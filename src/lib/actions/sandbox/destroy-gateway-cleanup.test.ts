@@ -56,6 +56,29 @@ describe("shouldCleanupGatewayAfterConfirmedFinalDestroy", () => {
     ).toBe(false);
   });
 
+  it("rechecks live state after observing an empty registry", () => {
+    const events: string[] = [];
+    expect(
+      shouldCleanupGatewayAfterConfirmedFinalDestroy(
+        {
+          deleteSucceededOrAlreadyGone: true,
+          removedRegistryEntry: true,
+        },
+        {
+          listSandboxes: () => {
+            events.push("registry-empty");
+            return { sandboxes: [] };
+          },
+          liveSandboxProbe: () => {
+            events.push("live-sandbox-observed");
+            return false;
+          },
+        },
+      ),
+    ).toBe(false);
+    expect(events).toEqual(["registry-empty", "live-sandbox-observed"]);
+  });
+
   it("collects OpenShell and Docker live-sandbox snapshots in the action layer", () => {
     const captureOpenshell = vi.fn(() => ({
       status: 0,
@@ -84,6 +107,7 @@ describe("shouldCleanupGatewayAfterConfirmedFinalDestroy", () => {
   });
 
   it("records failed Docker probes as fail-closed snapshots", () => {
+    const debug = vi.spyOn(console, "debug").mockImplementation(() => undefined);
     const snapshot = collectLiveSandboxProbeSnapshot({
       captureOpenshell: () => ({
         status: 0,
@@ -101,5 +125,8 @@ describe("shouldCleanupGatewayAfterConfirmedFinalDestroy", () => {
       output: "",
       probeFailed: true,
     });
+    expect(debug).toHaveBeenCalledWith(
+      "Docker container probe failed for sandbox 'npmtest'; preserving shared gateway.",
+    );
   });
 });

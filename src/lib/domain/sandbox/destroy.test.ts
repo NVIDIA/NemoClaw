@@ -121,6 +121,12 @@ describe("sandbox destroy helpers", () => {
       ),
     ).toBe("preserve");
     expect(
+      resolveDestroyGatewayCleanupDecision({}, { nonInteractive: true, platform: "darwin" }),
+    ).toBe("cleanup");
+    expect(
+      resolveDestroyGatewayCleanupDecision({}, { nonInteractive: true, platform: "linux" }),
+    ).toBe("preserve");
+    expect(
       resolveDestroyGatewayCleanupDecision({}, { nonInteractive: true, platform: "win32" }),
     ).toBe("preserve");
     expect(
@@ -170,6 +176,15 @@ describe("sandbox destroy helpers", () => {
             "NAME              CREATED              PHASE\nnpmtest           now                  Failed\n",
         },
         dockerContainersBySandboxName: new Map([["npmtest", { output: "", probeFailed: true }]]),
+      }),
+    ).toBe(false);
+  });
+
+  it("fails closed when OpenShell cannot report live sandbox state (#4662)", () => {
+    expect(
+      hasNoLiveSandboxes({
+        liveList: { status: 1, output: "" },
+        dockerContainersBySandboxName: new Map(),
       }),
     ).toBe(false);
   });

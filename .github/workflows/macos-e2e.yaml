@@ -75,6 +75,7 @@ jobs:
           npx vitest run --project integration
           test/tunnel-gateway-port-release-runtime.test.ts
           test/onboard-gateway-prelaunch-cutover.test.ts
+          test/onboard-gateway-legacy-identity-upgrade-runtime.test.ts
 
       - name: Prepare Docker availability
         id: docker
@@ -101,6 +102,10 @@ jobs:
             exit 0
           fi
 
+          # Do not install floating Homebrew packages before credentialed steps.
+          # The hosted runner image is the Colima dependency boundary; record
+          # its exact preinstalled version in every trusted run that uses it.
+          colima version
           echo "Docker is unavailable; starting preinstalled Colima for trusted macOS live E2E."
           if ! colima start --cpu 4 --memory 8 --disk 80 --vm-type vz --mount-type virtiofs; then
             echo "::warning::Colima could not start Docker on this macOS runner; skipping live E2E."

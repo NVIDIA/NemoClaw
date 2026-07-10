@@ -84,9 +84,12 @@ export function collectLiveSandboxProbeSnapshot(
         ),
       });
     } catch {
-      // Fail closed for the #4662 invalid-state boundary. If Docker cannot
-      // confirm the terminal OpenShell row has no backing container, keep the
-      // shared gateway so a live sandbox does not lose its listener.
+      // Fail closed for the #4662 invalid-state boundary and the lifecycle
+      // invariant documented in destroy-gateway.ts (#6639). If Docker cannot
+      // confirm the row has no backing container, preserve the shared gateway.
+      console.debug(
+        `Docker container probe failed for sandbox '${sandboxName}'; preserving shared gateway.`,
+      );
       dockerContainersBySandboxName.set(sandboxName, { output: "", probeFailed: true });
     }
   }

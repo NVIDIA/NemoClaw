@@ -181,6 +181,8 @@ export function hasNoLiveSandboxes({
   liveList,
   dockerContainersBySandboxName,
 }: LiveSandboxProbeSnapshot): boolean {
+  // Fail closed: if OpenShell cannot report authoritative sandbox state,
+  // preserve the shared gateway so a sandbox never loses its listener.
   if (liveList.status !== 0) {
     return false;
   }
