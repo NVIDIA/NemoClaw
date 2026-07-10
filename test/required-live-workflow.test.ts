@@ -121,6 +121,45 @@ exec "$@"
   }
 }
 
+function runStartStep(headBranch: string) {
+  const workflow = readYaml<TriggeredWorkflow>(REQUIRED_LIVE_PATH);
+  const start = step(workflow.jobs.coordinate, "Start required live evaluation");
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-required-live-start-step-"));
+  const binDir = path.join(tempDir, "bin");
+  const argumentsPath = path.join(tempDir, "node-arguments");
+  fs.mkdirSync(binDir);
+  fs.writeFileSync(
+    path.join(binDir, "node"),
+    '#!/usr/bin/env bash\nset -euo pipefail\nprintf \'%s\\0\' "$@" > "$FAKE_NODE_ARGUMENTS"\n',
+    { mode: 0o755 },
+  );
+
+  try {
+    const result = spawnSync("bash", ["-e", "-o", "pipefail", "-c", start.run!], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        CI_CONCLUSION: "success",
+        FAKE_NODE_ARGUMENTS: argumentsPath,
+        GITHUB_TOKEN: "token",
+        HEAD_BRANCH: headBranch,
+        HEAD_REPOSITORY: "NVIDIA/NemoClaw",
+        HEAD_SHA: "a".repeat(40),
+        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+        WORKFLOW_SHA: "d".repeat(40),
+        WORK_DIR: tempDir,
+      },
+      timeout: 5_000,
+    });
+    return {
+      arguments: fs.readFileSync(argumentsPath, "utf8").split("\0").slice(0, -1),
+      result,
+    };
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 function runChildValidation(currentPullSha: string) {
   const workflow = readYaml<DispatchWorkflow>(E2E_PATH);
   const validation = step(workflow.jobs["generate-matrix"], "Validate required-live dispatch");
@@ -243,8 +282,27 @@ describe("required live E2E workflow", () => {
     const cancelStep = step(cancel, "Cancel superseded required live runs");
 
     expect(cancelStep.run).toContain("tools/e2e/required-live.mts --mode cancel");
-    expect(cancelStep.run).toContain('--pr "${{ github.event.pull_request.number }}"');
+    expect(cancelStep.run).toContain('--pr "$PR_NUMBER"');
+    expect(cancelStep.run).not.toContain("${{ github.event.");
     expect(cancelStep.env?.GITHUB_TOKEN).toBe("${{ github.token }}");
+    expect(cancelStep.env?.PR_NUMBER).toBe("${{ github.event.pull_request.number }}");
+  });
+
+  it.each([
+    ["a single quote", "feature/'quoted"],
+    ["a double quote", 'feature/"quoted'],
+    ["command substitution", "feature/$(printf injected)"],
+    ["a semicolon", "feature/branch;printf injected"],
+    ["whitespace", "feature/space name"],
+    ["a newline", "feature/line\nname"],
+  ])("passes branch text containing $label as one inert shell argument", (_label, headBranch) => {
+    const execution = runStartStep(headBranch);
+    const branchFlag = execution.arguments.indexOf("--head-branch");
+
+    expect(execution.result.status).toBe(0);
+    expect(execution.result.stderr).toBe("");
+    expect(execution.arguments.filter((argument) => argument === "--head-branch")).toHaveLength(1);
+    expect(execution.arguments[branchFlag + 1]).toBe(headBranch);
   });
 
   it("coordinates one check lifecycle around a bounded child run", () => {
@@ -268,14 +326,21 @@ describe("required live E2E workflow", () => {
     expect(workspace.run).toContain('mktemp -d "${RUNNER_TEMP}/nemoclaw-required-live.XXXXXX"');
     expect(workspace.run).toContain('chmod 700 "$work_dir"');
     expect(start.run).toContain("tools/e2e/required-live.mts --mode start");
-    expect(start.run).toContain('--head "${{ github.event.workflow_run.head_sha }}"');
-    expect(start.run).toContain(
-      '--head-repo "${{ github.event.workflow_run.head_repository.full_name }}"',
-    );
-    expect(start.run).toContain('--head-branch "${{ github.event.workflow_run.head_branch }}"');
-    expect(start.run).toContain('--workflow-sha "${{ github.workflow_sha }}"');
-    expect(start.run).toContain('--ci-conclusion "${{ github.event.workflow_run.conclusion }}"');
-    expect(start.run).toContain('--work-dir "${{ steps.workspace.outputs.work_dir }}"');
+    expect(start.run).toContain('--head "$HEAD_SHA"');
+    expect(start.run).toContain('--head-repo "$HEAD_REPOSITORY"');
+    expect(start.run).toContain('--head-branch "$HEAD_BRANCH"');
+    expect(start.run).toContain('--workflow-sha "$WORKFLOW_SHA"');
+    expect(start.run).toContain('--ci-conclusion "$CI_CONCLUSION"');
+    expect(start.run).toContain('--work-dir "$WORK_DIR"');
+    expect(start.run).not.toContain("${{ github.event.");
+    expect(start.env).toMatchObject({
+      CI_CONCLUSION: "${{ github.event.workflow_run.conclusion }}",
+      HEAD_BRANCH: "${{ github.event.workflow_run.head_branch }}",
+      HEAD_REPOSITORY: "${{ github.event.workflow_run.head_repository.full_name }}",
+      HEAD_SHA: "${{ github.event.workflow_run.head_sha }}",
+      WORKFLOW_SHA: "${{ github.workflow_sha }}",
+      WORK_DIR: "${{ steps.workspace.outputs.work_dir }}",
+    });
     expect(start.run).not.toContain("--mode initialize");
     expect(upload.if).toContain("steps.workspace.outputs.work_dir != ''");
     expect(upload.with?.path).toBe(

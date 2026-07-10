@@ -38,10 +38,11 @@ jobs:
       - name: Cancel superseded required live runs
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: >-
           node --experimental-strip-types tools/e2e/required-live.mts
           --mode cancel
-          --pr "${{ github.event.pull_request.number }}"
+          --pr "$PR_NUMBER"
 
   coordinate:
     if: ${{ github.event_name == 'workflow_run' && github.repository == 'NVIDIA/NemoClaw' && github.event.workflow_run.event == 'pull_request' }}
@@ -83,16 +84,22 @@ jobs:
       - id: start
         name: Start required live evaluation
         env:
+          CI_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
           GITHUB_TOKEN: ${{ github.token }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+          WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
         run: >-
           node --experimental-strip-types tools/e2e/required-live.mts
           --mode start
-          --head "${{ github.event.workflow_run.head_sha }}"
-          --head-repo "${{ github.event.workflow_run.head_repository.full_name }}"
-          --head-branch "${{ github.event.workflow_run.head_branch }}"
-          --workflow-sha "${{ github.workflow_sha }}"
-          --ci-conclusion "${{ github.event.workflow_run.conclusion }}"
-          --work-dir "${{ steps.workspace.outputs.work_dir }}"
+          --head "$HEAD_SHA"
+          --head-repo "$HEAD_REPOSITORY"
+          --head-branch "$HEAD_BRANCH"
+          --workflow-sha "$WORKFLOW_SHA"
+          --ci-conclusion "$CI_CONCLUSION"
+          --work-dir "$WORK_DIR"
 
       - name: Upload required live plan
         if: ${{ always() && steps.workspace.outputs.work_dir != '' }}

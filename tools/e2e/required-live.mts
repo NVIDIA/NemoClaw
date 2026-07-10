@@ -460,6 +460,9 @@ function appendOutput(name: string, value: string): void {
   );
   try {
     if (!fs.fstatSync(descriptor).isFile()) throw new Error("GITHUB_OUTPUT must be a regular file");
+    // lgtm[js/network-data-to-file] Values are reduced to a strict single-line allowlist above,
+    // and the trusted runner-owned output file is opened without following symlinks.
+    // lgtm[js/http-to-file-access]
     fs.writeFileSync(descriptor, `${name}=${value}\n`, "utf8");
   } finally {
     fs.closeSync(descriptor);
