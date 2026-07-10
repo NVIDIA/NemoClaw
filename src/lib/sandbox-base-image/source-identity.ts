@@ -86,6 +86,57 @@ function gitNearestVersionTag(rootDir: string, env: NodeJS.ProcessEnv): string |
   return git.status === 0 ? normalizeVersionTag(git.stdout) : null;
 }
 
+function compareVersionTagsDesc(a: string, b: string): number {
+  const parse = (tag: string) =>
+    tag
+      .slice(1)
+      .split(/[.-]/)
+      .map((part) => (/^[0-9]+$/.test(part) ? Number(part) : part));
+  const left = parse(a);
+  const right = parse(b);
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const leftPart = left[index] ?? 0;
+    const rightPart = right[index] ?? 0;
+    if (leftPart === rightPart) continue;
+    if (typeof leftPart === "number" && typeof rightPart === "number") {
+      return rightPart - leftPart;
+    }
+    return String(rightPart).localeCompare(String(leftPart));
+  }
+  return 0;
+}
+
+function gitRemoteReachableVersionTag(rootDir: string, env: NodeJS.ProcessEnv): string | null {
+  const git = spawnSync("git", ["-C", rootDir, "ls-remote", "--tags", "origin", "v*"], {
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 5_000,
+    env: { ...env, GIT_TERMINAL_PROMPT: "0" },
+  });
+  if (git.status !== 0) return null;
+
+  const tags = new Map<string, string>();
+  for (const line of git.stdout.split("\n")) {
+    const match = line.match(/^([0-9a-f]{40})\s+refs\/tags\/(.+?)(\^\{\})?$/);
+    if (!match) continue;
+    const tag = normalizeVersionTag(match[2]);
+    if (!tag) continue;
+    const commit = match[1];
+    const peeled = match[3] === "^{}";
+    if (peeled || !tags.has(tag)) tags.set(tag, commit);
+  }
+
+  return (
+    [...tags]
+      .filter(
+        ([, commit]) =>
+          gitStatus(rootDir, ["merge-base", "--is-ancestor", commit, "HEAD"], env) === 0,
+      )
+      .map(([tag]) => tag)
+      .sort(compareVersionTagsDesc)[0] ?? null
+  );
+}
+
 function versionFileTag(rootDir: string): string | null {
   try {
     return normalizeVersionTag(fs.readFileSync(path.join(rootDir, ".version"), "utf-8"));
@@ -115,7 +166,7 @@ export function getNearestVersionedBaseImageTags(
   rootDir = ROOT,
   env: NodeJS.ProcessEnv = process.env,
 ): string[] {
-  const tag = gitNearestVersionTag(rootDir, env);
+  const tag = gitRemoteReachableVersionTag(rootDir, env) || gitNearestVersionTag(rootDir, env);
   return tag ? [tag] : [];
 }
 

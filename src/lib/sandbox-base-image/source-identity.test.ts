@@ -185,6 +185,25 @@ describe("sandbox base-image source identity", () => {
     expect(getNearestVersionedBaseImageTags(root, gitEnv)).toEqual(["v0.0.42"]);
   });
 
+  it("prefers the newest reachable origin release tag when local tags are stale", () => {
+    const remote = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-image-tags-remote-"));
+    tmpRoots.push(remote);
+    const root = createGitFixture();
+    git(remote, ["init", "--bare"]);
+    git(root, ["remote", "add", "origin", remote]);
+    git(root, ["tag", "v0.0.41"]);
+    writeFixture(root, "docs/release.md", "release 42\n");
+    git(root, ["add", "docs/release.md"]);
+    git(root, ["commit", "-m", "release 42"]);
+    git(root, ["tag", "-a", "v0.0.42", "-m", "v0.0.42"]);
+    git(root, ["push", "origin", "main", "refs/tags/v0.0.42"]);
+    git(root, ["tag", "-d", "v0.0.42"]);
+
+    expect(getVersionedBaseImageTags(root, gitEnv)).toEqual([]);
+    expect(git(root, ["describe", "--tags", "--abbrev=0", "--match", "v*"])).toBe("v0.0.41");
+    expect(getNearestVersionedBaseImageTags(root, gitEnv)).toEqual(["v0.0.42"]);
+  });
+
   it("detects committed Dockerfile.base changes relative to origin/main", () => {
     const root = createGitFixture();
     git(root, ["switch", "-c", "feature"]);
