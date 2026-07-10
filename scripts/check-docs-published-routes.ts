@@ -296,9 +296,13 @@ export function resolvePageLinksByText(
 }
 
 // Pages that have repeatedly regressed on source-path-vs-published-route drift
-// (NemoClaw#5445, #6290, #5465, #5460). Scoped intentionally: the wider docs
+// (NemoClaw#5445, #6290, #5465, #5460, #6601). Scoped intentionally: the wider docs
 // tree has unrelated pre-existing broken links tracked separately.
-const GUARDED_SOURCE_PAGES = ["reference/commands.mdx", "reference/platform-support.mdx"];
+const GUARDED_SOURCE_PAGES = [
+  "reference/commands.mdx",
+  "reference/network-policies.mdx",
+  "reference/platform-support.mdx",
+];
 
 function main(): void {
   const index = buildPublishedRouteIndex();
