@@ -33,6 +33,7 @@ import {
   loadLocalAdapterPid,
   persistLocalAdapterPid,
   readLocalAdapterJsonFile,
+  removeLocalAdapterFile,
   spawnDetachedNodeAdapter,
   waitForLocalAdapterHealth,
   writeLocalAdapterJsonFile,
@@ -123,6 +124,11 @@ function killStaleAdapter(): void {
     run,
     runCapture,
   });
+}
+
+function cleanupFailedAdapterStartup(): void {
+  killStaleAdapter();
+  removeLocalAdapterFile(STATE_PATH);
 }
 
 function getAdapterScriptPath(): string {
@@ -230,24 +236,29 @@ async function ensureOpenRouterRuntimeAdapterLocked(): Promise<AdapterRoute> {
     },
     buildEnv: buildSubprocessEnv,
   });
-  persistLocalAdapterPid(PID_PATH, child.pid);
+  try {
+    persistLocalAdapterPid(PID_PATH, child.pid);
 
-  if (!(await waitForAdapterHealth(configHash))) {
-    throw new Error(
-      `OpenRouter Runtime adapter did not become healthy on ${OPENROUTER_RUNTIME_ADAPTER_LOOPBACK_OPENAI_BASE_URL}`,
-    );
-  }
+    if (!(await waitForAdapterHealth(configHash))) {
+      throw new Error(
+        `OpenRouter Runtime adapter did not become healthy on ${OPENROUTER_RUNTIME_ADAPTER_LOOPBACK_OPENAI_BASE_URL}`,
+      );
+    }
 
-  writeLocalAdapterJsonFile(STATE_PATH, {
-    upstreamBaseUrl,
-    configHash,
-    pid: child.pid ?? null,
-    updatedAt: new Date().toISOString(),
-  });
-  if (!(await probeAdapterHealth({ configHash }))) {
-    throw new Error(
-      `OpenRouter Runtime adapter health changed before registration on ${OPENROUTER_RUNTIME_ADAPTER_LOOPBACK_OPENAI_BASE_URL}`,
-    );
+    writeLocalAdapterJsonFile(STATE_PATH, {
+      upstreamBaseUrl,
+      configHash,
+      pid: child.pid ?? null,
+      updatedAt: new Date().toISOString(),
+    });
+    if (!(await probeAdapterHealth({ configHash }))) {
+      throw new Error(
+        `OpenRouter Runtime adapter health changed before registration on ${OPENROUTER_RUNTIME_ADAPTER_LOOPBACK_OPENAI_BASE_URL}`,
+      );
+    }
+  } catch (err) {
+    cleanupFailedAdapterStartup();
+    throw err;
   }
 
   return adapterRoute();

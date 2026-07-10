@@ -10,6 +10,7 @@ import { sendJson } from "./openrouter-runtime-adapter-common";
 
 export const OPENROUTER_RUNTIME_ADAPTER_MAX_BODY_BYTES = 2 * 1024 * 1024;
 const OPENROUTER_RUNTIME_ADAPTER_BODY_TIMEOUT_MS = 30_000;
+const OPENROUTER_RUNTIME_ADAPTER_UPSTREAM_TIMEOUT_MS = 30_000;
 
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
@@ -121,7 +122,7 @@ function readBoundedRequestBody(req: http.IncomingMessage): Promise<Buffer> {
 function sendForwardError(res: http.ServerResponse, err: unknown): number {
   const status = err instanceof ForwardHttpError ? err.status : 502;
   const code = err instanceof ForwardHttpError ? err.code : "openrouter_runtime_error";
-  const message = err instanceof Error && err.message ? err.message : "OpenRouter request failed.";
+  const message = err instanceof ForwardHttpError ? err.message : "OpenRouter request failed.";
   if (!res.headersSent) {
     sendJson(res, status, {
       error: {
@@ -140,6 +141,7 @@ export async function forwardOpenRouterRequest(options: {
   req: http.IncomingMessage;
   res: http.ServerResponse;
   upstreamBaseUrl: string;
+  upstreamTimeoutMs?: number;
 }): Promise<number> {
   const upstreamUrl = buildUpstreamUrl(options.upstreamBaseUrl, options.req.url);
   const transport = upstreamUrl.protocol === "http:" ? http : https;
@@ -150,6 +152,15 @@ export async function forwardOpenRouterRequest(options: {
     return sendForwardError(options.res, err);
   }
   return new Promise((resolve) => {
+    let settled = false;
+    const resolveOnce = (status: number) => {
+      if (settled) return;
+      settled = true;
+      resolve(status);
+    };
+    const failRequest = (err: unknown) => {
+      resolveOnce(sendForwardError(options.res, err));
+    };
     const headers = buildForwardRequestHeaders(options.req);
     headers["content-length"] = String(body.length);
     const upstreamReq = transport.request(
@@ -161,12 +172,21 @@ export async function forwardOpenRouterRequest(options: {
       (upstreamRes) => {
         const status = upstreamRes.statusCode || 502;
         options.res.writeHead(status, buildForwardResponseHeaders(upstreamRes.headers));
+        upstreamRes.on("error", failRequest);
         upstreamRes.pipe(options.res);
-        upstreamRes.on("end", () => resolve(status));
+        upstreamRes.on("end", () => resolveOnce(status));
+      },
+    );
+    upstreamReq.setTimeout(
+      options.upstreamTimeoutMs ?? OPENROUTER_RUNTIME_ADAPTER_UPSTREAM_TIMEOUT_MS,
+      () => {
+        upstreamReq.destroy(
+          new ForwardHttpError(504, "OpenRouter upstream request timed out.", "upstream_timeout"),
+        );
       },
     );
     upstreamReq.on("error", (err) => {
-      resolve(sendForwardError(options.res, err));
+      failRequest(err);
     });
     upstreamReq.end(body);
   });

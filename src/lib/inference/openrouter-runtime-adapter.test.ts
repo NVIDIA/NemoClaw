@@ -163,4 +163,57 @@ describe("OpenRouter Runtime adapter", () => {
     });
     expect(upstreamHandler).not.toHaveBeenCalled();
   });
+
+  it("returns a generic error when upstream connection details fail (#5826)", async () => {
+    const adapter = createOpenRouterRuntimeAdapterServer({
+      upstreamBaseUrl: "http://127.0.0.1:1/api/v1",
+      upstreamTimeoutMs: 100,
+    });
+    const adapterBaseUrl = await listen(adapter);
+
+    const response = await fetch(`${adapterBaseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer sk-or-test",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ model: "moonshotai/kimi-k2.6", messages: [] }),
+    });
+
+    expect(response.status).toBe(502);
+    const body = (await response.json()) as { error: { message: string; code: string } };
+    expect(body.error).toMatchObject({
+      message: "OpenRouter request failed.",
+      code: "openrouter_runtime_error",
+    });
+    expect(JSON.stringify(body)).not.toContain("127.0.0.1");
+    expect(JSON.stringify(body)).not.toContain("ECONNREFUSED");
+  });
+
+  it("times out stalled upstream requests without hanging (#5826)", async () => {
+    const upstream = http.createServer(async (req, res) => {
+      await readRequestBody(req);
+      req.on("close", () => res.destroy());
+    });
+    const upstreamBaseUrl = await listen(upstream);
+    const adapter = createOpenRouterRuntimeAdapterServer({
+      upstreamBaseUrl: `${upstreamBaseUrl}/api/v1`,
+      upstreamTimeoutMs: 25,
+    });
+    const adapterBaseUrl = await listen(adapter);
+
+    const response = await fetch(`${adapterBaseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer sk-or-test",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ model: "moonshotai/kimi-k2.6", messages: [] }),
+    });
+
+    expect(response.status).toBe(504);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "upstream_timeout" },
+    });
+  });
 });

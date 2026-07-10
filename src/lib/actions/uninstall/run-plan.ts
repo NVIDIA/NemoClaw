@@ -377,6 +377,7 @@ function stopMatchingPids(pattern: string, runtime: UninstallRuntime, label: str
 // process that happens to be on the same port. Mirrors the
 // `isOllamaProxyProcess` check in `src/lib/onboard-ollama-proxy.ts`.
 const OLLAMA_AUTH_PROXY_CMDLINE_MARK = "ollama-auth-proxy.js";
+const OPENROUTER_RUNTIME_ADAPTER_CMDLINE_MARK = "openrouter-runtime-adapter";
 
 // Resolve the proxy port from runtime.env (rather than `process.env` at
 // module-load time) so a user who onboarded with NEMOCLAW_OLLAMA_PROXY_PORT
@@ -384,6 +385,7 @@ const OLLAMA_AUTH_PROXY_CMDLINE_MARK = "ollama-auth-proxy.js";
 // validation in `src/lib/core/ports.ts::parsePort`; falls back silently to
 // the default (11435) on malformed input — uninstall is best-effort.
 const DEFAULT_OLLAMA_PROXY_PORT = 11435;
+const DEFAULT_OPENROUTER_RUNTIME_ADAPTER_PORT = 11437;
 
 function resolveOllamaProxyPort(runtime: UninstallRuntime): number {
   const raw = runtime.env.NEMOCLAW_OLLAMA_PROXY_PORT;
@@ -395,10 +397,26 @@ function resolveOllamaProxyPort(runtime: UninstallRuntime): number {
   return parsed;
 }
 
+function resolveOpenRouterRuntimeAdapterPort(runtime: UninstallRuntime): number {
+  const raw = runtime.env.NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT;
+  if (raw === undefined || raw === "") return DEFAULT_OPENROUTER_RUNTIME_ADAPTER_PORT;
+  const trimmed = String(raw).trim();
+  if (!/^\d+$/.test(trimmed)) return DEFAULT_OPENROUTER_RUNTIME_ADAPTER_PORT;
+  const parsed = Number(trimmed);
+  if (parsed < 1024 || parsed > 65535) return DEFAULT_OPENROUTER_RUNTIME_ADAPTER_PORT;
+  return parsed;
+}
+
 function isOllamaAuthProxyPid(pid: number, runtime: UninstallRuntime): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   const result = runtime.run("ps", ["-p", String(pid), "-o", "args="], { env: runtime.env });
   return result.status === 0 && result.stdout.includes(OLLAMA_AUTH_PROXY_CMDLINE_MARK);
+}
+
+function isOpenRouterRuntimeAdapterPid(pid: number, runtime: UninstallRuntime): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  const result = runtime.run("ps", ["-p", String(pid), "-o", "args="], { env: runtime.env });
+  return result.status === 0 && result.stdout.includes(OPENROUTER_RUNTIME_ADAPTER_CMDLINE_MARK);
 }
 
 // `ps -p <pid>` is preferred over `kill(pid, 0)` for existence probing here:
@@ -442,6 +460,21 @@ function tryStopOllamaProxyPid(pid: number, runtime: UninstallRuntime): boolean 
     return true;
   }
   runtime.warn(`Failed to stop Ollama auth proxy ${pid}`);
+  return false;
+}
+
+function tryStopOpenRouterRuntimeAdapterPid(pid: number, runtime: UninstallRuntime): boolean {
+  runtime.kill(pid);
+  if (waitForPidExit(pid, runtime, 1000)) {
+    runtime.log(`Stopped OpenRouter Runtime adapter ${pid}`);
+    return true;
+  }
+  runtime.kill(pid, "SIGKILL");
+  if (waitForPidExit(pid, runtime, 1000)) {
+    runtime.log(`Stopped OpenRouter Runtime adapter ${pid}`);
+    return true;
+  }
+  runtime.warn(`Failed to stop OpenRouter Runtime adapter ${pid}`);
   return false;
 }
 
@@ -497,6 +530,42 @@ function stopOllamaAuthProxy(paths: UninstallPaths, runtime: UninstallRuntime): 
   }
 
   if (stopped.size === 0) runtime.log("No Ollama auth proxy processes found");
+}
+
+function stopOpenRouterRuntimeAdapter(paths: UninstallPaths, runtime: UninstallRuntime): void {
+  const stopped = new Set<number>();
+
+  const pidFile = path.join(paths.nemoclawStateDir, "openrouter-runtime-adapter.pid");
+  if (runtime.existsSync(pidFile)) {
+    try {
+      const raw = fs.readFileSync(pidFile, "utf-8").trim();
+      const pid = Number.parseInt(raw, 10);
+      if (Number.isFinite(pid) && pid > 0 && isOpenRouterRuntimeAdapterPid(pid, runtime)) {
+        if (tryStopOpenRouterRuntimeAdapterPid(pid, runtime)) stopped.add(pid);
+      }
+    } catch {
+      /* ignore — the State step deletes the file shortly anyway */
+    }
+  }
+
+  if (!runtime.commandExists("lsof")) {
+    if (stopped.size === 0) {
+      runtime.warn("lsof not found; skipping orphan OpenRouter Runtime adapter scan.");
+    }
+    return;
+  }
+
+  const adapterPort = resolveOpenRouterRuntimeAdapterPort(runtime);
+  const lsof = runtime.run("lsof", ["-ti", `:${adapterPort}`], { env: runtime.env });
+  const pids = splitNonEmptyLines(lsof.stdout).map(Number).filter(Number.isFinite);
+  for (const pid of pids) {
+    if (stopped.has(pid)) continue;
+    if (!pidOwnedByCurrentUser(pid, runtime)) continue;
+    if (!isOpenRouterRuntimeAdapterPid(pid, runtime)) continue;
+    if (tryStopOpenRouterRuntimeAdapterPid(pid, runtime)) stopped.add(pid);
+  }
+
+  if (stopped.size === 0) runtime.log("No OpenRouter Runtime adapter processes found");
 }
 
 const DEFAULT_MODEL_ROUTER_PORT = 4000;
@@ -920,6 +989,7 @@ function executePlan(
         { logNoProcesses: true },
       );
       stopOllamaAuthProxy(paths, runtime);
+      stopOpenRouterRuntimeAdapter(paths, runtime);
       stopModelRouter(paths, runtime);
     } else if (step.name === "OpenShell resources") {
       removeOpenShellResources(options, runtime);

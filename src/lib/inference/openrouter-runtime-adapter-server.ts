@@ -32,7 +32,7 @@ function isAllowedRequest(method: string | undefined, pathname: string): boolean
 }
 
 export function createOpenRouterRuntimeAdapterServer(
-  options: { upstreamBaseUrl?: string; logger?: AdapterLogger } = {},
+  options: { upstreamBaseUrl?: string; logger?: AdapterLogger; upstreamTimeoutMs?: number } = {},
 ): http.Server {
   const upstreamBaseUrl = options.upstreamBaseUrl || OPENROUTER_ENDPOINT_URL;
   const configHash = adapterConfigHash(upstreamBaseUrl);
@@ -77,7 +77,12 @@ export function createOpenRouterRuntimeAdapterServer(
         return;
       }
 
-      const status = await forwardOpenRouterRequest({ req, res, upstreamBaseUrl });
+      const status = await forwardOpenRouterRequest({
+        req,
+        res,
+        upstreamBaseUrl,
+        upstreamTimeoutMs: options.upstreamTimeoutMs,
+      });
       logAdapterEvent(logger, "request_completed", {
         method: req.method || "unknown",
         path: url.pathname,
@@ -85,7 +90,6 @@ export function createOpenRouterRuntimeAdapterServer(
         durationMs: Date.now() - started,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
       logAdapterEvent(logger, "request_failed", {
         method: req.method || "unknown",
         path: url.pathname,
@@ -95,7 +99,7 @@ export function createOpenRouterRuntimeAdapterServer(
       if (!res.headersSent) {
         sendJson(res, 502, {
           error: {
-            message: compactText(message || "OpenRouter request failed."),
+            message: compactText("OpenRouter request failed."),
             type: "openrouter_runtime_error",
             code: "openrouter_runtime_error",
           },
