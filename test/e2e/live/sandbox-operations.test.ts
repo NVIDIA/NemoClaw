@@ -640,7 +640,7 @@ test(
         "TC-SBX-09 tmux and PTY lifecycle work inside sandbox",
         "TC-SBX-10 two sandboxes list with model/provider metadata",
         "TC-SBX-11 sandboxes cannot reach each other by hostname",
-        "TC-SBX-12 destroying the non-final sandbox preserves the survivor and final destroy releases the gateway port",
+        "TC-SBX-12 destroying the non-final sandbox preserves the survivor and final destroy releases the gateway port through the macOS default or explicit non-macOS cleanup",
       ],
     });
 
@@ -679,12 +679,17 @@ test(
     await assertAgentCanAnswer(host, SANDBOX_A, "tc-sbx-12-survivor-agent-after-destroy-b");
 
     const gatewayRecovery = await assertGatewayRecovery(host, SANDBOX_A);
-    await assertDestroyRemovesSandbox(host, sandbox, SANDBOX_A, { cleanupGateway: true });
+    const finalDestroyCleanupMode =
+      process.platform === "darwin" ? "macos-default" : "explicit-non-macos";
+    await assertDestroyRemovesSandbox(host, sandbox, SANDBOX_A, {
+      cleanupGateway: finalDestroyCleanupMode === "explicit-non-macos",
+    });
     await expectHostPortFree(host, GATEWAY_PORT, "tc-sbx-12-final-destroy-gateway-port-free");
 
     await artifacts.target.complete({
       id: "sandbox-operations",
       status: "passed",
+      finalDestroyCleanupMode,
       finalGatewayPortReleased: true,
       gatewayRecovery,
       legacySource: "test/e2e/test-sandbox-operations.sh",
