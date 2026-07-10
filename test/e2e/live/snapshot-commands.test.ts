@@ -17,9 +17,8 @@ import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
-import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 import { scanSnapshotCredentialLeaks } from "./snapshot-credential-scanner.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-snapshot";
@@ -32,9 +31,16 @@ if (!BACKUP_DIR.startsWith(`${path.resolve(BACKUP_ROOT)}${path.sep}`)) {
 const MARKER_FILE = "/sandbox/.openclaw/workspace/snapshot-marker.txt";
 const SECOND_MARKER = "/sandbox/.openclaw/workspace/snapshot-marker-2.txt";
 const LIVE_TIMEOUT_MS = 30 * 60_000;
-const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
+const INFERENCE_API_KEY = "snapshot-commands-fixture-credential";
+const INFERENCE_MODEL = "snapshot-commands-model";
 
-function commandEnv(apiKey?: string): NodeJS.ProcessEnv {
+interface SnapshotInferenceFixture {
+  apiKey: string;
+  endpointUrl: string;
+  model: string;
+}
+
+function commandEnv(inference?: SnapshotInferenceFixture): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...buildAvailabilityProbeEnv(),
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
@@ -43,7 +49,17 @@ function commandEnv(apiKey?: string): NodeJS.ProcessEnv {
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
   };
-  if (apiKey) env.NVIDIA_INFERENCE_API_KEY = apiKey;
+  delete env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE;
+  if (inference) {
+    Object.assign(env, {
+      COMPATIBLE_API_KEY: inference.apiKey,
+      NEMOCLAW_COMPAT_MODEL: inference.model,
+      NEMOCLAW_ENDPOINT_URL: inference.endpointUrl,
+      NEMOCLAW_MODEL: inference.model,
+      NEMOCLAW_PREFERRED_API: "openai-completions",
+      NEMOCLAW_PROVIDER: "custom",
+    });
+  }
   return env;
 }
 
@@ -107,8 +123,7 @@ function firstSnapshotTimestamp(listOutput: string): string {
 
 test("snapshot commands preserve create/list/latest restore/targeted restore/no-leak lifecycle", {
   timeout: LIVE_TIMEOUT_MS,
-}, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
-  const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
+}, async ({ artifacts, cleanup, host, sandbox, skip }) => {
   await artifacts.target.declare({
     id: "snapshot-commands",
     boundary: "install.sh + nemoclaw snapshot commands + openshell sandbox exec",
@@ -116,6 +131,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     backupDir: BACKUP_DIR,
     contracts: [
       "install.sh onboards a live OpenClaw sandbox",
+      "onboard authenticates to a hermetic compatible inference endpoint",
       "snapshot create reports Snapshot v<N> created",
       "snapshot list shows versioned snapshots and parseable timestamps",
       "latest snapshot restore recovers latest workspace state",
@@ -137,6 +153,24 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     skip(`Docker is required for snapshot commands E2E: ${resultText(dockerInfo)}`);
   }
 
+  const inference = await startFakeOpenAiCompatibleServer({
+    apiKey: INFERENCE_API_KEY,
+    host: "0.0.0.0",
+    model: INFERENCE_MODEL,
+    publicHost: "host.openshell.internal",
+    requireAuth: true,
+    requireAuthModels: true,
+  });
+  cleanup.add("close snapshot commands compatible inference fixture", async () => {
+    await artifacts.writeJson("compatible-inference-requests.json", inference.requests());
+    await inference.close();
+  });
+  const inferenceConfig = {
+    apiKey: INFERENCE_API_KEY,
+    endpointUrl: inference.baseUrl,
+    model: INFERENCE_MODEL,
+  };
+
   cleanup.add(`destroy snapshot sandbox ${SANDBOX_NAME}`, () =>
     cleanupSnapshotSandbox(host, sandbox, "cleanup"),
   );
@@ -144,36 +178,21 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
   await cleanupSnapshotSandbox(host, sandbox, "pre-cleanup");
   fs.rmSync(BACKUP_DIR, { recursive: true, force: true });
 
-  let install: ShellProbeResult | undefined;
-  for (let attempt = 1; attempt <= INSTALL_ATTEMPTS; attempt += 1) {
-    install = await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {
-      artifactName:
-        attempt === 1 ? "phase-1-install-nemoclaw" : `phase-1-install-nemoclaw-attempt-${attempt}`,
-      cwd: REPO_ROOT,
-      env: commandEnv(apiKey),
-      redactionValues: [apiKey],
-      timeoutMs: 20 * 60_000,
-    });
-    if (install.exitCode === 0) break;
-    if (isTransientProviderValidationFailure(install) && attempt < INSTALL_ATTEMPTS) {
-      await new Promise((resolve) => setTimeout(resolve, 10_000 * attempt));
-      continue;
-    }
-    if (isTransientProviderValidationFailure(install) && process.env.GITHUB_ACTIONS === "true") {
-      await artifacts.writeJson("transient-provider-validation.skip.json", {
-        reason: "transient NVIDIA Endpoints validation failure during install.sh onboard",
-        attempts: INSTALL_ATTEMPTS,
-        sourceBoundary: "external NVIDIA Endpoints provider availability",
-        removalCondition:
-          "remove once CI endpoint validation is stable for a release cycle or covered by a hermetic provider-validation fixture",
-      });
-      skip(
-        `NVIDIA Endpoints validation hit a transient upstream/rate-limit failure after ${INSTALL_ATTEMPTS} attempts`,
-      );
-    }
-    break;
-  }
-  expect(install?.exitCode, install ? resultText(install) : "install did not run").toBe(0);
+  const install = await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {
+    artifactName: "phase-1-install-nemoclaw",
+    cwd: REPO_ROOT,
+    env: commandEnv(inferenceConfig),
+    redactionValues: [INFERENCE_API_KEY],
+    timeoutMs: 20 * 60_000,
+  });
+  expect(install.exitCode, resultText(install)).toBe(0);
+  expect(inference.requests()).toContainEqual(
+    expect.objectContaining({
+      auth: "ok",
+      model: INFERENCE_MODEL,
+      path: "/v1/chat/completions",
+    }),
+  );
 
   const cliProbe = await host.command(
     "bash",
