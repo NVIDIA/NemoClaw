@@ -57,11 +57,20 @@ exec(script, {"__name__": "__main__"})
 `.trim();
 
 const INODE_SWAP_MARKER = "# replacement created during race test\n";
+function failInstrumentation(label: string): never {
+  throw new Error(`Could not instrument the ${label}`);
+}
+
+function requireInstrumented(instrumented: string, label: string): string {
+  return instrumented !== KEY_ALLOWLIST_MERGE_PYTHON ? instrumented : failInstrumentation(label);
+}
+
 const INODE_REVALIDATION_POINT = String.raw`        try:
             latest_current = os.stat(current_name, dir_fd=parent_fd, follow_symlinks=False)`;
-const INODE_SWAP_SCRIPT = KEY_ALLOWLIST_MERGE_PYTHON.replace(
-  INODE_REVALIDATION_POINT,
-  String.raw`        swapped_name = current_name + ".pre-swap"
+const INODE_SWAP_SCRIPT = requireInstrumented(
+  KEY_ALLOWLIST_MERGE_PYTHON.replace(
+    INODE_REVALIDATION_POINT,
+    String.raw`        swapped_name = current_name + ".pre-swap"
         os.replace(current_name, swapped_name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
         replacement_fd = os.open(
             current_name,
@@ -77,15 +86,14 @@ const INODE_SWAP_SCRIPT = KEY_ALLOWLIST_MERGE_PYTHON.replace(
 
         try:
             latest_current = os.stat(current_name, dir_fd=parent_fd, follow_symlinks=False)`,
+  ),
+  "current-config inode revalidation point",
 );
 
-if (INODE_SWAP_SCRIPT === KEY_ALLOWLIST_MERGE_PYTHON) {
-  throw new Error("Could not instrument the current-config inode revalidation point");
-}
-
-const IN_PLACE_MUTATION_SCRIPT = KEY_ALLOWLIST_MERGE_PYTHON.replace(
-  INODE_REVALIDATION_POINT,
-  String.raw`        mutation_fd = os.open(
+const IN_PLACE_MUTATION_SCRIPT = requireInstrumented(
+  KEY_ALLOWLIST_MERGE_PYTHON.replace(
+    INODE_REVALIDATION_POINT,
+    String.raw`        mutation_fd = os.open(
             current_name,
             os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0),
             dir_fd=parent_fd,
@@ -99,11 +107,9 @@ const IN_PLACE_MUTATION_SCRIPT = KEY_ALLOWLIST_MERGE_PYTHON.replace(
 
         try:
             latest_current = os.stat(current_name, dir_fd=parent_fd, follow_symlinks=False)`,
+  ),
+  "current-config version revalidation point",
 );
-
-if (IN_PLACE_MUTATION_SCRIPT === KEY_ALLOWLIST_MERGE_PYTHON) {
-  throw new Error("Could not instrument the current-config version revalidation point");
-}
 
 const STAGE_REVALIDATION_POINT = String.raw`        try:
             latest_staged = os.stat(staged_name, dir_fd=parent_fd, follow_symlinks=False)`;
@@ -125,9 +131,10 @@ function stageSwapScript(kind: "hardlink" | "regular" | "symlink"): string {
             os.fsync(replacement_fd)
         finally:
             os.close(replacement_fd)`;
-  const instrumented = KEY_ALLOWLIST_MERGE_PYTHON.replace(
-    STAGE_REVALIDATION_POINT,
-    String.raw`        attack_name = ".nemoclaw-stage-attack-target"
+  return requireInstrumented(
+    KEY_ALLOWLIST_MERGE_PYTHON.replace(
+      STAGE_REVALIDATION_POINT,
+      String.raw`        attack_name = ".nemoclaw-stage-attack-target"
         attack_fd = os.open(
             attack_name,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL,
@@ -144,11 +151,9 @@ function stageSwapScript(kind: "hardlink" | "regular" | "symlink"): string {
 
         try:
             latest_staged = os.stat(staged_name, dir_fd=parent_fd, follow_symlinks=False)`,
+    ),
+    "staged-config inode revalidation point",
   );
-  if (instrumented === KEY_ALLOWLIST_MERGE_PYTHON) {
-    throw new Error("Could not instrument the staged-config inode revalidation point");
-  }
-  return instrumented;
 }
 
 const DCODE_OWNERSHIP: StateFileKeyAllowlistRestoreOwnership = {
@@ -226,6 +231,34 @@ interface ProductionRunOptions {
   script?: string;
 }
 
+function ancestorSymlinkConfigDir(dir: string): { configDir: string; stateFilePath: string } {
+  fs.mkdirSync(path.join(dir, "real", "nested"), { recursive: true });
+  fs.symlinkSync("real", path.join(dir, "alias"));
+  return {
+    configDir: path.join(dir, "alias", "nested"),
+    stateFilePath: "alias/nested/config.toml",
+  };
+}
+
+function writePlainCurrentConfig(currentPath: string, current: string): null {
+  fs.writeFileSync(currentPath, current, { mode: 0o660 });
+  return null;
+}
+
+function writeLinkedCurrentConfig(
+  dir: string,
+  currentPath: string,
+  current: string,
+  currentLink: "hardlink" | "symlink",
+): string {
+  const currentTargetPath = path.join(dir, "current.target");
+  fs.writeFileSync(currentTargetPath, current, { mode: 0o660 });
+  currentLink === "symlink"
+    ? fs.symlinkSync(path.basename(currentTargetPath), currentPath)
+    : fs.linkSync(currentTargetPath, currentPath);
+  return currentTargetPath;
+}
+
 function runProductionCommand(
   backup: string,
   current: string,
@@ -241,37 +274,23 @@ function runProductionCommand(
   stderr: string;
 } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-state-file-command-"));
-  let configDir = dir;
-  let stateFilePath = "config.toml";
-  if (options.parentAncestorSymlink) {
-    fs.mkdirSync(path.join(dir, "real", "nested"), { recursive: true });
-    fs.symlinkSync("real", path.join(dir, "alias"));
-    configDir = path.join(dir, "alias", "nested");
-    stateFilePath = "alias/nested/config.toml";
-  }
+  const { configDir, stateFilePath } = options.parentAncestorSymlink
+    ? ancestorSymlinkConfigDir(dir)
+    : { configDir: dir, stateFilePath: "config.toml" };
   const currentPath = path.join(configDir, "config.toml");
-  let currentTargetPath: string | null = null;
   try {
-    if (options.currentLink) {
-      currentTargetPath = path.join(dir, "current.target");
-      fs.writeFileSync(currentTargetPath, current, { mode: 0o660 });
-      if (options.currentLink === "symlink") {
-        fs.symlinkSync(path.basename(currentTargetPath), currentPath);
-      } else {
-        fs.linkSync(currentTargetPath, currentPath);
-      }
-    } else {
-      fs.writeFileSync(currentPath, current, { mode: 0o660 });
-    }
-    let command = buildKeyAllowlistMergeRestoreCommand(
+    const currentTargetPath = options.currentLink
+      ? writeLinkedCurrentConfig(dir, currentPath, current, options.currentLink)
+      : writePlainCurrentConfig(currentPath, current);
+    const baseCommand = buildKeyAllowlistMergeRestoreCommand(
       dir,
       { path: stateFilePath },
       DCODE_OWNERSHIP,
     );
-    if (options.script) {
-      command = command.replace(shellQuote(KEY_ALLOWLIST_MERGE_PYTHON), shellQuote(options.script));
-    }
-    command = command.replace(
+    const commandWithScript = options.script
+      ? baseCommand.replace(shellQuote(KEY_ALLOWLIST_MERGE_PYTHON), shellQuote(options.script))
+      : baseCommand;
+    const command = commandWithScript.replace(
       "/opt/venv/bin/python3",
       `python3 -I -c ${shellQuote(PYTHON_TEST_TOMLI_WRITER_SHIM)}`,
     );

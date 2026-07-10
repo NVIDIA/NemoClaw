@@ -13,6 +13,7 @@ import {
   resolveAgentName,
   resolveAgentNameAlias,
 } from "./defs";
+import type { StateFileKeyAllowlistRestoreOwnership, StateFileRestoreOwnership } from "./defs";
 
 const tempAgentDirs: string[] = [];
 
@@ -21,6 +22,15 @@ function writeTempAgentManifest(name: string, contents: string): void {
   tempAgentDirs.push(agentDir);
   fs.mkdirSync(agentDir, { recursive: true });
   fs.writeFileSync(path.join(agentDir, "manifest.yaml"), contents);
+}
+
+function assertKeyAllowlistOwnership(
+  ownership: StateFileRestoreOwnership | undefined,
+): asserts ownership is StateFileKeyAllowlistRestoreOwnership {
+  ownership?.merge === "key-allowlist" ||
+    (() => {
+      throw new Error("Deep Agents config must declare key-allowlist restore ownership");
+    })();
 }
 
 afterEach(() => {
@@ -160,9 +170,7 @@ describe("agent definitions", () => {
     expect(deepAgentsCode.stateFiles.map((entry) => entry.path)).not.toContain(".env");
     const configOwnership = deepAgentsCode.stateFiles[0]?.restore;
     expect(configOwnership?.merge).toBe("key-allowlist");
-    if (configOwnership?.merge !== "key-allowlist") {
-      throw new Error("Deep Agents config must declare key-allowlist restore ownership");
-    }
+    assertKeyAllowlistOwnership(configOwnership);
     const userOwnedKeys = configOwnership.userKeys.map((entry) => entry.key);
     expect(userOwnedKeys).toEqual([
       "ui.show_scrollbar",
