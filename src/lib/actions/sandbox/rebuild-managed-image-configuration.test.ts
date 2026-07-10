@@ -111,6 +111,39 @@ describe("managed DCode rebuild image configuration", () => {
     }
   });
 
+  it("preserves remote dashboard bind preparation from the managed Dockerfile patch (#6024)", async () => {
+    const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-rebuild-remote-bind-"));
+    const stagedDockerfile = path.join(testRoot, "Dockerfile");
+    fs.writeFileSync(stagedDockerfile, "FROM scratch\n");
+
+    try {
+      const result = await prepareManagedDcodeRebuildImage(dcodeInput(), {
+        stageBuildContext: () => ({
+          buildCtx: testRoot,
+          stagedDockerfile,
+          origin: "generated" as const,
+          cleanupBuildCtx: () => {
+            fs.rmSync(testRoot, { recursive: true, force: true });
+            return true;
+          },
+        }),
+        prepareDockerfilePatch: async () => ({
+          buildId: "dcode-remote-bind",
+          dashboardRemoteBindPrepared: true,
+          resolvedBaseImage: null,
+        }),
+        buildImage: () => ({ status: 0 }) as never,
+        removeImage: () => ({ status: 0 }) as never,
+      });
+
+      const prepared = expectPreparedImage(result);
+      expect(prepared.dashboardRemoteBindPrepared).toBe(true);
+      disposePreparedDcodeRebuildImage(prepared);
+    } finally {
+      fs.rmSync(testRoot, { recursive: true, force: true });
+    }
+  });
+
   it("defaults missing compatible-endpoint reasoning without borrowing ambient state (#6195)", async () => {
     const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-rebuild-reasoning-"));
     const stagedDockerfile = path.join(buildCtx, "Dockerfile");

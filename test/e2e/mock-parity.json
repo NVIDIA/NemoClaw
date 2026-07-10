@@ -1,5 +1,10 @@
 {
   "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
   "version": 1,
-  "entries": []
+  "entries": [
+    {
+      "live": "test/e2e/live/dashboard-remote-bind.test.ts",
+      "liveOnlyReason": "Requires a real OpenShell dashboard forward on a remote Brev host to prove all-interface bind behavior after background connect."
+    }
+  ]
 }

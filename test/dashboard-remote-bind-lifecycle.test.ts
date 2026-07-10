@@ -17,7 +17,7 @@ import { applyReusedSandboxDashboardState } from "../src/lib/onboard/sandbox-reu
 
 const requireSource = createRequire(import.meta.url);
 const { ensureSandboxPortForward, ensureSandboxPortForwardForPort } = requireSource(
-  "../src/lib/actions/sandbox/forward-recovery.ts",
+  "../src/lib/actions/sandbox/forward-recovery.js",
 ) as typeof import("../src/lib/actions/sandbox/forward-recovery.js");
 
 afterEach(() => {
