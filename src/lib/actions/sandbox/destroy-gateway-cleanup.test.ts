@@ -77,8 +77,6 @@ describe("shouldCleanupGatewayAfterConfirmedFinalDestroy", () => {
     expect(dockerCapture).toHaveBeenCalledWith(
       ["ps", "--filter", "name=openshell-npmtest-", "--format", "{{.Names}}"],
       {
-        ignoreError: true,
-        suppressOutput: true,
         timeout: 1_000,
       },
     );

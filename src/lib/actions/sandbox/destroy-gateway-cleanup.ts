@@ -79,8 +79,6 @@ export function collectLiveSandboxProbeSnapshot(
             "{{.Names}}",
           ],
           {
-            ignoreError: true,
-            suppressOutput: true,
             timeout: timeoutMs,
           },
         ),
