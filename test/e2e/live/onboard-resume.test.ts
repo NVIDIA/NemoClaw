@@ -8,11 +8,7 @@ import path from "node:path";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import {
-  type SandboxClient,
-  trustedSandboxShellScript,
-  validateSandboxName,
-} from "../fixtures/clients/sandbox.ts";
+import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import {
   cleanupCorporateCaFixture,
   corporateCaMergeProbeScript,
@@ -28,6 +24,10 @@ import {
   type FakeOpenAiCompatibleServer,
   startFakeOpenAiCompatibleServer,
 } from "../fixtures/fake-openai-compatible.ts";
+import {
+  expectSandboxProviderAttachment,
+  upsertGenericGatewayProvider,
+} from "../fixtures/gateway-providers.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 
 // Disruption-recovery contract — regression for #446.
@@ -48,6 +48,9 @@ const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-resume";
 const FAKE_COMPATIBLE_AUTH_VALUE = "e2e-compatible-auth-value";
 const FAKE_COMPATIBLE_MODEL = "test-model";
 const STALE_EXTRA_PROVIDER = "e2e-resume-stale-extra-provider";
+const LIVE_EXTRA_PROVIDER = "e2e-resume-live-extra-provider";
+const EXTRA_PROVIDER_TOKEN_ENV = "NEMOCLAW_E2E_EXTRA_PROVIDER_TOKEN";
+const EXTRA_PROVIDER_TOKEN = "e2e-resume-extra-provider-token";
 validateSandboxName(SANDBOX_NAME);
 
 // 15 minutes per onboard run; matches NEMOCLAW_E2E_DEFAULT_TIMEOUT in the
@@ -139,20 +142,6 @@ function expectHermeticCompatibleEndpointUsed(
   ).toBe(true);
 }
 
-async function expectGatewayProviderListExcludes(
-  sandbox: SandboxClient,
-  providerName: string,
-  artifactName: string,
-): Promise<void> {
-  const providerList = await sandbox.openshell(["provider", "list", "-g", "nemoclaw", "--names"], {
-    artifactName,
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 60_000,
-  });
-  expect(providerList.exitCode, resultText(providerList)).toBe(0);
-  expect(resultText(providerList).split(/\s+/u)).not.toContain(providerName);
-}
-
 // The e2e-live Vitest project owns the NEMOCLAW_RUN_LIVE_E2E collection gate,
 // so accidental cli-test-shard discovery cannot run this without real
 // `openshell`, Docker, or a sandbox-reachable fake OpenAI-compatible endpoint.
@@ -175,8 +164,8 @@ test("onboard-resume: interrupted onboard then --resume can recreate with cached
     contracts: [
       "forced policy-step failure leaves a resumable session",
       "resume recreates the sandbox on request without redoing cached preflight/gateway steps",
-      "resume sandbox recreation filters exact stale extra-provider records and prunes registry state",
-      "resume proves the stale extra provider is absent from live gateway config",
+      "resume sandbox recreation filters stale extra providers while preserving live attachments",
+      "resume proves recreated sandbox provider attachments are selectively reconciled",
       "host trust-store anchor corporate CA source is baked and merged after resume",
       "implicit resume is detected and --fresh suppresses that auto-resume",
     ],
@@ -265,6 +254,11 @@ test("onboard-resume: interrupted onboard then --resume can recreate with cached
     env: probeEnv,
     timeoutMs: 30_000,
   });
+  await sandbox.openshell(["provider", "delete", "-g", "nemoclaw", LIVE_EXTRA_PROVIDER], {
+    artifactName: "pre-cleanup-live-extra-provider-delete",
+    env: { ...probeEnv, [EXTRA_PROVIDER_TOKEN_ENV]: EXTRA_PROVIDER_TOKEN },
+    timeoutMs: 60_000,
+  });
   await sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
     artifactName: "pre-cleanup-openshell-gateway-destroy",
     env: probeEnv,
@@ -291,13 +285,21 @@ test("onboard-resume: interrupted onboard then --resume can recreate with cached
       env: cleanupEnv,
       timeoutMs: 30_000,
     });
+    await sandbox.openshell(["provider", "delete", "-g", "nemoclaw", LIVE_EXTRA_PROVIDER], {
+      artifactName: "cleanup-live-extra-provider-delete",
+      env: { ...cleanupEnv, [EXTRA_PROVIDER_TOKEN_ENV]: EXTRA_PROVIDER_TOKEN },
+      timeoutMs: 60_000,
+    });
     await sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
       artifactName: "cleanup-openshell-gateway-destroy",
       env: cleanupEnv,
       timeoutMs: 60_000,
     });
     fs.rmSync(SESSION_FILE, { force: true });
-    updateExtraProviders((providers) => providers.delete(STALE_EXTRA_PROVIDER));
+    updateExtraProviders((providers) => {
+      providers.delete(STALE_EXTRA_PROVIDER);
+      providers.delete(LIVE_EXTRA_PROVIDER);
+    });
 
     const sandboxAfterCleanup = await sandbox.openshell(["sandbox", "get", SANDBOX_NAME], {
       artifactName: "cleanup-openshell-sandbox-get-after-delete",
@@ -397,11 +399,20 @@ test("onboard-resume: interrupted onboard then --resume can recreate with cached
   await artifacts.writeJson("phase-2-fake-openai-compatible-requests.json", fake.requests());
   expectHermeticCompatibleEndpointUsed(fake, onboardingRequestOffset);
 
-  const seededExtraProviders = updateExtraProviders((providers) =>
-    providers.add(STALE_EXTRA_PROVIDER),
+  await upsertGenericGatewayProvider(host, LIVE_EXTRA_PROVIDER, {
+    artifactName: "phase-2-live-extra-provider-upsert",
+    credentialEnv: EXTRA_PROVIDER_TOKEN_ENV,
+    env: { ...buildAvailabilityProbeEnv(), [EXTRA_PROVIDER_TOKEN_ENV]: EXTRA_PROVIDER_TOKEN },
+    redactionValues: [EXTRA_PROVIDER_TOKEN],
+  });
+  const seededExtraProviders = updateExtraProviders((providers) => {
+    providers.add(STALE_EXTRA_PROVIDER);
+    providers.add(LIVE_EXTRA_PROVIDER);
+  });
+  await artifacts.writeJson("phase-2-extra-providers-seeded.json", seededExtraProviders);
+  expect(seededExtraProviders).toEqual(
+    expect.arrayContaining([LIVE_EXTRA_PROVIDER, STALE_EXTRA_PROVIDER]),
   );
-  await artifacts.writeJson("phase-2-stale-extra-providers-seeded.json", seededExtraProviders);
-  expect(seededExtraProviders).toContain(STALE_EXTRA_PROVIDER);
 
   // ──────────────────────────────────────────────────────────────────
   // Phase 3: resume — NVIDIA_INFERENCE_API_KEY and COMPATIBLE_API_KEY are
@@ -444,12 +455,17 @@ test("onboard-resume: interrupted onboard then --resume can recreate with cached
   // the skip evidence and absence of redo-only success strings instead of
   // rejecting headings that now frame the skipped phases.
   expect(resumeText).not.toContain("Starting OpenShell Docker-driver gateway...");
-  expect(readExtraProviders()).not.toContain(STALE_EXTRA_PROVIDER);
-  await expectGatewayProviderListExcludes(
-    sandbox,
-    STALE_EXTRA_PROVIDER,
-    "phase-3-gateway-provider-list-after-resume",
-  );
+  const reconciledExtraProviders = readExtraProviders();
+  expect(reconciledExtraProviders).toContain(LIVE_EXTRA_PROVIDER);
+  expect(reconciledExtraProviders).not.toContain(STALE_EXTRA_PROVIDER);
+  await expectSandboxProviderAttachment(sandbox, SANDBOX_NAME, LIVE_EXTRA_PROVIDER, "present", {
+    artifactName: "phase-3-sandbox-provider-list-live-after-resume",
+    env: buildAvailabilityProbeEnv(),
+  });
+  await expectSandboxProviderAttachment(sandbox, SANDBOX_NAME, STALE_EXTRA_PROVIDER, "absent", {
+    artifactName: "phase-3-sandbox-provider-list-stale-after-resume",
+    env: buildAvailabilityProbeEnv(),
+  });
 
   // Assertion: resume-inference-handled — first onboard completed through
   // openclaw before failing at policies. Inference was already configured
