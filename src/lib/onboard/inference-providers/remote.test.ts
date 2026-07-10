@@ -63,6 +63,12 @@ function makeDeps(overrides: Partial<RemoteProviderDeps> = {}): RemoteProviderDe
   };
 }
 
+function makeDepsWithCompatibleSkipVerify(skipVerify: boolean): RemoteProviderDeps {
+  const deps = makeDeps();
+  deps.REMOTE_PROVIDER_CONFIG.custom.skipVerify = skipVerify;
+  return deps;
+}
+
 describe("setupRemoteProviderInference", () => {
   const model = "Qwen/Qwen2.5-1.5B-Instruct";
 
@@ -245,9 +251,45 @@ describe("setupRemoteProviderInference", () => {
   });
 
   it.each([
+    ["loopback route rewrite", "http://localhost:8000/v1", true],
+    ["non-loopback route", "http://10.0.0.1:8000/v1", false],
+  ])("uses --no-verify for %s only when the gateway URL differs (#5744)", async (_name, endpointUrl, expectedNoVerify) => {
+    const deps = makeDepsWithCompatibleSkipVerify(false);
+
+    await expect(
+      setupRemoteProviderInference(
+        {
+          sandboxName: "dcode-vllm-local",
+          model,
+          provider: "compatible-endpoint",
+          endpointUrl,
+          credentialEnv: "COMPATIBLE_API_KEY",
+        },
+        deps,
+      ),
+    ).resolves.toEqual({ done: false });
+
+    expect(deps.runOpenshell).toHaveBeenCalledWith(
+      [
+        "inference",
+        "set",
+        ...(expectedNoVerify ? ["--no-verify"] : []),
+        "--provider",
+        "compatible-endpoint",
+        "--model",
+        model,
+        "--timeout",
+        "180",
+      ],
+      { ignoreError: true },
+    );
+  });
+
+  it.each([
     ["HTTPS loopback", "compatible-endpoint", "https://localhost:8000/v1"],
     ["non-loopback host", "compatible-endpoint", "http://10.0.0.1:8000/v1"],
-    ["privileged port", "compatible-endpoint", "http://localhost:1023/v1"],
+    ["IPv4 privileged port", "compatible-endpoint", "http://localhost:1023/v1"],
+    ["IPv6 privileged port", "compatible-endpoint", "http://[::1]:1023/v1"],
     ["IPv6 zone ID", "compatible-endpoint", "http://[::1%25eth0]:8000/v1"],
     ["embedded URL credentials", "compatible-endpoint", "http://user:pass@localhost:8000/v1"],
     ["malformed URL", "compatible-endpoint", "not a url"],

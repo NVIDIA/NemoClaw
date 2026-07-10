@@ -217,6 +217,9 @@ describe("inference setup navigation", () => {
     expect(markdown).toContain(
       "a server bound only to `127.0.0.1` can still be unreachable from the sandbox route.",
     );
+    expect(markdown).toContain(
+      "This rewrite depends on an OpenShell topology that resolves `host.openshell.internal` inside the sandbox",
+    );
   });
 
   it("routes vLLM tool-calling remediation to the self-hosted server guide", () => {
@@ -282,7 +285,10 @@ describe("inference setup navigation", () => {
     expect(result.note).toContain("validation skipped");
     expect(markdown).toContain("`http://host.openshell.internal:8000/v1`");
     expect(markdown).toContain(
-      "For loopback HTTP endpoints such as `http://localhost:8000/v1`, NemoClaw validates the endpoint from the host and registers the OpenShell gateway route through `host.openshell.internal:<port>` so sandbox traffic can leave the container namespace.",
+      "For HTTP loopback endpoints on the default HTTP port or an unprivileged port, such as `http://localhost:8000/v1`, NemoClaw validates the endpoint from the host and registers the OpenShell gateway route through `host.openshell.internal:<port>` so sandbox traffic can leave the container namespace.",
+    );
+    expect(markdown).toContain(
+      "if that bridge is unavailable, onboarding can still validate the host URL, but `$$nemoclaw <name> status` is the authoritative runtime check.",
     );
     expect(markdown).toContain(
       "If you manually enter a sandbox-internal alias such as `http://host.openshell.internal:8000/v1`, host-side endpoint probing is skipped during onboarding.",

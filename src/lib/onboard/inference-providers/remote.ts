@@ -22,6 +22,20 @@ const { probeOpenAiLikeEndpoint } = require("../../inference/onboard-probes") as
 
 type StaleProviderReplaceResult = { ok: boolean; status?: number | null; message?: string };
 
+// #5744: compatible endpoints entered as host loopback URLs must be split
+// across two routing contexts. The onboard smoke probe runs on the host, so it
+// should keep the user-entered URL (`http://localhost:<port>/v1`). The sandbox
+// runtime reaches the same host service through OpenShell's sandbox host bridge,
+// so the provider route uses `host.openshell.internal:<port>` instead.
+//
+// Source boundary: OpenShell owns the gateway bridge and provider verification
+// path. NemoClaw cannot infer every deployed gateway topology from provider
+// config alone, so this helper applies only to the narrow, host-validated HTTP
+// loopback shape that OpenShell exposes through the sandbox host bridge.
+//
+// Removal condition: drop this rewrite and the paired --no-verify once
+// OpenShell verifies provider routes from the gateway/sandbox routing context,
+// or exposes a definitive sandbox-path provider probe for this bridge.
 function gatewayReachableCompatibleEndpointUrl(
   provider: string,
   endpointUrl: string | null | undefined,
@@ -31,6 +45,8 @@ function gatewayReachableCompatibleEndpointUrl(
   try {
     parsed = new URL(endpointUrl);
   } catch {
+    // Leave malformed input untouched so the normal provider/probe validation
+    // path can report the URL problem instead of this classifier throwing first.
     return endpointUrl;
   }
   const hostname = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
