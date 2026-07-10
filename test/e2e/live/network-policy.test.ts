@@ -637,6 +637,16 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
   });
   expect(connectProbe.exitCode, text(connectProbe)).toBe(0);
 
+  const brewGitDenied = await sandboxBash(
+    sandbox,
+    "GIT_TERMINAL_PROMPT=0 git ls-remote https://github.com/Homebrew/brew.git HEAD >/dev/null",
+    { artifactName: "tc-net-11-brew-git-denied" },
+  );
+  const brewGitDeniedText = text(brewGitDenied);
+  expect(brewGitDenied.timedOut, brewGitDeniedText).toBe(false);
+  expect(brewGitDenied.exitCode, brewGitDeniedText).not.toBe(0);
+  expect(brewGitDeniedText).toMatch(/\b403\b|denied|forbidden/i);
+
   const brewProbe = await sandboxBash(
     sandbox,
     String.raw`
@@ -654,8 +664,6 @@ check_status() {
 }
 check_status formulae https://formulae.brew.sh
 check_status raw https://raw.githubusercontent.com/Homebrew/brew/HEAD/README.md
-git ls-remote https://github.com/Homebrew/brew.git HEAD >/dev/null
-echo "BREW_ENDPOINT_github_OK"
 check_status ghcr https://ghcr.io/v2/
 command -v brew
 brew --prefix
@@ -668,12 +676,27 @@ hello
   const brewText = text(brewProbe);
   expect(brewText).toContain("BREW_ENDPOINT_formulae_OK_");
   expect(brewText).toContain("BREW_ENDPOINT_raw_OK_");
-  expect(brewText).toContain("BREW_ENDPOINT_github_OK");
   expect(brewText).toContain("BREW_ENDPOINT_ghcr_OK_");
   expect(brewText).toContain("/usr/local/bin/brew");
   expect(brewText).toContain("/home/linuxbrew/.linuxbrew");
   expect(brewText).toContain("/home/linuxbrew/.linuxbrew/bin/hello");
   expect(brewText).toContain("Hello, world!");
+
+  const githubApply = await applyPreset(host, "github");
+  expect(githubApply.exitCode, text(githubApply)).toBe(0);
+  const githubGitProbe = await sandboxBash(
+    sandbox,
+    String.raw`
+set -euo pipefail
+GIT_TERMINAL_PROMPT=0 git ls-remote https://github.com/Homebrew/brew.git HEAD >/dev/null
+echo "GITHUB_GIT_OK"
+`,
+    { artifactName: "tc-net-11-github-git-allowed" },
+  );
+  const githubGitText = text(githubGitProbe);
+  expect(githubGitProbe.timedOut, githubGitText).toBe(false);
+  expect(githubGitProbe.exitCode, githubGitText).toBe(0);
+  expect(githubGitText).toContain("GITHUB_GIT_OK");
 
   const pypiApply = await applyPreset(host, "pypi");
   expect(pypiApply.exitCode, text(pypiApply)).toBe(0);

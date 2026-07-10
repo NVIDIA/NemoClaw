@@ -125,6 +125,49 @@ fi
     expect(validatePrReviewAdvisorWorkflowBoundary()).toEqual([]);
   });
 
+  it("rejects a workflow that masks an incomplete advisor analysis", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-outcome-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = YAML.parse(
+      fs.readFileSync(path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"), "utf8"),
+    ) as { jobs: { review: { steps: Array<{ name?: string }> } } };
+    workflow.jobs.review.steps = workflow.jobs.review.steps.filter(
+      (step) => step.name !== "Verify advisor analysis outcome",
+    );
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      expect(validatePrReviewAdvisorWorkflowBoundary(workflowPath)).toEqual([
+        "missing workflow step: Verify advisor analysis outcome",
+      ]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an outcome check whose failure is ignored", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-outcome-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = YAML.parse(
+      fs.readFileSync(path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"), "utf8"),
+    ) as {
+      jobs: { review: { steps: Array<{ name?: string; "continue-on-error"?: boolean }> } };
+    };
+    const outcome = workflow.jobs.review.steps.find(
+      (step) => step.name === "Verify advisor analysis outcome",
+    );
+    outcome!["continue-on-error"] = true;
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      expect(validatePrReviewAdvisorWorkflowBoundary(workflowPath)).toEqual([
+        "Verify advisor analysis outcome must not continue on error",
+      ]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("rejects an unpinned runtime package fallback", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-boundary-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
@@ -275,6 +318,8 @@ jobs:
           "PR checkout must use the pull request head SHA as inert analysis data",
           "Run PR review advisor must receive PR_REVIEW_ADVISOR_API_KEY only from secrets.PR_REVIEW_ADVISOR_API_KEY",
           "Run PR review advisor must not receive OPENAI_API_KEY",
+          "Run PR review advisor must continue-on-error until summaries, comments, and artifacts are published",
+          "missing workflow step: Verify advisor analysis outcome",
         ]),
       );
       expect(errors.some((error) => error.includes("full commit SHA"))).toBe(true);

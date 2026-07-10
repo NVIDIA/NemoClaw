@@ -14,12 +14,14 @@ skill:
 OpenClaw documents the sub-agent behavior, `sessions_spawn` tool, `agents.list` configuration, tool policy, nesting, and auth model in [Sub-Agents](https://docs.openclaw.ai/tools/subagents).
 Use that page as the source of truth for how OpenClaw sub-agents work.
 
-This page covers the sandbox-specific pieces: where the OpenClaw config lives, where to put per-agent credentials, which writable workspace path agents should use, and how the Omni VLM demo maps onto those paths.
+This page covers the sandbox-specific pieces of a sub-agent setup.
+It explains where the OpenClaw config lives, where to put per-agent credentials, and which writable workspace path agents should use.
+It also shows how the Omni VLM demo maps onto those paths.
 
 ## NemoClaw Sandbox Paths
 
 NemoClaw runs OpenClaw inside an OpenShell sandbox.
-When adapting an OpenClaw sub-agent setup, use these paths inside the sandbox:
+Use these paths inside the sandbox when you adapt an OpenClaw sub-agent setup:
 
 | Path | Purpose |
 |---|---|
@@ -35,7 +37,8 @@ Avoid relying on legacy `.openclaw-data` paths or read-only OpenClaw paths in de
 ## Omni Vision Sub-Agent Example
 
 The [`vlm-demo`](https://github.com/brevdev/nemoclaw-demos/tree/main/vlm-demo) applies the OpenClaw sub-agent pattern to a vision task.
-It keeps the primary `main` agent on the normal NemoClaw inference route and adds a `vision-operator` sub-agent backed by an Omni vision model.
+It keeps the primary `main` agent on the normal NemoClaw inference route.
+It adds a `vision-operator` sub-agent backed by an Omni vision model.
 
 | OpenClaw field | Omni example value |
 |---|---|
@@ -57,8 +60,12 @@ These commands run on the host that owns the sandbox containers and discover the
 If you have not created a sandbox yet, onboard one first, such as `my-assistant`.
 </Note>
 
-Fetch the current OpenClaw config from the sandbox, patch it with your auxiliary provider and `agents.list` changes, then upload it.
-On Docker-driver sandboxes, run these commands from the host that owns the sandbox containers.
+Fetch the current OpenClaw config from the sandbox.
+Patch it with your auxiliary provider and `agents.list` changes, then upload it.
+Run the following commands from the host that owns the sandbox containers when you use Docker-driver sandboxes.
+
+### Export the Current Config
+
 The container name includes a runtime suffix, so discover it from the OpenShell sandbox label:
 
 ```bash
@@ -74,18 +81,42 @@ docker exec --user root "$SANDBOX_CTR" cat /sandbox/.openclaw/openclaw.json > /t
 If `SANDBOX_CTR` is empty, the sandbox is not running on this host.
 Start the sandbox, confirm that `docker ps` shows the matching `openshell.ai/sandbox-name` label, then rerun the export commands before continuing.
 
+### Prepare the Updated Config
+
 Create `/tmp/openclaw.updated.json` with the OpenClaw sub-agent config.
 For the Omni example, the demo provides `vlm-demo/vlm-subagent/openclaw-patch.py`.
-Set `VLM_DEMO_DIR` to the local `vlm-demo` directory from the demo assets, then run the patch helper:
+The wrapper reads the key without echoing it and keeps the value out of the child process's operating-system argument list.
+Set `VLM_DEMO_DIR` to the local `vlm-demo` directory from the demo assets, then run the patch helper.
 
 ```bash
 export VLM_DEMO_DIR=/path/to/nemoclaw-demos/vlm-demo
-python3 "$VLM_DEMO_DIR/vlm-subagent/openclaw-patch.py" "$NVIDIA_API_KEY" < /tmp/openclaw.json > /tmp/openclaw.updated.json
+(
+  read -rsp "NVIDIA API key: " NVIDIA_API_KEY
+  printf '\n'
+  export NVIDIA_API_KEY
+  python3 -c '
+import os
+import runpy
+import sys
+
+helper = sys.argv[1]
+sys.argv = [helper, os.environ["NVIDIA_API_KEY"]]
+runpy.run_path(helper, run_name="__main__")
+' "$VLM_DEMO_DIR/vlm-subagent/openclaw-patch.py" \
+    < /tmp/openclaw.json > /tmp/openclaw.updated.json
+)
 ```
 
-The helper reads `/tmp/openclaw.json` from standard input, adds the Omni provider and `vision-operator` entry, and writes the patched config to `/tmp/openclaw.updated.json`.
-For a sub-agent other than the Omni example, create `/tmp/openclaw.updated.json` from the exported config with `cp /tmp/openclaw.json /tmp/openclaw.updated.json`, then edit it before the upload step with your provider under `models.providers` and your sub-agent under `agents`.
+The helper reads `/tmp/openclaw.json` from standard input.
+It adds the Omni provider and `vision-operator` entry.
+It writes the patched config to `/tmp/openclaw.updated.json`.
+
+For a sub-agent other than the Omni example, copy the exported config to `/tmp/openclaw.updated.json`.
+Use `cp /tmp/openclaw.json /tmp/openclaw.updated.json`.
+Before uploading the file, add your provider under `models.providers` and your sub-agent under `agents.list`.
 Do not commit `/tmp/openclaw.updated.json` or any other file that contains a real API key.
+
+### Upload the Updated Config
 
 Upload the patched config and refresh the hash.
 In the default mutable state, this keeps the local hash consistent but does not make it tamper-proof.
@@ -101,7 +132,8 @@ docker exec --user root "$SANDBOX_CTR" chmod 444 /sandbox/.openclaw/openclaw.jso
 docker exec --user root "$SANDBOX_CTR" chmod 444 /sandbox/.openclaw/.config-hash
 ```
 
-Check `/tmp/gateway.log` after upload and confirm the gateway hot-reloaded the provider or `agents.list` change:
+After uploading the config, check `/tmp/gateway.log`.
+Confirm that the gateway hot-reloaded the provider or `agents.list` change:
 
 ```bash
 nemoclaw "$SANDBOX" logs --since 5m --tail 200
@@ -119,7 +151,7 @@ The `agents list` output should include `vision-operator`.
 
 ## Add Sub-Agent Credentials
 
-If the auxiliary model uses a provider key outside the normal NemoClaw inference route, put that key in the sub-agent auth profile.
+Put the provider key in the sub-agent auth profile when the auxiliary model uses a provider outside the normal NemoClaw inference route.
 For the Omni example:
 
 ```text
@@ -127,7 +159,9 @@ For the Omni example:
 ```
 
 Use the same provider ID that appears in `models.providers`, such as `nvidia-omni`.
-Create `/tmp/auth-profiles.json` from `vlm-demo/vlm-subagent/auth-profiles.template.json`, replace `YOUR_NVIDIA_API_KEY_HERE` with the provider key, then upload it into the sandbox:
+Create `/tmp/auth-profiles.json` from `vlm-demo/vlm-subagent/auth-profiles.template.json`.
+Replace `YOUR_NVIDIA_API_KEY_HERE` with the provider key.
+Then upload the file into the sandbox:
 
 ```bash
 docker exec --user root "$SANDBOX_CTR" mkdir -p /sandbox/.openclaw/agents/vision-operator/agent
@@ -143,18 +177,23 @@ docker exec --user root "$SANDBOX_CTR" chown -R sandbox:sandbox /sandbox/.opencl
 
 ## Allow Auxiliary Provider Egress
 
-If the sub-agent calls a provider directly, update the OpenShell network policy for the binary that makes the request.
-In the Omni demo, the OpenClaw gateway runs as `/usr/local/bin/node`, so the NVIDIA endpoint policy must allow that binary.
+Update the OpenShell network policy for the binary that makes the request when the sub-agent calls a provider directly.
+In the Omni demo, the OpenClaw gateway runs as `/usr/local/bin/node`.
+The NVIDIA endpoint policy must allow that binary.
 
 Refer to [Customize the Network Policy](../network-policy/customize-network-policy) for policy update workflows.
 
 ## Sub-Agent Gateway Connectivity
 
 Spawned sub-agents connect back to the OpenClaw gateway over WebSocket at `OPENCLAW_GATEWAY_URL`.
-Inside the sandbox this connection runs through the enforced process tree, where the OpenShell proxy always blocks loopback destinations.
-NemoClaw therefore points `OPENCLAW_GATEWAY_URL` at the sandbox's own interface address (for example `ws://10.200.0.2:18790`) and allowlists that endpoint in the base sandbox policy (`openclaw_gateway_dialback`).
+Inside the sandbox, this connection runs through the enforced process tree.
+The OpenShell proxy always blocks loopback destinations in that process tree.
+NemoClaw points `OPENCLAW_GATEWAY_URL` at the sandbox's own interface address, such as `ws://10.200.0.2:18790`.
+The base sandbox policy allowlists that endpoint through `openclaw_gateway_dialback`.
 
-If `sessions_spawn` returns `gateway closed (1006 abnormal closure (no close frame))` and the gateway log shows no connection attempt, the dial-back path is blocked.
+### Troubleshoot Dial-Back Failures
+
+The dial-back path is blocked if `sessions_spawn` returns `gateway closed (1006 abnormal closure (no close frame))` and the gateway log shows no connection attempt.
 Check the following:
 
 1. `OPENCLAW_GATEWAY_URL` in the gateway process environment targets the sandbox interface address, not `127.0.0.1`.
@@ -163,14 +202,17 @@ Check the following:
 
 ## Add Delegation Instructions
 
-OpenClaw handles `sessions_spawn`, but the primary agent still needs task instructions.
+OpenClaw handles `sessions_spawn`.
+The primary agent still needs task instructions.
 Place those instructions in the writable workspace, for example:
 
 ```text
 /sandbox/.openclaw/workspace/TOOLS.md
 ```
 
-The Omni demo includes `vlm-demo/vlm-subagent/TOOLS.md`, which tells `main` to delegate image tasks to `vision-operator` and tells the sub-agent to read the image path it receives.
+The Omni demo includes `vlm-demo/vlm-subagent/TOOLS.md`.
+It tells `main` to delegate image tasks to `vision-operator`.
+It tells the sub-agent to read the image path it receives.
 Adapt that file for other task-specific models.
 
 ## Demo Assets

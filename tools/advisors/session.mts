@@ -51,6 +51,18 @@ export const DEFAULT_ADVISOR_MODEL = "openai/openai/gpt-5.5";
 export const NEMOTRON_ULTRA_ADVISOR_MODEL = "nvidia/nvidia/nemotron-3-ultra";
 export const ADVISOR_OPENAI_COMPATIBLE_BASE_URL = "https://inference-api.nvidia.com/v1";
 
+export function advisorRetrySettings(modelId: string) {
+  return {
+    enabled: true,
+    maxRetries: 4,
+    baseDelayMs: modelId === NEMOTRON_ULTRA_ADVISOR_MODEL ? 9_000 : 6_000,
+    provider: {
+      maxRetries: 0,
+      maxRetryDelayMs: 60_000,
+    },
+  } as const;
+}
+
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 const CONTEXT_TOOL_PARAMETERS = {
   type: "object",
@@ -331,7 +343,7 @@ export async function runReadOnlyAdvisor(
 
   const settingsManager = SettingsManager.inMemory({
     compaction: { enabled: false },
-    retry: { enabled: true, maxRetries: 2 },
+    retry: advisorRetrySettings(modelId),
   });
   const resourceLoader = new DefaultResourceLoader({
     cwd: options.cwd,
@@ -437,8 +449,27 @@ export async function runReadOnlyAdvisor(
       return;
     }
     if (event.type === "auto_retry_start") {
+      currentTurnError = undefined;
       raw.append(
-        `[${options.logPrefix}] retry ${event.attempt}/${event.maxAttempts}: ${event.errorMessage}\n`,
+        `[${options.logPrefix}] retry ${event.attempt}/${event.maxAttempts} delay_ms=${event.delayMs}: ${event.errorMessage}\n`,
+      );
+      options.logProgress(
+        `Advisor provider retry ${event.attempt}/${event.maxAttempts}: delayMs=${event.delayMs}`,
+      );
+      return;
+    }
+    if (event.type === "auto_retry_end") {
+      if (event.success) {
+        currentTurnError = undefined;
+      } else if (event.finalError) {
+        currentTurnError = undefined;
+        captureTurnError("assistant_retry_exhausted", event.finalError);
+      }
+      raw.append(
+        `[${options.logPrefix}] retry_end success=${event.success} attempts=${event.attempt}\n`,
+      );
+      options.logProgress(
+        `Advisor provider retry settled: success=${event.success} attempts=${event.attempt}`,
       );
     }
   });
@@ -569,9 +600,7 @@ export async function runReadOnlyAdvisor(
       currentTurnText = undefined;
       currentTurnName = "";
       if (settlement.turn.error) {
-        throw settlement.thrown instanceof Error
-          ? settlement.thrown
-          : new Error(settlement.turn.error);
+        throw new Error(settlement.turn.error);
       }
       if (settlement.callbackError) {
         throw new Error(`turn artifact persistence failed: ${settlement.callbackError}`);
