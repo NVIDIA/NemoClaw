@@ -14,6 +14,13 @@ import {
 } from "./support/hermes-shell-harness";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "agents", "hermes", "start.sh");
+const TIRITH_FINALIZER = path.join(
+  import.meta.dirname,
+  "..",
+  "agents",
+  "hermes",
+  "finalize-tirith-marker.py",
+);
 const SECRET_BOUNDARY_VALIDATOR_SCRIPT = path.join(
   import.meta.dirname,
   "..",
@@ -234,52 +241,6 @@ function runHermesRuntimeEnvSecretBoundary(envOverrides: Record<string, string>)
   }
 }
 
-function runTirithMarkerBootstrap(opts: { markerReason?: string; symlinkMarker?: boolean }) {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-tirith-"));
-  const hermesHome = path.join(tmpDir, ".hermes");
-  const marker = path.join(hermesHome, ".tirith-install-failed");
-  const target = path.join(tmpDir, "marker-target");
-  const scriptPath = path.join(tmpDir, "run.sh");
-
-  fs.mkdirSync(hermesHome, { recursive: true });
-  if (opts.symlinkMarker) {
-    fs.writeFileSync(target, opts.markerReason ?? "download_failed");
-    fs.symlinkSync(target, marker);
-  } else if (opts.markerReason !== undefined) {
-    fs.writeFileSync(marker, opts.markerReason);
-  }
-
-  const src = fs.readFileSync(START_SCRIPT, "utf-8");
-  fs.writeFileSync(
-    scriptPath,
-    [
-      "#!/usr/bin/env bash",
-      "set -euo pipefail",
-      extractShellFunctionFromSource(src, "retry_tirith_marker_if_needed"),
-      `HERMES_DIR=${shellQuote(hermesHome)}`,
-      "retry_tirith_marker_if_needed",
-    ].join("\n"),
-    { mode: 0o700 },
-  );
-
-  try {
-    const result = spawnSync("bash", [scriptPath], {
-      encoding: "utf-8",
-      timeout: 5000,
-      env: process.env,
-    });
-    return {
-      result,
-      markerExists: fs.existsSync(marker),
-      markerIsSymlink: fs.existsSync(marker) && fs.lstatSync(marker).isSymbolicLink(),
-      markerContent: fs.existsSync(marker) ? fs.readFileSync(marker, "utf-8") : "",
-      targetContent: fs.existsSync(target) ? fs.readFileSync(target, "utf-8") : "",
-    };
-  } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  }
-}
-
 function extractTirithDispatchBlock(src: string, mode: "non-root" | "root"): string {
   const nonRootStart = src.indexOf("# ── Non-root fallback");
   const rootStart = src.indexOf("# ── Root path");
@@ -305,6 +266,7 @@ function runTirithExplicitCommandDispatch(mode: "non-root" | "root") {
       "#!/usr/bin/env bash",
       "set -euo pipefail",
       extractShellFunctionFromSource(src, "retry_tirith_marker_if_needed"),
+      extractShellFunctionFromSource(src, "prepare_tirith_marker_retry"),
       mode === "root"
         ? 'id() { if [ "${1:-}" = "-u" ]; then printf "0\\n"; else command id "$@"; fi; }'
         : 'id() { if [ "${1:-}" = "-u" ]; then printf "1000\\n"; else command id "$@"; fi; }',
@@ -319,10 +281,13 @@ function runTirithExplicitCommandDispatch(mode: "non-root" | "root") {
       "refresh_hermes_runtime_config_hashes() { :; }",
       "refresh_hermes_provider_placeholders() { :; }",
       "configure_messaging_channels() { :; }",
-      "prepare_hermes_nonroot_runtime() { retry_tirith_marker_if_needed; }",
+      "prepare_hermes_nonroot_runtime() { prepare_tirith_marker_retry; }",
+      "prepare_hermes_root_runtime() { prepare_tirith_marker_retry; }",
       'cleanup_stale_hermes_gateway_runtime() { echo "unexpected gateway cleanup" >&2; return 99; }',
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       `HERMES_HASH_FILE=${shellQuote(path.join(tmpDir, "hermes.config-hash"))}`,
+      `_HERMES_PYTHON=${shellQuote(process.env.PYTHON || "python3")}`,
+      `_HERMES_TIRITH_MARKER_FINALIZER=${shellQuote(TIRITH_FINALIZER)}`,
       "STEP_DOWN_PREFIX_SANDBOX=(env)",
       'NEMOCLAW_CMD=(bash -c \'test ! -e "$1/.tirith-install-failed"\' bash "$HERMES_DIR")',
       extractTirithDispatchBlock(src, mode),
@@ -377,6 +342,8 @@ function runHermesRootStartupMutableRootPreflight() {
       "refresh_hermes_runtime_config_hashes() { :; }",
       "configure_messaging_channels() { :; }",
       "retry_tirith_marker_if_needed() { :; }",
+      "prepare_tirith_marker_retry() { retry_tirith_marker_if_needed; }",
+      extractShellFunctionFromSource(src, "prepare_hermes_root_runtime"),
       'cleanup_stale_hermes_gateway_runtime() { echo "unexpected gateway cleanup" >&2; return 99; }',
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       `HERMES_HASH_FILE=${shellQuote(path.join(tmpDir, "hermes.config-hash"))}`,
@@ -1040,6 +1007,7 @@ describe("agents/hermes/start.sh env secret boundary", () => {
           "refresh_hermes_runtime_config_hashes() { trace hashes; }",
           "configure_messaging_channels() { trace channels; }",
           "retry_tirith_marker_if_needed() { trace tirith; }",
+          extractShellFunctionFromSource(source, "prepare_tirith_marker_retry"),
           extractShellFunctionFromSource(source, "prepare_hermes_nonroot_runtime"),
           "HERMES_DIR=/sandbox/.hermes; prepare_hermes_nonroot_runtime",
         ].join("\n"),
@@ -1461,37 +1429,5 @@ describe("agents/hermes/start.sh Tirith marker bootstrap", () => {
     expect(run.result.stdout).toContain("verify mode=750");
     expect(run.result.stdout).toContain("api-key mode=770");
     expect(run.hermesDirMode).toBe("3770");
-  });
-
-  it("removes a retryable download_failed marker so Hermes runtime fallback can retry", () => {
-    const run = runTirithMarkerBootstrap({ markerReason: "download_failed" });
-
-    expect(run.result.status).toBe(0);
-    expect(run.markerExists).toBe(false);
-    expect(run.result.stderr).toContain(
-      "download_failed marker present; letting Hermes runtime fallback retry Tirith",
-    );
-  });
-
-  it("leaves unknown marker reasons untouched", () => {
-    const run = runTirithMarkerBootstrap({ markerReason: "checksum_failed" });
-
-    expect(run.result.status).toBe(0);
-    expect(run.markerExists).toBe(true);
-    expect(run.markerContent).toBe("checksum_failed");
-    expect(run.result.stderr).toContain("is not retryable");
-  });
-
-  it("refuses to read or remove an unsafe symlink marker", () => {
-    const run = runTirithMarkerBootstrap({
-      markerReason: "download_failed",
-      symlinkMarker: true,
-    });
-
-    expect(run.result.status).toBe(0);
-    expect(run.markerExists).toBe(true);
-    expect(run.markerIsSymlink).toBe(true);
-    expect(run.targetContent).toBe("download_failed");
-    expect(run.result.stderr).toContain("unsafe Tirith install marker");
   });
 });

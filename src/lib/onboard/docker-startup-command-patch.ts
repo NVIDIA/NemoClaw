@@ -5,7 +5,7 @@ import {
   type DockerGpuPatchDeps,
   type DockerGpuPatchMode,
   type DockerGpuPatchResult,
-  recreateOpenShellDockerSandboxWithGpu,
+  recreateOpenShellDockerSandboxContainer,
 } from "./docker-gpu-patch";
 
 const STARTUP_COMMAND_MODE: DockerGpuPatchMode = {
@@ -27,7 +27,7 @@ export function recreateOpenShellDockerSandboxWithStartupCommand(
   if (options.openshellSandboxCommand.length === 0) {
     throw new Error("OpenShell sandbox startup command is required for restart persistence.");
   }
-  return recreateOpenShellDockerSandboxWithGpu(
+  return recreateOpenShellDockerSandboxContainer(
     { ...options, modeOverride: STARTUP_COMMAND_MODE },
     deps,
   );

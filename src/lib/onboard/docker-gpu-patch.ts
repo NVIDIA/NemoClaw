@@ -1051,7 +1051,7 @@ export function getDockerGpuPatchFailureContext(
   return null;
 }
 
-export function recreateOpenShellDockerSandboxWithGpu(
+export function recreateOpenShellDockerSandboxContainer(
   options: {
     sandboxName: string;
     gpuDevice?: string | null;
@@ -1237,6 +1237,11 @@ export function recreateOpenShellDockerSandboxWithGpu(
     throw decoratePatchError(err, context);
   }
 }
+
+export const recreateOpenShellDockerSandboxWithGpu: (
+  options: Omit<Parameters<typeof recreateOpenShellDockerSandboxContainer>[0], "modeOverride">,
+  deps?: DockerGpuPatchDeps,
+) => DockerGpuPatchResult = recreateOpenShellDockerSandboxContainer;
 
 export function dockerGpuPatchCleanupCommands(sandboxName: string): string[] {
   return [`openshell sandbox delete ${JSON.stringify(sandboxName)}`];
