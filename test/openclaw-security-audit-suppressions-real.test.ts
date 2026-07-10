@@ -257,14 +257,20 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_AUDIT_HARNESS !== "1")(
             NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE: "operator",
           });
           expect(
-            explicitOptOut.suppressedFindings?.find(
+            explicitOptOut.findings.find(
               (finding) => finding.checkId === "gateway.control_ui.device_auth_disabled",
             ),
           ).toMatchObject({
             severity: "critical",
             remediation: expect.any(String),
-            suppression: { reason: expect.stringContaining("NEMOCLAW_DISABLE_DEVICE_AUTH=1") },
           });
+          expect(
+            findingForFlag(
+              explicitOptOut.findings,
+              "gateway.controlUi.dangerouslyDisableDeviceAuth=true",
+            ),
+          ).toBeDefined();
+          expect(explicitOptOut.suppressedFindings ?? []).toHaveLength(0);
         } finally {
           fs.rmSync(workspace, { recursive: true, force: true });
         }

@@ -169,6 +169,32 @@ describe("classifySandboxForwardHealth", () => {
       ),
     ).toBe(true);
   });
+
+  it("requires the requested bind when classifying a remote forward", () => {
+    expect(
+      classifySandboxForwardHealth(
+        [
+          {
+            sandboxName: "beta",
+            bind: "127.0.0.1",
+            port: "18790",
+            status: "running",
+          },
+        ],
+        "beta",
+        "18790",
+        "0.0.0.0",
+      ),
+    ).toBe(false);
+    expect(
+      classifySandboxForwardHealth(
+        [{ sandboxName: "beta", bind: "::", port: "18790", status: "running" }],
+        "beta",
+        "18790",
+        "0.0.0.0",
+      ),
+    ).toBe(true);
+  });
 });
 
 describe("classifyForwardHealthWithReachability", () => {
