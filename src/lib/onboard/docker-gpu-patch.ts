@@ -27,6 +27,7 @@ import {
   getDockerGpuSupervisorReconnectTimeoutSecs,
   waitForOpenShellSupervisorReconnect,
 } from "./docker-gpu-supervisor-reconnect";
+import { openshellSandboxCommandEnvValue } from "./docker-startup-command-env";
 
 export type { DockerGpuSupervisorReconnectDeps };
 export {
@@ -41,7 +42,6 @@ export const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
 export const OPENSHELL_MANAGED_BY_VALUE = "openshell";
 export const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
 const OPENSHELL_SANDBOX_COMMAND_ENV = "OPENSHELL_SANDBOX_COMMAND";
-const OPENSHELL_SANDBOX_COMMAND_TOKEN = /^[A-Za-z0-9_./:=,@%+\-\[\]]+$/u;
 
 const DOCKER_GPU_PATCH_TIMEOUT_MS = 30_000;
 const DOCKER_GPU_PATCH_WAIT_SECS = 180;
@@ -409,24 +409,6 @@ function envValue(env: string[] | null | undefined, key: string): string | null 
 function replaceEnvValue(entry: string, key: string, value: string | null | undefined): string {
   if (!value || envKey(entry) !== key) return entry;
   return `${key}=${value}`;
-}
-
-function openshellSandboxCommandEnvValue(
-  command: readonly string[] | null | undefined,
-): string | null {
-  const parts = (command || []).map((part) => String(part));
-  if (parts.length === 0) return null;
-  if (parts.some((part) => part.length === 0 || /[\s\u0085]/u.test(part))) {
-    throw new Error(
-      "OpenShell sandbox startup command tokens cannot be empty or contain whitespace.",
-    );
-  }
-  if (parts.some((part) => !OPENSHELL_SANDBOX_COMMAND_TOKEN.test(part))) {
-    throw new Error(
-      "OpenShell sandbox startup command tokens contain unsupported shell metacharacters.",
-    );
-  }
-  return parts.join(" ");
 }
 
 function dockerGpuHostEndpointFromOpenShellEndpoint(endpoint: string): string | null {

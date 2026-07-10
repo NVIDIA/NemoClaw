@@ -341,7 +341,7 @@ function runHermesRootStartupMutableRootPreflight() {
       "refresh_hermes_provider_placeholders() { :; }",
       "refresh_hermes_runtime_config_hashes() { :; }",
       "configure_messaging_channels() { :; }",
-      "retry_tirith_marker_if_needed() { :; }",
+      'retry_tirith_marker_if_needed() { printf "tirith-state=%s\\n" "$TIRITH_RETRY_MARKER_CLEARED"; }',
       "prepare_tirith_marker_retry() { TIRITH_RETRY_MARKER_CLEARED=0; retry_tirith_marker_if_needed; }",
       extractShellFunctionFromSource(src, "prepare_hermes_root_runtime"),
       'cleanup_stale_hermes_gateway_runtime() { echo "unexpected gateway cleanup" >&2; return 99; }',
@@ -1474,6 +1474,7 @@ describe("agents/hermes/start.sh Tirith marker bootstrap", () => {
     expect(run.result.status).toBe(0);
     expect(run.result.stdout).toContain("verify mode=750");
     expect(run.result.stdout).toContain("api-key mode=770");
+    expect(run.result.stdout).toContain("tirith-state=0");
     expect(run.hermesDirMode).toBe("3770");
   });
 });
