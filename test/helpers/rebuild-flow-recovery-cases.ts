@@ -33,7 +33,7 @@ export function registerRebuildFlowRecoveryTests(): void {
       expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
         "alpha",
         recoveryManifest.backupPath,
-        { targetAgentType: "openclaw", applyManagedStateFileRestore: false },
+        { targetAgentType: "openclaw" },
       );
     });
 
@@ -69,7 +69,7 @@ export function registerRebuildFlowRecoveryTests(): void {
       expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
         "alpha",
         recoveryManifest.backupPath,
-        { targetAgentType: "openclaw", applyManagedStateFileRestore: false },
+        { targetAgentType: "openclaw", allowCustomImageWholeStateFileRestore: true },
       );
     });
 

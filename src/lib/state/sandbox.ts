@@ -154,18 +154,19 @@ export interface RestoreResult {
   error?: string;
 }
 
-export interface RestoreOptions {
-  applyManagedStateFileRestore?: boolean;
-}
-
-export interface RecreatedSandboxRestoreOptions extends RestoreOptions {
+export interface RecreatedSandboxRestoreOptions {
   /** Agent in the newly created target image, not the backup manifest agent. */
   targetAgentType: string;
+  /** Explicit capability for custom images whose config must be restored wholesale. */
+  allowCustomImageWholeStateFileRestore?: true;
   /** Pre-captured baseline avoids a second remote read during onboarding finalization. */
   freshOpenClawImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
 }
 
-interface InternalRestoreOptions extends RestoreOptions {
+interface InternalRestoreOptions {
+  targetAgentType: string;
+  allowCustomImageWholeStateFileRestore?: true;
+  discoverFreshOpenClawImagePluginInstalls?: true;
   freshOpenClawImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
 }
 
@@ -925,25 +926,6 @@ export function buildStateFileRestoreCommand(
   return steps.join("; ");
 }
 
-function loadStateFileRestoreOwnership(
-  agentType: string,
-): Map<string, StateFileRestoreOwnership> | null {
-  const ownership = new Map<string, StateFileRestoreOwnership>();
-  let agent: ReturnType<typeof loadAgent> | null = null;
-  try {
-    agent = loadAgent(agentType);
-  } catch {
-    console.warn(`Could not load agent manifest for restore ownership lookup: ${agentType}`);
-    return null;
-  }
-  for (const file of agent.stateFiles) {
-    if (!file.restore) continue;
-    const normalized = normalizeStateFilePath(file.path);
-    if (normalized) ownership.set(normalized, file.restore);
-  }
-  return ownership;
-}
-
 function restoreStateFile(
   configFile: string,
   sandboxName: string,
@@ -951,7 +933,7 @@ function restoreStateFile(
   spec: StateFileSpec,
   backupPath: string,
   ownership: StateFileRestoreOwnership | undefined,
-  applyManagedStateFileRestore: boolean,
+  allowCustomImageWholeStateFileRestore: boolean,
   freshImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
   previousImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
 ): boolean {
@@ -980,8 +962,10 @@ function restoreStateFile(
       _log(`FAILED: ${result.error}`);
       input = null;
     }
-  } else if (ownership?.merge === "key-allowlist" && applyManagedStateFileRestore) {
-    command = buildKeyAllowlistMergeRestoreCommand(dir, spec, ownership);
+  } else if (ownership?.merge === "key-allowlist") {
+    command = allowCustomImageWholeStateFileRestore
+      ? buildStateFileRestoreCommand(dir, spec, false)
+      : buildKeyAllowlistMergeRestoreCommand(dir, spec, ownership);
     input = backupContents;
   } else {
     command = buildStateFileRestoreCommand(dir, spec, false);
@@ -1436,12 +1420,22 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
 /**
  * Restore state directories into a sandbox from a prior backup.
  */
-export function restoreSandboxState(
-  sandboxName: string,
-  backupPath: string,
-  options: RestoreOptions = {},
-): RestoreResult {
-  return restoreSandboxStateInternal(sandboxName, backupPath, options);
+export function restoreSandboxState(sandboxName: string, backupPath: string): RestoreResult {
+  const target = registry.getSandbox(sandboxName);
+  if (!target) {
+    return {
+      success: false,
+      restoredDirs: [],
+      failedDirs: ["manifest"],
+      restoredFiles: [],
+      failedFiles: [],
+      error: `Could not resolve target sandbox '${sandboxName}' for state restore`,
+    };
+  }
+  return restoreSandboxStateInternal(sandboxName, backupPath, {
+    targetAgentType: String(target.agent || "openclaw"),
+    ...(target.fromDockerfile ? { allowCustomImageWholeStateFileRestore: true } : {}),
+  });
 }
 
 export function restoreRecreatedSandboxState(
@@ -1449,27 +1443,16 @@ export function restoreRecreatedSandboxState(
   backupPath: string,
   options: RecreatedSandboxRestoreOptions,
 ): RestoreResult {
-  let freshOpenClawImagePluginInstalls: readonly OpenClawImagePluginInstall[] | undefined;
-  if (options.targetAgentType === "openclaw") {
-    const targetDir = loadAgent(options.targetAgentType).configPaths.dir;
-    const discovery = options.freshOpenClawImagePluginInstalls
-      ? parseOpenClawImagePluginInstalls(options.freshOpenClawImagePluginInstalls, targetDir)
-      : discoverFreshOpenClawImagePluginInstalls(sandboxName, { getSshConfig, sshArgs }, targetDir);
-    if (!discovery.ok) {
-      return {
-        success: false,
-        restoredDirs: [],
-        failedDirs: ["extensions"],
-        restoredFiles: [],
-        failedFiles: [],
-        error: discovery.error,
-      };
-    }
-    freshOpenClawImagePluginInstalls = discovery.pluginInstalls;
-  }
   return restoreSandboxStateInternal(sandboxName, backupPath, {
-    applyManagedStateFileRestore: options.applyManagedStateFileRestore,
-    freshOpenClawImagePluginInstalls,
+    targetAgentType: options.targetAgentType,
+    ...(options.allowCustomImageWholeStateFileRestore
+      ? { allowCustomImageWholeStateFileRestore: true }
+      : {}),
+    ...(options.targetAgentType === "openclaw" &&
+    options.freshOpenClawImagePluginInstalls === undefined
+      ? { discoverFreshOpenClawImagePluginInstalls: true }
+      : {}),
+    freshOpenClawImagePluginInstalls: options.freshOpenClawImagePluginInstalls,
   });
 }
 
@@ -1525,6 +1508,96 @@ function restoreSandboxStateInternal(
     `Local backup files: [${localFiles.map((f) => f.path).join(",")}] (${localFiles.length}/${stateFiles.length})`,
   );
 
+  const failRestoreContract = (error: string): RestoreResult => {
+    _log(`FAILED: ${error}`);
+    return {
+      success: false,
+      restoredDirs,
+      failedDirs: [...localDirs],
+      restoredFiles,
+      failedFiles: localFiles.map((file) => file.path),
+      error,
+    };
+  };
+  if (options.targetAgentType !== manifest.agentType) {
+    return failRestoreContract(
+      `Backup agent '${manifest.agentType}' does not match target agent '${options.targetAgentType}'`,
+    );
+  }
+  let targetAgent: ReturnType<typeof loadAgent>;
+  try {
+    targetAgent = loadAgent(options.targetAgentType);
+  } catch {
+    return failRestoreContract(
+      `Could not load target agent manifest '${options.targetAgentType}' for state restore`,
+    );
+  }
+  const normalizedBackupDir = dir.replace(/\/+$/, "");
+  const normalizedTargetDir = targetAgent.configPaths.dir.replace(/\/+$/, "");
+  if (normalizedBackupDir !== normalizedTargetDir) {
+    return failRestoreContract(
+      `Backup state directory '${normalizedBackupDir}' does not match target directory '${normalizedTargetDir}'`,
+    );
+  }
+  const targetStateFiles = new Map<string, AgentStateFile>();
+  for (const targetFile of targetAgent.stateFiles) {
+    const normalized = normalizeStateFilePath(targetFile.path);
+    if (!normalized || targetStateFiles.has(normalized)) {
+      return failRestoreContract(
+        `Target agent manifest '${options.targetAgentType}' has an invalid or duplicate state file declaration`,
+      );
+    }
+    targetStateFiles.set(normalized, targetFile);
+  }
+  const seenBackupPaths = new Set<string>();
+  for (const backupFile of stateFiles) {
+    if (seenBackupPaths.has(backupFile.path)) {
+      return failRestoreContract(`Backup manifest repeats state file '${backupFile.path}'`);
+    }
+    seenBackupPaths.add(backupFile.path);
+    const targetFile = targetStateFiles.get(backupFile.path);
+    if (!targetFile) {
+      return failRestoreContract(
+        `Backup state file '${backupFile.path}' is not declared by target agent '${options.targetAgentType}'`,
+      );
+    }
+    if (targetFile.strategy !== backupFile.strategy) {
+      return failRestoreContract(
+        `Backup state file '${backupFile.path}' strategy '${backupFile.strategy}' does not match target strategy '${targetFile.strategy}'`,
+      );
+    }
+  }
+
+  let freshOpenClawImagePluginInstalls: readonly OpenClawImagePluginInstall[] | undefined;
+  if (options.freshOpenClawImagePluginInstalls !== undefined) {
+    const parsed = parseOpenClawImagePluginInstalls(
+      options.freshOpenClawImagePluginInstalls,
+      targetAgent.configPaths.dir,
+    );
+    if (!parsed.ok) {
+      return {
+        ...failRestoreContract(parsed.error),
+        failedDirs: ["extensions"],
+        failedFiles: [],
+      };
+    }
+    freshOpenClawImagePluginInstalls = parsed.pluginInstalls;
+  } else if (options.discoverFreshOpenClawImagePluginInstalls === true) {
+    const discovery = discoverFreshOpenClawImagePluginInstalls(
+      sandboxName,
+      { getSshConfig, sshArgs },
+      targetAgent.configPaths.dir,
+    );
+    if (!discovery.ok) {
+      return {
+        ...failRestoreContract(discovery.error),
+        failedDirs: ["extensions"],
+        failedFiles: [],
+      };
+    }
+    freshOpenClawImagePluginInstalls = discovery.pluginInstalls;
+  }
+
   if (localDirs.length === 0 && localFiles.length === 0) {
     _log("No dirs or files to restore");
     return { success: true, restoredDirs, failedDirs, restoredFiles, failedFiles };
@@ -1545,7 +1618,6 @@ function restoreSandboxStateInternal(
 
   const tempSshConfig = createTempSshConfig(sshConfig, "nemoclaw-state-");
   const configFile = tempSshConfig.file;
-  const freshOpenClawImagePluginInstalls = options.freshOpenClawImagePluginInstalls;
   const previousOpenClawImagePluginInstalls =
     freshOpenClawImagePluginInstalls !== undefined
       ? manifest.openclawImagePluginInstalls
@@ -1709,15 +1781,9 @@ function restoreSandboxStateInternal(
       }
     }
 
-    const restoreOwnership = loadStateFileRestoreOwnership(manifest.agentType);
     for (const spec of localFiles) {
-      if (restoreOwnership === null) {
-        _log(
-          `FAILED: state file restore ${spec.path}: could not load agent manifest '${manifest.agentType}' to determine restore ownership`,
-        );
-        failedFiles.push(spec.path);
-        continue;
-      }
+      const targetStateFile = targetStateFiles.get(spec.path);
+      if (!targetStateFile) throw new Error(`Validated target state file missing: ${spec.path}`);
       if (
         restoreStateFile(
           configFile,
@@ -1725,8 +1791,8 @@ function restoreSandboxStateInternal(
           dir,
           spec,
           backupPath,
-          restoreOwnership.get(spec.path),
-          options.applyManagedStateFileRestore ?? false,
+          targetStateFile.restore,
+          options.allowCustomImageWholeStateFileRestore === true,
           configFreshOpenClawImagePluginInstalls,
           previousOpenClawImagePluginInstalls,
         )

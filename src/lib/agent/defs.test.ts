@@ -158,6 +158,22 @@ describe("agent definitions", () => {
       },
     ]);
     expect(deepAgentsCode.stateFiles.map((entry) => entry.path)).not.toContain(".env");
+    const configOwnership = deepAgentsCode.stateFiles[0]?.restore;
+    expect(configOwnership?.merge).toBe("key-allowlist");
+    if (configOwnership?.merge !== "key-allowlist") {
+      throw new Error("Deep Agents config must declare key-allowlist restore ownership");
+    }
+    const userOwnedKeys = configOwnership.userKeys.map((entry) => entry.key);
+    expect(userOwnedKeys).toEqual([
+      "ui.show_scrollbar",
+      "ui.show_url_open_toast",
+      "threads.relative_time",
+      "threads.sort_order",
+    ]);
+    expect(configOwnership.requireFreshTables).toEqual(["models", "update"]);
+    for (const runtimeOrUnknownKey of ["ui.theme", "agents", "servers"]) {
+      expect(userOwnedKeys).not.toContain(runtimeOrUnknownKey);
+    }
     expect(deepAgentsCode.userManagedFiles).toEqual([".deepagents/.env", ".deepagents/.mcp.json"]);
   });
 

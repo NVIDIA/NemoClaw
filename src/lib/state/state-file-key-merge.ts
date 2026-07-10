@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { StateFileRestoreOwnership, StateFileUserKeyType } from "../agent/defs.js";
+import type { StateFileKeyAllowlistRestoreOwnership, StateFileUserKeyType } from "../agent/defs.js";
 import { shellQuote } from "../runner.js";
 
 export const KEY_ALLOWLIST_MERGE_PYTHON = String.raw`
@@ -9,6 +9,7 @@ import copy
 import json
 import math
 import os
+import secrets
 import stat
 import sys
 import tomllib
@@ -21,10 +22,55 @@ def fail(message):
     raise SystemExit(message)
 
 
-def read_regular_file(path, label):
+def parse_config_payload(payload, label):
+    if len(payload) > MAX_CONFIG_BYTES:
+        fail(f"{label} config exceeds the restore size limit")
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError:
+        fail(f"{label} config is not valid UTF-8")
+    try:
+        parsed = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        fail(f"{label} config is not valid TOML")
+    if not isinstance(parsed, dict):
+        fail(f"{label} config must be a TOML document")
+    return text, parsed
+
+
+def read_stdin_config(label):
+    payload = sys.stdin.buffer.read(MAX_CONFIG_BYTES + 1)
+    return parse_config_payload(payload, label)
+
+
+def open_config_parent(base_dir, relative_path):
+    if not os.path.isabs(base_dir):
+        fail("config base directory must be absolute")
+    if os.path.isabs(relative_path) or "\\" in relative_path:
+        fail("config path must be canonical and relative")
+    segments = relative_path.split("/")
+    if not segments or any(segment in ("", ".", "..") for segment in segments):
+        fail("config path must be canonical and relative")
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(base_dir, flags)
+    except OSError:
+        fail("config parent directory is unsafe")
+    try:
+        for segment in segments[:-1]:
+            next_fd = os.open(segment, flags, dir_fd=fd)
+            os.close(fd)
+            fd = next_fd
+    except OSError:
+        os.close(fd)
+        fail("config parent directory is unsafe")
+    return fd, segments[-1]
+
+
+def read_regular_file_at(parent_fd, name, label):
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
-        fd = os.open(path, flags)
+        fd = os.open(name, flags, dir_fd=parent_fd)
     except OSError:
         fail(f"{label} config is missing or unsafe")
     try:
@@ -45,16 +91,7 @@ def read_regular_file(path, label):
             chunks.append(chunk)
     finally:
         os.close(fd)
-    try:
-        text = b"".join(chunks).decode("utf-8")
-    except UnicodeDecodeError:
-        fail(f"{label} config is not valid UTF-8")
-    try:
-        parsed = tomllib.loads(text)
-    except tomllib.TOMLDecodeError:
-        fail(f"{label} config is not valid TOML")
-    if not isinstance(parsed, dict):
-        fail(f"{label} config must be a TOML document")
+    text, parsed = parse_config_payload(b"".join(chunks), label)
     return text, parsed, metadata
 
 
@@ -76,6 +113,9 @@ def preserved_headers(text, required_headers):
             header_lines.append(line)
         else:
             break
+    for line in header_lines:
+        if len(line) > 2048 or any(ord(char) < 32 for char in line):
+            fail("current config has unsafe generated header metadata")
     for index, required in enumerate(required_headers):
         if index >= len(header_lines):
             fail("current config is missing a required generated header line")
@@ -86,9 +126,7 @@ def preserved_headers(text, required_headers):
                 fail("current config generated header is missing a required prefix")
         elif line != value:
             fail("current config generated header does not match")
-        if len(line) > 2048 or any(ord(char) < 32 for char in line):
-            fail("current config has unsafe generated header metadata")
-    return header_lines[: len(required_headers)]
+    return header_lines
 
 
 def resolve(node, path):
@@ -143,11 +181,14 @@ def set_path(root, path, value):
     node = root
     for segment in path[:-1]:
         child = node.get(segment)
-        if not isinstance(child, dict):
+        if child is None:
             child = {}
             node[segment] = child
+        elif not isinstance(child, dict):
+            return False
         node = child
     node[path[-1]] = value
+    return True
 
 
 def merge_user_keys(backup, current, user_keys):
@@ -188,65 +229,126 @@ def render_merged_config(merged, header_lines):
     return payload
 
 
-def write_staged_and_replace(staged_path, current_path, current_metadata, payload):
-    parent = os.path.dirname(staged_path)
-    if parent != os.path.dirname(current_path):
-        fail("config staging path must share the live config directory")
-    staged_name = os.path.basename(staged_path)
-    current_name = os.path.basename(current_path)
-    try:
-        parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0))
-    except OSError:
-        fail("config parent directory changed before atomic restore")
-    try:
-        flags = os.O_WRONLY | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+def same_file_version(expected, actual):
+    return (
+        stat.S_ISREG(actual.st_mode)
+        and actual.st_nlink == 1
+        and (
+            actual.st_dev,
+            actual.st_ino,
+            actual.st_size,
+            actual.st_mtime_ns,
+            actual.st_ctime_ns,
+        )
+        == (
+            expected.st_dev,
+            expected.st_ino,
+            expected.st_size,
+            expected.st_mtime_ns,
+            expected.st_ctime_ns,
+        )
+    )
+
+
+def create_staged_file(parent_fd):
+    flags = (
+        os.O_RDWR
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    for _attempt in range(100):
+        staged_name = f".nemoclaw-restore-merged.{secrets.token_hex(16)}"
         try:
-            fd = os.open(staged_name, flags, dir_fd=parent_fd)
+            fd = os.open(staged_name, flags, 0o600, dir_fd=parent_fd)
+        except FileExistsError:
+            continue
         except OSError:
-            fail("config staging file is missing or unsafe")
+            fail("config staging file could not be created safely")
+        metadata = os.fstat(fd)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            os.close(fd)
+            fail("config staging file is not a single regular file")
+        return staged_name, fd
+    fail("config staging file could not be created safely")
+
+
+def unlink_staged_if_owned(parent_fd, staged_name, staged_metadata):
+    if staged_metadata is None:
+        return
+    try:
+        latest = os.stat(staged_name, dir_fd=parent_fd, follow_symlinks=False)
+    except OSError:
+        return
+    if (latest.st_dev, latest.st_ino) != (staged_metadata.st_dev, staged_metadata.st_ino):
+        return
+    try:
+        os.unlink(staged_name, dir_fd=parent_fd)
+    except OSError:
+        pass
+
+
+def write_staged_and_replace(parent_fd, current_name, current_metadata, payload):
+    staged_name = ""
+    staged_fd = -1
+    staged_metadata = None
+    installed = False
+    try:
+        staged_name, staged_fd = create_staged_file(parent_fd)
         try:
-            staged_metadata = os.fstat(fd)
-            if not stat.S_ISREG(staged_metadata.st_mode) or staged_metadata.st_nlink != 1:
-                fail("config staging file is not a single regular file")
             written = 0
             while written < len(payload):
-                written += os.write(fd, payload[written:])
-            os.fchmod(fd, 0o660)
-            os.fsync(fd)
+                written += os.write(staged_fd, payload[written:])
+            os.fchmod(staged_fd, 0o660)
+            os.fsync(staged_fd)
+            staged_metadata = os.fstat(staged_fd)
         finally:
-            os.close(fd)
+            if staged_metadata is None and staged_fd >= 0:
+                staged_metadata = os.fstat(staged_fd)
 
         try:
-            latest = os.stat(current_name, dir_fd=parent_fd, follow_symlinks=False)
+            latest_current = os.stat(current_name, dir_fd=parent_fd, follow_symlinks=False)
         except OSError:
             fail("current config changed before atomic restore")
-        if stat.S_ISLNK(latest.st_mode) or (
-            latest.st_dev,
-            latest.st_ino,
-        ) != (
-            current_metadata.st_dev,
-            current_metadata.st_ino,
-        ):
+        if not same_file_version(current_metadata, latest_current):
             fail("current config changed before atomic restore")
 
+        try:
+            latest_staged = os.stat(staged_name, dir_fd=parent_fd, follow_symlinks=False)
+        except OSError:
+            fail("config staging file changed before atomic restore")
+        if staged_metadata is None or not same_file_version(staged_metadata, latest_staged):
+            fail("config staging file changed before atomic restore")
+
         os.replace(staged_name, current_name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        installed = True
         os.fsync(parent_fd)
     finally:
-        os.close(parent_fd)
+        if staged_fd >= 0:
+            os.close(staged_fd)
+        if not installed and staged_name:
+            unlink_staged_if_owned(parent_fd, staged_name, staged_metadata)
 
 
 def main():
-    if len(sys.argv) != 5:
-        fail("expected backup, current, staging paths, and an ownership spec")
-    backup_path, current_path, staged_path, spec_raw = sys.argv[1:]
+    if len(sys.argv) != 4:
+        fail("expected a config base, relative path, and ownership spec")
+    base_dir, relative_path, spec_raw = sys.argv[1:]
     spec = load_spec(spec_raw)
-    _backup_text, backup, _backup_metadata = read_regular_file(backup_path, "backed-up")
-    current_text, current, current_metadata = read_regular_file(current_path, "current")
-    header_lines = preserved_headers(current_text, spec.get("require_fresh_headers", []))
-    assert_fresh_tables(current, spec.get("require_fresh_tables", []))
-    merged = merge_user_keys(backup, current, spec.get("user_keys", []))
-    payload = render_merged_config(merged, header_lines)
-    write_staged_and_replace(staged_path, current_path, current_metadata, payload)
+    _backup_text, backup = read_stdin_config("backed-up")
+    parent_fd, current_name = open_config_parent(base_dir, relative_path)
+    try:
+        current_text, current, current_metadata = read_regular_file_at(
+            parent_fd, current_name, "current"
+        )
+        header_lines = preserved_headers(current_text, spec.get("require_fresh_headers", []))
+        assert_fresh_tables(current, spec.get("require_fresh_tables", []))
+        merged = merge_user_keys(backup, current, spec.get("user_keys", []))
+        payload = render_merged_config(merged, header_lines)
+        write_staged_and_replace(parent_fd, current_name, current_metadata, payload)
+    finally:
+        os.close(parent_fd)
 
 
 main()
@@ -267,7 +369,9 @@ export interface KeyAllowlistMergeSpec {
   require_fresh_headers: { match: "exact" | "prefix"; value: string }[];
 }
 
-export function stateFileKeyMergeSpec(ownership: StateFileRestoreOwnership): KeyAllowlistMergeSpec {
+export function stateFileKeyMergeSpec(
+  ownership: StateFileKeyAllowlistRestoreOwnership,
+): KeyAllowlistMergeSpec {
   return {
     user_keys: (ownership.userKeys ?? []).map((key) => {
       const spec: PythonUserKey = { path: key.key.split("."), type: key.type };
@@ -296,22 +400,19 @@ function assertSafeStateFilePath(path: string): void {
 export function buildKeyAllowlistMergeRestoreCommand(
   dir: string,
   spec: { path: string },
-  ownership: StateFileRestoreOwnership,
+  ownership: StateFileKeyAllowlistRestoreOwnership,
 ): string {
   assertSafeStateFilePath(spec.path);
   const normalizedDir = dir.replace(/\/+$/, "");
   const destination = shellQuote(`${normalizedDir}/${spec.path}`);
+  const baseDir = shellQuote(normalizedDir);
+  const relativePath = shellQuote(spec.path);
   const mergeSpec = shellQuote(JSON.stringify(stateFileKeyMergeSpec(ownership)));
   return [
     `dst=${destination}`,
     'parent="$(dirname "$dst")"',
     '[ -d "$parent" ] && [ ! -L "$parent" ] || { echo "unsafe config parent" >&2; exit 10; }',
     '[ -f "$dst" ] && [ ! -L "$dst" ] || { echo "fresh config is missing or unsafe" >&2; exit 11; }',
-    'backup_tmp="$(mktemp "${parent}/.nemoclaw-restore-backup.XXXXXX")"',
-    'staged_tmp="$(mktemp "${parent}/.nemoclaw-restore-merged.XXXXXX")"',
-    'trap \'rm -f -- "$backup_tmp" "$staged_tmp"\' EXIT',
-    'cat > "$backup_tmp"',
-    'chmod 600 "$backup_tmp" "$staged_tmp"',
-    `/opt/venv/bin/python3 -I -c ${shellQuote(KEY_ALLOWLIST_MERGE_PYTHON)} "$backup_tmp" "$dst" "$staged_tmp" ${mergeSpec}`,
+    `/opt/venv/bin/python3 -I -c ${shellQuote(KEY_ALLOWLIST_MERGE_PYTHON)} ${baseDir} ${relativePath} ${mergeSpec}`,
   ].join("; ");
 }

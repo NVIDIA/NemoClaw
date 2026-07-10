@@ -61,6 +61,10 @@ The Hermes database can contain session metadata and message history needed for 
 </AgentOnly>
 Snapshots also preserve sandbox registry metadata that affects rebuild behavior, including custom policy presets applied with `policy-add --from-file` or `policy-add --from-dir`.
 When you restore a snapshot, NemoClaw replays those recorded custom presets with their stored YAML content, so you do not need the original preset files on disk for the restored sandbox to keep the same policy state.
+The target sandbox's current agent manifest remains authoritative for state-file restore behavior.
+NemoClaw rejects the restore when the snapshot's agent, config directory, state-file path, or state-file strategy conflicts with that manifest.
+For managed images, NemoClaw applies the current manifest's managed config merge rules by default and does not fall back to whole-file replacement.
+For Deep Agents targets, whole-file config replacement is limited to sandboxes created from a custom Dockerfile.
 
 ```bash
 $$nemoclaw my-assistant snapshot create
@@ -126,7 +130,11 @@ NemoClaw rejects unsafe symlinks and hard links inside sandbox state during back
 Credential-bearing Deep Agents files such as `.deepagents/.env` and user-authored `.deepagents/.mcp.json` are intentionally excluded from snapshots.
 Deep Agents auth state files such as `.deepagents/.state/auth.json` and `.deepagents/.state/chatgpt-auth.json` are also excluded because the managed launcher refuses to start when upstream credential state is present.
 The managed `.deepagents/.nemoclaw-mcp.json` projection and `hooks.json` are also excluded because NemoClaw reconstructs managed MCP state and disables executable Deep Agents Code hooks in the managed harness.
-NemoClaw recreates generated `config.toml`, managed MCP projection state, and provider credentials from host-side onboarding and OpenShell provider state during rebuild.
+NemoClaw recreates the current inference route headers, `models` and `update` tables, managed MCP projection state, and provider credentials from host-side onboarding and OpenShell provider state during rebuild.
+For a NemoClaw-managed Deep Agents image, it restores only the allowlisted `ui.show_scrollbar`, `ui.show_url_open_toast`, `threads.relative_time`, and `threads.sort_order` preferences from the previous `config.toml` when their values pass validation.
+Unknown, runtime-controlled, executable, and security-sensitive backup keys are dropped instead of replacing freshly generated settings on that managed path.
+A Deep Agents target created from a custom Dockerfile restores `config.toml` as a whole file because the custom image owns its config schema, so review that backup before restoring it.
+On the managed key-level restore path, if either config is malformed, required managed data is missing, or the restore detects an unsafe link or file replacement, NemoClaw marks the restore as failed and does not fall back to copying the backed-up file wholesale.
 Before a Deep Agents rebuild changes the sandbox, NemoClaw verifies the recorded inference route, provider, model, reasoning settings, web search selection, base image, and policy inputs.
 If a late check fails, NemoClaw restores the previous MCP state and keeps the existing sandbox intact.
 

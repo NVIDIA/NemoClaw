@@ -230,4 +230,92 @@ describe("state file restore ownership", () => {
       /user_keys.*not allowed for merge 'openclaw-config'/,
     );
   });
+
+  it("rejects unknown state-file fields instead of silently dropping restore intent (#6334)", () => {
+    const agentName = `restore-typo-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [
+        `name: ${agentName}`,
+        "display_name: Restore",
+        "state_files:",
+        "  - path: config.toml",
+        "    restroe:",
+        "      merge: key-allowlist",
+      ].join("\n"),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/state_files\[0\]\.restroe.*not allowed/);
+  });
+
+  it("rejects unsafe shorthand state-file paths (#6334)", () => {
+    const agentName = `restore-unsafe-short-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [`name: ${agentName}`, "display_name: Restore", "state_files:", "  - ../config.toml"].join(
+        "\n",
+      ),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/state_files\[0\].*canonical relative path/);
+  });
+
+  it("rejects unsafe object state-file paths (#6334)", () => {
+    const agentName = `restore-unsafe-object-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [
+        `name: ${agentName}`,
+        "display_name: Restore",
+        "state_files:",
+        "  - path: /tmp/config.toml",
+      ].join("\n"),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/state_files\[0\]\.path.*relative path/);
+  });
+
+  it("rejects duplicate or ancestor-overlapping user-owned keys (#6334)", () => {
+    const agentName = `restore-overlap-user-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [
+        `name: ${agentName}`,
+        "display_name: Restore",
+        "state_files:",
+        "  - path: config.toml",
+        "    restore:",
+        "      merge: key-allowlist",
+        "      user_keys:",
+        "        - key: ui",
+        "          type: string",
+        "        - key: ui.show_scrollbar",
+        "          type: boolean",
+      ].join("\n"),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/user_keys\[0\].*user_keys\[1\].*contain/);
+  });
+
+  it("rejects user-owned keys that overlap authoritative fresh tables (#6334)", () => {
+    const agentName = `restore-overlap-fresh-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [
+        `name: ${agentName}`,
+        "display_name: Restore",
+        "state_files:",
+        "  - path: config.toml",
+        "    restore:",
+        "      merge: key-allowlist",
+        "      require_fresh_tables:",
+        "        - models",
+        "      user_keys:",
+        "        - key: models.default",
+        "          type: string",
+      ].join("\n"),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/user_keys\[0\]\.key.*require_fresh_tables\[0\]/);
+  });
 });

@@ -803,9 +803,7 @@ describe("runSandboxSnapshot", () => {
 
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
-    expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha", {
-      applyManagedStateFileRestore: false,
-    });
+    expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
     const output = consoleLog.mock.calls.flat().join("\n");
     expect(output).toContain("Using latest snapshot v4 name=stable");
     expect(output).toContain("Restoring snapshot into 'alpha'");
@@ -837,9 +835,7 @@ describe("runSandboxSnapshot", () => {
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
     expect(lifecycleMock.events).toContain("lock:restore sandbox snapshot");
-    expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha", {
-      applyManagedStateFileRestore: false,
-    });
+    expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
     expect(shieldsMock.repairMutableConfigPermsMock).toHaveBeenCalledWith("alpha");
     expect(applyPresetMock).toHaveBeenCalledWith("alpha", "github");
   });
@@ -906,9 +902,7 @@ describe("runSandboxSnapshot", () => {
       lifecycleMock.events.indexOf("cleanup-shields"),
     );
     expect(streamSandboxCreateMock).toHaveBeenCalled();
-    expect(restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha", {
-      applyManagedStateFileRestore: false,
-    });
+    expect(restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha");
   });
 
   it("blocks auto-create before deleting a destination when a gateway peer conflicts", async () => {
@@ -1459,9 +1453,7 @@ describe("runSandboxSnapshot", () => {
 
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
-    expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/alpha/v2", {
-      applyManagedStateFileRestore: false,
-    });
+    expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/alpha/v2");
     expect(removePresetMock).toHaveBeenCalledWith("alpha", "old-preset");
     expect(applyPresetMock).toHaveBeenCalledWith("alpha", "github");
     expect(removePresetMock).toHaveBeenCalledWith("alpha", "old-custom");

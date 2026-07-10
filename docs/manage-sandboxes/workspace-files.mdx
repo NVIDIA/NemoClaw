@@ -192,7 +192,13 @@ The Deep Agents manifest declares these durable directories:
 /sandbox/.deepagents/agent/skills/
 ```
 
-It also declares `/sandbox/.deepagents/config.toml` as a durable top-level state file because the file contains non-secret NemoClaw-generated provider and model configuration.
+It also declares `/sandbox/.deepagents/config.toml` as a durable top-level state file with key-level ownership.
+The target sandbox's current Deep Agents manifest defines this ownership policy, so a snapshot cannot weaken it.
+NemoClaw keeps the newly generated inference route headers and the `models` and `update` tables authoritative during rebuild.
+On a NemoClaw-managed image, only the allowlisted `ui.show_scrollbar`, `ui.show_url_open_toast`, `threads.relative_time`, and `threads.sort_order` preferences can be restored from the previous file.
+Runtime-controlled, unknown, executable, and security-sensitive backup keys are dropped on that managed path.
+A Deep Agents target created from a custom Dockerfile restores `config.toml` as a whole file because the custom image owns its config schema.
+On the managed key-level restore path, if config validation or safe atomic replacement fails, NemoClaw marks the restore as failed instead of falling back to a whole-file copy.
 Credential-bearing files such as `.deepagents/.env` and user-authored `.deepagents/.mcp.json` are intentionally omitted from snapshots.
 Managed MCP state is rebuilt from the host-side NemoClaw registry and OpenShell provider state instead of treated as user-authored durable state.
 Memory files such as `/sandbox/.deepagents/agent/AGENTS.md` and `/sandbox/.deepagents/agent/memories/` are upstream Deep Agents Code files.
@@ -204,7 +210,7 @@ Back up important Deep Agents state before destroying the sandbox.
 ## Editing State
 
 Prefer NemoClaw host commands for generated configuration such as model, provider, managed MCP, and policy settings.
-Direct edits to `/sandbox/.deepagents/config.toml` can be overwritten by rebuilds because NemoClaw owns the managed inference route.
+Direct edits to NemoClaw-owned or non-allowlisted keys in `/sandbox/.deepagents/config.toml` can be overwritten by rebuilds.
 Use `$$nemoclaw <name> connect` when you need to inspect runtime files interactively, or use `openshell sandbox download` and `openshell sandbox upload` for manual file transfer.
 
 Use Deep Agents Code commands for upstream-managed memories and skills.

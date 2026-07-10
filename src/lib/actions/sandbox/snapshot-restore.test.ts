@@ -300,16 +300,14 @@ describe("runSandboxSnapshot restore", () => {
 
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
-    expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha", {
-      applyManagedStateFileRestore: false,
-    });
+    expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
     const output = consoleLog.mock.calls.flat().join("\n");
     expect(output).toContain("Using latest snapshot v4 name=stable");
     expect(output).toContain("Restoring snapshot into 'alpha'");
     expect(output).toContain("Restored 1 directories, 1 files");
   });
 
-  it("applies managed state file restore for a managed DCode target but not a custom-image DCode target", async () => {
+  it("delegates managed and custom-image restore policy to the state layer", async () => {
     getLatestBackupMock.mockReturnValue({
       snapshotVersion: 4,
       name: "stable",
@@ -320,9 +318,7 @@ describe("runSandboxSnapshot restore", () => {
 
     getSandboxMock.mockReturnValue({ name: "alpha", agent: "langchain-deepagents-code" });
     await runSandboxSnapshot("alpha", { kind: "restore" });
-    expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha", {
-      applyManagedStateFileRestore: true,
-    });
+    expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
 
     getSandboxMock.mockReturnValue({
       name: "alpha",
@@ -330,9 +326,8 @@ describe("runSandboxSnapshot restore", () => {
       fromDockerfile: "/tmp/Dockerfile",
     });
     await runSandboxSnapshot("alpha", { kind: "restore" });
-    expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha", {
-      applyManagedStateFileRestore: false,
-    });
+    expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
+    expect(restoreSandboxStateMock).toHaveBeenCalledTimes(2);
   });
 
   it("keeps active-timer restore, permission repair, and policy reconciliation serialized", async () => {
@@ -360,9 +355,7 @@ describe("runSandboxSnapshot restore", () => {
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
     expect(lifecycleMock.events).toContain("lock:restore sandbox snapshot");
-    expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha", {
-      applyManagedStateFileRestore: false,
-    });
+    expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
     expect(shieldsMock.repairMutableConfigPermsMock).toHaveBeenCalledWith("alpha");
     expect(applyPresetMock).toHaveBeenCalledWith("alpha", "github");
   });
@@ -429,9 +422,7 @@ describe("runSandboxSnapshot restore", () => {
       lifecycleMock.events.indexOf("cleanup-shields"),
     );
     expect(streamSandboxCreateMock).toHaveBeenCalled();
-    expect(restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha", {
-      applyManagedStateFileRestore: false,
-    });
+    expect(restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha");
   });
 
   it("blocks auto-create before deleting a destination when a gateway peer conflicts", async () => {
