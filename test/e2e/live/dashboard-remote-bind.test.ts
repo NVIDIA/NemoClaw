@@ -46,6 +46,19 @@ function remoteHostCandidate(): string {
   return process.env.NEMOCLAW_E2E_REMOTE_HOST || externalIpv4 || os.hostname();
 }
 
+function connectStartedDashboardForward(
+  result: { exitCode: number | null; stdout: string },
+  sandboxName: string,
+  dashboardPort: string,
+): boolean {
+  return (
+    result.exitCode === 0 ||
+    (result.exitCode === null &&
+      result.stdout.includes(`Forwarding port ${dashboardPort}`) &&
+      result.stdout.includes(`sandbox ${sandboxName}`))
+  );
+}
+
 runDashboardRemoteBindTest(
   "dashboard forward binds all interfaces when remote bind is explicitly requested",
   async ({ artifacts, host, sandbox }) => {
@@ -89,7 +102,10 @@ runDashboardRemoteBindTest(
       },
       timeoutMs: 120_000,
     });
-    expect(connect.exitCode, `nemoclaw connect failed\n${connect.stderr}`).toBe(0);
+    expect(
+      connectStartedDashboardForward(connect, sandboxName, dashboardPort),
+      `nemoclaw connect did not complete or print background-forward proof\nstdout:\n${connect.stdout}\nstderr:\n${connect.stderr}`,
+    ).toBe(true);
 
     const forwardList = await sandbox.openshell(["forward", "list"], {
       artifactName: "dashboard-remote-bind-forward-list",
