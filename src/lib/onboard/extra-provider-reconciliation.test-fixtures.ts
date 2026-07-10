@@ -28,6 +28,7 @@ export function reconcile(
 ): string[] {
   return reconcileRegisteredExtraProviders("nemoclaw", {
     listExtraProviders: () => [...recorded],
+    removeExtraProvider: () => true,
     runOpenshell: vi.fn((args: string[]): ProbeResult => {
       const response = responses[args.at(-1) ?? ""];
       return typeof response === "function" ? response() : (response ?? ok());

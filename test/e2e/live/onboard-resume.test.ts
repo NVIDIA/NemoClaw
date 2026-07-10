@@ -175,7 +175,7 @@ test("onboard-resume: interrupted onboard then --resume can recreate with cached
     contracts: [
       "forced policy-step failure leaves a resumable session",
       "resume recreates the sandbox on request without redoing cached preflight/gateway steps",
-      "resume sandbox recreation filters exact stale extra-provider records without mutating registry state",
+      "resume sandbox recreation filters exact stale extra-provider records and prunes registry state",
       "resume proves the stale extra provider is absent from live gateway config",
       "host trust-store anchor corporate CA source is baked and merged after resume",
       "implicit resume is detected and --fresh suppresses that auto-resume",
@@ -444,7 +444,7 @@ test("onboard-resume: interrupted onboard then --resume can recreate with cached
   // the skip evidence and absence of redo-only success strings instead of
   // rejecting headings that now frame the skipped phases.
   expect(resumeText).not.toContain("Starting OpenShell Docker-driver gateway...");
-  expect(readExtraProviders()).toContain(STALE_EXTRA_PROVIDER);
+  expect(readExtraProviders()).not.toContain(STALE_EXTRA_PROVIDER);
   await expectGatewayProviderListExcludes(
     sandbox,
     STALE_EXTRA_PROVIDER,

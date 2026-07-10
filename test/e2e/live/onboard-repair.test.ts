@@ -136,7 +136,7 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
     contracts: [
       "forced policy-step failure leaves a resumable session",
       "resume recreates a recorded sandbox that was removed underneath it",
-      "resume repair filters exact stale extra-provider records without mutating registry state",
+      "resume repair filters exact stale extra-provider records and prunes registry state",
       "resume repair proves the stale extra provider is absent from live gateway config",
       "REQUESTS_CA_BUNDLE fallback corporate CA source is baked and merged after repair",
       "resume rejects a different requested sandbox name",
@@ -211,7 +211,7 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
   expect(resultText(repair)).toContain("[resume] Skipping preflight (cached)");
   expect(resultText(repair)).toContain("Recorded sandbox state is unavailable; recreating it");
   expect(resultText(repair)).toContain("Creating sandbox");
-  expect(readExtraProviders()).toContain(STALE_EXTRA_PROVIDER);
+  expect(readExtraProviders()).not.toContain(STALE_EXTRA_PROVIDER);
   await expectGatewayProviderListExcludes(
     sandbox,
     STALE_EXTRA_PROVIDER,

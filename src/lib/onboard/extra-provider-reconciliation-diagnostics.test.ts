@@ -63,9 +63,11 @@ describe("reconcileRegisteredExtraProviders diagnostics", () => {
       "Error: status: Unavailable, message: \"provider 'stale-provider' not found\"",
     ],
   ])("preserves providers for ambiguous diagnostics: %s (#6501)", (_label, stderr) => {
-    expect(reconcile(["stale-provider"], { "stale-provider": { status: 1, stderr } })).toEqual([
-      "stale-provider",
-    ]);
+    expect(
+      reconcile(["stale-provider"], {
+        "stale-provider": { status: 1, stderr },
+      }),
+    ).toEqual(["stale-provider"]);
   });
 
   it("uses composite output only when stderr and stdout are empty (#6501)", () => {
@@ -118,7 +120,10 @@ describe("reconcileRegisteredExtraProviders diagnostics", () => {
       reconcile(
         ["exact-provider", "named-ambiguous-provider"],
         {
-          "exact-provider": { status: 1, stderr: "Error: provider 'exact-provider' not found" },
+          "exact-provider": {
+            status: 1,
+            stderr: "Error: provider 'exact-provider' not found",
+          },
           "named-ambiguous-provider": {
             status: 1,
             stderr:
@@ -161,8 +166,20 @@ describe("reconcileRegisteredExtraProviders diagnostics", () => {
     ).toEqual(["stale-provider"]);
   });
 
+  it("preserves providers when the not-found diagnostic uses different casing (#6501)", () => {
+    expect(
+      reconcile(["tavily-search"], {
+        "tavily-search": {
+          status: 1,
+          stderr: "Error: provider 'Tavily-Search' not found",
+        },
+      }),
+    ).toEqual(["tavily-search"]);
+  });
+
   it("parses adversarial diagnostics within a bounded budget (#6501)", () => {
     const adversarial = [
+      `${"error: ".repeat(2_000)}provider 'redos-provider' not found`,
       `Error: provider '${"a".repeat(8_000)}`,
       `${"gateway ".repeat(1_000)}provider 'redos-provider' not found`,
       `status: unavailable ${"provider 'redos-provider' not found ".repeat(1_000)}`,

@@ -17,7 +17,7 @@ const onboardScriptMocksPath = JSON.stringify(
 );
 
 describe("onboard extra-provider reconciliation", () => {
-  it("attaches live user extras, skips stale names, and preserves registry state (#6501)", {
+  it("attaches live user extras, prunes stale names, and converges registry state (#6501)", {
     timeout: 90_000,
   }, () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-extra-provider-reconcile-"));
@@ -180,7 +180,6 @@ const { createSandbox } = require(${onboardPath});
           "provider get -g nemoclaw my-slack-bridge",
           "provider get -g nemoclaw my-slack-bridge",
           "provider get -g nemoclaw tavily-search",
-          "provider get -g nemoclaw tavily-search",
         ].sort(),
       );
       assert.equal(
@@ -194,7 +193,6 @@ const { createSandbox } = require(${onboardPath});
         "brave-search",
         "custom-provider",
         "my-slack-bridge",
-        "tavily-search",
       ]);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });

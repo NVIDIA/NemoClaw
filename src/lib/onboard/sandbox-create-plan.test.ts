@@ -74,7 +74,10 @@ function expectCredentialBindingFailure({
     sandboxGpuLogMessage: null,
     policyTier: null,
   });
-  const preparePolicy = vi.fn(() => ({ policyPath: "/tmp/policy.yaml", appliedPresets: [] }));
+  const preparePolicy = vi.fn(() => ({
+    policyPath: "/tmp/policy.yaml",
+    appliedPresets: [],
+  }));
   const appendResources = vi.fn();
   const cleanupProviders = vi.fn();
   const upsertProviders = vi.fn(() => []);
@@ -456,8 +459,16 @@ describe("prepareSandboxCreatePlan", () => {
       enabledChannels: ["telegram", "slack", "whatsapp"],
       disabledChannelNames: new Set(["slack"]),
       messagingTokenDefs: [
-        { name: "sandbox-telegram-bridge", envKey: "TELEGRAM_BOT_TOKEN", token: "telegram" },
-        { name: "sandbox-slack-bridge", envKey: "SLACK_BOT_TOKEN", token: "slack" },
+        {
+          name: "sandbox-telegram-bridge",
+          envKey: "TELEGRAM_BOT_TOKEN",
+          token: "telegram",
+        },
+        {
+          name: "sandbox-slack-bridge",
+          envKey: "SLACK_BOT_TOKEN",
+          token: "slack",
+        },
       ],
       reusableMessagingChannels: ["slack", "whatsapp"],
       reusableMessagingProviders: ["sandbox-slack-bridge", "sandbox-existing-whatsapp"],
@@ -488,7 +499,13 @@ describe("prepareSandboxCreatePlan", () => {
     });
 
     expect(upsertMessagingProviders).toHaveBeenCalledWith(
-      [{ name: "sandbox-telegram-bridge", envKey: "TELEGRAM_BOT_TOKEN", token: "telegram" }],
+      [
+        {
+          name: "sandbox-telegram-bridge",
+          envKey: "TELEGRAM_BOT_TOKEN",
+          token: "telegram",
+        },
+      ],
       { replaceExisting: true },
     );
     expect(result.activeMessagingChannels).toEqual(["telegram", "whatsapp"]);
@@ -587,50 +604,6 @@ describe("prepareSandboxCreatePlan", () => {
       .map((arg, index) => (arg === "--provider" ? result.createArgs[index + 1] : null))
       .filter((value): value is string => value !== null);
     expect(providerArgs).toEqual(["tavily-search", "custom-provider"]);
-  });
-
-  it("keeps reconciled extra providers stable across retry create plans (#6501)", () => {
-    const buildPlan = () =>
-      prepareSandboxCreatePlan({
-        basePolicyPath: "/repo/policy.yaml",
-        buildCtx: "/tmp/nemoclaw-build-1",
-        sandboxName: "sandbox",
-        channels,
-        enabledChannels: [],
-        disabledChannelNames: new Set(),
-        messagingTokenDefs: [],
-        reusableMessagingChannels: [],
-        reusableMessagingProviders: [],
-        extraProviders: ["brave-search", "custom-provider", "brave-search"],
-        hermesToolGateways: [],
-        sandboxGpuConfig,
-        dockerDriverGateway: true,
-        appendResourceFlags: vi.fn(),
-        runProviderPreDeleteCleanup: vi.fn(),
-        upsertMessagingProviders: vi.fn(() => []),
-        getMessagingChannelForEnvKey: () => null,
-        getHermesToolGatewayProviderName: vi.fn(),
-        deps: {
-          resolveDockerGpuSandboxCreatePlan: vi.fn(() => ({
-            useDockerGpuPatch: false,
-            logMessage: null,
-          })),
-          prepareInitialSandboxCreatePolicy: vi.fn(() => ({
-            policyPath: "/tmp/policy.yaml",
-            appliedPresets: [],
-          })),
-          buildSandboxGpuCreateArgs: vi.fn(() => []),
-        },
-      });
-    const providerArgs = (args: string[]) =>
-      args
-        .map((arg, index) => (arg === "--provider" ? args[index + 1] : null))
-        .filter((value): value is string => value !== null);
-    const firstProviders = providerArgs(buildPlan().createArgs);
-    const retryProviders = providerArgs(buildPlan().createArgs);
-
-    expect(firstProviders).toEqual(["brave-search", "custom-provider"]);
-    expect(retryProviders).toEqual(firstProviders);
   });
 
   it("does not duplicate an extra provider that is already a messaging provider", () => {
