@@ -36,10 +36,6 @@ const REGISTRY_FILE = path.join(process.env.HOME ?? os.homedir(), ".nemoclaw", "
 const GATEWAY_CONTAINER = "openshell-cluster-nemoclaw";
 const GATEWAY_PORT = process.env.NEMOCLAW_GATEWAY_PORT ?? "8080";
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 async function onboardSandbox(
   host: HostCliClient,
   cleanup: CleanupRegistry,
@@ -537,31 +533,21 @@ async function expectHostPortFree(
   artifactName: string,
   timeoutMs = 90_000,
 ): Promise<void> {
-  const startedAt = Date.now();
-  let lastProbe: ShellProbeResult | undefined;
-  for (let attempt = 1; Date.now() - startedAt < timeoutMs; attempt += 1) {
-    const probe = await host.command(
-      "node",
-      [
-        "-e",
-        'const net=require("node:net"); const server=net.createServer(); server.once("error", error => { console.error(error.code || "bind failed"); process.exit(1); }); server.listen(Number(process.argv[1]), "127.0.0.1", () => server.close(error => { if (error) { console.error(error.message); process.exit(1); } console.log("available"); }));',
-        port,
-      ],
-      {
-        artifactName: `${artifactName}-attempt-${attempt}`,
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 30_000,
-      },
-    );
-    if (probe.exitCode === 0) return;
-    lastProbe = probe;
-    await sleep(2_000);
-  }
-  throw new Error(
-    `gateway port ${port} remained occupied after final destroy: ${
-      lastProbe ? resultText(lastProbe) : "no probe completed"
-    }`,
+  const probe = await host.command(
+    "node",
+    [
+      "-e",
+      'const net=require("node:net"); const port=Number(process.argv[1]); const deadline=Date.now()+Number(process.argv[2]); const attempt=()=>{ const server=net.createServer(); server.once("error", error => { if (Date.now() >= deadline) { console.error(error.code || "bind failed"); process.exit(1); } setTimeout(attempt, 2000); }); server.listen(port, "127.0.0.1", () => server.close(error => { if (error) { console.error(error.message); process.exit(1); } console.log("available"); })); }; attempt();',
+      port,
+      String(timeoutMs),
+    ],
+    {
+      artifactName,
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: timeoutMs + 30_000,
+    },
   );
+  expectExitZero(probe, `gateway port ${port} remained occupied after final destroy`);
 }
 
 type GatewayRecoveryOutcome =
