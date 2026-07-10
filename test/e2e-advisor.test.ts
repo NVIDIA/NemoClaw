@@ -305,12 +305,13 @@ describe("E2E recommendation advisor prompt", () => {
     expect(removeSymlinks?.run).toContain('find "$ADVISOR_WORKDIR" -type l -print0');
     expect(removeSymlinks?.run).toContain('rm -- "$link"');
 
-    for (const advisorStepName of ["Run E2E recommendation advisor", "Run E2E target advisor"]) {
-      const advisorIndex = steps.findIndex((step) => step.name === advisorStepName);
-      expect(advisorIndex, advisorStepName).toBeGreaterThan(removeSymlinksIndex);
-      expect(steps[advisorIndex]?.env?.E2E_ADVISOR_API_KEY, advisorStepName).toBe(
-        "${{ secrets.PI_E2E_ADVISOR_API_KEY }}",
-      );
+    const secretConsumingSteps = steps
+      .map((step, index) => ({ index, step }))
+      .filter(({ step }) => JSON.stringify(step).includes("secrets."));
+    expect(secretConsumingSteps.length).toBeGreaterThan(0);
+
+    for (const { index, step } of secretConsumingSteps) {
+      expect(index, step.name ?? `workflow step ${index}`).toBeGreaterThan(removeSymlinksIndex);
     }
   });
 });
