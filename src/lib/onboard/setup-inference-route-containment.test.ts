@@ -152,6 +152,59 @@ describe("onboard shared gateway route containment", () => {
     expect(exitProcess).toHaveBeenCalledWith(1);
   });
 
+  it("rechecks recovered-route ownership inside both mutation locks before setup (#6630)", async () => {
+    const events: string[] = [];
+    const checkGatewayRouteCompatibility = vi.fn(() => ({ ok: true as const }));
+    const updateSandbox = vi.fn(() => true);
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const exitProcess = vi.fn((code: number): never => {
+      events.push(`exit:${code}`);
+      throw new Error(`exit ${code}`);
+    });
+    const setupInference = createSetupInference({
+      checkGatewayRouteCompatibility,
+      withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) => {
+        events.push("sandbox-lock");
+        return await operation();
+      },
+      withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) => {
+        events.push("gateway-lock");
+        return await operation();
+      },
+      getGatewayName: () => "nemoclaw",
+      error: (message: string) => events.push(`error:${message}`),
+      exitProcess,
+      updateSandbox,
+      runOpenshell,
+    } as unknown as SetupInferenceDeps);
+
+    await expect(
+      setupInference(
+        "alpha",
+        "model-a",
+        "anthropic-prod",
+        "https://api.anthropic.com",
+        "ANTHROPIC_API_KEY",
+        null,
+        [],
+        {
+          reservationSessionId: "session-current",
+          isRecordedProviderRecoveryAuthorized: () => {
+            events.push("recovery-authority");
+            return false;
+          },
+        },
+      ),
+    ).rejects.toThrow("exit 1");
+
+    expect(events.slice(0, 3)).toEqual(["sandbox-lock", "gateway-lock", "recovery-authority"]);
+    expect(events).toContainEqual(expect.stringContaining("lost reservation ownership"));
+    expect(checkGatewayRouteCompatibility).not.toHaveBeenCalled();
+    expect(updateSandbox).not.toHaveBeenCalled();
+    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(exitProcess).toHaveBeenCalledWith(1);
+  });
+
   it("reserves a fresh route before smoke failure lets another setup mutate it (#6315)", async () => {
     const reservations: SandboxEntry[] = [];
     let lockTail = Promise.resolve();

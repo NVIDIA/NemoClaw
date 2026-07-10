@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 type ProviderRecoveryInternals = {
   providerNameToOptionKey: (
@@ -101,6 +101,7 @@ describe("readRecordedProvider", () => {
     registry.getSandbox = originalGetSandbox;
     registry.listSandboxes = originalListSandboxes;
     onboardSession.loadSession = originalLoadSession;
+    vi.restoreAllMocks();
   });
 
   it("returns the provider stored in sandboxes.json", () => {
@@ -161,16 +162,23 @@ describe("readRecordedProvider", () => {
     expect(readRecordedProvider("")).toBeNull();
   });
 
-  it("falls back to the session when the registry read throws", () => {
+  it("fails closed instead of trusting session state when the registry read throws (#6630)", () => {
     registry.getSandbox = () => {
       throw new Error("registry unreadable");
     };
-    onboardSession.loadSession = () =>
-      ({ sandboxName: "spark-1", provider: "ollama-local" }) as ReturnType<
-        typeof onboardSession.loadSession
-      >;
+    const loadSession = vi.fn(
+      () =>
+        ({ sandboxName: "spark-1", provider: "ollama-local" }) as ReturnType<
+          typeof onboardSession.loadSession
+        >,
+    );
+    onboardSession.loadSession = loadSession;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     stubLiveGatewayUntrusted();
-    expect(readRecordedProvider("spark-1")).toBe("ollama-local");
+
+    expect(readRecordedProvider("spark-1")).toBeNull();
+    expect(loadSession).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("refusing recovery"));
   });
 
   it("returns null when registry, session, and live-gateway lookups all throw", () => {

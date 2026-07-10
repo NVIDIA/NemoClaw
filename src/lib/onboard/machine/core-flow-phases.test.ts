@@ -91,6 +91,7 @@ function createPhases(
         requiredEndpointUrl: null,
         requiredInferenceApi: null,
       }),
+      getSandboxRecoveryAuthority: (): "missing" => "missing",
       withGatewayRouteMutationLock: async <T>(
         _gatewayName: string,
         operation: () => Promise<T> | T,
@@ -303,6 +304,7 @@ describe("core onboard flow phases", () => {
       "nemoclaw",
       expect.any(Function),
       expect.any(Function),
+      expect.any(String),
     );
   });
 
