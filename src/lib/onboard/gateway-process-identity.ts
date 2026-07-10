@@ -44,25 +44,38 @@ function cliFlagValue(tokens: string[], names: string[]): string | null {
   return null;
 }
 
-function openShellGatewayStartMatchesTarget(
+function openShellGatewayMatchesTarget(
   tokens: string[],
   target: OpenShellGatewayProcessTarget | undefined,
+  opts: { requireExpectedFlags: boolean },
 ): boolean {
   if (!target || (!target.name && (target.port === undefined || target.port === null))) {
     return true;
   }
 
+  let matchedComparableFlag = false;
+
   if (target.name) {
     const actualName = cliFlagValue(tokens, ["--name"]);
-    if (actualName !== target.name) return false;
+    if (actualName === null) {
+      if (opts.requireExpectedFlags) return false;
+    } else {
+      if (actualName !== target.name) return false;
+      matchedComparableFlag = true;
+    }
   }
 
   if (target.port !== undefined && target.port !== null) {
     const actualPort = cliFlagValue(tokens, ["--port"]);
-    if (actualPort !== String(target.port)) return false;
+    if (actualPort === null) {
+      if (opts.requireExpectedFlags) return false;
+    } else {
+      if (actualPort !== String(target.port)) return false;
+      matchedComparableFlag = true;
+    }
   }
 
-  return true;
+  return matchedComparableFlag;
 }
 
 export function gatewayProcessCmdlineMatches(
@@ -80,14 +93,23 @@ export function gatewayProcessCmdlineMatches(
 
   const processNames = opts.processNames ?? HOST_GATEWAY_PROCESS_NAMES;
   const base = path.basename(argv0);
-  if (processNames.has(base)) return true;
+  if (processNames.has(base)) {
+    if (processNames.has("openshell-gateway") && base === "openshell-gateway") {
+      return openShellGatewayMatchesTarget(tokens, opts.expectedOpenShellGateway, {
+        requireExpectedFlags: false,
+      });
+    }
+    return true;
+  }
   if (
     processNames.has("openshell-gateway") &&
     base === "openshell" &&
     tokens[1] === "gateway" &&
     tokens[2] === "start"
   ) {
-    return openShellGatewayStartMatchesTarget(tokens, opts.expectedOpenShellGateway);
+    return openShellGatewayMatchesTarget(tokens, opts.expectedOpenShellGateway, {
+      requireExpectedFlags: true,
+    });
   }
 
   if (typeof gatewayBin === "string" && gatewayBin.length > 0) {
