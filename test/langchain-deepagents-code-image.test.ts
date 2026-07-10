@@ -821,13 +821,13 @@ describe("LangChain Deep Agents Code image contracts", () => {
     const review = readAgentFile("dependency-review.md");
 
     expect(review).toContain("requirements.lock");
-    expect(review).toContain("d8b01f36a0f325f38d18b4dc2cfdf452125987571a86ca58d9c93e08b7b06a14");
-    expect(review).toContain("Audit date: 2026-07-07");
+    expect(review).toContain("7889fd275175ceadde843480587a3ed5b3dc517537222e60fa6fdfe4d5b21332");
+    expect(review).toContain("Audit date: 2026-07-09");
     expect(review).toContain(
       "uv tool run --python 3.13 pip-audit -r agents/langchain-deepagents-code/requirements.lock --progress-spinner off --disable-pip",
     );
     expect(review).toContain("No known vulnerabilities found");
-    expect(review).toContain("1cee6afafcbe545f5d095c94cb0ad81ff2a1512f84ad9d128a69a9b3d72b3def");
+    expect(review).toContain("59f5e458f64964df94a5f95a27b693ffa54d3ded96dc5c865c53d72ba34b64c6");
     expect(review).toContain("7ba7b77bd6f889cc861eddbe3e38fc1f4433a85b7bc2a9b516e19a19a37a7686");
     expect(review).toContain("Adapter dependency audit result: `No known vulnerabilities found`");
     expect(review).toContain("Deep Agents Code `0.1.34` pins `deepagents==0.7.0a6`");

@@ -2776,7 +2776,6 @@ async function createSandboxWithBaseImageResolution(
     );
   }
   if (sandboxGpuLogMessage) console.log(sandboxGpuLogMessage);
-
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
   const envMessagingState = MessagingHostStateApplier.readPlanStateFromEnv();
   const plannedMessagingState =
@@ -2793,6 +2792,7 @@ async function createSandboxWithBaseImageResolution(
     model,
     chatUiUrl,
     provider,
+    endpointUrl: createIntent?.endpointUrl ?? null,
     preferredInferenceApi,
     webSearchConfig,
     toolDisclosure: effectiveToolDisclosure,

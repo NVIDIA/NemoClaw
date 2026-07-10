@@ -41,8 +41,12 @@ const CANONICAL_MODEL_SPEC = "nvidia:nvidia/nemotron-3-ultra-550b-a55b";
 const MANAGED_MODEL_ALIASES = [
   "openai:nvidia/nemotron-3-ultra-550b-a55b",
   "openai:nvidia/nvidia/nemotron-3-ultra",
+  "openrouter:nvidia/nemotron-3-ultra-550b-a55b",
+  "openrouter:nvidia/nvidia/nemotron-3-ultra",
 ] as const;
-const MANAGED_MODEL_IDS = MANAGED_MODEL_ALIASES.map((alias) => alias.slice("openai:".length));
+const MANAGED_MODEL_IDS = [
+  ...new Set(MANAGED_MODEL_ALIASES.map((alias) => alias.replace(/^(?:openai|openrouter):/, ""))),
+];
 
 const NATIVE_PROFILE_SOURCE = `"""Focused native Nemotron profile fixture."""
 
@@ -565,7 +569,10 @@ print(json.dumps({
     "aliases": aliases_registered,
     "aliasesShareManagedProfile": (
         all(aliases_registered)
-        and _HARNESS_PROFILES[aliases[0]] is _HARNESS_PROFILES[aliases[1]]
+        and all(
+            _HARNESS_PROFILES[key] is _HARNESS_PROFILES[aliases[0]]
+            for key in aliases[1:]
+        )
     ),
     "aliasMiddleware": alias_middleware,
     "canonicalHasGuard": any(
@@ -726,7 +733,7 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
     const result = runPlugin(fixture, { registerCalls: 2 });
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.probe.aliases).toEqual([true, true]);
+    expect(result.probe.aliases).toEqual(MANAGED_MODEL_ALIASES.map(() => true));
     expect(result.probe.aliasesShareManagedProfile).toBe(true);
     expect(result.probe.aliasMiddleware).toEqual([
       "NativeMiddleware",
@@ -745,7 +752,7 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
     const result = runPlugin(fixture, { concurrentRegisterCalls: 8 });
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.probe.aliases).toEqual([true, true]);
+    expect(result.probe.aliases).toEqual(MANAGED_MODEL_ALIASES.map(() => true));
     expect(result.probe.aliasesShareManagedProfile).toBe(true);
     expect(result.probe.aliasMiddleware).toEqual([
       "NativeMiddleware",
@@ -841,7 +848,7 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
 
     expect(result.status).not.toBe(0);
     expect(result.probe.error).toContain(message);
-    expect(result.probe.aliases).toEqual([false, false]);
+    expect(result.probe.aliases).toEqual(MANAGED_MODEL_ALIASES.map(() => false));
     expectOfficialSourcesUnchanged(fixture);
   });
 
@@ -860,7 +867,7 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
     expect(result.probe.error).toContain(
       "imported deepagents package does not match the reviewed distribution",
     );
-    expect(result.probe.aliases).toEqual([false, false]);
+    expect(result.probe.aliases).toEqual(MANAGED_MODEL_ALIASES.map(() => false));
     expectOfficialSourcesUnchanged(fixture);
   });
 
@@ -880,7 +887,7 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
 
     expect(result.status).not.toBe(0);
     expect(result.probe.error).toMatch(/does not match the reviewed Deep Agents/i);
-    expect(result.probe.aliases).toEqual([false, false]);
+    expect(result.probe.aliases).toEqual(MANAGED_MODEL_ALIASES.map(() => false));
     expectOfficialSourcesUnchanged(fixture, nativeSource, bootstrapSource);
   });
 
@@ -897,7 +904,7 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
 
     expect(result.status).not.toBe(0);
     expect(result.probe.error).toMatch(/not a trusted regular file/i);
-    expect(result.probe.aliases).toEqual([false, false]);
+    expect(result.probe.aliases).toEqual(MANAGED_MODEL_ALIASES.map(() => false));
   });
 
   it("rejects a missing canonical profile without creating aliases", () => {
@@ -906,7 +913,7 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
 
     expect(result.status).not.toBe(0);
     expect(result.probe.error).toContain("canonical profile");
-    expect(result.probe.aliases).toEqual([false, false]);
+    expect(result.probe.aliases).toEqual(MANAGED_MODEL_ALIASES.map(() => false));
     expect(result.probe.registryKeys).toEqual([]);
     expectOfficialSourcesUnchanged(fixture);
   });
@@ -920,7 +927,9 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
 
     expect(result.status).not.toBe(0);
     expect(result.probe.error).toMatch(/partial|conflict/i);
-    expect(result.probe.registryKeys).toHaveLength(aliasState === "partial" ? 2 : 3);
+    expect(result.probe.registryKeys).toHaveLength(
+      aliasState === "partial" ? 2 : MANAGED_MODEL_ALIASES.length + 1,
+    );
     expectOfficialSourcesUnchanged(fixture);
   });
 
@@ -933,7 +942,7 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
 
     expect(result.status).not.toBe(0);
     expect(result.probe.error).toContain("injected registration failure");
-    expect(result.probe.aliases).toEqual([false, false]);
+    expect(result.probe.aliases).toEqual(MANAGED_MODEL_ALIASES.map(() => false));
     expect(result.probe.unrelatedPresent).toBe(true);
     expect(result.probe.registryKeys).toEqual([CANONICAL_MODEL_SPEC, "openai:gpt-4.1-mini"].sort());
     expectOfficialSourcesUnchanged(fixture);

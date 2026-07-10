@@ -620,6 +620,7 @@ class SandboxStateFlow<
       recreate: decision.kind !== "create",
       toolDisclosure: toolDisclosureOrDefault(state.session?.toolDisclosure),
       observabilityEnabled: state.session?.observabilityEnabled === true,
+      ...(this.options.endpointUrl ? { endpointUrl: this.options.endpointUrl } : {}),
       ...(state.session?.observabilityRequestedExplicitly === true
         ? { observabilityRequestedExplicitly: true as const }
         : {}),
