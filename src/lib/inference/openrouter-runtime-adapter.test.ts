@@ -238,4 +238,32 @@ describe("OpenRouter Runtime adapter", () => {
       error: { code: "upstream_timeout" },
     });
   });
+
+  it("handles upstream mid-response aborts without crashing (#5826)", async () => {
+    const upstream = http.createServer(async (req, res) => {
+      await readRequestBody(req);
+      res.writeHead(200, { "Content-Type": "application/json", "Content-Length": "1024" });
+      res.write('{"partial":');
+      setImmediate(() => res.socket?.destroy());
+    });
+    const upstreamBaseUrl = await listen(upstream);
+    const adapter = createTestAdapter({
+      upstreamBaseUrl: `${upstreamBaseUrl}/api/v1`,
+      upstreamTimeoutMs: 100,
+    });
+    const adapterBaseUrl = await listen(adapter);
+
+    await expect(
+      fetch(`${adapterBaseUrl}/v1/chat/completions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${OPENROUTER_TEST_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ model: "moonshotai/kimi-k2.6", messages: [] }),
+      }).then((response) => response.text()),
+    ).rejects.toThrow();
+
+    await expect(fetch(`${adapterBaseUrl}/health`)).resolves.toMatchObject({ status: 200 });
+  });
 });

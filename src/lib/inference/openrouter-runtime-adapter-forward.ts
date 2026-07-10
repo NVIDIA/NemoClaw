@@ -173,9 +173,18 @@ export async function forwardOpenRouterRequest(options: {
       (upstreamRes) => {
         const status = upstreamRes.statusCode || 502;
         options.res.writeHead(status, buildForwardResponseHeaders(upstreamRes.headers));
-        upstreamRes.on("error", failRequest);
+        upstreamRes.once("aborted", () => {
+          failRequest(
+            new ForwardHttpError(
+              502,
+              "OpenRouter upstream response aborted.",
+              "upstream_response_aborted",
+            ),
+          );
+        });
+        upstreamRes.once("error", failRequest);
         upstreamRes.pipe(options.res);
-        upstreamRes.on("end", () => resolveOnce(status));
+        upstreamRes.once("end", () => resolveOnce(status));
       },
     );
     upstreamReq.setTimeout(

@@ -7,6 +7,7 @@
 // `onboard/bedrock-runtime.ts` exactly as the inline branch did.
 
 import { getCompatibleAnthropicOpenAiSurfaceBaseUrl } from "../../inference/config";
+import { OPENROUTER_PROVIDER_NAME } from "../../inference/openrouter";
 import { readGatewayProviderMetadata } from "../gateway-provider-metadata";
 import { deleteProviderWithRecovery, parseAttachedSandboxes } from "../sandbox-provider-cleanup";
 import type { RemoteProviderDeps, SetupInferenceResult } from "./types";
@@ -186,7 +187,7 @@ export async function setupRemoteProviderInference(
   if (bedrockSetup.handled) return { done: true, result: bedrockSetup.result };
   const openrouterCredentialEnv = credentialEnv || config.credentialEnv;
   const openrouterCredentialValue =
-    provider === "openrouter-api" ? hydrateCredentialEnv(openrouterCredentialEnv) : null;
+    provider === OPENROUTER_PROVIDER_NAME ? hydrateCredentialEnv(openrouterCredentialEnv) : null;
   const openrouterSetup = await openrouterRuntimeOnboard.setupOpenRouterRuntimeInference({
     sandboxName,
     provider,
