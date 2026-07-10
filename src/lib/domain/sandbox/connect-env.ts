@@ -4,7 +4,10 @@
 import type { ConfigObject, ConfigValue } from "../../security/credential-filter";
 
 export const NEMOCLAW_HERMES_LIGHT_SKIN_NAME = "nemoclaw-light";
-export const NEMOCLAW_HERMES_LIGHT_SKIN_REVIEWED_HERMES_VERSION = "v2026.6.19";
+export const NEMOCLAW_HERMES_LIGHT_SKIN_REVIEWED_HERMES_VERSIONS = [
+  "v2026.6.19",
+  "v2026.7.1",
+] as const;
 
 // Compatibility boundary: remove this NemoClaw-managed light skin once the
 // pinned Hermes version in agents/hermes/Dockerfile.base includes upstream

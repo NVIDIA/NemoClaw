@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { NEMOCLAW_HERMES_LIGHT_SKIN_REVIEWED_HERMES_VERSION } from "../../src/lib/domain/sandbox/connect-env";
+import { NEMOCLAW_HERMES_LIGHT_SKIN_REVIEWED_HERMES_VERSIONS } from "../../src/lib/domain/sandbox/connect-env";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const HERMES_DOCKERFILE_BASE = "agents/hermes/Dockerfile.base";
@@ -16,11 +16,12 @@ function main(): void {
   if (!pinnedVersion) {
     throw new Error(`${HERMES_DOCKERFILE_BASE}: could not find ARG HERMES_VERSION`);
   }
-  if (pinnedVersion !== NEMOCLAW_HERMES_LIGHT_SKIN_REVIEWED_HERMES_VERSION) {
+  const reviewedVersions: readonly string[] = NEMOCLAW_HERMES_LIGHT_SKIN_REVIEWED_HERMES_VERSIONS;
+  if (!reviewedVersions.includes(pinnedVersion)) {
     throw new Error(
       [
         "Hermes light terminal compatibility skin needs re-review.",
-        `${HERMES_DOCKERFILE_BASE} pins ${pinnedVersion}, but connect-env.ts was reviewed for ${NEMOCLAW_HERMES_LIGHT_SKIN_REVIEWED_HERMES_VERSION}.`,
+        `${HERMES_DOCKERFILE_BASE} pins ${pinnedVersion}, but connect-env.ts was reviewed for ${reviewedVersions.join(", ")}.`,
         "Remove the NemoClaw-managed light skin if upstream Hermes is readable in light terminals, or update the reviewed version constant after validating it still needs the shim.",
       ].join(" "),
     );
