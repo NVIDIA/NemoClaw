@@ -34,7 +34,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(output).toContain("Restored 1 directories, 1 files");
   });
 
-  it("delegates managed and custom-image restore policy to the state layer", async () => {
+  it("delegates managed and custom-image snapshot restores to the state layer", async () => {
     f.getLatestBackupMock.mockReturnValue({
       snapshotVersion: 4,
       name: "stable",
