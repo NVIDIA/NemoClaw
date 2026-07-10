@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { rewriteConfigUrlsWithDnsPinning } from "../sandbox/config";
 import type { ConfigObject } from "../security/credential-filter";
 import { runInferenceSet } from "./inference-set";
 import { baseSession, createDeps } from "./inference-set.test-support";
@@ -305,6 +304,8 @@ describe("runInferenceSet compatible providers", () => {
       ["privileged-port bridge", "http://host.openshell.internal:80/v1", "93.184.216.34"],
       ["DNS-private", "https://private-resolution.example/v1", "10.0.0.8"],
     ])(`rejects %s endpoint metadata for ${provider}`, async (_kind, endpointUrl, resolvedAddress) => {
+      const actualConfig =
+        await vi.importActual<typeof import("../sandbox/config")>("../sandbox/config");
       const lookup = vi.fn(async () => [{ address: resolvedAddress, family: 4 }]);
       const deps = createDeps({
         config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
@@ -314,7 +315,8 @@ describe("runInferenceSet compatible providers", () => {
           provider: "nvidia-prod",
           model: "nvidia/model-a",
         },
-        rewriteConfigUrlsWithDnsPinning: (value) => rewriteConfigUrlsWithDnsPinning(value, lookup),
+        rewriteConfigUrlsWithDnsPinning: (value) =>
+          actualConfig.rewriteConfigUrlsWithDnsPinning(value, lookup),
       });
 
       await expect(
