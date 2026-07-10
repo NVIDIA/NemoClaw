@@ -110,6 +110,7 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
   timeout: LIVE_TIMEOUT_MS,
 }, async ({ artifacts, cleanup: cleanupRegistry, host, sandbox, skip }) => {
   const corporateCa = createCorporateCaFixture("requests", "nemoclaw-repair-corporate-ca-");
+  cleanupRegistry.add("remove corporate CA fixture", () => cleanupCorporateCaFixture(corporateCa));
   await artifacts.target.declare({
     id: "onboard-repair",
     sandboxName: SANDBOX_NAME,
@@ -140,7 +141,6 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
   });
   cleanupRegistry.add("close fake OpenAI-compatible endpoint", async () => fake.close());
   cleanupRegistry.add("remove repair sandboxes", () => cleanup(host, sandbox));
-  cleanupRegistry.add("remove corporate CA fixture", () => cleanupCorporateCaFixture(corporateCa));
   await cleanup(host, sandbox);
 
   const first = await nemoclaw(

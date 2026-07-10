@@ -81,6 +81,7 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
     `https://raw.githubusercontent.com/NVIDIA/NemoClaw/${ref}/install.sh`;
   const installCwd = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-public-install-"));
   const corporateCa = createCorporateCaFixture("explicit", "nemoclaw-cloud-corporate-ca-");
+  cleanupRegistry.add("remove corporate CA fixture", () => cleanupCorporateCaFixture(corporateCa));
   const redactionValues = [hosted.apiKey];
 
   await artifacts.target.declare({
@@ -112,7 +113,6 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
   cleanupRegistry.add("remove cloud-onboard sandbox", () =>
     cleanup(host, sandbox, { label: "cleanup", verify: true }),
   );
-  cleanupRegistry.add("remove corporate CA fixture", () => cleanupCorporateCaFixture(corporateCa));
   await cleanup(host, sandbox, { label: "pre-cleanup", verify: false });
 
   const install = await host.command(

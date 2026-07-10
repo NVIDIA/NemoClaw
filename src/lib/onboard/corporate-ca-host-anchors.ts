@@ -6,7 +6,6 @@ import path from "node:path";
 
 import {
   CORPORATE_CA_ANCHOR_DIRS_ENV,
-  CORPORATE_CA_EXPLICIT_ENV,
   CORPORATE_CA_HOST_ANCHOR_SOURCE,
   CORPORATE_CA_LITERAL_SSL_CERTS_SOURCE,
   isKnownMergedTrustStorePath,
