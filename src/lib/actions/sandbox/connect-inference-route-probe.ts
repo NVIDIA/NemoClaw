@@ -48,7 +48,18 @@ export const INFERENCE_ROUTE_PROBE_SCRIPT = [
 // This separate regular-file install is intentionally absent from older images:
 // a newer CLI probing one fails before the stateful entrypoint or dcode wrapper
 // can run, so version skew cannot mutate observability state.
-const DCODE_MANAGED_EXEC_LAUNCHER = "/usr/local/lib/nemoclaw/dcode-managed-exec";
+export const DCODE_MANAGED_EXEC_LAUNCHER = "/usr/local/lib/nemoclaw/dcode-managed-exec";
+export const DCODE_MANAGED_EXEC_MISSING_DETAIL =
+  "trusted Deep Agents Code route-probe helper is missing; rebuild this sandbox with the updated NemoClaw image before retrying connect, status, or doctor";
+
+export function isDcodeManagedExecMissingDetail(detail: string): boolean {
+  const normalized = detail.replace(/\s+/g, " ").trim();
+  if (normalized === DCODE_MANAGED_EXEC_MISSING_DETAIL) return true;
+  return (
+    normalized.includes(DCODE_MANAGED_EXEC_LAUNCHER) &&
+    /\b(?:not found|no such file|does not exist|cannot stat|stat .* failed)\b/i.test(normalized)
+  );
+}
 
 /**
  * Classify a route result that is already known not to be healthy.
@@ -96,10 +107,15 @@ export function parseSandboxInferenceRouteProbeResult(
   const healthy = commandSucceeded && match?.[1] === "OK" && isReachableHttpStatus;
   const broken =
     commandSucceeded && Boolean(match) && (match?.[1] === "BROKEN" || !isReachableHttpStatus);
+  const trustedDetail =
+    !healthy && !broken && isDcodeManagedExecMissingDetail(detail)
+      ? DCODE_MANAGED_EXEC_MISSING_DETAIL
+      : detail;
   return {
     healthy,
     broken,
     httpStatus,
-    detail: detail || `openshell sandbox exec exited with status ${String(result.status ?? 1)}`,
+    detail:
+      trustedDetail || `openshell sandbox exec exited with status ${String(result.status ?? 1)}`,
   };
 }

@@ -10,7 +10,10 @@ import { describe, expect, it } from "vitest";
 import {
   buildSandboxInferenceRouteProbeArgs,
   classifyInferenceRouteFailureLabel,
+  DCODE_MANAGED_EXEC_LAUNCHER,
+  DCODE_MANAGED_EXEC_MISSING_DETAIL,
   INFERENCE_ROUTE_PROBE_SCRIPT,
+  isDcodeManagedExecMissingDetail,
   parseSandboxInferenceRouteProbeResult,
 } from "./connect-inference-route-probe";
 
@@ -187,6 +190,20 @@ describe("sandbox inference route probe result", () => {
     expect(
       parseSandboxInferenceRouteProbeResult({ status: 1, output: "transport unavailable" }),
     ).toMatchObject({ healthy: false, broken: false, httpStatus: 0 });
+  });
+
+  it("fails closed with rebuild guidance when the DCode helper is missing (#6192)", () => {
+    const output = `exec: ${DCODE_MANAGED_EXEC_LAUNCHER}: not found`;
+
+    const parsed = parseSandboxInferenceRouteProbeResult({ status: 127, output });
+
+    expect(parsed).toMatchObject({
+      healthy: false,
+      broken: false,
+      httpStatus: 0,
+      detail: DCODE_MANAGED_EXEC_MISSING_DETAIL,
+    });
+    expect(isDcodeManagedExecMissingDetail(parsed.detail)).toBe(true);
   });
 
   it("does not trust broken output from a failed exec boundary (#6192)", () => {
