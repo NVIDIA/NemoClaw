@@ -130,4 +130,26 @@ describe("stopHostGatewayProcesses target filtering", () => {
     expect(kill).not.toHaveBeenCalled();
     expect(fs.existsSync(pidFile)).toBe(false);
   });
+
+  it("accepts a Docker compatibility gateway with the cleanup target container name", () => {
+    const { kill, pidFile, result } = stopTargetedPid(
+      9999557,
+      "docker run --rm --name nemoclaw-openshell-gateway-8081 ubuntu:24.04 /opt/nemoclaw/openshell-gateway\n",
+    );
+
+    expect(result.stopped).toEqual([9999557]);
+    expect(kill).toHaveBeenCalledWith(9999557, "SIGTERM");
+    expect(fs.existsSync(pidFile)).toBe(false);
+  });
+
+  it("skips a stale PID-file Docker compatibility gateway for another port", () => {
+    const { kill, pidFile, result } = stopTargetedPid(
+      9999558,
+      "docker run --rm --name nemoclaw-openshell-gateway ubuntu:24.04 /opt/nemoclaw/openshell-gateway\n",
+    );
+
+    expect(result.skippedNonMatchingPids).toEqual([9999558]);
+    expect(kill).not.toHaveBeenCalled();
+    expect(fs.existsSync(pidFile)).toBe(false);
+  });
 });

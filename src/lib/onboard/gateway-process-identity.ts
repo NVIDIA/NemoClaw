@@ -3,6 +3,8 @@
 
 import path from "node:path";
 
+import { resolveGatewayCompatContainerName, resolveGatewayName } from "./gateway-binding";
+
 export const HOST_GATEWAY_PROCESS_NAMES = new Set(["openshell-gateway", "openclaw-gateway"]);
 export const OPENSHELL_GATEWAY_PROCESS_NAMES = new Set(["openshell-gateway"]);
 
@@ -78,6 +80,22 @@ function openShellGatewayMatchesTarget(
   return matchedComparableFlag;
 }
 
+function dockerCompatGatewayMatchesTarget(
+  tokens: string[],
+  target: OpenShellGatewayProcessTarget | undefined,
+): boolean {
+  if (!target || (!target.name && (target.port === undefined || target.port === null))) {
+    return true;
+  }
+  if (target.port === undefined || target.port === null) return false;
+
+  const port = Number(target.port);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return false;
+  if (target.name && target.name !== resolveGatewayName(port)) return false;
+
+  return cliFlagValue(tokens, ["--name"]) === resolveGatewayCompatContainerName(port);
+}
+
 export function gatewayProcessCmdlineMatches(
   cmdline: string,
   gatewayBin: string | null | undefined,
@@ -116,7 +134,11 @@ export function gatewayProcessCmdlineMatches(
     const normalize = opts.resolveExecutablePath ?? ((value: string) => path.resolve(value));
     const actual = normalize(argv0);
     const expected = normalize(gatewayBin);
-    if (actual && expected && actual === expected) return true;
+    if (actual && expected && actual === expected) {
+      return openShellGatewayMatchesTarget(tokens, opts.expectedOpenShellGateway, {
+        requireExpectedFlags: false,
+      });
+    }
   }
 
   // Docker compatibility mode: argv0 basename must be a known container
@@ -126,7 +148,7 @@ export function gatewayProcessCmdlineMatches(
     DOCKER_DRIVER_GATEWAY_CONTAINER_RUNTIME_NAMES.has(base) &&
     tokens.slice(1).includes(DOCKER_DRIVER_GATEWAY_COMPAT_MOUNT_PATH)
   ) {
-    return true;
+    return dockerCompatGatewayMatchesTarget(tokens, opts.expectedOpenShellGateway);
   }
 
   return false;
