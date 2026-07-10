@@ -106,9 +106,8 @@ function installDockerState(options: DockerStateOptions = {}) {
   const pullCompatible = new Set(options.pullCompatible ?? []);
   const latestRef = `${IMAGE_NAME}:latest`;
 
-  const assertNotLatest = (ref: string) => {
-    if (ref === latestRef) throw new Error("release resolution must not fall back to latest");
-  };
+  const assertNotLatest = (ref: string) =>
+    expect(ref, "release resolution must not fall back to latest").not.toBe(latestRef);
 
   dockerMocks.imageInspect.mockImplementation((ref: string) => {
     assertNotLatest(ref);
@@ -116,13 +115,13 @@ function installDockerState(options: DockerStateOptions = {}) {
   });
   dockerMocks.pull.mockImplementation((ref: string) => {
     assertNotLatest(ref);
-    if (!pullable.has(ref)) return { status: 1 };
-    present.add(ref);
-    if (pullCompatible.has(ref)) compatible.add(ref);
-    return { status: 0 };
+    const status = pullable.has(ref) ? 0 : 1;
+    status === 0 && present.add(ref);
+    status === 0 && pullCompatible.has(ref) && compatible.add(ref);
+    return { status };
   });
   dockerMocks.build.mockImplementation((_dockerfile: string, tag: string) => {
-    if (options.allowBuild !== true) throw new Error("local build must not run");
+    expect(options.allowBuild, "local build must not run").toBe(true);
     present.add(tag);
     compatible.add(tag);
     return { status: 0 };
