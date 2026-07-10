@@ -38,42 +38,57 @@ the trusted timing signal.
   `.github/workflows/e2e.yaml`, but the advisor job does not
   trigger those commands automatically.
 
-## Post-merge shadow controller
+## Required live PR check
 
-The model-independent `.github/workflows/post-merge-e2e-risk-gate-shadow.yaml` workflow
-uses the same checked-in risk-plan policy after a commit lands on `main`. It
-does not consume model output or the advisor artifact. Instead,
-`tools/e2e-advisor/post-merge-risk-gate.mts` confirms the trusted controller checkout,
-builds a new plan from the exact `github.event.before` and `github.event.after` range,
-and dispatches at most three `automaticJobs` to `e2e.yaml` against the merged
-commit. The controller opts into GitHub's workflow-dispatch run details and
-uses the returned run ID as the sole child-run selector, so a lookalike run
-cannot win a polling race for the same correlation ID.
+The model-independent `.github/workflows/required-live-e2e.yaml` workflow owns the
+required `E2E / Required Live` check for same-repository pull requests after
+`CI / Pull Request` completes.
+It does not consume model output or advisor artifacts.
+Instead, `tools/e2e/required-live.mts` resolves the open pull request for the
+triggering revision, reads its complete changed-file list, and builds a new plan
+from the checked-in risk policy.
+The controller dispatches every job in `requiredJobs` through `e2e.yaml`.
+If no runtime risk family matches, it reports success without dispatching live E2E.
 
-The child workflow validates that the exact checkout SHA equals the workflow's
-own current `main` commit, verifies its reachability, and checks selective-job
-inputs, plan hash, and correlation ID before E2E preparation or secret-bearing
-jobs can run. If `main` advances before an older controller dispatches, that
-child fails closed and the controller reports failure rather than executing the
-older commit with current secrets. The shadow-only Vitest reporter
-records the observed checkout SHA and pass, failure, skip, pending, and
-unhandled-error counts for each job and matrix shard. The controller accepts
-only signals bound to the expected SHA, plan hash, correlation ID, job, and
-shard.
+The controller verifies the pull request identity again immediately before
+dispatch.
+It also records the trusted controller revision, requires that revision to
+still be the current `main` revision immediately before dispatch, and accepts
+only a child workflow run created from that same revision.
+The child workflow validates that the pull request is still open, belongs to
+the base repository, and still points to the requested checkout SHA before E2E
+preparation or secret-bearing jobs can run.
+It also requires selective jobs, an empty target fan-out, a valid plan hash,
+and a valid correlation ID.
+The controller uses GitHub's returned workflow run ID as the sole child-run
+selector for waiting, evidence download, and completion.
 
-The start step records a SHA-256 digest of its private controller state in a
-GitHub step output. After child artifacts are downloaded, the finish step reads
-that state once and verifies the digest before parsing it or classifying any
-evidence, so downloaded files cannot change the dispatch state used for the
-check result.
+The Vitest reporter records the observed checkout SHA and pass, failure, skip,
+pending, and unhandled-error counts for each selected job and matrix shard.
+The checked workflow boundary requires every job named by the deterministic
+policy to expose its matching job identity, attach the reporter to every
+Vitest invocation, and always upload its evidence artifact.
+The controller accepts only signals bound to the expected SHA, plan hash,
+correlation ID, job, and shard.
+It also records a SHA-256 digest of its private dispatch state and verifies that
+digest before parsing downloaded evidence.
 
-The controller writes a check on the merged commit without posting a PR
-comment or running the scheduled/manual scorecard. Complete unskipped evidence
-reports success, selected E2E workflow or test failures for the merged commit report
-failure, and incomplete, ambiguous, skipped, or cap-limited evidence that
-requires manual expansion reports neutral. If no runtime risk family matches,
-it reports success without dispatching E2E. This is post-merge shadow evidence,
-not a required pre-merge check.
+The check has a binary result.
+It succeeds only when the correlated workflow succeeds and every expected job
+shard produces one complete, unskipped pass.
+Workflow failures, failed tests, missing or duplicate signals, skipped or
+pending tests, interrupted runs, and controller or evidence-validation errors
+all fail the check.
+Evidence download has its own 10-minute limit within the coordinator's
+180-minute job budget, and exceeding that limit fails the check.
+Pull request synchronization, reopening, or closure cancels active child runs
+for that pull request, and the E2E workflow cancels a superseded child run when
+a new revision is dispatched.
+
+E2E Advisor remains advisory.
+It uses the same deterministic policy as a recommendation floor and may add
+adjacent coverage, but its model output and availability never determine the
+required check.
 
 ## Required secret
 
@@ -98,11 +113,12 @@ dispatch commands; it does not trigger E2E workflows automatically.
 ## Artifacts
 
 - `e2e-advisor-prompt.md` — task prompt sent to the advisor. Diff, changed files, metadata, and schema are exposed through deterministic turn-scoped context tools and captured in the session transcript.
-- `risk-plan.json` — deterministic risk families, invariants, and required jobs for the PR
-  head commit and changed-file set, plus a capped `automaticJobs` subset,
-  manual-expansion state, and the plan digest. Both E2E advisor projections consume the
-  required-job floor, while the separate post-merge controller rebuilds the plan and
-  dispatches the automatic subset.
+- `risk-plan.json` — deterministic risk families, invariants, required jobs,
+  changed files, and the plan digest for the pull request revision.
+  Both E2E Advisor projections consume this required-job floor.
+  The required live controller independently rebuilds the plan from GitHub's
+  pull request file list and dispatches every selected job, so this advisor
+  artifact is not an input to the required check.
 - `e2e-advisor-raw-output.txt` — raw advisor transcript and diagnostics.
 - `e2e-advisor-result.json` — parsed advisor response or execution metadata.
 - `e2e-advisor-session.html` — exported advisor session transcript.
@@ -134,6 +150,5 @@ secret. Run `npm install` first so the Pi SDK dependency is available.
 `tools/e2e-advisor/schema.json` defines the normalized coverage recommendation shape.
 `tools/e2e-advisor/targets-schema.json` defines the normalized target recommendation shape used by the `targets` and `jobs` dispatch commands.
 
-The post-merge shadow check does not establish pre-merge enforcement. Any future required check
-must verify complete E2E evidence for the same PR head commit without making model availability part
-of the merge authority.
+The required live check verifies complete E2E evidence for the same pull
+request revision without making model availability part of merge authority.

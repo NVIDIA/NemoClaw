@@ -1,0 +1,220 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: E2E / Required Live
+
+on:
+  workflow_run:
+    workflows: ["CI / Pull Request"]
+    types: [completed]
+  pull_request_target:
+    types: [synchronize, reopened, closed]
+
+permissions: {}
+
+jobs:
+  cancel-superseded:
+    if: ${{ github.event_name == 'pull_request_target' && github.repository == 'NVIDIA/NemoClaw' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Checkout trusted controller
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: "22"
+
+      - name: Install trusted controller dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Cancel superseded required live runs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          node --experimental-strip-types tools/e2e/required-live.mts
+          --mode cancel
+          --pr "${{ github.event.pull_request.number }}"
+
+  coordinate:
+    if: ${{ github.event_name == 'workflow_run' && github.repository == 'NVIDIA/NemoClaw' && github.event.workflow_run.event == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      actions: write
+      checks: write
+      contents: read
+      pull-requests: read
+    concurrency:
+      group: required-live-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+      # Let an older coordinator observe child cancellation and close its check.
+      cancel-in-progress: false
+    steps:
+      - name: Checkout trusted controller
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: "22"
+
+      - name: Install trusted controller dependencies
+        run: npm ci --ignore-scripts
+
+      - id: workspace
+        name: Create private controller workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          work_dir="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-required-live.XXXXXX")"
+          chmod 700 "$work_dir"
+          printf 'work_dir=%s\n' "$work_dir" >> "$GITHUB_OUTPUT"
+
+      - id: start
+        name: Start required live evaluation
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          node --experimental-strip-types tools/e2e/required-live.mts
+          --mode start
+          --head "${{ github.event.workflow_run.head_sha }}"
+          --head-repo "${{ github.event.workflow_run.head_repository.full_name }}"
+          --head-branch "${{ github.event.workflow_run.head_branch }}"
+          --workflow-sha "${{ github.workflow_sha }}"
+          --ci-conclusion "${{ github.event.workflow_run.conclusion }}"
+          --work-dir "${{ steps.workspace.outputs.work_dir }}"
+
+      - name: Upload required live plan
+        if: ${{ always() && steps.workspace.outputs.work_dir != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: required-live-plan-${{ github.event.workflow_run.head_sha }}
+          path: ${{ steps.workspace.outputs.work_dir }}/required-live-plan.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - id: wait
+        name: Wait for required live run
+        if: ${{ steps.start.outputs.dispatched == 'true' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ steps.start.outputs.run_id }}
+        run: |
+          wait_status=0
+          timeout --signal=TERM --kill-after=30s 105m bash -s <<'WAIT' || wait_status=$?
+          set -euo pipefail
+
+          if [[ ! "$RUN_ID" =~ ^[1-9][0-9]*$ ]]; then
+            printf '::error title=Invalid required live run ID::The controller did not provide a positive numeric run ID.\n' >&2
+            exit 1
+          fi
+
+          run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
+          last_state=""
+          while true; do
+            if ! state="$(
+              gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" \
+                --json status,conclusion \
+                --jq '.status + ":" + (if (.conclusion == null or .conclusion == "") then "none" else .conclusion end)'
+            )"; then
+              printf '::error title=Required live status query failed::Unable to query run %s. %s\n' \
+                "$RUN_ID" "$run_url" >&2
+              exit 1
+            fi
+
+            if [[ "$state" != "$last_state" ]]; then
+              case "$state" in
+                queued:none | in_progress:none | requested:none | waiting:none | pending:none)
+                  printf 'Required live run %s status=%s url=%s\n' \
+                    "$RUN_ID" "${state%%:*}" "$run_url"
+                  ;;
+                completed:success)
+                  printf 'Required live run %s status=completed conclusion=success url=%s\n' \
+                    "$RUN_ID" "$run_url"
+                  ;;
+                completed:failure | completed:cancelled | completed:timed_out | completed:action_required | completed:neutral | completed:skipped | completed:stale | completed:startup_failure)
+                  printf '::error title=Required live run did not succeed::Run %s completed with conclusion %s. %s\n' \
+                    "$RUN_ID" "${state#*:}" "$run_url" >&2
+                  ;;
+                *)
+                  printf '::error title=Unexpected required live state::Run %s returned an unsupported status/conclusion pair. %s\n' \
+                    "$RUN_ID" "$run_url" >&2
+                  ;;
+              esac
+              last_state="$state"
+            fi
+
+            case "$state" in
+              queued:none | in_progress:none | requested:none | waiting:none | pending:none)
+                sleep 10
+                ;;
+              completed:success)
+                exit 0
+                ;;
+              *)
+                exit 1
+                ;;
+            esac
+          done
+          WAIT
+
+          if [ "$wait_status" -eq 124 ]; then
+            printf '::error title=Required live wait timed out::The run did not complete within 105 minutes.\n' >&2
+          fi
+          exit "$wait_status"
+
+      - id: evidence
+        name: Download required live evidence
+        if: ${{ always() && steps.start.outputs.dispatched == 'true' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ steps.start.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          download_status=0
+          timeout --signal=TERM --kill-after=30s 10m \
+            gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" \
+              --dir "${{ steps.workspace.outputs.work_dir }}/evidence" || download_status=$?
+          if [ "$download_status" -eq 124 ]; then
+            printf '::error title=Required live evidence download timed out::Artifact download exceeded 10 minutes.\n' >&2
+          fi
+          exit "$download_status"
+
+      - id: finish
+        name: Finish required live evaluation
+        if: ${{ always() && steps.start.outputs.dispatched == 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          node --experimental-strip-types tools/e2e/required-live.mts
+          --mode finish
+          --work-dir "${{ steps.workspace.outputs.work_dir }}"
+          --state-hash "${{ steps.start.outputs.state_hash }}"
+          --check-id "${{ steps.start.outputs.check_id }}"
+          --run-id "${{ steps.start.outputs.run_id }}"
+
+      - name: Close incomplete required live check
+        if: ${{ always() && steps.start.outputs.check_id != '' && steps.start.outputs.finalized != 'true' && steps.finish.outputs.finalized != 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          node --experimental-strip-types tools/e2e/required-live.mts
+          --mode abandon
+          --check-id "${{ steps.start.outputs.check_id }}"
+          --run-id "${{ steps.start.outputs.run_id }}"
+
+      - name: Remove private controller workspace
+        if: ${{ always() && steps.workspace.outputs.work_dir != '' }}
+        run: rm -rf -- "${{ steps.workspace.outputs.work_dir }}"

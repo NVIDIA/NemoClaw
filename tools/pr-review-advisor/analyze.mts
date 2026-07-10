@@ -2141,7 +2141,6 @@ function buildReconciliationTurnContext(
       tier: context.riskPlan.tier,
       familyIds: context.riskPlan.families.map((family) => family.id),
       requiredJobIds: context.riskPlan.requiredJobs.map((job) => job.id),
-      requiresManualExpansion: context.riskPlan.requiresManualExpansion,
     },
     linkedIssues: (context.github?.linkedIssues ?? []).map(({ number, fetchError }) => ({
       number,
@@ -2173,9 +2172,6 @@ export function buildRiskPlanReviewContext(plan: RiskPlan): Record<string, unkno
       reasons: job.reasons,
       matchedFileCount: job.matchedFiles.length,
     })),
-    automaticJobs: plan.automaticJobs,
-    maxAutomaticJobs: plan.maxAutomaticJobs,
-    requiresManualExpansion: plan.requiresManualExpansion,
   };
 }
 

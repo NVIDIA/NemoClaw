@@ -8,11 +8,10 @@ Direct E2E coverage runs through Vitest.
 Interactive TUI targets require `expect`. The unified workflow installs it
 before those targets run; local runners must provide it themselves.
 
-- `.github/workflows/e2e.yaml` is the scheduled and manually
-  dispatchable live target workflow.
-- `.github/workflows/post-merge-e2e-risk-gate-shadow.yaml` is the trusted post-merge
-  controller that selects and dispatches a bounded exact-commit subset after
-  pushes to `main`.
+- `.github/workflows/e2e.yaml` is the scheduled, manually dispatchable, and
+  selectively dispatched live target workflow.
+- `.github/workflows/required-live-e2e.yaml` is the trusted pull request
+  controller that owns the required `E2E / Required Live` check.
 - `.github/workflows/e2e-branch-validation.yaml` provisions Brev instances and
   runs focused E2E targets from source on a clean machine.
 - Platform workflows such as macOS, WSL, Ollama proxy, sandbox image, and
@@ -56,41 +55,64 @@ artifact so baseline aggregation stays stable.
 Older issue references to Vitest target artifacts under `e2e-artifacts/vitest/`
 map to this consolidated `e2e-artifacts/live/` registry-target artifact layout.
 
-## Post-merge risk shadow
+## Required live PR check
 
-Every push to the `main` branch of `NVIDIA/NemoClaw` starts a model-independent
-shadow controller. It builds the deterministic risk plan from the exact
-`github.event.before` and `github.event.after` range after confirming that its checkout
-matches the pushed commit. If the plan matches runtime regression families,
-the controller dispatches at most three `automaticJobs` through `e2e.yaml`.
-The workflow definition stays on `main`, while every E2E checkout uses the
-merged commit supplied through `checkout_sha`. GitHub returns the
-dispatched workflow's run ID directly, and the controller uses that ID as the
-sole child-run selector for waiting, evidence download, and completion.
+When `CI / Pull Request` completes for a same-repository pull request, the
+trusted `.github/workflows/required-live-e2e.yaml` workflow creates the
+`E2E / Required Live` check for that revision.
+The model-independent controller resolves the open pull request, reads its
+complete changed-file list from GitHub, and builds the deterministic risk plan.
+If runtime regression families match, it dispatches every selected
+`requiredJobs` entry through `e2e.yaml`.
+If no family matches, the check succeeds without dispatching live E2E.
 
-Before E2E preparation or selected jobs can use repository secrets,
-`e2e.yaml` verifies that the requested SHA equals the workflow's own current
-`main` commit, confirms that checked-out `HEAD` matches it, proves reachability,
-and accepts only selective job dispatch with valid plan and correlation
-metadata. If `main` advances before an older controller dispatches, that child
-fails closed and the controller records failure instead of running historical
-code with current secrets. The shadow-only Vitest
-reporter then writes a `risk-signal.json` for each selected job and matrix
-shard. Each signal binds the observed checkout SHA, expected SHA, plan hash,
+The controller verifies that the pull request did not change while the plan
+was prepared.
+It records the trusted workflow revision, requires that revision to remain the
+current `main` revision immediately before dispatch, and accepts only a child
+workflow run created from that same revision.
+The `e2e.yaml` workflow definition stays on `main`, while each selected job
+checks out the pull request revision supplied through `checkout_sha`.
+Before E2E preparation or selected jobs can use repository secrets, the child
+workflow verifies that the pull request is still open, comes from
+`NVIDIA/NemoClaw`, and still points to that revision.
+It also accepts only selective job dispatches with an empty target fan-out and
+valid plan and correlation metadata.
+GitHub returns the dispatched workflow's run ID directly, and the controller
+uses that ID as the sole child-run selector for waiting, evidence download,
+and completion.
+
+The Vitest reporter writes one `risk-signal.json` for each selected job and
+matrix shard.
+The checked workflow boundary requires every policy-selected job to expose its
+matching job identity, attach the reporter to every Vitest invocation, and
+always upload its evidence artifact.
+Each signal binds the observed checkout SHA, expected SHA, plan hash,
 correlation ID, and pass, failure, skip, pending, and unhandled-error counts.
-The controller retains `post-merge-risk-plan-<sha>` for 14 days, while each
+The controller retains `required-live-plan-<sha>` for 14 days, while each
 signal travels in the selected job's existing E2E artifact.
+Its private dispatch state is protected by a SHA-256 digest that is verified
+before downloaded evidence is classified.
 
-The controller reports `E2E / Post-merge Risk Gate (shadow)` on the merged
-commit. It reports success only when every expected shard produces a complete,
-unskipped pass and the three-job cap did not omit required jobs. Selected E2E
-workflow or test failures for the merged commit report failure. Missing, partial, skipped,
-ambiguous, or manual-expansion evidence reports neutral. A plan with no matched
-runtime risk reports success without dispatching live E2E. This shadow check runs
-after merge and is not a required PR check. It disables PR comments and the
-scheduled/manual scorecard, including scorecard Slack reporting.
-Controller or evidence-verification errors close an already-created check as
-neutral so incomplete evidence cannot appear successful.
+The required check has a binary result.
+It succeeds only when the correlated E2E workflow succeeds and every expected
+job shard produces one complete, unskipped pass.
+Workflow or test failures, missing or duplicate signals, skipped or pending
+tests, interrupted runs, and controller or evidence-validation errors fail the
+check.
+The coordinator has a 180-minute job budget and gives evidence download its
+own 10-minute limit, so a stalled download fails instead of consuming the
+remaining coordination time.
+Required-live dispatches suppress PR comments and the scheduled or manual
+scorecard, including scorecard Slack reporting.
+
+Pull request synchronization, reopening, or closure cancels active child runs
+for that pull request.
+The E2E workflow also cancels a superseded child run when a new revision is
+dispatched, while the earlier controller remains available to close its check
+as failed.
+The controller does not read PR Review Advisor or E2E Advisor output, so model
+availability and recommendations are not part of merge authority.
 
 ## Onboard performance budget
 

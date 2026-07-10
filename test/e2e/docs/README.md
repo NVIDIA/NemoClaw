@@ -106,16 +106,21 @@ test/e2e/
 ## CI Entry Points
 
 - `tools/advisors/risk-plan.mts` is the small deterministic selection policy
-  shared by PR Review Advisor, E2E Advisor, and the model-independent post-merge
-  shadow controller. It maps changed runtime surfaces to invariant families and
+  shared by PR Review Advisor, E2E Advisor, and the model-independent required
+  live controller. It maps changed runtime surfaces to invariant families and
   canonical `e2e.yaml` jobs; it is not a second test runner or migration-status
-  ledger.
+  ledger. The advisors use it as recommendation context, while the required
+  controller applies it independently without model output.
 
-- `.github/workflows/post-merge-e2e-risk-gate-shadow.yaml` runs only for trusted pushes to
-  `main`. `tools/e2e-advisor/post-merge-risk-gate.mts` builds a plan from the exact
-  before/after SHAs, dispatches at most three automatic jobs, and validates
-  `risk-signal.json` evidence for every expected job and matrix shard. The
-  resulting check is post-merge shadow evidence, not a required PR gate.
+- `.github/workflows/required-live-e2e.yaml` owns the required
+  `E2E / Required Live` check for same-repository pull request revisions after
+  `CI / Pull Request` completes. `tools/e2e/required-live.mts` builds a plan
+  from GitHub's complete pull request file list, dispatches every selected job,
+  and validates `risk-signal.json` evidence for every expected job and matrix
+  shard. It also requires its trusted workflow revision to remain current on
+  `main` immediately before dispatch and verifies that the child run uses that
+  revision. Pull request synchronization, reopening, or closure cancels active
+  child runs for that pull request.
 
 - `.github/workflows/e2e.yaml` runs selected or all supported
   live E2E targets and uploads an explicit artifact allowlist with
@@ -128,12 +133,16 @@ test/e2e/
   These per-target timing summaries are artifact evidence only.
   The Slack and GitHub scorecard timing comparison remains scoped to the
   dedicated `cloud-onboard` artifact.
-  Exact-commit shadow dispatches require the requested checkout to equal the
-  workflow's current `main` commit and verify its reachability before
-  preparation. The controller uses GitHub's returned workflow-dispatch run ID
-  as the sole child-run selector for waiting, evidence download, and
-  completion, attaches `test/e2e/risk-signal-reporter.ts` to live Vitest
-  invocations, and suppresses PR reporting and scorecards.
+  Required-live dispatches require an open pull request from the base
+  repository whose current revision matches `checkout_sha` before preparation.
+  The controller uses GitHub's returned workflow-dispatch run ID as the sole
+  child-run selector for waiting, evidence download, and completion, attaches
+  `test/e2e/risk-signal-reporter.ts` to live Vitest invocations, and suppresses
+  PR reporting and scorecards. The workflow boundary requires every job named
+  by the deterministic policy to expose matching job identity, attach that
+  reporter to every Vitest invocation, and always upload one evidence artifact.
+  The check succeeds only for one complete, unskipped passing signal from every
+  expected job shard; every other outcome is a failure.
 - `.github/workflows/e2e-branch-validation.yaml`, `macos-e2e.yaml`,
   `wsl-e2e.yaml`, `ollama-proxy-e2e.yaml`, and `regression-e2e.yaml` call
   focused E2E targets directly for their E2E coverage.
