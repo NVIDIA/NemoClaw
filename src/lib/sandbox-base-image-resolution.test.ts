@@ -387,8 +387,7 @@ describe("sandbox base-image warm resolution", () => {
     expect(dockerMocks.build).toHaveBeenCalledTimes(1);
   });
 
-  it("uses an exact source-SHA image before committed branch divergence (#4680)", () => {
-    sourceMocks.inputsChanged.mockReturnValue(true);
+  it("uses an exact source-SHA image only when no release tag is discoverable (#4680)", () => {
     dockerMocks.imageInspect.mockReturnValue({ status: 0 });
 
     const resolved = resolveSandboxBaseImage(resolutionOptions());

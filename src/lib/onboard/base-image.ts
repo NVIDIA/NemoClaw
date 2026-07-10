@@ -13,9 +13,10 @@ import { getInstalledOpenshellVersion } from "./openshell-version";
 
 /**
  * Resolve a compatible sandbox-base image and pin it to a repo digest when
- * possible. PR-branch validation tries source-SHA and nearest release tags
- * before latest; an unavailable or incompatible nearest release tag requires a
- * local Dockerfile.base build instead of falling through to a mutable tag.
+ * possible. PR-branch validation tries the nearest release tag before
+ * source-SHA or latest; an unavailable or incompatible nearest release tag
+ * requires a local Dockerfile.base build instead of falling through to a
+ * mutable tag.
  */
 export function pullAndResolveBaseImageDigest(
   options: {
