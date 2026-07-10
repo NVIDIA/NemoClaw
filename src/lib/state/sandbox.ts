@@ -28,13 +28,12 @@ import { spawnSync } from "child_process";
 import { captureSandboxSshConfigCommand } from "../adapters/openshell/client.js";
 import { resolveOpenshell } from "../adapters/openshell/resolve.js";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
-import type { AgentStateFile, StateFileRestoreOwnership } from "../agent/defs.js";
+import type { AgentStateFile } from "../agent/defs.js";
 import { loadAgent } from "../agent/defs.js";
 import { isObjectRecord, type UnknownRecord } from "../core/json-types.js";
 import { shellQuote } from "../runner.js";
 import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
 import { isSensitiveFile, sanitizeConfigFile } from "../security/credential-filter.js";
-import { buildOpenClawConfigRestoreInputFromSandbox } from "./openclaw-config-restore-input.js";
 import {
   buildRestoreCleanupCommand,
   buildRestoreTarArgs,
@@ -50,7 +49,7 @@ import {
 import type { CustomPolicyEntry } from "./registry.js";
 import * as registry from "./registry.js";
 import { isSshTransportFailure } from "./ssh-transport.js";
-import { buildKeyAllowlistMergeRestoreCommand } from "./state-file-key-merge.js";
+import { restoreStateFile } from "./state-file-restore.js";
 import { runTarListing } from "./tar-listing.js";
 
 const HOME_DIR = path.resolve(process.env.HOME || os.homedir());
@@ -764,24 +763,6 @@ const SQLITE_BACKUP_PY = [
   "    src_conn.close()",
 ].join("\n");
 
-const SQLITE_RESTORE_PY = [
-  "import os, sqlite3, sys",
-  "src, dst = sys.argv[1], sys.argv[2]",
-  "os.makedirs(os.path.dirname(dst), exist_ok=True)",
-  "src_conn = sqlite3.connect('file:' + src + '?mode=ro', uri=True, timeout=30)",
-  "dst_conn = sqlite3.connect(dst, timeout=30)",
-  "try:",
-  "    dst_conn.execute('PRAGMA busy_timeout=30000')",
-  "    src_conn.backup(dst_conn)",
-  "    ok = dst_conn.execute('PRAGMA quick_check').fetchone()[0]",
-  "    if ok != 'ok':",
-  "        raise SystemExit('sqlite quick_check failed: ' + str(ok))",
-  "finally:",
-  "    dst_conn.close()",
-  "    src_conn.close()",
-  "os.chmod(dst, 0o660)",
-].join("\n");
-
 function buildStateFileBackupCommand(dir: string, spec: StateFileSpec): string {
   const remotePath = stateFileRemotePath(dir, spec.path);
   const quotedRemotePath = shellQuote(remotePath);
@@ -856,139 +837,6 @@ function backupStateFile(
   return { outcome: "backed_up", unreachable: false };
 }
 
-export function buildStateFileRestoreCommand(
-  dir: string,
-  spec: StateFileSpec,
-  refreshOpenClawConfigHash = false,
-): string {
-  const remotePath = stateFileRemotePath(dir, spec.path);
-  const quotedRemotePath = shellQuote(remotePath);
-  if (spec.strategy === "sqlite_backup") {
-    return [
-      `dst=${quotedRemotePath}`,
-      'parent="$(dirname "$dst")"',
-      '[ ! -L "$parent" ] || { echo "refusing symlinked state parent: $parent" >&2; exit 10; }',
-      '[ ! -L "$dst" ] || { echo "refusing symlinked sqlite target: $dst" >&2; exit 11; }',
-      'mkdir -p "$parent"',
-      'tmp="$(mktemp /tmp/nemoclaw-sqlite-restore.XXXXXX)"',
-      "trap 'rm -f \"$tmp\"' EXIT",
-      'cat > "$tmp"',
-      'chmod 600 "$tmp"',
-      `umask 0007; python3 -c ${shellQuote(SQLITE_RESTORE_PY)} "$tmp" "$dst"`,
-    ].join("; ");
-  }
-
-  const steps = [
-    `dst=${quotedRemotePath}`,
-    'parent="$(dirname "$dst")"',
-    '[ ! -L "$parent" ] || { echo "refusing symlinked state parent: $parent" >&2; exit 10; }',
-    '[ ! -L "$dst" ] || { echo "refusing symlinked state target: $dst" >&2; exit 11; }',
-    'mkdir -p "$parent"',
-    'tmp="$(mktemp "${parent}/.nemoclaw-restore.XXXXXX")"',
-    'trap \'rm -f "$tmp" "${anchor_tmp:-}"\' EXIT',
-    'cat > "$tmp"',
-    'chmod 640 "$tmp"',
-  ];
-
-  if (refreshOpenClawConfigHash) {
-    // OpenClaw guards openclaw.json with a `.last-good` recovery anchor: on its
-    // config-integrity check it archives any live config that differs from
-    // `.last-good` as `openclaw.json.clobbered.*` and reverts to `.last-good`.
-    // The rebuild restore writes the merged user config directly, so without
-    // refreshing the anchor OpenClaw reverts the restored config back to the
-    // freshly generated baseline captured at first boot (issue #5202). Refresh
-    // the anchor from the staged temp BEFORE swapping the live file so the
-    // integrity watcher never observes a config that disagrees with it. Stage
-    // through a temp + atomic rename and fail closed (before the live swap) so
-    // a partial/failed anchor write never leaves a stale recovery target that
-    // would let OpenClaw revert the restored config.
-    steps.push(
-      'last_good="${dst}.last-good"',
-      '[ ! -L "$last_good" ] || { echo "refusing symlinked last-good target: $last_good" >&2; exit 13; }',
-      'anchor_tmp="$(mktemp "${parent}/.nemoclaw-lastgood.XXXXXX")" || { echo "failed to stage last-good anchor" >&2; exit 14; }',
-      'cat "$tmp" > "$anchor_tmp" || { echo "failed to write last-good anchor" >&2; exit 14; }',
-      'chmod 660 "$anchor_tmp" 2>/dev/null || true',
-      'mv -f "$anchor_tmp" "$last_good" || { echo "failed to install last-good anchor" >&2; exit 14; }',
-    );
-  }
-
-  steps.push('mv -f "$tmp" "$dst"');
-
-  if (refreshOpenClawConfigHash) {
-    steps.push(
-      'hash_file="${parent}/.config-hash"',
-      '[ ! -L "$hash_file" ] || { echo "refusing symlinked config hash target: $hash_file" >&2; exit 12; }',
-      '(cd "$parent" && sha256sum "$(basename "$dst")" > .config-hash)',
-      'chmod 660 "$hash_file" 2>/dev/null || true',
-    );
-  }
-
-  return steps.join("; ");
-}
-
-function restoreStateFile(
-  configFile: string,
-  sandboxName: string,
-  dir: string,
-  spec: StateFileSpec,
-  backupPath: string,
-  ownership: StateFileRestoreOwnership | undefined,
-  allowCustomImageWholeStateFileRestore: boolean,
-  freshImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
-  previousImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
-): boolean {
-  const localPath = path.join(backupPath, spec.path);
-  if (!existsSync(localPath)) return true;
-
-  const backupContents = readFileSync(localPath);
-  _log(`Restoring state file ${spec.path} (${spec.strategy})`);
-
-  let command: string;
-  let input: Buffer | null;
-  if (ownership?.merge === "openclaw-config") {
-    command = buildStateFileRestoreCommand(dir, spec, true);
-    const result = buildOpenClawConfigRestoreInputFromSandbox({
-      backupContents,
-      dir,
-      freshImagePluginInstalls,
-      log: _log,
-      previousImagePluginInstalls,
-      specPath: spec.path,
-      sshArgs: sshArgs(configFile, sandboxName),
-    });
-    if (result.ok) {
-      input = result.input;
-    } else {
-      _log(`FAILED: ${result.error}`);
-      input = null;
-    }
-  } else if (ownership?.merge === "key-allowlist") {
-    command = allowCustomImageWholeStateFileRestore
-      ? buildStateFileRestoreCommand(dir, spec, false)
-      : buildKeyAllowlistMergeRestoreCommand(dir, spec, ownership);
-    input = backupContents;
-  } else {
-    command = buildStateFileRestoreCommand(dir, spec, false);
-    input = backupContents;
-  }
-  if (input === null) return false;
-
-  const result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), command], {
-    input,
-    stdio: ["pipe", "pipe", "pipe"],
-    timeout: 120000,
-  });
-
-  if (result.status === 0 && !result.error && !result.signal) return true;
-
-  const detail =
-    (result.stderr?.toString() || "").trim() ||
-    result.error?.message ||
-    (result.signal ? `signal ${result.signal}` : `exit ${String(result.status)}`);
-  _log(`FAILED: state file restore ${spec.path}: ${detail.substring(0, 200)}`);
-  return false;
-}
-
 // ── Backup ─────────────────────────────────────────────────────────
 
 /**
@@ -996,6 +844,7 @@ function restoreStateFile(
  * Uses the agent manifest to determine which directories contain state.
  */
 
+export { buildStateFileRestoreCommand } from "./state-file-restore.js";
 // isSshTransportFailure lives in ./ssh-transport now. Re-exported here for
 // backwards compatibility with callers that used to import it from this
 // module. Prefer importing directly from ./ssh-transport in new code.
@@ -1786,13 +1635,13 @@ function restoreSandboxStateInternal(
       if (!targetStateFile) throw new Error(`Validated target state file missing: ${spec.path}`);
       if (
         restoreStateFile(
-          configFile,
-          sandboxName,
+          sshArgs(configFile, sandboxName),
           dir,
           spec,
           backupPath,
           targetStateFile.restore,
           options.allowCustomImageWholeStateFileRestore === true,
+          _log,
           configFreshOpenClawImagePluginInstalls,
           previousOpenClawImagePluginInstalls,
         )
