@@ -3,11 +3,7 @@
 
 import { compactText } from "../core/url-utils";
 import { OPENROUTER_CREDENTIAL_ENV, OPENROUTER_PROVIDER_NAME } from "../inference/openrouter";
-import {
-  cleanupStartedOpenRouterRuntimeAdapter,
-  ensureOpenRouterRuntimeAdapter,
-  type OpenRouterRuntimeAdapterRoute,
-} from "../inference/openrouter-runtime-adapter";
+import { ensureOpenRouterRuntimeAdapter } from "../inference/openrouter-runtime-adapter";
 import { redact } from "../runner";
 import * as registry from "../state/registry";
 import { LOCAL_INFERENCE_TIMEOUT_SECS } from "./env";
@@ -58,7 +54,6 @@ export async function setupOpenRouterRuntimeInference(
       forceOpenAiLike?: boolean;
     }) => void;
     ensureAdapter?: typeof ensureOpenRouterRuntimeAdapter;
-    cleanupAdapter?: typeof cleanupStartedOpenRouterRuntimeAdapter;
     updateSandbox?: typeof registry.updateSandbox;
   } & OpenRouterRuntimeDependencies,
 ): Promise<{ handled: false } | { handled: true; result: SetupInferenceResult }> {
@@ -87,19 +82,6 @@ export async function setupOpenRouterRuntimeInference(
     return { handled: true, result: { retry: "selection" } };
   }
 
-  const cleanupAdapterAfterDownstreamFailure = (adapterRoute: OpenRouterRuntimeAdapterRoute) => {
-    if (!adapterRoute.started) return;
-    try {
-      (options.cleanupAdapter ?? cleanupStartedOpenRouterRuntimeAdapter)(adapterRoute);
-    } catch (err) {
-      error(
-        `  Failed to stop OpenRouter Runtime adapter after setup failure: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-    }
-  };
-
   const env = options.credentialValue ? { [credentialEnv]: options.credentialValue } : {};
   const providerResult = options.upsertProvider(
     options.provider,
@@ -109,7 +91,6 @@ export async function setupOpenRouterRuntimeInference(
     env,
   );
   if (!providerResult.ok) {
-    cleanupAdapterAfterDownstreamFailure(adapter);
     error(`  ${providerResult.message}`);
     if (options.isNonInteractive()) return exitProcess(providerResult.status || 1);
     return { handled: true, result: { retry: "selection" } };
@@ -133,7 +114,6 @@ export async function setupOpenRouterRuntimeInference(
     { ignoreError: true },
   );
   if (applyResult.status !== 0) {
-    cleanupAdapterAfterDownstreamFailure(adapter);
     const message =
       compactText(redact(`${applyResult.stderr || ""} ${applyResult.stdout || ""}`)) ||
       `Failed to configure inference provider '${options.provider}'.`;

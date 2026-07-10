@@ -16,12 +16,10 @@ import {
   ADAPTER_NAME,
   LOG_PATH,
   OPENROUTER_RUNTIME_ADAPTER_AUTHORIZATION_HASH_ENV,
-  OPENROUTER_RUNTIME_ADAPTER_HEALTH_ID_ENV,
   adapterAuthorizationHash,
   adapterConfigHash,
   defaultAdapterLogger,
   logAdapterEvent,
-  normalizeAdapterHealthId,
   normalizeAuthorizationHash,
   sendJson,
   type AdapterLogger,
@@ -51,14 +49,6 @@ function requireAuthorizationHash(value: unknown): string {
   return normalized;
 }
 
-function requireHealthId(value: unknown): string {
-  const normalized = normalizeAdapterHealthId(value);
-  if (!normalized) {
-    throw new Error("OpenRouter Runtime adapter health id is required");
-  }
-  return normalized;
-}
-
 function isExpectedBearerAuthorization(
   actual: string | string[] | undefined,
   expectedAuthorizationHash: string,
@@ -73,14 +63,12 @@ export function createOpenRouterRuntimeAdapterServer(
     logger?: AdapterLogger;
     upstreamTimeoutMs?: number;
     authorizationHash?: string | null;
-    healthId?: string | null;
   } = {},
 ): http.Server {
   const upstreamBaseUrl = options.upstreamBaseUrl || OPENROUTER_ENDPOINT_URL;
   const configHash = adapterConfigHash(upstreamBaseUrl);
   const logger = options.logger || defaultAdapterLogger;
   const authorizationHash = requireAuthorizationHash(options.authorizationHash);
-  const healthId = requireHealthId(options.healthId);
   return http.createServer(async (req, res) => {
     const started = Date.now();
     const url = new URL(req.url || "/", "http://127.0.0.1");
@@ -90,7 +78,7 @@ export function createOpenRouterRuntimeAdapterServer(
           ok: true,
           adapter: ADAPTER_NAME,
           configHash,
-          healthId,
+          authorizationHash,
           headerNames: OPENROUTER_DEFAULT_HEADERS.map(([name]) => name),
         });
         return;
@@ -163,18 +151,14 @@ export function startOpenRouterRuntimeAdapterFromEnv(): http.Server {
   const authorizationHash = normalizeAuthorizationHash(
     process.env[OPENROUTER_RUNTIME_ADAPTER_AUTHORIZATION_HASH_ENV],
   );
-  const healthId = normalizeAdapterHealthId(process.env[OPENROUTER_RUNTIME_ADAPTER_HEALTH_ID_ENV]);
   if (!Number.isInteger(port) || port <= 0) {
     throw new Error("NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT must be a valid port");
   }
   if (!authorizationHash) {
     throw new Error(`${OPENROUTER_RUNTIME_ADAPTER_AUTHORIZATION_HASH_ENV} is required`);
   }
-  if (!healthId) {
-    throw new Error(`${OPENROUTER_RUNTIME_ADAPTER_HEALTH_ID_ENV} is required`);
-  }
 
-  const server = createOpenRouterRuntimeAdapterServer({ authorizationHash, healthId });
+  const server = createOpenRouterRuntimeAdapterServer({ authorizationHash });
   server.listen(port, OPENROUTER_RUNTIME_ADAPTER_BIND_HOST, () => {
     defaultAdapterLogger("adapter_ready", {
       bindHost: OPENROUTER_RUNTIME_ADAPTER_BIND_HOST,

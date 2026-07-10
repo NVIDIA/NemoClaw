@@ -16,7 +16,6 @@ import { OPENROUTER_RUNTIME_ADAPTER_MAX_BODY_BYTES } from "./openrouter-runtime-
 const servers: http.Server[] = [];
 const OPENROUTER_TEST_TOKEN = "sk-or-test";
 const OPENROUTER_TEST_AUTHORIZATION_HASH = adapterAuthorizationHash(OPENROUTER_TEST_TOKEN);
-const OPENROUTER_TEST_HEALTH_ID = "0123456789abcdef0123456789abcdef";
 
 afterEach(async () => {
   await Promise.all(
@@ -46,7 +45,6 @@ function createTestAdapter(
 ): http.Server {
   return createOpenRouterRuntimeAdapterServer({
     authorizationHash: OPENROUTER_TEST_AUTHORIZATION_HASH,
-    healthId: OPENROUTER_TEST_HEALTH_ID,
     ...options,
   });
 }
@@ -135,12 +133,10 @@ describe("OpenRouter Runtime adapter", () => {
     expect(healthBody).toMatchObject({
       ok: true,
       adapter: "openrouter-runtime",
-      healthId: OPENROUTER_TEST_HEALTH_ID,
+      authorizationHash: OPENROUTER_TEST_AUTHORIZATION_HASH,
       headerNames: ["HTTP-Referer", "X-OpenRouter-Title"],
     });
-    expect(healthBody).not.toHaveProperty("authorizationHash");
     expect(JSON.stringify(healthBody)).not.toContain(OPENROUTER_TEST_TOKEN);
-    expect(JSON.stringify(healthBody)).not.toContain(OPENROUTER_TEST_AUTHORIZATION_HASH);
 
     const missingAuth = await fetch(`${adapterBaseUrl}/v1/chat/completions`, {
       method: "POST",

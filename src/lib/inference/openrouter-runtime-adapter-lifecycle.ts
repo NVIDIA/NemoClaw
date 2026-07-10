@@ -44,14 +44,11 @@ import {
   LOCK_PATH,
   LOG_PATH,
   OPENROUTER_RUNTIME_ADAPTER_AUTHORIZATION_HASH_ENV,
-  OPENROUTER_RUNTIME_ADAPTER_HEALTH_ID_ENV,
   PID_PATH,
   STATE_DIR,
   STATE_PATH,
   adapterAuthorizationHash,
   adapterConfigHash,
-  generateAdapterHealthId,
-  normalizeAdapterHealthId,
   normalizeAuthorizationHash,
 } from "./openrouter-runtime-adapter-common";
 
@@ -65,11 +62,7 @@ type AdapterRoute = {
   localBaseUrl: string;
   logPath: string;
   credentialEnv: string;
-  started: boolean;
-  startedPid: number | null;
 };
-
-export type OpenRouterRuntimeAdapterRoute = AdapterRoute;
 
 type EnsureOpenRouterRuntimeAdapterOptions = {
   authorizationToken?: string | null;
@@ -145,25 +138,12 @@ function cleanupFailedAdapterStartup(): void {
   removeLocalAdapterFile(STATE_PATH);
 }
 
-export function cleanupStartedOpenRouterRuntimeAdapter(
-  adapter: Pick<OpenRouterRuntimeAdapterRoute, "started" | "startedPid">,
-): void {
-  if (!adapter.started || !adapter.startedPid) return;
-  const persistedPid = loadPersistedPid();
-  if (persistedPid !== adapter.startedPid) return;
-  if (isAdapterProcess(adapter.startedPid)) {
-    run(["kill", String(adapter.startedPid)], { ignoreError: true, suppressOutput: true });
-  }
-  removeLocalAdapterFile(PID_PATH);
-  removeLocalAdapterFile(STATE_PATH);
-}
-
 function getAdapterScriptPath(): string {
   return path.join(__dirname, "openrouter-runtime-adapter-entry.js");
 }
 
 function probeAdapterHealth(
-  options: { port?: number; configHash?: string | null; healthId?: string | null } = {},
+  options: { port?: number; configHash?: string | null; authorizationHash?: string | null } = {},
 ): Promise<boolean> {
   return new Promise((resolve) => {
     const req = http.request(
@@ -187,7 +167,8 @@ function probeAdapterHealth(
             resolve(
               body.adapter === ADAPTER_NAME &&
                 (!options.configHash || body.configHash === options.configHash) &&
-                (!options.healthId || body.healthId === options.healthId),
+                (!options.authorizationHash ||
+                  body.authorizationHash === options.authorizationHash),
             );
           } catch {
             resolve(false);
@@ -206,23 +187,24 @@ function probeAdapterHealth(
 
 async function waitForAdapterHealth(
   configHash: string,
-  healthId: string,
+  authorizationHash: string,
   port = OPENROUTER_RUNTIME_ADAPTER_PORT,
 ): Promise<boolean> {
-  return waitForLocalAdapterHealth(() => probeAdapterHealth({ port, configHash, healthId }), {
-    attempts: 20,
-    intervalMs: 100,
-  });
+  return waitForLocalAdapterHealth(
+    () => probeAdapterHealth({ port, configHash, authorizationHash }),
+    {
+      attempts: 20,
+      intervalMs: 100,
+    },
+  );
 }
 
-function adapterRoute(started: boolean, startedPid: number | null): AdapterRoute {
+function adapterRoute(): AdapterRoute {
   return {
     baseUrl: OPENROUTER_RUNTIME_ADAPTER_OPENAI_BASE_URL,
     localBaseUrl: OPENROUTER_RUNTIME_ADAPTER_LOOPBACK_OPENAI_BASE_URL,
     logPath: LOG_PATH,
     credentialEnv: OPENROUTER_CREDENTIAL_ENV,
-    started,
-    startedPid,
   };
 }
 
@@ -268,34 +250,30 @@ async function ensureOpenRouterRuntimeAdapterLocked(
   const configHash = adapterConfigHash(upstreamBaseUrl);
   const priorState = readLocalAdapterJsonFile(STATE_PATH);
   const authorizationHash = resolveAuthorizationHash(options.authorizationToken, priorState);
-  const priorHealthId = normalizeAdapterHealthId(priorState?.healthId);
   const priorPid = loadPersistedPid();
   if (
     isAdapterProcess(priorPid) &&
     priorState?.upstreamBaseUrl === upstreamBaseUrl &&
     priorState?.configHash === configHash &&
     normalizeAuthorizationHash(priorState?.authorizationHash) === authorizationHash &&
-    priorHealthId &&
-    (await probeAdapterHealth({ configHash, healthId: priorHealthId }))
+    (await probeAdapterHealth({ configHash, authorizationHash }))
   ) {
-    return adapterRoute(false, null);
+    return adapterRoute();
   }
 
   killStaleAdapter();
-  const healthId = generateAdapterHealthId();
   const child = spawnDetachedNodeAdapter({
     scriptPath: getAdapterScriptPath(),
     env: {
       NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT: String(OPENROUTER_RUNTIME_ADAPTER_PORT),
       [OPENROUTER_RUNTIME_ADAPTER_AUTHORIZATION_HASH_ENV]: authorizationHash,
-      [OPENROUTER_RUNTIME_ADAPTER_HEALTH_ID_ENV]: healthId,
     },
     buildEnv: buildSubprocessEnv,
   });
   try {
     persistLocalAdapterPid(PID_PATH, child.pid);
 
-    if (!(await waitForAdapterHealth(configHash, healthId))) {
+    if (!(await waitForAdapterHealth(configHash, authorizationHash))) {
       throw new Error(
         `OpenRouter Runtime adapter did not become healthy on ${OPENROUTER_RUNTIME_ADAPTER_LOOPBACK_OPENAI_BASE_URL}`,
       );
@@ -305,11 +283,10 @@ async function ensureOpenRouterRuntimeAdapterLocked(
       upstreamBaseUrl,
       configHash,
       authorizationHash,
-      healthId,
       pid: child.pid ?? null,
       updatedAt: new Date().toISOString(),
     });
-    if (!(await probeAdapterHealth({ configHash, healthId }))) {
+    if (!(await probeAdapterHealth({ configHash, authorizationHash }))) {
       throw new Error(
         `OpenRouter Runtime adapter health changed before registration on ${OPENROUTER_RUNTIME_ADAPTER_LOOPBACK_OPENAI_BASE_URL}`,
       );
@@ -319,7 +296,7 @@ async function ensureOpenRouterRuntimeAdapterLocked(
     throw err;
   }
 
-  return adapterRoute(true, child.pid ?? null);
+  return adapterRoute();
 }
 
 export async function ensureOpenRouterRuntimeAdapter(
