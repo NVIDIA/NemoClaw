@@ -216,6 +216,37 @@ describe("sandbox inference route probe result", () => {
     });
   });
 
+  it("normalizes missing-helper diagnostics reported on stderr (#6192)", () => {
+    const parsed = parseSandboxInferenceRouteProbeResult({
+      status: 127,
+      output: "",
+      stderr: `exec: ${DCODE_MANAGED_EXEC_LAUNCHER}: not found`,
+    });
+
+    expect(parsed).toMatchObject({
+      healthy: false,
+      broken: false,
+      httpStatus: 0,
+      detail: DCODE_MANAGED_EXEC_MISSING_DETAIL,
+    });
+  });
+
+  it("redacts token-like stderr before returning probe diagnostics (#6192)", () => {
+    const parsed = parseSandboxInferenceRouteProbeResult({
+      status: 0,
+      output: "OK 200",
+      stderr: "startup failed NVIDIA_API_KEY=super-secret",
+    });
+
+    expect(parsed).toMatchObject({
+      healthy: false,
+      broken: false,
+      httpStatus: 0,
+    });
+    expect(parsed.detail).toContain("NVIDIA_API_KEY=<REDACTED>");
+    expect(parsed.detail).not.toContain("super-secret");
+  });
+
   it("fails closed with rebuild guidance when the DCode helper is missing (#6192)", () => {
     const output = `exec: ${DCODE_MANAGED_EXEC_LAUNCHER}: not found`;
 

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { redactSensitiveText } from "../../security/redact";
+
 export type InferenceRouteProbeAgent = { name: string } | null;
 
 export type ParsedInferenceRouteProbe = {
@@ -62,6 +64,12 @@ export function isDcodeManagedExecMissingDetail(detail: string): boolean {
   );
 }
 
+function formatUntrustedProbeDetail(detail: string): string {
+  const normalized = detail.replace(/\s+/g, " ").trim();
+  if (isDcodeManagedExecMissingDetail(normalized)) return DCODE_MANAGED_EXEC_MISSING_DETAIL;
+  return redactSensitiveText(normalized) ?? "";
+}
+
 /**
  * Classify a route result that is already known not to be healthy.
  * Final HTTP 200-499 responses are handled as reachable before this helper is
@@ -112,7 +120,7 @@ export function parseSandboxInferenceRouteProbeResult(
       healthy: false,
       broken: false,
       httpStatus: 0,
-      detail: stderr.replace(/\s+/g, " ").slice(0, 240),
+      detail: formatUntrustedProbeDetail(stderr),
     };
   }
   const rawDetail = String(result.output ?? "").trim();
@@ -128,10 +136,7 @@ export function parseSandboxInferenceRouteProbeResult(
   const healthy = commandSucceeded && match?.[1] === "OK" && isReachableHttpStatus;
   const broken =
     commandSucceeded && Boolean(match) && (match?.[1] === "BROKEN" || !isReachableHttpStatus);
-  const trustedDetail =
-    !healthy && !broken && isDcodeManagedExecMissingDetail(detail)
-      ? DCODE_MANAGED_EXEC_MISSING_DETAIL
-      : detail;
+  const trustedDetail = !healthy && !broken ? formatUntrustedProbeDetail(detail) : detail;
   return {
     healthy,
     broken,
