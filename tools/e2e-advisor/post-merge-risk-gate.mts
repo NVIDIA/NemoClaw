@@ -19,6 +19,7 @@ import { readPrivateRegularFile, writePrivateRegularFile } from "./private-file.
 import type { E2eRiskSignal } from "./risk-signal.ts";
 
 const E2E_WORKFLOW = "e2e.yaml";
+const E2E_WORKFLOW_PATH = `.github/workflows/${E2E_WORKFLOW}`;
 const CHECK_NAME = "E2E / Post-merge Risk Gate (shadow)";
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const HASH_PATTERN = /^[a-f0-9]{64}$/u;
@@ -27,6 +28,7 @@ const SHARD_PATTERN = /^(?:default|[A-Za-z0-9][A-Za-z0-9_-]*)$/u;
 const CORRELATION_PATTERN =
   /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u;
 const MAX_PLAN_BYTES = 1024 * 1024;
+const MAX_CONTROLLER_ERROR_CHARS = 512;
 const DEFAULT_EVIDENCE_LIMITS = {
   maxDepth: 8,
   maxEntries: 4096,
@@ -54,6 +56,8 @@ type CheckConclusion = "success" | "failure" | "neutral";
 type WorkflowRun = {
   id: number;
   name: string;
+  path: string;
+  workflow_id: number;
   event: string;
   head_sha: string;
   status: string;
@@ -69,6 +73,12 @@ type WorkflowDispatchDetails = {
   workflow_run_id: number;
   run_url: string;
   html_url: string;
+};
+
+type WorkflowRunIdentity = {
+  childRunId: number;
+  correlationId: string;
+  repository: string;
 };
 
 export type RiskGateState = {
@@ -102,7 +112,7 @@ export function assertTrustedMainPush(options: {
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
@@ -181,7 +191,9 @@ function readRegularJson(file: string, maxBytes = MAX_PLAN_BYTES): unknown {
 }
 
 export function validateRiskGateState(value: unknown): RiskGateState {
-  if (!isRecord(value) || value.version !== 1) throw new Error("invalid risk-gate state version");
+  if (!isObjectRecord(value) || value.version !== 1) {
+    throw new Error("invalid risk-gate state version");
+  }
   if (typeof value.commitSha !== "string" || !SHA_PATTERN.test(value.commitSha)) {
     throw new Error("risk-gate state commit SHA is invalid");
   }
@@ -200,7 +212,9 @@ export function validateRiskGateState(value: unknown): RiskGateState {
   ) {
     throw new Error("risk-gate state expected jobs are invalid");
   }
-  if (!isRecord(value.expectedShards)) throw new Error("risk-gate state shards are invalid");
+  if (!isObjectRecord(value.expectedShards)) {
+    throw new Error("risk-gate state shards are invalid");
+  }
   const shardJobs = Object.keys(value.expectedShards).sort();
   if (JSON.stringify(shardJobs) !== JSON.stringify([...value.expectedJobs].sort())) {
     throw new Error("risk-gate state shard jobs do not match expected jobs");
@@ -223,7 +237,7 @@ export function validateRiskGateState(value: unknown): RiskGateState {
 }
 
 export function validateRiskPlan(value: unknown, allowedJobs: ReadonlySet<string>): RiskPlan {
-  if (!isRecord(value)) throw new Error("risk plan must be an object");
+  if (!isObjectRecord(value)) throw new Error("risk plan must be an object");
   if (value.version !== 1) throw new Error("unsupported risk-plan version");
   if (typeof value.headSha !== "string" || !SHA_PATTERN.test(value.headSha)) {
     throw new Error("risk plan headSha must be a lowercase 40-character SHA");
@@ -263,7 +277,9 @@ export function validateSignal(
     "commitSha" | "planHash" | "correlationId" | "expectedJobs" | "expectedShards"
   >,
 ): E2eRiskSignal {
-  if (!isRecord(value) || value.version !== 1) throw new Error("invalid risk signal version");
+  if (!isObjectRecord(value) || value.version !== 1) {
+    throw new Error("invalid risk signal version");
+  }
   const signal = value as E2eRiskSignal;
   if (!state.expectedJobs.includes(signal.jobId)) throw new Error("risk signal job is unexpected");
   if (!state.expectedShards[signal.jobId]?.includes(signal.shardId)) {
@@ -456,12 +472,24 @@ async function completeCheck(
   });
 }
 
+function controllerErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const singleLine = message
+    .replace(/[\r\n\t]+/gu, " ")
+    .replace(/\s{2,}/gu, " ")
+    .trim();
+  return singleLine.length > MAX_CONTROLLER_ERROR_CHARS
+    ? `${singleLine.slice(0, MAX_CONTROLLER_ERROR_CHARS - 3)}...`
+    : singleLine;
+}
+
 async function completeNeutralAfterControllerError(
   context: { repository: string; checkRunId: number },
   token: string,
   title: string,
-  detailsUrl?: string,
+  options: { error: unknown; detailsUrl?: string },
 ): Promise<boolean> {
+  const reason = controllerErrorMessage(options.error).replace(/`/gu, "'");
   try {
     await completeCheck(
       context,
@@ -470,9 +498,10 @@ async function completeNeutralAfterControllerError(
         conclusion: "neutral",
         title,
         summary:
-          "The shadow controller could not produce complete, trustworthy evidence. Inspect the controller workflow for details.",
+          "The shadow controller could not produce complete, trustworthy evidence." +
+          `\n\nController error: \`${reason}\``,
       },
-      detailsUrl,
+      options.detailsUrl,
     );
     return true;
   } catch (error) {
@@ -522,12 +551,12 @@ export function expectedRiskSignalShards(
   workflowPath = ".github/workflows/e2e.yaml",
 ): Record<string, string[]> {
   const workflow = YAML.parse(fs.readFileSync(workflowPath, "utf8")) as unknown;
-  const jobs = isRecord(workflow) && isRecord(workflow.jobs) ? workflow.jobs : {};
+  const jobs = isObjectRecord(workflow) && isObjectRecord(workflow.jobs) ? workflow.jobs : {};
   return Object.fromEntries(
     jobIds.map((jobId) => {
-      const job = isRecord(jobs[jobId]) ? jobs[jobId] : {};
-      const strategy = isRecord(job.strategy) ? job.strategy : {};
-      const matrix = isRecord(strategy.matrix) ? strategy.matrix : null;
+      const job = isObjectRecord(jobs[jobId]) ? jobs[jobId] : {};
+      const strategy = isObjectRecord(job.strategy) ? job.strategy : {};
+      const matrix = isObjectRecord(strategy.matrix) ? strategy.matrix : null;
       let shards = ["default"];
       if (matrix) {
         const keys = Object.keys(matrix);
@@ -538,7 +567,7 @@ export function expectedRiskSignalShards(
           }
         } else if (keys.length === 1 && Array.isArray(matrix.include)) {
           shards = matrix.include.map((entry) => {
-            if (!isRecord(entry) || typeof entry.agent !== "string") {
+            if (!isObjectRecord(entry) || typeof entry.agent !== "string") {
               throw new Error(`${jobId} risk matrix include entries must name an agent`);
             }
             return entry.agent;
@@ -563,7 +592,9 @@ export function validateWorkflowDispatchDetails(
   value: unknown,
   repository: string,
 ): WorkflowDispatchDetails {
-  if (!isRecord(value)) throw new Error("GitHub returned invalid workflow dispatch details");
+  if (!isObjectRecord(value)) {
+    throw new Error("GitHub returned invalid workflow dispatch details");
+  }
   const runId = value.workflow_run_id;
   if (!Number.isSafeInteger(runId) || (runId as number) < 1) {
     throw new Error("GitHub returned an invalid dispatched workflow run id");
@@ -574,6 +605,47 @@ export function validateWorkflowDispatchDetails(
     throw new Error("GitHub returned mismatched workflow dispatch URLs");
   }
   return value as WorkflowDispatchDetails;
+}
+
+function diagnosticValue(value: unknown): string {
+  const serialized = JSON.stringify(value) ?? String(value);
+  return serialized.length > 256 ? `${serialized.slice(0, 253)}...` : serialized;
+}
+
+export function assertCorrelatedWorkflowRun(
+  child: WorkflowRun,
+  identity: WorkflowRunIdentity,
+): void {
+  const childRunUrl = `https://github.com/${identity.repository}/actions/runs/${identity.childRunId}`;
+  const mismatches: string[] = [];
+  const requireEqual = (field: string, expected: unknown, actual: unknown): void => {
+    if (actual !== expected) {
+      mismatches.push(
+        `${field} expected=${diagnosticValue(expected)} actual=${diagnosticValue(actual)}`,
+      );
+    }
+  };
+
+  requireEqual("id", identity.childRunId, child.id);
+  requireEqual("path", E2E_WORKFLOW_PATH, child.path);
+  requireEqual("event", "workflow_dispatch", child.event);
+  requireEqual("html_url", childRunUrl, child.html_url);
+  requireEqual("display_title", `E2E risk ${identity.correlationId}`, child.display_title);
+  if (!SHA_PATTERN.test(child.head_sha)) {
+    mismatches.push(
+      `head_sha expected="40 lowercase hexadecimal characters" actual=${diagnosticValue(child.head_sha)}`,
+    );
+  }
+  if (!Number.isSafeInteger(child.workflow_id) || child.workflow_id < 1) {
+    mismatches.push(
+      `workflow_id expected="positive safe integer" actual=${diagnosticValue(child.workflow_id)}`,
+    );
+  }
+  if (mismatches.length > 0) {
+    throw new Error(
+      `correlated E2E workflow identity mismatch: ${mismatches.join("; ")}; observed run_name=${diagnosticValue(child.name)} workflow_id=${diagnosticValue(child.workflow_id)}`,
+    );
+  }
 }
 
 export async function dispatchRiskWorkflow(options: {
@@ -669,6 +741,9 @@ async function start(options: {
       });
       appendOutput("dispatched", "false");
       appendOutput("finalized", "true");
+      console.log(
+        `Completed shadow check without dispatch: plan=${plan.planHash.slice(0, 12)} selected_jobs=none`,
+      );
       return;
     }
 
@@ -698,11 +773,15 @@ async function start(options: {
     appendOutput("state_hash", sha256(serializedState));
     appendOutput("run_id", String(childRunId));
     appendOutput("dispatched", "true");
+    console.log(
+      `Dispatched risk-selected E2E run ${childRunId}: plan=${plan.planHash.slice(0, 12)} selected_jobs=${plan.automaticJobs.join(",")} url=https://github.com/${repository}/actions/runs/${childRunId}`,
+    );
   } catch (error) {
     const finalized = await completeNeutralAfterControllerError(
       { repository, checkRunId },
       token,
       "Risk-selected E2E could not be dispatched",
+      { error },
     );
     if (finalized) appendOutput("finalized", "true");
     throw error;
@@ -793,16 +872,14 @@ export async function finishRiskGate(options: {
       token,
       { userAgent: "nemoclaw-e2e-risk-gate" },
     );
-    if (
-      child.id !== childRunId ||
-      child.name !== "E2E" ||
-      child.event !== "workflow_dispatch" ||
-      !SHA_PATTERN.test(child.head_sha) ||
-      child.html_url !== childRunUrl ||
-      child.display_title !== `E2E risk ${state.correlationId}`
-    ) {
-      throw new Error("correlated E2E workflow identity changed");
-    }
+    assertCorrelatedWorkflowRun(child, {
+      childRunId,
+      correlationId: state.correlationId,
+      repository,
+    });
+    console.log(
+      `Verified correlated E2E run ${childRunId}: conclusion=${child.conclusion ?? "none"} url=${childRunUrl}`,
+    );
     const signals =
       child.conclusion === "success"
         ? findSignalFiles(options.evidencePath).map((file) =>
@@ -817,13 +894,15 @@ export async function finishRiskGate(options: {
       requiresManualExpansion: state.requiresManualExpansion,
     });
     await completeCheck(context, token, verdict, childRunUrl);
+    console.log(`Completed shadow check: conclusion=${verdict.conclusion} title=${verdict.title}`);
   } catch (error) {
-    await completeNeutralAfterControllerError(
+    const finalized = await completeNeutralAfterControllerError(
       context,
       token,
       "Risk-selected E2E evidence could not be verified",
-      childRunUrl,
+      { error, detailsUrl: childRunUrl },
     );
+    if (finalized) appendOutput("finalized", "true");
     throw error;
   }
 }
@@ -840,6 +919,15 @@ async function abandon(checkRunId: number): Promise<void> {
     summary:
       "The shadow controller stopped before it could produce complete evidence. Inspect the controller workflow for details.",
   });
+}
+
+function reportControllerError(error: unknown): void {
+  const message = controllerErrorMessage(error);
+  console.error(message);
+  if (process.env.GITHUB_ACTIONS === "true") {
+    const escaped = message.replace(/%/gu, "%25").replace(/\r/gu, "%0D").replace(/\n/gu, "%0A");
+    console.error(`::error title=Post-merge E2E risk gate controller failed::${escaped}`);
+  }
 }
 
 async function main(): Promise<void> {
@@ -871,7 +959,7 @@ async function main(): Promise<void> {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : String(error));
+    reportControllerError(error);
     process.exit(1);
   });
 }

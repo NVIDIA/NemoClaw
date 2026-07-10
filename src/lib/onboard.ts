@@ -150,6 +150,7 @@ const {
 const { applySessionRecovery } =
   require("./onboard/session-recovery") as typeof import("./onboard/session-recovery");
 const bedrockRuntimeOnboard: typeof import("./onboard/bedrock-runtime") = require("./onboard/bedrock-runtime");
+const openrouterRuntimeOnboard: typeof import("./onboard/openrouter-runtime") = require("./onboard/openrouter-runtime");
 const {
   installOllamaOnLinux,
 }: typeof import("./onboard/install-ollama-linux") = require("./onboard/install-ollama-linux");
@@ -164,7 +165,6 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const pRetry = require("p-retry");
-
 const runner: typeof import("./runner") = require("./runner");
 const { ROOT, SCRIPTS, redact, run, runCapture, runCaptureEx, runFile, validateName } = runner;
 const braveProviderProfile: typeof import("./onboard/brave-provider-profile") = require("./onboard/brave-provider-profile");
@@ -2298,7 +2298,6 @@ async function createSandboxWithBaseImageResolution(
   preparedBuildContext: PreparedSandboxBuildContext | null = null,
 ) {
   step(6, 8, "Creating sandbox");
-
   const sandboxName = validateName(
     sandboxNameOverride ?? (await promptValidatedSandboxName(agent)),
     "sandbox name",
@@ -2688,7 +2687,7 @@ async function createSandboxWithBaseImageResolution(
         console.warn(`  Warning: failed to remove old sandbox image '${previousEntry.imageTag}'.`);
       }
     }
-    registry.removeSandbox(sandboxName);
+    sandboxLifecycle.removeSandboxUnlessSessionReservation(previousEntry, sandboxName);
   }
 
   // Stage build context — use the custom Dockerfile path when provided,
@@ -3781,6 +3780,7 @@ function getSetupInferenceDeps(): SetupInferenceDeps {
     classifyApplyFailure,
     localInferenceTimeoutSecs: LOCAL_INFERENCE_TIMEOUT_SECS,
     bedrockRuntimeOnboard,
+    openrouterRuntimeOnboard,
     validateLocalProvider,
     getLocalProviderHealthCheck,
     getLocalProviderBaseUrl,

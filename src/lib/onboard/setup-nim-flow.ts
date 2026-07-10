@@ -7,7 +7,6 @@ import {
   resolveAgentProviderInferenceApi,
 } from "../inference/config";
 import type { GatewayRouteDiscoveryConstraints } from "../inference/gateway-route-compatibility";
-import { OPENROUTER_FEATURED_MODELS_URL } from "../inference/openrouter";
 import type { VllmProfile } from "../inference/vllm";
 import { isBackToSelection } from "../navigation";
 import type { HermesAuthMethod } from "./hermes-auth";
@@ -342,14 +341,7 @@ export function createSetupNim(
       defaultModel: resolveAgentDefaultCloudModel(agent),
       writeLine: deps.log,
     });
-    const openRouterFeaturedModels = deps.createNvidiaFeaturedModelSession({
-      catalogLabel: "OpenRouter's featured model catalog",
-      catalogUrl: OPENROUTER_FEATURED_MODELS_URL,
-      defaultModel: resolveAgentDefaultCloudModel(agent),
-      loadingMessage: "  Loading OpenRouter's featured model catalog...",
-      retiredModelIds: [],
-      writeLine: deps.log,
-    });
+    const openRouterFeaturedModels = nvidiaFeaturedModels;
     const createSelectionState = (): SetupNimSelectionState => {
       const state: SetupNimSelectionState = {
         model,

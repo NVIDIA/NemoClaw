@@ -6,9 +6,9 @@ import type { CaptureOpenshellResult } from "./adapters/openshell/client";
 import { captureOpenshellCommand } from "./adapters/openshell/client";
 import { resolveOpenshell } from "./adapters/openshell/resolve";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
+import { isObjectRecord } from "./core/json-types";
 import { GATEWAY_PORT } from "./core/ports";
 import { getNamedGatewayLifecycleState } from "./gateway-runtime-action";
-import { resolveGatewayName } from "./onboard/gateway-binding";
 import { getLiveGatewayInference } from "./inference/live";
 import type {
   GatewayHealth,
@@ -24,6 +24,7 @@ import type {
   MessagingAgentId,
   MessagingSerializableValue,
 } from "./messaging/manifest";
+import { resolveGatewayName } from "./onboard/gateway-binding";
 import * as registry from "./state/registry";
 import { createSystemDeps, parseSshProcesses } from "./state/sandbox-session";
 import { getServiceStatuses, showStatus as showServiceStatus } from "./tunnel/services";
@@ -269,10 +270,6 @@ function isStringPair(value: unknown): value is [string, string] {
     typeof value[0] === "string" &&
     typeof value[1] === "string"
   );
-}
-
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function readGatewayLog(rootDir: string, sandboxName: string): string | null {

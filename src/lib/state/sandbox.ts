@@ -30,7 +30,7 @@ import { resolveOpenshell } from "../adapters/openshell/resolve.js";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
 import type { AgentStateFile } from "../agent/defs.js";
 import { loadAgent } from "../agent/defs.js";
-import { isRecord, type UnknownRecord } from "../core/json-types.js";
+import { isObjectRecord, type UnknownRecord } from "../core/json-types.js";
 import { shellQuote } from "../runner.js";
 import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
 import { isSensitiveFile, sanitizeConfigFile } from "../security/credential-filter.js";
@@ -190,7 +190,7 @@ function isStringArray(value: unknown): value is string[] {
 
 function isStateFileSpec(value: unknown): value is StateFileSpec {
   return (
-    isRecord(value) &&
+    isObjectRecord(value) &&
     typeof value.path === "string" &&
     (value.strategy === "copy" || value.strategy === "sqlite_backup") &&
     normalizeStateFileSpec({ path: value.path, strategy: value.strategy }) !== null
@@ -198,7 +198,7 @@ function isStateFileSpec(value: unknown): value is StateFileSpec {
 }
 
 function isInstanceBackup(value: unknown): value is InstanceBackup {
-  if (!isRecord(value) || !isStateDirArray(value.stateDirs)) return false;
+  if (!isObjectRecord(value) || !isStateDirArray(value.stateDirs)) return false;
   return (
     typeof value.instanceId === "string" &&
     typeof value.agentType === "string" &&
@@ -248,7 +248,7 @@ export function hasAuthoritativeOpenClawImagePluginProvenance(value: {
 }
 
 function isRebuildManifest(value: unknown): value is RebuildManifest {
-  if (!isRecord(value) || !isStateDirArray(value.stateDirs)) return false;
+  if (!isObjectRecord(value) || !isStateDirArray(value.stateDirs)) return false;
   const dir = typeof value.dir === "string" ? value.dir : value.writableDir;
   return (
     typeof value.version === "number" &&
@@ -1766,7 +1766,7 @@ function readManifestPayload(backupPath: string): unknown | null {
 function hasInvalidMarkedOpenClawPluginProvenance(backupPath: string): boolean {
   const parsed = readManifestPayload(backupPath);
   return (
-    isRecord(parsed) &&
+    isObjectRecord(parsed) &&
     parsed.reconcileOpenClawImagePluginProvenance === true &&
     !hasAuthoritativeOpenClawImagePluginProvenance(parsed)
   );
