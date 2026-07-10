@@ -56,7 +56,7 @@ describe("shouldCleanupGatewayAfterConfirmedFinalDestroy", () => {
     ).toBe(false);
   });
 
-  it("rechecks live state after observing an empty registry", () => {
+  it("preserves the gateway when a live sandbox appears after the empty-registry check", () => {
     const events: string[] = [];
     expect(
       shouldCleanupGatewayAfterConfirmedFinalDestroy(
@@ -71,6 +71,7 @@ describe("shouldCleanupGatewayAfterConfirmedFinalDestroy", () => {
           },
           liveSandboxProbe: () => {
             events.push("live-sandbox-observed");
+            // False means the host probe observed a sandbox during the TOCTOU window.
             return false;
           },
         },
@@ -126,7 +127,7 @@ describe("shouldCleanupGatewayAfterConfirmedFinalDestroy", () => {
       probeFailed: true,
     });
     expect(debug).toHaveBeenCalledWith(
-      "Docker container probe failed for sandbox 'npmtest'; preserving shared gateway.",
+      "Docker container probe failed for sandbox 'npmtest'; preserving shared gateway: Error: docker unavailable",
     );
   });
 });

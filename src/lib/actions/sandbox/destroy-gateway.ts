@@ -121,8 +121,8 @@ export function cleanupGatewayAfterLastSandbox(
    * an existing installation is being recovered or removed.
    * Source-fix constraint: NemoClaw cannot add the modern verb to historical
    * OpenShell builds, so cleanup tries their legacy verb best-effort.
-   * Regression proof: destroy-gateway-cleanup.test.ts covers successful remove
-   * and remove-nonzero fallback while preserving Docker-volume cleanup.
+   * Regression proof: test/cli/destroy-gateway-cleanup.test.ts covers successful
+   * remove and remove-nonzero fallback while preserving Docker-volume cleanup.
    * Removal condition: remove the fallback when every supported recovery and
    * teardown entry point upgrades OpenShell to the blueprint minimum (currently
    * 0.0.72) before this function can run.

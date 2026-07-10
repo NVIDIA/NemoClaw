@@ -123,6 +123,17 @@ describe("stopHostGatewayProcesses target filtering", () => {
     expect(fs.existsSync(pidFile)).toBe(false);
   });
 
+  it("skips an untagged legacy no-argument launch until onboarding migrates it", () => {
+    const { kill, pidFile, result } = stopTargetedPid(
+      9999559,
+      "/opt/openshell/openshell-gateway\n",
+    );
+
+    expect(result.skippedNonMatchingPids).toEqual([9999559]);
+    expect(kill).not.toHaveBeenCalled();
+    expect(fs.existsSync(pidFile)).toBe(false);
+  });
+
   it("skips an owned no-argument host launch for another port", () => {
     const { kill, pidFile, result } = stopTargetedPid(
       9999556,

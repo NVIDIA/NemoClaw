@@ -12,6 +12,10 @@ import {
   type DockerDriverGatewayPortListenerOptions,
   type DockerDriverGatewayPortListenerScan,
 } from "./docker-driver-gateway-port-listener";
+import {
+  getDockerDriverGatewayTargetIdentityDrift,
+  readDockerDriverGatewayProcessIdentity,
+} from "./docker-driver-gateway-process-identity";
 import * as dockerDriverGatewayRuntimeMarker from "./docker-driver-gateway-runtime-marker";
 import * as gatewayBinding from "./gateway-binding";
 import {
@@ -290,21 +294,6 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     });
   }
 
-  function processIdentityMatchesGatewayTarget(
-    identity: string,
-    gatewayBin?: string | null,
-  ): boolean {
-    const port = currentGatewayPort();
-    return gatewayProcessCmdlineMatches(identity, gatewayBin, {
-      expectedOpenShellGateway: {
-        name: gatewayBinding.resolveGatewayName(port),
-        port,
-      },
-      processNames: OPENSHELL_GATEWAY_PROCESS_NAMES,
-      resolveExecutablePath: normalizeGatewayExecutablePath,
-    });
-  }
-
   function shouldRequireDockerDriverEnv(platform: NodeJS.Platform = process.platform): boolean {
     return platform === "linux";
   }
@@ -352,17 +341,13 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     gatewayBin?: string | null,
     platform: NodeJS.Platform = process.platform,
   ): DockerDriverGatewayRuntimeDrift | null {
-    // Released host gateways used the real binary with no argv target. They
-    // cannot be cleaned up safely by a later sandbox destroy, so a port-scoped
-    // cutover must retire them instead of adopting them as reusable.
-    if (!processIdentityMatchesGatewayTarget(readProcessIdentity(pid), gatewayBin)) {
-      const port = currentGatewayPort();
-      return {
-        reason:
-          "gateway process lacks target-bound cleanup identity for " +
-          `${gatewayBinding.resolveGatewayName(port)} on port ${port}`,
-      };
-    }
+    const identityDrift = getDockerDriverGatewayTargetIdentityDrift({
+      gatewayBin,
+      gatewayPort: currentGatewayPort(),
+      identity: readDockerDriverGatewayProcessIdentity(pid, captureProcessArgs),
+      normalizeGatewayExecutablePath,
+    });
+    if (identityDrift) return identityDrift;
     if (platform === "darwin" && desiredEnv.OPENSHELL_DRIVERS === "docker") {
       const markerDrift =
         dockerDriverGatewayRuntimeMarker.getDockerDriverGatewayRuntimeMarkerDriftForStateDir(
@@ -403,25 +388,12 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
       .trim();
   }
 
-  function readProcessIdentity(pid: number): string {
-    const procCmdlinePath = `/proc/${pid}/cmdline`;
-    try {
-      if (fs.existsSync(procCmdlinePath)) {
-        const identity = fs.readFileSync(procCmdlinePath, "utf-8").replace(/\0/g, " ").trim();
-        if (identity) return identity;
-      }
-    } catch {
-      // Fall through to ps on hosts without readable procfs.
-    }
-    return captureProcessArgs(pid);
-  }
-
   function isDockerDriverGatewayProcess(
     pid: number,
     gatewayBin?: string | null,
     opts: { requireDockerDriverEnv?: boolean } = {},
   ): boolean {
-    const identity = readProcessIdentity(pid);
+    const identity = readDockerDriverGatewayProcessIdentity(pid, captureProcessArgs);
     if (!identity) return false;
     const matchesGatewayBinary = processIdentityMatchesGatewayBinary(identity, gatewayBin);
     if (!matchesGatewayBinary) return false;

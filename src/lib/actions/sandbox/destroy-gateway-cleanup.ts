@@ -83,12 +83,12 @@ export function collectLiveSandboxProbeSnapshot(
           },
         ),
       });
-    } catch {
-      // Fail closed for the #4662 invalid-state boundary and the lifecycle
-      // invariant documented in destroy-gateway.ts (#6639). If Docker cannot
+    } catch (error) {
+      // SOURCE_OF_TRUTH: preserve unrelated sandboxes and owned resources only;
+      // see the #6639 removal boundary in destroy-gateway.ts. If Docker cannot
       // confirm the row has no backing container, preserve the shared gateway.
       console.debug(
-        `Docker container probe failed for sandbox '${sandboxName}'; preserving shared gateway.`,
+        `Docker container probe failed for sandbox '${sandboxName}'; preserving shared gateway: ${String(error)}`,
       );
       dockerContainersBySandboxName.set(sandboxName, { output: "", probeFailed: true });
     }
