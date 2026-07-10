@@ -25,6 +25,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const chooseModelPath = path.join(repoRoot, "docs", "inference", "choose-model.mdx");
 const hermesProviderPath = path.join(repoRoot, "docs", "inference", "use-hermes-provider.mdx");
 const releaseNotesPath = path.join(repoRoot, "docs", "about", "release-notes.mdx");
+const inferenceDocsDir = path.join(repoRoot, "docs", "inference");
 const docsNavPath = path.join(repoRoot, "docs", "index.yml");
 const fernDocsPath = path.join(repoRoot, "fern", "docs.yml");
 const compatibleEndpointPath = path.join(
@@ -147,6 +148,10 @@ function readCuratedOnboardingModelIds(): string[] {
   ];
 }
 
+function stripFencedCodeBlocks(markdown: string): string {
+  return markdown.replace(/^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1[ \t]*$/gm, "");
+}
+
 describe("inference options model task-fit docs (#4755)", () => {
   it("keeps a per-model task-fit comparison table for curated onboarding models", () => {
     const markdown = fs.readFileSync(chooseModelPath, "utf8");
@@ -183,6 +188,21 @@ describe("inference options model task-fit docs (#4755)", () => {
 });
 
 describe("inference setup navigation", () => {
+  it("keeps simple list items compact across inference topics", () => {
+    const spacedListItems =
+      /^([ \t]*)(?:[-*+]|\d+\.)[ \t]+[^\n]+\n[ \t]*\n\1(?:[-*+]|\d+\.)[ \t]+/m;
+
+    for (const fileName of fs.readdirSync(inferenceDocsDir)) {
+      if (!fileName.endsWith(".mdx")) continue;
+
+      const markdown = fs.readFileSync(path.join(inferenceDocsDir, fileName), "utf8");
+      const prose = stripFencedCodeBlocks(markdown);
+      expect(prose, `${fileName} has a blank line between simple list items`).not.toMatch(
+        spacedListItems,
+      );
+    }
+  });
+
   it("routes the latest local and compatible inference release note through the shared chooser", () => {
     const markdown = fs.readFileSync(releaseNotesPath, "utf8");
     const releaseStart = markdown.indexOf("## v0.0.79");
