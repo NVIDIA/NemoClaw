@@ -185,7 +185,7 @@ describe("inference options model task-fit docs (#4755)", () => {
 });
 
 describe("inference setup navigation", () => {
-  it("routes the latest local and compatible inference release note to both setup guides (#6590)", () => {
+  it("routes the latest local and compatible inference release note through the shared chooser", () => {
     const markdown = fs.readFileSync(releaseNotesPath, "utf8");
     const releaseStart = markdown.indexOf("## v0.0.79");
     const releaseEnd = markdown.indexOf("## v0.0.78", releaseStart);
@@ -198,10 +198,10 @@ describe("inference setup navigation", () => {
     expect(bulletEnd).toBeGreaterThan(bulletStart);
     const bullet = release.slice(bulletStart, bulletEnd);
 
-    expect(bullet).toContain("[Set Up Ollama](../inference/local-inference/set-up-ollama)");
     expect(bullet).toContain(
       "[Choose a Local Inference Server](../inference/local-inference/choose-local-inference-server)",
     );
+    expect(bullet).not.toContain("../inference/local-inference/set-up-ollama");
   });
 
   it("routes local options to focused setup pages", () => {
