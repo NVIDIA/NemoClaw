@@ -694,9 +694,7 @@ function getOnboardDashboardPort(): number {
   return _preflightDashboardPort ?? DASHBOARD_PORT;
 }
 
-function isNonInteractive(): boolean {
-  return NON_INTERACTIVE || isNonInteractiveEnv();
-}
+const isNonInteractive = (): boolean => NON_INTERACTIVE || isNonInteractiveEnv();
 
 function isRecreateSandbox(requested = false): boolean {
   return requested || RECREATE_SANDBOX || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
