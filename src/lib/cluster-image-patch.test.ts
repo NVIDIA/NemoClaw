@@ -382,4 +382,34 @@ describe("ensurePatchedClusterImage", () => {
       }),
     ).toThrow(ClusterImagePatchError);
   });
+
+  it("surfaces redacted docker build diagnostics on failure (#6622)", () => {
+    const token = ["sk", "abcdef0123456789abcdef0123456789abcdef0123456789"].join("-");
+    const reproduce = () => {
+      let upstreamInspectCount = 0;
+      ensurePatchedClusterImage({
+        upstreamImage: UPSTREAM,
+        runCaptureImpl: (cmd) => {
+          if (inspectAt(cmd) === "upstream") {
+            upstreamInspectCount += 1;
+            return upstreamInspectCount === 1 ? "" : "sha256:abcd";
+          }
+          return "";
+        },
+        runImpl: (cmd) =>
+          cmd[1] === "build"
+            ? {
+                status: 1,
+                stderr: `failed to resolve source metadata: Bearer ${token}`,
+              }
+            : { status: 0 },
+        logger: () => {},
+        fsImpl: createMockFs(),
+        tmpdirImpl: () => "/tmp",
+      });
+    };
+
+    expect(reproduce).toThrowError(/failed to resolve source metadata/);
+    expect(reproduce).not.toThrowError(token);
+  });
 });
