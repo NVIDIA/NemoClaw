@@ -8,6 +8,11 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import {
+  cleanupCorporateCaFixture,
+  corporateCaMergeProbeScript,
+  createCorporateCaFixture,
+} from "../fixtures/corporate-ca.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
@@ -104,13 +109,17 @@ async function waitSandboxAbsent(sandbox: SandboxClient, name: string): Promise<
 test("onboard repair resumes missing sandbox and rejects conflicting resume inputs", {
   timeout: LIVE_TIMEOUT_MS,
 }, async ({ artifacts, cleanup: cleanupRegistry, host, sandbox, skip }) => {
+  const corporateCa = createCorporateCaFixture("requests", "nemoclaw-repair-corporate-ca-");
+  cleanupRegistry.add("remove corporate CA fixture", () => cleanupCorporateCaFixture(corporateCa));
   await artifacts.target.declare({
     id: "onboard-repair",
     sandboxName: SANDBOX_NAME,
     otherSandboxName: OTHER_SANDBOX_NAME,
+    corporateCaSource: corporateCa.sourceLabel,
     contracts: [
       "forced policy-step failure leaves a resumable session",
       "resume recreates a recorded sandbox that was removed underneath it",
+      "REQUESTS_CA_BUNDLE fallback corporate CA source is baked and merged after repair",
       "resume rejects a different requested sandbox name",
       "resume rejects provider/model overrides that conflict with recorded state",
     ],
@@ -143,6 +152,7 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
       NEMOCLAW_E2E_FORCE_FAIL_AT_STEP: "policies",
       NEMOCLAW_POLICY_MODE: "suggested",
       NEMOCLAW_RECREATE_SANDBOX: "1",
+      ...corporateCa.env,
     }),
   );
   expect(first.exitCode, resultText(first)).toBe(1);
@@ -169,6 +179,7 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
     "phase-2-resume-repair",
     onboardEnv(SANDBOX_NAME, fake.baseUrl, {
       NEMOCLAW_POLICY_MODE: "skip",
+      ...corporateCa.env,
     }),
   );
   expect(repair.exitCode, resultText(repair)).toBe(0);
@@ -179,6 +190,13 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
   const status = await nemoclaw(host, [SANDBOX_NAME, "status"], "phase-2-status-after-repair");
   expect(status.exitCode, resultText(status)).toBe(0);
 
+  const corporateCaProbe = await sandbox.execShell(SANDBOX_NAME, corporateCaMergeProbeScript(), {
+    artifactName: "phase-2-corporate-ca-merge-probe",
+    env: env(),
+    timeoutMs: 60_000,
+  });
+  expect(corporateCaProbe.exitCode, resultText(corporateCaProbe)).toBe(0);
+
   const reinject = await nemoclaw(
     host,
     ["onboard", "--non-interactive"],
@@ -188,6 +206,7 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
       NEMOCLAW_E2E_FORCE_FAIL_AT_STEP: "policies",
       NEMOCLAW_POLICY_MODE: "suggested",
       NEMOCLAW_RECREATE_SANDBOX: "1",
+      ...corporateCa.env,
     }),
   );
   expect(reinject.exitCode, resultText(reinject)).toBe(1);

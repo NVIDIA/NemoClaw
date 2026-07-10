@@ -1120,6 +1120,18 @@ To intentionally switch provider or model, recreate the named sandbox with fresh
 nemo-deepagents onboard --fresh --name <name> --recreate-sandbox
 ```
 
+### Trusted route-probe helper is missing
+
+Deep Agents sandboxes created by older NemoClaw images may not contain the image-owned `/usr/local/lib/nemoclaw/dcode-managed-exec` helper.
+Current `connect`, `status`, and `doctor` fail closed when that helper is missing because NemoClaw cannot run the authoritative `inference.local` route probe safely.
+
+If the output says the trusted Deep Agents Code route-probe helper is missing, rebuild the sandbox with the current image and retry the command:
+
+```bash
+nemo-deepagents <name> rebuild
+nemo-deepagents <name> status
+```
+
 ### `dcode` refuses to start because upstream auth state exists
 
 The managed launchers refuse upstream credential state inside `/sandbox/.deepagents/.state/auth.json` and `/sandbox/.deepagents/.state/chatgpt-auth.json`.
@@ -1214,6 +1226,33 @@ If they are missing on an older sandbox, upgrade NemoClaw and run:
 ```bash
 $$nemoclaw <name> rebuild
 ```
+
+### External channel TLS fails behind a corporate MITM proxy (`NET:FAIL`)
+
+On networks where a corporate proxy in front of the host re-signs external TLS with its own root CA, external endpoints such as `api.telegram.org` fail certificate verification even when the network policy allows the connection. Logs show the request opening (`NET:OPEN ... api.telegram.org:443`) followed by `NET:FAIL`. OpenShell injects only its own L7-proxy CA into the sandbox, so the separate corporate root is missing from the trust path.
+
+To fix this, point NemoClaw at your corporate CA bundle on the host **before** onboarding, then onboard (or rebuild). The recommended, explicit way is `NEMOCLAW_CORPORATE_CA_BUNDLE`. NemoClaw validates the bundle, bakes it into the sandbox image, and at startup appends it to the OpenShell trust bundle — it never replaces the OpenShell CA — repointing `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `REQUESTS_CA_BUNDLE`, `GIT_SSL_CAINFO`, and `NODE_EXTRA_CA_CERTS` at the merged bundle so curl, Python, Git, and Node all trust both roots:
+
+```bash
+export NEMOCLAW_CORPORATE_CA_BUNDLE=/path/to/corporate-ca.pem
+$$nemoclaw onboard
+```
+
+If your corporate CA is already installed in the host system trust store, NemoClaw detects it automatically. It scans the administrator anchor directories (recursively, matching `update-ca-certificates`) — `/usr/local/share/ca-certificates/` on Debian/Ubuntu and `/etc/pki/ca-trust/source/anchors/` on RHEL/Fedora — which is where an administrator drops a root CA before running `update-ca-certificates` / `update-ca-trust`. NemoClaw deliberately does **not** read the merged `/etc/ssl/certs/ca-certificates.crt`, which also contains the distro's public roots; it imports only these bounded anchor sources so it never bakes broad, unrelated OS trust into the image. This host-store detection is a last-resort fallback, tried only after the environment variables above. To scan a non-standard anchor location, set `NEMOCLAW_CORPORATE_CA_ANCHOR_DIRS` to a path-list of directories; set it to an empty value to disable host-store scanning.
+
+Resolution order:
+
+1. Explicit `NEMOCLAW_CORPORATE_CA_BUNDLE` (fails onboarding loudly when set but invalid, or when it points at a merged OS trust store such as `/etc/ssl/certs/ca-certificates.crt` — export only your corporate root instead).
+2. Conventional CA variables `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, then `SSL_CERT_FILE` (each **skipped with a `WARNING` log** when it is set but points at a missing or invalid file — the import is non-fatal, but the warning tells you it was skipped). A conventional variable that points at a merged OS trust store (for example the common `SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt`) is also skipped with a `WARNING`, so a default system bundle is never baked in wholesale — the host-anchor scan below still finds a locally-installed corporate root.
+3. Host administrator anchor directories (an empty or absent directory is skipped silently; a directory that holds candidate files but no valid CA, or that exceeds the size/count caps, is skipped with a `WARNING` log).
+
+When a fallback or host-store source is baked, onboarding logs which source and path it used (`baking corporate proxy CA from …`). If you set a conventional CA variable but the import does not happen, check the onboard build logs: a variable that points at a missing or invalid file is skipped with a `WARNING: … was skipped for corporate CA import` line, and an anchor directory that holds only invalid certificates logs a similar warning. Absence of the `baking …` line means no source validated. Use `NEMOCLAW_CORPORATE_CA_BUNDLE` for explicit, fail-loud behavior. To import a corporate root that is not installed in an anchor directory, export just your corporate root (and any intermediates) into a small PEM file and point `NEMOCLAW_CORPORATE_CA_BUNDLE` at it.
+
+`/etc/ssl/certs/` contract: NemoClaw satisfies the #6210 host trust-store acceptance path by reading the administrator anchor **source** directories above, not the merged `/etc/ssl/certs/ca-certificates.crt` view. This is intentional — the merged file interleaves your corporate root with the distro's public root bundle, and importing it wholesale would widen sandbox trust far beyond the one corporate proxy CA. A corporate root installed via `update-ca-certificates` / `update-ca-trust` already lives in an anchor source directory, so it is detected. If no anchor source validates but NemoClaw sees direct regular CA certificate files in the literal `/etc/ssl/certs/` output directory, it imports only those validated standalone CA files while still excluding the merged `ca-certificates.crt` bundle and symlink fan-out. Normal leaf certificates in that directory, such as Ubuntu's `ssl-cert-snakeoil.pem`, are ignored. A root present *only* as a hand-edited entry in the merged file is not imported, and must be pointed at explicitly via `NEMOCLAW_CORPORATE_CA_BUNDLE`.
+
+Custom Dockerfile contract: the managed NemoClaw sandbox Dockerfiles handle the corporate CA automatically — onboarding bakes the validated bundle into `ARG NEMOCLAW_CORPORATE_CA_B64`, and the image decodes it into the root-owned, read-only file `/usr/local/share/nemoclaw/corporate-ca.pem`. If you build the sandbox from a **custom Dockerfile**, the fallback and host-store sources are a silent no-op unless that Dockerfile declares `ARG NEMOCLAW_CORPORATE_CA_B64` and decodes it into `/usr/local/share/nemoclaw/corporate-ca.pem` the same way. The explicit `NEMOCLAW_CORPORATE_CA_BUNDLE` is the exception — it fails onboarding loudly (rather than no-op) when the managed ARG is absent, so you find out immediately. Either add the ARG and decode step to your Dockerfile, or keep using a managed Dockerfile, to import a corporate CA through automatic detection.
+
+Every imported source must be a regular (non-symlink), readable PEM file that is **not group- or world-writable** (a trust anchor any other user could rewrite is rejected), non-empty and within the size cap, and in which **every** certificate block parses as an X.509 CA certificate (`basicConstraints CA:TRUE`). The imported trust is capped at a small corporate chain (not a full OS trust store) — a source that would exceed the cap is rejected or skipped rather than truncated. To disable the import entirely, set `NEMOCLAW_CORPORATE_CA_IMPORT=0`.
 
 ### A request inside the sandbox fails with `CONNECT tunnel failed, response 403`
 
