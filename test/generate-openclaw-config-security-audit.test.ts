@@ -75,6 +75,7 @@ describe("generate-openclaw-config.mts: managed security audit findings", () => 
   it("explains an explicit loopback device auth opt-out (#6024)", () => {
     const config = buildSecurityAuditConfig("https://127.0.0.1:18789", {
       NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
+      NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE: "operator",
     });
     expect(config.security.audit.suppressions.map((entry: any) => entry.checkId)).toEqual([
       "gateway.control_ui.device_auth_disabled",
@@ -86,6 +87,25 @@ describe("generate-openclaw-config.mts: managed security audit findings", () => 
     expect(config.security.audit.suppressions[0].reason).toContain(
       "NEMOCLAW_DISABLE_DEVICE_AUTH=1",
     );
+  });
+
+  it("reports the managed onboarding device auth compatibility source truthfully (#6024)", () => {
+    const config = buildSecurityAuditConfig("https://127.0.0.1:18789", {
+      NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
+      NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE: "managed-onboard",
+    });
+
+    expect(config.security.audit.suppressions[0].reason).toContain("NemoClaw onboarding");
+    expect(config.security.audit.suppressions[0].reason).not.toContain("explicitly opts out");
+  });
+
+  it("keeps device auth findings active when opt-out provenance is missing (#6024)", () => {
+    const config = buildSecurityAuditConfig("https://127.0.0.1:18789", {
+      NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
+    });
+
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.security).toBeUndefined();
   });
 
   it("omits audit suppressions for a loopback HTTPS dashboard (#6024)", () => {

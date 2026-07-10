@@ -1192,8 +1192,12 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const isRemote = !isLoopback(parsed.hostname || "");
   const remoteBindOptIn = env.NEMOCLAW_DASHBOARD_BIND === "0.0.0.0";
   const hasRemoteDashboardExposure = isRemote || remoteBindOptIn;
-  const explicitDeviceAuthOptOut = env.NEMOCLAW_DISABLE_DEVICE_AUTH === "1";
-  const disableDeviceAuth = explicitDeviceAuthOptOut || hasRemoteDashboardExposure;
+  const deviceAuthOptOut = env.NEMOCLAW_DISABLE_DEVICE_AUTH === "1";
+  const deviceAuthOptOutSource = env.NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE;
+  const explicitDeviceAuthOptOut = deviceAuthOptOut && deviceAuthOptOutSource === "operator";
+  const managedDeviceAuthOptOut =
+    deviceAuthOptOut && deviceAuthOptOutSource === "managed-onboard";
+  const disableDeviceAuth = deviceAuthOptOut || hasRemoteDashboardExposure;
   const allowInsecure = parsed.scheme === "http";
   const securityAuditSuppressions: JsonObject[] = [];
   if (allowInsecure && !hasRemoteDashboardExposure) {
@@ -1208,9 +1212,10 @@ export function buildConfig(env: Env = process.env): JsonObject {
       },
     );
   }
-  if (explicitDeviceAuthOptOut && !hasRemoteDashboardExposure) {
-    const reason =
-      "NemoClaw applies this setting because NEMOCLAW_DISABLE_DEVICE_AUTH=1 explicitly opts out of device authentication.";
+  if ((explicitDeviceAuthOptOut || managedDeviceAuthOptOut) && !hasRemoteDashboardExposure) {
+    const reason = managedDeviceAuthOptOut
+      ? "NemoClaw onboarding disables device authentication for immediate dashboard access (managed compatibility behavior; see #1217)."
+      : "NemoClaw applies this setting because NEMOCLAW_DISABLE_DEVICE_AUTH=1 explicitly opts out of device authentication.";
     securityAuditSuppressions.push(
       { checkId: "gateway.control_ui.device_auth_disabled", reason },
       {

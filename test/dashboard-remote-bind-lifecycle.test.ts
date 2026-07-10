@@ -38,6 +38,20 @@ function remoteBindDockerfile(...postGeneratorInstructions: string[]): string {
 }
 
 describe("remote dashboard bind production lifecycle", () => {
+  it("prepares remote bind from the exact checked-in Dockerfile instructions (#6024)", () => {
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-stock-"));
+    const dockerfile = path.join(directory, "Dockerfile");
+    fs.copyFileSync(path.join(process.cwd(), "Dockerfile"), dockerfile);
+
+    try {
+      const result = patchStagedDockerfile(dockerfile, "test-model", "http://127.0.0.1:18789");
+      expect(result.dashboardRemoteBindPrepared).toBe(true);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("carries the audited remote-exposure signal through image and sandbox creation (#6024)", () => {
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-"));
@@ -200,6 +214,36 @@ describe("remote dashboard bind production lifecycle", () => {
       expect(() =>
         patchStagedDockerfile(dockerfile, "test-model", "http://127.0.0.1:18789"),
       ).toThrow(/preserve the generated remote dashboard output/);
+      expect(hasPreparedRemoteDashboardBind(dockerfile)).toBe(false);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    [
+      "generator",
+      remoteBindDockerfile().replace(
+        "RUN node --experimental-strip-types /scripts/generate-openclaw-config.mts",
+        "RUN node --experimental-strip-types /scripts/generate-openclaw-config.mts && printf '{}' > /sandbox/.openclaw/openclaw.json",
+      ),
+    ],
+    [
+      "allowlisted command",
+      remoteBindDockerfile(
+        "RUN chmod 660 /sandbox/.openclaw/openclaw.json && printf '{}' > /sandbox/.openclaw/openclaw.json",
+      ),
+    ],
+  ])("rejects a compound %s instruction that appends a config rewrite (#6024)", (_label, body) => {
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-compound-"));
+    const dockerfile = path.join(directory, "Dockerfile");
+    fs.writeFileSync(dockerfile, body);
+
+    try {
+      expect(() =>
+        patchStagedDockerfile(dockerfile, "test-model", "http://127.0.0.1:18789"),
+      ).toThrow(/generate-openclaw-config|preserve the generated remote dashboard output/);
       expect(hasPreparedRemoteDashboardBind(dockerfile)).toBe(false);
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });

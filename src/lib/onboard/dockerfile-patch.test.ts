@@ -171,6 +171,7 @@ describe("dockerfile patch helpers", () => {
         "ARG NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME=old",
         "ARG NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE=old",
         "ARG NEMOCLAW_DISABLE_DEVICE_AUTH=0",
+        "ARG NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE=operator",
         "ARG NEMOCLAW_MESSAGING_PLAN_B64=old",
       ].join("\n"),
     );
@@ -208,6 +209,7 @@ describe("dockerfile patch helpers", () => {
     expect(patched).toContain("ARG NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME=nemoclaw-local");
     expect(patched).toContain("ARG NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE=0.5");
     expect(patched).toContain("ARG NEMOCLAW_DISABLE_DEVICE_AUTH=1");
+    expect(patched).toContain("ARG NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE=managed-onboard");
     const patchedMessagingPlan = readMessagingPlanArg(patched) as {
       channels?: Array<{ channelId?: string; active?: boolean }>;
       buildSteps?: unknown;

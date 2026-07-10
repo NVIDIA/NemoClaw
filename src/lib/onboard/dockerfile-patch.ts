@@ -357,10 +357,16 @@ export function patchStagedDockerfile(
     }
   }
   // Onboard flow expects immediate dashboard access without device pairing,
-  // so disable device auth for images built during onboard (see #1217).
+  // so disable device auth for images built during onboard (see #1217). Keep
+  // this managed compatibility choice distinct from an operator's explicit
+  // build-arg opt-out for security-audit reporting.
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_DISABLE_DEVICE_AUTH=.*$/m,
     `ARG NEMOCLAW_DISABLE_DEVICE_AUTH=${sanitizeDockerArg("1")}`,
+  );
+  dockerfile = dockerfile.replace(
+    /^ARG NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE=.*$/m,
+    `ARG NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE=${sanitizeDockerArg("managed-onboard")}`,
   );
   const messagingPlan = MessagingSetupApplier.readPlanFromEnv();
   if (messagingPlan) {

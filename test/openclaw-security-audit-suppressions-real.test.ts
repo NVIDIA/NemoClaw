@@ -254,6 +254,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_AUDIT_HARNESS !== "1")(
 
           const explicitOptOut = runOpenClawAudit(binary, "https://127.0.0.1:18789", {
             NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
+            NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE: "operator",
           });
           expect(
             explicitOptOut.suppressedFindings?.find(

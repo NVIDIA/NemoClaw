@@ -643,8 +643,8 @@ Device authentication requires each connecting device to go through a pairing fl
 
 | Aspect | Detail |
 |---|---|
-| Default | Enabled for loopback dashboards. NemoClaw disables device authentication for non-loopback `CHAT_UI_URL` values and when `NEMOCLAW_DISABLE_DEVICE_AUTH=1`. |
-| What you can change | Use a loopback `CHAT_UI_URL` to retain device authentication. Set `NEMOCLAW_DISABLE_DEVICE_AUTH=1` only as a deliberate build-time opt-out. The setting is baked into `openclaw.json` and verified by hash at startup. |
+| Default | The base Dockerfile enables device authentication for loopback dashboards. Standard onboarding currently applies a managed compatibility opt-out for immediate dashboard access. NemoClaw also disables device authentication for non-loopback `CHAT_UI_URL` values. |
+| What you can change | Outside managed onboarding, set `NEMOCLAW_DISABLE_DEVICE_AUTH=1` only as a deliberate build-time opt-out. The setting and its managed-vs-operator provenance are baked into `openclaw.json` audit metadata and the config is verified by hash at startup. |
 | Risk if relaxed | Disabling device auth allows any device on the network to connect to the gateway without proving identity. This is dangerous when combined with LAN-bind changes or cloudflared tunnels in remote deployments, resulting in an unauthenticated, publicly reachable dashboard. |
 | Recommendation | Prefer loopback access or SSH port forwarding so device authentication stays enabled. If a browser-only remote dashboard requires the compatibility setting, use HTTPS and restrict who can reach the dashboard. |
 
@@ -683,7 +683,8 @@ The `allowInsecureAuth` setting controls whether the gateway permits non-HTTPS a
 | Risk if relaxed | Allowing insecure auth over HTTPS defeats the purpose of TLS, because authentication tokens transit in cleartext. |
 | Recommendation | Use `https://` for any deployment accessible beyond `localhost`. The default local URL (`http://127.0.0.1:18789`) correctly allows insecure auth for local development. |
 
-OpenClaw's security audit keeps NemoClaw-managed loopback `allowInsecureAuth` findings and loopback-only explicit `NEMOCLAW_DISABLE_DEVICE_AUTH=1` opt-out findings visible as accepted findings instead of counting them as unexplained active findings.
+OpenClaw's security audit keeps NemoClaw-managed loopback `allowInsecureAuth` findings and provenance-known loopback device-auth opt-out findings visible as accepted findings instead of counting them as unexplained active findings.
+Device-auth findings record whether the opt-out came from NemoClaw's managed onboarding compatibility behavior or an operator-provided `NEMOCLAW_DISABLE_DEVICE_AUTH=1`; an opt-out with missing provenance remains active.
 For audit reporting, NemoClaw treats either a non-loopback `CHAT_UI_URL` or an onboard-time `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` as remote dashboard exposure. Use the same bind setting on later `connect` calls. If the sandbox was created without that setting, NemoClaw refuses the remote forward until you recreate it with `NEMOCLAW_DASHBOARD_BIND=0.0.0.0 $$nemoclaw onboard --recreate-sandbox`; this keeps the generated audit state aligned with the host exposure state.
 For an explicit remote bind with a loopback `CHAT_UI_URL`, NemoClaw disables device auth and enables OpenClaw's Host-header origin fallback because the browser's remote origin is not known at image-build time. Both settings expand access and must remain explicit; use HTTPS or an SSH local forward when possible.
 In that state, NemoClaw does not add the loopback-only audit suppressions, so the resulting device-auth, insecure-auth, and Host-header fallback findings remain active.

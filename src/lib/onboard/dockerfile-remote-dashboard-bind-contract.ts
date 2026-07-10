@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
+
 import {
   dockerfileInstructions,
   readDockerfilePatchSnapshot,
@@ -11,58 +13,60 @@ const REMOTE_BIND_ARG_RE = /^ARG\s+NEMOCLAW_DASHBOARD_BIND=/;
 const REMOTE_BIND_PATCHED_ARG_RE = /^ARG\s+NEMOCLAW_DASHBOARD_BIND=0\.0\.0\.0$/;
 const REMOTE_BIND_PROMOTION_RE = /NEMOCLAW_DASHBOARD_BIND=\$\{NEMOCLAW_DASHBOARD_BIND\}/;
 const OPENCLAW_CONFIG_GENERATOR_RE =
-  /^RUN\b.*\bnode\s+--experimental-strip-types\s+\/scripts\/generate-openclaw-config\.mts\b/;
-const SAFE_VALIDATION_GENERATOR_HOME_RE =
-  /\bHOME=(?:"\$validation_home"|\$validation_home)(?=\s|$)/;
+  /^RUN\s+(?:NEMOCLAW_OPENCLAW_MANAGED_PROXY=0\s+)?node\s+--experimental-strip-types\s+\/scripts\/generate-openclaw-config\.mts$/;
+const SAFE_VALIDATION_GENERATOR_RE =
+  /^RUN\s+validation_home="\$validation_root\/progressive";\s+HOME=(?:"\$validation_home"|\$validation_home)\s+node\s+--experimental-strip-types\s+\/scripts\/generate-openclaw-config\.mts$/;
 const PASSIVE_FINAL_STAGE_INSTRUCTION_RE = /^(?:ARG|ENV|WORKDIR|USER|HEALTHCHECK|ENTRYPOINT|CMD)\b/;
 const CONFIG_MODE_RE = /^RUN\s+chmod\s+660\s+\/sandbox\/\.openclaw\/openclaw\.json$/;
 const CONFIG_HASH_RE =
   /^RUN\s+sha256sum\s+\/sandbox\/\.openclaw\/openclaw\.json\s+>\s+\/sandbox\/\.openclaw\/\.config-hash(?:\s+&&\s+chmod\s+660\s+\/sandbox\/\.openclaw\/\.config-hash)?(?:\s+&&\s+chown\s+sandbox:sandbox\s+\/sandbox\/\.openclaw\/\.config-hash)?$/;
 const MESSAGING_BUILD_APPLIER_RE =
   /^RUN\s+OPENCLAW_VERSION="\$\{OPENCLAW_VERSION\}"\s+node\s+--experimental-strip-types\s+\/src\/lib\/messaging\/applier\/build\/messaging-build-applier\.mts\s+--agent\s+openclaw\s+--phase\s+(?:agent-install|post-agent-install)$/;
-const OPENCLAW_PLUGIN_INTEGRITY_RE = /^RUN\s+set -eu;\s+verify_openclaw_plugin_integrity\(\) \{/;
-const NEMOCLAW_PLUGIN_INSTALL_RE =
-  /^RUN\s+NPM_CONFIG_IGNORE_SCRIPTS=true\s+npm_config_ignore_scripts=true\s+openclaw plugins install \/opt\/nemoclaw\b/;
 const MANAGED_PROXY_TOKEN_PATCH_RE =
   /^RUN\s+python3 -c ".*path = os\.path\.expanduser\('~\/\.openclaw\/openclaw\.json'\);.*cfg\.setdefault\('gateway', \{\}\)\.setdefault\('auth', \{\}\)\['token'\] = '';.*cfg\['proxy'\] = \{.*'loopbackMode': 'gateway-only'.*json\.dump\(cfg, open\(path, 'w'\), indent=2\);.*os\.chmod\(path, 0o600\)"$/;
-const LEGACY_OPENCLAW_LAYOUT_RE =
-  /^RUN\s+set -eu;\s+config_dir=\/sandbox\/\.openclaw;\s+data_dir=\/sandbox\/\.openclaw-data;\s+/;
-const GROUP_MEMBERSHIP_RE = /^RUN\s+if id gateway\b/;
-const OPENCLAW_PERMISSION_RE =
-  /^RUN\s+set -eu;\s+if \[ -e \/tmp\/nemoclaw-legacy-openclaw-layout \]; then\b/;
-const SHELL_HOOKS_RE = /^RUN\s+chmod 444 \/usr\/local\/lib\/nemoclaw\/sandbox-rlimits\.sh\b/;
-const NEMOCLAW_STATE_RE = /^RUN\s+chown root:root \/sandbox\/\.nemoclaw\b/;
-const DARWIN_VM_COMPAT_RE = /^RUN\s+if \[ "\$NEMOCLAW_DARWIN_VM_COMPAT" = "1" \]; then\b/;
-const OTEL_PROXY_PATCH_RE = /^RUN\s+set -eu;\s+if \[ "\$NEMOCLAW_OPENCLAW_OTEL" = "1" \]; then\b/;
 
-const ALLOWED_POST_GENERATOR_RUN_RE = [
+const EXACT_CUSTOM_POST_GENERATOR_RUN_RE = [
   CONFIG_MODE_RE,
   CONFIG_HASH_RE,
   MESSAGING_BUILD_APPLIER_RE,
-  OPENCLAW_PLUGIN_INTEGRITY_RE,
-  NEMOCLAW_PLUGIN_INSTALL_RE,
   MANAGED_PROXY_TOKEN_PATCH_RE,
-  LEGACY_OPENCLAW_LAYOUT_RE,
-  GROUP_MEMBERSHIP_RE,
-  OPENCLAW_PERMISSION_RE,
-  SHELL_HOOKS_RE,
-  NEMOCLAW_STATE_RE,
-  DARWIN_VM_COMPAT_RE,
-  OTEL_PROXY_PATCH_RE,
 ] as const;
+
+// Complex RUN instructions in the shipped Dockerfile are accepted only as
+// exact normalized instructions. Prefix matching here would let a custom
+// Dockerfile append `&& <rewrite openclaw.json>` to an otherwise safe command.
+// A lifecycle test verifies these digests against the checked-in Dockerfile.
+const CANONICAL_POST_GENERATOR_RUN_SHA256 = new Set([
+  "e7256f12c618bb424f53fec801378d92446d880c5935965ebb3b548694866b63",
+  "96e127a525e71bfc6d61e1da86b83d53a3ae61ca5d7923aed6d26afac10326cd",
+  "737edaaa69f80cf10d42fd349e0be068c1ef6e7375d5dcb4055b012420b58736",
+  "5b814e92449a6778385f588877fe72ebed80e601f8eb0c90c2842b17a489f3da",
+  "0e1a9a7bab2fab0a974577c3af8785157b4b9be2b4db32d5f4f9e5aa3c8c8171",
+  "a68297161e2c6463440b822f4e4be0518e745fb5fba8c61ab53b876724f7b666",
+  "865a9e486e1f0f54e33138a94d5cf51feb67daec4b6e6f0e21f9de22ef7e10f7",
+  "ca493ae7905fae5c587a8e5c31fcb3d423235940589c2decee99d7b338e87d88",
+  "d181ff3c36d8982f78b5627d1f4a02fd30d2667cd1ca8ffb97fb65535ae452ee",
+  "6d4094a9d7c21eeb408cadd728da7cd7e0ee9574746436be59c26b218c8ab218",
+  "fa9a9916a254ea4faa06339c759b89ade441bd54c22fa8fc4c927547e40ff456",
+  "d50e094416f150f74c24f81665be08064a1c5bd23c11d29575b20379b5a58ce2",
+  "42ef0b12e92ebe146c25367831b4ce3a2664f0fa99fd5e4fb98a8939d3af8800",
+  "8b49e78185185f1b7e24d01631186554fef21d2300db65c9bc9998e7ec00469f",
+]);
+
+function instructionSha256(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
 
 const postGeneratorInstructionAllowed = (instruction: DockerfileInstruction): boolean => {
   const { text } = instruction;
   if (PASSIVE_FINAL_STAGE_INSTRUCTION_RE.test(text)) return true;
-  if (OPENCLAW_CONFIG_GENERATOR_RE.test(text)) {
-    return SAFE_VALIDATION_GENERATOR_HOME_RE.test(text);
-  }
-  return ALLOWED_POST_GENERATOR_RUN_RE.some((pattern) => pattern.test(text));
+  if (SAFE_VALIDATION_GENERATOR_RE.test(text)) return true;
+  if (EXACT_CUSTOM_POST_GENERATOR_RUN_RE.some((pattern) => pattern.test(text))) return true;
+  return CANONICAL_POST_GENERATOR_RUN_SHA256.has(instructionSha256(text));
 };
 
 const isPrimaryOpenClawConfigGenerator = (instruction: DockerfileInstruction): boolean =>
-  OPENCLAW_CONFIG_GENERATOR_RE.test(instruction.text) &&
-  !SAFE_VALIDATION_GENERATOR_HOME_RE.test(instruction.text);
+  OPENCLAW_CONFIG_GENERATOR_RE.test(instruction.text);
 
 export type PatchedRemoteDashboardBindContract = {
   dockerfile: string;
