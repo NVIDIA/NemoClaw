@@ -64,6 +64,7 @@ export interface SandboxStateOptions<
   resumeAgentChanged: boolean;
   requestedObservabilityEnabled?: boolean | null;
   requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
+  recreateSandbox: (requested?: boolean) => boolean;
   gatewayName: string;
   session: Session | null;
   sandboxName: string | null;
@@ -421,6 +422,7 @@ class SandboxStateFlow<
       sandboxGpuConfigChanged: state.sandboxName
         ? this.deps.hasSandboxGpuDrift(state.sandboxName, this.options.sandboxGpuConfig)
         : false,
+      recreateSandboxRequested: this.options.recreateSandbox(false),
       messagingChannelConfigChanged: !this.deps.messagingChannelConfigsEqual(
         effectiveMessagingConfig,
         storedMessagingConfig,

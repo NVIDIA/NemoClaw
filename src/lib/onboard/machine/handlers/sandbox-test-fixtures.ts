@@ -226,6 +226,7 @@ export function baseOptions(
     resume: false,
     fresh: false,
     resumeAgentChanged: false,
+    recreateSandbox: () => false,
     gatewayName: "nemoclaw",
     session,
     sandboxName: null,

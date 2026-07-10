@@ -489,6 +489,46 @@ describe("handleSandboxState", () => {
     expect(result.session).toBe(skippedSession);
   });
 
+  it("honors explicit recreate requests for completed ready sandboxes on resume", async () => {
+    const session = createSession({
+      sandboxName: "saved",
+      messagingPlan: makeMinimalPlan("saved", "openclaw", ["slack"]),
+    });
+    session.steps.sandbox.status = "complete";
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      getSandboxRegistryEntry: () => ({
+        name: "saved",
+        provider: "provider",
+        model: "model",
+        endpointUrl: null,
+        preferredInferenceApi: "openai-completions",
+        toolDisclosure: "progressive",
+        fromDockerfile: null,
+        hermesAuthMethod: null,
+      }),
+    });
+    calls.createSandbox.mockResolvedValue("saved");
+
+    const result = await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+      recreateSandbox: () => true,
+    });
+
+    expect(calls.skipped).not.toHaveBeenCalled();
+    expect(calls.note).toHaveBeenCalledWith(
+      "  [resume] Recreate sandbox requested; recreating sandbox.",
+    );
+    expect(calls.removeSandbox).not.toHaveBeenCalled();
+    expect(calls.createSandbox).toHaveBeenCalled();
+    const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
+    expect(createSandboxCall[4]).toBe("saved");
+    expect(createSandboxCall[14]).toMatchObject({ recreate: true });
+    expect(result.sandboxName).toBe("saved");
+  });
+
   it("recreates a resumed Hermes sandbox when its compatible Anthropic frontend is stale", async () => {
     const session = createSession({
       agent: "hermes",

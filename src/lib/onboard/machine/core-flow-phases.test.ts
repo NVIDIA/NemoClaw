@@ -160,6 +160,7 @@ function createPhases(
     },
     sandbox: {
       resumeAgentChanged: false,
+      recreateSandbox: () => false,
       controlUiPort: null,
       rootDir: "/repo",
     },

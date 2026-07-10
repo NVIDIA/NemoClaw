@@ -4510,6 +4510,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           requestedDcodeAutoApprovalMode: runtimeControlRequests.requestedDcodeAutoApprovalMode,
           authoritativePolicyTier:
             opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : null,
+          recreateSandbox: isRecreateSandbox,
           controlUiPort: _preflightDashboardPort,
           rootDir: ROOT,
         },
