@@ -38,19 +38,23 @@ function isAllowedRequest(method: string | undefined, pathname: string): boolean
 function timingSafeHashEqual(actualHash: string, expectedHash: string): boolean {
   const actual = Buffer.from(actualHash, "hex");
   const expected = Buffer.from(expectedHash, "hex");
-  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+  return crypto.timingSafeEqual(actual, expected);
+}
+
+function requireAuthorizationHash(value: unknown): string {
+  const normalized = normalizeAuthorizationHash(value);
+  if (!normalized) {
+    throw new Error("OpenRouter Runtime adapter authorization hash is required");
+  }
+  return normalized;
 }
 
 function isExpectedBearerAuthorization(
   actual: string | string[] | undefined,
-  expectedAuthorizationHash: string | null,
+  expectedAuthorizationHash: string,
 ): boolean {
-  const token = getBearerAuthorizationToken(actual);
-  return Boolean(
-    token &&
-      expectedAuthorizationHash &&
-      timingSafeHashEqual(adapterAuthorizationHash(token), expectedAuthorizationHash),
-  );
+  const token = getBearerAuthorizationToken(actual) ?? "";
+  return timingSafeHashEqual(adapterAuthorizationHash(token), expectedAuthorizationHash);
 }
 
 export function createOpenRouterRuntimeAdapterServer(
@@ -64,7 +68,7 @@ export function createOpenRouterRuntimeAdapterServer(
   const upstreamBaseUrl = options.upstreamBaseUrl || OPENROUTER_ENDPOINT_URL;
   const configHash = adapterConfigHash(upstreamBaseUrl);
   const logger = options.logger || defaultAdapterLogger;
-  const authorizationHash = normalizeAuthorizationHash(options.authorizationHash);
+  const authorizationHash = requireAuthorizationHash(options.authorizationHash);
   return http.createServer(async (req, res) => {
     const started = Date.now();
     const url = new URL(req.url || "/", "http://127.0.0.1");
