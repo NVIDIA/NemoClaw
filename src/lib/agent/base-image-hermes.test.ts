@@ -62,7 +62,6 @@ describe("agent base image provisioning", () => {
       expect(resolveSandboxBaseImageMock).toHaveBeenCalledWith(
         expect.objectContaining({
           pinnedRemoteRef: trackedRef?.[1],
-          preferPinnedRemoteRef: false,
         }),
       );
 

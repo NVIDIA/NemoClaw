@@ -193,7 +193,6 @@ function createAgentBaseImageResolutionOptions(
     forceRefresh: options.forceBaseImageRefresh,
     rootDir: ROOT,
     pinnedRemoteRef,
-    preferPinnedRemoteRef: false,
     ...validationOptions,
   };
 }
