@@ -1720,7 +1720,7 @@ try {
 if (!isObjectRecord(registry) || !isObjectRecord(registry.sandboxes)) process.exit(1);
 
 const entries = Object.entries(registry.sandboxes);
-if (entries.some(([name, entry]) => !name || !isObjectRecord(entry) || entry.name !== name)) {
+if (entries.some(([name, entry]) => !name.trim() || !isObjectRecord(entry) || entry.name !== name)) {
   process.exit(1);
 }
 

@@ -80,4 +80,16 @@ describe("sandbox registry normalization", () => {
     expect(persisted.defaultSandbox).toBeNull();
     expect(persisted.defaultSelectionRevision).toBe(1);
   });
+
+  it("does not retain a default inherited from Object.prototype", async () => {
+    const registry = await loadRegistryWith({}, "constructor");
+
+    registry.save(registry.load());
+
+    const persisted = JSON.parse(
+      fs.readFileSync(path.join(process.env.HOME!, ".nemoclaw", "sandboxes.json"), "utf8"),
+    ) as { defaultSandbox?: unknown; defaultSelectionRevision?: unknown };
+    expect(persisted.defaultSandbox).toBeNull();
+    expect(persisted.defaultSelectionRevision).toBe(1);
+  });
 });

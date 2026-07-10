@@ -25,6 +25,7 @@ export function retainedDefaultSandbox(
   sandboxes: Record<string, SandboxEntry>,
 ): string | null {
   if (typeof defaultSandbox !== "string") return null;
+  if (!Object.prototype.hasOwnProperty.call(sandboxes, defaultSandbox)) return null;
   const entry = sandboxes[defaultSandbox];
   if (!entry || entry.pendingRouteReservation === true) return null;
   return defaultSandbox;
