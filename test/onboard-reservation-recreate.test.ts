@@ -15,9 +15,26 @@ const onboardScriptMocksPath = JSON.stringify(
 );
 
 describe("onboard sandbox recreate reservation safety", () => {
-  it("preserves a current-session pending route reservation across a not-ready recreate (#6562)", {
-    timeout: 60_000,
-  }, async () => {
+  it.each([
+    {
+      name: "preserves a current-session pending route reservation across a not-ready recreate",
+      reservationSessionId: "session-owner",
+      expectedRemoval: false,
+    },
+    {
+      name: "removes a foreign-session pending route reservation before a not-ready recreate",
+      reservationSessionId: "session-other",
+      expectedRemoval: true,
+    },
+    {
+      name: "removes an unstamped pending route reservation before a not-ready recreate",
+      reservationSessionId: null,
+      expectedRemoval: true,
+    },
+  ] as const)("$name (#6562)", { timeout: 60_000 }, async ({
+    reservationSessionId,
+    expectedRemoval,
+  }) => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-reservation-survives-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "reservation-survives.js");
@@ -65,11 +82,12 @@ runner.runCapture = (command) => {
 
 onboardSession.loadSession = () => ({ sessionId: "session-owner" });
 
+const reservationSessionId = ${JSON.stringify(reservationSessionId)};
 registry.getSandbox = () => ({
   name: "my-assistant",
   gpuEnabled: false,
   pendingRouteReservation: true,
-  reservationSessionId: "session-owner",
+  ...(reservationSessionId === null ? {} : { reservationSessionId }),
 });
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
@@ -139,8 +157,10 @@ const { createSandbox } = require(${onboardPath});
     );
     assert.equal(
       removedReservation,
-      false,
-      "must not delete the current session's pending route reservation during recreate",
+      expectedRemoval,
+      expectedRemoval
+        ? "must delete abandoned pending route reservations during recreate"
+        : "must not delete the current session's pending route reservation during recreate",
     );
     assert.ok(
       events.some((e) => e.kind === "run" && (e.cmd || "").includes("sandbox delete")),

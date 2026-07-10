@@ -110,6 +110,45 @@ describe("sandbox inference route reservation", () => {
       await fs.rm(home, { recursive: true, force: true });
     }
   });
+
+  it("transfers reservation ownership when a new session retargets the route (#6562)", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-route-reservation-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("./registry");
+      registry.reserveSandboxInferenceRoute("alpha", {
+        provider: "compatible-endpoint",
+        model: "model-a",
+        endpointUrl: "https://api.example.test/v1",
+        credentialEnv: "CUSTOM_API_KEY",
+        preferredInferenceApi: "openai-responses",
+        gatewayName: "nemoclaw",
+        reservationSessionId: "session-old",
+      });
+
+      registry.reserveSandboxInferenceRoute("alpha", {
+        provider: "compatible-endpoint",
+        model: "model-b",
+        endpointUrl: "https://api.example.test/v1",
+        credentialEnv: "CUSTOM_API_KEY",
+        preferredInferenceApi: "openai-responses",
+        gatewayName: "nemoclaw",
+        reservationSessionId: "session-new",
+      });
+
+      const reserved = registry.getSandbox("alpha");
+      expect(reserved).toMatchObject({
+        model: "model-b",
+        pendingRouteReservation: true,
+        reservationSessionId: "session-new",
+      });
+      expect(registry.isPendingReservationForSession(reserved, "session-new")).toBe(true);
+      expect(registry.isPendingReservationForSession(reserved, "session-old")).toBe(false);
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("pending reservation ownership (#6562)", () => {
