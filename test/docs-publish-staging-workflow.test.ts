@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,9 +15,7 @@ type DocsPublishStagingWorkflow = Workflow & {
 
 function requiredStep(steps: WorkflowStep[] | undefined, name: string): WorkflowStep {
   const step = steps?.find((candidate) => candidate.name === name);
-  if (!step) {
-    throw new Error(`Missing workflow step: ${name}`);
-  }
+  assert(step, `Missing workflow step: ${name}`);
   return step;
 }
 
