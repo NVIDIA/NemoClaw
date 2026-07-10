@@ -98,6 +98,7 @@ describe("prepareSandboxDockerfilePatch", () => {
     expect(patchStagedDockerfile.mock.calls[0]?.[11]).toEqual({
       buildIdPolicy: "preserve",
       toolDisclosure: "progressive",
+      trustedManagedDockerfile: true,
       requireToolDisclosureContract: false,
       baseImageResolutionMetadata: resolutionMetadata,
     });
@@ -165,6 +166,7 @@ describe("prepareSandboxDockerfilePatch", () => {
       {
         buildIdPolicy: "preserve",
         toolDisclosure: "progressive",
+        trustedManagedDockerfile: true,
         requireToolDisclosureContract: false,
       },
     );
@@ -203,6 +205,7 @@ describe("prepareSandboxDockerfilePatch", () => {
     expect(patchStagedDockerfile.mock.calls[0]?.[11]).toEqual({
       buildIdPolicy: "preserve",
       toolDisclosure: "progressive",
+      trustedManagedDockerfile: true,
       requireToolDisclosureContract: false,
     });
   });
@@ -310,6 +313,7 @@ describe("prepareSandboxDockerfilePatch", () => {
     expect(patchStagedDockerfile.mock.calls[0]?.[11]).toEqual({
       buildIdPolicy: "rewrite",
       toolDisclosure: "progressive",
+      trustedManagedDockerfile: true,
       requireToolDisclosureContract: false,
     });
   });

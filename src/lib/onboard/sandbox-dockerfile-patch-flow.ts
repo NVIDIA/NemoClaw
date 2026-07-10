@@ -194,6 +194,7 @@ export async function prepareSandboxDockerfilePatch({
       return {
         buildIdPolicy,
         toolDisclosure,
+        ...(!fromDockerfile ? { trustedManagedDockerfile: true } : {}),
         ...(endpointUrl ? { upstreamEndpointUrl: endpointUrl } : {}),
         ...(dcodeAutoApprovalMode ? { dcodeAutoApprovalMode } : {}),
         requireToolDisclosureContract: Boolean(fromDockerfile),

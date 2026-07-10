@@ -90,6 +90,7 @@ export interface PatchStagedDockerfileOptions {
   buildIdPolicy?: DockerfileBuildIdPolicy;
   toolDisclosure?: ToolDisclosure;
   requireToolDisclosureContract?: boolean;
+  trustedManagedDockerfile?: boolean;
   baseImageResolutionMetadata?: SandboxBaseImageResolutionMetadata | null;
   dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
   upstreamEndpointUrl?: string | null;
@@ -222,10 +223,15 @@ export function patchStagedDockerfile(
     /^ARG CHAT_UI_URL=.*$/m,
     `ARG CHAT_UI_URL=${sanitizeDockerArg(chatUiUrl)}`,
   );
-  const remoteDashboardBind = patchRemoteDashboardBindContract(
-    dockerfile,
-    process.env.NEMOCLAW_DASHBOARD_BIND === "0.0.0.0" ? "0.0.0.0" : "",
-  );
+  const requestedDashboardBind = process.env.NEMOCLAW_DASHBOARD_BIND === "0.0.0.0" ? "0.0.0.0" : "";
+  // Dockerfile text is only defense-in-depth for repository-managed inputs.
+  // Custom --from images need post-build/runtime attestation before remote exposure is safe.
+  if (requestedDashboardBind && options.trustedManagedDockerfile !== true) {
+    throw new Error(
+      "Remote dashboard bind is unavailable with custom --from Dockerfiles until post-build runtime configuration attestation is implemented.",
+    );
+  }
+  const remoteDashboardBind = patchRemoteDashboardBindContract(dockerfile, requestedDashboardBind);
   dockerfile = remoteDashboardBind.dockerfile;
   const { dashboardRemoteBindPrepared } = remoteDashboardBind;
   dockerfile = dockerfile.replace(

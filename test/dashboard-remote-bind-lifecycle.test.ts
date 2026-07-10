@@ -9,9 +9,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   hasPreparedRemoteDashboardBind,
-  patchStagedDockerfile,
+  patchStagedDockerfile as patchStagedDockerfileImpl,
 } from "../src/lib/onboard/dockerfile-patch";
 import { prepareSandboxCreateLaunch } from "../src/lib/onboard/sandbox-create-launch";
+import { prepareSandboxDockerfilePatch } from "../src/lib/onboard/sandbox-dockerfile-patch-flow";
 import { buildCreatedSandboxRegistryEntry } from "../src/lib/onboard/sandbox-registration";
 import { applyReusedSandboxDashboardState } from "../src/lib/onboard/sandbox-reuse";
 
@@ -39,7 +40,93 @@ function remoteBindDockerfile(...postGeneratorInstructions: string[]): string {
 
 const MANAGED_PROXY_PATCH = `RUN python3 -c " import json, os; path = os.path.expanduser('~/.openclaw/openclaw.json'); cfg = json.load(open(path)); cfg.setdefault('gateway', {}).setdefault('auth', {})['token'] = ''; proxy_host = os.environ.get('NEMOCLAW_PROXY_HOST') or '10.200.0.1'; proxy_port = os.environ.get('NEMOCLAW_PROXY_PORT') or '3128'; cfg['proxy'] = { 'enabled': True, 'proxyUrl': f'http://{proxy_host}:{proxy_port}', 'loopbackMode': 'gateway-only', }; json.dump(cfg, open(path, 'w'), indent=2); os.chmod(path, 0o600)"`;
 
+function patchStagedDockerfile(
+  dockerfilePath: string,
+  model: string,
+  chatUiUrl: string,
+): ReturnType<typeof patchStagedDockerfileImpl> {
+  return patchStagedDockerfileImpl(
+    dockerfilePath,
+    model,
+    chatUiUrl,
+    undefined,
+    null,
+    null,
+    null,
+    null,
+    false,
+    null,
+    [],
+    { trustedManagedDockerfile: true },
+  );
+}
+
 describe("remote dashboard bind production lifecycle", () => {
+  it.each([
+    [
+      "pre-generator NODE_OPTIONS",
+      "ENV NODE_OPTIONS=--require=/tmp/bypass.cjs",
+      "before-generator",
+    ],
+    ["pre-generator PATH", "ENV PATH=/tmp/bypass:${PATH}", "before-generator"],
+    ["pre-generator SHELL", 'SHELL ["/tmp/bypass-shell", "-c"]', "before-generator"],
+    ["post-generator PATH", "ENV PATH=/tmp/bypass:${PATH}", "before-config-hash"],
+    ["post-generator PYTHONPATH", "ENV PYTHONPATH=/tmp/bypass", "before-proxy-patch"],
+    ["replacement HEALTHCHECK", "HEALTHCHECK CMD /tmp/bypass-healthcheck", "append"],
+    ["replacement ENTRYPOINT", 'ENTRYPOINT ["/tmp/bypass-entrypoint"]', "append"],
+    ["replacement CMD", 'CMD ["/tmp/bypass-command"]', "append"],
+  ])("rejects custom --from remote bind with %s (#6024)", async (_label, instruction, location) => {
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-from-"));
+    const dockerfile = path.join(directory, "Dockerfile");
+    const stockDockerfile = fs.readFileSync(path.join(process.cwd(), "Dockerfile"), "utf8");
+    const generator =
+      "RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 node --experimental-strip-types /scripts/generate-openclaw-config.mts";
+    const proxyPatch = 'RUN python3 -c "\\\n';
+    const configHash =
+      "RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash";
+    const body =
+      location === "before-generator"
+        ? stockDockerfile.replace(generator, `${instruction}\n${generator}`)
+        : location === "before-proxy-patch"
+          ? stockDockerfile.replace(proxyPatch, `${instruction}\n${proxyPatch}`)
+          : location === "before-config-hash"
+            ? stockDockerfile.replace(configHash, `${instruction}\n${configHash}`)
+            : `${stockDockerfile}\n${instruction}\n`;
+    fs.writeFileSync(dockerfile, body);
+
+    try {
+      await expect(
+        prepareSandboxDockerfilePatch({
+          agent: { name: "openclaw" } as never,
+          fromDockerfile: dockerfile,
+          sandboxBaseImage: "ghcr.io/nvidia/nemoclaw/sandbox-base",
+          sandboxBaseTag: "latest",
+          stagedDockerfile: dockerfile,
+          model: "test-model",
+          chatUiUrl: "http://127.0.0.1:18789",
+          provider: null,
+          preferredInferenceApi: null,
+          webSearchConfig: null,
+          hermesToolGateways: [],
+          sandboxGpuConfig: { mode: "0" } as never,
+          log: vi.fn(),
+          deps: {
+            isLinuxDockerDriverGatewayEnabled: () => false,
+            pullAndResolveBaseImageDigest: () => ({
+              digest: "sha256:custom",
+              ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:custom",
+            }),
+            enforceDockerGpuPatchPreserveNetwork: async () => false,
+            now: () => 1,
+          },
+        }),
+      ).rejects.toThrow(/custom --from Dockerfiles.*runtime configuration attestation/);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("prepares remote bind from the exact checked-in Dockerfile instructions (#6024)", () => {
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-stock-"));
