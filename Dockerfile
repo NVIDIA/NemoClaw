@@ -144,10 +144,12 @@ RUN npm ci --omit=dev \
     && test -z "$json5_unsafe"
 COPY scripts/patch-openclaw-tool-catalog.js /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js
 COPY scripts/patch-openclaw-chat-send.js /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js
+COPY scripts/patch-openclaw-mcp-npx.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts
 COPY scripts/patch-openclaw-issue-4434-diagnostics.ts /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.ts
 COPY scripts/patch-openclaw-device-self-approval.ts /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.ts
 RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js \
         /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js \
+        /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.ts \
         /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.ts
 
@@ -741,6 +743,16 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-devic
 # from its assistant error formatter for unreachable inference failures.
 # hadolint ignore=DL3059
 RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.ts \
+    /usr/local/lib/node_modules/openclaw/dist
+
+# Patch OpenClaw's MCP stdio launcher so npx-backed MCP servers run with -y.
+# Without this, npx can prompt on cold package resolution and consume the MCP
+# JSON-RPC stdin pipe, causing the initialize handshake to time out.
+#
+# Removal criteria: drop when upstream OpenClaw normalizes npx MCP server args
+# and emits actionable MCP startup timeout diagnostics.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts \
     /usr/local/lib/node_modules/openclaw/dist
 
 # Run the compact tool catalog shim for OpenClaw selection runtimes that still

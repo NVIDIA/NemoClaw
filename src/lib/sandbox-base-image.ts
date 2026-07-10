@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import os from "node:os";
+import path from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import {
   dockerBuild,
   dockerImageInspect,
@@ -27,6 +30,7 @@ import {
   SANDBOX_BASE_TAG,
   type SandboxBaseImageResolution,
 } from "./sandbox-base-image/types";
+import { redactFull } from "./security/redact";
 import { addTraceEvent } from "./trace";
 
 export * from "./sandbox-base-image/image-compatibility";
@@ -36,18 +40,22 @@ export * from "./sandbox-base-image/resolution-metadata";
 export * from "./sandbox-base-image/source-identity";
 export * from "./sandbox-base-image/types";
 
+const BUILD_FAILURE_DIAGNOSTIC_LIMIT = 8_000;
+const BUILD_FAILURE_TRUNCATED_SUFFIX = "\n[diagnostic truncated]";
+
 /**
  * Combine stderr + stdout from a captured `dockerBuild` failure and pass them
- * through the runner's redaction so secrets in build output never reach the
- * terminal. BuildKit splits diagnostics across both streams depending on the
- * backend and progress mode, so taking only stderr can hide the actual reason
- * a build failed.
+ * through the complete diagnostic redaction pipeline so secrets, host paths,
+ * and terminal control sequences never reach the terminal. BuildKit splits
+ * diagnostics across both streams depending on the backend and progress mode,
+ * so taking only stderr can hide the actual reason a build failed.
  */
 export function formatBuildFailureDiagnostics(buildResult: {
+  error?: unknown;
   stderr?: unknown;
   stdout?: unknown;
 }): string {
-  const streams = [buildResult.stderr, buildResult.stdout]
+  const streams = [buildResult.error, buildResult.stderr, buildResult.stdout]
     .map((stream) => {
       if (stream == null) return "";
       if (Buffer.isBuffer(stream)) return stream.toString("utf8");
@@ -55,7 +63,20 @@ export function formatBuildFailureDiagnostics(buildResult: {
     })
     .map((text) => text.trim())
     .filter((text) => text.length > 0);
-  return streams.length > 0 ? redact(streams.join("\n")) : "";
+  if (streams.length === 0) return "";
+
+  let diagnostics = redact(redactFull(stripVTControlCharacters(streams.join("\n"))));
+  for (const [prefix, replacement] of [
+    [process.env.HOME, "~"],
+    [os.homedir(), "~"],
+    [os.tmpdir(), "<tmp>"],
+  ] as const) {
+    if (!prefix || prefix === path.parse(prefix).root) continue;
+    diagnostics = diagnostics.replaceAll(prefix, replacement);
+  }
+  return diagnostics.length > BUILD_FAILURE_DIAGNOSTIC_LIMIT
+    ? `${diagnostics.slice(0, BUILD_FAILURE_DIAGNOSTIC_LIMIT)}${BUILD_FAILURE_TRUNCATED_SUFFIX}`
+    : diagnostics;
 }
 
 function localBuildAllowed(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -243,7 +264,7 @@ function resolveLocalCandidate(
     const diagnostics = formatBuildFailureDiagnostics(buildResult);
     if (diagnostics) console.error(diagnostics);
     const detail = buildResult.error
-      ? `: ${buildResult.error.message}`
+      ? " (process launch failed)"
       : ` (exit ${buildResult.status ?? "unknown"})`;
     console.error(`  Failed to build ${label}${detail}`);
     return null;
