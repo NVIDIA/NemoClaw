@@ -14,9 +14,19 @@ const NOT_FOUND_SUFFIXES = new Set([
 // Parser helpers deliberately default to null/false for malformed or unknown
 // diagnostics. The caller treats that as `ambiguous-diagnostic`, preserving the
 // provider and emitting one redacted aggregate warning for observability.
+function stripAnsi(value: string): string {
+  return value.replace(/\x1B\[[0-?]*[ -/]*[@-~]/gu, "");
+}
+
+function stripIssueMarker(text: string): string {
+  const trimmed = text.trimStart();
+  return trimmed.startsWith("×") ? trimmed.slice(1).trimStart() : trimmed;
+}
+
 function stripIssueDecoration(line: string): string {
-  const trimmed = line.trim();
-  return trimmed.startsWith("│") ? trimmed.slice(1).trimStart() : trimmed;
+  const trimmed = stripAnsi(line).trim();
+  const withoutPipe = trimmed.startsWith("│") ? trimmed.slice(1).trimStart() : trimmed;
+  return stripIssueMarker(withoutPipe);
 }
 
 function joinDiagnosticLines(lines: string[]): string {
@@ -35,7 +45,7 @@ function stripDiagnosticPrefixes(line: string): string {
     const lower = text.toLowerCase();
     const prefix = DIAGNOSTIC_PREFIXES.find((candidate) => lower.startsWith(candidate));
     if (!prefix) return text;
-    text = text.slice(prefix.length).trimStart();
+    text = stripIssueMarker(text.slice(prefix.length));
   }
   return text;
 }
