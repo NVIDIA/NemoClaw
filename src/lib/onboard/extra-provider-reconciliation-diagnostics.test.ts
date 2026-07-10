@@ -47,6 +47,24 @@ describe("reconcileRegisteredExtraProviders diagnostics", () => {
       stderr:
         "\u001b[1m\u001b[31mError:\u001b[39m\u001b[0m   × provider 'colored-provider' not found",
     },
+    {
+      label: "wrapped OpenShell provider-get issue diagnostic without a remediation command",
+      provider: "e2e-stale-extra-provider",
+      stderr: [
+        "Error:   × provider 'e2e-stale-extra-provider' not found and 'e2e-stale-extra-",
+        "  │ provider' is not a recognized provider type.",
+      ].join("\n"),
+    },
+    {
+      label: "wrapped OpenShell issue diagnostic with split remediation provider token",
+      provider: "e2e-resume-stale-extra-provider",
+      stderr: [
+        "Error:   × provider 'e2e-resume-stale-extra-provider' not found and 'e2e-resume-",
+        "  │ stale-extra-provider' is not a recognized provider type. Create it first",
+        "  │ with `openshell provider create --type <type> --name e2e-resume-stale-",
+        "  │ extra-provider`",
+      ].join("\n"),
+    },
   ])("accepts exact $label not-found diagnostics (#6501)", ({ provider, stderr }) => {
     expect(reconcile([provider], { [provider]: { status: 1, stderr } })).toEqual([]);
   });

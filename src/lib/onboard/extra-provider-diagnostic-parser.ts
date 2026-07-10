@@ -134,24 +134,23 @@ function wrappedIssueDiagnosticMatches(
   issueDiagnostic: string,
   providerName: string,
 ): boolean | null {
-  const lower = issueDiagnostic.toLowerCase();
+  const text = stripDiagnosticPrefixes(issueDiagnostic).replace(/^\s*×\s*/u, "");
+  const lower = text.toLowerCase();
   const hasWrappedIssueShape =
-    lower.includes("provider ") &&
+    lower.startsWith("provider ") &&
     lower.includes(" not found and ") &&
-    lower.includes(" is not a recognized provider type") &&
-    lower.includes("openshell provider create") &&
-    lower.includes("--name ");
+    lower.includes(" is not a recognized provider type");
   if (!hasWrappedIssueShape) return null;
 
-  const firstProvider = readQuotedValue(issueDiagnostic, lower.indexOf("provider "));
+  const firstProvider = readQuotedValue(text, lower.indexOf("provider "));
   const secondProvider = firstProvider
-    ? readQuotedValue(issueDiagnostic, lower.indexOf(" and ", firstProvider.end))
+    ? readQuotedValue(text, lower.indexOf(" and ", firstProvider.end))
     : null;
-  const commandProvider = commandNameAfterMarker(issueDiagnostic, "--name ");
+  const commandProvider = commandNameAfterMarker(text, "--name ");
   return (
     firstProvider?.value === providerName &&
     secondProvider?.value === providerName &&
-    commandProvider === providerName
+    (commandProvider === null || commandProvider === providerName)
   );
 }
 
