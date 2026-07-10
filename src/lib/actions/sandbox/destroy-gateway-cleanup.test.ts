@@ -3,7 +3,11 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { shouldCleanupGatewayAfterConfirmedFinalDestroy } from "./destroy-gateway-cleanup";
+import { hasNoLiveSandboxes } from "../../domain/sandbox/destroy";
+import {
+  collectLiveSandboxProbeSnapshot,
+  shouldCleanupGatewayAfterConfirmedFinalDestroy,
+} from "./destroy-gateway-cleanup";
 
 describe("shouldCleanupGatewayAfterConfirmedFinalDestroy", () => {
   it("defers live probes until the local registry is empty", () => {
@@ -50,5 +54,54 @@ describe("shouldCleanupGatewayAfterConfirmedFinalDestroy", () => {
         },
       ),
     ).toBe(false);
+  });
+
+  it("collects OpenShell and Docker live-sandbox snapshots in the action layer", () => {
+    const captureOpenshell = vi.fn(() => ({
+      status: 0,
+      output:
+        "NAME              CREATED              PHASE\nnpmtest           now                  Error\n",
+    }));
+    const dockerCapture = vi.fn(() => "openshell-npmtest-e487d1bd\n");
+
+    const snapshot = collectLiveSandboxProbeSnapshot({
+      captureOpenshell,
+      dockerCapture,
+      timeoutMs: 1_000,
+    });
+
+    expect(captureOpenshell).toHaveBeenCalledWith(["sandbox", "list"], {
+      ignoreError: true,
+      timeout: 1_000,
+    });
+    expect(dockerCapture).toHaveBeenCalledWith(
+      ["ps", "--filter", "name=openshell-npmtest-", "--format", "{{.Names}}"],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: 1_000,
+      },
+    );
+    expect(hasNoLiveSandboxes(snapshot)).toBe(false);
+  });
+
+  it("records failed Docker probes as fail-closed snapshots", () => {
+    const snapshot = collectLiveSandboxProbeSnapshot({
+      captureOpenshell: () => ({
+        status: 0,
+        output:
+          "NAME              CREATED              PHASE\nnpmtest           now                  Failed\n",
+      }),
+      dockerCapture: () => {
+        throw new Error("docker unavailable");
+      },
+      timeoutMs: 1_000,
+    });
+
+    expect(hasNoLiveSandboxes(snapshot)).toBe(false);
+    expect(snapshot.dockerContainersBySandboxName.get("npmtest")).toEqual({
+      output: "",
+      probeFailed: true,
+    });
   });
 });

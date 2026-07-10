@@ -3,16 +3,29 @@
 
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import {
-  type DockerCaptureProbe,
+  type DockerSandboxContainerSnapshot,
+  dockerSandboxContainerNamePrefix,
+  getLiveSandboxNames,
   hasNoLiveSandboxes,
-  type LiveSandboxListProbe,
+  type LiveSandboxListSnapshot,
   shouldCleanupGatewayAfterDestroy,
 } from "../../domain/sandbox/destroy";
 import * as registry from "../../state/registry";
 
 type SandboxListProvider = () => { sandboxes: unknown[] };
 
-type LiveSandboxProbe = typeof hasNoLiveSandboxes;
+type LiveSandboxListProbe = (
+  args: string[],
+  opts?: { ignoreError?: boolean; timeout?: number },
+) => LiveSandboxListSnapshot;
+
+type DockerCaptureProbe = (args: string[], opts?: Record<string, unknown>) => string;
+
+type LiveSandboxProbe = (deps?: {
+  captureOpenshell?: LiveSandboxListProbe;
+  dockerCapture?: DockerCaptureProbe;
+  timeoutMs?: number;
+}) => boolean;
 
 type FinalDestroyGatewayCleanupInput = {
   deleteSucceededOrAlreadyGone: boolean;
@@ -39,12 +52,59 @@ function captureDockerContainers(...args: Parameters<DockerCaptureProbe>) {
   return dockerCapture(...args);
 }
 
+export function collectLiveSandboxProbeSnapshot(
+  deps: {
+    captureOpenshell?: LiveSandboxListProbe;
+    dockerCapture?: DockerCaptureProbe;
+    timeoutMs?: number;
+  } = {},
+): Parameters<typeof hasNoLiveSandboxes>[0] {
+  const captureOpenshell = deps.captureOpenshell ?? captureLiveSandboxes;
+  const dockerCapture = deps.dockerCapture ?? captureDockerContainers;
+  const timeoutMs = deps.timeoutMs ?? OPENSHELL_PROBE_TIMEOUT_MS;
+  const liveList = captureOpenshell(["sandbox", "list"], {
+    ignoreError: true,
+    timeout: timeoutMs,
+  });
+  const dockerContainersBySandboxName = new Map<string, DockerSandboxContainerSnapshot>();
+  for (const sandboxName of getLiveSandboxNames(liveList)) {
+    try {
+      dockerContainersBySandboxName.set(sandboxName, {
+        output: dockerCapture(
+          [
+            "ps",
+            "--filter",
+            `name=${dockerSandboxContainerNamePrefix(sandboxName)}`,
+            "--format",
+            "{{.Names}}",
+          ],
+          {
+            ignoreError: true,
+            suppressOutput: true,
+            timeout: timeoutMs,
+          },
+        ),
+      });
+    } catch {
+      // Fail closed for the #4662 invalid-state boundary. If Docker cannot
+      // confirm the terminal OpenShell row has no backing container, keep the
+      // shared gateway so a live sandbox does not lose its listener.
+      dockerContainersBySandboxName.set(sandboxName, { output: "", probeFailed: true });
+    }
+  }
+  return { liveList, dockerContainersBySandboxName };
+}
+
+function hasNoLiveSandboxesFromHost(deps?: Parameters<LiveSandboxProbe>[0]): boolean {
+  return hasNoLiveSandboxes(collectLiveSandboxProbeSnapshot(deps));
+}
+
 export function shouldCleanupGatewayAfterConfirmedFinalDestroy(
   input: FinalDestroyGatewayCleanupInput,
   deps: FinalDestroyGatewayCleanupDeps = {},
 ): boolean {
   const listSandboxes = deps.listSandboxes ?? registry.listSandboxes;
-  const liveSandboxProbe = deps.liveSandboxProbe ?? hasNoLiveSandboxes;
+  const liveSandboxProbe = deps.liveSandboxProbe ?? hasNoLiveSandboxesFromHost;
   const timeoutMs = deps.timeoutMs ?? OPENSHELL_PROBE_TIMEOUT_MS;
   const noRegisteredSandboxes = listSandboxes().sandboxes.length === 0;
   const noLiveSandboxes =
@@ -52,8 +112,6 @@ export function shouldCleanupGatewayAfterConfirmedFinalDestroy(
     input.removedRegistryEntry &&
     noRegisteredSandboxes &&
     liveSandboxProbe({
-      captureOpenshell: captureLiveSandboxes,
-      dockerCapture: captureDockerContainers,
       timeoutMs,
     });
 

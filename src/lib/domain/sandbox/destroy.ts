@@ -29,17 +29,19 @@ export type DestroyGatewayCleanupContext = {
   platform: NodeJS.Platform;
 };
 
-export type LiveSandboxListProbe = (
-  args: string[],
-  opts?: { ignoreError?: boolean; timeout?: number },
-) => { status: number | null; output: string };
+export type LiveSandboxListSnapshot = {
+  status: number | null;
+  output: string;
+};
 
-export type DockerCaptureProbe = (args: string[], opts?: Record<string, unknown>) => string;
+export type DockerSandboxContainerSnapshot = {
+  output: string;
+  probeFailed?: boolean;
+};
 
-export type LiveSandboxProbeDeps = {
-  captureOpenshell: LiveSandboxListProbe;
-  dockerCapture: DockerCaptureProbe;
-  timeoutMs: number;
+export type LiveSandboxProbeSnapshot = {
+  liveList: LiveSandboxListSnapshot;
+  dockerContainersBySandboxName: ReadonlyMap<string, DockerSandboxContainerSnapshot>;
 };
 
 export function isMissingSandboxDeleteOutput(output = ""): boolean {
@@ -126,7 +128,7 @@ export function resolveDestroyGatewayCleanupDecision(
   return "prompt";
 }
 
-function dockerSandboxContainerNamePrefix(sandboxName: string): string {
+export function dockerSandboxContainerNamePrefix(sandboxName: string): string {
   return `openshell-${sandboxName}-`;
 }
 
@@ -157,45 +159,28 @@ function ownsDockerSandboxContainer(
 
 export function hasRunningDockerSandboxContainer(
   sandboxName: string,
-  dockerCapture: DockerCaptureProbe,
-  timeoutMs: number,
+  snapshot: DockerSandboxContainerSnapshot | undefined,
   knownSandboxNames: Iterable<string> = [sandboxName],
 ): boolean {
-  const containerNamePrefix = dockerSandboxContainerNamePrefix(sandboxName);
-  try {
-    const output = dockerCapture(
-      ["ps", "--filter", `name=${containerNamePrefix}`, "--format", "{{.Names}}"],
-      {
-        ignoreError: true,
-        suppressOutput: true,
-        timeout: timeoutMs,
-      },
-    );
-    return dockerContainerNames(output).some((name) =>
-      ownsDockerSandboxContainer(name, sandboxName, knownSandboxNames),
-    );
-  } catch {
-    // Fail closed for the #4662 invalid-state boundary: OpenShell may report a
-    // terminal sandbox row while the Docker sandbox container is still running.
-    // Docker is the authoritative source for that live-container check, and the
-    // OpenShell false terminal state cannot be fixed from this destroy path. If
-    // the Docker probe itself fails, preserve the shared gateway so a live
-    // sandbox does not lose its listener on final destroy. Covered by
-    // destroy.test.ts; remove this fallback after OpenShell no longer emits
-    // false terminal rows and #6639 is closed.
+  if (!snapshot || snapshot.probeFailed) {
     return true;
   }
+  return dockerContainerNames(snapshot.output).some((name) =>
+    ownsDockerSandboxContainer(name, sandboxName, knownSandboxNames),
+  );
+}
+
+export function getLiveSandboxNames(liveList: LiveSandboxListSnapshot): string[] {
+  if (liveList.status !== 0) {
+    return [];
+  }
+  return parseLiveSandboxEntries(liveList.output).map((entry) => entry.name);
 }
 
 export function hasNoLiveSandboxes({
-  captureOpenshell,
-  dockerCapture,
-  timeoutMs,
-}: LiveSandboxProbeDeps): boolean {
-  const liveList = captureOpenshell(["sandbox", "list"], {
-    ignoreError: true,
-    timeout: timeoutMs,
-  });
+  liveList,
+  dockerContainersBySandboxName,
+}: LiveSandboxProbeSnapshot): boolean {
   if (liveList.status !== 0) {
     return false;
   }
@@ -203,6 +188,10 @@ export function hasNoLiveSandboxes({
   const sandboxNames = entries.map((entry) => entry.name);
   return entries.every((entry) => {
     if (!TERMINAL_OPEN_SHELL_SANDBOX_PHASES.has(entry.phase ?? "")) return false;
-    return !hasRunningDockerSandboxContainer(entry.name, dockerCapture, timeoutMs, sandboxNames);
+    return !hasRunningDockerSandboxContainer(
+      entry.name,
+      dockerContainersBySandboxName.get(entry.name),
+      sandboxNames,
+    );
   });
 }

@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
+  dockerSandboxContainerNamePrefix,
   getSandboxDeleteOutcome,
   hasNoLiveSandboxes,
   hasRunningDockerSandboxContainer,
@@ -132,78 +133,63 @@ describe("sandbox destroy helpers", () => {
       "NAME              CREATED              PHASE\nnpmtest           2026-06-01 00:00:00  Error\n";
     expect(
       hasNoLiveSandboxes({
-        captureOpenshell: () => ({ status: 0, output: liveListOutput }),
-        dockerCapture: () => "",
-        timeoutMs: 1_000,
+        liveList: { status: 0, output: liveListOutput },
+        dockerContainersBySandboxName: new Map([["npmtest", { output: "" }]]),
       }),
     ).toBe(true);
     expect(
       hasNoLiveSandboxes({
-        captureOpenshell: () => ({ status: 0, output: liveListOutput }),
-        dockerCapture: () => "openshell-npmtest-e487d1bd\n",
-        timeoutMs: 1_000,
+        liveList: { status: 0, output: liveListOutput },
+        dockerContainersBySandboxName: new Map([
+          ["npmtest", { output: "openshell-npmtest-e487d1bd\n" }],
+        ]),
       }),
     ).toBe(false);
     expect(
       hasNoLiveSandboxes({
-        captureOpenshell: () => ({
+        liveList: {
           status: 0,
           output:
             "NAME              CREATED              PHASE\nnpmtest           now                  Ready\n",
-        }),
-        dockerCapture: () => "",
-        timeoutMs: 1_000,
+        },
+        dockerContainersBySandboxName: new Map([["npmtest", { output: "" }]]),
       }),
     ).toBe(false);
   });
 
-  it("fails closed when the Docker live-container probe cannot run (#4662)", () => {
-    expect(
-      hasRunningDockerSandboxContainer(
-        "npmtest",
-        () => {
-          throw new Error("docker unavailable");
-        },
-        1_000,
-      ),
-    ).toBe(true);
+  it("fails closed when a Docker live-container probe snapshot is missing or failed (#4662)", () => {
+    expect(hasRunningDockerSandboxContainer("npmtest", undefined)).toBe(true);
+    expect(hasRunningDockerSandboxContainer("npmtest", { output: "", probeFailed: true })).toBe(
+      true,
+    );
     expect(
       hasNoLiveSandboxes({
-        captureOpenshell: () => ({
+        liveList: {
           status: 0,
           output:
             "NAME              CREATED              PHASE\nnpmtest           now                  Failed\n",
-        }),
-        dockerCapture: () => {
-          throw new Error("docker unavailable");
         },
-        timeoutMs: 1_000,
+        dockerContainersBySandboxName: new Map([["npmtest", { output: "", probeFailed: true }]]),
       }),
     ).toBe(false);
   });
 
   it("matches Docker sandbox containers with a literal name prefix (#4662)", () => {
-    const dockerCapture = vi.fn(
-      () => "prefix-openshell-npmtest-e487d1bd\nopenshell-npmtest-e487d1bd\n",
-    );
-
-    expect(hasRunningDockerSandboxContainer("npmtest", dockerCapture, 1_000)).toBe(true);
-    expect(dockerCapture).toHaveBeenCalledWith(
-      ["ps", "--filter", "name=openshell-npmtest-", "--format", "{{.Names}}"],
-      {
-        ignoreError: true,
-        suppressOutput: true,
-        timeout: 1_000,
-      },
-    );
+    expect(dockerSandboxContainerNamePrefix("npmtest")).toBe("openshell-npmtest-");
     expect(
-      hasRunningDockerSandboxContainer("npmtest[", () => "openshell-npmtest[-e487d1bd\n", 1_000),
+      hasRunningDockerSandboxContainer("npmtest", {
+        output: "prefix-openshell-npmtest-e487d1bd\nopenshell-npmtest-e487d1bd\n",
+      }),
+    ).toBe(true);
+    expect(
+      hasRunningDockerSandboxContainer("npmtest[", {
+        output: "openshell-npmtest[-e487d1bd\n",
+      }),
     ).toBe(true);
     expect(
       hasRunningDockerSandboxContainer(
         "npmtest",
-        () => "prefix-openshell-npmtest-e487d1bd\nopenshell-npmtest-extra-e487d1bd\n",
-        1_000,
+        { output: "prefix-openshell-npmtest-e487d1bd\nopenshell-npmtest-extra-e487d1bd\n" },
         ["npmtest", "npmtest-extra"],
       ),
     ).toBe(false);
