@@ -138,7 +138,11 @@ describe("stopHostGatewayProcesses", () => {
     ]);
     const { run } = makeRun(responses);
     const kill = vi.fn<HostGatewayProcessDeps["kill"]>((pid, signal) => {
-      if (signal === "SIGTERM") exited.add(pid);
+      switch (signal) {
+        case "SIGTERM":
+          exited.add(pid);
+          break;
+      }
       return true;
     });
 
@@ -166,7 +170,11 @@ describe("stopHostGatewayProcesses", () => {
     ]);
     const { run } = makeRun(responses);
     const kill = vi.fn<HostGatewayProcessDeps["kill"]>((pid, signal) => {
-      if (signal === "SIGTERM") exited.add(pid);
+      switch (signal) {
+        case "SIGTERM":
+          exited.add(pid);
+          break;
+      }
       return true;
     });
 
@@ -195,7 +203,11 @@ describe("stopHostGatewayProcesses", () => {
     ]);
     const { run } = makeRun(responses);
     const kill = vi.fn<HostGatewayProcessDeps["kill"]>((pid, signal) => {
-      if (signal === "SIGTERM") exited.add(pid);
+      switch (signal) {
+        case "SIGTERM":
+          exited.add(pid);
+          break;
+      }
       return true;
     });
 
