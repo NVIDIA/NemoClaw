@@ -1215,6 +1215,7 @@ describe("Hermes sandbox provisioning", () => {
       path.join(localLib, "patch-hermes-session-list-preview.py"),
       path.join(localLib, "seed-hermes-dashboard-config.py"),
       path.join(localLib, "hermes-runtime-config-guard.py"),
+      path.join(localLib, "finalize-tirith-marker.py"),
       buildMcpDigestPath,
       mcpConfigTransactionPath,
       mcpManifest,
@@ -1238,7 +1239,6 @@ describe("Hermes sandbox provisioning", () => {
       fs.mkdirSync(etcDir, { recursive: true });
       fs.writeFileSync(bashrcPath, "# fixture\n", { mode: 0o600 });
       for (const file of files) fs.writeFileSync(file, "# fixture\n", { mode: 0o600 });
-
       const { result, calls } = runLoggedDockerShell(command, tmp, [
         'chown() { printf "chown %s\\n" "$*" >> "$call_log"; }',
       ]);
