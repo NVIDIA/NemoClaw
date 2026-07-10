@@ -15,6 +15,8 @@ const moduleMocks = vi.hoisted(() => ({
   listCustomPresets: vi.fn<(sandboxName: string) => PresetInfo[]>(),
   getAppliedPresets: vi.fn<(sandboxName: string) => string[]>(),
   getGatewayPresets: vi.fn<(sandboxName: string) => string[] | null>(),
+  isDockerRuntimeDown: vi.fn<(sandboxName: string) => boolean>(),
+  printDockerRuntimeDownGuidance: vi.fn(),
 }));
 
 vi.mock("../../state/registry", async (importOriginal) => ({
@@ -29,6 +31,12 @@ vi.mock("../../policy", async (importOriginal) => ({
   listCustomPresets: moduleMocks.listCustomPresets,
   getAppliedPresets: moduleMocks.getAppliedPresets,
   getGatewayPresets: moduleMocks.getGatewayPresets,
+}));
+
+vi.mock("./gateway-failure-classifier", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./gateway-failure-classifier")>()),
+  isDockerRuntimeDown: moduleMocks.isDockerRuntimeDown,
+  printDockerRuntimeDownGuidance: moduleMocks.printDockerRuntimeDownGuidance,
 }));
 
 import { listSandboxPolicies } from "./policy-channel";
@@ -78,6 +86,7 @@ beforeEach(() => {
   moduleMocks.getCustomPolicies.mockReturnValue([]);
   moduleMocks.listPresets.mockReturnValue(POLICY_PRESETS);
   moduleMocks.listCustomPresets.mockReturnValue([]);
+  moduleMocks.isDockerRuntimeDown.mockReturnValue(false);
 });
 
 afterEach(() => {
