@@ -29,7 +29,7 @@ const START = path.join(import.meta.dirname, "..", "agents", "hermes", "start.sh
 function runHermesRootMcpStartup(commitStatus: 0 | 1) {
   const source = fs.readFileSync(START, "utf-8");
   const startupBlock = source.match(
-    /^launch_hermes_gateway\nstart_gateway_log_stream\nwait_for_hermes_gateway_internal "\$GATEWAY_PID"\nensure_hermes_supervised_auxiliaries\nif ! commit_hermes_mcp_applied_if_pending; then\n[\s\S]*?^restore_hermes_config_permissions_after_dashboard_start$/m,
+    /^launch_hermes_gateway\nstart_gateway_log_stream\nwait_for_hermes_gateway_internal "\$GATEWAY_PID"\nensure_hermes_supervised_auxiliaries\nfinalize_tirith_marker_retry\nif ! commit_hermes_mcp_applied_if_pending; then\n[\s\S]*?^restore_hermes_config_permissions_after_dashboard_start$/m,
   )?.[0];
   expect(startupBlock).toBeDefined();
   const startupScript = startupBlock as string;
@@ -45,7 +45,7 @@ function runHermesRootMcpStartup(commitStatus: 0 | 1) {
       'launch_hermes_gateway() { GATEWAY_PID=4242; trace "launch:$GATEWAY_PID"; }',
       "start_gateway_log_stream() { trace log-stream; }",
       'wait_for_hermes_gateway_internal() { trace "health:$1"; }',
-      "ensure_hermes_supervised_auxiliaries() { trace auxiliaries; }",
+      "ensure_hermes_supervised_auxiliaries() { trace auxiliaries; }\nfinalize_tirith_marker_retry() { :; }",
       `commit_hermes_mcp_applied_if_pending() { trace commit-applied; return ${commitStatus}; }`,
       "stop_hermes_gateway_fail_closed() { trace stop-fail-closed; }",
       "restore_hermes_config_permissions_after_dashboard_start() { trace restore-permissions; }",
