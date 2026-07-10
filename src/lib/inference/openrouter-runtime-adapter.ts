@@ -8,7 +8,11 @@ export {
   adapterAuthorizationHash,
   adapterConfigHash,
 } from "./openrouter-runtime-adapter-common";
-export { ensureOpenRouterRuntimeAdapter } from "./openrouter-runtime-adapter-lifecycle";
+export {
+  cleanupStartedOpenRouterRuntimeAdapter,
+  ensureOpenRouterRuntimeAdapter,
+  type OpenRouterRuntimeAdapterRoute,
+} from "./openrouter-runtime-adapter-lifecycle";
 export {
   createOpenRouterRuntimeAdapterServer,
   startOpenRouterRuntimeAdapterFromEnv,

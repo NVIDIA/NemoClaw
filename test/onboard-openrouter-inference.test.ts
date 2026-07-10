@@ -27,6 +27,8 @@ describe("OpenRouter onboarding inference setup", () => {
         localBaseUrl: "http://127.0.0.1:11437/v1",
         credentialEnv: "OPENROUTER_API_KEY",
         logPath: "/tmp/openrouter-runtime-adapter.log",
+        started: true,
+        startedPid: 12345,
       }));
       const setupOpenRouterRuntimeInference =
         openrouterRuntimeOnboard.setupOpenRouterRuntimeInference;
@@ -88,6 +90,8 @@ describe("OpenRouter onboarding inference setup", () => {
         localBaseUrl: "http://127.0.0.1:11437/v1",
         credentialEnv: "OPENROUTER_API_KEY",
         logPath: "/tmp/openrouter-runtime-adapter.log",
+        started: false,
+        startedPid: null,
       }));
       const setupOpenRouterRuntimeInference =
         openrouterRuntimeOnboard.setupOpenRouterRuntimeInference;
@@ -130,6 +134,94 @@ describe("OpenRouter onboarding inference setup", () => {
         "  ✓ Inference route set: openrouter-api / moonshotai/kimi-k2.6",
       ]);
       expect(harness.errors).toEqual([]);
+    });
+  });
+
+  it("stops a newly-started OpenRouter adapter when provider registration fails (#5826)", async () => {
+    await withProcessEnv({ OPENROUTER_API_KEY: "sk-or-test" }, async () => {
+      const adapter = {
+        baseUrl: "http://host.openshell.internal:11437/v1",
+        localBaseUrl: "http://127.0.0.1:11437/v1",
+        credentialEnv: "OPENROUTER_API_KEY",
+        logPath: "/tmp/openrouter-runtime-adapter.log",
+        started: true,
+        startedPid: 12345,
+      };
+      const ensureAdapter = vi.fn(async () => adapter);
+      const cleanupAdapter = vi.fn();
+      const setupOpenRouterRuntimeInference =
+        openrouterRuntimeOnboard.setupOpenRouterRuntimeInference;
+      const harness = createDirectSetupInferenceHarness({
+        runOpenshell: (args) => {
+          if (args.join(" ").startsWith("provider update ")) {
+            return { status: 44, stderr: "provider update failed" };
+          }
+          return undefined;
+        },
+        overrides: {
+          openrouterRuntimeOnboard: {
+            setupOpenRouterRuntimeInference: (
+              input: Parameters<typeof setupOpenRouterRuntimeInference>[0],
+            ) => setupOpenRouterRuntimeInference({ ...input, ensureAdapter, cleanupAdapter }),
+          },
+        },
+      });
+
+      const result = await harness.setupInference(
+        "test-box",
+        "moonshotai/kimi-k2.6",
+        "openrouter-api",
+        "https://openrouter.ai/api/v1",
+        "OPENROUTER_API_KEY",
+      );
+
+      expect(result).toEqual({ retry: "selection" });
+      expect(cleanupAdapter).toHaveBeenCalledWith(adapter);
+      expect(harness.errors.join("\n")).toContain("provider update failed");
+    });
+  });
+
+  it("does not stop a reused OpenRouter adapter when inference registration fails (#5826)", async () => {
+    await withProcessEnv({ OPENROUTER_API_KEY: "sk-or-test" }, async () => {
+      const adapter = {
+        baseUrl: "http://host.openshell.internal:11437/v1",
+        localBaseUrl: "http://127.0.0.1:11437/v1",
+        credentialEnv: "OPENROUTER_API_KEY",
+        logPath: "/tmp/openrouter-runtime-adapter.log",
+        started: false,
+        startedPid: null,
+      };
+      const ensureAdapter = vi.fn(async () => adapter);
+      const cleanupAdapter = vi.fn();
+      const setupOpenRouterRuntimeInference =
+        openrouterRuntimeOnboard.setupOpenRouterRuntimeInference;
+      const harness = createDirectSetupInferenceHarness({
+        runOpenshell: (args) => {
+          if (args.join(" ").startsWith("inference set ")) {
+            return { status: 45, stderr: "inference set failed" };
+          }
+          return undefined;
+        },
+        overrides: {
+          openrouterRuntimeOnboard: {
+            setupOpenRouterRuntimeInference: (
+              input: Parameters<typeof setupOpenRouterRuntimeInference>[0],
+            ) => setupOpenRouterRuntimeInference({ ...input, ensureAdapter, cleanupAdapter }),
+          },
+        },
+      });
+
+      const result = await harness.setupInference(
+        "test-box",
+        "moonshotai/kimi-k2.6",
+        "openrouter-api",
+        "https://openrouter.ai/api/v1",
+        "OPENROUTER_API_KEY",
+      );
+
+      expect(result).toEqual({ retry: "selection" });
+      expect(cleanupAdapter).not.toHaveBeenCalled();
+      expect(harness.errors.join("\n")).toContain("inference set failed");
     });
   });
 });
