@@ -803,7 +803,9 @@ describe("runSandboxSnapshot", () => {
 
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
-    expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
+    expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha", {
+      applyManagedStateFileRestore: false,
+    });
     const output = consoleLog.mock.calls.flat().join("\n");
     expect(output).toContain("Using latest snapshot v4 name=stable");
     expect(output).toContain("Restoring snapshot into 'alpha'");
@@ -835,7 +837,9 @@ describe("runSandboxSnapshot", () => {
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
     expect(lifecycleMock.events).toContain("lock:restore sandbox snapshot");
-    expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
+    expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha", {
+      applyManagedStateFileRestore: false,
+    });
     expect(shieldsMock.repairMutableConfigPermsMock).toHaveBeenCalledWith("alpha");
     expect(applyPresetMock).toHaveBeenCalledWith("alpha", "github");
   });
@@ -902,7 +906,9 @@ describe("runSandboxSnapshot", () => {
       lifecycleMock.events.indexOf("cleanup-shields"),
     );
     expect(streamSandboxCreateMock).toHaveBeenCalled();
-    expect(restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha");
+    expect(restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha", {
+      applyManagedStateFileRestore: false,
+    });
   });
 
   it("blocks auto-create before deleting a destination when a gateway peer conflicts", async () => {

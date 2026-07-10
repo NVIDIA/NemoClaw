@@ -503,9 +503,11 @@ describe("runSandboxSnapshot restore", () => {
     getLatestBackupMock.mockReturnValue({ ...latestBackupFixture });
     const { runSandboxSnapshot } = await import("./snapshot");
     await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
-    const [createCommandValue, createEnv] = streamSandboxCreateMock.mock.calls[0] ?? [];
-    const createCommand = String(createCommandValue ?? "");
-    expect(createCommand).toContain(`'NEMOCLAW_OBSERVABILITY=${expectedValue}'`);
+    const createCall = streamSandboxCreateMock.mock.calls[0] ?? [];
+    const createArgs = createCall[1] as readonly string[];
+    const createEnv = createCall[2] as NodeJS.ProcessEnv | undefined;
+    expect(createCall[0]).toBe("openshell");
+    expect(createArgs).toContain(`NEMOCLAW_OBSERVABILITY=${expectedValue}`);
     expect(createEnv?.NEMOCLAW_OBSERVABILITY).toBeUndefined();
     expect(registerSandboxMock).toHaveBeenCalledWith(
       expect.objectContaining({
