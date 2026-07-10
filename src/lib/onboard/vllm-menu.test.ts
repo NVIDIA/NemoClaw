@@ -20,7 +20,7 @@ describe("buildVllmMenuEntries", () => {
     assert.deepEqual(entries, []);
   });
 
-  it("returns the running entry when vLLM is reachable on localhost", () => {
+  it("marks the running entry experimental on generic hosts", () => {
     const entries = buildVllmMenuEntries({
       vllmRunning: true,
       vllmProfile: null,
@@ -34,6 +34,27 @@ describe("buildVllmMenuEntries", () => {
     assert.match(entries[0].label, /Local vLLM \[experimental\]/);
     assert.match(entries[0].label, /running/);
   });
+
+  for (const [platform, hostLabel] of [
+    ["spark", "Spark"],
+    ["station", "Station"],
+  ] as const) {
+    it(`does not mark the running entry experimental on DGX ${hostLabel}`, () => {
+      const entries = buildVllmMenuEntries({
+        vllmRunning: true,
+        vllmProfile: null,
+        experimental: false,
+        platform,
+        hasVllmImage: false,
+        log: () => {},
+        env: {},
+      });
+      assert.equal(entries.length, 1);
+      assert.equal(entries[0].key, "vllm");
+      assert.doesNotMatch(entries[0].label, /experimental/);
+      assert.match(entries[0].label, /running/);
+    });
+  }
 
   it("returns the install entry when a profile matches and EXPERIMENTAL is set", () => {
     const entries = buildVllmMenuEntries({
