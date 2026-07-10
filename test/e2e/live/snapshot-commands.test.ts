@@ -35,7 +35,7 @@ if (!BACKUP_DIR.startsWith(`${path.resolve(BACKUP_ROOT)}${path.sep}`)) {
 const MARKER_FILE = "/sandbox/.openclaw/workspace/snapshot-marker.txt";
 const SECOND_MARKER = "/sandbox/.openclaw/workspace/snapshot-marker-2.txt";
 const LIVE_TIMEOUT_MS = 30 * 60_000;
-const INFERENCE_API_KEY = "snapshot-commands-fixture-credential";
+const INFERENCE_API_KEY = "nvapi-snapshot-commands-fixture-credential";
 const INFERENCE_MODEL = "snapshot-commands-model";
 
 interface SnapshotInferenceFixture {
