@@ -9,6 +9,7 @@ import {
   createBearerAuthConfig,
   createCurlAuthConfig,
   createOpenAiLikeAuthConfig,
+  parseOpenAiLikeExtraHeaders,
   createQueryParamAuthConfig,
   createXApiKeyAuthConfig,
 } from "./auth-config";
@@ -94,6 +95,22 @@ describe("curl auth config helper", () => {
     } finally {
       config.cleanup();
     }
+  });
+
+  it.each([
+    " : value",
+    "Bad Header: value",
+    "missing-colon",
+  ])("rejects invalid OpenAI-like provider header %j", (header) => {
+    expect(() => parseOpenAiLikeExtraHeaders([header])).toThrow(
+      "invalid OpenAI-like provider header",
+    );
+  });
+
+  it("accepts every HTTP token character in an OpenAI-like provider header name", () => {
+    expect(parseOpenAiLikeExtraHeaders(["!#$%&'*+-.^_`|~09AZaz: value"])).toEqual([
+      { name: "!#$%&'*+-.^_`|~09AZaz", value: "value" },
+    ]);
   });
 
   it("honours a caller-supplied tmpfile prefix so health probes are identifiable in /proc", () => {
