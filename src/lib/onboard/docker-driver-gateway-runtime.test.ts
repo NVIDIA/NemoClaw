@@ -200,14 +200,17 @@ describe("docker-driver gateway runtime helpers", () => {
         },
         () => {
           const { helpers, runCapture } = makeHelpers({
-            runCapture: vi.fn((args) =>
-              args.join(" ") === "ps -axo pid=,ppid=,command="
+            runCapture: vi.fn((args) => {
+              if (args.join(" ") === `ps -p ${pid} -o args=`) {
+                return "openshell-gateway[nemoclaw=nemoclaw-18080;port=18080]\n";
+              }
+              return args.join(" ") === "ps -axo pid=,ppid=,command="
                 ? [
                     `${pid} 1 ${gatewayBin}`,
                     `${pid + 1} ${pid} /usr/local/bin/openshell-driver-vm --bind-socket /tmp/vm.sock`,
                   ].join("\n")
-                : "",
-            ),
+                : "";
+            }),
           });
           const desiredEnv = helpers.getDockerDriverGatewayEnv(null, "darwin");
           writeDockerDriverGatewayRuntimeMarkerForStateDir(stateDir, {
@@ -357,7 +360,9 @@ describe("docker-driver gateway runtime helpers", () => {
     const identityGatewayBin = "/opt/openshell/openshell-gateway";
     const replacementGatewayBin = "/opt/openshell/replaced/openshell-gateway";
     const desiredEnv = { OPENSHELL_DRIVERS: "docker" };
-    const { helpers } = makeHelpers();
+    const { helpers } = makeHelpers({
+      runCapture: vi.fn(() => "openshell-gateway[nemoclaw=nemoclaw-18080;port=18080]\n"),
+    });
     const originalExistsSync = fs.existsSync.bind(fs);
     const originalReadFileSync = fs.readFileSync.bind(fs);
     const originalReadlinkSync = fs.readlinkSync.bind(fs);
@@ -384,5 +389,35 @@ describe("docker-driver gateway runtime helpers", () => {
       helpers.getDockerDriverGatewayRuntimeDrift(pid, desiredEnv, identityGatewayBin, "linux")
         ?.reason,
     ).toBe(`executable=${replacementGatewayBin} (expected ${identityGatewayBin})`);
+  });
+
+  it("forces a legacy no-argument host gateway through replacement before reuse", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-runtime-"));
+    const pid = 87_654;
+    const gatewayBin = path.join(stateDir, "openshell-gateway");
+    try {
+      withEnv({ NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir }, () => {
+        const { helpers } = makeHelpers({
+          runCapture: vi.fn((args) =>
+            args.join(" ") === `ps -p ${pid} -o args=` ? `${gatewayBin}\n` : "",
+          ),
+        });
+        const desiredEnv = helpers.getDockerDriverGatewayEnv(null, "darwin");
+        writeDockerDriverGatewayRuntimeMarkerForStateDir(stateDir, {
+          pid,
+          desiredEnv,
+          endpoint: desiredEnv.OPENSHELL_GRPC_ENDPOINT,
+          gatewayBin,
+          platform: "darwin",
+          arch: process.arch,
+        });
+
+        expect(
+          helpers.getDockerDriverGatewayRuntimeDrift(pid, desiredEnv, gatewayBin, "darwin")?.reason,
+        ).toContain("lacks target-bound cleanup identity");
+      });
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
   });
 });
