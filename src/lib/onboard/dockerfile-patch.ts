@@ -30,9 +30,8 @@ import {
   isDcodeAutoApprovalMode,
 } from "./dcode-auto-approval";
 import {
-  findRemoteDashboardBindFinalStageArg,
   hasPreparedRemoteDashboardBind,
-  hasRemoteDashboardBindGenerationContract,
+  patchRemoteDashboardBindContract,
 } from "./dockerfile-remote-dashboard-bind-contract";
 import {
   dockerfileInstructions,
@@ -190,24 +189,12 @@ export function patchStagedDockerfile(
     /^ARG CHAT_UI_URL=.*$/m,
     `ARG CHAT_UI_URL=${sanitizeDockerArg(chatUiUrl)}`,
   );
-  const dashboardBind = process.env.NEMOCLAW_DASHBOARD_BIND === "0.0.0.0" ? "0.0.0.0" : "";
-  const dashboardBindArg = findRemoteDashboardBindFinalStageArg(dockerfile);
-  if (dashboardBind && !dashboardBindArg) {
-    throw new Error(
-      "Dockerfile is missing ARG NEMOCLAW_DASHBOARD_BIND; cannot prepare remote dashboard exposure.",
-    );
-  }
-  if (dashboardBindArg) {
-    dockerfile = `${dockerfile.slice(0, dashboardBindArg.start)}ARG NEMOCLAW_DASHBOARD_BIND=${dashboardBind}${dockerfile.slice(dashboardBindArg.end)}`;
-  }
-  const dashboardRemoteBindPrepared =
-    dashboardBind === "0.0.0.0" && hasRemoteDashboardBindGenerationContract(dockerfile);
-  if (dashboardBind === "0.0.0.0" && !dashboardRemoteBindPrepared) {
-    throw new Error(
-      "Dockerfile declares ARG NEMOCLAW_DASHBOARD_BIND but does not promote it to " +
-        "generate-openclaw-config.mts; cannot prepare remote dashboard exposure.",
-    );
-  }
+  const remoteDashboardBind = patchRemoteDashboardBindContract(
+    dockerfile,
+    process.env.NEMOCLAW_DASHBOARD_BIND === "0.0.0.0" ? "0.0.0.0" : "",
+  );
+  dockerfile = remoteDashboardBind.dockerfile;
+  const { dashboardRemoteBindPrepared } = remoteDashboardBind;
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_INFERENCE_BASE_URL=.*$/m,
     `ARG NEMOCLAW_INFERENCE_BASE_URL=${sanitizeDockerArg(inferenceBaseUrl)}`,

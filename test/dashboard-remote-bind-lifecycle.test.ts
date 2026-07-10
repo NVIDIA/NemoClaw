@@ -167,6 +167,115 @@ describe("remote dashboard bind production lifecycle", () => {
     }
   });
 
+  it("rejects final-stage config overwrites after the remote-bind generator (#6024)", () => {
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-overwrite-"));
+    const dockerfile = path.join(directory, "Dockerfile");
+    fs.writeFileSync(
+      dockerfile,
+      [
+        "FROM scratch",
+        "ARG NEMOCLAW_MODEL=",
+        "ARG CHAT_UI_URL=",
+        "ARG NEMOCLAW_DASHBOARD_BIND=",
+        "ENV NEMOCLAW_DASHBOARD_BIND=${NEMOCLAW_DASHBOARD_BIND}",
+        "RUN node --experimental-strip-types /scripts/generate-openclaw-config.mts",
+        "RUN printf '{}' > /sandbox/.openclaw/openclaw.json",
+      ].join("\n"),
+    );
+
+    try {
+      expect(() =>
+        patchStagedDockerfile(dockerfile, "test-model", "http://127.0.0.1:18789"),
+      ).toThrow(/preserve the generated remote dashboard output/);
+      expect(hasPreparedRemoteDashboardBind(dockerfile)).toBe(false);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("allows final-stage config metadata updates after the remote-bind generator (#6024)", () => {
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-metadata-"));
+    const dockerfile = path.join(directory, "Dockerfile");
+    fs.writeFileSync(
+      dockerfile,
+      [
+        "FROM scratch",
+        "ARG NEMOCLAW_MODEL=",
+        "ARG CHAT_UI_URL=",
+        "ARG NEMOCLAW_DASHBOARD_BIND=",
+        "ENV NEMOCLAW_DASHBOARD_BIND=${NEMOCLAW_DASHBOARD_BIND}",
+        "RUN node --experimental-strip-types /scripts/generate-openclaw-config.mts",
+        "RUN chmod 660 /sandbox/.openclaw/openclaw.json",
+        "RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash",
+      ].join("\n"),
+    );
+
+    try {
+      expect(() =>
+        patchStagedDockerfile(dockerfile, "test-model", "http://127.0.0.1:18789"),
+      ).not.toThrow();
+      expect(hasPreparedRemoteDashboardBind(dockerfile)).toBe(true);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects final-stage config regeneration after the remote-bind generator (#6024)", () => {
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-regenerate-"));
+    const dockerfile = path.join(directory, "Dockerfile");
+    fs.writeFileSync(
+      dockerfile,
+      [
+        "FROM scratch",
+        "ARG NEMOCLAW_MODEL=",
+        "ARG CHAT_UI_URL=",
+        "ARG NEMOCLAW_DASHBOARD_BIND=",
+        "ENV NEMOCLAW_DASHBOARD_BIND=${NEMOCLAW_DASHBOARD_BIND}",
+        "RUN node --experimental-strip-types /scripts/generate-openclaw-config.mts",
+        "RUN node --experimental-strip-types /scripts/generate-openclaw-config.mts",
+      ].join("\n"),
+    );
+
+    try {
+      expect(() =>
+        patchStagedDockerfile(dockerfile, "test-model", "http://127.0.0.1:18789"),
+      ).toThrow(/preserve the generated remote dashboard output/);
+      expect(hasPreparedRemoteDashboardBind(dockerfile)).toBe(false);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("allows validation-home config generation after the remote-bind generator (#6024)", () => {
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-validation-"));
+    const dockerfile = path.join(directory, "Dockerfile");
+    fs.writeFileSync(
+      dockerfile,
+      [
+        "FROM scratch",
+        "ARG NEMOCLAW_MODEL=",
+        "ARG CHAT_UI_URL=",
+        "ARG NEMOCLAW_DASHBOARD_BIND=",
+        "ENV NEMOCLAW_DASHBOARD_BIND=${NEMOCLAW_DASHBOARD_BIND}",
+        "RUN node --experimental-strip-types /scripts/generate-openclaw-config.mts",
+        'RUN validation_home="$validation_root/progressive"; HOME="$validation_home" node --experimental-strip-types /scripts/generate-openclaw-config.mts',
+      ].join("\n"),
+    );
+
+    try {
+      expect(() =>
+        patchStagedDockerfile(dockerfile, "test-model", "http://127.0.0.1:18789"),
+      ).not.toThrow();
+      expect(hasPreparedRemoteDashboardBind(dockerfile)).toBe(true);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed when connect requests remote exposure for a local-only sandbox (#6024)", () => {
     const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
     const registry = requireSource("../src/lib/state/registry.js");

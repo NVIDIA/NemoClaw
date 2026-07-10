@@ -988,6 +988,18 @@ function pollForSandboxReady(elapsed: () => string): void {
   }
 }
 
+function readProductDashboardRemoteBindPrepared(): boolean {
+  const script = [
+    `const fs = require("fs");`,
+    `const os = require("os");`,
+    `const path = require("path");`,
+    `const file = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");`,
+    `const data = JSON.parse(fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "{}");`,
+    `process.stdout.write(String(data?.sandboxes?.["e2e-test"]?.dashboardRemoteBindPrepared === true));`,
+  ].join("");
+  return ssh(`node -e ${shellQuote(script)}`, { timeout: 10_000 }).trim() === "true";
+}
+
 /**
  * Kill the hung onboard process tree and write the sandbox registry manually.
  *
@@ -999,6 +1011,12 @@ function pollForSandboxReady(elapsed: () => string): void {
  */
 function writeManualRegistry(elapsed: () => string): void {
   console.log(`[${elapsed()}] Sandbox ready — killing hung onboard and writing registry...`);
+  const dashboardRemoteBindPrepared =
+    TEST_SUITE === "dashboard-remote-bind" && readProductDashboardRemoteBindPrepared();
+  expect(
+    dashboardRemoteBindPrepared || TEST_SUITE !== "dashboard-remote-bind",
+    "dashboard-remote-bind E2E must preserve the product-written remote bind proof",
+  ).toBe(true);
   // Kill hung onboard processes. pkill may kill the SSH connection itself
   // if the pattern matches too broadly, so wrap in try/catch.
   try {
@@ -1025,7 +1043,7 @@ function writeManualRegistry(elapsed: () => string): void {
           provider: null,
           gpuEnabled: false,
           policies: ["pypi", "npm"],
-          ...(TEST_SUITE === "dashboard-remote-bind" ? { dashboardRemoteBindPrepared: true } : {}),
+          ...(dashboardRemoteBindPrepared ? { dashboardRemoteBindPrepared: true } : {}),
         },
       },
     },
