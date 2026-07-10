@@ -4,7 +4,7 @@
 import path from "node:path";
 import { spawnSync } from "child_process";
 
-import { isRecord } from "../core/json-types.js";
+import { isObjectRecord } from "../core/json-types.js";
 import { shellQuote } from "../core/shell-quote.js";
 import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
 import {
@@ -356,11 +356,14 @@ export function parseOpenClawImagePluginInstalls(
     return { ok: false, error: "OpenClaw image plugin provenance is invalid" };
   }
   return validateOpenClawImagePluginInstalls(
-    value.map((entry) => [
-      isRecord(entry) && typeof entry.id === "string" ? entry.id : "",
-      isRecord(entry) ? entry.installPath : undefined,
-      isRecord(entry) ? entry.loadPaths : undefined,
-    ]),
+    value.map((entry) => {
+      if (!isObjectRecord(entry)) return ["", undefined, undefined] as const;
+      return [
+        typeof entry.id === "string" ? entry.id : "",
+        entry.installPath,
+        entry.loadPaths,
+      ] as const;
+    }),
     dir,
   );
 }
@@ -377,11 +380,11 @@ export function parseFreshOpenClawPluginExtensionDirs(
   registryIndex: unknown,
   dir: string,
 ): OpenClawManagedExtensionDiscoveryResult {
-  if (!isRecord(registryIndex) || registryIndex.version !== 1) {
+  if (!isObjectRecord(registryIndex) || registryIndex.version !== 1) {
     return { ok: false, error: "fresh OpenClaw plugin install registry is invalid" };
   }
   const installs = registryIndex.installRecords;
-  if (!isRecord(installs)) {
+  if (!isObjectRecord(installs)) {
     return { ok: false, error: "fresh OpenClaw plugin install records are invalid" };
   }
 
@@ -399,7 +402,10 @@ export function parseFreshOpenClawPluginExtensionDirs(
     .sort()
     .map((id) => {
       const metadata = installs[id];
-      if (!isRecord(metadata) || !OPENCLAW_PLUGIN_INSTALL_SOURCES.has(String(metadata.source))) {
+      if (
+        !isObjectRecord(metadata) ||
+        !OPENCLAW_PLUGIN_INSTALL_SOURCES.has(String(metadata.source))
+      ) {
         return [id, undefined, undefined] as const;
       }
       if (

@@ -71,7 +71,6 @@ Install the following before you begin.
 - Node.js 22.16+ and npm 10+
 - Python 3.11+ (for documentation tooling)
 - Docker (running)
-- [uv](https://docs.astral.sh/uv/) (for Python dependency management — install with `curl -LsSf https://astral.sh/uv/install.sh | sh`, or `brew install uv` on macOS)
 - [hadolint](https://github.com/hadolint/hadolint) (Dockerfile linter — `brew install hadolint` on macOS)
 
 ## Getting Started
@@ -82,7 +81,7 @@ From the repository root, prepare the checkout with one command:
 ./scripts/dev-setup.sh
 ```
 
-The setup command installs repository-local dependencies, synchronizes the root Python environment, builds and type-checks the CLI and plugin, and installs prek hooks.
+The setup command installs repository-local dependencies, verifies the available Python interpreter, builds and type-checks the CLI and plugin, and installs prek hooks.
 It is safe to rerun and does not install host packages, change accounts or global Git configuration, accept licenses, manage credentials, or create a runtime sandbox.
 Use `./scripts/dev-setup.sh --repair` to explicitly rerun the same repository-local repairs.
 
@@ -129,7 +128,6 @@ Use these commands when troubleshooting an individual setup step:
 ```bash
 npm install --include=dev --ignore-scripts
 npm --prefix nemoclaw install --include=dev --ignore-scripts
-uv sync --python /path/to/python3.11-or-newer --no-python-downloads
 npm run build:cli
 npm --prefix nemoclaw run build
 npm run typecheck:cli
@@ -263,11 +261,11 @@ The repository is organized as follows.
 | Path | Purpose |
 |------|---------|
 | `nemoclaw/` | TypeScript plugin (Commander CLI, OpenClaw extension) |
-| `nemoclaw-blueprint/` | Python blueprint for sandbox orchestration |
+| `nemoclaw-blueprint/` | Blueprint definition and network policies |
 | `bin/` | CLI entry point (`nemoclaw.js`) |
 | `scripts/` | Install helpers and automation scripts |
 | `test/` | Root-level integration tests |
-| `docs/` | User-facing documentation (Fern MDX plus legacy MyST source during migration) |
+| `docs/` | User-facing Fern MDX documentation |
 | `fern/` | Fern site configuration, theme, and assets |
 
 ## Language Policy
@@ -350,7 +348,7 @@ If force-push is not allowed after an unverified commit is published, open a fre
 
 Do not add links to third-party code repositories, community collections, or unofficial resources in documentation, README files, or code. This includes "awesome lists," community template repositories, wrapper projects, and similar community-maintained resources — regardless of popularity or utility.
 
-Links to official documentation for tools we depend on (e.g., Node.js, Python, uv) and industry standards (e.g., Conventional Commits) are acceptable.
+Links to official documentation for tools we depend on (e.g., Node.js and Python) and industry standards (e.g., Conventional Commits) are acceptable.
 
 **Why:** External repositories are outside our control. They can change ownership, inject malicious content, or misrepresent an endorsement by NVIDIA. Keeping references within our own repo avoids these risks entirely.
 

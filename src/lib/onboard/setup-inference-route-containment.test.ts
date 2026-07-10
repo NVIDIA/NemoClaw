@@ -243,4 +243,64 @@ describe("onboard shared gateway route containment", () => {
     expect(reservations).toHaveLength(1);
     expect(exitProcess).toHaveBeenCalledWith(1);
   });
+
+  it("stamps the owning onboard session on the initial route reservation (#6562)", async () => {
+    const reservations: SandboxEntry[] = [];
+    const updateSandbox = vi.fn(
+      (name: string, route: Parameters<SetupInferenceDeps["updateSandbox"]>[1]) => {
+        reservations.push({ name, ...route });
+        return true;
+      },
+    );
+    const setupInference = createSetupInference({
+      checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
+      withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      step: vi.fn(),
+      getGatewayName: () => "nemoclaw",
+      runOpenshell: vi.fn(() => ({ status: 0 })),
+      updateSandbox,
+      upsertProvider: vi.fn(() => ({ ok: true })),
+      verifyInferenceRoute: vi.fn(),
+      verifyOnboardInferenceSmoke: vi.fn(),
+      isNonInteractive: () => true,
+      hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
+      isRoutedInferenceProvider: () => true,
+      reconcileModelRouter: vi.fn(async () => undefined),
+      routedInference: {
+        upsertRoutedProvider: vi.fn(() => ({
+          ok: true,
+          endpointUrl: "http://router.test/v1",
+          result: { ok: true },
+        })),
+      },
+      hydrateCredentialEnv: vi.fn(() => "secret"),
+      redact: (value: string) => value,
+      compactText: (value: string) => value,
+      log: vi.fn(),
+      error: vi.fn(),
+      exitProcess: vi.fn((code: number): never => {
+        throw new Error(`exit ${code}`);
+      }),
+    } as unknown as SetupInferenceDeps);
+
+    await expect(
+      setupInference(
+        "gamma",
+        "model-c",
+        "router-c",
+        "http://router-c.test/v1",
+        "ROUTER_KEY",
+        null,
+        [],
+        { skipHostInferenceSmoke: true, reservationSessionId: "session-gamma" },
+      ),
+    ).resolves.toEqual({ ok: true });
+
+    expect(reservations).toEqual([
+      expect.objectContaining({ name: "gamma", reservationSessionId: "session-gamma" }),
+    ]);
+  });
 });

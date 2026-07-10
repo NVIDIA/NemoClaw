@@ -312,6 +312,11 @@ else:
         errors.append("platforms.slack missing or not a mapping")
     elif slack.get("enabled") is not True:
         errors.append(f"platforms.slack.enabled is not true ({slack!r})")
+    elif (
+        not isinstance(slack.get("extra"), dict)
+        or slack["extra"].get("rich_blocks") is not True
+    ):
+        errors.append(f"platforms.slack.extra.rich_blocks is not true ({slack!r})")
 if "SLACK_BOT_TOKEN" in config_text or "SLACK_APP_TOKEN" in config_text:
     errors.append("config.yaml contains Slack token env keys")
 if errors:
@@ -328,6 +333,43 @@ PY`,
   );
   expectExitZero(configProbe, "Hermes Slack config shape probe");
   expect(configProbe.stdout.trim()).toBe("OK");
+
+  const rendererProbe = await sandboxEncodedSh(
+    sandbox,
+    SANDBOX_NAME,
+    String.raw`python3 - <<'PY'
+import importlib.util
+from pathlib import Path
+
+renderer_path = Path("/opt/hermes/plugins/platforms/slack/block_kit.py")
+if not renderer_path.is_file():
+    print(f"FAIL Hermes Slack Block Kit renderer missing: {renderer_path}")
+    raise SystemExit
+
+spec = importlib.util.spec_from_file_location("hermes_slack_block_kit", renderer_path)
+if spec is None or spec.loader is None:
+    print("FAIL cannot load Hermes Slack Block Kit renderer")
+    raise SystemExit
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+markdown = "# Results\n\n| Check | Result |\n|:------|:------:|\n| Hermes | Pass |"
+blocks = module.render_blocks(markdown)
+types = [block.get("type") for block in blocks or []]
+if "header" not in types or "table" not in types:
+    print(f"FAIL expected header and native table Block Kit blocks, got {types!r}")
+else:
+    print("OK")
+PY`,
+    [],
+    {
+      artifactName: "phase-4-rich-block-renderer",
+      redactionValues,
+      timeoutMs: 60_000,
+    },
+  );
+  expectExitZero(rendererProbe, "Hermes Slack Block Kit renderer probe");
+  expect(rendererProbe.stdout.trim()).toBe("OK");
 
   const envProbe = await sandboxEncodedSh(
     sandbox,
@@ -644,6 +686,7 @@ PY`,
       slackProvidersCreated: true,
       hermesHealthOk: true,
       hermesSlackConfigShape: true,
+      hermesSlackRichBlockTableRendering: true,
       resolverPlaceholders: true,
       rawTokensAbsentFromFilesLogsAndProcesses: true,
       hermesScopedSlackPolicy: true,

@@ -20,7 +20,7 @@ import {
   enumValue,
   extractJson,
   getPath,
-  isRecord,
+  isObjectRecord,
   recordItems,
   stringArray,
   stringOrDefault,
@@ -2303,7 +2303,7 @@ export function normalizeReviewResult(
   result: unknown,
   metadata: ReviewMetadata,
 ): ReviewAdvisorResult {
-  if (!isRecord(result)) throw new Error("PR review advisor returned a non-object result");
+  if (!isObjectRecord(result)) throw new Error("PR review advisor returned a non-object result");
   const object = result as Record<string, unknown>;
   const sourceOfTruthReview = sanitizeSourceOfTruthReview(object.sourceOfTruthReview);
   return {
@@ -2324,7 +2324,7 @@ export function normalizeReviewResult(
 }
 
 function sanitizeSummary(value: unknown): ReviewAdvisorResult["summary"] {
-  const object = isRecord(value) ? value : {};
+  const object = isObjectRecord(value) ? value : {};
   return {
     recommendation: enumValue(object.recommendation, SUMMARY_RECOMMENDATIONS, "info_only"),
     confidence: enumValue(object.confidence, CONFIDENCES, "medium"),
@@ -2340,7 +2340,7 @@ function sanitizeSummary(value: unknown): ReviewAdvisorResult["summary"] {
 function sanitizeSinceLastReview(
   value: unknown,
 ): ReviewAdvisorResult["summary"]["sinceLastReview"] {
-  if (!isRecord(value)) return undefined;
+  if (!isObjectRecord(value)) return undefined;
   return {
     resolved: nonNegativeInteger(value.resolved),
     stillApplies: nonNegativeInteger(value.stillApplies),
@@ -2382,7 +2382,7 @@ function sanitizeFindings(value: unknown): Finding[] {
 }
 
 function sanitizeSimplification(value: unknown): SimplificationFinding | undefined {
-  if (!isRecord(value)) return undefined;
+  if (!isObjectRecord(value)) return undefined;
   const tag = enumValue(value.tag, SIMPLIFICATION_TAGS, "shrink");
   return {
     tag,
@@ -2454,7 +2454,7 @@ export function sanitizeTestDepth(
   value: unknown,
   fallback: ReviewAdvisorResult["testDepth"],
 ): ReviewAdvisorResult["testDepth"] {
-  const object = isRecord(value) ? value : {};
+  const object = isObjectRecord(value) ? value : {};
   const requestedVerdict = enumValue(object.verdict, TEST_DEPTH_VERDICTS, fallback.verdict);
   const verdictRank: Record<TestDepthVerdict, number> = {
     unknown: 0,
@@ -2494,7 +2494,7 @@ export function sanitizeTestDepth(
 }
 
 function sanitizeReviewCompleteness(value: unknown): ReviewAdvisorResult["reviewCompleteness"] {
-  const object = isRecord(value) ? value : {};
+  const object = isObjectRecord(value) ? value : {};
   const limitations = stringArray(object.limitations);
   return {
     limitations:

@@ -302,6 +302,7 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
     ["a non-object sandboxes field", '{"sandboxes":[]}'],
     ["a malformed sandbox row", '{"sandboxes":{"alpha":null}}'],
     ["a sandbox row without a name", '{"sandboxes":{"alpha":{}}}'],
+    ["a sandbox row with a whitespace-only name", '{"sandboxes":{"   ":{"name":"   "}}}'],
     [
       "a sandbox row whose name differs from its registry key",
       '{"sandboxes":{"alpha":{"name":"beta"}}}',

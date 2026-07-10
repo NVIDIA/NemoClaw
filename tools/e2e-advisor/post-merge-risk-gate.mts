@@ -112,7 +112,7 @@ export function assertTrustedMainPush(options: {
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
@@ -191,7 +191,9 @@ function readRegularJson(file: string, maxBytes = MAX_PLAN_BYTES): unknown {
 }
 
 export function validateRiskGateState(value: unknown): RiskGateState {
-  if (!isRecord(value) || value.version !== 1) throw new Error("invalid risk-gate state version");
+  if (!isObjectRecord(value) || value.version !== 1) {
+    throw new Error("invalid risk-gate state version");
+  }
   if (typeof value.commitSha !== "string" || !SHA_PATTERN.test(value.commitSha)) {
     throw new Error("risk-gate state commit SHA is invalid");
   }
@@ -210,7 +212,9 @@ export function validateRiskGateState(value: unknown): RiskGateState {
   ) {
     throw new Error("risk-gate state expected jobs are invalid");
   }
-  if (!isRecord(value.expectedShards)) throw new Error("risk-gate state shards are invalid");
+  if (!isObjectRecord(value.expectedShards)) {
+    throw new Error("risk-gate state shards are invalid");
+  }
   const shardJobs = Object.keys(value.expectedShards).sort();
   if (JSON.stringify(shardJobs) !== JSON.stringify([...value.expectedJobs].sort())) {
     throw new Error("risk-gate state shard jobs do not match expected jobs");
@@ -233,7 +237,7 @@ export function validateRiskGateState(value: unknown): RiskGateState {
 }
 
 export function validateRiskPlan(value: unknown, allowedJobs: ReadonlySet<string>): RiskPlan {
-  if (!isRecord(value)) throw new Error("risk plan must be an object");
+  if (!isObjectRecord(value)) throw new Error("risk plan must be an object");
   if (value.version !== 1) throw new Error("unsupported risk-plan version");
   if (typeof value.headSha !== "string" || !SHA_PATTERN.test(value.headSha)) {
     throw new Error("risk plan headSha must be a lowercase 40-character SHA");
@@ -273,7 +277,9 @@ export function validateSignal(
     "commitSha" | "planHash" | "correlationId" | "expectedJobs" | "expectedShards"
   >,
 ): E2eRiskSignal {
-  if (!isRecord(value) || value.version !== 1) throw new Error("invalid risk signal version");
+  if (!isObjectRecord(value) || value.version !== 1) {
+    throw new Error("invalid risk signal version");
+  }
   const signal = value as E2eRiskSignal;
   if (!state.expectedJobs.includes(signal.jobId)) throw new Error("risk signal job is unexpected");
   if (!state.expectedShards[signal.jobId]?.includes(signal.shardId)) {
@@ -545,12 +551,12 @@ export function expectedRiskSignalShards(
   workflowPath = ".github/workflows/e2e.yaml",
 ): Record<string, string[]> {
   const workflow = YAML.parse(fs.readFileSync(workflowPath, "utf8")) as unknown;
-  const jobs = isRecord(workflow) && isRecord(workflow.jobs) ? workflow.jobs : {};
+  const jobs = isObjectRecord(workflow) && isObjectRecord(workflow.jobs) ? workflow.jobs : {};
   return Object.fromEntries(
     jobIds.map((jobId) => {
-      const job = isRecord(jobs[jobId]) ? jobs[jobId] : {};
-      const strategy = isRecord(job.strategy) ? job.strategy : {};
-      const matrix = isRecord(strategy.matrix) ? strategy.matrix : null;
+      const job = isObjectRecord(jobs[jobId]) ? jobs[jobId] : {};
+      const strategy = isObjectRecord(job.strategy) ? job.strategy : {};
+      const matrix = isObjectRecord(strategy.matrix) ? strategy.matrix : null;
       let shards = ["default"];
       if (matrix) {
         const keys = Object.keys(matrix);
@@ -561,7 +567,7 @@ export function expectedRiskSignalShards(
           }
         } else if (keys.length === 1 && Array.isArray(matrix.include)) {
           shards = matrix.include.map((entry) => {
-            if (!isRecord(entry) || typeof entry.agent !== "string") {
+            if (!isObjectRecord(entry) || typeof entry.agent !== "string") {
               throw new Error(`${jobId} risk matrix include entries must name an agent`);
             }
             return entry.agent;
@@ -586,7 +592,9 @@ export function validateWorkflowDispatchDetails(
   value: unknown,
   repository: string,
 ): WorkflowDispatchDetails {
-  if (!isRecord(value)) throw new Error("GitHub returned invalid workflow dispatch details");
+  if (!isObjectRecord(value)) {
+    throw new Error("GitHub returned invalid workflow dispatch details");
+  }
   const runId = value.workflow_run_id;
   if (!Number.isSafeInteger(runId) || (runId as number) < 1) {
     throw new Error("GitHub returned an invalid dispatched workflow run id");

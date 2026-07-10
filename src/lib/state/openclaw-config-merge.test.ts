@@ -22,6 +22,19 @@ function imageInstall(id: string, installPath: string, loadPaths: string[] = [])
 }
 
 describe("mergeOpenClawRestoredConfig", () => {
+  it("rejects non-plain top-level objects instead of treating every object as JSON", () => {
+    class ConfigEnvelope {
+      readonly gateway = { auth: { token: "stale-token" } };
+    }
+
+    expect(() => mergeOpenClawRestoredConfig(new ConfigEnvelope(), {})).toThrow(
+      "OpenClaw selective config merge requires JSON objects",
+    );
+    expect(() => mergeOpenClawRestoredConfig({}, new Date(0))).toThrow(
+      "OpenClaw selective config merge requires JSON objects",
+    );
+  });
+
   it("keeps rebuilt runtime-owned config while restoring durable backup-only settings", () => {
     const merged = mergeOpenClawRestoredConfig(
       {
