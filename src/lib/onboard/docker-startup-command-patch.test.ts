@@ -86,4 +86,62 @@ describe("Docker startup-command patch", () => {
       }),
     ).toThrow("OpenShell sandbox startup command is required for restart persistence");
   });
+
+  it("rejects shell metacharacters before Docker mutation", () => {
+    const dockerStop = vi.fn(() => ({ status: 0 }));
+    const dockerRename = vi.fn(() => ({ status: 0 }));
+    const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
+
+    expect(() =>
+      recreateOpenShellDockerSandboxWithStartupCommand(
+        {
+          sandboxName: "alpha",
+          openshellSandboxCommand: ["env", "VALUE=$(id)", "nemoclaw-start"],
+        },
+        {
+          dockerCapture: vi.fn((args: readonly string[]) =>
+            args[0] === "ps"
+              ? "old-container-id\n"
+              : args[0] === "inspect"
+                ? JSON.stringify([inspectFixture()])
+                : "",
+          ),
+          dockerRunDetached,
+          dockerRename,
+          dockerStop,
+        },
+      ),
+    ).toThrow("OpenShell sandbox startup command tokens contain unsupported shell metacharacters");
+    expect(dockerStop).not.toHaveBeenCalled();
+    expect(dockerRename).not.toHaveBeenCalled();
+    expect(dockerRunDetached).not.toHaveBeenCalled();
+  });
+
+  it("restores the original sandbox when startup-command recreation fails", () => {
+    const dockerRunDetached = vi.fn(() => ({ status: 1, stderr: "boom" }));
+
+    expect(() =>
+      recreateOpenShellDockerSandboxWithStartupCommand(
+        {
+          sandboxName: "alpha",
+          openshellSandboxCommand: ["env", "nemoclaw-start"],
+        },
+        {
+          dockerCapture: vi.fn((args: readonly string[]) =>
+            args[0] === "ps"
+              ? "old-container-id\n"
+              : args[0] === "inspect"
+                ? JSON.stringify([inspectFixture()])
+                : "",
+          ),
+          dockerRunDetached,
+          dockerRename: vi.fn(() => ({ status: 0 })),
+          dockerRm: vi.fn(() => ({ status: 0 })),
+          dockerStart: vi.fn(() => ({ status: 0 })),
+          dockerStop: vi.fn(() => ({ status: 0 })),
+          now: () => new Date("2026-07-10T00:00:00Z"),
+        },
+      ),
+    ).toThrow(/Could not start recreated sandbox container: boom; pre-patch sandbox restored/);
+  });
 });

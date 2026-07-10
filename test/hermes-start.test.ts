@@ -342,7 +342,7 @@ function runHermesRootStartupMutableRootPreflight() {
       "refresh_hermes_runtime_config_hashes() { :; }",
       "configure_messaging_channels() { :; }",
       "retry_tirith_marker_if_needed() { :; }",
-      "prepare_tirith_marker_retry() { retry_tirith_marker_if_needed; }",
+      "prepare_tirith_marker_retry() { TIRITH_RETRY_MARKER_CLEARED=0; retry_tirith_marker_if_needed; }",
       extractShellFunctionFromSource(src, "prepare_hermes_root_runtime"),
       'cleanup_stale_hermes_gateway_runtime() { echo "unexpected gateway cleanup" >&2; return 99; }',
       `HERMES_DIR=${shellQuote(hermesHome)}`,

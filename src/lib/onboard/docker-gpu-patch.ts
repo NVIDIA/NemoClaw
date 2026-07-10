@@ -41,6 +41,7 @@ export const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
 export const OPENSHELL_MANAGED_BY_VALUE = "openshell";
 export const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
 const OPENSHELL_SANDBOX_COMMAND_ENV = "OPENSHELL_SANDBOX_COMMAND";
+const OPENSHELL_SANDBOX_COMMAND_TOKEN = /^[A-Za-z0-9_./:=,@%+\-\[\]]+$/u;
 
 const DOCKER_GPU_PATCH_TIMEOUT_MS = 30_000;
 const DOCKER_GPU_PATCH_WAIT_SECS = 180;
@@ -418,6 +419,11 @@ function openshellSandboxCommandEnvValue(
   if (parts.some((part) => part.length === 0 || /[\s\u0085]/u.test(part))) {
     throw new Error(
       "OpenShell sandbox startup command tokens cannot be empty or contain whitespace.",
+    );
+  }
+  if (parts.some((part) => !OPENSHELL_SANDBOX_COMMAND_TOKEN.test(part))) {
+    throw new Error(
+      "OpenShell sandbox startup command tokens contain unsupported shell metacharacters.",
     );
   }
   return parts.join(" ");
