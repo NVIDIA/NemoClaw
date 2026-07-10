@@ -51,15 +51,12 @@ navigation:
             slug: inference
             collapsed: open-by-default
             contents:
-              - page: "Inference Overview"
-                path: _build/agent-variants/inference/inference-overview.openclaw.generated.mdx
-                slug: inference-overview
-              - section: "Learn and Choose"
+              - page: "About Inference Routing"
+                path: _build/agent-variants/inference/how-inference-routing-works.openclaw.generated.mdx
+                slug: about-inference-routing
+              - section: "Choose a Provider and Model"
                 slug: learn-and-choose
                 contents:
-                  - page: "How Inference Routing Works"
-                    path: _build/agent-variants/inference/how-inference-routing-works.openclaw.generated.mdx
-                    slug: how-inference-routing-works
                   - page: "Choose an Inference Provider"
                     path: _build/agent-variants/inference/choose-inference-provider.openclaw.generated.mdx
                     slug: choose-inference-provider
@@ -343,15 +340,12 @@ navigation:
             slug: inference
             collapsed: open-by-default
             contents:
-              - page: "Inference Overview"
-                path: _build/agent-variants/inference/inference-overview.deepagents.generated.mdx
-                slug: inference-overview
-              - section: "Learn and Choose"
+              - page: "About Inference Routing"
+                path: _build/agent-variants/inference/how-inference-routing-works.deepagents.generated.mdx
+                slug: about-inference-routing
+              - section: "Choose a Provider and Model"
                 slug: learn-and-choose
                 contents:
-                  - page: "How Inference Routing Works"
-                    path: _build/agent-variants/inference/how-inference-routing-works.deepagents.generated.mdx
-                    slug: how-inference-routing-works
                   - page: "Choose an Inference Provider"
                     path: _build/agent-variants/inference/choose-inference-provider.deepagents.generated.mdx
                     slug: choose-inference-provider
@@ -557,15 +551,12 @@ navigation:
             slug: inference
             collapsed: open-by-default
             contents:
-              - page: "Inference Overview"
-                path: _build/agent-variants/inference/inference-overview.hermes.generated.mdx
-                slug: inference-overview
-              - section: "Learn and Choose"
+              - page: "About Inference Routing"
+                path: _build/agent-variants/inference/how-inference-routing-works.hermes.generated.mdx
+                slug: about-inference-routing
+              - section: "Choose a Provider and Model"
                 slug: learn-and-choose
                 contents:
-                  - page: "How Inference Routing Works"
-                    path: _build/agent-variants/inference/how-inference-routing-works.hermes.generated.mdx
-                    slug: how-inference-routing-works
                   - page: "Choose an Inference Provider"
                     path: _build/agent-variants/inference/choose-inference-provider.hermes.generated.mdx
                     slug: choose-inference-provider

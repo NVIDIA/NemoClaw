@@ -110,7 +110,7 @@ For each relevant commit, determine which doc page(s) it affects. Use this mappi
 | `nemoclaw-blueprint/blueprint.yaml` | `docs/reference/architecture.mdx`, `docs/inference/how-inference-routing-works.mdx` |
 | `scripts/` (setup, start) | `docs/get-started/quickstart.mdx` |
 | `Dockerfile` | `docs/reference/architecture.mdx` |
-| Inference-related changes | Start at `docs/inference/inference-overview.mdx`, then update the focused provider, model, setup, management, or validation page that owns the behavior. |
+| Inference-related changes | Start at `docs/inference/how-inference-routing-works.mdx`, then update the focused provider, model, setup, management, or validation page that owns the behavior. |
 
 If a commit does not map to any existing page but introduces a user-visible concept, flag it as needing a new page.
 If a commit already changes files under `docs/`, include those pages in the target page list and run a docs review or edit pass against them using the style guidance in Step 5.
