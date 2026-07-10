@@ -4,9 +4,9 @@
 import { createHash } from "node:crypto";
 
 import {
+  type DockerfileInstruction,
   dockerfileInstructions,
   readDockerfilePatchSnapshot,
-  type DockerfileInstruction,
 } from "./dockerfile-tool-disclosure-contract";
 
 const REMOTE_BIND_ARG_RE = /^ARG\s+NEMOCLAW_DASHBOARD_BIND=/;
@@ -68,6 +68,26 @@ export type PatchedRemoteDashboardBindContract = {
   dockerfile: string;
   dashboardRemoteBindPrepared: boolean;
 };
+
+export function isRemoteDashboardBindRequested(value: string | undefined): boolean {
+  return value === "0.0.0.0";
+}
+
+export function resolveRequestedRemoteDashboardBind(
+  value: string | undefined,
+  trustedManagedDockerfile: boolean,
+): "" | "0.0.0.0" {
+  if (value === undefined || value === "") return "";
+  if (!isRemoteDashboardBindRequested(value)) {
+    throw new Error("NEMOCLAW_DASHBOARD_BIND must be empty or 0.0.0.0.");
+  }
+  if (!trustedManagedDockerfile) {
+    throw new Error(
+      "Remote dashboard bind is unavailable with custom --from Dockerfiles until post-build runtime configuration attestation is implemented.",
+    );
+  }
+  return "0.0.0.0";
+}
 
 function finalStageInstructions(dockerfile: string): DockerfileInstruction[] {
   const instructions = dockerfileInstructions(dockerfile);

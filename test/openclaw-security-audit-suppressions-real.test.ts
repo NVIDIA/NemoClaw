@@ -245,6 +245,25 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_AUDIT_HARNESS !== "1")(
           });
           expect(managedAuthFindings(remoteBindOnboard.findings)).toHaveLength(4);
           expect(
+            remoteBindOnboard.findings.some(
+              (finding) => finding.checkId === "gateway.control_ui.insecure_auth",
+            ),
+          ).toBe(true);
+          expect(
+            remoteBindOnboard.findings.some(
+              (finding) => finding.checkId === "gateway.control_ui.device_auth_disabled",
+            ),
+          ).toBe(true);
+          expect(
+            findingForFlag(remoteBindOnboard.findings, "gateway.controlUi.allowInsecureAuth=true"),
+          ).toBeDefined();
+          expect(
+            findingForFlag(
+              remoteBindOnboard.findings,
+              "gateway.controlUi.dangerouslyDisableDeviceAuth=true",
+            ),
+          ).toBeDefined();
+          expect(
             findingForFlag(
               remoteBindOnboard.findings,
               "gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback=true",

@@ -10,6 +10,7 @@ import { getActiveMessagingHostForward } from "../../messaging/host-forward";
 import type { SandboxMessagingHostForwardPlan } from "../../messaging/manifest";
 import { hydrateDerivedSandboxMessagingPlanFields } from "../../messaging/persistence";
 import { parseSandboxMessagingPlan } from "../../messaging/plan-validation";
+import { isRemoteDashboardBindRequested } from "../../onboard/dockerfile-remote-dashboard-bind-contract";
 import * as registry from "../../state/registry";
 import { parseForwardList } from "../../state/sandbox-session";
 import {
@@ -62,7 +63,7 @@ export function resolveSandboxDashboardPort(
  */
 export function ensureSandboxPortForward(sandboxName: string): boolean {
   const port = resolveSandboxDashboardPort(sandboxName);
-  const remoteBindRequested = process.env.NEMOCLAW_DASHBOARD_BIND === "0.0.0.0";
+  const remoteBindRequested = isRemoteDashboardBindRequested(process.env.NEMOCLAW_DASHBOARD_BIND);
   if (
     remoteBindRequested &&
     registry.getSandbox(sandboxName)?.dashboardRemoteBindPrepared !== true

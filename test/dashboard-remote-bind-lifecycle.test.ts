@@ -17,7 +17,7 @@ import { buildCreatedSandboxRegistryEntry } from "../src/lib/onboard/sandbox-reg
 import { applyReusedSandboxDashboardState } from "../src/lib/onboard/sandbox-reuse";
 
 const requireSource = createRequire(import.meta.url);
-const { ensureSandboxPortForward, ensureSandboxPortForwardForPort } = requireSource(
+const { ensureSandboxPortForward } = requireSource(
   "../src/lib/actions/sandbox/forward-recovery.js",
 ) as typeof import("../src/lib/actions/sandbox/forward-recovery.js");
 
@@ -659,37 +659,34 @@ describe("remote dashboard bind production lifecycle", () => {
     ).toBe(false);
   });
 
-  it("can force a loopback restart independently of remote-bind selection (#6024)", () => {
+  it("keeps a prepared sandbox on loopback without remote-bind opt-in (#6024)", () => {
     const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
     const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
-    let stopped = false;
+    const registry = requireSource("../src/lib/state/registry.js");
     let started = false;
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "");
     vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
-    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockImplementation(
-      () => !stopped || started,
-    );
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "beta",
+      dashboardPort: 18789,
+      dashboardRemoteBindPrepared: true,
+    });
+    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockImplementation(() => started);
     vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation(() => ({
       status: 0,
-      output:
-        !stopped || started
-          ? "SANDBOX  BIND  PORT  PID  STATUS\nbeta  127.0.0.1  18789  12345  running"
-          : "",
+      output: started
+        ? "SANDBOX  BIND  PORT  PID  STATUS\nbeta  127.0.0.1  18789  12345  running"
+        : "",
     }));
     const runOpenshell = vi
       .spyOn(openshellRuntime, "runOpenshell")
       .mockImplementation((rawArgs: unknown) => {
         const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
-        stopped ||= args[0] === "forward" && args[1] === "stop";
         started ||= args[0] === "forward" && args[1] === "start";
         return { status: 0 } as never;
       });
 
-    expect(
-      ensureSandboxPortForwardForPort("beta", 18789, {
-        forwardTarget: "18789",
-        forceRestart: true,
-      }),
-    ).toBe(true);
+    expect(ensureSandboxPortForward("beta")).toBe(true);
     expect(runOpenshell).toHaveBeenCalledWith(
       ["forward", "start", "--background", "18789", "beta"],
       { ignoreError: true },

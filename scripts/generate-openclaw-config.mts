@@ -16,7 +16,8 @@
 //   NEMOCLAW_TOOL_DISCLOSURE,
 //   NEMOCLAW_AGENT_TIMEOUT, NEMOCLAW_AGENT_HEARTBEAT_EVERY,
 //   NEMOCLAW_INFERENCE_COMPAT_B64,
-//   NEMOCLAW_DISABLE_DEVICE_AUTH,
+//   NEMOCLAW_DASHBOARD_BIND, NEMOCLAW_DISABLE_DEVICE_AUTH,
+//   NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE,
 //   NEMOCLAW_EXTRA_AGENTS_JSON_B64,
 //   NEMOCLAW_PROXY_HOST, NEMOCLAW_PROXY_PORT,
 //   NEMOCLAW_OPENCLAW_MANAGED_PROXY, NEMOCLAW_WEB_SEARCH_ENABLED,
@@ -48,6 +49,16 @@ const MODEL_SETUP_EFFECT_KEYS: Record<string, Set<string>> = {
 const DEFAULT_DASHBOARD_PORT = 18789;
 const MIN_DASHBOARD_PORT = 1024;
 const MAX_DASHBOARD_PORT = 65535;
+const REMOTE_DASHBOARD_BIND_VALUES = new Set(["0.0.0.0"]);
+const DEVICE_AUTH_OPT_OUT_SOURCES = new Set(["operator", "managed-onboard"]);
+
+function readOptionalEnumEnv(env: Env, name: string, allowedValues: ReadonlySet<string>): string {
+  const value = env[name] ?? "";
+  if (value !== "" && !allowedValues.has(value)) {
+    throw new Error(`${name} must be empty or one of: ${[...allowedValues].join(", ")}`);
+  }
+  return value;
+}
 
 // Local Ollama small-context compaction policy (NemoClaw #5468).
 //
@@ -1190,10 +1201,19 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const origins = unique([loopbackOrigin, chatOrigin, portlessOrigin].filter(Boolean) as string[]);
 
   const isRemote = !isLoopback(parsed.hostname || "");
-  const remoteBindOptIn = env.NEMOCLAW_DASHBOARD_BIND === "0.0.0.0";
+  const dashboardBind = readOptionalEnumEnv(
+    env,
+    "NEMOCLAW_DASHBOARD_BIND",
+    REMOTE_DASHBOARD_BIND_VALUES,
+  );
+  const remoteBindOptIn = dashboardBind === "0.0.0.0";
   const hasRemoteDashboardExposure = isRemote || remoteBindOptIn;
   const deviceAuthOptOut = env.NEMOCLAW_DISABLE_DEVICE_AUTH === "1";
-  const deviceAuthOptOutSource = env.NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE;
+  const deviceAuthOptOutSource = readOptionalEnumEnv(
+    env,
+    "NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE",
+    DEVICE_AUTH_OPT_OUT_SOURCES,
+  );
   const managedDeviceAuthOptOut = deviceAuthOptOut && deviceAuthOptOutSource === "managed-onboard";
   const disableDeviceAuth = deviceAuthOptOut || hasRemoteDashboardExposure;
   const allowInsecure = parsed.scheme === "http";
