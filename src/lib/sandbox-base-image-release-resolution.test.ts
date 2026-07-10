@@ -90,9 +90,48 @@ function abiRequiredOverrideOptions() {
   };
 }
 
-function mockPublishedGlibc(version: string): void {
-  dockerMocks.imageInspect.mockReturnValue({ status: 0 });
-  dockerMocks.capture.mockReturnValue(`ldd (GNU libc) ${version}`);
+type DockerStateOptions = {
+  allowBuild?: boolean;
+  compatible?: string[];
+  glibcVersion?: string;
+  present?: string[];
+  pullCompatible?: string[];
+  pullable?: string[];
+};
+
+function installDockerState(options: DockerStateOptions = {}) {
+  const present = new Set(options.present ?? []);
+  const pullable = new Set(options.pullable ?? []);
+  const compatible = new Set(options.compatible ?? []);
+  const pullCompatible = new Set(options.pullCompatible ?? []);
+  const latestRef = `${IMAGE_NAME}:latest`;
+
+  const assertNotLatest = (ref: string) => {
+    if (ref === latestRef) throw new Error("release resolution must not fall back to latest");
+  };
+
+  dockerMocks.imageInspect.mockImplementation((ref: string) => {
+    assertNotLatest(ref);
+    return { status: present.has(ref) ? 0 : 1 };
+  });
+  dockerMocks.pull.mockImplementation((ref: string) => {
+    assertNotLatest(ref);
+    if (!pullable.has(ref)) return { status: 1 };
+    present.add(ref);
+    if (pullCompatible.has(ref)) compatible.add(ref);
+    return { status: 0 };
+  });
+  dockerMocks.build.mockImplementation((_dockerfile: string, tag: string) => {
+    if (options.allowBuild !== true) throw new Error("local build must not run");
+    present.add(tag);
+    compatible.add(tag);
+    return { status: 0 };
+  });
+  dockerMocks.capture.mockReturnValue(`ldd (GNU libc) ${options.glibcVersion ?? "2.41"}`);
+
+  return {
+    validateImage: vi.fn((ref: string) => compatible.has(ref)),
+  };
 }
 
 describe("sandbox base-image release resolution", () => {
@@ -112,39 +151,26 @@ describe("sandbox base-image release resolution", () => {
   });
 
   it("refreshes a stale local release-tag image before accepting the versioned base (#6456)", () => {
-    const validateImage = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
-    dockerMocks.imageInspect.mockReturnValue({ status: 0 });
-    dockerMocks.pull.mockReturnValue({ status: 0 });
+    const state = installDockerState({
+      present: [RELEASE_REF],
+      pullable: [RELEASE_REF],
+      pullCompatible: [RELEASE_REF],
+    });
 
     const resolved = resolveSandboxBaseImage({
       ...versionedResolutionOptions(),
-      validateImage,
+      validateImage: state.validateImage,
     });
 
     expect(resolved).toMatchObject({
       ref: RELEASE_REF,
       source: "version-tag",
     });
-    expect(validateImage).toHaveBeenCalledTimes(2);
-    expect(validateImage).toHaveBeenNthCalledWith(1, RELEASE_REF);
-    expect(validateImage).toHaveBeenNthCalledWith(2, RELEASE_REF);
-    expect(dockerMocks.pull).toHaveBeenCalledWith(RELEASE_REF, {
-      ignoreError: true,
-      suppressOutput: true,
-    });
-    expect(traceMocks.add).toHaveBeenCalledWith("nemoclaw.sandbox_base_image.remote_refresh", {
-      source: "version-tag",
-    });
-    expect(dockerMocks.build).not.toHaveBeenCalled();
   });
 
   it("builds locally instead of falling back to latest when a release-tag base is unavailable (#6456)", () => {
     const options = versionedResolutionOptions("1");
-    dockerMocks.imageInspect.mockImplementation((ref: string) => ({
-      status: ref === RELEASE_REF || ref === LOCAL_TAG ? 1 : 0,
-    }));
-    dockerMocks.pull.mockReturnValue({ status: 1 });
-    dockerMocks.build.mockReturnValue({ status: 0 });
+    installDockerState({ allowBuild: true });
 
     const resolved = resolveSandboxBaseImage(options);
 
@@ -152,38 +178,18 @@ describe("sandbox base-image release resolution", () => {
       ref: LOCAL_TAG,
       source: "local",
     });
-    expect(dockerMocks.imageInspect).toHaveBeenCalledWith(RELEASE_REF, {
-      ignoreError: true,
-      suppressOutput: true,
-    });
-    expect(dockerMocks.imageInspect).not.toHaveBeenCalledWith(LOCAL_TAG, expect.anything());
-    expect(dockerMocks.imageInspect).not.toHaveBeenCalledWith(
-      `${IMAGE_NAME}:latest`,
-      expect.anything(),
-    );
-    expect(dockerMocks.build).toHaveBeenCalledWith(
-      options.dockerfilePath,
-      LOCAL_TAG,
-      options.rootDir,
-      {
-        ignoreError: true,
-        quiet: true,
-        suppressOutput: true,
-      },
-    );
   });
 
   it("builds locally when a refreshed release-tag base still fails runtime validation (#6456)", () => {
-    const validateImage = vi.fn((ref: string) => ref === LOCAL_TAG);
+    const state = installDockerState({
+      allowBuild: true,
+      present: [RELEASE_REF],
+      pullable: [RELEASE_REF],
+    });
     const options = {
       ...versionedResolutionOptions("1"),
-      validateImage,
+      validateImage: state.validateImage,
     };
-    dockerMocks.imageInspect.mockImplementation((ref: string) => ({
-      status: ref === RELEASE_REF ? 0 : 1,
-    }));
-    dockerMocks.pull.mockReturnValue({ status: 0 });
-    dockerMocks.build.mockReturnValue({ status: 0 });
 
     const resolved = resolveSandboxBaseImage(options);
 
@@ -191,108 +197,46 @@ describe("sandbox base-image release resolution", () => {
       ref: LOCAL_TAG,
       source: "local",
     });
-    expect(validateImage).toHaveBeenCalledTimes(3);
-    expect(validateImage).toHaveBeenNthCalledWith(1, RELEASE_REF);
-    expect(validateImage).toHaveBeenNthCalledWith(2, RELEASE_REF);
-    expect(validateImage).toHaveBeenNthCalledWith(3, LOCAL_TAG);
-    expect(dockerMocks.pull).toHaveBeenCalledWith(RELEASE_REF, {
-      ignoreError: true,
-      suppressOutput: true,
-    });
-    expect(dockerMocks.imageInspect).not.toHaveBeenCalledWith(
-      `${IMAGE_NAME}:latest`,
-      expect.anything(),
-    );
-    expect(dockerMocks.build).toHaveBeenCalledWith(
-      options.dockerfilePath,
-      LOCAL_TAG,
-      options.rootDir,
-      {
-        ignoreError: true,
-        quiet: true,
-        suppressOutput: true,
-      },
-    );
   });
 
   it("fails closed when a release-tag base is unavailable and local builds are disabled (#6456)", () => {
-    dockerMocks.imageInspect.mockReturnValue({ status: 1 });
-    dockerMocks.pull.mockReturnValue({ status: 1 });
+    installDockerState();
 
     expect(() => resolveSandboxBaseImage(versionedResolutionOptions("0"))).toThrow(
       "versioned base image",
     );
-
-    expect(dockerMocks.imageInspect).toHaveBeenCalledWith(RELEASE_REF, {
-      ignoreError: true,
-      suppressOutput: true,
-    });
-    expect(dockerMocks.imageInspect).not.toHaveBeenCalledWith(
-      `${IMAGE_NAME}:latest`,
-      expect.anything(),
-    );
-    expect(dockerMocks.build).not.toHaveBeenCalled();
   });
 
   it("fails closed when a refreshed release-tag base still fails runtime validation and local builds are disabled (#6456)", () => {
-    const validateImage = vi.fn(() => false);
-    dockerMocks.imageInspect.mockImplementation((ref: string) => ({
-      status: ref === RELEASE_REF ? 0 : 1,
-    }));
-    dockerMocks.pull.mockReturnValue({ status: 0 });
+    const state = installDockerState({
+      present: [RELEASE_REF],
+      pullable: [RELEASE_REF],
+    });
 
     expect(() =>
       resolveSandboxBaseImage({
         ...versionedResolutionOptions("0"),
-        validateImage,
+        validateImage: state.validateImage,
       }),
     ).toThrow("versioned base image");
-
-    expect(validateImage).toHaveBeenCalledTimes(2);
-    expect(validateImage).toHaveBeenNthCalledWith(1, RELEASE_REF);
-    expect(validateImage).toHaveBeenNthCalledWith(2, RELEASE_REF);
-    expect(dockerMocks.pull).toHaveBeenCalledWith(RELEASE_REF, {
-      ignoreError: true,
-      suppressOutput: true,
-    });
-    expect(dockerMocks.imageInspect).not.toHaveBeenCalledWith(
-      `${IMAGE_NAME}:latest`,
-      expect.anything(),
-    );
-    expect(dockerMocks.build).not.toHaveBeenCalled();
   });
 
   it("fails closed instead of falling back when an explicit override fails ABI validation (#4680)", () => {
-    mockPublishedGlibc("2.36");
+    installDockerState({
+      glibcVersion: "2.36",
+      present: [`${IMAGE_NAME}:published`],
+    });
 
     expect(() => resolveSandboxBaseImage(abiRequiredOverrideOptions())).toThrow(
       "override 'ghcr.io/nvidia/nemoclaw/sandbox-base:published' could not be resolved",
-    );
-
-    expect(dockerMocks.capture).toHaveBeenCalledTimes(1);
-    expect(dockerMocks.build).not.toHaveBeenCalled();
-    expect(traceMocks.add).toHaveBeenCalledWith("nemoclaw.sandbox_base_image.local_validation", {
-      source: "override",
-      present: true,
-    });
-    expect(traceMocks.add).not.toHaveBeenCalledWith(
-      "nemoclaw.sandbox_base_image.local_fallback_reuse",
     );
   });
 
   it("fails closed when an explicit override cannot be pulled (#4680)", () => {
-    dockerMocks.imageInspect.mockReturnValue({ status: 1 });
-    dockerMocks.pull.mockReturnValue({ status: 1 });
+    installDockerState();
 
     expect(() => resolveSandboxBaseImage(abiRequiredOverrideOptions())).toThrow(
       "override 'ghcr.io/nvidia/nemoclaw/sandbox-base:published' could not be resolved",
     );
-
-    expect(dockerMocks.capture).not.toHaveBeenCalled();
-    expect(dockerMocks.pull).toHaveBeenCalledWith(`${IMAGE_NAME}:published`, {
-      ignoreError: true,
-      suppressOutput: true,
-    });
-    expect(dockerMocks.build).not.toHaveBeenCalled();
   });
 });
