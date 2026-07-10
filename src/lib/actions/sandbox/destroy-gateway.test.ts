@@ -66,6 +66,40 @@ describe("cleanupGatewayAfterLastSandbox", () => {
     );
   });
 
+  it("keeps the PID-file-scoped host gateway reaper active for Linux final destroy", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    vi.spyOn(os, "homedir").mockReturnValue("/home/tester");
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+    const stateDir = path.join(
+      "/home/tester",
+      ".local",
+      "state",
+      "nemoclaw",
+      "openshell-docker-gateway-8081",
+    );
+
+    cleanupGatewayAfterLastSandbox("nemoclaw-8081", runOpenshell);
+
+    expect(mocks.stopHostGatewayProcesses).toHaveBeenCalledWith(
+      {},
+      {
+        usePgrepFallback: false,
+        stateDir,
+        pidFile: path.join(stateDir, "openshell-gateway.pid"),
+      },
+    );
+    expect(runOpenshell).toHaveBeenCalledWith(["gateway", "remove", "nemoclaw-8081"], {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    expect(mocks.dockerRemoveVolumesByPrefix).toHaveBeenCalledWith(
+      "openshell-cluster-nemoclaw-8081",
+      {
+        ignoreError: true,
+      },
+    );
+  });
+
   it("keeps host gateway reaping disabled for non-Docker-driver platforms", () => {
     vi.spyOn(process, "platform", "get").mockReturnValue("win32");
     const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));

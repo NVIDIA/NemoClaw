@@ -198,7 +198,15 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   });
   vi.spyOn(dockerRun, "dockerCapture").mockImplementation((args: unknown) => {
     const argv = Array.isArray(args) ? args.map(String) : [];
-    return argv[0] === "ps" ? (options.dockerPsOutput ?? "") : "";
+    if (argv[0] !== "ps") return "";
+    const filterIndex = argv.indexOf("--filter");
+    const filterValue = filterIndex >= 0 ? argv[filterIndex + 1] : undefined;
+    const nameFilter = filterValue?.startsWith("name=") ? filterValue.slice(5) : undefined;
+    const names = (options.dockerPsOutput ?? "").split("\n").filter(Boolean);
+    const matchedNames = nameFilter
+      ? names.filter((name) => new RegExp(nameFilter).test(`/${name}`))
+      : names;
+    return matchedNames.length > 0 ? `${matchedNames.join("\n")}\n` : "";
   });
   const selectGatewaySpy = vi
     .spyOn(destroyGateway, "selectGatewayForSandboxDestroy")

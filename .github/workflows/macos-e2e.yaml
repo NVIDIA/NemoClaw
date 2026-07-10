@@ -37,7 +37,7 @@ concurrency:
 jobs:
   macos-e2e:
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -100,10 +100,34 @@ jobs:
         run: |
           NEMOCLAW_RUN_LIVE_E2E=1 npx vitest run --project e2e-live test/e2e/live/full-e2e.test.ts --silent=false --reporter=default
 
+      - name: Install OpenShell CLI for macOS sandbox operations
+        if: steps.docker.outputs.docker_ok == 'true'
+        run: bash scripts/install-openshell.sh
+
+      - name: Run macOS final-destroy gateway cleanup E2E
+        if: steps.docker.outputs.docker_ok == 'true'
+        env:
+          E2E_TARGET_ID: "sandbox-operations"
+          E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/macos-sandbox-operations
+          NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+          NEMOCLAW_RUN_LIVE_E2E: "1"
+          NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_POLICY_TIER: "open"
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          OPENSHELL_GATEWAY: "nemoclaw"
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          npx vitest run --project e2e-live \
+            test/e2e/live/sandbox-operations.test.ts \
+            --silent=false --reporter=default
+
       - name: Explain skipped full E2E
         if: steps.docker.outputs.docker_ok != 'true'
         run: |
-          echo 'Skipping macOS full E2E because Docker is unavailable on this runner.'
+          echo 'Skipping macOS live E2E because Docker is unavailable on this runner.'
           echo 'The workflow still validated the NemoClaw build on macOS (Apple Silicon).'
 
       - name: Upload logs on failure

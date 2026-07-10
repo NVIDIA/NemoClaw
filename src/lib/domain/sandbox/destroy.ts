@@ -150,8 +150,14 @@ export function hasRunningDockerSandboxContainer(
     );
     return output.trim().length > 0;
   } catch {
-    // Fail closed: if Docker cannot be probed, preserve the shared gateway so
-    // a still-running sandbox does not lose its listener on final destroy.
+    // Fail closed for the #4662 invalid-state boundary: OpenShell may report a
+    // terminal sandbox row while the Docker sandbox container is still running.
+    // Docker is the authoritative source for that live-container check, and the
+    // OpenShell false terminal state cannot be fixed from this destroy path. If
+    // the Docker probe itself fails, preserve the shared gateway so a live
+    // sandbox does not lose its listener on final destroy. Covered by
+    // destroy.test.ts; remove this fallback with the terminal-row workaround
+    // after OpenShell no longer emits false terminal rows and #6639 is closed.
     return true;
   }
 }

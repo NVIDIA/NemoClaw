@@ -34,6 +34,11 @@ const SANDBOX_A = "e2e-sbx-a";
 const SANDBOX_B = "e2e-sbx-b";
 const REGISTRY_FILE = path.join(process.env.HOME ?? os.homedir(), ".nemoclaw", "sandboxes.json");
 const GATEWAY_CONTAINER = "openshell-cluster-nemoclaw";
+const GATEWAY_PORT = process.env.NEMOCLAW_GATEWAY_PORT ?? "8080";
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 async function onboardSandbox(
   host: HostCliClient,
@@ -526,6 +531,39 @@ async function assertDestroyRemovesSandbox(
   expect(outputContainsSandbox(openshellList, sandboxName), resultText(openshellList)).toBe(false);
 }
 
+async function expectHostPortFree(
+  host: HostCliClient,
+  port: string,
+  artifactName: string,
+  timeoutMs = 90_000,
+): Promise<void> {
+  const startedAt = Date.now();
+  let lastProbe: ShellProbeResult | undefined;
+  for (let attempt = 1; Date.now() - startedAt < timeoutMs; attempt += 1) {
+    const probe = await host.command(
+      "node",
+      [
+        "-e",
+        'const net=require("node:net"); const server=net.createServer(); server.once("error", error => { console.error(error.code || "bind failed"); process.exit(1); }); server.listen(Number(process.argv[1]), "127.0.0.1", () => server.close(error => { if (error) { console.error(error.message); process.exit(1); } console.log("available"); }));',
+        port,
+      ],
+      {
+        artifactName: `${artifactName}-attempt-${attempt}`,
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    if (probe.exitCode === 0) return;
+    lastProbe = probe;
+    await sleep(2_000);
+  }
+  throw new Error(
+    `gateway port ${port} remained occupied after final destroy: ${
+      lastProbe ? resultText(lastProbe) : "no probe completed"
+    }`,
+  );
+}
+
 type GatewayRecoveryOutcome =
   | "recovered-before-status"
   | "recovered-by-status"
@@ -609,6 +647,7 @@ test(
         "TC-SBX-09 tmux and PTY lifecycle work inside sandbox",
         "TC-SBX-10 two sandboxes list with model/provider metadata",
         "TC-SBX-11 sandboxes cannot reach each other by hostname",
+        "TC-SBX-12 destroying the non-final sandbox preserves the survivor and final destroy releases the gateway port",
       ],
     });
 
@@ -643,12 +682,17 @@ test(
     await assertNetworkIsolation(sandbox, SANDBOX_A, SANDBOX_B, "tc-sbx-11-a-cannot-reach-b");
     await assertNetworkIsolation(sandbox, SANDBOX_B, SANDBOX_A, "tc-sbx-11-b-cannot-reach-a");
     await assertDestroyRemovesSandbox(host, sandbox, SANDBOX_B);
+    await expectListed(host, SANDBOX_A, "tc-sbx-12-survivor-listed-after-destroy-b");
+    await assertAgentCanAnswer(host, SANDBOX_A, "tc-sbx-12-survivor-agent-after-destroy-b");
 
     const gatewayRecovery = await assertGatewayRecovery(host, SANDBOX_A);
+    await assertDestroyRemovesSandbox(host, sandbox, SANDBOX_A);
+    await expectHostPortFree(host, GATEWAY_PORT, "tc-sbx-12-final-destroy-gateway-port-free");
 
     await artifacts.target.complete({
       id: "sandbox-operations",
       status: "passed",
+      finalGatewayPortReleased: true,
       gatewayRecovery,
       legacySource: "test/e2e/test-sandbox-operations.sh",
     });
