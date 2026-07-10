@@ -40,7 +40,10 @@ function collectStrings(value: unknown): string[] {
         : [];
 }
 
-function runWaitStep(scenario: "success" | "failure" | "query-failure" | "timeout") {
+function runWaitStep(
+  scenario: "success" | "failure" | "query-failure" | "timeout" | "unsupported",
+  options: { runId?: string } = {},
+) {
   const workflow = readYaml<TriggeredWorkflow>(SHADOW_PATH);
   const wait = step(workflow.jobs.shadow, "Wait for correlated E2E run");
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shadow-wait-"));
@@ -60,6 +63,7 @@ case "$FAKE_GH_SCENARIO:$count" in
   success:*) printf 'completed:success\n' ;;
   failure:*) printf 'completed:failure\n' ;;
   query-failure:*) printf 'simulated GitHub query failure\n' >&2; exit 1 ;;
+  unsupported:*) printf 'completed:unknown\n' ;;
   *) exit 2 ;;
 esac
 `,
@@ -80,7 +84,7 @@ exec "$@"
   );
 
   try {
-    return spawnSync("bash", ["-e", "-o", "pipefail", "-c", wait.run!], {
+    const result = spawnSync("bash", ["-e", "-o", "pipefail", "-c", wait.run!], {
       encoding: "utf8",
       env: {
         ...process.env,
@@ -88,10 +92,14 @@ exec "$@"
         FAKE_GH_SCENARIO: scenario,
         GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
         PATH: `${binDir}:${process.env.PATH ?? ""}`,
-        RUN_ID: "29110351531",
+        RUN_ID: options.runId ?? "29110351531",
       },
       timeout: 5_000,
     });
+    return {
+      ...result,
+      ghCallCount: Number(fs.readFileSync(callCountPath, "utf8").trim()),
+    };
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
@@ -224,6 +232,22 @@ describe("post-merge E2E risk gate shadow workflow", () => {
     expect(result.status).toBe(124);
     expect(result.stderr).toContain("::error title=Correlated E2E wait timed out::");
     expect(result.stderr).toContain("did not complete within 105 minutes");
+  });
+
+  it("rejects an invalid child-run ID before querying GitHub", () => {
+    const result = runWaitStep("success", { runId: "invalid" });
+
+    expect(result.status).toBe(1);
+    expect(result.ghCallCount).toBe(0);
+    expect(result.stderr).toContain("::error title=Invalid correlated E2E run ID::");
+  });
+
+  it("fails closed for an unsupported child-run state", () => {
+    const result = runWaitStep("unsupported");
+
+    expect(result.status).toBe(1);
+    expect(result.ghCallCount).toBe(1);
+    expect(result.stderr).toContain("::error title=Unexpected correlated E2E state::");
   });
 
   it("binds every E2E checkout and test signal to the merged commit", () => {
