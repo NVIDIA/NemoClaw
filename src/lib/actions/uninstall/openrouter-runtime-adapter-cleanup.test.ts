@@ -20,16 +20,54 @@ function notFound(): RunResult {
 const OPENROUTER_RUNTIME_ADAPTER_CMDLINE =
   "/usr/bin/node /home/test/NemoClaw/dist/lib/inference/openrouter-runtime-adapter-entry.js\n";
 
+type RunStub = (args: readonly string[]) => RunResult | null;
+
 function psStub(pidStr: string, opts: { exited: Set<number>; cmdline?: string; owner?: string }) {
+  const pid = Number(pidStr);
+  const responses = new Map<string, () => RunResult>([
+    [
+      ["-p", pidStr, "-o", "pid="].join("\0"),
+      () => (opts.exited.has(pid) ? notFound() : ok(`${pidStr}\n`)),
+    ],
+    [["-p", pidStr, "-o", "user="].join("\0"), () => ok(`${opts.owner ?? "testuser"}\n`)],
+    [
+      ["-p", pidStr, "-o", "args="].join("\0"),
+      () => ok(opts.cmdline ?? OPENROUTER_RUNTIME_ADAPTER_CMDLINE),
+    ],
+  ]);
+
   return (args: readonly string[]): RunResult | null => {
-    if (args[0] !== "-p" || args[1] !== pidStr || args[2] !== "-o") return null;
-    const pid = Number(pidStr);
-    if (args[3] === "pid=") {
-      return opts.exited.has(pid) ? notFound() : ok(`${pidStr}\n`);
-    }
-    if (args[3] === "user=") return ok(`${opts.owner ?? "testuser"}\n`);
-    if (args[3] === "args=") return ok(opts.cmdline ?? OPENROUTER_RUNTIME_ADAPTER_CMDLINE);
-    return null;
+    return responses.get(args.join("\0"))?.() ?? null;
+  };
+}
+
+function defaultRun(command: string, args: readonly string[]): RunResult {
+  switch (command) {
+    case "lsof":
+      return ok("");
+    default:
+      switch (args[0]) {
+        case "-c":
+          return ok("/fake/bin/tool\n");
+        case "-f":
+          return ok("");
+        default:
+          return ok();
+      }
+  }
+}
+
+function runStub(routes: Record<string, RunStub> = {}) {
+  return (command: string, args: readonly string[]): RunResult => {
+    return routes[command]?.(args) ?? defaultRun(command, args);
+  };
+}
+
+function lsofPortStub(ports: string[], portPids: Map<string, RunResult>) {
+  return (args: readonly string[]): RunResult => {
+    const port = args[1] ?? "";
+    ports.push(port);
+    return portPids.get(port) ?? ok("");
   };
 }
 
@@ -61,16 +99,7 @@ describe("OpenRouter Runtime adapter uninstall cleanup", () => {
           },
           log: (line) => logs.push(line),
           rmSync: vi.fn(),
-          run: (command, args) => {
-            if (command === "ps") {
-              const result = stub(args);
-              if (result) return result;
-            }
-            if (command === "lsof") return ok("");
-            if (args[0] === "-c") return ok("/fake/bin/tool\n");
-            if (args[0] === "-f") return ok("");
-            return ok();
-          },
+          run: runStub({ ps: stub }),
           runDocker: () => ok(""),
         },
       );
@@ -107,20 +136,10 @@ describe("OpenRouter Runtime adapter uninstall cleanup", () => {
         },
         log: (line) => logs.push(line),
         rmSync: vi.fn(),
-        run: (command, args) => {
-          if (command === "lsof" && args[0] === "-ti") {
-            lsofPorts.push(args[1] ?? "");
-            if (args[1] === ":12037") return ok("33334\n");
-            return ok("");
-          }
-          if (command === "ps") {
-            const result = stub(args);
-            if (result) return result;
-          }
-          if (args[0] === "-c") return ok("/fake/bin/tool\n");
-          if (args[0] === "-f") return ok("");
-          return ok();
-        },
+        run: runStub({
+          lsof: lsofPortStub(lsofPorts, new Map([[":12037", ok("33334\n")]])),
+          ps: stub,
+        }),
         runDocker: () => ok(""),
       },
     );
@@ -155,19 +174,10 @@ describe("OpenRouter Runtime adapter uninstall cleanup", () => {
         },
         log: (line) => logs.push(line),
         rmSync: vi.fn(),
-        run: (command, args) => {
-          if (command === "lsof" && args[0] === "-ti" && args[1] === ":11437") {
-            return ok("99998\n");
-          }
-          if (command === "lsof") return ok("");
-          if (command === "ps") {
-            const result = stub(args);
-            if (result) return result;
-          }
-          if (args[0] === "-c") return ok("/fake/bin/tool\n");
-          if (args[0] === "-f") return ok("");
-          return ok();
-        },
+        run: runStub({
+          lsof: lsofPortStub([], new Map([[":11437", ok("99998\n")]])),
+          ps: stub,
+        }),
         runDocker: () => ok(""),
       },
     );
