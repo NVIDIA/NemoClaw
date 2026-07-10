@@ -5,9 +5,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { resultText } from "../fixtures/clients/command.ts";
+import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import {
+  cleanupCorporateCaFixture,
+  corporateCaMergeProbeScript,
+  createCorporateCaFixture,
+} from "../fixtures/corporate-ca.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
@@ -75,6 +80,8 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
     process.env.NEMOCLAW_INSTALL_SCRIPT_URL ??
     `https://raw.githubusercontent.com/NVIDIA/NemoClaw/${ref}/install.sh`;
   const installCwd = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-public-install-"));
+  const corporateCa = createCorporateCaFixture("explicit", "nemoclaw-cloud-corporate-ca-");
+  cleanupRegistry.add("remove corporate CA fixture", () => cleanupCorporateCaFixture(corporateCa));
   const redactionValues = [hosted.apiKey];
 
   await artifacts.target.declare({
@@ -83,9 +90,11 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
     installUrl,
     installRef: ref,
     checksDir: CHECKS_DIR,
+    corporateCaSource: corporateCa.sourceLabel,
     contracts: [
       "public curl installer uses GitHub clone path for the requested ref",
       "sandbox appears healthy after cloud onboarding",
+      "explicit corporate CA source is baked and merged with OpenShell trust inside the sandbox",
       "cloud split checks cover inference.local, security leak checks, and Landlock/read-only behavior",
       "cleanup verifies sandbox removal",
     ],
@@ -108,11 +117,12 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
 
   const install = await host.command(
     "bash",
-    ["-lc", `cd '${installCwd}' && curl -fsSL '${installUrl}' | bash`],
+    ["-lc", `cd ${shellQuote(installCwd)} && curl -fsSL ${shellQuote(installUrl)} | bash`],
     {
       artifactName: "phase-1-public-install",
       env: env({
         ...hosted.env,
+        ...corporateCa.env,
         NVIDIA_INFERENCE_API_KEY: hosted.apiKey,
         NEMOCLAW_INSTALL_REF: ref,
         NEMOCLAW_INSTALL_TAG: ref,
@@ -144,6 +154,13 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
   });
   expect(list.exitCode, resultText(list)).toBe(0);
   expect(list.stdout).toContain(SANDBOX_NAME);
+
+  const corporateCaProbe = await sandbox.execShell(SANDBOX_NAME, corporateCaMergeProbeScript(), {
+    artifactName: "phase-2-corporate-ca-merge-probe",
+    env: env(),
+    timeoutMs: 60_000,
+  });
+  expect(corporateCaProbe.exitCode, resultText(corporateCaProbe)).toBe(0);
 
   const checkScripts = fs
     .readdirSync(CHECKS_DIR)
