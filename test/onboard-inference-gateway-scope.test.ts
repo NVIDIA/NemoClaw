@@ -65,7 +65,7 @@ describe("onboarding inference gateway scope", () => {
           runOpenshell: (args) =>
             args.slice(0, 2).join(" ") === "provider get" ? { status: 1 } : undefined,
         });
-        const endpointUrl = "http://localhost:8000/v1";
+        const endpointUrl = "http://localhost:8000/v1?tenant=local#models";
         const model = "deepseek-ai/DeepSeek-V4-Flash";
 
         await expect(
@@ -83,7 +83,7 @@ describe("onboarding inference gateway scope", () => {
 
         expect(harness.commands.map(({ command }) => command)).toEqual([
           `provider get -g ${GATEWAY} compatible-endpoint`,
-          `provider create -g ${GATEWAY} --name compatible-endpoint --type openai --credential COMPATIBLE_API_KEY --config OPENAI_BASE_URL=http://host.openshell.internal:8000/v1`,
+          `provider create -g ${GATEWAY} --name compatible-endpoint --type openai --credential COMPATIBLE_API_KEY --config OPENAI_BASE_URL=http://host.openshell.internal:8000/v1?tenant=local#models`,
           `inference set -g ${GATEWAY} --no-verify --provider compatible-endpoint --model ${model} --timeout 180`,
         ]);
         expect(harness.verifyOnboardInferenceSmoke).toHaveBeenCalledWith({

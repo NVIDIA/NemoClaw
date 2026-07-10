@@ -53,7 +53,10 @@ function gatewayReachableCompatibleEndpointUrl(
   parsed.hostname = "host.openshell.internal";
   const pathname = parsed.pathname.replace(/\/+$/, "");
   parsed.pathname = pathname || "/";
-  return parsed.pathname === "/" ? parsed.origin : `${parsed.origin}${parsed.pathname}`;
+  const routeSuffix = `${parsed.search}${parsed.hash}`;
+  return parsed.pathname === "/"
+    ? `${parsed.origin}${routeSuffix}`
+    : `${parsed.origin}${parsed.pathname}${routeSuffix}`;
 }
 
 /**
