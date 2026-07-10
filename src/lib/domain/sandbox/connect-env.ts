@@ -45,6 +45,13 @@ export function hermesConfigUsesManagedLightSkin(config: ConfigObject): boolean 
   return hermesConfigDisplaySkin(config) === NEMOCLAW_HERMES_LIGHT_SKIN_NAME;
 }
 
+function canApplyHermesLightSkinConfig(config: ConfigObject): boolean {
+  const display = config.display;
+  if (display === undefined) return true;
+  if (!isConfigRecord(display)) return false;
+  return display.skin === undefined || display.skin === NEMOCLAW_HERMES_LIGHT_SKIN_NAME;
+}
+
 export function applyHermesLightSkinConfig(config: ConfigObject): boolean {
   const display = config.display;
   if (isConfigRecord(display)) {
@@ -99,7 +106,7 @@ export function shouldApplyHermesLightSkin(
   return (
     shouldInspectHermesLightSkinConfig(agent, env) &&
     hostTerminalLooksLight(env) &&
-    (hermesConfigDisplaySkin(config) === null || hermesConfigUsesManagedLightSkin(config))
+    canApplyHermesLightSkinConfig(config)
   );
 }
 

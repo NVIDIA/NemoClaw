@@ -109,4 +109,14 @@ describe("sandbox connect environment helpers", () => {
     expect(applyHermesLightSkinConfig(userConfig)).toBe(false);
     expect(userConfig.display.skin).toBe("solarized-light");
   });
+
+  it("preserves explicit non-string Hermes display skin values (#6380)", () => {
+    const config = { display: { skin: null }, model: "test" };
+
+    expect(shouldApplyHermesLightSkin({ name: "hermes" }, { COLORFGBG: "0;15" }, config)).toBe(
+      false,
+    );
+    expect(applyHermesLightSkinConfig(config)).toBe(false);
+    expect(config.display.skin).toBeNull();
+  });
 });
