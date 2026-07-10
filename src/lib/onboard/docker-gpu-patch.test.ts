@@ -23,11 +23,11 @@ import {
   getDockerGpuPatchNetworkMode,
   getDockerGpuSupervisorReconnectTimeoutSecs,
   recreateOpenShellDockerSandboxWithGpu,
-  recreateOpenShellDockerSandboxWithStartupCommand,
   selectDockerGpuPatchMode,
   shouldApplyDockerGpuPatch,
   waitForOpenShellSupervisorReconnect,
 } from "./docker-gpu-patch";
+import { recreateOpenShellDockerSandboxWithStartupCommand } from "./docker-startup-command-patch";
 
 function inspectFixture(): DockerContainerInspect {
   return {
@@ -701,6 +701,15 @@ describe("docker-gpu-patch", () => {
     expect(cloneArgs).not.toEqual(
       expect.arrayContaining(["--security-opt", "apparmor=unconfined"]),
     );
+  });
+
+  it("rejects an empty restart-persistence command before Docker mutation", () => {
+    expect(() =>
+      recreateOpenShellDockerSandboxWithStartupCommand({
+        sandboxName: "alpha",
+        openshellSandboxCommand: [],
+      }),
+    ).toThrow("OpenShell sandbox startup command is required for restart persistence");
   });
 });
 

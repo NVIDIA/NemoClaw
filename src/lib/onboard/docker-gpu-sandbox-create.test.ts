@@ -132,6 +132,81 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     expect(patch.selectedMode()?.kind).toBe("startup-command");
   });
 
+  it("rolls back startup-command recreation when the supervisor does not reconnect", () => {
+    const deps = makeDeps();
+    const result = {
+      ...deferredCreateResult(),
+      mode: {
+        kind: "startup-command" as const,
+        label: "persistent sandbox startup command",
+        device: "",
+        args: [],
+      },
+    };
+    const capturePreRollbackDiagnostics = vi.fn(() => null);
+    const finalizeBackup = vi.fn(() => ({ backupRemoved: false, rolledBack: true }));
+    const onPatchFailureExit = vi.fn();
+    const patch = createDockerGpuSandboxCreatePatch({
+      enabled: false,
+      persistStartupCommand: true,
+      sandboxName: "alpha",
+      openshellSandboxCommand: ["env", "nemoclaw-start"],
+      timeoutSecs: 60,
+      deps,
+      overrides: {
+        findContainerIds: vi.fn(() => ["existing-container"]),
+        recreateStartupPatch: vi.fn(() => result),
+        waitForSupervisor: vi.fn(() => false),
+        capturePreRollbackDiagnostics,
+        finalizeBackup,
+        onPatchFailureExit,
+      },
+    });
+
+    patch.maybeApplyDuringCreate();
+    patch.waitForSupervisorReconnectIfNeeded();
+
+    expect(capturePreRollbackDiagnostics).toHaveBeenCalledWith("alpha", result, deps);
+    expect(capturePreRollbackDiagnostics.mock.invocationCallOrder[0]).toBeLessThan(
+      finalizeBackup.mock.invocationCallOrder[0],
+    );
+    expect(finalizeBackup).toHaveBeenCalledWith({ result, supervisorReady: false }, deps);
+    const [, error, exitDeps] = onPatchFailureExit.mock.calls[0];
+    expect((error as Error).message).toMatch(/pre-patch sandbox restored/);
+    const context = (exitDeps as { context: DockerGpuPatchFailureContext }).context;
+    expect(context.selectedMode?.kind).toBe("startup-command");
+    expect(context.rolledBack).toBe(true);
+  });
+
+  it("reports startup-command creation failures through the composed patch boundary", () => {
+    const deps = makeDeps();
+    const onPatchFailureExit = vi.fn();
+    const patch = createDockerGpuSandboxCreatePatch({
+      enabled: false,
+      persistStartupCommand: true,
+      sandboxName: "alpha",
+      openshellSandboxCommand: ["env", "nemoclaw-start"],
+      timeoutSecs: 60,
+      deps,
+      overrides: {
+        findContainerIds: vi.fn(() => ["existing-container"]),
+        recreateStartupPatch: vi.fn(() => {
+          throw new Error("startup recreate failed");
+        }),
+        onPatchFailureExit,
+      },
+    });
+
+    patch.maybeApplyDuringCreate();
+    expect(patch.createFailureMessage()).toMatch(/startup-command patch failed/);
+    patch.exitOnPatchError();
+    expect(onPatchFailureExit).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ message: "startup recreate failed" }),
+      expect.objectContaining({ runCaptureOpenshell: deps.runCaptureOpenshell }),
+    );
+  });
+
   it("rolls back to the backup container and surfaces rolledBack=true diagnostics when supervisorReady=false", () => {
     const deps = makeDeps();
     const result = deferredCreateResult();

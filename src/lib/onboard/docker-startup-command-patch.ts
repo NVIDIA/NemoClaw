@@ -1,0 +1,34 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import {
+  type DockerGpuPatchDeps,
+  type DockerGpuPatchMode,
+  type DockerGpuPatchResult,
+  recreateOpenShellDockerSandboxWithGpu,
+} from "./docker-gpu-patch";
+
+const STARTUP_COMMAND_MODE: DockerGpuPatchMode = {
+  kind: "startup-command",
+  label: "persistent sandbox startup command",
+  device: "",
+  args: [],
+};
+
+export function recreateOpenShellDockerSandboxWithStartupCommand(
+  options: {
+    sandboxName: string;
+    timeoutSecs?: number;
+    waitForSupervisor?: boolean;
+    openshellSandboxCommand: readonly string[];
+  },
+  deps: DockerGpuPatchDeps = {},
+): DockerGpuPatchResult {
+  if (options.openshellSandboxCommand.length === 0) {
+    throw new Error("OpenShell sandbox startup command is required for restart persistence.");
+  }
+  return recreateOpenShellDockerSandboxWithGpu(
+    { ...options, modeOverride: STARTUP_COMMAND_MODE },
+    deps,
+  );
+}

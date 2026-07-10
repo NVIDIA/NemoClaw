@@ -17,12 +17,16 @@ import {
   printDockerGpuProofFailure,
   printDockerGpuReadinessFailure,
   recreateOpenShellDockerSandboxWithGpu,
-  recreateOpenShellDockerSandboxWithStartupCommand,
   shouldApplyDockerGpuPatch,
   waitForOpenShellSupervisorReconnect,
 } from "./docker-gpu-patch";
 import { finalizeDockerGpuPatchBackup } from "./docker-gpu-patch-finalize";
 import { captureDockerGpuPreRollbackDiagnostics } from "./docker-gpu-pre-rollback-diagnostics";
+import {
+  createDockerSandboxRecreator,
+  type RecreateGpuPatchFn,
+  type RecreateStartupPatchFn,
+} from "./docker-startup-command-sandbox-create";
 import { detectWslDockerDesktopStatus } from "./wsl-docker-desktop-gpu";
 
 let cachedDockerDesktopWslRuntime: boolean | null = null;
@@ -43,8 +47,6 @@ type DockerGpuSandboxCreateDeps = Pick<
   "runOpenshell" | "runCaptureOpenshell" | "sleep" | "dockerCapture"
 >;
 
-type RecreatePatchFn = typeof recreateOpenShellDockerSandboxWithGpu;
-type RecreateStartupPatchFn = typeof recreateOpenShellDockerSandboxWithStartupCommand;
 type WaitSupervisorFn = typeof waitForOpenShellSupervisorReconnect;
 type FindContainerIdsFn = typeof findOpenShellDockerSandboxContainerIds;
 type FinalizeBackupFn = typeof finalizeDockerGpuPatchBackup;
@@ -81,7 +83,7 @@ type DockerGpuSandboxCreatePatchOptions = {
    */
   overrides?: {
     findContainerIds?: FindContainerIdsFn;
-    recreatePatch?: RecreatePatchFn;
+    recreatePatch?: RecreateGpuPatchFn;
     recreateStartupPatch?: RecreateStartupPatchFn;
     waitForSupervisor?: WaitSupervisorFn;
     finalizeBackup?: FinalizeBackupFn;
@@ -136,8 +138,7 @@ export function createDockerGpuSandboxCreatePatch(
   const findContainerIds =
     options.overrides?.findContainerIds ?? findOpenShellDockerSandboxContainerIds;
   const recreatePatch = options.overrides?.recreatePatch ?? recreateOpenShellDockerSandboxWithGpu;
-  const recreateStartupPatch =
-    options.overrides?.recreateStartupPatch ?? recreateOpenShellDockerSandboxWithStartupCommand;
+  const recreateStartupPatch = options.overrides?.recreateStartupPatch;
   const waitForSupervisor =
     options.overrides?.waitForSupervisor ?? waitForOpenShellSupervisorReconnect;
   const finalizeBackup = options.overrides?.finalizeBackup ?? finalizeDockerGpuPatchBackup;
@@ -154,26 +155,15 @@ export function createDockerGpuSandboxCreatePatch(
     backend: options.backend,
     dockerDesktopWsl: options.dockerDesktopWsl ?? isDockerDesktopWslRuntime(),
   };
-  const startupCommandPatchEnabled = !options.enabled && options.persistStartupCommand === true;
-  const patchEnabled = options.enabled || startupCommandPatchEnabled;
+  const patchEnabled = options.enabled || options.persistStartupCommand === true;
   const patchTarget = options.enabled ? "NVIDIA GPU access" : "restart-safe startup";
-  const recreateSelectedPatch = (
-    waitForSupervisor: boolean,
-    deps: DockerGpuPatchDeps,
-  ): DockerGpuPatchResult => {
-    if (options.enabled) {
-      return recreatePatch({ ...applyOptions, waitForSupervisor }, deps);
-    }
-    return recreateStartupPatch(
-      {
-        sandboxName: options.sandboxName,
-        openshellSandboxCommand: options.openshellSandboxCommand ?? [],
-        timeoutSecs: options.timeoutSecs,
-        waitForSupervisor,
-      },
-      deps,
-    );
-  };
+  const recreateSelectedPatch = createDockerSandboxRecreator({
+    gpuEnabled: options.enabled,
+    gpuOptions: applyOptions,
+    startupCommand: options.openshellSandboxCommand,
+    recreateGpu: recreatePatch,
+    recreateStartup: recreateStartupPatch,
+  });
 
   return {
     maybeApplyDuringCreate() {

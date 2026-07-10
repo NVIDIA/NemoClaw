@@ -444,6 +444,10 @@ retry_tirith_marker_if_needed() {
   fi
 }
 
+# sourceBoundary: Hermes runtime fallback recreates download_failed when its background Tirith fetch fails.
+# whyNotSourceFix: Hermes is an upstream image dependency; this entrypoint owns restart recovery only.
+# regressionTest: test/hermes-tirith-retry-finalization.test.ts covers cleanup and unsafe-marker preservation.
+# removalCondition: Remove when Hermes no longer recreates the marker after a handled startup retry.
 finalize_tirith_marker_retry() {
   local marker="${HERMES_DIR}/.tirith-install-failed"
   local reason
@@ -2833,6 +2837,7 @@ supervise_hermes_gateway_current_user() {
 }
 
 bootstrap_hermes_gateway_current_user() {
+  TIRITH_RETRY_MARKER_CLEARED=0
   launch_hermes_gateway_current_user || return 1
   start_gateway_log_stream
   refresh_hermes_supervised_child_pids

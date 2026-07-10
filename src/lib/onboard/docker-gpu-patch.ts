@@ -1060,7 +1060,7 @@ export function recreateOpenShellDockerSandboxWithGpu(
     openshellSandboxCommand?: readonly string[] | null;
     backend?: DockerGpuPatchBackend;
     dockerDesktopWsl?: boolean;
-    startupCommandOnly?: boolean;
+    modeOverride?: DockerGpuPatchMode;
   },
   deps: DockerGpuPatchDeps = {},
 ): DockerGpuPatchResult {
@@ -1083,16 +1083,8 @@ export function recreateOpenShellDockerSandboxWithGpu(
     const image = String(inspect.Config?.Image || "").trim();
     if (!image) throw new Error("OpenShell sandbox container inspect did not include an image.");
 
-    const selection = options.startupCommandOnly
-      ? {
-          mode: {
-            kind: "startup-command" as const,
-            label: "persistent sandbox startup command",
-            device: "",
-            args: [],
-          },
-          attempts: [],
-        }
+    const selection = options.modeOverride
+      ? { mode: options.modeOverride, attempts: [] }
       : selectDockerGpuPatchMode(
           {
             image,
@@ -1125,7 +1117,7 @@ export function recreateOpenShellDockerSandboxWithGpu(
     // CUDA fails with `NvRmMemInitNvmap ... Permission denied` and `cuInit(0)`
     // returns 999 even though the devices are mounted (#4231). Grant the
     // sandbox user the owning group(s) so CUDA can initialize.
-    if (!options.startupCommandOnly && options.backend === "jetson") {
+    if (selection.mode.kind !== "startup-command" && options.backend === "jetson") {
       const tegraGroupGids = d.detectTegraDeviceGroupGids();
       if (tegraGroupGids.length > 0) {
         cloneOptions.extraGroupGids = tegraGroupGids;
@@ -1177,9 +1169,10 @@ export function recreateOpenShellDockerSandboxWithGpu(
         { newContainerId: originalName, backupContainerName, originalName },
         deps,
       );
-      const containerDescription = options.startupCommandOnly
-        ? "recreated sandbox container"
-        : "GPU-enabled sandbox container";
+      const containerDescription =
+        selection.mode.kind === "startup-command"
+          ? "recreated sandbox container"
+          : "GPU-enabled sandbox container";
       throw new Error(
         `Could not start ${containerDescription}: ${resultText(runResult)}; ${
           context.rolledBack
@@ -1199,9 +1192,10 @@ export function recreateOpenShellDockerSandboxWithGpu(
         deps,
       );
     if (!newContainerId) {
-      const containerDescription = options.startupCommandOnly
-        ? "Recreated sandbox container"
-        : "GPU-enabled sandbox container";
+      const containerDescription =
+        selection.mode.kind === "startup-command"
+          ? "Recreated sandbox container"
+          : "GPU-enabled sandbox container";
       throw new Error(`${containerDescription} started, but Docker did not report its ID.`);
     }
     context.newContainerId = newContainerId;
@@ -1242,18 +1236,6 @@ export function recreateOpenShellDockerSandboxWithGpu(
     const err = error instanceof Error ? error : new Error(String(error));
     throw decoratePatchError(err, context);
   }
-}
-
-export function recreateOpenShellDockerSandboxWithStartupCommand(
-  options: {
-    sandboxName: string;
-    timeoutSecs?: number;
-    waitForSupervisor?: boolean;
-    openshellSandboxCommand: readonly string[];
-  },
-  deps: DockerGpuPatchDeps = {},
-): DockerGpuPatchResult {
-  return recreateOpenShellDockerSandboxWithGpu({ ...options, startupCommandOnly: true }, deps);
 }
 
 export function dockerGpuPatchCleanupCommands(sandboxName: string): string[] {
