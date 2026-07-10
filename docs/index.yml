@@ -103,6 +103,9 @@ navigation:
               - page: "Sandbox Hardening"
                 path: deployment/sandbox-hardening.mdx
                 slug: sandbox-hardening
+              - page: "Playwright Browser Agent"
+                path: manage-sandboxes/run-playwright-browser-agent.mdx
+                slug: run-playwright-browser-agent
           - section: "Network Policy"
             slug: network-policy
             collapsed: open-by-default

@@ -1,0 +1,312 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Run a Playwright Browser Agent in a Sandbox"
+sidebar-title: "Playwright Browser Agent"
+description: "Build a custom sandbox image with Chromium, whitelist the egress a browser needs, and drive Playwright inside a NemoClaw sandbox."
+description-agent: "Explains how to run a self-hosted Playwright and Chromium browser agent inside a NemoClaw sandbox. Use when users ask about running a browser in the sandbox, Landlock blocking Chromium, ssrf_denied on playwright install, or building a custom sandbox image."
+keywords: ["nemoclaw playwright sandbox", "chromium landlock sandbox", "custom sandbox image", "browser agent egress policy", "ssrf_denied playwright install"]
+content:
+  type: "how_to"
+---
+
+Run a Playwright and Chromium browser agent entirely inside a NemoClaw sandbox, under the sandbox's deny-default egress, SSRF protection, and Landlock kernel isolation.
+
+Running a real browser inside the sandbox is not a matter of `pip install playwright`. Three independent security layers each have to be solved, in order, and their failure modes are not self-explanatory. This page describes the model first, then gives a working recipe.
+
+## Managed Browser Tooling Versus This Recipe
+
+NemoClaw ships a managed browser path: the `nous-browser` policy preset and the Hermes `browser-use` tool, which drive a cloud-hosted browser through the Nous Portal broker. That browser runs in the Browser Use cloud service, not in your sandbox.
+
+This page covers the do-it-yourself alternative, where Chromium runs locally inside the sandbox under the sandbox's own egress, SSRF, and Landlock envelope, with no dependency on an external browser cloud.
+
+| | Managed (`browser-use`) | Self-hosted (this page) |
+|---|---|---|
+| Where the browser runs | Browser Use cloud | Inside your sandbox |
+| Setup | Preset and managed tool | Custom image and egress policy |
+| Target sites | What the service supports | Any site you whitelist |
+| Outbound dependency | Nous Portal and `*.browser-use.com` | None beyond your target's hosts |
+
+Use the managed tool when it fits. Use this recipe when you need a self-hosted browser, full control of the image and egress, or a deployment that cannot route through the managed cloud.
+
+## The Three Security Layers
+
+Every attempt to run a browser inside a sandbox meets these in the same order.
+
+<AccordionGroup>
+  <Accordion title="Layer 1 — Domain whitelist (egress policy)">
+
+Sandbox egress is deny-default. Every host the browser reaches must appear in the sandbox's policy, and a modern page pulls from more hosts than you expect: the target site, its CDNs, analytics endpoints, font services, and OAuth endpoints.
+
+The practical workflow is iterative. Run the agent, watch for blocked-host errors, add the host, re-apply, repeat.
+
+For Google Forms, the non-obvious hosts beyond `docs.google.com` are `*.gstatic.com`, `*.googleapis.com`, and `accounts.google.com`. Without them, Google's React initialization script never loads, form inputs stay `disabled`, and Playwright times out trying to fill them.
+
+Policies do not persist across sandbox recreates. Re-apply after every `openshell sandbox create`.
+
+  </Accordion>
+  <Accordion title="Layer 2 — SSRF protection">
+
+Whitelisting a domain does not permit binary downloads from that domain's CDN. OpenShell runs a separate SSRF protection layer that returns `ssrf_denied / blocked: internal address` on CDN binary fetches even when the host is in the egress policy. Policy YAML cannot bypass this layer.
+
+The symptom: `pip install playwright` succeeds, then `playwright install chromium` fails downloading from `cdn.playwright.dev`, even though `cdn.playwright.dev` is whitelisted.
+
+Install browser binaries at image build time instead. The Dockerfile below installs Debian's `chromium` package with `apt-get`, which runs during `docker build` on the host, where SSRF protection does not apply.
+
+  </Accordion>
+  <Accordion title="Layer 3 — Landlock kernel isolation">
+
+Even if you sidestep Layer 2 by copying a Chromium binary into a running sandbox, it will not execute. Linux Landlock permits execution only from trusted paths defined at image build time. Binaries dropped into `/home/node/.cache/`, `/tmp/`, or `/sandbox/` at runtime are blocked regardless of file permissions or ownership.
+
+Chromium must therefore live at a Landlock-trusted path baked into the image. `/usr/bin/chromium`, where Debian's package installs it, works. Point Playwright at it explicitly rather than letting it fall back to its bundled browser under `~/.cache/`, which Landlock blocks.
+
+  </Accordion>
+</AccordionGroup>
+
+## Build the Custom Sandbox Image
+
+<Warning>
+Do not build `FROM ghcr.io/nvidia/nemoclaw/sandbox-base`. `nemoclaw onboard` builds its own image from the upstream base and ignores a custom base. The image to extend is the *output* of `nemoclaw onboard`, which already contains the agent tooling.
+</Warning>
+
+<Steps>
+  <Step title="Onboard, then find the resulting image">
+    ```bash
+    nemoclaw onboard --no-gpu
+    docker exec openshell-cluster-nemoclaw ctr -n k8s.io images ls | grep sandbox-from
+    ```
+
+    The second command prints a reference such as `docker.io/openshell/sandbox-from:1778200778`. The numeric tag is a build ID. Note it.
+  </Step>
+
+  <Step title="Export the onboarded image into Docker">
+    The embedded k3s cluster uses its own containerd image store, separate from Docker's.
+
+    ```bash
+    docker exec openshell-cluster-nemoclaw ctr -n k8s.io images export \
+      /tmp/nemoclaw-full.tar docker.io/openshell/sandbox-from:<BUILD_ID>
+    docker cp openshell-cluster-nemoclaw:/tmp/nemoclaw-full.tar /tmp/nemoclaw-full.tar
+    docker load -i /tmp/nemoclaw-full.tar
+    ```
+  </Step>
+
+  <Step title="Write the Dockerfile">
+    Set the `FROM` line to the build ID from the first step.
+
+    ```dockerfile
+    FROM openshell/sandbox-from:<BUILD_ID>
+
+    USER root
+
+    # Chromium and its runtime libs. The base is Debian Bookworm, so the package
+    # is `chromium` (not `chromium-browser`, which is Ubuntu) and `libasound2`
+    # (not `libasound2t64`). Installing at build time sidesteps the SSRF
+    # protection that would block the same download at runtime.
+    RUN apt-get update && apt-get install -y --no-install-recommends \
+        chromium \
+        libnss3 \
+        libatk1.0-0 \
+        libatk-bridge2.0-0 \
+        libcups2 \
+        libdrm2 \
+        libgbm1 \
+        libxkbcommon0 \
+        libxcomposite1 \
+        libxdamage1 \
+        libxfixes3 \
+        libxrandr2 \
+        libasound2 \
+        && rm -rf /var/lib/apt/lists/*
+
+    # Debian Bookworm enforces PEP 668, so system pip needs
+    # --break-system-packages. To prefer a venv, create one at a
+    # Landlock-trusted path baked into the image.
+    RUN pip3 install playwright --break-system-packages
+
+    # Point Playwright at the apt-installed Chromium. /usr/bin/ is a
+    # Landlock-trusted execution path.
+    ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
+
+    USER sandbox
+    ```
+
+    To record video, see [Optional video recording](#optional-video-recording) before you build.
+  </Step>
+
+  <Step title="Build, import into the cluster, and retag">
+    ```bash
+    docker build -t nemoclaw-with-chrome:v1 .
+    docker save nemoclaw-with-chrome:v1 -o /tmp/nemoclaw-with-chrome.tar
+    docker cp /tmp/nemoclaw-with-chrome.tar openshell-cluster-nemoclaw:/tmp/
+    docker exec openshell-cluster-nemoclaw ctr -n k8s.io images import \
+      /tmp/nemoclaw-with-chrome.tar
+
+    docker exec openshell-cluster-nemoclaw ctr -n k8s.io images tag \
+      docker.io/library/nemoclaw-with-chrome:v1 \
+      docker.io/library/nemoclaw-with-chrome:v1-pinned
+    ```
+
+    <Warning>
+    Retag to a pinned tag. The embedded Kubernetes treats `:latest` as `imagePullPolicy: Always` and tries to pull from a remote registry, which fails for a local-only image. Any tag that is not `:latest` resolves to `IfNotPresent` and uses the imported image.
+    </Warning>
+  </Step>
+
+  <Step title="Create a sandbox from the pinned image">
+    ```bash
+    openshell sandbox create --name my-sandbox \
+      --from docker.io/library/nemoclaw-with-chrome:v1-pinned
+    ```
+  </Step>
+</Steps>
+
+## Apply the Egress Policy
+
+Save the following as `egress-policy.yaml`, replacing the target host with the site your agent navigates to.
+
+```yaml
+preset:
+  name: playwright-browser-agent
+  description: "Egress whitelist for a Playwright and Chromium agent inside a NemoClaw sandbox."
+
+network_policies:
+  playwright-browser-agent:
+    endpoints:
+      - host: example.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET,  path: "/**" }
+          - allow: { method: POST, path: "/**" }
+
+    # Binaries permitted to make outbound calls. Chromium is launched as a
+    # subprocess of python3, so listing python3 covers the script's egress.
+    binaries:
+      - { path: /usr/local/bin/python3 }
+      - { path: /usr/bin/python3 }
+      - { path: /usr/bin/curl }
+```
+
+Apply it, and re-apply after every sandbox recreate:
+
+```bash
+nemoclaw my-sandbox policy-add --from-file egress-policy.yaml
+```
+
+For a Google Forms target, add `docs.google.com`, `www.google.com`, `*.gstatic.com`, `*.googleapis.com`, and `accounts.google.com` as further endpoints. See [Customize Network Policy](../network-policy/customize-network-policy) for the full schema.
+
+## Drive the Browser
+
+Three Playwright settings are non-default inside a sandbox, and all three are required:
+
+- `ignore_https_errors=True` on the browser context, because OpenShell runs a TLS-intercepting egress proxy that Chromium must trust.
+- `executable_path="/usr/bin/chromium"`, because Landlock blocks Playwright's bundled browser.
+- `headless=True`, because the sandbox has no display server.
+
+```python
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+
+FORM_URL = "https://example.com/your-form"
+FIELD_VALUES = ["First field value", "Second field value"]
+SUBMIT_TEXT = "Submit"
+
+
+def fill_form(url: str, values: list[str], submit_text: str = "Submit") -> str:
+    """Navigate to url, fill visible text fields in document order, submit,
+    and return the final page title."""
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True,
+            executable_path="/usr/bin/chromium",
+        )
+        context = browser.new_context(ignore_https_errors=True)
+        page = context.new_page()
+
+        page.goto(url)
+        page.wait_for_load_state("networkidle")
+
+        # React-controlled inputs ship `disabled` and enable only once their
+        # init JS loads. If a CDN the page needs is missing from the egress
+        # whitelist, they stay disabled forever. See Layer 1.
+        try:
+            page.wait_for_function(
+                "!document.querySelector('input[type=\"text\"]').disabled",
+                timeout=15000,
+            )
+        except PlaywrightTimeoutError:
+            print("Fields still disabled after 15s — attempting fill anyway.")
+
+        fields = page.locator('input[type="text"], textarea')
+        for i in range(min(fields.count(), len(values))):
+            field = fields.nth(i)
+            field.click()
+            field.fill(values[i])
+            # Log the length only; never the raw value, which may be sensitive.
+            print(f"  field {i + 1}: filled ({len(values[i])} chars)")
+
+        # Match a real button or a div acting as one, as Google Forms does.
+        page.locator(
+            f'button:has-text("{submit_text}"), '
+            f'div[role="button"]:has-text("{submit_text}")'
+        ).first.click()
+        page.wait_for_load_state("networkidle")
+
+        title = page.title()
+        browser.close()
+        return title
+
+
+if __name__ == "__main__":
+    print(fill_form(FORM_URL, FIELD_VALUES, SUBMIT_TEXT))
+```
+
+Copy the script in and run it. A direct `kubectl cp` from a WSL2 host fails with a TLS error against the embedded cluster, so use a two-step copy:
+
+```bash
+docker cp fill_form_example.py openshell-cluster-nemoclaw:/tmp/fill_form_example.py
+docker exec openshell-cluster-nemoclaw kubectl -n openshell cp \
+  /tmp/fill_form_example.py my-sandbox:/tmp/fill_form_example.py
+docker exec openshell-cluster-nemoclaw kubectl -n openshell exec my-sandbox -- \
+  python3 /tmp/fill_form_example.py
+```
+
+<Note>
+Omit `-it` on `exec`. There is no TTY, so you see a harmless warning, but stdout still streams.
+</Note>
+
+## Troubleshooting
+
+| Symptom | Layer | Fix |
+|---|---|---|
+| `ERR_NAME_NOT_RESOLVED` or a proxy 403 on a host | 1 | Add the host to the policy, then re-apply |
+| Fields stay `disabled` and `fill()` times out | 1 | A CDN the site needs is not whitelisted, commonly `*.gstatic.com` or `*.googleapis.com` |
+| `ssrf_denied / blocked: internal address` on a download | 2 | Move the download to image build time |
+| `chromium: Permission denied`, or the binary silently fails | 3 | Bake the binary into the image under `/usr/bin/` |
+| `kubectl cp` TLS error from WSL2 | — | Use the two-step `docker cp` and `kubectl cp` copy |
+| `Executable doesn't exist at .../ffmpeg-1011/ffmpeg-linux` | 3 | Install ffmpeg at build time and symlink both cache paths |
+
+## Optional Video Recording
+
+Playwright's `record_video_dir` needs ffmpeg in two locations inside the sandbox, because Playwright resolves its ffmpeg path relative to `$HOME` rather than `$PATH`, and two different users invoke it. A direct `kubectl exec` runs as root and looks in `/root/.cache/`. The agent's `exec` tool runs as the sandbox user and looks in `/sandbox/.cache/`. If only one symlink exists, the other user fails, even though `ffmpeg --version` works from a shell.
+
+The reasoning matches Chromium's: `playwright install ffmpeg` downloads to `~/.cache/`, which Landlock blocks from execution, so install through apt to `/usr/bin/ffmpeg` and point both expected paths at it.
+
+Add this to the Dockerfile before the `USER sandbox` line:
+
+```dockerfile
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /root/.cache/ms-playwright/ffmpeg-1011 \
+    && ln -sf /usr/bin/ffmpeg /root/.cache/ms-playwright/ffmpeg-1011/ffmpeg-linux \
+    && mkdir -p /sandbox/.cache/ms-playwright/ffmpeg-1011 \
+    && ln -sf /usr/bin/ffmpeg /sandbox/.cache/ms-playwright/ffmpeg-1011/ffmpeg-linux \
+    && chown -R sandbox:sandbox /sandbox/.cache
+```
+
+Verify that both paths resolve to `/usr/bin/ffmpeg`:
+
+```bash
+docker exec openshell-cluster-nemoclaw kubectl -n openshell exec my-sandbox -- \
+  ls -la /root/.cache/ms-playwright/ffmpeg-1011/ffmpeg-linux \
+         /sandbox/.cache/ms-playwright/ffmpeg-1011/ffmpeg-linux
+```
