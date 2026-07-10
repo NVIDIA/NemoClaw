@@ -1009,7 +1009,7 @@ describe("pull request and main workflow contracts", () => {
     expect(vitestConfig).toContain('name: "e2e-support"');
     expect(stepRuns(prWorkflow.jobs["e2e-support"])).toEqual([
       "npm ci --ignore-scripts",
-      'npx tsx scripts/checks/e2e-mock-parity.ts --base "$BASE_SHA" --head HEAD',
+      "npx tsx scripts/checks/e2e-mock-parity.ts --base HEAD^1 --head HEAD^2",
       "npm run build:cli",
       "npx vitest run --project e2e-support",
     ]);

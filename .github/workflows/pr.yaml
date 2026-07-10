@@ -330,9 +330,10 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Validate changed live E2E mock parity
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: npx tsx scripts/checks/e2e-mock-parity.ts --base "$BASE_SHA" --head HEAD
+        # The pull_request payload can retain an older base SHA while GitHub's
+        # checked-out merge ref already targets newer main. Diff the merge
+        # parents so base-only changes are never attributed to the PR.
+        run: npx tsx scripts/checks/e2e-mock-parity.ts --base HEAD^1 --head HEAD^2
 
       - name: Build CLI artifacts for E2E support
         run: npm run build:cli
