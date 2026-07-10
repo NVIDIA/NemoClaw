@@ -45,6 +45,9 @@ import { createAgentSandbox } from "./base-image";
 
 const platformDigest = "sha256:c0c149ed03b3e8fcd3e395558b22e871cd27c9966ea6faf04c0d2b94d0a821b9";
 const platformRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${platformDigest}`;
+const versionRef = "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:v0.0.79";
+const versionDigest = "sha256:ca7c0fc05522ecdb856f5e72dcb334fca938d74239a2eca79f3cc027d5a16d98";
+const versionPlatformRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${versionDigest}`;
 const imageId = `sha256:${"b".repeat(64)}`;
 const createdBuildContexts: string[] = [];
 let trackedRef = "";
@@ -107,7 +110,57 @@ describe("Hermes base-image resolver integration", () => {
     }
   });
 
-  it("stages Hermes on aarch64 with a Dockerfile-pinned platform digest produced by the resolver path (#6313)", () => {
+  it("stages Hermes on aarch64 with a release-tag platform digest produced by the resolver path (#6456)", () => {
+    sourceMocks.nearestTags.mockReturnValue(["v0.0.79"]);
+    dockerMocks.imageInspect.mockImplementation((ref: string) => ({
+      status: [trackedRef, platformRef, versionRef, versionPlatformRef].includes(ref) ? 0 : 1,
+    }));
+    dockerMocks.imageInspectFormat.mockImplementation((format: string, ref: string) =>
+      (
+        new Map([
+          [`{{json .RepoDigests}}\0${trackedRef}`, JSON.stringify([platformRef])],
+          [`{{json .RepoDigests}}\0${versionRef}`, JSON.stringify([versionPlatformRef])],
+          [
+            `{{json .}}\0${versionPlatformRef}`,
+            JSON.stringify({
+              Architecture: "arm64",
+              Id: imageId,
+              Os: "linux",
+              RepoDigests: [versionPlatformRef],
+            }),
+          ],
+        ]).get(`${format}\0${ref}`) ?? ""
+      ).trim(),
+    );
+
+    const result = createAgentSandbox(makeAgent());
+    createdBuildContexts.push(result.buildCtx);
+
+    expect(fs.readFileSync(result.stagedDockerfile, "utf8")).toContain(
+      `ARG BASE_IMAGE=${versionPlatformRef}`,
+    );
+    expect(result.baseImageResolutionMetadata).toMatchObject({
+      architecture: "arm64",
+      digest: versionDigest,
+      ref: versionPlatformRef,
+      source: "version-tag",
+    });
+    expect(result.baseImageResolutionMetadata?.pinnedRemoteRef).toBeUndefined();
+    expect(dockerMocks.imageInspect).toHaveBeenCalledWith(versionRef, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(dockerMocks.imageInspectFormat).toHaveBeenCalledWith(
+      "{{json .RepoDigests}}",
+      versionRef,
+      { ignoreError: true },
+    );
+    expect(dockerMocks.imageInspect).not.toHaveBeenCalledWith(trackedRef, expect.anything());
+  }, 15_000);
+
+  it("accepts an explicit official platform digest override after validation", () => {
+    vi.stubEnv("NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF", platformRef);
+
     const result = createAgentSandbox(makeAgent());
     createdBuildContexts.push(result.buildCtx);
 
@@ -115,28 +168,9 @@ describe("Hermes base-image resolver integration", () => {
       `ARG BASE_IMAGE=${platformRef}`,
     );
     expect(result.baseImageResolutionMetadata).toMatchObject({
-      architecture: "arm64",
       digest: platformDigest,
-      pinnedRemoteRef: trackedRef,
       ref: platformRef,
-      source: "pinned",
+      source: "override",
     });
-    expect(dockerMocks.imageInspect).toHaveBeenCalledWith(trackedRef, {
-      ignoreError: true,
-      suppressOutput: true,
-    });
-    expect(dockerMocks.imageInspectFormat).toHaveBeenCalledWith(
-      "{{json .RepoDigests}}",
-      trackedRef,
-      { ignoreError: true },
-    );
-  }, 15_000);
-
-  it("rejects an explicit platform digest override without pinned provenance", () => {
-    vi.stubEnv("NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF", platformRef);
-
-    expect(() => createAgentSandbox(makeAgent())).toThrow(
-      `Hermes final image does not accept base image ref '${platformRef}'`,
-    );
   });
 });

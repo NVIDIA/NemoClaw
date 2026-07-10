@@ -36,6 +36,8 @@ const HERMES_MCP_RUNTIME_PROBE_OK = "nemoclaw-hermes-mcp-runtime-ok";
 // pins and Docker-normalized platform manifest digests.
 const HERMES_OFFICIAL_BASE_DIGEST_REF =
   /^ghcr\.io\/nvidia\/nemoclaw\/hermes-sandbox-base@sha256:[0-9a-f]{64}$/;
+const HERMES_OFFICIAL_BASE_TAG_REF =
+  /^ghcr\.io\/nvidia\/nemoclaw\/hermes-sandbox-base:[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 
 export interface EnsureAgentBaseImageOptions {
   forceBaseImageRebuild?: boolean;
@@ -135,6 +137,13 @@ function hermesFinalDockerfileAcceptsBase(
   ) {
     return true;
   }
+  if (
+    typeof image !== "string" &&
+    ["override", "version-tag", "source-sha", "latest"].includes(image.source) &&
+    (HERMES_OFFICIAL_BASE_TAG_REF.test(imageRef) || HERMES_OFFICIAL_BASE_DIGEST_REF.test(imageRef))
+  ) {
+    return true;
+  }
   return imageRef === getHermesPinnedRemoteBaseRef(agent);
 }
 
@@ -184,7 +193,7 @@ function createAgentBaseImageResolutionOptions(
     forceRefresh: options.forceBaseImageRefresh,
     rootDir: ROOT,
     pinnedRemoteRef,
-    preferPinnedRemoteRef: agent.name === "hermes" && pinnedRemoteRef !== undefined,
+    preferPinnedRemoteRef: false,
     ...validationOptions,
   };
 }

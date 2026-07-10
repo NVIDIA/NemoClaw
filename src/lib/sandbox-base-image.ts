@@ -360,6 +360,12 @@ export function resolveSandboxBaseImage(
 
     if (baseImageInputsChangedSinceMain(rootDir, env, inputPaths)) return resolveChangedInputs();
 
+    const nearestVersionTags = getNearestVersionedBaseImageTags(rootDir, env).filter(
+      (tag) => !versionTags.includes(tag),
+    );
+    const nearestVersionTagResolution = resolveVersionTags(nearestVersionTags);
+    if (nearestVersionTagResolution) return nearestVersionTagResolution;
+
     if (!preferPinnedRemoteRef && options.pinnedRemoteRef) {
       const resolved = resolvePulledCandidate(
         options.imageName,
@@ -370,12 +376,6 @@ export function resolveSandboxBaseImage(
       );
       if (resolved) return finish(resolved);
     }
-
-    const nearestVersionTags = getNearestVersionedBaseImageTags(rootDir, env).filter(
-      (tag) => !versionTags.includes(tag),
-    );
-    const nearestVersionTagResolution = resolveVersionTags(nearestVersionTags);
-    if (nearestVersionTagResolution) return nearestVersionTagResolution;
 
     for (const tag of getSourceShortShaTags(options.rootDir || ROOT, env)) {
       const imageRef = `${options.imageName}:${tag}`;

@@ -39,7 +39,7 @@ describe("agent base image provisioning", () => {
     });
   });
 
-  it("accepts only the tracked published Hermes base digest", () => {
+  it("accepts resolver-validated official Hermes base refs", () => {
     const dockerfilePath = path.resolve(import.meta.dirname, "../../../agents/hermes/Dockerfile");
     const dockerfile = fs.readFileSync(dockerfilePath, "utf8");
     const trackedRef = dockerfile.match(
@@ -62,9 +62,21 @@ describe("agent base image provisioning", () => {
       expect(resolveSandboxBaseImageMock).toHaveBeenCalledWith(
         expect.objectContaining({
           pinnedRemoteRef: trackedRef?.[1],
-          preferPinnedRemoteRef: true,
+          preferPinnedRemoteRef: false,
         }),
       );
+
+      const versionRef = "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:v0.0.79";
+      resolveSandboxBaseImageMock.mockReturnValue({
+        ref: versionRef,
+        digest: null,
+        source: "version-tag",
+        glibcVersion: "2.41",
+      });
+      expect(ensureAgentBaseImage(makeAgent({ dockerfilePath }))).toEqual({
+        imageTag: versionRef,
+        built: false,
+      });
 
       const platformDigest =
         "sha256:c0c149ed03b3e8fcd3e395558b22e871cd27c9966ea6faf04c0d2b94d0a821b9";
@@ -74,6 +86,17 @@ describe("agent base image provisioning", () => {
         digest: platformDigest,
         source: "pinned",
         pinnedRemoteRef: trackedRef?.[1],
+        glibcVersion: "2.41",
+      });
+      expect(ensureAgentBaseImage(makeAgent({ dockerfilePath }))).toEqual({
+        imageTag: platformDigestRef,
+        built: false,
+      });
+
+      resolveSandboxBaseImageMock.mockReturnValue({
+        ref: platformDigestRef,
+        digest: platformDigest,
+        source: "version-tag",
         glibcVersion: "2.41",
       });
       expect(ensureAgentBaseImage(makeAgent({ dockerfilePath }))).toEqual({
@@ -99,9 +122,10 @@ describe("agent base image provisioning", () => {
         source: "latest",
         glibcVersion: "2.41",
       });
-      expect(() => ensureAgentBaseImage(makeAgent({ dockerfilePath }))).toThrow(
-        "Hermes final image does not accept base image ref",
-      );
+      expect(ensureAgentBaseImage(makeAgent({ dockerfilePath }))).toEqual({
+        imageTag: platformDigestRef,
+        built: false,
+      });
 
       resolveSandboxBaseImageMock.mockReturnValue({
         ref: platformDigestRef,
@@ -114,11 +138,11 @@ describe("agent base image provisioning", () => {
         "Hermes final image does not accept base image ref",
       );
 
-      const differentRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"0".repeat(64)}`;
+      const differentRef = `localhost:5000/custom/hermes-base@sha256:${"0".repeat(64)}`;
       resolveSandboxBaseImageMock.mockReturnValue({
         ref: differentRef,
         digest: `sha256:${"0".repeat(64)}`,
-        source: "source-sha",
+        source: "override",
         glibcVersion: "2.41",
       });
       expect(() => ensureAgentBaseImage(makeAgent({ dockerfilePath }))).toThrow(
