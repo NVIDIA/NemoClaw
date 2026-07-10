@@ -4,6 +4,7 @@
 import os from "node:os";
 import path from "node:path";
 
+import { dockerRemoveVolumesByPrefix } from "../../adapters/docker/volume";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { DASHBOARD_PORT } from "../../core/ports";
 import {
@@ -66,9 +67,6 @@ export function cleanupGatewayAfterLastSandbox(
     runOpenshell ??
     (require("../../adapters/openshell/runtime") as { runOpenshell: DestroyRunOpenshell })
       .runOpenshell;
-  const { dockerRemoveVolumesByPrefix } = require("../../adapters/docker") as {
-    dockerRemoveVolumesByPrefix: (prefix: string, opts?: { ignoreError?: boolean }) => void;
-  };
 
   openshell(["forward", "stop", DASHBOARD_FORWARD_PORT], {
     ignoreError: true,
@@ -79,7 +77,7 @@ export function cleanupGatewayAfterLastSandbox(
   // ports the live openshell tracks; this catches orphans whose openshell
   // record was lost across upgrades or failed onboards.
   stopStaleDashboardListeners();
-  if (process.platform === "linux") {
+  if (process.platform === "linux" || process.platform === "darwin") {
     // Sandbox destroy is conservative: only stop the host gateway whose PID
     // file we wrote during onboard. Disable the pgrep sweep so a stray
     // openshell-gateway under another user/project on the same host (rare but
@@ -112,7 +110,8 @@ export function cleanupGatewayAfterLastSandbox(
    *
    * macOS previously ran only `gateway destroy`, which current OpenShell
    * rejects as an unrecognized subcommand (#6569). The host-process stop above
-   * remains Linux-only.
+   * now uses the same PID-file-scoped reaper as Linux so final unattended
+   * macOS destroys release the Docker-driver gateway listener (#4662).
    */
   const removeResult = openshell(["gateway", "remove", gatewayName], {
     ignoreError: true,

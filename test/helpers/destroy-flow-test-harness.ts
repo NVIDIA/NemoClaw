@@ -41,7 +41,9 @@ type DestroyHarnessOptions = {
   agent?: "openclaw" | "hermes";
   deleteOutput?: string;
   deleteStatus?: number;
+  dockerPsOutput?: string;
   finalizeMcpError?: string;
+  liveListOutput?: string;
   mcpAddState?: "prepared";
   mcpServers?: string[];
   promptResponses?: string[];
@@ -116,6 +118,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const shields = requireDist("../../shields/index.js");
   const timerControl = requireDist("../../shields/timer-control.js");
   const mcpBridge = requireDist("./mcp-bridge.js");
+  const dockerRun = requireDist("../../adapters/docker/run.js");
 
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue("/usr/bin/openshell");
   const promptSpy = vi.spyOn(credentialStore, "prompt").mockResolvedValue("yes");
@@ -191,7 +194,11 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   });
   vi.spyOn(runtime, "captureOpenshell").mockReturnValue({
     status: 0,
-    output: "",
+    output: options.liveListOutput ?? "",
+  });
+  vi.spyOn(dockerRun, "dockerCapture").mockImplementation((args: unknown) => {
+    const argv = Array.isArray(args) ? args.map(String) : [];
+    return argv[0] === "ps" ? (options.dockerPsOutput ?? "") : "";
   });
   const selectGatewaySpy = vi
     .spyOn(destroyGateway, "selectGatewayForSandboxDestroy")

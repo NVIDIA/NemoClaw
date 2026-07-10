@@ -22,7 +22,7 @@ import {
   SANDBOX_PROVIDER_SUFFIXES,
 } from "../../onboard/sandbox-provider-cleanup";
 import { validateName } from "../../runner";
-import { parseLiveSandboxNames } from "../../runtime-recovery";
+import { parseLiveSandboxEntries } from "../../runtime-recovery";
 import { killTimer as defaultKillShieldsTimer } from "../../shields/timer-control";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import type { Session } from "../../state/onboard-session";
@@ -117,6 +117,37 @@ async function resolveCleanupGatewayDecision(options: DestroySandboxOptions): Pr
   return trimmed === "y" || trimmed === "yes";
 }
 
+const TERMINAL_OPEN_SHELL_SANDBOX_PHASES = new Set(["Error", "Failed"]);
+
+function escapeDockerNameRegex(value: string): string {
+  return value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+}
+
+function hasRunningDockerSandboxContainer(sandboxName: string): boolean {
+  const { dockerCapture } = require("../../adapters/docker/run") as {
+    dockerCapture: (args: string[], opts?: Record<string, unknown>) => string;
+  };
+  try {
+    const output = dockerCapture(
+      [
+        "ps",
+        "--filter",
+        `name=^/openshell-${escapeDockerNameRegex(sandboxName)}-`,
+        "--format",
+        "{{.Names}}",
+      ],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+      },
+    );
+    return output.trim().length > 0;
+  } catch {
+    return true;
+  }
+}
+
 function hasNoLiveSandboxes(): boolean {
   const { captureOpenshell } = require("../../adapters/openshell/runtime") as {
     captureOpenshell: (
@@ -131,7 +162,10 @@ function hasNoLiveSandboxes(): boolean {
   if (liveList.status !== 0) {
     return false;
   }
-  return parseLiveSandboxNames(liveList.output).size === 0;
+  return parseLiveSandboxEntries(liveList.output).every((entry) => {
+    if (!TERMINAL_OPEN_SHELL_SANDBOX_PHASES.has(entry.phase ?? "")) return false;
+    return !hasRunningDockerSandboxContainer(entry.name);
+  });
 }
 
 export function cleanupSandboxServices(

@@ -39,6 +39,14 @@ export function gatewayProcessCmdlineMatches(
   const processNames = opts.processNames ?? HOST_GATEWAY_PROCESS_NAMES;
   const base = path.basename(argv0);
   if (processNames.has(base)) return true;
+  if (
+    processNames.has("openshell-gateway") &&
+    base === "openshell" &&
+    tokens[1] === "gateway" &&
+    tokens[2] === "start"
+  ) {
+    return true;
+  }
 
   if (typeof gatewayBin === "string" && gatewayBin.length > 0) {
     const normalize = opts.resolveExecutablePath ?? ((value: string) => path.resolve(value));

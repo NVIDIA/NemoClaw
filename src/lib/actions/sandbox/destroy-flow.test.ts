@@ -126,6 +126,35 @@ describe("destroySandbox flow", () => {
     );
   });
 
+  it("cleans the final macOS gateway when sandbox list only has exited terminal rows (#4662)", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    const harness = createDestroyHarness({
+      dockerPsOutput: "",
+      liveListOutput:
+        "NAME              CREATED              PHASE\nnpmtest           2026-06-01 00:00:00  Error\n",
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith(
+      "nemoclaw-19080",
+      harness.runOpenshellSpy,
+    );
+  });
+
+  it("preserves the final macOS gateway when a terminal row still has a running Docker sandbox container (#4662)", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    const harness = createDestroyHarness({
+      dockerPsOutput: "openshell-npmtest-e487d1bd\n",
+      liveListOutput:
+        "NAME              CREATED              PHASE\nnpmtest           2026-06-01 00:00:00  Error\n",
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+  });
+
   it("honors the gateway preservation environment override on macOS (#4662)", async () => {
     vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
     vi.stubEnv("NEMOCLAW_CLEANUP_GATEWAY", "0");

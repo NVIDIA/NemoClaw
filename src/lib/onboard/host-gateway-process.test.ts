@@ -152,6 +152,34 @@ describe("stopHostGatewayProcesses", () => {
     expect(fs.existsSync(pidFile)).toBe(false);
   });
 
+  it("accepts the OpenShell CLI gateway-start process recorded in the PID file", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-gateway-"));
+    const pidFile = path.join(stateDir, "openshell-gateway.pid");
+    fs.writeFileSync(pidFile, "9999552\n");
+    const exited = new Set<number>();
+    const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
+      ["pgrep -f ^(/[^ ]*/)?openshell-gateway( |$)", notFound()],
+      ...psResponses(9999552, {
+        cmdline: "/Users/test/.local/bin/openshell gateway start --name nemoclaw --port 8080\n",
+        exited,
+      }),
+    ]);
+    const { run } = makeRun(responses);
+    const kill = vi.fn<HostGatewayProcessDeps["kill"]>((pid, signal) => {
+      if (signal === "SIGTERM") exited.add(pid);
+      return true;
+    });
+
+    const result = stopHostGatewayProcesses(
+      { run, kill, env: { USER: "tester" }, commandExists: () => true, log: vi.fn() },
+      { stateDir },
+    );
+
+    expect(result.stopped).toEqual([9999552]);
+    expect(kill).toHaveBeenCalledWith(9999552, "SIGTERM");
+    expect(fs.existsSync(pidFile)).toBe(false);
+  });
+
   it("rejects a PID whose argv0 is not docker even if it touches the mount path", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-gateway-"));
     const pidFile = path.join(stateDir, "openshell-gateway.pid");
