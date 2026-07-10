@@ -3,6 +3,12 @@
   "version": 1,
   "entries": [
     {
+      "live": "test/e2e/live/full-e2e.test.ts",
+      "fast": [
+        "test/e2e/support/onboard-performance.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/onboard-repair.test.ts",
       "fast": [
         "src/lib/onboard/extra-provider-reconciliation-diagnostics.test.ts",
