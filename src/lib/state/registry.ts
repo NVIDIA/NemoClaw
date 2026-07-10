@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isErrnoException } from "../core/errno";
+import { isObjectRecord } from "../core/json-types";
 import type { InferenceSelection } from "../inference/selection";
 import {
   inferenceSelectionRegistryFields,
@@ -25,7 +26,7 @@ import {
   serializeSandboxMcpStateForDisk,
 } from "./registry-mcp";
 import type { SandboxMessagingState } from "./registry-messaging";
-import { retainedDefaultSandbox, sandboxRegistryEntries } from "./registry-normalization";
+import { parseSandboxRegistryEntries, retainedDefaultSandbox } from "./registry-normalization";
 import * as reversibleRemoval from "./registry-reversible-removal";
 
 export {
@@ -361,7 +362,7 @@ export function withLock<T>(fn: () => T): T {
 
 export function load(): SandboxRegistry {
   return normalizeRegistry(
-    readConfigFile<SandboxRegistry>(REGISTRY_FILE, { sandboxes: {}, defaultSandbox: null }),
+    readConfigFile<unknown>(REGISTRY_FILE, { sandboxes: {}, defaultSandbox: null }),
   );
 }
 
@@ -369,10 +370,11 @@ export function save(data: SandboxRegistry): void {
   writeConfigFile(REGISTRY_FILE, serializeRegistryForDisk(data));
 }
 
-function normalizeRegistry(data: SandboxRegistry): SandboxRegistry {
+function normalizeRegistry(value: unknown): SandboxRegistry {
+  const data = isObjectRecord(value) ? value : {};
   const extraProviders = normalizeExtraProviders(data.extraProviders);
   const sandboxes = Object.fromEntries(
-    sandboxRegistryEntries(data).map(([name, entry]) => [
+    parseSandboxRegistryEntries(data.sandboxes).map(([name, entry]) => [
       name,
       normalizeSandboxEntryForRuntime(entry),
     ]),
@@ -393,7 +395,7 @@ function normalizeRegistry(data: SandboxRegistry): SandboxRegistry {
 function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
   const extraProviders = normalizeExtraProviders(data.extraProviders);
   const sandboxes = Object.fromEntries(
-    sandboxRegistryEntries(data).map(([name, entry]) => [
+    Object.entries(data.sandboxes).map(([name, entry]) => [
       name,
       serializeSandboxEntryForDisk(entry),
     ]),

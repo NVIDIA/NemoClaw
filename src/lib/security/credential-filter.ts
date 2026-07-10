@@ -286,7 +286,6 @@ export function stripCredentials(obj: ConfigValue): ConfigValue {
     // by CLI-flag context: `["--api-key", "<opaque>"]` or `"--api-key=<opaque>"`.
     return obj.map((value, index) => scrubArrayElement(value, obj[index - 1]));
   }
-  if (!isConfigObject(obj)) return obj;
 
   const result: ConfigObject = {};
   for (const [key, value] of Object.entries(obj)) {

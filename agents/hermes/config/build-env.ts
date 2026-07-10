@@ -139,7 +139,7 @@ function isSafeEnvKey(value: string): boolean {
   return /^[A-Z_][A-Z0-9_]*$/.test(value);
 }
 
-function planHasEnvLineRender(plan: Record<string, unknown> | null): boolean {
-  const renderEntries = Array.isArray(plan?.agentRender) ? plan.agentRender : [];
+function planHasEnvLineRender(plan: Record<string, unknown>): boolean {
+  const renderEntries = Array.isArray(plan.agentRender) ? plan.agentRender : [];
   return renderEntries.some((entry) => isObjectRecord(entry) && entry.kind === "env-lines");
 }

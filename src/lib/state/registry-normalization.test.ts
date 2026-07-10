@@ -14,15 +14,17 @@ async function loadRegistryWith(
   sandboxes: Record<string, unknown>,
   defaultSandbox: unknown = null,
 ) {
+  return loadRegistryDocument({ defaultSandbox, sandboxes });
+}
+
+async function loadRegistryDocument(document: unknown) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-registry-normalization-"));
   temporaryHomes.push(home);
   const configDir = path.join(home, ".nemoclaw");
   fs.mkdirSync(configDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(configDir, "sandboxes.json"),
-    JSON.stringify({ defaultSandbox, sandboxes }),
-    { mode: 0o600 },
-  );
+  fs.writeFileSync(path.join(configDir, "sandboxes.json"), JSON.stringify(document), {
+    mode: 0o600,
+  });
 
   process.env.HOME = home;
   vi.resetModules();
@@ -38,6 +40,26 @@ afterEach(() => {
 });
 
 describe("sandbox registry normalization", () => {
+  it.each([
+    null,
+    [],
+    42,
+    "invalid",
+  ])("treats a non-object top-level registry document as empty: %j", async (document) => {
+    const registry = await loadRegistryDocument(document);
+
+    expect(registry.listSandboxes()).toEqual({ sandboxes: [], defaultSandbox: null });
+  });
+
+  it("drops a malformed sandboxes container at the file boundary", async () => {
+    const registry = await loadRegistryDocument({
+      defaultSandbox: 42,
+      sandboxes: "not-an-object",
+    });
+
+    expect(registry.listSandboxes()).toEqual({ sandboxes: [], defaultSandbox: null });
+  });
+
   it("drops object-shaped entries that do not contain a usable sandbox name", async () => {
     const registry = await loadRegistryWith({
       missing: { createdAt: "2026-07-09T00:00:00.000Z" },

@@ -265,11 +265,7 @@ async function importRuntimeFunctions(
 
   let runtimeModule: JsonRecord;
   try {
-    const loaded: unknown = await import(moduleUrl.href);
-    if (!isObjectRecord(loaded)) {
-      fail(`compiled runtime ${filePath} did not export a module object`);
-    }
-    runtimeModule = loaded;
+    runtimeModule = await import(moduleUrl.href);
   } catch (error) {
     fail(`could not import compiled runtime ${filePath}: ${errorMessage(error)}`);
   }

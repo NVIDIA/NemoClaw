@@ -330,12 +330,7 @@ const DEFAULT_ROUTER_PORT = 4000;
 function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditions): string {
   // sourceOfTruth: nemoclaw/src/shared/openshell-policy-boundary.cts
   const current = parseOpenShellPolicy(currentPolicyRaw).policy;
-  if (current.network_policies !== undefined && !isPlainObject(current.network_policies)) {
-    throw new Error("Current policy network_policies must be a YAML mapping");
-  }
-  const existingNetworkPolicies = isPlainObject(current.network_policies)
-    ? current.network_policies
-    : {};
+  const existingNetworkPolicies = current.network_policies ?? {};
   const output: UnknownRecord = {};
 
   // Stable OpenShell 0.0.72 exposes composable top-level policy sections as
@@ -351,8 +346,7 @@ function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditio
     }
   }
 
-  output.version =
-    typeof current.version === "number" && Number.isFinite(current.version) ? current.version : 1;
+  output.version = current.version ?? 1;
   output.network_policies = withoutProviderComposedPolicies({
     ...existingNetworkPolicies,
     ...additions,
@@ -501,13 +495,12 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-function buildSafeInferencePlan(source: InferenceProfile | unknown): SafeInferencePlan {
-  const record = isPlainObject(source) ? source : {};
+function buildSafeInferencePlan(source: InferenceProfile | UnknownRecord): SafeInferencePlan {
   return {
-    provider_type: optionalString(record.provider_type),
-    provider_name: optionalString(record.provider_name),
-    endpoint: optionalString(record.endpoint),
-    model: optionalString(record.model),
+    provider_type: optionalString(source.provider_type),
+    provider_name: optionalString(source.provider_name),
+    endpoint: optionalString(source.endpoint),
+    model: optionalString(source.model),
   };
 }
 
