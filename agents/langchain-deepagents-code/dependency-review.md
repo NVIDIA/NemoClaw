@@ -7,9 +7,9 @@ This file records the reviewed dependency baseline for the Deep Agents Code sand
 Update it whenever `requirements.lock` changes.
 
 - Lockfile: `agents/langchain-deepagents-code/requirements.lock`
-- Lockfile SHA-256: `d8b01f36a0f325f38d18b4dc2cfdf452125987571a86ca58d9c93e08b7b06a14`
+- Lockfile SHA-256: `7889fd275175ceadde843480587a3ed5b3dc517537222e60fa6fdfe4d5b21332`
 - Audit command: `uv tool run --python 3.13 pip-audit -r agents/langchain-deepagents-code/requirements.lock --progress-spinner off --disable-pip`
-- Audit date: 2026-07-07
+- Audit date: 2026-07-09
 - Audit result: `No known vulnerabilities found`
 
 The Dockerfile installs this lockfile with `pip3 install --require-hashes`, so this review covers the exact package versions selected for the managed image install.
@@ -59,7 +59,7 @@ NemoClaw no longer vendors or overlays that source.
 - Native profile SHA-256: `c8e8dd2b0182334b54be4f46ff0c7b45fbb95dc13bd9a92c249eb47a14fa13d7`
 - Unmodified built-in bootstrap SHA-256: `005a91e7fc4ca6b21220673dd9d02d6686bf63e1e4f1102d124b01f96886efcf`
 - First-party adapter: `nemoclaw-deepagents-profile==0.1.0`
-- Adapter module SHA-256: `1cee6afafcbe545f5d095c94cb0ad81ff2a1512f84ad9d128a69a9b3d72b3def`
+- Adapter module SHA-256: `59f5e458f64964df94a5f95a27b693ffa54d3ded96dc5c865c53d72ba34b64c6`
 - Adapter project metadata SHA-256: `7ba7b77bd6f889cc861eddbe3e38fc1f4433a85b7bc2a9b516e19a19a37a7686`
 - Adapter wheel license expression: `Apache-2.0`
 - Adapter dependency audit result: `No known vulnerabilities found`. Its only
@@ -124,12 +124,15 @@ aliases. They are not a new provider profile and do not modify the reviewed
 canonical NVIDIA profile.
 
 The two managed model IDs remain language-local constants in the TypeScript
-config generator and the isolated Python image/plugin validators. Those
-components run on opposite sides of the offline wheel-install boundary, so a
-shared runtime data file would enlarge the installed trust surface solely to
-deduplicate two immutable strings. The focused profile-plugin suite extracts
-the identifiers from every production consumer and requires the exact sets to
-match, preventing drift without adding another mutable build artifact.
+config generator and the isolated Python image/plugin validators. NemoClaw
+registers both IDs under the managed OpenAI adapter and the managed OpenRouter
+adapter because Deep Agents Code applies provider-native request shaping before
+it reaches the shared `inference.local` route. Those components run on opposite
+sides of the offline wheel-install boundary, so a shared runtime data file would
+enlarge the installed trust surface solely to deduplicate two immutable strings.
+The focused profile-plugin suite extracts the identifiers from every production
+consumer and requires the exact sets to match, preventing drift without adding
+another mutable build artifact.
 
 For `force_nonempty_content`, the invalid state originates in the NVIDIA Ultra
 chat template/serving path: a Chat Completions response that combines reasoning

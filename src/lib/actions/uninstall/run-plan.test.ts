@@ -983,6 +983,10 @@ describe("uninstall run plan", () => {
       fs.writeFileSync(path.join(stateDir, "backups", "20260320-120000", "USER.md"), "hello");
       fs.writeFileSync(path.join(stateDir, "sandboxes.json"), "[]");
       fs.writeFileSync(path.join(stateDir, "ollama-auth-proxy.pid"), "1234");
+      fs.writeFileSync(path.join(stateDir, "openrouter-runtime-adapter.pid"), "1235");
+      fs.writeFileSync(path.join(stateDir, "openrouter-runtime-adapter.json"), "{}");
+      fs.writeFileSync(path.join(stateDir, "openrouter-runtime-adapter.lock"), "lock");
+      fs.writeFileSync(path.join(stateDir, "openrouter-runtime-adapter.log"), "{}\n");
       fs.mkdirSync(path.join(stateDir, "source"));
       return { tmpHome, stateDir };
     }
@@ -1044,6 +1048,10 @@ describe("uninstall run plan", () => {
         expect(result.exitCode).toBe(0);
         expectPreservedEntries(stateDir);
         expect(fs.existsSync(path.join(stateDir, "ollama-auth-proxy.pid"))).toBe(false);
+        expect(fs.existsSync(path.join(stateDir, "openrouter-runtime-adapter.pid"))).toBe(false);
+        expect(fs.existsSync(path.join(stateDir, "openrouter-runtime-adapter.json"))).toBe(false);
+        expect(fs.existsSync(path.join(stateDir, "openrouter-runtime-adapter.lock"))).toBe(false);
+        expect(fs.existsSync(path.join(stateDir, "openrouter-runtime-adapter.log"))).toBe(false);
         expect(fs.existsSync(path.join(stateDir, "source"))).toBe(false);
         expect(logs).toContain(
           `Preserving rebuild-backups, backups, sandboxes.json under ${stateDir}.`,

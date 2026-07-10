@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
 
+import { isObjectRecord } from "../core/json-types";
 import { getMessagingPolicyKeysByChannel } from "../messaging/channels";
 import * as policies from "../policy";
 import {
@@ -163,16 +164,12 @@ export function getNetworkPolicyNames(policyContent: string): Set<string> | null
   }
 }
 
-function isYamlObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function filterHermesInactiveMessagingPolicies(
   policyContent: string,
   activeMessagingChannels: string[],
 ): { content: string; changed: boolean } {
   const parsed = YAML.parse(policyContent);
-  if (!isYamlObject(parsed) || !isYamlObject(parsed.network_policies)) {
+  if (!isObjectRecord(parsed) || !isObjectRecord(parsed.network_policies)) {
     return { content: policyContent, changed: false };
   }
 
