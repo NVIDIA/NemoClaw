@@ -63,6 +63,17 @@ runs:
         npm install --ignore-scripts
         cd nemoclaw && npm install --ignore-scripts
 
+    - name: Install ripgrep for advisor tool tests
+      shell: bash
+      run: |
+        set -euo pipefail
+        if ! command -v rg >/dev/null 2>&1; then
+          RIPGREP_VERSION="14.1.0-1"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends "ripgrep=${RIPGREP_VERSION}"
+        fi
+        rg --version
+
     - name: Build TypeScript plugin
       shell: bash
       run: cd nemoclaw && npm run build
