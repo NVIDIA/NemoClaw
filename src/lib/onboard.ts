@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Interactive onboarding wizard — 8 steps from zero to running sandbox.
-// Supports non-interactive mode via --non-interactive flag or
-// NEMOCLAW_NON_INTERACTIVE=1 env var for CI/CD pipelines.
 
 const {
   envInt,
@@ -694,7 +692,9 @@ function getOnboardDashboardPort(): number {
   return _preflightDashboardPort ?? DASHBOARD_PORT;
 }
 
-const isNonInteractive = (): boolean => NON_INTERACTIVE || isNonInteractiveEnv();
+function isNonInteractive(): boolean {
+  return NON_INTERACTIVE || isNonInteractiveEnv();
+}
 
 function isRecreateSandbox(requested = false): boolean {
   return requested || RECREATE_SANDBOX || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
