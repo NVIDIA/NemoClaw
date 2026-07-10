@@ -81,10 +81,12 @@ function updateExtraProviders(update: (providers: Set<string>) => void): string[
   const providers = new Set(readExtraProviders());
   update(providers);
   const sorted = [...providers].sort();
-  if (sorted.length > 0) registry.extraProviders = sorted;
-  else delete registry.extraProviders;
+  const nextRegistry = Object.assign(
+    Object.fromEntries(Object.entries(registry).filter(([key]) => key !== "extraProviders")),
+    sorted.length > 0 ? { extraProviders: sorted } : {},
+  );
   fs.mkdirSync(path.dirname(REGISTRY_FILE), { recursive: true });
-  fs.writeFileSync(REGISTRY_FILE, `${JSON.stringify(registry, null, 2)}\n`, "utf8");
+  fs.writeFileSync(REGISTRY_FILE, `${JSON.stringify(nextRegistry, null, 2)}\n`, "utf8");
   return sorted;
 }
 
