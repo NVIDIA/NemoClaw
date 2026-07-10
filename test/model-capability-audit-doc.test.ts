@@ -73,7 +73,9 @@ describe("model capability audit doc (#3123)", () => {
     expect(markdown).toContain(
       "[Choose an Inference Provider](../learn-and-choose/choose-inference-provider)",
     );
-    expect(markdown).toContain("[Fix Tool-Calling Failures](fix-tool-calling-failures)");
+    expect(markdown).toContain(
+      "[Troubleshooting](../../reference/troubleshooting#tool-calls-appear-as-assistant-text)",
+    );
     expect(markdown).toContain("[Architecture](../../reference/architecture)");
   });
 });

@@ -24,6 +24,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const chooseModelPath = path.join(repoRoot, "docs", "inference", "choose-model.mdx");
 const hermesProviderPath = path.join(repoRoot, "docs", "inference", "use-hermes-provider.mdx");
 const releaseNotesPath = path.join(repoRoot, "docs", "about", "release-notes.mdx");
+const docsNavPath = path.join(repoRoot, "docs", "index.yml");
 const compatibleEndpointPath = path.join(
   repoRoot,
   "docs",
@@ -43,12 +44,7 @@ const localChoicePath = path.join(
   "choose-local-inference-server.mdx",
 );
 const vllmSetupPath = path.join(repoRoot, "docs", "inference", "set-up-vllm.mdx");
-const toolCallingFailuresPath = path.join(
-  repoRoot,
-  "docs",
-  "inference",
-  "fix-tool-calling-failures.mdx",
-);
+const troubleshootingPath = path.join(repoRoot, "docs", "reference", "troubleshooting.mdx");
 const verifyInferenceRoutePath = path.join(
   repoRoot,
   "docs",
@@ -226,13 +222,21 @@ describe("inference setup navigation", () => {
     expect(markdown).not.toContain("--host 0.0.0.0");
   });
 
-  it("routes tool-calling remediation to the focused vLLM guide", () => {
-    const markdown = fs.readFileSync(toolCallingFailuresPath, "utf8");
-    const start = markdown.indexOf("## Related Topics");
+  it("keeps tool-calling remediation canonical in troubleshooting", () => {
+    const markdown = fs.readFileSync(troubleshootingPath, "utf8");
+    const start = markdown.indexOf("### Tool calls appear as assistant text");
     expect(start).toBeGreaterThanOrEqual(0);
-    const section = markdown.slice(start);
+    const end = markdown.indexOf("\n### ", start + 4);
+    const section = markdown.slice(start, end);
 
-    expect(section).toContain("[Set Up vLLM](../local-inference/set-up-vllm)");
+    expect(section).toContain("[set up vLLM](../inference/local-inference/set-up-vllm)");
+    expect(
+      fs.existsSync(path.join(repoRoot, "docs", "inference", "fix-tool-calling-failures.mdx")),
+    ).toBe(false);
+
+    const nav = fs.readFileSync(docsNavPath, "utf8");
+    expect(nav).toContain('section: "Validate Inference"');
+    expect(nav).not.toContain('section: "Validate and Troubleshoot"');
   });
 
   it("documents compatible-endpoint probing separately from runtime API selection", () => {

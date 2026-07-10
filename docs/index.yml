@@ -135,8 +135,8 @@ navigation:
                   - page: "Configure Inference Timeouts"
                     path: _build/agent-variants/inference/configure-inference-timeouts.openclaw.generated.mdx
                     slug: configure-inference-timeouts
-              - section: "Validate and Troubleshoot"
-                slug: validate-and-troubleshoot
+              - section: "Validate Inference"
+                slug: validate-inference
                 contents:
                   - page: "Understand Provider Validation"
                     path: _build/agent-variants/inference/understand-provider-validation.openclaw.generated.mdx
@@ -144,9 +144,6 @@ navigation:
                   - page: "Verify the Sandbox Inference Route"
                     path: _build/agent-variants/inference/verify-inference-route.openclaw.generated.mdx
                     slug: verify-inference-route
-                  - page: "Fix Tool-Calling Failures"
-                    path: inference/fix-tool-calling-failures.mdx
-                    slug: fix-tool-calling-failures
                   - page: "Audit Model Capabilities"
                     path: _build/agent-variants/inference/model-capability-audit.openclaw.generated.mdx
                     slug: audit-model-capabilities
@@ -418,8 +415,8 @@ navigation:
                   - page: "Configure Inference Timeouts"
                     path: _build/agent-variants/inference/configure-inference-timeouts.deepagents.generated.mdx
                     slug: configure-inference-timeouts
-              - section: "Validate and Troubleshoot"
-                slug: validate-and-troubleshoot
+              - section: "Validate Inference"
+                slug: validate-inference
                 contents:
                   - page: "Understand Provider Validation"
                     path: _build/agent-variants/inference/understand-provider-validation.deepagents.generated.mdx
@@ -635,8 +632,8 @@ navigation:
                   - page: "Configure Inference Timeouts"
                     path: _build/agent-variants/inference/configure-inference-timeouts.hermes.generated.mdx
                     slug: configure-inference-timeouts
-              - section: "Validate and Troubleshoot"
-                slug: validate-and-troubleshoot
+              - section: "Validate Inference"
+                slug: validate-inference
                 contents:
                   - page: "Understand Provider Validation"
                     path: _build/agent-variants/inference/understand-provider-validation.hermes.generated.mdx
