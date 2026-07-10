@@ -9,24 +9,24 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildRiskPlan, riskPlanRequiredJobIds } from "../tools/advisors/risk-plan.mts";
 import {
-  abandonRequiredLive,
+  abandonPrGate,
   assertCorrelatedWorkflowRun,
-  cancelRequiredLive,
-  classifyRequiredLiveEvidence,
-  dispatchRequiredLive,
+  cancelPrGate,
+  classifyPrGateEvidence,
+  dispatchPrGate,
   expectedSignalShards,
   findSignalFiles,
-  finishRequiredLive,
+  finishPrGate,
+  type PrGateState,
   type PullRequest,
   parseControllerCommand,
   pullChangedFiles,
-  type RequiredLiveState,
-  startRequiredLive,
-  validateRequiredLiveState,
+  startPrGate,
+  validatePrGateState,
   validateRiskPlan,
   validateSignal,
   validateWorkflowDispatchDetails,
-} from "../tools/e2e/required-live.mts";
+} from "../tools/e2e/pr-e2e-gate.mts";
 import type { E2eRiskSignal } from "../tools/e2e/risk-signal.ts";
 import {
   createGitHubFetchRouter,
@@ -87,7 +87,7 @@ function pullRequest(changedFiles = 1): PullRequest {
     state: "open",
     changed_files: changedFiles,
     head: {
-      ref: "feature/required-live",
+      ref: "feature/pr-e2e-gate",
       sha: HEAD_SHA,
       repo: { full_name: "NVIDIA/NemoClaw" },
     },
@@ -103,7 +103,7 @@ function pullRequestListItem(pull = pullRequest()): Omit<PullRequest, "changed_f
   return item;
 }
 
-function state(): RequiredLiveState {
+function state(): PrGateState {
   const plan = buildRiskPlan({ headSha: HEAD_SHA, changedFiles: ["src/lib/onboard.ts"] });
   return {
     version: 1,
@@ -129,7 +129,7 @@ function startCommand(workDir: string) {
     "--head-repo",
     "NVIDIA/NemoClaw",
     "--head-branch",
-    "feature/required-live",
+    "feature/pr-e2e-gate",
     "--workflow-sha",
     WORKFLOW_SHA,
     "--ci-conclusion",
@@ -142,7 +142,7 @@ function startCommand(workDir: string) {
 }
 
 function signal(
-  gate: RequiredLiveState,
+  gate: PrGateState,
   jobId: string,
   shardId = "default",
   overrides: Partial<E2eRiskSignal> = {},
@@ -165,7 +165,7 @@ function signal(
   };
 }
 
-function workflowRun(gate: RequiredLiveState, overrides: Record<string, unknown> = {}) {
+function workflowRun(gate: PrGateState, overrides: Record<string, unknown> = {}) {
   return {
     id: 23,
     name: "E2E",
@@ -175,15 +175,15 @@ function workflowRun(gate: RequiredLiveState, overrides: Record<string, unknown>
     head_sha: gate.workflowSha,
     status: "completed",
     conclusion: "success",
-    display_title: `E2E PR #${gate.prNumber} required live ${gate.correlationId}`,
+    display_title: `E2E PR #${gate.prNumber} (${gate.correlationId})`,
     html_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/23",
     ...overrides,
   };
 }
 
-describe("required live E2E controller", () => {
+describe("PR E2E controller", () => {
   it("parses one lifecycle command set inside a private workspace", () => {
-    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-required-live-"));
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-"));
     try {
       expect(
         parseControllerCommand([
@@ -194,7 +194,7 @@ describe("required live E2E controller", () => {
           "--head-repo",
           "NVIDIA/NemoClaw",
           "--head-branch",
-          "feature/required-live",
+          "feature/pr-e2e-gate",
           "--workflow-sha",
           WORKFLOW_SHA,
           "--ci-conclusion",
@@ -204,8 +204,8 @@ describe("required live E2E controller", () => {
         ]),
       ).toMatchObject({
         mode: "start",
-        planPath: path.join(workDir, "required-live-plan.json"),
-        statePath: path.join(workDir, "required-live-state.json"),
+        planPath: path.join(workDir, "risk-plan.json"),
+        statePath: path.join(workDir, "controller-state.json"),
         evidencePath: path.join(workDir, "evidence"),
       });
       expect(parseControllerCommand(["--mode", "cancel", "--pr", "42"])).toEqual({
@@ -229,7 +229,7 @@ describe("required live E2E controller", () => {
     }
   });
 
-  it("accepts only the current deterministic plan and bounded state", () => {
+  it("validates the risk plan and bounded state", () => {
     const plan = buildRiskPlan({ headSha: HEAD_SHA, changedFiles: ["src/lib/onboard.ts"] });
     const allowed = new Set(riskPlanRequiredJobIds(plan));
     const gate = state();
@@ -239,12 +239,12 @@ describe("required live E2E controller", () => {
       /unsupported risk-plan version/u,
     );
     expect(() => validateRiskPlan({ ...plan, planHash: "b".repeat(64) }, allowed)).toThrow(
-      /deterministic hash/u,
+      /hash and inputs/u,
     );
     expect(() => validateRiskPlan(plan, new Set())).toThrow(/unknown E2E job/u);
-    expect(validateRequiredLiveState(gate)).toEqual(gate);
-    expect(() => validateRequiredLiveState({ ...gate, prNumber: 0 })).toThrow(/PR number/u);
-    expect(() => validateRequiredLiveState({ ...gate, expectedShards: {} })).toThrow(/shard jobs/u);
+    expect(validatePrGateState(gate)).toEqual(gate);
+    expect(() => validatePrGateState({ ...gate, prNumber: 0 })).toThrow(/PR number/u);
+    expect(() => validatePrGateState({ ...gate, expectedShards: {} })).toThrow(/shard jobs/u);
   });
 
   it("paginates canonical pull request files and includes both names for renames", async () => {
@@ -280,7 +280,7 @@ describe("required live E2E controller", () => {
     const gate = state();
     const complete = gate.expectedJobs.map((job) => signal(gate, job));
     const classify = (signals: E2eRiskSignal[], workflowConclusion: string | null = "success") =>
-      classifyRequiredLiveEvidence({
+      classifyPrGateEvidence({
         workflowConclusion,
         expectedJobs: gate.expectedJobs,
         expectedShards: gate.expectedShards,
@@ -289,17 +289,17 @@ describe("required live E2E controller", () => {
 
     expect(classify(complete).conclusion).toBe("success");
     expect(classify([], "cancelled").conclusion).toBe("failure");
-    expect(classify(complete.slice(0, 1)).title).toMatch(/missing evidence/u);
-    expect(classify([...complete, complete[0]!]).title).toMatch(/duplicate evidence/u);
+    expect(classify(complete.slice(0, 1)).title).toBe("Evidence is missing");
+    expect(classify([...complete, complete[0]!]).title).toBe("Duplicate evidence");
     expect(
       classify([signal(gate, "onboard-repair", "default", { skipped: 1 }), complete[1]!]).title,
-    ).toMatch(/incomplete evidence/u);
+    ).toBe("Evidence is incomplete");
     expect(
       classify([
         signal(gate, "onboard-repair", "default", { failed: 1, runReason: "failed" }),
         complete[1]!,
       ]).title,
-    ).toMatch(/test failures/u);
+    ).toBe("Tests failed");
   });
 
   it("binds every signal to the revision, plan, correlation, job, and shard", () => {
@@ -354,7 +354,7 @@ describe("required live E2E controller", () => {
     );
 
     await expect(
-      dispatchRequiredLive({
+      dispatchPrGate({
         repository: "NVIDIA/NemoClaw",
         token: "token",
         jobs,
@@ -391,7 +391,7 @@ describe("required live E2E controller", () => {
     ).toThrow(/mismatched workflow dispatch URLs/u);
   });
 
-  it("refuses dispatch when main moved past the trusted workflow revision", async () => {
+  it("refuses dispatch after main advances", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       githubResponse({
         ref: "refs/heads/main",
@@ -400,7 +400,7 @@ describe("required live E2E controller", () => {
     );
 
     await expect(
-      dispatchRequiredLive({
+      dispatchPrGate({
         repository: "NVIDIA/NemoClaw",
         token: "token",
         jobs: ["onboard-repair"],
@@ -410,7 +410,7 @@ describe("required live E2E controller", () => {
         planHash: "c".repeat(64),
         correlationId: CORRELATION_ID,
       }),
-    ).rejects.toThrow(/no longer the current main revision/u);
+    ).rejects.toThrow(/main no longer points/u);
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
@@ -431,15 +431,15 @@ describe("required live E2E controller", () => {
     ).toThrow(/display_title/u);
   });
 
-  it("runs the dispatch-to-evidence lifecycle and completes one successful check", async () => {
-    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-required-live-lifecycle-"));
+  it("completes the check when all evidence passes", async () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-lifecycle-"));
     const outputPath = path.join(workDir, "github-output");
     fs.writeFileSync(outputPath, "", { mode: 0o600 });
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     vi.stubEnv("GITHUB_OUTPUT", outputPath);
     const requests: RecordedGitHubRequest[] = [];
-    let gate: RequiredLiveState | undefined;
+    let gate: PrGateState | undefined;
     vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter(
         [
@@ -494,8 +494,8 @@ describe("required live E2E controller", () => {
 
     try {
       const command = startCommand(workDir);
-      await startRequiredLive(command);
-      gate = validateRequiredLiveState(JSON.parse(fs.readFileSync(command.statePath, "utf8")));
+      await startPrGate(command);
+      gate = validatePrGateState(JSON.parse(fs.readFileSync(command.statePath, "utf8")));
       for (const job of gate.expectedJobs) {
         for (const shard of gate.expectedShards[job]!) {
           const directory = path.join(command.evidencePath, `${job}-${shard}`);
@@ -513,7 +513,7 @@ describe("required live E2E controller", () => {
           .split("\n")
           .map((line) => line.split("=", 2)),
       );
-      await finishRequiredLive({
+      await finishPrGate({
         statePath: command.statePath,
         stateHash: outputs.state_hash!,
         evidencePath: command.evidencePath,
@@ -524,6 +524,18 @@ describe("required live E2E controller", () => {
       expect(gate.expectedJobs).toEqual(BROAD_JOBS);
       expect(requests.filter((request) => request.url.includes("/pulls?"))).toHaveLength(2);
       expect(requests.filter((request) => request.url.endsWith("/pulls/42"))).toHaveLength(2);
+      const checkCreation = requests.find(
+        (request) => request.url.endsWith("/check-runs") && request.method === "POST",
+      );
+      expect(checkCreation?.body).toMatchObject({
+        name: "E2E / PR Gate",
+        head_sha: HEAD_SHA,
+        status: "in_progress",
+        output: {
+          title: "Evaluating PR commit",
+          summary: "Validating the PR and selecting E2E jobs.",
+        },
+      });
       const dispatch = requests.find((request) => request.url.endsWith("/dispatches"));
       expect(dispatch?.body).toMatchObject({
         inputs: {
@@ -541,14 +553,14 @@ describe("required live E2E controller", () => {
       expect(checkUpdates[0]?.body).toMatchObject({
         status: "in_progress",
         output: {
-          title: "Running 13 required live E2E jobs",
+          title: "Running 13 E2E jobs",
           summary: expect.stringContaining("upgrade-stale-sandbox"),
         },
       });
       expect(checkUpdates[1]?.body).toMatchObject({
         status: "completed",
         conclusion: "success",
-        output: { title: "Required live E2E passed" },
+        output: { title: "All selected jobs passed" },
       });
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
     } finally {
@@ -557,7 +569,7 @@ describe("required live E2E controller", () => {
   });
 
   it("fails without dispatch when the pull request changes during planning", async () => {
-    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-required-live-race-"));
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-race-"));
     const outputPath = path.join(workDir, "github-output");
     fs.writeFileSync(outputPath, "", { mode: 0o600 });
     vi.stubEnv("GITHUB_TOKEN", "token");
@@ -607,8 +619,8 @@ describe("required live E2E controller", () => {
     );
 
     try {
-      await expect(startRequiredLive(startCommand(workDir))).rejects.toThrow(
-        /changed while required live E2E was being prepared/u,
+      await expect(startPrGate(startCommand(workDir))).rejects.toThrow(
+        /PR changed during preparation/u,
       );
       expect(requests.some((request) => request.url.endsWith("/dispatches"))).toBe(false);
       expect(requests.some((request) => request.url.endsWith("/git/ref/heads/main"))).toBe(false);
@@ -623,7 +635,7 @@ describe("required live E2E controller", () => {
   });
 
   it("cancels the child and closes the check when startup fails after dispatch", async () => {
-    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-required-live-start-"));
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-start-"));
     const outputPath = path.join(workDir, "github-output");
     fs.writeFileSync(outputPath, "", { mode: 0o600 });
     vi.stubEnv("GITHUB_TOKEN", "token");
@@ -686,15 +698,20 @@ describe("required live E2E controller", () => {
     );
 
     try {
-      await expect(startRequiredLive(startCommand(workDir))).rejects.toThrow(
-        /simulated update failure/u,
-      );
+      await expect(startPrGate(startCommand(workDir))).rejects.toThrow(/simulated update failure/u);
       expect(requests.some((request) => request.url.endsWith("/actions/runs/23/cancel"))).toBe(
         true,
       );
       const checkUpdates = requests.filter((request) => request.url.endsWith("/check-runs/17"));
       expect(checkUpdates).toHaveLength(2);
-      expect(checkUpdates[1]?.body).toMatchObject({ status: "completed", conclusion: "failure" });
+      expect(checkUpdates[1]?.body).toMatchObject({
+        status: "completed",
+        conclusion: "failure",
+        output: {
+          title: "Run could not start",
+          summary: expect.stringContaining("The controller could not complete the check."),
+        },
+      });
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
@@ -702,12 +719,26 @@ describe("required live E2E controller", () => {
   });
 
   it.each([
-    { label: "missing evidence", status: "completed", expectCancellation: false },
-    { label: "an unfinished child", status: "in_progress", expectCancellation: true },
-  ])("closes the check as failure for $label", async ({ status, expectCancellation }) => {
-    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-required-live-finish-"));
+    {
+      label: "missing evidence",
+      status: "completed",
+      expectCancellation: false,
+      expectedTitle: "Evidence is missing",
+    },
+    {
+      label: "an unfinished child",
+      status: "in_progress",
+      expectCancellation: true,
+      expectedTitle: "E2E run did not succeed",
+    },
+  ])("closes the check as failure for $label", async ({
+    status,
+    expectCancellation,
+    expectedTitle,
+  }) => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-finish-"));
     const outputPath = path.join(workDir, "github-output");
-    const statePath = path.join(workDir, "required-live-state.json");
+    const statePath = path.join(workDir, "controller-state.json");
     const evidencePath = path.join(workDir, "evidence");
     const gate = state();
     const serializedState = `${JSON.stringify(gate, null, 2)}\n`;
@@ -740,7 +771,7 @@ describe("required live E2E controller", () => {
 
     try {
       await expect(
-        finishRequiredLive({
+        finishPrGate({
           statePath,
           stateHash: sha256(serializedState),
           evidencePath,
@@ -752,7 +783,11 @@ describe("required live E2E controller", () => {
         expectCancellation,
       );
       const completion = requests.find((request) => request.url.endsWith("/check-runs/17"));
-      expect(completion?.body).toMatchObject({ status: "completed", conclusion: "failure" });
+      expect(completion?.body).toMatchObject({
+        status: "completed",
+        conclusion: "failure",
+        output: { title: expectedTitle },
+      });
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
@@ -773,6 +808,7 @@ describe("required live E2E controller", () => {
                 workflowRun(gate, { status: "in_progress" }),
                 workflowRun(gate, { id: 24, status: "completed" }),
                 workflowRun(gate, { id: 25, status: "queued", display_title: "E2E manual" }),
+                workflowRun({ ...gate, prNumber: 420 }, { id: 26, status: "queued" }),
               ],
             }),
         ),
@@ -783,14 +819,17 @@ describe("required live E2E controller", () => {
       ]),
     );
 
-    await expect(cancelRequiredLive(42)).resolves.toBe(1);
+    await expect(cancelPrGate(42)).resolves.toBe(1);
     expect(
       fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/cancel")),
     ).toHaveLength(1);
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/26/cancel"))).toBe(
+      false,
+    );
   });
 
   it("cancels a known child and closes an abandoned check as failure", async () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-required-live-abandon-"));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-abandon-"));
     const outputPath = path.join(directory, "github-output");
     fs.writeFileSync(outputPath, "", { mode: 0o600 });
     vi.stubEnv("GITHUB_TOKEN", "token");
@@ -814,12 +853,19 @@ describe("required live E2E controller", () => {
     );
 
     try {
-      await abandonRequiredLive(17, 23);
+      await abandonPrGate(17, 23);
       expect(requests.map((request) => request.url)).toEqual([
         "https://api.github.com/repos/NVIDIA/NemoClaw/actions/runs/23/cancel",
         "https://api.github.com/repos/NVIDIA/NemoClaw/check-runs/17",
       ]);
-      expect(requests[1]?.body).toMatchObject({ status: "completed", conclusion: "failure" });
+      expect(requests[1]?.body).toMatchObject({
+        status: "completed",
+        conclusion: "failure",
+        output: {
+          title: "Controller stopped early",
+          summary: "The controller stopped before it could complete the check.",
+        },
+      });
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
@@ -827,7 +873,7 @@ describe("required live E2E controller", () => {
   });
 
   it("bounds recursive signal discovery and rejects symlinks", () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-required-live-evidence-"));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-evidence-"));
     try {
       const first = path.join(directory, "first");
       fs.mkdirSync(first);

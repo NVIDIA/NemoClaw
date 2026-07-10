@@ -15,7 +15,7 @@ const META_JOBS = new Set(["report-to-pr", "scorecard"]);
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
 const GITHUB_SCRIPT_NODE24_ACTION =
   "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3";
-const REQUIRED_LIVE_REPORTER = "test/e2e/risk-signal-reporter.ts";
+const PR_GATE_REPORTER = "test/e2e/risk-signal-reporter.ts";
 const E2E_ARTIFACT_ACTION = "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@";
 const ISSUE_API_REFERENCE = /\bgithub\.rest\.issues\b/u;
 const ISSUE_MUTATION_BEYOND_COMMENT =
@@ -110,7 +110,7 @@ function requireNode24GithubScript(errors: string[], step: WorkflowStep, owner: 
   }
 }
 
-function validateRequiredLiveDispatch(errors: string[], workflow: OperationsWorkflow): void {
+function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow): void {
   const inputs = workflow.on?.workflow_dispatch?.inputs ?? {};
   for (const name of ["jobs", "pr_number", "checkout_sha", "plan_hash", "correlation_id"]) {
     const input = inputs[name];
@@ -126,36 +126,34 @@ function validateRequiredLiveDispatch(errors: string[], workflow: OperationsWork
   };
   for (const [name, value] of Object.entries(expectedEnvironment)) {
     if (workflow.env?.[name] !== value) {
-      errors.push(`E2E workflow must bind ${name} to required-live metadata`);
+      errors.push(`E2E workflow must bind ${name} to controller metadata`);
     }
   }
   const runName = String(workflow["run-name"] ?? "");
   for (const fragment of ["inputs.checkout_sha", "inputs.pr_number", "inputs.correlation_id"]) {
-    if (!runName.includes(fragment)) errors.push(`required-live run name must include ${fragment}`);
+    if (!runName.includes(fragment)) errors.push(`PR E2E run name must include ${fragment}`);
   }
   const concurrencyGroup = String(workflow.concurrency?.group ?? "");
   if (
     !concurrencyGroup.includes("inputs.checkout_sha") ||
     !concurrencyGroup.includes("inputs.pr_number")
   ) {
-    errors.push("required-live concurrency must be scoped to its pull request");
+    errors.push("PR E2E concurrency must be scoped to its pull request");
   }
   if (workflow.concurrency?.["cancel-in-progress"] !== "${{ inputs.checkout_sha != '' }}") {
-    errors.push("required-live concurrency must cancel obsolete pull request runs");
+    errors.push("PR E2E concurrency must cancel obsolete runs");
   }
 
   const matrixJob = workflow.jobs["generate-matrix"] ?? {};
   const steps = matrixJob.steps ?? [];
-  const validationIndex = steps.findIndex(
-    (step) => step.name === "Validate required-live dispatch",
-  );
+  const validationIndex = steps.findIndex((step) => step.name === "Validate controller dispatch");
   const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
   const validation = validationIndex >= 0 ? steps[validationIndex] : {};
   if (validation.if !== "${{ inputs.checkout_sha != '' }}") {
-    errors.push("required-live validation must be activated only by checkout_sha");
+    errors.push("Controller validation must be activated only by checkout_sha");
   }
   if (validationIndex < 0 || prepareIndex < 0 || validationIndex >= prepareIndex) {
-    errors.push("required-live validation must run before workspace preparation");
+    errors.push("Controller validation must run before workspace preparation");
   }
   const expectedStepEnvironment = {
     CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
@@ -167,7 +165,7 @@ function validateRequiredLiveDispatch(errors: string[], workflow: OperationsWork
   };
   for (const [name, value] of Object.entries(expectedStepEnvironment)) {
     if (validation.env?.[name] !== value) {
-      errors.push(`required-live validation must bind ${name}`);
+      errors.push(`Controller validation must bind ${name}`);
     }
   }
   const validationScript = String(validation.run ?? "");
@@ -183,7 +181,7 @@ function validateRequiredLiveDispatch(errors: string[], workflow: OperationsWork
     "'.head.sha'",
   ]) {
     if (!validationScript.includes(fragment)) {
-      errors.push(`required-live validation must retain ${fragment}`);
+      errors.push(`Controller validation must retain ${fragment}`);
     }
   }
 
@@ -193,41 +191,38 @@ function validateRequiredLiveDispatch(errors: string[], workflow: OperationsWork
         step.uses?.startsWith("actions/checkout@") &&
         step.with?.ref !== "${{ inputs.checkout_sha || github.sha }}"
       ) {
-        errors.push(`${jobName} checkout must use the selected immutable commit`);
+        errors.push(`${jobName} checkout must use the selected PR commit`);
       }
     }
   }
 }
 
-function validateRequiredLiveEvidenceProducers(
-  errors: string[],
-  workflow: OperationsWorkflow,
-): void {
+function validatePrGateEvidenceProducers(errors: string[], workflow: OperationsWorkflow): void {
   const requiredJobs = new Set(RISK_RULES.flatMap((rule) => rule.requiredJobs));
   for (const jobId of requiredJobs) {
     const job = workflow.jobs[jobId];
     if (!job) {
-      errors.push(`required-live plan job is missing from E2E workflow: ${jobId}`);
+      errors.push(`Risk-plan job is missing from E2E workflow: ${jobId}`);
       continue;
     }
     if (job.env?.E2E_JOB !== "1" || job.env?.E2E_TARGET_ID !== jobId) {
-      errors.push(`${jobId} must expose matching required-live job identity`);
+      errors.push(`${jobId} must expose matching E2E job identity`);
     }
     if (typeof job.env?.E2E_ARTIFACT_DIR !== "string" || !job.env.E2E_ARTIFACT_DIR) {
-      errors.push(`${jobId} must expose a required-live artifact directory`);
+      errors.push(`${jobId} must expose an evidence artifact directory`);
     }
     const vitestSteps = (job.steps ?? []).filter((step) =>
       String(step.run ?? "").includes("npx vitest"),
     );
     if (
       vitestSteps.length === 0 ||
-      vitestSteps.some((step) => !String(step.run).includes(REQUIRED_LIVE_REPORTER))
+      vitestSteps.some((step) => !String(step.run).includes(PR_GATE_REPORTER))
     ) {
-      errors.push(`${jobId} must attach the required-live reporter to every Vitest invocation`);
+      errors.push(`${jobId} must attach the risk-signal reporter to every Vitest invocation`);
     }
     const uploads = (job.steps ?? []).filter((step) => step.uses?.startsWith(E2E_ARTIFACT_ACTION));
     if (uploads.length !== 1 || uploads[0]?.if !== "always()") {
-      errors.push(`${jobId} must always upload one required-live evidence artifact`);
+      errors.push(`${jobId} must always upload one evidence artifact`);
     }
   }
 }
@@ -546,8 +541,8 @@ export function validateE2eOperationsWorkflow(
   advisorPath = DEFAULT_ADVISOR_PATH,
 ): string[] {
   const errors: string[] = [];
-  validateRequiredLiveDispatch(errors, workflow);
-  validateRequiredLiveEvidenceProducers(errors, workflow);
+  validatePrGateDispatch(errors, workflow);
+  validatePrGateEvidenceProducers(errors, workflow);
   validateAggregation(errors, workflow);
   validateIssueRoutingRetirement(errors, workflow);
   validateScorecard(errors, workflow);

@@ -45,7 +45,7 @@ describe("E2E risk signal reporter", () => {
     expect(configuredEnvironment({})).toBeNull();
   });
 
-  it("fails closed when required-live metadata is incomplete", () => {
+  it("fails closed when run metadata is incomplete", () => {
     expect(() => configuredEnvironment({ NEMOCLAW_E2E_EXPECTED_SHA: EXPECTED_SHA })).toThrow(
       /E2E_ARTIFACT_DIR/u,
     );

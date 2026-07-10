@@ -24,8 +24,8 @@ import { readFreeStandingJobsInventory } from "./workflow-boundary.mts";
 
 const E2E_WORKFLOW = "e2e.yaml";
 const E2E_WORKFLOW_PATH = `.github/workflows/${E2E_WORKFLOW}`;
-const CHECK_NAME = "E2E / Required Live";
-const USER_AGENT = "nemoclaw-required-live";
+const CHECK_NAME = "E2E / PR Gate";
+const USER_AGENT = "nemoclaw-pr-e2e-gate";
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const HASH_PATTERN = /^[a-f0-9]{64}$/u;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
@@ -112,7 +112,7 @@ type WorkflowRunIdentity = {
   workflowSha: string;
 };
 
-export type RequiredLiveState = {
+export type PrGateState = {
   version: 1;
   commitSha: string;
   workflowSha: string;
@@ -123,7 +123,7 @@ export type RequiredLiveState = {
   expectedShards: Record<string, string[]>;
 };
 
-export type RequiredLiveVerdict = {
+export type PrGateVerdict = {
   conclusion: CheckConclusion;
   title: string;
   summary: string;
@@ -207,8 +207,8 @@ export function privateControllerPaths(workDir: string): ControllerPaths {
     throw new Error("--work-dir must be an owned private absolute directory");
   }
   return {
-    planPath: path.join(resolved, "required-live-plan.json"),
-    statePath: path.join(resolved, "required-live-state.json"),
+    planPath: path.join(resolved, "risk-plan.json"),
+    statePath: path.join(resolved, "controller-state.json"),
     evidencePath: path.join(resolved, "evidence"),
   };
 }
@@ -255,24 +255,24 @@ function readRegularJson(file: string, maxBytes = MAX_PLAN_BYTES): unknown {
   return JSON.parse(readPrivateRegularFile(file, { maxBytes })!);
 }
 
-export function validateRequiredLiveState(value: unknown): RequiredLiveState {
+export function validatePrGateState(value: unknown): PrGateState {
   if (!isObjectRecord(value) || value.version !== 1) {
-    throw new Error("invalid required-live state version");
+    throw new Error("State version is invalid");
   }
   if (typeof value.commitSha !== "string" || !SHA_PATTERN.test(value.commitSha)) {
-    throw new Error("required-live state commit SHA is invalid");
+    throw new Error("State commit SHA is invalid");
   }
   if (typeof value.workflowSha !== "string" || !SHA_PATTERN.test(value.workflowSha)) {
-    throw new Error("required-live state workflow SHA is invalid");
+    throw new Error("State workflow SHA is invalid");
   }
   if (typeof value.planHash !== "string" || !HASH_PATTERN.test(value.planHash)) {
-    throw new Error("required-live state plan hash is invalid");
+    throw new Error("State plan hash is invalid");
   }
   if (typeof value.correlationId !== "string" || !CORRELATION_PATTERN.test(value.correlationId)) {
-    throw new Error("required-live state correlation id is invalid");
+    throw new Error("State correlation ID is invalid");
   }
   if (!Number.isSafeInteger(value.prNumber) || (value.prNumber as number) < 1) {
-    throw new Error("required-live state PR number is invalid");
+    throw new Error("State PR number is invalid");
   }
   if (
     !Array.isArray(value.expectedJobs) ||
@@ -280,14 +280,14 @@ export function validateRequiredLiveState(value: unknown): RequiredLiveState {
     !value.expectedJobs.every((job) => typeof job === "string" && JOB_PATTERN.test(job)) ||
     new Set(value.expectedJobs).size !== value.expectedJobs.length
   ) {
-    throw new Error("required-live state expected jobs are invalid");
+    throw new Error("State jobs are invalid");
   }
   if (!isObjectRecord(value.expectedShards)) {
-    throw new Error("required-live state shards are invalid");
+    throw new Error("State shards are invalid");
   }
   const shardJobs = Object.keys(value.expectedShards).sort();
   if (JSON.stringify(shardJobs) !== JSON.stringify([...value.expectedJobs].sort())) {
-    throw new Error("required-live state shard jobs do not match expected jobs");
+    throw new Error("State shard jobs do not match expected jobs");
   }
   for (const job of value.expectedJobs) {
     const shards = value.expectedShards[job];
@@ -297,10 +297,10 @@ export function validateRequiredLiveState(value: unknown): RequiredLiveState {
       new Set(shards).size !== shards.length ||
       !shards.every((shard) => typeof shard === "string" && SHARD_PATTERN.test(shard))
     ) {
-      throw new Error(`required-live state shards are invalid for ${job}`);
+      throw new Error(`State shards are invalid for ${job}`);
     }
   }
-  return value as RequiredLiveState;
+  return value as PrGateState;
 }
 
 export function validateRiskPlan(value: unknown, allowedJobs: ReadonlySet<string>): RiskPlan {
@@ -321,7 +321,7 @@ export function validateRiskPlan(value: unknown, allowedJobs: ReadonlySet<string
     changedFiles: value.changedFiles as string[],
   });
   if (JSON.stringify(value) !== JSON.stringify(rebuilt)) {
-    throw new Error("risk plan does not match its deterministic hash and inputs");
+    throw new Error("risk plan does not match its hash and inputs");
   }
   if (!HASH_PATTERN.test(rebuilt.planHash)) throw new Error("risk plan hash is invalid");
   const selectedJobs = riskPlanRequiredJobIds(rebuilt);
@@ -339,7 +339,7 @@ export function validateRiskPlan(value: unknown, allowedJobs: ReadonlySet<string
 export function validateSignal(
   value: unknown,
   state: Pick<
-    RequiredLiveState,
+    PrGateState,
     "commitSha" | "planHash" | "correlationId" | "expectedJobs" | "expectedShards"
   >,
 ): E2eRiskSignal {
@@ -368,17 +368,17 @@ export function validateSignal(
   return signal;
 }
 
-export function classifyRequiredLiveEvidence(options: {
+export function classifyPrGateEvidence(options: {
   workflowConclusion: string | null;
   expectedJobs: readonly string[];
   expectedShards: Readonly<Record<string, readonly string[]>>;
   signals: readonly E2eRiskSignal[];
-}): RequiredLiveVerdict {
+}): PrGateVerdict {
   if (options.workflowConclusion !== "success") {
     return {
       conclusion: "failure",
-      title: "Required live E2E did not complete successfully",
-      summary: `The correlated E2E workflow concluded ${options.workflowConclusion ?? "without a result"}.`,
+      title: "E2E run did not succeed",
+      summary: `The run concluded ${options.workflowConclusion ?? "without a result"}.`,
     };
   }
   const expectedEvidence = options.expectedJobs.flatMap((job) =>
@@ -390,8 +390,8 @@ export function classifyRequiredLiveEvidence(options: {
   ) {
     return {
       conclusion: "failure",
-      title: "Required live E2E lacks an evidence policy",
-      summary: "At least one selected job has no trusted shard policy.",
+      title: "Evidence policy is incomplete",
+      summary: "At least one selected job has no configured shard policy.",
     };
   }
   const byJobShard = new Map<string, E2eRiskSignal>();
@@ -400,7 +400,7 @@ export function classifyRequiredLiveEvidence(options: {
     if (byJobShard.has(key)) {
       return {
         conclusion: "failure",
-        title: "Required live E2E produced duplicate evidence",
+        title: "Duplicate evidence",
         summary: `More than one signal was uploaded for ${key}.`,
       };
     }
@@ -410,8 +410,8 @@ export function classifyRequiredLiveEvidence(options: {
   if (missing.length > 0) {
     return {
       conclusion: "failure",
-      title: "Required live E2E is missing evidence",
-      summary: `Missing bound signals for: ${missing.join(", ")}.`,
+      title: "Evidence is missing",
+      summary: `Missing signals: ${missing.join(", ")}.`,
     };
   }
   const failed = expectedEvidence.filter((key) => {
@@ -421,7 +421,7 @@ export function classifyRequiredLiveEvidence(options: {
   if (failed.length > 0) {
     return {
       conclusion: "failure",
-      title: "Required live E2E reported test failures",
+      title: "Tests failed",
       summary: `Failing signals: ${failed.join(", ")}.`,
     };
   }
@@ -434,14 +434,14 @@ export function classifyRequiredLiveEvidence(options: {
   if (partial.length > 0) {
     return {
       conclusion: "failure",
-      title: "Required live E2E produced incomplete evidence",
+      title: "Evidence is incomplete",
       summary: `Incomplete or skipped signals: ${partial.join(", ")}.`,
     };
   }
   return {
     conclusion: "success",
-    title: "Required live E2E passed",
-    summary: "Every expected job shard produced a complete, unskipped pass.",
+    title: "All selected jobs passed",
+    summary: "Every expected job shard passed with no skips or pending tests.",
   };
 }
 
@@ -461,7 +461,7 @@ function appendOutput(name: string, value: string): void {
   try {
     if (!fs.fstatSync(descriptor).isFile()) throw new Error("GITHUB_OUTPUT must be a regular file");
     // lgtm[js/network-data-to-file] Values are reduced to a strict single-line allowlist above,
-    // and the trusted runner-owned output file is opened without following symlinks.
+    // and the runner-owned output file is opened without following symlinks.
     // lgtm[js/http-to-file-access]
     fs.writeFileSync(descriptor, `${name}=${value}\n`, "utf8");
   } finally {
@@ -495,7 +495,7 @@ async function createCheck(
 async function completeCheck(
   context: { repository: string; checkRunId: number },
   token: string,
-  verdict: RequiredLiveVerdict,
+  verdict: PrGateVerdict,
   detailsUrl?: string,
 ): Promise<void> {
   await githubApi(`repos/${context.repository}/check-runs/${context.checkRunId}`, token, {
@@ -523,8 +523,8 @@ async function updateRunningCheck(
       status: "in_progress",
       details_url: childRunUrl,
       output: {
-        title: `Running ${options.jobs.length} required live E2E ${options.jobs.length === 1 ? "job" : "jobs"}`,
-        summary: `Plan ${options.planHash} selected: ${options.jobs.join(", ")}.`,
+        title: `Running ${options.jobs.length} E2E ${options.jobs.length === 1 ? "job" : "jobs"}`,
+        summary: `Risk plan ${options.planHash} selected: ${options.jobs.join(", ")}.`,
       },
     },
     userAgent: USER_AGENT,
@@ -556,15 +556,13 @@ async function completeFailureAfterControllerError(
       {
         conclusion: "failure",
         title,
-        summary: `The required-live controller could not produce trustworthy evidence.\n\nController error: \`${reason}\``,
+        summary: `The controller could not complete the check.\n\nController error: \`${reason}\``,
       },
       options.detailsUrl,
     );
     return true;
   } catch (error) {
-    console.error(
-      `Failed to close required-live check after controller error: ${controllerErrorMessage(error)}`,
-    );
+    console.error(`Failed to close check after controller error: ${controllerErrorMessage(error)}`);
     return false;
   }
 }
@@ -719,7 +717,7 @@ function assertPullUnchanged(before: PullRequest, after: PullRequest): void {
     JSON.stringify({ ...pullIdentity(before), changedFiles: before.changed_files }) !==
     JSON.stringify({ ...pullIdentity(after), changedFiles: after.changed_files })
   ) {
-    throw new Error("Pull request changed while required live E2E was being prepared");
+    throw new Error("PR changed during preparation");
   }
 }
 
@@ -807,7 +805,7 @@ export function assertCorrelatedWorkflowRun(
   requireEqual("html_url", childRunUrl, child.html_url);
   requireEqual(
     "display_title",
-    `E2E PR #${identity.prNumber} required live ${identity.correlationId}`,
+    `E2E PR #${identity.prNumber} (${identity.correlationId})`,
     child.display_title,
   );
   requireEqual("head_sha", identity.workflowSha, child.head_sha);
@@ -818,12 +816,12 @@ export function assertCorrelatedWorkflowRun(
   }
   if (mismatches.length > 0) {
     throw new Error(
-      `Correlated E2E workflow identity mismatch: ${mismatches.join("; ")}; observed run_name=${diagnosticValue(child.name)} workflow_id=${diagnosticValue(child.workflow_id)}`,
+      `E2E run identity mismatch: ${mismatches.join("; ")}; observed run_name=${diagnosticValue(child.name)} workflow_id=${diagnosticValue(child.workflow_id)}`,
     );
   }
 }
 
-export async function dispatchRequiredLive(options: {
+export async function dispatchPrGate(options: {
   repository: string;
   token: string;
   jobs: readonly string[];
@@ -846,7 +844,7 @@ export async function dispatchRequiredLive(options: {
     !HASH_PATTERN.test(options.planHash) ||
     !CORRELATION_PATTERN.test(options.correlationId)
   ) {
-    throw new Error("required-live workflow dispatch inputs are invalid");
+    throw new Error("Controller dispatch inputs are invalid");
   }
   const main = await githubApi<GitReference>(
     `repos/${options.repository}/git/ref/heads/main`,
@@ -859,9 +857,7 @@ export async function dispatchRequiredLive(options: {
     main.object?.type !== "commit" ||
     main.object.sha !== options.workflowSha
   ) {
-    throw new Error(
-      `Trusted workflow revision ${options.workflowSha} is no longer the current main revision`,
-    );
+    throw new Error(`main no longer points to workflow commit ${options.workflowSha}`);
   }
   const details = await githubApi<unknown>(
     `repos/${options.repository}/actions/workflows/${E2E_WORKFLOW}/dispatches`,
@@ -897,21 +893,21 @@ async function cancelChildRun(repository: string, token: string, runId: number):
   }
 }
 
-export async function startRequiredLive(
+export async function startPrGate(
   command: Extract<ControllerCommand, { mode: "start" }>,
 ): Promise<void> {
   const { token, repository } = tokenAndRepository();
-  if (!SHA_PATTERN.test(command.headSha)) throw new Error("triggering head SHA is invalid");
-  if (!SHA_PATTERN.test(command.workflowSha)) throw new Error("trusted workflow SHA is invalid");
-  assertRepository(command.headRepository, "triggering head repository");
+  if (!SHA_PATTERN.test(command.headSha)) throw new Error("PR head SHA is invalid");
+  if (!SHA_PATTERN.test(command.workflowSha)) throw new Error("workflow SHA is invalid");
+  assertRepository(command.headRepository, "PR head repository");
   assertBranch(command.headBranch);
 
   const checkRunId = await createCheck(
     repository,
     token,
     command.headSha,
-    "Required live E2E is evaluating this revision",
-    "The controller is validating the pull request and building its deterministic live-test plan.",
+    "Evaluating PR commit",
+    "Validating the PR and selecting E2E jobs.",
   );
   appendOutput("check_id", String(checkRunId));
 
@@ -921,8 +917,8 @@ export async function startRequiredLive(
     if (command.ciConclusion !== "success") {
       await completeCheck({ repository, checkRunId }, token, {
         conclusion: "failure",
-        title: "Pull request CI did not pass",
-        summary: `CI / Pull Request concluded ${command.ciConclusion || "without a result"}; live E2E was not dispatched.`,
+        title: "PR CI did not pass",
+        summary: `CI / Pull Request concluded ${command.ciConclusion || "without a result"}; no run was dispatched.`,
       });
       appendOutput("dispatched", "false");
       appendOutput("finalized", "true");
@@ -938,7 +934,7 @@ export async function startRequiredLive(
       headBranch: command.headBranch,
     });
     if (command.headRepository !== repository || pull.head.repo?.full_name !== repository) {
-      throw new Error("Required live E2E can run only for branches in the base repository");
+      throw new Error("PR branch must be in the base repository");
     }
 
     const changedFiles = await pullChangedFiles(repository, pull, token);
@@ -960,24 +956,22 @@ export async function startRequiredLive(
     if (jobs.length === 0) {
       await completeCheck({ repository, checkRunId }, token, {
         conclusion: "success",
-        title: "No required live E2E selected",
-        summary: "The deterministic plan matched no live runtime regression family.",
+        title: "No E2E jobs selected",
+        summary: "No changed files matched an E2E risk rule.",
       });
       appendOutput("dispatched", "false");
       appendOutput("finalized", "true");
       finalized = true;
-      console.log(
-        `Required live E2E completed without dispatch: pr=${pull.number} plan=${plan.planHash}`,
-      );
+      console.log(`No run dispatched: pr=${pull.number} plan=${plan.planHash}`);
       return;
     }
 
     const expectedShards = expectedSignalShards(jobs);
     const correlationId = randomUUID();
     if (!CORRELATION_PATTERN.test(correlationId)) {
-      throw new Error("generated correlation id is invalid");
+      throw new Error("generated correlation ID is invalid");
     }
-    childRunId = await dispatchRequiredLive({
+    childRunId = await dispatchPrGate({
       repository,
       token,
       jobs,
@@ -988,7 +982,7 @@ export async function startRequiredLive(
       correlationId,
     });
     appendOutput("run_id", String(childRunId));
-    const state: RequiredLiveState = {
+    const state: PrGateState = {
       version: 1,
       commitSha: command.headSha,
       workflowSha: command.workflowSha,
@@ -1008,7 +1002,7 @@ export async function startRequiredLive(
     appendOutput("state_hash", sha256(serializedState));
     appendOutput("dispatched", "true");
     console.log(
-      `Required live E2E dispatched: pr=${pull.number} run=${childRunId} plan=${plan.planHash} jobs=${jobs.join(",")} url=https://github.com/${repository}/actions/runs/${childRunId}`,
+      `Run dispatched: pr=${pull.number} run=${childRunId} plan=${plan.planHash} jobs=${jobs.join(",")} url=https://github.com/${repository}/actions/runs/${childRunId}`,
     );
   } catch (error) {
     let reportedError = error;
@@ -1025,7 +1019,7 @@ export async function startRequiredLive(
       const closed = await completeFailureAfterControllerError(
         { repository, checkRunId },
         token,
-        "Required live E2E could not start",
+        "Run could not start",
         { error: reportedError },
       );
       if (closed) appendOutput("finalized", "true");
@@ -1085,7 +1079,7 @@ export function findSignalFiles(
   return files.sort((left, right) => left.localeCompare(right));
 }
 
-export async function finishRequiredLive(options: {
+export async function finishPrGate(options: {
   statePath: string;
   stateHash: string;
   evidencePath: string;
@@ -1104,7 +1098,7 @@ export async function finishRequiredLive(options: {
     if (sha256(serializedState) !== options.stateHash) {
       throw new Error("controller state changed after E2E dispatch");
     }
-    const state = validateRequiredLiveState(JSON.parse(serializedState));
+    const state = validatePrGateState(JSON.parse(serializedState));
     const child = await githubApi<WorkflowRun>(
       `repos/${repository}/actions/runs/${options.childRunId}`,
       token,
@@ -1120,7 +1114,7 @@ export async function finishRequiredLive(options: {
     if (child.status !== "completed") {
       await cancelChildRun(repository, token, options.childRunId);
       console.log(
-        `Cancelled unfinished required live E2E during finalization: run=${options.childRunId} status=${child.status} url=${childRunUrl}`,
+        `Cancelled unfinished run during finalization: run=${options.childRunId} status=${child.status} url=${childRunUrl}`,
       );
     }
     const workflowConclusion =
@@ -1136,7 +1130,7 @@ export async function finishRequiredLive(options: {
             maxSignalFiles: expectedSignalCount + 1,
           }).map((file) => validateSignal(readRegularJson(file), state))
         : [];
-    const verdict = classifyRequiredLiveEvidence({
+    const verdict = classifyPrGateEvidence({
       workflowConclusion,
       expectedJobs: state.expectedJobs,
       expectedShards: state.expectedShards,
@@ -1146,7 +1140,7 @@ export async function finishRequiredLive(options: {
     appendOutput("finalized", "true");
     finalized = true;
     console.log(
-      `Required live E2E completed: run=${options.childRunId} conclusion=${verdict.conclusion} title=${verdict.title} url=${childRunUrl}`,
+      `Run completed: run=${options.childRunId} conclusion=${verdict.conclusion} title=${verdict.title} url=${childRunUrl}`,
     );
     if (verdict.conclusion === "failure") throw new Error(verdict.title);
   } catch (error) {
@@ -1154,7 +1148,7 @@ export async function finishRequiredLive(options: {
       const closed = await completeFailureAfterControllerError(
         context,
         token,
-        "Required live E2E evidence could not be verified",
+        "Evidence could not be verified",
         { error, detailsUrl: childRunUrl },
       );
       if (closed) appendOutput("finalized", "true");
@@ -1163,7 +1157,7 @@ export async function finishRequiredLive(options: {
   }
 }
 
-export async function abandonRequiredLive(checkRunId: number, childRunId?: number): Promise<void> {
+export async function abandonPrGate(checkRunId: number, childRunId?: number): Promise<void> {
   const { token, repository } = tokenAndRepository();
   let cancellationError: unknown;
   if (childRunId) {
@@ -1178,17 +1172,17 @@ export async function abandonRequiredLive(checkRunId: number, childRunId?: numbe
     : "";
   await completeCheck({ repository, checkRunId }, token, {
     conclusion: "failure",
-    title: "Required live E2E controller stopped early",
-    summary: `The controller stopped before it could produce complete evidence.${cancellationSummary}`,
+    title: "Controller stopped early",
+    summary: `The controller stopped before it could complete the check.${cancellationSummary}`,
   });
   appendOutput("finalized", "true");
   if (cancellationError) throw cancellationError;
 }
 
-export async function cancelRequiredLive(prNumber: number): Promise<number> {
+export async function cancelPrGate(prNumber: number): Promise<number> {
   const { token, repository } = tokenAndRepository();
   if (!Number.isSafeInteger(prNumber) || prNumber < 1) throw new Error("PR number is invalid");
-  const titlePrefix = `E2E PR #${prNumber} required live `;
+  const titlePrefix = `E2E PR #${prNumber} (`;
   const active: WorkflowRun[] = [];
   for (let page = 1; page <= MAX_ACTIVE_RUN_PAGES; page += 1) {
     const response = await githubApi<WorkflowRunsResponse>(
@@ -1206,20 +1200,20 @@ export async function cancelRequiredLive(prNumber: number): Promise<number> {
     );
     if (response.workflow_runs.length < 100) break;
     if (page === MAX_ACTIVE_RUN_PAGES) {
-      throw new Error("Required-live run listing exceeded its page limit");
+      throw new Error("Run listing exceeded its page limit");
     }
   }
   for (const run of active) {
     if (!Number.isSafeInteger(run.id) || run.id < 1) {
-      throw new Error("GitHub returned an invalid active workflow run id");
+      throw new Error("GitHub returned an invalid active run ID");
     }
     await cancelChildRun(repository, token, run.id);
     console.log(
-      `Cancelled superseded required live E2E: pr=${prNumber} run=${run.id} url=https://github.com/${repository}/actions/runs/${run.id}`,
+      `Cancelled superseded run: pr=${prNumber} run=${run.id} url=https://github.com/${repository}/actions/runs/${run.id}`,
     );
   }
   if (active.length === 0) {
-    console.log(`No active required live E2E runs found for PR #${prNumber}`);
+    console.log(`No active E2E runs found for PR #${prNumber}`);
   }
   return active.length;
 }
@@ -1229,18 +1223,18 @@ function reportControllerError(error: unknown): void {
   console.error(message);
   if (process.env.GITHUB_ACTIONS === "true") {
     const escaped = message.replace(/%/gu, "%25").replace(/\r/gu, "%0D").replace(/\n/gu, "%0A");
-    console.error(`::error title=Required live E2E controller failed::${escaped}`);
+    console.error(`::error title=Controller failed::${escaped}`);
   }
 }
 
 async function main(): Promise<void> {
   const command = parseControllerCommand(process.argv.slice(2));
   if (command.mode === "start") {
-    await startRequiredLive(command);
+    await startPrGate(command);
     return;
   }
   if (command.mode === "finish") {
-    await finishRequiredLive({
+    await finishPrGate({
       statePath: command.statePath,
       stateHash: command.stateHash,
       evidencePath: command.evidencePath,
@@ -1250,10 +1244,10 @@ async function main(): Promise<void> {
     return;
   }
   if (command.mode === "abandon") {
-    await abandonRequiredLive(command.checkRunId, command.childRunId);
+    await abandonPrGate(command.checkRunId, command.childRunId);
     return;
   }
-  await cancelRequiredLive(command.prNumber);
+  await cancelPrGate(command.prNumber);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

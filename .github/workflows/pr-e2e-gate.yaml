@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: E2E / Required Live
+name: E2E / PR Gate
 
 on:
   workflow_run:
@@ -21,7 +21,7 @@ jobs:
       actions: write
       contents: read
     steps:
-      - name: Checkout trusted controller
+      - name: Checkout controller
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ github.workflow_sha }}
@@ -32,15 +32,15 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Install trusted controller dependencies
+      - name: Install controller dependencies
         run: npm ci --ignore-scripts
 
-      - name: Cancel superseded required live runs
+      - name: Cancel superseded E2E runs
         env:
           GITHUB_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: >-
-          node --experimental-strip-types tools/e2e/required-live.mts
+          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
           --mode cancel
           --pr "$PR_NUMBER"
 
@@ -54,11 +54,11 @@ jobs:
       contents: read
       pull-requests: read
     concurrency:
-      group: required-live-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
-      # Let an older coordinator observe child cancellation and close its check.
+      group: pr-e2e-gate-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+      # Let the previous coordinator observe E2E cancellation and close its check.
       cancel-in-progress: false
     steps:
-      - name: Checkout trusted controller
+      - name: Checkout controller
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ github.workflow_sha }}
@@ -69,20 +69,20 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Install trusted controller dependencies
+      - name: Install controller dependencies
         run: npm ci --ignore-scripts
 
       - id: workspace
-        name: Create private controller workspace
+        name: Create private workspace
         shell: bash
         run: |
           set -euo pipefail
-          work_dir="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-required-live.XXXXXX")"
+          work_dir="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-pr-e2e-gate.XXXXXX")"
           chmod 700 "$work_dir"
           printf 'work_dir=%s\n' "$work_dir" >> "$GITHUB_OUTPUT"
 
       - id: start
-        name: Start required live evaluation
+        name: Start evaluation
         env:
           CI_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -92,7 +92,7 @@ jobs:
           WORKFLOW_SHA: ${{ github.workflow_sha }}
           WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
         run: >-
-          node --experimental-strip-types tools/e2e/required-live.mts
+          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
           --mode start
           --head "$HEAD_SHA"
           --head-repo "$HEAD_REPOSITORY"
@@ -101,17 +101,17 @@ jobs:
           --ci-conclusion "$CI_CONCLUSION"
           --work-dir "$WORK_DIR"
 
-      - name: Upload required live plan
+      - name: Upload risk plan
         if: ${{ always() && steps.workspace.outputs.work_dir != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: required-live-plan-${{ github.event.workflow_run.head_sha }}
-          path: ${{ steps.workspace.outputs.work_dir }}/required-live-plan.json
+          name: pr-e2e-risk-plan-${{ github.event.workflow_run.head_sha }}
+          path: ${{ steps.workspace.outputs.work_dir }}/risk-plan.json
           if-no-files-found: ignore
           retention-days: 14
 
       - id: wait
-        name: Wait for required live run
+        name: Wait for E2E run
         if: ${{ steps.start.outputs.dispatched == 'true' }}
         continue-on-error: true
         env:
@@ -123,7 +123,7 @@ jobs:
           set -euo pipefail
 
           if [[ ! "$RUN_ID" =~ ^[1-9][0-9]*$ ]]; then
-            printf '::error title=Invalid required live run ID::The controller did not provide a positive numeric run ID.\n' >&2
+            printf '::error title=Invalid run ID::The controller did not provide a positive numeric run ID.\n' >&2
             exit 1
           fi
 
@@ -135,7 +135,7 @@ jobs:
                 --json status,conclusion \
                 --jq '.status + ":" + (if (.conclusion == null or .conclusion == "") then "none" else .conclusion end)'
             )"; then
-              printf '::error title=Required live status query failed::Unable to query run %s. %s\n' \
+              printf '::error title=Run status query failed::Unable to query run %s. %s\n' \
                 "$RUN_ID" "$run_url" >&2
               exit 1
             fi
@@ -143,19 +143,19 @@ jobs:
             if [[ "$state" != "$last_state" ]]; then
               case "$state" in
                 queued:none | in_progress:none | requested:none | waiting:none | pending:none)
-                  printf 'Required live run %s status=%s url=%s\n' \
+                  printf 'Run %s status=%s url=%s\n' \
                     "$RUN_ID" "${state%%:*}" "$run_url"
                   ;;
                 completed:success)
-                  printf 'Required live run %s status=completed conclusion=success url=%s\n' \
+                  printf 'Run %s status=completed conclusion=success url=%s\n' \
                     "$RUN_ID" "$run_url"
                   ;;
                 completed:failure | completed:cancelled | completed:timed_out | completed:action_required | completed:neutral | completed:skipped | completed:stale | completed:startup_failure)
-                  printf '::error title=Required live run did not succeed::Run %s completed with conclusion %s. %s\n' \
+                  printf '::error title=E2E run failed::Run %s completed with conclusion %s. %s\n' \
                     "$RUN_ID" "${state#*:}" "$run_url" >&2
                   ;;
                 *)
-                  printf '::error title=Unexpected required live state::Run %s returned an unsupported status/conclusion pair. %s\n' \
+                  printf '::error title=Unexpected run state::Run %s returned an unsupported status/conclusion pair. %s\n' \
                     "$RUN_ID" "$run_url" >&2
                   ;;
               esac
@@ -177,12 +177,12 @@ jobs:
           WAIT
 
           if [ "$wait_status" -eq 124 ]; then
-            printf '::error title=Required live wait timed out::The run did not complete within 105 minutes.\n' >&2
+            printf '::error title=E2E run timed out::The run did not complete within 105 minutes.\n' >&2
           fi
           exit "$wait_status"
 
       - id: evidence
-        name: Download required live evidence
+        name: Download evidence
         if: ${{ always() && steps.start.outputs.dispatched == 'true' }}
         continue-on-error: true
         env:
@@ -195,33 +195,33 @@ jobs:
             gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" \
               --dir "${{ steps.workspace.outputs.work_dir }}/evidence" || download_status=$?
           if [ "$download_status" -eq 124 ]; then
-            printf '::error title=Required live evidence download timed out::Artifact download exceeded 10 minutes.\n' >&2
+            printf '::error title=Evidence download timed out::Artifact download exceeded 10 minutes.\n' >&2
           fi
           exit "$download_status"
 
       - id: finish
-        name: Finish required live evaluation
+        name: Verify evidence
         if: ${{ always() && steps.start.outputs.dispatched == 'true' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: >-
-          node --experimental-strip-types tools/e2e/required-live.mts
+          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
           --mode finish
           --work-dir "${{ steps.workspace.outputs.work_dir }}"
           --state-hash "${{ steps.start.outputs.state_hash }}"
           --check-id "${{ steps.start.outputs.check_id }}"
           --run-id "${{ steps.start.outputs.run_id }}"
 
-      - name: Close incomplete required live check
+      - name: Close incomplete check
         if: ${{ always() && steps.start.outputs.check_id != '' && steps.start.outputs.finalized != 'true' && steps.finish.outputs.finalized != 'true' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: >-
-          node --experimental-strip-types tools/e2e/required-live.mts
+          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
           --mode abandon
           --check-id "${{ steps.start.outputs.check_id }}"
           --run-id "${{ steps.start.outputs.run_id }}"
 
-      - name: Remove private controller workspace
+      - name: Remove private workspace
         if: ${{ always() && steps.workspace.outputs.work_dir != '' }}
         run: rm -rf -- "${{ steps.workspace.outputs.work_dir }}"

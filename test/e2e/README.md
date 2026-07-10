@@ -10,8 +10,8 @@ before those targets run; local runners must provide it themselves.
 
 - `.github/workflows/e2e.yaml` is the scheduled, manually dispatchable, and
   selectively dispatched live target workflow.
-- `.github/workflows/required-live-e2e.yaml` is the trusted pull request
-  controller that owns the required `E2E / Required Live` check.
+- `.github/workflows/pr-e2e-gate.yaml` is the PR controller for
+  `E2E / PR Gate`.
 - `.github/workflows/e2e-branch-validation.yaml` provisions Brev instances and
   runs focused E2E targets from source on a clean machine.
 - Platform workflows such as macOS, WSL, Ollama proxy, sandbox image, and
@@ -55,32 +55,23 @@ artifact so baseline aggregation stays stable.
 Older issue references to Vitest target artifacts under `e2e-artifacts/vitest/`
 map to this consolidated `e2e-artifacts/live/` registry-target artifact layout.
 
-## Required live PR check
+## PR E2E check
 
-When `CI / Pull Request` completes for a same-repository pull request, the
-trusted `.github/workflows/required-live-e2e.yaml` workflow creates the
-`E2E / Required Live` check for that revision.
-The model-independent controller resolves the open pull request, reads its
-complete changed-file list from GitHub, and builds the deterministic risk plan.
-If runtime regression families match, it dispatches every selected
-`requiredJobs` entry through `e2e.yaml`.
-If no family matches, the check succeeds without dispatching live E2E.
+When `CI / Pull Request` completes for a PR from this repository,
+`.github/workflows/pr-e2e-gate.yaml` creates `E2E / PR Gate` for the PR head
+commit. The controller reads all changed files and builds the deterministic
+risk plan. If a runtime risk family matches, it dispatches every selected
+`requiredJobs` entry through `e2e.yaml`; otherwise the check passes without an
+E2E run.
 
-The controller verifies that the pull request did not change while the plan
-was prepared.
-It records the trusted workflow revision, requires that revision to remain the
-current `main` revision immediately before dispatch, and accepts only a child
-workflow run created from that same revision.
-The `e2e.yaml` workflow definition stays on `main`, while each selected job
-checks out the pull request revision supplied through `checkout_sha`.
-Before E2E preparation or selected jobs can use repository secrets, the child
-workflow verifies that the pull request is still open, comes from
-`NVIDIA/NemoClaw`, and still points to that revision.
-It also accepts only selective job dispatches without the `targets` input and
-valid plan and correlation metadata.
-GitHub returns the dispatched workflow's run ID directly, and the controller
-uses that ID as the sole child-run selector for waiting, evidence download,
-and completion.
+Before dispatch, the controller verifies that the PR is unchanged and that
+`main` still points to its workflow commit. It accepts only an E2E run using
+that commit. Each selected job checks out `checkout_sha`. Before preparation or
+secret-bearing jobs can run, `e2e.yaml` verifies that the PR remains open,
+belongs to `NVIDIA/NemoClaw`, and still has that head commit. The dispatch
+includes selected jobs and valid plan and correlation metadata, but not
+`targets`. The controller uses GitHub's returned run ID for waiting, evidence
+download, and completion.
 
 The Vitest reporter writes one `risk-signal.json` for each selected job and
 matrix shard.
@@ -89,28 +80,23 @@ matching job identity, attach the reporter to every Vitest invocation, and
 always upload its evidence artifact.
 Each signal binds the observed checkout SHA, expected SHA, plan hash,
 correlation ID, and pass, failure, skip, pending, and unhandled-error counts.
-The controller retains `required-live-plan-<sha>` for 14 days, while each
+The controller retains `pr-e2e-risk-plan-<sha>` for 14 days, while each
 signal travels in the selected job's existing E2E artifact.
 Its private dispatch state is protected by a SHA-256 digest that is verified
 before downloaded evidence is classified.
 
-The required check has a binary result.
-It succeeds only when the correlated E2E workflow succeeds and every expected
-job shard produces one complete, unskipped pass.
-Workflow or test failures, missing or duplicate signals, skipped or pending
-tests, interrupted runs, and controller or evidence-validation errors fail the
-check.
+When the plan selects jobs, the check passes only when the E2E run succeeds and
+every expected job shard uploads one complete passing signal with no skips or
+pending tests. Every other dispatched outcome fails.
 The coordinator has a 180-minute job budget and gives evidence download its
 own 10-minute limit, so a stalled download fails instead of consuming the
 remaining coordination time.
-Required-live dispatches suppress PR comments and the scheduled or manual
+These dispatches suppress PR comments and the scheduled or manual
 scorecard, including scorecard Slack reporting.
 
-Pull request synchronization, reopening, or closure cancels active child runs
-for that pull request.
-The E2E workflow also cancels a superseded child run when a new revision is
-dispatched, while the earlier controller remains available to close its check
-as failed.
+Synchronizing, reopening, or closing the PR cancels its active E2E runs. A new
+dispatch also cancels the previous run, while the previous controller remains
+available to close its check as failed.
 The controller does not read PR Review Advisor or E2E Advisor output, so model
 availability and recommendations are not part of merge authority.
 

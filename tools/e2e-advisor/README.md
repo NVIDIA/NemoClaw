@@ -38,57 +38,18 @@ the trusted timing signal.
   `.github/workflows/e2e.yaml`, but the advisor job does not
   trigger those commands automatically.
 
-## Required live PR check
+## PR E2E check
 
-The model-independent `.github/workflows/required-live-e2e.yaml` workflow owns the
-required `E2E / Required Live` check for same-repository pull requests after
-`CI / Pull Request` completes.
-It does not consume model output or advisor artifacts.
-Instead, `tools/e2e/required-live.mts` resolves the open pull request for the
-triggering revision, reads its complete changed-file list, and builds a new plan
-from the checked-in risk policy.
-The controller dispatches every job in `requiredJobs` through `e2e.yaml`.
-If no runtime risk family matches, it reports success without dispatching live E2E.
+`.github/workflows/pr-e2e-gate.yaml` owns `E2E / PR Gate` after
+`CI / Pull Request` completes. It uses the same checked-in risk policy as E2E
+Advisor, but rebuilds the plan from GitHub's changed-file list and never
+consumes advisor output. It dispatches every selected `requiredJobs` entry and
+verifies the resulting E2E evidence. See
+[NemoClaw E2E CI](../../test/e2e/README.md) for the full lifecycle.
 
-The controller verifies the pull request identity again immediately before
-dispatch.
-It also records the trusted controller revision, requires that revision to
-still be the current `main` revision immediately before dispatch, and accepts
-only a child workflow run created from that same revision.
-The child workflow validates that the pull request is still open, belongs to
-the base repository, and still points to the requested checkout SHA before E2E
-preparation or secret-bearing jobs can run.
-It also requires selective jobs with no `targets` input, a valid plan hash,
-and a valid correlation ID.
-The controller uses GitHub's returned workflow run ID as the sole child-run
-selector for waiting, evidence download, and completion.
-
-The Vitest reporter records the observed checkout SHA and pass, failure, skip,
-pending, and unhandled-error counts for each selected job and matrix shard.
-The checked workflow boundary requires every job named by the deterministic
-policy to expose its matching job identity, attach the reporter to every
-Vitest invocation, and always upload its evidence artifact.
-The controller accepts only signals bound to the expected SHA, plan hash,
-correlation ID, job, and shard.
-It also records a SHA-256 digest of its private dispatch state and verifies that
-digest before parsing downloaded evidence.
-
-The check has a binary result.
-It succeeds only when the correlated workflow succeeds and every expected job
-shard produces one complete, unskipped pass.
-Workflow failures, failed tests, missing or duplicate signals, skipped or
-pending tests, interrupted runs, and controller or evidence-validation errors
-all fail the check.
-Evidence download has its own 10-minute limit within the coordinator's
-180-minute job budget, and exceeding that limit fails the check.
-Pull request synchronization, reopening, or closure cancels active child runs
-for that pull request, and the E2E workflow cancels a superseded child run when
-a new revision is dispatched.
-
-E2E Advisor remains advisory.
-It uses the same deterministic policy as a recommendation floor and may add
-adjacent coverage, but its model output and availability never determine the
-required check.
+E2E Advisor remains advisory. It uses the risk policy as a recommendation
+floor and may add adjacent coverage, but its model output and availability do
+not determine the PR E2E check.
 
 ## Required secret
 
@@ -116,9 +77,9 @@ dispatch commands; it does not trigger E2E workflows automatically.
 - `risk-plan.json` — deterministic risk families, invariants, required jobs,
   changed files, and the plan digest for the pull request revision.
   Both E2E Advisor projections consume this required-job floor.
-  The required live controller independently rebuilds the plan from GitHub's
-  pull request file list and dispatches every selected job, so this advisor
-  artifact is not an input to the required check.
+  The PR E2E controller independently rebuilds the plan from GitHub's pull
+  request file list and dispatches every selected job, so this advisor
+  artifact is not an input to the PR E2E check.
 - `e2e-advisor-raw-output.txt` — raw advisor transcript and diagnostics.
 - `e2e-advisor-result.json` — parsed advisor response or execution metadata.
 - `e2e-advisor-session.html` — exported advisor session transcript.
@@ -149,6 +110,3 @@ secret. Run `npm install` first so the Pi SDK dependency is available.
 
 `tools/e2e-advisor/schema.json` defines the normalized coverage recommendation shape.
 `tools/e2e-advisor/targets-schema.json` defines the normalized target recommendation shape used by the `targets` and `jobs` dispatch commands.
-
-The required live check verifies complete E2E evidence for the same pull
-request revision without making model availability part of merge authority.

@@ -14,7 +14,7 @@ import {
   type WorkflowStep,
 } from "./helpers/e2e-workflow-contract.ts";
 
-const REQUIRED_LIVE_PATH = ".github/workflows/required-live-e2e.yaml";
+const PR_GATE_PATH = ".github/workflows/pr-e2e-gate.yaml";
 const E2E_PATH = ".github/workflows/e2e.yaml";
 
 type CoordinatorJob = WorkflowJob & {
@@ -60,9 +60,9 @@ function runWaitStep(
   scenario: "success" | "failure" | "query-failure" | "timeout" | "unsupported",
   options: { runId?: string } = {},
 ) {
-  const workflow = readYaml<TriggeredWorkflow>(REQUIRED_LIVE_PATH);
-  const wait = step(workflow.jobs.coordinate, "Wait for required live run");
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-required-live-wait-"));
+  const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
+  const wait = step(workflow.jobs.coordinate, "Wait for E2E run");
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-wait-"));
   const binDir = path.join(tempDir, "bin");
   const callCountPath = path.join(tempDir, "gh-call-count");
   fs.mkdirSync(binDir);
@@ -122,9 +122,9 @@ exec "$@"
 }
 
 function runStartStep(headBranch: string) {
-  const workflow = readYaml<TriggeredWorkflow>(REQUIRED_LIVE_PATH);
-  const start = step(workflow.jobs.coordinate, "Start required live evaluation");
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-required-live-start-step-"));
+  const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
+  const start = step(workflow.jobs.coordinate, "Start evaluation");
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-start-step-"));
   const binDir = path.join(tempDir, "bin");
   const argumentsPath = path.join(tempDir, "node-arguments");
   fs.mkdirSync(binDir);
@@ -162,8 +162,8 @@ function runStartStep(headBranch: string) {
 
 function runChildValidation(currentPullSha: string) {
   const workflow = readYaml<DispatchWorkflow>(E2E_PATH);
-  const validation = step(workflow.jobs["generate-matrix"], "Validate required-live dispatch");
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-required-live-child-"));
+  const validation = step(workflow.jobs["generate-matrix"], "Validate controller dispatch");
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-child-"));
   const binDir = path.join(tempDir, "bin");
   fs.mkdirSync(binDir);
   fs.writeFileSync(
@@ -215,13 +215,13 @@ esac
   }
 }
 
-describe("required live E2E workflow", () => {
-  it("runs only from trusted lifecycle events with least-privilege jobs", () => {
-    const workflow = readYaml<TriggeredWorkflow>(REQUIRED_LIVE_PATH);
+describe("PR E2E gate workflow", () => {
+  it("limits triggers and job permissions", () => {
+    const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
     const cancel = workflow.jobs["cancel-superseded"];
     const coordinate = workflow.jobs.coordinate;
 
-    expect(workflow.name).toBe("E2E / Required Live");
+    expect(workflow.name).toBe("E2E / PR Gate");
     expect(workflow.on).toEqual({
       workflow_run: {
         workflows: ["CI / Pull Request"],
@@ -246,7 +246,7 @@ describe("required live E2E workflow", () => {
   });
 
   it("pins both controller checkouts and installs without lifecycle scripts or caches", () => {
-    const workflow = readYaml<TriggeredWorkflow>(REQUIRED_LIVE_PATH);
+    const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
     const allSteps = Object.values(workflow.jobs).flatMap((job) => job.steps ?? []);
     const checkouts = allSteps.filter((candidate) =>
       candidate.uses?.startsWith("actions/checkout@"),
@@ -255,7 +255,7 @@ describe("required live E2E workflow", () => {
       candidate.uses?.startsWith("actions/setup-node@"),
     );
     const installs = allSteps.filter(
-      (candidate) => candidate.name === "Install trusted controller dependencies",
+      (candidate) => candidate.name === "Install controller dependencies",
     );
 
     expect(checkouts).toHaveLength(2);
@@ -276,12 +276,12 @@ describe("required live E2E workflow", () => {
     ).toBe(false);
   });
 
-  it("cancels superseded pull request runs through the trusted controller", () => {
-    const workflow = readYaml<TriggeredWorkflow>(REQUIRED_LIVE_PATH);
+  it("cancels superseded PR runs", () => {
+    const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
     const cancel = workflow.jobs["cancel-superseded"];
-    const cancelStep = step(cancel, "Cancel superseded required live runs");
+    const cancelStep = step(cancel, "Cancel superseded E2E runs");
 
-    expect(cancelStep.run).toContain("tools/e2e/required-live.mts --mode cancel");
+    expect(cancelStep.run).toContain("tools/e2e/pr-e2e-gate.mts --mode cancel");
     expect(cancelStep.run).toContain('--pr "$PR_NUMBER"');
     expect(cancelStep.run).not.toContain("${{ github.event.");
     expect(cancelStep.env?.GITHUB_TOKEN).toBe("${{ github.token }}");
@@ -305,27 +305,27 @@ describe("required live E2E workflow", () => {
     expect(execution.arguments[branchFlag + 1]).toBe(headBranch);
   });
 
-  it("coordinates one check lifecycle around a bounded child run", () => {
-    const workflow = readYaml<TriggeredWorkflow>(REQUIRED_LIVE_PATH);
+  it("coordinates the check around one E2E run", () => {
+    const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
     const job = workflow.jobs.coordinate;
-    const workspace = step(job, "Create private controller workspace");
-    const start = step(job, "Start required live evaluation");
-    const upload = step(job, "Upload required live plan");
-    const wait = step(job, "Wait for required live run");
-    const download = step(job, "Download required live evidence");
-    const finish = step(job, "Finish required live evaluation");
-    const fallback = step(job, "Close incomplete required live check");
-    const cleanup = step(job, "Remove private controller workspace");
+    const workspace = step(job, "Create private workspace");
+    const start = step(job, "Start evaluation");
+    const upload = step(job, "Upload risk plan");
+    const wait = step(job, "Wait for E2E run");
+    const download = step(job, "Download evidence");
+    const finish = step(job, "Verify evidence");
+    const fallback = step(job, "Close incomplete check");
+    const cleanup = step(job, "Remove private workspace");
 
     expect(job.concurrency).toEqual({
       group:
-        "required-live-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}",
+        "pr-e2e-gate-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}",
       "cancel-in-progress": false,
     });
     expect(job["timeout-minutes"]).toBe(180);
-    expect(workspace.run).toContain('mktemp -d "${RUNNER_TEMP}/nemoclaw-required-live.XXXXXX"');
+    expect(workspace.run).toContain('mktemp -d "${RUNNER_TEMP}/nemoclaw-pr-e2e-gate.XXXXXX"');
     expect(workspace.run).toContain('chmod 700 "$work_dir"');
-    expect(start.run).toContain("tools/e2e/required-live.mts --mode start");
+    expect(start.run).toContain("tools/e2e/pr-e2e-gate.mts --mode start");
     expect(start.run).toContain('--head "$HEAD_SHA"');
     expect(start.run).toContain('--head-repo "$HEAD_REPOSITORY"');
     expect(start.run).toContain('--head-branch "$HEAD_BRANCH"');
@@ -343,9 +343,8 @@ describe("required live E2E workflow", () => {
     });
     expect(start.run).not.toContain("--mode initialize");
     expect(upload.if).toContain("steps.workspace.outputs.work_dir != ''");
-    expect(upload.with?.path).toBe(
-      "${{ steps.workspace.outputs.work_dir }}/required-live-plan.json",
-    );
+    expect(upload.with?.name).toBe("pr-e2e-risk-plan-${{ github.event.workflow_run.head_sha }}");
+    expect(upload.with?.path).toBe("${{ steps.workspace.outputs.work_dir }}/risk-plan.json");
     expect(wait.run).toContain("timeout --signal=TERM --kill-after=30s 105m");
     expect(wait.run).toContain('gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY"');
     expect(wait.run).toContain("--json status,conclusion");
@@ -365,7 +364,7 @@ describe("required live E2E workflow", () => {
     expect(download.run).toContain('--dir "${{ steps.workspace.outputs.work_dir }}/evidence"');
     expect(download["continue-on-error"]).toBe(true);
     expect(finish.if).toContain("always()");
-    expect(finish.run).toContain("tools/e2e/required-live.mts --mode finish");
+    expect(finish.run).toContain("tools/e2e/pr-e2e-gate.mts --mode finish");
     expect(finish.run).toContain('--state-hash "${{ steps.start.outputs.state_hash }}"');
     expect(finish.run).toContain('--check-id "${{ steps.start.outputs.check_id }}"');
     expect(finish.run).toContain('--run-id "${{ steps.start.outputs.run_id }}"');
@@ -373,7 +372,7 @@ describe("required live E2E workflow", () => {
     expect(fallback.if).toContain("steps.start.outputs.check_id != ''");
     expect(fallback.if).toContain("steps.start.outputs.finalized != 'true'");
     expect(fallback.if).toContain("steps.finish.outputs.finalized != 'true'");
-    expect(fallback.run).toContain("tools/e2e/required-live.mts --mode abandon");
+    expect(fallback.run).toContain("tools/e2e/pr-e2e-gate.mts --mode abandon");
     expect(fallback.run).toContain('--run-id "${{ steps.start.outputs.run_id }}"');
     expect(cleanup.if).toContain("always() && steps.workspace.outputs.work_dir != ''");
     expect(cleanup.run).toContain('rm -rf -- "${{ steps.workspace.outputs.work_dir }}"');
@@ -394,17 +393,17 @@ describe("required live E2E workflow", () => {
       }),
     );
     expect(workflow["run-name"]).toContain(
-      "format('E2E PR #{0} required live {1}', inputs.pr_number, inputs.correlation_id)",
+      "format('E2E PR #{0} ({1})', inputs.pr_number, inputs.correlation_id)",
     );
   });
 
-  it("executes child validation against the pull request current revision", () => {
+  it("validates the E2E run against the PR head commit", () => {
     const current = runChildValidation("a".repeat(40));
     const stale = runChildValidation("c".repeat(40));
 
     expect(current.status).toBe(0);
     expect(stale.status).toBe(1);
-    expect(stale.stdout).toContain("checkout_sha must match the pull request's current commit");
+    expect(stale.stdout).toContain("checkout_sha must match the PR head commit");
   });
 
   it("logs each child state once and exits after success", () => {
@@ -423,7 +422,7 @@ describe("required live E2E workflow", () => {
 
     expect(result.status).toBe(1);
     expect(result.stdout.match(/status=in_progress/gu)).toHaveLength(1);
-    expect(result.stderr).toContain("::error title=Required live run did not succeed::");
+    expect(result.stderr).toContain("::error title=E2E run failed::");
     expect(result.stderr).toContain("completed with conclusion failure");
   });
 
@@ -432,14 +431,14 @@ describe("required live E2E workflow", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("simulated GitHub query failure");
-    expect(result.stderr).toContain("::error title=Required live status query failed::");
+    expect(result.stderr).toContain("::error title=Run status query failed::");
   });
 
   it("labels only the bounded wait exit as a timeout", () => {
     const result = runWaitStep("timeout");
 
     expect(result.status).toBe(124);
-    expect(result.stderr).toContain("::error title=Required live wait timed out::");
+    expect(result.stderr).toContain("::error title=E2E run timed out::");
     expect(result.stderr).toContain("did not complete within 105 minutes");
   });
 
@@ -448,7 +447,7 @@ describe("required live E2E workflow", () => {
 
     expect(result.status).toBe(1);
     expect(result.ghCallCount).toBe(0);
-    expect(result.stderr).toContain("::error title=Invalid required live run ID::");
+    expect(result.stderr).toContain("::error title=Invalid run ID::");
   });
 
   it("fails closed for an unsupported child state", () => {
@@ -456,6 +455,6 @@ describe("required live E2E workflow", () => {
 
     expect(result.status).toBe(1);
     expect(result.ghCallCount).toBe(1);
-    expect(result.stderr).toContain("::error title=Unexpected required live state::");
+    expect(result.stderr).toContain("::error title=Unexpected run state::");
   });
 });

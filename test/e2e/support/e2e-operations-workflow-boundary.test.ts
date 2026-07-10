@@ -57,7 +57,7 @@ describe("E2E operations workflow boundary", () => {
     );
   });
 
-  it("keeps PR reporting and scorecards disabled for required-live runs", () => {
+  it("keeps PR reporting and scorecards disabled for PR E2E runs", () => {
     const workflow = readE2eOperationsWorkflow();
     workflow.jobs["report-to-pr"].if =
       "${{ always() && github.event_name == 'workflow_dispatch' }}";
@@ -72,13 +72,13 @@ describe("E2E operations workflow boundary", () => {
     );
   });
 
-  it("rejects required-live protocol and pull request validation drift", () => {
+  it("rejects controller protocol and PR validation drift", () => {
     const workflow = readE2eOperationsWorkflow();
     delete workflow.on?.workflow_dispatch?.inputs?.plan_hash;
     workflow.env!.NEMOCLAW_E2E_PLAN_HASH = "${{ inputs.checkout_sha }}";
     workflow.concurrency!["cancel-in-progress"] = false;
     const validation = workflow.jobs["generate-matrix"].steps!.find(
-      (step) => step.name === "Validate required-live dispatch",
+      (step) => step.name === "Validate controller dispatch",
     )!;
     validation.if = "${{ inputs.plan_hash != '' }}";
     validation.run = "echo unchecked";
@@ -90,11 +90,11 @@ describe("E2E operations workflow boundary", () => {
     expect(validateE2eOperationsWorkflow(workflow)).toEqual(
       expect.arrayContaining([
         "workflow_dispatch plan_hash must be an optional string with an empty default",
-        "E2E workflow must bind NEMOCLAW_E2E_PLAN_HASH to required-live metadata",
-        "required-live concurrency must cancel obsolete pull request runs",
-        "required-live validation must be activated only by checkout_sha",
-        'required-live validation must retain "$PR_NUMBER" =~ ^[1-9][0-9]*$',
-        "generate-matrix checkout must use the selected immutable commit",
+        "E2E workflow must bind NEMOCLAW_E2E_PLAN_HASH to controller metadata",
+        "PR E2E concurrency must cancel obsolete runs",
+        "Controller validation must be activated only by checkout_sha",
+        'Controller validation must retain "$PR_NUMBER" =~ ^[1-9][0-9]*$',
+        "generate-matrix checkout must use the selected PR commit",
       ]),
     );
   });
@@ -112,9 +112,9 @@ describe("E2E operations workflow boundary", () => {
 
     expect(validateE2eOperationsWorkflow(workflow)).toEqual(
       expect.arrayContaining([
-        "cloud-onboard must expose matching required-live job identity",
-        "cloud-onboard must attach the required-live reporter to every Vitest invocation",
-        "cloud-onboard must always upload one required-live evidence artifact",
+        "cloud-onboard must expose matching E2E job identity",
+        "cloud-onboard must attach the risk-signal reporter to every Vitest invocation",
+        "cloud-onboard must always upload one evidence artifact",
       ]),
     );
   });
