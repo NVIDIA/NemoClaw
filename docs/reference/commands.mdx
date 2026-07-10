@@ -725,7 +725,7 @@ NemoClaw permits the retry only after it confirms either a trusted host-side GPU
 It then saves redacted diagnostics and removes the incomplete sandbox before retrying.
 Sandbox-reported CUDA output alone never authorizes the broader compatibility envelope, even when the operator enabled fallback.
 That case fails closed and points to the explicit `NEMOCLAW_DOCKER_GPU_PATCH=1` compatibility-only control.
-NemoClaw retries only after it verifies that no OpenShell-labeled container remains; if cleanup cannot be proven safe, onboarding stops and prints cleanup guidance instead.
+NemoClaw retries only after it verifies that no OpenShell-managed Docker container labeled for that sandbox remains; if cleanup cannot be proven safe, onboarding stops and prints cleanup guidance instead.
 On Docker Desktop WSL and Jetson/Tegra, automatic GPU onboarding uses the compatibility path directly.
 On ordinary native Linux, the compatibility path uses an available NVIDIA CDI spec before falling back to Docker `--gpus all` or the NVIDIA runtime.
 On Docker Desktop WSL, the compatibility path skips CDI and tries Docker `--gpus all` before the NVIDIA runtime.
@@ -2377,7 +2377,8 @@ The command backs up workspace state, destroys the old sandbox (including its ho
 Credentials are stripped from backups before storage.
 Policy presets applied to the old sandbox are reapplied to the new one so your egress rules survive the rebuild.
 The replacement uses the recorded compatible-endpoint reasoning mode and web search selection instead of ambient shell values.
-The recorded sandbox GPU mode is preserved across rebuild.
+Rebuild preserves the recorded sandbox GPU enablement mode and, for an explicitly enabled sandbox, its recorded device selector.
+It re-resolves the Docker-driver GPU route from the current host and current `NEMOCLAW_DOCKER_GPU_PATCH` value, so native-only, explicitly authorized native-with-fallback, and compatibility-only routing may differ from the original onboarding run.
 A rebuild preserves the recorded tool-disclosure mode unless `--tool-disclosure` explicitly changes it; it ignores an ambient `NEMOCLAW_TOOL_DISCLOSURE` value while recreating the sandbox.
 A rebuild preserves the recorded Deep Agents Code observability choice and matching local OTLP policy state unless `--observability` or `--no-observability` explicitly changes them.
 A rebuild preserves the recorded Deep Agents Code auto-approval capability unless `--dcode-auto-approval` explicitly changes it.
