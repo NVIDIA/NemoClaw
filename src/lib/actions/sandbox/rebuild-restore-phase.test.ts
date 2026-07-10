@@ -15,6 +15,19 @@ import { runRebuildRestorePhase } from "./rebuild-restore-phase";
 const BUILTIN_OBSERVABILITY_CONTENT =
   "network_policies:\n  observability-otlp-local:\n    name: observability-otlp-local\n";
 
+type StandardRestoreOptions = Omit<
+  Parameters<typeof runRebuildRestorePhase>[0],
+  "targetAgentType" | "targetImageIsCustom"
+>;
+
+function runStandardRebuildRestorePhase(options: StandardRestoreOptions) {
+  return runRebuildRestorePhase({
+    ...options,
+    targetAgentType: "openclaw",
+    targetImageIsCustom: false,
+  });
+}
+
 describe("rebuild policy restore fidelity", () => {
   beforeEach(() => {
     vi.spyOn(policies, "loadPresetForSandbox").mockImplementation((_sandboxName, presetName) =>
@@ -40,14 +53,12 @@ describe("rebuild policy restore fidelity", () => {
       error: "could not read fresh OpenClaw plugin install registry",
     });
 
-    const result = runRebuildRestorePhase({
+    const result = runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: { agentType: "openclaw", backupPath: "/tmp/rebuild-backup" } as never,
       policyPresets: [],
       customPolicies: [],
       reconcileManagedDcodeObservability: false,
-      targetAgentType: "openclaw",
-      targetImageIsCustom: false,
       log,
     });
 
@@ -58,35 +69,6 @@ describe("rebuild policy restore fidelity", () => {
     expect(log).toHaveBeenCalledWith(
       expect.stringContaining("error=could not read fresh OpenClaw plugin install registry"),
     );
-  });
-
-  it("forwards the recreated target identity and explicit custom-image capability", () => {
-    vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const restoreRecreatedSandboxState = vi
-      .spyOn(sandboxState, "restoreRecreatedSandboxState")
-      .mockReturnValue({
-        success: true,
-        restoredDirs: [],
-        restoredFiles: [],
-        failedDirs: [],
-        failedFiles: [],
-      });
-
-    runRebuildRestorePhase({
-      sandboxName: "alpha",
-      targetAgentType: "langchain-deepagents-code",
-      targetImageIsCustom: true,
-      backupManifest: { agentType: "openclaw", backupPath: "/tmp/rebuild-backup" } as never,
-      policyPresets: [],
-      customPolicies: [],
-      reconcileManagedDcodeObservability: false,
-      log: vi.fn(),
-    });
-
-    expect(restoreRecreatedSandboxState).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backup", {
-      targetAgentType: "langchain-deepagents-code",
-      allowCustomImageWholeStateFileRestore: true,
-    });
   });
 
   it("replays custom web-policy names from exact content instead of same-name built-ins", () => {
@@ -109,7 +91,7 @@ describe("rebuild policy restore fidelity", () => {
       content: `network_policies:\n  ${name}-custom:\n    name: ${name}-custom\n`,
       sourcePath: `/tmp/${name}.yaml`,
     }));
-    const result = runRebuildRestorePhase({
+    const result = runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: {
         agentType: "openclaw",
@@ -119,8 +101,6 @@ describe("rebuild policy restore fidelity", () => {
       policyPresets: ["npm", "brave", "tavily", "nous-web"],
       customPolicies,
       reconcileManagedDcodeObservability: false,
-      targetAgentType: "openclaw",
-      targetImageIsCustom: false,
       log: vi.fn(),
     });
 
@@ -159,14 +139,12 @@ describe("rebuild policy restore fidelity", () => {
         sourcePath: "/tmp/custom-egress.yaml",
       },
     ];
-    const result = runRebuildRestorePhase({
+    const result = runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: null,
       policyPresets: [],
       customPolicies,
       reconcileManagedDcodeObservability: false,
-      targetAgentType: "openclaw",
-      targetImageIsCustom: false,
       log: vi.fn(),
     });
 
@@ -194,14 +172,12 @@ describe("rebuild policy restore fidelity", () => {
         "network_policies:\n  mcp-bridge-search:\n    endpoints:\n      - host: mcp.example.com\n        allowed_ips: [203.0.113.10]\n",
       sourcePath: MCP_BRIDGE_POLICY_SOURCE,
     };
-    const result = runRebuildRestorePhase({
+    const result = runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: null,
       policyPresets: [],
       customPolicies: [genuineCustomPolicy, generatedMcpPolicy],
       reconcileManagedDcodeObservability: false,
-      targetAgentType: "openclaw",
-      targetImageIsCustom: false,
       log: vi.fn(),
     });
 
@@ -225,14 +201,12 @@ describe("rebuild policy restore fidelity", () => {
       .mockReturnValueOnce("absent");
     const removePreset = vi.spyOn(policies, "removePreset").mockReturnValue(true);
 
-    const result = runRebuildRestorePhase({
+    const result = runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: null,
       policyPresets: ["npm"],
       customPolicies: [],
       reconcileManagedDcodeObservability: true,
-      targetAgentType: "openclaw",
-      targetImageIsCustom: false,
       log: vi.fn(),
     });
 
@@ -252,14 +226,12 @@ describe("rebuild policy restore fidelity", () => {
       .mockReturnValueOnce(null);
     vi.spyOn(policies, "removePreset").mockReturnValue(true);
 
-    const result = runRebuildRestorePhase({
+    const result = runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: null,
       policyPresets: ["npm"],
       customPolicies: [],
       reconcileManagedDcodeObservability: true,
-      targetAgentType: "openclaw",
-      targetImageIsCustom: false,
       log: vi.fn(),
     });
 
@@ -284,14 +256,12 @@ describe("rebuild policy restore fidelity", () => {
         throw new Error("apply failed");
       });
 
-    const result = runRebuildRestorePhase({
+    const result = runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: null,
       policyPresets: ["npm", "bad", "throw"],
       customPolicies: [],
       reconcileManagedDcodeObservability: false,
-      targetAgentType: "openclaw",
-      targetImageIsCustom: false,
       log: vi.fn(),
     });
 
@@ -307,14 +277,12 @@ describe("rebuild policy restore fidelity", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(policies, "applyPreset").mockReturnValue(true);
 
-    const result = runRebuildRestorePhase({
+    const result = runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: null,
       policyPresets: ["observability-otlp-local"],
       customPolicies: [],
       reconcileManagedDcodeObservability: true,
-      targetAgentType: "openclaw",
-      targetImageIsCustom: false,
       log: vi.fn(),
     });
 
@@ -330,14 +298,12 @@ describe("rebuild policy restore fidelity", () => {
     vi.spyOn(policies, "applyPreset").mockReturnValue(true);
     vi.spyOn(policies, "getPresetContentGatewayState").mockReturnValue(null);
 
-    const result = runRebuildRestorePhase({
+    const result = runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: null,
       policyPresets: ["observability-otlp-local"],
       customPolicies: [],
       reconcileManagedDcodeObservability: true,
-      targetAgentType: "openclaw",
-      targetImageIsCustom: false,
       log: vi.fn(),
     });
 
@@ -348,14 +314,12 @@ describe("rebuild policy restore fidelity", () => {
   it("does not remove or persist DCode base-policy keys detected as broad presets", () => {
     const removePreset = vi.spyOn(policies, "removePreset");
 
-    const result = runRebuildRestorePhase({
+    const result = runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: null,
       policyPresets: [],
       customPolicies: [],
       reconcileManagedDcodeObservability: true,
-      targetAgentType: "openclaw",
-      targetImageIsCustom: false,
       log: vi.fn(),
     });
 
@@ -375,14 +339,12 @@ describe("rebuild policy restore fidelity", () => {
       sourcePath: "/tmp/operator-collector.yaml",
     };
 
-    const result = runRebuildRestorePhase({
+    const result = runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: null,
       policyPresets: [],
       customPolicies: [customPolicy],
       reconcileManagedDcodeObservability: true,
-      targetAgentType: "openclaw",
-      targetImageIsCustom: false,
       log: vi.fn(),
     });
 
@@ -409,14 +371,12 @@ describe("rebuild policy restore fidelity", () => {
       sourcePath: "/tmp/corp-otel.yaml",
     };
 
-    const result = runRebuildRestorePhase({
+    const result = runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: null,
       policyPresets: [],
       customPolicies: [customPolicy],
       reconcileManagedDcodeObservability: true,
-      targetAgentType: "openclaw",
-      targetImageIsCustom: false,
       log: vi.fn(),
     });
 
@@ -445,14 +405,12 @@ describe("rebuild policy restore fidelity", () => {
       .mockReturnValueOnce("absent");
     const removePreset = vi.spyOn(policies, "removePreset").mockReturnValue(true);
 
-    const result = runRebuildRestorePhase({
+    const result = runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: null,
       policyPresets: ["observability-otlp-local"],
       customPolicies: [customPolicy],
       reconcileManagedDcodeObservability: true,
-      targetAgentType: "openclaw",
-      targetImageIsCustom: false,
       log: vi.fn(),
     });
 
@@ -476,14 +434,12 @@ describe("rebuild policy restore fidelity", () => {
       .mockReturnValueOnce("absent");
     const removePreset = vi.spyOn(policies, "removePreset").mockReturnValue(true);
 
-    const result = runRebuildRestorePhase({
+    const result = runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: null,
       policyPresets: [],
       customPolicies: [customPolicy],
       reconcileManagedDcodeObservability: true,
-      targetAgentType: "openclaw",
-      targetImageIsCustom: false,
       log: vi.fn(),
     });
 
@@ -506,14 +462,12 @@ describe("rebuild policy restore fidelity", () => {
     vi.spyOn(policies, "getPresetContentGatewayState").mockReturnValue("drift");
     const removePreset = vi.spyOn(policies, "removePreset");
 
-    const result = runRebuildRestorePhase({
+    const result = runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: null,
       policyPresets: [],
       customPolicies: [customPolicy],
       reconcileManagedDcodeObservability: true,
-      targetAgentType: "openclaw",
-      targetImageIsCustom: false,
       log: vi.fn(),
     });
 
@@ -535,14 +489,12 @@ describe("rebuild policy restore fidelity", () => {
       .mockReturnValueOnce(null);
     vi.spyOn(policies, "removePreset").mockReturnValue(true);
 
-    const result = runRebuildRestorePhase({
+    const result = runStandardRebuildRestorePhase({
       sandboxName: "alpha",
       backupManifest: null,
       policyPresets: ["observability-otlp-local"],
       customPolicies: [customPolicy],
       reconcileManagedDcodeObservability: true,
-      targetAgentType: "openclaw",
-      targetImageIsCustom: false,
       log: vi.fn(),
     });
 
