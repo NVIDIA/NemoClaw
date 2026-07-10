@@ -159,13 +159,14 @@ function wrappedIssueDiagnosticMatches(
 ): boolean | null {
   const text = stripDiagnosticPrefixes(issueDiagnostic).replace(/^\s*×\s*/u, "");
   const lower = text.toLowerCase();
+  const providerIndex = lower.indexOf("provider ");
   const hasWrappedIssueShape =
-    lower.startsWith("provider ") &&
+    providerIndex >= 0 &&
     lower.includes(" not found and ") &&
     lower.includes(" is not a recognized provider type");
   if (!hasWrappedIssueShape) return null;
 
-  const firstProvider = readQuotedValue(text, lower.indexOf("provider "));
+  const firstProvider = readQuotedValue(text, providerIndex);
   const secondProvider = firstProvider
     ? readQuotedValue(text, lower.indexOf(" and ", firstProvider.end))
     : null;

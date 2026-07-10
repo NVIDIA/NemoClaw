@@ -66,6 +66,16 @@ describe("reconcileRegisteredExtraProviders diagnostics", () => {
       ].join("\n"),
     },
     {
+      label: "wrapped OpenShell provider-get issue diagnostic after runner prefix",
+      provider: "e2e-stale-extra-provider",
+      stderr: [
+        "OpenShell command failed while probing provider:",
+        "Error:   × provider 'e2e-stale-extra-provider' not found and 'e2e-stale-extra-",
+        "  │ provider' is not a recognized provider type. Create it first with",
+        "  │ `openshell provider create --type <type> --name e2e-stale-extra-provider`",
+      ].join("\n"),
+    },
+    {
       label: "OpenShell issue diagnostic with structured not-found code and message",
       provider: "stale-provider",
       stderr:
