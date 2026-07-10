@@ -76,7 +76,7 @@ checks out the pull request revision supplied through `checkout_sha`.
 Before E2E preparation or selected jobs can use repository secrets, the child
 workflow verifies that the pull request is still open, comes from
 `NVIDIA/NemoClaw`, and still points to that revision.
-It also accepts only selective job dispatches with an empty target fan-out and
+It also accepts only selective job dispatches without the `targets` input and
 valid plan and correlation metadata.
 GitHub returns the dispatched workflow's run ID directly, and the controller
 uses that ID as the sole child-run selector for waiting, evidence download,

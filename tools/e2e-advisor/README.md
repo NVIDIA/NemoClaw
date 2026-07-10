@@ -58,7 +58,7 @@ only a child workflow run created from that same revision.
 The child workflow validates that the pull request is still open, belongs to
 the base repository, and still points to the requested checkout SHA before E2E
 preparation or secret-bearing jobs can run.
-It also requires selective jobs, an empty target fan-out, a valid plan hash,
+It also requires selective jobs with no `targets` input, a valid plan hash,
 and a valid correlation ID.
 The controller uses GitHub's returned workflow run ID as the sole child-run
 selector for waiting, evidence download, and completion.
