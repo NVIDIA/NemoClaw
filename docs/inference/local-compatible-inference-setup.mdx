@@ -56,10 +56,18 @@ $$nemoclaw onboard
 
 When the wizard asks you to choose an inference provider, select **Other OpenAI-compatible endpoint**.
 Enter the base URL of your local server, for example `http://localhost:8000/v1` on the default Docker-driver topology.
-For a containerized OpenShell gateway that cannot reach host `localhost`, use the host-gateway URL for your setup, commonly `http://host.openshell.internal:8000/v1`.
+For HTTP loopback endpoints on the default HTTP port or an unprivileged port, such as `http://localhost:8000/v1`, NemoClaw validates the endpoint from the host and registers the OpenShell gateway route through `host.openshell.internal:<port>` so sandbox traffic can leave the container namespace.
+This rewrite depends on an OpenShell topology that resolves `host.openshell.internal` inside the sandbox; if that bridge is unavailable, onboarding can still validate the host URL, but `$$nemoclaw <name> status` is the authoritative runtime check.
+Make sure the local server listens on an address reachable from containers, such as `0.0.0.0`; a server bound only to `127.0.0.1` can still be unreachable from the sandbox route.
+
+<Warning>
+Binding a model server to `0.0.0.0` exposes it on every host interface unless a host firewall or interface policy blocks access.
+Restrict the listener to the OpenShell/Docker bridge when your server supports that, otherwise firewall the port to the bridge network or enable endpoint authentication before using dummy API keys.
+</Warning>
+
 Port `8000` is included in NemoClaw's `local-inference` policy preset.
-This is a sandbox-internal alias, so host-side endpoint probing is skipped during onboarding.
-Use a routable endpoint when you need onboarding to verify the API, tool-calling, and streaming paths.
+If you manually enter a sandbox-internal alias such as `http://host.openshell.internal:8000/v1`, host-side endpoint probing is skipped during onboarding.
+Use a host-routable endpoint such as `localhost` when you need onboarding to verify the API, tool-calling, and streaming paths before gateway registration.
 Otherwise, confirm the runtime after onboarding with `$$nemoclaw <name> status` and a short agent request.
 
 For GGUF models, start a compatible server such as `llama-server` yourself and enter the model id that server reports from `/v1/models`.
@@ -73,7 +81,7 @@ Start llama.cpp on the host:
 ```bash
 llama-server \
   -m /models/NVIDIA-Nemotron3-Nano-4B-Q4_K_M.gguf \
-  --host 127.0.0.1 \
+  --host 0.0.0.0 \
   --port 8000 \
   -c 16384 \
   -ngl 999 \
@@ -81,11 +89,17 @@ llama-server \
   --chat-template chatml
 ```
 
+<Warning>
+This example uses `--host 0.0.0.0` only to make the server reachable from containers.
+Do not leave an unauthenticated model server exposed on public, corporate, or Wi-Fi interfaces; firewall port `8000` to the OpenShell/Docker bridge or enable API-key authentication.
+</Warning>
+
 Select **Other OpenAI-compatible endpoint** during onboarding.
 Enter the server base URL, such as `http://localhost:8000/v1`, and the model id reported by `/v1/models`.
-For a containerized OpenShell gateway, use the reachable host-service URL for your setup, commonly `http://host.openshell.internal:8000/v1`.
-Host-side endpoint probing is skipped during onboarding for this sandbox-internal alias.
-Use a routable endpoint when you need onboarding to verify the API, tool-calling, and streaming paths.
+For HTTP loopback endpoints on the default HTTP port or an unprivileged port, NemoClaw validates the endpoint from the host and registers the OpenShell gateway route through `host.openshell.internal:<port>` for sandbox traffic.
+This rewrite depends on an OpenShell topology that resolves `host.openshell.internal` inside the sandbox; if that bridge is unavailable, onboarding can still validate the host URL, but `$$nemoclaw <name> status` is the authoritative runtime check.
+If you manually enter a sandbox-internal alias such as `http://host.openshell.internal:8000/v1`, host-side endpoint probing is skipped during onboarding.
+Use a host-routable endpoint such as `localhost` when you need onboarding to verify the API, tool-calling, and streaming paths.
 
 After onboarding, run `$$nemoclaw <name> status` and check the `Inference` row before starting long agent work.
 

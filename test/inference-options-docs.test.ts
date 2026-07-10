@@ -209,11 +209,29 @@ describe("inference setup navigation", () => {
     expect(section).toContain("[Use Ollama for Local Inference](use-local-inference)");
   });
 
-  it("uses a loopback-only bind for the raw model server example", () => {
+  it("uses a container-reachable bind for the raw model server example (#5744)", () => {
     const markdown = fs.readFileSync(selfHostedInferenceSetupPath, "utf8");
+    const bindGuidance =
+      "Make sure the local server listens on an address reachable from containers, such as `0.0.0.0`";
+    const bindWarning =
+      "Binding a model server to `0.0.0.0` exposes it on every host interface unless a host firewall or interface policy blocks access.";
+    const exampleWarning =
+      "This example uses `--host 0.0.0.0` only to make the server reachable from containers.";
 
-    expect(markdown).toContain("--host 127.0.0.1");
-    expect(markdown).not.toContain("--host 0.0.0.0");
+    expect(markdown).toContain("--host 0.0.0.0");
+    expect(markdown).not.toContain("--host 127.0.0.1");
+    expect(
+      markdown.slice(markdown.indexOf(bindGuidance), markdown.indexOf(bindGuidance) + 700),
+    ).toContain(bindWarning);
+    expect(
+      markdown.slice(markdown.indexOf("--host 0.0.0.0"), markdown.indexOf("--host 0.0.0.0") + 700),
+    ).toContain(exampleWarning);
+    expect(markdown).toContain(
+      "a server bound only to `127.0.0.1` can still be unreachable from the sandbox route.",
+    );
+    expect(markdown).toContain(
+      "This rewrite depends on an OpenShell topology that resolves `host.openshell.internal` inside the sandbox",
+    );
   });
 
   it("routes vLLM tool-calling remediation to the self-hosted server guide", () => {
@@ -279,10 +297,16 @@ describe("inference setup navigation", () => {
     expect(result.note).toContain("validation skipped");
     expect(markdown).toContain("`http://host.openshell.internal:8000/v1`");
     expect(markdown).toContain(
-      "This is a sandbox-internal alias, so host-side endpoint probing is skipped during onboarding.",
+      "For HTTP loopback endpoints on the default HTTP port or an unprivileged port, such as `http://localhost:8000/v1`, NemoClaw validates the endpoint from the host and registers the OpenShell gateway route through `host.openshell.internal:<port>` so sandbox traffic can leave the container namespace.",
     );
     expect(markdown).toContain(
-      "Use a routable endpoint when you need onboarding to verify the API, tool-calling, and streaming paths.",
+      "if that bridge is unavailable, onboarding can still validate the host URL, but `$$nemoclaw <name> status` is the authoritative runtime check.",
+    );
+    expect(markdown).toContain(
+      "If you manually enter a sandbox-internal alias such as `http://host.openshell.internal:8000/v1`, host-side endpoint probing is skipped during onboarding.",
+    );
+    expect(markdown).toContain(
+      "Use a host-routable endpoint such as `localhost` when you need onboarding to verify the API, tool-calling, and streaming paths",
     );
     const textAfterEachAlias = markdown.split(hostGatewayAlias).slice(1);
     expect(textAfterEachAlias).toHaveLength(2);

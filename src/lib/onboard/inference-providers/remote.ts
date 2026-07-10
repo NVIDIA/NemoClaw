@@ -23,6 +23,39 @@ const { probeOpenAiLikeEndpoint } = require("../../inference/onboard-probes") as
 
 type StaleProviderReplaceResult = { ok: boolean; status?: number | null; message?: string };
 
+// #5744: keep host-side validation on the user-entered loopback URL, but
+// register the sandbox route through OpenShell's host bridge. Remove this when
+// OpenShell can verify provider routes from the sandbox/gateway network context.
+function gatewayReachableCompatibleEndpointUrl(
+  provider: string,
+  endpointUrl: string | null | undefined,
+): string | null | undefined {
+  if (provider !== "compatible-endpoint" || !endpointUrl) return endpointUrl;
+  let parsed: URL;
+  try {
+    parsed = new URL(endpointUrl);
+  } catch {
+    return endpointUrl;
+  }
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (hostname.includes("%")) return endpointUrl;
+  const port = parsed.port ? Number(parsed.port) : null;
+  const isLoopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  if (
+    parsed.protocol !== "http:" ||
+    parsed.username ||
+    parsed.password ||
+    !isLoopback ||
+    (port !== null && (!Number.isInteger(port) || port < 1024))
+  ) {
+    return endpointUrl;
+  }
+  parsed.hostname = "host.openshell.internal";
+  const pathname = parsed.pathname.replace(/\/+$/, "");
+  parsed.pathname = pathname || "/";
+  return parsed.pathname === "/" ? parsed.origin : `${parsed.origin}${parsed.pathname}`;
+}
+
 /**
  * Replace a provider that a prior Anthropic-Messages registration left behind
  * so it can be re-registered as `type=openai` for the OpenAI-compatible route
@@ -232,6 +265,7 @@ export async function setupRemoteProviderInference(
   while (true) {
     const resolvedCredentialEnv = credentialEnv || (config && config.credentialEnv);
     const resolvedEndpointUrl = endpointUrl || (config && config.endpointUrl);
+    const gatewayEndpointUrl = gatewayReachableCompatibleEndpointUrl(provider, resolvedEndpointUrl);
     let providerResult;
     if (reuseGatewayCredentialWithoutLocalKey) {
       // This is only a last-moment existence probe. The primary authorization
@@ -241,14 +275,23 @@ export async function setupRemoteProviderInference(
         ignoreError: true,
         suppressOutput: true,
       });
-      providerResult =
-        existing.status === 0
-          ? { ok: true }
-          : {
-              ok: false,
-              status: existing.status || 1,
-              message: `Recovered provider '${provider}' is no longer registered in OpenShell.`,
-            };
+      if (existing.status !== 0) {
+        providerResult = {
+          ok: false,
+          status: existing.status || 1,
+          message: `Recovered provider '${provider}' is no longer registered in OpenShell.`,
+        };
+      } else if (gatewayEndpointUrl !== resolvedEndpointUrl) {
+        providerResult = upsertProvider(
+          provider,
+          config.providerType,
+          resolvedCredentialEnv,
+          gatewayEndpointUrl,
+          {},
+        );
+      } else {
+        providerResult = { ok: true };
+      }
     } else {
       const credentialValue = hydrateCredentialEnv(resolvedCredentialEnv);
       const env =
@@ -311,7 +354,7 @@ export async function setupRemoteProviderInference(
           provider,
           config.providerType,
           resolvedCredentialEnv,
-          resolvedEndpointUrl,
+          gatewayEndpointUrl,
           env,
         );
       }
@@ -336,7 +379,8 @@ export async function setupRemoteProviderInference(
       return exitProcess(providerResult.status || 1);
     }
     const argsv = ["inference", "set"];
-    if (config.skipVerify) {
+    if (config.skipVerify || gatewayEndpointUrl !== resolvedEndpointUrl) {
+      // Host-side verification cannot resolve the sandbox-only bridge URL.
       argsv.push("--no-verify");
     }
     argsv.push("--provider", provider, "--model", model);

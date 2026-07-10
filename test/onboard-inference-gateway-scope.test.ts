@@ -57,6 +57,55 @@ describe("onboarding inference gateway scope", () => {
     });
   });
 
+  it("registers loopback compatible endpoints through the gateway alias but keeps host smoke local (#5744)", async () => {
+    await withProcessEnv(
+      { COMPATIBLE_API_KEY: "sk-compatible-TEST-NOT-A-REAL-VALUE" },
+      async () => {
+        const harness = createHarness({
+          runOpenshell: (args) =>
+            args.slice(0, 2).join(" ") === "provider get" ? { status: 1 } : undefined,
+        });
+        const endpointUrl = "http://localhost:8000/v1";
+        const model = "deepseek-ai/DeepSeek-V4-Flash";
+
+        await expect(
+          harness.setupInference(
+            "dcode-vllm-local",
+            model,
+            "compatible-endpoint",
+            endpointUrl,
+            "COMPATIBLE_API_KEY",
+            null,
+            [],
+            { gatewayName: GATEWAY },
+          ),
+        ).resolves.toEqual({ ok: true });
+
+        expect(harness.commands.map(({ command }) => command)).toEqual([
+          `provider get -g ${GATEWAY} compatible-endpoint`,
+          `provider create -g ${GATEWAY} --name compatible-endpoint --type openai --credential COMPATIBLE_API_KEY --config OPENAI_BASE_URL=http://host.openshell.internal:8000/v1`,
+          `inference set -g ${GATEWAY} --no-verify --provider compatible-endpoint --model ${model} --timeout 180`,
+        ]);
+        expect(harness.verifyOnboardInferenceSmoke).toHaveBeenCalledWith({
+          provider: "compatible-endpoint",
+          model,
+          endpointUrl,
+          credentialEnv: "COMPATIBLE_API_KEY",
+          pinnedAddresses: [],
+        });
+        expect(harness.updateSandbox).toHaveBeenCalledWith("dcode-vllm-local", {
+          provider: "compatible-endpoint",
+          model,
+          endpointUrl,
+          credentialEnv: "COMPATIBLE_API_KEY",
+          preferredInferenceApi: null,
+          gatewayName: GATEWAY,
+        });
+        expectCommandsTargetOnly(harness.commands);
+      },
+    );
+  });
+
   it("keeps compatible-endpoint replacement and detach recovery on the target gateway", async () => {
     await withProcessEnv(
       { COMPATIBLE_ANTHROPIC_API_KEY: "sk-ant-TEST-NOT-A-REAL-VALUE" },
