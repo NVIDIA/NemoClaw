@@ -1120,6 +1120,18 @@ To intentionally switch provider or model, recreate the named sandbox with fresh
 nemo-deepagents onboard --fresh --name <name> --recreate-sandbox
 ```
 
+### Trusted route-probe helper is missing
+
+Deep Agents sandboxes created by older NemoClaw images may not contain the image-owned `/usr/local/lib/nemoclaw/dcode-managed-exec` helper.
+Current `connect`, `status`, and `doctor` fail closed when that helper is missing because NemoClaw cannot run the authoritative `inference.local` route probe safely.
+
+If the output says the trusted Deep Agents Code route-probe helper is missing, rebuild the sandbox with the current image and retry the command:
+
+```bash
+nemo-deepagents <name> rebuild
+nemo-deepagents <name> status
+```
+
 ### `dcode` refuses to start because upstream auth state exists
 
 The managed launchers refuse upstream credential state inside `/sandbox/.deepagents/.state/auth.json` and `/sandbox/.deepagents/.state/chatgpt-auth.json`.
