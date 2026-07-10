@@ -65,6 +65,17 @@ describe("reconcileRegisteredExtraProviders diagnostics", () => {
         "  │ extra-provider`",
       ].join("\n"),
     },
+    {
+      label: "OpenShell issue diagnostic with structured not-found code and message",
+      provider: "stale-provider",
+      stderr:
+        "Error:   × code: 'Some requested entity was not found', message: \"provider 'stale-provider' not found\"",
+    },
+    {
+      label: "provider name containing gateway",
+      provider: "my-gateway-provider",
+      stderr: "Error: provider 'my-gateway-provider' not found",
+    },
   ])("accepts exact $label not-found diagnostics (#6501)", ({ provider, stderr }) => {
     expect(reconcile([provider], { [provider]: { status: 1, stderr } })).toEqual([]);
   });
@@ -85,6 +96,10 @@ describe("reconcileRegisteredExtraProviders diagnostics", () => {
     [
       "gateway and provider missing",
       "Error: gateway 'nemoclaw' not found; provider 'stale-provider' not found",
+    ],
+    [
+      "structured not-found code but gateway message",
+      "Error: × code: 'Some requested entity was not found', message: \"gateway 'nemoclaw' not found while checking provider 'stale-provider'\"",
     ],
     ["transport plus provider text", "transport error\nError: provider 'stale-provider' not found"],
     [

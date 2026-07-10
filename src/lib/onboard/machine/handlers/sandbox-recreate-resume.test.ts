@@ -45,7 +45,7 @@ describe("handleSandboxState resume recreation", () => {
       "  [resume] Recreate sandbox requested; recreating sandbox.",
     );
     expect(calls.removeSandbox).not.toHaveBeenCalled();
-    expect(calls.createSandbox).toHaveBeenCalled();
+    expect(calls.createSandbox).toHaveBeenCalledTimes(1);
     const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
     expect(createSandboxCall[4]).toBe("saved");
     expect(createSandboxCall[14]).toMatchObject({ recreate: true });

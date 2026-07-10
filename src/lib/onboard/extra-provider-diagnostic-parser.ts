@@ -61,7 +61,7 @@ function readQuotedValue(text: string, searchStart = 0): { value: string; end: n
 }
 
 function lineReportsMissingGateway(line: string): boolean {
-  const lower = line.toLowerCase();
+  const lower = line.replace(/'[^']*'|"[^"]*"|`[^`]*`/gu, "").toLowerCase();
   return (
     lower.includes("unknown gateway") ||
     lower.includes("no such gateway") ||
@@ -83,6 +83,9 @@ function structuredStatusValue(line: string): string | null {
     if (line[cursor] !== ":" && line[cursor] !== "=") continue;
     cursor += 1;
     while (/[\s"']/u.test(line[cursor] ?? "")) cursor += 1;
+    if (line.slice(cursor).toLowerCase().startsWith("some requested entity was not found")) {
+      return "notfound";
+    }
     const start = cursor;
     while (/[a-z_-]/iu.test(line[cursor] ?? "")) cursor += 1;
     return line.slice(start, cursor);
@@ -102,7 +105,12 @@ function normalizedNotFoundSuffix(value: string): string {
 }
 
 function providerNameFromNotFoundLine(line: string): string | null {
-  let text = stripDiagnosticPrefixes(line);
+  return (
+    providerNameFromNotFoundText(stripDiagnosticPrefixes(line)) ?? providerNameFromMessage(line)
+  );
+}
+
+function providerNameFromNotFoundText(text: string): string | null {
   let hasNotFoundStatusPrefix = false;
   if (text.toLowerCase().startsWith("notfound:")) {
     text = text.slice("notfound:".length).trimStart();
@@ -118,6 +126,21 @@ function providerNameFromNotFoundLine(line: string): string | null {
     : NOT_FOUND_SUFFIXES.has(suffix)
       ? quoted.value
       : null;
+}
+
+function providerNameFromMessage(line: string): string | null {
+  const text = stripDiagnosticPrefixes(line);
+  const markerIndex = text.toLowerCase().indexOf("message:");
+  if (markerIndex < 0) return null;
+  let cursor = markerIndex + "message:".length;
+  while (/\s/u.test(text[cursor] ?? "")) cursor += 1;
+  const quote = text[cursor];
+  if (quote === "'" || quote === '"' || quote === "`") {
+    const end = text.indexOf(quote, cursor + 1);
+    if (end < 0) return null;
+    return providerNameFromNotFoundText(text.slice(cursor + 1, end));
+  }
+  return providerNameFromNotFoundText(text.slice(cursor));
 }
 
 function commandNameAfterMarker(text: string, marker: string): string | null {
