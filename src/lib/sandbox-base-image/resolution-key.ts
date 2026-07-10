@@ -8,6 +8,7 @@ import path from "node:path";
 import { dockerInfoFormat } from "../adapters/docker";
 import { ROOT } from "../runner";
 import {
+  getNearestVersionedBaseImageTags,
   getSourceShortShaTags,
   getVersionedBaseImageTags,
   normalizeBaseImageInputPaths,
@@ -57,6 +58,7 @@ export function createSandboxBaseImageResolutionKey(options: ResolveBaseImageOpt
     pinnedRemoteRef: options.pinnedRemoteRef || null,
     ...(options.preferPinnedRemoteRef === true ? { preferPinnedRemoteRef: true } : {}),
     versionTags: getVersionedBaseImageTags(rootDir, env),
+    nearestVersionTags: getNearestVersionedBaseImageTags(rootDir, env),
     sourceTags: getSourceShortShaTags(rootDir, env),
     localTag: options.localTag,
     inputFingerprint: hashBaseImageInputs(rootDir, options.dockerfilePath, options.inputPaths),

@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 import { type MockInstance, vi } from "vitest";
 
 import type { SecretBoundaryRefusalReason } from "../../src/lib/actions/sandbox/hermes-secret-boundary-recovery";
+import type { ConfigObject } from "../../src/lib/security/credential-filter";
 import type { SandboxEntry } from "../../src/lib/state/registry";
 
 type ConnectSandbox = typeof import("../../src/lib/actions/sandbox/connect")["connectSandbox"];
@@ -31,12 +32,15 @@ export type ConnectHarness = {
   errorSpy: MockInstance;
   logSpy: MockInstance;
   preflightVllmSpy: MockInstance;
+  readSandboxConfigSpy: MockInstance;
   registryEntries: SandboxEntry[];
+  resolveAgentConfigSpy: MockInstance;
   runAutoPairSpy: MockInstance;
   runOpenshellSpy: MockInstance;
   runSetupDnsProxySpy: MockInstance;
   spawnSyncSpy: MockInstance;
   withGatewayRouteMutationLockSpy: MockInstance;
+  writeSandboxConfigSpy: MockInstance;
 };
 
 export type ConnectHarnessOptions = {
@@ -45,6 +49,7 @@ export type ConnectHarnessOptions = {
   inferenceProbeResponses?: Array<
     string | { status?: number | null; output?: string | null; stderr?: string | null }
   >;
+  hermesConfig?: ConfigObject;
   registryEntry?: Partial<SandboxEntry>;
   registryEntries?: Array<Partial<SandboxEntry> & Pick<SandboxEntry, "name">>;
   sessionAgent?: unknown;
@@ -110,6 +115,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     "../../src/lib/inference/gateway-route-mutation-lock.js",
   );
   const sandboxVersion = requireDist("../../src/lib/sandbox/version.js");
+  const sandboxConfig = requireDist("../../src/lib/sandbox/config.js");
   const registry = requireDist("../../src/lib/state/registry.js");
   const sandboxSession = requireDist("../../src/lib/state/sandbox-session.js");
   const vmDnsMonkeypatch = requireDist("../../src/lib/actions/sandbox/vm-dns-monkeypatch.js");
@@ -202,6 +208,26 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     sandboxes: registryEntries,
     defaultSandbox: primaryRegistryEntry.name,
   });
+  const hermesConfigTarget = {
+    agentName: "hermes",
+    configPath: "/sandbox/.hermes/config.yaml",
+    configDir: "/sandbox/.hermes",
+    format: "yaml",
+    configFile: "config.yaml",
+    sensitiveFiles: ["/sandbox/.hermes/.config-hash", "/sandbox/.hermes/.env"],
+  };
+  const resolveAgentConfigSpy = vi
+    .spyOn(sandboxConfig, "resolveAgentConfig")
+    .mockImplementation((name: unknown) => {
+      const entry = registryEntries.find((candidate) => candidate.name === String(name));
+      return entry?.agent === "hermes" ? hermesConfigTarget : sandboxConfig.DEFAULT_AGENT_CONFIG;
+    });
+  const readSandboxConfigSpy = vi
+    .spyOn(sandboxConfig, "readSandboxConfig")
+    .mockReturnValue(options.hermesConfig ?? {});
+  const writeSandboxConfigSpy = vi
+    .spyOn(sandboxConfig, "writeSandboxConfig")
+    .mockImplementation(() => undefined);
   vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(
     (options.sessionAgent ?? { name: "openclaw" }) as never,
   );
@@ -224,11 +250,14 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     errorSpy,
     logSpy,
     preflightVllmSpy,
+    readSandboxConfigSpy,
     registryEntries,
+    resolveAgentConfigSpy,
     runAutoPairSpy,
     runOpenshellSpy,
     runSetupDnsProxySpy,
     spawnSyncSpy,
     withGatewayRouteMutationLockSpy,
+    writeSandboxConfigSpy,
   };
 }

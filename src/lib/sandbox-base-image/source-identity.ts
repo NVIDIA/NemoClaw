@@ -77,6 +77,103 @@ function gitExactVersionTag(rootDir: string, env: NodeJS.ProcessEnv): string | n
   return git.status === 0 ? normalizeVersionTag(git.stdout) : null;
 }
 
+function gitNearestVersionTag(rootDir: string, env: NodeJS.ProcessEnv): string | null {
+  const git = spawnSync(
+    "git",
+    ["-C", rootDir, "describe", "--tags", "--abbrev=0", "--match", "v*"],
+    { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], timeout: 5_000, env },
+  );
+  return git.status === 0 ? normalizeVersionTag(git.stdout) : null;
+}
+
+type VersionTagParts = {
+  core: number[];
+  prerelease: Array<number | string>;
+};
+
+function parseVersionTag(tag: string): VersionTagParts {
+  const rawParts = tag.slice(1).split(/[.-]/);
+  const core: number[] = [];
+  let index = 0;
+  for (; index < rawParts.length; index += 1) {
+    const part = rawParts[index];
+    if (!/^[0-9]+$/.test(part)) break;
+    core.push(Number(part));
+  }
+  return {
+    core,
+    prerelease: rawParts.slice(index).map((part) => (/^[0-9]+$/.test(part) ? Number(part) : part)),
+  };
+}
+
+function comparePrereleasePartsDesc(
+  left: Array<number | string>,
+  right: Array<number | string>,
+): number {
+  if (left.length === 0 || right.length === 0) {
+    if (left.length === right.length) return 0;
+    return left.length === 0 ? -1 : 1;
+  }
+
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const leftPart = left[index];
+    const rightPart = right[index];
+    if (leftPart === rightPart) continue;
+    if (leftPart === undefined) return 1;
+    if (rightPart === undefined) return -1;
+    if (typeof leftPart === "number" && typeof rightPart === "number") {
+      return rightPart - leftPart;
+    }
+    if (typeof leftPart === "number") return 1;
+    if (typeof rightPart === "number") return -1;
+    return String(rightPart).localeCompare(String(leftPart));
+  }
+  return 0;
+}
+
+function compareVersionTagsDesc(a: string, b: string): number {
+  const left = parseVersionTag(a);
+  const right = parseVersionTag(b);
+  for (let index = 0; index < Math.max(left.core.length, right.core.length); index += 1) {
+    const leftPart = left.core[index] ?? 0;
+    const rightPart = right.core[index] ?? 0;
+    if (leftPart === rightPart) continue;
+    return rightPart - leftPart;
+  }
+  return comparePrereleasePartsDesc(left.prerelease, right.prerelease);
+}
+
+function gitRemoteReachableVersionTag(rootDir: string, env: NodeJS.ProcessEnv): string | null {
+  const git = spawnSync("git", ["-C", rootDir, "ls-remote", "--tags", "origin", "v*"], {
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 5_000,
+    env: { ...env, GIT_TERMINAL_PROMPT: "0" },
+  });
+  if (git.status !== 0) return null;
+
+  const tags = new Map<string, string>();
+  for (const line of git.stdout.split("\n")) {
+    const match = line.match(/^([0-9a-f]{40})\s+refs\/tags\/(.+?)(\^\{\})?$/);
+    if (!match) continue;
+    const tag = normalizeVersionTag(match[2]);
+    if (!tag) continue;
+    const commit = match[1];
+    const peeled = match[3] === "^{}";
+    if (peeled || !tags.has(tag)) tags.set(tag, commit);
+  }
+
+  return (
+    [...tags]
+      .filter(
+        ([, commit]) =>
+          gitStatus(rootDir, ["merge-base", "--is-ancestor", commit, "HEAD"], env) === 0,
+      )
+      .map(([tag]) => tag)
+      .sort(compareVersionTagsDesc)[0] ?? null
+  );
+}
+
 function versionFileTag(rootDir: string): string | null {
   try {
     return normalizeVersionTag(fs.readFileSync(path.join(rootDir, ".version"), "utf-8"));
@@ -100,6 +197,14 @@ export function getVersionedBaseImageTags(
   return Array.from(
     new Set(values.map((value) => normalizeVersionTag(value)).filter(Boolean)),
   ) as string[];
+}
+
+export function getNearestVersionedBaseImageTags(
+  rootDir = ROOT,
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const tag = gitRemoteReachableVersionTag(rootDir, env) || gitNearestVersionTag(rootDir, env);
+  return tag ? [tag] : [];
 }
 
 function gitStatus(rootDir: string, args: string[], env: NodeJS.ProcessEnv): number | null {

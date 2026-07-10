@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isObjectRecord } from "../../../../core/json-types";
 import { normalizeCredentialValue } from "../../../../credentials/store";
 import type { MessagingHookHandler, MessagingHookRegistration } from "../../../hooks/types";
 import {
@@ -86,7 +87,7 @@ export function createTelegramGetMeReachabilityHook(
     }
 
     const payload = await readTelegramJson(response);
-    if (!isObject(payload) || payload.ok !== true) {
+    if (!isObjectRecord(payload) || payload.ok !== true) {
       logRejectedToken(log);
       logTelegramDisabled("the bot token was rejected by Telegram", log);
       throw new Error("Telegram bot token was rejected.");
@@ -167,10 +168,6 @@ async function readTelegramJson(response: TelegramFetchResponse): Promise<unknow
   } catch (_error) {
     return {};
   }
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isRejectedTokenResponse(response: TelegramFetchResponse): boolean {

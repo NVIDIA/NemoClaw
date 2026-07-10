@@ -148,11 +148,10 @@ const {
   getRegistrySandboxMessagingPlan,
   MessagingHostStateApplier,
 } = require("./onboard/messaging-channel-setup") as typeof import("./onboard/messaging-channel-setup");
-const {
-  applySessionRecovery,
-}: typeof import("./onboard/session-recovery") = require("./onboard/session-recovery");
-const bedrockRuntimeOnboard: typeof import("./onboard/bedrock-runtime") =
-  require("./onboard/bedrock-runtime");
+const { applySessionRecovery } =
+  require("./onboard/session-recovery") as typeof import("./onboard/session-recovery");
+const bedrockRuntimeOnboard: typeof import("./onboard/bedrock-runtime") = require("./onboard/bedrock-runtime");
+const openrouterRuntimeOnboard: typeof import("./onboard/openrouter-runtime") = require("./onboard/openrouter-runtime");
 const {
   installOllamaOnLinux,
 }: typeof import("./onboard/install-ollama-linux") = require("./onboard/install-ollama-linux");
@@ -2692,7 +2691,7 @@ async function createSandboxWithBaseImageResolution(
         console.warn(`  Warning: failed to remove old sandbox image '${previousEntry.imageTag}'.`);
       }
     }
-    registry.removeSandbox(sandboxName);
+    sandboxLifecycle.removeSandboxUnlessSessionReservation(previousEntry, sandboxName);
   }
 
   // Stage build context — use the custom Dockerfile path when provided,
@@ -2780,7 +2779,6 @@ async function createSandboxWithBaseImageResolution(
     );
   }
   if (sandboxGpuLogMessage) console.log(sandboxGpuLogMessage);
-
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
   const envMessagingState = MessagingHostStateApplier.readPlanStateFromEnv();
   const plannedMessagingState =
@@ -2797,6 +2795,7 @@ async function createSandboxWithBaseImageResolution(
     model,
     chatUiUrl,
     provider,
+    endpointUrl: createIntent?.endpointUrl ?? null,
     preferredInferenceApi,
     webSearchConfig,
     toolDisclosure: effectiveToolDisclosure,
@@ -3784,6 +3783,7 @@ function getSetupInferenceDeps(): SetupInferenceDeps {
     classifyApplyFailure,
     localInferenceTimeoutSecs: LOCAL_INFERENCE_TIMEOUT_SECS,
     bedrockRuntimeOnboard,
+    openrouterRuntimeOnboard,
     validateLocalProvider,
     getLocalProviderHealthCheck,
     getLocalProviderBaseUrl,

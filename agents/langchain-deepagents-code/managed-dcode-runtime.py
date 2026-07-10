@@ -89,10 +89,13 @@ _FETCH_URL_TRUSTED_PROXY_ENV = (
 _MANAGED_FETCH_CA_BUNDLE_FILE = Path(
     "/etc/openshell-tls/ca-bundle.pem"
 )
-_MANAGED_ADAPTER_PROVIDER = "openai"
+# Keep this managed adapter allow-list in sync with generate-config.ts and the
+# patch-managed-deepagents-code.py provider guards injected into Deep Agents Code.
+_MANAGED_ADAPTER_PROVIDERS = frozenset({"openai", "openrouter"})
 _NVIDIA_DISPLAY_PROVIDER_ALIASES = frozenset(
     {"nvidia", "nvidia-prod", "nvidia-nim", "nvidia-router"}
 )
+_OPENROUTER_DISPLAY_PROVIDER_ALIASES = frozenset({"openrouter", "openrouter-api"})
 _DISPLAY_PROVIDER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 # Match the launchers' root-owned, image-baked proxy validator. Its deliberate
 # RFC 1123 deviation permits underscores only for controlled internal/container
@@ -1301,15 +1304,14 @@ def managed_auto_approval_enabled() -> bool:
 def managed_display_provider(adapter_provider: object) -> str:
     """Return the provider label to show for the managed inference adapter.
 
-    Managed inference always routes through the OpenAI-compatible adapter, so
-    Deep Agents Code reports the wire provider (`openai`) in the status bar and
-    the model-identity system prompt. Substitute the onboard-selected upstream
-    provider so those surfaces match the launch page. Only the managed
-    ``openai`` adapter is relabeled; every other adapter is returned unchanged.
-    NVIDIA route aliases share the canonical ``nvidia`` display family.
+    Managed inference normally routes through the OpenAI-compatible adapter, and
+    OpenRouter routes through Deep Agents Code's native OpenRouter adapter while
+    still targeting the managed ``inference.local`` gateway. Substitute the
+    onboard-selected upstream provider so status surfaces match the launch page.
+    NVIDIA and OpenRouter aliases share canonical display families.
     """
     adapter = adapter_provider if isinstance(adapter_provider, str) else ""
-    if adapter != _MANAGED_ADAPTER_PROVIDER:
+    if adapter not in _MANAGED_ADAPTER_PROVIDERS:
         return adapter
 
     upstream = os.environ.get(_UPSTREAM_PROVIDER_ENV, "")
@@ -1317,6 +1319,8 @@ def managed_display_provider(adapter_provider: object) -> str:
         return adapter
     if upstream in _NVIDIA_DISPLAY_PROVIDER_ALIASES:
         return "nvidia"
+    if upstream in _OPENROUTER_DISPLAY_PROVIDER_ALIASES:
+        return "openrouter"
     return upstream
 
 

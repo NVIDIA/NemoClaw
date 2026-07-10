@@ -143,6 +143,9 @@ navigation:
               - page: "Credential Storage"
                 path: _build/agent-variants/security/credential-storage.openclaw.generated.mdx
                 slug: credential-storage
+              - page: "Credential Rotation"
+                path: _build/agent-variants/security/credential-rotation.openclaw.generated.mdx
+                slug: credential-rotation
               - page: "Trusted Computing Base"
                 path: _build/agent-variants/security/tcb-boundary.openclaw.generated.mdx
                 slug: trusted-computing-base
@@ -439,6 +442,9 @@ navigation:
               - page: "Credential Storage"
                 path: _build/agent-variants/security/credential-storage.hermes.generated.mdx
                 slug: credential-storage
+              - page: "Credential Rotation"
+                path: _build/agent-variants/security/credential-rotation.hermes.generated.mdx
+                slug: credential-rotation
               - page: "Trusted Computing Base"
                 path: _build/agent-variants/security/tcb-boundary.hermes.generated.mdx
                 slug: trusted-computing-base
