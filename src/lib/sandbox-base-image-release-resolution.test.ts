@@ -3,7 +3,7 @@
 
 import path from "node:path";
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const dockerMocks = vi.hoisted(() => ({
   build: vi.fn(),
@@ -136,6 +136,8 @@ function installDockerState(options: DockerStateOptions = {}) {
 describe("sandbox base-image release resolution", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
     dockerMocks.infoFormat.mockReturnValue("linux/amd64\n");
     sourceMocks.inputsDirty.mockReturnValue(false);
     sourceMocks.inputsChanged.mockReturnValue(false);
@@ -147,6 +149,10 @@ describe("sandbox base-image release resolution", () => {
         Architecture: "amd64",
       }),
     );
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("refreshes a stale local release-tag image before accepting the versioned base (#6456)", () => {
