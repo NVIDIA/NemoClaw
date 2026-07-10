@@ -1000,6 +1000,28 @@ function readProductDashboardRemoteBindPrepared(): boolean {
   return ssh(`node -e ${shellQuote(script)}`, { timeout: 10_000 }).trim() === "true";
 }
 
+const DASHBOARD_REMOTE_BIND_PROOF_WAIT_MS = 180_000;
+const DASHBOARD_REMOTE_BIND_PROOF_POLL_MS = 5_000;
+
+function waitForProductDashboardRemoteBindPrepared(elapsed: () => string): boolean {
+  if (TEST_SUITE !== "dashboard-remote-bind") return false;
+
+  console.log(`[${elapsed()}] Waiting for product-written dashboard remote-bind registry proof...`);
+  const deadline = Date.now() + DASHBOARD_REMOTE_BIND_PROOF_WAIT_MS;
+  while (Date.now() < deadline) {
+    if (readProductDashboardRemoteBindPrepared()) return true;
+    execSync(`sleep ${DASHBOARD_REMOTE_BIND_PROOF_POLL_MS / 1000}`);
+  }
+
+  const failLog = ssh("tail -120 /tmp/nemoclaw-onboard.log 2>/dev/null || echo 'no log'", {
+    timeout: 10_000,
+  });
+  throw new Error(
+    "dashboard-remote-bind E2E did not observe product-written remote bind proof before " +
+      `manual registry handoff.\n${failLog}`,
+  );
+}
+
 /**
  * Kill the hung onboard process tree and write the sandbox registry manually.
  *
@@ -1012,7 +1034,7 @@ function readProductDashboardRemoteBindPrepared(): boolean {
 function writeManualRegistry(elapsed: () => string): void {
   console.log(`[${elapsed()}] Sandbox ready — killing hung onboard and writing registry...`);
   const dashboardRemoteBindPrepared =
-    TEST_SUITE === "dashboard-remote-bind" && readProductDashboardRemoteBindPrepared();
+    TEST_SUITE === "dashboard-remote-bind" && waitForProductDashboardRemoteBindPrepared(elapsed);
   expect(
     dashboardRemoteBindPrepared || TEST_SUITE !== "dashboard-remote-bind",
     "dashboard-remote-bind E2E must preserve the product-written remote bind proof",
