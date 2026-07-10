@@ -211,17 +211,17 @@ export function buildChatCompletionsUrl(baseUrl: string): string {
   return url.toString();
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function isValidChatCompletion(payload: unknown): boolean {
-  if (!isRecord(payload) || !Array.isArray(payload.choices) || payload.choices.length === 0) {
+  if (!isObjectRecord(payload) || !Array.isArray(payload.choices) || payload.choices.length === 0) {
     return false;
   }
   const firstChoice = payload.choices[0];
-  if (!isRecord(firstChoice)) return false;
-  const message = isRecord(firstChoice.message) ? firstChoice.message : {};
+  if (!isObjectRecord(firstChoice)) return false;
+  const message = isObjectRecord(firstChoice.message) ? firstChoice.message : {};
   return [message.content, message.reasoning_content, message.reasoning, firstChoice.text].some(
     (value) => typeof value === "string" && value.trim().length > 0,
   );

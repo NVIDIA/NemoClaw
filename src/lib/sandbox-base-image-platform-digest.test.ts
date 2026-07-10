@@ -18,6 +18,7 @@ const traceMocks = vi.hoisted(() => ({
 const sourceMocks = vi.hoisted(() => ({
   inputsChanged: vi.fn(),
   inputsDirty: vi.fn(),
+  nearestTags: vi.fn(),
 }));
 
 vi.mock("./adapters/docker", () => ({
@@ -36,6 +37,7 @@ vi.mock("./sandbox-base-image/source-identity", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./sandbox-base-image/source-identity")>()),
   baseImageInputsChangedSinceMain: sourceMocks.inputsChanged,
   baseImageInputsDirty: sourceMocks.inputsDirty,
+  getNearestVersionedBaseImageTags: sourceMocks.nearestTags,
 }));
 
 import {
@@ -92,6 +94,7 @@ describe("sandbox base-image pinned platform digest resolution", () => {
     dockerMocks.infoFormat.mockReturnValue("linux/amd64\n");
     sourceMocks.inputsDirty.mockReturnValue(false);
     sourceMocks.inputsChanged.mockReturnValue(false);
+    sourceMocks.nearestTags.mockReturnValue([]);
     dockerMocks.pull.mockReturnValue({ status: 1 });
   });
 

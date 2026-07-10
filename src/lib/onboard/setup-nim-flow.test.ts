@@ -4,7 +4,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentDefinition } from "../agent/defs";
-import { OPENROUTER_FEATURED_MODELS_URL } from "../inference/openrouter";
 import type { VllmProfile } from "../inference/vllm";
 import { getWindowsHostOllamaDockerRequirement } from "./local-inference-topology";
 import type { InferenceProviderHostState } from "./provider-host-state";
@@ -143,14 +142,16 @@ afterEach(() => {
 });
 
 describe("createSetupNim", () => {
-  it("passes the Deep Agents manifest default to NVIDIA model selection", async () => {
+  it("passes the Deep Agents manifest default to shared NVIDIA/OpenRouter model selection", async () => {
     const ultra = "nvidia/nemotron-3-ultra-550b-a55b";
     const log = vi.fn();
+    const sharedSession = { select: async () => unexpected("featured model selection") };
     const createNvidiaFeaturedModelSession = vi.fn<
       SetupNimFlowDeps["createNvidiaFeaturedModelSession"]
-    >(() => ({ select: async () => unexpected("featured model selection") }));
+    >(() => sharedSession);
     const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
       async (_args, state) => {
+        expect(state.openRouterFeaturedModels).toBe(state.nvidiaFeaturedModels);
         state.model = ultra;
         state.provider = "nvidia-prod";
         state.endpointUrl = "https://integrate.api.nvidia.com/v1";
@@ -168,16 +169,9 @@ describe("createSetupNim", () => {
 
     await setupNim(null, null, dcodeAgent);
 
+    expect(createNvidiaFeaturedModelSession).toHaveBeenCalledTimes(1);
     expect(createNvidiaFeaturedModelSession).toHaveBeenCalledWith({
       defaultModel: ultra,
-      writeLine: log,
-    });
-    expect(createNvidiaFeaturedModelSession).toHaveBeenCalledWith({
-      catalogLabel: "OpenRouter's featured model catalog",
-      catalogUrl: OPENROUTER_FEATURED_MODELS_URL,
-      defaultModel: ultra,
-      loadingMessage: "  Loading OpenRouter's featured model catalog...",
-      retiredModelIds: [],
       writeLine: log,
     });
   });

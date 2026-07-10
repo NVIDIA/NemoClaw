@@ -38,7 +38,7 @@ describe("Hermes doctor and config hash boundary", () => {
     try {
       fs.mkdirSync(path.dirname(hermesBin), { recursive: true });
       fs.mkdirSync(path.dirname(wrapper), { recursive: true });
-      fs.writeFileSync(hermesBin, "#!/usr/bin/env bash\nprintf 'hermes v0.18.0\\n'\n", {
+      fs.writeFileSync(hermesBin, "#!/usr/bin/env bash\nprintf 'hermes v0.19.0\\n'\n", {
         mode: 0o755,
       });
       fs.writeFileSync(wrapper, "# wrapper fixture without resumed oneshot marker\n");
@@ -52,7 +52,7 @@ describe("Hermes doctor and config hash boundary", () => {
 
       expect(result.status).toBe(1);
       expect(result.stderr).toContain(
-        "Hermes v0.17.0 compatibility workarounds are still installed",
+        "Hermes v0.18.0 compatibility workarounds are still installed",
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

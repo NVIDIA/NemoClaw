@@ -70,6 +70,9 @@ function createHarness() {
     bedrockRuntimeOnboard: {
       setupBedrockRuntimeInference: vi.fn(async () => ({ handled: false as const })),
     },
+    openrouterRuntimeOnboard: {
+      setupOpenRouterRuntimeInference: vi.fn(async () => ({ handled: false as const })),
+    },
     redact: vi.fn((value: string) => value),
     compactText: vi.fn((value: string) => value.trim()),
     probeOpenAiLikeEndpoint,
