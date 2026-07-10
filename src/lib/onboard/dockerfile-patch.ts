@@ -29,11 +29,7 @@ import {
   type DcodeAutoApprovalMode,
   isDcodeAutoApprovalMode,
 } from "./dcode-auto-approval";
-import {
-  hasPreparedRemoteDashboardBind,
-  patchRemoteDashboardBindContract,
-  resolveRequestedRemoteDashboardBind,
-} from "./dockerfile-remote-dashboard-bind-contract";
+import * as remoteDashboardBindContract from "./dockerfile-remote-dashboard-bind-contract";
 import {
   dockerfileInstructions,
   readDockerfilePatchSnapshot,
@@ -124,11 +120,9 @@ export function isValidProxyPort(value: string): boolean {
   return port >= 1 && port <= 65535;
 }
 
-export type PatchedDockerfileMetadata = {
-  dashboardRemoteBindPrepared: boolean;
-};
+export type PatchedDockerfileMetadata = { dashboardRemoteBindPrepared: boolean };
 
-export { hasPreparedRemoteDashboardBind };
+export { hasPreparedRemoteDashboardBind } from "./dockerfile-remote-dashboard-bind-contract";
 
 export function patchStagedDockerfile(
   dockerfilePath: string,
@@ -224,11 +218,11 @@ export function patchStagedDockerfile(
     /^ARG CHAT_UI_URL=.*$/m,
     `ARG CHAT_UI_URL=${sanitizeDockerArg(chatUiUrl)}`,
   );
-  const requestedDashboardBind = resolveRequestedRemoteDashboardBind(
+  const remoteDashboardBind = remoteDashboardBindContract.patchRequestedRemoteDashboardBindContract(
+    dockerfile,
     process.env.NEMOCLAW_DASHBOARD_BIND,
     options.trustedManagedDockerfile === true,
   );
-  const remoteDashboardBind = patchRemoteDashboardBindContract(dockerfile, requestedDashboardBind);
   dockerfile = remoteDashboardBind.dockerfile;
   const { dashboardRemoteBindPrepared } = remoteDashboardBind;
   dockerfile = dockerfile.replace(

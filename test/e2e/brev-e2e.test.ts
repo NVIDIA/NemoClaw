@@ -1309,7 +1309,7 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
   );
 
   it.runIf(TEST_SUITE === "dashboard-remote-bind")(
-    "dashboard forward binds to all interfaces for remote browser origins",
+    "clean-host remote bind reaches Ready with active audit findings and wildcard forwarding",
     () => {
       const output = runRemoteCommand(
         [
@@ -1322,7 +1322,7 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
         ].join(" "),
         300_000,
       );
-      expect(output).toContain("dashboard forward binds all interfaces");
+      expect(output).toContain("clean-host remote bind keeps audit risks active");
       expect(output).not.toMatch(/FAIL|Failed/i);
     },
     300_000,

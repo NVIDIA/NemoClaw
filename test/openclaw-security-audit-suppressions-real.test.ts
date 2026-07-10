@@ -163,7 +163,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_AUDIT_HARNESS !== "1")(
   "OpenClaw managed security audit consumer contract",
   () => {
     it(
-      "suppresses only exact managed findings while preserving active risks (#6024)",
+      "pins exact OpenClaw checkIds while suppressing only managed findings (#6024)",
       () => {
         const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-audit-suite-"));
         try {

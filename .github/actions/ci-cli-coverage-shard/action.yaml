@@ -63,10 +63,6 @@ runs:
         npm install --ignore-scripts
         cd nemoclaw && npm install --ignore-scripts
 
-    - name: Verify ripgrep for advisor tool tests
-      shell: bash
-      run: rg --version
-
     - name: Build TypeScript plugin
       shell: bash
       run: cd nemoclaw && npm run build

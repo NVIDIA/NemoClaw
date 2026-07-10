@@ -89,6 +89,17 @@ export function resolveRequestedRemoteDashboardBind(
   return "0.0.0.0";
 }
 
+export function patchRequestedRemoteDashboardBindContract(
+  dockerfile: string,
+  value: string | undefined,
+  trustedManagedDockerfile: boolean,
+): PatchedRemoteDashboardBindContract {
+  return patchRemoteDashboardBindContract(
+    dockerfile,
+    resolveRequestedRemoteDashboardBind(value, trustedManagedDockerfile),
+  );
+}
+
 function finalStageInstructions(dockerfile: string): DockerfileInstruction[] {
   const instructions = dockerfileInstructions(dockerfile);
   const finalFromIndex = instructions.reduce(

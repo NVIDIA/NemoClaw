@@ -4,8 +4,9 @@
 import os from "node:os";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { sandboxAccessEnv } from "../fixtures/clients/sandbox.ts";
+import { sandboxAccessEnv, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { parseJsonFromText } from "./json-envelope.ts";
 
 // Branch validation provisions and onboards a real remote sandbox first; this
 // test restarts only that sandbox's dashboard forward and proves the explicit
@@ -65,7 +66,7 @@ function connectStartedDashboardForward(
 }
 
 runDashboardRemoteBindTest(
-  "dashboard forward binds all interfaces when remote bind is explicitly requested",
+  "clean-host remote bind keeps audit risks active and binds all interfaces",
   async ({ artifacts, host, sandbox }) => {
     const sandboxName = process.env.NEMOCLAW_SANDBOX_NAME || "e2e-test";
     const dashboardPort = process.env.NEMOCLAW_DASHBOARD_PORT || "18789";
@@ -133,5 +134,33 @@ runDashboardRemoteBindTest(
       bindsAllInterfaces(forwardLine, dashboardPort),
       `Could not prove dashboard forward uses 0.0.0.0:${dashboardPort}: ${forwardLine}`,
     ).toBe(true);
+
+    const audit = await sandbox.execShell(
+      sandboxName,
+      trustedSandboxShellScript("openclaw security audit --json"),
+      {
+        artifactName: "dashboard-remote-bind-security-audit",
+        env: sandboxAccessEnv(),
+        timeoutMs: 60_000,
+      },
+    );
+    expect(audit.exitCode, `OpenClaw security audit failed\n${audit.stderr}`).toBe(0);
+    const auditResult = parseJsonFromText(audit.stdout) as {
+      findings: Array<{ checkId: string; detail: string }>;
+      suppressedFindings?: unknown[];
+    };
+    expect(auditResult.suppressedFindings ?? []).toEqual([]);
+    expect(auditResult.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ checkId: "gateway.control_ui.insecure_auth" }),
+        expect.objectContaining({ checkId: "gateway.control_ui.device_auth_disabled" }),
+        expect.objectContaining({
+          checkId: "config.insecure_or_dangerous_flags",
+          detail: expect.stringContaining(
+            "gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback=true",
+          ),
+        }),
+      ]),
+    );
   },
 );

@@ -627,6 +627,25 @@ describe("remote dashboard bind production lifecycle", () => {
     );
   });
 
+  it("does not replace another sandbox's forward during remote-bind recovery (#6024)", () => {
+    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
+    const registry = requireSource("../src/lib/state/registry.js");
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "beta",
+      dashboardPort: 18789,
+      dashboardRemoteBindPrepared: true,
+    });
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
+      status: 0,
+      output: "SANDBOX  BIND  PORT  PID  STATUS\nalpha  0.0.0.0  18789  12345  running",
+    });
+    const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell");
+
+    expect(ensureSandboxPortForward("beta")).toBe(false);
+    expect(runOpenshell).not.toHaveBeenCalled();
+  });
+
   it("re-verifies remote-bind preparation immediately before opening the forward (#6024)", () => {
     const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
     const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");

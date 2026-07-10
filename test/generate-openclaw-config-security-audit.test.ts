@@ -20,6 +20,7 @@ function buildSecurityAuditConfig(chatUiUrl: string, overrides: Record<string, s
 describe("generate-openclaw-config.mts: managed security audit findings", () => {
   it("explains NemoClaw-managed insecure auth findings (#6024)", () => {
     const config = buildSecurityAuditConfig("http://127.0.0.1:18789");
+    expect(config.gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback).toBeUndefined();
     expect(config.security.audit.suppressions).toEqual([
       {
         checkId: "gateway.control_ui.insecure_auth",
@@ -49,6 +50,7 @@ describe("generate-openclaw-config.mts: managed security audit findings", () => 
     });
     expect(config.gateway.controlUi.allowInsecureAuth).toBe(true);
     expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback).toBeUndefined();
     expect(config.security).toBeUndefined();
   });
 
