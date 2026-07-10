@@ -112,6 +112,11 @@ export function cleanupGatewayAfterLastSandbox(
    * rejects as an unrecognized subcommand (#6569). The host-process stop above
    * now uses the same PID-file-scoped reaper as Linux so final unattended
    * macOS destroys release the Docker-driver gateway listener (#4662).
+   * Removal tracker: #6652. Remove the macOS reliance on this host-process
+   * fallback after OpenShell releases the Docker-driver listener fix, NemoClaw
+   * raises its supported OpenShell floor to that fixed build, and a real macOS
+   * Docker-driver sandbox-operations run proves final unattended destroy
+   * releases the gateway port without this fallback.
    */
   const removeResult = openshell(["gateway", "remove", gatewayName], {
     ignoreError: true,

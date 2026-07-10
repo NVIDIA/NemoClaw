@@ -37,7 +37,7 @@ concurrency:
 jobs:
   macos-e2e:
     runs-on: macos-26
-    timeout-minutes: 90
+    timeout-minutes: 150
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -76,22 +76,42 @@ jobs:
           test/tunnel-gateway-port-release-runtime.test.ts
           test/onboard-gateway-prelaunch-cutover.test.ts
 
-      - name: Detect Docker availability
+      - name: Prepare Docker availability
         id: docker
+        env:
+          TRUSTED_MACOS_LIVE: ${{ github.event_name != 'pull_request' && '1' || '0' }}
         run: |
+          set -euo pipefail
           if docker info >/dev/null 2>&1; then
             echo "docker_ok=true" >> "$GITHUB_OUTPUT"
             echo "Docker is available"
             docker version
-          else
-            echo "docker_ok=false" >> "$GITHUB_OUTPUT"
-            echo "Docker is not available on this runner"
+            exit 0
           fi
 
+          if [ "$TRUSTED_MACOS_LIVE" != "1" ]; then
+            echo "docker_ok=false" >> "$GITHUB_OUTPUT"
+            echo "Docker is unavailable; pull_request macOS runs skip secret-bearing live E2E."
+            exit 0
+          fi
+
+          echo "Docker is unavailable; starting Colima for trusted macOS live E2E."
+          install_formula() {
+            if ! brew list --formula "$1" >/dev/null 2>&1; then
+              brew install "$1"
+            fi
+          }
+          install_formula colima
+          install_formula docker
+          colima start --cpu 4 --memory 8 --disk 80 --vm-type vz --mount-type virtiofs
+          docker info
+          echo "docker_ok=true" >> "$GITHUB_OUTPUT"
+          docker version
+
       - name: Run macOS full E2E
-        if: steps.docker.outputs.docker_ok == 'true'
+        if: steps.docker.outputs.docker_ok == 'true' && github.event_name != 'pull_request'
         env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ github.event_name != 'pull_request' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           GITHUB_TOKEN: ${{ github.token }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
@@ -101,11 +121,11 @@ jobs:
           NEMOCLAW_RUN_LIVE_E2E=1 npx vitest run --project e2e-live test/e2e/live/full-e2e.test.ts --silent=false --reporter=default
 
       - name: Install OpenShell CLI for macOS sandbox operations
-        if: steps.docker.outputs.docker_ok == 'true'
+        if: steps.docker.outputs.docker_ok == 'true' && github.event_name != 'pull_request'
         run: bash scripts/install-openshell.sh
 
       - name: Run macOS final-destroy gateway cleanup E2E
-        if: steps.docker.outputs.docker_ok == 'true'
+        if: steps.docker.outputs.docker_ok == 'true' && github.event_name != 'pull_request'
         env:
           E2E_TARGET_ID: "sandbox-operations"
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/macos-sandbox-operations
@@ -115,7 +135,7 @@ jobs:
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
           NEMOCLAW_POLICY_TIER: "open"
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ github.event_name != 'pull_request' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           OPENSHELL_GATEWAY: "nemoclaw"
         run: |
           set -euo pipefail
@@ -124,10 +144,14 @@ jobs:
             test/e2e/live/sandbox-operations.test.ts \
             --silent=false --reporter=default
 
-      - name: Explain skipped full E2E
-        if: steps.docker.outputs.docker_ok != 'true'
+      - name: Explain skipped macOS live E2E
+        if: steps.docker.outputs.docker_ok != 'true' || github.event_name == 'pull_request'
         run: |
-          echo 'Skipping macOS live E2E because Docker is unavailable on this runner.'
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo 'Skipping secret-bearing macOS live E2E on pull_request; use trusted workflow_dispatch/push evidence for live validation.'
+          elif [ "${{ steps.docker.outputs.docker_ok }}" != "true" ]; then
+            echo 'Skipping macOS live E2E because Docker is unavailable on this runner.'
+          fi
           echo 'The workflow still validated the NemoClaw build on macOS (Apple Silicon).'
 
       - name: Upload logs on failure

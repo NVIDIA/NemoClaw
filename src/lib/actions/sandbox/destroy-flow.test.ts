@@ -102,6 +102,17 @@ describe("destroySandbox flow", () => {
     expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
   });
 
+  it("does not probe live sandboxes when registered sandboxes remain (#4662)", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    const harness = createDestroyHarness({ registeredSandboxCount: 2 });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.captureOpenshellSpy).not.toHaveBeenCalled();
+    expect(harness.dockerCaptureSpy).not.toHaveBeenCalled();
+    expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+  });
+
   it("preserves the final gateway for native Windows unattended destroys (#4662)", async () => {
     // Supported Windows execution uses WSL2, which reports `linux`. Keep an
     // unexpected native `win32` host on the conservative non-macOS default.

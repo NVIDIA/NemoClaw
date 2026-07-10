@@ -107,8 +107,10 @@ export function shouldCleanupGatewayAfterDestroy(input: {
  *
  * Linux preserves the shared gateway by default for reuse (#2166), while
  * unattended macOS destroys clean it up so the leaked host listener is released
- * (#4662). Track removal in #6639: drop the macOS default only after live
- * macOS final destroys release the listener without forced gateway cleanup.
+ * (#4662). Track removal in #6652: drop the macOS default after OpenShell
+ * releases the Docker-driver listener fix, NemoClaw raises its supported
+ * OpenShell floor to that fixed version, and live macOS final destroys release
+ * the listener without forced gateway cleanup.
  * Native win32 hosts keep the conservative non-macOS default because supported
  * Windows runs go through WSL2 and report `linux`.
  */
@@ -156,8 +158,8 @@ export function hasRunningDockerSandboxContainer(
     // OpenShell false terminal state cannot be fixed from this destroy path. If
     // the Docker probe itself fails, preserve the shared gateway so a live
     // sandbox does not lose its listener on final destroy. Covered by
-    // destroy.test.ts; remove this fallback with the terminal-row workaround
-    // after OpenShell no longer emits false terminal rows and #6639 is closed.
+    // destroy.test.ts; remove this fallback after OpenShell no longer emits
+    // false terminal rows and #6652 is closed.
     return true;
   }
 }

@@ -398,26 +398,31 @@ async function destroySandboxUnlocked(
       return s;
     });
   }
+  const noRegisteredSandboxes = registry.listSandboxes().sandboxes.length === 0;
+  const shouldProbeLiveSandboxes = deleteSucceededOrAlreadyGone && removed && noRegisteredSandboxes;
+  const noLiveSandboxes =
+    shouldProbeLiveSandboxes &&
+    hasNoLiveSandboxes({
+      captureOpenshell: (...args) => {
+        const { captureOpenshell } = require("../../adapters/openshell/runtime") as {
+          captureOpenshell: LiveSandboxListProbe;
+        };
+        return captureOpenshell(...args);
+      },
+      dockerCapture: (...args) => {
+        const { dockerCapture } = require("../../adapters/docker/run") as {
+          dockerCapture: DockerCaptureProbe;
+        };
+        return dockerCapture(...args);
+      },
+      timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+    });
   if (
     shouldCleanupGatewayAfterDestroy({
       deleteSucceededOrAlreadyGone,
       removedRegistryEntry: removed,
-      noRegisteredSandboxes: registry.listSandboxes().sandboxes.length === 0,
-      noLiveSandboxes: hasNoLiveSandboxes({
-        captureOpenshell: (...args) => {
-          const { captureOpenshell } = require("../../adapters/openshell/runtime") as {
-            captureOpenshell: LiveSandboxListProbe;
-          };
-          return captureOpenshell(...args);
-        },
-        dockerCapture: (...args) => {
-          const { dockerCapture } = require("../../adapters/docker/run") as {
-            dockerCapture: DockerCaptureProbe;
-          };
-          return dockerCapture(...args);
-        },
-        timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
-      }),
+      noRegisteredSandboxes,
+      noLiveSandboxes,
     })
   ) {
     const shouldCleanupGateway = await resolveCleanupGatewayDecision(normalized);

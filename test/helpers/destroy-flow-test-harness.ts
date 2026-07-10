@@ -14,7 +14,9 @@ const destroyModulePath = "./destroy.js";
 
 export type DestroyHarness = {
   cleanupGatewaySpy: MockInstance;
+  captureOpenshellSpy: MockInstance;
   destroySandbox: DestroySandbox;
+  dockerCaptureSpy: MockInstance;
   errorSpy: MockInstance;
   events: string[];
   finalizeMcpBridgesAfterSandboxDeleteSpy: MockInstance;
@@ -192,22 +194,24 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
         return { status: 0, stdout: "", stderr: "" };
     }
   });
-  vi.spyOn(runtime, "captureOpenshell").mockReturnValue({
+  const captureOpenshellSpy = vi.spyOn(runtime, "captureOpenshell").mockReturnValue({
     status: 0,
     output: options.liveListOutput ?? "",
   });
-  vi.spyOn(dockerRun, "dockerCapture").mockImplementation((args: unknown) => {
-    const argv = Array.isArray(args) ? args.map(String) : [];
-    if (argv[0] !== "ps") return "";
-    const filterIndex = argv.indexOf("--filter");
-    const filterValue = filterIndex >= 0 ? argv[filterIndex + 1] : undefined;
-    const nameFilter = filterValue?.startsWith("name=") ? filterValue.slice(5) : undefined;
-    const names = (options.dockerPsOutput ?? "").split("\n").filter(Boolean);
-    const matchedNames = nameFilter
-      ? names.filter((name) => new RegExp(nameFilter).test(`/${name}`))
-      : names;
-    return matchedNames.length > 0 ? `${matchedNames.join("\n")}\n` : "";
-  });
+  const dockerCaptureSpy = vi
+    .spyOn(dockerRun, "dockerCapture")
+    .mockImplementation((args: unknown) => {
+      const argv = Array.isArray(args) ? args.map(String) : [];
+      if (argv[0] !== "ps") return "";
+      const filterIndex = argv.indexOf("--filter");
+      const filterValue = filterIndex >= 0 ? argv[filterIndex + 1] : undefined;
+      const nameFilter = filterValue?.startsWith("name=") ? filterValue.slice(5) : undefined;
+      const names = (options.dockerPsOutput ?? "").split("\n").filter(Boolean);
+      const matchedNames = nameFilter
+        ? names.filter((name) => new RegExp(nameFilter).test(`/${name}`))
+        : names;
+      return matchedNames.length > 0 ? `${matchedNames.join("\n")}\n` : "";
+    });
   const selectGatewaySpy = vi
     .spyOn(destroyGateway, "selectGatewayForSandboxDestroy")
     .mockImplementation(() => undefined);
@@ -300,6 +304,8 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
 
   return {
     cleanupGatewaySpy,
+    captureOpenshellSpy,
+    dockerCaptureSpy,
     destroySandbox: requireDist(destroyModulePath).destroySandbox,
     errorSpy,
     events,
