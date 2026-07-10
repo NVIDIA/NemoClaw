@@ -7,6 +7,7 @@ import path from "node:path";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { CLI_NAME } from "../../cli/branding";
 import { G, R, YW } from "../../cli/terminal-style";
+import { isNonInteractiveEnv } from "../../core/non-interactive";
 import { prompt as askPrompt } from "../../credentials/store";
 import {
   type DestroySandboxOptions,
@@ -79,19 +80,14 @@ type RemoveShieldsStateDeps = {
   warn?: (message: string) => void;
 };
 
-// Mirrors the body of `isNonInteractive()` in src/lib/onboard.ts. Duplicated
-// here to avoid an awkward sibling-action -> onboard import; the canonical
-// helper should be lifted to src/lib/core/ so this and the lazy requires in
-// policy-channel.ts and inference/ollama/proxy.ts can all share one source.
-function isNonInteractive(): boolean {
-  return process.env.NEMOCLAW_NON_INTERACTIVE === "1";
-}
-
 /**
  * Decide whether to tear down the shared NemoClaw gateway after destroying
  * the last sandbox. Linux preserves it by default for reuse (#2166), while
  * unattended macOS destroys clean it up so the host listener is released
- * (#4662). Explicit cleanup options always take precedence.
+ * (#4662). Track removal in #6639: drop this macOS default only after live
+ * macOS final destroys release the gateway listener without forced gateway
+ * cleanup and Linux reuse semantics remain covered. Explicit cleanup options
+ * always take precedence.
  *
  * Prompt rules:
  *   - explicit `cleanupGateway` set         → honour it without prompting
@@ -101,10 +97,12 @@ function isNonInteractive(): boolean {
 async function resolveCleanupGatewayDecision(options: DestroySandboxOptions): Promise<boolean> {
   if (options.cleanupGateway === true) return true;
   if (options.cleanupGateway === false) return false;
-  if (options.yes === true || options.force === true || isNonInteractive()) {
-    // macOS must release the leaked gateway listener after final destroy (#4662).
-    // Supported Windows runs use WSL2 (`linux`); unexpected `win32` hosts keep
-    // the conservative non-macOS gateway-preservation default.
+  if (options.yes === true || options.force === true || isNonInteractiveEnv()) {
+    // Workaround for #4662, tracked for removal by #6639. macOS must release
+    // the leaked gateway listener after final destroy until OpenShell final
+    // destroy proves the listener is released without forcing shared gateway
+    // cleanup. Supported Windows runs use WSL2 (`linux`); unexpected `win32`
+    // hosts keep the conservative non-macOS gateway-preservation default.
     return process.platform === "darwin";
   }
   console.log(`  ${YW}This was the last sandbox.${R}`);
