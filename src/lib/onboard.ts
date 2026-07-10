@@ -2087,20 +2087,16 @@ async function startDockerDriverGateway({
     },
   );
   if (cutover === "reused") return;
-  if (!gatewayBin) throw new Error("OpenShell gateway binary missing after cutover");
+  if (!gatewayBin || !gatewayLaunch) {
+    throw new Error("OpenShell gateway launch missing after cutover");
+  }
 
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const logPath = path.join(stateDir, "openshell-gateway.log");
   const logFd = dockerDriverGatewayLaunch.openDockerDriverGatewayLog(logPath, { exitOnFailure });
   console.log("  Starting OpenShell Docker-driver gateway...");
   console.log(`  Gateway log: ${logPath}`);
-  const launch = gatewayLaunch ?? {
-    command: gatewayBin,
-    args: [],
-    env: { ...process.env, ...gatewayEnv },
-    mode: "host" as const,
-    processGatewayBin: gatewayBin,
-  };
+  const launch = gatewayLaunch;
   dockerDriverGatewayLaunch.prepareAndLogDockerDriverGatewayLaunch(launch);
   const child = dockerDriverGatewayLaunch.spawnDockerDriverGateway(launch, logFd);
   const childExit = trackChildExit(child); // #3111 zombie-safe liveness

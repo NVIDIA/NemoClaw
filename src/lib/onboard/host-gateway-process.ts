@@ -60,7 +60,8 @@ export interface StopHostGatewayResult {
 // path could match unrelated commands. The compat parent is rediscovered via
 // the PID file written at launch time.
 /** Anchored pgrep pattern for direct host openshell-gateway processes. */
-export const HOST_GATEWAY_PGREP_PATTERN = "^(/[^ ]*/)?openshell-gateway( |$)";
+export const HOST_GATEWAY_PGREP_PATTERN =
+  "^(/[^ ]*/)?openshell-gateway(\\[nemoclaw=nemoclaw(-[0-9]+)?;port=[0-9]+\\]| |$)";
 const DEFAULT_TERM_WAIT_MS = 1000;
 const DEFAULT_KILL_WAIT_MS = 1000;
 const DEFAULT_POLL_INTERVAL_MS = 50;

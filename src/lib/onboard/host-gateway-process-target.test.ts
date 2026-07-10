@@ -8,10 +8,13 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  HOST_GATEWAY_PGREP_PATTERN,
   type HostGatewayProcessDeps,
   type RunResult,
   stopHostGatewayProcesses,
 } from "./host-gateway-process";
+
+const PGREP_KEY = `pgrep -f ${HOST_GATEWAY_PGREP_PATTERN}`;
 
 type RunResponse = (args: string[]) => RunResult;
 
@@ -56,7 +59,7 @@ function stopTargetedPid(pid: number, cmdline: string) {
   fs.writeFileSync(pidFile, `${pid}\n`);
   const exited = new Set<number>();
   const responses = new Map<string, RunResponse>([
-    ["pgrep -f ^(/[^ ]*/)?openshell-gateway( |$)", staticResponse(notFound())],
+    [PGREP_KEY, staticResponse(notFound())],
     ...psResponses(pid, { cmdline, exited }),
   ]);
   const kill = vi.fn<HostGatewayProcessDeps["kill"]>((killedPid, signal) => {
@@ -109,10 +112,10 @@ describe("stopHostGatewayProcesses target filtering", () => {
     expect(fs.existsSync(pidFile)).toBe(false);
   });
 
-  it("accepts a direct openshell-gateway process with the cleanup target port", () => {
+  it("accepts the owned no-argument host launch for the cleanup target", () => {
     const { kill, pidFile, result } = stopTargetedPid(
       9999555,
-      "/Users/test/.local/bin/openshell-gateway --port 8081\n",
+      "openshell-gateway[nemoclaw=nemoclaw-8081;port=8081]\n",
     );
 
     expect(result.stopped).toEqual([9999555]);
@@ -120,10 +123,10 @@ describe("stopHostGatewayProcesses target filtering", () => {
     expect(fs.existsSync(pidFile)).toBe(false);
   });
 
-  it("skips a stale PID-file direct openshell-gateway process for another port", () => {
+  it("skips an owned no-argument host launch for another port", () => {
     const { kill, pidFile, result } = stopTargetedPid(
       9999556,
-      "/Users/test/.local/bin/openshell-gateway --port 8080\n",
+      "openshell-gateway[nemoclaw=nemoclaw;port=8080]\n",
     );
 
     expect(result.skippedNonMatchingPids).toEqual([9999556]);

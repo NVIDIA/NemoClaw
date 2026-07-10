@@ -3,7 +3,11 @@
 
 import path from "node:path";
 
-import { resolveGatewayCompatContainerName, resolveGatewayName } from "./gateway-binding";
+import {
+  resolveGatewayCompatContainerName,
+  resolveGatewayName,
+  resolveGatewayPortFromName,
+} from "./gateway-binding";
 
 export const HOST_GATEWAY_PROCESS_NAMES = new Set(["openshell-gateway", "openclaw-gateway"]);
 export const OPENSHELL_GATEWAY_PROCESS_NAMES = new Set(["openshell-gateway"]);
@@ -25,6 +29,39 @@ type ResolveExecutablePath = (value: string) => string | null;
 export interface OpenShellGatewayProcessTarget {
   name?: string | null;
   port?: number | string | null;
+}
+
+const OWNED_HOST_GATEWAY_ARGV0_RE =
+  /^openshell-gateway\[nemoclaw=(nemoclaw(?:-\d+)?);port=(\d+)\]$/;
+
+export function buildOwnedHostGatewayArgv0(gatewayName: string | null | undefined): string | null {
+  if (!gatewayName) return null;
+  const port = resolveGatewayPortFromName(gatewayName);
+  if (port === null) return null;
+  return `openshell-gateway[nemoclaw=${gatewayName};port=${port}]`;
+}
+
+function ownedHostGatewayTarget(argv0: string): { name: string; port: number } | null {
+  const match = OWNED_HOST_GATEWAY_ARGV0_RE.exec(argv0);
+  if (!match) return null;
+  const name = match[1];
+  const port = Number(match[2]);
+  if (resolveGatewayPortFromName(name) !== port || resolveGatewayName(port) !== name) return null;
+  return { name, port };
+}
+
+function gatewayTargetMatches(
+  actual: { name: string; port: number },
+  expected: OpenShellGatewayProcessTarget | undefined,
+): boolean {
+  if (!expected || (!expected.name && (expected.port === undefined || expected.port === null))) {
+    return true;
+  }
+  if (expected.name && expected.name !== actual.name) return false;
+  if (expected.port !== undefined && expected.port !== null) {
+    return String(expected.port) === String(actual.port);
+  }
+  return true;
 }
 
 export function cleanGatewayProcessToken(token: string): string {
@@ -111,6 +148,10 @@ export function gatewayProcessCmdlineMatches(
 
   const processNames = opts.processNames ?? HOST_GATEWAY_PROCESS_NAMES;
   const base = path.basename(argv0);
+  const ownedTarget = ownedHostGatewayTarget(base);
+  if (ownedTarget && processNames.has("openshell-gateway")) {
+    return gatewayTargetMatches(ownedTarget, opts.expectedOpenShellGateway);
+  }
   if (processNames.has(base)) {
     if (processNames.has("openshell-gateway") && base === "openshell-gateway") {
       return openShellGatewayMatchesTarget(tokens, opts.expectedOpenShellGateway, {
