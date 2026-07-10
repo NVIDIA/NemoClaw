@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   getSandboxDeleteOutcome,
@@ -179,6 +179,33 @@ describe("sandbox destroy helpers", () => {
         },
         timeoutMs: 1_000,
       }),
+    ).toBe(false);
+  });
+
+  it("matches Docker sandbox containers with a literal name prefix (#4662)", () => {
+    const dockerCapture = vi.fn(
+      () => "prefix-openshell-npmtest-e487d1bd\nopenshell-npmtest-e487d1bd\n",
+    );
+
+    expect(hasRunningDockerSandboxContainer("npmtest", dockerCapture, 1_000)).toBe(true);
+    expect(dockerCapture).toHaveBeenCalledWith(
+      ["ps", "--filter", "name=openshell-npmtest-", "--format", "{{.Names}}"],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: 1_000,
+      },
+    );
+    expect(
+      hasRunningDockerSandboxContainer("npmtest[", () => "openshell-npmtest[-e487d1bd\n", 1_000),
+    ).toBe(true);
+    expect(
+      hasRunningDockerSandboxContainer(
+        "npmtest",
+        () => "prefix-openshell-npmtest-e487d1bd\nopenshell-npmtest-extra-e487d1bd\n",
+        1_000,
+        ["npmtest", "npmtest-extra"],
+      ),
     ).toBe(false);
   });
 });

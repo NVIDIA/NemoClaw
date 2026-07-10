@@ -4,7 +4,6 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { CLI_NAME } from "../../cli/branding";
 import { G, R, YW } from "../../cli/terminal-style";
 import { isNonInteractiveEnv } from "../../core/non-interactive";
@@ -14,11 +13,7 @@ import {
   normalizeDestroySandboxOptions,
 } from "../../domain/lifecycle/options";
 import {
-  type DockerCaptureProbe,
-  hasNoLiveSandboxes,
-  type LiveSandboxListProbe,
   resolveDestroyGatewayCleanupDecision,
-  shouldCleanupGatewayAfterDestroy,
   shouldStopHostServicesAfterDestroy,
 } from "../../domain/sandbox/destroy";
 import {
@@ -34,6 +29,7 @@ import { resolveNemoclawStateDir } from "../../state/paths";
 import * as registry from "../../state/registry";
 import { confirmSandboxDestroy } from "./destroy-confirmation";
 import { executeSandboxDestroy } from "./destroy-execution";
+import { shouldCleanupGatewayAfterConfirmedFinalDestroy } from "./destroy-gateway-cleanup";
 import { cleanupGatewayAfterLastSandbox } from "./destroy-gateway";
 import { prepareSandboxDestroy } from "./destroy-preflight";
 import { type WipeSandboxStateDeps, wipeSandboxState } from "./wipe-state";
@@ -398,31 +394,10 @@ async function destroySandboxUnlocked(
       return s;
     });
   }
-  const noRegisteredSandboxes = registry.listSandboxes().sandboxes.length === 0;
-  const shouldProbeLiveSandboxes = deleteSucceededOrAlreadyGone && removed && noRegisteredSandboxes;
-  const noLiveSandboxes =
-    shouldProbeLiveSandboxes &&
-    hasNoLiveSandboxes({
-      captureOpenshell: (...args) => {
-        const { captureOpenshell } = require("../../adapters/openshell/runtime") as {
-          captureOpenshell: LiveSandboxListProbe;
-        };
-        return captureOpenshell(...args);
-      },
-      dockerCapture: (...args) => {
-        const { dockerCapture } = require("../../adapters/docker/run") as {
-          dockerCapture: DockerCaptureProbe;
-        };
-        return dockerCapture(...args);
-      },
-      timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
-    });
   if (
-    shouldCleanupGatewayAfterDestroy({
+    shouldCleanupGatewayAfterConfirmedFinalDestroy({
       deleteSucceededOrAlreadyGone,
       removedRegistryEntry: removed,
-      noRegisteredSandboxes,
-      noLiveSandboxes,
     })
   ) {
     const shouldCleanupGateway = await resolveCleanupGatewayDecision(normalized);

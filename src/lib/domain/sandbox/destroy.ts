@@ -107,7 +107,7 @@ export function shouldCleanupGatewayAfterDestroy(input: {
  *
  * Linux preserves the shared gateway by default for reuse (#2166), while
  * unattended macOS destroys clean it up so the leaked host listener is released
- * (#4662). Track removal in #6652: drop the macOS default after OpenShell
+ * (#4662). Track removal in #6639: drop the macOS default after OpenShell
  * releases the Docker-driver listener fix, NemoClaw raises its supported
  * OpenShell floor to that fixed version, and live macOS final destroys release
  * the listener without forced gateway cleanup.
@@ -126,31 +126,54 @@ export function resolveDestroyGatewayCleanupDecision(
   return "prompt";
 }
 
-function escapeDockerNameRegex(value: string): string {
-  return value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+function dockerSandboxContainerNamePrefix(sandboxName: string): string {
+  return `openshell-${sandboxName}-`;
+}
+
+function dockerContainerNames(output: string): string[] {
+  return output
+    .split(/\r?\n/u)
+    .map((name) => name.trim())
+    .filter(Boolean);
+}
+
+function ownsDockerSandboxContainer(
+  containerName: string,
+  sandboxName: string,
+  knownSandboxNames: Iterable<string>,
+): boolean {
+  const exactName = `openshell-${sandboxName}`;
+  const containerNamePrefix = `${exactName}-`;
+  if (containerName === exactName) return true;
+  if (!containerName.startsWith(containerNamePrefix)) return false;
+  const known = new Set(knownSandboxNames);
+  known.add(sandboxName);
+  const stripped = containerName.replace(/^openshell-/, "");
+  const owner = [...known]
+    .filter((name) => stripped === name || stripped.startsWith(`${name}-`))
+    .sort((a, b) => b.length - a.length)[0];
+  return owner === sandboxName;
 }
 
 export function hasRunningDockerSandboxContainer(
   sandboxName: string,
   dockerCapture: DockerCaptureProbe,
   timeoutMs: number,
+  knownSandboxNames: Iterable<string> = [sandboxName],
 ): boolean {
+  const containerNamePrefix = dockerSandboxContainerNamePrefix(sandboxName);
   try {
     const output = dockerCapture(
-      [
-        "ps",
-        "--filter",
-        `name=^/openshell-${escapeDockerNameRegex(sandboxName)}-`,
-        "--format",
-        "{{.Names}}",
-      ],
+      ["ps", "--filter", `name=${containerNamePrefix}`, "--format", "{{.Names}}"],
       {
         ignoreError: true,
         suppressOutput: true,
         timeout: timeoutMs,
       },
     );
-    return output.trim().length > 0;
+    return dockerContainerNames(output).some((name) =>
+      ownsDockerSandboxContainer(name, sandboxName, knownSandboxNames),
+    );
   } catch {
     // Fail closed for the #4662 invalid-state boundary: OpenShell may report a
     // terminal sandbox row while the Docker sandbox container is still running.
@@ -159,7 +182,7 @@ export function hasRunningDockerSandboxContainer(
     // the Docker probe itself fails, preserve the shared gateway so a live
     // sandbox does not lose its listener on final destroy. Covered by
     // destroy.test.ts; remove this fallback after OpenShell no longer emits
-    // false terminal rows and #6652 is closed.
+    // false terminal rows and #6639 is closed.
     return true;
   }
 }
@@ -176,8 +199,10 @@ export function hasNoLiveSandboxes({
   if (liveList.status !== 0) {
     return false;
   }
-  return parseLiveSandboxEntries(liveList.output).every((entry) => {
+  const entries = parseLiveSandboxEntries(liveList.output);
+  const sandboxNames = entries.map((entry) => entry.name);
+  return entries.every((entry) => {
     if (!TERMINAL_OPEN_SHELL_SANDBOX_PHASES.has(entry.phase ?? "")) return false;
-    return !hasRunningDockerSandboxContainer(entry.name, dockerCapture, timeoutMs);
+    return !hasRunningDockerSandboxContainer(entry.name, dockerCapture, timeoutMs, sandboxNames);
   });
 }

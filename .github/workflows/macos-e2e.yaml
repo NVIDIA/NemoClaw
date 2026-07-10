@@ -95,14 +95,13 @@ jobs:
             exit 0
           fi
 
-          echo "Docker is unavailable; starting Colima for trusted macOS live E2E."
-          install_formula() {
-            if ! brew list --formula "$1" >/dev/null 2>&1; then
-              brew install "$1"
-            fi
-          }
-          install_formula colima
-          install_formula docker
+          if ! command -v docker >/dev/null 2>&1 || ! command -v colima >/dev/null 2>&1; then
+            echo "::warning::Docker/Colima is not preinstalled on this macOS runner; skipping live E2E instead of bootstrapping floating Homebrew packages before credentialed steps."
+            echo "docker_ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Docker is unavailable; starting preinstalled Colima for trusted macOS live E2E."
           if ! colima start --cpu 4 --memory 8 --disk 80 --vm-type vz --mount-type virtiofs; then
             echo "::warning::Colima could not start Docker on this macOS runner; skipping live E2E."
             echo "docker_ok=false" >> "$GITHUB_OUTPUT"
@@ -170,4 +169,5 @@ jobs:
           name: macos-e2e-logs
           path: |
             /tmp/nemoclaw-e2e-*.log
+            ${{ github.workspace }}/e2e-artifacts/live
           if-no-files-found: ignore

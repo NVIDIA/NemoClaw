@@ -12,6 +12,7 @@ type WorkflowStep = {
   if?: string;
   env?: Record<string, unknown>;
   run?: string;
+  with?: Record<string, unknown>;
 };
 
 type WorkflowJob = {
@@ -61,14 +62,27 @@ describe("macOS E2E workflow boundary", () => {
     }
   });
 
-  it("starts Docker with Colima only for trusted macOS live runs", () => {
+  it("starts Docker with preinstalled Colima only for trusted macOS live runs", () => {
     const docker = stepNamed("Prepare Docker availability");
     expect(String(docker.env?.TRUSTED_MACOS_LIVE)).toContain("github.event_name != 'pull_request'");
     expect(docker.run).toContain('TRUSTED_MACOS_LIVE" != "1"');
+    expect(docker.run).toContain("command -v docker");
+    expect(docker.run).toContain("command -v colima");
+    expect(docker.run).toContain(
+      "skipping live E2E instead of bootstrapping floating Homebrew packages",
+    );
+    expect(docker.run).not.toContain("brew install");
     expect(docker.run).toContain("colima start");
     expect(docker.run).toContain("Colima could not start Docker");
     expect(docker.run).toContain("docker_ok=false");
     expect(docker.run).toContain("docker info");
+  });
+
+  it("uploads live macOS E2E artifacts when the workflow fails", () => {
+    const upload = stepNamed("Upload logs on failure");
+    expect(upload.if).toBe("failure()");
+    expect(String(upload.with?.path)).toContain("/tmp/nemoclaw-e2e-*.log");
+    expect(String(upload.with?.path)).toContain("${{ github.workspace }}/e2e-artifacts/live");
   });
 
   it("keeps the job timeout outside the combined live test budgets", () => {

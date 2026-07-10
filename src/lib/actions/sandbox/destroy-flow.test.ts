@@ -166,6 +166,19 @@ describe("destroySandbox flow", () => {
     expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
   });
 
+  it("treats Docker name filters as literal substring matches in cleanup probes (#4662)", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    const harness = createDestroyHarness({
+      dockerPsOutput: "openshell-npmtest[-e487d1bd\n",
+      liveListOutput:
+        "NAME              CREATED              PHASE\nnpmtest[          2026-06-01 00:00:00  Error\n",
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+  });
+
   it("honors the gateway preservation environment override on macOS (#4662)", async () => {
     vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
     vi.stubEnv("NEMOCLAW_CLEANUP_GATEWAY", "0");

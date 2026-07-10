@@ -208,7 +208,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
       const nameFilter = filterValue?.startsWith("name=") ? filterValue.slice(5) : undefined;
       const names = (options.dockerPsOutput ?? "").split("\n").filter(Boolean);
       const matchedNames = nameFilter
-        ? names.filter((name) => new RegExp(nameFilter).test(`/${name}`))
+        ? names.filter((name) => `/${name}`.includes(nameFilter))
         : names;
       return matchedNames.length > 0 ? `${matchedNames.join("\n")}\n` : "";
     });
