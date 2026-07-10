@@ -165,6 +165,14 @@ function resolvePulledCandidate(
   options: ResolveBaseImageOptions,
   candidateOptions: PulledCandidateOptions = {},
 ): SandboxBaseImageResolution | null {
+  // Source-of-truth boundary: refreshIfLocalInvalid covers locally cached
+  // release-tag images that fail runtime validation after a published base
+  // drifts from NemoClaw's required runtime deps (see #6456). This resolver
+  // cannot fix the publishing pipeline, so it can only force one registry
+  // refresh before falling back to the normal local-build/error path.
+  // Regression: "builds locally when a refreshed release-tag base still fails
+  // runtime validation". Remove this retry when every version-tagged published
+  // base is runtime-validated by the publishing pipeline before publication.
   const inspectResult = dockerImageInspect(imageRef, {
     ignoreError: true,
     suppressOutput: true,
