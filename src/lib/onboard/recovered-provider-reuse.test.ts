@@ -83,6 +83,48 @@ describe("assessRecoveredProviderCredentialReuse", () => {
     }
   });
 
+  it("reuses OpenRouter when its distinct provider name is registered as OpenAI-compatible (#5826)", () => {
+    expect(
+      assessRecoveredProviderCredentialReuse({
+        ...completeRecovery,
+        selectedKey: "openrouter",
+        selectedProvider: "openrouter-api",
+        recoveredProvider: "openrouter-api",
+        expectedCredentialEnv: "OPENROUTER_API_KEY",
+        gatewayProvider: {
+          name: "openrouter-api",
+          type: "openai",
+          credentialKeys: ["OPENROUTER_API_KEY"],
+          configKeys: ["OPENAI_BASE_URL"],
+        },
+        endpointIdentity: undefined,
+      }),
+    ).toMatchObject({
+      kind: "reuse-gateway-credential",
+      preferredInferenceApi: "openai-completions",
+    });
+  });
+
+  it("rejects recovered OpenRouter responses routes because onboarding forces chat completions (#5826)", () => {
+    expect(
+      assessRecoveredProviderCredentialReuse({
+        ...completeRecovery,
+        selectedKey: "openrouter",
+        selectedProvider: "openrouter-api",
+        recoveredProvider: "openrouter-api",
+        recoveredPreferredInferenceApi: "openai-responses",
+        expectedCredentialEnv: "OPENROUTER_API_KEY",
+        gatewayProvider: {
+          name: "openrouter-api",
+          type: "openai",
+          credentialKeys: ["OPENROUTER_API_KEY"],
+          configKeys: ["OPENAI_BASE_URL"],
+        },
+        endpointIdentity: undefined,
+      }),
+    ).toMatchObject({ kind: "reject" });
+  });
+
   it.each([
     ["explicit selection", { recoveredFromSandbox: false }],
     ["provider mismatch", { recoveredProvider: "openai-api" }],

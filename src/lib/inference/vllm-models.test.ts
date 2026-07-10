@@ -209,7 +209,7 @@ describe("vllm model registry", () => {
     expect(qwen35b!.gated).toBe(false);
   });
 
-  it("builds the NVFP4 serve command from the DGX Spark model-card recipe", () => {
+  it("builds the NVFP4 serve command from the DGX Spark model-card recipe (#6457)", () => {
     const qwen35b = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-35b-a3b-nvfp4");
     const cmd = buildVllmServeCommand(qwen35b!);
     // The current NVIDIA model card no longer needs Spark-specific env exports.
@@ -227,7 +227,16 @@ describe("vllm model registry", () => {
     expect(cmd).toContain("--attention-backend flashinfer");
     expect(cmd).toContain("--moe-backend marlin");
     expect(cmd).toContain("--enable-auto-tool-choice");
-    expect(cmd).toContain("--tool-call-parser qwen3_xml");
+    // #6457: `qwen3_coder` (not `qwen3_xml`) is the validated tool-call parser
+    // for this Spark checkpoint; `qwen3_xml` mis-parses its tool-call frames and
+    // breaks Deep Agents Code tool calls with HTTP 400.
+    expect(cmd).toContain("--tool-call-parser qwen3_coder");
+    expect(cmd).not.toContain("qwen3_xml");
+    // Exactly one tool-call parser is configured for the Spark recipe, so the
+    // #6457 regression (serving this checkpoint with qwen3_xml, which mis-parses
+    // its tool-call frames and fails Deep Agents Code with HTTP 400) cannot creep
+    // back in alongside qwen3_coder.
+    expect(cmd.match(/--tool-call-parser/g)).toHaveLength(1);
     expect(cmd).toContain("--reasoning-parser qwen3");
     expect(cmd).toContain("--max-model-len 262144");
     expect(cmd).toContain(

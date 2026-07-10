@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SANDBOX_EXEC_STARTED_MARKER } from "./sandbox-exec-output";
+import type { SnapshotStreamSandboxCreateMock } from "./snapshot-create-stream-test-types";
 
 type OpenshellCaptureResult = {
   status: number | null;
@@ -16,16 +16,7 @@ type OpenshellCaptureResult = {
   error?: Error;
   signal?: NodeJS.Signals | null;
 };
-type SandboxRecord = {
-  name: string;
-  agent?: string | null;
-  gatewayName?: string | null;
-  imageTag?: string | null;
-  openshellDriver?: string | null;
-  observabilityEnabled?: boolean;
-  provider?: string | null;
-  model?: string | null;
-};
+type SandboxRecord = { name: string; observabilityEnabled?: boolean } & Record<string, unknown>;
 type DcodeProbeState = "active" | "idle" | "unverifiable" | "no-runtime";
 
 function dcodeProbeOutput(state: DcodeProbeState, extra = ""): string {
@@ -139,13 +130,12 @@ const runOpenshellMock = vi.fn((args: string[]) => {
   args[0] === "sandbox" && args[1] === "delete" && lifecycleMock.events.push("delete");
   return { status: 0, output: "" };
 });
-const streamSandboxCreateMock = vi.fn(
-  async (_command: string, _env: NodeJS.ProcessEnv, _options?: Record<string, unknown>) => ({
-    status: 0,
-    output: "",
-    forcedReady: false,
-  }),
-);
+const streamSandboxCreateMock = vi.fn<SnapshotStreamSandboxCreateMock>(async () => ({
+  status: 0,
+  output: "",
+  sawProgress: false,
+  forcedReady: false,
+}));
 const dcodeSandboxEntry = {
   name: "alpha",
   agent: "langchain-deepagents-code",
@@ -984,9 +974,11 @@ describe("runSandboxSnapshot", () => {
     getLatestBackupMock.mockReturnValue({ ...latestBackupFixture });
     const { runSandboxSnapshot } = await import("./snapshot");
     await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
-    const [createCommandValue, createEnv] = streamSandboxCreateMock.mock.calls[0] ?? [];
-    const createCommand = String(createCommandValue ?? "");
-    expect(createCommand).toContain(`'NEMOCLAW_OBSERVABILITY=${expectedValue}'`);
+    const createCall = streamSandboxCreateMock.mock.calls[0] ?? [];
+    const createArgs = createCall[1] as readonly string[];
+    const createEnv = createCall[2] as NodeJS.ProcessEnv | undefined;
+    expect(createCall[0]).toBe("openshell");
+    expect(createArgs).toContain(`NEMOCLAW_OBSERVABILITY=${expectedValue}`);
     expect(createEnv?.NEMOCLAW_OBSERVABILITY).toBeUndefined();
     expect(registerSandboxMock).toHaveBeenCalledWith(
       expect.objectContaining({

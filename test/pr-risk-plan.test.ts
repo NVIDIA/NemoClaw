@@ -91,6 +91,11 @@ describe("deterministic PR risk plan", () => {
       jobs: ["inference-routing", "network-policy"],
     },
     {
+      file: "nemoclaw-blueprint/policies/presets/brew.yaml",
+      family: "inference-policy",
+      jobs: ["inference-routing", "network-policy"],
+    },
+    {
       file: "src/lib/messaging/applier/agent-config.ts",
       family: "messaging-lifecycle",
       jobs: ["channels-add-remove", "channels-stop-start"],

@@ -8,6 +8,33 @@ import {
   ONBOARD_TERMINAL_MACHINE_STATES,
 } from "./types";
 
+/**
+ * The legal onboarding transition graph.
+ *
+ * There are exactly two families of edges and no others:
+ *
+ * 1. Direct edges (`ONBOARD_MACHINE_DIRECT_TRANSITIONS`) — the forward flow
+ *    plus the `inference -> provider_selection` retry and the
+ *    `sandbox -> {openclaw,agent_setup}` branch. `kind` is `advance`, `retry`,
+ *    or `branch`.
+ * 2. Failure edges (`ONBOARD_MACHINE_FAILURE_TRANSITIONS`) — every non-terminal
+ *    state may transition to `failed`. `kind` is `failure`.
+ *
+ * Terminality invariant: `complete` and `failed` are terminal and have no
+ * outgoing edges. In particular there is deliberately **no** edge out of
+ * `failed` into any agent/flow state, so a completed-then-reopened session can
+ * never take an invalid `failed -> <agent>` transition (#6179).
+ *
+ * Recovery model: resuming an interrupted run does not transition out of a
+ * terminal state. Instead a single, side-effect-free recovery pass
+ * (`applySessionRecovery`) validates and re-seats the durable snapshot at a
+ * legal non-terminal entry state before any flow handler runs and writes a
+ * deterministic recovery receipt. After `onboard.resumed`, the runtime makes a
+ * best-effort `state.repair.completed` dispatch attempt for that receipt. A
+ * restart before the next transition retries the same receipt ID. Terminal
+ * states therefore stay terminal within the graph while recovery remains
+ * explicit and observable.
+ */
 export const ONBOARD_MACHINE_DIRECT_TRANSITIONS = [
   { from: "init", to: "preflight", kind: "advance" },
   { from: "preflight", to: "gateway", kind: "advance" },

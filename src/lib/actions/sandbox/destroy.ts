@@ -439,10 +439,10 @@ async function destroySandboxUnlocked(
     if (shouldCleanupGateway) {
       cleanupGatewayAfterLastSandbox(cleanupGatewayName, runOpenshell);
     } else {
-      const gatewayRemovalHint =
-        process.platform === "linux"
-          ? `openshell gateway remove ${cleanupGatewayName}`
-          : `openshell gateway destroy -g ${cleanupGatewayName}`;
+      // `gateway remove <name>` is the modern OpenShell subcommand on every
+      // platform; the old `gateway destroy -g` was pre-0.0.44 only and current
+      // OpenShell rejects it as unrecognized, so never recommend it (#6569).
+      const gatewayRemovalHint = `openshell gateway remove ${cleanupGatewayName}`;
       console.log(
         `  Shared NemoClaw gateway preserved. Re-run '${gatewayRemovalHint}' to remove it,`,
       );

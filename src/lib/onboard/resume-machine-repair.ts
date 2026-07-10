@@ -1,11 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { MACHINE_SNAPSHOT_VERSION, type Session } from "../state/onboard-session";
+import type { Session } from "../state/onboard-session";
 import { nextMachineStateAfterCompletedStep } from "../state/onboard-step-state";
 import { machineStateFromOnboardSessionStep } from "./machine/events";
 import type { OnboardMachineState } from "./machine/types";
-import { classifyResumeMachineRepair } from "./resume-repair-policy";
 
 /**
  * Reads the legacy step-level source of truth for interrupted sessions whose
@@ -31,6 +30,12 @@ function activeStepMachineState(session: Session): OnboardMachineState | null {
 
 /**
  * Computes the nonterminal state where a failed durable session should resume.
+ *
+ * This derives the resume entry from the legacy step-level source of truth and
+ * is one of the building blocks for the single recovery pass in
+ * `session-recovery.ts` (`planSessionRecovery` / `applySessionRecovery`), which
+ * classifies, validates, and applies the recovery. Remove this bridge once step
+ * fields stop being used to derive resume state (#6227).
  */
 export function resumeMachineState(session: Session): OnboardMachineState {
   return (
@@ -38,28 +43,4 @@ export function resumeMachineState(session: Session): OnboardMachineState {
     nextMachineStateAfterCompletedStep(session.lastCompletedStep, session) ??
     "init"
   );
-}
-
-/**
- * Repairs legacy terminal-session/FSM boundaries during --resume.
- *
- * Source fix constraint: terminal -> resume is not a modeled FSM transition
- * yet, and legacy step fields still act as the secondary durable source for
- * resume. Remove this bridge once terminal-session recovery is represented by
- * explicit FSM recovery results or step fields stop being used to derive resume
- * state.
- */
-export function repairResumeMachineSnapshot(
-  session: Session,
-  stateEnteredAt = new Date().toISOString(),
-): Session {
-  if (classifyResumeMachineRepair(session).action !== "repair") return session;
-  const state = resumeMachineState(session);
-  session.machine = {
-    version: MACHINE_SNAPSHOT_VERSION,
-    state,
-    stateEnteredAt,
-    revision: session.machine.revision + 1,
-  };
-  return session;
 }

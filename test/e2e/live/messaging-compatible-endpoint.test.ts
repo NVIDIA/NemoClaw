@@ -3,7 +3,7 @@
 
 /**
  *
- * This stays intentionally direct: the the contract is the real
+ * This stays intentionally direct: the contract is the real
  * Docker/OpenShell/nemoclaw boundary with a local OpenAI-compatible endpoint
  * mock, Telegram messaging config, sandbox inference.local routing, and an
  * OpenClaw agent turn through the compatible endpoint proxy path.
