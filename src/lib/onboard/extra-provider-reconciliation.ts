@@ -102,7 +102,14 @@ function reportsExactProviderNotFound(output: string, providerName: string): boo
     /^(?:(?:error|rpc\s+error)\s*:\s*)?provider\s+(["'`])([^"'`\r\n]+)\1\s+(?:(?:was|is)\s+)?(?:not\s+found|notfound)[.!]?\s*$/i;
   const structuredMissingThenProvider =
     /^(?:(?:error|rpc\s+error)\s*:\s*)*(?:status\s*:\s*)?notfound\s*:\s*provider\s+(["'`])([^"'`\r\n]+)\1(?:\s+(?:(?:was|is)\s+)?(?:not\s+found|notfound))?[.!]?\s*$/i;
-  const issueDiagnostic = diagnosticLines.map((line) => line.replace(/^│\s*/u, "")).join(" ");
+  const issueDiagnostic = diagnosticLines
+    .map((line) => line.replace(/^│\s*/u, ""))
+    .reduce((message, line) => {
+      const part = line.trim();
+      if (!part) return message;
+      return message.endsWith("-") ? `${message}${part}` : `${message} ${part}`;
+    }, "")
+    .trim();
   const missingAndUnrecognized =
     /^(?:error\s*:\s*)?(?:×\s*)?provider\s+(["'`])([^"'`\r\n]+)\1\s+not\s+found\s+and\s+(["'`])([^"'`\r\n]+)\3\s+is\s+not\s+a\s+recognized\s+provider\s+type\.\s+Create\s+it\s+first\s+with\s+`openshell\s+provider\s+create\s+--type\s+<type>\s+--name\s+([^`\s]+)`[.!]?\s*$/i;
   const issueMatch = missingAndUnrecognized.exec(issueDiagnostic);

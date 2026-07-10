@@ -93,18 +93,36 @@ describe("reconcileRegisteredExtraProviders", () => {
   });
 
   it.each([
-    ["single-quoted CLI", "Error: provider 'stale-provider' not found"],
-    ["double-quoted gRPC", 'rpc error: NotFound: provider "stale-provider"'],
-    [
-      "wrapped OpenShell issue diagnostic",
-      [
+    {
+      label: "single-quoted CLI",
+      provider: "stale-provider",
+      stderr: "Error: provider 'stale-provider' not found",
+    },
+    {
+      label: "double-quoted gRPC",
+      provider: "stale-provider",
+      stderr: 'rpc error: NotFound: provider "stale-provider"',
+    },
+    {
+      label: "wrapped OpenShell issue diagnostic",
+      provider: "stale-provider",
+      stderr: [
         "Error:   × provider 'stale-provider' not found and 'stale-provider' is not a recognized",
         "  │ provider type. Create it first with `openshell provider create --type",
         "  │ <type> --name stale-provider`",
       ].join("\n"),
-    ],
-  ])("accepts exact %s not-found diagnostics (#6501)", (_label, stderr) => {
-    expect(reconcile(["stale-provider"], { "stale-provider": { status: 1, stderr } })).toEqual([]);
+    },
+    {
+      label: "wrapped OpenShell issue diagnostic with split provider token",
+      provider: "e2e-stale-extra-provider",
+      stderr: [
+        "Error:   × provider 'e2e-stale-extra-provider' not found and 'e2e-stale-extra-",
+        "  │ provider' is not a recognized provider type. Create it first with",
+        "  │ `openshell provider create --type <type> --name e2e-stale-extra-provider`",
+      ].join("\n"),
+    },
+  ])("accepts exact $label not-found diagnostics (#6501)", ({ provider, stderr }) => {
+    expect(reconcile([provider], { [provider]: { status: 1, stderr } })).toEqual([]);
   });
 
   it.each([
