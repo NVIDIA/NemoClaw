@@ -22,14 +22,10 @@ const CONFIG_HASH_RE =
   /^RUN\s+sha256sum\s+\/sandbox\/\.openclaw\/openclaw\.json\s+>\s+\/sandbox\/\.openclaw\/\.config-hash(?:\s+&&\s+chmod\s+660\s+\/sandbox\/\.openclaw\/\.config-hash)?(?:\s+&&\s+chown\s+sandbox:sandbox\s+\/sandbox\/\.openclaw\/\.config-hash)?$/;
 const MESSAGING_BUILD_APPLIER_RE =
   /^RUN\s+OPENCLAW_VERSION="\$\{OPENCLAW_VERSION\}"\s+node\s+--experimental-strip-types\s+\/src\/lib\/messaging\/applier\/build\/messaging-build-applier\.mts\s+--agent\s+openclaw\s+--phase\s+(?:agent-install|post-agent-install)$/;
-const MANAGED_PROXY_TOKEN_PATCH_RE =
-  /^RUN\s+python3 -c ".*path = os\.path\.expanduser\('~\/\.openclaw\/openclaw\.json'\);.*cfg\.setdefault\('gateway', \{\}\)\.setdefault\('auth', \{\}\)\['token'\] = '';.*cfg\['proxy'\] = \{.*'loopbackMode': 'gateway-only'.*json\.dump\(cfg, open\(path, 'w'\), indent=2\);.*os\.chmod\(path, 0o600\)"$/;
-
 const EXACT_CUSTOM_POST_GENERATOR_RUN_RE = [
   CONFIG_MODE_RE,
   CONFIG_HASH_RE,
   MESSAGING_BUILD_APPLIER_RE,
-  MANAGED_PROXY_TOKEN_PATCH_RE,
 ] as const;
 
 // Complex RUN instructions in the shipped Dockerfile are accepted only as

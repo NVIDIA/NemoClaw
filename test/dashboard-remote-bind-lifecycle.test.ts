@@ -37,6 +37,8 @@ function remoteBindDockerfile(...postGeneratorInstructions: string[]): string {
   ].join("\n");
 }
 
+const MANAGED_PROXY_PATCH = `RUN python3 -c " import json, os; path = os.path.expanduser('~/.openclaw/openclaw.json'); cfg = json.load(open(path)); cfg.setdefault('gateway', {}).setdefault('auth', {})['token'] = ''; proxy_host = os.environ.get('NEMOCLAW_PROXY_HOST') or '10.200.0.1'; proxy_port = os.environ.get('NEMOCLAW_PROXY_PORT') or '3128'; cfg['proxy'] = { 'enabled': True, 'proxyUrl': f'http://{proxy_host}:{proxy_port}', 'loopbackMode': 'gateway-only', }; json.dump(cfg, open(path, 'w'), indent=2); os.chmod(path, 0o600)"`;
+
 describe("remote dashboard bind production lifecycle", () => {
   it("prepares remote bind from the exact checked-in Dockerfile instructions (#6024)", () => {
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
@@ -346,7 +348,7 @@ describe("remote dashboard bind production lifecycle", () => {
     fs.writeFileSync(
       dockerfile,
       remoteBindDockerfile(
-        `RUN python3 -c " import json, os; path = os.path.expanduser('~/.openclaw/openclaw.json'); cfg = json.load(open(path)); cfg.setdefault('gateway', {}).setdefault('auth', {})['token'] = ''; proxy_host = os.environ.get('NEMOCLAW_PROXY_HOST') or '10.200.0.1'; proxy_port = os.environ.get('NEMOCLAW_PROXY_PORT') or '3128'; cfg['proxy'] = { 'enabled': True, 'proxyUrl': f'http://{proxy_host}:{proxy_port}', 'loopbackMode': 'gateway-only', }; json.dump(cfg, open(path, 'w'), indent=2); os.chmod(path, 0o600)"`,
+        MANAGED_PROXY_PATCH,
         "RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash && chmod 660 /sandbox/.openclaw/.config-hash && chown sandbox:sandbox /sandbox/.openclaw/.config-hash",
       ),
     );
@@ -356,6 +358,26 @@ describe("remote dashboard bind production lifecycle", () => {
         patchStagedDockerfile(dockerfile, "test-model", "http://127.0.0.1:18789"),
       ).not.toThrow();
       expect(hasPreparedRemoteDashboardBind(dockerfile)).toBe(true);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a config reset embedded inside the managed proxy patch shape (#6024)", () => {
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-embedded-"));
+    const dockerfile = path.join(directory, "Dockerfile");
+    const embeddedReset = MANAGED_PROXY_PATCH.replace(
+      "proxy_host = os.environ.get",
+      "cfg = {}; proxy_host = os.environ.get",
+    );
+    fs.writeFileSync(dockerfile, remoteBindDockerfile(embeddedReset));
+
+    try {
+      expect(() =>
+        patchStagedDockerfile(dockerfile, "test-model", "http://127.0.0.1:18789"),
+      ).toThrow(/preserve the generated remote dashboard output/);
+      expect(hasPreparedRemoteDashboardBind(dockerfile)).toBe(false);
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }
