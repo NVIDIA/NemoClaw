@@ -133,6 +133,7 @@ describe("Hermes doctor and config hash boundary", () => {
         ].join("\n"),
       );
       expect(mode(path.join(binDir, "nemoclaw-gateway-control"))).toBe("700");
+      expect(mode(path.join(libDir, "finalize-tirith-marker.py"))).toBe("755");
       expect(mode(mcpConfigTransactionPath)).toBe("755");
       expect(mode(mcpCredentialBoundaryPath)).toBe("444");
       expect(mode(buildMcpDigestPath)).toBe("444");

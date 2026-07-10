@@ -371,6 +371,42 @@ function runHermesRootStartupMutableRootPreflight() {
   }
 }
 
+function runTirithFinalizerPathResolution(installed: boolean) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tirith-path-"));
+  const scriptPath = path.join(tmpDir, "run.sh");
+  const installedPath = path.join(tmpDir, "installed-finalizer.py");
+  const fallbackPath = path.join(tmpDir, "finalize-tirith-marker.py");
+  const source = fs.readFileSync(START_SCRIPT, "utf-8");
+  const start = source.indexOf(
+    '_HERMES_TIRITH_MARKER_FINALIZER="/usr/local/lib/nemoclaw/finalize-tirith-marker.py"',
+  );
+  const end = source.indexOf("\n_HERMES_GUARD_TIMEOUT=", start);
+  const resolver = source
+    .slice(start, end)
+    .replace("/usr/local/lib/nemoclaw/finalize-tirith-marker.py", installedPath);
+  fs.writeFileSync(fallbackPath, "#!/usr/bin/env python3\n", { mode: 0o755 });
+  void (installed ? fs.writeFileSync(installedPath, "#!/usr/bin/env python3\n") : undefined);
+  fs.writeFileSync(
+    scriptPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      resolver,
+      'printf "%s\\n" "$_HERMES_TIRITH_MARKER_FINALIZER"',
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  try {
+    return {
+      expected: installed ? installedPath : fallbackPath,
+      result: spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 }),
+    };
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 function runHermesSandboxInitPreludeWithFakePath() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-init-path-"));
   const fakeBin = path.join(tmpDir, "bin");
@@ -1410,6 +1446,16 @@ describe("agents/hermes/start.sh shields-up kanban dispatcher override", () => {
 });
 
 describe("agents/hermes/start.sh Tirith marker bootstrap", () => {
+  it.each([
+    true,
+    false,
+  ])("resolves the installed Tirith finalizer before fallback (%s)", (installed) => {
+    const run = runTirithFinalizerPathResolution(installed);
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.result.stdout.trim()).toBe(run.expected);
+  });
+
   it("removes retryable Tirith markers before explicit command dispatch", () => {
     for (const mode of ["non-root", "root"] as const) {
       const run = runTirithExplicitCommandDispatch(mode);
