@@ -8,13 +8,22 @@ import path from "node:path";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import {
+  type SandboxClient,
+  trustedSandboxShellScript,
+  validateSandboxName,
+} from "../fixtures/clients/sandbox.ts";
 import {
   cleanupCorporateCaFixture,
   corporateCaMergeProbeScript,
   createCorporateCaFixture,
 } from "../fixtures/corporate-ca.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import {
+  readExtraProviders,
+  REGISTRY_FILE,
+  updateExtraProviders,
+} from "../fixtures/extra-providers-registry.ts";
 import {
   type FakeOpenAiCompatibleServer,
   startFakeOpenAiCompatibleServer,
@@ -35,7 +44,6 @@ import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 // registry, migration ledger, or new shared helper.
 
 const SESSION_FILE = path.join(os.homedir(), ".nemoclaw", "onboard-session.json");
-const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-resume";
 const FAKE_COMPATIBLE_AUTH_VALUE = "e2e-compatible-auth-value";
 const FAKE_COMPATIBLE_MODEL = "test-model";
@@ -85,36 +93,6 @@ function markSessionInProgress(file: string): void {
   fs.writeFileSync(file, JSON.stringify(session, null, 2), "utf8");
 }
 
-function readRegistry(): { extraProviders?: unknown; [key: string]: unknown } {
-  return fs.existsSync(REGISTRY_FILE)
-    ? (JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as {
-        extraProviders?: unknown;
-        [key: string]: unknown;
-      })
-    : { sandboxes: {}, defaultSandbox: null };
-}
-
-function readExtraProviders(): string[] {
-  const value = readRegistry().extraProviders;
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string")
-    : [];
-}
-
-function updateExtraProviders(update: (providers: Set<string>) => void): string[] {
-  const registry = readRegistry();
-  const providers = new Set(readExtraProviders());
-  update(providers);
-  const sorted = [...providers].sort();
-  const nextRegistry = Object.assign(
-    Object.fromEntries(Object.entries(registry).filter(([key]) => key !== "extraProviders")),
-    sorted.length > 0 ? { extraProviders: sorted } : {},
-  );
-  fs.mkdirSync(path.dirname(REGISTRY_FILE), { recursive: true });
-  fs.writeFileSync(REGISTRY_FILE, `${JSON.stringify(nextRegistry, null, 2)}\n`, "utf8");
-  return sorted;
-}
-
 function interruptedSessionSummary(session: SessionStateInterrupted): Record<string, unknown> {
   return {
     status: session.status,
@@ -161,6 +139,20 @@ function expectHermeticCompatibleEndpointUsed(
   ).toBe(true);
 }
 
+async function expectGatewayProviderListExcludes(
+  sandbox: SandboxClient,
+  providerName: string,
+  artifactName: string,
+): Promise<void> {
+  const providerList = await sandbox.openshell(["provider", "list", "-g", "nemoclaw", "--names"], {
+    artifactName,
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 60_000,
+  });
+  expect(providerList.exitCode, resultText(providerList)).toBe(0);
+  expect(resultText(providerList).split(/\s+/u)).not.toContain(providerName);
+}
+
 // The e2e-live Vitest project owns the NEMOCLAW_RUN_LIVE_E2E collection gate,
 // so accidental cli-test-shard discovery cannot run this without real
 // `openshell`, Docker, or a sandbox-reachable fake OpenAI-compatible endpoint.
@@ -184,6 +176,7 @@ test("onboard-resume: interrupted onboard then --resume can recreate with cached
       "forced policy-step failure leaves a resumable session",
       "resume recreates the sandbox on request without redoing cached preflight/gateway steps",
       "resume sandbox recreation filters exact stale extra-provider records without mutating registry state",
+      "resume proves the stale extra provider is absent from live gateway config",
       "host trust-store anchor corporate CA source is baked and merged after resume",
       "implicit resume is detected and --fresh suppresses that auto-resume",
     ],
@@ -452,6 +445,11 @@ test("onboard-resume: interrupted onboard then --resume can recreate with cached
   // rejecting headings that now frame the skipped phases.
   expect(resumeText).not.toContain("Starting OpenShell Docker-driver gateway...");
   expect(readExtraProviders()).toContain(STALE_EXTRA_PROVIDER);
+  await expectGatewayProviderListExcludes(
+    sandbox,
+    STALE_EXTRA_PROVIDER,
+    "phase-3-gateway-provider-list-after-resume",
+  );
 
   // Assertion: resume-inference-handled — first onboard completed through
   // openclaw before failing at policies. Inference was already configured

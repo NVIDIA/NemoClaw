@@ -63,9 +63,168 @@ function outputText(value: unknown): string {
 const PROVIDER_PROBE_TIMEOUT_MS = 5_000;
 const PROVIDER_PROBE_DIAGNOSTIC_LIMIT = 64 * 1024;
 const PROVIDER_RECONCILIATION_BUDGET_MS = 15_000;
+const DIAGNOSTIC_PREFIXES = ["error:", "rpc error:", "status:"];
+const NOT_FOUND_SUFFIXES = new Set([
+  "not found",
+  "notfound",
+  "is not found",
+  "is notfound",
+  "was not found",
+  "was notfound",
+]);
 
 function monotonicNowMs(): number {
   return Number(process.hrtime.bigint() / 1_000_000n);
+}
+
+type ProviderProbeOutcome = {
+  keep: boolean;
+  reason?: IndeterminateProbeReason;
+};
+
+type ProviderProbeContext = {
+  gatewayName: string;
+  name: string;
+  runOpenshell: ExtraProviderRunOpenshell;
+  nowMs: () => number;
+  deadlineMs: number;
+};
+
+function stripIssueDecoration(line: string): string {
+  const trimmed = line.trim();
+  return trimmed.startsWith("│") ? trimmed.slice(1).trimStart() : trimmed;
+}
+
+function joinDiagnosticLines(lines: string[]): string {
+  return lines
+    .reduce((message, line) => {
+      const part = line.trim();
+      if (!part) return message;
+      return message.endsWith("-") ? `${message}${part}` : `${message} ${part}`;
+    }, "")
+    .trim();
+}
+
+function stripDiagnosticPrefixes(line: string): string {
+  let text = stripIssueDecoration(line);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const lower = text.toLowerCase();
+    for (const prefix of DIAGNOSTIC_PREFIXES) {
+      if (lower.startsWith(prefix)) {
+        text = text.slice(prefix.length).trimStart();
+        changed = true;
+        break;
+      }
+    }
+  }
+  return text;
+}
+
+function readQuotedValue(text: string, searchStart = 0): { value: string; end: number } | null {
+  const quoteIndex = ["'", '"', "`"]
+    .map((quote) => ({ quote, index: text.indexOf(quote, searchStart) }))
+    .filter(({ index }) => index >= 0)
+    .sort((left, right) => left.index - right.index)[0];
+  if (!quoteIndex) return null;
+  const end = text.indexOf(quoteIndex.quote, quoteIndex.index + 1);
+  return end >= 0 ? { value: text.slice(quoteIndex.index + 1, end), end: end + 1 } : null;
+}
+
+function lineReportsMissingGateway(line: string): boolean {
+  const lower = line.toLowerCase();
+  return (
+    lower.includes("unknown gateway") ||
+    lower.includes("no such gateway") ||
+    lower.includes("notfound: gateway") ||
+    (lower.includes("gateway") &&
+      (lower.includes("does not exist") ||
+        lower.includes("not found") ||
+        lower.includes("notfound")))
+  );
+}
+
+function structuredStatusValue(line: string): string | null {
+  const lower = line.toLowerCase();
+  for (const key of ["status", "code"]) {
+    const keyIndex = lower.indexOf(key);
+    if (keyIndex < 0) continue;
+    let cursor = keyIndex + key.length;
+    while (/\s/u.test(line[cursor] ?? "")) cursor += 1;
+    if (line[cursor] !== ":" && line[cursor] !== "=") continue;
+    cursor += 1;
+    while (/[\s"']/u.test(line[cursor] ?? "")) cursor += 1;
+    const start = cursor;
+    while (/[a-z_-]/iu.test(line[cursor] ?? "")) cursor += 1;
+    return line.slice(start, cursor);
+  }
+  return null;
+}
+
+function normalizeStatus(value: string): string {
+  return value.replaceAll("_", "").replaceAll("-", "").toLowerCase();
+}
+
+function normalizedNotFoundSuffix(value: string): string {
+  return value
+    .replace(/[.!]+$/u, "")
+    .trim()
+    .toLowerCase();
+}
+
+function providerNameFromNotFoundLine(line: string): string | null {
+  let text = stripDiagnosticPrefixes(line);
+  let hasNotFoundStatusPrefix = false;
+  if (text.toLowerCase().startsWith("notfound:")) {
+    text = text.slice("notfound:".length).trimStart();
+    hasNotFoundStatusPrefix = true;
+  }
+  const providerPrefix = "provider ";
+  if (!text.toLowerCase().startsWith(providerPrefix)) return null;
+  const quoted = readQuotedValue(text, providerPrefix.length);
+  if (!quoted) return null;
+  const suffix = normalizedNotFoundSuffix(text.slice(quoted.end));
+  return suffix === "" && hasNotFoundStatusPrefix
+    ? quoted.value
+    : NOT_FOUND_SUFFIXES.has(suffix)
+      ? quoted.value
+      : null;
+}
+
+function commandNameAfterMarker(text: string, marker: string): string | null {
+  const markerIndex = text.toLowerCase().indexOf(marker.toLowerCase());
+  if (markerIndex < 0) return null;
+  let cursor = markerIndex + marker.length;
+  while (/\s/u.test(text[cursor] ?? "")) cursor += 1;
+  const start = cursor;
+  while (cursor < text.length && !/[\s`]/u.test(text[cursor] ?? "")) cursor += 1;
+  return cursor > start ? text.slice(start, cursor) : null;
+}
+
+function wrappedIssueDiagnosticMatches(
+  issueDiagnostic: string,
+  providerName: string,
+): boolean | null {
+  const lower = issueDiagnostic.toLowerCase();
+  const hasWrappedIssueShape =
+    lower.includes("provider ") &&
+    lower.includes(" not found and ") &&
+    lower.includes(" is not a recognized provider type") &&
+    lower.includes("openshell provider create") &&
+    lower.includes("--name ");
+  if (!hasWrappedIssueShape) return null;
+
+  const firstProvider = readQuotedValue(issueDiagnostic, lower.indexOf("provider "));
+  const secondProvider = firstProvider
+    ? readQuotedValue(issueDiagnostic, lower.indexOf(" and ", firstProvider.end))
+    : null;
+  const commandProvider = commandNameAfterMarker(issueDiagnostic, "--name ");
+  return (
+    firstProvider?.value === providerName &&
+    secondProvider?.value === providerName &&
+    commandProvider === providerName
+  );
 }
 
 /**
@@ -78,53 +237,65 @@ function monotonicNowMs(): number {
  */
 function reportsExactProviderNotFound(output: string, providerName: string): boolean {
   const lines = output.slice(0, PROVIDER_PROBE_DIAGNOSTIC_LIMIT).split(/\r?\n/);
-  const diagnosticLines = lines.map((line) => line.trim()).filter(Boolean);
+  const diagnosticLines = lines.map(stripIssueDecoration).filter(Boolean);
   if (diagnosticLines.length === 0) return false;
-  const hasMissingGatewayDiagnostic = lines.some(
-    (line) =>
-      /\bunknown\s+gateway\b/i.test(line) ||
-      /\bno\s+such\s+gateway\b/i.test(line) ||
-      /\bgateway\b[^\r\n]{0,200}\bdoes\s+not\s+exist\b/i.test(line) ||
-      /\bgateway(?:\s+["'`][^"'`\r\n]+["'`])?\s+(?:(?:was|is)\s+)?(?:not\s+found|NotFound)\b/i.test(
-        line,
-      ) ||
-      /\bNotFound\b\s*:\s*gateway\b/i.test(line),
-  );
-  if (hasMissingGatewayDiagnostic) return false;
-
-  const hasConflictingStructuredStatus = lines.some((line) => {
-    const status = line.match(/\b(?:status|code)\s*[:=]\s*["']?([a-z][a-z_-]*)/i)?.[1];
-    return Boolean(status && status.replaceAll("_", "").toLowerCase() !== "notfound");
-  });
-  if (hasConflictingStructuredStatus) return false;
-
-  const providerThenMissing =
-    /^(?:(?:error|rpc\s+error)\s*:\s*)?provider\s+(["'`])([^"'`\r\n]+)\1\s+(?:(?:was|is)\s+)?(?:not\s+found|notfound)[.!]?\s*$/i;
-  const structuredMissingThenProvider =
-    /^(?:(?:error|rpc\s+error)\s*:\s*)*(?:status\s*:\s*)?notfound\s*:\s*provider\s+(["'`])([^"'`\r\n]+)\1(?:\s+(?:(?:was|is)\s+)?(?:not\s+found|notfound))?[.!]?\s*$/i;
-  const issueDiagnostic = diagnosticLines
-    .map((line) => line.replace(/^│\s*/u, ""))
-    .reduce((message, line) => {
-      const part = line.trim();
-      if (!part) return message;
-      return message.endsWith("-") ? `${message}${part}` : `${message} ${part}`;
-    }, "")
-    .trim();
-  const missingAndUnrecognized =
-    /^(?:error\s*:\s*)?(?:×\s*)?provider\s+(["'`])([^"'`\r\n]+)\1\s+not\s+found\s+and\s+(["'`])([^"'`\r\n]+)\3\s+is\s+not\s+a\s+recognized\s+provider\s+type\.\s+Create\s+it\s+first\s+with\s+`openshell\s+provider\s+create\s+--type\s+<type>\s+--name\s+([^`\s]+)`[.!]?\s*$/i;
-  const issueMatch = missingAndUnrecognized.exec(issueDiagnostic);
-  if (issueMatch) {
-    return (
-      issueMatch[2] === providerName &&
-      issueMatch[4] === providerName &&
-      issueMatch[5] === providerName
-    );
+  if (diagnosticLines.some(lineReportsMissingGateway)) return false;
+  if (
+    diagnosticLines.some((line) => {
+      const status = structuredStatusValue(line);
+      return Boolean(status && normalizeStatus(status) !== "notfound");
+    })
+  ) {
+    return false;
   }
 
-  return diagnosticLines.every((line) => {
-    const match = providerThenMissing.exec(line) ?? structuredMissingThenProvider.exec(line);
-    return match?.[2] === providerName;
-  });
+  const wrappedIssueMatch = wrappedIssueDiagnosticMatches(
+    joinDiagnosticLines(diagnosticLines),
+    providerName,
+  );
+  if (wrappedIssueMatch !== null) return wrappedIssueMatch;
+
+  return diagnosticLines.every((line) => providerNameFromNotFoundLine(line) === providerName);
+}
+
+function diagnosticPartsFromProbeResult(result: ReturnType<ExtraProviderRunOpenshell>): string[] {
+  const primaryDiagnosticParts = [result.stderr, result.stdout].map(outputText).filter(Boolean);
+  return primaryDiagnosticParts.length > 0
+    ? primaryDiagnosticParts
+    : [outputText(result.output)].filter(Boolean);
+}
+
+function probeExtraProvider(context: ProviderProbeContext): ProviderProbeOutcome {
+  const remainingMs = context.deadlineMs - context.nowMs();
+  if (remainingMs <= 0) return { keep: true, reason: "aggregate-time-budget" };
+
+  let result: ReturnType<ExtraProviderRunOpenshell>;
+  try {
+    result = context.runOpenshell(["provider", "get", "-g", context.gatewayName, context.name], {
+      ignoreError: true,
+      maxBuffer: PROVIDER_PROBE_DIAGNOSTIC_LIMIT,
+      stdio: ["ignore", "pipe", "pipe"],
+      suppressOutput: true,
+      timeout: Math.max(1, Math.min(PROVIDER_PROBE_TIMEOUT_MS, Math.floor(remainingMs))),
+    });
+  } catch {
+    return { keep: true, reason: "probe-threw" };
+  }
+  if (result.error) return { keep: true, reason: "probe-process-error" };
+  if (result.status === 0) return { keep: true };
+  // OpenShell CLI command errors use exit 1. A null status means timeout or
+  // signal termination, while any other exit is outside this diagnostic
+  // contract; both are indeterminate and must preserve the provider.
+  if (result.status === null) return { keep: true, reason: "timeout-or-signal" };
+  if (result.status !== 1) return { keep: true, reason: "unexpected-exit" };
+
+  const diagnosticParts = diagnosticPartsFromProbeResult(result);
+  if (diagnosticParts.some((part) => Buffer.byteLength(part) >= PROVIDER_PROBE_DIAGNOSTIC_LIMIT)) {
+    return { keep: true, reason: "diagnostic-capture-limit" };
+  }
+  return reportsExactProviderNotFound(diagnosticParts.join("\n"), context.name)
+    ? { keep: false }
+    : { keep: true, reason: "ambiguous-diagnostic" };
 }
 
 /**
@@ -156,51 +327,18 @@ export function reconcileRegisteredExtraProviders(
   const deadlineMs = nowMs() + PROVIDER_RECONCILIATION_BUDGET_MS;
   const indeterminateReasons = new Set<IndeterminateProbeReason>();
   let indeterminateProviderCount = 0;
-  const preserveIndeterminate = (reason: IndeterminateProbeReason): true => {
+
+  const recordIndeterminate = (reason: IndeterminateProbeReason): void => {
     indeterminateReasons.add(reason);
     indeterminateProviderCount += 1;
-    return true;
   };
 
-  const reconciled = recorded.filter((name) => {
-    const remainingMs = deadlineMs - nowMs();
-    if (remainingMs <= 0) return preserveIndeterminate("aggregate-time-budget");
-
-    let result: ReturnType<ExtraProviderRunOpenshell>;
-    try {
-      result = runOpenshell(["provider", "get", "-g", gatewayName, name], {
-        ignoreError: true,
-        maxBuffer: PROVIDER_PROBE_DIAGNOSTIC_LIMIT,
-        stdio: ["ignore", "pipe", "pipe"],
-        suppressOutput: true,
-        timeout: Math.max(1, Math.min(PROVIDER_PROBE_TIMEOUT_MS, Math.floor(remainingMs))),
-      });
-    } catch {
-      return preserveIndeterminate("probe-threw");
-    }
-    if (result.error) return preserveIndeterminate("probe-process-error");
-    if (result.status === 0) return true;
-    // OpenShell CLI command errors use exit 1. A null status means timeout or
-    // signal termination, while any other exit is outside this diagnostic
-    // contract; both are indeterminate and must preserve the provider.
-    if (result.status === null) return preserveIndeterminate("timeout-or-signal");
-    if (result.status !== 1) return preserveIndeterminate("unexpected-exit");
-
-    const primaryDiagnosticParts = [result.stderr, result.stdout].map(outputText).filter(Boolean);
-    const diagnosticParts =
-      primaryDiagnosticParts.length > 0
-        ? primaryDiagnosticParts
-        : [outputText(result.output)].filter(Boolean);
-    if (
-      diagnosticParts.some((part) => Buffer.byteLength(part) >= PROVIDER_PROBE_DIAGNOSTIC_LIMIT)
-    ) {
-      return preserveIndeterminate("diagnostic-capture-limit");
-    }
-    const diagnostic = diagnosticParts.join("\n");
-    return reportsExactProviderNotFound(diagnostic, name)
-      ? false
-      : preserveIndeterminate("ambiguous-diagnostic");
-  });
+  const reconciled: string[] = [];
+  for (const name of recorded) {
+    const outcome = probeExtraProvider({ gatewayName, name, runOpenshell, nowMs, deadlineMs });
+    if (outcome.reason) recordIndeterminate(outcome.reason);
+    if (outcome.keep) reconciled.push(name);
+  }
 
   if (indeterminateProviderCount > 0) {
     warn(
