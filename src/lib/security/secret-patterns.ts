@@ -48,6 +48,12 @@ export const TOKEN_PREFIX_PATTERNS: RegExp[] = [
   /lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*/g,
 ];
 
+/** Structured standalone tokens without a provider-specific prefix. */
+export const STRUCTURED_TOKEN_PATTERNS: RegExp[] = [
+  // JSON Web Tokens (base64url header.payload.signature).
+  /\beyJ[A-Za-z0-9_-]{5,}\.eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{10,}\b/g,
+];
+
 /** Context-anchored patterns (require a prefix like KEY=, Bearer, etc.). */
 export const CONTEXT_PATTERNS: RegExp[] = [
   /(?<=Bearer\s+)[A-Za-z0-9_.+/=-]{10,}/gi,
@@ -80,6 +86,7 @@ export const SECRET_BLOCK_PATTERNS: RegExp[] = [
 /** All secret patterns combined. */
 export const SECRET_PATTERNS: RegExp[] = [
   ...TOKEN_PREFIX_PATTERNS,
+  ...STRUCTURED_TOKEN_PATTERNS,
   ...SECRET_BLOCK_PATTERNS,
   ...CONTEXT_PATTERNS,
 ];

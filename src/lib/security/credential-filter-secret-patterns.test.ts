@@ -5,6 +5,10 @@ import { describe, expect, it } from "vitest";
 
 import { isCredentialField, stripCredentials, valueLooksLikeSecret } from "./credential-filter.js";
 
+function makeJwtFixture(): string {
+  return ["eyJhbGciOiJIUzI1NiJ9", "eyJzdWIiOiIxMjM0NTY3ODkwIn0", "signatureABCDEFGHI"].join(".");
+}
+
 describe("isCredentialField", () => {
   it("matches explicit field names", () => {
     expect(isCredentialField("apiKey")).toBe(true);
@@ -120,6 +124,7 @@ describe("valueLooksLikeSecret", () => {
     expect(valueLooksLikeSecret("ghp_0123456789abcdef")).toBe(true);
     expect(valueLooksLikeSecret("sk-proj-0123456789abcdefghij")).toBe(true);
     expect(valueLooksLikeSecret("xoxb-123456789-abcdefghij")).toBe(true);
+    expect(valueLooksLikeSecret(makeJwtFixture())).toBe(true);
     expect(valueLooksLikeSecret("Bearer abcdef0123456789")).toBe(true);
   });
 

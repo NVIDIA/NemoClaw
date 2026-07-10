@@ -24,6 +24,7 @@ import {
   CONTEXT_PATTERNS,
   SECRET_BLOCK_PATTERNS,
   SECRET_PATTERNS,
+  STRUCTURED_TOKEN_PATTERNS,
   TOKEN_PREFIX_PATTERNS,
 } from "./secret-patterns";
 
@@ -234,6 +235,10 @@ const FULL_REDACT_PATTERNS: [RegExp, string][] = [
     new RegExp(p.source, p.flags),
     "<REDACTED>",
   ]),
+  ...STRUCTURED_TOKEN_PATTERNS.map((p): [RegExp, string] => [
+    new RegExp(p.source, p.flags),
+    "<REDACTED>",
+  ]),
   [/(Bearer )\S+/gi, "$1<REDACTED>"],
   [/\/bot[^/\s]+\//g, "/bot<REDACTED>/"],
 ];
@@ -250,7 +255,11 @@ export function redactFull(text: string): string {
 /** Redact self-identifying tokens and secret blocks without rewriting surrounding structure. */
 export function redactStandaloneSecretsFull(text: string): string {
   let result = text;
-  for (const pattern of [...TOKEN_PREFIX_PATTERNS, ...SECRET_BLOCK_PATTERNS]) {
+  for (const pattern of [
+    ...TOKEN_PREFIX_PATTERNS,
+    ...STRUCTURED_TOKEN_PATTERNS,
+    ...SECRET_BLOCK_PATTERNS,
+  ]) {
     pattern.lastIndex = 0;
     result = result.replace(pattern, "<REDACTED>");
   }
@@ -264,7 +273,12 @@ export function redactSensitiveText(value: unknown): string | null {
   let result = value
     .replace(SENSITIVE_ENV_ASSIGNMENT_PATTERN, "$1=<REDACTED>")
     .replace(/Bearer\s+\S+/gi, "Bearer <REDACTED>");
-  for (const pattern of [...SECRET_BLOCK_PATTERNS, ...CONTEXT_PATTERNS, ...TOKEN_PREFIX_PATTERNS]) {
+  for (const pattern of [
+    ...SECRET_BLOCK_PATTERNS,
+    ...CONTEXT_PATTERNS,
+    ...TOKEN_PREFIX_PATTERNS,
+    ...STRUCTURED_TOKEN_PATTERNS,
+  ]) {
     pattern.lastIndex = 0;
     result = result.replace(pattern, "<REDACTED>");
   }
@@ -283,11 +297,16 @@ export function redactUrl(value: unknown): string | null {
     parsed.url.username = "";
     parsed.url.password = "";
   }
-  for (const key of [...parsed.url.searchParams.keys()]) {
-    if (/(^|[-_])(?:signature|sig|token|auth|access_token)$/i.test(key)) {
-      parsed.url.searchParams.set(key, "<REDACTED>");
-    }
+  const redactedSearchParams = new URLSearchParams();
+  for (const [key, queryValue] of parsed.url.searchParams) {
+    redactedSearchParams.append(
+      key,
+      /(^|[-_])(?:signature|sig|token|auth|access_token)$/i.test(key)
+        ? "<REDACTED>"
+        : redactStandaloneSecretsFull(queryValue),
+    );
   }
+  parsed.url.search = redactedSearchParams.toString();
   parsed.url.hash = "";
   return `${parsed.url.toString()}${parsed.suffix}`;
 }

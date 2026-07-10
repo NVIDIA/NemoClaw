@@ -12,6 +12,10 @@ import {
   redactUrl,
 } from "./redact.js";
 
+function makeJwtFixture(): string {
+  return ["eyJhbGciOiJIUzI1NiJ9", "eyJzdWIiOiIxMjM0NTY3ODkwIn0", "signatureABCDEFGHI"].join(".");
+}
+
 describe("URL redaction", () => {
   it.each([
     ["SOCKS", "socks5://socks-user:socks-password@proxy.example:1080"],
@@ -96,6 +100,40 @@ describe("URL redaction", () => {
     );
 
     expect(result).toBe("ftp://files.example/path?token=%3CREDACTED%3E");
+  });
+
+  it("redacts encoded and repeated token-shaped query values under benign names", () => {
+    const secrets = {
+      anthropic: "sk-ant-abcdefghijklmnopqrstuvwxyz",
+      github: "ghp_abcdefghijklmnopqrstuvwxyz",
+      jwt: makeJwtFixture(),
+      nvidia: "nvapi-abcdefghijklmnopqrstuvwxyz",
+      openai: "sk-proj-abcdefghijklmnopqrstuvwxyz",
+      slack: "xoxb-1234567890-abcdefghij",
+    };
+    const encodedOpenAi = secrets.openai.replaceAll("-", "%2D");
+    const result = redactUrl(
+      `https://url-user:url-password@endpoint.example/api?value=${secrets.nvidia}&model=${encodedOpenAi}&provider=${secrets.anthropic}&session=${secrets.github}&channel=${secrets.slack}&assertion=${secrets.jwt}&repeat=safe&repeat=${secrets.github}&mixed=prefix:${secrets.nvidia}:suffix&token=opaque-value&keep=yes#session=${secrets.slack}`,
+    );
+
+    expect(result).not.toBeNull();
+    const parsed = new URL(result as string);
+    expect(parsed.username).toBe("");
+    expect(parsed.password).toBe("");
+    expect(parsed.hash).toBe("");
+    expect(parsed.searchParams.get("value")).toBe("<REDACTED>");
+    expect(parsed.searchParams.get("model")).toBe("<REDACTED>");
+    expect(parsed.searchParams.get("provider")).toBe("<REDACTED>");
+    expect(parsed.searchParams.get("session")).toBe("<REDACTED>");
+    expect(parsed.searchParams.get("channel")).toBe("<REDACTED>");
+    expect(parsed.searchParams.get("assertion")).toBe("<REDACTED>");
+    expect(parsed.searchParams.getAll("repeat")).toEqual(["safe", "<REDACTED>"]);
+    expect(parsed.searchParams.get("mixed")).toBe("prefix:<REDACTED>:suffix");
+    expect(parsed.searchParams.get("token")).toBe("<REDACTED>");
+    expect(parsed.searchParams.get("keep")).toBe("yes");
+    for (const secret of Object.values(secrets)) {
+      expect(result).not.toContain(secret);
+    }
   });
 });
 
