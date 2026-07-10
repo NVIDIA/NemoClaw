@@ -2780,6 +2780,7 @@ recover_hermes_gateway_current_user() {
             || ! hermes_gateway_healthy "$GATEWAY_PID"; then
             break
           fi
+          finalize_tirith_marker_retry
           if ! commit_hermes_mcp_applied_if_pending; then
             echo "[SECURITY] HERMES_MCP_APPLIED_COMMIT_FAILED: stopping the uncommitted Hermes gateway" >&2
             hermes_stop_tracked_role gateway "$GATEWAY_PID" current "$INTERNAL_PORT" || return 1
