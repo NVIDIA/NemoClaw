@@ -3,7 +3,7 @@
 
 import { vi } from "vitest";
 
-type SandboxStub = { name: string };
+type SandboxStub = { name: string; pendingRouteReservation?: true };
 
 export type DirectPublicDispatchHarness = {
   dispatchCli: (argv: string[]) => Promise<void>;
@@ -21,8 +21,10 @@ export type DirectPublicDispatchHarness = {
 
 type DirectPublicDispatchOptions = {
   sandboxNames?: readonly string[];
-  /** Default-sandbox pointer returned by the registry stub (default: none). */
+  /** Stored default-sandbox pointer; the stub applies the production fallback contract. */
   defaultSandbox?: string | null;
+  /** Registered route reservations that are not ready or default-eligible. */
+  pendingSandboxNames?: readonly string[];
   /** Args the sandbox-connect stub treats as connect flags (default: none). */
   connectFlags?: readonly string[];
 };
@@ -65,14 +67,29 @@ export async function withDirectPublicDispatch(
   const priorRegistryRecovery = requireCache[registryRecoveryPath];
   const priorRunner = requireCache[runnerPath];
   const priorDockerHost = process.env.DOCKER_HOST;
+  const pendingSandboxNames = new Set(options.pendingSandboxNames ?? []);
   const sandboxes = new Map<string, SandboxStub>(
-    (options.sandboxNames ?? []).map((name) => [name, { name }]),
+    (options.sandboxNames ?? []).map((name) => [
+      name,
+      {
+        name,
+        ...(pendingSandboxNames.has(name) ? { pendingRouteReservation: true as const } : {}),
+      },
+    ]),
   );
   const getSandbox = vi.fn((name: string) => sandboxes.get(name) ?? null);
-  const getDefault = vi.fn(() => options.defaultSandbox ?? null);
+  const getDefault = vi.fn(() => {
+    const storedDefault = options.defaultSandbox ?? null;
+    const stored = storedDefault ? sandboxes.get(storedDefault) : null;
+    if (stored && stored.pendingRouteReservation !== true) return storedDefault;
+    return (
+      [...sandboxes.values()].find((sandbox) => sandbox.pendingRouteReservation !== true)?.name ??
+      null
+    );
+  });
   const listSandboxes = vi.fn(() => ({
     sandboxes: [...sandboxes.values()],
-    defaultSandbox: sandboxes.keys().next().value ?? null,
+    defaultSandbox: options.defaultSandbox ?? null,
   }));
   const recoverRegistryEntries = vi.fn(async () => ({
     ...listSandboxes(),

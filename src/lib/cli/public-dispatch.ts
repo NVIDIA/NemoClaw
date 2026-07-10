@@ -28,6 +28,7 @@ import {
   normalizeArgv,
   suggestCommand,
 } from "./argv-normalizer";
+import { resolveBareConnectArgv } from "./bare-connect-routing";
 import { getRegisteredOclifCommandMetadata } from "./oclif-metadata";
 import {
   type PublicTranslationResult,
@@ -292,80 +293,6 @@ function handlePublicConnectHelp(normalized: NormalizedSandboxArgv): boolean {
   return true;
 }
 
-// ── Bare `nemoclaw connect` (#6627) ──────────────────────────────
-//
-// `nemoclaw connect` with no sandbox name targets the default sandbox instead
-// of parsing "connect" as a sandbox name. A registered sandbox literally named
-// "connect" keeps the historical name-first grammar.
-
-/**
- * Route a bare `connect` invocation to the default sandbox.
- *
- * Returns the (possibly rewritten) argv to dispatch, or `null` when the
- * invocation was fully handled here (bare `connect --help`).
- * Exits with a usage error when no default sandbox can be resolved, or with
- * an order hint when the trailing argument is a registered sandbox name.
- */
-async function resolveBareConnectArgv(
-  normalized: NormalizedSandboxArgv,
-): Promise<NormalizedSandboxArgv | null> {
-  if (normalized.sandboxName !== "connect" || registry().getSandbox("connect")) {
-    return normalized;
-  }
-
-  if (normalized.action !== "connect") {
-    // `nemoclaw connect <name>` — reversed order. Point at the correct grammar
-    // when the trailing token is a registered sandbox; otherwise let the
-    // regular unknown-command path handle it.
-    const reorderedCandidate = findRegisteredSandboxName([normalized.action]);
-    if (reorderedCandidate) {
-      printConnectOrderHint(reorderedCandidate);
-      process.exit(1);
-    }
-    return normalized;
-  }
-
-  if (normalized.connectHelpRequested) {
-    sandboxConnect().printSandboxConnectHelp(registry().getDefault() ?? undefined);
-    return null;
-  }
-
-  const defaultName = await resolveDefaultSandboxForBareConnect();
-  if (!defaultName) {
-    printBareConnectWithoutDefault();
-  }
-  return { ...normalized, sandboxName: defaultName };
-}
-
-async function resolveDefaultSandboxForBareConnect(): Promise<string | null> {
-  const currentDefault = registry().getDefault();
-  if (currentDefault) return currentDefault;
-  // With registered sandboxes but no default pointer, guidance beats recovery:
-  // recovery probes the live gateway and its failure modes would bury the
-  // "set a default" hint. An empty registry may just be stale while an
-  // onboarded sandbox is still live, so give recovery one chance to restore
-  // the entries along with the default-sandbox pointer.
-  if (registry().listSandboxes().sandboxes.length > 0) return null;
-  await registryRecovery().recoverRegistryEntries();
-  return registry().getDefault();
-}
-
-function printBareConnectWithoutDefault(): never {
-  const allNames = registry()
-    .listSandboxes()
-    .sandboxes.map((s: { name: string }) => s.name);
-  console.error(`  '${CLI_NAME} connect' connects to the default sandbox, but none is set.`);
-  console.error("");
-  if (allNames.length > 0) {
-    console.error(`  Registered sandboxes: ${allNames.join(", ")}`);
-    console.error(`  Set a default with: ${CLI_NAME} use <sandbox-name>`);
-    console.error(`  Or connect directly: ${CLI_NAME} <sandbox-name> connect`);
-  } else {
-    console.error(`  Run '${CLI_NAME} onboard' to create one.`);
-  }
-  process.exit(1);
-}
-
 function validatePublicConnectArgs(
   sandboxName: string,
   action: string,
@@ -432,7 +359,15 @@ async function dispatchSandboxArgv(
   normalized: NormalizedSandboxArgv,
   argv: string[],
 ): Promise<void> {
-  const routed = await resolveBareConnectArgv(normalized);
+  const routed = await resolveBareConnectArgv(normalized, {
+    findRegisteredSandboxName,
+    getDefault: () => registry().getDefault(),
+    getSandbox: (name) => registry().getSandbox(name),
+    listSandboxes: () => registry().listSandboxes(),
+    printConnectOrderHint,
+    printSandboxConnectHelp: (sandboxName) => sandboxConnect().printSandboxConnectHelp(sandboxName),
+    recoverRegistryEntries: () => registryRecovery().recoverRegistryEntries(),
+  });
   if (!routed) return;
   const cmd = routed.sandboxName;
   const rawArgsAfterCmd = argv.slice(1);
