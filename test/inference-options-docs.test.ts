@@ -219,6 +219,13 @@ describe("inference setup navigation", () => {
     expect(markdown).not.toContain("--host 0.0.0.0");
   });
 
+  it("uses a loopback-only bind for the local vLLM server example", () => {
+    const markdown = fs.readFileSync(vllmSetupPath, "utf8");
+
+    expect(markdown).toContain("--host 127.0.0.1");
+    expect(markdown).not.toContain("--host 0.0.0.0");
+  });
+
   it("routes tool-calling remediation to the focused vLLM guide", () => {
     const markdown = fs.readFileSync(toolCallingFailuresPath, "utf8");
     const start = markdown.indexOf("## Related Topics");
