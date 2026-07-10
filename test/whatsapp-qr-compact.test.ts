@@ -291,6 +291,7 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
     args: string[],
     opts: {
       gatewayUrl?: string;
+      gatewayToken?: string;
       insecurePublicWs?: string;
       privateGatewayUrl?: string;
       insecurePrivateWs?: string;
@@ -312,6 +313,7 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
           'echo "FAKE_OPENCLAW_NODE_OPTIONS=${NODE_OPTIONS:-}"',
           'echo "FAKE_OPENCLAW_GATEWAY_URL=${OPENCLAW_GATEWAY_URL:-unset}"',
           'echo "FAKE_OPENCLAW_INSECURE_WS=${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-unset}"',
+          'echo "FAKE_OPENCLAW_TOKEN=${OPENCLAW_GATEWAY_TOKEN:-unset}"',
           `exit ${opts.fakeExit ?? 0}`,
         ].join("\n"),
         { mode: 0o755 },
@@ -336,6 +338,11 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
         wrapperLines.push(`export OPENCLAW_GATEWAY_URL=${JSON.stringify(opts.gatewayUrl)}`);
       } else {
         wrapperLines.push("unset OPENCLAW_GATEWAY_URL");
+      }
+      if (opts.gatewayToken !== undefined) {
+        wrapperLines.push(`export OPENCLAW_GATEWAY_TOKEN=${JSON.stringify(opts.gatewayToken)}`);
+      } else {
+        wrapperLines.push("unset OPENCLAW_GATEWAY_TOKEN");
       }
       wrapperLines.push(
         opts.insecurePublicWs !== undefined
@@ -407,8 +414,9 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
 
   it.each([
     "ws://127.0.0.1:18789",
-    "wss://gateway.internal:443",
-  ])("accepts ws:// and wss:// gateway URLs (%s)", (goodUrl) => {
+    "wss://localhost:443",
+    "ws://[::1]:18789",
+  ])("accepts loopback ws:// and wss:// gateway URL overrides (%s)", (goodUrl) => {
     const r = runGuard(["channels", "login", "--channel", "whatsapp"], {
       gatewayUrl: goodUrl,
       preloadPresent: true,
@@ -416,6 +424,26 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
     expect(r.stdout).toContain("FAKE_OPENCLAW_ARGS=channels login --channel whatsapp");
     expect(r.stdout).toContain(`FAKE_OPENCLAW_GATEWAY_URL=${goodUrl}`);
     expect(r.stdout).toContain("GUARD_EXIT=0");
+  });
+
+  it.each([
+    "wss://attacker.example.test:443",
+    "ws://10.200.0.2:18790",
+    "ws://gateway.internal:18789",
+    "ws://127.0.0.1.evil.example:18789",
+    "ws://localhost.evil.example:18789",
+  ])("fails closed on a non-loopback gateway URL override without invoking openclaw (%s)", (badUrl) => {
+    const r = runGuard(["channels", "login", "--channel", "whatsapp"], {
+      gatewayUrl: badUrl,
+      gatewayToken: "guard-secret-token",
+      preloadPresent: true,
+    });
+    expect(r.stderr).toContain("is not a loopback gateway URL");
+    expect(r.stdout).toContain("GUARD_EXIT=1");
+    // The child never runs, so the connect-shell gateway token is never
+    // presented to the caller-selected endpoint.
+    expect(r.stdout).not.toContain("FAKE_OPENCLAW_ARGS");
+    expect(r.stdout).not.toContain("FAKE_OPENCLAW_TOKEN");
   });
 
   it("does not re-inject the stashed private gateway URL for WhatsApp (#6413)", () => {
@@ -434,26 +462,26 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
     expect(r.stdout).toContain("GUARD_EXIT=0");
   });
 
-  it("preserves an explicit public gateway override without borrowing the private opt-in (#4504)", () => {
+  it("preserves an explicit loopback override without borrowing the private opt-in (#4504)", () => {
     const r = runGuard(["channels", "login", "--channel", "whatsapp"], {
-      gatewayUrl: "wss://explicit.example.test:443",
+      gatewayUrl: "wss://127.0.0.1:443",
       privateGatewayUrl: "ws://10.200.0.2:18790",
       insecurePrivateWs: "1",
       preloadPresent: true,
     });
-    expect(r.stdout).toContain("FAKE_OPENCLAW_GATEWAY_URL=wss://explicit.example.test:443");
+    expect(r.stdout).toContain("FAKE_OPENCLAW_GATEWAY_URL=wss://127.0.0.1:443");
     expect(r.stdout).toContain("FAKE_OPENCLAW_INSECURE_WS=unset");
   });
 
-  it("preserves the insecure-WS marker explicitly coupled to a public override (#4504)", () => {
+  it("preserves the insecure-WS marker explicitly coupled to a loopback override (#4504)", () => {
     const r = runGuard(["channels", "login", "--channel", "whatsapp"], {
-      gatewayUrl: "ws://explicit.example.test:18790",
+      gatewayUrl: "ws://localhost:18790",
       insecurePublicWs: "explicit-marker",
       privateGatewayUrl: "ws://10.200.0.2:18790",
       insecurePrivateWs: "1",
       preloadPresent: true,
     });
-    expect(r.stdout).toContain("FAKE_OPENCLAW_GATEWAY_URL=ws://explicit.example.test:18790");
+    expect(r.stdout).toContain("FAKE_OPENCLAW_GATEWAY_URL=ws://localhost:18790");
     expect(r.stdout).toContain("FAKE_OPENCLAW_INSECURE_WS=explicit-marker");
   });
 

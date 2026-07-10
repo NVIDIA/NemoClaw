@@ -3548,9 +3548,10 @@ openclaw() {
               # approve` wrapper (NemoClaw#4462) relies on — and the post-pair
               # restart succeeds without any token-bearing reconcile. That
               # single change dictates this block's shape: an unset URL is the
-              # healthy default rather than an error, the ws:// scheme check
-              # and the pairing banner apply only to an explicitly exported
-              # OPENCLAW_GATEWAY_URL (kept as an operator escape hatch), and
+              # healthy default rather than an error, the ws:// scheme and
+              # loopback-host checks plus the pairing banner apply only to an
+              # explicitly exported OPENCLAW_GATEWAY_URL (kept as a
+              # loopback-only operator escape hatch), and
               # the login runs in a subshell that exports the override env
               # only when present — an empty-but-set OPENCLAW_GATEWAY_URL is
               # not equivalent to an unset one for OpenClaw's config
@@ -3559,12 +3560,33 @@ openclaw() {
               _nemoclaw_whatsapp_insecure_ws="${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}"
               if [ -n "$_nemoclaw_whatsapp_gateway_url" ]; then
                 # The OpenClaw gateway is a WebSocket endpoint (set to
-                # ws://127.0.0.1:<port> at boot). Reject a malformed scheme up
-                # front so a typo'd/clobbered URL is reported as a gateway/env
-                # problem rather than failing inside the login as an ambiguous
-                # close.
+                # ws://127.0.0.1:<port> at boot). Dispatch on the override:
+                #
+                #   ws(s):// on 127.0.0.1 | localhost | [::1]  -> honor
+                #   ws(s):// on any other host                 -> reject
+                #   anything else (not a ws:// URL)            -> reject
+                #
+                # Non-loopback hosts: the connect shell exports the gateway
+                # token, so a caller-selected endpoint would receive it —
+                # reject rather than silently strip (stripping would flip the
+                # login into device-pairing auth against a foreign host).
+                # Malformed values fail fast as a gateway/env problem instead
+                # of an ambiguous close inside the login.
                 case "$_nemoclaw_whatsapp_gateway_url" in
-                  ws://* | wss://*) ;;
+                  ws://127.0.0.1 | ws://127.0.0.1:* | ws://127.0.0.1/* | \
+                    wss://127.0.0.1 | wss://127.0.0.1:* | wss://127.0.0.1/* | \
+                    ws://localhost | ws://localhost:* | ws://localhost/* | \
+                    wss://localhost | wss://localhost:* | wss://localhost/* | \
+                    "ws://[::1]" | "ws://[::1]:"* | "ws://[::1]/"* | \
+                    "wss://[::1]" | "wss://[::1]:"* | "wss://[::1]/"*) ;;
+                  ws://* | wss://*)
+                    echo "Error: WhatsApp pairing cannot start — gateway URL='${_nemoclaw_whatsapp_gateway_url}' is not a loopback gateway URL." >&2
+                    echo "Explicit overrides are honored only for the in-sandbox loopback gateway (ws://127.0.0.1:<port>," >&2
+                    echo "ws://localhost:<port>, or ws://[::1]:<port>) so the connect shell's gateway token is never" >&2
+                    echo "presented to a non-local endpoint. Unset OPENCLAW_GATEWAY_URL to pair via the supported" >&2
+                    echo "in-sandbox loopback resolution." >&2
+                    return 1
+                    ;;
                   *)
                     echo "Error: WhatsApp pairing cannot start — gateway URL='${_nemoclaw_whatsapp_gateway_url}' is not a ws:// gateway URL." >&2
                     echo "The OpenClaw gateway is a WebSocket endpoint (e.g. ws://127.0.0.1:<port>); a malformed value" >&2
