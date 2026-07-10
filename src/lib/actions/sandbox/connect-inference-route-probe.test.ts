@@ -201,6 +201,21 @@ describe("sandbox inference route probe result", () => {
     ).toMatchObject({ healthy: false, broken: false, httpStatus: 0 });
   });
 
+  it("does not trust stdout success when the exec boundary emits stderr (#6192)", () => {
+    expect(
+      parseSandboxInferenceRouteProbeResult({
+        status: 0,
+        output: "OK 200",
+        stderr: "/sandbox/.bash_profile: line 1: 3: Bad file descriptor\n",
+      }),
+    ).toMatchObject({
+      healthy: false,
+      broken: false,
+      httpStatus: 0,
+      detail: expect.stringContaining("/sandbox/.bash_profile"),
+    });
+  });
+
   it("fails closed with rebuild guidance when the DCode helper is missing (#6192)", () => {
     const output = `exec: ${DCODE_MANAGED_EXEC_LAUNCHER}: not found`;
 

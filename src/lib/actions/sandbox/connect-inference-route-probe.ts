@@ -15,6 +15,7 @@ export type InferenceRouteFailureLabel = "unhealthy" | "unreachable";
 type InferenceRouteProbeCommandResult = {
   status?: number | null;
   output?: string | null;
+  stderr?: string | null;
 };
 
 // OpenShell injects the per-sandbox trust bundle into each exec process. Pass
@@ -105,6 +106,15 @@ export function buildSandboxInferenceRouteProbeArgs(
 export function parseSandboxInferenceRouteProbeResult(
   result: InferenceRouteProbeCommandResult,
 ): ParsedInferenceRouteProbe {
+  const stderr = String(result.stderr ?? "").trim();
+  if (stderr) {
+    return {
+      healthy: false,
+      broken: false,
+      httpStatus: 0,
+      detail: stderr.replace(/\s+/g, " ").slice(0, 240),
+    };
+  }
   const rawDetail = String(result.output ?? "").trim();
   // Some OpenShell releases frame child stdout for humans. Normalize only the
   // two known frame prefixes at the beginning of the captured output.

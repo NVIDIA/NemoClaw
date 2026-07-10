@@ -42,6 +42,7 @@ export async function probeSandboxInferenceGatewayHealth(
       buildSandboxInferenceRouteProbeArgs(sandboxName, getSessionAgent(sandboxName)),
       {
         ignoreError: true,
+        includeStreams: true,
         timeout: OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
       },
     );

@@ -42,7 +42,9 @@ export type ConnectHarness = {
 export type ConnectHarnessOptions = {
   agentName?: string;
   inferenceGetOutput?: string;
-  inferenceProbeResponses?: string[];
+  inferenceProbeResponses?: Array<
+    string | { status?: number | null; output?: string | null; stderr?: string | null }
+  >;
   registryEntry?: Partial<SandboxEntry>;
   registryEntries?: Array<Partial<SandboxEntry> & Pick<SandboxEntry, "name">>;
   sessionAgent?: unknown;
@@ -139,7 +141,8 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
         argv[1] === "exec" &&
         argv.join(" ").includes("inference.local/v1/models")
       ) {
-        return { status: 0, output: inferenceProbeResponses.shift() ?? "OK 200" };
+        const response = inferenceProbeResponses.shift() ?? "OK 200";
+        return typeof response === "string" ? { status: 0, output: response } : response;
       }
       return { status: 0, output: "" };
     });
