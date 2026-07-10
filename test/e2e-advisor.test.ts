@@ -173,14 +173,17 @@ describe("E2E recommendation advisor prompt", () => {
       schema: { type: "object" },
     });
 
-    expect(turn.syntheticToolResults?.map((result) => result.toolName)).toEqual([
+    expect(turn.contextToolResults?.map((result) => result.toolName)).toEqual([
       "e2e_advisor_metadata",
       "e2e_advisor_changed_files",
       "e2e_advisor_risk_plan",
       "e2e_advisor_git_diff",
       "e2e_advisor_response_schema",
     ]);
-    expect(turn.syntheticToolResults?.[2]?.content).toContain("messaging-lifecycle");
+    expect(turn.contextToolResults?.[2]?.content).toContain("messaging-lifecycle");
+    for (const result of turn.contextToolResults ?? []) {
+      expect(turn.prompt).toContain(`\`${result.toolName}\``);
+    }
     expect(turn.prompt).toContain("deterministic risk plan");
   });
 

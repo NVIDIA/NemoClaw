@@ -179,7 +179,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .spyOn(onboardSession, "releaseOnboardLock")
     .mockImplementation(() => undefined);
   vi.spyOn(onboardSession, "acquireOnboardLock").mockReturnValue({ acquired: true });
-  const markStepFailedSpy = installTerminalStepFailureMock(onboardSession, session);
+  const finalizeIncompleteOnboardStepSpy = installTerminalStepFailureMock(onboardSession, session);
   session.sandboxName = overrides.sessionSandboxName ?? session.sandboxName;
   const modelsCustomOpenClawImage =
     typeof overrides.sandboxEntry?.fromDockerfile === "string" &&
@@ -502,7 +502,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     ensureValidatedBraveSearchCredentialSpy,
     hydrateCredentialEnvSpy,
     logSpy,
-    markStepFailedSpy,
+    finalizeIncompleteOnboardStepSpy,
     onboardSpy,
     registryUpdateSpy,
     setDefaultSpy,

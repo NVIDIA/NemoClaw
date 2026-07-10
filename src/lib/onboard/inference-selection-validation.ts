@@ -65,6 +65,7 @@ export interface InferenceSelectionValidationHelpers {
     helpUrl?: string | null,
     options?: {
       authMode?: "bearer" | "query-param";
+      extraHeaders?: readonly string[];
       requireResponsesToolCalling?: boolean;
       requireChatCompletionsToolCalling?: boolean;
       skipResponsesProbe?: boolean;
@@ -182,6 +183,7 @@ export function createInferenceSelectionValidationHelpers(
     helpUrl: string | null = null,
     options: {
       authMode?: "bearer" | "query-param";
+      extraHeaders?: readonly string[];
       requireResponsesToolCalling?: boolean;
       requireChatCompletionsToolCalling?: boolean;
       skipResponsesProbe?: boolean;

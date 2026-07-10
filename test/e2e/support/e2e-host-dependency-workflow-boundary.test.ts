@@ -60,6 +60,12 @@ describe("inline E2E host dependency boundary", () => {
       expected:
         "issue-4434-tui-unreachable-inference host dependency install must be exactly 'sudo apt-get install -y --no-install-recommends expect iptables'",
     },
+    {
+      jobName: "openclaw-tui-chat-correlation",
+      stepName: "Install OpenClaw TUI host dependencies",
+      expected:
+        "openclaw-tui-chat-correlation host dependency install must be exactly 'sudo apt-get install -y --no-install-recommends expect'",
+    },
   ])("rejects package allowlist drift in $jobName", ({ jobName, stepName, expected }) => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-apt-allowlist-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
@@ -70,6 +76,25 @@ describe("inline E2E host dependency boundary", () => {
 
     try {
       expect(validateE2eWorkflowBoundary(workflowPath)).toContain(expected);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects installing the OpenClaw TUI host dependency after workspace preparation", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-host-dependency-order-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow();
+    const steps = workflow.jobs["openclaw-tui-chat-correlation"].steps;
+    const installIndex = requireStepIndex(steps, "Install OpenClaw TUI host dependencies");
+    const prepareIndex = requireStepIndex(steps, "Prepare E2E workspace");
+    [steps[installIndex], steps[prepareIndex]] = [steps[prepareIndex]!, steps[installIndex]!];
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      expect(validateE2eWorkflowBoundary(workflowPath)).toContain(
+        "openclaw-tui-chat-correlation host dependencies must be installed before workspace prep",
+      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
