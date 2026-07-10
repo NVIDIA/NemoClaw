@@ -55,6 +55,7 @@ export type PrepareSandboxDockerfilePatchInput = {
 
 export type SandboxDockerfilePatchResult = {
   buildId: string;
+  dashboardRemoteBindPrepared: boolean;
   resolvedBaseImage: ResolvedSandboxBaseImage | null;
 };
 
@@ -174,7 +175,7 @@ export async function prepareSandboxDockerfilePatch({
     !fromDockerfile && STABLE_MANAGED_BUILD_ID_AGENTS.has(managedAgentName)
       ? "preserve"
       : "rewrite";
-  (deps.patchStagedDockerfile ?? patchStagedDockerfile)(
+  const patched = (deps.patchStagedDockerfile ?? patchStagedDockerfile)(
     stagedDockerfile,
     model,
     chatUiUrl,
@@ -198,5 +199,9 @@ export async function prepareSandboxDockerfilePatch({
     })(),
   );
 
-  return { buildId, resolvedBaseImage: resolved };
+  return {
+    buildId,
+    dashboardRemoteBindPrepared: patched?.dashboardRemoteBindPrepared === true,
+    resolvedBaseImage: resolved,
+  };
 }

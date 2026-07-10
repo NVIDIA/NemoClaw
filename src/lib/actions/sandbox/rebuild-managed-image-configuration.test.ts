@@ -27,7 +27,11 @@ describe("managed DCode rebuild image configuration", () => {
     let reasoningDuringPatch: string | undefined;
     const prepareDockerfilePatch = vi.fn(async () => {
       reasoningDuringPatch = process.env.NEMOCLAW_REASONING;
-      return { buildId: "dcode-fidelity", resolvedBaseImage: null };
+      return {
+        buildId: "dcode-fidelity",
+        dashboardRemoteBindPrepared: false,
+        resolvedBaseImage: null,
+      };
     });
 
     try {
@@ -129,7 +133,11 @@ describe("managed DCode rebuild image configuration", () => {
           }),
           prepareDockerfilePatch: async () => {
             reasoningDuringPatch = process.env.NEMOCLAW_REASONING;
-            return { buildId: "dcode-reasoning-default", resolvedBaseImage: null };
+            return {
+              buildId: "dcode-reasoning-default",
+              dashboardRemoteBindPrepared: false,
+              resolvedBaseImage: null,
+            };
           },
           buildImage: () => ({ status: 0 }) as never,
           removeImage: () => ({ status: 0 }) as never,

@@ -135,6 +135,7 @@ describe("prepareSandboxDockerfilePatch", () => {
 
     expect(result).toEqual({
       buildId: "12345",
+      dashboardRemoteBindPrepared: false,
       resolvedBaseImage: {
         digest: "sha256:abcdef0123456789",
         ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:abcdef0123456789",

@@ -36,6 +36,8 @@ describe("remote dashboard bind production lifecycle", () => {
         "ARG CHAT_UI_URL=http://127.0.0.1:18789",
         "ARG NEMOCLAW_DASHBOARD_BIND=",
         "ARG NEMOCLAW_DISABLE_DEVICE_AUTH=0",
+        "ENV NEMOCLAW_DASHBOARD_BIND=${NEMOCLAW_DASHBOARD_BIND}",
+        "RUN node --experimental-strip-types /scripts/generate-openclaw-config.mts",
       ].join("\n"),
     );
 
@@ -108,6 +110,30 @@ describe("remote dashboard bind production lifecycle", () => {
       expect(() =>
         patchStagedDockerfile(dockerfile, "test-model", "http://127.0.0.1:18789"),
       ).toThrow(/missing ARG NEMOCLAW_DASHBOARD_BIND/);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses remote preparation when a custom Dockerfile declares but never consumes the bind arg (#6024)", () => {
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-unused-"));
+    const dockerfile = path.join(directory, "Dockerfile");
+    fs.writeFileSync(
+      dockerfile,
+      [
+        "ARG NEMOCLAW_MODEL=",
+        "ARG CHAT_UI_URL=",
+        "ARG NEMOCLAW_DASHBOARD_BIND=",
+        "FROM scratch",
+      ].join("\n"),
+    );
+
+    try {
+      expect(() =>
+        patchStagedDockerfile(dockerfile, "test-model", "http://127.0.0.1:18789"),
+      ).toThrow(/does not promote it to generate-openclaw-config/);
+      expect(hasPreparedRemoteDashboardBind(dockerfile)).toBe(false);
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }

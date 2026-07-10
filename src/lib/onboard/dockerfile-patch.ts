@@ -88,8 +88,25 @@ export function isValidProxyPort(value: string): boolean {
   return port >= 1 && port <= 65535;
 }
 
+export type PatchedDockerfileMetadata = {
+  dashboardRemoteBindPrepared: boolean;
+};
+
+function hasRemoteDashboardBindGenerationContract(dockerfile: string): boolean {
+  const argIndex = dockerfile.search(/^ARG NEMOCLAW_DASHBOARD_BIND=0\.0\.0\.0$/m);
+  if (argIndex < 0) return false;
+  const envIndex = dockerfile.search(
+    /^\s*(?:ENV\s+)?NEMOCLAW_DASHBOARD_BIND=\$\{NEMOCLAW_DASHBOARD_BIND\}\s*\\?$/m,
+  );
+  if (envIndex < 0 || envIndex < argIndex) return false;
+  const generatorIndex = dockerfile.search(
+    /^RUN\b[^\n]*(?:\\\n[^\n]*)*generate-openclaw-config\.mts/m,
+  );
+  return generatorIndex > envIndex;
+}
+
 export function hasPreparedRemoteDashboardBind(dockerfilePath: string): boolean {
-  return /^ARG NEMOCLAW_DASHBOARD_BIND=0\.0\.0\.0$/m.test(
+  return hasRemoteDashboardBindGenerationContract(
     readDockerfilePatchSnapshot(dockerfilePath).content,
   );
 }
@@ -107,7 +124,7 @@ export function patchStagedDockerfile(
   inferenceBaseUrlOverride: string | null = null,
   hermesToolGateways: string[] = [],
   options: PatchStagedDockerfileOptions = {},
-): void {
+): PatchedDockerfileMetadata {
   const sanitizedModel = sanitizeDockerArg(model);
   const sandboxInference = getSandboxInferenceConfig(
     sanitizedModel,
@@ -191,6 +208,14 @@ export function patchStagedDockerfile(
     dashboardBindArgPattern,
     `ARG NEMOCLAW_DASHBOARD_BIND=${dashboardBind}`,
   );
+  const dashboardRemoteBindPrepared =
+    dashboardBind === "0.0.0.0" && hasRemoteDashboardBindGenerationContract(dockerfile);
+  if (dashboardBind === "0.0.0.0" && !dashboardRemoteBindPrepared) {
+    throw new Error(
+      "Dockerfile declares ARG NEMOCLAW_DASHBOARD_BIND but does not promote it to " +
+        "generate-openclaw-config.mts; cannot prepare remote dashboard exposure.",
+    );
+  }
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_INFERENCE_BASE_URL=.*$/m,
     `ARG NEMOCLAW_INFERENCE_BASE_URL=${sanitizeDockerArg(inferenceBaseUrl)}`,
@@ -375,4 +400,5 @@ export function patchStagedDockerfile(
     );
   }
   replaceDockerfilePatchSnapshot(dockerfilePath, patchSnapshot, dockerfile);
+  return { dashboardRemoteBindPrepared };
 }

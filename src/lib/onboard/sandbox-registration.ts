@@ -68,15 +68,21 @@ export function creationFidelity(
   webSearchConfig: WebSearchConfig | null,
   fromDockerfile: string | null,
   hermesAuthMethod: "oauth" | "api_key" | null,
+  dashboardRemoteBindPrepared?: boolean,
 ): Pick<
   SandboxEntry,
-  "webSearchEnabled" | "webSearchProvider" | "fromDockerfile" | "hermesAuthMethod"
+  | "webSearchEnabled"
+  | "webSearchProvider"
+  | "fromDockerfile"
+  | "hermesAuthMethod"
+  | "dashboardRemoteBindPrepared"
 > {
   return {
     webSearchEnabled: webSearchConfig?.fetchEnabled === true,
     webSearchProvider: webSearchConfig ? webSearchProviderForConfig(webSearchConfig) : null,
     fromDockerfile,
     hermesAuthMethod,
+    dashboardRemoteBindPrepared: dashboardRemoteBindPrepared === true,
   };
 }
 

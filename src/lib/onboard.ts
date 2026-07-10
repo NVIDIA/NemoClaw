@@ -90,7 +90,6 @@ const {
   selectResourceProfileForSandbox,
 }: typeof import("./onboard/resource-profile-selection") = require("./onboard/resource-profile-selection");
 const {
-  hasPreparedRemoteDashboardBind,
   patchStagedDockerfile,
 }: typeof import("./onboard/dockerfile-patch") = require("./onboard/dockerfile-patch");
 const {
@@ -2786,28 +2785,27 @@ async function createSandboxWithBaseImageResolution(
   const envMessagingState = MessagingHostStateApplier.readPlanStateFromEnv();
   const plannedMessagingState =
     envMessagingState?.plan.sandboxName === sandboxName ? envMessagingState : undefined;
-  sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig({
-    configuredMessagingChannels:
-      getChannelsFromPlan(plannedMessagingState?.plan) ?? activeMessagingChannels,
-  });
-  const buildId = await preparedDcodeRebuild.resolveSandboxBuildId({
-    preparedBuildContext,
-    agent,
-    fromDockerfile,
-    stagedDockerfile,
-    model,
-    chatUiUrl,
-    provider,
-    preferredInferenceApi,
-    webSearchConfig,
-    toolDisclosure: effectiveToolDisclosure,
-    ...(isManagedDcodeAgent ? { dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode } : {}),
-    hermesToolGateways,
-    sandboxGpuConfig: effectiveSandboxGpuConfig,
-    ...baseImageResolutionFlow.getBaseImageResolutionPatchOptions(baseImageResolutionContext),
-    gatewayPort: GATEWAY_PORT,
-  });
-  const dashboardRemoteBindPrepared = hasPreparedRemoteDashboardBind(stagedDockerfile);
+  const configuredMessagingChannels =
+    getChannelsFromPlan(plannedMessagingState?.plan) ?? activeMessagingChannels;
+  sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig({ configuredMessagingChannels });
+  const { buildId, dashboardRemoteBindPrepared } =
+    await preparedDcodeRebuild.resolveSandboxBuildPatch({
+      preparedBuildContext,
+      agent,
+      fromDockerfile,
+      stagedDockerfile,
+      model,
+      chatUiUrl,
+      provider,
+      preferredInferenceApi,
+      webSearchConfig,
+      toolDisclosure: effectiveToolDisclosure,
+      ...(isManagedDcodeAgent ? { dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode } : {}),
+      hermesToolGateways,
+      sandboxGpuConfig: effectiveSandboxGpuConfig,
+      ...baseImageResolutionFlow.getBaseImageResolutionPatchOptions(baseImageResolutionContext),
+      gatewayPort: GATEWAY_PORT,
+    });
   const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
   const { createResult, prebuild, effectiveDashboardPort, dockerGpuCreatePatch } =
     await runSandboxCreateStep(
@@ -3009,13 +3007,12 @@ async function createSandboxWithBaseImageResolution(
           ...(isManagedDcodeAgent ? { dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode } : {}),
           policyTier: resolvedCreatePolicyTier,
           // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-          ...sandboxRegistration.creationFidelity(webSearchConfig, fromDockerfile, normalizeHermesAuthMethod(hermesAuthMethod)),
+          ...sandboxRegistration.creationFidelity(webSearchConfig, fromDockerfile, normalizeHermesAuthMethod(hermesAuthMethod), dashboardRemoteBindPrepared),
           plannedMessagingState,
           preservedMcpState,
           hermesToolGateways,
           hermesDashboardState: finalHermesDashboardState,
           dashboardPort: actualDashboardPort,
-          dashboardRemoteBindPrepared,
           gatewayName: GATEWAY_NAME,
           gatewayPort: GATEWAY_PORT,
         }),
