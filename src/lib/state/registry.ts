@@ -4,7 +4,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isErrnoException } from "../core/errno";
-import { isObjectRecord } from "../core/json-types";
 import type { InferenceSelection } from "../inference/selection";
 import {
   inferenceSelectionRegistryFields,
@@ -26,6 +25,7 @@ import {
   serializeSandboxMcpStateForDisk,
 } from "./registry-mcp";
 import type { SandboxMessagingState } from "./registry-messaging";
+import { retainedDefaultSandbox, sandboxRegistryEntries } from "./registry-normalization";
 import * as reversibleRemoval from "./registry-reversible-removal";
 
 export {
@@ -412,32 +412,6 @@ function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
   };
   if (extraProviders) base.extraProviders = extraProviders;
   return base;
-}
-
-function sandboxRegistryEntries(data: SandboxRegistry): Array<[string, SandboxEntry]> {
-  const sandboxes = isObjectRecord(data.sandboxes) ? data.sandboxes : {};
-  return Object.entries(sandboxes).filter((entry): entry is [string, SandboxEntry] =>
-    isSandboxEntryLike(entry[0], entry[1]),
-  );
-}
-
-function isSandboxEntryLike(name: string, entry: unknown): entry is SandboxEntry {
-  return (
-    isObjectRecord(entry) &&
-    typeof entry.name === "string" &&
-    entry.name === name &&
-    entry.name.trim().length > 0
-  );
-}
-
-function retainedDefaultSandbox(
-  defaultSandbox: unknown,
-  sandboxes: Record<string, SandboxEntry>,
-): string | null {
-  if (typeof defaultSandbox !== "string") return null;
-  const entry = sandboxes[defaultSandbox];
-  if (!entry || entry.pendingRouteReservation === true) return null;
-  return defaultSandbox;
 }
 
 function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
