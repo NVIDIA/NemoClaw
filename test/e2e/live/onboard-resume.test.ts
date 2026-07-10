@@ -6,8 +6,14 @@ import os from "node:os";
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import {
+  cleanupCorporateCaFixture,
+  corporateCaMergeProbeScript,
+  createCorporateCaFixture,
+} from "../fixtures/corporate-ca.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   type FakeOpenAiCompatibleServer,
@@ -133,6 +139,24 @@ test("onboard-resume: interrupted onboard then --resume completes without redoin
   host,
   sandbox,
 }) => {
+  const corporateCa = createCorporateCaFixture("host-anchor", "nemoclaw-resume-corporate-ca-");
+  cleanup.add("remove corporate CA fixture", () => cleanupCorporateCaFixture(corporateCa));
+  await artifacts.writeJson("corporate-ca-source.json", {
+    mode: corporateCa.mode,
+    source: corporateCa.sourceLabel,
+  });
+  await artifacts.target.declare({
+    id: "onboard-resume",
+    sandboxName: SANDBOX_NAME,
+    corporateCaSource: corporateCa.sourceLabel,
+    contracts: [
+      "forced policy-step failure leaves a resumable session",
+      "resume completes without redoing cached preflight/gateway/sandbox steps",
+      "host trust-store anchor corporate CA source is baked and merged after resume",
+      "implicit resume is detected and --fresh suppresses that auto-resume",
+    ],
+  });
+
   // ──────────────────────────────────────────────────────────────────
   // Phase 1: prerequisites (host-side, all faithful on ubuntu-latest)
   // ──────────────────────────────────────────────────────────────────
@@ -278,6 +302,7 @@ test("onboard-resume: interrupted onboard then --resume completes without redoin
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_E2E_FAILURE_INJECTION: "1",
     NEMOCLAW_E2E_FORCE_FAIL_AT_STEP: "policies",
+    ...corporateCa.env,
   };
   expect(firstRunEnv.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
   const firstRun = await host.command("node", [CLI_ENTRYPOINT, "onboard", "--non-interactive"], {
@@ -356,6 +381,7 @@ test("onboard-resume: interrupted onboard then --resume completes without redoin
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     NEMOCLAW_POLICY_MODE: "skip",
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+    ...corporateCa.env,
   };
   expect(resumeEnv.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
   expect(resumeEnv.COMPATIBLE_API_KEY).toBeUndefined();
@@ -403,6 +429,13 @@ test("onboard-resume: interrupted onboard then --resume completes without redoin
     timeoutMs: 60_000,
   });
   expect(sandboxStatus.exitCode, sandboxStatus.stderr).toBe(0);
+
+  const corporateCaProbe = await sandbox.execShell(SANDBOX_NAME, corporateCaMergeProbeScript(), {
+    artifactName: "phase-3-corporate-ca-merge-probe",
+    env: probeEnv,
+    timeoutMs: 60_000,
+  });
+  expect(corporateCaProbe.exitCode, resultText(corporateCaProbe)).toBe(0);
 
   // Assertion: session-file-complete-state.
   const complete = readSession<SessionStateComplete>(SESSION_FILE);
@@ -478,4 +511,5 @@ test("onboard-resume: interrupted onboard then --resume completes without redoin
   expect(freshRun.exitCode, freshText).not.toBe(0);
   expect(freshText).toContain("[e2e] Forced onboarding failure at step 'preflight'.");
   expect(freshText).not.toContain("(resume mode)");
+  await artifacts.target.complete({ id: "onboard-resume", status: "passed" });
 });

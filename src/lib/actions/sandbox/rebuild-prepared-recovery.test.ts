@@ -10,7 +10,10 @@ import {
   snapshotEnv,
 } from "../../../../test/helpers/rebuild-flow-harness";
 
-const restoreSandboxEnv = snapshotEnv(["NEMOCLAW_SANDBOX_NAME"]);
+const restoreSandboxEnv = snapshotEnv([
+  "NEMOCLAW_SANDBOX_NAME",
+  "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+]);
 
 describe("prepared rebuild recovery", () => {
   beforeEach(() => {
