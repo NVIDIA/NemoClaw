@@ -12,6 +12,25 @@ import { extractShellFunction } from "./support/hermes-shell-harness";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "agents", "hermes", "start.sh");
 
+function readRegularFileNoFollow(filePath: string) {
+  try {
+    const fd = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    try {
+      const openedKind = fs.fstatSync(fd);
+      return openedKind.isFile() ? fs.readFileSync(fd, "utf-8") : "";
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? "";
+    return ["ENOENT", "ELOOP", "EISDIR"].includes(code)
+      ? ""
+      : (() => {
+          throw error;
+        })();
+  }
+}
+
 function runTirithFinalizer(commands: readonly string[]) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-tirith-finalize-"));
   const hermesHome = path.join(tmpDir, ".hermes");
@@ -44,8 +63,8 @@ function runTirithFinalizer(commands: readonly string[]) {
     env: process.env,
   });
   const markerKind = fs.lstatSync(marker, { throwIfNoEntry: false });
-  const markerContent = markerKind?.isFile() ? fs.readFileSync(marker, "utf-8") : "";
-  const targetContent = fs.existsSync(target) ? fs.readFileSync(target, "utf-8") : "";
+  const markerContent = readRegularFileNoFollow(marker);
+  const targetContent = readRegularFileNoFollow(target);
   fs.rmSync(tmpDir, { recursive: true, force: true });
   return { markerContent, markerKind, result, source, targetContent };
 }
