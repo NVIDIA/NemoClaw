@@ -29,8 +29,26 @@ type PreRollbackDiagnosticsDeps = Pick<
   "runCaptureOpenshell" | "dockerCapture" | "dockerLogs" | "homedir" | "now"
 >;
 
-// This wrapper owns only the pre-rollback time budget. The shared collector
-// is the sole redaction and artifact-publication boundary for every caller.
+/**
+ * Failed compatibility-replacement diagnostics source-of-truth boundary:
+ *
+ * - Invalid state: Docker created the replacement container, but the OpenShell
+ *   supervisor did not reconnect. Rolling back would erase the replacement's
+ *   transient process, network, state, and log evidence.
+ * - Source boundary: Docker and OpenShell own that ephemeral runtime state;
+ *   this wrapper can only snapshot it immediately before the local rollback.
+ *   The shared collector remains the sole redaction and artifact-publication
+ *   boundary for every caller.
+ * - Source-fix constraint: this layer cannot make the external supervisor
+ *   reconnect or retain the failed replacement without delaying restoration
+ *   of the original sandbox, so capture is best effort and strictly bounded.
+ * - Regression tests: docker-gpu-pre-rollback-diagnostics.test.ts covers the
+ *   allowlisted bundle, redaction, and time budget; the sandbox-create tests
+ *   prove capture precedes rollback and capture failure cannot block rollback.
+ * - Removal condition: remove this wrapper only when the replacement path
+ *   emits equivalent bounded, redacted evidence before rollback, or no longer
+ *   replaces a container and therefore has no transient state to preserve.
+ */
 function boundedDiagnosticsDeps(deps: PreRollbackDiagnosticsDeps): PreRollbackDiagnosticsDeps {
   const capture = deps.dockerCapture ?? defaultDockerCapture;
   const logs = deps.dockerLogs ?? defaultDockerLogs;

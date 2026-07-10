@@ -84,6 +84,7 @@ describe("preflightRebuildTargetRuntime GPU route", () => {
 
   it.each([
     { control: "auto", selectedRoute: "native" },
+    { control: "fallback", selectedRoute: "native" },
     { control: "1", selectedRoute: "compatibility" },
   ] as const)("passes the $selectedRoute rebuild GPU route into network preflight (#6110)", async ({
     control,

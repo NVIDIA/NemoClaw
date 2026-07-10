@@ -106,9 +106,14 @@ export interface SandboxGpuCreateFlowResult {
  *   `NEMOCLAW_DOCKER_GPU_PATCH=fallback`; diagnostics classify a failure after
  *   authorization and never independently grant broader confinement.
  *
- * Keep this module bounded to one create-attempt execution plus composition of
- * the generic fallback plan. If another lifecycle stage or retry route is
- * added, extract the attempt executor instead of growing this trust boundary.
+ * This is intentionally the smallest safe state-machine boundary: route
+ * authorization, native-failure classification, cleanup proof, and the single
+ * retry transition must remain ordered over the same local state. Splitting
+ * them now would export a partially authorized transition across a module
+ * boundary without reducing the number of lifecycle stages. Keep this module
+ * bounded to one create-attempt execution plus composition of the generic
+ * fallback plan. If another lifecycle stage or retry route is added, extract
+ * the attempt executor instead of growing this trust boundary.
  *
  * Create a sandbox through the selected GPU route, with one fail-closed
  * compatibility retry when the native-first plan permits it.
