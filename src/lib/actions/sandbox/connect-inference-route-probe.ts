@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { redactSensitiveText } from "../../security/redact";
+
 export type InferenceRouteProbeAgent = { name: string } | null;
 
 export type ParsedInferenceRouteProbe = {
@@ -15,6 +17,7 @@ export type InferenceRouteFailureLabel = "unhealthy" | "unreachable";
 type InferenceRouteProbeCommandResult = {
   status?: number | null;
   output?: string | null;
+  stderr?: string | null;
 };
 
 // OpenShell injects the per-sandbox trust bundle into each exec process. Pass
@@ -48,7 +51,24 @@ export const INFERENCE_ROUTE_PROBE_SCRIPT = [
 // This separate regular-file install is intentionally absent from older images:
 // a newer CLI probing one fails before the stateful entrypoint or dcode wrapper
 // can run, so version skew cannot mutate observability state.
-const DCODE_MANAGED_EXEC_LAUNCHER = "/usr/local/lib/nemoclaw/dcode-managed-exec";
+export const DCODE_MANAGED_EXEC_LAUNCHER = "/usr/local/lib/nemoclaw/dcode-managed-exec";
+export const DCODE_MANAGED_EXEC_MISSING_DETAIL =
+  "trusted Deep Agents Code route-probe helper is missing; rebuild this sandbox with the updated NemoClaw image before retrying connect, status, or doctor";
+
+export function isDcodeManagedExecMissingDetail(detail: string): boolean {
+  const normalized = detail.replace(/\s+/g, " ").trim();
+  if (normalized === DCODE_MANAGED_EXEC_MISSING_DETAIL) return true;
+  return (
+    normalized.includes(DCODE_MANAGED_EXEC_LAUNCHER) &&
+    /\b(?:not found|no such file|does not exist|cannot stat|stat .* failed)\b/i.test(normalized)
+  );
+}
+
+function formatUntrustedProbeDetail(detail: string): string {
+  const normalized = detail.replace(/\s+/g, " ").trim();
+  if (isDcodeManagedExecMissingDetail(normalized)) return DCODE_MANAGED_EXEC_MISSING_DETAIL;
+  return redactSensitiveText(normalized) ?? "";
+}
 
 /**
  * Classify a route result that is already known not to be healthy.
@@ -63,26 +83,46 @@ export function buildSandboxInferenceRouteProbeArgs(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
 ): string[] {
-  const command =
-    agent?.name === "langchain-deepagents-code"
-      ? [
-          // The trusted launcher ignores ambient proxy overrides and does not
-          // source sandbox-user startup files or rewrite persistent runtime
-          // state before executing this probe.
-          DCODE_MANAGED_EXEC_LAUNCHER,
-          "/bin/sh",
-          "-c",
-          INFERENCE_ROUTE_PROBE_SCRIPT,
-        ]
-      : ["sh", "-c", INFERENCE_ROUTE_PROBE_SCRIPT];
+  if (agent?.name === "langchain-deepagents-code") {
+    return [
+      "sandbox",
+      "exec",
+      "--name",
+      sandboxName,
+      "--no-tty",
+      "--env",
+      "HOME=/usr/local/lib/nemoclaw",
+      "--env",
+      "BASH_ENV=",
+      "--env",
+      "ENV=",
+      "--",
+      // The trusted launcher ignores ambient proxy overrides and does not
+      // source sandbox-user startup files or rewrite persistent runtime
+      // state before executing this probe.
+      DCODE_MANAGED_EXEC_LAUNCHER,
+      "/bin/sh",
+      "-c",
+      INFERENCE_ROUTE_PROBE_SCRIPT,
+    ];
+  }
 
-  return ["sandbox", "exec", "--name", sandboxName, "--", ...command];
+  return ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", INFERENCE_ROUTE_PROBE_SCRIPT];
 }
 
 /** Parse the shared route-probe output used by connect, status, and doctor. */
 export function parseSandboxInferenceRouteProbeResult(
   result: InferenceRouteProbeCommandResult,
 ): ParsedInferenceRouteProbe {
+  const stderr = String(result.stderr ?? "").trim();
+  if (stderr) {
+    return {
+      healthy: false,
+      broken: false,
+      httpStatus: 0,
+      detail: formatUntrustedProbeDetail(stderr),
+    };
+  }
   const rawDetail = String(result.output ?? "").trim();
   // Some OpenShell releases frame child stdout for humans. Normalize only the
   // two known frame prefixes at the beginning of the captured output.
@@ -96,10 +136,12 @@ export function parseSandboxInferenceRouteProbeResult(
   const healthy = commandSucceeded && match?.[1] === "OK" && isReachableHttpStatus;
   const broken =
     commandSucceeded && Boolean(match) && (match?.[1] === "BROKEN" || !isReachableHttpStatus);
+  const trustedDetail = !healthy && !broken ? formatUntrustedProbeDetail(detail) : detail;
   return {
     healthy,
     broken,
     httpStatus,
-    detail: detail || `openshell sandbox exec exited with status ${String(result.status ?? 1)}`,
+    detail:
+      trustedDetail || `openshell sandbox exec exited with status ${String(result.status ?? 1)}`,
   };
 }
