@@ -12,6 +12,7 @@ import {
   baseImageInputsChangedSinceMain,
   baseImageInputsDirty,
   buildLocalBaseTag,
+  getNearestVersionedBaseImageTags,
   getSourceShortShaTags,
   getVersionedBaseImageTags,
   normalizeBaseImageInputPaths,
@@ -170,6 +171,18 @@ describe("sandbox base-image source identity", () => {
     git(root, ["add", "src/other.ts"]);
     git(root, ["commit", "-m", "move off tag"]);
     expect(getVersionedBaseImageTags(root, gitEnv)).toEqual([]);
+  });
+
+  it("finds the nearest release tag for unversioned source checkouts", () => {
+    const root = createGitFixture();
+    git(root, ["tag", "v0.0.42"]);
+    git(root, ["switch", "-c", "feature"]);
+    writeFixture(root, "src/other.ts", "export const value = 42;\n");
+    git(root, ["add", "src/other.ts"]);
+    git(root, ["commit", "-m", "move off tag"]);
+
+    expect(getVersionedBaseImageTags(root, gitEnv)).toEqual([]);
+    expect(getNearestVersionedBaseImageTags(root, gitEnv)).toEqual(["v0.0.42"]);
   });
 
   it("detects committed Dockerfile.base changes relative to origin/main", () => {

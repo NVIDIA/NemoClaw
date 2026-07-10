@@ -19,6 +19,7 @@ const traceMocks = vi.hoisted(() => ({
 const sourceMocks = vi.hoisted(() => ({
   inputsDirty: vi.fn(),
   inputsChanged: vi.fn(),
+  nearestTags: vi.fn(),
 }));
 
 vi.mock("./adapters/docker", () => ({
@@ -38,6 +39,7 @@ vi.mock("./sandbox-base-image/source-identity", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./sandbox-base-image/source-identity")>()),
   baseImageInputsDirty: sourceMocks.inputsDirty,
   baseImageInputsChangedSinceMain: sourceMocks.inputsChanged,
+  getNearestVersionedBaseImageTags: sourceMocks.nearestTags,
 }));
 
 import { resolveSandboxBaseImage } from "./sandbox-base-image";
@@ -48,6 +50,7 @@ const REF = `${IMAGE_NAME}@${DIGEST}`;
 const IMAGE_ID = `sha256:${"b".repeat(64)}`;
 const LOCAL_TAG = "nemoclaw-sandbox-base-local:test";
 const RELEASE_REF = `${IMAGE_NAME}:v0.0.76`;
+const NEAREST_RELEASE_REF = `${IMAGE_NAME}:v0.0.78`;
 
 function resolutionOptions() {
   return {
@@ -141,6 +144,7 @@ describe("sandbox base-image release resolution", () => {
     dockerMocks.infoFormat.mockReturnValue("linux/amd64\n");
     sourceMocks.inputsDirty.mockReturnValue(false);
     sourceMocks.inputsChanged.mockReturnValue(false);
+    sourceMocks.nearestTags.mockReturnValue([]);
     dockerMocks.imageInspectFormat.mockReturnValue(
       JSON.stringify({
         Id: IMAGE_ID,
@@ -224,6 +228,42 @@ describe("sandbox base-image release resolution", () => {
         validateImage: state.validateImage,
       }),
     ).toThrow("versioned base image");
+  });
+
+  it("tries the nearest release-tag base before latest for source checkouts (#6456)", () => {
+    sourceMocks.nearestTags.mockReturnValue(["v0.0.78"]);
+    installDockerState({ present: [NEAREST_RELEASE_REF] });
+
+    const resolved = resolveSandboxBaseImage(resolutionOptions());
+
+    expect(resolved).toMatchObject({
+      ref: NEAREST_RELEASE_REF,
+      source: "version-tag",
+    });
+    expect(dockerMocks.imageInspect).toHaveBeenCalledWith(NEAREST_RELEASE_REF, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+  });
+
+  it("builds locally instead of falling back to latest when the nearest release-tag base is unavailable (#6456)", () => {
+    sourceMocks.nearestTags.mockReturnValue(["v0.0.78"]);
+    installDockerState({ allowBuild: true });
+    const options = resolutionOptions();
+
+    const resolved = resolveSandboxBaseImage({
+      ...options,
+      env: {
+        ...options.env,
+        NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: "1",
+      },
+    });
+
+    expect(resolved).toMatchObject({
+      ref: LOCAL_TAG,
+      source: "local",
+    });
   });
 
   it("fails closed instead of falling back when an explicit override fails ABI validation (#4680)", () => {

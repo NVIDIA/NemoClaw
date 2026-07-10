@@ -16,6 +16,7 @@ const dockerMocks = vi.hoisted(() => ({
 const sourceMocks = vi.hoisted(() => ({
   inputsDirty: vi.fn(),
   inputsChanged: vi.fn(),
+  nearestTags: vi.fn(),
 }));
 
 vi.mock("./adapters/docker", () => ({
@@ -35,6 +36,7 @@ vi.mock("./sandbox-base-image/source-identity", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./sandbox-base-image/source-identity")>()),
   baseImageInputsDirty: sourceMocks.inputsDirty,
   baseImageInputsChangedSinceMain: sourceMocks.inputsChanged,
+  getNearestVersionedBaseImageTags: sourceMocks.nearestTags,
 }));
 
 import { resolveSandboxBaseImage } from "./sandbox-base-image";
@@ -61,6 +63,7 @@ describe("agent-specific sandbox base-image resolution", () => {
     dockerMocks.infoFormat.mockReturnValue("linux/amd64\n");
     sourceMocks.inputsDirty.mockReturnValue(false);
     sourceMocks.inputsChanged.mockReturnValue(false);
+    sourceMocks.nearestTags.mockReturnValue([]);
   });
 
   it("tracks agent dependency locks in dirty and main-divergence checks (#6456)", () => {

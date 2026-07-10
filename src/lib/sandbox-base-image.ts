@@ -17,6 +17,7 @@ import {
 import {
   baseImageInputsChangedSinceMain,
   baseImageInputsDirty,
+  getNearestVersionedBaseImageTags,
   getSourceShortShaTags,
   getVersionedBaseImageTags,
 } from "./sandbox-base-image/source-identity";
@@ -319,6 +320,28 @@ export function resolveSandboxBaseImage(
     const inputPaths = [options.dockerfilePath, ...(options.inputPaths ?? [])];
     const preferPinnedRemoteRef = options.preferPinnedRemoteRef === true;
     const versionTags = getVersionedBaseImageTags(options.rootDir || ROOT, env);
+    const resolveVersionTags = (tags: string[]): SandboxBaseImageResolution | null => {
+      for (const tag of tags) {
+        const imageRef = `${options.imageName}:${tag}`;
+        const resolved = resolvePulledCandidate(
+          options.imageName,
+          imageRef,
+          "version-tag",
+          options,
+          { refreshIfLocalInvalid: true },
+        );
+        if (resolved) return finish(resolved);
+      }
+
+      if (tags.length === 0) return null;
+      const local = resolveLocalCandidate(options, true);
+      if (local) return finish(local);
+      throw new SandboxBaseImageResolutionError(
+        `${options.label || "Sandbox base image"} versioned base image ` +
+          `${tags.map((tag) => `${options.imageName}:${tag}`).join(", ")} could not be ` +
+          "resolved or validated, and no compatible local base image could be produced.",
+      );
+    };
     if (baseImageInputsDirty(rootDir, env, inputPaths)) return resolveChangedInputs();
 
     if (preferPinnedRemoteRef && options.pinnedRemoteRef) {
@@ -332,23 +355,8 @@ export function resolveSandboxBaseImage(
       if (resolved) return finish(resolved);
     }
 
-    for (const tag of versionTags) {
-      const imageRef = `${options.imageName}:${tag}`;
-      const resolved = resolvePulledCandidate(options.imageName, imageRef, "version-tag", options, {
-        refreshIfLocalInvalid: true,
-      });
-      if (resolved) return finish(resolved);
-    }
-
-    if (versionTags.length > 0) {
-      const local = resolveLocalCandidate(options, true);
-      if (local) return finish(local);
-      throw new SandboxBaseImageResolutionError(
-        `${options.label || "Sandbox base image"} versioned base image ` +
-          `${versionTags.map((tag) => `${options.imageName}:${tag}`).join(", ")} could not be ` +
-          "resolved or validated, and no compatible local base image could be produced.",
-      );
-    }
+    const versionTagResolution = resolveVersionTags(versionTags);
+    if (versionTagResolution) return versionTagResolution;
 
     for (const tag of getSourceShortShaTags(options.rootDir || ROOT, env)) {
       const imageRef = `${options.imageName}:${tag}`;
@@ -368,6 +376,12 @@ export function resolveSandboxBaseImage(
       );
       if (resolved) return finish(resolved);
     }
+
+    const nearestVersionTags = getNearestVersionedBaseImageTags(rootDir, env).filter(
+      (tag) => !versionTags.includes(tag),
+    );
+    const nearestVersionTagResolution = resolveVersionTags(nearestVersionTags);
+    if (nearestVersionTagResolution) return nearestVersionTagResolution;
 
     const latestRef = `${options.imageName}:${SANDBOX_BASE_TAG}`;
     const resolved = resolvePulledCandidate(options.imageName, latestRef, "latest", options);

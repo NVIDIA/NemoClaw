@@ -77,6 +77,15 @@ function gitExactVersionTag(rootDir: string, env: NodeJS.ProcessEnv): string | n
   return git.status === 0 ? normalizeVersionTag(git.stdout) : null;
 }
 
+function gitNearestVersionTag(rootDir: string, env: NodeJS.ProcessEnv): string | null {
+  const git = spawnSync(
+    "git",
+    ["-C", rootDir, "describe", "--tags", "--abbrev=0", "--match", "v*"],
+    { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], timeout: 5_000, env },
+  );
+  return git.status === 0 ? normalizeVersionTag(git.stdout) : null;
+}
+
 function versionFileTag(rootDir: string): string | null {
   try {
     return normalizeVersionTag(fs.readFileSync(path.join(rootDir, ".version"), "utf-8"));
@@ -100,6 +109,14 @@ export function getVersionedBaseImageTags(
   return Array.from(
     new Set(values.map((value) => normalizeVersionTag(value)).filter(Boolean)),
   ) as string[];
+}
+
+export function getNearestVersionedBaseImageTags(
+  rootDir = ROOT,
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const tag = gitNearestVersionTag(rootDir, env);
+  return tag ? [tag] : [];
 }
 
 function gitStatus(rootDir: string, args: string[], env: NodeJS.ProcessEnv): number | null {
