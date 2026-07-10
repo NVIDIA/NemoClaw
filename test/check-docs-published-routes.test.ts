@@ -25,8 +25,8 @@ navigation:
               - page: Commands
                 path: _build/agent-variants/reference/commands.openclaw.generated.mdx
                 slug: commands
-          - section: Inference
-            slug: inference
+          - section: Configure Agents
+            slug: configure-agents
             contents:
               - page: Declarative Multi-Agent Manifest
                 path: inference/declarative-agents-manifest.mdx
@@ -72,7 +72,7 @@ describe("published docs route checking", () => {
     const index = buildPublishedRouteIndex(navYaml);
     const source = commandsSource(`
 <AgentOnly variant="openclaw">
-See [Declarative Multi-Agent Manifest](../inference/declarative-agents-manifest).
+See [Declarative Multi-Agent Manifest](../configure-agents/declarative-agents-manifest).
 </AgentOnly>
 
 See [Hermes Commands](/user-guide/hermes/reference/commands).

@@ -18,7 +18,7 @@
 // routes such as `/user-guide/openclaw/...` are valid too, and are checked
 // against the same published route map.
 
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parse } from "yaml";
@@ -296,12 +296,20 @@ export function resolvePageLinksByText(
 }
 
 // Pages that have repeatedly regressed on source-path-vs-published-route drift
-// (NemoClaw#5445, #6290, #5465, #5460, #6601). Scoped intentionally: the wider docs
-// tree has unrelated pre-existing broken links tracked separately.
+// (NemoClaw#5445, #6290, #5465, #5460, #6601). Guard every inference page because
+// its nested navigation intentionally differs from the flat source directory.
 const GUARDED_SOURCE_PAGES = [
   "reference/commands.mdx",
   "reference/network-policies.mdx",
   "reference/platform-support.mdx",
+  ...readdirSync(path.join(docsRoot, "configure-agents"))
+    .filter((name) => name.endsWith(".mdx"))
+    .sort()
+    .map((name) => `configure-agents/${name}`),
+  ...readdirSync(path.join(docsRoot, "inference"))
+    .filter((name) => name.endsWith(".mdx"))
+    .sort()
+    .map((name) => `inference/${name}`),
 ];
 
 function main(): void {

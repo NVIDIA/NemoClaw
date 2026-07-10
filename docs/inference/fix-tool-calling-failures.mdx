@@ -1,0 +1,72 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Fix Tool-Calling Failures"
+sidebar-title: "Fix Tool-Calling Failures"
+description: "Diagnose OpenClaw local inference responses that expose tool-call JSON as assistant text."
+description-agent: "Diagnoses unstructured local tool calls. Use when OpenClaw displays raw tool-call JSON or does not dispatch a requested tool."
+keywords: ["openclaw tool calling", "raw tool call json", "vllm tool call parser"]
+content:
+  type: "troubleshooting"
+---
+
+Local model servers must return structured `tool_calls` for OpenClaw to dispatch a tool.
+Use this page when the TUI shows a JSON-shaped tool request as normal assistant text.
+
+## Identify the Symptom
+
+A leaked tool request can look like this assistant response.
+
+```json
+{"arguments":{"query":"robotics"},"name":"memory_search"}
+```
+
+The failure follows this sequence:
+
+- The model emits text that looks like a tool call.
+- The inference response does not include a structured `tool_calls` field.
+- The gateway treats the response as assistant text.
+- No tool runs, and the TUI displays the JSON.
+
+This symptom is different from a network or policy block.
+`nemoclaw <name> status`, `nemoclaw <name> logs`, and `nemoclaw debug --quick` can all look healthy while conversation-level tool dispatch fails.
+
+## Check the Workload Fit
+
+Ollama can serve local chat and some simple tool surfaces.
+Agent loops with several tools, long instructions, or multi-turn dispatch need a server that returns structured tool calls consistently.
+
+| Workload | Ollama is usually sufficient | Prefer vLLM with a parser |
+|---|---|---|
+| Plain chat | Yes | Optional |
+| One simple tool with short prompts | Often | Optional |
+| Agent loops with several tools | Risky | Yes |
+| Long system prompts or sender metadata | Risky | Yes |
+| Multi-turn tool dispatch | Risky | Yes |
+
+## Use a Parser-Aware Server
+
+For persistent agent use, configure vLLM with auto tool choice and the tool-call parser that matches the model family.
+The vLLM setup page covers server startup, parser selection, managed setup, and onboarding.
+
+After the parser-aware server is ready, re-run onboarding and select **Local vLLM [experimental]** or **Other OpenAI-compatible endpoint**.
+
+Do not rely on direct edits to `openclaw.json` for a persistent provider change.
+NemoClaw-managed rebuilds can overwrite those edits, while onboarding keeps the sandbox image, OpenShell route, and host-managed credentials aligned.
+
+## Verify Structured Dispatch
+
+Ask the agent to perform an action that requires a tool.
+Confirm these results:
+
+- The TUI does not show a JSON blob as assistant text.
+- The gateway log shows tool dispatch followed by an answer.
+- `nemoclaw <name> status` reports the intended local vLLM or compatible provider.
+
+If JSON still appears as text, confirm that vLLM started with auto tool choice and the parser required by the model family.
+
+## Related Topics
+
+- [Set Up vLLM](../local-inference/set-up-vllm) for parser-aware local server setup.
+- [Verify the Sandbox Inference Route](verify-inference-route) to separate route failures from structured tool-call failures.
+- [Configure Progressive Tool Disclosure](../../configure-agents/progressive-tool-disclosure) to change how OpenClaw discovers available tools.

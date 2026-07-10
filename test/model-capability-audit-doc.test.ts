@@ -70,8 +70,10 @@ describe("model capability audit doc (#3123)", () => {
     const markdown = fs.readFileSync(auditDocPath, "utf8");
 
     expect(markdown).toContain("## Next Steps");
-    expect(markdown).toContain("[Inference Options](inference-options)");
-    expect(markdown).toContain("[Tool-Calling Reliability](tool-calling-reliability)");
-    expect(markdown).toContain("[Architecture](../reference/architecture)");
+    expect(markdown).toContain(
+      "[Choose an Inference Provider](../learn-and-choose/choose-inference-provider)",
+    );
+    expect(markdown).toContain("[Fix Tool-Calling Failures](fix-tool-calling-failures)");
+    expect(markdown).toContain("[Architecture](../../reference/architecture)");
   });
 });
