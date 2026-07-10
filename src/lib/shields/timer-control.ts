@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+import { isObjectRecord } from "../core/json-types";
 import { resolveNemoclawStateDir } from "../state/paths";
 
 interface TimerMarker {
@@ -18,16 +19,10 @@ interface TimerMarker {
   leaseOwnerStartIdentity?: string;
 }
 
-type UnknownRecord = { [key: string]: unknown };
-
-function isObjectRecord(value: unknown): value is UnknownRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function isTimerMarker(value: unknown): value is TimerMarker {
-  const pid = isObjectRecord(value) ? value.pid : undefined;
+  if (!isObjectRecord(value)) return false;
+  const pid = value.pid;
   return (
-    isObjectRecord(value) &&
     typeof pid === "number" &&
     Number.isInteger(pid) &&
     pid > 0 &&

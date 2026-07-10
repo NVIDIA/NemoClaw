@@ -255,6 +255,16 @@ describe("gateway recovery", () => {
     expect(deps.runOpenshell).not.toHaveBeenCalled();
   });
 
+  it("rejects the OpenRouter Runtime adapter port before invoking OpenShell (#5826)", async () => {
+    const deps = createDeps();
+
+    await expect(startGatewayForRecovery({ gatewayPort: 11437 }, deps)).rejects.toThrow(
+      "OpenRouter Runtime adapter",
+    );
+
+    expect(deps.runOpenshell).not.toHaveBeenCalled();
+  });
+
   it("fails closed on cross-port recovery when the Linux Docker-driver gateway is enabled", async () => {
     const deps = createDeps({ isLinuxDockerDriverGatewayEnabled: () => true });
 

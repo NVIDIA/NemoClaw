@@ -892,6 +892,12 @@ ARG NEMOCLAW_OPENCLAW_OTEL=0
 ARG NEMOCLAW_OPENCLAW_OTEL_ENDPOINT=http://host.openshell.internal:4318
 ARG NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME=openclaw-gateway
 ARG NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE=1.0
+# Base64-encoded host corporate-proxy CA bundle (#6210). Empty by default. When
+# onboard detects an operator-supplied corporate CA on the host it bakes it
+# here; the RUN below decodes it to a root-owned file that the entrypoint
+# appends to the OpenShell trust bundle at runtime. The CA is a public
+# certificate, not a secret, so baking it into an image layer is acceptable.
+ARG NEMOCLAW_CORPORATE_CA_B64=
 
 # SECURITY: Promote build-args to env vars so the TypeScript script reads them
 # via process.env, never via string interpolation into executable source code.
@@ -923,6 +929,26 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_OPENCLAW_OTEL_ENDPOINT=${NEMOCLAW_OPENCLAW_OTEL_ENDPOINT} \
     NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME=${NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME} \
     NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE=${NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE}
+
+# Decode the host corporate-proxy CA (#6210) to a root-owned, read-only file
+# when onboard baked one in. No-op when NEMOCLAW_CORPORATE_CA_B64 is empty. The
+# ARG is expanded by the shell (not interpolated into source), and its value is
+# base64 sanitized host-side, so this is not an injection vector.
+# hadolint ignore=DL3059,DL4006
+RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
+      command -v base64 >/dev/null 2>&1 || { echo "[nemoclaw] base64 is required to decode NEMOCLAW_CORPORATE_CA_B64 but is not installed in the build image" >&2; exit 1; }; \
+      command -v openssl >/dev/null 2>&1 || { echo "[nemoclaw] openssl is required to validate NEMOCLAW_CORPORATE_CA_B64 but is not installed in the build image (#6210)" >&2; exit 1; }; \
+      mkdir -p /usr/local/share/nemoclaw \
+      && { printf '%s' "${NEMOCLAW_CORPORATE_CA_B64}" | base64 --decode > /tmp/nemoclaw-corporate-ca.decoded 2>/dev/null \
+           || { echo "[nemoclaw] NEMOCLAW_CORPORATE_CA_B64 is not valid base64; expected a single-line base64-encoded PEM (#6210)" >&2; exit 1; }; } \
+      && awk '/-----BEGIN CERTIFICATE-----/{f=1} f{print} /-----END CERTIFICATE-----/{f=0}' /tmp/nemoclaw-corporate-ca.decoded > /usr/local/share/nemoclaw/corporate-ca.pem \
+      && rm -f /tmp/nemoclaw-corporate-ca.decoded \
+      && { grep -qF -- "-----BEGIN CERTIFICATE-----" /usr/local/share/nemoclaw/corporate-ca.pem || { echo "[nemoclaw] NEMOCLAW_CORPORATE_CA_B64 did not decode to a bundle of valid X.509 certificates (#6210)" >&2; exit 1; }; } \
+      && { openssl crl2pkcs7 -nocrl -certfile /usr/local/share/nemoclaw/corporate-ca.pem >/dev/null 2>&1 || { echo "[nemoclaw] NEMOCLAW_CORPORATE_CA_B64 did not decode to a bundle of valid X.509 certificates (#6210)" >&2; exit 1; }; } \
+      && chown root:root /usr/local/share/nemoclaw/corporate-ca.pem \
+      && chmod 0444 /usr/local/share/nemoclaw/corporate-ca.pem \
+      && echo "[nemoclaw] baked host corporate-proxy CA into image trust (#6210)"; \
+    fi
 
 # Bake reduced messaging runtime metadata for the entrypoint. The full
 # NEMOCLAW_MESSAGING_PLAN_B64 is a build input; OpenShell sandbox create only

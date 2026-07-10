@@ -322,6 +322,12 @@ export function createDirectSetupInferenceHarnessFactory(
       // bypass the selection phase that normally supplies validated pins.
       resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
       promptValidationRecovery: async () => "selection",
+      bedrockRuntimeOnboard: {
+        setupBedrockRuntimeInference: async () => ({ handled: false as const }),
+      },
+      openrouterRuntimeOnboard: {
+        setupOpenRouterRuntimeInference: async () => ({ handled: false as const }),
+      },
       validateLocalProvider: () => ({ ok: true }),
       getLocalProviderHealthCheck: () => null,
       getLocalProviderBaseUrl: (provider: string) =>

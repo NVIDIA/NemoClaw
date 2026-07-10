@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { isPlainObject } from "../core/json-types";
 import { isSafeModelId } from "../validation";
 import type {
   AgentDashboard,
@@ -31,15 +32,7 @@ function isManifestValue(value: unknown): value is ManifestValue {
 }
 
 function isManifestRecord(value: unknown): value is ManifestRecord {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) {
-    return false;
-  }
-
+  if (!isPlainObject(value)) return false;
   return Object.values(value).every((entry) => isManifestValue(entry));
 }
 

@@ -14,6 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
 
+import { isObjectRecord } from "../core/json-types";
 import { ROOT } from "../runner";
 
 const TIERS_FILE = path.join(ROOT, "nemoclaw-blueprint", "policies", "tiers.yaml");
@@ -45,10 +46,6 @@ type TierYamlScalar = string | number | boolean | null | undefined;
 type TierYamlValue = TierYamlScalar | TierYamlRecord | TierYamlValue[];
 type TierYamlRecord = { [key: string]: TierYamlValue };
 
-function isRecord(value: TierYamlValue): value is TierYamlRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function readString(record: TierYamlRecord, key: string): string | null {
   const value = record[key];
   return typeof value === "string" ? value : null;
@@ -59,7 +56,7 @@ function isTierAccess(value: string): value is TierAccess {
 }
 
 function parseTierPreset(value: TierYamlValue, index: number, tierName: string): TierPreset {
-  if (!isRecord(value)) {
+  if (!isObjectRecord(value)) {
     throw new Error(`tiers.yaml: tier '${tierName}' preset ${String(index)} is not an object`);
   }
 
@@ -79,7 +76,7 @@ function parseTierPreset(value: TierYamlValue, index: number, tierName: string):
 }
 
 function parseTierDefinition(value: TierYamlValue, index: number): TierDefinition {
-  if (!isRecord(value)) {
+  if (!isObjectRecord(value)) {
     throw new Error(`tiers.yaml: tier ${String(index)} is not an object`);
   }
 
@@ -111,7 +108,7 @@ function parseTierDefinition(value: TierYamlValue, index: number): TierDefinitio
 
 function parseTierDocument(raw: string): TierDocument {
   const parsed = YAML.parse(raw);
-  if (!isRecord(parsed) || !Array.isArray(parsed.tiers)) {
+  if (!isObjectRecord(parsed) || !Array.isArray(parsed.tiers)) {
     throw new Error(`tiers.yaml: expected a top-level 'tiers' array in ${TIERS_FILE}`);
   }
 
@@ -174,4 +171,4 @@ function resolveTierPresets(
   return presets;
 }
 
-export { TIERS_FILE, listTiers, getTier, resolveTierPresets };
+export { getTier, listTiers, resolveTierPresets, TIERS_FILE };
