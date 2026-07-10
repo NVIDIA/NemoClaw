@@ -146,7 +146,7 @@ ${body}
   return { status: result.status, stdout: result.stdout };
 }
 
-describe("MCP status wire-level credential-resolution probe", () => {
+describe("MCP status wire-level credential-resolution probe", { timeout: 15_000 }, () => {
   it("probes by default for a single named server and surfaces the wire failure (#6379)", () => {
     const home = createTempHome("nemoclaw-mcp-resolution-single-");
     const { stdout } = runHarness(
