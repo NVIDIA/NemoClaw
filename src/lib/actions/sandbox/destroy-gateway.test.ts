@@ -118,30 +118,34 @@ describe("cleanupGatewayAfterLastSandbox", () => {
   });
 
   it.each([
-    "host reaper",
-    "gateway remove",
-    "volume cleanup",
-  ] as const)("converges on retry after a partial %s failure (#4662)", (failureStage) => {
+    [
+      "host reaper",
+      () =>
+        mocks.stopHostGatewayProcesses.mockImplementationOnce(() => {
+          throw new Error("injected host reaper failure");
+        }),
+    ],
+    [
+      "gateway remove",
+      (runOpenshell: ReturnType<typeof vi.fn>) =>
+        runOpenshell
+          .mockImplementationOnce(() => ({ status: 0, stdout: "", stderr: "" }))
+          .mockImplementationOnce(() => {
+            throw new Error("injected gateway remove failure");
+          }),
+    ],
+    [
+      "volume cleanup",
+      () =>
+        mocks.dockerRemoveVolumesByPrefix.mockImplementationOnce(() => {
+          throw new Error("injected volume cleanup failure");
+        }),
+    ],
+  ] as const)("converges on retry after a partial %s failure (#4662)", (_stage, injectFailure) => {
     vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
     vi.spyOn(os, "homedir").mockReturnValue("/home/tester");
-    if (failureStage === "host reaper") {
-      mocks.stopHostGatewayProcesses.mockImplementationOnce(() => {
-        throw new Error("injected host reaper failure");
-      });
-    }
-    if (failureStage === "volume cleanup") {
-      mocks.dockerRemoveVolumesByPrefix.mockImplementationOnce(() => {
-        throw new Error("injected volume cleanup failure");
-      });
-    }
-    let removeFailed = false;
-    const runOpenshell = vi.fn((args: string[]) => {
-      if (failureStage === "gateway remove" && args[0] === "gateway" && !removeFailed) {
-        removeFailed = true;
-        throw new Error("injected gateway remove failure");
-      }
-      return { status: 0, stdout: "", stderr: "" };
-    });
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+    injectFailure(runOpenshell);
 
     expect(() => cleanupGatewayAfterLastSandbox("nemoclaw-8081", runOpenshell)).toThrow();
     expect(() => cleanupGatewayAfterLastSandbox("nemoclaw-8081", runOpenshell)).not.toThrow();
