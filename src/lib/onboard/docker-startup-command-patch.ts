@@ -2,18 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  buildDockerGpuMode,
   type DockerGpuPatchDeps,
-  type DockerGpuPatchMode,
   type DockerGpuPatchResult,
   recreateOpenShellDockerSandboxContainer,
 } from "./docker-gpu-patch";
 
-const STARTUP_COMMAND_MODE: DockerGpuPatchMode = {
-  kind: "startup-command",
-  label: "persistent sandbox startup command",
-  device: "",
-  args: [],
-};
+const STARTUP_COMMAND_MODE = buildDockerGpuMode("startup-command");
 
 export function recreateOpenShellDockerSandboxWithStartupCommand(
   options: {

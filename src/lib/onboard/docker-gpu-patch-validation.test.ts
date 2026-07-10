@@ -41,6 +41,15 @@ function inspectFixture(): DockerContainerInspect {
 }
 
 describe("Docker GPU startup command validation (#6110)", () => {
+  it("keeps startup-command recreation free of GPU arguments", () => {
+    expect(buildDockerGpuMode("startup-command", "nvidia.com/gpu=all")).toEqual({
+      kind: "startup-command",
+      label: "persistent sandbox startup command",
+      device: "",
+      args: [],
+    });
+  });
+
   it.each([
     ["Docker --gpus", buildDockerGpuMode("gpus")],
     ["native CDI", buildDockerGpuMode("cdi")],
