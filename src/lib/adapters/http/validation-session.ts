@@ -49,7 +49,11 @@ const PROXY_ENV_NAMES = [
 
 const CURL_TLS_ENV_NAMES = ["CURL_CA_BUNDLE", "SSL_CERT_FILE", "SSL_CERT_DIR"] as const;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
-const DEFAULT_DNS_LOOKUP_TIMEOUT_MS = 5_000;
+
+function safeErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/(https?:\/\/[^\s?]+)\?[^\s]*/gi, "$1?[redacted]").slice(0, 256);
+}
 
 function configured(env: NodeJS.ProcessEnv, names: readonly string[]): boolean {
   return names.some((name) => Boolean(env[name]?.trim()));
@@ -199,7 +203,7 @@ export async function createValidationSession(
         () =>
           withTimeout(
             lookup(endpoint.hostname, { all: true, verbatim: true }),
-            options.dnsTimeoutMs ?? DEFAULT_DNS_LOOKUP_TIMEOUT_MS,
+            options.dnsTimeoutMs ?? 5_000,
             "validation DNS lookup timed out",
           ),
       );
@@ -207,6 +211,7 @@ export async function createValidationSession(
       addTraceEvent("validation_transport_fallback", {
         reason: "dns_lookup_failed",
         error_code: (error as NodeJS.ErrnoException).code ?? "unknown",
+        error_message: safeErrorMessage(error),
       });
       return null;
     }

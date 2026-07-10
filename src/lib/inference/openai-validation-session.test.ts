@@ -136,6 +136,33 @@ describe("OpenAI validation keepalive sequence", () => {
     expect(paths).toEqual(["/v1/responses", "/v1/responses", "/v1/chat/completions"]);
   });
 
+  it("returns Responses success when native streaming emits the required event", async () => {
+    const paths: string[] = [];
+    const server = http.createServer((request, response) => {
+      paths.push(request.url ?? "");
+      request.resume();
+      response.end(
+        paths.length === 1
+          ? '{"output":[{"type":"message"}]}'
+          : "event: response.output_text.delta\ndata: {}\n\n",
+      );
+    });
+    const port = await listen(server);
+    const harness = deps();
+
+    const result = await probeOpenAiLikeEndpointWithValidationSession(
+      `http://provider.example.test:${port}/v1`,
+      "test-model",
+      "test-key",
+      { probeStreaming: true },
+      harness,
+    );
+
+    expect(result).toMatchObject({ ok: true, api: "openai-responses" });
+    expect(paths).toEqual(["/v1/responses", "/v1/responses"]);
+    expect(harness.legacyProbe).not.toHaveBeenCalled();
+  });
+
   it("replays through curl after a terminal native failure", async () => {
     const server = http.createServer((request, response) => {
       request.resume();
@@ -262,6 +289,52 @@ describe("OpenAI validation keepalive sequence", () => {
     expect(result).toMatchObject({ ok: true, api: "openai-completions" });
     expect(legacyProbe).toHaveBeenCalledTimes(1);
     expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "CURL_CA_BUNDLE",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+  ])("uses curl without DNS pre-resolution when %s is configured", async (envName) => {
+    const legacyProbe: OpenAiValidationSessionDeps["legacyProbe"] = vi.fn(() => ({
+      ok: true,
+      api: "openai-completions",
+    }));
+    const lookup = vi.fn();
+    const harness = deps(legacyProbe);
+    harness.sessionOptions = { env: { [envName]: "/tmp/provider-tls-config" }, lookup };
+
+    const result = await probeOpenAiLikeEndpointWithValidationSession(
+      "https://provider.example.test/v1",
+      "test-model",
+      "test-key",
+      {},
+      harness,
+    );
+
+    expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+    expect(legacyProbe).toHaveBeenCalledTimes(1);
+    expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it("keeps preflight-pinned endpoints on curl without native DNS", async () => {
+    const legacyProbe: OpenAiValidationSessionDeps["legacyProbe"] = vi.fn(() => ({
+      ok: true,
+      api: "openai-completions",
+    }));
+    const harness = deps(legacyProbe);
+
+    const result = await probeOpenAiLikeEndpointWithValidationSession(
+      "https://provider.example.test/v1",
+      "test-model",
+      "test-key",
+      { pinnedAddresses: ["203.0.113.10"] },
+      harness,
+    );
+
+    expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+    expect(legacyProbe).toHaveBeenCalledTimes(1);
+    expect(harness.sessionOptions!.lookup).not.toHaveBeenCalled();
   });
 
   it("keeps DeepSeek V4 Pro on its specialized legacy streaming probe", async () => {

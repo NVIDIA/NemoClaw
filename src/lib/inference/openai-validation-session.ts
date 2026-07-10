@@ -164,8 +164,17 @@ function streamingEventTypes(body: string): Set<string> {
 }
 
 async function waitForRetry(ms: number): Promise<void> {
-  if (process.env.VITEST === "true" || process.env.NEMOCLAW_TEST_NO_SLEEP === "1") return;
+  if (process.env.NEMOCLAW_TEST_NO_SLEEP === "1") return;
   await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function safeErrorDetails(error: unknown): { error_code: string; error_message: string } {
+  const value = error as NodeJS.ErrnoException;
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    error_code: value?.code ?? "unknown",
+    error_message: message.replace(/(https?:\/\/[^\s?]+)\?[^\s]*/gi, "$1?[redacted]").slice(0, 256),
+  };
 }
 
 async function requestWithHttpRetry(
@@ -319,7 +328,11 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
       }
     }
     return { ok: true, api: "openai-completions", label: "Chat Completions API" };
-  } catch {
+  } catch (error) {
+    addTraceEvent("validation_transport_error", {
+      reason: "native_unexpected_failure",
+      ...safeErrorDetails(error),
+    });
     return nativeFailureFallback("native_unexpected_failure");
   } finally {
     session.close();
