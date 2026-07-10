@@ -77,6 +77,7 @@ export async function createPreparedDcodeImageFixture(
   }));
   const prepareDockerfilePatch = vi.fn(async () => ({
     buildId: "dcode-build-1",
+    dashboardRemoteBindPrepared: false,
     resolvedBaseImage: null,
   }));
   const buildImage = vi.fn(() => ({ status: 0 }) as never);

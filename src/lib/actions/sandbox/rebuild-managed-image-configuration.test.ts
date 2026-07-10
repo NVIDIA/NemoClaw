@@ -77,6 +77,7 @@ describe("managed DCode rebuild image configuration", () => {
     fs.writeFileSync(stagedDockerfile, "FROM scratch\n");
     const prepareDockerfilePatch = vi.fn(async () => ({
       buildId: "dcode-auto-approval",
+      dashboardRemoteBindPrepared: false,
       resolvedBaseImage: null,
     }));
 

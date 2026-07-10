@@ -89,6 +89,7 @@ describe("managed DCode rebuild image preparation", () => {
       })),
       prepareDockerfilePatch: vi.fn(async () => ({
         buildId: "dcode-build-cleanup",
+        dashboardRemoteBindPrepared: false,
         resolvedBaseImage: null,
       })),
       buildImage: vi.fn(() => ({ status: 0 }) as never),
@@ -122,6 +123,7 @@ describe("managed DCode rebuild image preparation", () => {
       })),
       prepareDockerfilePatch: vi.fn(async () => ({
         buildId: "dcode-build-failure",
+        dashboardRemoteBindPrepared: false,
         resolvedBaseImage: null,
       })),
       buildImage: vi.fn(
