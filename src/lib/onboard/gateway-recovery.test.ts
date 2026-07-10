@@ -40,6 +40,7 @@ function createDeps(overrides: Partial<GatewayRecoveryDeps> = {}): GatewayRecove
     startGatewayWithOptions: vi.fn(
       async () => undefined,
     ) as GatewayRecoveryDeps["startGatewayWithOptions"],
+    shouldPatchCoredns: () => false,
     // Tests assert the plain-CLI fallback path by default; the Linux
     // Docker-driver branch is opted into explicitly per case.
     isLinuxDockerDriverGatewayEnabled: () => false,

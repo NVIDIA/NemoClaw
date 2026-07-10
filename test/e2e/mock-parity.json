@@ -5,6 +5,29 @@
     {
       "live": "test/e2e/live/sandbox-operations.test.ts",
       "liveOnlyReason": "The final-destroy gateway release contract needs two real Docker/OpenShell sandboxes plus host 127.0.0.1 port binding; a fast mock cannot prove the shared-gateway ownership boundary."
+    },
+    {
+      "live": "test/e2e/live/onboard-repair.test.ts",
+      "fast": [
+        "src/lib/onboard/extra-provider-reconciliation-diagnostics.test.ts",
+        "src/lib/onboard/extra-provider-reconciliation-probes.test.ts",
+        "src/lib/onboard/extra-provider-reconciliation.test.ts",
+        "src/lib/onboard/machine/handlers/sandbox-resume.test.ts",
+        "src/lib/onboard/sandbox-create-plan-extra-providers.test.ts",
+        "test/onboard-extra-provider-reconciliation.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/onboard-resume.test.ts",
+      "fast": [
+        "src/lib/onboard/extra-provider-reconciliation-diagnostics.test.ts",
+        "src/lib/onboard/extra-provider-reconciliation-probes.test.ts",
+        "src/lib/onboard/extra-provider-reconciliation.test.ts",
+        "src/lib/onboard/machine/handlers/sandbox-recreate-resume.test.ts",
+        "src/lib/onboard/machine/handlers/sandbox-resume.test.ts",
+        "src/lib/onboard/sandbox-create-plan-extra-providers.test.ts",
+        "test/onboard-extra-provider-reconciliation.test.ts"
+      ]
     }
   ]
 }

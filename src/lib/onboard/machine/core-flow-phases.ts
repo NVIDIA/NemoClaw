@@ -38,6 +38,7 @@ export interface CoreOnboardFlowPhaseOptions<
     requestedObservabilityEnabled?: boolean | null;
     requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
     authoritativePolicyTier?: string | null;
+    recreateSandbox: (requested?: boolean) => boolean;
     controlUiPort: number | null;
     rootDir: string;
   };
@@ -118,6 +119,7 @@ export function createCoreOnboardFlowPhases<
       resumeAgentChanged: options.sandbox.resumeAgentChanged,
       requestedObservabilityEnabled: options.sandbox.requestedObservabilityEnabled,
       requestedDcodeAutoApprovalMode: options.sandbox.requestedDcodeAutoApprovalMode,
+      recreateSandbox: options.sandbox.recreateSandbox,
       session: context.session,
       sandboxName: context.sandboxName,
       model: context.model,

@@ -14,13 +14,22 @@ import {
   createCorporateCaFixture,
 } from "../fixtures/corporate-ca.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { readExtraProviders, updateExtraProviders } from "../fixtures/extra-providers-registry.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
+import {
+  expectSandboxProviderAttachment,
+  upsertGenericGatewayProvider,
+} from "../fixtures/gateway-providers.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-repair";
 const OTHER_SANDBOX_NAME = process.env.NEMOCLAW_OTHER_SANDBOX_NAME ?? "e2e-repair-other";
 const SESSION_FILE = path.join(os.homedir(), ".nemoclaw", "onboard-session.json");
+const STALE_EXTRA_PROVIDER = "e2e-stale-extra-provider";
+const LIVE_EXTRA_PROVIDER = "e2e-live-extra-provider";
+const EXTRA_PROVIDER_TOKEN_ENV = "NEMOCLAW_E2E_EXTRA_PROVIDER_TOKEN";
+const EXTRA_PROVIDER_TOKEN = "e2e-extra-provider-token";
 const LIVE_TIMEOUT_MS = 70 * 60_000;
 
 validateSandboxName(SANDBOX_NAME);
@@ -84,12 +93,23 @@ async function cleanup(host: HostCliClient, sandbox: SandboxClient): Promise<voi
     })
     .catch(() => undefined);
   await sandbox
+    .openshell(["provider", "delete", "-g", "nemoclaw", LIVE_EXTRA_PROVIDER], {
+      artifactName: "cleanup-live-extra-provider-delete",
+      env: env({ [EXTRA_PROVIDER_TOKEN_ENV]: EXTRA_PROVIDER_TOKEN }),
+      timeoutMs: 60_000,
+    })
+    .catch(() => undefined);
+  await sandbox
     .openshell(["gateway", "destroy", "-g", "nemoclaw"], {
       artifactName: "cleanup-gateway-destroy",
       env: env(),
       timeoutMs: 60_000,
     })
     .catch(() => undefined);
+  updateExtraProviders((providers) => {
+    providers.delete(STALE_EXTRA_PROVIDER);
+    providers.delete(LIVE_EXTRA_PROVIDER);
+  });
   fs.rmSync(SESSION_FILE, { force: true });
 }
 
@@ -119,6 +139,8 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
     contracts: [
       "forced policy-step failure leaves a resumable session",
       "resume recreates a recorded sandbox that was removed underneath it",
+      "resume repair filters stale extra-provider records while preserving live attachments",
+      "resume repair proves recreated sandbox provider attachments are selectively reconciled",
       "REQUESTS_CA_BUNDLE fallback corporate CA source is baked and merged after repair",
       "resume rejects a different requested sandbox name",
       "resume rejects provider/model overrides that conflict with recorded state",
@@ -166,6 +188,21 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
   });
   expect(sandboxAfterFailure.exitCode, resultText(sandboxAfterFailure)).toBe(0);
 
+  await upsertGenericGatewayProvider(host, LIVE_EXTRA_PROVIDER, {
+    artifactName: "phase-1-live-extra-provider-upsert",
+    credentialEnv: EXTRA_PROVIDER_TOKEN_ENV,
+    env: env({ [EXTRA_PROVIDER_TOKEN_ENV]: EXTRA_PROVIDER_TOKEN }),
+    redactionValues: [EXTRA_PROVIDER_TOKEN],
+  });
+  const seededExtraProviders = updateExtraProviders((providers) => {
+    providers.add(STALE_EXTRA_PROVIDER);
+    providers.add(LIVE_EXTRA_PROVIDER);
+  });
+  await artifacts.writeJson("phase-1-extra-providers-seeded.json", seededExtraProviders);
+  expect(seededExtraProviders).toEqual(
+    expect.arrayContaining([LIVE_EXTRA_PROVIDER, STALE_EXTRA_PROVIDER]),
+  );
+
   await sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
     artifactName: "phase-2-delete-recorded-sandbox",
     env: env(),
@@ -186,6 +223,17 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
   expect(resultText(repair)).toContain("[resume] Skipping preflight (cached)");
   expect(resultText(repair)).toContain("Recorded sandbox state is unavailable; recreating it");
   expect(resultText(repair)).toContain("Creating sandbox");
+  const reconciledExtraProviders = readExtraProviders();
+  expect(reconciledExtraProviders).toContain(LIVE_EXTRA_PROVIDER);
+  expect(reconciledExtraProviders).not.toContain(STALE_EXTRA_PROVIDER);
+  await expectSandboxProviderAttachment(sandbox, SANDBOX_NAME, LIVE_EXTRA_PROVIDER, "present", {
+    artifactName: "phase-2-sandbox-provider-list-live-after-repair",
+    env: env(),
+  });
+  await expectSandboxProviderAttachment(sandbox, SANDBOX_NAME, STALE_EXTRA_PROVIDER, "absent", {
+    artifactName: "phase-2-sandbox-provider-list-stale-after-repair",
+    env: env(),
+  });
 
   const status = await nemoclaw(host, [SANDBOX_NAME, "status"], "phase-2-status-after-repair");
   expect(status.exitCode, resultText(status)).toBe(0);
