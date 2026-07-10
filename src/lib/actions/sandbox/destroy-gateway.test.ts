@@ -4,7 +4,7 @@
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   dockerRemoveVolumesByPrefix: vi.fn(),
@@ -25,6 +25,16 @@ vi.mock("../../onboard/stale-gateway-cleanup", () => ({
 import { cleanupGatewayAfterLastSandbox } from "./destroy-gateway";
 
 describe("cleanupGatewayAfterLastSandbox", () => {
+  beforeEach(() => {
+    mocks.stopHostGatewayProcesses.mockReturnValue({
+      failed: [],
+      skippedDeadPids: [],
+      skippedNonMatchingPids: [],
+      stopped: [],
+      sudoRemediationPids: [],
+    });
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
     vi.clearAllMocks();
@@ -115,6 +125,28 @@ describe("cleanupGatewayAfterLastSandbox", () => {
       ignoreError: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
+  });
+
+  it("fails before gateway and volume removal when the owned host listener survives (#4662)", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    vi.spyOn(os, "homedir").mockReturnValue("/home/tester");
+    mocks.stopHostGatewayProcesses.mockReturnValue({
+      failed: [123],
+      skippedDeadPids: [],
+      skippedNonMatchingPids: [],
+      stopped: [],
+      sudoRemediationPids: [123],
+    });
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+
+    expect(() => cleanupGatewayAfterLastSandbox("nemoclaw-8081", runOpenshell)).toThrow(
+      /PID\(s\) 123.*rerun destroy/,
+    );
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      ["gateway", "remove", "nemoclaw-8081"],
+      expect.anything(),
+    );
+    expect(mocks.dockerRemoveVolumesByPrefix).not.toHaveBeenCalled();
   });
 
   it.each([

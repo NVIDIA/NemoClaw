@@ -18,6 +18,7 @@ type WorkflowStep = {
 
 type WorkflowJob = {
   if?: string;
+  permissions?: Record<string, string>;
   "runs-on"?: string;
   "timeout-minutes"?: number;
   steps?: WorkflowStep[];
@@ -71,6 +72,7 @@ describe("macOS E2E workflow boundary", () => {
     const live = stepNamed("Run macOS Docker final-destroy E2E", "macos-docker-final-destroy");
 
     expect(job["runs-on"]).toBe("macos-15-intel");
+    expect(job.permissions).toEqual({ contents: "read" });
     expect(docker.uses).toBe("docker/setup-docker-action@6d7cfa65f60a9dda7b46e5513fa982536f3c9877");
     expect(docker.with?.version).toBe("v27.4.0");
     expect(String(docker.env?.LIMA_START_ARGS)).toContain("--cpus 4 --memory 8");

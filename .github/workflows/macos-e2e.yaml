@@ -129,6 +129,8 @@ jobs:
   # Keep the secret-bearing real Docker proof on reviewed main-branch code only.
   macos-docker-final-destroy:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    permissions:
+      contents: read
     runs-on: macos-15-intel
     timeout-minutes: 90
     steps:

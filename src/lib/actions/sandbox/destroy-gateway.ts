@@ -112,7 +112,17 @@ export function cleanupGatewayAfterLastSandbox(
       stopOptions.openShellGatewayName = gatewayName;
       stopOptions.openShellGatewayPort = perGatewayState.port;
     }
-    stopHostGatewayProcesses({}, stopOptions);
+    const stopResult = stopHostGatewayProcesses({}, stopOptions);
+    const failedPids = [...new Set([...stopResult.failed, ...stopResult.sudoRemediationPids])];
+    if (failedPids.length > 0) {
+      const remediation =
+        stopResult.sudoRemediationPids.length > 0
+          ? ` Retry with sufficient permissions for PID(s) ${stopResult.sudoRemediationPids.join(", ")}, then rerun destroy.`
+          : " Retry destroy after stopping the listed process(es).";
+      throw new Error(
+        `Failed to stop the owned host gateway process(es) for '${gatewayName}': ${failedPids.join(", ")}.${remediation}`,
+      );
+    }
   }
   /**
    * SOURCE_OF_TRUTH
