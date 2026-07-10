@@ -25,6 +25,7 @@ describe("buildVllmMenuEntries", () => {
       vllmRunning: true,
       vllmProfile: null,
       experimental: false,
+      platform: "linux",
       hasVllmImage: false,
       log: () => {},
       env: {},
