@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
@@ -48,7 +49,7 @@ function isAlive(pid: number): boolean {
 afterEach(() => {
   for (const pid of livePids) killQuietly(pid);
   livePids.clear();
-  if (tmpHome) fs.rmSync(tmpHome, { recursive: true, force: true });
+  tmpHome && fs.rmSync(tmpHome, { recursive: true, force: true });
   tmpHome = null;
 });
 
@@ -86,7 +87,7 @@ function launchOrphanGateway(options: {
   pidFile: string;
   port: number;
 }): number {
-  if (!tmpHome) throw new Error("temporary home is not initialized");
+  assert.ok(tmpHome, "temporary home is not initialized");
   scriptSequence += 1;
   const gatewayFile = path.join(tmpHome, `gateway-${scriptSequence}.cjs`);
   fs.writeFileSync(
@@ -125,7 +126,7 @@ function launchOrphanGateway(options: {
       backoffFactor: 1,
     },
   );
-  if (!started) throw new Error("gateway fixture did not start");
+  assert.ok(started, "gateway fixture did not start");
   livePids.add(pid);
   return pid;
 }
