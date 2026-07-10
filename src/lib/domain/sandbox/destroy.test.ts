@@ -5,8 +5,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   getSandboxDeleteOutcome,
+  hasNoLiveSandboxes,
+  hasRunningDockerSandboxContainer,
   isGatewayUnreachableDeleteOutput,
   isMissingSandboxDeleteOutput,
+  resolveDestroyGatewayCleanupDecision,
   shouldCleanupGatewayAfterDestroy,
   shouldStopHostServicesAfterDestroy,
 } from "./destroy";
@@ -87,6 +90,94 @@ describe("sandbox destroy helpers", () => {
         removedRegistryEntry: true,
         noRegisteredSandboxes: true,
         noLiveSandboxes: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("resolves final-gateway cleanup defaults without prompting when unattended (#4662)", () => {
+    expect(
+      resolveDestroyGatewayCleanupDecision(
+        { cleanupGateway: true },
+        { nonInteractive: false, platform: "linux" },
+      ),
+    ).toBe("cleanup");
+    expect(
+      resolveDestroyGatewayCleanupDecision(
+        { cleanupGateway: false },
+        { nonInteractive: true, platform: "darwin" },
+      ),
+    ).toBe("preserve");
+    expect(
+      resolveDestroyGatewayCleanupDecision(
+        { yes: true },
+        { nonInteractive: false, platform: "darwin" },
+      ),
+    ).toBe("cleanup");
+    expect(
+      resolveDestroyGatewayCleanupDecision(
+        { force: true },
+        { nonInteractive: false, platform: "linux" },
+      ),
+    ).toBe("preserve");
+    expect(
+      resolveDestroyGatewayCleanupDecision({}, { nonInteractive: true, platform: "win32" }),
+    ).toBe("preserve");
+    expect(
+      resolveDestroyGatewayCleanupDecision({}, { nonInteractive: false, platform: "darwin" }),
+    ).toBe("prompt");
+  });
+
+  it("treats only terminal OpenShell rows without Docker containers as no live sandboxes (#4662)", () => {
+    const liveListOutput =
+      "NAME              CREATED              PHASE\nnpmtest           2026-06-01 00:00:00  Error\n";
+    expect(
+      hasNoLiveSandboxes({
+        captureOpenshell: () => ({ status: 0, output: liveListOutput }),
+        dockerCapture: () => "",
+        timeoutMs: 1_000,
+      }),
+    ).toBe(true);
+    expect(
+      hasNoLiveSandboxes({
+        captureOpenshell: () => ({ status: 0, output: liveListOutput }),
+        dockerCapture: () => "openshell-npmtest-e487d1bd\n",
+        timeoutMs: 1_000,
+      }),
+    ).toBe(false);
+    expect(
+      hasNoLiveSandboxes({
+        captureOpenshell: () => ({
+          status: 0,
+          output:
+            "NAME              CREATED              PHASE\nnpmtest           now                  Ready\n",
+        }),
+        dockerCapture: () => "",
+        timeoutMs: 1_000,
+      }),
+    ).toBe(false);
+  });
+
+  it("fails closed when the Docker live-container probe cannot run (#4662)", () => {
+    expect(
+      hasRunningDockerSandboxContainer(
+        "npmtest",
+        () => {
+          throw new Error("docker unavailable");
+        },
+        1_000,
+      ),
+    ).toBe(true);
+    expect(
+      hasNoLiveSandboxes({
+        captureOpenshell: () => ({
+          status: 0,
+          output:
+            "NAME              CREATED              PHASE\nnpmtest           now                  Failed\n",
+        }),
+        dockerCapture: () => {
+          throw new Error("docker unavailable");
+        },
+        timeoutMs: 1_000,
       }),
     ).toBe(false);
   });

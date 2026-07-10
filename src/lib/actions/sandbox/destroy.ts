@@ -14,6 +14,10 @@ import {
   normalizeDestroySandboxOptions,
 } from "../../domain/lifecycle/options";
 import {
+  type DockerCaptureProbe,
+  hasNoLiveSandboxes,
+  type LiveSandboxListProbe,
+  resolveDestroyGatewayCleanupDecision,
   shouldCleanupGatewayAfterDestroy,
   shouldStopHostServicesAfterDestroy,
 } from "../../domain/sandbox/destroy";
@@ -22,7 +26,6 @@ import {
   SANDBOX_PROVIDER_SUFFIXES,
 } from "../../onboard/sandbox-provider-cleanup";
 import { validateName } from "../../runner";
-import { parseLiveSandboxEntries } from "../../runtime-recovery";
 import { killTimer as defaultKillShieldsTimer } from "../../shields/timer-control";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import type { Session } from "../../state/onboard-session";
@@ -80,31 +83,14 @@ type RemoveShieldsStateDeps = {
   warn?: (message: string) => void;
 };
 
-/**
- * Decide whether to tear down the shared NemoClaw gateway after destroying
- * the last sandbox. Linux preserves it by default for reuse (#2166), while
- * unattended macOS destroys clean it up so the host listener is released
- * (#4662). Track removal in #6639: drop this macOS default only after live
- * macOS final destroys release the gateway listener without forced gateway
- * cleanup and Linux reuse semantics remain covered. Explicit cleanup options
- * always take precedence.
- *
- * Prompt rules:
- *   - explicit `cleanupGateway` set         → honour it without prompting
- *   - non-interactive or `--yes` / `--force` → use the platform default
- *   - interactive without `--yes`           → prompt the user
- */
 async function resolveCleanupGatewayDecision(options: DestroySandboxOptions): Promise<boolean> {
-  if (options.cleanupGateway === true) return true;
-  if (options.cleanupGateway === false) return false;
-  if (options.yes === true || options.force === true || isNonInteractiveEnv()) {
-    // Workaround for #4662, tracked for removal by #6639. macOS must release
-    // the leaked gateway listener after final destroy until OpenShell final
-    // destroy proves the listener is released without forcing shared gateway
-    // cleanup. Supported Windows runs use WSL2 (`linux`); unexpected `win32`
-    // hosts keep the conservative non-macOS gateway-preservation default.
-    return process.platform === "darwin";
-  }
+  const decision = resolveDestroyGatewayCleanupDecision(options, {
+    nonInteractive: isNonInteractiveEnv(),
+    platform: process.platform,
+  });
+  if (decision === "cleanup") return true;
+  if (decision === "preserve") return false;
+
   console.log(`  ${YW}This was the last sandbox.${R}`);
   console.log(
     "  Also destroy the shared NemoClaw gateway (port forward, gateway pod, cluster volumes)?",
@@ -115,57 +101,6 @@ async function resolveCleanupGatewayDecision(options: DestroySandboxOptions): Pr
   );
   const trimmed = answer.trim().toLowerCase();
   return trimmed === "y" || trimmed === "yes";
-}
-
-const TERMINAL_OPEN_SHELL_SANDBOX_PHASES = new Set(["Error", "Failed"]);
-
-function escapeDockerNameRegex(value: string): string {
-  return value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
-}
-
-function hasRunningDockerSandboxContainer(sandboxName: string): boolean {
-  const { dockerCapture } = require("../../adapters/docker/run") as {
-    dockerCapture: (args: string[], opts?: Record<string, unknown>) => string;
-  };
-  try {
-    const output = dockerCapture(
-      [
-        "ps",
-        "--filter",
-        `name=^/openshell-${escapeDockerNameRegex(sandboxName)}-`,
-        "--format",
-        "{{.Names}}",
-      ],
-      {
-        ignoreError: true,
-        suppressOutput: true,
-        timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-      },
-    );
-    return output.trim().length > 0;
-  } catch {
-    return true;
-  }
-}
-
-function hasNoLiveSandboxes(): boolean {
-  const { captureOpenshell } = require("../../adapters/openshell/runtime") as {
-    captureOpenshell: (
-      args: string[],
-      opts?: { ignoreError?: boolean; timeout?: number },
-    ) => { status: number | null; output: string };
-  };
-  const liveList = captureOpenshell(["sandbox", "list"], {
-    ignoreError: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-  });
-  if (liveList.status !== 0) {
-    return false;
-  }
-  return parseLiveSandboxEntries(liveList.output).every((entry) => {
-    if (!TERMINAL_OPEN_SHELL_SANDBOX_PHASES.has(entry.phase ?? "")) return false;
-    return !hasRunningDockerSandboxContainer(entry.name);
-  });
 }
 
 export function cleanupSandboxServices(
@@ -468,7 +403,21 @@ async function destroySandboxUnlocked(
       deleteSucceededOrAlreadyGone,
       removedRegistryEntry: removed,
       noRegisteredSandboxes: registry.listSandboxes().sandboxes.length === 0,
-      noLiveSandboxes: hasNoLiveSandboxes(),
+      noLiveSandboxes: hasNoLiveSandboxes({
+        captureOpenshell: (...args) => {
+          const { captureOpenshell } = require("../../adapters/openshell/runtime") as {
+            captureOpenshell: LiveSandboxListProbe;
+          };
+          return captureOpenshell(...args);
+        },
+        dockerCapture: (...args) => {
+          const { dockerCapture } = require("../../adapters/docker/run") as {
+            dockerCapture: DockerCaptureProbe;
+          };
+          return dockerCapture(...args);
+        },
+        timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+      }),
     })
   ) {
     const shouldCleanupGateway = await resolveCleanupGatewayDecision(normalized);

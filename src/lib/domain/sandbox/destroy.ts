@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { parseLiveSandboxEntries } from "../../runtime-recovery";
+
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
+const TERMINAL_OPEN_SHELL_SANDBOX_PHASES = new Set(["Error", "Failed"]);
 
 function stripAnsi(value = ""): string {
   return String(value).replace(ANSI_RE, "");
@@ -11,6 +14,32 @@ export type SpawnLikeResult = {
   status: number | null;
   stdout?: string;
   stderr?: string;
+};
+
+export type DestroyGatewayCleanupDecision = "cleanup" | "preserve" | "prompt";
+
+export type DestroyGatewayCleanupOptions = {
+  cleanupGateway?: boolean;
+  yes?: boolean;
+  force?: boolean;
+};
+
+export type DestroyGatewayCleanupContext = {
+  nonInteractive: boolean;
+  platform: NodeJS.Platform;
+};
+
+export type LiveSandboxListProbe = (
+  args: string[],
+  opts?: { ignoreError?: boolean; timeout?: number },
+) => { status: number | null; output: string };
+
+export type DockerCaptureProbe = (args: string[], opts?: Record<string, unknown>) => string;
+
+export type LiveSandboxProbeDeps = {
+  captureOpenshell: LiveSandboxListProbe;
+  dockerCapture: DockerCaptureProbe;
+  timeoutMs: number;
 };
 
 export function isMissingSandboxDeleteOutput(output = ""): boolean {
@@ -71,4 +100,76 @@ export function shouldCleanupGatewayAfterDestroy(input: {
     input.noRegisteredSandboxes &&
     input.noLiveSandboxes
   );
+}
+
+/**
+ * Decide the non-UI gateway cleanup path for a final sandbox destroy.
+ *
+ * Linux preserves the shared gateway by default for reuse (#2166), while
+ * unattended macOS destroys clean it up so the leaked host listener is released
+ * (#4662). Track removal in #6639: drop the macOS default only after live
+ * macOS final destroys release the listener without forced gateway cleanup.
+ * Native win32 hosts keep the conservative non-macOS default because supported
+ * Windows runs go through WSL2 and report `linux`.
+ */
+export function resolveDestroyGatewayCleanupDecision(
+  options: DestroyGatewayCleanupOptions,
+  context: DestroyGatewayCleanupContext,
+): DestroyGatewayCleanupDecision {
+  if (options.cleanupGateway === true) return "cleanup";
+  if (options.cleanupGateway === false) return "preserve";
+  if (options.yes === true || options.force === true || context.nonInteractive) {
+    return context.platform === "darwin" ? "cleanup" : "preserve";
+  }
+  return "prompt";
+}
+
+function escapeDockerNameRegex(value: string): string {
+  return value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+}
+
+export function hasRunningDockerSandboxContainer(
+  sandboxName: string,
+  dockerCapture: DockerCaptureProbe,
+  timeoutMs: number,
+): boolean {
+  try {
+    const output = dockerCapture(
+      [
+        "ps",
+        "--filter",
+        `name=^/openshell-${escapeDockerNameRegex(sandboxName)}-`,
+        "--format",
+        "{{.Names}}",
+      ],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: timeoutMs,
+      },
+    );
+    return output.trim().length > 0;
+  } catch {
+    // Fail closed: if Docker cannot be probed, preserve the shared gateway so
+    // a still-running sandbox does not lose its listener on final destroy.
+    return true;
+  }
+}
+
+export function hasNoLiveSandboxes({
+  captureOpenshell,
+  dockerCapture,
+  timeoutMs,
+}: LiveSandboxProbeDeps): boolean {
+  const liveList = captureOpenshell(["sandbox", "list"], {
+    ignoreError: true,
+    timeout: timeoutMs,
+  });
+  if (liveList.status !== 0) {
+    return false;
+  }
+  return parseLiveSandboxEntries(liveList.output).every((entry) => {
+    if (!TERMINAL_OPEN_SHELL_SANDBOX_PHASES.has(entry.phase ?? "")) return false;
+    return !hasRunningDockerSandboxContainer(entry.name, dockerCapture, timeoutMs);
+  });
 }
