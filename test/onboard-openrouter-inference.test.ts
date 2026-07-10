@@ -49,6 +49,7 @@ describe("OpenRouter onboarding inference setup", () => {
         "OPENROUTER_API_KEY",
       );
 
+      expect(ensureAdapter).toHaveBeenCalledWith({ authorizationToken: "sk-or-test" });
       const commands = harness.commands.map(({ command }) => command);
       assert.deepEqual(commands, [
         "provider get -g nemoclaw openrouter-api",
@@ -115,6 +116,7 @@ describe("OpenRouter onboarding inference setup", () => {
         },
       );
 
+      expect(ensureAdapter).toHaveBeenCalledWith({ authorizationToken: null });
       expect(harness.commands.map(({ command }) => command)).toEqual([
         "provider get -g nemoclaw openrouter-api",
         "provider update -g nemoclaw openrouter-api --config OPENAI_BASE_URL=http://host.openshell.internal:11437/v1",

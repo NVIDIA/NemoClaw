@@ -34,9 +34,10 @@ class ForwardHttpError extends Error {
   }
 }
 
-export function hasBearerAuthorization(actual: string | string[] | undefined): boolean {
+export function getBearerAuthorizationToken(actual: string | string[] | undefined): string | null {
   const header = Array.isArray(actual) ? actual[0] : actual;
-  return typeof header === "string" && /^Bearer\s+\S+/.test(header);
+  const match = typeof header === "string" ? header.match(/^Bearer\s+(\S+)$/) : null;
+  return match?.[1] ?? null;
 }
 
 export function buildUpstreamUrl(upstreamBaseUrl: string, reqUrl: string | undefined): URL {

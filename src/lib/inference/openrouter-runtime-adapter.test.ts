@@ -7,10 +7,15 @@ import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { OPENROUTER_DEFAULT_HEADERS } from "./openrouter";
-import { createOpenRouterRuntimeAdapterServer } from "./openrouter-runtime-adapter";
+import {
+  adapterAuthorizationHash,
+  createOpenRouterRuntimeAdapterServer,
+} from "./openrouter-runtime-adapter";
 import { OPENROUTER_RUNTIME_ADAPTER_MAX_BODY_BYTES } from "./openrouter-runtime-adapter-forward";
 
 const servers: http.Server[] = [];
+const OPENROUTER_TEST_TOKEN = "sk-or-test";
+const OPENROUTER_TEST_AUTHORIZATION_HASH = adapterAuthorizationHash(OPENROUTER_TEST_TOKEN);
 
 afterEach(async () => {
   await Promise.all(
@@ -32,6 +37,15 @@ function listen(server: http.Server): Promise<string> {
       expect(address).toEqual(expect.objectContaining({ address: "127.0.0.1" }));
       resolve(`http://127.0.0.1:${(address as AddressInfo).port}`);
     });
+  });
+}
+
+function createTestAdapter(
+  options: Parameters<typeof createOpenRouterRuntimeAdapterServer>[0] = {},
+): http.Server {
+  return createOpenRouterRuntimeAdapterServer({
+    authorizationHash: OPENROUTER_TEST_AUTHORIZATION_HASH,
+    ...options,
   });
 }
 
@@ -66,7 +80,7 @@ describe("OpenRouter Runtime adapter", () => {
       res.end(JSON.stringify({ id: "chatcmpl-test", choices: [] }));
     });
     const upstreamBaseUrl = await listen(upstream);
-    const adapter = createOpenRouterRuntimeAdapterServer({
+    const adapter = createTestAdapter({
       upstreamBaseUrl: `${upstreamBaseUrl}/api/v1`,
     });
     const adapterBaseUrl = await listen(adapter);
@@ -78,7 +92,7 @@ describe("OpenRouter Runtime adapter", () => {
     const response = await fetch(`${adapterBaseUrl}/v1/chat/completions?trace=1`, {
       method: "POST",
       headers: {
-        Authorization: "Bearer sk-or-test",
+        Authorization: `Bearer ${OPENROUTER_TEST_TOKEN}`,
         "Content-Type": "application/json",
         "HTTP-Referer": "https://example.invalid/",
         "X-OpenRouter-Title": "Wrong Title",
@@ -95,7 +109,7 @@ describe("OpenRouter Runtime adapter", () => {
       url: "/api/v1/chat/completions?trace=1",
       body: payload,
     });
-    expect(upstreamRequests[0].headers.authorization).toBe("Bearer sk-or-test");
+    expect(upstreamRequests[0].headers.authorization).toBe(`Bearer ${OPENROUTER_TEST_TOKEN}`);
     expect(upstreamRequests[0].headers["http-referer"]).toBe(OPENROUTER_DEFAULT_HEADERS[0][1]);
     expect(upstreamRequests[0].headers["x-openrouter-title"]).toBe(
       OPENROUTER_DEFAULT_HEADERS[1][1],
@@ -108,7 +122,7 @@ describe("OpenRouter Runtime adapter", () => {
     );
     const upstream = http.createServer(upstreamHandler);
     const upstreamBaseUrl = await listen(upstream);
-    const adapter = createOpenRouterRuntimeAdapterServer({
+    const adapter = createTestAdapter({
       upstreamBaseUrl: `${upstreamBaseUrl}/api/v1`,
     });
     const adapterBaseUrl = await listen(adapter);
@@ -119,9 +133,10 @@ describe("OpenRouter Runtime adapter", () => {
     expect(healthBody).toMatchObject({
       ok: true,
       adapter: "openrouter-runtime",
+      authorizationHash: OPENROUTER_TEST_AUTHORIZATION_HASH,
       headerNames: ["HTTP-Referer", "X-OpenRouter-Title"],
     });
-    expect(JSON.stringify(healthBody)).not.toContain("sk-or-test");
+    expect(JSON.stringify(healthBody)).not.toContain(OPENROUTER_TEST_TOKEN);
 
     const missingAuth = await fetch(`${adapterBaseUrl}/v1/chat/completions`, {
       method: "POST",
@@ -130,8 +145,15 @@ describe("OpenRouter Runtime adapter", () => {
     });
     expect(missingAuth.status).toBe(401);
 
+    const wrongAuth = await fetch(`${adapterBaseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: { Authorization: "Bearer sk-or-other", "Content-Type": "application/json" },
+      body: "{}",
+    });
+    expect(wrongAuth.status).toBe(401);
+
     const unsupported = await fetch(`${adapterBaseUrl}/v1/models`, {
-      headers: { Authorization: "Bearer sk-or-test" },
+      headers: { Authorization: `Bearer ${OPENROUTER_TEST_TOKEN}` },
     });
     expect(unsupported.status).toBe(404);
     expect(upstreamHandler).not.toHaveBeenCalled();
@@ -143,7 +165,7 @@ describe("OpenRouter Runtime adapter", () => {
     );
     const upstream = http.createServer(upstreamHandler);
     const upstreamBaseUrl = await listen(upstream);
-    const adapter = createOpenRouterRuntimeAdapterServer({
+    const adapter = createTestAdapter({
       upstreamBaseUrl: `${upstreamBaseUrl}/api/v1`,
     });
     const adapterBaseUrl = await listen(adapter);
@@ -151,7 +173,7 @@ describe("OpenRouter Runtime adapter", () => {
     const response = await fetch(`${adapterBaseUrl}/v1/chat/completions`, {
       method: "POST",
       headers: {
-        Authorization: "Bearer sk-or-test",
+        Authorization: `Bearer ${OPENROUTER_TEST_TOKEN}`,
         "Content-Type": "application/json",
       },
       body: "x".repeat(OPENROUTER_RUNTIME_ADAPTER_MAX_BODY_BYTES + 1),
@@ -165,7 +187,7 @@ describe("OpenRouter Runtime adapter", () => {
   });
 
   it("returns a generic error when upstream connection details fail (#5826)", async () => {
-    const adapter = createOpenRouterRuntimeAdapterServer({
+    const adapter = createTestAdapter({
       upstreamBaseUrl: "http://127.0.0.1:1/api/v1",
       upstreamTimeoutMs: 100,
     });
@@ -174,7 +196,7 @@ describe("OpenRouter Runtime adapter", () => {
     const response = await fetch(`${adapterBaseUrl}/v1/chat/completions`, {
       method: "POST",
       headers: {
-        Authorization: "Bearer sk-or-test",
+        Authorization: `Bearer ${OPENROUTER_TEST_TOKEN}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ model: "moonshotai/kimi-k2.6", messages: [] }),
@@ -196,7 +218,7 @@ describe("OpenRouter Runtime adapter", () => {
       req.on("close", () => res.destroy());
     });
     const upstreamBaseUrl = await listen(upstream);
-    const adapter = createOpenRouterRuntimeAdapterServer({
+    const adapter = createTestAdapter({
       upstreamBaseUrl: `${upstreamBaseUrl}/api/v1`,
       upstreamTimeoutMs: 25,
     });
@@ -205,7 +227,7 @@ describe("OpenRouter Runtime adapter", () => {
     const response = await fetch(`${adapterBaseUrl}/v1/chat/completions`, {
       method: "POST",
       headers: {
-        Authorization: "Bearer sk-or-test",
+        Authorization: `Bearer ${OPENROUTER_TEST_TOKEN}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ model: "moonshotai/kimi-k2.6", messages: [] }),

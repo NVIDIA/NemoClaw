@@ -69,7 +69,9 @@ export async function setupOpenRouterRuntimeInference(
 
   let adapter: Awaited<ReturnType<typeof ensureOpenRouterRuntimeAdapter>>;
   try {
-    adapter = await (options.ensureAdapter ?? ensureOpenRouterRuntimeAdapter)();
+    adapter = await (options.ensureAdapter ?? ensureOpenRouterRuntimeAdapter)({
+      authorizationToken: options.credentialValue,
+    });
   } catch (err) {
     error(
       `  Failed to start OpenRouter Runtime adapter: ${

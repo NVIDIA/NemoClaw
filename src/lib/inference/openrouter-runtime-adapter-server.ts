@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import crypto from "node:crypto";
 import http from "node:http";
 
 import { OPENROUTER_RUNTIME_ADAPTER_PORT } from "../core/ports";
@@ -14,15 +15,18 @@ import {
 import {
   ADAPTER_NAME,
   LOG_PATH,
+  OPENROUTER_RUNTIME_ADAPTER_AUTHORIZATION_HASH_ENV,
+  adapterAuthorizationHash,
   adapterConfigHash,
   defaultAdapterLogger,
   logAdapterEvent,
+  normalizeAuthorizationHash,
   sendJson,
   type AdapterLogger,
 } from "./openrouter-runtime-adapter-common";
 import {
   forwardOpenRouterRequest,
-  hasBearerAuthorization,
+  getBearerAuthorizationToken,
 } from "./openrouter-runtime-adapter-forward";
 
 const ALLOWED_POST_PATHS = new Set(["/v1/chat/completions"]);
@@ -31,12 +35,36 @@ function isAllowedRequest(method: string | undefined, pathname: string): boolean
   return method === "POST" && ALLOWED_POST_PATHS.has(pathname);
 }
 
+function timingSafeHashEqual(actualHash: string, expectedHash: string): boolean {
+  const actual = Buffer.from(actualHash, "hex");
+  const expected = Buffer.from(expectedHash, "hex");
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
+
+function isExpectedBearerAuthorization(
+  actual: string | string[] | undefined,
+  expectedAuthorizationHash: string | null,
+): boolean {
+  const token = getBearerAuthorizationToken(actual);
+  return Boolean(
+    token &&
+      expectedAuthorizationHash &&
+      timingSafeHashEqual(adapterAuthorizationHash(token), expectedAuthorizationHash),
+  );
+}
+
 export function createOpenRouterRuntimeAdapterServer(
-  options: { upstreamBaseUrl?: string; logger?: AdapterLogger; upstreamTimeoutMs?: number } = {},
+  options: {
+    upstreamBaseUrl?: string;
+    logger?: AdapterLogger;
+    upstreamTimeoutMs?: number;
+    authorizationHash?: string | null;
+  } = {},
 ): http.Server {
   const upstreamBaseUrl = options.upstreamBaseUrl || OPENROUTER_ENDPOINT_URL;
   const configHash = adapterConfigHash(upstreamBaseUrl);
   const logger = options.logger || defaultAdapterLogger;
+  const authorizationHash = normalizeAuthorizationHash(options.authorizationHash);
   return http.createServer(async (req, res) => {
     const started = Date.now();
     const url = new URL(req.url || "/", "http://127.0.0.1");
@@ -46,11 +74,12 @@ export function createOpenRouterRuntimeAdapterServer(
           ok: true,
           adapter: ADAPTER_NAME,
           configHash,
+          authorizationHash,
           headerNames: OPENROUTER_DEFAULT_HEADERS.map(([name]) => name),
         });
         return;
       }
-      if (!hasBearerAuthorization(req.headers.authorization)) {
+      if (!isExpectedBearerAuthorization(req.headers.authorization, authorizationHash)) {
         sendJson(res, 401, {
           error: { message: "Unauthorized", type: "unauthorized", code: "unauthorized" },
         });
@@ -115,11 +144,17 @@ export function startOpenRouterRuntimeAdapterFromEnv(): http.Server {
   const port = Number(
     process.env.NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT || OPENROUTER_RUNTIME_ADAPTER_PORT,
   );
+  const authorizationHash = normalizeAuthorizationHash(
+    process.env[OPENROUTER_RUNTIME_ADAPTER_AUTHORIZATION_HASH_ENV],
+  );
   if (!Number.isInteger(port) || port <= 0) {
     throw new Error("NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT must be a valid port");
   }
+  if (!authorizationHash) {
+    throw new Error(`${OPENROUTER_RUNTIME_ADAPTER_AUTHORIZATION_HASH_ENV} is required`);
+  }
 
-  const server = createOpenRouterRuntimeAdapterServer();
+  const server = createOpenRouterRuntimeAdapterServer({ authorizationHash });
   server.listen(port, OPENROUTER_RUNTIME_ADAPTER_BIND_HOST, () => {
     defaultAdapterLogger("adapter_ready", {
       bindHost: OPENROUTER_RUNTIME_ADAPTER_BIND_HOST,

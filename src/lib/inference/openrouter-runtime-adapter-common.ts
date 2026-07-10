@@ -19,6 +19,8 @@ export const STATE_PATH = path.join(STATE_DIR, "openrouter-runtime-adapter.json"
 export const LOCK_PATH = path.join(STATE_DIR, "openrouter-runtime-adapter.lock");
 export const LOG_PATH = path.join(STATE_DIR, "openrouter-runtime-adapter.log");
 export const ADAPTER_NAME = "openrouter-runtime";
+export const OPENROUTER_RUNTIME_ADAPTER_AUTHORIZATION_HASH_ENV =
+  "NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_AUTHORIZATION_HASH";
 
 export type AdapterLogFields = Record<string, string | number | boolean | null | undefined>;
 export type AdapterLogger = (event: string, fields?: AdapterLogFields) => void;
@@ -82,6 +84,17 @@ export function adapterConfigHash(upstreamBaseUrl = OPENROUTER_ENDPOINT_URL): st
       }),
     )
     .digest("hex");
+}
+
+export function adapterAuthorizationHash(token: string): string {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+export function normalizeAuthorizationHash(value: unknown): string | null {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  return /^[a-f0-9]{64}$/.test(normalized) ? normalized : null;
 }
 
 function normalizeHttpStatus(status: number): number {
