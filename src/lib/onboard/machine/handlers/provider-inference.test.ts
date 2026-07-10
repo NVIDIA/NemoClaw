@@ -823,10 +823,21 @@ describe("handleProviderInferenceState", () => {
     await handleProviderInferenceState({
       ...baseOptions(deps, session),
       resume: true,
+      authoritativeResumeConfig: true,
       sandboxName: "my-assistant",
     });
 
     expect(setupNim).toHaveBeenCalledOnce();
+    expect(setupNim).toHaveBeenCalledWith(
+      { type: "nvidia" },
+      "my-assistant",
+      null,
+      true,
+      "nemoclaw",
+      expect.any(Function),
+      expect.any(Function),
+      session.sessionId,
+    );
     expect(calls.setupInference).toHaveBeenCalledWith(
       "my-assistant",
       "nvidia/nemotron",
