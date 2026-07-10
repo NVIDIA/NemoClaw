@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type * as TypeScript from "typescript";
 import { describe, expect, it } from "vitest";
+import { parse } from "yaml";
 import { shouldForceCompletionsApi } from "../src/lib/validation.js";
 import { getSandboxRuntimeInferenceEndpoint } from "../src/lib/onboard/docker-gpu-local-inference.js";
 
@@ -25,6 +26,7 @@ const chooseModelPath = path.join(repoRoot, "docs", "inference", "choose-model.m
 const hermesProviderPath = path.join(repoRoot, "docs", "inference", "use-hermes-provider.mdx");
 const releaseNotesPath = path.join(repoRoot, "docs", "about", "release-notes.mdx");
 const docsNavPath = path.join(repoRoot, "docs", "index.yml");
+const fernDocsPath = path.join(repoRoot, "fern", "docs.yml");
 const compatibleEndpointPath = path.join(
   repoRoot,
   "docs",
@@ -208,11 +210,31 @@ describe("inference setup navigation", () => {
     expect(markdown).toContain("[Set Up NVIDIA NIM](set-up-nvidia-nim)");
   });
 
-  it("uses a loopback-only bind for the raw model server example", () => {
+  it("uses loopback-only binds for every compatible local server example", () => {
     const markdown = fs.readFileSync(compatibleEndpointPath, "utf8");
 
-    expect(markdown).toContain("--host 127.0.0.1");
+    expect(markdown).toContain(
+      "vllm serve meta-llama/Llama-3.1-8B-Instruct --host 127.0.0.1 --port 8000",
+    );
+    expect(markdown).toContain("llama-server \\");
+    expect(markdown).toContain("--host 127.0.0.1 \\");
     expect(markdown).not.toContain("--host 0.0.0.0");
+  });
+
+  it("keeps broad flat local-inference redirects on the chooser", () => {
+    const config = parse(fs.readFileSync(fernDocsPath, "utf8")) as {
+      redirects: Array<{ source: string; destination: string }>;
+    };
+    const redirects = new Map(
+      config.redirects.map(({ source, destination }) => [source, destination]),
+    );
+
+    expect(redirects.get("/nemoclaw/latest/inference/use-local-inference")).toBe(
+      "/nemoclaw/latest/user-guide/openclaw/inference/local-inference/choose-local-inference-server",
+    );
+    expect(redirects.get("/nemoclaw/inference/use-local-inference")).toBe(
+      "/nemoclaw/user-guide/openclaw/inference/local-inference/choose-local-inference-server",
+    );
   });
 
   it("uses a loopback-only bind for the local vLLM server example", () => {
