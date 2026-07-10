@@ -506,8 +506,12 @@ async function assertDestroyRemovesSandbox(
   sandboxName: string,
   options: { cleanupGateway?: boolean } = {},
 ): Promise<void> {
-  const destroyArgs = [sandboxName, "destroy", "--yes"];
-  if (options.cleanupGateway) destroyArgs.push("--cleanup-gateway");
+  const destroyArgs = [
+    sandboxName,
+    "destroy",
+    "--yes",
+    ...(options.cleanupGateway ? ["--cleanup-gateway"] : []),
+  ];
   const destroy = await host.nemoclaw(destroyArgs, {
     artifactName: `tc-sbx-05-destroy-${sandboxName}`,
     env: buildAvailabilityProbeEnv(),
