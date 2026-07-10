@@ -10,17 +10,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const dockerMocks = vi.hoisted(() => ({
   infoFormat: vi.fn(),
 }));
-const sourceMocks = vi.hoisted(() => ({
-  nearestTags: vi.fn(),
-}));
 
 vi.mock("../adapters/docker", () => ({
   dockerInfoFormat: dockerMocks.infoFormat,
-}));
-
-vi.mock("./source-identity", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./source-identity")>()),
-  getNearestVersionedBaseImageTags: sourceMocks.nearestTags,
 }));
 
 import { createSandboxBaseImageResolutionKey } from "./resolution-key";
@@ -53,7 +45,6 @@ afterEach(() => {
 beforeEach(() => {
   vi.clearAllMocks();
   dockerMocks.infoFormat.mockReturnValue("linux/amd64\n");
-  sourceMocks.nearestTags.mockReturnValue([]);
 });
 
 describe("sandbox base-image resolution key", () => {
@@ -123,12 +114,25 @@ describe("sandbox base-image resolution key", () => {
     expect(second).not.toBe(first);
   });
 
-  it("isolates nearest release-tag candidates so warm hints do not mask new tags (#6456)", () => {
+  it("isolates pinned-first resolution policy", () => {
     const root = fixture();
-    const before = createSandboxBaseImageResolutionKey(options(root));
-    sourceMocks.nearestTags.mockReturnValue(["v0.0.79"]);
+    const base = {
+      ...options(root),
+      pinnedRemoteRef: "example/base@sha256:first",
+    };
 
-    expect(createSandboxBaseImageResolutionKey(options(root))).not.toBe(before);
+    expect(createSandboxBaseImageResolutionKey({ ...base, preferPinnedRemoteRef: true })).not.toBe(
+      createSandboxBaseImageResolutionKey(base),
+    );
+  });
+
+  it("keeps an explicit false policy compatible with callers that omit it", () => {
+    const root = fixture();
+    const base = options(root);
+
+    expect(createSandboxBaseImageResolutionKey({ ...base, preferPinnedRemoteRef: false })).toBe(
+      createSandboxBaseImageResolutionKey(base),
+    );
   });
 
   it("bounds Docker platform detection before using the host fallback (#4680)", () => {

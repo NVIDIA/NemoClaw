@@ -320,7 +320,7 @@ describe("sandbox base-image warm resolution", () => {
     expect(dockerMocks.build).not.toHaveBeenCalled();
   });
 
-  it("uses a Dockerfile-pinned remote image when no release tag is discoverable (#4680)", () => {
+  it("uses a Dockerfile-pinned remote image before moving published tags (#4680)", () => {
     dockerMocks.imageInspect.mockImplementation((ref: string) => ({
       status: ref === REF ? 0 : 1,
     }));
@@ -346,12 +346,13 @@ describe("sandbox base-image warm resolution", () => {
     expect(dockerMocks.build).not.toHaveBeenCalled();
   });
 
-  it("uses a Dockerfile-pinned fallback before an available source-SHA image", () => {
+  it("prefers an explicitly trusted pin over an available source-SHA image", () => {
     dockerMocks.imageInspect.mockReturnValue({ status: 0 });
 
     const resolved = resolveSandboxBaseImage({
       ...resolutionOptions(),
       pinnedRemoteRef: REF,
+      preferPinnedRemoteRef: true,
     });
 
     expect(resolved).toMatchObject({ ref: REF, source: "pinned" });

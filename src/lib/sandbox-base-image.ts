@@ -318,6 +318,7 @@ export function resolveSandboxBaseImage(
   } else {
     const rootDir = options.rootDir || ROOT;
     const inputPaths = [options.dockerfilePath, ...(options.inputPaths ?? [])];
+    const preferPinnedRemoteRef = options.preferPinnedRemoteRef === true;
     const versionTags = getVersionedBaseImageTags(options.rootDir || ROOT, env);
     const resolveVersionTags = (tags: string[]): SandboxBaseImageResolution | null => {
       for (const tag of tags) {
@@ -343,18 +344,7 @@ export function resolveSandboxBaseImage(
     };
     if (baseImageInputsDirty(rootDir, env, inputPaths)) return resolveChangedInputs();
 
-    const versionTagResolution = resolveVersionTags(versionTags);
-    if (versionTagResolution) return versionTagResolution;
-
-    if (baseImageInputsChangedSinceMain(rootDir, env, inputPaths)) return resolveChangedInputs();
-
-    const nearestVersionTags = getNearestVersionedBaseImageTags(rootDir, env).filter(
-      (tag) => !versionTags.includes(tag),
-    );
-    const nearestVersionTagResolution = resolveVersionTags(nearestVersionTags);
-    if (nearestVersionTagResolution) return nearestVersionTagResolution;
-
-    if (options.pinnedRemoteRef) {
+    if (preferPinnedRemoteRef && options.pinnedRemoteRef) {
       const resolved = resolvePulledCandidate(
         options.imageName,
         options.pinnedRemoteRef,
@@ -364,6 +354,28 @@ export function resolveSandboxBaseImage(
       );
       if (resolved) return finish(resolved);
     }
+
+    const versionTagResolution = resolveVersionTags(versionTags);
+    if (versionTagResolution) return versionTagResolution;
+
+    if (baseImageInputsChangedSinceMain(rootDir, env, inputPaths)) return resolveChangedInputs();
+
+    if (!preferPinnedRemoteRef && options.pinnedRemoteRef) {
+      const resolved = resolvePulledCandidate(
+        options.imageName,
+        options.pinnedRemoteRef,
+        "pinned",
+        options,
+        { pinnedRemoteRef: options.pinnedRemoteRef },
+      );
+      if (resolved) return finish(resolved);
+    }
+
+    const nearestVersionTags = getNearestVersionedBaseImageTags(rootDir, env).filter(
+      (tag) => !versionTags.includes(tag),
+    );
+    const nearestVersionTagResolution = resolveVersionTags(nearestVersionTags);
+    if (nearestVersionTagResolution) return nearestVersionTagResolution;
 
     for (const tag of getSourceShortShaTags(options.rootDir || ROOT, env)) {
       const imageRef = `${options.imageName}:${tag}`;

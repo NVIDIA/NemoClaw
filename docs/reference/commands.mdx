@@ -324,6 +324,7 @@ For a clean release checkout or versioned install, NemoClaw first accepts the ex
 If that tag exists locally but fails compatibility validation, NemoClaw refreshes the same tag from the registry once and validates it again.
 If the release-version image is missing or still incompatible, NemoClaw builds a compatible local base instead of falling back to mutable `:latest`.
 For unversioned development checkouts, NemoClaw tries the image tagged with the newest reachable release version from `origin` before source-commit images, and only uses `:latest` when no version tag is discoverable.
+When a stable tag and a prerelease tag share the same version, NemoClaw prefers the stable tag.
 If `origin` tag lookup is unavailable, NemoClaw uses the newest reachable local release tag as a fallback.
 If that nearest release-version image is missing or incompatible, NemoClaw builds a compatible local base instead of falling back to mutable `:latest`.
 The required-build path does not reuse an older local tag.
@@ -341,9 +342,9 @@ When the OpenShell sandbox ABI is required, resolution also fails if no ABI-comp
 <AgentOnly variant="hermes">
 
 For Hermes, warm-hint and candidate validation reruns a container probe for the MCP SDK and native Streamable HTTP integration.
-During normal resolution, NemoClaw tries the release-version Hermes base before the exact published digest declared by the final Hermes Dockerfile.
-The selected candidate must also pass any active OpenShell ABI requirement, and a validated result can be recorded for warm-hint reuse.
-The final Hermes image accepts only resolver-validated official Hermes base images, the official digest tracked by its Dockerfile, or a repository-built local base, so an otherwise reachable or ABI-compatible image is not sufficient.
+During normal resolution, NemoClaw tries the exact published digest declared by the final Hermes Dockerfile before release-version and source-commit candidates.
+The digest must also pass any active OpenShell ABI requirement, and a validated result can be recorded for warm-hint reuse.
+The final Hermes image accepts only the official published digest tracked by its Dockerfile or a repository-built local base, so an otherwise reachable or ABI-compatible image is not sufficient.
 
 </AgentOnly>
 
@@ -3378,7 +3379,7 @@ NemoClaw validates the requested image against the manifest-required `deepagents
 <AgentOnly variant="hermes">
 
 Set `NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF` to a Hermes sandbox-base tag or digest to override base-image resolution during onboarding.
-NemoClaw validates the requested image for the required MCP runtime, and the final Hermes image accepts only resolver-validated official Hermes base tags or digests, the tracked official digest, or a repository-built local base.
+NemoClaw validates the requested image for the required MCP runtime, and the final Hermes image still accepts only the tracked official digest or a repository-built local base.
 
 </AgentOnly>
 

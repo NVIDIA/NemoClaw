@@ -86,24 +86,61 @@ function gitNearestVersionTag(rootDir: string, env: NodeJS.ProcessEnv): string |
   return git.status === 0 ? normalizeVersionTag(git.stdout) : null;
 }
 
-function compareVersionTagsDesc(a: string, b: string): number {
-  const parse = (tag: string) =>
-    tag
-      .slice(1)
-      .split(/[.-]/)
-      .map((part) => (/^[0-9]+$/.test(part) ? Number(part) : part));
-  const left = parse(a);
-  const right = parse(b);
+type VersionTagParts = {
+  core: number[];
+  prerelease: Array<number | string>;
+};
+
+function parseVersionTag(tag: string): VersionTagParts {
+  const rawParts = tag.slice(1).split(/[.-]/);
+  const core: number[] = [];
+  let index = 0;
+  for (; index < rawParts.length; index += 1) {
+    const part = rawParts[index];
+    if (!/^[0-9]+$/.test(part)) break;
+    core.push(Number(part));
+  }
+  return {
+    core,
+    prerelease: rawParts.slice(index).map((part) => (/^[0-9]+$/.test(part) ? Number(part) : part)),
+  };
+}
+
+function comparePrereleasePartsDesc(
+  left: Array<number | string>,
+  right: Array<number | string>,
+): number {
+  if (left.length === 0 || right.length === 0) {
+    if (left.length === right.length) return 0;
+    return left.length === 0 ? -1 : 1;
+  }
+
   for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
-    const leftPart = left[index] ?? 0;
-    const rightPart = right[index] ?? 0;
+    const leftPart = left[index];
+    const rightPart = right[index];
     if (leftPart === rightPart) continue;
+    if (leftPart === undefined) return 1;
+    if (rightPart === undefined) return -1;
     if (typeof leftPart === "number" && typeof rightPart === "number") {
       return rightPart - leftPart;
     }
+    if (typeof leftPart === "number") return 1;
+    if (typeof rightPart === "number") return -1;
     return String(rightPart).localeCompare(String(leftPart));
   }
   return 0;
+}
+
+function compareVersionTagsDesc(a: string, b: string): number {
+  const left = parseVersionTag(a);
+  const right = parseVersionTag(b);
+  for (let index = 0; index < Math.max(left.core.length, right.core.length); index += 1) {
+    const leftPart = left.core[index] ?? 0;
+    const rightPart = right.core[index] ?? 0;
+    if (leftPart === rightPart) continue;
+    return rightPart - leftPart;
+  }
+  return comparePrereleasePartsDesc(left.prerelease, right.prerelease);
 }
 
 function gitRemoteReachableVersionTag(rootDir: string, env: NodeJS.ProcessEnv): string | null {

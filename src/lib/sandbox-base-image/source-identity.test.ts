@@ -100,6 +100,19 @@ function createGitFixtureWithRemoteOnlyBaseRef() {
   return root;
 }
 
+function createGitFixtureWithReachableOriginTags(tags: string[]) {
+  const root = createGitFixtureWithRemoteOnlyBaseRef();
+  for (const tag of tags) {
+    git(root, ["tag", tag]);
+  }
+  git(root, ["push", "origin", ...tags.map((tag) => `refs/tags/${tag}`)]);
+  git(root, ["switch", "-c", "feature"]);
+  writeFixture(root, "src/other.ts", "export const value = 42;\n");
+  git(root, ["add", "src/other.ts"]);
+  git(root, ["commit", "-m", "move off tag"]);
+  return root;
+}
+
 afterEach(() => {
   for (const root of tmpRoots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });
@@ -202,6 +215,18 @@ describe("sandbox base-image source identity", () => {
     expect(getVersionedBaseImageTags(root, gitEnv)).toEqual([]);
     expect(git(root, ["describe", "--tags", "--abbrev=0", "--match", "v*"])).toBe("v0.0.41");
     expect(getNearestVersionedBaseImageTags(root, gitEnv)).toEqual(["v0.0.42"]);
+  });
+
+  it("prefers a stable reachable origin release over a prerelease created later (#6624)", () => {
+    const root = createGitFixtureWithReachableOriginTags(["v0.0.79", "v0.0.79-rc.1"]);
+
+    expect(getNearestVersionedBaseImageTags(root, gitEnv)).toEqual(["v0.0.79"]);
+  });
+
+  it("prefers a stable reachable origin release over a prerelease created earlier (#6624)", () => {
+    const root = createGitFixtureWithReachableOriginTags(["v0.0.79-rc.1", "v0.0.79"]);
+
+    expect(getNearestVersionedBaseImageTags(root, gitEnv)).toEqual(["v0.0.79"]);
   });
 
   it("detects committed Dockerfile.base changes relative to origin/main", () => {

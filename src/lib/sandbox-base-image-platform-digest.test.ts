@@ -122,6 +122,7 @@ describe("sandbox base-image pinned platform digest resolution", () => {
     const resolved = resolveSandboxBaseImage({
       ...resolutionOptions(),
       pinnedRemoteRef: REF,
+      preferPinnedRemoteRef: true,
     });
 
     expect(resolved).toEqual({
@@ -160,6 +161,7 @@ describe("sandbox base-image pinned platform digest resolution", () => {
     const resolved = resolveSandboxBaseImage({
       ...resolutionOptions(),
       pinnedRemoteRef: REF,
+      preferPinnedRemoteRef: true,
     });
 
     expect(resolved).toMatchObject({
