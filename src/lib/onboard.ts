@@ -2746,7 +2746,9 @@ async function createSandboxWithBaseImageResolution(
     messagingTokenDefs,
     reusableMessagingChannels,
     reusableMessagingProviders,
-    extraProviders: reconcileRegisteredExtraProviders(GATEWAY_NAME, { runOpenshell }),
+    extraProviders:
+      createIntent?.extraProviders ??
+      reconcileRegisteredExtraProviders(GATEWAY_NAME, { runOpenshell }),
     hermesToolGateways,
     sandboxGpuConfig: effectiveSandboxGpuConfig,
     dockerDriverGateway,
@@ -4551,6 +4553,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             selectResourceProfileForSandbox({ isNonInteractive, note, prompt, promptOrDefault }),
           stopStaleDashboardListenersForSandbox,
           listRegistrySandboxes: registry.listSandboxes,
+          reconcileRegisteredExtraProviders: (gatewayName) =>
+            reconcileRegisteredExtraProviders(gatewayName, { runOpenshell }),
           createSandbox: preparedDcodeRuntime.bindCreateSandbox(
             createSandboxWithBaseImageResolution.bind(null, baseImageResolutionContext),
           ),

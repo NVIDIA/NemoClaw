@@ -20,6 +20,7 @@ describe("handleSandboxState resume recreation", () => {
     session.steps.sandbox.status = "complete";
     const { deps, calls } = createDeps({
       getSandboxReuseState: () => "ready",
+      reconcileRegisteredExtraProviders: vi.fn(() => ["healthy-extra-provider"]),
       getSandboxRegistryEntry: () => ({
         name: "saved",
         provider: "provider",
@@ -44,11 +45,15 @@ describe("handleSandboxState resume recreation", () => {
     expect(calls.note).toHaveBeenCalledWith(
       "  [resume] Recreate sandbox requested; recreating sandbox.",
     );
+    expect(deps.reconcileRegisteredExtraProviders).toHaveBeenCalledWith("nemoclaw");
     expect(calls.removeSandbox).not.toHaveBeenCalled();
     expect(calls.createSandbox).toHaveBeenCalledTimes(1);
     const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
     expect(createSandboxCall[4]).toBe("saved");
-    expect(createSandboxCall[14]).toMatchObject({ recreate: true });
+    expect(createSandboxCall[14]).toMatchObject({
+      extraProviders: ["healthy-extra-provider"],
+      recreate: true,
+    });
     expect(result.sandboxName).toBe("saved");
   });
 });
