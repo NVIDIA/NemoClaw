@@ -1003,23 +1003,26 @@ function readProductDashboardRemoteBindPrepared(): boolean {
 const DASHBOARD_REMOTE_BIND_PROOF_WAIT_MS = 180_000;
 const DASHBOARD_REMOTE_BIND_PROOF_POLL_MS = 5_000;
 
-function waitForProductDashboardRemoteBindPrepared(elapsed: () => string): boolean {
-  if (TEST_SUITE !== "dashboard-remote-bind") return false;
-
+function waitForProductDashboardRemoteBindPrepared(elapsed: () => string): true {
   console.log(`[${elapsed()}] Waiting for product-written dashboard remote-bind registry proof...`);
   const deadline = Date.now() + DASHBOARD_REMOTE_BIND_PROOF_WAIT_MS;
-  while (Date.now() < deadline) {
-    if (readProductDashboardRemoteBindPrepared()) return true;
+  let prepared = readProductDashboardRemoteBindPrepared();
+  while (!prepared && Date.now() < deadline) {
     execSync(`sleep ${DASHBOARD_REMOTE_BIND_PROOF_POLL_MS / 1000}`);
+    prepared = readProductDashboardRemoteBindPrepared();
   }
 
-  const failLog = ssh("tail -120 /tmp/nemoclaw-onboard.log 2>/dev/null || echo 'no log'", {
-    timeout: 10_000,
-  });
-  throw new Error(
+  const failLog = prepared
+    ? ""
+    : ssh("tail -120 /tmp/nemoclaw-onboard.log 2>/dev/null || echo 'no log'", {
+        timeout: 10_000,
+      });
+  expect(
+    prepared,
     "dashboard-remote-bind E2E did not observe product-written remote bind proof before " +
       `manual registry handoff.\n${failLog}`,
-  );
+  ).toBe(true);
+  return true;
 }
 
 /**
