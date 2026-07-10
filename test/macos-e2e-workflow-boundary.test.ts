@@ -66,6 +66,8 @@ describe("macOS E2E workflow boundary", () => {
     expect(String(docker.env?.TRUSTED_MACOS_LIVE)).toContain("github.event_name != 'pull_request'");
     expect(docker.run).toContain('TRUSTED_MACOS_LIVE" != "1"');
     expect(docker.run).toContain("colima start");
+    expect(docker.run).toContain("Colima could not start Docker");
+    expect(docker.run).toContain("docker_ok=false");
     expect(docker.run).toContain("docker info");
   });
 

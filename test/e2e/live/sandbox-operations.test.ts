@@ -504,13 +504,16 @@ async function assertDestroyRemovesSandbox(
   host: HostCliClient,
   sandbox: SandboxClient,
   sandboxName: string,
+  options: { cleanupGateway?: boolean } = {},
 ): Promise<void> {
-  const destroy = await host.nemoclaw([sandboxName, "destroy", "--yes"], {
+  const destroyArgs = [sandboxName, "destroy", "--yes"];
+  if (options.cleanupGateway) destroyArgs.push("--cleanup-gateway");
+  const destroy = await host.nemoclaw(destroyArgs, {
     artifactName: `tc-sbx-05-destroy-${sandboxName}`,
     env: buildAvailabilityProbeEnv(),
     timeoutMs: 15 * 60_000,
   });
-  expectExitZero(destroy, `nemoclaw ${sandboxName} destroy --yes`);
+  expectExitZero(destroy, `nemoclaw ${destroyArgs.join(" ")}`);
 
   const list = await host.nemoclaw(["list"], {
     artifactName: `tc-sbx-05-nemoclaw-list-after-destroy-${sandboxName}`,
@@ -672,7 +675,7 @@ test(
     await assertAgentCanAnswer(host, SANDBOX_A, "tc-sbx-12-survivor-agent-after-destroy-b");
 
     const gatewayRecovery = await assertGatewayRecovery(host, SANDBOX_A);
-    await assertDestroyRemovesSandbox(host, sandbox, SANDBOX_A);
+    await assertDestroyRemovesSandbox(host, sandbox, SANDBOX_A, { cleanupGateway: true });
     await expectHostPortFree(host, GATEWAY_PORT, "tc-sbx-12-final-destroy-gateway-port-free");
 
     await artifacts.target.complete({
