@@ -23,6 +23,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
+import { isObjectRecord } from "../core/json-types";
 import { hasPassCredentialSegment, SECRET_PATTERNS } from "./secret-patterns";
 
 function parseJson<T>(text: string): T {
@@ -239,7 +240,7 @@ export function isSafeCredentialPlaceholder(value: ConfigValue): boolean {
  * Narrow an unknown value to a JSON-like configuration object.
  */
 export function isConfigObject(value: ConfigValue | object): value is ConfigObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return isObjectRecord(value);
 }
 
 /**

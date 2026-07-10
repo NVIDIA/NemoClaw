@@ -207,13 +207,15 @@ function assignDiscordConfig(
 
   const users = uniqueStrings([
     ...stringList(allowedUsers),
-    ...Object.values(guilds).flatMap((entry) => (isRecord(entry) ? stringList(entry.users) : [])),
+    ...Object.values(guilds).flatMap((entry) =>
+      isObjectRecord(entry) ? stringList(entry.users) : [],
+    ),
   ]);
   assignCsv(target, "DISCORD_USER_ID", users);
 
   for (const guildId of guildIds) {
     const guild = guilds[guildId];
-    if (!isRecord(guild)) continue;
+    if (!isObjectRecord(guild)) continue;
     if (typeof guild.requireMention === "boolean" || typeof guild.requireMention === "string") {
       assignMentionMode(target, "DISCORD_REQUIRE_MENTION", guild.requireMention);
       return;
@@ -270,7 +272,7 @@ function decodeJsonEnv<T>(env: Record<string, string>, name: string, fallback: T
   return JSON.parse(Buffer.from(encoded, "base64").toString("utf-8")) as T;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 

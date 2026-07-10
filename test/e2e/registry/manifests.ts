@@ -25,12 +25,12 @@ const FORBIDDEN_PRODUCT_FIELDS = new Set([
 
 const SECRET_KEY_PATTERN = /(api[-_]?key|token|secret|password|credential)$/i;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function asRecord(value: unknown, fieldPath: string, filePath: string): Record<string, unknown> {
-  if (!isRecord(value)) {
+  if (!isObjectRecord(value)) {
     throw new Error(`${filePath}: ${fieldPath} must be an object`);
   }
   return value;
@@ -51,7 +51,7 @@ function scanProductOnly(value: unknown, filePath: string, fieldPath = "manifest
     value.forEach((entry, index) => scanProductOnly(entry, filePath, `${fieldPath}[${index}]`));
     return;
   }
-  if (!isRecord(value)) {
+  if (!isObjectRecord(value)) {
     return;
   }
 

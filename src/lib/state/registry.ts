@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isErrnoException } from "../core/errno";
+import { isObjectRecord } from "../core/json-types";
 import type { InferenceSelection } from "../inference/selection";
 import {
   inferenceSelectionRegistryFields,
@@ -370,17 +371,20 @@ export function save(data: SandboxRegistry): void {
 
 function normalizeRegistry(data: SandboxRegistry): SandboxRegistry {
   const extraProviders = normalizeExtraProviders(data.extraProviders);
+  const sandboxes = Object.fromEntries(
+    sandboxRegistryEntries(data).map(([name, entry]) => [
+      name,
+      normalizeSandboxEntryForRuntime(entry),
+    ]),
+  );
   const base: SandboxRegistry = {
-    defaultSandbox: data.defaultSandbox ?? null,
+    // Preserve a stale string pointer at read time so diagnostics can explain
+    // which sandbox disappeared. Mutation paths repair it before persistence.
+    defaultSandbox: typeof data.defaultSandbox === "string" ? data.defaultSandbox : null,
     defaultSelectionRevision: reversibleRemoval.normalizeDefaultSelectionRevision(
       data.defaultSelectionRevision,
     ),
-    sandboxes: Object.fromEntries(
-      sandboxRegistryEntries(data).map(([name, entry]) => [
-        name,
-        normalizeSandboxEntryForRuntime(entry),
-      ]),
-    ),
+    sandboxes,
   };
   if (extraProviders) base.extraProviders = extraProviders;
   return base;
@@ -388,35 +392,52 @@ function normalizeRegistry(data: SandboxRegistry): SandboxRegistry {
 
 function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
   const extraProviders = normalizeExtraProviders(data.extraProviders);
+  const sandboxes = Object.fromEntries(
+    sandboxRegistryEntries(data).map(([name, entry]) => [
+      name,
+      serializeSandboxEntryForDisk(entry),
+    ]),
+  );
+  const defaultSandbox = retainedDefaultSandbox(data.defaultSandbox, sandboxes);
+  const currentDefaultSelectionRevision = reversibleRemoval.normalizeDefaultSelectionRevision(
+    data.defaultSelectionRevision,
+  );
   const base: SandboxRegistry = {
-    defaultSandbox: data.defaultSandbox ?? null,
-    defaultSelectionRevision: reversibleRemoval.normalizeDefaultSelectionRevision(
-      data.defaultSelectionRevision,
-    ),
-    sandboxes: Object.fromEntries(
-      sandboxRegistryEntries(data).map(([name, entry]) => [
-        name,
-        serializeSandboxEntryForDisk(entry),
-      ]),
-    ),
+    defaultSandbox,
+    defaultSelectionRevision:
+      defaultSandbox === data.defaultSandbox
+        ? currentDefaultSelectionRevision
+        : reversibleRemoval.incrementDefaultSelectionRevision(currentDefaultSelectionRevision),
+    sandboxes,
   };
   if (extraProviders) base.extraProviders = extraProviders;
   return base;
 }
 
 function sandboxRegistryEntries(data: SandboxRegistry): Array<[string, SandboxEntry]> {
-  const sandboxes = isRecord(data.sandboxes) ? data.sandboxes : {};
+  const sandboxes = isObjectRecord(data.sandboxes) ? data.sandboxes : {};
   return Object.entries(sandboxes).filter((entry): entry is [string, SandboxEntry] =>
-    isSandboxEntryLike(entry[1]),
+    isSandboxEntryLike(entry[0], entry[1]),
   );
 }
 
-function isSandboxEntryLike(entry: unknown): entry is SandboxEntry {
-  return isRecord(entry);
+function isSandboxEntryLike(name: string, entry: unknown): entry is SandboxEntry {
+  return (
+    isObjectRecord(entry) &&
+    typeof entry.name === "string" &&
+    entry.name === name &&
+    entry.name.trim().length > 0
+  );
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function retainedDefaultSandbox(
+  defaultSandbox: unknown,
+  sandboxes: Record<string, SandboxEntry>,
+): string | null {
+  if (typeof defaultSandbox !== "string") return null;
+  const entry = sandboxes[defaultSandbox];
+  if (!entry || entry.pendingRouteReservation === true) return null;
+  return defaultSandbox;
 }
 
 function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
@@ -481,6 +502,9 @@ export function getDefault(): string | null {
 export function registerSandbox(entry: SandboxEntry): void {
   withLock(() => {
     const data = load();
+    if (retainedDefaultSandbox(data.defaultSandbox, data.sandboxes) === null) {
+      data.defaultSandbox = null;
+    }
     data.sandboxes[entry.name] = {
       name: entry.name,
       createdAt: entry.createdAt || new Date().toISOString(),

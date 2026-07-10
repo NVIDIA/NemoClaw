@@ -3,6 +3,7 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { isObjectRecord } from "./object-record.ts";
 
 const KNOWN_MODEL_SETUP_AGENTS = new Set(["openclaw", "hermes"]);
 
@@ -100,7 +101,7 @@ function listJsonFiles(root: string): string[] {
 }
 
 function validateManifestPayload(payload: unknown, manifestPath: string): ModelSetupManifest {
-  if (!isRecord(payload)) {
+  if (!isObjectRecord(payload)) {
     throw new Error(`${manifestPath}: manifest must be a JSON object`);
   }
   if (!isNonEmptyString(payload.id)) {
@@ -115,11 +116,11 @@ function validateManifestPayload(payload: unknown, manifestPath: string): ModelS
   if (!isNonEmptyString(payload.description)) {
     throw new Error(`${manifestPath}: field 'description' must be a non-empty string`);
   }
-  if (!isRecord(payload.match)) {
+  if (!isObjectRecord(payload.match)) {
     throw new Error(`${manifestPath}: field 'match' must be an object`);
   }
   validateMatch(payload.match, manifestPath);
-  if (!isRecord(payload.effects) || Object.keys(payload.effects).length === 0) {
+  if (!isObjectRecord(payload.effects) || Object.keys(payload.effects).length === 0) {
     throw new Error(`${manifestPath}: field 'effects' must be a non-empty object`);
   }
   return payload as ModelSetupManifest;
@@ -167,7 +168,7 @@ function validateSelectedAgentEffects(payload: ModelSetupManifest, manifestPath:
 
   if (payload.agent === "hermes") {
     const compat = payload.effects.hermesCompat;
-    if (compat !== undefined && !isRecord(compat)) {
+    if (compat !== undefined && !isObjectRecord(compat)) {
       throw new Error(`${manifestPath}: effects.hermesCompat must be an object`);
     }
   }
@@ -193,10 +194,6 @@ function modelSetupMatches(payload: ModelSetupManifest, context: ModelSetupConte
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isNonEmptyString(value: unknown): value is string {

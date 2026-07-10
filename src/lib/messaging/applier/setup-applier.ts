@@ -3,6 +3,7 @@
 
 import { Buffer } from "node:buffer";
 
+import { isObjectRecord } from "../../core/json-types";
 import type { ChannelHookPhase, SandboxMessagingPlan } from "../manifest";
 import {
   applyAgentConfigAtOpenShell as applyAgentConfigPlanAtOpenShell,
@@ -143,7 +144,7 @@ export class MessagingSetupApplier {
 
 function assertSandboxMessagingPlan(value: unknown): asserts value is SandboxMessagingPlan {
   if (
-    !isObject(value) ||
+    !isObjectRecord(value) ||
     value.schemaVersion !== 1 ||
     typeof value.sandboxName !== "string" ||
     typeof value.agent !== "string" ||
@@ -152,7 +153,7 @@ function assertSandboxMessagingPlan(value: unknown): asserts value is SandboxMes
     !value.channels.every(isSerializableChannelPlan) ||
     !Array.isArray(value.disabledChannels) ||
     !Array.isArray(value.credentialBindings) ||
-    !isObject(value.networkPolicy) ||
+    !isObjectRecord(value.networkPolicy) ||
     !Array.isArray(value.agentRender) ||
     !Array.isArray(value.buildSteps) ||
     !isRuntimeSetup(value.runtimeSetup) ||
@@ -163,16 +164,12 @@ function assertSandboxMessagingPlan(value: unknown): asserts value is SandboxMes
   }
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function isSerializableChannelPlan(value: unknown): boolean {
-  if (!isObject(value)) return false;
+  if (!isObjectRecord(value)) return false;
   if (!Object.hasOwn(value, "hostForward")) return true;
   const hostForward = value.hostForward;
   return (
-    isObject(hostForward) &&
+    isObjectRecord(hostForward) &&
     typeof hostForward.channelId === "string" &&
     typeof hostForward.port === "number" &&
     Number.isInteger(hostForward.port) &&
@@ -185,7 +182,7 @@ function isSerializableChannelPlan(value: unknown): boolean {
 function isRuntimeSetup(value: unknown): boolean {
   if (value === undefined) return true;
   return (
-    isObject(value) &&
+    isObjectRecord(value) &&
     Array.isArray(value.nodePreloads) &&
     Array.isArray(value.envAliases) &&
     Array.isArray(value.secretScans)
