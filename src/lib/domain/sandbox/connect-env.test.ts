@@ -4,10 +4,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  applyHermesLightSkinConfig,
   buildHermesLightSkinConfig,
   buildSandboxConnectEnv,
+  hermesConfigUsesManagedLightSkin,
   NEMOCLAW_HERMES_LIGHT_SKIN_NAME,
+  removeHermesLightSkinConfig,
+  shouldApplyHermesLightSkin,
   shouldPrepareHermesLightSkin,
+  shouldRemoveHermesLightSkin,
 } from "./connect-env";
 
 describe("sandbox connect environment helpers", () => {
@@ -92,5 +97,31 @@ describe("sandbox connect environment helpers", () => {
     expect(
       buildHermesLightSkinConfig("display:\n  skin: solarized-light\nmodel: test\n"),
     ).toBeNull();
+  });
+
+  it("applies and later removes only the NemoClaw-managed Hermes light skin (#6380)", () => {
+    const config = { model: "test" };
+
+    expect(shouldApplyHermesLightSkin({ name: "hermes" }, { COLORFGBG: "0;15" }, config)).toBe(
+      true,
+    );
+    expect(applyHermesLightSkinConfig(config)).toBe(true);
+    expect(hermesConfigUsesManagedLightSkin(config)).toBe(true);
+
+    expect(shouldRemoveHermesLightSkin({ name: "hermes" }, { COLORFGBG: "0;0" }, config)).toBe(
+      true,
+    );
+    expect(removeHermesLightSkinConfig(config)).toBe(true);
+    expect(config).toEqual({ model: "test" });
+  });
+
+  it("preserves user-owned Hermes display skins while cleaning managed skin state (#6380)", () => {
+    const userConfig = { display: { skin: "solarized-light" } };
+    expect(shouldApplyHermesLightSkin({ name: "hermes" }, { COLORFGBG: "0;15" }, userConfig)).toBe(
+      false,
+    );
+    expect(applyHermesLightSkinConfig(userConfig)).toBe(false);
+    expect(removeHermesLightSkinConfig(userConfig)).toBe(false);
+    expect(userConfig.display.skin).toBe("solarized-light");
   });
 });

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import YAML from "yaml";
+import type { ConfigObject, ConfigValue } from "../../security/credential-filter";
 
 export const NEMOCLAW_HERMES_LIGHT_SKIN_NAME = "nemoclaw-light";
 
@@ -19,6 +20,45 @@ colors:
 
 function hasEnvValue(value: string | undefined): boolean {
   return String(value ?? "").trim().length > 0;
+}
+
+function isConfigRecord(value: ConfigValue): value is ConfigObject {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+export function hermesConfigDisplaySkin(config: ConfigObject): string | null {
+  const display = config.display;
+  if (!isConfigRecord(display)) return null;
+  return typeof display.skin === "string" ? display.skin : null;
+}
+
+export function hermesConfigUsesManagedLightSkin(config: ConfigObject): boolean {
+  return hermesConfigDisplaySkin(config) === NEMOCLAW_HERMES_LIGHT_SKIN_NAME;
+}
+
+export function applyHermesLightSkinConfig(config: ConfigObject): boolean {
+  const display = config.display;
+  if (isConfigRecord(display)) {
+    if (display.skin !== undefined && display.skin !== NEMOCLAW_HERMES_LIGHT_SKIN_NAME) {
+      return false;
+    }
+    if (display.skin === NEMOCLAW_HERMES_LIGHT_SKIN_NAME) return false;
+    display.skin = NEMOCLAW_HERMES_LIGHT_SKIN_NAME;
+    return true;
+  }
+  if (display !== undefined) return false;
+  config.display = { skin: NEMOCLAW_HERMES_LIGHT_SKIN_NAME };
+  return true;
+}
+
+export function removeHermesLightSkinConfig(config: ConfigObject): boolean {
+  const display = config.display;
+  if (!isConfigRecord(display) || display.skin !== NEMOCLAW_HERMES_LIGHT_SKIN_NAME) {
+    return false;
+  }
+  delete display.skin;
+  if (Object.keys(display).length === 0) delete config.display;
+  return true;
 }
 
 export function hostTerminalLooksLight(env: NodeJS.ProcessEnv): boolean {
@@ -74,6 +114,34 @@ export function shouldPrepareHermesLightSkin(
     !hasEnvValue(env.HERMES_TUI_LIGHT) &&
     !hasEnvValue(env.HERMES_TUI_THEME) &&
     hermesConfigHasDisplaySkin(hermesConfigText) === false
+  );
+}
+
+export function shouldApplyHermesLightSkin(
+  agent: { name?: string } | null | undefined,
+  env: NodeJS.ProcessEnv,
+  config: ConfigObject,
+): boolean {
+  return (
+    agent?.name === "hermes" &&
+    hostTerminalLooksLight(env) &&
+    !hasEnvValue(env.HERMES_TUI_LIGHT) &&
+    !hasEnvValue(env.HERMES_TUI_THEME) &&
+    (hermesConfigDisplaySkin(config) === null || hermesConfigUsesManagedLightSkin(config))
+  );
+}
+
+export function shouldRemoveHermesLightSkin(
+  agent: { name?: string } | null | undefined,
+  env: NodeJS.ProcessEnv,
+  config: ConfigObject,
+): boolean {
+  return (
+    agent?.name === "hermes" &&
+    hermesConfigUsesManagedLightSkin(config) &&
+    (!hostTerminalLooksLight(env) ||
+      hasEnvValue(env.HERMES_TUI_LIGHT) ||
+      hasEnvValue(env.HERMES_TUI_THEME))
   );
 }
 

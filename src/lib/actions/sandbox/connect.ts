@@ -19,11 +19,13 @@ import { D, G, R, YW } from "../../cli/terminal-style";
 import { spawnExitCode } from "../../core/process-exit";
 import { shellQuote } from "../../core/shell-quote";
 import {
-  buildHermesLightSkinConfig,
+  applyHermesLightSkinConfig,
   buildSandboxConnectEnv,
-  hostTerminalLooksLight,
+  hermesConfigUsesManagedLightSkin,
   NEMOCLAW_HERMES_LIGHT_SKIN_YAML,
-  shouldPrepareHermesLightSkin,
+  removeHermesLightSkinConfig,
+  shouldApplyHermesLightSkin,
+  shouldRemoveHermesLightSkin,
 } from "../../domain/sandbox/connect-env";
 import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
 import {
@@ -43,6 +45,7 @@ import {
 } from "../../openshell-gateway-endpoint-guard";
 import { isWsl } from "../../platform";
 import { ROOT } from "../../runner";
+import { readSandboxConfig, resolveAgentConfig, writeSandboxConfig } from "../../sandbox/config";
 import * as sandboxVersion from "../../sandbox/version";
 import { redact } from "../../security/redact";
 import {
@@ -106,26 +109,36 @@ function encodeForSandboxWrite(content: string): string {
   return Buffer.from(content, "utf8").toString("base64");
 }
 
-function readSandboxHermesConfig(sandboxName: string): string | null {
-  const result = captureOpenshell(
-    [
-      "sandbox",
-      "exec",
-      "--name",
-      sandboxName,
-      "--",
-      "sh",
-      "-c",
-      'hermes_home="${HERMES_HOME:-/sandbox/.hermes}"; test -f "$hermes_home/config.yaml" && cat "$hermes_home/config.yaml" || true',
-    ],
+function warnHermesLightSkinFailure(action: string, error: unknown): void {
+  const detail = error instanceof Error && error.message ? `: ${redact(error.message)}` : "";
+  console.error(`  ${YW}⚠${R} Could not ${action} Hermes light terminal skin${detail}`);
+}
+
+function writeHermesLightSkinFile(sandboxName: string): boolean {
+  const skinB64 = encodeForSandboxWrite(NEMOCLAW_HERMES_LIGHT_SKIN_YAML);
+  const script = [
+    "set -eu",
+    'hermes_home="${HERMES_HOME:-/sandbox/.hermes}"',
+    'skin_dir="$hermes_home/skins"',
+    'mkdir -p "$skin_dir"',
+    'tmp="$(mktemp "$skin_dir/.nemoclaw-light.XXXXXX")"',
+    "trap 'rm -f \"$tmp\"' EXIT",
+    `printf %s ${shellQuote(skinB64)} | base64 -d > "$tmp"`,
+    'chmod 640 "$tmp"',
+    'mv -f "$tmp" "$skin_dir/nemoclaw-light.yaml"',
+    'chown sandbox:sandbox "$skin_dir/nemoclaw-light.yaml" 2>/dev/null || true',
+  ].join("\n");
+  const result = runOpenshell(
+    ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", script],
     {
       ignoreError: true,
+      stdio: "ignore",
       timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-      maxBuffer: 1024 * 1024,
     },
   );
-  if (result.status !== 0) return null;
-  return result.output ?? "";
+  if (result.status === 0 && !result.error && !result.signal) return true;
+  warnHermesLightSkinFailure("write", result.error ?? `exit ${result.status ?? result.signal}`);
+  return false;
 }
 
 function prepareHermesLightTerminalSkin(
@@ -133,36 +146,35 @@ function prepareHermesLightTerminalSkin(
   agent: { name?: string } | null | undefined,
   env: NodeJS.ProcessEnv,
 ): void {
-  if (
-    agent?.name !== "hermes" ||
-    !hostTerminalLooksLight(env) ||
-    String(env.HERMES_TUI_LIGHT ?? "").trim() ||
-    String(env.HERMES_TUI_THEME ?? "").trim()
-  ) {
+  if (agent?.name !== "hermes") return;
+
+  const target = resolveAgentConfig(sandboxName);
+  if (target.agentName !== "hermes") return;
+
+  let config: ReturnType<typeof readSandboxConfig>;
+  try {
+    config = readSandboxConfig(sandboxName, target);
+  } catch (error) {
+    warnHermesLightSkinFailure("read", error);
     return;
   }
 
-  const currentConfig = readSandboxHermesConfig(sandboxName);
-  if (currentConfig === null || !shouldPrepareHermesLightSkin(agent, env, currentConfig)) return;
+  if (shouldApplyHermesLightSkin(agent, env, config)) {
+    const changed = applyHermesLightSkinConfig(config);
+    if (!changed && !hermesConfigUsesManagedLightSkin(config)) return;
+    if (!writeHermesLightSkinFile(sandboxName)) return;
+    if (!changed) return;
+  } else if (!shouldRemoveHermesLightSkin(agent, env, config)) {
+    return;
+  } else if (!removeHermesLightSkinConfig(config)) {
+    return;
+  }
 
-  const updatedConfig = buildHermesLightSkinConfig(currentConfig);
-  if (!updatedConfig) return;
-
-  const skinB64 = encodeForSandboxWrite(NEMOCLAW_HERMES_LIGHT_SKIN_YAML);
-  const configB64 = encodeForSandboxWrite(updatedConfig);
-  const script = [
-    "set -eu",
-    'hermes_home="${HERMES_HOME:-/sandbox/.hermes}"',
-    'mkdir -p "$hermes_home/skins"',
-    `printf %s ${shellQuote(skinB64)} | base64 -d > "$hermes_home/skins/nemoclaw-light.yaml"`,
-    `printf %s ${shellQuote(configB64)} | base64 -d > "$hermes_home/config.yaml"`,
-  ].join("\n");
-
-  runOpenshell(["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", script], {
-    ignoreError: true,
-    stdio: "ignore",
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-  });
+  try {
+    writeSandboxConfig(sandboxName, target, config);
+  } catch (error) {
+    warnHermesLightSkinFailure("update", error);
+  }
 }
 
 type SandboxListProbe = {
