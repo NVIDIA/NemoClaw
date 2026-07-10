@@ -85,19 +85,51 @@ function upsertFrontmatterLine(frontmatter: string, key: string, value: string):
 }
 
 function stripAgentOnlyBlocksForVariant(body: string, activeVariant: AgentVariant): string {
-  return body.replace(
-    /\n?<AgentOnly variant="([^"]+)">\n([\s\S]*?)\n<\/AgentOnly>\n?/g,
-    (_match, variant: string, content: string) => {
-      if (
-        !variant
-          .split(",")
-          .map((item) => item.trim())
-          .includes(activeVariant)
-      )
-        return "\n";
-      return `\n${content.trim()}\n`;
-    },
-  );
+  type OpenBlock = {
+    include: boolean;
+    lines: string[];
+    openLine: string;
+  };
+
+  const renderedLines: string[] = [];
+  let openBlock: OpenBlock | undefined;
+
+  for (const line of body.split("\n")) {
+    if (openBlock) {
+      if (line.match(/^<\/AgentOnly>\s*$/)) {
+        if (openBlock.include) renderedLines.push(...openBlock.lines);
+        openBlock = undefined;
+        continue;
+      }
+      openBlock.lines.push(line);
+      continue;
+    }
+
+    const openMatch = line.match(/^<AgentOnly variant="([^"]+)">\s*$/);
+    if (openMatch) {
+      openBlock = {
+        include: agentOnlyVariantMatches(openMatch[1], activeVariant),
+        lines: [],
+        openLine: line,
+      };
+      continue;
+    }
+
+    renderedLines.push(line);
+  }
+
+  if (openBlock) {
+    renderedLines.push(openBlock.openLine, ...openBlock.lines);
+  }
+
+  return renderedLines.join("\n");
+}
+
+function agentOnlyVariantMatches(variant: string, activeVariant: AgentVariant): boolean {
+  return variant
+    .split(",")
+    .map((item) => item.trim())
+    .includes(activeVariant);
 }
 
 export function renderAgentVariantPage(

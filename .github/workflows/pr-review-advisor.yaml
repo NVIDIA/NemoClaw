@@ -280,3 +280,13 @@ jobs:
           name: ${{ matrix.advisor.artifact_name }}
           path: artifacts/${{ matrix.advisor.artifact_dir }}/
           if-no-files-found: warn
+
+      - name: Verify advisor analysis outcome
+        if: always()
+        env:
+          ANALYSIS_OUTCOME: ${{ steps.analysis.outcome }}
+        run: |
+          if [ "$ANALYSIS_OUTCOME" != "success" ]; then
+            echo "::error::PR review advisor analysis did not complete: outcome=$ANALYSIS_OUTCOME"
+            exit 1
+          fi

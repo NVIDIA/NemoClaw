@@ -35,6 +35,14 @@ Before starting larger work:
 - Open an issue after the proposal has enough scope and design detail for maintainer review.
 - For questions, open a [GitHub Discussion](https://github.com/NVIDIA/NemoClaw/discussions) or comment on a related issue.
 
+Before editing, translate the request or issue into observable success criteria and define the intended change boundary.
+State assumptions only when they materially affect behavior, security, compatibility, or a public contract.
+If reasonable interpretations would produce meaningfully different outcomes, record the alternatives and tradeoffs and get alignment before implementation; use established local patterns for routine, reversible details.
+
+Prefer the existing architecture and the smallest direct change that satisfies those criteria.
+Do not introduce speculative features, configuration, extension points, or abstractions for possible future cases.
+Add complexity only when the current requirement demonstrates that the simpler design is insufficient.
+
 ## Before You Open an Issue
 
 Open an issue when you encounter one of the following situations.
@@ -240,8 +248,11 @@ npm run docs
 
 Leave the broad-gate verification item unchecked unless you actually ran the applicable command.
 If hooks were skipped or unavailable, run `npm run check:diff` before opening the PR.
-For code changes, run the targeted tests for changed behavior once per relevant change set and record that command as evidence.
-Do not rerun them solely because hooks passed, but do rerun after later edits or hook autofixes that can affect the tested behavior.
+For code changes, map each success criterion to the narrowest stable test or other evidence that proves it, then run those targeted checks once per relevant change set and record the commands as evidence.
+Reproduce defects before fixing them when feasible; when reproduction is not feasible, record why and preserve the strongest available pre-fix evidence.
+Add regression coverage at the earliest stable behavior boundary that could have caught the defect, and add higher-level coverage only when it protects a distinct integration boundary.
+Include relevant negative and state-safety evidence when the acceptance criteria or risk require it.
+Do not rerun targeted checks solely because hooks passed, but do rerun them after later edits or hook autofixes that can affect the tested behavior.
 Reserve `npm test` for broad runtime changes, test harness changes, or cases where targeted coverage is hard to justify.
 Reserve `npm run check` for repo-wide hook, formatter, generated-check, or coverage-baseline changes.
 
@@ -296,6 +307,15 @@ We welcome contributions. Every PR requires maintainer review before merge. To k
 Maintainers review pull requests according to project priority, security impact, release readiness, and reviewer availability.
 PRs that solve issues with Priority set to Urgent or High are more likely to receive earlier review when maintainers have capacity.
 For substantial features or behavior changes, start with a GitHub Discussion before opening a large implementation PR.
+
+Keep each pull request issue-scoped: every changed line should support the problem, its observable success criteria, or the evidence required to verify them.
+Remove code made obsolete by the change, but keep drive-by refactoring, formatting, comment rewrites, and unrelated cleanup out of the diff.
+Report unrelated debt separately, and disclose a necessary scope deviation before implementing it so reviewers can assess the tradeoff.
+
+When QA finds a defect that escaped normal engineering controls, treat it as both a product failure and a detection gap.
+In the issue or pull-request narrative, record the product root cause, why the existing implementation, tests, review, CI, environment, or diagnostics did not catch it, and the smallest durable prevention evidence.
+Search adjacent code paths for the same failure class within a bounded scope; fix adjacent instances only when they share the root cause and fit the current change, otherwise report them separately.
+Keep the analysis proportionate to the escaped defect and avoid assigning individual blame; ordinary defects do not require a heavyweight RCA.
 
 ### DCO Sign-Off
 

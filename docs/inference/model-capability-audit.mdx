@@ -16,7 +16,7 @@ status: "maintained"
 exclude-from-skills-gen: true
 ---
 Use this matrix to maintain model and provider audit evidence for NemoClaw agent behavior.
-The matrix tracks whether a supported model works as an agent model, not only whether it can answer a one-shot chat prompt.
+Use it to determine whether a supported model works as an agent model, not only whether it can answer a one-shot chat prompt.
 
 Do not mark a row as completed without committed evidence or a stable CI link.
 Rows seeded from source inventory start as `not-yet-run` until a maintainer imports or records evidence.
@@ -68,9 +68,31 @@ Rows can remain `degraded`, `blocked`, or `not-yet-run` when a scenario cannot b
 | Shell tool loop | Separate structured `hostname`, `date`, and `uptime` tool calls are emitted, persisted, correlated with tool results, and followed by a final assistant response. |
 | Multi-turn continuation | Turn 2 uses a tool result from turn 1 and does not ask the user to continue after a complete tool result. |
 | Sub-agent delegation | The primary agent emits a structured `sessions_spawn` request, the sub-agent receives the intended task and workspace, and the primary agent consumes the result. |
-| Hermes path | Hermes starts with the selected provider/model, returns the expected OpenAI-compatible response shape, keeps core tools direct, and uses its native structured `tool_search` -> `tool_describe` -> `tool_call` path for a deferred tool. Keep Hermes `tools.tool_search.enabled: on` evidence separate from OpenClaw `tools.toolSearch.mode: tools` evidence. |
-| Deep Agents path | `dcode status` reports the managed route, interactive `dcode` can complete a terminal task with approval prompts intact, and headless `dcode -n` can complete a bounded non-shell task while preserving the managed Chat Completions route. When testing the optional `thread-opt-in` capability, record the configured host mode separately from the active TUI thread state, prove explicit activation and thread-boundary reset behavior, and rerun the policy and credential boundary checks. Keep default interactive, opted-in interactive, and headless evidence separate. |
+| Hermes path | Complete the [Hermes path checks](#hermes-path). |
+| Deep Agents path | Complete the [Deep Agents path checks](#deep-agents-path). |
 | Performance and operability | The row records validation duration, first event timing when available, retry behavior, timeout budget, streaming requirement, request mutation requirement, API path forcing, and cold-start differences. |
+
+### Hermes Path
+
+Validate the Hermes path with the following checks.
+
+- Start Hermes with the selected provider and model.
+- Confirm that it returns the expected OpenAI-compatible response shape.
+- Confirm that core tools remain direct.
+- Exercise a deferred tool through the native structured `tool_search` -> `tool_describe` -> `tool_call` path.
+- Keep Hermes `tools.tool_search.enabled: on` evidence separate from OpenClaw `tools.toolSearch.mode: tools` evidence.
+
+### Deep Agents Path
+
+Validate the Deep Agents paths independently with the following checks.
+
+- Confirm that `dcode status` reports the managed route.
+- Confirm that interactive `dcode` completes a terminal task while preserving approval prompts.
+- Confirm that headless `dcode -n` completes a bounded non-shell task while preserving the managed Chat Completions route.
+- When testing optional `thread-opt-in`, record the configured host mode separately from the active TUI thread state.
+- Prove explicit activation and thread-boundary reset behavior.
+- Rerun the policy and credential boundary checks.
+- Keep default interactive, opted-in interactive, and headless evidence separate.
 
 ## Deep Agents Approval Evidence
 
