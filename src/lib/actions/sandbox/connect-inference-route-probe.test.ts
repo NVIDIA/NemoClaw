@@ -23,11 +23,18 @@ describe("sandbox connect inference route probe argv", () => {
       name: "langchain-deepagents-code",
     });
 
-    expect(args.slice(0, 8)).toEqual([
+    expect(args.slice(0, 15)).toEqual([
       "sandbox",
       "exec",
       "--name",
       "deep-code",
+      "--no-tty",
+      "--env",
+      "HOME=/usr/local/lib/nemoclaw",
+      "--env",
+      "BASH_ENV=",
+      "--env",
+      "ENV=",
       "--",
       "/usr/local/lib/nemoclaw/dcode-managed-exec",
       "/bin/sh",
@@ -115,7 +122,9 @@ describe("sandbox connect inference route probe argv", () => {
       const args = buildSandboxInferenceRouteProbeArgs("deep-code", {
         name: "langchain-deepagents-code",
       });
-      const command = args.slice(5);
+      const delimiter = args.indexOf("--");
+      expect(delimiter).toBeGreaterThan(0);
+      const command = args.slice(delimiter + 1);
       command[0] = launcher;
 
       const result = spawnSync(command[0], command.slice(1), {

@@ -74,20 +74,31 @@ export function buildSandboxInferenceRouteProbeArgs(
   sandboxName: string,
   agent: InferenceRouteProbeAgent,
 ): string[] {
-  const command =
-    agent?.name === "langchain-deepagents-code"
-      ? [
-          // The trusted launcher ignores ambient proxy overrides and does not
-          // source sandbox-user startup files or rewrite persistent runtime
-          // state before executing this probe.
-          DCODE_MANAGED_EXEC_LAUNCHER,
-          "/bin/sh",
-          "-c",
-          INFERENCE_ROUTE_PROBE_SCRIPT,
-        ]
-      : ["sh", "-c", INFERENCE_ROUTE_PROBE_SCRIPT];
+  if (agent?.name === "langchain-deepagents-code") {
+    return [
+      "sandbox",
+      "exec",
+      "--name",
+      sandboxName,
+      "--no-tty",
+      "--env",
+      "HOME=/usr/local/lib/nemoclaw",
+      "--env",
+      "BASH_ENV=",
+      "--env",
+      "ENV=",
+      "--",
+      // The trusted launcher ignores ambient proxy overrides and does not
+      // source sandbox-user startup files or rewrite persistent runtime
+      // state before executing this probe.
+      DCODE_MANAGED_EXEC_LAUNCHER,
+      "/bin/sh",
+      "-c",
+      INFERENCE_ROUTE_PROBE_SCRIPT,
+    ];
+  }
 
-  return ["sandbox", "exec", "--name", sandboxName, "--", ...command];
+  return ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", INFERENCE_ROUTE_PROBE_SCRIPT];
 }
 
 /** Parse the shared route-probe output used by connect, status, and doctor. */
