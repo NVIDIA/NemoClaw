@@ -15,8 +15,11 @@ const INFERENCE = {
   model: "snapshot-commands-model",
 };
 
+const HOSTED_CREDENTIAL_ENVS = ["NVIDIA_INFERENCE_API_KEY", "NVIDIA_API_KEY"] as const;
+
 afterEach(() => {
   delete process.env[HOSTED_FLAG];
+  for (const name of HOSTED_CREDENTIAL_ENVS) delete process.env[name];
 });
 
 describe("snapshot commands live env helper", () => {
@@ -66,12 +69,19 @@ describe("snapshot commands live env helper", () => {
     expect(env.NEMOCLAW_PROVIDER).toBeUndefined();
   });
 
-  it("never exposes a hosted NVIDIA inference credential to the child env", () => {
+  it("never exposes an ambient hosted NVIDIA inference credential to the child env", () => {
     process.env[HOSTED_FLAG] = "1";
+    for (const name of HOSTED_CREDENTIAL_ENVS) {
+      process.env[name] = "nvapi-ambient-credential-that-must-not-leak";
+    }
 
     const env = buildSnapshotCommandEnv(SANDBOX_NAME, INFERENCE);
 
-    expect(env.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
-    expect(env.NVIDIA_API_KEY).toBeUndefined();
+    for (const name of HOSTED_CREDENTIAL_ENVS) {
+      // Guard against the assertion below going vacuous: the credential really
+      // is present in the ambient env this helper builds from.
+      expect(process.env[name]).toBe("nvapi-ambient-credential-that-must-not-leak");
+      expect(env[name]).toBeUndefined();
+    }
   });
 });
