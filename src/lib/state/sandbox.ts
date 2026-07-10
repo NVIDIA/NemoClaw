@@ -706,14 +706,21 @@ function normalizeStateFileSpec(spec: AgentStateFile | StateFileSpec): StateFile
   return { path: normalized, strategy: spec.strategy };
 }
 
+function normalizeStateFileSpecsPreservingDuplicates(
+  specs: readonly (AgentStateFile | StateFileSpec)[],
+): StateFileSpec[] {
+  return specs.flatMap((spec) => {
+    const normalized = normalizeStateFileSpec(spec);
+    return normalized ? [normalized] : [];
+  });
+}
+
 function normalizeStateFileSpecs(
   specs: readonly (AgentStateFile | StateFileSpec)[],
 ): StateFileSpec[] {
   const normalized: StateFileSpec[] = [];
   const seen = new Set<string>();
-  for (const spec of specs) {
-    const next = normalizeStateFileSpec(spec);
-    if (!next) continue;
+  for (const next of normalizeStateFileSpecsPreservingDuplicates(specs)) {
     const key = `${next.strategy}:${next.path}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -1348,7 +1355,7 @@ function restoreSandboxStateInternal(
   // backward compatibility.
   const restorableStateDirs = manifest.backedUpDirs ?? manifest.stateDirs;
   const localDirs = existingBackupDirs(backupPath, restorableStateDirs);
-  const stateFiles = normalizeStateFileSpecs(manifest.stateFiles ?? []);
+  const stateFiles = normalizeStateFileSpecsPreservingDuplicates(manifest.stateFiles ?? []);
   const localFiles = stateFiles.filter((f) => existsSync(path.join(backupPath, f.path)));
   _log(
     `Local backup dirs: [${localDirs.join(",")}] (${localDirs.length}/${manifest.stateDirs.length})`,
@@ -1705,7 +1712,9 @@ function readManifest(backupPath: string): RebuildManifest | null {
     return {
       ...manifest,
       dir,
-      stateFiles: normalizeStateFileSpecs(manifest.stateFiles ?? []),
+      // Preserve repeated normalized paths from this untrusted payload so the
+      // restore contract can reject them instead of silently de-duplicating.
+      stateFiles: normalizeStateFileSpecsPreservingDuplicates(manifest.stateFiles ?? []),
       blueprintDigest: manifest.blueprintDigest ?? null,
     };
   } catch {

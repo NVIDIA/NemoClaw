@@ -50,6 +50,33 @@ afterEach(() => {
 });
 
 describe("state-file restore target contract", () => {
+  it.each([
+    {
+      description: "identical paths",
+      stateFiles: [
+        { path: "config.toml", strategy: "copy" as const },
+        { path: "config.toml", strategy: "copy" as const },
+      ],
+    },
+    {
+      description: "normalized path aliases",
+      stateFiles: [
+        { path: "config.toml", strategy: "copy" as const },
+        { path: "./config.toml", strategy: "copy" as const },
+      ],
+    },
+  ])("rejects repeated backup state-file $description", ({ stateFiles }) => {
+    const backupPath = writeBackup({ stateFiles });
+
+    const result = restoreRecreatedSandboxState("alpha", backupPath, {
+      targetAgentType: "langchain-deepagents-code",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Backup manifest repeats state file 'config.toml'");
+    expect(result.failedFiles).toContain("config.toml");
+  });
+
   it("rejects a backup agent that does not match the recreated target", () => {
     const backupPath = writeBackup({
       stateFiles: [{ path: "config.toml", strategy: "copy" }],
