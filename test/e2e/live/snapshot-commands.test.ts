@@ -15,7 +15,11 @@ import path from "node:path";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import {
+  type SandboxClient,
+  trustedSandboxShellScript,
+  validateSandboxName,
+} from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
@@ -186,6 +190,28 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     timeoutMs: 20 * 60_000,
   });
   expect(install.exitCode, resultText(install)).toBe(0);
+
+  const authenticatedInference = await sandbox.execShell(
+    SANDBOX_NAME,
+    trustedSandboxShellScript(
+      `curl -fsS --max-time 60 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data '${JSON.stringify(
+        {
+          model: INFERENCE_MODEL,
+          messages: [{ role: "user", content: "reply with OK" }],
+          max_tokens: 8,
+        },
+      )}'`,
+    ),
+    {
+      artifactName: "phase-1-authenticated-inference-post",
+      env: commandEnv(),
+      timeoutMs: 90_000,
+    },
+  );
+  expect(
+    authenticatedInference.exitCode,
+    `${authenticatedInference.stdout}\n${authenticatedInference.stderr}`,
+  ).toBe(0);
   expect(inference.requests()).toContainEqual(
     expect.objectContaining({
       auth: "ok",
