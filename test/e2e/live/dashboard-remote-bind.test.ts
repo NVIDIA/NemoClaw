@@ -46,16 +46,21 @@ function remoteHostCandidate(): string {
   return process.env.NEMOCLAW_E2E_REMOTE_HOST || externalIpv4 || os.hostname();
 }
 
+function stripAnsi(output: string): string {
+  return output.replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "");
+}
+
 function connectStartedDashboardForward(
-  result: { exitCode: number | null; stdout: string },
+  result: { exitCode: number | null; stdout: string; stderr: string },
   sandboxName: string,
   dashboardPort: string,
 ): boolean {
+  const output = stripAnsi(`${result.stdout}\n${result.stderr}`);
   return (
     result.exitCode === 0 ||
     (result.exitCode === null &&
-      result.stdout.includes(`Forwarding port ${dashboardPort}`) &&
-      result.stdout.includes(`sandbox ${sandboxName}`))
+      output.includes(`Forwarding port ${dashboardPort}`) &&
+      output.includes(`sandbox ${sandboxName}`))
   );
 }
 
