@@ -55,6 +55,7 @@ export interface RunOpts {
 
 export interface RunResult {
   status: number | null;
+  error?: unknown;
   stdout?: unknown;
   stderr?: unknown;
 }
@@ -409,5 +410,10 @@ function defaultRun(cmd: readonly string[], opts: RunOpts = {}): RunResult {
     suppressOutput: opts.suppressOutput,
     ...(opts.timeoutMs !== undefined ? { timeout: opts.timeoutMs } : {}),
   });
-  return { status: result.status ?? null, stdout: result.stdout, stderr: result.stderr };
+  return {
+    status: result.status ?? null,
+    error: result.error,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  };
 }

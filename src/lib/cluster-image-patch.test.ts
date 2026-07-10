@@ -365,6 +365,11 @@ describe("ensurePatchedClusterImage", () => {
 
   it("surfaces redacted docker build diagnostics on failure (#6622)", () => {
     const token = ["sk", "abcdef0123456789abcdef0123456789abcdef0123456789"].join("-");
+    const basicCredential = Buffer.from(
+      ["build-user", "build-password"].join(":"),
+      "utf8",
+    ).toString("base64");
+    const spawnCause = ["spawn", "docker", "EACCES"].join(" ");
     const reproduce = () => {
       let upstreamInspectCount = 0;
       ensurePatchedClusterImage({
@@ -378,7 +383,11 @@ describe("ensurePatchedClusterImage", () => {
         },
         runImpl: (cmd) =>
           cmd[1] === "build"
-            ? { status: 2, stderr: `failed to resolve source metadata: Bearer ${token}` }
+            ? {
+                status: null,
+                error: new Error(spawnCause),
+                stderr: `Authorization: Basic ${basicCredential}\nfailed to resolve source metadata: Bearer ${token}`,
+              }
             : { status: 0 },
         logger: () => {},
         fsImpl: createMockFs(),
@@ -388,6 +397,8 @@ describe("ensurePatchedClusterImage", () => {
 
     expect(reproduce).toThrowError(ClusterImagePatchError);
     expect(reproduce).toThrowError(/failed to resolve source metadata/);
+    expect(reproduce).toThrowError(spawnCause);
     expect(reproduce).not.toThrowError(token);
+    expect(reproduce).not.toThrowError(basicCredential);
   });
 });
