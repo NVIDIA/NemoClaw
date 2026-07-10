@@ -166,7 +166,7 @@ export async function runCoreOnboardFlowSlice<Context extends OnboardFlowContext
   phases: readonly OnboardSequencePhase<Context>[];
   resume: boolean;
   recordStateResult(result: OnboardStateResult): Promise<unknown>;
-  recordInvalidatedStateResult?: InvalidatedOnboardStateResultRecorder;
+  recordInvalidatedStateResult: InvalidatedOnboardStateResultRecorder;
 }): Promise<OnboardMachineRunnerResult<Context>> {
   // Recompute plan for live resume repair when durable machine snapshots
   // are already downstream of this slice even though provider/sandbox

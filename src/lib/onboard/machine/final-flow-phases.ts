@@ -162,7 +162,7 @@ export async function runFinalOnboardFlowSlice<Context extends OnboardFlowContex
   phases: readonly OnboardSequencePhase<Context>[];
   resume: boolean;
   recordStateResult(result: OnboardStateResult): Promise<unknown>;
-  recordInvalidatedStateResult?: InvalidatedOnboardStateResultRecorder;
+  recordInvalidatedStateResult: InvalidatedOnboardStateResultRecorder;
   afterPoliciesResultApplied?(): void;
   onContextUpdated?(context: Context): void;
 }): Promise<void> {
@@ -194,9 +194,6 @@ export async function runFinalOnboardFlowSlice<Context extends OnboardFlowContex
       if (isPoliciesAppliedResult(stateResult)) options.afterPoliciesResultApplied?.();
     },
     recordInvalidatedStateResult: async (stateResult, invalidation) => {
-      if (!options.recordInvalidatedStateResult) {
-        throw new Error("Missing onboarding state result invalidation recorder");
-      }
       await options.recordInvalidatedStateResult(stateResult, invalidation);
       if (isPoliciesAppliedResult(stateResult)) options.afterPoliciesResultApplied?.();
     },

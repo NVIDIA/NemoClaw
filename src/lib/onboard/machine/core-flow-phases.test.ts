@@ -437,6 +437,9 @@ describe("core onboard flow phases", () => {
       recordStateResult: async () => {
         throw new Error("compatibility recorder should not run");
       },
+      recordInvalidatedStateResult: async () => {
+        throw new Error("invalidation recorder should not run on fresh strict runner path");
+      },
     });
 
     expect(calls).toEqual(["provider_selection", "sandbox"]);
@@ -554,6 +557,7 @@ describe("core onboard flow phases", () => {
         phases: [phase],
         resume: true,
         recordStateResult: async () => undefined,
+        recordInvalidatedStateResult: recordInvalidatedTargets([]),
       }),
     ).rejects.toThrow("Unexpected onboarding live flow state before slice entry");
     expect(phase.run).not.toHaveBeenCalled();

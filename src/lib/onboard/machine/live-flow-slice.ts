@@ -33,7 +33,7 @@ export interface LiveOnboardFlowSliceOptions<Context> {
     phases: readonly OnboardSequencePhase<Context>[];
   }): Promise<OnboardMachineRunnerResult<Context>>;
   recordStateResult(result: OnboardStateResult): Promise<unknown>;
-  recordInvalidatedStateResult?: InvalidatedOnboardStateResultRecorder;
+  recordInvalidatedStateResult: InvalidatedOnboardStateResultRecorder;
 }
 
 export class EmptyLiveOnboardFlowSliceResultError extends Error {
@@ -78,10 +78,6 @@ function resultSourceState(result: OnboardStateResult): string | null {
   return typeof source === "string" ? source : null;
 }
 
-function missingInvalidatedRecorder(): never {
-  throw new Error("Missing onboarding state result invalidation recorder");
-}
-
 async function recordRecomputedResult<Context>(
   options: Pick<
     LiveOnboardFlowSliceOptions<Context>,
@@ -96,7 +92,7 @@ async function recordRecomputedResult<Context>(
   const current = await options.runtime.session();
   const sourceState = resultSourceState(options.result) ?? options.phaseState;
   if (current.machine.state === options.result.next) {
-    await (options.recordInvalidatedStateResult ?? missingInvalidatedRecorder)(options.result, {
+    await options.recordInvalidatedStateResult(options.result, {
       reason: "already_at_target",
       currentState: current.machine.state,
       sourceState,
@@ -104,7 +100,7 @@ async function recordRecomputedResult<Context>(
     return;
   }
   if (sourceState && current.machine.state !== sourceState) {
-    await (options.recordInvalidatedStateResult ?? missingInvalidatedRecorder)(options.result, {
+    await options.recordInvalidatedStateResult(options.result, {
       reason: "source_state_mismatch",
       currentState: current.machine.state,
       sourceState,

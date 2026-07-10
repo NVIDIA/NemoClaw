@@ -178,11 +178,18 @@ describe("runLiveOnboardFlowSlice", () => {
       liveRuntime.applyResult(result),
     );
     const recordInvalidatedStateResult = invalidatedRecorder();
+    // Preflight replays advanceTo('gateway', { state: 'preflight' }) while the
+    // durable machine already stands at 'provider_selection'. The compatibility
+    // phase body must still execute (backstop side effects) and the recomputed
+    // transition must be routed through invalidation, not applied. Assert both:
+    // stalePhase.run fired once, and invalidation carries the correct source /
+    // current state ownership for #6227.
+    const stalePhase = phase("preflight", 2);
 
     await runLiveOnboardFlowSlice({
       context: { value: 1 },
       runtime: liveRuntime.runtime,
-      phases: [phase("preflight", 2)],
+      phases: [stalePhase],
       runWhenState: ["preflight"],
       compatibilityWhenState: ["provider_selection"],
       runSlice,
@@ -191,6 +198,7 @@ describe("runLiveOnboardFlowSlice", () => {
     });
 
     expect(runSlice).not.toHaveBeenCalled();
+    expect(stalePhase.run).toHaveBeenCalledOnce();
     expect(recordStateResult).not.toHaveBeenCalled();
     expect(recordInvalidatedStateResult).toHaveBeenCalledOnce();
     expect(recordInvalidatedStateResult).toHaveBeenCalledWith(

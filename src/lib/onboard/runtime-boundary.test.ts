@@ -12,7 +12,13 @@ import {
 } from "../state/onboard-session";
 import type { StepMutationOptions } from "../state/onboard-step-mutation";
 import type { OnboardMachineEvent } from "./machine/events";
-import { advanceTo, branchTo, completeOnboardMachine, retryTo } from "./machine/result";
+import {
+  advanceTo,
+  branchTo,
+  completeOnboardMachine,
+  failOnboardMachine,
+  retryTo,
+} from "./machine/result";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./machine/runtime";
 import type { OnboardMachineState } from "./machine/types";
 import { OnboardRuntimeBoundary } from "./runtime-boundary";
@@ -337,6 +343,30 @@ describe("OnboardRuntimeBoundary", () => {
         targetState: "gateway",
       },
     });
+  });
+
+  it.each([
+    { label: "complete", result: () => completeOnboardMachine() },
+    { label: "failed", result: () => failOnboardMachine("boom") },
+  ] as const)("rejects non-transition $label results before emitting invalidation (#6227)", async ({
+    result,
+  }) => {
+    const harness = createRuntimeHarness();
+    const boundary = new OnboardRuntimeBoundary({
+      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+      maybeForceE2eStepFailure: () => undefined,
+      createRuntime: harness.createRuntime,
+    });
+
+    await expect(
+      boundary.recordInvalidatedStateResult(result(), {
+        reason: "already_at_target",
+        currentState: "init",
+        sourceState: "init",
+      }),
+    ).rejects.toThrow(/Cannot invalidate non-transition/);
+
+    expect(harness.events).toHaveLength(0);
   });
 
   it("emits diagnostics for explicit invalidated replay of stale default results", async () => {

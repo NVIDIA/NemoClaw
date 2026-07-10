@@ -199,6 +199,7 @@ describe("final onboard flow runtime boundary", () => {
       phases,
       resume: false,
       recordStateResult: vi.fn(),
+      recordInvalidatedStateResult: vi.fn(),
       afterPoliciesResultApplied: () => {
         order.push("disarm");
       },
@@ -270,6 +271,7 @@ describe("final onboard flow runtime boundary", () => {
         phases,
         resume: false,
         recordStateResult: vi.fn(),
+        recordInvalidatedStateResult: vi.fn(),
         afterPoliciesResultApplied: () => {
           order.push("disarm");
         },

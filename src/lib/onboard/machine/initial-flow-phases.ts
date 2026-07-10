@@ -192,7 +192,7 @@ export async function runInitialOnboardFlowSlice<Context extends OnboardFlowCont
   phases: readonly OnboardSequencePhase<Context>[];
   resume: boolean;
   recordStateResult(result: OnboardStateResult): Promise<unknown>;
-  recordInvalidatedStateResult?: InvalidatedOnboardStateResultRecorder;
+  recordInvalidatedStateResult: InvalidatedOnboardStateResultRecorder;
 }): Promise<OnboardMachineRunnerResult<Context>> {
   // Recompute plan for live resume repair when durable machine snapshots
   // are already downstream of this slice even though preflight/gateway host
