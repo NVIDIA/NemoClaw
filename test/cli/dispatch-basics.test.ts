@@ -446,6 +446,106 @@ describe("CLI dispatch", () => {
     );
   });
 
+  it("connects to the default sandbox when connect is invoked without a sandbox name (#6627)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, recoverRegistryEntries, runOclifCommandById }) => {
+        await dispatchCli(["connect"]);
+
+        expect(runOclifCommandById).toHaveBeenCalledWith(
+          "sandbox:connect",
+          ["dcode-managed"],
+          expect.anything(),
+        );
+        expect(recoverRegistryEntries).not.toHaveBeenCalled();
+      },
+      { sandboxNames: ["dcode-managed"], defaultSandbox: "dcode-managed" },
+    );
+  });
+
+  it("forwards connect flags to the default sandbox on a bare connect invocation (#6627)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, runOclifCommandById }) => {
+        await dispatchCli(["connect", "--probe-only"]);
+
+        expect(runOclifCommandById).toHaveBeenCalledWith(
+          "sandbox:connect",
+          ["dcode-managed", "--probe-only"],
+          expect.anything(),
+        );
+      },
+      {
+        sandboxNames: ["dcode-managed"],
+        defaultSandbox: "dcode-managed",
+        connectFlags: ["--probe-only"],
+      },
+    );
+  });
+
+  it("explains how to set a default when bare connect finds none (#6627)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, exitSpy, recoverRegistryEntries, stderr }) => {
+        await expect(dispatchCli(["connect"])).rejects.toThrow("process.exit:1");
+
+        const output = stderr.join("\n");
+        expect(recoverRegistryEntries).not.toHaveBeenCalled();
+        expect(output).toContain(
+          "'nemoclaw connect' connects to the default sandbox, but none is set.",
+        );
+        expect(output).toContain("Registered sandboxes: alpha, beta");
+        expect(output).toContain("Set a default with: nemoclaw use <sandbox-name>");
+        expect(output).toContain("Or connect directly: nemoclaw <sandbox-name> connect");
+        expect(exitSpy).toHaveBeenCalledWith(1);
+      },
+      { sandboxNames: ["alpha", "beta"] },
+    );
+  });
+
+  it("points bare connect at onboarding when no sandboxes are registered (#6627)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, exitSpy, recoverRegistryEntries, stderr }) => {
+        await expect(dispatchCli(["connect"])).rejects.toThrow("process.exit:1");
+
+        const output = stderr.join("\n");
+        expect(recoverRegistryEntries).toHaveBeenCalledTimes(1);
+        expect(output).toContain(
+          "'nemoclaw connect' connects to the default sandbox, but none is set.",
+        );
+        expect(output).toContain("Run 'nemoclaw onboard' to create one.");
+        expect(exitSpy).toHaveBeenCalledWith(1);
+      },
+    );
+  });
+
+  it("keeps the name-first grammar for a sandbox literally named connect (#6627)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, getDefault, runOclifCommandById }) => {
+        await dispatchCli(["connect"]);
+
+        expect(runOclifCommandById).toHaveBeenCalledWith(
+          "sandbox:connect",
+          ["connect"],
+          expect.anything(),
+        );
+        expect(getDefault).not.toHaveBeenCalled();
+      },
+      { sandboxNames: ["connect"], defaultSandbox: null },
+    );
+  });
+
+  it("explains connect command order when only the sandbox name follows connect (#6627)", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, exitSpy, stderr }) => {
+        await expect(dispatchCli(["connect", "alpha"])).rejects.toThrow("process.exit:1");
+
+        const output = stderr.join("\n");
+        expect(output).toContain("Command order is: nemoclaw <sandbox-name> connect");
+        expect(output).toContain("Did you mean: nemoclaw alpha connect?");
+        expect(exitSpy).toHaveBeenCalledWith(1);
+      },
+      { sandboxNames: ["alpha"] },
+    );
+  });
+
   it("suggests the closest registered sandbox name for a mistyped sandbox action", async () => {
     await withDirectPublicDispatch(
       async ({ dispatchCli, exitSpy, stderr }) => {

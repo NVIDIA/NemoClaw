@@ -8,6 +8,7 @@ type SandboxStub = { name: string };
 export type DirectPublicDispatchHarness = {
   dispatchCli: (argv: string[]) => Promise<void>;
   exitSpy: ReturnType<typeof vi.spyOn>;
+  getDefault: ReturnType<typeof vi.fn>;
   getSandbox: ReturnType<typeof vi.fn>;
   listSandboxes: ReturnType<typeof vi.fn>;
   recoverRegistryEntries: ReturnType<typeof vi.fn>;
@@ -20,6 +21,10 @@ export type DirectPublicDispatchHarness = {
 
 type DirectPublicDispatchOptions = {
   sandboxNames?: readonly string[];
+  /** Default-sandbox pointer returned by the registry stub (default: none). */
+  defaultSandbox?: string | null;
+  /** Args the sandbox-connect stub treats as connect flags (default: none). */
+  connectFlags?: readonly string[];
 };
 
 const requireCache = require.cache as Record<string, NodeModule | undefined>;
@@ -64,6 +69,7 @@ export async function withDirectPublicDispatch(
     (options.sandboxNames ?? []).map((name) => [name, { name }]),
   );
   const getSandbox = vi.fn((name: string) => sandboxes.get(name) ?? null);
+  const getDefault = vi.fn(() => options.defaultSandbox ?? null);
   const listSandboxes = vi.fn(() => ({
     sandboxes: [...sandboxes.values()],
     defaultSandbox: sandboxes.keys().next().value ?? null,
@@ -86,6 +92,7 @@ export async function withDirectPublicDispatch(
   const resetObservedCalls = () => {
     stderr.length = 0;
     exitSpy.mockClear();
+    getDefault.mockClear();
     getSandbox.mockClear();
     listSandboxes.mockClear();
     recoverRegistryEntries.mockClear();
@@ -93,11 +100,14 @@ export async function withDirectPublicDispatch(
     runOclifCommandById.mockClear();
   };
 
-  cacheModule(registryPath, { getSandbox, listSandboxes });
+  cacheModule(registryPath, { getDefault, getSandbox, listSandboxes });
   cacheModule(registryRecoveryPath, { recoverRegistryEntries });
   cacheModule(oclifRunnerPath, { runOclifArgv, runOclifCommandById });
+  const connectFlags = new Set(options.connectFlags ?? []);
   cacheModule(sandboxConnectPath, {
-    isSandboxConnectFlag: vi.fn(() => false),
+    isSandboxConnectFlag: vi.fn((arg: string | undefined) =>
+      typeof arg === "string" ? connectFlags.has(arg) : false,
+    ),
     parseSandboxConnectArgs: vi.fn(),
     printSandboxConnectHelp: vi.fn(),
   });
@@ -110,6 +120,7 @@ export async function withDirectPublicDispatch(
     await run({
       dispatchCli,
       exitSpy,
+      getDefault,
       getSandbox,
       listSandboxes,
       recoverRegistryEntries,
