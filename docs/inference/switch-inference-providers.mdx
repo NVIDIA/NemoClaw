@@ -46,10 +46,13 @@ OpenShell currently exposes one inference route per gateway, not one route per s
 All registered sandboxes on the same gateway must use the same provider and model.
 Custom compatible routes must also use the same endpoint and API family.
 An OpenClaw native-Anthropic route and a Hermes OpenAI-frontend route therefore cannot share a gateway, even when their custom endpoint and model are otherwise identical.
+
 NemoClaw checks stopped sandboxes because they depend on that route when restarted.
 If a registered same-gateway sandbox lacks durable provider or model metadata, or a custom route lacks durable endpoint or API-family metadata, NemoClaw fails closed until you remove and re-onboard that sandbox with complete route metadata.
+
 When a route conflicts, onboarding, runtime switching, and connect-time repair exit non-zero before changing the gateway and name the affected sandboxes.
 If the live gateway route still ends up differing from a sandbox's recorded route, for example after a direct `openshell inference set`, `$$nemoclaw <name> status` prints a warning naming both routes and the supported command to realign or adopt the live route.
+
 Align the routes, remove the conflicting sandbox, or onboard it with another `NEMOCLAW_GATEWAY_PORT`.
 </Warning>
 
@@ -68,7 +71,8 @@ Use the provider ID shown there in the `inference set` commands below.
 
 ### Installer Provider Aliases
 
-`inference set` also accepts the installer-facing provider names shown during `$$nemoclaw onboard` (for example `anthropicCompatible`, `build`, or `custom`) and normalizes each one to its canonical OpenShell provider ID before applying the change. The name you picked at onboarding therefore works here without translation:
+`inference set` also accepts the installer-facing provider names shown during `$$nemoclaw onboard` (for example `anthropicCompatible`, `build`, or `custom`) and normalizes each one to its canonical OpenShell provider ID before applying the change.
+The name you picked at onboarding therefore works here without translation:
 
 ```bash
 # Both forms select the same provider:
@@ -98,9 +102,11 @@ Pass `--sandbox <name>` when you do not want to use the default registered sandb
 For Deep Agents, use a fresh named recreation when you need to switch providers or models.
 The managed `dcode` runtime reads `/sandbox/.deepagents/config.toml`, which NemoClaw writes during onboarding and rebuilds.
 The recreate path keeps that file, the OpenShell route, and the host registry in sync while runtime switching for Deep Agents is still being hardened.
+
 The `--resume` flag is not a provider or model switch path for any variant.
 After completed onboarding, sessions are no longer resumable.
 During an interrupted resume, NemoClaw reuses the recorded provider and model.
+
 Pass the existing sandbox name when you want to replace that sandbox.
 
 </AgentOnly>
@@ -156,6 +162,7 @@ $$nemoclaw inference set --provider compatible-anthropic-endpoint --model <model
 To change only the model on a sandbox that is already on this provider, omit `--endpoint-url` when its durable registry entry contains both endpoint and API-family metadata.
 `inference set` reuses that recorded route and does not repoint the gateway.
 If the durable metadata is incomplete, NemoClaw fails closed and tells you to re-run onboarding.
+
 Any `--endpoint-url` you pass is always validated by the host-side SSRF guard, so a URL that resolves to a private or internal address is rejected even if it matches the recorded endpoint.
 To point the sandbox at a different endpoint, re-run `$$nemoclaw onboard` with the new endpoint because rebuild reuses the recorded endpoint and cannot change it.
 
@@ -182,6 +189,7 @@ nemo-deepagents onboard --fresh --name <sandbox-name> --recreate-sandbox
 ```
 
 The wizard prompts for provider and model choices, backs up the existing sandbox state, recreates the named sandbox, and rewrites the managed `dcode` config for the new route.
+
 If you want to keep the current sandbox until the new route passes validation, create a side-by-side sandbox first:
 
 ```bash
@@ -196,12 +204,14 @@ nemo-deepagents use <new-sandbox-name>
 <AgentOnly variant="openclaw,hermes">
 
 Before patching the in-sandbox config, NemoClaw resolves the target route's API family: OpenAI chat completions, Anthropic Messages, or OpenAI Responses.
+
 For OpenClaw, `inference set` syncs the provider API family and primary model reference into the running config.
 Switches within the current API family hot-reload without replacing the gateway process.
 When the API family changes, for example from OpenAI Chat Completions to Anthropic Messages, NemoClaw uses the managed supervisor to restart only the OpenClaw gateway after the config and integrity hash are committed.
 The sandbox stays running, but active agent requests are briefly interrupted while gateway health and forwards recover.
 The audit trail records `gateway restart pending` before this post-commit restart and `gateway restart failed` if the supervisor cannot complete it.
 That failure does not roll back the committed route or config; run `$$nemoclaw <name> gateway restart` to finish applying the switch.
+
 For Hermes, `inference set` writes `model.api_mode: anthropic_messages` for Anthropic Messages routes, `model.api_mode: codex_responses` for OpenAI Responses routes, and removes `api_mode` for OpenAI-style chat-completions routes.
 Hermes also keeps `model.api_key` on the OpenShell proxy placeholder so dashboard and API sessions continue to authenticate through the gateway after a route change.
 
@@ -319,10 +329,12 @@ To change these values, set the corresponding environment variables before runni
 | `NEMOCLAW_AGENT_HEARTBEAT_EVERY` | Go-style duration (`30m`, `1h`, `0m` to disable) | `unset` (OpenClaw default) |
 
 NemoClaw ignores invalid values and bakes the default into the image.
+
 For Local Ollama, onboarding loads the selected model first and uses Ollama's reported runtime context length when `NEMOCLAW_CONTEXT_WINDOW` is unset.
 For local vLLM, onboarding uses the runtime `max_model_len` value when the server reports one and `NEMOCLAW_CONTEXT_WINDOW` is unset.
 For an OpenAI-compatible endpoint (the **Other OpenAI-compatible endpoint** provider, including a self-hosted vLLM server), onboarding probes the endpoint's `/v1/models` response and uses its reported `max_model_len` when `NEMOCLAW_CONTEXT_WINDOW` is unset, so OpenClaw gets the endpoint's real context window instead of a small architecture default.
 Set `NEMOCLAW_CONTEXT_WINDOW` to override the probed value.
+
 Use `NEMOCLAW_INFERENCE_INPUTS=text,image` only for a model that accepts image input through the selected provider.
 During interactive onboarding, NemoClaw prompts for **Text only** or **Text + Image** when the discovered model name looks multimodal and `NEMOCLAW_INFERENCE_INPUTS` is not already valid.
 Non-interactive onboarding uses the environment value or the default `text` setting.
@@ -353,6 +365,7 @@ For Local Ollama, onboarding loads the selected model first and uses Ollama's re
 For local vLLM, onboarding uses the runtime `max_model_len` value when the server reports one and `NEMOCLAW_CONTEXT_WINDOW` is unset.
 For an OpenAI-compatible endpoint (the **Other OpenAI-compatible endpoint** provider, including a self-hosted vLLM server), onboarding probes the endpoint's `/v1/models` response and uses its reported `max_model_len` when `NEMOCLAW_CONTEXT_WINDOW` is unset, so Hermes gets the endpoint's real context window instead of a small architecture default.
 Set `NEMOCLAW_CONTEXT_WINDOW` to override the probed value.
+
 When onboarding resolves a valid window from an explicit override or endpoint probe, NemoClaw writes it as `model.context_length` in the generated `config.yaml`.
 If neither path yields a valid value, `model.context_length` remains unset and Hermes auto-detects from the endpoint.
 
@@ -368,6 +381,7 @@ $$nemoclaw onboard
 `NEMOCLAW_AGENT_TIMEOUT` controls the per-request inference timeout baked into `agents.defaults.timeoutSeconds`.
 Increase it for slow local inference, such as CPU-only Ollama or vLLM on modest hardware.
 NemoClaw writes this value into `openclaw.json` during onboarding.
+
 The default sandbox can keep that file writable for agent state, but direct in-sandbox edits are not the supported or durable way to change NemoClaw-managed defaults.
 Rebuild the sandbox with `$$nemoclaw onboard` to apply a new value.
 
@@ -379,6 +393,7 @@ This controls OpenClaw's periodic main-session agent turn.
 Each interval, the agent wakes up to review follow-ups and read `HEARTBEAT.md` if present in the workspace.
 The OpenClaw default is 30 minutes (1 hour for Anthropic OAuth / Claude CLI reuse).
 Tune the cadence with a duration string like `5m` or `2h`, or set `0m` to disable the periodic turns entirely.
+
 Disabling also drops `HEARTBEAT.md` from normal-run bootstrap context per upstream behavior, so the model no longer sees heartbeat-only instructions.
 NemoClaw writes this value into `openclaw.json` during onboarding.
 The in-sandbox `openclaw config set` command is not the supported path for NemoClaw-managed build-time defaults, and a rebuild overwrites direct file edits.
@@ -453,7 +468,8 @@ The status output includes the active provider, model, and endpoint with the res
 - The sandbox continues to use `inference.local`.
 - `$$nemoclaw inference set` patches the selected running OpenClaw sandbox config and recomputes its config hash.
 - Use `$$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox` for build-time settings such as context window, max tokens, reasoning mode, heartbeat cadence, or image contents.
-- Local Ollama and local vLLM routes use local provider tokens rather than `OPENAI_API_KEY`. Rebuilds of older local-inference sandboxes clear the stale OpenAI credential requirement automatically.
+- Local Ollama and local vLLM routes use local provider tokens rather than `OPENAI_API_KEY`.
+- Rebuilds of older local-inference sandboxes clear the stale OpenAI credential requirement automatically.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -462,7 +478,8 @@ The status output includes the active provider, model, and endpoint with the res
 - The sandbox continues to use `inference.local`.
 - `$$nemoclaw inference set` patches the selected running Hermes sandbox config and recomputes its config hash.
 - Use `$$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox` for build-time settings such as context window or image contents.
-- Local Ollama and local vLLM routes use local provider tokens rather than `OPENAI_API_KEY`. Rebuilds of older local-inference sandboxes clear the stale OpenAI credential requirement automatically.
+- Local Ollama and local vLLM routes use local provider tokens rather than `OPENAI_API_KEY`.
+- Rebuilds of older local-inference sandboxes clear the stale OpenAI credential requirement automatically.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">

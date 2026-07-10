@@ -380,6 +380,7 @@ function probeSandboxInferenceRoute(
     // remains an argv value, so no user input is interpolated into the script.
     const probe = captureOpenshell(buildSandboxInferenceRouteProbeArgs(sandboxName, agent), {
       ignoreError: true,
+      includeStreams: true,
       timeout: OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
     });
     const parsed = parseSandboxInferenceRouteProbeResult(probe);
