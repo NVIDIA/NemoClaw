@@ -10,6 +10,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildRiskPlan, RISK_RULES } from "../tools/advisors/risk-plan.mts";
 import {
+  assertCorrelatedWorkflowRun,
   assertTrustedMainPush,
   changedFilesBetween,
   classifyRiskEvidence,
@@ -269,6 +270,51 @@ describe("post-merge E2E risk gate", () => {
     ).toThrow(/mismatched workflow dispatch URLs/u);
   });
 
+  it("reports the exact mismatched correlated workflow identity fields", () => {
+    const gate = state();
+    const childRunId = 23;
+    const child = {
+      id: childRunId,
+      name: `E2E risk ${gate.correlationId}`,
+      path: ".github/workflows/e2e.yaml",
+      workflow_id: 304268429,
+      event: "workflow_dispatch",
+      head_sha: gate.commitSha,
+      status: "completed",
+      conclusion: "success",
+      created_at: "2026-07-08T00:00:00.000Z",
+      display_title: `E2E risk ${gate.correlationId}`,
+      html_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${childRunId}`,
+    };
+    const identity = {
+      childRunId,
+      correlationId: gate.correlationId,
+      repository: "NVIDIA/NemoClaw",
+    };
+    const cases = [
+      { override: { id: 24 }, expected: "id expected=23 actual=24" },
+      {
+        override: { path: ".github/workflows/other.yaml" },
+        expected:
+          'path expected=".github/workflows/e2e.yaml" actual=".github/workflows/other.yaml"',
+      },
+      {
+        override: { display_title: "E2E risk wrong" },
+        expected: `display_title expected="E2E risk ${gate.correlationId}" actual="E2E risk wrong"`,
+      },
+      {
+        override: { workflow_id: 0 },
+        expected: 'workflow_id expected="positive safe integer" actual=0',
+      },
+    ];
+
+    for (const { override, expected } of cases) {
+      expect(() => assertCorrelatedWorkflowRun({ ...child, ...override }, identity)).toThrow(
+        expected,
+      );
+    }
+  });
+
   it("finish reports the directly dispatched child failure when main advances", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-risk-finish-"));
     const statePath = path.join(workDir, "e2e-risk-gate-state.json");
@@ -285,13 +331,15 @@ describe("post-merge E2E risk gate", () => {
         text: async () =>
           JSON.stringify({
             id: childRunId,
-            name: "E2E",
+            name: `E2E risk ${gate.correlationId}`,
             event: "workflow_dispatch",
             head_sha: "b".repeat(40),
             status: "completed",
             conclusion: "failure",
             created_at: "2026-07-08T00:00:00.000Z",
             display_title: `E2E risk ${gate.correlationId}`,
+            path: ".github/workflows/e2e.yaml",
+            workflow_id: 304268429,
             html_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${childRunId}`,
           }),
       } as Response)
@@ -321,11 +369,14 @@ describe("post-merge E2E risk gate", () => {
   it("rejects changed controller state before classifying downloaded evidence", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-risk-state-"));
     const statePath = path.join(workDir, "e2e-risk-gate-state.json");
+    const outputPath = path.join(workDir, "github-output");
     const originalState = `${JSON.stringify(state())}\n`;
     const changedState = `${JSON.stringify({ ...state(), requiresManualExpansion: true })}\n`;
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    vi.stubEnv("GITHUB_OUTPUT", outputPath);
     fs.writeFileSync(statePath, changedState, { mode: 0o600 });
+    fs.writeFileSync(outputPath, "", { mode: 0o600 });
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValue({ ok: true, text: async () => "{}" } as Response);
@@ -348,6 +399,10 @@ describe("post-merge E2E risk gate", () => {
         conclusion: "neutral",
         output: { title: "Risk-selected E2E evidence could not be verified" },
       });
+      expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)).output.summary).toContain(
+        "controller state changed after E2E dispatch",
+      );
+      expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true\n");
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }
