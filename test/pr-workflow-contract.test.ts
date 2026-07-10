@@ -637,7 +637,7 @@ describe("pull request and main workflow contracts", () => {
     for (const path of ["bin/nemoclaw.js", "jsconfig.json", "package.json", "package-lock.json"]) {
       expect(jsFiles.test(path), path).toBe(true);
     }
-    expect(jsFiles.test("docs/_ext/nemoclaw.js")).toBe(false);
+    expect(jsFiles.test("docs/_components/nemoclaw.js")).toBe(false);
   });
 
   it("executes repo-wide coverage and diff-scoped automatic hook commands", () => {
@@ -1009,11 +1009,18 @@ describe("pull request and main workflow contracts", () => {
     expect(vitestConfig).toContain('name: "e2e-support"');
     expect(stepRuns(prWorkflow.jobs["e2e-support"])).toEqual([
       "npm ci --ignore-scripts",
+      "npx tsx scripts/checks/e2e-mock-parity.ts --base HEAD^1 --head HEAD^2",
       "npm run build:cli",
       "npx vitest run --project e2e-support",
     ]);
     expect(stepRuns(mainWorkflow.jobs["e2e-support"])).toEqual([
       "npm ci --ignore-scripts",
+      `if [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+  echo "Skipping changed live E2E parity: main has no prior commit."
+  exit 0
+fi
+npx tsx scripts/checks/e2e-mock-parity.ts --base "$BASE_SHA" --head HEAD
+`,
       "npm run build:cli",
       "npx vitest run --project e2e-support",
     ]);

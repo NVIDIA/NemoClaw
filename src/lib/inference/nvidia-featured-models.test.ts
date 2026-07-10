@@ -11,7 +11,6 @@ import {
   NVIDIA_FEATURED_MODELS_URL,
   parseNvidiaFeaturedModels,
 } from "./nvidia-featured-models";
-import { OPENROUTER_FEATURED_MODELS_URL } from "./openrouter";
 
 describe("NVIDIA featured model catalog", () => {
   it("prefixes bare Nemotron catalog IDs with the canonical endpoint namespace (#5827)", () => {
@@ -110,14 +109,12 @@ describe("NVIDIA featured model catalog", () => {
     });
   });
 
-  it("can fetch OpenRouter's featured catalog from its own endpoint (#5826)", () => {
+  it("can fetch an alternate featured catalog from a configured endpoint", () => {
     const result = fetchNvidiaFeaturedModels({
-      catalogUrl: OPENROUTER_FEATURED_MODELS_URL,
+      catalogUrl: "https://example.invalid/featured-models-partner.json",
       retiredModelIds: [],
       runCurlProbeImpl: (argv) => {
-        expect(argv.at(-1)).toBe(
-          "https://assets.ngc.nvidia.com/products/api-catalog/featured-models-openrouter.json",
-        );
+        expect(argv.at(-1)).toBe("https://example.invalid/featured-models-partner.json");
         return {
           ok: true,
           httpStatus: 200,
@@ -197,10 +194,10 @@ describe("NVIDIA featured model catalog", () => {
     ]);
   });
 
-  it("uses the configured catalog label in fallback warnings (#5826)", () => {
+  it("uses the configured catalog label in fallback warnings", () => {
     const warnings: string[] = [];
     getNvidiaFeaturedModelOptions({
-      catalogLabel: "OpenRouter's featured model catalog",
+      catalogLabel: "Partner featured model catalog",
       runCurlProbeImpl: () => ({
         ok: false,
         httpStatus: 503,
@@ -213,7 +210,7 @@ describe("NVIDIA featured model catalog", () => {
     });
 
     expect(warnings).toEqual([
-      "  Warning: failed to load OpenRouter's featured model catalog; falling back to the bundled list (service unavailable; HTTP 503).",
+      "  Warning: failed to load Partner featured model catalog; falling back to the bundled list (service unavailable; HTTP 503).",
     ]);
   });
 

@@ -12,6 +12,7 @@ import {
   baseImageInputsChangedSinceMain,
   baseImageInputsDirty,
   buildLocalBaseTag,
+  getNearestVersionedBaseImageTags,
   getSourceShortShaTags,
   getVersionedBaseImageTags,
   normalizeBaseImageInputPaths,
@@ -99,6 +100,19 @@ function createGitFixtureWithRemoteOnlyBaseRef() {
   return root;
 }
 
+function createGitFixtureWithReachableOriginTags(tags: string[]) {
+  const root = createGitFixtureWithRemoteOnlyBaseRef();
+  for (const tag of tags) {
+    git(root, ["tag", tag]);
+  }
+  git(root, ["push", "origin", ...tags.map((tag) => `refs/tags/${tag}`)]);
+  git(root, ["switch", "-c", "feature"]);
+  writeFixture(root, "src/other.ts", "export const value = 42;\n");
+  git(root, ["add", "src/other.ts"]);
+  git(root, ["commit", "-m", "move off tag"]);
+  return root;
+}
+
 afterEach(() => {
   for (const root of tmpRoots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });
@@ -170,6 +184,49 @@ describe("sandbox base-image source identity", () => {
     git(root, ["add", "src/other.ts"]);
     git(root, ["commit", "-m", "move off tag"]);
     expect(getVersionedBaseImageTags(root, gitEnv)).toEqual([]);
+  });
+
+  it("finds the nearest release tag for unversioned source checkouts", () => {
+    const root = createGitFixture();
+    git(root, ["tag", "v0.0.42"]);
+    git(root, ["switch", "-c", "feature"]);
+    writeFixture(root, "src/other.ts", "export const value = 42;\n");
+    git(root, ["add", "src/other.ts"]);
+    git(root, ["commit", "-m", "move off tag"]);
+
+    expect(getVersionedBaseImageTags(root, gitEnv)).toEqual([]);
+    expect(getNearestVersionedBaseImageTags(root, gitEnv)).toEqual(["v0.0.42"]);
+  });
+
+  it("prefers the newest reachable origin release tag when local tags are stale", () => {
+    const remote = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-image-tags-remote-"));
+    tmpRoots.push(remote);
+    const root = createGitFixture();
+    git(remote, ["init", "--bare"]);
+    git(root, ["remote", "add", "origin", remote]);
+    git(root, ["tag", "v0.0.41"]);
+    writeFixture(root, "docs/release.md", "release 42\n");
+    git(root, ["add", "docs/release.md"]);
+    git(root, ["commit", "-m", "release 42"]);
+    git(root, ["tag", "-a", "v0.0.42", "-m", "v0.0.42"]);
+    git(root, ["push", "origin", "main", "refs/tags/v0.0.42"]);
+    git(root, ["tag", "-d", "v0.0.42"]);
+
+    expect(getVersionedBaseImageTags(root, gitEnv)).toEqual([]);
+    expect(git(root, ["describe", "--tags", "--abbrev=0", "--match", "v*"])).toBe("v0.0.41");
+    expect(getNearestVersionedBaseImageTags(root, gitEnv)).toEqual(["v0.0.42"]);
+  });
+
+  it("prefers a stable reachable origin release over a prerelease created later (#6624)", () => {
+    const root = createGitFixtureWithReachableOriginTags(["v0.0.79", "v0.0.79-rc.1"]);
+
+    expect(getNearestVersionedBaseImageTags(root, gitEnv)).toEqual(["v0.0.79"]);
+  });
+
+  it("prefers a stable reachable origin release over a prerelease created earlier (#6624)", () => {
+    const root = createGitFixtureWithReachableOriginTags(["v0.0.79-rc.1", "v0.0.79"]);
+
+    expect(getNearestVersionedBaseImageTags(root, gitEnv)).toEqual(["v0.0.79"]);
   });
 
   it("detects committed Dockerfile.base changes relative to origin/main", () => {

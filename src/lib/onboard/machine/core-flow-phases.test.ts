@@ -160,6 +160,7 @@ function createPhases(
     },
     sandbox: {
       resumeAgentChanged: false,
+      recreateSandbox: () => false,
       controlUiPort: null,
       rootDir: "/repo",
     },
@@ -205,6 +206,7 @@ function createPhases(
       selectResourceProfileForSandbox: vi.fn(async () => null),
       stopStaleDashboardListenersForSandbox: vi.fn(),
       listRegistrySandboxes: () => ({ sandboxes: [] }),
+      reconcileRegisteredExtraProviders: vi.fn(() => []),
       createSandbox: vi.fn(async () => "created-sandbox"),
       updateSandboxRegistry: vi.fn(),
       getSandboxAgentRegistryFields: () => ({ agent: "openclaw" }),
@@ -360,7 +362,11 @@ describe("core onboard flow phases", () => {
       "HERMES_API_KEY",
       "api_key",
       ["nous-web"],
-      { gatewayName: "nemoclaw", allowToolsIncompatible: false },
+      {
+        gatewayName: "nemoclaw",
+        allowToolsIncompatible: false,
+        reservationSessionId: session.sessionId,
+      },
     );
     expect(result.context.hermesToolGateways).toEqual(["nous-web"]);
 

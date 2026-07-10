@@ -156,7 +156,7 @@ describe("MessagingSetupApplier", () => {
 
     const cyclic = { ...plan } as Record<string, unknown>;
     cyclic.self = cyclic;
-    expect(() => MessagingSetupApplier.encodePlan(cyclic as never)).toThrow(/cycle/);
+    expect(() => MessagingSetupApplier.encodePlan(cyclic as never)).toThrow(/circular/i);
   });
 
   it("lists hook requests by phase without executing hook implementations", async () => {

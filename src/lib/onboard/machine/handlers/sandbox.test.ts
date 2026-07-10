@@ -74,6 +74,7 @@ describe("handleSandboxState", () => {
         recreate: false,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
+        extraProviders: [],
       },
     );
     expect(calls.updateSandbox).toHaveBeenCalledWith(
@@ -433,6 +434,7 @@ describe("handleSandboxState", () => {
         recreate: false,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
+        extraProviders: [],
       },
     );
     expect(result.hermesToolGateways).toEqual(["nous-audio"]);
@@ -542,6 +544,7 @@ describe("handleSandboxState", () => {
         recreate: true,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
+        extraProviders: [],
       },
     );
   });
@@ -749,6 +752,7 @@ describe("handleSandboxState", () => {
         recreate: true,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
+        extraProviders: [],
       },
     );
     expect(result.webSearchConfigChanged).toBe(true);
@@ -867,6 +871,7 @@ describe("handleSandboxState", () => {
         recreate: true,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
+        extraProviders: [],
       },
     );
     expect(result.webSearchConfig).toBeNull();
