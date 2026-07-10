@@ -233,6 +233,9 @@ describe("PR E2E gate workflow", () => {
     });
     expect(workflow.permissions).toEqual({});
     expect(cancel.if).toContain("github.event_name == 'pull_request_target'");
+    expect(cancel.if).toContain(
+      "github.event.pull_request.head.repo.full_name == github.repository",
+    );
     expect(cancel.permissions).toEqual({ actions: "write", contents: "read" });
     expect(coordinate.if).toContain("github.event_name == 'workflow_run'");
     expect(coordinate.if).toContain("github.event.workflow_run.event == 'pull_request'");
