@@ -5,6 +5,29 @@
     {
       "live": "test/e2e/live/dashboard-remote-bind.test.ts",
       "liveOnlyReason": "Requires a real OpenShell dashboard forward on a remote Brev host to prove all-interface bind behavior after background connect."
+    },
+    {
+      "live": "test/e2e/live/onboard-repair.test.ts",
+      "fast": [
+        "src/lib/onboard/extra-provider-reconciliation-diagnostics.test.ts",
+        "src/lib/onboard/extra-provider-reconciliation-probes.test.ts",
+        "src/lib/onboard/extra-provider-reconciliation.test.ts",
+        "src/lib/onboard/machine/handlers/sandbox-resume.test.ts",
+        "src/lib/onboard/sandbox-create-plan-extra-providers.test.ts",
+        "test/onboard-extra-provider-reconciliation.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/onboard-resume.test.ts",
+      "fast": [
+        "src/lib/onboard/extra-provider-reconciliation-diagnostics.test.ts",
+        "src/lib/onboard/extra-provider-reconciliation-probes.test.ts",
+        "src/lib/onboard/extra-provider-reconciliation.test.ts",
+        "src/lib/onboard/machine/handlers/sandbox-recreate-resume.test.ts",
+        "src/lib/onboard/machine/handlers/sandbox-resume.test.ts",
+        "src/lib/onboard/sandbox-create-plan-extra-providers.test.ts",
+        "test/onboard-extra-provider-reconciliation.test.ts"
+      ]
     }
   ]
 }
