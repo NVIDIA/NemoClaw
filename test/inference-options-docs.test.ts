@@ -209,11 +209,14 @@ describe("inference setup navigation", () => {
     expect(section).toContain("[Use Ollama for Local Inference](use-local-inference)");
   });
 
-  it("uses a loopback-only bind for the raw model server example", () => {
+  it("uses a container-reachable bind for the raw model server example (#5744)", () => {
     const markdown = fs.readFileSync(selfHostedInferenceSetupPath, "utf8");
 
-    expect(markdown).toContain("--host 127.0.0.1");
-    expect(markdown).not.toContain("--host 0.0.0.0");
+    expect(markdown).toContain("--host 0.0.0.0");
+    expect(markdown).not.toContain("--host 127.0.0.1");
+    expect(markdown).toContain(
+      "a server bound only to `127.0.0.1` can still be unreachable from the sandbox route.",
+    );
   });
 
   it("routes vLLM tool-calling remediation to the self-hosted server guide", () => {
@@ -279,10 +282,13 @@ describe("inference setup navigation", () => {
     expect(result.note).toContain("validation skipped");
     expect(markdown).toContain("`http://host.openshell.internal:8000/v1`");
     expect(markdown).toContain(
-      "This is a sandbox-internal alias, so host-side endpoint probing is skipped during onboarding.",
+      "For loopback HTTP endpoints such as `http://localhost:8000/v1`, NemoClaw validates the endpoint from the host and registers the OpenShell gateway route through `host.openshell.internal:<port>` so sandbox traffic can leave the container namespace.",
     );
     expect(markdown).toContain(
-      "Use a routable endpoint when you need onboarding to verify the API, tool-calling, and streaming paths.",
+      "If you manually enter a sandbox-internal alias such as `http://host.openshell.internal:8000/v1`, host-side endpoint probing is skipped during onboarding.",
+    );
+    expect(markdown).toContain(
+      "Use a host-routable endpoint such as `localhost` when you need onboarding to verify the API, tool-calling, and streaming paths",
     );
     const textAfterEachAlias = markdown.split(hostGatewayAlias).slice(1);
     expect(textAfterEachAlias).toHaveLength(2);
