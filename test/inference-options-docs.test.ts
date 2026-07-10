@@ -192,9 +192,9 @@ describe("inference setup navigation", () => {
     const spacedListItems =
       /^([ \t]*)(?:[-*+]|\d+\.)[ \t]+[^\n]+\n[ \t]*\n\1(?:[-*+]|\d+\.)[ \t]+/m;
 
-    for (const fileName of fs.readdirSync(inferenceDocsDir)) {
-      if (!fileName.endsWith(".mdx")) continue;
-
+    for (const fileName of fs
+      .readdirSync(inferenceDocsDir)
+      .filter((name) => name.endsWith(".mdx"))) {
       const markdown = fs.readFileSync(path.join(inferenceDocsDir, fileName), "utf8");
       const prose = stripFencedCodeBlocks(markdown);
       expect(prose, `${fileName} has a blank line between simple list items`).not.toMatch(
