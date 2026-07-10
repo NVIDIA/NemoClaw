@@ -1546,7 +1546,8 @@ Ollama can serve local chat and some simple tool surfaces, but agent loops with 
 
 For persistent agent use, [set up vLLM](../inference/local-inference/set-up-vllm) with automatic tool choice and the tool-call parser that matches the model family.
 After the parser-aware server is ready, re-run onboarding.
-For a server detected on `localhost:8000`, select the **Local vLLM [experimental]** entry marked **running (suggested)**; for another address, select **Other OpenAI-compatible endpoint**.
+For a server detected on `localhost:8000`, select the **Local vLLM** entry marked **running (suggested)**; for another address, select **Other OpenAI-compatible endpoint**.
+On generic hosts, the Local vLLM entry includes an experimental label; on DGX Spark or DGX Station, it does not.
 
 Do not rely on direct edits to `openclaw.json` for a persistent provider change.
 NemoClaw-managed rebuilds can overwrite those edits, while onboarding keeps the sandbox image, OpenShell route, and host-managed credentials aligned.

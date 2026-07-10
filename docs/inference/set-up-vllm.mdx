@@ -27,7 +27,8 @@ Run onboarding.
 $$nemoclaw onboard
 ```
 
-Select **Local vLLM [experimental]**.
+Select **Local vLLM**.
+On generic hosts, the entry includes an experimental label; on DGX Spark or DGX Station, it does not.
 NemoClaw validates the detected endpoint and records the model reported by `/v1/models`.
 When vLLM exposes runtime metadata such as `max_model_len`, NemoClaw uses that value for the configured context window unless you set `NEMOCLAW_CONTEXT_WINDOW`.
 

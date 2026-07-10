@@ -490,6 +490,7 @@ describe("createSetupNim", () => {
   });
 
   it("recovers a recorded provider and model without prompting in non-interactive mode (#6245)", async () => {
+    const recoverySessionId = "session-recovery";
     const prompt = vi.fn(async () => unexpected("interactive provider prompt"));
     const note = vi.fn();
     const readRecordedProvider = vi.fn(() => "openai-api");
@@ -503,6 +504,7 @@ describe("createSetupNim", () => {
           recoveredFromSandbox: true,
           recoveredModel: "gpt-4.1",
           sandboxName: "existing-sandbox",
+          recoverySessionId,
         });
         state.model = args.recoveredModel;
         state.provider = "openai-api";
@@ -524,12 +526,22 @@ describe("createSetupNim", () => {
       }),
     );
 
-    const result = await setupNim(null, "existing-sandbox");
+    const result = await setupNim(
+      null,
+      "existing-sandbox",
+      null,
+      true,
+      null,
+      null,
+      undefined,
+      undefined,
+      recoverySessionId,
+    );
 
     expect(prompt).not.toHaveBeenCalled();
-    expect(readRecordedProvider).toHaveBeenCalledWith("existing-sandbox");
-    expect(readRecordedNimContainer).toHaveBeenCalledWith("existing-sandbox");
-    expect(readRecordedModel).toHaveBeenCalledWith("existing-sandbox");
+    expect(readRecordedProvider).toHaveBeenCalledWith("existing-sandbox", recoverySessionId);
+    expect(readRecordedNimContainer).toHaveBeenCalledWith("existing-sandbox", recoverySessionId);
+    expect(readRecordedModel).toHaveBeenCalledWith("existing-sandbox", recoverySessionId);
     expect(note).toHaveBeenCalledWith(
       "  [non-interactive] Provider: openai (recovered from sandbox 'existing-sandbox')",
     );

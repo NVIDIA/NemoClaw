@@ -793,6 +793,11 @@ $$nemoclaw deploy <instance-name>
 ### `$$nemoclaw <name> connect`
 
 Connect to a sandbox by name.
+Bare `$$nemoclaw connect` (no sandbox name) connects to the registry default.
+NemoClaw uses the stored default when it names a non-pending registered sandbox, then falls back to the first non-pending registration.
+If only pending registrations remain, the command exits non-zero and tells you to wait for onboarding or remove the incomplete sandbox.
+If the registry remains empty after recovery, it tells you to run `$$nemoclaw onboard`.
+A registered sandbox literally named `connect` keeps the name-first reading.
 If the sandbox is not yet in the `Ready` phase, `connect` polls `openshell sandbox list` every few seconds and prints the current phase. This gives you progress output right after onboarding, when the 2.4 GB image is still pulling, instead of a silent hang.
 Control the wait budget with `NEMOCLAW_CONNECT_TIMEOUT` (integer seconds, default `120`). When the deadline expires, `connect` exits non-zero with the last-seen phase.
 
@@ -823,6 +828,7 @@ You no longer need to re-run `$$nemoclaw onboard` after a reboot in this case.
 
 ```bash
 $$nemoclaw my-assistant connect [--probe-only]
+$$nemoclaw connect
 ```
 
 The `--probe-only` flag verifies the sandbox is reachable over SSH and exits without opening a shell.
