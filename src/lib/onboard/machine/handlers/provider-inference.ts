@@ -34,6 +34,8 @@ export interface ProviderInferenceSetupOptions {
   preferredInferenceApi?: string | null;
   /** Public addresses approved for custom endpoint host probes. */
   endpointPinnedAddresses?: readonly string[];
+  /** Onboard session that owns the route reservation this setup creates. */
+  reservationSessionId?: string;
 }
 
 export interface ProviderSelectionResult {
@@ -554,6 +556,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
               : {}),
             ...(preferredInferenceApi ? { preferredInferenceApi } : {}),
             ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
+            reservationSessionId: session?.sessionId,
           };
           await deps.startRecordedStep("inference", { provider, model });
           inferenceResult = await withInferenceTrace(
@@ -741,6 +744,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         ...(reuseGatewayCredentialWithoutLocalKey ? { reuseGatewayCredentialWithoutLocalKey } : {}),
         ...(preferredInferenceApi ? { preferredInferenceApi } : {}),
         ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
+        reservationSessionId: session?.sessionId,
       };
       await deps.startRecordedStep("inference", { provider, model });
       inferenceResult = await withInferenceTrace(

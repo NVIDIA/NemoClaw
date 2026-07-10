@@ -57,6 +57,7 @@ describe("handleProviderInferenceState", () => {
         gatewayName: "nemoclaw",
         allowToolsIncompatible: false,
         preferredInferenceApi: "openai-responses",
+        reservationSessionId: expect.any(String),
       },
     );
     expect(calls.deleteEnv).toHaveBeenCalledWith("NVIDIA_INFERENCE_API_KEY");
@@ -125,6 +126,7 @@ describe("handleProviderInferenceState", () => {
         gatewayName: "nemoclaw",
         allowToolsIncompatible: false,
         preferredInferenceApi: "openai-completions",
+        reservationSessionId: expect.any(String),
       },
     );
     expect(result.preferredInferenceApi).toBe("openai-completions");
@@ -167,6 +169,7 @@ describe("handleProviderInferenceState", () => {
         gatewayName: "nemoclaw",
         allowToolsIncompatible: false,
         preferredInferenceApi: "openai-completions",
+        reservationSessionId: expect.any(String),
       },
     );
     expect(calls.complete).toHaveBeenCalledWith(
@@ -223,6 +226,7 @@ describe("handleProviderInferenceState", () => {
         gatewayName: "nemoclaw-9090",
         allowToolsIncompatible: false,
         preferredInferenceApi: "openai-completions",
+        reservationSessionId: expect.any(String),
       },
     );
   });
@@ -348,6 +352,8 @@ describe("handleProviderInferenceState", () => {
       preferredInferenceApi: "openai-completions",
     });
     const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
+    const rebuiltSession = createSession({ sessionId: "rebuild-session-id" });
+    calls.complete.mockResolvedValueOnce(rebuiltSession);
 
     const result = await handleProviderInferenceState({
       ...baseOptions(deps, session),
@@ -383,7 +389,7 @@ describe("handleProviderInferenceState", () => {
       credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai-completions",
       gatewayName: "nemoclaw",
-      reservationSessionId: expect.any(String),
+      reservationSessionId: rebuiltSession.sessionId,
     });
   });
 
@@ -680,7 +686,11 @@ describe("handleProviderInferenceState", () => {
       "COMPATIBLE_API_KEY",
       null,
       [],
-      { gatewayName: "nemoclaw", allowToolsIncompatible: false },
+      {
+        gatewayName: "nemoclaw",
+        allowToolsIncompatible: false,
+        reservationSessionId: expect.any(String),
+      },
     );
   });
 
@@ -716,7 +726,11 @@ describe("handleProviderInferenceState", () => {
       "COMPATIBLE_API_KEY",
       null,
       [],
-      { gatewayName: "nemoclaw", allowToolsIncompatible: false },
+      {
+        gatewayName: "nemoclaw",
+        allowToolsIncompatible: false,
+        reservationSessionId: expect.any(String),
+      },
     );
   });
 
@@ -753,7 +767,11 @@ describe("handleProviderInferenceState", () => {
       "COMPATIBLE_API_KEY",
       null,
       [],
-      { gatewayName: "nemoclaw", allowToolsIncompatible: false },
+      {
+        gatewayName: "nemoclaw",
+        allowToolsIncompatible: false,
+        reservationSessionId: expect.any(String),
+      },
     );
     expect(calls.log).toHaveBeenCalledWith(
       "  [resume] Refreshing compatible-endpoint inference route for messaging.",
@@ -831,6 +849,7 @@ describe("handleProviderInferenceState", () => {
         skipHostInferenceSmoke: true,
         reuseGatewayCredentialWithoutLocalKey: true,
         preferredInferenceApi: "openai-completions",
+        reservationSessionId: expect.any(String),
       },
     );
     expect(calls.log).toHaveBeenCalledWith(
@@ -920,7 +939,11 @@ describe("handleProviderInferenceState", () => {
       "COMPATIBLE_API_KEY",
       null,
       [],
-      { gatewayName: "nemoclaw", allowToolsIncompatible: false },
+      {
+        gatewayName: "nemoclaw",
+        allowToolsIncompatible: false,
+        reservationSessionId: expect.any(String),
+      },
     );
     expect(calls.log).toHaveBeenCalledWith(
       "  [resume] Refreshing compatible-endpoint inference route for messaging.",
@@ -1029,6 +1052,8 @@ describe("handleProviderInferenceState", () => {
       isInferenceRouteReady: vi.fn(() => true),
       withGatewayRouteMutationLock,
     });
+    const rebuiltSession = createSession({ sessionId: "router-rebuild-session-id" });
+    calls.complete.mockResolvedValueOnce(rebuiltSession);
     calls.reconcileRouter.mockImplementation(async () => {
       expect(insideGatewayLock).toBe(true);
     });
@@ -1056,7 +1081,7 @@ describe("handleProviderInferenceState", () => {
       credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       preferredInferenceApi: null,
       gatewayName: "nemoclaw",
-      reservationSessionId: expect.any(String),
+      reservationSessionId: rebuiltSession.sessionId,
     });
   });
 
@@ -1173,6 +1198,7 @@ describe("handleProviderInferenceState", () => {
         gatewayName: "nemoclaw",
         allowToolsIncompatible: true,
         preferredInferenceApi: "openai-responses",
+        reservationSessionId: expect.any(String),
       },
     );
   });

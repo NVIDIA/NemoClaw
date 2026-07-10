@@ -282,6 +282,7 @@ export function createSetupInference(
             credentialEnv,
             preferredInferenceApi: options.preferredInferenceApi ?? null,
             gatewayName,
+            reservationSessionId: options.reservationSessionId,
           });
           routeReserved = reserved;
           return reserved;
