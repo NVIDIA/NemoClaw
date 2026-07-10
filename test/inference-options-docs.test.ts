@@ -21,12 +21,6 @@ const { probeOpenAiLikeEndpoint } = require("../src/lib/inference/onboard-probes
   ) => { api: string | null; label: string | null; note?: string; ok: boolean };
 };
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const providerChoicePath = path.join(
-  repoRoot,
-  "docs",
-  "inference",
-  "choose-inference-provider.mdx",
-);
 const chooseModelPath = path.join(repoRoot, "docs", "inference", "choose-model.mdx");
 const hermesProviderPath = path.join(repoRoot, "docs", "inference", "use-hermes-provider.mdx");
 const releaseNotesPath = path.join(repoRoot, "docs", "about", "release-notes.mdx");

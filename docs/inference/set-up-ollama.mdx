@@ -97,6 +97,12 @@ The install and restart paths set `OLLAMA_HOST=0.0.0.0:11434` on Windows so Dock
 NemoClaw relaunches Ollama from the detected Windows tray application or verified `ollama.exe` path and waits for the endpoint to respond.
 It pulls missing models through the Ollama HTTP API without requiring an Ollama CLI inside WSL.
 
+<Warning>
+  Windows-host Ollama does not require authentication on port `11434`.
+  Keep the Windows network profile private, block inbound access to port `11434` on public interfaces, and allow only the local WSL/Docker network path that needs `host.docker.internal`.
+  Do not expose this port to your LAN or the internet.
+</Warning>
+
 If the endpoint is not reachable, NemoClaw also checks the Windows `ollama.exe` process through PowerShell interop.
 When the daemon does not become reachable, onboarding prints PowerShell commands for inspecting the Windows process and port state.
 Run only one Ollama instance on port `11434` at a time.

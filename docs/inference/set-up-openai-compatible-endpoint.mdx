@@ -41,14 +41,12 @@ Enter the server base URL and the model ID reported by the server.
 Use `http://localhost:8000/v1` when the default Docker-driver topology makes the host endpoint reachable at that address.
 For a containerized OpenShell gateway that cannot reach host `localhost`, use the host-gateway URL for your environment, commonly `http://host.openshell.internal:8000/v1`.
 
-The host-side endpoint probe is skipped for the sandbox-internal `host.openshell.internal` alias.
-Use a host-routable endpoint when you want onboarding to verify the API, tool-calling, and streaming paths before sandbox creation.
-Otherwise, verify the runtime route after onboarding.
+For host-routable endpoints, NemoClaw verifies the API, tool-calling, and streaming paths before sandbox creation.
+The host-side endpoint probe is skipped for the sandbox-internal `host.openshell.internal` alias, so verify the runtime route after onboarding when you use that address.
 
 The wizard prompts for an API key.
 Enter any non-empty placeholder such as `dummy` when the server does not require authentication.
 
-NemoClaw validates the endpoint with a real inference request before continuing.
 Refer to [Choose a Compatible Inference API](choose-compatible-inference-api) for the probe order and runtime API selection.
 
 ## Serve a Raw Model File

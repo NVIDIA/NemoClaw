@@ -116,7 +116,7 @@ Gated models require a Hugging Face token.
 Export `HF_TOKEN` before onboarding so NemoClaw can forward it to the managed container.
 
 ```bash
-export HF_TOKEN=<your-hf-token>
+export HF_TOKEN="<your-hf-token>"
 NEMOCLAW_PROVIDER=install-vllm \
   NEMOCLAW_VLLM_MODEL=deepseek-r1-distill-70b \
   $$nemoclaw onboard --non-interactive

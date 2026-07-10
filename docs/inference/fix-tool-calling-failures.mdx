@@ -49,7 +49,8 @@ Agent loops with several tools, long instructions, or multi-turn dispatch need a
 For persistent agent use, configure vLLM with auto tool choice and the tool-call parser that matches the model family.
 The vLLM setup page covers server startup, parser selection, managed setup, and onboarding.
 
-After the parser-aware server is ready, re-run onboarding and select **Local vLLM [experimental]** or **Other OpenAI-compatible endpoint**.
+After the parser-aware server is ready, re-run onboarding.
+For a server detected on `localhost:8000`, select the **Local vLLM [experimental]** entry marked as running; for another address, select **Other OpenAI-compatible endpoint**.
 
 Do not rely on direct edits to `openclaw.json` for a persistent provider change.
 NemoClaw-managed rebuilds can overwrite those edits, while onboarding keeps the sandbox image, OpenShell route, and host-managed credentials aligned.
