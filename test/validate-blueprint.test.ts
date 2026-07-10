@@ -93,6 +93,7 @@ type Endpoint = {
   enforcement?: string;
   access?: string;
   tls?: string;
+  allow_encoded_slash?: boolean;
   websocket_credential_rewrite?: boolean;
   request_body_credential_rewrite?: boolean;
   rules?: Rule[];
@@ -400,6 +401,25 @@ describe("base sandbox policy", () => {
     ]);
   });
 
+  it("allows encoded scoped-package paths only on the ClawHub endpoint (#4104)", () => {
+    const np = policy.network_policies ?? {};
+    const clawhubEndpoints = np.clawhub?.endpoints ?? [];
+    expect(clawhubEndpoints).toHaveLength(1);
+    expect(clawhubEndpoints[0]).toMatchObject({
+      host: "clawhub.ai",
+      protocol: "rest",
+      enforcement: "enforce",
+      allow_encoded_slash: true,
+    });
+
+    const encodedSlashHosts = Object.values(np).flatMap((entry) =>
+      (entry.endpoints ?? [])
+        .filter((endpoint) => endpoint.allow_encoded_slash === true)
+        .map((endpoint) => endpoint.host),
+    );
+    expect(encodedSlashHosts).toEqual(["clawhub.ai"]);
+  });
+
   it("does not reference the absent Claude CLI binary", () => {
     const serialized = JSON.stringify(policy.network_policies ?? {});
     expect(serialized).not.toContain("/usr/local/bin/claude");
@@ -626,6 +646,7 @@ describe("permissive sandbox policy", () => {
   // gateway-bound virtual hostnames.
   // Ref: https://github.com/NVIDIA/NemoClaw/issues/2513, #2663
   const policy = loadYaml<SandboxPolicy>(PERMISSIVE_POLICY_PATH);
+  const agentPolicy = loadYaml<SandboxPolicy>(OPENCLAW_PERMISSIVE_POLICY_PATH);
 
   it("parses and declares network_policies", () => {
     expect(policy.network_policies).toBeDefined();
@@ -651,6 +672,20 @@ describe("permissive sandbox policy", () => {
     // Matches the permissive-file convention used by every other block
     // (e.g. `nvidia`, `github`, `huggingface`, etc.).
     expect(binaries).toEqual(["/**"]);
+  });
+
+  it("preserves ClawHub encoded scoped-package paths in permissive mode (#4104)", () => {
+    for (const candidate of [policy, agentPolicy]) {
+      const endpoints = candidate.network_policies?.clawhub?.endpoints ?? [];
+      expect(endpoints).toHaveLength(1);
+      expect(endpoints[0]).toMatchObject({
+        host: "clawhub.ai",
+        protocol: "rest",
+        enforcement: "enforce",
+        allow_encoded_slash: true,
+        access: "full",
+      });
+    }
   });
 });
 

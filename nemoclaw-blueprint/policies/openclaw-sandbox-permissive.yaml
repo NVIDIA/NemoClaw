@@ -103,6 +103,7 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
+        allow_encoded_slash: true
         access: full
     binaries:
       - { path: "/**" }

@@ -168,6 +168,9 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
+        # ClawHub addresses scoped packages as @scope%2Fname. Keep strict
+        # canonicalization everywhere else while allowing that registry form.
+        allow_encoded_slash: true
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
