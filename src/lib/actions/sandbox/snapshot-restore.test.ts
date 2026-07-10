@@ -3,6 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SANDBOX_EXEC_STARTED_MARKER } from "./sandbox-exec-output";
+import type { SnapshotStreamSandboxCreateMock } from "./snapshot-create-stream-test-types";
 
 type OpenshellCaptureResult = {
   status: number | null;
@@ -132,13 +133,12 @@ const runOpenshellMock = vi.fn((args: string[]) => {
   args[0] === "sandbox" && args[1] === "delete" && lifecycleMock.events.push("delete");
   return { status: 0, output: "" };
 });
-const streamSandboxCreateMock = vi.fn(
-  async (_command: string, _env: NodeJS.ProcessEnv, _options?: Record<string, unknown>) => ({
-    status: 0,
-    output: "",
-    forcedReady: false,
-  }),
-);
+const streamSandboxCreateMock = vi.fn<SnapshotStreamSandboxCreateMock>(async () => ({
+  status: 0,
+  output: "",
+  sawProgress: false,
+  forcedReady: false,
+}));
 const latestBackupFixture = {
   timestamp: "2026-06-15T00:00:00.000Z",
   backupPath: "/tmp/backup-alpha",
