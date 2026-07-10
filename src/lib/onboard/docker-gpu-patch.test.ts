@@ -658,11 +658,13 @@ describe("docker-gpu-patch", () => {
       CapAdd: [],
       SecurityOpt: [],
     };
-    const dockerCapture = vi.fn((args: readonly string[]) => {
-      if (args[0] === "ps") return "old-container-id\n";
-      if (args[0] === "inspect") return JSON.stringify([inspect]);
-      return "";
-    });
+    const dockerCaptureOutput: Record<string, string> = {
+      ps: "old-container-id\n",
+      inspect: JSON.stringify([inspect]),
+    };
+    const dockerCapture = vi.fn(
+      (args: readonly string[]) => dockerCaptureOutput[args[0] ?? ""] ?? "",
+    );
     const dockerRunDetached = vi.fn((_args: readonly string[]) => ({
       status: 0,
       stdout: "new-container-id\n",
