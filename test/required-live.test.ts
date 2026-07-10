@@ -28,6 +28,11 @@ import {
   validateWorkflowDispatchDetails,
 } from "../tools/e2e/required-live.mts";
 import type { E2eRiskSignal } from "../tools/e2e/risk-signal.ts";
+import {
+  createGitHubFetchRouter,
+  githubFetchRoute,
+  type RecordedGitHubRequest,
+} from "./support/github-fetch-router.ts";
 
 const HEAD_SHA = "a".repeat(40);
 const BASE_SHA = "b".repeat(40);
@@ -132,8 +137,8 @@ function startCommand(workDir: string) {
     "--work-dir",
     workDir,
   ]);
-  if (command.mode !== "start") throw new Error("unexpected command mode");
-  return command;
+  expect(command.mode).toBe("start");
+  return command as Extract<ReturnType<typeof parseControllerCommand>, { mode: "start" }>;
 }
 
 function signal(
@@ -248,12 +253,18 @@ describe("required live E2E controller", () => {
       ...(index === 0 ? { previous_filename: "src/old-name.ts" } : {}),
     }));
     const pageTwo = [{ filename: "src/file-100.ts" }];
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input);
-      if (url.endsWith("page=1")) return githubResponse(pageOne);
-      if (url.endsWith("page=2")) return githubResponse(pageTwo);
-      throw new Error(`Unexpected request: ${url}`);
-    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter([
+        githubFetchRoute(
+          ({ url }) => url.endsWith("page=1"),
+          () => githubResponse(pageOne),
+        ),
+        githubFetchRoute(
+          ({ url }) => url.endsWith("page=2"),
+          () => githubResponse(pageTwo),
+        ),
+      ]),
+    );
 
     const files = await pullChangedFiles("NVIDIA/NemoClaw", pullRequest(101), "token");
 
@@ -320,19 +331,27 @@ describe("required live E2E controller", () => {
 
   it("dispatches every selected job through the five-field child protocol", async () => {
     const jobs = ["onboard-repair", "onboard-resume", "full-e2e", "hermes-e2e"];
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      if (String(input).endsWith("/git/ref/heads/main")) {
-        return githubResponse({
-          ref: "refs/heads/main",
-          object: { type: "commit", sha: WORKFLOW_SHA },
-        });
-      }
-      return githubResponse({
-        workflow_run_id: 23,
-        run_url: "https://api.github.com/repos/NVIDIA/NemoClaw/actions/runs/23",
-        html_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/23",
-      });
-    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter([
+        githubFetchRoute(
+          ({ url }) => url.endsWith("/git/ref/heads/main"),
+          () =>
+            githubResponse({
+              ref: "refs/heads/main",
+              object: { type: "commit", sha: WORKFLOW_SHA },
+            }),
+        ),
+        githubFetchRoute(
+          ({ url }) => url.endsWith("/actions/workflows/e2e.yaml/dispatches"),
+          () =>
+            githubResponse({
+              workflow_run_id: 23,
+              run_url: "https://api.github.com/repos/NVIDIA/NemoClaw/actions/runs/23",
+              html_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/23",
+            }),
+        ),
+      ]),
+    );
 
     await expect(
       dispatchRequiredLive({
@@ -419,41 +438,59 @@ describe("required live E2E controller", () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     vi.stubEnv("GITHUB_OUTPUT", outputPath);
-    const requests: Array<{ url: string; method: string; body?: unknown }> = [];
+    const requests: RecordedGitHubRequest[] = [];
     let gate: RequiredLiveState | undefined;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const url = String(input);
-      const method = init?.method ?? "GET";
-      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
-      requests.push({ url, method, body });
-      if (url.endsWith("/check-runs") && method === "POST") return githubResponse({ id: 17 });
-      if (url.includes("/pulls?state=open&head=")) {
-        return githubResponse([pullRequestListItem(pullRequest(BROAD_FILES.length))]);
-      }
-      if (url.includes("/pulls/42/files?")) {
-        return githubResponse(BROAD_FILES.map((filename) => ({ filename })));
-      }
-      if (url.endsWith("/pulls/42")) return githubResponse(pullRequest(BROAD_FILES.length));
-      if (url.endsWith("/git/ref/heads/main")) {
-        return githubResponse({
-          ref: "refs/heads/main",
-          object: { type: "commit", sha: WORKFLOW_SHA },
-        });
-      }
-      if (url.endsWith("/actions/workflows/e2e.yaml/dispatches")) {
-        return githubResponse({
-          workflow_run_id: 23,
-          run_url: "https://api.github.com/repos/NVIDIA/NemoClaw/actions/runs/23",
-          html_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/23",
-        });
-      }
-      if (url.endsWith("/actions/runs/23") && method === "GET") {
-        if (!gate) throw new Error("state was not loaded before finish");
-        return githubResponse(workflowRun(gate));
-      }
-      if (url.endsWith("/check-runs/17") && method === "PATCH") return githubResponse({});
-      throw new Error(`Unexpected request: ${method} ${url}`);
-    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs") && method === "POST",
+            () => githubResponse({ id: 17 }),
+          ),
+          githubFetchRoute(
+            ({ url }) => url.includes("/pulls?state=open&head="),
+            () => githubResponse([pullRequestListItem(pullRequest(BROAD_FILES.length))]),
+          ),
+          githubFetchRoute(
+            ({ url }) => url.includes("/pulls/42/files?"),
+            () => githubResponse(BROAD_FILES.map((filename) => ({ filename }))),
+          ),
+          githubFetchRoute(
+            ({ url }) => url.endsWith("/pulls/42"),
+            () => githubResponse(pullRequest(BROAD_FILES.length)),
+          ),
+          githubFetchRoute(
+            ({ url }) => url.endsWith("/git/ref/heads/main"),
+            () =>
+              githubResponse({
+                ref: "refs/heads/main",
+                object: { type: "commit", sha: WORKFLOW_SHA },
+              }),
+          ),
+          githubFetchRoute(
+            ({ url }) => url.endsWith("/actions/workflows/e2e.yaml/dispatches"),
+            () =>
+              githubResponse({
+                workflow_run_id: 23,
+                run_url: "https://api.github.com/repos/NVIDIA/NemoClaw/actions/runs/23",
+                html_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/23",
+              }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/actions/runs/23") && method === "GET",
+            () => {
+              expect(gate).toBeDefined();
+              return githubResponse(workflowRun(gate!));
+            },
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
+            () => githubResponse({}),
+          ),
+        ],
+        requests,
+      ),
+    );
 
     try {
       const command = startCommand(workDir);
@@ -526,33 +563,48 @@ describe("required live E2E controller", () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     vi.stubEnv("GITHUB_OUTPUT", outputPath);
-    const requests: Array<{ url: string; method: string; body?: unknown }> = [];
+    const requests: RecordedGitHubRequest[] = [];
     let listCalls = 0;
     let detailCalls = 0;
     const updatedPull = {
       ...pullRequest(),
       base: { ...pullRequest().base, sha: "c".repeat(40) },
     };
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const url = String(input);
-      const method = init?.method ?? "GET";
-      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
-      requests.push({ url, method, body });
-      if (url.endsWith("/check-runs") && method === "POST") return githubResponse({ id: 17 });
-      if (url.includes("/pulls?state=open&head=")) {
-        listCalls += 1;
-        return githubResponse([pullRequestListItem(listCalls === 1 ? pullRequest() : updatedPull)]);
-      }
-      if (url.includes("/pulls/42/files?")) {
-        return githubResponse([{ filename: "src/lib/onboard.ts" }]);
-      }
-      if (url.endsWith("/pulls/42")) {
-        detailCalls += 1;
-        return githubResponse(detailCalls === 1 ? pullRequest() : updatedPull);
-      }
-      if (url.endsWith("/check-runs/17") && method === "PATCH") return githubResponse({});
-      throw new Error(`Unexpected request: ${method} ${url}`);
-    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs") && method === "POST",
+            () => githubResponse({ id: 17 }),
+          ),
+          githubFetchRoute(
+            ({ url }) => url.includes("/pulls?state=open&head="),
+            () => {
+              listCalls += 1;
+              return githubResponse([
+                pullRequestListItem(listCalls === 1 ? pullRequest() : updatedPull),
+              ]);
+            },
+          ),
+          githubFetchRoute(
+            ({ url }) => url.includes("/pulls/42/files?"),
+            () => githubResponse([{ filename: "src/lib/onboard.ts" }]),
+          ),
+          githubFetchRoute(
+            ({ url }) => url.endsWith("/pulls/42"),
+            () => {
+              detailCalls += 1;
+              return githubResponse(detailCalls === 1 ? pullRequest() : updatedPull);
+            },
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
+            () => githubResponse({}),
+          ),
+        ],
+        requests,
+      ),
+    );
 
     try {
       await expect(startRequiredLive(startCommand(workDir))).rejects.toThrow(
@@ -577,43 +629,61 @@ describe("required live E2E controller", () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     vi.stubEnv("GITHUB_OUTPUT", outputPath);
-    const requests: Array<{ url: string; method: string; body?: unknown }> = [];
+    const requests: RecordedGitHubRequest[] = [];
     let checkPatches = 0;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const url = String(input);
-      const method = init?.method ?? "GET";
-      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
-      requests.push({ url, method, body });
-      if (url.endsWith("/check-runs") && method === "POST") return githubResponse({ id: 17 });
-      if (url.includes("/pulls?state=open&head=")) return githubResponse([pullRequestListItem()]);
-      if (url.includes("/pulls/42/files?")) {
-        return githubResponse([{ filename: "src/lib/onboard.ts" }]);
-      }
-      if (url.endsWith("/pulls/42")) return githubResponse(pullRequest());
-      if (url.endsWith("/git/ref/heads/main")) {
-        return githubResponse({
-          ref: "refs/heads/main",
-          object: { type: "commit", sha: WORKFLOW_SHA },
-        });
-      }
-      if (url.endsWith("/actions/workflows/e2e.yaml/dispatches")) {
-        return githubResponse({
-          workflow_run_id: 23,
-          run_url: "https://api.github.com/repos/NVIDIA/NemoClaw/actions/runs/23",
-          html_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/23",
-        });
-      }
-      if (url.endsWith("/actions/runs/23/cancel") && method === "POST") {
-        return githubResponse(undefined, 202);
-      }
-      if (url.endsWith("/check-runs/17") && method === "PATCH") {
-        checkPatches += 1;
-        return checkPatches === 1
-          ? githubResponse({ message: "simulated update failure" }, 500)
-          : githubResponse({});
-      }
-      throw new Error(`Unexpected request: ${method} ${url}`);
-    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs") && method === "POST",
+            () => githubResponse({ id: 17 }),
+          ),
+          githubFetchRoute(
+            ({ url }) => url.includes("/pulls?state=open&head="),
+            () => githubResponse([pullRequestListItem()]),
+          ),
+          githubFetchRoute(
+            ({ url }) => url.includes("/pulls/42/files?"),
+            () => githubResponse([{ filename: "src/lib/onboard.ts" }]),
+          ),
+          githubFetchRoute(
+            ({ url }) => url.endsWith("/pulls/42"),
+            () => githubResponse(pullRequest()),
+          ),
+          githubFetchRoute(
+            ({ url }) => url.endsWith("/git/ref/heads/main"),
+            () =>
+              githubResponse({
+                ref: "refs/heads/main",
+                object: { type: "commit", sha: WORKFLOW_SHA },
+              }),
+          ),
+          githubFetchRoute(
+            ({ url }) => url.endsWith("/actions/workflows/e2e.yaml/dispatches"),
+            () =>
+              githubResponse({
+                workflow_run_id: 23,
+                run_url: "https://api.github.com/repos/NVIDIA/NemoClaw/actions/runs/23",
+                html_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/23",
+              }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/actions/runs/23/cancel") && method === "POST",
+            () => githubResponse(undefined, 202),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
+            () => {
+              checkPatches += 1;
+              return checkPatches === 1
+                ? githubResponse({ message: "simulated update failure" }, 500)
+                : githubResponse({});
+            },
+          ),
+        ],
+        requests,
+      ),
+    );
 
     try {
       await expect(startRequiredLive(startCommand(workDir))).rejects.toThrow(
@@ -647,21 +717,26 @@ describe("required live E2E controller", () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     vi.stubEnv("GITHUB_OUTPUT", outputPath);
-    const requests: Array<{ url: string; method: string; body?: unknown }> = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const url = String(input);
-      const method = init?.method ?? "GET";
-      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
-      requests.push({ url, method, body });
-      if (url.endsWith("/actions/runs/23") && method === "GET") {
-        return githubResponse(workflowRun(gate, { status, conclusion: "success" }));
-      }
-      if (url.endsWith("/actions/runs/23/cancel") && method === "POST") {
-        return githubResponse(undefined, 202);
-      }
-      if (url.endsWith("/check-runs/17") && method === "PATCH") return githubResponse({});
-      throw new Error(`Unexpected request: ${method} ${url}`);
-    });
+    const requests: RecordedGitHubRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/actions/runs/23") && method === "GET",
+            () => githubResponse(workflowRun(gate, { status, conclusion: "success" })),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/actions/runs/23/cancel") && method === "POST",
+            () => githubResponse(undefined, 202),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
+            () => githubResponse({}),
+          ),
+        ],
+        requests,
+      ),
+    );
 
     try {
       await expect(
@@ -688,22 +763,25 @@ describe("required live E2E controller", () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     const gate = state();
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const url = String(input);
-      if (url.includes("/actions/workflows/e2e.yaml/runs?")) {
-        return githubResponse({
-          workflow_runs: [
-            workflowRun(gate, { status: "in_progress" }),
-            workflowRun(gate, { id: 24, status: "completed" }),
-            workflowRun(gate, { id: 25, status: "queued", display_title: "E2E manual" }),
-          ],
-        });
-      }
-      if (url.endsWith("/actions/runs/23/cancel") && init?.method === "POST") {
-        return githubResponse(undefined, 202);
-      }
-      throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
-    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter([
+        githubFetchRoute(
+          ({ url }) => url.includes("/actions/workflows/e2e.yaml/runs?"),
+          () =>
+            githubResponse({
+              workflow_runs: [
+                workflowRun(gate, { status: "in_progress" }),
+                workflowRun(gate, { id: 24, status: "completed" }),
+                workflowRun(gate, { id: 25, status: "queued", display_title: "E2E manual" }),
+              ],
+            }),
+        ),
+        githubFetchRoute(
+          ({ url, method }) => url.endsWith("/actions/runs/23/cancel") && method === "POST",
+          () => githubResponse(undefined, 202),
+        ),
+      ]),
+    );
 
     await expect(cancelRequiredLive(42)).resolves.toBe(1);
     expect(
@@ -718,14 +796,22 @@ describe("required live E2E controller", () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     vi.stubEnv("GITHUB_OUTPUT", outputPath);
-    const requests: Array<{ url: string; body?: unknown }> = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      requests.push({
-        url: String(input),
-        body: init?.body ? JSON.parse(String(init.body)) : undefined,
-      });
-      return githubResponse(undefined, String(input).endsWith("/cancel") ? 202 : 200);
-    });
+    const requests: RecordedGitHubRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/actions/runs/23/cancel") && method === "POST",
+            () => githubResponse(undefined, 202),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
+            () => githubResponse(undefined),
+          ),
+        ],
+        requests,
+      ),
+    );
 
     try {
       await abandonRequiredLive(17, 23);
