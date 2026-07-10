@@ -79,6 +79,9 @@ Three checks, all LLM judgments. See `checks/tier-2-quality.md`.
 
 ### Step 7: Weighted score
 
+- Build the Tier 0 eligibility set from exactly these six boolean keys: `state_open`, `ci_green_latest_sha`, `mergeable`, `contributor_compliance`, `branch_protection`, and `coderabbit_threads_resolved`.
+- Stop if any candidate omits a key, adds an unknown key, or supplies a non-boolean value.
+- Only PRs for which all six gates are `true` enter happy-path scoring.
 - Each pass = full points
 - Each yellow = half points
 - Each fail = zero
@@ -87,11 +90,11 @@ Three checks, all LLM judgments. See `checks/tier-2-quality.md`.
 
 ### Step 8: Tier 3 ranking
 
-Branch on whether any PR passes all Tier 0 gates. See `tiebreakers.md` for happy-path tiebreakers, degraded-mode distance-to-ready ranking, and the behavior-coverage matrix.
+Derive the mode from the Tier 0 eligibility set rather than accepting a caller-provided mode. In happy mode, set `winner` only to a PR in that set and leave `closest_to_ready` null. In degraded mode, leave `winner` null and use `closest_to_ready` only for an open, contributor-compliant salvage candidate. See `tiebreakers.md` for happy-path tiebreakers, degraded-mode distance-to-ready ranking, and the behavior-coverage matrix.
 
 ### Step 9: Emit verdict
 
-Use `templates/verdict.md`. Every judgment must carry evidence (file:line refs, diff snippets), reasoning chain, and the score it contributed.
+Use `templates/verdict.md`. Pass the generated spec through `scripts/render-verdict.py`; do not render or recommend a merge if it exits nonzero. The renderer independently validates the six gates, recomputes eligibility and mode, and rejects a `winner` outside the eligible set. Every judgment must carry evidence (file:line refs, diff snippets), reasoning chain, and the score it contributed.
 
 ## Reference files
 
