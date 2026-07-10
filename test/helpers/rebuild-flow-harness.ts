@@ -134,7 +134,7 @@ export type RebuildFlowHarness = {
   executeSandboxCommandSpy: MockInstance;
   ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
   logSpy: MockInstance;
-  markStepFailedSpy: MockInstance;
+  finalizeIncompleteOnboardStepSpy: MockInstance;
   openShieldsSpy: MockInstance;
   onboardSpy: MockInstance;
   preflightAuthoritativeRebuildTargetSpy: MockInstance;
@@ -229,15 +229,18 @@ function createRebuildFlowSession(machineSnapshotVersion: number): RebuildFlowSe
 }
 
 function installTerminalStepFailureMock(
-  onboardSession: { markStepFailed: (...args: unknown[]) => unknown },
+  onboardSession: { finalizeIncompleteOnboardStep: (...args: unknown[]) => unknown },
   session: RebuildFlowSession,
 ): MockInstance {
   return vi
-    .spyOn(onboardSession, "markStepFailed")
-    .mockImplementation((stepName: unknown, message: unknown, options: unknown) => {
+    .spyOn(onboardSession, "finalizeIncompleteOnboardStep")
+    .mockImplementation((stepName: unknown, message: unknown) => {
+      if (session.machine.state === "failed" || session.machine.state === "complete") {
+        return session;
+      }
       const stepKey = String(stepName);
-      const step = session.steps[stepKey] ?? createStep("pending");
-      session.steps[stepKey] = step;
+      const step = session.steps[stepKey];
+      if (!step) return session;
       step.status = "failed";
       step.error = typeof message === "string" ? message : null;
       session.status = "failed";
@@ -246,10 +249,8 @@ function installTerminalStepFailureMock(
         message: typeof message === "string" ? message : null,
         recordedAt: "2026-06-01T00:02:00.000Z",
       };
-      const updateMachine =
-        (options as { updateMachine?: boolean } | undefined)?.updateMachine === true;
-      session.machine.state = updateMachine ? "failed" : session.machine.state;
-      session.machine.revision += updateMachine ? 1 : 0;
+      session.machine.state = "failed";
+      session.machine.revision += 1;
       return session;
     });
 }
@@ -329,7 +330,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const releaseOnboardLockSpy = vi
     .spyOn(onboardSession, "releaseOnboardLock")
     .mockImplementation(() => undefined);
-  const markStepFailedSpy = installTerminalStepFailureMock(onboardSession, session);
+  const finalizeIncompleteOnboardStepSpy = installTerminalStepFailureMock(onboardSession, session);
   session.sandboxName = overrides.sessionSandboxName ?? session.sandboxName;
   const sandboxEntry = {
     name: "alpha",
@@ -433,6 +434,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     failedDirs: [],
     failedFiles: [],
     manifest: {
+      agentType: overrides.agentName ?? "openclaw",
       backupPath: "/tmp/nemoclaw-rebuild-backup",
       timestamp: "2026-06-01T00:00:00.000Z",
       policyPresets: overrides.backupPolicyPresets ?? ["npm", "bad", "throw"],
@@ -453,16 +455,18 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   vi.spyOn(sandboxState, "hasPositiveManagedImageEvidence").mockReturnValue(
     overrides.managedImageEvidence ?? true,
   );
-  const restoreSandboxStateSpy = vi.spyOn(sandboxState, "restoreSandboxState").mockImplementation(
-    overrides.restoreSandboxState ??
-      (() => ({
-        success: true,
-        restoredDirs: ["workspace"],
-        restoredFiles: ["user.md"],
-        failedDirs: [],
-        failedFiles: [],
-      })),
-  );
+  const restoreSandboxStateSpy = vi
+    .spyOn(sandboxState, "restoreRecreatedSandboxState")
+    .mockImplementation(
+      overrides.restoreSandboxState ??
+        (() => ({
+          success: true,
+          restoredDirs: ["workspace"],
+          restoredFiles: ["user.md"],
+          failedDirs: [],
+          failedFiles: [],
+        })),
+    );
   const runOpenshellSpy = vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args) => {
     const argv = args as string[];
     return argv[0] === "provider" && argv[1] === "get"
@@ -627,7 +631,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     executeSandboxCommandSpy,
     ensureMessagingHostForwardAfterRebuildSpy,
     logSpy,
-    markStepFailedSpy,
+    finalizeIncompleteOnboardStepSpy,
     openShieldsSpy,
     onboardSpy,
     preflightAuthoritativeRebuildTargetSpy,

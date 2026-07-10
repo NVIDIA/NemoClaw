@@ -5,6 +5,7 @@ import { Buffer } from "node:buffer";
 
 import { normalizeProviderPlaceholderForEnvKey } from "../../../src/lib/messaging/provider-placeholders.ts";
 import { readToolDisclosureEnv } from "../../../src/lib/tool-disclosure.ts";
+import { isObjectRecord } from "./object-record.ts";
 
 export type HermesWebSearchProvider = "tavily";
 
@@ -90,7 +91,7 @@ function readMessagingCredentialPlaceholders(
     "NEMOCLAW_MESSAGING_PLAN_B64",
     "bnVsbA==",
   );
-  if (!isRecord(plan) || plan.agent !== "hermes") return [];
+  if (!isObjectRecord(plan) || plan.agent !== "hermes") return [];
   if (planHasEnvLineRender(plan)) return [];
 
   const channels = Array.isArray(plan.channels) ? plan.channels : [];
@@ -101,7 +102,7 @@ function readMessagingCredentialPlaceholders(
   );
   const activeChannels = new Set(
     channels.flatMap((channel) => {
-      if (!isRecord(channel)) return [];
+      if (!isObjectRecord(channel)) return [];
       const channelId = typeof channel.channelId === "string" ? channel.channelId : "";
       return channelId &&
         channel.active === true &&
@@ -115,7 +116,7 @@ function readMessagingCredentialPlaceholders(
   const placeholders = new Map<string, string>();
 
   for (const binding of bindings) {
-    if (!isRecord(binding)) continue;
+    if (!isObjectRecord(binding)) continue;
     const channelId = typeof binding.channelId === "string" ? binding.channelId : "";
     const envKey = typeof binding.providerEnvKey === "string" ? binding.providerEnvKey : "";
     const placeholder = typeof binding.placeholder === "string" ? binding.placeholder : "";
@@ -134,15 +135,11 @@ function readMessagingCredentialPlaceholders(
   return [...placeholders].map(([envKey, placeholder]) => ({ envKey, placeholder }));
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function isSafeEnvKey(value: string): boolean {
   return /^[A-Z_][A-Z0-9_]*$/.test(value);
 }
 
-function planHasEnvLineRender(plan: Record<string, unknown> | null): boolean {
-  const renderEntries = Array.isArray(plan?.agentRender) ? plan.agentRender : [];
-  return renderEntries.some((entry) => isRecord(entry) && entry.kind === "env-lines");
+function planHasEnvLineRender(plan: Record<string, unknown>): boolean {
+  const renderEntries = Array.isArray(plan.agentRender) ? plan.agentRender : [];
+  return renderEntries.some((entry) => isObjectRecord(entry) && entry.kind === "env-lines");
 }

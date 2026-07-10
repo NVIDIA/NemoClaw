@@ -86,12 +86,11 @@ export type NativeGpuFallbackCleanupDeps = {
  * `sandbox-gpu-cleanup-verification.test.ts`; the live fallback scenario proves
  * the same boundary against OpenShell.
  *
- * Retire ordinary-Linux automatic fallback only when the minimum supported
- * OpenShell is greater than 0.0.72 and that pinned minimum passes native GPU
- * create, readiness, and CUDA proof across every supported ordinary-Linux
- * environment. This is a version-bound acceptance gate, not a claim about an
- * unverified future release. Docker Desktop WSL and Jetson/Tegra compatibility
- * retirement remain separately gated by their native support.
+ * The ordinary-Linux fallback plan is reachable only through the operator's
+ * explicit `NEMOCLAW_DOCKER_GPU_PATCH=fallback` control. Trusted diagnostics
+ * classify a failure after that authorization; they never grant the broader
+ * compatibility envelope themselves. Docker Desktop WSL and Jetson/Tegra
+ * compatibility retirement remain separately gated by their native support.
  */
 export function isNativeGpuCreatePreBuildRejection(output: string): boolean {
   const text = String(output ?? "");

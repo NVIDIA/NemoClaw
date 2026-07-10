@@ -31,9 +31,16 @@ export type DockerGpuRouteOptions = {
  * - removalCondition: remove after a breaking release explicitly retires legacy nonzero values.
  */
 function warnForLegacyNonzeroControl(control: string, log: (message: string) => void): void {
-  if (control === "" || control === "0" || control === "1" || control === "auto") return;
+  if (
+    control === "" ||
+    control === "0" ||
+    control === "1" ||
+    control === "auto" ||
+    control === "fallback"
+  )
+    return;
   log(
-    `  Warning: unrecognized NEMOCLAW_DOCKER_GPU_PATCH value '${control}'; preserving legacy compatibility-only behavior. Use 0, 1, or auto.`,
+    `  Warning: unrecognized NEMOCLAW_DOCKER_GPU_PATCH value '${control}'; preserving legacy compatibility-only behavior. Use 0, 1, auto, or fallback.`,
   );
 }
 
@@ -71,8 +78,8 @@ export function resolveDockerGpuRoutePlan(
   if (config.hostGpuPlatform === "jetson") {
     return control === "0" ? "native-only" : "compatibility-only";
   }
-  if (control === "0") return "native-only";
-  if (control === "" || control === "auto") return "native-with-fallback";
+  if (control === "fallback") return "native-with-fallback";
+  if (control === "" || control === "auto" || control === "0") return "native-only";
 
   // Before native routing was introduced, every nonzero value enabled the
   // compatibility patch. Preserve that automation contract, including values

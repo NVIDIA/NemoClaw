@@ -318,6 +318,8 @@ describe("sandbox BuildKit prebuild", () => {
   it("uses the argv-based Docker helper and returns the local image on success", async () => {
     const { buildCtx, createArgs, dockerfile } = createBuildContext();
     const buildImage = vi.fn(async () => 0);
+    const resolvedBuildCtx = fs.realpathSync(buildCtx);
+    const resolvedDockerfile = fs.realpathSync(dockerfile);
     const result = await prebuildSandboxImageIfEligible({
       buildCtx,
       buildId: BUILD_ID,
@@ -334,12 +336,11 @@ describe("sandbox BuildKit prebuild", () => {
     expect(buildImage).toHaveBeenCalledWith(
       [
         "build",
-        "--progress=plain",
         "-t",
         "nemoclaw-sandbox-local:alpha-1234567890",
         "-f",
-        fs.realpathSync(dockerfile),
-        fs.realpathSync(buildCtx),
+        resolvedDockerfile,
+        resolvedBuildCtx,
       ],
       expect.objectContaining({
         env: expect.objectContaining({ DOCKER_BUILDKIT: "1" }),

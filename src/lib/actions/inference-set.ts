@@ -132,6 +132,7 @@ const SUPPORTED_PROVIDER_NAMES = [
   "nvidia-nim",
   "nvidia-router",
   "openai-api",
+  "openrouter-api",
   "anthropic-prod",
   "compatible-anthropic-endpoint",
   "gemini-api",
@@ -160,6 +161,9 @@ const INSTALLER_PROVIDER_ALIASES: Readonly<Record<string, string>> = {
   build: "nvidia-prod",
   cloud: "nvidia-prod",
   openai: "openai-api",
+  "open-router": "openrouter-api",
+  openrouter: "openrouter-api",
+  openrouterai: "openrouter-api",
   anthropic: "anthropic-prod",
   gemini: "gemini-api",
   // Hermes Provider (Nous portal) is reachable under several onboard synonyms;
@@ -345,6 +349,28 @@ function updateAgentPrimary(config: ConfigObject, primaryModelRef: string): void
   const defaults = ensureObject(agents, "defaults");
   const model = ensureObject(defaults, "model");
   model.primary = primaryModelRef;
+  updatePrimaryAgentListModel(agents, primaryModelRef);
+}
+
+function updatePrimaryAgentListModel(agents: ConfigObject, primaryModelRef: string): void {
+  const list = agents.list;
+  if (!Array.isArray(list)) return;
+  let defaultAgent: ConfigObject | undefined;
+  for (const entry of list) {
+    if (!isConfigObject(entry)) continue;
+    if (entry.id === "main") {
+      if (typeof entry.model === "string") {
+        entry.model = primaryModelRef;
+      }
+      return;
+    }
+    if (!defaultAgent && entry.default === true) {
+      defaultAgent = entry;
+    }
+  }
+  if (defaultAgent && typeof defaultAgent.model === "string") {
+    defaultAgent.model = primaryModelRef;
+  }
 }
 
 function buildProviderConfig(

@@ -20,6 +20,7 @@ describe("Docker GPU route rendering", () => {
   it.each([
     [GPU_CONFIG, {}, false],
     [GPU_CONFIG, { NEMOCLAW_DOCKER_GPU_PATCH: "auto" }, false],
+    [GPU_CONFIG, { NEMOCLAW_DOCKER_GPU_PATCH: "fallback" }, false],
     [GPU_CONFIG, { NEMOCLAW_DOCKER_GPU_PATCH: "0" }, false],
     [GPU_CONFIG, { NEMOCLAW_DOCKER_GPU_PATCH: "1" }, true],
     [{ sandboxGpuEnabled: false }, {}, false],

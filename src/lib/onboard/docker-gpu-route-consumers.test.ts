@@ -10,6 +10,7 @@ import {
   verifyDockerGpuSandboxLocalInference,
   verifyGpuSandboxAfterReady,
 } from "./docker-gpu-local-inference";
+import { resolveDockerGpuRoutePlan } from "./docker-gpu-route";
 import { prepareSandboxGpuRoutePolicies } from "./sandbox-gpu-route-policy";
 
 const GPU_CONFIG = { sandboxGpuEnabled: true };
@@ -27,11 +28,16 @@ describe("route-specific policy materialization", () => {
       appliedPresets: ["github"],
       cleanup: options?.dockerGpuPatch ? compatibilityCleanup : nativeCleanup,
     }));
+    const explicitFallbackPlan = resolveDockerGpuRoutePlan(GPU_CONFIG, {
+      dockerDriverGateway: true,
+      env: { NEMOCLAW_DOCKER_GPU_PATCH: "fallback" },
+      platform: "linux",
+    });
     const policies = prepareSandboxGpuRoutePolicies(
       "/repo/policy.yaml",
       ["telegram"],
       { directGpu: true, additionalPresets: ["github"] },
-      "native-with-fallback",
+      explicitFallbackPlan,
       preparePolicy,
     );
 
@@ -52,6 +58,35 @@ describe("route-specific policy materialization", () => {
     expect(policies.initialSandboxPolicy.cleanup?.()).toBe(true);
     expect(nativeCleanup).toHaveBeenCalledOnce();
     expect(compatibilityCleanup).toHaveBeenCalledOnce();
+  });
+
+  it("does not materialize a broader compatibility policy for ordinary Linux defaults (#6110)", () => {
+    const preparePolicy = vi.fn((_base, _channels, options) => ({
+      policyPath: options?.dockerGpuPatch ? "/tmp/compatibility.yaml" : "/tmp/native.yaml",
+      appliedPresets: [],
+    }));
+    const defaultPlan = resolveDockerGpuRoutePlan(GPU_CONFIG, {
+      dockerDriverGateway: true,
+      env: { NEMOCLAW_DOCKER_GPU_PATCH: "auto" },
+      platform: "linux",
+    });
+
+    const policies = prepareSandboxGpuRoutePolicies(
+      "/repo/policy.yaml",
+      [],
+      { directGpu: true },
+      defaultPlan,
+      preparePolicy,
+    );
+
+    expect(defaultPlan).toBe("native-only");
+    expect(preparePolicy).toHaveBeenCalledOnce();
+    expect(preparePolicy).toHaveBeenCalledWith(
+      "/repo/policy.yaml",
+      [],
+      expect.objectContaining({ dockerGpuPatch: false }),
+    );
+    expect(policies.compatibilityPolicyPath).toBeNull();
   });
 
   it("cleans the initial temporary policy when fallback policy materialization fails", () => {

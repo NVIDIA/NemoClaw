@@ -89,7 +89,7 @@ function gpuRouteLogMessage(
         ? "  Jetson sandbox GPU enabled; using NVIDIA Container Runtime instead of CDI/--gpus."
         : "  Docker-driver GPU patch active; allowing /proc writes required by Docker GPU initialization.";
     case "native-with-fallback":
-      return "  Automatic sandbox GPU enabled; trying native OpenShell injection with compatibility fallback.";
+      return "  Operator-authorized GPU fallback enabled; trying native OpenShell injection with one compatibility retry.";
     case "native-only":
       return "  Direct sandbox GPU enabled; allowing OpenShell GPU policy enrichment.";
     default: {

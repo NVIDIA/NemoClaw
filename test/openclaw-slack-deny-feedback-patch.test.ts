@@ -93,14 +93,15 @@ function runGuardProbe(
   options: {
     loadMode?: "require" | "import";
     requireGuardTwice?: boolean;
-    withWhatsappPreload?: boolean;
+    whatsappPreloadOrder?: "before-slack" | "after-slack";
   } = {},
 ) {
   const script = `
 const guard = ${JSON.stringify(SLACK_GUARD)};
-${options.withWhatsappPreload ? `require(${JSON.stringify(WHATSAPP_QR_COMPACT)});` : ""}
+${options.whatsappPreloadOrder === "before-slack" ? `require(${JSON.stringify(WHATSAPP_QR_COMPACT)});` : ""}
 require(guard);
 ${options.requireGuardTwice ? "require(guard);" : ""}
+${options.whatsappPreloadOrder === "after-slack" ? `require(${JSON.stringify(WHATSAPP_QR_COMPACT)});` : ""}
 const { pathToFileURL } = require("node:url");
 let prepareSlackMessage;
 async function loadPrepareSlackMessage() {
@@ -258,7 +259,7 @@ describe("OpenClaw Slack denial-feedback patch", () => {
     try {
       const { result, output } = runGuardProbe(prepareFile, {
         loadMode: "import",
-        withWhatsappPreload: true,
+        whatsappPreloadOrder: "before-slack",
       });
       expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
       expect(fs.readFileSync(prepareFile, "utf-8")).not.toContain(
@@ -273,6 +274,26 @@ describe("OpenClaw Slack denial-feedback patch", () => {
         channel: "C1",
         user: "U999DENIED",
       });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("composes Slack-before-WhatsApp synchronous loaders for ESM imports (#6467)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-whatsapp-loaders-"));
+    const prepareFile = writeSlackPackage(tmp, { moduleType: "esm" });
+    try {
+      const { result, output } = runGuardProbe(prepareFile, {
+        loadMode: "import",
+        whatsappPreloadOrder: "after-slack",
+      });
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(result.stderr).not.toMatch(/loadSync|returned for the "source" from the "load" hook/u);
+
+      const mention = output?.mention as { result: unknown; calls: FeedbackCall[] };
+      expect(mention.result).toBeNull();
+      expect(mention.calls).toHaveLength(1);
+      expect(mention.calls[0].method).toBe("chat.postEphemeral");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

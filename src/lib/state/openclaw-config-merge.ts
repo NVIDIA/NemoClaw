@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isRecord } from "../core/json-types.js";
+import { isPlainObject } from "../core/json-types.js";
 import { listOpenClawManagedChannelNames } from "../messaging/channels/index.js";
+import type { OpenClawImagePluginInstall } from "./openclaw-plugin-restore.js";
 
 const MANAGED_OPENCLAW_CHANNEL_NAMES = listOpenClawManagedChannelNames();
 
@@ -48,10 +49,6 @@ const MANAGED_WEB_SEARCH_PLUGIN_ENTRIES = new Set<string>(
   OPENCLAW_CONFIG_RESTORE_OWNERSHIP.managedWebSearchPluginEntries,
 );
 
-function isPlainJsonObject(value: unknown): value is Record<string, unknown> {
-  return isRecord(value);
-}
-
 function cloneJson<T>(value: T): T {
   if (value === undefined) return undefined as T;
   return JSON.parse(JSON.stringify(value)) as T;
@@ -64,7 +61,7 @@ function mergeJsonObjects(
   const merged: Record<string, unknown> = cloneJson(base);
   for (const [key, value] of Object.entries(overlay)) {
     const existing = merged[key];
-    if (isPlainJsonObject(existing) && isPlainJsonObject(value)) {
+    if (isPlainObject(existing) && isPlainObject(value)) {
       merged[key] = mergeJsonObjects(existing, value);
     } else {
       merged[key] = cloneJson(value);
@@ -73,23 +70,27 @@ function mergeJsonObjects(
   return merged;
 }
 
-function mergeOpenClawChannels(backupChannels: unknown, currentChannels: unknown): unknown {
-  if (!isPlainJsonObject(backupChannels)) return cloneJson(currentChannels);
+function mergeOpenClawChannels(
+  backupChannels: unknown,
+  currentChannels: unknown,
+  previousImagePluginIds?: ReadonlySet<string>,
+): unknown {
+  if (!isPlainObject(backupChannels)) return cloneJson(currentChannels);
 
-  const merged: Record<string, unknown> = isPlainJsonObject(currentChannels)
+  const merged: Record<string, unknown> = isPlainObject(currentChannels)
     ? cloneJson(currentChannels)
     : {};
 
   for (const [key, value] of Object.entries(backupChannels)) {
     if (key === "defaults") {
       merged[key] =
-        isPlainJsonObject(value) && isPlainJsonObject(merged[key])
+        isPlainObject(value) && isPlainObject(merged[key])
           ? mergeJsonObjects(merged[key] as Record<string, unknown>, value)
           : cloneJson(value);
       continue;
     }
 
-    if (MANAGED_OPENCLAW_CHANNELS.has(key)) {
+    if (MANAGED_OPENCLAW_CHANNELS.has(key) || previousImagePluginIds?.has(key)) {
       // Freshly generated channel blocks carry current OpenShell placeholder
       // revisions and current start/stop/add/remove state. Never resurrect a
       // managed channel that the fresh config omitted, and never overwrite a
@@ -99,7 +100,7 @@ function mergeOpenClawChannels(backupChannels: unknown, currentChannels: unknown
 
     const existing = merged[key];
     merged[key] =
-      isPlainJsonObject(existing) && isPlainJsonObject(value)
+      isPlainObject(existing) && isPlainObject(value)
         ? mergeJsonObjects(existing, value)
         : cloneJson(value);
   }
@@ -109,11 +110,13 @@ function mergeOpenClawChannels(backupChannels: unknown, currentChannels: unknown
 function mergeOpenClawEntryMap(
   backupEntries: unknown,
   currentEntries: unknown,
+  previousImagePluginIds?: ReadonlySet<string>,
 ): Record<string, unknown> | undefined {
-  if (!isPlainJsonObject(backupEntries) && !isPlainJsonObject(currentEntries)) return undefined;
+  if (!isPlainObject(backupEntries) && !isPlainObject(currentEntries)) return undefined;
   const merged: Record<string, unknown> = {};
-  if (isPlainJsonObject(backupEntries)) {
+  if (isPlainObject(backupEntries)) {
     for (const [key, value] of Object.entries(backupEntries)) {
+      if (previousImagePluginIds?.has(key)) continue;
       // Search-provider plugins are selected by the fresh rebuild. Omitting
       // one is meaningful: provider switches and disablement must not restore
       // a stale Brave/Tavily entry from the durable snapshot.
@@ -121,7 +124,7 @@ function mergeOpenClawEntryMap(
       merged[key] = cloneJson(value);
     }
   }
-  if (isPlainJsonObject(currentEntries)) {
+  if (isPlainObject(currentEntries)) {
     // Current generated entries win so rebuild does not restore stale runtime
     // placeholders, model routing, or plugin enablement for NemoClaw-managed ids.
     Object.assign(merged, cloneJson(currentEntries));
@@ -129,16 +132,110 @@ function mergeOpenClawEntryMap(
   return merged;
 }
 
+function mergeOpenClawPluginLoad(
+  backupLoad: unknown,
+  currentLoad: unknown,
+  previousImagePluginLoadPaths?: ReadonlySet<string>,
+): Record<string, unknown> | undefined {
+  const backup = isPlainObject(backupLoad) ? backupLoad : {};
+  const current = isPlainObject(currentLoad) ? currentLoad : {};
+  const merged = mergeJsonObjects(current, backup);
+  const currentPaths = Array.isArray(current.paths)
+    ? current.paths.filter((entry): entry is string => typeof entry === "string")
+    : [];
+  const backupPaths = Array.isArray(backup.paths)
+    ? backup.paths.filter(
+        (entry): entry is string =>
+          typeof entry === "string" && !previousImagePluginLoadPaths?.has(entry),
+      )
+    : [];
+  const paths = [...new Set([...currentPaths, ...backupPaths])];
+  if (Array.isArray(current.paths) || Array.isArray(backup.paths)) merged.paths = paths;
+  else delete merged.paths;
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+function stringArray(value: unknown): string[] | undefined {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : undefined;
+}
+
+function mergeOpenClawPluginIdList(
+  backupValue: unknown,
+  currentValue: unknown,
+  previousImagePluginIds?: ReadonlySet<string>,
+  currentOppositeIds: ReadonlySet<string> = new Set(),
+): string[] | undefined {
+  const backup = stringArray(backupValue);
+  const current = stringArray(currentValue);
+  if (!backup && !current) return undefined;
+  return [
+    ...new Set([
+      ...(current ?? []),
+      ...(backup ?? []).filter(
+        (id) => !previousImagePluginIds?.has(id) && !currentOppositeIds.has(id),
+      ),
+    ]),
+  ];
+}
+
+function mergeOpenClawPluginSlots(
+  backupSlots: unknown,
+  currentSlots: unknown,
+  previousImagePluginIds?: ReadonlySet<string>,
+): Record<string, unknown> | undefined {
+  if (!isPlainObject(backupSlots) && !isPlainObject(currentSlots)) return undefined;
+  const merged: Record<string, unknown> = {};
+  if (isPlainObject(backupSlots)) {
+    for (const [key, value] of Object.entries(backupSlots)) {
+      if (typeof value === "string" && previousImagePluginIds?.has(value)) continue;
+      merged[key] = cloneJson(value);
+    }
+  }
+  if (isPlainObject(currentSlots)) Object.assign(merged, cloneJson(currentSlots));
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+type OpenClawImagePluginOwnership = {
+  ids?: ReadonlySet<string>;
+  loadPaths?: ReadonlySet<string>;
+};
+
+function imagePluginOwnership(
+  installs?: readonly OpenClawImagePluginInstall[],
+): OpenClawImagePluginOwnership {
+  if (installs === undefined) return {};
+  const ids = new Set<string>();
+  const loadPaths = new Set<string>();
+  for (const install of installs) {
+    if (!Array.isArray(install.loadPaths)) {
+      throw new Error("OpenClaw image plugin provenance is missing explicit load paths");
+    }
+    ids.add(install.id);
+    for (const loadPath of install.loadPaths) loadPaths.add(loadPath);
+  }
+  return { ids, loadPaths };
+}
+
+function removedImagePluginIds(
+  previous: OpenClawImagePluginOwnership,
+  fresh: OpenClawImagePluginOwnership,
+): ReadonlySet<string> | undefined {
+  if (!previous.ids) return undefined;
+  return new Set([...previous.ids].filter((id) => !fresh.ids?.has(id)));
+}
+
 function mergeOpenClawTools(backupTools: unknown, currentTools: unknown): unknown {
-  if (!isPlainJsonObject(backupTools)) return cloneJson(currentTools);
-  if (!isPlainJsonObject(currentTools) && currentTools !== undefined && currentTools !== null) {
+  if (!isPlainObject(backupTools)) return cloneJson(currentTools);
+  if (!isPlainObject(currentTools) && currentTools !== undefined && currentTools !== null) {
     return cloneJson(currentTools);
   }
-  const current = isPlainJsonObject(currentTools) ? currentTools : {};
+  const current = isPlainObject(currentTools) ? currentTools : {};
 
   const merged = mergeJsonObjects(current, backupTools);
-  const backupWeb = isPlainJsonObject(backupTools.web) ? backupTools.web : {};
-  const currentWeb = isPlainJsonObject(current.web) ? current.web : {};
+  const backupWeb = isPlainObject(backupTools.web) ? backupTools.web : {};
+  const currentWeb = isPlainObject(current.web) ? current.web : {};
   const mergedWeb = mergeJsonObjects(currentWeb, backupWeb);
 
   // The fresh generator owns tools.web.search, including omission when web
@@ -159,7 +256,7 @@ function mergeOpenClawTools(backupTools: unknown, currentTools: unknown): unknow
 }
 
 function modelEntryId(entry: unknown): string | null {
-  if (isPlainJsonObject(entry) && typeof entry.id === "string") return entry.id;
+  if (isPlainObject(entry) && typeof entry.id === "string") return entry.id;
   return null;
 }
 
@@ -204,14 +301,14 @@ function mergeOpenClawModelArray(backupModels: unknown, currentModels: unknown):
   if (Array.isArray(backupModels)) {
     for (const entry of backupModels) {
       const id = modelEntryId(entry);
-      if (id && isPlainJsonObject(entry) && !backupById.has(id)) backupById.set(id, entry);
+      if (id && isPlainObject(entry) && !backupById.has(id)) backupById.set(id, entry);
     }
   }
 
   return currentModels.map((entry) => {
     const id = modelEntryId(entry);
     const backupMatch = id ? backupById.get(id) : undefined;
-    if (backupMatch && isPlainJsonObject(entry)) return mergeOpenClawModelEntry(backupMatch, entry);
+    if (backupMatch && isPlainObject(entry)) return mergeOpenClawModelEntry(backupMatch, entry);
     return cloneJson(entry);
   });
 }
@@ -243,9 +340,9 @@ function mergeOpenClawProviderMap(
   backupProviders: unknown,
   currentProviders: unknown,
 ): Record<string, unknown> | undefined {
-  if (!isPlainJsonObject(backupProviders) && !isPlainJsonObject(currentProviders)) return undefined;
-  const backup = isPlainJsonObject(backupProviders) ? backupProviders : {};
-  const current = isPlainJsonObject(currentProviders) ? currentProviders : {};
+  if (!isPlainObject(backupProviders) && !isPlainObject(currentProviders)) return undefined;
+  const backup = isPlainObject(backupProviders) ? backupProviders : {};
+  const current = isPlainObject(currentProviders) ? currentProviders : {};
 
   const merged: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(backup)) {
@@ -254,7 +351,7 @@ function mergeOpenClawProviderMap(
   for (const [key, value] of Object.entries(current)) {
     const backupEntry = backup[key];
     merged[key] =
-      isPlainJsonObject(backupEntry) && isPlainJsonObject(value)
+      isPlainObject(backupEntry) && isPlainObject(value)
         ? mergeOpenClawProviderEntry(backupEntry, value)
         : cloneJson(value);
   }
@@ -262,8 +359,8 @@ function mergeOpenClawProviderMap(
 }
 
 function mergeOpenClawModels(backupModels: unknown, currentModels: unknown): unknown {
-  if (!isPlainJsonObject(backupModels)) return cloneJson(currentModels);
-  if (!isPlainJsonObject(currentModels)) return cloneJson(backupModels);
+  if (!isPlainObject(backupModels)) return cloneJson(currentModels);
+  if (!isPlainObject(currentModels)) return cloneJson(backupModels);
 
   const merged = mergeJsonObjects(currentModels, backupModels);
   const providers = mergeOpenClawProviderMap(backupModels.providers, currentModels.providers);
@@ -271,23 +368,77 @@ function mergeOpenClawModels(backupModels: unknown, currentModels: unknown): unk
   return merged;
 }
 
-function mergeOpenClawPlugins(backupPlugins: unknown, currentPlugins: unknown): unknown {
-  if (!isPlainJsonObject(backupPlugins)) return cloneJson(currentPlugins);
-  const current = isPlainJsonObject(currentPlugins) ? currentPlugins : {};
-
-  const merged = mergeJsonObjects(current, backupPlugins);
-  const entries = mergeOpenClawEntryMap(backupPlugins.entries, current.entries);
+function mergeOpenClawPlugins(
+  backupPlugins: unknown,
+  currentPlugins: unknown,
+  previousOwnership: OpenClawImagePluginOwnership,
+  freshOwnership: OpenClawImagePluginOwnership,
+): Record<string, unknown> | undefined {
+  if (!isPlainObject(backupPlugins) && !isPlainObject(currentPlugins)) return undefined;
+  const backup = isPlainObject(backupPlugins) ? backupPlugins : {};
+  const current = isPlainObject(currentPlugins) ? currentPlugins : {};
+  const merged = mergeJsonObjects(current, backup);
+  // OpenClaw injects install records only into transient command snapshots. Its
+  // durable ledger is separate, so never write this synthetic map to openclaw.json.
+  delete merged.installs;
+  const entries = mergeOpenClawEntryMap(backup.entries, current.entries, previousOwnership.ids);
   if (entries) merged.entries = entries;
-  return merged;
+  else delete merged.entries;
+
+  const currentAllow = stringArray(current.allow);
+  const currentDeny = stringArray(current.deny);
+  const removedIds = removedImagePluginIds(previousOwnership, freshOwnership);
+  const backupAllowOwnedIds = currentAllow ? previousOwnership.ids : removedIds;
+  const backupDenyOwnedIds = currentDeny ? previousOwnership.ids : removedIds;
+  const allow = mergeOpenClawPluginIdList(
+    backup.allow,
+    current.allow,
+    backupAllowOwnedIds,
+    new Set(currentDeny ?? []),
+  );
+  if (allow && allow.length > 0) merged.allow = allow;
+  else delete merged.allow;
+  const deny = mergeOpenClawPluginIdList(
+    backup.deny,
+    current.deny,
+    backupDenyOwnedIds,
+    new Set(currentAllow ?? []),
+  );
+  if (deny && deny.length > 0) merged.deny = deny;
+  else delete merged.deny;
+
+  const slots = mergeOpenClawPluginSlots(backup.slots, current.slots, previousOwnership.ids);
+  if (slots) merged.slots = slots;
+  else delete merged.slots;
+
+  const load = mergeOpenClawPluginLoad(backup.load, current.load, previousOwnership.loadPaths);
+  if (load) merged.load = load;
+  else delete merged.load;
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+export interface OpenClawConfigMergeOptions {
+  freshImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
+  previousImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
 }
 
 export function mergeOpenClawRestoredConfig(
   backedUpConfig: unknown,
   currentConfig: unknown,
+  options: OpenClawConfigMergeOptions = {},
 ): unknown {
-  if (!isPlainJsonObject(backedUpConfig)) return cloneJson(currentConfig ?? backedUpConfig);
-  if (!isPlainJsonObject(currentConfig)) return cloneJson(backedUpConfig);
+  if (!isPlainObject(backedUpConfig) || !isPlainObject(currentConfig)) {
+    throw new Error("OpenClaw selective config merge requires JSON objects");
+  }
 
+  if (
+    (options.previousImagePluginInstalls === undefined) !==
+    (options.freshImagePluginInstalls === undefined)
+  ) {
+    throw new Error("Complete previous and fresh OpenClaw image plugin provenance is required");
+  }
+  const previousOwnership = imagePluginOwnership(options.previousImagePluginInstalls);
+  const freshOwnership = imagePluginOwnership(options.freshImagePluginInstalls);
   const merged = mergeJsonObjects(currentConfig, backedUpConfig);
 
   for (const key of OPENCLAW_CONFIG_RESTORE_OWNERSHIP.runtimeSections) {
@@ -295,9 +446,18 @@ export function mergeOpenClawRestoredConfig(
     else delete merged[key];
   }
 
-  merged.channels = mergeOpenClawChannels(backedUpConfig.channels, currentConfig.channels);
+  merged.channels = mergeOpenClawChannels(
+    backedUpConfig.channels,
+    currentConfig.channels,
+    previousOwnership.ids,
+  );
   merged.models = mergeOpenClawModels(backedUpConfig.models, currentConfig.models);
-  merged.plugins = mergeOpenClawPlugins(backedUpConfig.plugins, currentConfig.plugins);
+  merged.plugins = mergeOpenClawPlugins(
+    backedUpConfig.plugins,
+    currentConfig.plugins,
+    previousOwnership,
+    freshOwnership,
+  );
   merged.tools = mergeOpenClawTools(backedUpConfig.tools, currentConfig.tools);
 
   return merged;

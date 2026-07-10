@@ -321,10 +321,15 @@ describe("resolveDockerGpuSandboxCreatePlan", () => {
 
   it.each<RouteCase>([
     { label: "GPU disabled", gpuEnabled: false, expected: "none" },
-    { label: "ordinary Linux default", expected: "native-with-fallback" },
+    { label: "ordinary Linux default", expected: "native-only" },
     {
       label: "ordinary Linux auto",
       control: "auto",
+      expected: "native-only",
+    },
+    {
+      label: "ordinary Linux explicit fallback",
+      control: "fallback",
       expected: "native-with-fallback",
     },
     { label: "ordinary Linux opt-out", control: "0", expected: "native-only" },

@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  DCODE_AUTO_APPROVAL_MODES,
+  type DcodeAutoApprovalMode,
+  isDcodeAutoApprovalMode,
+} from "../../onboard/dcode-auto-approval";
+import {
   normalizeToolDisclosure,
   TOOL_DISCLOSURE_VALUES,
   type ToolDisclosure,
@@ -32,6 +37,7 @@ function readCleanupGatewayEnv(): boolean | undefined {
 }
 
 export interface RebuildSandboxOptions {
+  dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
   force?: boolean;
   observabilityEnabled?: boolean;
   toolDisclosure?: ToolDisclosure;
@@ -77,6 +83,7 @@ export function normalizeDestroySandboxOptions(
 export function normalizeRebuildSandboxOptions(
   options: string[] | RebuildSandboxOptions = {},
 ): RebuildSandboxOptions {
+  let rawDcodeAutoApprovalMode: unknown;
   let rawToolDisclosure: unknown;
   if (Array.isArray(options)) {
     const observabilityIndex = options.lastIndexOf("--observability");
@@ -94,7 +101,26 @@ export function normalizeRebuildSandboxOptions(
     if (toolDisclosureFlagProvided && !toolDisclosure) {
       throw new Error(`--tool-disclosure must be one of: ${TOOL_DISCLOSURE_VALUES.join(", ")}.`);
     }
+    const dcodeAutoApprovalSplitIndex = options.lastIndexOf("--dcode-auto-approval");
+    const dcodeAutoApprovalInline = [...options]
+      .reverse()
+      .find((value) => value.startsWith("--dcode-auto-approval="));
+    const dcodeAutoApprovalFlagProvided =
+      dcodeAutoApprovalSplitIndex >= 0 || dcodeAutoApprovalInline !== undefined;
+    rawDcodeAutoApprovalMode =
+      dcodeAutoApprovalSplitIndex >= 0
+        ? options[dcodeAutoApprovalSplitIndex + 1]
+        : dcodeAutoApprovalInline?.slice("--dcode-auto-approval=".length);
+    const dcodeAutoApprovalMode = isDcodeAutoApprovalMode(rawDcodeAutoApprovalMode)
+      ? rawDcodeAutoApprovalMode
+      : undefined;
+    if (dcodeAutoApprovalFlagProvided && !dcodeAutoApprovalMode) {
+      throw new Error(
+        `--dcode-auto-approval must be one of: ${DCODE_AUTO_APPROVAL_MODES.join(", ")}.`,
+      );
+    }
     return {
+      ...(dcodeAutoApprovalMode ? { dcodeAutoApprovalMode } : {}),
       force: options.includes("--force"),
       ...(observabilityEnabled === undefined ? {} : { observabilityEnabled }),
       ...(toolDisclosure ? { toolDisclosure } : {}),
@@ -102,12 +128,25 @@ export function normalizeRebuildSandboxOptions(
       yes: options.includes("--yes"),
     };
   }
+  rawDcodeAutoApprovalMode = options.dcodeAutoApprovalMode;
+  const dcodeAutoApprovalMode = isDcodeAutoApprovalMode(rawDcodeAutoApprovalMode)
+    ? rawDcodeAutoApprovalMode
+    : undefined;
+  if (rawDcodeAutoApprovalMode !== undefined && !dcodeAutoApprovalMode) {
+    throw new Error(
+      `dcodeAutoApprovalMode must be one of: ${DCODE_AUTO_APPROVAL_MODES.join(", ")}.`,
+    );
+  }
   rawToolDisclosure = options.toolDisclosure;
   const toolDisclosure = normalizeToolDisclosure(rawToolDisclosure);
   if (rawToolDisclosure !== undefined && !toolDisclosure) {
     throw new Error(`toolDisclosure must be one of: ${TOOL_DISCLOSURE_VALUES.join(", ")}.`);
   }
-  return { ...options, ...(toolDisclosure ? { toolDisclosure } : {}) };
+  return {
+    ...options,
+    ...(dcodeAutoApprovalMode ? { dcodeAutoApprovalMode } : {}),
+    ...(toolDisclosure ? { toolDisclosure } : {}),
+  };
 }
 
 export function normalizeGarbageCollectImagesOptions(

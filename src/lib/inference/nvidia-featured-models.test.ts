@@ -109,6 +109,48 @@ describe("NVIDIA featured model catalog", () => {
     });
   });
 
+  it("can fetch an alternate featured catalog from a configured endpoint", () => {
+    const result = fetchNvidiaFeaturedModels({
+      catalogUrl: "https://example.invalid/featured-models-partner.json",
+      retiredModelIds: [],
+      runCurlProbeImpl: (argv) => {
+        expect(argv.at(-1)).toBe("https://example.invalid/featured-models-partner.json");
+        return {
+          ok: true,
+          httpStatus: 200,
+          curlStatus: 0,
+          body: JSON.stringify({
+            "featured-models": [{ model: "moonshotai/kimi-k2.6", "model-name": "Kimi K2.6" }],
+          }),
+          stderr: "",
+          message: "",
+        };
+      },
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      models: [{ id: "moonshotai/kimi-k2.6", label: "Kimi K2.6" }],
+    });
+  });
+
+  it("lets provider-specific catalogs opt out of NVIDIA-only retirement filters (#5826)", () => {
+    expect(
+      parseNvidiaFeaturedModels(
+        JSON.stringify({
+          "featured-models": [
+            { model: "moonshotai/kimi-k2.6", "model-name": "Kimi K2.6" },
+            { model: "z-ai/glm-5.1", "model-name": "GLM 5.1" },
+          ],
+        }),
+        { retiredModelIds: [] },
+      ),
+    ).toEqual([
+      { id: "moonshotai/kimi-k2.6", label: "Kimi K2.6" },
+      { id: "z-ai/glm-5.1", label: "GLM 5.1" },
+    ]);
+  });
+
   it("falls back to the curated NVIDIA featured model snapshot when the catalog is unavailable", () => {
     const warnings: string[] = [];
     const models = getNvidiaFeaturedModelOptions({
@@ -149,6 +191,26 @@ describe("NVIDIA featured model catalog", () => {
 
     expect(warnings).toEqual([
       "  Warning: failed to load NVIDIA's featured model catalog; falling back to the bundled list (spoofed next; HTTP 503).",
+    ]);
+  });
+
+  it("uses the configured catalog label in fallback warnings", () => {
+    const warnings: string[] = [];
+    getNvidiaFeaturedModelOptions({
+      catalogLabel: "Partner featured model catalog",
+      runCurlProbeImpl: () => ({
+        ok: false,
+        httpStatus: 503,
+        curlStatus: 0,
+        body: "",
+        stderr: "",
+        message: "service unavailable",
+      }),
+      warn: (message) => warnings.push(message),
+    });
+
+    expect(warnings).toEqual([
+      "  Warning: failed to load Partner featured model catalog; falling back to the bundled list (service unavailable; HTTP 503).",
     ]);
   });
 

@@ -10,7 +10,10 @@ import {
   snapshotEnv,
 } from "../../../../test/helpers/rebuild-flow-harness";
 
-const restoreSandboxEnv = snapshotEnv(["NEMOCLAW_SANDBOX_NAME"]);
+const restoreSandboxEnv = snapshotEnv([
+  "NEMOCLAW_SANDBOX_NAME",
+  "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+]);
 
 describe("prepared rebuild recovery", () => {
   beforeEach(() => {
@@ -47,6 +50,7 @@ describe("prepared rebuild recovery", () => {
     expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
       "alpha",
       recoveryManifest.backupPath,
+      { targetAgentType: "openclaw" },
     );
   });
 
@@ -87,6 +91,7 @@ describe("prepared rebuild recovery", () => {
     expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
       "alpha",
       recoveryManifest.backupPath,
+      { targetAgentType: "openclaw" },
     );
   });
 

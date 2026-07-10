@@ -16,10 +16,17 @@ import {
   NEMOCLAW_PROVIDERS,
   type UninstallPaths,
 } from "../../domain/uninstall/paths";
+import {
+  gatewayDestroySkipMessage,
+  OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE,
+  preservedRegistryUnrecoverableWarnings,
+  providerDeleteSkipMessage,
+} from "../../domain/uninstall/messaging";
 import { buildUninstallPlan, type UninstallPlan } from "../../domain/uninstall/plan";
 import { stopHostGatewayProcesses } from "../../onboard/host-gateway-process";
 import { isModelRouterCommandLineForPort } from "../../onboard/model-router-process";
 import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
+import { stopOpenRouterRuntimeAdapter } from "./openrouter-runtime-adapter-cleanup";
 import { classifyShimPath, type FileSystemDeps } from "./plan";
 
 export interface RunResult {
@@ -601,17 +608,25 @@ function removeOpenShellResources(options: UninstallRunOptions, runtime: Uninsta
     runtime.warn("openshell not found; skipping gateway/provider/sandbox cleanup.");
     return;
   }
-  runOptional(runtime, "Deleted all OpenShell sandboxes", "openshell", [
-    "sandbox",
-    "delete",
-    "--all",
-  ]);
+  // #6520 sub-bug: a no-op delete must not print `Deleted … skipped`;
+  // wording lives in domain/uninstall/messaging.ts.
+  runOptional(
+    runtime,
+    "Deleted all OpenShell sandboxes",
+    "openshell",
+    ["sandbox", "delete", "--all"],
+    {
+      onSkip: OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE,
+    },
+  );
   for (const provider of NEMOCLAW_PROVIDERS) {
-    runOptional(runtime, `Deleted provider '${provider}'`, "openshell", [
-      "provider",
-      "delete",
-      provider,
-    ]);
+    runOptional(
+      runtime,
+      `Deleted provider '${provider}'`,
+      "openshell",
+      ["provider", "delete", provider],
+      { onSkip: providerDeleteSkipMessage(provider) },
+    );
   }
   const gatewayLabel = options.gatewayName || "nemoclaw";
   runOptional(
@@ -619,7 +634,7 @@ function removeOpenShellResources(options: UninstallRunOptions, runtime: Uninsta
     `Destroyed gateway '${gatewayLabel}'`,
     "openshell",
     ["gateway", "destroy", "-g", gatewayLabel],
-    { onSkip: `Gateway '${gatewayLabel}' already removed or unreachable` },
+    { onSkip: gatewayDestroySkipMessage(gatewayLabel) },
   );
 }
 
@@ -813,6 +828,19 @@ function detectPreservableEntries(paths: UninstallPaths, runtime: UninstallRunti
   );
 }
 
+// #6520: wording lives in domain/uninstall/messaging.ts; empty when
+// sandboxes.json is not being preserved.
+function warnPreservedRegistryUnrecoverable(
+  preservable: readonly string[],
+  runtime: UninstallRuntime,
+): void {
+  for (const line of preservedRegistryUnrecoverableWarnings(
+    preservable,
+    runtimeBranding(runtime).cli,
+  ))
+    runtime.warn(line);
+}
+
 function resolvePreserveSet(
   paths: UninstallPaths,
   options: UninstallRunOptions,
@@ -837,6 +865,7 @@ function resolvePreserveSet(
     runtime.log(
       "  Pass --destroy-user-data (or set NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1) to purge user data on uninstall.",
     );
+    warnPreservedRegistryUnrecoverable(preservable, runtime);
     return PRESERVED_USER_DATA_ENTRIES;
   }
   runtime.log(`The following user data under ${paths.nemoclawStateDir} is preserved by default:`);
@@ -848,6 +877,7 @@ function resolvePreserveSet(
     return [];
   }
   runtime.log("Keeping user data.");
+  warnPreservedRegistryUnrecoverable(preservable, runtime);
   return PRESERVED_USER_DATA_ENTRIES;
 }
 
@@ -891,6 +921,7 @@ function executePlan(
         { logNoProcesses: true },
       );
       stopOllamaAuthProxy(paths, runtime);
+      stopOpenRouterRuntimeAdapter(paths, runtime);
       stopModelRouter(paths, runtime);
     } else if (step.name === "OpenShell resources") {
       removeOpenShellResources(options, runtime);

@@ -49,7 +49,12 @@ const { route: GPU_ROUTE, scenario: GPU_STARTUP_SCENARIO } = resolveHermesGpuSta
   process.env.E2E_HERMES_GPU_STARTUP_SCENARIO,
   process.env.NEMOCLAW_DOCKER_GPU_PATCH === "1",
 );
-const FORCE_LEGACY_GPU_PATCH = GPU_ROUTE === "compatibility-only";
+const GPU_ROUTE_CONTROL =
+  GPU_ROUTE === "compatibility-only"
+    ? "1"
+    : GPU_ROUTE === "compatibility-fallback"
+      ? "fallback"
+      : undefined;
 validateSandboxName(SANDBOX_NAME);
 
 function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -63,7 +68,7 @@ function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     NEMOCLAW_SANDBOX_GPU: "1",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: "60",
-    ...(FORCE_LEGACY_GPU_PATCH ? { NEMOCLAW_DOCKER_GPU_PATCH: "1" } : {}),
+    ...(GPU_ROUTE_CONTROL ? { NEMOCLAW_DOCKER_GPU_PATCH: GPU_ROUTE_CONTROL } : {}),
   };
 }
 

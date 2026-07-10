@@ -4,14 +4,14 @@
 // Single source of truth for credential-shaped name detection. Both the curl
 // argv/URL validator (curl-args.ts) and the curl probe environment scrubber
 // (probe.ts) consult this so a regression in one place cannot diverge from the
-// other. Covers common credential stem words (key, secret, token, password,
-// auth, credential) appearing as the exact name, joined to another word with
-// `_`/`-`, or in the `api`/`apikey` and other common no-separator compound
-// forms (accesskey, secretkey, authtoken, refreshtoken, accesstoken,
-// clientsecret) so a camelCase or run-together provider parameter cannot slip
-// a secret past the validator.
+// other. Covers common credential stem words and compound credential names so
+// separator-free provider parameters such as `clientSecret`, browser/session
+// material such as cookies, and connection strings cannot slip past the
+// validator. The standalone local credential helper and browser form embed this
+// literal pattern; scripts/checks/local-credential-helper-pin.ts enforces exact
+// parity because those reviewed artifacts cannot import this module at runtime.
 export const CREDENTIAL_SHAPED_NAME_PATTERN =
-  /(?:^|[_-])(?:api[_-]?key|accesskey|secretkey|authtoken|refreshtoken|accesstoken|clientsecret|key|secret|token|password|passwd|auth|credential|credentials)(?:$|[_-])/i;
+  /(?:^|[_-])(?:api[_-]?key|access[_-]?key|secret[_-]?key|auth[_-]?token|refresh[_-]?token|access[_-]?token|client[_-]?secret|private[_-]?key|pass[_-]?code|personal[_-]?access[_-]?token|connection[_-]?string|webhook(?:[_-]?url)?|key|secret|token|password|passwd|passcode|auth|authorization|credential|credentials|bearer|bearer[_-]?token|cookie|cookies|pat|private|privatekey|pin|webhookurl|dsn|connectionstring)(?:$|[_-])/i;
 
 export function isCredentialShapedName(name: string): boolean {
   return CREDENTIAL_SHAPED_NAME_PATTERN.test(name);
@@ -23,9 +23,11 @@ export function isCredentialShapedName(name: string): boolean {
 // instead of maintaining their own partial assignment regexes.
 export const SUPPORTED_CREDENTIAL_ENV_NAMES: ReadonlySet<string> = new Set([
   "NGC_API_KEY",
+  "NEMOCLAW_PROVIDER_KEY",
   "NVIDIA_API_KEY",
   "NVIDIA_INFERENCE_API_KEY",
   "OPENAI_API_KEY",
+  "OPENROUTER_API_KEY",
   "ANTHROPIC_API_KEY",
   "GEMINI_API_KEY",
   "GOOGLE_API_KEY",

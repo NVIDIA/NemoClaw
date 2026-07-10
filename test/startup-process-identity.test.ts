@@ -86,6 +86,9 @@ def supervised_scenario(
         namespace_path = os.path.join(root, "shared")
         with open(namespace_path, "wb") as stream:
             stream.write(b"shared")
+        nested_namespace_path = os.path.join(root, "nested")
+        with open(nested_namespace_path, "wb") as stream:
+            stream.write(b"nested")
         write_process(
             proc_root,
             1,
@@ -97,13 +100,15 @@ def supervised_scenario(
             parent_pid=0,
         )
         for process in processes:
-            pid, start_time, cmdline, effective_uid, inner_pid, parent_pid = process
+            pid, start_time, cmdline, effective_uid, inner_pid, parent_pid, *namespace = process
+            if namespace not in ([], ["nested"]):
+                raise AssertionError(f"unsupported namespace selector: {namespace!r}")
             write_process(
                 proc_root,
                 pid,
                 start_time,
                 cmdline,
-                namespace_path,
+                nested_namespace_path if namespace == ["nested"] else namespace_path,
                 effective_uid=effective_uid,
                 inner_pid=inner_pid,
                 parent_pid=parent_pid,
@@ -134,7 +139,14 @@ def supervised_scenario(
             guard._proc_pid_namespace_inode = original_namespace_reader
 
 entrypoint = b"bash\0/usr/local/bin/nemoclaw-start\0"
+direct_entrypoint = b"/usr/local/bin/nemoclaw-start\0"
+entrypoint_with_command = b"bash\0/usr/local/bin/nemoclaw-start\0true\0"
+direct_entrypoint_with_command = b"/usr/local/bin/nemoclaw-start\0true\0"
 spoof = b"bash\0/tmp/nemoclaw-start-spoof\0"
+argv_spoof = b"python3\0/tmp/evil.py\0/usr/local/bin/nemoclaw-start\0"
+noncanonical_bash = b"/tmp/bash\0/usr/local/bin/nemoclaw-start\0"
+misplaced_start = b"bash\0/tmp/evil.sh\0/usr/local/bin/nemoclaw-start\0"
+empty_argument_spoof = b"bash\0\0/usr/local/bin/nemoclaw-start\0"
 proof = {
     "remapped": scenario([(412, "424242", entrypoint, "trusted")]),
     "stale": scenario([(412, "999999", entrypoint, "trusted")]),
@@ -155,6 +167,24 @@ proof.update({
     "openshell_supervised": supervised_scenario([
         (412, "424242", entrypoint, 1000, 412, 1),
     ]),
+    "openshell_supervised_direct": supervised_scenario([
+        (412, "424242", direct_entrypoint, 1000, 412, 1),
+    ]),
+    "openshell_supervised_command": supervised_scenario([
+        (412, "424242", entrypoint_with_command, 1000, 412, 1),
+    ]),
+    "openshell_supervised_direct_command": supervised_scenario([
+        (412, "424242", direct_entrypoint_with_command, 1000, 412, 1),
+    ]),
+    "openshell_noncanonical_bash": supervised_scenario([
+        (412, "424242", noncanonical_bash, 1000, 412, 1),
+    ]),
+    "openshell_misplaced_start": supervised_scenario([
+        (412, "424242", misplaced_start, 1000, 412, 1),
+    ]),
+    "openshell_empty_argument_spoof": supervised_scenario([
+        (412, "424242", empty_argument_spoof, 1000, 412, 1),
+    ]),
     "openshell_landlock_all_namespaces_denied": supervised_scenario([
         (412, "424242", entrypoint, 1000, 412, 1),
     ], namespace_access=False),
@@ -170,11 +200,29 @@ proof.update({
     "openshell_nested_child": supervised_scenario([
         (412, "424242", entrypoint, 1000, 1, 1),
     ]),
+    "openshell_nested_pid_namespace": supervised_scenario([
+        (412, "424242", entrypoint, 1000, 1, 1, "nested"),
+    ]),
+    "openshell_cross_namespace_outer_pid": supervised_scenario([
+        (412, "424242", entrypoint, 1000, 412, 1, "nested"),
+    ]),
+    "openshell_nested_landlock_all_namespaces_denied": supervised_scenario([
+        (412, "424242", entrypoint, 1000, 1, 1, "nested"),
+    ], namespace_access=False),
+    "openshell_nested_landlock_supervisor_namespace_denied": supervised_scenario([
+        (412, "424242", entrypoint, 1000, 1, 1, "nested"),
+    ], namespace_access="child_only"),
     "openshell_non_direct_child": supervised_scenario([
         (412, "424242", entrypoint, 1000, 412, 77),
     ]),
     "openshell_spoof": supervised_scenario([
         (412, "424242", spoof, 1000, 412, 1),
+    ]),
+    "openshell_argv_spoof": supervised_scenario([
+        (412, "424242", argv_spoof, 1000, 412, 1),
+    ]),
+    "openshell_nested_argv_spoof": supervised_scenario([
+        (412, "424242", argv_spoof, 1000, 1, 1, "nested"),
     ]),
     "openshell_duplicate": supervised_scenario([
         (412, "424242", entrypoint, 1000, 412, 1),
@@ -186,6 +234,12 @@ proof.update({
     "openshell_wrong_required_child": supervised_scenario([
         (412, "424242", entrypoint, 1000, 412, 1),
     ], required_pid=413),
+    "openshell_nested_required_child": supervised_scenario([
+        (412, "424242", entrypoint, 1000, 1, 1, "nested"),
+    ], required_pid=412),
+    "openshell_nested_wrong_required_child": supervised_scenario([
+        (412, "424242", entrypoint, 1000, 1, 1, "nested"),
+    ], required_pid=413),
 })
 print(json.dumps(proof))
 `;
@@ -195,15 +249,29 @@ const GUARDS = [
   ["Hermes", path.resolve("agents/hermes/runtime-config-guard.py")],
 ] as const;
 
-describe.each(GUARDS)("%s startup process identity", (_name, guardPath) => {
-  it("authenticates exactly one root namespace init and rejects stale or spoofed identities (#2426)", () => {
-    const result = spawnSync("python3", ["-c", IDENTITY_HARNESS, guardPath], {
-      encoding: "utf-8",
-      timeout: 5000,
-    });
+function runIdentityHarness(guardPath: string) {
+  const result = spawnSync("python3", ["-c", IDENTITY_HARNESS, guardPath], {
+    encoding: "utf-8",
+    timeout: 5000,
+  });
 
-    expect(result.status, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({
+  expect(result.status, result.stderr).toBe(0);
+  return JSON.parse(result.stdout);
+}
+
+describe.each(GUARDS)("%s startup process identity", (name, guardPath) => {
+  it("authenticates exactly one root namespace init and rejects stale or spoofed identities (#2426)", () => {
+    const {
+      openshell_argv_spoof: _openshellArgvSpoof,
+      openshell_nested_argv_spoof: _openshellNestedArgvSpoof,
+      openshell_supervised_command: _openshellSupervisedCommand,
+      openshell_supervised_direct_command: _openshellSupervisedDirectCommand,
+      openshell_noncanonical_bash: _openshellNoncanonicalBash,
+      openshell_misplaced_start: _openshellMisplacedStart,
+      openshell_empty_argument_spoof: _openshellEmptyArgumentSpoof,
+      ...proof
+    } = runIdentityHarness(guardPath);
+    expect(proof).toEqual({
       remapped: true,
       stale: false,
       spoof: false,
@@ -213,16 +281,40 @@ describe.each(GUARDS)("%s startup process identity", (_name, guardPath) => {
       duplicate: false,
       bounded: false,
       openshell_supervised: true,
+      openshell_supervised_direct: true,
       openshell_landlock_all_namespaces_denied: true,
       openshell_landlock_supervisor_namespace_denied: true,
       openshell_wrong_supervisor: false,
       openshell_root_child: false,
       openshell_nested_child: false,
+      // #6565 reproduces nested PID namespaces only for OpenClaw. Hermes keeps
+      // its independently tested same-namespace topology until it has a
+      // Hermes-specific reproduction or acceptance requirement.
+      openshell_nested_pid_namespace: name === "OpenClaw",
+      openshell_cross_namespace_outer_pid: false,
+      openshell_nested_landlock_all_namespaces_denied: name === "OpenClaw",
+      openshell_nested_landlock_supervisor_namespace_denied: name === "OpenClaw",
       openshell_non_direct_child: false,
       openshell_spoof: false,
       openshell_duplicate: false,
       openshell_required_child: true,
       openshell_wrong_required_child: false,
+      openshell_nested_required_child: name === "OpenClaw",
+      openshell_nested_wrong_required_child: false,
     });
+  });
+});
+
+describe.each(GUARDS)("%s exact startup argv", (_name, guardPath) => {
+  it("rejects a trusted script path smuggled in an unrelated argv (#6565)", () => {
+    const proof = runIdentityHarness(guardPath);
+
+    expect(proof.openshell_argv_spoof).toBe(false);
+    expect(proof.openshell_nested_argv_spoof).toBe(false);
+    expect(proof.openshell_supervised_command).toBe(true);
+    expect(proof.openshell_supervised_direct_command).toBe(true);
+    expect(proof.openshell_noncanonical_bash).toBe(false);
+    expect(proof.openshell_misplaced_start).toBe(false);
+    expect(proof.openshell_empty_argument_spoof).toBe(false);
   });
 });

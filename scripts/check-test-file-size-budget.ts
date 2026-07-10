@@ -109,7 +109,7 @@ export function parseBudget(sourceText: string, filePath = BUDGET_PATH): TestFil
     `${filePath}: defaultMaxLines`,
   );
 
-  if (parsed.legacyMaxLines !== undefined && !isRecord(parsed.legacyMaxLines)) {
+  if (parsed.legacyMaxLines !== undefined && !isObjectRecord(parsed.legacyMaxLines)) {
     throw new Error(`${filePath}: legacyMaxLines must be an object when present`);
   }
 
@@ -124,7 +124,7 @@ export function parseBudget(sourceText: string, filePath = BUDGET_PATH): TestFil
   return { defaultMaxLines, legacyMaxLines };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 

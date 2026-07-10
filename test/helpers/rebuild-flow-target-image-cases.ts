@@ -378,10 +378,9 @@ export function registerRebuildFlowTargetImageTests(): void {
 
         expect(process.env[overrideEnvVar]).toBe("nemoclaw-hermes-sandbox-base-local:image-caller");
         expect(harness.releaseOnboardLockSpy).toHaveBeenCalled();
-        expect(harness.markStepFailedSpy).toHaveBeenCalledWith(
+        expect(harness.finalizeIncompleteOnboardStepSpy).toHaveBeenCalledWith(
           "sandbox",
           "Rebuild recreate failed",
-          expect.objectContaining({ updateMachine: true }),
         );
         expect(harness.session).toMatchObject({
           status: "failed",

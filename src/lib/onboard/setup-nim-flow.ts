@@ -341,6 +341,7 @@ export function createSetupNim(
       defaultModel: resolveAgentDefaultCloudModel(agent),
       writeLine: deps.log,
     });
+    const openRouterFeaturedModels = nvidiaFeaturedModels;
     const createSelectionState = (): SetupNimSelectionState => {
       const state: SetupNimSelectionState = {
         model,
@@ -355,6 +356,7 @@ export function createSetupNim(
         allowToolsIncompatible,
         ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
         nvidiaFeaturedModels,
+        openRouterFeaturedModels,
       };
       state.assertRouteCompatible = () => {
         const effectiveInferenceApi = () =>

@@ -21,32 +21,47 @@ const LINUX_DOCKER: DockerGpuRouteOptions = {
 };
 
 describe("resolveDockerGpuRoutePlan", () => {
-  const controls = [undefined, "auto", "0", "1", "true"] as const;
+  const controls = [undefined, "auto", "fallback", "0", "1", "true"] as const;
   const environments = [
     {
       name: "GPU disabled",
       config: { sandboxGpuEnabled: false },
       options: LINUX_DOCKER,
-      expected: ["none", "none", "none", "none", "none"],
+      expected: ["none", "none", "none", "none", "none", "none"],
     },
     {
       name: "non-Docker driver",
       config: GPU_CONFIG,
       options: { ...LINUX_DOCKER, dockerDriverGateway: false },
-      expected: ["native-only", "native-only", "native-only", "native-only", "native-only"],
+      expected: [
+        "native-only",
+        "native-only",
+        "native-only",
+        "native-only",
+        "native-only",
+        "native-only",
+      ],
     },
     {
       name: "non-Linux host",
       config: GPU_CONFIG,
       options: { ...LINUX_DOCKER, platform: "darwin" as const },
-      expected: ["native-only", "native-only", "native-only", "native-only", "native-only"],
+      expected: [
+        "native-only",
+        "native-only",
+        "native-only",
+        "native-only",
+        "native-only",
+        "native-only",
+      ],
     },
     {
       name: "ordinary Linux Docker",
       config: GPU_CONFIG,
       options: LINUX_DOCKER,
       expected: [
-        "native-with-fallback",
+        "native-only",
+        "native-only",
         "native-with-fallback",
         "native-only",
         "compatibility-only",
@@ -63,6 +78,7 @@ describe("resolveDockerGpuRoutePlan", () => {
         "compatibility-only",
         "compatibility-only",
         "compatibility-only",
+        "compatibility-only",
       ],
     },
     {
@@ -70,6 +86,7 @@ describe("resolveDockerGpuRoutePlan", () => {
       config: { sandboxGpuEnabled: true, hostGpuPlatform: "jetson" },
       options: LINUX_DOCKER,
       expected: [
+        "compatibility-only",
         "compatibility-only",
         "compatibility-only",
         "native-only",
@@ -117,6 +134,9 @@ describe("resolveDockerGpuRoutePlan", () => {
     );
     expect(matrixByKey.get("Docker Desktop WSL:0")).toBe("compatibility-only");
     expect(matrixByKey.get("Jetson/Tegra:0")).toBe("native-only");
+    expect(matrixByKey.get("ordinary Linux Docker:unset")).toBe("native-only");
+    expect(matrixByKey.get("ordinary Linux Docker:auto")).toBe("native-only");
+    expect(matrixByKey.get("ordinary Linux Docker:fallback")).toBe("native-with-fallback");
     expect(matrixByKey.get("ordinary Linux Docker:true")).toBe("compatibility-only");
     expect(matrixByKey.get("non-Linux host:true")).toBe("native-only");
   });

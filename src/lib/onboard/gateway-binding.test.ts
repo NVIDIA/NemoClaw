@@ -55,6 +55,7 @@ describe("dynamic gateway runtime helpers", () => {
       undefined,
       "http://127.0.0.1:8080/",
       undefined,
+      undefined,
     );
     expect(probeDockerDriverGatewayHttpReady).toHaveBeenLastCalledWith(
       undefined,
@@ -71,6 +72,7 @@ describe("dynamic gateway runtime helpers", () => {
     expect(probeGatewayHttpReady).toHaveBeenLastCalledWith(
       undefined,
       "http://127.0.0.1:8081/",
+      undefined,
       undefined,
     );
     expect(getGatewayClusterImageDrift).toHaveBeenLastCalledWith({
@@ -100,12 +102,38 @@ describe("dynamic gateway runtime helpers", () => {
       25,
       "https://probe.example/health",
       "POST",
+      undefined,
     );
     await expect(helpers.waitForGatewayHttpReady()).resolves.toBe(true);
     expect(probeGatewayHttpReady).toHaveBeenLastCalledWith(
       undefined,
       "http://127.0.0.1:9090/",
       undefined,
+      undefined,
+    );
+  });
+
+  it("forwards explicit HTTP readiness abort signals", async () => {
+    const probeGatewayHttpReady = vi.fn(async () => true);
+    const helpers = createDynamicGatewayRuntimeHelpers({
+      getGatewayName: () => "nemoclaw-9090",
+      getGatewayPort: () => 9090,
+      getDockerDriverGatewayEndpoint: (port) => `http://127.0.0.1:${port}`,
+      getGatewayClusterImageDrift: vi.fn(() => null),
+      probeGatewayHttpReady,
+      probeDockerDriverGatewayHttpReady: vi.fn(async () => true),
+      waitForGatewayHttpReadyBase: vi.fn(async () => true),
+      probeGatewayTcpReady: vi.fn(async () => true),
+    });
+    const controller = new AbortController();
+
+    await helpers.isGatewayHttpReady(25, "https://probe.example/health", "POST", controller.signal);
+
+    expect(probeGatewayHttpReady).toHaveBeenLastCalledWith(
+      25,
+      "https://probe.example/health",
+      "POST",
+      controller.signal,
     );
   });
 });

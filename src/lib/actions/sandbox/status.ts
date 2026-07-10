@@ -38,7 +38,9 @@ export {
   collectSandboxStatusSnapshot,
   getSandboxStatusInferenceHealth,
   getSandboxStatusReport,
+  isInferenceHealthFailing,
   maybeGetSandboxStatusInferenceHealth,
+  resolveSandboxStatusDcodeAutoApprovalMode,
   type SandboxStatusReport,
   type SandboxStatusSnapshot,
 } from "./status-snapshot";
@@ -76,6 +78,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     rpcIssue,
     currentModel,
     currentProvider,
+    routeDrift,
     inferenceHealth,
     terminalRuntimeHealth,
   } = snapshot;
@@ -103,6 +106,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     lookup,
     currentModel,
     currentProvider,
+    routeDrift,
     inferenceHealth,
     terminalRuntimeHealth,
     statusAgent,

@@ -73,6 +73,19 @@ describe("NVIDIA featured model selection", () => {
     });
   });
 
+  it("uses a provider-specific loading message when configured", async () => {
+    const writeLine = vi.fn();
+    vi.mocked(promptCloudModel).mockResolvedValueOnce("moonshotai/kimi-k2.6");
+    const session = createNvidiaFeaturedModelSession({
+      loadingMessage: "  Loading partner featured model catalog...",
+      writeLine,
+    });
+
+    await expect(session.select(null, null, false)).resolves.toBe("moonshotai/kimi-k2.6");
+
+    expect(writeLine).toHaveBeenCalledWith("  Loading partner featured model catalog...");
+  });
+
   it("keeps requested, recovered, and environment models ahead of the agent default", async () => {
     const session = createNvidiaFeaturedModelSession({
       defaultModel: "nvidia/nemotron-3-ultra-550b-a55b",

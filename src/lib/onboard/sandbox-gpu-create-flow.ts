@@ -4,6 +4,7 @@
 import { printSandboxCreateRecoveryHints } from "../build-context";
 import { getSandboxDeleteOutcome } from "../domain/sandbox/destroy";
 import { type StreamSandboxCreateResult, streamSandboxCreate } from "../sandbox/create-stream";
+import { getReadyCheckOutputPatternsForAgent } from "../sandbox/create-stream-ready-gate";
 import { redactFull } from "../security/redact";
 import { getSandboxFailurePhase, isSandboxReady } from "../state/gateway";
 import type { SandboxGpuProofResult } from "../state/registry";
@@ -25,8 +26,8 @@ import {
   queryOpenShellDockerSandboxContainers,
   queryOpenShellDockerSandboxRuntimeSnapshot,
 } from "./openshell-docker-sandbox-containers";
+import { reportSandboxCreateFailure } from "./created-sandbox-failure";
 import { printSandboxCreateFailureDiagnostics } from "./sandbox-create-failure";
-import { renderSandboxCreateCommand } from "./sandbox-create-launch";
 import * as sandboxGpuCreateAttempt from "./sandbox-gpu-create-attempt";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import * as sandboxGpuPreflight from "./sandbox-gpu-preflight";
@@ -54,7 +55,7 @@ export interface SandboxGpuCreateFlowInput {
   dockerDriverGateway: boolean;
   gatewayPort: number;
   sandboxReadyTimeoutSecs: number;
-  createCommand: string;
+  createArgv: string[];
   sandboxEnv: NodeJS.ProcessEnv;
   sandboxStartupCommand: string[];
   prebuild: SandboxPrebuildResult;
@@ -66,7 +67,7 @@ export interface SandboxGpuCreateFlowDeps {
   runOpenshell: RunOpenshell;
   runCaptureOpenshell: RunCaptureOpenshell;
   sleep: Sleep;
-  openshellShellCommand(args: string[]): string;
+  openshellArgv(args: string[]): string[];
   verifyDirectSandboxGpu(sandboxName: string): SandboxGpuProofResult;
 }
 
@@ -80,7 +81,7 @@ export interface SandboxGpuCreateFlowResult {
 }
 
 /**
- * Automatic native GPU compatibility fallback source-of-truth boundary:
+ * Operator-authorized native GPU compatibility fallback source-of-truth boundary:
  *
  * - Invalid state: OpenShell rejects `--gpu` before create progress, the exact
  *   labeled container records a host runtime GPU-injection error, or a
@@ -101,9 +102,9 @@ export interface SandboxGpuCreateFlowResult {
  *   `process.exit` paths. The caller registers process-exit cleanup for its
  *   temporary policy/build context before entering this flow; only classified
  *   native GPU failures return into the compatibility orchestration.
- * - Removal condition: remove automatic fallback only when the minimum
- *   supported OpenShell version provides reliable native GPU injection across
- *   ordinary Linux, Docker Desktop WSL, and Jetson/Tegra hosts.
+ * - Authorization: ordinary Linux reaches this plan only through explicit
+ *   `NEMOCLAW_DOCKER_GPU_PATCH=fallback`; diagnostics classify a failure after
+ *   authorization and never independently grant broader confinement.
  *
  * Keep this module bounded to one create-attempt execution plus composition of
  * the generic fallback plan. If another lifecycle stage or retry route is
@@ -117,7 +118,7 @@ export async function runSandboxGpuCreateFlow(
   deps: SandboxGpuCreateFlowDeps,
 ): Promise<SandboxGpuCreateFlowResult> {
   let firstCreateOutput = "";
-  let compatibilityCommand: string | null = null;
+  let compatibilityArgv: string[] | null = null;
   let registryImageRef: string | null = input.prebuild.imageRef;
   let allowUnbuiltCompatibilitySource = false;
   let nativeRuntimeSnapshot: Extract<
@@ -139,7 +140,7 @@ export async function runSandboxGpuCreateFlow(
         "  Native OpenShell GPU onboarding did not complete; retrying once by recreating the OpenShell-managed Docker container with the legacy GPU compatibility envelope.",
       );
       console.warn(
-        "  This compatibility container swap may relax container confinement compared with native injection. Set NEMOCLAW_DOCKER_GPU_PATCH=0 for native-only behavior.",
+        "  This compatibility container swap may relax container confinement compared with native injection. The retry is running only because NEMOCLAW_DOCKER_GPU_PATCH=fallback explicitly authorized it.",
       );
     }
     const dockerGpuCreatePatch = createDockerGpuSandboxCreatePatch({
@@ -151,22 +152,33 @@ export async function runSandboxGpuCreateFlow(
       backend: input.sandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic",
       deps,
     });
-    const command = compatibilityCommand ?? input.createCommand;
-    const createResult = await streamSandboxCreate(command, input.sandboxEnv, {
-      readyCheck: () => {
-        const list = deps.runCaptureOpenshell(["sandbox", "list"], {
-          ignoreError: true,
-        });
-        if (isSandboxReady(list, input.sandboxName)) return true;
-        dockerGpuCreatePatch.maybeApplyDuringCreate();
-        return false;
+    const attemptArgv = compatibilityArgv ?? input.createArgv;
+    const [createExecutable, ...createExecutableArgs] = attemptArgv;
+    if (!createExecutable) {
+      throw new Error("Sandbox create executable is missing.");
+    }
+    const createResult = await streamSandboxCreate(
+      createExecutable,
+      createExecutableArgs,
+      input.sandboxEnv,
+      {
+        readyCheck: () => {
+          const list = deps.runCaptureOpenshell(["sandbox", "list"], {
+            ignoreError: true,
+          });
+          return isSandboxReady(list, input.sandboxName);
+        },
+        onPoll: () => dockerGpuCreatePatch.maybeApplyDuringCreate(),
+        readyCheckOutputPatterns: getReadyCheckOutputPatternsForAgent(
+          input.terminalAgent,
+          input.sandboxEnv,
+        ),
+        failureCheck: dockerGpuCreatePatch.createFailureMessage,
+        traceEvent: addTraceEvent,
+        initialPhase:
+          compatibility && (input.prebuild.imageRef || compatibilityArgv) ? "create" : undefined,
       },
-      readyCheckOutputPatterns: input.terminalAgent ? [] : undefined,
-      failureCheck: dockerGpuCreatePatch.createFailureMessage,
-      traceEvent: addTraceEvent,
-      initialPhase:
-        compatibility && (input.prebuild.imageRef || compatibilityCommand) ? "create" : undefined,
-    });
+    );
     if (!firstCreateOutput) firstCreateOutput = createResult.output;
     dockerGpuCreatePatch.exitOnPatchError();
     if (createResult.status !== 0) {
@@ -209,17 +221,23 @@ export async function runSandboxGpuCreateFlow(
           fallbackEligible: true,
         } as const;
       } else {
-        console.error("");
-        console.error(`  Sandbox creation failed (exit ${createResult.status}).`);
-        if (createResult.output) console.error(`\n${createResult.output}`);
-        printSandboxCreateFailureDiagnostics(input.sandboxName, {
-          backupPath: input.restoreBackupPath,
-        });
-        console.error("  Try:  openshell sandbox list        # check gateway state");
-        printSandboxCreateRecoveryHints(createResult.output, {
-          createArgs: input.prebuild.createArgs,
-        });
-        process.exit(createResult.status || 1);
+        reportSandboxCreateFailure(
+          {
+            sandboxName: input.sandboxName,
+            createStatus: createResult.status,
+            createOutput: createResult.output,
+            restoreBackupPath: input.restoreBackupPath,
+            createArgs: input.prebuild.createArgs,
+          },
+          {
+            classifyCreateFailure: classifySandboxCreateFailure,
+            printCreateFailureDiagnostics: printSandboxCreateFailureDiagnostics,
+            printRecoveryHints: printSandboxCreateRecoveryHints,
+            warn: (message) => console.warn(message),
+            error: (message) => console.error(message),
+            exitProcess: (code) => process.exit(code),
+          },
+        );
       }
     }
     dockerGpuCreatePatch.ensureApplied();
@@ -286,7 +304,7 @@ export async function runSandboxGpuCreateFlow(
           console.error(`  Retry: ${cliName()} onboard`);
         }
       }
-      process.exit(1);
+      process.exit(createResult.status === 0 ? 1 : createResult.status);
     }
     if (input.sandboxGpuConfig.sandboxGpuEnabled) {
       const deferNativeProofFailure =
@@ -389,11 +407,16 @@ export async function runSandboxGpuCreateFlow(
           allowUnbuiltSource: allowUnbuiltCompatibilitySource,
           compatibilityPolicyPath: input.compatibilityPolicyPath,
         });
-        compatibilityCommand = renderSandboxCreateCommand(
-          compatibilityArgs,
-          input.sandboxStartupCommand,
-          deps.openshellShellCommand,
-        );
+        compatibilityArgv = deps.openshellArgv([
+          "sandbox",
+          "create",
+          ...compatibilityArgs,
+          "--",
+          ...input.sandboxStartupCommand,
+        ]);
+        if (compatibilityArgv.length === 0) {
+          throw new Error("Compatibility sandbox create executable is missing.");
+        }
         await dockerGpuLocalInference.enforceDockerGpuPatchPreserveNetwork(
           input.provider,
           input.sandboxGpuConfig,
@@ -411,7 +434,7 @@ export async function runSandboxGpuCreateFlow(
   );
   if (!gpuCreateOutcome.ok) {
     console.error("");
-    console.error("  Automatic GPU fallback stopped before compatibility retry.");
+    console.error("  Operator-authorized GPU fallback stopped before compatibility retry.");
     if (gpuCreateOutcome.preparationRefused)
       console.error(
         `  Compatibility retry could not be prepared: ${gpuCreateOutcome.preparationRefused}`,

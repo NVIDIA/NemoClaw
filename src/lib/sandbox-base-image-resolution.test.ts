@@ -19,6 +19,7 @@ const traceMocks = vi.hoisted(() => ({
 const sourceMocks = vi.hoisted(() => ({
   inputsDirty: vi.fn(),
   inputsChanged: vi.fn(),
+  nearestTags: vi.fn(),
 }));
 
 vi.mock("./adapters/docker", () => ({
@@ -38,6 +39,7 @@ vi.mock("./sandbox-base-image/source-identity", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./sandbox-base-image/source-identity")>()),
   baseImageInputsDirty: sourceMocks.inputsDirty,
   baseImageInputsChangedSinceMain: sourceMocks.inputsChanged,
+  getNearestVersionedBaseImageTags: sourceMocks.nearestTags,
 }));
 
 import {
@@ -67,35 +69,13 @@ function resolutionOptions() {
   };
 }
 
-function abiRequiredOverrideOptions() {
-  const options = resolutionOptions();
-  return {
-    ...options,
-    envVar: "NEMOCLAW_SANDBOX_BASE_IMAGE_REF",
-    env: {
-      ...options.env,
-      NEMOCLAW_SANDBOX_BASE_IMAGE_REF: `${IMAGE_NAME}:published`,
-      NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: "0",
-    },
-    requireOpenshellSandboxAbi: true,
-  };
-}
-
-function mockPublishedAndLocalGlibc(localVersion: string): void {
-  dockerMocks.imageInspect.mockReturnValue({ status: 0 });
-  dockerMocks.capture.mockImplementation((args: string[]) =>
-    args.includes("nemoclaw-sandbox-base-local:test")
-      ? `ldd (GNU libc) ${localVersion}`
-      : "ldd (GNU libc) 2.36",
-  );
-}
-
 describe("sandbox base-image warm resolution", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     dockerMocks.infoFormat.mockReturnValue("linux/amd64\n");
     sourceMocks.inputsDirty.mockReturnValue(false);
     sourceMocks.inputsChanged.mockReturnValue(false);
+    sourceMocks.nearestTags.mockReturnValue([]);
     dockerMocks.imageInspectFormat.mockReturnValue(
       JSON.stringify({
         Id: IMAGE_ID,
@@ -407,8 +387,7 @@ describe("sandbox base-image warm resolution", () => {
     expect(dockerMocks.build).toHaveBeenCalledTimes(1);
   });
 
-  it("uses an exact source-SHA image before committed branch divergence (#4680)", () => {
-    sourceMocks.inputsChanged.mockReturnValue(true);
+  it("uses an exact source-SHA image only when no release tag is discoverable (#4680)", () => {
     dockerMocks.imageInspect.mockReturnValue({ status: 0 });
 
     const resolved = resolveSandboxBaseImage(resolutionOptions());
@@ -416,37 +395,5 @@ describe("sandbox base-image warm resolution", () => {
     expect(resolved).toMatchObject({ source: "source-sha" });
     expect(dockerMocks.pull).not.toHaveBeenCalled();
     expect(dockerMocks.build).not.toHaveBeenCalled();
-  });
-
-  it("uses an ABI-compatible local fallback after a published override fails ABI validation (#4680)", () => {
-    mockPublishedAndLocalGlibc("2.41");
-
-    const resolved = resolveSandboxBaseImage(abiRequiredOverrideOptions());
-
-    expect(resolved).toMatchObject({
-      ref: "nemoclaw-sandbox-base-local:test",
-      digest: null,
-      source: "local",
-      glibcVersion: "2.41",
-    });
-    expect(dockerMocks.capture).toHaveBeenCalledTimes(2);
-    expect(dockerMocks.build).not.toHaveBeenCalled();
-    expect(traceMocks.add).toHaveBeenCalledWith("nemoclaw.sandbox_base_image.local_validation", {
-      source: "override",
-      present: true,
-    });
-    expect(traceMocks.add).toHaveBeenCalledWith("nemoclaw.sandbox_base_image.local_fallback_reuse");
-  });
-
-  it("rejects an ABI-incompatible local fallback after a published override fails ABI validation (#4680)", () => {
-    mockPublishedAndLocalGlibc("2.38");
-
-    expect(resolveSandboxBaseImage(abiRequiredOverrideOptions())).toBeNull();
-
-    expect(dockerMocks.capture).toHaveBeenCalledTimes(2);
-    expect(dockerMocks.build).not.toHaveBeenCalled();
-    expect(traceMocks.add).not.toHaveBeenCalledWith(
-      "nemoclaw.sandbox_base_image.local_fallback_reuse",
-    );
   });
 });

@@ -558,7 +558,6 @@ type ProcessCredentialBackScenario = {
   answers: string[];
   menuSelections?: string[];
   credentialEnv: string;
-  promptPattern: RegExp;
   expectedOutcome?: "back" | "exit";
   env?: Record<string, string>;
   agent?: "hermes";
@@ -570,45 +569,45 @@ const PROCESS_CREDENTIAL_BACK_SCENARIOS: readonly ProcessCredentialBackScenario[
   {
     name: "OpenAI",
     label: "OpenAI API key",
-    answers: ["2", "back", "1", ""],
+    answers: ["back", ""],
+    menuSelections: ["^OpenAI$", "^NVIDIA Endpoints$"],
     credentialEnv: "OPENAI_API_KEY",
-    promptPattern: /OpenAI API key: /,
   },
   {
     name: "Anthropic",
     label: "Anthropic API key",
-    answers: ["4", "back", "1", ""],
+    answers: ["back", ""],
+    menuSelections: ["^Anthropic$", "^NVIDIA Endpoints$"],
     credentialEnv: "ANTHROPIC_API_KEY",
-    promptPattern: /Anthropic API key: /,
   },
   {
     name: "Anthropic exit",
     label: "Anthropic API key",
-    answers: ["4", "exit"],
+    answers: ["exit"],
+    menuSelections: ["^Anthropic$"],
     credentialEnv: "ANTHROPIC_API_KEY",
-    promptPattern: /Anthropic API key: /,
     expectedOutcome: "exit",
   },
   {
     name: "Google Gemini",
     label: "Google Gemini API key",
-    answers: ["6", "back", "1", ""],
+    answers: ["back", ""],
+    menuSelections: ["^Google Gemini$", "^NVIDIA Endpoints$"],
     credentialEnv: "GEMINI_API_KEY",
-    promptPattern: /Google Gemini API key: /,
   },
   {
     name: "Other OpenAI-compatible endpoint",
     label: "Other OpenAI-compatible endpoint API key",
-    answers: ["3", "https://proxy.example.com/v1", "back", "1", ""],
+    answers: ["https://proxy.example.com/v1", "back", ""],
+    menuSelections: ["^Other OpenAI-compatible endpoint$", "^NVIDIA Endpoints$"],
     credentialEnv: "COMPATIBLE_API_KEY",
-    promptPattern: /Other OpenAI-compatible endpoint API key: /,
   },
   {
     name: "Other Anthropic-compatible endpoint",
     label: "Other Anthropic-compatible endpoint API key",
-    answers: ["5", "https://proxy.example.com", "back", "1", ""],
+    answers: ["https://proxy.example.com", "back", ""],
+    menuSelections: ["^Other Anthropic-compatible endpoint$", "^NVIDIA Endpoints$"],
     credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-    promptPattern: /Other Anthropic-compatible endpoint API key: /,
   },
   {
     name: "Model Router",
@@ -616,7 +615,6 @@ const PROCESS_CREDENTIAL_BACK_SCENARIOS: readonly ProcessCredentialBackScenario[
     answers: ["back", ""],
     menuSelections: ["Model Router", "NVIDIA Endpoints"],
     credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-    promptPattern: /Model Router API key: /,
   },
   {
     name: "Hermes Provider Nous API key",
@@ -624,7 +622,6 @@ const PROCESS_CREDENTIAL_BACK_SCENARIOS: readonly ProcessCredentialBackScenario[
     answers: ["back", ""],
     menuSelections: ["Hermes Provider", "Nous API Key", "NVIDIA Endpoints"],
     credentialEnv: "NOUS_API_KEY",
-    promptPattern: /Nous API Key: /,
     agent: "hermes",
   },
   {
@@ -633,7 +630,6 @@ const PROCESS_CREDENTIAL_BACK_SCENARIOS: readonly ProcessCredentialBackScenario[
     answers: ["", "back", ""],
     menuSelections: ["Local NVIDIA NIM", "NVIDIA Endpoints"],
     credentialEnv: "NGC_API_KEY",
-    promptPattern: /NGC API Key: /,
     env: { NEMOCLAW_EXPERIMENTAL: "1" },
     gpu: {
       type: "nvidia",
@@ -674,9 +670,7 @@ function runCredentialBackScenarioBatch(): Map<string, CredentialBackPayload> {
   const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
   const agentDefsPath = JSON.stringify(path.join(repoRoot, "src", "lib", "agent", "defs.ts"));
   const nimPath = JSON.stringify(path.join(repoRoot, "src", "lib", "inference", "nim.ts"));
-  const childScenarios = PROCESS_CREDENTIAL_BACK_SCENARIOS.map(
-    ({ promptPattern: _promptPattern, ...scenario }) => scenario,
-  );
+  const childScenarios = PROCESS_CREDENTIAL_BACK_SCENARIOS;
 
   fs.mkdirSync(fakeBin, { recursive: true });
   writeAlwaysOkCurl(fakeBin);
@@ -684,7 +678,7 @@ function runCredentialBackScenarioBatch(): Map<string, CredentialBackPayload> {
   const script = String.raw`
 const scenarios = ${JSON.stringify(childScenarios)};
 const clearCredentialEnv = [
-  "NVIDIA_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY",
+  "NVIDIA_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY",
   "COMPATIBLE_API_KEY", "COMPATIBLE_ANTHROPIC_API_KEY", "NOUS_API_KEY",
   "NVIDIA_INFERENCE_API_KEY", "NGC_API_KEY", "NEMOCLAW_PROVIDER_KEY",
 ];
@@ -862,7 +856,9 @@ function runCredentialBackScenarioProcess(scenario: ProcessCredentialBackScenari
       assert.deepEqual(payload.saved, []);
       assert.ok(payload.lines.some((line) => line.includes("Exiting onboarding.")));
       assert.ok(
-        payload.prompts.some((entry) => scenario.promptPattern.test(entry.message) && entry.secret),
+        payload.prompts.some(
+          (entry) => entry.message.includes(`${scenario.label}:`) && entry.secret,
+        ),
       );
       return;
     default:
@@ -870,7 +866,9 @@ function runCredentialBackScenarioProcess(scenario: ProcessCredentialBackScenari
       assert.equal(payload.result?.provider, "nvidia-prod");
       assert.ok(payload.lines.some((line) => line.includes("Returning to provider selection.")));
       assert.ok(
-        payload.prompts.some((entry) => scenario.promptPattern.test(entry.message) && entry.secret),
+        payload.prompts.some(
+          (entry) => entry.message.includes(`${scenario.label}:`) && entry.secret,
+        ),
       );
       assert.ok(payload.saved.every((entry) => entry.value !== "back"));
       assert.equal(payload.credentialValue, null);
@@ -1265,7 +1263,7 @@ child_process.spawnSync = (cmd, args, opts) => {
   return originalSpawnSync(cmd, args, opts);
 };
 
-const answers = ["7", "1"];
+const answers = ["8", "1"];
 const messages = [];
 const commands = [];
 
@@ -1447,7 +1445,7 @@ child_process.spawnSync = (cmd, args, opts) => {
 const messages = [];
 const runCommands = [];
 const shellCommands = [];
-const answers = ["7", "1"];
+const answers = ["8", "1"];
 
 credentials.prompt = async (message) => {
   messages.push(message);
@@ -1533,7 +1531,7 @@ const { setupNim } = require(${onboardPath});
     );
   });
 
-  it("applies the systemd loopback override for an existing running Ollama install", {
+  it("treats an implicit latest Ollama model as installed during systemd repair", {
     timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS,
   }, () => {
     const repoRoot = path.join(import.meta.dirname, "..");
@@ -1570,7 +1568,7 @@ const shellCommands = [];
 runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
-  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "llama3.2:latest" }] });
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
@@ -1617,13 +1615,14 @@ const { setupNim } = require(${onboardPath});
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_PROVIDER: "ollama",
-        NEMOCLAW_MODEL: "qwen3:8b",
+        NEMOCLAW_MODEL: "llama3.2",
       },
     });
 
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "ollama-local");
+    assert.equal(payload.result.model, "llama3.2");
     assert.ok(
       payload.lines.some((line: string) =>
         line.includes("Configuring Ollama systemd loopback override"),
@@ -2229,7 +2228,7 @@ const { setupNim } = require(${onboardPath});
   });
 
   it("returns to provider selection when Ollama manual entry chooses back", async () => {
-    const answers = ["7", "1"];
+    const answers = ["8", "1"];
     const messages: string[] = [];
     const lines: string[] = [];
     const stateSelections: string[] = [];
@@ -2278,7 +2277,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(handleRemoteProviderSelection.mock.calls.length, 1);
   });
 
-  it("offers starter Ollama models when none are installed and pulls the selected model", () => {
+  it("waits for delayed Ollama registration after pulling a starter model", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-bootstrap-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -2305,23 +2304,23 @@ exit 0
     );
 
     const script = String.raw`
+const fs = require("fs");
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["7", "1", "y"];
+const answers = ["8", "1", "y"];
 const messages = [];
-
+const pullLog = ${JSON.stringify(pullLog)};
+let listAttempts = 0;
 credentials.prompt = async (message) => {
   messages.push(message);
   return answers.shift() || "";
 };
 runner.runCapture = (command) => {
-  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
-  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
   if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [] });
-  if (cmd.includes("ollama list")) return "";
+  if (cmd.includes("ollama list")) return fs.existsSync(pullLog) && ++listAttempts >= 7 ? "qwen3.5:9b" : "";
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
   if (cmd.includes("-o args=")) return "node ollama-auth-proxy.js";
@@ -2338,7 +2337,7 @@ const { setupNim } = require(${onboardPath});
   console.error = (...args) => lines.push(args.join(" "));
   try {
     const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, lines }));
+    originalLog(JSON.stringify({ result, messages, lines, listAttempts }));
   } finally {
     console.log = originalLog;
     console.error = originalError;
@@ -2356,6 +2355,7 @@ const { setupNim } = require(${onboardPath});
       env: {
         ...process.env,
         HOME: tmpDir,
+        NEMOCLAW_TEST_NO_SLEEP: "1",
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
       },
     });
@@ -2364,19 +2364,16 @@ const { setupNim } = require(${onboardPath});
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "ollama-local");
     assert.equal(payload.result.model, "qwen3.5:9b");
+    assert.equal(payload.listAttempts, 7);
     assert.ok(payload.lines.some((line: string) => line.includes("Ollama starter models:")));
-    assert.ok(
-      payload.lines.some((line: string) =>
-        line.includes("No local Ollama models are installed yet"),
-      ),
-    );
+    assert.match(payload.lines.join("\n"), /Waiting for Ollama to register model: qwen3\.5:9b/);
     assert.ok(
       payload.lines.some((line: string) => line.includes("Pulling Ollama model: qwen3.5:9b")),
     );
     assert.equal(fs.readFileSync(pullLog, "utf8").trim(), "qwen3.5:9b");
   });
 
-  it("reprompts inside the Ollama model flow when a pull fails", () => {
+  it("reprompts when a pulled Ollama model does not appear in discovery (#6038)", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-retry-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -2395,9 +2392,6 @@ const { setupNim } = require(${onboardPath});
       `#!/usr/bin/env bash
 if [ "$1" = "pull" ]; then
   echo "$2" >> ${JSON.stringify(pullLog)}
-  if [ "$2" = "qwen3.5:9b" ]; then
-    exit 1
-  fi
   exit 0
 fi
 exit 0
@@ -2406,23 +2400,23 @@ exit 0
     );
 
     const script = String.raw`
+const fs = require("fs");
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["7", "1", "y", "2", "llama3.2:3b", "y"];
+const answers = ["8", "1", "y", "2", "llama3.2:3b", "y"];
 const messages = [];
+const pullLog = ${JSON.stringify(pullLog)};
 
 credentials.prompt = async (message) => {
   messages.push(message);
   return answers.shift() || "";
 };
 runner.runCapture = (command) => {
-  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
-  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
   if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [] });
-  if (cmd.includes("ollama list")) return "";
+  if (cmd.includes("ollama list")) return fs.existsSync(pullLog) && fs.readFileSync(pullLog, "utf8").includes("llama3.2:3b") ? "llama3.2:3b" : "";
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
   if (cmd.includes("-o args=")) return "node ollama-auth-proxy.js";
@@ -2458,6 +2452,7 @@ const { setupNim } = require(${onboardPath});
         ...process.env,
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_TEST_NO_SLEEP: "1",
       },
     });
 
@@ -2467,7 +2462,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.model, "llama3.2:3b");
     assert.ok(
       payload.lines.some((line: string) =>
-        line.includes("Failed to pull Ollama model 'qwen3.5:9b'"),
+        line.includes("Ollama pull for 'qwen3.5:9b' completed, but Ollama did not list"),
       ),
     );
     assert.ok(
@@ -2509,11 +2504,13 @@ exit 0
     );
 
     const script = String.raw`
+const fs = require("fs");
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["7", "1", "n", "1", "y"];
+const answers = ["8", "1", "n", "1", "y"];
 const messages = [];
+const pullLog = ${JSON.stringify(pullLog)};
 
 credentials.prompt = async (message) => {
   messages.push(message);
@@ -2523,7 +2520,7 @@ runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
   if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [] });
-  if (cmd.includes("ollama list")) return "";
+  if (cmd.includes("ollama list")) return fs.existsSync(pullLog) ? "qwen3.5:9b" : "";
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
   if (cmd.includes("-o args=")) return "node ollama-auth-proxy.js";
@@ -2571,14 +2568,11 @@ const { setupNim } = require(${onboardPath});
         line.includes("Skipped pulling Ollama model 'qwen3.5:9b'"),
       ),
     );
-    // Pull only happened on the second confirmation, not on the declined first attempt.
     assert.equal(fs.readFileSync(pullLog, "utf8").trim(), "qwen3.5:9b");
     const downloadPrompts = payload.messages.filter((message: string) =>
       /Download Ollama model/.test(message),
     );
     assert.equal(downloadPrompts.length, 2);
-    // Each prompt must surface the resolved size — the whole point of #2639 —
-    // either a "<value> <unit>" label or the explicit "size unknown" fallback.
     const sizePattern = /\((\d+(\.\d+)? (B|KB|MB|GB|TB)( \(estimated\))?|size unknown)\)/;
     for (const prompt of downloadPrompts) {
       assert.match(prompt, sizePattern);
@@ -2612,11 +2606,13 @@ exit 0
     );
 
     const script = String.raw`
+const fs = require("fs");
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["7", "1"];
+const answers = ["8", "1"];
 const messages = [];
+const pullLog = ${JSON.stringify(pullLog)};
 
 credentials.prompt = async (message) => {
   messages.push(message);
@@ -2626,7 +2622,7 @@ runner.runCapture = (command) => {
   const cmd = Array.isArray(command) ? command.join(" ") : command;
   if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
   if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [] });
-  if (cmd.includes("ollama list")) return "";
+  if (cmd.includes("ollama list")) return fs.existsSync(pullLog) ? "qwen3.5:9b" : "";
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
   if (cmd.includes("-o args=")) return "node ollama-auth-proxy.js";
@@ -2671,7 +2667,6 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.provider, "ollama-local");
     assert.equal(payload.result.model, "qwen3.5:9b");
     assert.equal(fs.readFileSync(pullLog, "utf8").trim(), "qwen3.5:9b");
-    // No "Download Ollama model 'X'?" prompt was issued — the env var bypassed it.
     assert.equal(
       payload.messages.filter((message: string) => /Download Ollama model/.test(message)).length,
       0,
@@ -3040,7 +3035,7 @@ const { setupNim } = require(${onboardPath});
         "https://ollama.public.test:11434/v1",
         "my-model",
         "ollama-key",
-        EXPECTED_CUSTOM_ENDPOINT_PROBE_OPTIONS,
+        { ...EXPECTED_CUSTOM_ENDPOINT_PROBE_OPTIONS, calibrateTimeouts: true },
       );
     } finally {
       restoreProcessEnvValue("NEMOCLAW_PREFERRED_API", previousPreferredApi);
@@ -3097,7 +3092,7 @@ const { setupNim } = require(${onboardPath});
         "https://openai-proxy.example.com/v1",
         "gpt-4o",
         "sk-test",
-        EXPECTED_CUSTOM_ENDPOINT_PROBE_OPTIONS,
+        { ...EXPECTED_CUSTOM_ENDPOINT_PROBE_OPTIONS, calibrateTimeouts: true },
       );
     } finally {
       restoreProcessEnvValue("NEMOCLAW_PREFERRED_API", previousPreferredApi);
@@ -3124,7 +3119,7 @@ const { setupNim } = require(${onboardPath});
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["3", "", "", ""];
+const answers = ["4", "", "", ""];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -3753,7 +3748,7 @@ const { setupNim } = require(${onboardPath});
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["3", "https://proxy.example.com/v1/chat/completions?token=secret#frag", "custom-model", "retry", "proxy-good", "custom-model"];
+const answers = ["4", "https://proxy.example.com/v1/chat/completions?token=secret#frag", "custom-model", "retry", "proxy-good", "custom-model"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -3871,12 +3866,12 @@ printf '%s' "$status"
       { mode: 0o755 },
     );
 
-    // vLLM is option 7 (build, openai, custom, anthropic, anthropicCompatible, gemini, vllm)
+    // vLLM is option 8 (build, openrouter, openai, custom, anthropic, anthropicCompatible, gemini, vllm)
     const script = String.raw`
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["7"];
+const answers = ["8"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -3975,7 +3970,7 @@ printf '%s' "$status"
       { mode: 0o755 },
     );
 
-    // NIM-local is option 7 (build, openai, custom, anthropic, anthropicCompatible, gemini, nim-local)
+    // NIM-local is option 8 (build, openrouter, openai, custom, anthropic, anthropicCompatible, gemini, nim-local)
     // No ollama, no vLLM — only NIM-local shows up as experimental option
     const script = String.raw`
 const credentials = require(${credentialsPath});
@@ -3990,8 +3985,8 @@ nimMod.startNimContainerByName = () => "container-123";
 nimMod.waitForNimHealth = () => true;
 nimMod.isNgcLoggedIn = () => true;
 
-// Select option 7 (nim-local), then model 1
-const answers = ["7", "1"];
+// Select option 8 (nim-local), then model 1
+const answers = ["8", "1"];
 const messages = [];
 
 credentials.prompt = async (message) => {

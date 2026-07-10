@@ -536,7 +536,12 @@ print_done() {
   # #5735: do not claim a clean install when the automatic upgrade of a
   # pre-existing sandbox failed (it may have been destroyed before its recreate
   # failed). Surface an explicit incomplete/recovery status instead.
+  # #6520: same when recovery exited 0 but recorded sandboxes were not found
+  # on their own recorded gateway — they were not recovered, so the install is
+  # not clean either.
   if [[ "${_UPGRADE_SANDBOXES_FAILED:-false}" == true ]]; then
+    warn "=== Installation completed with warnings ==="
+  elif [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
     warn "=== Installation completed with warnings ==="
   else
     info "=== Installation complete ==="
@@ -545,14 +550,27 @@ print_done() {
   printf "  ${C_GREEN}${C_BOLD}%s${C_RESET}  ${C_DIM}(%ss)${C_RESET}\n" "$_CLI_DISPLAY" "$elapsed"
   printf "\n"
   if [[ "${_PREEXISTING_SANDBOX_RECOVERY_RAN:-false}" == true ]]; then
-    printf "  ${C_GREEN}Existing sandboxes were recovered and upgraded.${C_RESET}\n"
+    if [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
+      # #6520: recovery exited 0 but recorded sandboxes were not found on
+      # their own recorded gateway; do not report them as recovered, and give
+      # a concrete remediation path instead.
+      printf "  ${C_YELLOW}Some recorded sandboxes were not found on their recorded gateway and were not recovered.${C_RESET}\n"
+      printf "  ${C_YELLOW}Their gateway registration or Docker image may have been removed (see the recovery notes above).${C_RESET}\n"
+      printf "  ${C_DIM}Clear a stranded sandbox with '%s <name> destroy', then rebuild it with '%s onboard'.${C_RESET}\n" "$_CLI_BIN" "$_CLI_BIN"
+    else
+      printf "  ${C_GREEN}Existing sandboxes were recovered and upgraded.${C_RESET}\n"
+    fi
     if [[ "$_needs_cli_refresh" == true ]]; then
       printf "  ${C_YELLOW}%s installed, but this shell needs PATH refresh before '%s' will run.${C_RESET}\n" "$_CLI_DISPLAY" "$_CLI_BIN"
       printf "\n"
       printf "  ${C_GREEN}For this terminal:${C_RESET}\n"
       print_cli_path_refresh_actions
     fi
-    printf "  ${C_DIM}No new sandbox onboarding was needed.${C_RESET}\n"
+    if [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
+      printf "  ${C_DIM}Generic onboarding was skipped because recorded sandboxes exist.${C_RESET}\n"
+    else
+      printf "  ${C_DIM}No new sandbox onboarding was needed.${C_RESET}\n"
+    fi
   elif [[ "$ONBOARD_RAN" == true ]]; then
     local agent_name
     agent_name="$(resolve_onboarded_agent)"
@@ -639,7 +657,7 @@ usage() {
   printf "                                  In curl pipes, set this on bash or export it first.\n"
   printf "                                  Example: curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=%s bash\n" "$INSTALL_TAG_EXAMPLE"
   printf "    NEMOCLAW_INSTALL_REF          Exact Git ref/SHA to install\n"
-  printf "    NEMOCLAW_PROVIDER             build | openai | anthropic | anthropicCompatible\n"
+  printf "    NEMOCLAW_PROVIDER             build | openrouter | openai | anthropic | anthropicCompatible\n"
   printf "                                  | gemini | ollama | custom | nim-local | vllm | routed\n"
   printf "                                  | hermes-provider\n"
   printf "                                  (aliases: cloud -> build, nim -> nim-local)\n"
@@ -925,6 +943,11 @@ ONBOARD_RAN=false
 _CLI_PATH=""
 _PREEXISTING_SANDBOX_COUNT=0
 _PREEXISTING_SANDBOX_RECOVERY_RAN=false
+# #6520: set when the automatic recovery pass exited 0 but skipped recorded
+# sandboxes it could not observe on the selected gateway (e.g. their gateway
+# and Docker image were removed by a prior uninstall while sandboxes.json was
+# preserved). The final summary must not claim those sandboxes were recovered.
+_PREEXISTING_SANDBOX_ORPHANED=false
 _LEGACY_MANAGED_RECOVERY_NAMES_JSON="[]"
 # #5735: set when automatic recovery/upgrade of pre-existing sandboxes
 # reported a failure. A failed/destructive rebuild must not be reported as a
@@ -1684,7 +1707,7 @@ inspect_sandbox_registry_for_upgrade() {
   node - "$reg_file" "$field" <<'NODE'
 const fs = require("node:fs");
 
-function isRecord(value) {
+function isObjectRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
@@ -1694,10 +1717,10 @@ try {
 } catch {
   process.exit(1);
 }
-if (!isRecord(registry) || !isRecord(registry.sandboxes)) process.exit(1);
+if (!isObjectRecord(registry) || !isObjectRecord(registry.sandboxes)) process.exit(1);
 
 const entries = Object.entries(registry.sandboxes);
-if (entries.some(([name, entry]) => !name || !isRecord(entry) || entry.name !== name)) {
+if (entries.some(([name, entry]) => !name.trim() || !isObjectRecord(entry) || entry.name !== name)) {
   process.exit(1);
 }
 
@@ -2014,7 +2037,7 @@ preinstall_backup_and_retire_legacy_gateway() {
     if legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
       error "Pre-upgrade backup failed. Aborting before retiring the legacy OpenShell gateway."
     fi
-    error "Pre-upgrade backup failed. Resolve every reported sandbox backup failure and rerun the installer."
+    error "Pre-upgrade backup stopped the installer. Resolve every reported sandbox backup failure or skipped sandbox using the CLI output above, then rerun the installer."
   fi
   export NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1
 
@@ -2262,12 +2285,45 @@ recover_preexisting_sandboxes_before_onboard() {
   # pre-upgrade backup signal is present, the CLI also recovers registered
   # non-Ready sandboxes from their validated latest backup. It attempts every
   # eligible sandbox before returning non-zero for any failure.
-  if NEMOCLAW_CONFIRMED_LEGACY_MANAGED_SANDBOXES="${_LEGACY_MANAGED_RECOVERY_NAMES_JSON:-[]}" \
-    "$cli_runner" upgrade-sandboxes --auto 2>&1; then
+  #
+  # #6520: mirror the CLI output into a temp log (while still streaming it) so
+  # the installer can tell "recovered" apart from "exited 0 but recorded
+  # sandboxes are unrecoverable" — e.g. after `nemoclaw uninstall` removed the
+  # gateway and Docker image a preserved sandboxes.json still references. The
+  # CLI emits a dedicated orphan marker only for sandboxes absent from their
+  # own recorded gateway (never for sandboxes bound to another live gateway or
+  # ones that reconnect mid-run); keep the grep in sync with the "recorded
+  # sandbox(es) were not found on their recorded gateway" line in
+  # src/lib/actions/upgrade-sandboxes.ts.
+  local recovery_log=""
+  recovery_log="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-recovery-XXXXXX" 2>/dev/null)" || recovery_log=""
+  local recovery_status=0
+  if [ -n "$recovery_log" ]; then
+    _cleanup_files+=("$recovery_log")
+    if NEMOCLAW_CONFIRMED_LEGACY_MANAGED_SANDBOXES="${_LEGACY_MANAGED_RECOVERY_NAMES_JSON:-[]}" \
+      "$cli_runner" upgrade-sandboxes --auto 2>&1 | tee "$recovery_log"; then
+      recovery_status=0
+    else
+      # pipefail: take the CLI's own status, not tee's — a log-write failure
+      # (e.g. ENOSPC on TMPDIR) must not convert a successful recovery into
+      # the #5735 failure path.
+      recovery_status=${PIPESTATUS[0]}
+    fi
+  else
+    NEMOCLAW_CONFIRMED_LEGACY_MANAGED_SANDBOXES="${_LEGACY_MANAGED_RECOVERY_NAMES_JSON:-[]}" \
+      "$cli_runner" upgrade-sandboxes --auto 2>&1 || recovery_status=$?
+  fi
+  if [ "$recovery_status" -eq 0 ]; then
     _PREEXISTING_SANDBOX_RECOVERY_RAN=true
+    if [ -n "$recovery_log" ] \
+      && grep -Fq "recorded sandbox(es) were not found on their recorded gateway" "$recovery_log"; then
+      _PREEXISTING_SANDBOX_ORPHANED=true
+    fi
+    rm -f "$recovery_log" 2>/dev/null || true
     return 0
   fi
 
+  rm -f "$recovery_log" 2>/dev/null || true
   _UPGRADE_SANDBOXES_FAILED=true
   warn "One or more existing sandboxes could not be recovered automatically."
   warn "Generic onboarding will not run; review the affected sandbox and preserved backup diagnostics above."
@@ -2619,7 +2675,7 @@ describe_express_install() {
         inference_summary="managed local vLLM using the DGX Spark profile default model"
       fi
       inference_disclosure="Managed vLLM pulls the configured vLLM image/model and runs a local vLLM inference container."
-      sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-spark-assistant}"
+      sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     "DGX Station")
       inference_summary="managed local vLLM"
@@ -2718,7 +2774,7 @@ maybe_offer_express_install() {
       export NEMOCLAW_POLICY_MODE=suggested
       case "$platform" in
         "DGX Spark")
-          export NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-my-spark-assistant}"
+          export NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
           export NEMOCLAW_PROVIDER=install-vllm
           if [ -n "${NEMOCLAW_VLLM_MODEL:-}" ]; then
             export NEMOCLAW_VLLM_MODEL
@@ -2858,7 +2914,12 @@ main() {
         return 1
       fi
       if [[ "${_PREEXISTING_SANDBOX_RECOVERY_RAN:-false}" == true ]]; then
-        info "Existing sandboxes recovered; skipping generic onboarding."
+        if [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
+          # #6520: do not claim recovery when recorded sandboxes are stranded.
+          warn "Some recorded sandboxes could not be recovered; skipping generic onboarding."
+        else
+          info "Existing sandboxes recovered; skipping generic onboarding."
+        fi
       else
         run_onboard || error "Onboarding did not complete successfully."
         ONBOARD_RAN=true

@@ -17,6 +17,7 @@ import { createInferenceRouteHelpers } from "../src/lib/onboard/inference-route.
 import { createLocalInferenceRouteApplier } from "../src/lib/onboard/local-inference-route.js";
 import type { SetupInference, SetupInferenceDeps } from "../src/lib/onboard/setup-inference.js";
 import { stageOptimizedSandboxBuildContext } from "../src/lib/sandbox/build-context.js";
+import { writeOkOpenshell } from "./helpers/onboard-openshell-fixture";
 import { testTimeoutOptions } from "./helpers/timeouts";
 import {
   createDirectCommandRouter,
@@ -39,7 +40,6 @@ type CommandEntry = {
   dockerfileReadError?: string;
 };
 type ResumeConflict = { field: string; requested: string | null; recorded: string | null };
-
 type OnboardTestInternals = {
   getNavigationChoice: (value?: string | null) => string | null;
   getFutureShellPathHint: (binDir: string, pathValue?: string) => string | null;
@@ -115,14 +115,6 @@ const repoRoot = path.join(import.meta.dirname, "..");
 const onboardScriptMocksPath = JSON.stringify(
   path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
 );
-
-function writeExecutable(target: string, contents: string) {
-  fs.writeFileSync(target, contents, { mode: 0o755 });
-}
-
-function writeOkOpenshell(fakeBin: string) {
-  writeExecutable(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n");
-}
 
 describe("onboard helpers", () => {
   it("adds host proxy variables to sandbox startup env args", () => {
@@ -742,6 +734,7 @@ startGateway(null).catch(() => {});
     assert.deepEqual(evidence.setupCredentialValues, [credentialValue, credentialValue]);
     assert.equal(evidence.parentCredentialUnchanged, true);
   });
+
   it("reuses a registered Hermes Provider without re-collecting host credentials", async () => {
     await withProcessEnv(
       {
@@ -1781,7 +1774,7 @@ const { EventEmitter } = require("node:events");
 const commands = [];
 const registerCalls = [];
 const updateCalls = [];
-const defaultCalls = []; registry.addExtraProvider("tavily-search");
+const defaultCalls = [];
 runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
@@ -1884,7 +1877,7 @@ const { createSandbox } = require(${onboardPath});
       entry.command.includes("sandbox create"),
     );
     assert.ok(createCommand, "expected sandbox create command");
-    assert.match(createCommand.command, /(?=.*nemoclaw-start)(?=.*--provider tavily-search)/);
+    assert.match(createCommand.command, /nemoclaw-start/);
     assert.doesNotMatch(createCommand.command, /--upload/);
     assert.doesNotMatch(createCommand.command, /OPENCLAW_CONFIG_PATH/);
     assert.doesNotMatch(createCommand.command, /NVIDIA_INFERENCE_API_KEY=/);
@@ -2772,8 +2765,8 @@ sandboxState.backupSandboxState = (name) => {
     manifest: { backupPath: "/tmp/fake-backup-path", timestamp: "2026-05-25T00:00:00Z" },
   };
 };
-sandboxState.restoreSandboxState = (name, backupPath) => {
-  events.push({ kind: "restore", name, backupPath });
+sandboxState.restoreRecreatedSandboxState = (name, backupPath, options) => {
+  events.push({ kind: "restore", name, backupPath, options });
   return {
     success: true,
     restoredDirs: ["workspace", "skills"],
@@ -2840,6 +2833,7 @@ const { createSandbox } = require(${onboardPath});
       cmd?: string;
       name?: string;
       backupPath?: string;
+      options?: { targetAgentType?: string; freshOpenClawImagePluginInstalls?: unknown[] };
     }>;
     const backupIndex = events.findIndex((e) => e.kind === "backup");
     const deleteIndex = events.findIndex(
@@ -2854,6 +2848,8 @@ const { createSandbox } = require(${onboardPath});
     assert.equal(backupEvent?.name, "my-assistant", "backup target must match sandbox name");
     const restoreEvent = events[restoreIndex];
     assert.equal(restoreEvent?.backupPath, "/tmp/fake-backup-path", "restore must use backup path");
+    assert.equal(restoreEvent?.options?.targetAgentType, "openclaw");
+    assert.equal(restoreEvent?.options?.freshOpenClawImagePluginInstalls, undefined);
   });
 
   it("recreate-sandbox with NEMOCLAW_RECREATE_WITHOUT_BACKUP=1 skips backup", {
@@ -2909,7 +2905,7 @@ sandboxState.backupSandboxState = () => {
   events.push({ kind: "backup" });
   return { success: true, backedUpDirs: [], failedDirs: [], backedUpFiles: [], failedFiles: [] };
 };
-sandboxState.restoreSandboxState = () => {
+sandboxState.restoreRecreatedSandboxState = () => {
   events.push({ kind: "restore" });
   return { success: true, restoredDirs: [], failedDirs: [], restoredFiles: [], failedFiles: [] };
 };
@@ -2973,7 +2969,7 @@ const { createSandbox } = require(${onboardPath});
     );
     assert.ok(
       !events.some((e) => e.kind === "restore"),
-      "should not call restoreSandboxState when no backup occurred",
+      "should not call restoreRecreatedSandboxState when no backup occurred",
     );
   });
 
@@ -3042,7 +3038,7 @@ sandboxState.backupSandboxState = (name) => {
     manifest: { backupPath: "/tmp/fake-backup-notready", timestamp: "2026-05-25T00:00:00Z" },
   };
 };
-sandboxState.restoreSandboxState = (name, backupPath) => {
+sandboxState.restoreRecreatedSandboxState = (name, backupPath) => {
   events.push({ kind: "restore", name, backupPath });
   return {
     success: true,

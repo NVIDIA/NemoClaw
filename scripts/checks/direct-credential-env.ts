@@ -13,17 +13,9 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as ts from "typescript";
+import { SUPPORTED_CREDENTIAL_ENV_NAMES } from "../../src/lib/security/credential-env";
 
-const CREDENTIAL_ENV_KEYS = new Set([
-  "NVIDIA_INFERENCE_API_KEY",
-  "NVIDIA_API_KEY",
-  "NEMOCLAW_PROVIDER_KEY",
-  "OPENAI_API_KEY",
-  "ANTHROPIC_API_KEY",
-  "GEMINI_API_KEY",
-  "COMPATIBLE_API_KEY",
-  "COMPATIBLE_ANTHROPIC_API_KEY",
-]);
+const CREDENTIAL_ENV_KEYS = SUPPORTED_CREDENTIAL_ENV_NAMES;
 
 const MESSAGE =
   "Direct process.env access for provider credentials bypasses credentials.json. " +

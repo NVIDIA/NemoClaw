@@ -21,8 +21,8 @@ export const HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS = [
   "recreating the OpenShell-managed Docker container",
   "legacy GPU compatibility envelope",
   "may relax container confinement",
-  "NEMOCLAW_DOCKER_GPU_PATCH=0",
-  "native-only behavior",
+  "NEMOCLAW_DOCKER_GPU_PATCH=fallback",
+  "explicitly authorized",
 ] as const;
 
 interface HermesGpuStartupProofOptions {
@@ -60,7 +60,7 @@ export async function assertHermesGpuStartupProof({
     }
   } else if (gpuRoute === "compatibility-fallback") {
     expect(installText).toContain(
-      "Automatic sandbox GPU enabled; trying native OpenShell injection with compatibility fallback.",
+      "Operator-authorized GPU fallback enabled; trying native OpenShell injection with one compatibility retry.",
     );
     for (const fragment of HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS) {
       expect(installText).toContain(fragment);
@@ -71,7 +71,7 @@ export async function assertHermesGpuStartupProof({
     expect(installText).toContain("Docker GPU mode selected:");
   } else {
     expect(installText).toContain(
-      "Automatic sandbox GPU enabled; trying native OpenShell injection with compatibility fallback.",
+      "Direct sandbox GPU enabled; allowing OpenShell GPU policy enrichment.",
     );
     expect(installText).not.toContain(
       "Recreating OpenShell Docker sandbox container with NVIDIA GPU access",

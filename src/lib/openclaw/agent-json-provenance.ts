@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isRecord } from "../core/json-types";
+import { isObjectRecord, type UnknownRecord } from "../core/json-types";
 import { redactFull } from "../security/redact";
 
 const FAILURE_STATUS_VALUES = new Set(["error", "errored", "failed", "failure"]);
@@ -23,15 +23,15 @@ type WalkEntry = {
 };
 
 function snippet(value: string, limit = 300): string {
-  const squashed = value
+  const sanitized = value
     .replace(ANSI_OSC_PATTERN, "")
     .replace(ANSI_CSI_PATTERN, "")
     .replace(/\r|\u0008/gu, "")
-    .replace(CONTROL_PATTERN, "")
-    .replace(/\s+/gu, " ")
-    .trim();
-  const redacted = redactProvenanceDetail(squashed);
-  return redacted.length <= limit ? redacted : `${redacted.slice(0, limit - 3)}...`;
+    .replace(CONTROL_PATTERN, "");
+  // Preserve line boundaries while redacting so line-oriented header patterns
+  // cannot consume unrelated details that happen to follow on another line.
+  const squashed = redactProvenanceDetail(sanitized).replace(/\s+/gu, " ").trim();
+  return squashed.length <= limit ? squashed : `${squashed.slice(0, limit - 3)}...`;
 }
 
 function redactProvenanceDetail(value: string): string {
@@ -60,7 +60,7 @@ function strings(value: unknown): string[] {
 
     const children = Array.isArray(entry.value)
       ? entry.value
-      : isRecord(entry.value)
+      : isObjectRecord(entry.value)
         ? Object.values(entry.value)
         : [];
     if (children.length === 0) continue;
@@ -79,7 +79,7 @@ function strings(value: unknown): string[] {
 
 function detailFromValue(value: unknown): string | null {
   if (typeof value === "string") return snippet(value);
-  if (Array.isArray(value) || isRecord(value)) {
+  if (Array.isArray(value) || isObjectRecord(value)) {
     const nested = strings(value)
       .map((part) => snippet(part))
       .filter(Boolean);
@@ -167,19 +167,23 @@ function collectToolFailureProvenance(value: unknown): string[] {
     visited += 1;
     if (entry.depth > MAX_PROVENANCE_WALK_DEPTH) continue;
 
-    const children = Array.isArray(entry.value)
-      ? entry.value
-      : isRecord(entry.value)
-        ? Object.values(entry.value)
-        : [];
-    if (!Array.isArray(entry.value) && !isRecord(entry.value)) continue;
+    let children: unknown[];
+    let recordValue: UnknownRecord | null = null;
+    if (Array.isArray(entry.value)) {
+      children = entry.value;
+    } else if (isObjectRecord(entry.value)) {
+      recordValue = entry.value;
+      children = Object.values(recordValue);
+    } else {
+      continue;
+    }
 
     const objectValue = entry.value as object;
     if (seen.has(objectValue)) continue;
     seen.add(objectValue);
 
-    if (isRecord(entry.value)) {
-      const line = toolFailureLine(entry.value);
+    if (recordValue) {
+      const line = toolFailureLine(recordValue);
       if (line) lines.push(line);
     }
 

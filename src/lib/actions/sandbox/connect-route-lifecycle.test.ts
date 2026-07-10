@@ -60,6 +60,9 @@ describe("connectSandbox route lifecycle", () => {
     expect(errorOutput).toContain(
       "Aligning the gateway to anthropic-prod/claude-sonnet-4-20250514",
     );
+    expect(errorOutput).toContain(
+      "nemoclaw inference set --provider 'nvidia-prod' --model 'nvidia/nemotron-3-super-120b-a12b' --sandbox 'alpha'",
+    );
     expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
       [
         "inference",
@@ -78,6 +81,26 @@ describe("connectSandbox route lifecycle", () => {
       "openshell",
       ["sandbox", "connect", "alpha"],
       expect.any(Object),
+    );
+  });
+
+  it("shell-quotes hostile route values in drift recovery commands (#3726)", async () => {
+    const sandboxName = "alpha's box";
+    const harness = createConnectHarness({
+      inferenceGetOutput:
+        "Gateway inference:\n  Provider: openai; touch /tmp/pwn\n  Model: $(id) model\n",
+      registryEntry: {
+        name: sandboxName,
+        model: "claude-sonnet-4-20250514",
+        provider: "anthropic-prod",
+      },
+    });
+
+    await expect(harness.connectSandbox(sandboxName, { probeOnly: true })).resolves.toBeUndefined();
+
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errorOutput).toContain(
+      "nemoclaw inference set --provider 'openai; touch /tmp/pwn' --model '$(id) model' --sandbox 'alpha'\\''s box'",
     );
   });
 
@@ -147,6 +170,35 @@ describe("connectSandbox route lifecycle", () => {
       expect.objectContaining({ ignoreError: true }),
     );
     expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not claim repair ran when route inspection fails before repair (#6192)", async () => {
+    const harness = createConnectHarness({
+      registryEntry: {
+        model: "nvidia/nemotron-3-super-120b-a12b",
+        provider: "nvidia-prod",
+      },
+    });
+    harness.captureOpenshellSpy
+      .mockReturnValueOnce({ status: 0, output: "alpha Ready" })
+      .mockImplementationOnce(() => {
+        throw new Error("gateway inference read failed");
+      });
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(1)");
+
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errorOutput).toContain("failed to verify or repair inference route");
+    expect(errorOutput).toContain("did not return a trusted result");
+    expect(errorOutput).toContain("route is not known healthy");
+    expect(errorOutput).not.toContain("after DNS and route repair");
+    expect(errorOutput).not.toContain("route is known to be broken");
+    expect(harness.captureOpenshellSpy).toHaveBeenCalledWith(
+      ["inference", "get", "-g", "nemoclaw"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
   it("stops before opening SSH when route repair and reset both fail", async () => {

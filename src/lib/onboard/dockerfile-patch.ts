@@ -20,6 +20,16 @@ import {
   type ToolDisclosure,
 } from "../tool-disclosure";
 import {
+  CORPORATE_CA_EXPLICIT_ENV,
+  encodeCorporateCaArg,
+  resolveCorporateCa,
+} from "./corporate-ca";
+import {
+  DCODE_AUTO_APPROVAL_BUILD_ARG,
+  type DcodeAutoApprovalMode,
+  isDcodeAutoApprovalMode,
+} from "./dcode-auto-approval";
+import {
   dockerfileInstructions,
   readDockerfilePatchSnapshot,
   replaceDockerfilePatchSnapshot,
@@ -53,6 +63,24 @@ export interface PatchStagedDockerfileOptions {
   toolDisclosure?: ToolDisclosure;
   requireToolDisclosureContract?: boolean;
   baseImageResolutionMetadata?: SandboxBaseImageResolutionMetadata | null;
+  dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
+}
+
+export function patchDcodeAutoApprovalDockerArg(
+  dockerfile: string,
+  mode: DcodeAutoApprovalMode,
+): string {
+  if (!isDcodeAutoApprovalMode(mode)) {
+    throw new Error("Invalid DCode auto-approval mode; refusing to patch the Dockerfile.");
+  }
+  const instruction = new RegExp(`^ARG ${DCODE_AUTO_APPROVAL_BUILD_ARG}=[^\\r\\n]*$`, "gm");
+  const matches = dockerfile.match(instruction) ?? [];
+  if (matches.length !== 1) {
+    throw new Error(
+      `Dockerfile must contain exactly one ARG ${DCODE_AUTO_APPROVAL_BUILD_ARG}=... instruction; found ${matches.length}.`,
+    );
+  }
+  return dockerfile.replace(instruction, `ARG ${DCODE_AUTO_APPROVAL_BUILD_ARG}=${mode}`);
 }
 
 export function isValidProxyHost(value: string): boolean {
@@ -100,6 +128,9 @@ export function patchStagedDockerfile(
       );
   if (toolDisclosureInstruction) {
     dockerfile = `${dockerfile.slice(0, toolDisclosureInstruction.start)}ARG NEMOCLAW_TOOL_DISCLOSURE=${sanitizeDockerArg(toolDisclosure)}${dockerfile.slice(toolDisclosureInstruction.end)}`;
+  }
+  if (options.dcodeAutoApprovalMode !== undefined) {
+    dockerfile = patchDcodeAutoApprovalDockerArg(dockerfile, options.dcodeAutoApprovalMode);
   }
   // Pin the base image to a specific digest when available (#1904).
   // The ref must come from pullAndResolveBaseImageDigest() — never from
@@ -331,5 +362,33 @@ export function patchStagedDockerfile(
       `ARG NEMOCLAW_EXTRA_AGENTS_JSON_B64=${encoded}`,
     );
   }
+  // Corporate proxy CA import (#6210). When the host exposes an operator
+  // corporate CA bundle — via env var or an installed host trust-store anchor —
+  // bake its base64 so the entrypoint can append it to the OpenShell trust
+  // bundle at runtime (never replacing it). The replace is a silent no-op on
+  // custom/legacy Dockerfiles that predate this ARG.
+  const corporateCa = resolveCorporateCa(process.env);
+  if (corporateCa) {
+    const corporateCaArgPattern = /^ARG NEMOCLAW_CORPORATE_CA_B64=.*$/m;
+    if (corporateCaArgPattern.test(dockerfile)) {
+      dockerfile = dockerfile.replace(
+        corporateCaArgPattern,
+        `ARG NEMOCLAW_CORPORATE_CA_B64=${sanitizeDockerArg(encodeCorporateCaArg(corporateCa.pem))}`,
+      );
+      // Surface which host source is being baked so a fallback import (from a
+      // conventional CA env var rather than the explicit opt-in) is never
+      // silent. The CA is a public certificate, so logging its source is safe.
+      console.error(
+        `[nemoclaw] baking corporate proxy CA from ${corporateCa.sourceEnv} (${corporateCa.sourcePath}) into the sandbox image trust (#6210)`,
+      );
+    } else if (corporateCa.sourceEnv === CORPORATE_CA_EXPLICIT_ENV) {
+      // Explicit opt-in must not silently no-op on a managed Dockerfile.
+      throw new Error(
+        "Dockerfile is missing ARG NEMOCLAW_CORPORATE_CA_B64; cannot bake the corporate CA from NEMOCLAW_CORPORATE_CA_BUNDLE.",
+      );
+    }
+    // Fallback source + a custom Dockerfile without the ARG: leave a no-op.
+  }
+
   replaceDockerfilePatchSnapshot(dockerfilePath, patchSnapshot, dockerfile);
 }

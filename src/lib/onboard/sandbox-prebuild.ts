@@ -203,15 +203,7 @@ export async function prebuildSandboxImageIfEligible(
   let status: number | null;
   try {
     status = await buildImage(
-      [
-        "build",
-        "--progress=plain",
-        "-t",
-        imageRef,
-        "-f",
-        trustedContext.dockerfile,
-        trustedContext.buildCtx,
-      ],
+      ["build", "-t", imageRef, "-f", trustedContext.dockerfile, trustedContext.buildCtx],
       {
         env: { ...dockerBuildSubprocessEnv(), DOCKER_BUILDKIT: "1" },
         stdio: "inherit",
@@ -247,7 +239,7 @@ export async function prebuildSandboxImageIfEligible(
   }
   if (!imageId) {
     log(
-      "  Local image identity could not be proven; automatic GPU compatibility fallback may fail closed if no exact native container identity becomes available.",
+      "  Local image identity could not be proven; an operator-authorized GPU compatibility fallback may fail closed if no exact native container identity becomes available.",
     );
   }
   return {

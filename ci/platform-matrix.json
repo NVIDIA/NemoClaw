@@ -31,7 +31,7 @@
       "status": "tested",
       "prd_priority": "P0",
       "ci_tested": true,
-      "notes": "Primary tested path. Ubuntu 24.04 is the validated distro in production source (`DEFAULT_COMPAT_IMAGE` in `src/lib/onboard/docker-driver-gateway-compat.ts:11` and the preflight tests pin 24.04 only); the installer's package-manager probes assume apt-get. Other distros (Ubuntu 22.04, Fedora, Rocky, Alma, NixOS, Arch) may work but are not validated."
+      "notes": "Primary tested path. Ubuntu 24.04 is the validated distro in production source (`DEFAULT_COMPAT_IMAGE` in `src/lib/onboard/docker-driver-gateway-compat.ts:16` and the preflight tests pin 24.04 only); the installer's package-manager probes assume apt-get. Other distros (Ubuntu 22.04, Fedora, Rocky, Alma, NixOS, Arch) may work but are not validated."
     },
     {
       "name": "macOS (Apple Silicon)",
@@ -84,6 +84,12 @@
       "notes": "Hosted models on integrate.api.nvidia.com"
     },
     {
+      "name": "OpenRouter",
+      "status": "tested",
+      "endpoint_type": "OpenAI-compatible",
+      "notes": "First-class onboarding route for OpenClaw, Hermes, and LangChain Deep Agents Code. NemoClaw registers the `openrouter-api` provider through OpenShell's `openai` profile with a host runtime adapter URL; host-side validation and runtime traffic send the default OpenRouter attribution headers."
+    },
+    {
       "name": "OpenAI",
       "status": "tested",
       "endpoint_type": "Native OpenAI-compatible",
@@ -93,7 +99,7 @@
       "name": "Other OpenAI-compatible endpoint",
       "status": "caveated",
       "endpoint_type": "Custom OpenAI-compatible",
-      "notes": "Adapter path validated against OpenRouter as the `compatible-endpoint` provider with `openrouter/auto` (see `src/lib/inference/config.test.ts:208`); the onboarding prompt that surfaces OpenRouter as the worked example is in `handleRemoteProviderSelection` in `src/lib/onboard.ts`. Behavior on other OpenAI-compatible proxies, gateways, and self-hosted implementations may vary; this row claims the adapter, not the universe of compatible endpoints."
+      "notes": "Custom base-URL adapter for servers that implement OpenAI-compatible `/v1/chat/completions` or `/v1/responses`. Behavior on OpenAI-compatible proxies, gateways, and self-hosted implementations may vary; this row claims the adapter, not the universe of compatible endpoints."
     },
     {
       "name": "Anthropic",

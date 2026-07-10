@@ -136,6 +136,26 @@ export type RemoteProviderDeps = CommonDeps & {
       log: (message: string) => void;
     }): Promise<{ handled: true; result: SetupInferenceResult } | { handled: false }>;
   };
+  openrouterRuntimeOnboard: {
+    setupOpenRouterRuntimeInference(input: {
+      sandboxName: string | null;
+      provider: string;
+      model: string;
+      credentialEnv: string | null;
+      credentialValue: string | null;
+      reuseGatewayCredentialWithoutLocalKey?: boolean;
+      skipHostInferenceSmoke?: boolean;
+      isNonInteractive: () => boolean;
+      runOpenshell: RunOpenshell;
+      upsertProvider: UpsertProvider;
+      verifyInferenceRoute: VerifyInferenceRoute;
+      verifyOnboardInferenceSmoke: any;
+      updateSandbox: Registry["updateSandbox"];
+      exitProcess: CommonDeps["exitProcess"];
+      error: (message: string) => void;
+      log: (message: string) => void;
+    }): Promise<{ handled: true; result: SetupInferenceResult } | { handled: false }>;
+  };
 };
 
 // DNS lookup signature compatible with `dnsPromises.lookup(host, { all: true })`
@@ -250,6 +270,7 @@ export const REMOTE_PROVIDER_NAMES = [
   "nvidia-prod",
   "nvidia-nim",
   "openai-api",
+  "openrouter-api",
   "anthropic-prod",
   "compatible-anthropic-endpoint",
   "gemini-api",

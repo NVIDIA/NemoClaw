@@ -7,6 +7,7 @@ import { type MockInstance, vi } from "vitest";
 
 import type { SandboxGatewayState } from "../../src/lib/actions/sandbox/gateway-state";
 import type { SandboxStatusPreflightResult } from "../../src/lib/actions/sandbox/status-preflight";
+import type { SandboxStatusRouteDrift } from "../../src/lib/actions/sandbox/status-snapshot";
 import type { ProviderHealthStatus } from "../../src/lib/inference/health";
 
 type ShowSandboxStatus = typeof import("../../src/lib/actions/sandbox/status")["showSandboxStatus"];
@@ -53,6 +54,7 @@ const baseSandboxEntry = {
 export type StatusFlowHarnessOptions = {
   currentModel?: string;
   currentProvider?: string;
+  routeDrift?: SandboxStatusRouteDrift | null;
   inferenceHealth?: ProviderHealthStatus | null;
   lookup?: SandboxGatewayState;
   lookupState?: "present" | "missing";
@@ -60,6 +62,7 @@ export type StatusFlowHarnessOptions = {
   sandboxEntry?: Partial<Omit<typeof baseSandboxEntry, "agentVersion">> & {
     agent?: string | null;
     agentVersion?: string | null;
+    dcodeAutoApprovalMode?: "disabled" | "thread-opt-in";
   };
   shieldsPosture?: {
     mode: "locked" | "mutable_default" | "mutable";
@@ -135,23 +138,23 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
       rpcIssue: null,
       currentModel: options.currentModel ?? "nvidia/nemotron-live",
       currentProvider: options.currentProvider ?? "ollama-local",
+      routeDrift: options.routeDrift ?? null,
       inferenceHealth:
         options.inferenceHealth === undefined
           ? {
               ok: true,
               probed: true,
-              providerLabel: "Ollama",
-              endpoint: "http://127.0.0.1:11434/v1/chat/completions",
-              detail: "chat completions probe passed",
+              providerLabel: "Inference route",
+              endpoint: "https://inference.local/v1/models",
+              detail: "inference route reachable",
               subprobes: [
                 {
-                  ok: false,
+                  ok: true,
                   probed: true,
-                  providerLabel: "Inference gateway chain",
-                  endpoint: "http://127.0.0.1:19000/v1/chat/completions",
-                  detail: "gateway refused connection",
-                  probeLabel: "gateway",
-                  failureLabel: "unreachable",
+                  providerLabel: "Ollama",
+                  endpoint: "http://127.0.0.1:11434/v1/chat/completions",
+                  detail: "chat completions probe passed",
+                  probeLabel: "ollama backend",
                 },
               ],
             }

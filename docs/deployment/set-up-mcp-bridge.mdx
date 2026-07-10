@@ -19,7 +19,15 @@ The integration has three parts:
 
 - An OpenShell provider stores credentials outside the sandbox.
 - A generated OpenShell network policy grants the MCP endpoint through `protocol: mcp` and applies explicit JSON-RPC MCP method rules.
-- An agent adapter writes the MCP endpoint into OpenClaw, Hermes, or LangChain Deep Agents Code config.
+<AgentOnly variant="openclaw">
+- An agent adapter writes the MCP endpoint into OpenClaw config.
+</AgentOnly>
+<AgentOnly variant="hermes">
+- An agent adapter writes the MCP endpoint into Hermes config.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+- An agent adapter writes the MCP endpoint into LangChain Deep Agents Code config.
+</AgentOnly>
 
 This integration depends on the OpenShell MCP/JSON-RPC L7 policy support from [NVIDIA/OpenShell#1865](https://github.com/NVIDIA/OpenShell/pull/1865).
 NemoClaw v0.0.74 defaults to the pinned stable OpenShell `0.0.72` release, which exposes native `protocol: mcp` policy handling and provider-backed credential replacement.
@@ -99,7 +107,10 @@ In that implementation, [`crates/openshell-supervisor-network/src/proxy.rs:2476-
 The CONNECT path passes the returned list directly to `TcpStream::connect` at [`crates/openshell-supervisor-network/src/proxy.rs:822-832`](https://github.com/NVIDIA/OpenShell/blob/8cb16de9eae4c44d7d31e1493747d8c10abb5963/crates/openshell-supervisor-network/src/proxy.rs#L822-L832).
 The explicit HTTP-forward path carries the same returned list from [`crates/openshell-supervisor-network/src/proxy.rs:3885-3893`](https://github.com/NVIDIA/OpenShell/blob/8cb16de9eae4c44d7d31e1493747d8c10abb5963/crates/openshell-supervisor-network/src/proxy.rs#L3885-L3893) to [`crates/openshell-supervisor-network/src/proxy.rs:4123-4125`](https://github.com/NVIDIA/OpenShell/blob/8cb16de9eae4c44d7d31e1493747d8c10abb5963/crates/openshell-supervisor-network/src/proxy.rs#L4123-L4125).
 A DNS change to a private, special-use, or otherwise unpinned address therefore fails closed instead of widening the route.
-The stable and development `mcp-bridge` live lanes verify this OpenShell contract before any NemoClaw MCP mutation and independently of all three agent adapters: the OpenClaw scenario applies a raw `protocol: mcp` policy with `allowed_ips: [1.1.1.1]`, remaps the hostname to a reachable private runner address, sends a raw MCP `tools/list` request, requires an exact HTTP 403, verifies that the upstream server recorded zero requests, and restores the exact base policy in `finally`.
+The stable `mcp-bridge` live lane verifies this OpenShell contract before any NemoClaw MCP mutation and independently of all three agent adapters.
+The development lane first compares its installed moving OpenShell build with the reviewed child-visible credential manifest.
+An exact version match runs the same full lifecycle, while any other development version records the expected fail-closed compatibility result and skips managed MCP mutation.
+The full lifecycle OpenClaw scenario applies a raw `protocol: mcp` policy with `allowed_ips: [1.1.1.1]`, remaps the hostname to a reachable private runner address, sends a raw MCP `tools/list` request, requires an exact HTTP 403, verifies that the upstream server recorded zero requests, and restores the exact base policy in `finally`.
 `restart` resolves the hostname again before updating that policy.
 Authenticated MCP rejects `host.openshell.internal`, `host.docker.internal`, and `host.containers.internal` on stable OpenShell `v0.0.72`.
 That release has a trusted-gateway branch for one narrow link-local topology, but it does not expose an attested driver gateway address that NemoClaw can pin; non-link-local driver aliases otherwise fall back to mutable exact-host resolution.
@@ -274,6 +285,28 @@ If deletion is refused, NemoClaw attempts to restore the previous MCP state, rep
 Provider deletion and registry cleanup happen only after OpenShell confirms that the sandbox is gone.
 NemoClaw prechecks the recorded provider ID and credential-key shape before mutation and uses a random per-add provider-name suffix to avoid accidental name reuse.
 The stable OpenShell limitations section describes why these ownership checks do not form an atomic identity binding.
+
+An interrupted MCP destroy can leave durable transaction state.
+A prepared-only transaction means deletion is not durably confirmed.
+If the sandbox is still live, recover without destroying it by removing the affected server with `--force`.
+
+```bash
+$$nemoclaw my-sandbox mcp remove <server> --force
+```
+
+NemoClaw clears the prepared marker only after cleanup succeeds without residuals and no bridge entries remain.
+For a sandbox with multiple bridge entries, repeat the command with each registered server name until the manifest is empty.
+A failed cleanup, a wrong server name, residual resources, or any remaining bridge entry preserves the marker for another retry.
+
+A pending marker, including a transaction with both prepared and pending markers, means the registry records that OpenShell deletion was already confirmed.
+`mcp remove --force` refuses this state because provider or policy cleanup can still be owed.
+Finish the idempotent destroy instead.
+
+```bash
+$$nemoclaw my-sandbox destroy
+```
+
+While either marker remains, `rebuild` refuses during preflight before backup or deletion and prints a redacted diagnostic with the applicable recovery command.
 
 `remove --force` may remove a modified same-name agent adapter entry so an operator can clear local config.
 Provider deletion still requires the exact recorded provider ID, type, and credential key, and policy deletion still requires exact owned content; force never claims an unowned or drifted provider or same-key live policy.

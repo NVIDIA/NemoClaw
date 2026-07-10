@@ -360,7 +360,11 @@ describe("core onboard flow phases", () => {
       "HERMES_API_KEY",
       "api_key",
       ["nous-web"],
-      { gatewayName: "nemoclaw", allowToolsIncompatible: false },
+      {
+        gatewayName: "nemoclaw",
+        allowToolsIncompatible: false,
+        reservationSessionId: session.sessionId,
+      },
     );
     expect(result.context.hermesToolGateways).toEqual(["nous-web"]);
 

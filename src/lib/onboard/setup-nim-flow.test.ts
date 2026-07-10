@@ -22,6 +22,12 @@ const REMOTE_PROVIDER_CONFIG: SetupNimFlowDeps["remoteProviderConfig"] = {
     endpointUrl: "https://api.openai.com/v1",
     credentialEnv: "OPENAI_API_KEY",
   },
+  openrouter: {
+    label: "OpenRouter",
+    providerName: "openrouter-api",
+    endpointUrl: "https://openrouter.ai/api/v1",
+    credentialEnv: "OPENROUTER_API_KEY",
+  },
   custom: {
     label: "Other OpenAI-compatible endpoint",
     providerName: "compatible-endpoint",
@@ -136,14 +142,16 @@ afterEach(() => {
 });
 
 describe("createSetupNim", () => {
-  it("passes the Deep Agents manifest default to NVIDIA model selection", async () => {
+  it("passes the Deep Agents manifest default to shared NVIDIA/OpenRouter model selection", async () => {
     const ultra = "nvidia/nemotron-3-ultra-550b-a55b";
     const log = vi.fn();
+    const sharedSession = { select: async () => unexpected("featured model selection") };
     const createNvidiaFeaturedModelSession = vi.fn<
       SetupNimFlowDeps["createNvidiaFeaturedModelSession"]
-    >(() => ({ select: async () => unexpected("featured model selection") }));
+    >(() => sharedSession);
     const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
       async (_args, state) => {
+        expect(state.openRouterFeaturedModels).toBe(state.nvidiaFeaturedModels);
         state.model = ultra;
         state.provider = "nvidia-prod";
         state.endpointUrl = "https://integrate.api.nvidia.com/v1";
@@ -161,6 +169,7 @@ describe("createSetupNim", () => {
 
     await setupNim(null, null, dcodeAgent);
 
+    expect(createNvidiaFeaturedModelSession).toHaveBeenCalledTimes(1);
     expect(createNvidiaFeaturedModelSession).toHaveBeenCalledWith({
       defaultModel: ultra,
       writeLine: log,

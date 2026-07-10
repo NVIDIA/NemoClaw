@@ -25,6 +25,13 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       order: 40,
     },
   ],
+  completion: [
+    {
+      group: "Getting Started",
+      order: 1.75,
+      flags: "[bash|zsh|fish]",
+    },
+  ],
   "credentials:add": [
     {
       group: "Credentials",
@@ -339,6 +346,14 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       group: "Sandbox Management",
       order: 6,
       flags: "[--follow] [--tail <lines>|-n <lines>] [--since <duration>]",
+    },
+  ],
+  "sandbox:policy:get": [
+    {
+      group: "Policy Presets",
+      order: 16,
+      description: "Export round-trippable base policy YAML",
+      flags: "[--raw]",
     },
   ],
   "sandbox:policy:add": [
