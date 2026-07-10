@@ -99,27 +99,23 @@ function getRepoDigest(
   return { digest, ref: `${imageName}@${digest}` };
 }
 
-function resolvePulledCandidate(
+type PulledCandidateOptions = {
+  pinnedRemoteRef?: string;
+  refreshIfLocalInvalid?: boolean;
+};
+
+function imageRefCanRefresh(imageRef: string): boolean {
+  return !imageRef.includes("@sha256:");
+}
+
+function validatePulledCandidate(
   imageName: string,
   imageRef: string,
   source: SandboxBaseImageResolution["source"],
   options: ResolveBaseImageOptions,
-  pinnedRemoteRef?: string,
+  candidateOptions: PulledCandidateOptions,
+  warn: boolean,
 ): SandboxBaseImageResolution | null {
-  const inspectResult = dockerImageInspect(imageRef, {
-    ignoreError: true,
-    suppressOutput: true,
-  });
-  addTraceEvent("nemoclaw.sandbox_base_image.local_validation", {
-    source,
-    present: inspectResult.status === 0,
-  });
-  if (inspectResult.status !== 0) {
-    addTraceEvent("nemoclaw.sandbox_base_image.remote_pull", { source });
-    const pullResult = dockerPull(imageRef, { ignoreError: true, suppressOutput: true });
-    if (pullResult.status !== 0) return null;
-  }
-
   let glibcVersion: string | null = null;
   if (options.requireOpenshellSandboxAbi) {
     const check = imageMeetsMinimumGlibc(
@@ -128,20 +124,24 @@ function resolvePulledCandidate(
     );
     glibcVersion = check.version;
     if (!check.ok) {
-      console.warn(
-        `  Warning: ${options.label || "sandbox base image"} ${imageRef} has glibc ` +
-          `${glibcVersion || "unknown"}; OpenShell sandbox supervisor requires ` +
-          `glibc >= ${options.minGlibcVersion || OPENSHELL_SANDBOX_MIN_GLIBC}.`,
-      );
+      if (warn) {
+        console.warn(
+          `  Warning: ${options.label || "sandbox base image"} ${imageRef} has glibc ` +
+            `${glibcVersion || "unknown"}; OpenShell sandbox supervisor requires ` +
+            `glibc >= ${options.minGlibcVersion || OPENSHELL_SANDBOX_MIN_GLIBC}.`,
+        );
+      }
       return null;
     }
   }
 
   if (options.validateImage && !options.validateImage(imageRef)) {
-    console.warn(
-      `  Warning: ${options.label || "sandbox base image"} ${imageRef} lacks ` +
-        `${options.validationDescription || "a required runtime capability"}.`,
-    );
+    if (warn) {
+      console.warn(
+        `  Warning: ${options.label || "sandbox base image"} ${imageRef} lacks ` +
+          `${options.validationDescription || "a required runtime capability"}.`,
+      );
+    }
     return null;
   }
 
@@ -150,9 +150,57 @@ function resolvePulledCandidate(
     ref: repoDigest?.ref || imageRef,
     digest: repoDigest?.digest || null,
     source,
-    ...(pinnedRemoteRef ? { pinnedRemoteRef } : {}),
+    ...(candidateOptions.pinnedRemoteRef
+      ? { pinnedRemoteRef: candidateOptions.pinnedRemoteRef }
+      : {}),
     glibcVersion,
   };
+}
+
+function resolvePulledCandidate(
+  imageName: string,
+  imageRef: string,
+  source: SandboxBaseImageResolution["source"],
+  options: ResolveBaseImageOptions,
+  candidateOptions: PulledCandidateOptions = {},
+): SandboxBaseImageResolution | null {
+  const inspectResult = dockerImageInspect(imageRef, {
+    ignoreError: true,
+    suppressOutput: true,
+  });
+  const localPresent = inspectResult.status === 0;
+  addTraceEvent("nemoclaw.sandbox_base_image.local_validation", {
+    source,
+    present: localPresent,
+  });
+  if (!localPresent) {
+    addTraceEvent("nemoclaw.sandbox_base_image.remote_pull", { source });
+    const pullResult = dockerPull(imageRef, { ignoreError: true, suppressOutput: true });
+    if (pullResult.status !== 0) return null;
+  }
+
+  const resolved = validatePulledCandidate(
+    imageName,
+    imageRef,
+    source,
+    options,
+    candidateOptions,
+    !localPresent || !candidateOptions.refreshIfLocalInvalid,
+  );
+  if (resolved) return resolved;
+
+  if (
+    localPresent &&
+    candidateOptions.refreshIfLocalInvalid === true &&
+    imageRefCanRefresh(imageRef)
+  ) {
+    addTraceEvent("nemoclaw.sandbox_base_image.remote_refresh", { source });
+    const pullResult = dockerPull(imageRef, { ignoreError: true, suppressOutput: true });
+    if (pullResult.status !== 0) return null;
+    return validatePulledCandidate(imageName, imageRef, source, options, candidateOptions, true);
+  }
+
+  return null;
 }
 
 function resolveLocalCandidate(
@@ -262,11 +310,15 @@ export function resolveSandboxBaseImage(
   if (override) {
     const resolved = resolvePulledCandidate(options.imageName, override, "override", options);
     if (resolved) return finish(resolved);
-    if (!options.requireOpenshellSandboxAbi && !options.validateImage) return null;
+    throw new SandboxBaseImageResolutionError(
+      `${options.label || "Sandbox base image"} override '${override}' could not be resolved ` +
+        "or failed required compatibility checks.",
+    );
   } else {
     const rootDir = options.rootDir || ROOT;
     const inputPaths = [options.dockerfilePath, ...(options.inputPaths ?? [])];
     const preferPinnedRemoteRef = options.preferPinnedRemoteRef === true;
+    const versionTags = getVersionedBaseImageTags(options.rootDir || ROOT, env);
     if (baseImageInputsDirty(rootDir, env, inputPaths)) return resolveChangedInputs();
 
     if (preferPinnedRemoteRef && options.pinnedRemoteRef) {
@@ -275,15 +327,27 @@ export function resolveSandboxBaseImage(
         options.pinnedRemoteRef,
         "pinned",
         options,
-        options.pinnedRemoteRef,
+        { pinnedRemoteRef: options.pinnedRemoteRef },
       );
       if (resolved) return finish(resolved);
     }
 
-    for (const tag of getVersionedBaseImageTags(options.rootDir || ROOT, env)) {
+    for (const tag of versionTags) {
       const imageRef = `${options.imageName}:${tag}`;
-      const resolved = resolvePulledCandidate(options.imageName, imageRef, "version-tag", options);
+      const resolved = resolvePulledCandidate(options.imageName, imageRef, "version-tag", options, {
+        refreshIfLocalInvalid: true,
+      });
       if (resolved) return finish(resolved);
+    }
+
+    if (versionTags.length > 0) {
+      const local = resolveLocalCandidate(options, true);
+      if (local) return finish(local);
+      throw new SandboxBaseImageResolutionError(
+        `${options.label || "Sandbox base image"} versioned base image ` +
+          `${versionTags.map((tag) => `${options.imageName}:${tag}`).join(", ")} could not be ` +
+          "resolved or validated, and no compatible local base image could be produced.",
+      );
     }
 
     for (const tag of getSourceShortShaTags(options.rootDir || ROOT, env)) {
@@ -300,7 +364,7 @@ export function resolveSandboxBaseImage(
         options.pinnedRemoteRef,
         "pinned",
         options,
-        options.pinnedRemoteRef,
+        { pinnedRemoteRef: options.pinnedRemoteRef },
       );
       if (resolved) return finish(resolved);
     }

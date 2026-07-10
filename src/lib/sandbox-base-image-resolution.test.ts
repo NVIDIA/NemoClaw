@@ -81,13 +81,9 @@ function abiRequiredOverrideOptions() {
   };
 }
 
-function mockPublishedAndLocalGlibc(localVersion: string): void {
+function mockPublishedGlibc(version: string): void {
   dockerMocks.imageInspect.mockReturnValue({ status: 0 });
-  dockerMocks.capture.mockImplementation((args: string[]) =>
-    args.includes("nemoclaw-sandbox-base-local:test")
-      ? `ldd (GNU libc) ${localVersion}`
-      : "ldd (GNU libc) 2.36",
-  );
+  dockerMocks.capture.mockReturnValue(`ldd (GNU libc) ${version}`);
 }
 
 describe("sandbox base-image warm resolution", () => {
@@ -340,6 +336,108 @@ describe("sandbox base-image warm resolution", () => {
     expect(dockerMocks.build).not.toHaveBeenCalled();
   });
 
+  it("refreshes a stale local release-tag image before accepting the versioned base (#6456)", () => {
+    const options = resolutionOptions();
+    const validateImage = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
+    dockerMocks.imageInspect.mockReturnValue({ status: 0 });
+    dockerMocks.pull.mockReturnValue({ status: 0 });
+
+    const resolved = resolveSandboxBaseImage({
+      ...options,
+      env: { ...options.env, NEMOCLAW_INSTALL_REF: "v0.0.76" },
+      validateImage,
+      validationDescription: "deepagents-code==0.1.34",
+    });
+
+    expect(resolved).toMatchObject({
+      ref: `${IMAGE_NAME}:v0.0.76`,
+      source: "version-tag",
+    });
+    expect(validateImage).toHaveBeenCalledTimes(2);
+    expect(validateImage).toHaveBeenNthCalledWith(1, `${IMAGE_NAME}:v0.0.76`);
+    expect(validateImage).toHaveBeenNthCalledWith(2, `${IMAGE_NAME}:v0.0.76`);
+    expect(dockerMocks.pull).toHaveBeenCalledWith(`${IMAGE_NAME}:v0.0.76`, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(traceMocks.add).toHaveBeenCalledWith("nemoclaw.sandbox_base_image.remote_refresh", {
+      source: "version-tag",
+    });
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+  });
+
+  it("builds locally instead of falling back to latest when a release-tag base is unavailable (#6456)", () => {
+    const options = resolutionOptions();
+    dockerMocks.imageInspect.mockImplementation((ref: string) => ({
+      status: ref === `${IMAGE_NAME}:v0.0.76` || ref === "nemoclaw-sandbox-base-local:test" ? 1 : 0,
+    }));
+    dockerMocks.pull.mockReturnValue({ status: 1 });
+    dockerMocks.build.mockReturnValue({ status: 0 });
+
+    const resolved = resolveSandboxBaseImage({
+      ...options,
+      env: {
+        ...options.env,
+        NEMOCLAW_INSTALL_REF: "v0.0.76",
+        NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: "1",
+      },
+    });
+
+    expect(resolved).toMatchObject({
+      ref: "nemoclaw-sandbox-base-local:test",
+      source: "local",
+    });
+    expect(dockerMocks.imageInspect).toHaveBeenCalledWith(`${IMAGE_NAME}:v0.0.76`, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(dockerMocks.imageInspect).not.toHaveBeenCalledWith(
+      "nemoclaw-sandbox-base-local:test",
+      expect.anything(),
+    );
+    expect(dockerMocks.imageInspect).not.toHaveBeenCalledWith(
+      `${IMAGE_NAME}:latest`,
+      expect.anything(),
+    );
+    expect(dockerMocks.build).toHaveBeenCalledWith(
+      options.dockerfilePath,
+      "nemoclaw-sandbox-base-local:test",
+      options.rootDir,
+      {
+        ignoreError: true,
+        quiet: true,
+        suppressOutput: true,
+      },
+    );
+  });
+
+  it("fails closed when a release-tag base is unavailable and local builds are disabled (#6456)", () => {
+    const options = resolutionOptions();
+    dockerMocks.imageInspect.mockReturnValue({ status: 1 });
+    dockerMocks.pull.mockReturnValue({ status: 1 });
+
+    expect(() =>
+      resolveSandboxBaseImage({
+        ...options,
+        env: {
+          ...options.env,
+          NEMOCLAW_INSTALL_REF: "v0.0.76",
+          NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: "0",
+        },
+      }),
+    ).toThrow("versioned base image");
+
+    expect(dockerMocks.imageInspect).toHaveBeenCalledWith(`${IMAGE_NAME}:v0.0.76`, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(dockerMocks.imageInspect).not.toHaveBeenCalledWith(
+      `${IMAGE_NAME}:latest`,
+      expect.anything(),
+    );
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+  });
+
   it("uses a Dockerfile-pinned remote image before moving published tags (#4680)", () => {
     dockerMocks.imageInspect.mockImplementation((ref: string) => ({
       status: ref === REF ? 0 : 1,
@@ -418,35 +516,37 @@ describe("sandbox base-image warm resolution", () => {
     expect(dockerMocks.build).not.toHaveBeenCalled();
   });
 
-  it("uses an ABI-compatible local fallback after a published override fails ABI validation (#4680)", () => {
-    mockPublishedAndLocalGlibc("2.41");
+  it("fails closed instead of falling back when an explicit override fails ABI validation (#4680)", () => {
+    mockPublishedGlibc("2.36");
 
-    const resolved = resolveSandboxBaseImage(abiRequiredOverrideOptions());
+    expect(() => resolveSandboxBaseImage(abiRequiredOverrideOptions())).toThrow(
+      "override 'ghcr.io/nvidia/nemoclaw/sandbox-base:published' could not be resolved",
+    );
 
-    expect(resolved).toMatchObject({
-      ref: "nemoclaw-sandbox-base-local:test",
-      digest: null,
-      source: "local",
-      glibcVersion: "2.41",
-    });
-    expect(dockerMocks.capture).toHaveBeenCalledTimes(2);
+    expect(dockerMocks.capture).toHaveBeenCalledTimes(1);
     expect(dockerMocks.build).not.toHaveBeenCalled();
     expect(traceMocks.add).toHaveBeenCalledWith("nemoclaw.sandbox_base_image.local_validation", {
       source: "override",
       present: true,
     });
-    expect(traceMocks.add).toHaveBeenCalledWith("nemoclaw.sandbox_base_image.local_fallback_reuse");
-  });
-
-  it("rejects an ABI-incompatible local fallback after a published override fails ABI validation (#4680)", () => {
-    mockPublishedAndLocalGlibc("2.38");
-
-    expect(resolveSandboxBaseImage(abiRequiredOverrideOptions())).toBeNull();
-
-    expect(dockerMocks.capture).toHaveBeenCalledTimes(2);
-    expect(dockerMocks.build).not.toHaveBeenCalled();
     expect(traceMocks.add).not.toHaveBeenCalledWith(
       "nemoclaw.sandbox_base_image.local_fallback_reuse",
     );
+  });
+
+  it("fails closed when an explicit override cannot be pulled (#4680)", () => {
+    dockerMocks.imageInspect.mockReturnValue({ status: 1 });
+    dockerMocks.pull.mockReturnValue({ status: 1 });
+
+    expect(() => resolveSandboxBaseImage(abiRequiredOverrideOptions())).toThrow(
+      "override 'ghcr.io/nvidia/nemoclaw/sandbox-base:published' could not be resolved",
+    );
+
+    expect(dockerMocks.capture).not.toHaveBeenCalled();
+    expect(dockerMocks.pull).toHaveBeenCalledWith(`${IMAGE_NAME}:published`, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(dockerMocks.build).not.toHaveBeenCalled();
   });
 });

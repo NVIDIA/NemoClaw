@@ -94,7 +94,7 @@ describe("agent-specific sandbox base-image resolution", () => {
     ]);
   });
 
-  it("rejects a pulled base when custom runtime validation fails (#6456)", () => {
+  it("fails a custom override when runtime validation fails (#6456)", () => {
     const options = resolutionOptions();
     const staleRef = `${IMAGE_NAME}:stale-dcode`;
     const validateImage = vi.fn(() => false);
@@ -102,7 +102,7 @@ describe("agent-specific sandbox base-image resolution", () => {
     dockerMocks.pull.mockReturnValue({ status: 0 });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
-    expect(
+    expect(() =>
       resolveSandboxBaseImage({
         ...options,
         envVar: "NEMOCLAW_SANDBOX_BASE_IMAGE_REF",
@@ -114,7 +114,7 @@ describe("agent-specific sandbox base-image resolution", () => {
         validateImage,
         validationDescription: "deepagents-code==0.1.34",
       }),
-    ).toBeNull();
+    ).toThrow("override 'ghcr.io/nvidia/nemoclaw/sandbox-base:stale-dcode' could not be resolved");
     expect(dockerMocks.pull).toHaveBeenCalledWith(staleRef, {
       ignoreError: true,
       suppressOutput: true,
