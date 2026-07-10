@@ -137,6 +137,7 @@ const server = createServer(async (req, res) => {
     recordRequest({
       method: "GET",
       path,
+      hostHeader: req.headers.host,
       bodyBytes: 0,
       auth: modelsAuthOk ? "ok" : "missing",
       // Presence only (never the token) so callers can prove a probe sent its
@@ -160,6 +161,7 @@ const server = createServer(async (req, res) => {
   recordRequest({
     method: req.method || "GET",
     path,
+    hostHeader: req.headers.host,
     bodyBytes: raw.length,
     auth,
     // Presence only (never the token), matching the models request record.

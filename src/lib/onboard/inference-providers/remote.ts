@@ -10,6 +10,10 @@ import { getCompatibleAnthropicOpenAiSurfaceBaseUrl } from "../../inference/conf
 import { OPENROUTER_PROVIDER_NAME } from "../../inference/openrouter";
 import { readGatewayProviderMetadata } from "../gateway-provider-metadata";
 import { deleteProviderWithRecovery, parseAttachedSandboxes } from "../sandbox-provider-cleanup";
+import {
+  gatewayReachableCompatibleEndpointUrl,
+  reuseRegisteredProviderWithGatewayEndpoint,
+} from "./compatible-endpoint-gateway-route";
 import type { RemoteProviderDeps, SetupInferenceResult } from "./types";
 
 const { probeOpenAiLikeEndpoint } = require("../../inference/onboard-probes") as {
@@ -22,42 +26,6 @@ const { probeOpenAiLikeEndpoint } = require("../../inference/onboard-probes") as
 };
 
 type StaleProviderReplaceResult = { ok: boolean; status?: number | null; message?: string };
-
-// #5744: keep host-side validation on the user-entered loopback URL, but
-// register the sandbox route through OpenShell's host bridge. Remove this when
-// OpenShell can verify provider routes from the sandbox/gateway network context.
-function gatewayReachableCompatibleEndpointUrl(
-  provider: string,
-  endpointUrl: string | null | undefined,
-): string | null | undefined {
-  if (provider !== "compatible-endpoint" || !endpointUrl) return endpointUrl;
-  let parsed: URL;
-  try {
-    parsed = new URL(endpointUrl);
-  } catch {
-    return endpointUrl;
-  }
-  const hostname = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
-  if (hostname.includes("%")) return endpointUrl;
-  const port = parsed.port ? Number(parsed.port) : null;
-  const isLoopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
-  if (
-    parsed.protocol !== "http:" ||
-    parsed.username ||
-    parsed.password ||
-    !isLoopback ||
-    (port !== null && (!Number.isInteger(port) || port < 1024))
-  ) {
-    return endpointUrl;
-  }
-  parsed.hostname = "host.openshell.internal";
-  const pathname = parsed.pathname.replace(/\/+$/, "");
-  parsed.pathname = pathname || "/";
-  const routeSuffix = `${parsed.search}${parsed.hash}`;
-  return parsed.pathname === "/"
-    ? `${parsed.origin}${routeSuffix}`
-    : `${parsed.origin}${parsed.pathname}${routeSuffix}`;
-}
 
 /**
  * Replace a provider that a prior Anthropic-Messages registration left behind
@@ -271,30 +239,15 @@ export async function setupRemoteProviderInference(
     const gatewayEndpointUrl = gatewayReachableCompatibleEndpointUrl(provider, resolvedEndpointUrl);
     let providerResult;
     if (reuseGatewayCredentialWithoutLocalKey) {
-      // This is only a last-moment existence probe. The primary authorization
-      // of the provider's non-secret credential/config binding identity is
-      // assessRecoveredProviderCredentialReuse in recovered-provider-reuse.ts.
-      const existing = runOpenshell(["provider", "get", provider], {
-        ignoreError: true,
-        suppressOutput: true,
+      providerResult = reuseRegisteredProviderWithGatewayEndpoint({
+        provider,
+        providerType: config.providerType,
+        credentialEnv: resolvedCredentialEnv,
+        endpointUrl: resolvedEndpointUrl,
+        gatewayEndpointUrl,
+        runOpenshell,
+        upsertProvider,
       });
-      if (existing.status !== 0) {
-        providerResult = {
-          ok: false,
-          status: existing.status || 1,
-          message: `Recovered provider '${provider}' is no longer registered in OpenShell.`,
-        };
-      } else if (gatewayEndpointUrl !== resolvedEndpointUrl) {
-        providerResult = upsertProvider(
-          provider,
-          config.providerType,
-          resolvedCredentialEnv,
-          gatewayEndpointUrl,
-          {},
-        );
-      } else {
-        providerResult = { ok: true };
-      }
     } else {
       const credentialValue = hydrateCredentialEnv(resolvedCredentialEnv);
       const env =

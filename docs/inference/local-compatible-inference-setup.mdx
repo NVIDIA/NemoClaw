@@ -56,7 +56,12 @@ $$nemoclaw onboard
 
 When the wizard asks you to choose an inference provider, select **Other OpenAI-compatible endpoint**.
 Enter the base URL of your local server, for example `http://localhost:8000/v1` on the default Docker-driver topology.
-For HTTP loopback endpoints on the default HTTP port or an unprivileged port, such as `http://localhost:8000/v1`, NemoClaw validates the endpoint from the host and registers the OpenShell gateway route through `host.openshell.internal:<port>` so sandbox traffic can leave the container namespace.
+To qualify for automatic rewriting, an HTTP endpoint URL must use the exact loopback host `localhost`, `127.0.0.1`, or `[::1]`.
+It must also specify a port allowed by NemoClaw's bundled `local-inference` policy: `8000`, `11434`, or `11435`.
+NemoClaw validates the entered URL from the host and registers the OpenShell gateway route through `host.openshell.internal:<port>` for sandbox traffic.
+The sandbox policy must allow the selected bridge port.
+NemoClaw leaves URLs without an explicit port, URLs on `:80` or another privileged port, and URLs on unsupported ports unchanged.
+Those URLs require a separately compatible runtime topology and network policy.
 This rewrite depends on an OpenShell topology that resolves `host.openshell.internal` inside the sandbox; if that bridge is unavailable, onboarding can still validate the host URL, but `$$nemoclaw <name> status` is the authoritative runtime check.
 Make sure the local server listens on an address reachable from containers, such as `0.0.0.0`; a server bound only to `127.0.0.1` can still be unreachable from the sandbox route.
 
@@ -96,7 +101,12 @@ Do not leave an unauthenticated model server exposed on public, corporate, or Wi
 
 Select **Other OpenAI-compatible endpoint** during onboarding.
 Enter the server base URL, such as `http://localhost:8000/v1`, and the model id reported by `/v1/models`.
-For HTTP loopback endpoints on the default HTTP port or an unprivileged port, NemoClaw validates the endpoint from the host and registers the OpenShell gateway route through `host.openshell.internal:<port>` for sandbox traffic.
+To qualify for automatic rewriting, an HTTP endpoint URL must use the exact loopback host `localhost`, `127.0.0.1`, or `[::1]`.
+It must also specify a port allowed by NemoClaw's bundled `local-inference` policy: `8000`, `11434`, or `11435`.
+NemoClaw validates the entered URL from the host and registers the OpenShell gateway route through `host.openshell.internal:<port>` for sandbox traffic.
+The sandbox policy must allow the selected bridge port.
+NemoClaw leaves URLs without an explicit port, URLs on `:80` or another privileged port, and URLs on unsupported ports unchanged.
+Those URLs require a separately compatible runtime topology and network policy.
 This rewrite depends on an OpenShell topology that resolves `host.openshell.internal` inside the sandbox; if that bridge is unavailable, onboarding can still validate the host URL, but `$$nemoclaw <name> status` is the authoritative runtime check.
 If you manually enter a sandbox-internal alias such as `http://host.openshell.internal:8000/v1`, host-side endpoint probing is skipped during onboarding.
 Use a host-routable endpoint such as `localhost` when you need onboarding to verify the API, tool-calling, and streaming paths.

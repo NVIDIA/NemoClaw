@@ -106,6 +106,52 @@ describe("onboarding inference gateway scope", () => {
     );
   });
 
+  it("updates a recovered loopback route without re-exporting its gateway credential (#5744)", async () => {
+    await withProcessEnv({ COMPATIBLE_API_KEY: undefined }, async () => {
+      const harness = createHarness({
+        runOpenshell: (args) =>
+          args.slice(0, 2).join(" ") === "provider get" ? { status: 0 } : undefined,
+      });
+      const model = "deepseek-ai/DeepSeek-V4-Flash";
+
+      await expect(
+        harness.setupInference(
+          "dcode-vllm-local",
+          model,
+          "compatible-endpoint",
+          "http://localhost:8000/v1",
+          "COMPATIBLE_API_KEY",
+          null,
+          [],
+          {
+            gatewayName: GATEWAY,
+            reuseGatewayCredentialWithoutLocalKey: true,
+            skipHostInferenceSmoke: true,
+          },
+        ),
+      ).resolves.toEqual({ ok: true });
+
+      expect(harness.commands.map(({ command }) => command)).toEqual([
+        `provider get -g ${GATEWAY} compatible-endpoint`,
+        `provider get -g ${GATEWAY} compatible-endpoint`,
+        `provider update -g ${GATEWAY} compatible-endpoint --config OPENAI_BASE_URL=http://host.openshell.internal:8000/v1`,
+        `inference set -g ${GATEWAY} --no-verify --provider compatible-endpoint --model ${model} --timeout 180`,
+      ]);
+      const providerUpdate = harness.commands.find(({ command }) =>
+        command.startsWith("provider update "),
+      );
+      expect(providerUpdate?.env).toEqual({});
+      expect(harness.commands.every(({ env }) => env?.COMPATIBLE_API_KEY === undefined)).toBe(true);
+      expect(harness.verifyOnboardInferenceSmoke).not.toHaveBeenCalled();
+      expect(harness.verifyInferenceRoute).toHaveBeenCalledWith(
+        GATEWAY,
+        "compatible-endpoint",
+        model,
+      );
+      expectCommandsTargetOnly(harness.commands);
+    });
+  });
+
   it("keeps compatible-endpoint replacement and detach recovery on the target gateway", async () => {
     await withProcessEnv(
       { COMPATIBLE_ANTHROPIC_API_KEY: "sk-ant-TEST-NOT-A-REAL-VALUE" },

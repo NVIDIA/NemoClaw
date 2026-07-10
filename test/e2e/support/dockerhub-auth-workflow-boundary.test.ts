@@ -17,7 +17,6 @@ const NO_IMAGE_E2E_JOBS = [
   "docs-validation",
   "gateway-drift-preflight",
   "gateway-health-honest",
-  "inference-routing",
   "onboard-negative-paths",
   "openshell-version-pin",
 ] as const;

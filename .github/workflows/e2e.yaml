@@ -1044,16 +1044,17 @@ jobs:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
+      - *dockerhub-auth
+
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run inference routing live test
-        # Direct E2E coverage. The
-        # always-on PR-safe slices prove invalid-key and unreachable-endpoint
-        # classification/cleanup without spending live provider quota; real
-        # NVIDIA credential isolation and third-party provider smokes stay
-        # skipped unless their secrets are explicitly supplied by a future
-        # workflow.
+        # Direct E2E coverage. The always-on PR-safe slices prove invalid-key,
+        # unreachable-endpoint, and localhost-compatible gateway routing
+        # without spending live provider quota. Real NVIDIA credential
+        # isolation and third-party provider smokes stay skipped unless their
+        # secrets are explicitly supplied by a future workflow.
         run: |
           set -euo pipefail
           npx vitest run --project e2e-live \
@@ -1063,6 +1064,11 @@ jobs:
       - name: Upload inference routing artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   cloud-inference:
     needs: generate-matrix

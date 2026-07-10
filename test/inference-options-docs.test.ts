@@ -7,8 +7,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type * as TypeScript from "typescript";
 import { describe, expect, it } from "vitest";
-import { shouldForceCompletionsApi } from "../src/lib/validation.js";
 import { getSandboxRuntimeInferenceEndpoint } from "../src/lib/onboard/docker-gpu-local-inference.js";
+import { shouldForceCompletionsApi } from "../src/lib/validation.js";
 
 const require = createRequire(import.meta.url);
 const ts = require("typescript") as typeof TypeScript;
@@ -297,8 +297,19 @@ describe("inference setup navigation", () => {
     expect(result.note).toContain("validation skipped");
     expect(markdown).toContain("`http://host.openshell.internal:8000/v1`");
     expect(markdown).toContain(
-      "For HTTP loopback endpoints on the default HTTP port or an unprivileged port, such as `http://localhost:8000/v1`, NemoClaw validates the endpoint from the host and registers the OpenShell gateway route through `host.openshell.internal:<port>` so sandbox traffic can leave the container namespace.",
+      "To qualify for automatic rewriting, an HTTP endpoint URL must use the exact loopback host `localhost`, `127.0.0.1`, or `[::1]`.",
     );
+    expect(markdown).toContain(
+      "It must also specify a port allowed by NemoClaw's bundled `local-inference` policy: `8000`, `11434`, or `11435`.",
+    );
+    expect(markdown).toContain(
+      "NemoClaw validates the entered URL from the host and registers the OpenShell gateway route through `host.openshell.internal:<port>` for sandbox traffic.",
+    );
+    expect(markdown).toContain("The sandbox policy must allow the selected bridge port.");
+    expect(markdown).toContain(
+      "NemoClaw leaves URLs without an explicit port, URLs on `:80` or another privileged port, and URLs on unsupported ports unchanged.",
+    );
+    expect(markdown).not.toContain("the default HTTP port or an unprivileged port");
     expect(markdown).toContain(
       "if that bridge is unavailable, onboarding can still validate the host URL, but `$$nemoclaw <name> status` is the authoritative runtime check.",
     );
