@@ -13,15 +13,13 @@ const REMOTE_BIND_PROMOTION_RE = /NEMOCLAW_DASHBOARD_BIND=\$\{NEMOCLAW_DASHBOARD
 const OPENCLAW_CONFIG_GENERATOR_RE = /^RUN\b.*generate-openclaw-config\.mts/;
 const SAFE_VALIDATION_GENERATOR_HOME_RE =
   /\bHOME=(?:"\$validation_home"|\$validation_home)(?=\s|$)/;
-const OPENCLAW_CONFIG_TARGET_RE = `(?:/sandbox/|\\$HOME/|~/)?\\.openclaw/openclaw\\.json\\b`;
-const OPENCLAW_CONFIG_REDIRECT_OVERWRITE_RE = new RegExp(
-  `(?:^|[\\s;&|])(?:[0-9]?>|>>)\\s*["']?${OPENCLAW_CONFIG_TARGET_RE}`,
+const OPENCLAW_CONFIG_TARGET_PATTERN = `(?:/sandbox/|\\$HOME/|~/)?\\.openclaw/openclaw\\.json\\b`;
+const OPENCLAW_CONFIG_TARGET_RE = new RegExp(OPENCLAW_CONFIG_TARGET_PATTERN);
+const SAFE_OPENCLAW_CONFIG_CHMOD_RE = new RegExp(
+  `^RUN\\s+chmod\\s+[0-7]{3,4}\\s+["']?${OPENCLAW_CONFIG_TARGET_PATTERN}["']?$`,
 );
-const OPENCLAW_CONFIG_COPY_OVERWRITE_RE = new RegExp(
-  `\\b(?:cp|mv|install)\\b[\\s\\S]*\\s["']?${OPENCLAW_CONFIG_TARGET_RE}`,
-);
-const OPENCLAW_CONFIG_IN_PLACE_EDIT_RE = new RegExp(
-  `\\b(?:sed|perl)\\b[\\s\\S]*\\s-i\\b[\\s\\S]*${OPENCLAW_CONFIG_TARGET_RE}`,
+const SAFE_OPENCLAW_CONFIG_HASH_RE = new RegExp(
+  `^RUN\\s+sha256sum\\s+["']?${OPENCLAW_CONFIG_TARGET_PATTERN}["']?\\s*>\\s*["']?(?:/sandbox/|\\$HOME/|~/)?\\.openclaw/\\.config-hash\\b["']?$`,
 );
 
 export type PatchedRemoteDashboardBindContract = {
@@ -46,13 +44,16 @@ export function findRemoteDashboardBindFinalStageArg(
   );
 }
 
-function invalidatesGeneratedOpenClawConfig(instruction: DockerfileInstruction): boolean {
+function allowsPostGeneratorOpenClawConfigInstruction(instruction: DockerfileInstruction): boolean {
+  if (OPENCLAW_CONFIG_GENERATOR_RE.test(instruction.text)) {
+    return SAFE_VALIDATION_GENERATOR_HOME_RE.test(instruction.text);
+  }
+  if (!OPENCLAW_CONFIG_TARGET_RE.test(instruction.text)) {
+    return true;
+  }
   return (
-    OPENCLAW_CONFIG_REDIRECT_OVERWRITE_RE.test(instruction.text) ||
-    OPENCLAW_CONFIG_COPY_OVERWRITE_RE.test(instruction.text) ||
-    OPENCLAW_CONFIG_IN_PLACE_EDIT_RE.test(instruction.text) ||
-    (OPENCLAW_CONFIG_GENERATOR_RE.test(instruction.text) &&
-      !SAFE_VALIDATION_GENERATOR_HOME_RE.test(instruction.text))
+    SAFE_OPENCLAW_CONFIG_CHMOD_RE.test(instruction.text) ||
+    SAFE_OPENCLAW_CONFIG_HASH_RE.test(instruction.text)
   );
 }
 
@@ -70,7 +71,7 @@ export function hasRemoteDashboardBindGenerationContract(dockerfile: string): bo
   );
   const invalidatorIndex = finalStage.findIndex(
     (instruction, index) =>
-      index > generatorIndex && invalidatesGeneratedOpenClawConfig(instruction),
+      index > generatorIndex && !allowsPostGeneratorOpenClawConfigInstruction(instruction),
   );
   return (
     argIndex >= 0 &&
