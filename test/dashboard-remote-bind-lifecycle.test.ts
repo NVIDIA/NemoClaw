@@ -122,10 +122,38 @@ describe("remote dashboard bind production lifecycle", () => {
     fs.writeFileSync(
       dockerfile,
       [
+        "FROM scratch",
         "ARG NEMOCLAW_MODEL=",
         "ARG CHAT_UI_URL=",
         "ARG NEMOCLAW_DASHBOARD_BIND=",
+      ].join("\n"),
+    );
+
+    try {
+      expect(() =>
+        patchStagedDockerfile(dockerfile, "test-model", "http://127.0.0.1:18789"),
+      ).toThrow(/does not promote it to generate-openclaw-config/);
+      expect(hasPreparedRemoteDashboardBind(dockerfile)).toBe(false);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects remote-bind proof that only appears in an unused build stage (#6024)", () => {
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-remote-bind-decoy-"));
+    const dockerfile = path.join(directory, "Dockerfile");
+    fs.writeFileSync(
+      dockerfile,
+      [
+        "FROM scratch AS decoy",
+        "ARG NEMOCLAW_DASHBOARD_BIND=",
+        "ENV NEMOCLAW_DASHBOARD_BIND=${NEMOCLAW_DASHBOARD_BIND}",
+        "RUN node --experimental-strip-types /scripts/generate-openclaw-config.mts",
         "FROM scratch",
+        "ARG NEMOCLAW_MODEL=",
+        "ARG CHAT_UI_URL=",
+        "ARG NEMOCLAW_DASHBOARD_BIND=",
       ].join("\n"),
     );
 

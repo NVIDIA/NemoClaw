@@ -30,6 +30,11 @@ import {
   isDcodeAutoApprovalMode,
 } from "./dcode-auto-approval";
 import {
+  findRemoteDashboardBindFinalStageArg,
+  hasPreparedRemoteDashboardBind,
+  hasRemoteDashboardBindGenerationContract,
+} from "./dockerfile-remote-dashboard-bind-contract";
+import {
   dockerfileInstructions,
   readDockerfilePatchSnapshot,
   replaceDockerfilePatchSnapshot,
@@ -97,24 +102,7 @@ export type PatchedDockerfileMetadata = {
   dashboardRemoteBindPrepared: boolean;
 };
 
-function hasRemoteDashboardBindGenerationContract(dockerfile: string): boolean {
-  const argIndex = dockerfile.search(/^ARG NEMOCLAW_DASHBOARD_BIND=0\.0\.0\.0$/m);
-  if (argIndex < 0) return false;
-  const envIndex = dockerfile.search(
-    /^\s*(?:ENV\s+)?NEMOCLAW_DASHBOARD_BIND=\$\{NEMOCLAW_DASHBOARD_BIND\}\s*\\?$/m,
-  );
-  if (envIndex < 0 || envIndex < argIndex) return false;
-  const generatorIndex = dockerfile.search(
-    /^RUN\b[^\n]*(?:\\\n[^\n]*)*generate-openclaw-config\.mts/m,
-  );
-  return generatorIndex > envIndex;
-}
-
-export function hasPreparedRemoteDashboardBind(dockerfilePath: string): boolean {
-  return hasRemoteDashboardBindGenerationContract(
-    readDockerfilePatchSnapshot(dockerfilePath).content,
-  );
-}
+export { hasPreparedRemoteDashboardBind };
 
 export function patchStagedDockerfile(
   dockerfilePath: string,
@@ -203,16 +191,15 @@ export function patchStagedDockerfile(
     `ARG CHAT_UI_URL=${sanitizeDockerArg(chatUiUrl)}`,
   );
   const dashboardBind = process.env.NEMOCLAW_DASHBOARD_BIND === "0.0.0.0" ? "0.0.0.0" : "";
-  const dashboardBindArgPattern = /^ARG NEMOCLAW_DASHBOARD_BIND=.*$/m;
-  if (dashboardBind && !dashboardBindArgPattern.test(dockerfile)) {
+  const dashboardBindArg = findRemoteDashboardBindFinalStageArg(dockerfile);
+  if (dashboardBind && !dashboardBindArg) {
     throw new Error(
       "Dockerfile is missing ARG NEMOCLAW_DASHBOARD_BIND; cannot prepare remote dashboard exposure.",
     );
   }
-  dockerfile = dockerfile.replace(
-    dashboardBindArgPattern,
-    `ARG NEMOCLAW_DASHBOARD_BIND=${dashboardBind}`,
-  );
+  if (dashboardBindArg) {
+    dockerfile = `${dockerfile.slice(0, dashboardBindArg.start)}ARG NEMOCLAW_DASHBOARD_BIND=${dashboardBind}${dockerfile.slice(dashboardBindArg.end)}`;
+  }
   const dashboardRemoteBindPrepared =
     dashboardBind === "0.0.0.0" && hasRemoteDashboardBindGenerationContract(dockerfile);
   if (dashboardBind === "0.0.0.0" && !dashboardRemoteBindPrepared) {
