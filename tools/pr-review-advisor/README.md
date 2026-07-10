@@ -56,10 +56,10 @@ before the failure so later runs and reviewers do not lose substantive review hi
 The workflow is advisory and must not be configured as a required status check. It uses the
 deterministic plan as review context but does not run its jobs. E2E Advisor emits the corresponding
 plan-backed recommendations separately and likewise does not dispatch E2E. Model availability must
-not become the authority for whether a pull request can merge. The PR E2E controller separately
-rebuilds the plan from GitHub's changed-file list and dispatches every selected job after
-`CI / Pull Request` completes. `E2E / PR Gate` does not consume either advisor's output and does not
-make PR Review Advisor a merge gate.
+not become the authority for whether a pull request can merge. For PRs from this repository, the PR
+E2E controller separately rebuilds the plan from GitHub's changed-file list and dispatches every
+selected job after `CI / Pull Request` completes. `E2E / PR Gate` does not consume either advisor's
+output and does not make PR Review Advisor a merge gate.
 
 Required-check status is point-in-time context, not a settled-CI gate. Earlier
 `PR_REVIEW_ADVISOR_WAIT_*` workflow variables were inert and have been removed; any future waiting

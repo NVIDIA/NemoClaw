@@ -45,7 +45,7 @@ jobs:
           --pr "$PR_NUMBER"
 
   coordinate:
-    if: ${{ github.event_name == 'workflow_run' && github.repository == 'NVIDIA/NemoClaw' && github.event.workflow_run.event == 'pull_request' }}
+    if: ${{ github.event_name == 'workflow_run' && github.repository == 'NVIDIA/NemoClaw' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.head_repository.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     permissions:

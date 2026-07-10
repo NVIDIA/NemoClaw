@@ -901,6 +901,9 @@ export async function startPrGate(
   if (!SHA_PATTERN.test(command.workflowSha)) throw new Error("workflow SHA is invalid");
   assertRepository(command.headRepository, "PR head repository");
   assertBranch(command.headBranch);
+  if (command.headRepository !== repository) {
+    throw new Error("PR branch must be in the base repository");
+  }
 
   const checkRunId = await createCheck(
     repository,

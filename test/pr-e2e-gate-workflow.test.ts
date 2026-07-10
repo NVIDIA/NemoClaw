@@ -236,6 +236,9 @@ describe("PR E2E gate workflow", () => {
     expect(cancel.permissions).toEqual({ actions: "write", contents: "read" });
     expect(coordinate.if).toContain("github.event_name == 'workflow_run'");
     expect(coordinate.if).toContain("github.event.workflow_run.event == 'pull_request'");
+    expect(coordinate.if).toContain(
+      "github.event.workflow_run.head_repository.full_name == github.repository",
+    );
     expect(coordinate.permissions).toEqual({
       actions: "write",
       checks: "write",

@@ -40,11 +40,11 @@ the trusted timing signal.
 
 ## PR E2E check
 
-`.github/workflows/pr-e2e-gate.yaml` owns `E2E / PR Gate` after
-`CI / Pull Request` completes. It uses the same checked-in risk policy as E2E
-Advisor, but rebuilds the plan from GitHub's changed-file list and never
-consumes advisor output. It dispatches every selected `requiredJobs` entry and
-verifies the resulting E2E evidence. See
+`.github/workflows/pr-e2e-gate.yaml` owns `E2E / PR Gate` for PRs from this
+repository after `CI / Pull Request` completes. It uses the same checked-in
+risk policy as E2E Advisor, but rebuilds the plan from GitHub's changed-file
+list and never consumes advisor output. It dispatches every selected
+`requiredJobs` entry and verifies the resulting E2E evidence. See
 [NemoClaw E2E CI](../../test/e2e/README.md) for the full lifecycle.
 
 E2E Advisor remains advisory. It uses the risk policy as a recommendation

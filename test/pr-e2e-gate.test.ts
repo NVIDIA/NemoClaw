@@ -431,6 +431,22 @@ describe("PR E2E controller", () => {
     ).toThrow(/display_title/u);
   });
 
+  it("rejects fork branches before making API requests", async () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-fork-"));
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    try {
+      await expect(
+        startPrGate({ ...startCommand(workDir), headRepository: "contributor/NemoClaw" }),
+      ).rejects.toThrow(/PR branch must be in the base repository/u);
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
   it("completes the check when all evidence passes", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-lifecycle-"));
     const outputPath = path.join(workDir, "github-output");
