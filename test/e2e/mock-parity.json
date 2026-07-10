@@ -1,5 +1,29 @@
 {
   "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
   "version": 1,
-  "entries": []
+  "entries": [
+    {
+      "live": "test/e2e/live/onboard-repair.test.ts",
+      "fast": [
+        "src/lib/onboard/extra-provider-reconciliation-diagnostics.test.ts",
+        "src/lib/onboard/extra-provider-reconciliation-probes.test.ts",
+        "src/lib/onboard/extra-provider-reconciliation.test.ts",
+        "src/lib/onboard/machine/handlers/sandbox-resume.test.ts",
+        "src/lib/onboard/sandbox-create-plan-extra-providers.test.ts",
+        "test/onboard-extra-provider-reconciliation.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/onboard-resume.test.ts",
+      "fast": [
+        "src/lib/onboard/extra-provider-reconciliation-diagnostics.test.ts",
+        "src/lib/onboard/extra-provider-reconciliation-probes.test.ts",
+        "src/lib/onboard/extra-provider-reconciliation.test.ts",
+        "src/lib/onboard/machine/handlers/sandbox-recreate-resume.test.ts",
+        "src/lib/onboard/machine/handlers/sandbox-resume.test.ts",
+        "src/lib/onboard/sandbox-create-plan-extra-providers.test.ts",
+        "test/onboard-extra-provider-reconciliation.test.ts"
+      ]
+    }
+  ]
 }
