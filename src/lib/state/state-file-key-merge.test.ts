@@ -50,6 +50,55 @@ sys.argv = [sys.argv[0], *sys.argv[2:]]
 exec(script, {"__name__": "__main__"})
 `.trim();
 
+const PYTHON_TOCTOU_WRAPPER = String.raw`
+import json
+import os
+import sys
+import types
+
+class TOMLDecodeError(ValueError):
+    pass
+
+def loads(text):
+    payload = "\n".join(
+        line for line in text.splitlines() if not line.startswith("#")
+    ).strip()
+    try:
+        return json.loads(payload)
+    except (TypeError, ValueError) as error:
+        raise TOMLDecodeError("malformed") from error
+
+tomllib = types.ModuleType("tomllib")
+tomllib.loads = loads
+tomllib.TOMLDecodeError = TOMLDecodeError
+tomli_w = types.ModuleType("tomli_w")
+tomli_w.dumps = lambda value: json.dumps(value)
+sys.modules["tomllib"] = tomllib
+sys.modules["tomli_w"] = tomli_w
+
+script = sys.argv[1]
+backup_path, current_path, staged_path, spec_raw, swap_path = sys.argv[2:7]
+
+driven_script = script.replace("\nmain()", "\npass")
+assert driven_script != script, "expected to find the trailing main() call to detach"
+namespace = {"__name__": "toctou_harness"}
+exec(driven_script, namespace)
+
+spec = namespace["load_spec"](spec_raw)
+_backup_text, backup, _backup_metadata = namespace["read_regular_file"](backup_path, "backed-up")
+current_text, current, current_metadata = namespace["read_regular_file"](current_path, "current")
+header_lines = namespace["preserved_headers"](current_text, spec.get("require_fresh_headers", []))
+namespace["assert_fresh_tables"](current, spec.get("require_fresh_tables", []))
+merged = namespace["merge_user_keys"](backup, current, spec.get("user_keys", []))
+payload = namespace["render_merged_config"](merged, header_lines)
+
+# Simulate an attacker swapping the live config for a different inode after it
+# was read and validated, but before the staged replace commits.
+os.replace(swap_path, current_path)
+
+namespace["write_staged_and_replace"](staged_path, current_path, current_metadata, payload)
+`.trim();
+
 const DCODE_OWNERSHIP: StateFileRestoreOwnership = {
   merge: "key-allowlist",
   userKeys: [
@@ -115,6 +164,38 @@ function runMergeScript(
 
 function mergedJson(config: string): Record<string, unknown> {
   return JSON.parse(config.split("\n").slice(2).join("\n").trim()) as Record<string, unknown>;
+}
+
+function withTempDir<T>(fn: (dir: string) => T): T {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-state-file-key-merge-"));
+  try {
+    return fn(dir);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function spawnMergeScript(
+  backupPath: string,
+  currentPath: string,
+  stagedPath: string,
+  ownership: StateFileRestoreOwnership,
+): { status: number | null; stderr: string } {
+  const result = spawnSync(
+    "python3",
+    [
+      "-I",
+      "-c",
+      PYTHON_TEST_WRAPPER,
+      KEY_ALLOWLIST_MERGE_PYTHON,
+      backupPath,
+      currentPath,
+      stagedPath,
+      JSON.stringify(stateFileKeyMergeSpec(ownership)),
+    ],
+    { encoding: "utf-8" },
+  );
+  return { status: result.status, stderr: result.stderr };
 }
 
 describe("stateFileKeyMergeSpec", () => {
@@ -341,5 +422,217 @@ describe("key-allowlist state-file merge", () => {
       DCODE_OWNERSHIP,
     );
     expect(custom).toContain("/sandbox/.custom/config.toml");
+  });
+
+  it("rejects a symlinked current config instead of following it", () => {
+    withTempDir((dir) => {
+      const backupPath = path.join(dir, "backup.toml");
+      const realConfigPath = path.join(dir, "real-config.toml");
+      const currentPath = path.join(dir, "config.toml");
+      const stagedPath = path.join(dir, ".nemoclaw-restore-merged.test");
+      const realContent = generatedCurrent({ models: { default: "m" } });
+      fs.writeFileSync(backupPath, JSON.stringify({ ui: { show_scrollbar: true } }), {
+        mode: 0o600,
+      });
+      fs.writeFileSync(realConfigPath, realContent, { mode: 0o660 });
+      fs.symlinkSync(realConfigPath, currentPath);
+      fs.writeFileSync(stagedPath, "", { mode: 0o600 });
+
+      const result = spawnMergeScript(backupPath, currentPath, stagedPath, DCODE_OWNERSHIP);
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("current config is missing or unsafe");
+      expect(fs.readFileSync(realConfigPath, "utf-8")).toBe(realContent);
+    });
+  });
+
+  it("rejects a symlinked backup config instead of following it", () => {
+    withTempDir((dir) => {
+      const realBackupPath = path.join(dir, "real-backup.toml");
+      const backupPath = path.join(dir, "backup.toml");
+      const currentPath = path.join(dir, "config.toml");
+      const stagedPath = path.join(dir, ".nemoclaw-restore-merged.test");
+      fs.writeFileSync(realBackupPath, JSON.stringify({ ui: { show_scrollbar: true } }), {
+        mode: 0o600,
+      });
+      fs.symlinkSync(realBackupPath, backupPath);
+      fs.writeFileSync(currentPath, generatedCurrent({ models: { default: "m" } }), {
+        mode: 0o660,
+      });
+      fs.writeFileSync(stagedPath, "", { mode: 0o600 });
+
+      const result = spawnMergeScript(backupPath, currentPath, stagedPath, DCODE_OWNERSHIP);
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("backed-up config is missing or unsafe");
+    });
+  });
+
+  it("rejects a hard-linked current config", () => {
+    withTempDir((dir) => {
+      const backupPath = path.join(dir, "backup.toml");
+      const currentPath = path.join(dir, "config.toml");
+      const extraLinkPath = path.join(dir, "config-alias.toml");
+      const stagedPath = path.join(dir, ".nemoclaw-restore-merged.test");
+      const currentContent = generatedCurrent({ models: { default: "m" } });
+      fs.writeFileSync(backupPath, JSON.stringify({ ui: { show_scrollbar: true } }), {
+        mode: 0o600,
+      });
+      fs.writeFileSync(currentPath, currentContent, { mode: 0o660 });
+      fs.linkSync(currentPath, extraLinkPath);
+      fs.writeFileSync(stagedPath, "", { mode: 0o600 });
+
+      const result = spawnMergeScript(backupPath, currentPath, stagedPath, DCODE_OWNERSHIP);
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("current config is not a single regular file");
+      expect(fs.readFileSync(currentPath, "utf-8")).toBe(currentContent);
+    });
+  });
+
+  it("rejects a symlinked staging file instead of writing through it", () => {
+    withTempDir((dir) => {
+      const backupPath = path.join(dir, "backup.toml");
+      const currentPath = path.join(dir, "config.toml");
+      const stagedPath = path.join(dir, ".nemoclaw-restore-merged.test");
+      const stagedEscapeTarget = path.join(dir, "escape-target.toml");
+      fs.writeFileSync(backupPath, JSON.stringify({ ui: { show_scrollbar: true } }), {
+        mode: 0o600,
+      });
+      fs.writeFileSync(
+        currentPath,
+        generatedCurrent({
+          models: { default: "m" },
+          update: { check: false, auto_update: false },
+        }),
+        { mode: 0o660 },
+      );
+      fs.writeFileSync(stagedEscapeTarget, "", { mode: 0o600 });
+      fs.symlinkSync(stagedEscapeTarget, stagedPath);
+
+      const result = spawnMergeScript(backupPath, currentPath, stagedPath, DCODE_OWNERSHIP);
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("config staging file is missing or unsafe");
+      expect(fs.readFileSync(stagedEscapeTarget, "utf-8")).toBe("");
+    });
+  });
+
+  it("rejects the staged replace when the current config's inode changes after it was read (TOCTOU)", () => {
+    withTempDir((dir) => {
+      const backupPath = path.join(dir, "backup.toml");
+      const currentPath = path.join(dir, "config.toml");
+      const stagedPath = path.join(dir, ".nemoclaw-restore-merged.test");
+      const swapPath = path.join(dir, "attacker-config.toml");
+      fs.writeFileSync(backupPath, JSON.stringify({ ui: { show_scrollbar: true } }), {
+        mode: 0o600,
+      });
+      fs.writeFileSync(
+        currentPath,
+        generatedCurrent({
+          models: { default: "m" },
+          update: { check: false, auto_update: false },
+        }),
+        { mode: 0o660 },
+      );
+      fs.writeFileSync(stagedPath, "", { mode: 0o600 });
+      fs.writeFileSync(swapPath, "attacker-controlled", { mode: 0o660 });
+
+      const result = spawnSync(
+        "python3",
+        [
+          "-I",
+          "-c",
+          PYTHON_TOCTOU_WRAPPER,
+          KEY_ALLOWLIST_MERGE_PYTHON,
+          backupPath,
+          currentPath,
+          stagedPath,
+          JSON.stringify(stateFileKeyMergeSpec(DCODE_OWNERSHIP)),
+          swapPath,
+        ],
+        { encoding: "utf-8" },
+      );
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("current config changed before atomic restore");
+      expect(fs.readFileSync(currentPath, "utf-8")).toBe("attacker-controlled");
+    });
+  });
+
+  it("round-trips real TOML syntax through the real tomllib/tomli_w parser and serializer", () => {
+    withTempDir((dir) => {
+      const backupPath = path.join(dir, "backup.toml");
+      const currentPath = path.join(dir, "config.toml");
+      const stagedPath = path.join(dir, ".nemoclaw-restore-merged.test");
+      const backupToml = [
+        "[ui]",
+        "show_scrollbar = true",
+        "show_url_open_toast = false",
+        "",
+        "[threads]",
+        "relative_time = false",
+        'sort_order = "created_at"',
+        "",
+        "[servers.attacker.nested]",
+        'value = "should not survive key-allowlist merge"',
+        "",
+      ].join("\n");
+      const currentToml = [
+        GENERATED_HEADER,
+        FRESH_PROVIDER_HEADER,
+        "",
+        "[models]",
+        'default = "openai:nvidia/new-model"',
+        "",
+        "[update]",
+        "check = false",
+        "auto_update = false",
+        "",
+      ].join("\n");
+      fs.writeFileSync(backupPath, backupToml, { mode: 0o600 });
+      fs.writeFileSync(currentPath, currentToml, { mode: 0o660 });
+      fs.writeFileSync(stagedPath, "", { mode: 0o600 });
+
+      const result = spawnSync(
+        "python3",
+        // No -I here (unlike the production invocation): isolated mode drops the
+        // user site-packages directory, which is where the CI-installed real
+        // tomli_w lives. This test targets parser/serializer fidelity, not the
+        // isolation flag, which the other tests in this file already cover.
+        [
+          "-c",
+          KEY_ALLOWLIST_MERGE_PYTHON,
+          backupPath,
+          currentPath,
+          stagedPath,
+          JSON.stringify(stateFileKeyMergeSpec(DCODE_OWNERSHIP)),
+        ],
+        { encoding: "utf-8" },
+      );
+
+      expect(result.status).toBe(0);
+      const merged = fs.readFileSync(currentPath, "utf-8");
+      expect(merged.split("\n").slice(0, 2)).toEqual([GENERATED_HEADER, FRESH_PROVIDER_HEADER]);
+      expect(merged).not.toContain("servers");
+      expect(merged).not.toContain("attacker");
+
+      const reparsed = spawnSync(
+        "python3",
+        [
+          "-I",
+          "-c",
+          "import json, sys, tomllib; print(json.dumps(tomllib.loads(sys.stdin.read())))",
+        ],
+        { input: merged, encoding: "utf-8" },
+      );
+      expect(reparsed.status).toBe(0);
+      expect(JSON.parse(reparsed.stdout)).toEqual({
+        models: { default: "openai:nvidia/new-model" },
+        update: { check: false, auto_update: false },
+        ui: { show_scrollbar: true, show_url_open_toast: false },
+        threads: { relative_time: false, sort_order: "created_at" },
+      });
+    });
   });
 });

@@ -222,6 +222,9 @@ jobs:
             .github/actions/ci-installer-integration
           sparse-checkout-cone-mode: false
 
+      - name: Install tomli-w for real-TOML state-file merge tests
+        run: python3 -m pip install --user tomli-w
+
       - name: Run CLI coverage shard
         uses: ./.trusted-ci-actions/.github/actions/ci-cli-coverage-shard
         with:
