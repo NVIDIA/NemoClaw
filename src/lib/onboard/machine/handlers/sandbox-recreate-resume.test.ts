@@ -56,4 +56,31 @@ describe("handleSandboxState resume recreation", () => {
     });
     expect(result.sandboxName).toBe("saved");
   });
+
+  it("passes an authoritative empty extra-provider list after reconciliation prunes stale names", async () => {
+    const session = createSession({
+      sandboxName: "saved",
+      messagingPlan: makeMinimalPlan("saved", "openclaw", ["slack"]),
+    });
+    session.steps.sandbox.status = "complete";
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "missing",
+      reconcileRegisteredExtraProviders: vi.fn(() => []),
+    });
+    calls.createSandbox.mockResolvedValue("saved");
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+    });
+
+    expect(deps.reconcileRegisteredExtraProviders).toHaveBeenCalledWith("nemoclaw");
+    expect(calls.createSandbox).toHaveBeenCalledTimes(1);
+    const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
+    expect(createSandboxCall[14]).toMatchObject({
+      extraProviders: [],
+      recreate: true,
+    });
+  });
 });

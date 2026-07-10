@@ -35,6 +35,9 @@ describe("onboard extra-provider reconciliation", () => {
       const credentialsPath = JSON.stringify(
         path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
       );
+      const sandboxBaseImagePath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "sandbox-base-image.ts"),
+      );
 
       fs.mkdirSync(fakeBin, { recursive: true });
       writeOkOpenshell(fakeBin);
@@ -44,6 +47,7 @@ const runner = require(${runnerPath});
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
 const credentials = require(${credentialsPath});
+const sandboxBaseImage = require(${sandboxBaseImagePath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const _n = (command) => (Array.isArray(command) ? command.join(" ") : String(command)).replace(/'/g, "");
@@ -88,6 +92,12 @@ registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
+sandboxBaseImage.resolveSandboxBaseImage = () => ({
+  ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  source: "latest",
+  glibcVersion: "2.39",
+});
 
 childProcess.spawn = (...args) => {
   const child = new EventEmitter();

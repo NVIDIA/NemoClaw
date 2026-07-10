@@ -630,7 +630,7 @@ class SandboxStateFlow<
       ...(this.options.authoritativePolicyTier
         ? { policyTier: this.options.authoritativePolicyTier }
         : {}),
-      ...(extraProviders.length > 0 ? { extraProviders } : {}),
+      extraProviders,
     };
   }
 
