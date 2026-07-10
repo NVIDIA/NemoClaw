@@ -59,6 +59,8 @@ export function collectLiveSandboxProbeSnapshot(
     timeoutMs?: number;
   } = {},
 ): Parameters<typeof hasNoLiveSandboxes>[0] {
+  // Both host probes are synchronous so this produces one ordered snapshot
+  // after the registry check and before the cleanup decision.
   const captureOpenshell = deps.captureOpenshell ?? captureLiveSandboxes;
   const dockerCapture = deps.dockerCapture ?? captureDockerContainers;
   const timeoutMs = deps.timeoutMs ?? OPENSHELL_PROBE_TIMEOUT_MS;
@@ -84,9 +86,13 @@ export function collectLiveSandboxProbeSnapshot(
         ),
       });
     } catch (error) {
-      // SOURCE_OF_TRUTH: preserve unrelated sandboxes and owned resources only;
-      // see the #6639 removal boundary in destroy-gateway.ts. If Docker cannot
-      // confirm the row has no backing container, preserve the shared gateway.
+      // SOURCE_OF_TRUTH: this host Docker CLI probe follows a terminal OpenShell
+      // row and must attest that its backing container is absent. An exception
+      // leaves live-sandbox state unknown, so preserve the shared gateway.
+      // NemoClaw cannot manufacture that container-runtime attestation here;
+      // destroy-gateway-cleanup.test.ts locks this fail-closed behavior. Remove
+      // it only when final cleanup has one authoritative sandbox/container state
+      // source; see the OpenShell listener-removal boundary tracked in #6639.
       console.debug(
         `Docker container probe failed for sandbox '${sandboxName}'; preserving shared gateway: ${String(error)}`,
       );

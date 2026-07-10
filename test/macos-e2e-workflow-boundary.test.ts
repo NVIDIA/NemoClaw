@@ -47,17 +47,22 @@ function stepNamed(name: string, jobName = "macos-e2e"): WorkflowStep {
 }
 
 describe("macOS E2E workflow boundary", () => {
-  it("keeps secret-bearing live E2E off pull_request runs", () => {
+  it("keeps secret-bearing live E2E on trusted main-branch code", () => {
     expect(readMacosWorkflow().on?.pull_request).toBeDefined();
 
     expect(stepNamed("Run macOS full E2E").if).toContain("github.event_name != 'pull_request'");
+    expect(stepNamed("Run macOS full E2E").if).toContain("github.ref == 'refs/heads/main'");
 
     expect(String(stepNamed("Run macOS full E2E").env?.NVIDIA_INFERENCE_API_KEY)).toContain(
       "github.event_name != 'pull_request'",
     );
+    expect(String(stepNamed("Run macOS full E2E").env?.NVIDIA_INFERENCE_API_KEY)).toContain(
+      "github.ref == 'refs/heads/main'",
+    );
     expect(jobNamed("macos-docker-final-destroy").if).toContain(
       "github.event_name != 'pull_request'",
     );
+    expect(jobNamed("macos-docker-final-destroy").if).toContain("github.ref == 'refs/heads/main'");
   });
 
   it("runs final-destroy against a commit-pinned Docker setup on trusted Intel macOS", () => {
@@ -71,17 +76,20 @@ describe("macOS E2E workflow boundary", () => {
     expect(String(docker.env?.LIMA_START_ARGS)).toContain("--cpus 4 --memory 8");
     expect(live.run).toContain("test/e2e/live/sandbox-operations.test.ts");
     expect(live.env?.NEMOCLAW_NON_INTERACTIVE).toBe("1");
+    expect(job.steps?.some((step) => step.uses?.startsWith("actions/upload-artifact@"))).toBe(
+      false,
+    );
   });
 
   it("uploads live macOS E2E artifacts when the workflow fails", () => {
     const upload = stepNamed("Upload logs on failure");
-    expect(upload.if).toBe("failure()");
+    expect(upload.if).toBe("failure() && github.event_name == 'pull_request'");
     expect(String(upload.with?.path)).toContain("/tmp/nemoclaw-e2e-*.log");
     expect(String(upload.with?.path)).toContain("${{ github.workspace }}/e2e-artifacts/live");
   });
 
-  it("keeps the job timeout outside the combined live test budgets", () => {
-    expect(jobNamed("macos-e2e")["timeout-minutes"]).toBeGreaterThanOrEqual(150);
-    expect(jobNamed("macos-docker-final-destroy")["timeout-minutes"]).toBeGreaterThanOrEqual(150);
+  it("bounds the fast and real-Docker macOS jobs independently", () => {
+    expect(jobNamed("macos-e2e")["timeout-minutes"]).toBe(30);
+    expect(jobNamed("macos-docker-final-destroy")["timeout-minutes"]).toBe(90);
   });
 });

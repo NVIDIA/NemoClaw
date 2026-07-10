@@ -56,17 +56,12 @@ describe("destroySandbox flow", () => {
   });
 
   it.each([
-    ["--yes", { yes: true }, () => vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", ""), true],
-    ["NEMOCLAW_NON_INTERACTIVE=1", {}, () => vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", "1"), true],
-    [
-      "an explicit preservation override",
-      { yes: true, cleanupGateway: false },
-      () => vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", ""),
-      false,
-    ],
-  ] as const)("applies the macOS final-gateway default for %s (#4662)", async (_scenario, options, configureEnvironment, cleanupExpected) => {
+    ["--yes", { yes: true }, "", true],
+    ["NEMOCLAW_NON_INTERACTIVE=1", {}, "1", true],
+    ["an explicit preservation override", { yes: true, cleanupGateway: false }, "", false],
+  ] as const)("applies the macOS final-gateway default for %s (#4662)", async (_scenario, options, nonInteractive, cleanupExpected) => {
     vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
-    configureEnvironment();
+    vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", nonInteractive);
     const harness = createDestroyHarness();
 
     await expect(harness.destroySandbox("alpha", options)).resolves.toBeUndefined();

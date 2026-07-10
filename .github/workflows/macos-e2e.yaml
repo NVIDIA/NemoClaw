@@ -37,7 +37,7 @@ concurrency:
 jobs:
   macos-e2e:
     runs-on: macos-26
-    timeout-minutes: 150
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -91,9 +91,9 @@ jobs:
           echo "Docker is unavailable on the Apple Silicon runner."
 
       - name: Run macOS full E2E
-        if: steps.docker.outputs.docker_ok == 'true' && github.event_name != 'pull_request'
+        if: steps.docker.outputs.docker_ok == 'true' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         env:
-          NVIDIA_INFERENCE_API_KEY: ${{ github.event_name != 'pull_request' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
+          NVIDIA_INFERENCE_API_KEY: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           GITHUB_TOKEN: ${{ github.token }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
@@ -103,17 +103,19 @@ jobs:
           NEMOCLAW_RUN_LIVE_E2E=1 npx vitest run --project e2e-live test/e2e/live/full-e2e.test.ts --silent=false --reporter=default
 
       - name: Explain skipped macOS live E2E
-        if: steps.docker.outputs.docker_ok != 'true' || github.event_name == 'pull_request'
+        if: steps.docker.outputs.docker_ok != 'true' || github.ref != 'refs/heads/main' || github.event_name == 'pull_request'
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             echo 'Skipping secret-bearing macOS live E2E on pull_request; use trusted workflow_dispatch/push evidence for live validation.'
+          elif [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            echo 'Skipping secret-bearing macOS live E2E outside the trusted main branch.'
           elif [ "${{ steps.docker.outputs.docker_ok }}" != "true" ]; then
             echo 'Skipping macOS live E2E because Docker is unavailable on this runner.'
           fi
           echo 'The workflow still validated the NemoClaw build on macOS (Apple Silicon).'
 
       - name: Upload logs on failure
-        if: failure()
+        if: failure() && github.event_name == 'pull_request'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: macos-e2e-logs
@@ -122,10 +124,13 @@ jobs:
             ${{ github.workspace }}/e2e-artifacts/live
           if-no-files-found: ignore
 
+  # docker/setup-docker-action supports Intel macOS, while the primary Apple
+  # Silicon job validates the same gateway lifecycle regressions without Docker.
+  # Keep the secret-bearing real Docker proof on reviewed main-branch code only.
   macos-docker-final-destroy:
-    if: github.event_name != 'pull_request'
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: macos-15-intel
-    timeout-minutes: 150
+    timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -177,13 +182,3 @@ jobs:
           npx vitest run --project e2e-live \
             test/e2e/live/sandbox-operations.test.ts \
             --silent=false --reporter=default
-
-      - name: Upload logs on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: macos-docker-final-destroy-logs
-          path: |
-            /tmp/nemoclaw-e2e-*.log
-            ${{ github.workspace }}/e2e-artifacts/live
-          if-no-files-found: ignore
