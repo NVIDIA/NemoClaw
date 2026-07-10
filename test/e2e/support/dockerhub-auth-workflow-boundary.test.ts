@@ -89,7 +89,7 @@ function writeExecutable(filePath: string, source: string): void {
 }
 
 describe("shared Docker Hub authentication workflow boundary", () => {
-  it("reuses one auth alias and one explicit audited cleanup step across every image job", () => {
+  it("reuses one auth alias and one explicit audited cleanup step across every image job (#6430)", () => {
     const workflow = loadWorkflow();
     const requiredJobs = imageJobNames(workflow);
     const canonicalAuth = namedStep(workflow.jobs.live, AUTH_STEP_NAME);
@@ -127,7 +127,9 @@ describe("shared Docker Hub authentication workflow boundary", () => {
         -1;
       const authIndex = job.steps?.findIndex((step) => step.name === AUTH_STEP_NAME) ?? -1;
       const cleanupIndex = job.steps?.findIndex((step) => step.name === CLEANUP_STEP_NAME) ?? -1;
-      expect(authIndex, `${jobName} auth order`).toBe(checkoutIndex + 1);
+      const expectedAuthIndex =
+        jobName === "jetson-nvmap-gpu" ? checkoutIndex + 2 : checkoutIndex + 1;
+      expect(authIndex, `${jobName} auth order`).toBe(expectedAuthIndex);
       expect(cleanupIndex, `${jobName} cleanup order`).toBe((job.steps?.length ?? 0) - 1);
     }
     expect(new Set(cleanupSteps).size, "cleanup steps must not consume the YAML alias budget").toBe(

@@ -75,6 +75,29 @@ describe("agent variant docs", () => {
     expect(rendered).not.toContain("<AgentOnly");
   });
 
+  it("keeps adjacent list items together after variant filtering", () => {
+    const rendered = renderAgentVariantPage(
+      `---
+title: "Example"
+---
+## Prerequisites
+
+<AgentOnly variant="openclaw">
+- NemoClaw installed.
+</AgentOnly>
+<AgentOnly variant="hermes">
+- NemoHermes installed.
+</AgentOnly>
+- A local model server running.
+`,
+      "openclaw",
+    );
+
+    expect(rendered).toContain("- NemoClaw installed.\n- A local model server running.");
+    expect(rendered).not.toContain("- NemoClaw installed.\n\n- A local model server running.");
+    expect(rendered).not.toContain("NemoHermes installed.");
+  });
+
   it("rewrites relative imports but preserves Fern route links for generated build output", () => {
     const rendered = renderAgentVariantPage(
       `${source}\nSee [Commands](../reference/commands#$$nemoclaw-list).\nSee [Backup](backup-restore).\n![Diagram](images/diagram.png)\n`,
@@ -150,5 +173,26 @@ describe("agent variant docs", () => {
     expect(openclaw).not.toContain(
       "Deep Agents does not have a NemoClaw-managed web-search feature.",
     );
+  });
+
+  it("keeps the troubleshooting security review link within each agent guide (#6558)", () => {
+    const troubleshooting = readFileSync(
+      new URL("../docs/reference/troubleshooting.mdx", import.meta.url),
+      "utf8",
+    );
+
+    for (const variant of ["openclaw", "hermes", "deepagents"] as const) {
+      const rendered = renderAgentVariantPage(troubleshooting, variant, {
+        outputPath: `/repo/docs/_build/agent-variants/reference/troubleshooting.${variant}.generated.mdx`,
+        sourcePath: "/repo/docs/reference/troubleshooting.mdx",
+      });
+
+      expect(rendered).toContain(
+        "[OpenShell 0.0.72 compatibility review](../security/openshell-0.0.72-compatibility-review#source-of-truth-boundaries)",
+      );
+      expect(rendered).not.toMatch(
+        /\/user-guide\/(?:openclaw|hermes|deepagents)\/security\/openshell-0\.0\.72-compatibility-review/,
+      );
+    }
   });
 });

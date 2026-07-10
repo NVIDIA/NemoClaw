@@ -39,6 +39,7 @@ const sdk = vi.hoisted(() => {
     emitRepairProse: false,
     omitAnalysis: false,
     prompts: [] as string[],
+    retryResponses: [] as Array<"exhausted" | "success">,
     terminalResponses: [] as TerminalResponse[],
   };
 
@@ -52,6 +53,7 @@ const sdk = vi.hoisted(() => {
     state.emitRepairProse = false;
     state.omitAnalysis = false;
     state.prompts = [];
+    state.retryResponses = [];
     state.terminalResponses = [];
   };
 
@@ -115,6 +117,7 @@ const sdk = vi.hoisted(() => {
           ? (state.terminalResponses.shift() ?? "omit")
           : "omit";
         const terminalPlan = terminalPlans[terminalResponse];
+        const retryResponse = terminalTool ? undefined : state.retryResponses.shift();
         await (contextTool && !state.omitContextTool
           ? executeContextTool(contextTool, emit)
           : Promise.resolve());
@@ -122,8 +125,40 @@ const sdk = vi.hoisted(() => {
           failTerminalTool(terminalTool as MockTool, emit),
         );
         const isRepairPrompt = prompt.includes("Call `turn_action` now");
+        const retryError = "429 status code (no body)";
+        const retryAttemptEvents = [
+          {
+            type: "message_update",
+            assistantMessageEvent: {
+              type: "error",
+              error: { errorMessage: "transient stream failure before response" },
+              reason: "error",
+            },
+          },
+          {
+            type: "message_end",
+            message: { role: "assistant", stopReason: "error", errorMessage: retryError },
+          },
+          {
+            type: "auto_retry_start",
+            attempt: 1,
+            maxAttempts: 4,
+            delayMs: 6_000,
+            errorMessage: retryError,
+          },
+        ];
+        const retryPlans = {
+          none: [],
+          success: [...retryAttemptEvents, { type: "auto_retry_end", success: true, attempt: 1 }],
+          exhausted: [
+            ...retryAttemptEvents,
+            { type: "auto_retry_end", success: false, attempt: 1, finalError: retryError },
+          ],
+        };
+        retryPlans[retryResponse ?? "none"].forEach(emit);
         const shouldEmitText =
           !state.omitAnalysis &&
+          retryResponse !== "exhausted" &&
           (!prompt.includes("Emit no prose before or after") ||
             (state.emitCommitProse && !isRepairPrompt) ||
             (state.emitRepairProse && isRepairPrompt));
@@ -168,6 +203,7 @@ vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => ({
 
 import {
   type AdvisorPromptTurn,
+  advisorRetrySettings,
   READ_ONLY_TOOLS,
   runReadOnlyAdvisor,
 } from "../tools/advisors/session.mts";
@@ -245,6 +281,38 @@ afterEach(() => {
 });
 
 describe("advisor session runner", () => {
+  it("uses one bounded provider-aware retry layer for transient failures", () => {
+    expect(advisorRetrySettings("openai/openai/gpt-5.5")).toEqual({
+      enabled: true,
+      maxRetries: 4,
+      baseDelayMs: 6_000,
+      provider: {
+        maxRetries: 0,
+        maxRetryDelayMs: 60_000,
+      },
+    });
+    expect(advisorRetrySettings("nvidia/nvidia/nemotron-3-ultra").baseDelayMs).toBe(9_000);
+  });
+
+  it("clears a transient provider error after the same-session retry succeeds", async () => {
+    sdk.state.retryResponses = ["success"];
+    const result = await run([analysisTurn("only-analysis")]);
+
+    expect(result.fatalError).toBeUndefined();
+    expect(result.turnErrors).toEqual([]);
+    expect(result.raw).toContain("retry 1/4 delay_ms=6000: 429 status code (no body)");
+    expect(result.raw).toContain("retry_end success=true attempts=1");
+  });
+
+  it("keeps the provider error when same-session retries are exhausted", async () => {
+    sdk.state.retryResponses = ["exhausted"];
+    const result = await run([analysisTurn("only-analysis")]);
+
+    expect(result.fatalError).toBe("429 status code (no body)");
+    expect(result.turnErrors).toEqual(["only-analysis: 429 status code (no body)"]);
+    expect(result.raw).toContain("retry_end success=false attempts=1");
+  });
+
   it.each([
     ["omitted", "omit"],
     ["failed once", "fail-once"],

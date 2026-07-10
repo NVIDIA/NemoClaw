@@ -10,7 +10,10 @@ import { describe, expect, it } from "vitest";
 import {
   buildSandboxInferenceRouteProbeArgs,
   classifyInferenceRouteFailureLabel,
+  DCODE_MANAGED_EXEC_LAUNCHER,
+  DCODE_MANAGED_EXEC_MISSING_DETAIL,
   INFERENCE_ROUTE_PROBE_SCRIPT,
+  isDcodeManagedExecMissingDetail,
   parseSandboxInferenceRouteProbeResult,
 } from "./connect-inference-route-probe";
 
@@ -20,11 +23,18 @@ describe("sandbox connect inference route probe argv", () => {
       name: "langchain-deepagents-code",
     });
 
-    expect(args.slice(0, 8)).toEqual([
+    expect(args.slice(0, 15)).toEqual([
       "sandbox",
       "exec",
       "--name",
       "deep-code",
+      "--no-tty",
+      "--env",
+      "HOME=/usr/local/lib/nemoclaw",
+      "--env",
+      "BASH_ENV=",
+      "--env",
+      "ENV=",
       "--",
       "/usr/local/lib/nemoclaw/dcode-managed-exec",
       "/bin/sh",
@@ -112,7 +122,9 @@ describe("sandbox connect inference route probe argv", () => {
       const args = buildSandboxInferenceRouteProbeArgs("deep-code", {
         name: "langchain-deepagents-code",
       });
-      const command = args.slice(5);
+      const delimiter = args.indexOf("--");
+      expect(delimiter).toBeGreaterThan(0);
+      const command = args.slice(delimiter + 1);
       command[0] = launcher;
 
       const result = spawnSync(command[0], command.slice(1), {
@@ -187,6 +199,66 @@ describe("sandbox inference route probe result", () => {
     expect(
       parseSandboxInferenceRouteProbeResult({ status: 1, output: "transport unavailable" }),
     ).toMatchObject({ healthy: false, broken: false, httpStatus: 0 });
+  });
+
+  it("does not trust stdout success when the exec boundary emits stderr (#6192)", () => {
+    expect(
+      parseSandboxInferenceRouteProbeResult({
+        status: 0,
+        output: "OK 200",
+        stderr: "/sandbox/.bash_profile: line 1: 3: Bad file descriptor\n",
+      }),
+    ).toMatchObject({
+      healthy: false,
+      broken: false,
+      httpStatus: 0,
+      detail: expect.stringContaining("/sandbox/.bash_profile"),
+    });
+  });
+
+  it("normalizes missing-helper diagnostics reported on stderr (#6192)", () => {
+    const parsed = parseSandboxInferenceRouteProbeResult({
+      status: 127,
+      output: "",
+      stderr: `exec: ${DCODE_MANAGED_EXEC_LAUNCHER}: not found`,
+    });
+
+    expect(parsed).toMatchObject({
+      healthy: false,
+      broken: false,
+      httpStatus: 0,
+      detail: DCODE_MANAGED_EXEC_MISSING_DETAIL,
+    });
+  });
+
+  it("redacts token-like stderr before returning probe diagnostics (#6192)", () => {
+    const parsed = parseSandboxInferenceRouteProbeResult({
+      status: 0,
+      output: "OK 200",
+      stderr: "startup failed NVIDIA_API_KEY=super-secret",
+    });
+
+    expect(parsed).toMatchObject({
+      healthy: false,
+      broken: false,
+      httpStatus: 0,
+    });
+    expect(parsed.detail).toContain("NVIDIA_API_KEY=<REDACTED>");
+    expect(parsed.detail).not.toContain("super-secret");
+  });
+
+  it("fails closed with rebuild guidance when the DCode helper is missing (#6192)", () => {
+    const output = `exec: ${DCODE_MANAGED_EXEC_LAUNCHER}: not found`;
+
+    const parsed = parseSandboxInferenceRouteProbeResult({ status: 127, output });
+
+    expect(parsed).toMatchObject({
+      healthy: false,
+      broken: false,
+      httpStatus: 0,
+      detail: DCODE_MANAGED_EXEC_MISSING_DETAIL,
+    });
+    expect(isDcodeManagedExecMissingDetail(parsed.detail)).toBe(true);
   });
 
   it("does not trust broken output from a failed exec boundary (#6192)", () => {

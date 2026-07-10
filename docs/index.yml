@@ -54,9 +54,12 @@ navigation:
               - page: "Inference Options"
                 path: _build/agent-variants/inference/inference-options.openclaw.generated.mdx
                 slug: inference-options
-              - page: "Use Local Inference"
+              - page: "Use Ollama for Local Inference"
                 path: _build/agent-variants/inference/use-local-inference.openclaw.generated.mdx
                 slug: use-local-inference
+              - page: "Set Up Self-Hosted Inference Servers"
+                path: _build/agent-variants/inference/local-compatible-inference-setup.openclaw.generated.mdx
+                slug: local-compatible-inference-setup
               - page: "Tool-Calling Reliability"
                 path: inference/tool-calling-reliability.mdx
                 slug: tool-calling-reliability
@@ -243,6 +246,9 @@ navigation:
               - page: "Inference Options"
                 path: _build/agent-variants/inference/inference-options.deepagents.generated.mdx
                 slug: inference-options
+              - page: "Set Up Self-Hosted Inference Servers"
+                path: _build/agent-variants/inference/local-compatible-inference-setup.deepagents.generated.mdx
+                slug: local-compatible-inference-setup
               - page: "Model Capability Audit"
                 path: _build/agent-variants/inference/model-capability-audit.deepagents.generated.mdx
                 slug: model-capability-audit
@@ -275,6 +281,9 @@ navigation:
               - page: "Credential Storage"
                 path: _build/agent-variants/security/credential-storage.deepagents.generated.mdx
                 slug: credential-storage
+              - page: "OpenShell 0.0.72 Compatibility Review"
+                path: _build/agent-variants/security/openshell-0.0.72-compatibility-review.deepagents.generated.mdx
+                slug: openshell-0.0.72-compatibility-review
           - section: "Reference"
             slug: reference
             collapsed: open-by-default
@@ -363,9 +372,12 @@ navigation:
               - page: "Inference Options"
                 path: _build/agent-variants/inference/inference-options.hermes.generated.mdx
                 slug: inference-options
-              - page: "Use Local Inference"
+              - page: "Use Ollama for Local Inference"
                 path: _build/agent-variants/inference/use-local-inference.hermes.generated.mdx
                 slug: use-local-inference
+              - page: "Set Up Self-Hosted Inference Servers"
+                path: _build/agent-variants/inference/local-compatible-inference-setup.hermes.generated.mdx
+                slug: local-compatible-inference-setup
               - page: "Model Capability Audit"
                 path: _build/agent-variants/inference/model-capability-audit.hermes.generated.mdx
                 slug: model-capability-audit

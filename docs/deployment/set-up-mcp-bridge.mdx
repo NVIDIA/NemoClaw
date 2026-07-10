@@ -19,7 +19,15 @@ The integration has three parts:
 
 - An OpenShell provider stores credentials outside the sandbox.
 - A generated OpenShell network policy grants the MCP endpoint through `protocol: mcp` and applies explicit JSON-RPC MCP method rules.
-- An agent adapter writes the MCP endpoint into OpenClaw, Hermes, or LangChain Deep Agents Code config.
+<AgentOnly variant="openclaw">
+- An agent adapter writes the MCP endpoint into OpenClaw config.
+</AgentOnly>
+<AgentOnly variant="hermes">
+- An agent adapter writes the MCP endpoint into Hermes config.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+- An agent adapter writes the MCP endpoint into LangChain Deep Agents Code config.
+</AgentOnly>
 
 This integration depends on the OpenShell MCP/JSON-RPC L7 policy support from [NVIDIA/OpenShell#1865](https://github.com/NVIDIA/OpenShell/pull/1865).
 NemoClaw v0.0.74 defaults to the pinned stable OpenShell `0.0.72` release, which exposes native `protocol: mcp` policy handling and provider-backed credential replacement.
