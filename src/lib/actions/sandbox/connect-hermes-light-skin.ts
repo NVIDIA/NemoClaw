@@ -9,9 +9,8 @@ import {
   applyHermesLightSkinConfig,
   hermesConfigUsesManagedLightSkin,
   NEMOCLAW_HERMES_LIGHT_SKIN_YAML,
-  removeHermesLightSkinConfig,
   shouldApplyHermesLightSkin,
-  shouldRemoveHermesLightSkin,
+  shouldInspectHermesLightSkinConfig,
 } from "../../domain/sandbox/connect-env";
 import { readSandboxConfig, resolveAgentConfig, writeSandboxConfig } from "../../sandbox/config";
 import { redact } from "../../security/redact";
@@ -60,6 +59,7 @@ export function prepareHermesLightTerminalSkin(
   env: NodeJS.ProcessEnv,
 ): void {
   if (agent?.name !== "hermes") return;
+  if (!shouldInspectHermesLightSkinConfig(agent, env)) return;
 
   const target = resolveAgentConfig(sandboxName);
   if (target.agentName !== "hermes") return;
@@ -77,9 +77,7 @@ export function prepareHermesLightTerminalSkin(
     if (!changed && !hermesConfigUsesManagedLightSkin(config)) return;
     if (!writeHermesLightSkinFile(sandboxName)) return;
     if (!changed) return;
-  } else if (!shouldRemoveHermesLightSkin(agent, env, config)) {
-    return;
-  } else if (!removeHermesLightSkinConfig(config)) {
+  } else {
     return;
   }
 

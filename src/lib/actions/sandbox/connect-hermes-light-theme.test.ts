@@ -14,18 +14,20 @@ const REDACTED_URL_CANARY = "https://user:secret@example.test/hermes";
 
 type ConnectHarness = ReturnType<typeof createConnectHarness>;
 
-function connectCalls(harness: ConnectHarness) {
+function connectCalls(harness: ConnectHarness, sandboxName = "alpha") {
   return harness.spawnSyncSpy.mock.calls.filter(
     ([command, args]) =>
-      command === "openshell" && Array.isArray(args) && args.join(" ") === "sandbox connect alpha",
+      command === "openshell" &&
+      Array.isArray(args) &&
+      args.join(" ") === `sandbox connect ${sandboxName}`,
   );
 }
 
-function skinWriteCalls(harness: ConnectHarness) {
+function skinWriteCalls(harness: ConnectHarness, sandboxName = "alpha") {
   return harness.runOpenshellSpy.mock.calls.filter(
     ([args]) =>
       Array.isArray(args) &&
-      args.slice(0, 6).join(" ") === "sandbox exec --name alpha -- sh" &&
+      args.slice(0, 6).join(" ") === `sandbox exec --name ${sandboxName} -- sh` &&
       String(args[7] ?? "").includes("nemoclaw-light.yaml"),
   );
 }
@@ -45,6 +47,8 @@ describe("Hermes sandbox connect light terminal skin", () => {
 
   beforeEach(() => {
     process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
+    vi.stubEnv("HERMES_TUI_LIGHT", "");
+    vi.stubEnv("HERMES_TUI_THEME", "");
     Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
     exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number | string | null) => {
       throw new Error(`process.exit(${code ?? 0})`);
@@ -123,7 +127,7 @@ describe("Hermes sandbox connect light terminal skin", () => {
     expectConnectSucceeded(harness, exitSpy);
   });
 
-  it("removes the NemoClaw-managed Hermes light skin when reconnecting from a dark terminal (#6380)", async () => {
+  it("does not read or write Hermes config when reconnecting from a dark terminal (#6380)", async () => {
     vi.stubEnv("COLORFGBG", "0;0");
     const hermesConfig = {
       display: { skin: NEMOCLAW_HERMES_LIGHT_SKIN_NAME },
@@ -140,14 +144,20 @@ describe("Hermes sandbox connect light terminal skin", () => {
 
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
 
+    expect(harness.resolveAgentConfigSpy).not.toHaveBeenCalled();
+    expect(harness.readSandboxConfigSpy).not.toHaveBeenCalled();
     expect(skinWriteCalls(harness)).toHaveLength(0);
-    expect(harness.writeSandboxConfigSpy).toHaveBeenCalledOnce();
-    expect(hermesConfig).toEqual({ model: "test" });
+    expect(harness.writeSandboxConfigSpy).not.toHaveBeenCalled();
+    expect(hermesConfig).toEqual({
+      display: { skin: NEMOCLAW_HERMES_LIGHT_SKIN_NAME },
+      model: "test",
+    });
     expectConnectSucceeded(harness, exitSpy);
   });
 
-  it("performs only a read-only cleanup probe for dark terminals without a managed Hermes skin (#6380)", async () => {
-    vi.stubEnv("COLORFGBG", "0;0");
+  it("does not read or write Hermes config when a Hermes theme override is set (#6380)", async () => {
+    vi.stubEnv("COLORFGBG", "0;15");
+    vi.stubEnv("HERMES_TUI_THEME", "dark");
     const harness = createConnectHarness({
       agentName: "hermes",
       hermesConfig: { model: "test" },
@@ -159,10 +169,49 @@ describe("Hermes sandbox connect light terminal skin", () => {
 
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
 
-    expect(harness.readSandboxConfigSpy).toHaveBeenCalledOnce();
+    expect(harness.resolveAgentConfigSpy).not.toHaveBeenCalled();
+    expect(harness.readSandboxConfigSpy).not.toHaveBeenCalled();
     expect(skinWriteCalls(harness)).toHaveLength(0);
     expect(harness.writeSandboxConfigSpy).not.toHaveBeenCalled();
     expect(warningText(harness)).not.toContain("Could not");
+    expectConnectSucceeded(harness, exitSpy);
+  });
+
+  it("targets only the requested Hermes sandbox when sibling sandboxes are registered (#6380)", async () => {
+    vi.stubEnv("TERM_PROGRAM", "Apple_Terminal");
+    vi.stubEnv("COLORFGBG", "0;15");
+    const alphaConfig = { model: "alpha" };
+    const betaConfig = { display: { skin: "beta-owned" }, model: "beta" };
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      registryEntries: [
+        { name: "alpha", agent: "hermes" },
+        { name: "beta", agent: "hermes" },
+      ],
+      sessionAgent: {
+        name: "hermes",
+        runtime: { kind: "terminal", interactive_command: "hermes" },
+      },
+    });
+    harness.readSandboxConfigSpy.mockImplementation((name: unknown) =>
+      String(name) === "alpha" ? alphaConfig : betaConfig,
+    );
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
+
+    expect(harness.resolveAgentConfigSpy.mock.calls.map(([name]) => String(name))).toEqual([
+      "alpha",
+    ]);
+    expect(harness.readSandboxConfigSpy.mock.calls.map(([name]) => String(name))).toEqual([
+      "alpha",
+    ]);
+    expect(harness.writeSandboxConfigSpy.mock.calls.map(([name]) => String(name))).toEqual([
+      "alpha",
+    ]);
+    expect(skinWriteCalls(harness, "alpha")).toHaveLength(1);
+    expect(skinWriteCalls(harness, "beta")).toHaveLength(0);
+    expect(betaConfig).toEqual({ display: { skin: "beta-owned" }, model: "beta" });
+    expect(connectCalls(harness, "beta")).toHaveLength(0);
     expectConnectSucceeded(harness, exitSpy);
   });
 

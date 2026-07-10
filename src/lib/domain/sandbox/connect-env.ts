@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import YAML from "yaml";
 import type { ConfigObject, ConfigValue } from "../../security/credential-filter";
 
 export const NEMOCLAW_HERMES_LIGHT_SKIN_NAME = "nemoclaw-light";
@@ -58,16 +57,6 @@ export function applyHermesLightSkinConfig(config: ConfigObject): boolean {
   return true;
 }
 
-export function removeHermesLightSkinConfig(config: ConfigObject): boolean {
-  const display = config.display;
-  if (!isConfigRecord(display) || display.skin !== NEMOCLAW_HERMES_LIGHT_SKIN_NAME) {
-    return false;
-  }
-  delete display.skin;
-  if (Object.keys(display).length === 0) delete config.display;
-  return true;
-}
-
 export function hostTerminalLooksLight(env: NodeJS.ProcessEnv): boolean {
   const colorfgbg = String(env.COLORFGBG ?? "").trim();
   if (!colorfgbg) return false;
@@ -78,49 +67,15 @@ export function hostTerminalLooksLight(env: NodeJS.ProcessEnv): boolean {
   return bg === 7 || bg === 15;
 }
 
-export function hermesConfigHasDisplaySkin(configText: string): boolean | null {
-  try {
-    const doc = YAML.parseDocument(configText.trim() ? configText : "{}");
-    if (doc.errors.length > 0) return null;
-    const root = doc.toJSON();
-    if (root !== null && (typeof root !== "object" || Array.isArray(root))) return null;
-    return doc.hasIn(["display", "skin"]);
-  } catch {
-    return null;
-  }
-}
-
-export function buildHermesLightSkinConfig(configText: string): string | null {
-  try {
-    const doc = YAML.parseDocument(configText.trim() ? configText : "{}");
-    if (doc.errors.length > 0) return null;
-
-    const root = doc.toJSON();
-    if (root !== null && (typeof root !== "object" || Array.isArray(root))) return null;
-    if (doc.hasIn(["display", "skin"])) return null;
-
-    const display = doc.get("display", true);
-    if (display !== undefined && display !== null && !YAML.isMap(display)) return null;
-    if (!YAML.isMap(display)) doc.set("display", doc.createNode({}));
-
-    doc.setIn(["display", "skin"], NEMOCLAW_HERMES_LIGHT_SKIN_NAME);
-    return String(doc).trimEnd() + "\n";
-  } catch {
-    return null;
-  }
-}
-
-export function shouldPrepareHermesLightSkin(
+export function shouldInspectHermesLightSkinConfig(
   agent: { name?: string } | null | undefined,
   env: NodeJS.ProcessEnv,
-  hermesConfigText: string,
 ): boolean {
   return (
     agent?.name === "hermes" &&
     hostTerminalLooksLight(env) &&
     !hasEnvValue(env.HERMES_TUI_LIGHT) &&
-    !hasEnvValue(env.HERMES_TUI_THEME) &&
-    hermesConfigHasDisplaySkin(hermesConfigText) === false
+    !hasEnvValue(env.HERMES_TUI_THEME)
   );
 }
 
@@ -130,25 +85,8 @@ export function shouldApplyHermesLightSkin(
   config: ConfigObject,
 ): boolean {
   return (
-    agent?.name === "hermes" &&
-    hostTerminalLooksLight(env) &&
-    !hasEnvValue(env.HERMES_TUI_LIGHT) &&
-    !hasEnvValue(env.HERMES_TUI_THEME) &&
+    shouldInspectHermesLightSkinConfig(agent, env) &&
     (hermesConfigDisplaySkin(config) === null || hermesConfigUsesManagedLightSkin(config))
-  );
-}
-
-export function shouldRemoveHermesLightSkin(
-  agent: { name?: string } | null | undefined,
-  env: NodeJS.ProcessEnv,
-  config: ConfigObject,
-): boolean {
-  return (
-    agent?.name === "hermes" &&
-    hermesConfigUsesManagedLightSkin(config) &&
-    (!hostTerminalLooksLight(env) ||
-      hasEnvValue(env.HERMES_TUI_LIGHT) ||
-      hasEnvValue(env.HERMES_TUI_THEME))
   );
 }
 
