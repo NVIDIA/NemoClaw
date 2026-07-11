@@ -18,6 +18,7 @@ describe("gateway restart failure markers", () => {
       [string, ReturnType<typeof classifyGatewayRestartFailure>["layer"]]
     > = [
       ["PRIVILEGED_CONTROL_UNAVAILABLE", "privileged control unavailable"],
+      ["SUPERVISOR_UNAVAILABLE", "supervisor not running"],
       ["SUPERVISOR_REBUILD_REQUIRED", "privileged control unavailable"],
       ["SUPERVISOR_BUSY", "privileged control unavailable"],
       [MARKERS.SECRET_BOUNDARY_REFUSED, "secret-boundary refusal"],

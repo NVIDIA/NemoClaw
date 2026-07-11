@@ -31,9 +31,12 @@ import {
   recoverMessagingHostForward,
   resolveSandboxDashboardPort,
 } from "./forward-recovery";
+import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
+import { buildSandboxRuntimeEnvArgs } from "../../onboard/sandbox-create-launch";
 import {
   classifyGatewayRestartFailure,
   type GatewayRestartDeps,
+  type GatewayRestartFailureLayer,
   type GatewayRestartResult,
   printGatewayRestartFailure,
   type RestartSandboxGatewayOptions,
@@ -278,6 +281,72 @@ export function executeGatewaySupervisorAction(
   return { status, stdout, stderr };
 }
 
+function reconstructSupervisorLaunchEnvArgs(sandboxName: string): string[] | null {
+  const entry = registry.getSandbox(sandboxName);
+  if (!entry) return null;
+  const agent = agentRuntime.getSessionAgent(sandboxName) ?? null;
+  const manageDashboard = shouldManageDashboardForAgent(agent);
+  const dashboardPort = String(resolveSandboxDashboardPort(sandboxName));
+  const chatUiUrl = manageDashboard ? `http://127.0.0.1:${dashboardPort}` : "";
+  const hermesDashboardEnabled = entry.hermesDashboardEnabled === true;
+  const { envArgs } = buildSandboxRuntimeEnvArgs({
+    agent,
+    chatUiUrl,
+    manageDashboard,
+    getDashboardForwardPort: () => dashboardPort,
+    hermesDashboardState: {
+      enabled: hermesDashboardEnabled,
+      config: hermesDashboardEnabled
+        ? {
+            enabled: true,
+            port: entry.hermesDashboardPort ?? 0,
+            internalPort: entry.hermesDashboardInternalPort ?? 0,
+            tuiEnabled: entry.hermesDashboardTui === true,
+          }
+        : null,
+    },
+    extraPlaceholderKeys: [],
+    observabilityEnabled: entry.observabilityEnabled === true,
+    sandboxName,
+    env: process.env,
+    omitCredentialEnv: true,
+  });
+  return envArgs;
+}
+
+function relaunchManagedSupervisorSession(
+  sandboxName: string,
+  { quiet }: { quiet: boolean },
+): boolean {
+  if (process.env.NEMOCLAW_DISABLE_SUPERVISOR_RELAUNCH === "1") return false;
+  const envArgs = reconstructSupervisorLaunchEnvArgs(sandboxName);
+  if (envArgs === null) return false;
+  const startedMarker = "NEMOCLAW_SUPERVISOR_RELAUNCHED";
+  const envPrefix = envArgs.map(shellQuote).join(" ");
+  const daemonCommand =
+    `echo ${startedMarker}; ` +
+    `setsid nohup env ${envPrefix} nemoclaw-start ` +
+    ">/tmp/nemoclaw-start-recover.log 2>&1 </dev/null &";
+  if (!quiet) console.log("  Relaunching the in-sandbox supervisor...");
+  let result: ReturnType<typeof spawnSync>;
+  try {
+    result = spawnSync(
+      getOpenshellBinary(),
+      ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", daemonCommand],
+      {
+        cwd: ROOT,
+        encoding: "utf-8",
+        env: buildSubprocessEnv(),
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
+      },
+    );
+  } catch {
+    return false;
+  }
+  return result.status === 0 && String(result.stdout || "").includes(startedMarker);
+}
+
 async function executeSandboxExecCommandForStatus(
   sandboxName: string,
   command: string,
@@ -401,11 +470,13 @@ function recoverSandboxProcesses(
   {
     quiet = false,
     requestGatewaySupervisorAction = executeGatewaySupervisorAction,
+    onFailureLayer,
   }: {
     quiet?: boolean;
     requestGatewaySupervisorAction?: typeof executeGatewaySupervisorAction;
+    onFailureLayer?: (layer: GatewayRestartFailureLayer) => void;
   } = {},
-): "managed" | "custom" | null {
+): "managed" | "custom" | "relaunched" | null {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const dashboardPort = resolveSandboxDashboardPort(sandboxName);
   let persistedAgent: string | null;
@@ -421,7 +492,7 @@ function recoverSandboxProcesses(
   }
   const recoveredSsh = (result: SandboxCommandResult | null) =>
     !!(result && result.status === 0 && hasGatewayRecoveryMarker(result));
-  const recoverManagedGateway = (): boolean => {
+  const recoverManagedGateway = (): "managed" | "relaunched" | null => {
     const maxAttempts = 3;
     const retryIntervalSeconds = readNonNegativeNumberEnv(
       "NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS",
@@ -430,7 +501,7 @@ function recoverSandboxProcesses(
     let execResult: SandboxCommandResult | null = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       execResult = requestGatewaySupervisorAction(sandboxName, "recover");
-      if (hasGatewayRecoveryMarker(execResult)) return true;
+      if (hasGatewayRecoveryMarker(execResult)) return "managed";
 
       // PID 1 may replace the gateway between the host's stopped observation
       // and the controller's process-tree capture. Retry only exact transient
@@ -439,8 +510,15 @@ function recoverSandboxProcesses(
       sleepSeconds(retryIntervalSeconds);
     }
     const failure = classifyGatewayRestartFailure(execResult);
+    onFailureLayer?.(failure.layer);
+    if (
+      failure.layer === "supervisor not running" &&
+      relaunchManagedSupervisorSession(sandboxName, { quiet })
+    ) {
+      return "relaunched";
+    }
     if (!quiet) printGatewayRestartFailure(sandboxName, failure.layer, failure.detail);
-    return false;
+    return null;
   };
   if (persistedAgent === "hermes") {
     if (!isHermesAgent(agent)) {
@@ -448,7 +526,7 @@ function recoverSandboxProcesses(
       if (!quiet) printGatewayRestartFailure(sandboxName, "unsupported agent", detail);
       return null;
     }
-    return recoverManagedGateway() ? "managed" : null;
+    return recoverManagedGateway();
   }
 
   // A persisted non-OpenClaw runtime whose manifest cannot be loaded is not
@@ -463,7 +541,7 @@ function recoverSandboxProcesses(
   }
 
   if ((!persistedAgent || persistedAgent === "openclaw") && (!agent || agent.name === "openclaw")) {
-    return recoverManagedGateway() ? "managed" : null;
+    return recoverManagedGateway();
   }
 
   const agentScript = agentRuntime.buildRecoveryScript(agent, dashboardPort);
@@ -535,8 +613,17 @@ function gatewayRecoveryTimeoutSeconds(
 function printHostManagedGatewayRecoveryHints(
   sandboxName: string,
   agent: ReturnType<typeof agentRuntime.getSessionAgent>,
+  failureLayer: GatewayRestartFailureLayer | null = null,
 ): void {
   const quotedSandboxName = shellQuote(sandboxName);
+  if (failureLayer === "supervisor not running") {
+    console.error("  The in-sandbox supervisor is not running, so the managed gateway restart");
+    console.error("  cannot relaunch it (a container restart stops the supervisor).");
+    console.error("  Recreate the sandbox runtime to restore it:");
+    console.error(`    nemoclaw ${quotedSandboxName} rebuild --yes`);
+    console.error("  If rebuild is blocked, destroy and re-onboard the sandbox to restore it.");
+    return;
+  }
   let agentName = agent?.name ?? null;
   if (!agentName) {
     try {
@@ -848,9 +935,13 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     console.log("  Recovering...");
   }
 
+  let managedRecoveryFailureLayer: GatewayRestartFailureLayer | null = null;
   const recoveryKind = recoverSandboxProcesses(sandboxName, {
     quiet,
     requestGatewaySupervisorAction,
+    onFailureLayer: (layer) => {
+      managedRecoveryFailureLayer = layer;
+    },
   });
   if (recoveryKind !== null) {
     // Wait for gateway to bind its HTTP port before declaring success. The
@@ -930,7 +1021,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
   }
   if (!quiet) {
     console.error(`  Could not restart ${recoveryDisplayName} gateway automatically.`);
-    printHostManagedGatewayRecoveryHints(sandboxName, recoveryAgent);
+    printHostManagedGatewayRecoveryHints(sandboxName, recoveryAgent, managedRecoveryFailureLayer);
   }
 
   return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
