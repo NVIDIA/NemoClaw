@@ -187,6 +187,13 @@ export function getProviderSelectionConfig(
         credentialEnv: "GEMINI_API_KEY",
         providerLabel: "Google Gemini",
       };
+    case "github-copilot":
+      return {
+        ...base,
+        model: model || "gpt-5.4",
+        credentialEnv: "COPILOT_GITHUB_TOKEN",
+        providerLabel: "GitHub Copilot",
+      };
     case "compatible-endpoint":
       return {
         ...base,
@@ -267,6 +274,7 @@ export function getSandboxInferenceConfig(
       inferenceApi = "anthropic-messages";
       break;
     case "gemini-api":
+    case "github-copilot":
     case OPENROUTER_PROVIDER_NAME:
     case "hermes-provider":
       providerKey = MANAGED_PROVIDER_ID;

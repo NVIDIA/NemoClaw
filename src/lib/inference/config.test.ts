@@ -216,6 +216,16 @@ describe("inference selection config", () => {
     expect(getProviderSelectionConfig("gemini-api", "gemini-2.5-pro")).toEqual(
       expect.objectContaining({ model: "gemini-2.5-pro", providerLabel: "Google Gemini" }),
     );
+    expect(getProviderSelectionConfig("github-copilot", "gpt-5.4-mini")).toEqual({
+      endpointType: "custom",
+      endpointUrl: INFERENCE_ROUTE_URL,
+      ncpPartner: null,
+      model: "gpt-5.4-mini",
+      profile: DEFAULT_ROUTE_PROFILE,
+      credentialEnv: "COPILOT_GITHUB_TOKEN",
+      provider: "github-copilot",
+      providerLabel: "GitHub Copilot",
+    });
     expect(getProviderSelectionConfig("compatible-endpoint", "openrouter/auto")).toEqual({
       endpointType: "custom",
       endpointUrl: INFERENCE_ROUTE_URL,
@@ -267,6 +277,7 @@ describe("inference selection config", () => {
       "anthropic-prod",
       "compatible-anthropic-endpoint",
       "gemini-api",
+      "github-copilot",
       "compatible-endpoint",
       "hermes-provider",
       "vllm-local",
@@ -301,6 +312,7 @@ describe("inference selection config", () => {
     expect(getProviderSelectionConfig("openrouter-api")?.model).toBe(DEFAULT_CLOUD_MODEL);
     expect(getProviderSelectionConfig("anthropic-prod")?.model).toBe("claude-sonnet-4-6");
     expect(getProviderSelectionConfig("gemini-api")?.model).toBe("gemini-2.5-flash");
+    expect(getProviderSelectionConfig("github-copilot")?.model).toBe("gpt-5.4");
     expect(getProviderSelectionConfig("compatible-endpoint")?.model).toBe("custom-model");
     expect(getProviderSelectionConfig("compatible-anthropic-endpoint")?.model).toBe(
       "custom-anthropic-model",
@@ -349,6 +361,18 @@ describe("getSandboxInferenceConfig", () => {
       inferenceBaseUrl: INFERENCE_ROUTE_URL,
       inferenceApi: "openai-completions",
       inferenceCompat: null,
+    });
+  });
+
+  it("maps GitHub Copilot to the managed inference provider", () => {
+    expect(getSandboxInferenceConfig("gpt-5.4", "github-copilot")).toEqual({
+      providerKey: MANAGED_PROVIDER_ID,
+      primaryModelRef: `${MANAGED_PROVIDER_ID}/gpt-5.4`,
+      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceApi: "openai-completions",
+      inferenceCompat: {
+        supportsStore: false,
+      },
     });
   });
 

@@ -25,6 +25,9 @@ const OPENAI_ENDPOINT_URL = "https://api.openai.com/v1";
 const ANTHROPIC_ENDPOINT_URL = "https://api.anthropic.com";
 const GEMINI_ENDPOINT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
 const HERMES_INFERENCE_ENDPOINT_URL = "https://inference-api.nousresearch.com/v1";
+const COPILOT_ENDPOINT_URL = "https://api.githubcopilot.com";
+const COPILOT_CREDENTIAL_ENV = "COPILOT_GITHUB_TOKEN";
+const COPILOT_CREDENTIAL_SOURCE_ENVS = ["GH_TOKEN", "GITHUB_TOKEN"];
 const HOSTED_INFERENCE_SOURCE_ENV = "NVIDIA_INFERENCE_API_KEY";
 const HOSTED_INFERENCE_PROVIDER_KEY_ENV = "NEMOCLAW_PROVIDER_KEY";
 const HOSTED_INFERENCE_CREDENTIAL_ENV = "COMPATIBLE_API_KEY";
@@ -39,6 +42,8 @@ const NON_INTERACTIVE_PROVIDER_ALIASES = {
   vllm: "vllm",
   "open-router": "openrouter",
   openrouterai: "openrouter",
+  github: "copilot",
+  "github-copilot": "copilot",
   anthropiccompatible: "anthropicCompatible",
   hermes: "hermesProvider",
   "hermes-provider": "hermesProvider",
@@ -53,6 +58,7 @@ const NON_INTERACTIVE_PROVIDER_KEYS = new Set([
   "anthropic",
   "anthropicCompatible",
   "gemini",
+  "copilot",
   "hermesProvider",
   "ollama",
   "custom",
@@ -65,7 +71,7 @@ const NON_INTERACTIVE_PROVIDER_KEYS = new Set([
   "start-windows-ollama",
 ]);
 const NON_INTERACTIVE_PROVIDER_VALID_VALUES =
-  "Valid values: build, openrouter, openai, anthropic, anthropicCompatible, gemini, hermes-provider, ollama, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama";
+  "Valid values: build, openrouter, openai, anthropic, anthropicCompatible, gemini, copilot, hermes-provider, ollama, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama";
 const PROVIDER_KEY_ROUTE_VALUES = new Set(
   [
     "inference",
@@ -137,6 +143,17 @@ const REMOTE_PROVIDER_CONFIG = {
     helpUrl: "https://aistudio.google.com/app/apikey",
     modelMode: "curated",
     defaultModel: "gemini-2.5-flash",
+    skipVerify: true,
+  },
+  copilot: {
+    label: "GitHub Copilot",
+    providerName: "github-copilot",
+    providerType: "copilot",
+    credentialEnv: COPILOT_CREDENTIAL_ENV,
+    endpointUrl: COPILOT_ENDPOINT_URL,
+    helpUrl: "https://docs.github.com/copilot",
+    modelMode: "curated",
+    defaultModel: "gpt-5.4",
     skipVerify: true,
   },
   // Hermes Provider is a single menu entry by design: every model family it
@@ -298,6 +315,24 @@ function stageHostedInferenceSourceSecretEnv() {
     (process.env.NEMOCLAW_PREFERRED_API || "").trim() || "openai-completions";
   process.env[HOSTED_INFERENCE_CREDENTIAL_ENV] = sourceKey;
   return true;
+}
+
+function stageCopilotCredentialEnv() {
+  const current = normalizeCredentialValue(
+    // check-direct-credential-env-ignore -- Copilot's canonical env wins over generic GitHub token aliases.
+    process.env[COPILOT_CREDENTIAL_ENV] ?? "",
+  );
+  if (current) return false;
+  for (const sourceEnv of COPILOT_CREDENTIAL_SOURCE_ENVS) {
+    const value = normalizeCredentialValue(
+      // check-direct-credential-env-ignore -- Copilot provider accepts GitHub token aliases documented by OpenShell.
+      process.env[sourceEnv] ?? "",
+    );
+    if (!value) continue;
+    process.env[COPILOT_CREDENTIAL_ENV] = value;
+    return true;
+  }
+  return false;
 }
 
 function isHostedInferenceProviderKeyCredentialCandidate(value) {
@@ -494,6 +529,9 @@ module.exports = {
   OPENAI_ENDPOINT_URL,
   ANTHROPIC_ENDPOINT_URL,
   GEMINI_ENDPOINT_URL,
+  COPILOT_ENDPOINT_URL,
+  COPILOT_CREDENTIAL_ENV,
+  COPILOT_CREDENTIAL_SOURCE_ENVS,
   REMOTE_PROVIDER_CONFIG,
   LOCAL_INFERENCE_PROVIDERS,
   OLLAMA_PROXY_CREDENTIAL_ENV,
@@ -508,6 +546,7 @@ module.exports = {
   getProviderLabel,
   getEffectiveProviderName,
   stageHostedInferenceSourceSecretEnv,
+  stageCopilotCredentialEnv,
   getNonInteractiveProvider,
   getNonInteractiveModel,
   getRequestedProviderHint,

@@ -4,9 +4,13 @@
 import { resolveProviderCredential, saveCredential } from "../credentials/store";
 
 const {
+  COPILOT_CREDENTIAL_ENV,
   isProviderKeyCredentialCandidate,
+  stageCopilotCredentialEnv,
 }: {
+  COPILOT_CREDENTIAL_ENV: string;
   isProviderKeyCredentialCandidate: (value: string | null | undefined) => boolean;
+  stageCopilotCredentialEnv: () => boolean;
 } = require("./providers");
 
 // NEMOCLAW_PROVIDER_KEY is a permanent compatibility fallback for callers that
@@ -39,6 +43,9 @@ export function stageBuildProviderKeyBridge(): void {
 
 export function stageRemoteProviderKeyBridge(credentialEnv: string | null): void {
   if (!credentialEnv) return;
+  if (credentialEnv === COPILOT_CREDENTIAL_ENV) {
+    stageCopilotCredentialEnv();
+  }
   const providerKeyHint = getProviderKeyBridgeHint();
   if (!isProviderKeyCredentialCandidate(providerKeyHint)) return;
   if (resolveProviderCredential(credentialEnv)) return;

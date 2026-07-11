@@ -13,6 +13,7 @@ const REMOTE_PROVIDER_CONFIG = {
   anthropic: { label: "Anthropic" },
   anthropicCompatible: { label: "Other Anthropic-compatible endpoint" },
   gemini: { label: "Google Gemini" },
+  copilot: { label: "GitHub Copilot" },
   hermesProvider: { label: "Hermes Provider" },
 };
 
@@ -54,6 +55,7 @@ describe("buildInferenceProviderMenu", () => {
       "anthropic",
       "anthropicCompatible",
       "gemini",
+      "copilot",
     ]);
   });
 
@@ -86,6 +88,7 @@ describe("buildInferenceProviderMenu", () => {
       "install-ollama",
       "routed",
       "hermesProvider",
+      "copilot",
     ]);
     expect(result.options.find((option) => option.key === "build")?.label).toBe("NVIDIA Endpoints");
     expect(result.options.find((option) => option.key === "hermesProvider")?.label).toBe(
@@ -100,7 +103,7 @@ describe("buildInferenceProviderMenu", () => {
       windowsHostInstallLabel: "Install Ollama on Windows host (requires Docker Desktop)",
     });
 
-    expect(result.options.at(-1)).toEqual({
+    expect(result.options).toContainEqual({
       key: "install-windows-ollama",
       label: "Install Ollama on Windows host (requires Docker Desktop)",
     });
@@ -116,7 +119,7 @@ describe("buildInferenceProviderMenu", () => {
         reachable ? "Use Ollama on Windows host - running" : "Start Ollama on Windows host",
     });
 
-    expect(result.options.at(-1)).toEqual({
+    expect(result.options).toContainEqual({
       key: "start-windows-ollama",
       label: "Use Ollama on Windows host - running",
     });

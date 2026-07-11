@@ -24,6 +24,7 @@ Use this status table to distinguish validated provider integrations from adapte
 | NVIDIA Endpoints | Tested | OpenAI-compatible | Hosted models on integrate.api.nvidia.com |
 | OpenRouter | Tested | OpenAI-compatible | First-class onboarding route for OpenClaw, Hermes, and LangChain Deep Agents Code. NemoClaw registers the `openrouter-api` provider through OpenShell's `openai` profile with a host runtime adapter URL; host-side validation and runtime traffic send the default OpenRouter attribution headers. |
 | OpenAI | Tested | Native OpenAI-compatible | Uses OpenAI model IDs |
+| GitHub Copilot | Tested with limitations | OpenShell Copilot profile | Uses OpenShell's `copilot` provider profile and host GitHub token discovery. NemoClaw registers the route and skips generic `/v1` probing because Copilot authentication is profile-owned. |
 | Other OpenAI-compatible endpoint | Tested with limitations | Custom OpenAI-compatible | Custom base-URL adapter for servers that implement OpenAI-compatible `/v1/chat/completions` or `/v1/responses`. Behavior on OpenAI-compatible proxies, gateways, and self-hosted implementations may vary; this row claims the adapter, not the universe of compatible endpoints. |
 | Anthropic | Tested | Native Anthropic | Uses anthropic-messages |
 | Other Anthropic-compatible endpoint | Tested with limitations | Custom Anthropic-compatible | Adapter path validated with AWS Bedrock (`src/lib/onboard/bedrock-runtime.ts`). Behavior on other Anthropic-compatible proxies and gateways may vary; this row claims the adapter, not the universe of compatible endpoints. |
@@ -44,6 +45,7 @@ Hosted providers use provider-managed endpoints and curated model choices.
 | NVIDIA Endpoints | OpenAI-compatible Chat Completions | `NVIDIA_INFERENCE_API_KEY` | [Use NVIDIA Endpoints](../hosted-inference/use-nvidia-endpoints) |
 | OpenRouter | OpenAI-compatible Chat Completions | `OPENROUTER_API_KEY` | [Use OpenRouter](../hosted-inference/use-openrouter) |
 | OpenAI | Native OpenAI-compatible | `OPENAI_API_KEY` | [Use OpenAI](../hosted-inference/use-openai) |
+| GitHub Copilot | OpenShell Copilot profile | `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN` | Use a GitHub token from an account with Copilot access. |
 | Anthropic | Anthropic Messages | `ANTHROPIC_API_KEY` | [Use Anthropic](../hosted-inference/use-anthropic) |
 | Google Gemini | Google OpenAI-compatible Chat Completions | `GEMINI_API_KEY` | [Use Google Gemini](../hosted-inference/use-google-gemini) |
 

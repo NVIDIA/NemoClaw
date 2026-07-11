@@ -120,6 +120,7 @@ export function buildInferenceProviderMenu(
   for (const providerKey of input.agentProviderOptions) {
     pushUniqueRemoteProviderOption(options, input.remoteProviderConfig, providerKey);
   }
+  pushUniqueRemoteProviderOption(options, input.remoteProviderConfig, "copilot");
 
   return {
     options,

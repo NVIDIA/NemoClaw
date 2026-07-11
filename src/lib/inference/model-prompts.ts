@@ -17,6 +17,7 @@ export type ModelPromptResult = string | BackToSelection;
 
 export const REMOTE_MODEL_OPTIONS: Record<string, string[]> = {
   openai: ["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.4-pro-2026-03-05"],
+  copilot: ["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "claude-sonnet-4-6"],
   anthropic: ["claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-6"],
   gemini: [
     "gemini-3.1-pro-preview",

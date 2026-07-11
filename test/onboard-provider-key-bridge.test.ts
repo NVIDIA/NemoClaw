@@ -15,7 +15,10 @@ const TRACKED_ENV_KEYS = [
   "ANTHROPIC_API_KEY",
   "COMPATIBLE_API_KEY",
   "COMPATIBLE_ANTHROPIC_API_KEY",
+  "COPILOT_GITHUB_TOKEN",
   "GEMINI_API_KEY",
+  "GH_TOKEN",
+  "GITHUB_TOKEN",
   "NEMOCLAW_MODEL",
   "NEMOCLAW_NON_INTERACTIVE",
   "NEMOCLAW_PROVIDER",
@@ -193,6 +196,22 @@ describe("onboard provider-key compatibility bridges", () => {
       assert.equal(payload.result?.provider, "openai-api");
       assert.equal(payload.result?.credentialEnv, "OPENAI_API_KEY");
       assert.equal(payload.env.OPENAI_API_KEY, "sk-explicit-openai");
+    },
+  );
+
+  it(
+    "stages GitHub token aliases before Copilot remote provider validation",
+    testTimeoutOptions(90_000),
+    () => {
+      const payload = runSetupNimBridgeScenario({
+        NEMOCLAW_PROVIDER: "copilot",
+        GH_TOKEN: "ghp-copilot-fallback",
+      });
+
+      assert.equal(payload.outcome, "completed");
+      assert.equal(payload.result?.provider, "github-copilot");
+      assert.equal(payload.result?.credentialEnv, "COPILOT_GITHUB_TOKEN");
+      assert.equal(payload.env.COPILOT_GITHUB_TOKEN, "ghp-copilot-fallback");
     },
   );
 

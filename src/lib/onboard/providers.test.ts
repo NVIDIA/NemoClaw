@@ -10,6 +10,8 @@ type RunOpenshell = (command: string[], opts?: RunOptions) => RunResult;
 const {
   HOSTED_INFERENCE_ENDPOINT_URL,
   HOSTED_INFERENCE_MODEL,
+  COPILOT_CREDENTIAL_ENV,
+  COPILOT_CREDENTIAL_SOURCE_ENVS,
   NON_INTERACTIVE_PROVIDER_ALIASES,
   NON_INTERACTIVE_PROVIDER_KEYS,
   REMOTE_PROVIDER_CONFIG,
@@ -18,12 +20,15 @@ const {
   getRequestedProviderHint,
   isProviderKeyCredentialCandidate,
   providerExistsInGateway,
+  stageCopilotCredentialEnv,
   stageHostedInferenceSourceSecretEnv,
   upsertProvider,
   upsertMessagingProviders,
 } = require("./providers") as {
   HOSTED_INFERENCE_ENDPOINT_URL: string;
   HOSTED_INFERENCE_MODEL: string;
+  COPILOT_CREDENTIAL_ENV: string;
+  COPILOT_CREDENTIAL_SOURCE_ENVS: string[];
   NON_INTERACTIVE_PROVIDER_ALIASES: Record<string, string>;
   NON_INTERACTIVE_PROVIDER_KEYS: Set<string>;
   REMOTE_PROVIDER_CONFIG: Record<
@@ -51,6 +56,7 @@ const {
   ) => string | null;
   isProviderKeyCredentialCandidate: (value: string | null | undefined) => boolean;
   providerExistsInGateway: (name: string, runOpenshell: RunOpenshell) => boolean;
+  stageCopilotCredentialEnv: () => boolean;
   stageHostedInferenceSourceSecretEnv: () => boolean;
   upsertProvider: (
     name: string,
@@ -86,6 +92,9 @@ function withProviderEnv(next: Record<string, string | undefined>, testBody: () 
     "NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL",
     "NEMOCLAW_E2E_USE_HOSTED_INFERENCE",
     "COMPATIBLE_API_KEY",
+    "COPILOT_GITHUB_TOKEN",
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
     ...Object.keys(next),
   ]);
   const previous = new Map<string, string | undefined>();
@@ -155,6 +164,43 @@ describe("onboard provider helpers", () => {
         "https://inference-api.nvidia.com",
       ),
     ).toContain("ANTHROPIC_BASE_URL=https://inference-api.nvidia.com");
+  });
+
+  it("registers GitHub Copilot through OpenShell's Copilot provider profile (#5799)", () => {
+    const provider = REMOTE_PROVIDER_CONFIG.copilot;
+
+    expect(provider).toMatchObject({
+      providerName: "github-copilot",
+      providerType: "copilot",
+      credentialEnv: "COPILOT_GITHUB_TOKEN",
+    });
+    expect(NON_INTERACTIVE_PROVIDER_KEYS.has("copilot")).toBe(true);
+    expect(NON_INTERACTIVE_PROVIDER_ALIASES.github).toBe("copilot");
+    expect(NON_INTERACTIVE_PROVIDER_ALIASES["github-copilot"]).toBe("copilot");
+    expect(
+      buildProviderArgs(
+        "create",
+        provider.providerName,
+        provider.providerType,
+        provider.credentialEnv,
+        "https://api.githubcopilot.com",
+      ),
+    ).not.toContain("--config");
+  });
+
+  it("stages GitHub token aliases into the Copilot credential env (#5799)", () => {
+    expect(COPILOT_CREDENTIAL_ENV).toBe("COPILOT_GITHUB_TOKEN");
+    expect(COPILOT_CREDENTIAL_SOURCE_ENVS).toEqual(["GH_TOKEN", "GITHUB_TOKEN"]);
+
+    withProviderEnv({ GH_TOKEN: "ghp-test-token" }, () => {
+      expect(stageCopilotCredentialEnv()).toBe(true);
+      expect(process.env.COPILOT_GITHUB_TOKEN).toBe("ghp-test-token");
+    });
+
+    withProviderEnv({ COPILOT_GITHUB_TOKEN: "explicit-token", GH_TOKEN: "ignored-token" }, () => {
+      expect(stageCopilotCredentialEnv()).toBe(false);
+      expect(process.env.COPILOT_GITHUB_TOKEN).toBe("explicit-token");
+    });
   });
 
   it("builds create arguments for generic providers", () => {
