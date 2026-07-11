@@ -457,6 +457,7 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
     // presented to the caller-selected endpoint.
     expect(r.stdout).not.toContain("FAKE_OPENCLAW_ARGS");
     expect(r.stdout).not.toContain("FAKE_OPENCLAW_TOKEN");
+    expect(`${r.stdout}\n${r.stderr}`).not.toContain("guard-secret-token");
   });
 
   it("fails closed on a non-loopback URL when an imported function shadows the bracket builtin", () => {
@@ -471,6 +472,7 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
     expect(r.stdout).not.toContain("FAKE_OPENCLAW_ARGS");
     expect(r.stdout).not.toContain("FAKE_OPENCLAW_TOKEN");
     expect(r.stdout).not.toContain("POISON_COMMAND_USED");
+    expect(`${r.stdout}\n${r.stderr}`).not.toContain("guard-secret-token");
   });
 
   it("cannot continue into token-bearing dispatch when an imported function shadows return", () => {
@@ -484,6 +486,7 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
     expect(r.stdout).toContain("GUARD_EXIT=1");
     expect(r.stdout).not.toContain("FAKE_OPENCLAW_ARGS");
     expect(r.stdout).not.toContain("FAKE_OPENCLAW_TOKEN");
+    expect(`${r.stdout}\n${r.stderr}`).not.toContain("guard-secret-token");
   });
 
   it("bypasses a shadowed command function for a validated loopback URL", () => {
@@ -518,6 +521,7 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
     expect(r.stdout).toContain("GUARD_EXIT=1");
     expect(r.stdout).not.toContain("FAKE_OPENCLAW_ARGS");
     expect(r.stdout).not.toContain("FAKE_OPENCLAW_TOKEN");
+    expect(`${r.stdout}\n${r.stderr}`).not.toContain("guard-secret-token");
   });
 
   it("does not re-inject the stashed private gateway URL for WhatsApp (#6413)", () => {
