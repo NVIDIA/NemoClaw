@@ -153,8 +153,10 @@ openclaw channels login --channel whatsapp  # OpenClaw sandboxes
 hermes whatsapp                             # Hermes sandboxes
 ```
 
+<AgentOnly variant="openclaw">
 For OpenClaw sandboxes, NemoClaw validates the gateway URL before pairing and renders the WhatsApp QR code in a compact terminal form so it fits in smaller terminal windows.
-If pairing exits with a gateway close such as `1008`, rerun the login command one time and then check `nemoclaw <sandbox> channels status --channel whatsapp` so you can diagnose the gateway/session path separately from QR rendering.
+If pairing exits with a gateway close such as `1008`, rerun the login command one time and then check `$$nemoclaw <sandbox> channels status --channel whatsapp` so you can diagnose the gateway/session path separately from QR rendering.
+</AgentOnly>
 
 The sandbox generates and stores session credentials inside durable agent state (`whatsapp` for OpenClaw, `platforms/whatsapp` for Hermes), so they survive rebuilds without re-pairing.
 This is the runtime tradeoff of enabling WhatsApp without a host bridge: a paired sandbox can use that WhatsApp account until you unpair it or clear the durable state.
