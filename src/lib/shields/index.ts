@@ -25,6 +25,7 @@ const { fork } = require("child_process");
 const { randomBytes } = require("crypto");
 const { run, runCapture, validateName } = require("../runner");
 const { CLI_NAME }: typeof import("../cli/branding") = require("../cli/branding");
+const { isObjectRecord }: typeof import("../core/json-types") = require("../core/json-types");
 const {
   dockerExecFileSync,
   dockerSpawnSync,
@@ -825,12 +826,6 @@ function saveShieldsState(sandboxName: string, patch: ShieldsState): ShieldsStat
   fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
   fs.writeFileSync(stateFilePath(sandboxName), JSON.stringify(updated, null, 2), { mode: 0o600 });
   return updated;
-}
-
-type UnknownRecord = { [key: string]: unknown };
-
-function isObjectRecord(value: unknown): value is UnknownRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isOptionalBoolean(value: unknown): value is boolean | undefined {

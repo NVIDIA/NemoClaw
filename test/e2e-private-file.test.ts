@@ -8,10 +8,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
-import {
-  readPrivateRegularFile,
-  writePrivateRegularFile,
-} from "../tools/e2e-advisor/private-file.ts";
+import { readPrivateRegularFile, writePrivateRegularFile } from "../tools/e2e/private-file.ts";
 
 describe("private E2E controller files", () => {
   it("writes private regular files without following links or truncating hardlink targets", () => {
@@ -44,7 +41,7 @@ describe("private E2E controller files", () => {
     const fifo = path.join(directory, "state.json");
     try {
       execFileSync("mkfifo", [fifo]);
-      const moduleUrl = pathToFileURL(path.resolve("tools/e2e-advisor/private-file.ts")).href;
+      const moduleUrl = pathToFileURL(path.resolve("tools/e2e/private-file.ts")).href;
       const read = spawnSync(
         process.execPath,
         [

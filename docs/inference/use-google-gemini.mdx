@@ -1,0 +1,50 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Use Google Gemini"
+sidebar-title: "Use Google Gemini"
+description: "Configure NemoClaw to use Google Gemini through its OpenAI-compatible endpoint."
+description-agent: "Sets up Google Gemini as the NemoClaw inference provider. Use when onboarding with a Gemini API key or selecting a curated Gemini model."
+keywords: ["NemoClaw Gemini", "Google Gemini inference", "GEMINI_API_KEY"]
+content:
+  type: "how_to"
+---
+The Google Gemini provider routes NemoClaw to Google's OpenAI-compatible Chat Completions endpoint.
+The sandbox continues to use the managed `inference.local` route.
+
+## Credential
+
+Set `GEMINI_API_KEY` in the host shell before onboarding.
+NemoClaw keeps the credential on the host and uses provider-aware validation during retries.
+
+## Model Choices
+
+The onboarding wizard offers these curated model IDs.
+
+- `gemini-3.1-pro-preview`.
+- `gemini-3.1-flash-lite-preview`.
+- `gemini-3-flash-preview`.
+- `gemini-2.5-pro`.
+- `gemini-2.5-flash`.
+- `gemini-2.5-flash-lite`.
+
+## Onboard
+
+Run the onboarding wizard and select **Google Gemini**.
+
+```bash
+$$nemoclaw onboard
+```
+
+Select a model when the wizard prompts you.
+NemoClaw validates the selected provider and model before creating the sandbox.
+
+## Validation
+
+NemoClaw validates Gemini through its OpenAI-compatible Chat Completions path only.
+It skips the Responses API probe because Gemini does not support `/v1/responses`.
+
+## Related Topics
+
+- [Choose a Model](../learn-and-choose/choose-model) compares the curated Gemini models by task fit.
+- [Understand Provider Validation](../validate-inference/understand-provider-validation) describes provider validation behavior.

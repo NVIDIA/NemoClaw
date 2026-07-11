@@ -28,6 +28,7 @@ import {
   normalizeArgv,
   suggestCommand,
 } from "./argv-normalizer";
+import { resolveBareConnectArgv } from "./bare-connect-routing";
 import { getRegisteredOclifCommandMetadata } from "./oclif-metadata";
 import {
   type PublicTranslationResult,
@@ -358,17 +359,27 @@ async function dispatchSandboxArgv(
   normalized: NormalizedSandboxArgv,
   argv: string[],
 ): Promise<void> {
-  const cmd = normalized.sandboxName;
+  const routed = await resolveBareConnectArgv(normalized, {
+    findRegisteredSandboxName,
+    getDefault: () => registry().getDefault(),
+    getSandbox: (name) => registry().getSandbox(name),
+    listSandboxes: () => registry().listSandboxes(),
+    printConnectOrderHint,
+    printSandboxConnectHelp: (sandboxName) => sandboxConnect().printSandboxConnectHelp(sandboxName),
+    recoverRegistryEntries: () => registryRecovery().recoverRegistryEntries(),
+  });
+  if (!routed) return;
+  const cmd = routed.sandboxName;
   const rawArgsAfterCmd = argv.slice(1);
-  const requestedSandboxAction = normalized.action;
-  const requestedSandboxActionArgs = normalized.actionArgs;
-  if (handlePublicConnectHelp(normalized)) return;
+  const requestedSandboxAction = routed.action;
+  const requestedSandboxActionArgs = routed.actionArgs;
+  if (handlePublicConnectHelp(routed)) return;
 
   // Help is parser metadata, not sandbox runtime behavior. Render sandbox-scoped
   // public help before registry recovery so `nemoclaw missing channels start --help`
   // stays side-effect free and never starts or repairs services.
   if (
-    !normalized.connectHelpRequested &&
+    !routed.connectHelpRequested &&
     isKnownSandboxAction(requestedSandboxAction) &&
     hasPublicSandboxHelpFlag(requestedSandboxAction, requestedSandboxActionArgs)
   ) {

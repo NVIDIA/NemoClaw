@@ -56,9 +56,10 @@ before the failure so later runs and reviewers do not lose substantive review hi
 The workflow is advisory and must not be configured as a required status check. It uses the
 deterministic plan as review context but does not run its jobs. E2E Advisor emits the corresponding
 plan-backed recommendations separately and likewise does not dispatch E2E. Model availability must
-not become the authority for whether a pull request can merge. After a commit lands, a separate
-model-independent shadow controller rebuilds the plan from the exact `main` push range and runs its
-capped automatic subset. That post-merge check does not make PR Review Advisor a merge gate.
+not become the authority for whether a pull request can merge. For PRs from this repository, the PR
+E2E controller separately rebuilds the plan from GitHub's changed-file list and dispatches every
+selected job after `CI / Pull Request` completes. `E2E / PR Gate` does not consume either advisor's
+output and does not make PR Review Advisor a merge gate.
 
 Required-check status is point-in-time context, not a settled-CI gate. Earlier
 `PR_REVIEW_ADVISOR_WAIT_*` workflow variables were inert and have been removed; any future waiting
@@ -82,7 +83,8 @@ Authors and coding agents should follow the shared [PR CI and Automated Review F
 - During rollout, non-default advisor lanes may see an older trusted `main` checkout that has the workflow matrix but not the matching model/configurable-comment support. The workflow treats that as trusted-main rollout skew, writes low-confidence skip artifacts in the lane-specific artifact directory, and suppresses that lane's sticky PR comment. Do not run PR-controlled advisor code to bypass this gate; remove the gate only after the trusted `main` implementation always supports the parallel advisor lane and configurable sticky markers.
 - The checked-in risk plan is deterministic and additive. PR Review Advisor reviews every listed
   invariant and required job for missing evidence. Both E2E Advisor result normalizers restore any
-  listed job that a model omits or downgrades.
+  listed job that a model omits or downgrades. The PR E2E controller separately dispatches
+  every listed job without consuming either advisor's normalized result.
 
 ## Required secret
 

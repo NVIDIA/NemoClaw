@@ -355,6 +355,8 @@ const { onboard } = require(${onboardPath});
       ...(scenario.mode === "authoritative-core-gateway"
         ? {
             authoritativeResumeConfig: true,
+            recreateSandbox: true,
+            onboardLockAlreadyHeld: true,
             targetGatewayName: "nemoclaw-9090",
             targetGatewayPort: 9090,
           }

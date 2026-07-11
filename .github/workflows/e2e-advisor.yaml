@@ -6,6 +6,11 @@ name: E2E / Advisor
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  # Fork PRs cannot access advisor secrets in pull_request context. This
+  # parallel path executes the workflow from trusted main and treats the PR
+  # pull ref only as inert analysis data.
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
     inputs:
       base_ref:
@@ -47,16 +52,15 @@ permissions:
   # by integration" despite `issues: write`. See the comment step below and
   # https://github.com/orgs/community/discussions/56632.
   pull-requests: write
-  issues: write
 
 concurrency:
-  group: e2e-advisor-${{ github.event.pull_request.number || github.ref }}
+  group: e2e-advisor-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   advise:
     name: E2E recommendation
-    if: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'NVIDIA/NemoClaw') }}
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == 'NVIDIA/NemoClaw') || (github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != 'NVIDIA/NemoClaw')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -121,11 +125,12 @@ jobs:
         run: echo "ADVISOR_WORKDIR=$GITHUB_WORKSPACE/pr-workdir" >> "$GITHUB_ENV"
 
       - name: Prepare target PR checkout
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' }}
+        if: ${{ github.event_name == 'pull_request_target' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '') }}
         env:
-          TARGET_REPO: ${{ inputs.target_repo }}
-          TARGET_PR: ${{ inputs.target_pr }}
-          TARGET_BASE: ${{ inputs.target_base }}
+          TARGET_REPO: ${{ github.event_name == 'pull_request_target' && github.repository || inputs.target_repo }}
+          TARGET_PR: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.number || inputs.target_pr }}
+          TARGET_BASE: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.ref || inputs.target_base }}
+          EXPECTED_HEAD_SHA: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || '' }}
         run: |
           if [[ ! "$TARGET_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
             echo "::error::target_repo must match owner/repo with GitHub-safe characters"
@@ -144,10 +149,26 @@ jobs:
           mkdir -p "$TARGET_DIR"
           git -C "$TARGET_DIR" init
           git -C "$TARGET_DIR" remote add target "https://github.com/${TARGET_REPO}.git"
-          git -C "$TARGET_DIR" fetch --no-tags target "$TARGET_BASE"
+          git -C "$TARGET_DIR" fetch --no-tags target "refs/heads/${TARGET_BASE}:refs/remotes/target/${TARGET_BASE}"
           git -C "$TARGET_DIR" fetch --no-tags target "pull/${TARGET_PR}/head:refs/remotes/target/pr-${TARGET_PR}"
           git -C "$TARGET_DIR" checkout --detach "refs/remotes/target/pr-${TARGET_PR}"
+          if [ -n "$EXPECTED_HEAD_SHA" ] && [ "$(git -C "$TARGET_DIR" rev-parse HEAD)" != "$EXPECTED_HEAD_SHA" ]; then
+            echo "::error::Fetched pull ref does not match the triggering PR head SHA"
+            exit 1
+          fi
           echo "ADVISOR_WORKDIR=$TARGET_DIR" >> "$GITHUB_ENV"
+          echo "PR_NUMBER=$TARGET_PR" >> "$GITHUB_ENV"
+
+      # The advisor reads repository files while holding its model API key.
+      # Remove worktree symlinks so untrusted PR data cannot redirect a read
+      # to runner files such as /proc/self/environ. Git diff still reads the
+      # committed objects, so symlink additions and changes remain visible.
+      - name: Remove symlinks from analysis workspace
+        shell: bash
+        run: |
+          while IFS= read -r -d '' link; do
+            rm -- "$link"
+          done < <(find "$ADVISOR_WORKDIR" -type l -print0)
 
       # Pinned SDK install. The version is held in PI_SDK_VERSION above so
       # the pin is reviewed as a code change, not silently inherited from
@@ -164,8 +185,8 @@ jobs:
         id: analysis
         continue-on-error: true
         env:
-          BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && format('target/{0}', inputs.target_base) || inputs.base_ref) }}
-          HEAD_REF: ${{ github.event_name == 'pull_request' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}
+          BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || (github.event_name == 'pull_request_target' && format('target/{0}', github.event.pull_request.base.ref) || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && format('target/{0}', inputs.target_base) || inputs.base_ref)) }}
+          HEAD_REF: ${{ (github.event_name == 'pull_request' || github.event_name == 'pull_request_target') && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}
           E2E_ADVISOR_RUN_ANALYSIS: ${{ github.event_name == 'workflow_dispatch' && inputs.run_analysis == false && '0' || '1' }}
           # Preferred E2E advisor secret.
           E2E_ADVISOR_API_KEY: ${{ secrets.PI_E2E_ADVISOR_API_KEY }}
@@ -181,8 +202,8 @@ jobs:
         id: target-analysis
         continue-on-error: true
         env:
-          BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && format('target/{0}', inputs.target_base) || inputs.base_ref) }}
-          HEAD_REF: ${{ github.event_name == 'pull_request' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}
+          BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || (github.event_name == 'pull_request_target' && format('target/{0}', github.event.pull_request.base.ref) || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && format('target/{0}', inputs.target_base) || inputs.base_ref)) }}
+          HEAD_REF: ${{ (github.event_name == 'pull_request' || github.event_name == 'pull_request_target') && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}
           E2E_TARGET_ADVISOR_RUN_ANALYSIS: ${{ github.event_name == 'workflow_dispatch' && inputs.run_analysis == false && '0' || '1' }}
           # Reuse the shared E2E advisor secret. The target advisor is a
           # separate prompt/agent but uses the same model and credential.
@@ -208,7 +229,7 @@ jobs:
           fi
 
       - name: Post E2E advisor PR comment
-        if: ${{ always() && github.event_name == 'pull_request' }}
+        if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'pull_request_target') }}
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.E2E_ADVISOR_GITHUB_TOKEN || github.token }}
@@ -229,7 +250,7 @@ jobs:
           fi
 
       - name: Post E2E target advisor PR comment
-        if: ${{ always() && github.event_name == 'pull_request' }}
+        if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'pull_request_target') }}
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.E2E_ADVISOR_GITHUB_TOKEN || github.token }}

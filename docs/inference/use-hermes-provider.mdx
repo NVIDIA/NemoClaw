@@ -1,0 +1,49 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Use Hermes Provider"
+sidebar-title: "Use Hermes Provider"
+description: "Configure Hermes Agent to use the host OpenShell provider registered by NemoClaw."
+description-agent: "Sets up Hermes Provider for Hermes Agent. Use when choosing the Hermes-specific hosted provider or one of its curated models."
+keywords: ["Hermes Provider", "NemoClaw Hermes inference", "Hermes models"]
+content:
+  type: "how_to"
+---
+Hermes Provider routes Hermes Agent through the host OpenShell provider that NemoClaw registers during Hermes onboarding.
+This option is available only for Hermes Agent.
+
+## Credential Boundary
+
+NemoClaw uses the host OpenShell provider registered during onboarding.
+The sandbox does not receive raw provider credentials.
+
+## Model Choices
+
+The Hermes Provider catalog includes curated models such as these examples.
+
+- `moonshotai/kimi-k2.6`.
+- `openai/gpt-5.4-mini`.
+- `z-ai/glm-5.1`.
+
+The Hermes Provider catalog is separate from the featured catalog shared by NVIDIA Endpoints and OpenRouter.
+Catalog updates affect new onboarding choices and do not rewrite existing sandbox configurations.
+
+## Onboard
+
+Run the Hermes onboarding wizard and select **Hermes Provider**.
+
+```bash
+nemohermes onboard
+```
+
+Select a model when the wizard prompts you.
+NemoClaw validates the selected provider and model before creating the sandbox.
+
+## Validation
+
+The wizard validates the selected provider and model before sandbox creation.
+
+## Related Topics
+
+- [About Inference Routing](../about-inference-routing) explains the host-managed inference path.
+- [Switch Models](../manage-inference/switch-models) changes the model for an existing Hermes sandbox.

@@ -20,6 +20,7 @@ const dockerMocks = vi.hoisted(() => ({
 const sourceMocks = vi.hoisted(() => ({
   inputsChanged: vi.fn(),
   inputsDirty: vi.fn(),
+  nearestTags: vi.fn(),
 }));
 
 vi.mock("../adapters/docker", () => ({
@@ -37,6 +38,7 @@ vi.mock("../sandbox-base-image/source-identity", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../sandbox-base-image/source-identity")>()),
   baseImageInputsChangedSinceMain: sourceMocks.inputsChanged,
   baseImageInputsDirty: sourceMocks.inputsDirty,
+  getNearestVersionedBaseImageTags: sourceMocks.nearestTags,
 }));
 
 import { createAgentSandbox } from "./base-image";
@@ -53,6 +55,7 @@ describe("Hermes base-image resolver integration", () => {
     vi.stubEnv("NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF", "");
     sourceMocks.inputsChanged.mockReturnValue(false);
     sourceMocks.inputsDirty.mockReturnValue(false);
+    sourceMocks.nearestTags.mockReturnValue([]);
     dockerMocks.infoFormat.mockReturnValue("linux/aarch64\n");
     dockerMocks.pull.mockReturnValue({ status: 1 });
 

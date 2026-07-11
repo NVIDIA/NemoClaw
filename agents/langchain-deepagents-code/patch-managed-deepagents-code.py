@@ -498,24 +498,26 @@ def _parse_interpreter_ptc(raw):
 
 
 def _get_provider_kwargs(provider: str, *, model_name: str | None = None) -> dict[str, Any]:
-    """Return only the NemoClaw-managed OpenAI-compatible constructor contract."""
+    """Return only the NemoClaw-managed inference constructor contract."""
     del model_name
     from deepagents_code.model_config import ModelConfig, ModelConfigError
     from deepagents_code._nemoclaw_managed import managed_inference_base_url
 
-    if provider != "openai":
+    if provider not in {"openai", "openrouter"}:
         raise ModelConfigError(
-            "Only the NemoClaw-managed OpenAI-compatible provider is enabled"
+            "Only NemoClaw-managed inference providers are enabled"
         )
     # Load once so malformed TOML still fails through the upstream config error
     # path, but do not consume mutable provider classes, credentials, params, or
     # endpoints from it.
     ModelConfig.load()
-    return {
+    kwargs = {
         "api_key": "nemoclaw-managed-inference",
         "base_url": managed_inference_base_url(),
-        "use_responses_api": False,
     }
+    if provider == "openai":
+        kwargs["use_responses_api"] = False
+    return kwargs
 '''
 
 # Source-of-truth boundary: upstream Deep Agents Code 0.1.34 resolves and pins
@@ -1077,9 +1079,9 @@ _nemoclaw_original_select_with_auth_check = ModelSelectorScreen._select_with_aut
 
 def _nemoclaw_select_with_auth_check(self, model_spec: str, provider: str) -> None:
     if provider:
-        if provider != "openai":
+        if provider not in {"openai", "openrouter"}:
             self.app.notify(
-                "Only the NemoClaw-managed OpenAI-compatible provider is enabled.",
+                "Only NemoClaw-managed inference providers are enabled.",
                 severity="warning",
                 markup=False,
             )

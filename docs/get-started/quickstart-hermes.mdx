@@ -84,7 +84,7 @@ Use these details when your first-run path needs more control.
 <AccordionGroup>
   <Accordion title="Choose inference and optional services">
     The Hermes wizard supports the same inference provider choices as the OpenClaw quickstart.
-    Refer to [Inference Options](../inference/inference-options) for provider requirements, model choices, and local-server setup.
+    Refer to [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) for provider requirements, model choices, and local-server setup.
 
     Hermes supports Tavily for web search, not the NemoClaw Brave Search path.
     Select it during onboarding and provide `TAVILY_API_KEY` when prompted.
@@ -173,7 +173,7 @@ Use these details when your first-run path needs more control.
     ```
 
     The provider options and credential variables match the standard NemoClaw quickstart.
-    Refer to [Inference Options](../inference/inference-options) for provider-specific prompts.
+    Refer to [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) for provider-specific prompts.
     Hermes offers Tavily Search and does not support the NemoClaw Brave Search path.
     When you enable Tavily Search, provide `TAVILY_API_KEY`.
     NemoClaw validates the key, stores it in a sandbox-scoped OpenShell provider, writes `web.backend: tavily` into the Hermes configuration, and writes only an OpenShell resolver placeholder into the generated environment.
@@ -209,7 +209,7 @@ Use these details when your first-run path needs more control.
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
     ```
 
-    Use the provider variables from [Inference Options](../inference/inference-options) when you choose another provider.
+    Use the provider variables from [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) when you choose another provider.
     Set `NEMOCLAW_WEB_SEARCH_PROVIDER=none` to disable web search explicitly.
     When the selector is unset, Hermes enables Tavily automatically when `TAVILY_API_KEY` is available and ignores `BRAVE_API_KEY`.
     Changing or disabling Tavily requires sandbox recreation because the backend, credential attachment, and policy selection are build-time inputs.
@@ -293,7 +293,7 @@ If `nemohermes` is unavailable after installing, reload your shell profile or fo
 
 ## Next Steps
 
-- [Inference Options](../inference/inference-options) explains how to choose or change a model and provider.
+- [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) explains how to choose or change a model and provider.
 - [Commands](../reference/commands) explains the `nemohermes` alias and its options.
 - [Backup and Restore](../manage-sandboxes/backup-restore) explains how to preserve sandbox state.
 - [Monitor Sandbox Activity](../monitoring/monitor-sandbox-activity) explains how to inspect OpenShell events and sandbox logs.

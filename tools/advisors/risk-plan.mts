@@ -3,8 +3,7 @@
 
 import { createHash } from "node:crypto";
 
-export const RISK_PLAN_VERSION = 1 as const;
-export const DEFAULT_MAX_AUTOMATIC_JOBS = 3;
+export const RISK_PLAN_VERSION = 2 as const;
 
 export type RiskTier = 0 | 1 | 2 | 3;
 export type RiskFamilyId =
@@ -41,9 +40,6 @@ export type RiskPlan = {
   tier: RiskTier;
   families: RiskPlanFamily[];
   requiredJobs: RiskPlanJob[];
-  automaticJobs: string[];
-  maxAutomaticJobs: number;
-  requiresManualExpansion: boolean;
 };
 
 type RiskRule = Omit<RiskPlanFamily, "matchedFiles"> & {
@@ -223,7 +219,6 @@ function planDigest(value: Omit<RiskPlan, "planHash">): string {
 export function buildRiskPlan(options: {
   headSha: string;
   changedFiles: readonly string[];
-  maxAutomaticJobs?: number;
 }): RiskPlan {
   const changedFiles = stableUnique(options.changedFiles);
   const runtimeFiles = changedFiles.filter(isRuntimeRelevant);
@@ -263,8 +258,6 @@ export function buildRiskPlan(options: {
   const requiredJobs = [...jobs.values()].sort(
     (left, right) => right.tier - left.tier || left.id.localeCompare(right.id),
   );
-  const maxAutomaticJobs = options.maxAutomaticJobs ?? DEFAULT_MAX_AUTOMATIC_JOBS;
-  const automaticJobs = requiredJobs.slice(0, maxAutomaticJobs).map((job) => job.id);
   const tier = families.reduce<RiskTier>(
     (highest, family) => Math.max(highest, family.tier) as RiskTier,
     0,
@@ -276,9 +269,6 @@ export function buildRiskPlan(options: {
     tier,
     families,
     requiredJobs,
-    automaticJobs,
-    maxAutomaticJobs,
-    requiresManualExpansion: requiredJobs.length > maxAutomaticJobs,
   };
 
   return { ...withoutHash, planHash: planDigest(withoutHash) };
