@@ -121,6 +121,15 @@ describe("createProviderRecoveryReceiptLedger", () => {
     ).toBeNull();
   });
 
+  it("refuses a replayed activation under the same session (one-shot)", () => {
+    const ledger = createProviderRecoveryReceiptLedger();
+    const receipt = mint();
+    const context = { target: receiptTarget(), sessionId: "sess-a", nowMs: 500 };
+
+    expect(ledger.activate(receipt, context)).not.toBeNull();
+    expect(ledger.activate(receipt, context)).toBeNull();
+  });
+
   it("refuses activation for an expired, cross-sandbox, or mismatched-route target", () => {
     const ledger = createProviderRecoveryReceiptLedger();
     expect(

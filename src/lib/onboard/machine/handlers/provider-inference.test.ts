@@ -16,6 +16,7 @@ import {
 } from "./provider-inference";
 import {
   type Agent,
+  activatedRecoveryReceipt,
   baseOptions,
   baseSelection,
   createDeps,
@@ -820,12 +821,22 @@ describe("handleProviderInferenceState", () => {
       isInferenceRouteReady: vi.fn(() => true),
     });
     calls.complete.mockResolvedValue(session);
+    const { receipt, ledger } = activatedRecoveryReceipt({
+      sandboxName: "my-assistant",
+      sessionId: session.sessionId,
+      provider: "compatible-endpoint",
+      model: "nvidia/nemotron",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      preferredInferenceApi: "openai-completions",
+    });
 
     await handleProviderInferenceState({
       ...baseOptions(deps, session),
       resume: true,
       authoritativeResumeConfig: true,
       sandboxName: "my-assistant",
+      providerRecoveryReceipt: receipt,
+      providerRecoveryReceiptLedger: ledger,
     });
 
     expect(setupNim).toHaveBeenCalledOnce();

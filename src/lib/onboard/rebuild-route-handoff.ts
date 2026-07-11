@@ -215,8 +215,7 @@ export function createProviderRecoveryReceiptLedger(): {
       if (!context.sessionId) return null;
       if (context.nowMs > receipt.expiresAtMs) return null;
       if (!receiptMatchesTarget(receipt, context.target)) return null;
-      const priorSession = activatedSessionByNonce.get(receipt.nonce);
-      if (priorSession !== undefined && priorSession !== context.sessionId) return null;
+      if (activatedSessionByNonce.has(receipt.nonce)) return null;
       activatedSessionByNonce.set(receipt.nonce, context.sessionId);
       return Object.freeze({ ...receipt, sessionId: context.sessionId });
     },
