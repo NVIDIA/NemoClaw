@@ -21,11 +21,17 @@ interface ProviderRecoverySetupOptions {
   isRecordedProviderRecoveryAuthorized?: () => boolean;
 }
 
+interface ProviderRecoveryOptions {
+  /** The rebuild preflight already validated and rewrote this matching session identity. */
+  authoritativeResumeConfig?: boolean;
+}
+
 export function createRecovery(
   fresh: boolean,
   sandboxName: string | null,
   session: Session | null,
   deps: ProviderRecoveryDeps,
+  options: ProviderRecoveryOptions = {},
 ): {
   sessionId: string | null;
   shouldRecover(): boolean;
@@ -46,7 +52,9 @@ export function createRecovery(
           ? deps.getSandboxRecoveryAuthority(sandboxName, sessionId)
           : "missing",
         sessionSandboxName:
-          session?.steps?.sandbox?.status === "complete" ? (session.sandboxName ?? null) : null,
+          session?.steps?.sandbox?.status === "complete" || options.authoritativeResumeConfig
+            ? (session?.sandboxName ?? null)
+            : null,
       }),
     setupOptions(recoveredRecordedProvider, selectedSandboxName, currentSessionId) {
       if (!recoveredRecordedProvider) return { reservationSessionId: currentSessionId };
