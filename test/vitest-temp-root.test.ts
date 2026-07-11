@@ -121,6 +121,87 @@ describe("Vitest temp root", () => {
     }
   });
 
+  it("removes the run root through the process-exit fallback", () => {
+    const outerEnv = readTempEnv();
+    const previousKeep = process.env.NEMOCLAW_TEST_KEEP_TEMP;
+    const previousExitListeners = process.listenerCount("exit");
+    let exitHandler = (_code: number): void => {};
+    let root = path.join(os.tmpdir(), "no-exit-fallback-root");
+    let teardown = (): void => {};
+
+    try {
+      delete process.env.NEMOCLAW_TEST_KEEP_TEMP;
+      teardown = setupVitestTempRoot();
+      root = process.env.TMPDIR as string;
+      fs.writeFileSync(path.join(root, "sentinel"), "test");
+      exitHandler = process.listeners("exit").at(-1) as (code: number) => void;
+
+      expect(process.listenerCount("exit")).toBe(previousExitListeners + 1);
+      exitHandler(0);
+      expect(fs.existsSync(root)).toBe(false);
+
+      teardown();
+      teardown = (): void => {};
+      expect(readTempEnv()).toEqual(outerEnv);
+      expect(process.listenerCount("exit")).toBe(previousExitListeners);
+    } finally {
+      try {
+        teardown();
+      } finally {
+        process.off("exit", exitHandler);
+        fs.rmSync(root, { recursive: true, force: true });
+        restoreTempEnv(outerEnv);
+        restoreEnvValue("NEMOCLAW_TEST_KEEP_TEMP", previousKeep);
+      }
+    }
+  });
+
+  it("retries cleanup on exit after teardown removal fails", () => {
+    const outerEnv = readTempEnv();
+    const previousKeep = process.env.NEMOCLAW_TEST_KEEP_TEMP;
+    const previousExitListeners = process.listenerCount("exit");
+    const removeError = new Error("simulated removal failure");
+    const realRmSync = fs.rmSync;
+    const remove = vi
+      .spyOn(fs, "rmSync")
+      .mockImplementationOnce(() => {
+        throw removeError;
+      })
+      .mockImplementation(realRmSync);
+    let exitHandler = (_code: number): void => {};
+    let root = path.join(os.tmpdir(), "no-retry-root");
+    let teardown = (): void => {};
+
+    try {
+      delete process.env.NEMOCLAW_TEST_KEEP_TEMP;
+      teardown = setupVitestTempRoot();
+      root = process.env.TMPDIR as string;
+      fs.writeFileSync(path.join(root, "sentinel"), "test");
+      exitHandler = process.listeners("exit").at(-1) as (code: number) => void;
+
+      expect(teardown).toThrow(removeError);
+      expect(readTempEnv()).toEqual(outerEnv);
+      expect(process.listenerCount("exit")).toBe(previousExitListeners + 1);
+
+      exitHandler(0);
+      expect(fs.existsSync(root)).toBe(false);
+      expect(remove).toHaveBeenCalledTimes(2);
+
+      teardown();
+      teardown = (): void => {};
+      expect(process.listenerCount("exit")).toBe(previousExitListeners);
+    } finally {
+      try {
+        teardown();
+      } finally {
+        process.off("exit", exitHandler);
+        realRmSync(root, { recursive: true, force: true });
+        restoreTempEnv(outerEnv);
+        restoreEnvValue("NEMOCLAW_TEST_KEEP_TEMP", previousKeep);
+      }
+    }
+  });
+
   it("wires cleanup into root and standalone plugin test runs", () => {
     expect(rootVitestConfig.test?.globalSetup).toBe(ROOT_SETUP);
     expect(pluginVitestConfig.test?.globalSetup).toBe(
