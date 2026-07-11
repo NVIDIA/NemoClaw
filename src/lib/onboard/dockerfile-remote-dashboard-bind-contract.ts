@@ -73,6 +73,15 @@ export function isRemoteDashboardBindRequested(value: string | undefined): boole
   return value === "0.0.0.0";
 }
 
+export function patchManagedDeviceAuthOptOutContract(dockerfile: string): string {
+  return dockerfile
+    .replace(/^ARG NEMOCLAW_DISABLE_DEVICE_AUTH=.*$/m, "ARG NEMOCLAW_DISABLE_DEVICE_AUTH=1")
+    .replace(
+      /^ARG NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE=.*$/m,
+      "ARG NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE=managed-onboard",
+    );
+}
+
 export function resolveRequestedRemoteDashboardBind(
   value: string | undefined,
   trustedManagedDockerfile: boolean,
