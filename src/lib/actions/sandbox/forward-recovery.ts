@@ -11,6 +11,7 @@ import type { SandboxMessagingHostForwardPlan } from "../../messaging/manifest";
 import { hydrateDerivedSandboxMessagingPlanFields } from "../../messaging/persistence";
 import { parseSandboxMessagingPlan } from "../../messaging/plan-validation";
 import { isRemoteDashboardBindRequested } from "../../onboard/dockerfile-remote-dashboard-bind-contract";
+import { isWsl } from "../../platform";
 import * as registry from "../../state/registry";
 import { parseForwardList } from "../../state/sandbox-session";
 import {
@@ -64,6 +65,7 @@ export function resolveSandboxDashboardPort(
 export function ensureSandboxPortForward(sandboxName: string): boolean {
   const port = resolveSandboxDashboardPort(sandboxName);
   const remoteBindRequested = isRemoteDashboardBindRequested(process.env.NEMOCLAW_DASHBOARD_BIND);
+  const allInterfaceBindRequired = remoteBindRequested || isWsl();
   if (
     remoteBindRequested &&
     registry.getSandbox(sandboxName)?.dashboardRemoteBindPrepared !== true
@@ -74,9 +76,9 @@ export function ensureSandboxPortForward(sandboxName: string): boolean {
     return false;
   }
   return ensureSandboxPortForwardForPort(sandboxName, port, {
-    forwardTarget: remoteBindRequested ? `0.0.0.0:${port}` : String(port),
+    forwardTarget: allInterfaceBindRequired ? `0.0.0.0:${port}` : String(port),
     forceRestart: remoteBindRequested,
-    expectedBind: remoteBindRequested ? "0.0.0.0" : "127.0.0.1",
+    expectedBind: allInterfaceBindRequired ? "0.0.0.0" : "127.0.0.1",
     beforeStart: remoteBindRequested
       ? () => registry.getSandbox(sandboxName)?.dashboardRemoteBindPrepared === true
       : undefined,

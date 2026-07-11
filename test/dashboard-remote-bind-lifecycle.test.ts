@@ -682,6 +682,9 @@ describe("remote dashboard bind production lifecycle", () => {
     let started = false;
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "");
     vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
+    vi.stubEnv("WSL_DISTRO_NAME", "");
+    vi.stubEnv("WSL_INTEROP", "");
+    vi.spyOn(os, "release").mockReturnValue("6.8.0-linux");
     vi.spyOn(registry, "getSandbox").mockReturnValue({
       name: "beta",
       dashboardPort: 18789,
@@ -713,6 +716,40 @@ describe("remote dashboard bind production lifecycle", () => {
     );
   });
 
+  it("restores an all-interface forward for WSL without remote-bind opt-in (#6024)", () => {
+    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
+    const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
+    const registry = requireSource("../src/lib/state/registry.js");
+    let started = false;
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "");
+    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
+    vi.stubEnv("WSL_DISTRO_NAME", "Ubuntu");
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "beta",
+      dashboardPort: 18789,
+    });
+    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockImplementation(() => started);
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation(() => ({
+      status: 0,
+      output: started
+        ? "SANDBOX  BIND  PORT  PID  STATUS\nbeta  0.0.0.0  18789  12345  running"
+        : "",
+    }));
+    const runOpenshell = vi
+      .spyOn(openshellRuntime, "runOpenshell")
+      .mockImplementation((rawArgs: unknown) => {
+        const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
+        started ||= args[0] === "forward" && args[1] === "start";
+        return { status: 0 } as never;
+      });
+
+    expect(ensureSandboxPortForward("beta")).toBe(true);
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["forward", "start", "--background", "0.0.0.0:18789", "beta"],
+      { ignoreError: true },
+    );
+  });
+
   it("keeps a prepared sandbox on loopback without remote-bind opt-in (#6024)", () => {
     const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
     const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
@@ -720,6 +757,9 @@ describe("remote dashboard bind production lifecycle", () => {
     let started = false;
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "");
     vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
+    vi.stubEnv("WSL_DISTRO_NAME", "");
+    vi.stubEnv("WSL_INTEROP", "");
+    vi.spyOn(os, "release").mockReturnValue("6.8.0-linux");
     vi.spyOn(registry, "getSandbox").mockReturnValue({
       name: "beta",
       dashboardPort: 18789,

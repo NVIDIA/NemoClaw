@@ -151,7 +151,8 @@ Use these details when your first-run path needs more control.
   </Accordion>
 
   <Accordion title="Open the dashboard from a remote host">
-    The dashboard binds to `127.0.0.1` on the host running NemoClaw.
+    Outside WSL, the dashboard forward binds to `127.0.0.1` on the host running NemoClaw.
+    On WSL, it binds on all interfaces so the Windows host can reach it, while the ready summary still prints a loopback dashboard URL.
     When you connect over SSH, forward the dashboard port from your workstation, substituting the port from the ready summary.
 
     ```bash
