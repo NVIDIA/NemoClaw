@@ -27,6 +27,7 @@ import {
   getDockerGpuSupervisorReconnectTimeoutSecs,
   waitForOpenShellSupervisorReconnect,
 } from "./docker-gpu-supervisor-reconnect";
+import { openshellSandboxCommandEnvValue } from "./docker-startup-command-env";
 
 export type { DockerGpuSupervisorReconnectDeps };
 export {
@@ -104,7 +105,7 @@ export type DockerGpuPatchDeps = {
   errorPhaseDebouncePolls?: number;
 };
 
-export type DockerGpuPatchModeKind = "gpus" | "nvidia-runtime" | "cdi";
+export type DockerGpuPatchModeKind = "gpus" | "nvidia-runtime" | "cdi" | "startup-command";
 export type DockerGpuPatchBackend = "generic" | "jetson";
 
 export type DockerGpuPatchMode = {
@@ -410,19 +411,6 @@ function replaceEnvValue(entry: string, key: string, value: string | null | unde
   return `${key}=${value}`;
 }
 
-function openshellSandboxCommandEnvValue(
-  command: readonly string[] | null | undefined,
-): string | null {
-  const parts = (command || []).map((part) => String(part));
-  if (parts.length === 0) return null;
-  if (parts.some((part) => part.length === 0 || /[\s\u0085]/u.test(part))) {
-    throw new Error(
-      "OpenShell sandbox startup command tokens cannot be empty or contain whitespace.",
-    );
-  }
-  return parts.join(" ");
-}
-
 function dockerGpuHostEndpointFromOpenShellEndpoint(endpoint: string): string | null {
   try {
     const url = new URL(endpoint);
@@ -473,6 +461,14 @@ export function buildDockerGpuMode(
   device?: string | null,
   options: { backend?: DockerGpuPatchBackend } = {},
 ): DockerGpuPatchMode {
+  if (kind === "startup-command") {
+    return {
+      kind,
+      label: "persistent sandbox startup command",
+      device: "",
+      args: [],
+    };
+  }
   const dockerDevice = normalizeGpuDeviceForDocker(device);
   if (kind === "gpus") {
     const gpuValue = dockerDevice === "all" ? "all" : `device=${dockerDevice}`;
@@ -670,6 +666,7 @@ export function buildDockerGpuCloneRunArgs(
   if (!image) throw new Error("Docker inspect output did not include Config.Image.");
 
   const args: string[] = ["--name", dockerContainerName(inspect), ...mode.args];
+  const gpuAugment = mode.kind !== "startup-command";
 
   pushStringFlag(args, "--hostname", config.Hostname);
   pushStringFlag(args, "--user", config.User);
@@ -681,7 +678,9 @@ export function buildDockerGpuCloneRunArgs(
     options.openshellSandboxCommand,
   );
   let sawOpenShellSandboxCommandEnv = false;
-  for (const env of stringArray(config.Env).filter((entry) => !GPU_ENV_KEYS.has(envKey(entry)))) {
+  for (const env of stringArray(config.Env).filter(
+    (entry) => !gpuAugment || !GPU_ENV_KEYS.has(envKey(entry)),
+  )) {
     const key = envKey(env);
     if (key === OPENSHELL_SANDBOX_COMMAND_ENV && openshellSandboxCommandEnv) {
       sawOpenShellSandboxCommandEnv = true;
@@ -724,7 +723,7 @@ export function buildDockerGpuCloneRunArgs(
   // GPU-capable container self-sufficient for the operations the GPU proof
   // checks, regardless of what the non-GPU baseline happened to set (#3511).
   const capAdd = new Set(stringArray(host.CapAdd));
-  capAdd.add("SYS_PTRACE");
+  if (gpuAugment) capAdd.add("SYS_PTRACE");
   for (const cap of capAdd) args.push("--cap-add", cap);
   for (const cap of stringArray(host.CapDrop)) args.push("--cap-drop", cap);
   const securityOpt = new Set(stringArray(host.SecurityOpt));
@@ -733,7 +732,7 @@ export function buildDockerGpuCloneRunArgs(
   // entries, and a baseline that explicitly chose `apparmor=docker-default`
   // (or similar) should be respected — we are scoped to the GPU recreate
   // path, not to overriding deliberate operator choices.
-  if (![...securityOpt].some((entry) => entry.startsWith("apparmor"))) {
+  if (gpuAugment && ![...securityOpt].some((entry) => entry.startsWith("apparmor"))) {
     securityOpt.add("apparmor=unconfined");
   }
   for (const opt of securityOpt) args.push("--security-opt", opt);
@@ -1048,7 +1047,7 @@ export function getDockerGpuPatchFailureContext(
   return null;
 }
 
-export function recreateOpenShellDockerSandboxWithGpu(
+export function recreateOpenShellDockerSandboxContainer(
   options: {
     sandboxName: string;
     gpuDevice?: string | null;
@@ -1057,6 +1056,7 @@ export function recreateOpenShellDockerSandboxWithGpu(
     openshellSandboxCommand?: readonly string[] | null;
     backend?: DockerGpuPatchBackend;
     dockerDesktopWsl?: boolean;
+    modeOverride?: DockerGpuPatchMode;
   },
   deps: DockerGpuPatchDeps = {},
 ): DockerGpuPatchResult {
@@ -1079,15 +1079,17 @@ export function recreateOpenShellDockerSandboxWithGpu(
     const image = String(inspect.Config?.Image || "").trim();
     if (!image) throw new Error("OpenShell sandbox container inspect did not include an image.");
 
-    const selection = selectDockerGpuPatchMode(
-      {
-        image,
-        device: options.gpuDevice,
-        backend: options.backend,
-        dockerDesktopWsl: options.dockerDesktopWsl,
-      },
-      deps,
-    );
+    const selection = options.modeOverride
+      ? { mode: options.modeOverride, attempts: [] }
+      : selectDockerGpuPatchMode(
+          {
+            image,
+            device: options.gpuDevice,
+            backend: options.backend,
+            dockerDesktopWsl: options.dockerDesktopWsl,
+          },
+          deps,
+        );
     context.modeAttempts = selection.attempts;
     context.selectedMode = selection.mode;
     if (!selection.mode) {
@@ -1111,7 +1113,7 @@ export function recreateOpenShellDockerSandboxWithGpu(
     // CUDA fails with `NvRmMemInitNvmap ... Permission denied` and `cuInit(0)`
     // returns 999 even though the devices are mounted (#4231). Grant the
     // sandbox user the owning group(s) so CUDA can initialize.
-    if (options.backend === "jetson") {
+    if (selection.mode.kind !== "startup-command" && options.backend === "jetson") {
       const tegraGroupGids = d.detectTegraDeviceGroupGids();
       if (tegraGroupGids.length > 0) {
         cloneOptions.extraGroupGids = tegraGroupGids;
@@ -1163,8 +1165,12 @@ export function recreateOpenShellDockerSandboxWithGpu(
         { newContainerId: originalName, backupContainerName, originalName },
         deps,
       );
+      const containerDescription =
+        selection.mode.kind === "startup-command"
+          ? "recreated sandbox container"
+          : "GPU-enabled sandbox container";
       throw new Error(
-        `Could not start GPU-enabled sandbox container: ${resultText(runResult)}; ${
+        `Could not start ${containerDescription}: ${resultText(runResult)}; ${
           context.rolledBack
             ? "pre-patch sandbox restored"
             : "rollback failed; pre-patch sandbox was NOT restored"
@@ -1182,7 +1188,11 @@ export function recreateOpenShellDockerSandboxWithGpu(
         deps,
       );
     if (!newContainerId) {
-      throw new Error("GPU-enabled sandbox container started, but Docker did not report its ID.");
+      const containerDescription =
+        selection.mode.kind === "startup-command"
+          ? "Recreated sandbox container"
+          : "GPU-enabled sandbox container";
+      throw new Error(`${containerDescription} started, but Docker did not report its ID.`);
     }
     context.newContainerId = newContainerId;
 
@@ -1223,6 +1233,11 @@ export function recreateOpenShellDockerSandboxWithGpu(
     throw decoratePatchError(err, context);
   }
 }
+
+export const recreateOpenShellDockerSandboxWithGpu: (
+  options: Omit<Parameters<typeof recreateOpenShellDockerSandboxContainer>[0], "modeOverride">,
+  deps?: DockerGpuPatchDeps,
+) => DockerGpuPatchResult = recreateOpenShellDockerSandboxContainer;
 
 export function dockerGpuPatchCleanupCommands(sandboxName: string): string[] {
   return [`openshell sandbox delete ${JSON.stringify(sandboxName)}`];
@@ -1319,10 +1334,14 @@ export function printDockerGpuPatchFailureAndExit(
     { error, context, selectedMode, snapshot, classification },
     inspectDeps,
   );
+  const errorMessage =
+    error instanceof Error && error.message
+      ? createDockerGpuDiagnosticRedactor().redactText(error.message)
+      : "";
   console.error("");
   console.error("  Docker GPU patch failed.");
-  if (error instanceof Error && error.message) {
-    console.error(`  ${error.message}`);
+  if (errorMessage) {
+    console.error(`  ${errorMessage}`);
   }
   printDockerGpuPatchClassificationLines(classification);
   if (diagnostics) {
