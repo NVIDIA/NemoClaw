@@ -1334,10 +1334,14 @@ export function printDockerGpuPatchFailureAndExit(
     { error, context, selectedMode, snapshot, classification },
     inspectDeps,
   );
+  const errorMessage =
+    error instanceof Error && error.message
+      ? createDockerGpuDiagnosticRedactor().redactText(error.message)
+      : "";
   console.error("");
   console.error("  Docker GPU patch failed.");
-  if (error instanceof Error && error.message) {
-    console.error(`  ${error.message}`);
+  if (errorMessage) {
+    console.error(`  ${errorMessage}`);
   }
   printDockerGpuPatchClassificationLines(classification);
   if (diagnostics) {
