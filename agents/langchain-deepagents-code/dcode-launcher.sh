@@ -14,6 +14,7 @@ unset _nemoclaw_auto_approval_env
 readonly MANAGED_DCODE_WRAPPER="/usr/local/lib/nemoclaw/dcode-wrapper.sh"
 readonly MANAGED_EXEC_LAUNCHER="/usr/local/lib/nemoclaw/dcode-managed-exec"
 readonly MANAGED_OBSERVABILITY_MARKER="/sandbox/.deepagents/.nemoclaw-observability-enabled"
+readonly MANAGED_FETCH_CA_BUNDLE_FILE="/etc/openshell-tls/ca-bundle.pem"
 readonly MANAGED_SESSION_SUPERVISOR="/usr/local/lib/nemoclaw/dcode-session-supervisor.py"
 export HOME=/sandbox
 export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -98,10 +99,50 @@ read_managed_proxy_value() {
   printf '%s' "$value"
 }
 
+managed_fetch_ca_bundle_metadata() {
+  local file="$1"
+  local metadata
+  if metadata="$(stat -c '%u:%a:%s' "$file" 2>/dev/null)"; then
+    printf '%s' "$metadata"
+  else
+    stat -f '%u:%Lp:%z' "$file" 2>/dev/null
+  fi
+}
+
+validate_managed_fetch_ca_bundle() {
+  local file="$MANAGED_FETCH_CA_BUNDLE_FILE"
+  local metadata owner mode size extra
+  if [ -L "$file" ]; then
+    printf '%s\n' 'Missing or unsafe managed fetch CA bundle file.' >&2
+    return 1
+  fi
+  [ -e "$file" ] || return 0
+  if [ ! -f "$file" ] || [ ! -r "$file" ]; then
+    printf '%s\n' 'Missing or unsafe managed fetch CA bundle file.' >&2
+    return 1
+  fi
+  metadata="$(managed_fetch_ca_bundle_metadata "$file")" || {
+    printf '%s\n' 'Cannot inspect managed fetch CA bundle file.' >&2
+    return 1
+  }
+  IFS=: read -r owner mode size extra <<<"$metadata"
+  if [ -n "${extra:-}" ] \
+    || [[ ! "$owner" =~ ^[0-9]+$ ]] \
+    || [[ ! "$mode" =~ ^[0-7]{3,4}$ ]] \
+    || [[ ! "$size" =~ ^[0-9]+$ ]] \
+    || [ "$owner" != "$MANAGED_PROXY_OWNER_UID" ] \
+    || [ "$size" -le 0 ] \
+    || (((8#$mode & 0022) != 0)); then
+    printf '%s\n' 'Unsafe ownership or mode on managed fetch CA bundle file.' >&2
+    return 1
+  fi
+}
+
 # Onboard validates the build args and the Dockerfile stores them in root-owned
 # files. Runtime env is untrusted and cannot override those image-baked values.
 PROXY_HOST="$(read_managed_proxy_value "$MANAGED_PROXY_HOST_FILE" "host")"
 PROXY_PORT="$(read_managed_proxy_value "$MANAGED_PROXY_PORT_FILE" "port")"
+validate_managed_fetch_ca_bundle
 unset NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT
 # Generic proxy fallbacks are outside the managed dcode contract and may carry
 # host credentials even after the scheme-specific proxy values are normalized.
