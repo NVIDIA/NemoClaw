@@ -14,6 +14,7 @@ import path from "node:path";
 import readline from "node:readline";
 
 import { isErrnoException } from "../core/errno";
+import { markPromptActive } from "../core/prompt-activity";
 import { listMessagingCredentialMetadata } from "../messaging/channels";
 import { rejectSymlinksOnPath } from "../state/config-io";
 
@@ -520,6 +521,10 @@ export function removeLegacyCredentialsFileIfEmpty(): boolean {
  */
 export function promptSecret(question: string): Promise<string> {
   return new Promise((resolve, reject) => {
+    // Register with the prompt-activity registry so background timers
+    // (e.g. onboarding heartbeats) hold their output while this prompt
+    // owns the terminal. Released in cleanup() on every settle path. (#6651)
+    const releasePromptActivity = markPromptActive();
     const input = process.stdin;
     const output = process.stderr;
     // Re-attach stdin to the event loop. cleanup() below unrefs after the
@@ -534,6 +539,7 @@ export function promptSecret(question: string): Promise<string> {
     let finished = false;
 
     function cleanup() {
+      releasePromptActivity();
       input.removeListener("data", onData);
       if (rawModeEnabled && typeof input.setRawMode === "function") {
         input.setRawMode(false);
@@ -646,10 +652,14 @@ export function prompt(question: string, opts: { secret?: boolean } = {}): Promi
         });
       return;
     }
+    // The secret path above registers inside promptSecret(); this covers the
+    // readline path. Released in cleanup() on every settle path. (#6651)
+    const releasePromptActivity = markPromptActive();
     const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
     let finished = false;
 
     function cleanup() {
+      releasePromptActivity();
       rl.close();
       // pause+unref so the process exits naturally after the last prompt
       // resolves. The matching ref() above keeps subsequent prompts working;

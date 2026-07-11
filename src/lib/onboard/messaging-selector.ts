@@ -3,6 +3,8 @@
 
 import readline from "node:readline";
 
+import { markPromptActive } from "../core/prompt-activity";
+
 export interface MessagingChannelSelectorEntry {
   readonly id: string;
   readonly displayName: string;
@@ -154,10 +156,14 @@ export function readMessagingChannelSelection<T extends MessagingChannelSelector
     const input = process.stdin as MessagingSelectorInput;
     const output = process.stderr;
     const normalizerState = createMessagingSelectorNormalizerState();
+    // Hold background heartbeat output while this raw-mode menu owns the
+    // terminal; released in cleanup() on every settle path. (#6651)
+    const releasePromptActivity = markPromptActive();
     let rawModeEnabled = false;
     let finished = false;
 
     function cleanup() {
+      releasePromptActivity();
       input.removeListener("data", onData);
       process.removeListener("SIGINT", sigintHandler);
       process.removeListener("SIGTERM", sigtermHandler);
@@ -254,10 +260,14 @@ function promptMessagingSelectorLine(question: string): Promise<string> {
       process.stdin.ref();
     }
 
+    // Hold background heartbeat output while this prompt owns the terminal;
+    // released in cleanup() on every settle path. (#6651)
+    const releasePromptActivity = markPromptActive();
     const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
     let finished = false;
 
     function cleanup() {
+      releasePromptActivity();
       rl.close();
       if (typeof process.stdin.pause === "function") {
         process.stdin.pause();
