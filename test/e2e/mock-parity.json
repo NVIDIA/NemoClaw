@@ -15,6 +15,10 @@
       "fast": ["test/e2e/support/onboard-performance.test.ts"]
     },
     {
+      "live": "test/e2e/live/network-policy.test.ts",
+      "fast": ["test/validate-blueprint.test.ts", "test/validate-config-schemas.test.ts"]
+    },
+    {
       "live": "test/e2e/live/onboard-repair.test.ts",
       "fast": [
         "src/lib/onboard/extra-provider-reconciliation-diagnostics.test.ts",
