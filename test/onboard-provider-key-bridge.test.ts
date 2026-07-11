@@ -206,6 +206,7 @@ describe("onboard provider-key compatibility bridges", () => {
       const payload = runSetupNimBridgeScenario({
         NEMOCLAW_PROVIDER: "copilot",
         GH_TOKEN: "ghp-copilot-fallback",
+        NEMOCLAW_PROVIDER_KEY: "legacy-provider-key",
       });
 
       assert.equal(payload.outcome, "completed");

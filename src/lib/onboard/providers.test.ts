@@ -197,6 +197,16 @@ describe("onboard provider helpers", () => {
       expect(process.env.COPILOT_GITHUB_TOKEN).toBe("ghp-test-token");
     });
 
+    withProviderEnv({ GITHUB_TOKEN: "github-fallback-token" }, () => {
+      expect(stageCopilotCredentialEnv()).toBe(true);
+      expect(process.env.COPILOT_GITHUB_TOKEN).toBe("github-fallback-token");
+    });
+
+    withProviderEnv({ GH_TOKEN: "gh-token", GITHUB_TOKEN: "github-token" }, () => {
+      expect(stageCopilotCredentialEnv()).toBe(true);
+      expect(process.env.COPILOT_GITHUB_TOKEN).toBe("gh-token");
+    });
+
     withProviderEnv({ COPILOT_GITHUB_TOKEN: "explicit-token", GH_TOKEN: "ignored-token" }, () => {
       expect(stageCopilotCredentialEnv()).toBe(false);
       expect(process.env.COPILOT_GITHUB_TOKEN).toBe("explicit-token");
