@@ -1,0 +1,94 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Configure Inference Timeouts"
+sidebar-title: "Configure Timeouts"
+description: "Configure NemoClaw inference request, provider-validation, and sandbox-readiness timeouts."
+description-agent: "Configures inference-related time budgets. Use when local validation, agent requests, or sandbox readiness exceeds the default timeout."
+keywords: ["nemoclaw inference timeout", "local inference timeout", "sandbox ready timeout"]
+content:
+  type: "how_to"
+---
+import { AgentOnly } from "../_components/AgentGuide";
+
+NemoClaw uses separate time budgets for agent requests, local provider validation, and sandbox readiness.
+Change the budget that matches the phase that times out.
+
+## Choose the Timeout
+
+Use the error location to select the correct setting.
+
+| Setting | Applies to | Default |
+|---|---|---|
+| `NEMOCLAW_AGENT_TIMEOUT` | OpenClaw per-request inference | `600` seconds |
+| `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | Ollama, vLLM, NIM, and compatible-endpoint validation during onboarding | `180` seconds |
+| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | Image build, gateway upload, and in-sandbox boot after sandbox creation | `180` seconds |
+
+The readiness timeout does not govern inference requests or provider validation.
+
+## Increase the OpenClaw Request Timeout
+
+<AgentOnly variant="openclaw">
+
+Increase `NEMOCLAW_AGENT_TIMEOUT` for a slow model server, such as CPU-only local inference or modest vLLM hardware.
+NemoClaw writes this value to `agents.defaults.timeoutSeconds` during onboarding.
+
+```bash
+export NEMOCLAW_AGENT_TIMEOUT=1800
+$$nemoclaw onboard
+```
+
+This setting is baked into the sandbox image.
+Recreate an existing sandbox to apply a new value.
+
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+
+Hermes does not consume the OpenClaw-only `NEMOCLAW_AGENT_TIMEOUT` setting.
+
+</AgentOnly>
+
+## Increase the Local Validation Timeout
+
+Raise `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` when the inference-server validation probe needs more than 180 seconds.
+Large prompts, cold local model loads, and slower hardware can require a larger budget.
+
+```bash
+export NEMOCLAW_LOCAL_INFERENCE_TIMEOUT=300
+$$nemoclaw onboard
+```
+
+Local Ollama setup treats host-side curl timeouts as retryable probe failures and retries with a larger timeout before reporting validation failure.
+This variable does not extend the later sandbox-readiness wait.
+
+## Increase the Sandbox Readiness Timeout
+
+Raise `NEMOCLAW_SANDBOX_READY_TIMEOUT` when onboarding creates the sandbox but image build, upload, or boot exceeds 180 seconds.
+This can occur during a first run with cold caches or on a remote VM over a slow link.
+
+```bash
+export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
+$$nemoclaw onboard
+```
+
+Raise both onboarding budgets when the provider probe and the later sandbox creation phase are slow.
+
+```bash
+export NEMOCLAW_LOCAL_INFERENCE_TIMEOUT=300
+export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
+$$nemoclaw onboard
+```
+
+## Apply Build-Time Changes
+
+Recreate an existing sandbox when you change a timeout that NemoClaw bakes into its image.
+
+```bash
+$$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
+```
+
+## Related Topics
+
+- [Configure Model Limits](configure-model-limits) for context-window and output-token settings.
+- [Verify the Sandbox Inference Route](../validate-inference/verify-inference-route) after onboarding completes.

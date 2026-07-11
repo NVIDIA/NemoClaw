@@ -1,0 +1,83 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Choose a Local Inference Server"
+sidebar-title: "Choose a Local Server"
+description: "Compare Ollama, vLLM, and NVIDIA NIM before choosing a local inference server for NemoClaw."
+description-agent: "Compares NemoClaw local inference server options. Use when choosing between Ollama, vLLM, and NVIDIA NIM."
+keywords: ["nemoclaw local inference", "ollama vllm nim", "local inference server"]
+content:
+  type: "concept"
+---
+import { AgentOnly } from "../_components/AgentGuide";
+
+NemoClaw supports Ollama, vLLM, and NVIDIA NIM as local inference servers.
+Choose the option that matches your host, model, and operational needs.
+
+The agent inside the sandbox sends inference traffic to `inference.local`.
+OpenShell intercepts that traffic and forwards it to the local endpoint configured during onboarding.
+
+## Compare the Options
+
+<AgentOnly variant="openclaw,hermes">
+| Option | When to use it | Availability | Runtime API |
+|---|---|---|---|
+| Ollama | You want the default local option and want NemoClaw to install, start, or use Ollama on supported hosts. | Appears when Ollama is installed or running, and the wizard can offer installation on supported hosts. | Ollama through the managed local route. |
+| Existing vLLM | You already run vLLM on `localhost:8000`. | Appears when NemoClaw detects the server. | `/v1/chat/completions`. |
+| Managed vLLM | You want NemoClaw to pull an image, download model weights, and manage the server container. | Appears by default on DGX Spark and DGX Station, while generic Linux NVIDIA GPU hosts require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm`. | `/v1/chat/completions`. |
+| NVIDIA NIM | You want NemoClaw to pull and manage a validated NIM container on a NIM-capable NVIDIA GPU. | Experimental and requires `NEMOCLAW_EXPERIMENTAL=1`. | `/v1/chat/completions`. |
+</AgentOnly>
+
+<AgentOnly variant="deepagents">
+| Option | When to use it | Availability | Runtime API |
+|---|---|---|---|
+| Existing vLLM | You already run vLLM on `localhost:8000`. | Appears when NemoClaw detects the server. | `/v1/chat/completions`. |
+| Managed vLLM | You want NemoClaw to pull an image, download model weights, and manage the server container. | Appears by default on DGX Spark and DGX Station, while generic Linux NVIDIA GPU hosts require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm`. | `/v1/chat/completions`. |
+| NVIDIA NIM | You want NemoClaw to pull and manage a validated NIM container on a NIM-capable NVIDIA GPU. | Experimental and requires `NEMOCLAW_EXPERIMENTAL=1`. | `/v1/chat/completions`. |
+</AgentOnly>
+
+<AgentOnly variant="openclaw,hermes">
+Ollama selects among installed or starter model tags and validates the selected model.
+</AgentOnly>
+Managed vLLM uses host-specific model profiles and lets you select a supported registry model.
+NVIDIA NIM filters its available models by detected GPU VRAM.
+
+<AgentOnly variant="openclaw,hermes">
+## Choose Ollama
+
+Choose Ollama when you want the default local setup path.
+The wizard can detect a running daemon, install or upgrade Ollama on supported macOS and Linux hosts, and work with Windows-host Ollama from WSL when Docker Desktop integration is available.
+
+Some model and template combinations can return tool calls as plain text under realistic agent load.
+OpenClaw onboarding validates structured tool calls and stops when the selected model does not provide the required behavior.
+
+Refer to [Set Up Ollama](set-up-ollama).
+</AgentOnly>
+
+## Choose vLLM
+
+Choose vLLM when you already operate a compatible server or want a managed container on a supported NVIDIA GPU host.
+NemoClaw forces the Chat Completions API path because the vLLM Responses endpoint does not run the configured tool-call parser.
+
+Refer to [Set Up vLLM](set-up-vllm).
+
+## Choose NVIDIA NIM
+
+Choose NVIDIA NIM when you want a managed NIM container and your host has a NIM-capable NVIDIA GPU.
+The path is experimental, requires NGC registry access, and can fail when a selected image does not publish a manifest for the host architecture.
+
+Refer to [Set Up NVIDIA NIM](set-up-nvidia-nim).
+
+## Use Another Server
+
+Use a custom endpoint when your server is not one of the managed local options.
+NemoClaw supports servers that expose an OpenAI-compatible API and supports compatible Anthropic routes with agent-specific runtime requirements.
+
+- [Set Up an OpenAI-Compatible Endpoint](../custom-endpoints/set-up-openai-compatible-endpoint).
+- [Set Up an Anthropic-Compatible Endpoint](../custom-endpoints/set-up-anthropic-compatible-endpoint).
+- [Choose a Compatible Inference API](../custom-endpoints/choose-compatible-inference-api).
+
+## Related Topics
+
+- [Configure Inference Timeouts](../manage-inference/configure-inference-timeouts) for slow local models and long sandbox startup times.
+- [Verify the Inference Route](../validate-inference/verify-inference-route) after onboarding.

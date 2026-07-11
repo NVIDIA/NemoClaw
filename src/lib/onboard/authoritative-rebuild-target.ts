@@ -112,8 +112,25 @@ export function rebuildProviderFlowOptions(
   opts: OnboardOptions,
   target: Parameters<typeof validateRebuildHandoff>[1],
 ): { authoritativeResumeConfig: boolean; forceInferenceSetup: boolean } {
+  const authoritativeResumeConfig = opts.authoritativeResumeConfig === true;
+  if (authoritativeResumeConfig) {
+    const gateway = resolveAuthoritativeOnboardGatewayBinding(opts);
+    if (
+      opts.resume !== true ||
+      opts.recreateSandbox !== true ||
+      opts.onboardLockAlreadyHeld !== true ||
+      !gateway ||
+      !target.sandboxName ||
+      !target.provider ||
+      !target.model
+    ) {
+      throw new Error(
+        "Authoritative provider recovery requires a preflighted locked rebuild resume.",
+      );
+    }
+  }
   return {
-    authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
+    authoritativeResumeConfig,
     forceInferenceSetup: validateRebuildHandoff(opts, target),
   };
 }

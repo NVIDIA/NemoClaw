@@ -33,7 +33,15 @@ import { extractOpenClawAgentPayloadText } from "./agent-turn-latency-helpers.ts
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-full";
 const LIVE_TIMEOUT_MS = 50 * 60_000;
 const FIRST_TURN_TIMEOUT_MS = 240_000;
-const ONBOARD_BUDGET_SECS = 180;
+// Cold-path acceptance budget for install + BuildKit image build + gateway
+// health + first hosted agent turn (#6002, #6265). The dominant term is the
+// cold BuildKit image build, which swings run-to-run with Docker Hub pull
+// speed and hosted-runner I/O. Observed post-#6265 onboard phase alone ranged
+// 163s (pass) to 173s (fail) on identical `main` commits — a ~10s swing — so
+// the original 180s cap left only ~7s of headroom and tipped over on slow
+// builds. Raised to 205s to absorb build-phase variance while still catching
+// gross onboard regressions (first hosted turn itself is only ~5-8s).
+const ONBOARD_BUDGET_SECS = 205;
 const MAX_SILENCE_SECS = 60;
 const EXPECTED_FIRST_REPLY = "NEMOCLAW_E2E_READY_6002";
 const MEASURE_COLD_ONBOARD = process.env.E2E_TARGET_ID === "full-e2e";
