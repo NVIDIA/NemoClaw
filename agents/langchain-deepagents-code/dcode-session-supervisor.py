@@ -114,9 +114,13 @@ def run(argv: Sequence[str]) -> int:
         os.execvp(argv[0], list(argv))
 
     _enable_child_subreaper()
-    child = subprocess.Popen(list(argv))
+    child: subprocess.Popen[bytes] | None = None
+    pending_signals: list[int] = []
 
     def forward(sig: int, _frame: object) -> None:
+        if child is None:
+            pending_signals.append(sig)
+            return
         try:
             os.kill(child.pid, sig)
         except (ProcessLookupError, PermissionError):
@@ -133,6 +137,9 @@ def run(argv: Sequence[str]) -> int:
         signal.signal(sig, forward)
 
     try:
+        child = subprocess.Popen(list(argv))
+        for pending_signal in pending_signals:
+            forward(pending_signal, None)
         returncode = child.wait()
     finally:
         _cleanup_adopted_descendants()

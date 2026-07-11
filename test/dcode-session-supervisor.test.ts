@@ -16,6 +16,37 @@ const supervisor = path.join(
 const canRun = process.platform === "linux" && spawnSync("python3", ["--version"]).status === 0;
 
 describe.runIf(canRun)("managed DCode session supervisor", () => {
+  it("installs disconnect handlers before spawning DCode", () => {
+    const probe = [
+      "import importlib.util",
+      "import os",
+      "import signal",
+      "import sys",
+      `spec = importlib.util.spec_from_file_location('supervisor', ${JSON.stringify(supervisor)})`,
+      "module = importlib.util.module_from_spec(spec)",
+      "spec.loader.exec_module(module)",
+      "forwarded = []",
+      "real_kill = os.kill",
+      "module._enable_child_subreaper = lambda: None",
+      "module._cleanup_adopted_descendants = lambda: None",
+      "module.os.kill = lambda pid, sig: forwarded.append((pid, sig))",
+      "class FakeChild:",
+      "    pid = 4242",
+      "    def __init__(self, _argv):",
+      "        real_kill(os.getpid(), signal.SIGTERM)",
+      "    def wait(self):",
+      "        return 0",
+      "module.subprocess.Popen = FakeChild",
+      "status = module.run(['/fake/dcode'])",
+      "expected = [(4242, signal.SIGTERM)]",
+      "raise SystemExit(0 if status == 0 and forwarded == expected else 1)",
+    ].join("\n");
+
+    const result = spawnSync("python3", ["-c", probe], { encoding: "utf8" });
+
+    expect(result.status, result.stderr).toBe(0);
+  });
+
   it("preserves the DCode exit code after session cleanup", () => {
     const result = spawnSync("python3", [supervisor, "/bin/sh", "-c", "exit 7"], {
       encoding: "utf8",
