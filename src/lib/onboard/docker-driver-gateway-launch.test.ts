@@ -15,6 +15,7 @@ import {
   resolveDriftGatewayBin,
   shouldUseContainerizedGateway,
 } from "./docker-driver-gateway-launch";
+import { gatewayProcessCmdlineMatches } from "./gateway-process-identity";
 
 function withTempBinaries<T>(
   fn: (paths: { dir: string; gatewayBin: string; sandboxBin: string }) => T,
@@ -174,6 +175,38 @@ describe("docker-driver-gateway-launch", () => {
         mode: "host",
         processGatewayBin: gatewayBin,
       });
+    });
+  });
+
+  it("binds the real no-argument host launch identity to its gateway target", () => {
+    withTempBinaries(({ dir, gatewayBin }) => {
+      const launch = buildDockerDriverGatewayLaunch({
+        gatewayBin,
+        gatewayName: "nemoclaw-8081",
+        stateDir: dir,
+        platform: "linux",
+        env: {},
+        hostGlibcVersion: "2.39",
+        requiredGlibcVersions: ["2.39"],
+        gatewayEnv: {
+          OPENSHELL_DRIVERS: "docker",
+          OPENSHELL_GRPC_ENDPOINT: "https://127.0.0.1:8081",
+        },
+      });
+      const cmdline = [launch.argv0, ...launch.args].filter(Boolean).join(" ");
+
+      expect(launch.args).toEqual([]);
+      expect(launch.argv0).toBe("openshell-gateway[nemoclaw=nemoclaw-8081;port=8081]");
+      expect(
+        gatewayProcessCmdlineMatches(cmdline, gatewayBin, {
+          expectedOpenShellGateway: { name: "nemoclaw-8081", port: 8081 },
+        }),
+      ).toBe(true);
+      expect(
+        gatewayProcessCmdlineMatches(cmdline, gatewayBin, {
+          expectedOpenShellGateway: { name: "nemoclaw", port: 8080 },
+        }),
+      ).toBe(false);
     });
   });
 

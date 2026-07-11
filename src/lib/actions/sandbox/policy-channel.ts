@@ -6,6 +6,7 @@ import path from "node:path";
 import { runOpenshell } from "../../adapters/openshell/runtime";
 import { type AgentDefinition, loadAgent } from "../../agent/defs";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
+import { isNonInteractiveEnv } from "../../core/non-interactive";
 import { prompt as askPrompt, getCredential } from "../../credentials/store";
 import {
   type PolicyAddOptions,
@@ -60,9 +61,7 @@ import { policyChannelDependencies } from "./policy-channel-dependencies";
 import { refreshSandboxPolicyContextFile } from "./policy-context-refresh";
 import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
 
-function isNonInteractive(): boolean {
-  return process.env.NEMOCLAW_NON_INTERACTIVE === "1";
-}
+const isNonInteractive = isNonInteractiveEnv;
 
 type ChannelMutationOptions = {
   channel?: string;
@@ -166,7 +165,7 @@ async function addSandboxPolicyUnlocked(
     }
     answer = preset.name;
   } else {
-    if (process.env.NEMOCLAW_NON_INTERACTIVE === "1") {
+    if (isNonInteractive()) {
       console.error("  Non-interactive mode requires a preset name.");
       console.error(`  Usage: ${CLI_NAME} <sandbox> policy-add <preset> [--yes] [--dry-run]`);
       process.exit(1);
@@ -1504,9 +1503,7 @@ async function removeSandboxPolicyUnlocked(
   options: PolicyRemoveOptions,
 ): Promise<void> {
   const dryRun = Boolean(options.dryRun);
-  const skipConfirm = Boolean(
-    options.yes || options.force || process.env.NEMOCLAW_NON_INTERACTIVE === "1",
-  );
+  const skipConfirm = Boolean(options.yes || options.force || isNonInteractive());
 
   // Remove-able presets = built-in presets + custom presets applied via
   // --from-file / --from-dir (tracked in registry.customPolicies).
@@ -1533,7 +1530,7 @@ async function removeSandboxPolicyUnlocked(
     }
     answer = preset.name;
   } else {
-    if (process.env.NEMOCLAW_NON_INTERACTIVE === "1") {
+    if (isNonInteractive()) {
       console.error("  Non-interactive mode requires a preset name.");
       console.error(`  Usage: ${CLI_NAME} <sandbox> policy-remove <preset> [--yes] [--dry-run]`);
       process.exit(1);
