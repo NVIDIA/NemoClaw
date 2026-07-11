@@ -63,6 +63,7 @@ import {
   exitOnMcpReconciliationRefusal,
   exitOnSecretBoundaryRefusal,
 } from "./connect-boundary-refusal";
+import { prepareHermesLightTerminalSkin } from "./connect-hermes-light-skin";
 import {
   assertSandboxGatewayRouteCompatible,
   buildGatewayInferenceGetArgs,
@@ -380,6 +381,7 @@ function probeSandboxInferenceRoute(
     // remains an argv value, so no user input is interpolated into the script.
     const probe = captureOpenshell(buildSandboxInferenceRouteProbeArgs(sandboxName, agent), {
       ignoreError: true,
+      includeStreams: true,
       timeout: OPENSHELL_INFERENCE_ROUTE_PROBE_TIMEOUT_MS,
     });
     const parsed = parseSandboxInferenceRouteProbeResult(probe);
@@ -1172,10 +1174,11 @@ export async function connectSandbox(
     // OPENSHELL_SANDBOX) and covers every other interactive entry path too.
     console.log("");
   }
+  prepareHermesLightTerminalSkin(sandboxName, agent, process.env);
   const result = spawnSync(getOpenshellBinary(), ["sandbox", "connect", sandboxName], {
     stdio: "inherit",
     cwd: ROOT,
-    env: process.env,
+    env: { ...process.env },
   });
   exitWithConnectSpawnResult(sandboxName, result);
 }

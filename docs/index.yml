@@ -51,21 +51,115 @@ navigation:
             slug: inference
             collapsed: open-by-default
             contents:
-              - page: "Inference Options"
-                path: _build/agent-variants/inference/inference-options.openclaw.generated.mdx
-                slug: inference-options
-              - page: "Use Local Inference"
-                path: _build/agent-variants/inference/use-local-inference.openclaw.generated.mdx
-                slug: use-local-inference
-              - page: "Tool-Calling Reliability"
-                path: inference/tool-calling-reliability.mdx
-                slug: tool-calling-reliability
-              - page: "Model Capability Audit"
-                path: _build/agent-variants/inference/model-capability-audit.openclaw.generated.mdx
-                slug: model-capability-audit
-              - page: "Switch Inference Providers"
-                path: _build/agent-variants/inference/switch-inference-providers.openclaw.generated.mdx
-                slug: switch-inference-providers
+              - page: "About Inference Routing"
+                path: _build/agent-variants/inference/how-inference-routing-works.openclaw.generated.mdx
+                slug: about-inference-routing
+              - section: "Choose a Provider and Model"
+                slug: learn-and-choose
+                contents:
+                  - page: "Choose an Inference Provider"
+                    path: _build/agent-variants/inference/choose-inference-provider.openclaw.generated.mdx
+                    slug: choose-inference-provider
+                  - page: "Choose a Model"
+                    path: _build/agent-variants/inference/choose-model.openclaw.generated.mdx
+                    slug: choose-model
+              - section: "Hosted Inference"
+                slug: hosted-inference
+                contents:
+                  - page: "Use NVIDIA Endpoints"
+                    path: _build/agent-variants/inference/use-nvidia-endpoints.openclaw.generated.mdx
+                    slug: use-nvidia-endpoints
+                  - page: "Use OpenRouter"
+                    path: _build/agent-variants/inference/use-openrouter.openclaw.generated.mdx
+                    slug: use-openrouter
+                  - page: "Use OpenAI"
+                    path: _build/agent-variants/inference/use-openai.openclaw.generated.mdx
+                    slug: use-openai
+                  - page: "Use Anthropic"
+                    path: _build/agent-variants/inference/use-anthropic.openclaw.generated.mdx
+                    slug: use-anthropic
+                  - page: "Use Google Gemini"
+                    path: _build/agent-variants/inference/use-google-gemini.openclaw.generated.mdx
+                    slug: use-google-gemini
+                  - page: "Set Up Model Router"
+                    path: _build/agent-variants/inference/set-up-model-router.openclaw.generated.mdx
+                    slug: set-up-model-router
+              - section: "Local Inference"
+                slug: local-inference
+                contents:
+                  - page: "Choose a Local Inference Server"
+                    path: _build/agent-variants/inference/choose-local-inference-server.openclaw.generated.mdx
+                    slug: choose-local-inference-server
+                  - page: "Use Ollama"
+                    path: _build/agent-variants/inference/set-up-ollama.openclaw.generated.mdx
+                    slug: set-up-ollama
+                  - page: "Set Up vLLM"
+                    path: _build/agent-variants/inference/set-up-vllm.openclaw.generated.mdx
+                    slug: set-up-vllm
+                  - page: "Set Up NVIDIA NIM"
+                    path: _build/agent-variants/inference/set-up-nvidia-nim.openclaw.generated.mdx
+                    slug: set-up-nvidia-nim
+              - section: "Custom Endpoints"
+                slug: custom-endpoints
+                contents:
+                  - page: "Set Up an OpenAI-Compatible Endpoint"
+                    path: _build/agent-variants/inference/set-up-openai-compatible-endpoint.openclaw.generated.mdx
+                    slug: set-up-openai-compatible-endpoint
+                  - page: "Set Up an Anthropic-Compatible Endpoint"
+                    path: _build/agent-variants/inference/set-up-anthropic-compatible-endpoint.openclaw.generated.mdx
+                    slug: set-up-anthropic-compatible-endpoint
+                  - page: "Choose a Compatible Inference API"
+                    path: _build/agent-variants/inference/choose-compatible-inference-api.openclaw.generated.mdx
+                    slug: choose-compatible-inference-api
+                  - page: "Meet Custom Endpoint Security Requirements"
+                    path: _build/agent-variants/inference/custom-endpoint-security.openclaw.generated.mdx
+                    slug: custom-endpoint-security
+              - section: "Manage Inference"
+                slug: manage-inference
+                contents:
+                  - page: "View the Active Inference Route"
+                    path: _build/agent-variants/inference/view-active-inference-route.openclaw.generated.mdx
+                    slug: view-active-inference-route
+                  - page: "Switch Models"
+                    path: _build/agent-variants/inference/switch-models.openclaw.generated.mdx
+                    slug: switch-models
+                  - page: "Switch Providers"
+                    path: _build/agent-variants/inference/switch-providers.openclaw.generated.mdx
+                    slug: switch-providers
+                  - page: "Configure Model Limits"
+                    path: _build/agent-variants/inference/configure-model-limits.openclaw.generated.mdx
+                    slug: configure-model-limits
+                  - page: "Configure Model Capabilities"
+                    path: inference/configure-model-capabilities.mdx
+                    slug: configure-model-capabilities
+                  - page: "Configure Inference Timeouts"
+                    path: _build/agent-variants/inference/configure-inference-timeouts.openclaw.generated.mdx
+                    slug: configure-inference-timeouts
+              - section: "Validate Inference"
+                slug: validate-inference
+                contents:
+                  - page: "Understand Provider Validation"
+                    path: _build/agent-variants/inference/understand-provider-validation.openclaw.generated.mdx
+                    slug: understand-provider-validation
+                  - page: "Verify the Sandbox Inference Route"
+                    path: _build/agent-variants/inference/verify-inference-route.openclaw.generated.mdx
+                    slug: verify-inference-route
+                  - page: "Audit Model Capabilities"
+                    path: _build/agent-variants/inference/model-capability-audit.openclaw.generated.mdx
+                    slug: audit-model-capabilities
+          - section: "Configure Agents"
+            slug: configure-agents
+            collapsed: open-by-default
+            contents:
+              - page: "Configure Progressive Tool Disclosure"
+                path: _build/agent-variants/configure-agents/progressive-tool-disclosure.openclaw.generated.mdx
+                slug: progressive-tool-disclosure
+              - page: "Understand Context Compaction"
+                path: configure-agents/understand-context-compaction.mdx
+                slug: understand-context-compaction
+              - page: "Configure Agent Heartbeats"
+                path: configure-agents/configure-agent-heartbeats.mdx
+                slug: configure-agent-heartbeats
               - page: "Set Up Task-Specific Sub-Agents"
                 path: inference/set-up-sub-agent.mdx
                 slug: set-up-sub-agent
@@ -140,6 +234,9 @@ navigation:
               - page: "Credential Storage"
                 path: _build/agent-variants/security/credential-storage.openclaw.generated.mdx
                 slug: credential-storage
+              - page: "Credential Rotation"
+                path: _build/agent-variants/security/credential-rotation.openclaw.generated.mdx
+                slug: credential-rotation
               - page: "Trusted Computing Base"
                 path: _build/agent-variants/security/tcb-boundary.openclaw.generated.mdx
                 slug: trusted-computing-base
@@ -240,15 +337,103 @@ navigation:
             slug: inference
             collapsed: open-by-default
             contents:
-              - page: "Inference Options"
-                path: _build/agent-variants/inference/inference-options.deepagents.generated.mdx
-                slug: inference-options
-              - page: "Model Capability Audit"
-                path: _build/agent-variants/inference/model-capability-audit.deepagents.generated.mdx
-                slug: model-capability-audit
-              - page: "Switch Inference Providers"
-                path: _build/agent-variants/inference/switch-inference-providers.deepagents.generated.mdx
-                slug: switch-inference-providers
+              - page: "About Inference Routing"
+                path: _build/agent-variants/inference/how-inference-routing-works.deepagents.generated.mdx
+                slug: about-inference-routing
+              - section: "Choose a Provider and Model"
+                slug: learn-and-choose
+                contents:
+                  - page: "Choose an Inference Provider"
+                    path: _build/agent-variants/inference/choose-inference-provider.deepagents.generated.mdx
+                    slug: choose-inference-provider
+                  - page: "Choose a Model"
+                    path: _build/agent-variants/inference/choose-model.deepagents.generated.mdx
+                    slug: choose-model
+              - section: "Hosted Inference"
+                slug: hosted-inference
+                contents:
+                  - page: "Use NVIDIA Endpoints"
+                    path: _build/agent-variants/inference/use-nvidia-endpoints.deepagents.generated.mdx
+                    slug: use-nvidia-endpoints
+                  - page: "Use OpenRouter"
+                    path: _build/agent-variants/inference/use-openrouter.deepagents.generated.mdx
+                    slug: use-openrouter
+                  - page: "Use OpenAI"
+                    path: _build/agent-variants/inference/use-openai.deepagents.generated.mdx
+                    slug: use-openai
+                  - page: "Use Anthropic"
+                    path: _build/agent-variants/inference/use-anthropic.deepagents.generated.mdx
+                    slug: use-anthropic
+                  - page: "Use Google Gemini"
+                    path: _build/agent-variants/inference/use-google-gemini.deepagents.generated.mdx
+                    slug: use-google-gemini
+                  - page: "Set Up Model Router"
+                    path: _build/agent-variants/inference/set-up-model-router.deepagents.generated.mdx
+                    slug: set-up-model-router
+              - section: "Local Inference"
+                slug: local-inference
+                contents:
+                  - page: "Choose a Local Inference Server"
+                    path: _build/agent-variants/inference/choose-local-inference-server.deepagents.generated.mdx
+                    slug: choose-local-inference-server
+                  - page: "Set Up vLLM"
+                    path: _build/agent-variants/inference/set-up-vllm.deepagents.generated.mdx
+                    slug: set-up-vllm
+                  - page: "Set Up NVIDIA NIM"
+                    path: _build/agent-variants/inference/set-up-nvidia-nim.deepagents.generated.mdx
+                    slug: set-up-nvidia-nim
+              - section: "Custom Endpoints"
+                slug: custom-endpoints
+                contents:
+                  - page: "Set Up an OpenAI-Compatible Endpoint"
+                    path: _build/agent-variants/inference/set-up-openai-compatible-endpoint.deepagents.generated.mdx
+                    slug: set-up-openai-compatible-endpoint
+                  - page: "Set Up an Anthropic-Compatible Endpoint"
+                    path: _build/agent-variants/inference/set-up-anthropic-compatible-endpoint.deepagents.generated.mdx
+                    slug: set-up-anthropic-compatible-endpoint
+                  - page: "Choose a Compatible Inference API"
+                    path: _build/agent-variants/inference/choose-compatible-inference-api.deepagents.generated.mdx
+                    slug: choose-compatible-inference-api
+                  - page: "Meet Custom Endpoint Security Requirements"
+                    path: _build/agent-variants/inference/custom-endpoint-security.deepagents.generated.mdx
+                    slug: custom-endpoint-security
+              - section: "Manage Inference"
+                slug: manage-inference
+                contents:
+                  - page: "View the Active Inference Route"
+                    path: _build/agent-variants/inference/view-active-inference-route.deepagents.generated.mdx
+                    slug: view-active-inference-route
+                  - page: "Switch Models"
+                    path: _build/agent-variants/inference/switch-models.deepagents.generated.mdx
+                    slug: switch-models
+                  - page: "Switch Providers"
+                    path: _build/agent-variants/inference/switch-providers.deepagents.generated.mdx
+                    slug: switch-providers
+                  - page: "Configure Model Limits"
+                    path: _build/agent-variants/inference/configure-model-limits.deepagents.generated.mdx
+                    slug: configure-model-limits
+                  - page: "Configure Inference Timeouts"
+                    path: _build/agent-variants/inference/configure-inference-timeouts.deepagents.generated.mdx
+                    slug: configure-inference-timeouts
+              - section: "Validate Inference"
+                slug: validate-inference
+                contents:
+                  - page: "Understand Provider Validation"
+                    path: _build/agent-variants/inference/understand-provider-validation.deepagents.generated.mdx
+                    slug: understand-provider-validation
+                  - page: "Verify the Sandbox Inference Route"
+                    path: _build/agent-variants/inference/verify-inference-route.deepagents.generated.mdx
+                    slug: verify-inference-route
+                  - page: "Audit Model Capabilities"
+                    path: _build/agent-variants/inference/model-capability-audit.deepagents.generated.mdx
+                    slug: audit-model-capabilities
+          - section: "Configure Agents"
+            slug: configure-agents
+            collapsed: open-by-default
+            contents:
+              - page: "Configure Progressive Tool Disclosure"
+                path: _build/agent-variants/configure-agents/progressive-tool-disclosure.deepagents.generated.mdx
+                slug: progressive-tool-disclosure
           - section: "Manage Sandboxes"
             slug: manage-sandboxes
             collapsed: open-by-default
@@ -275,6 +460,9 @@ navigation:
               - page: "Credential Storage"
                 path: _build/agent-variants/security/credential-storage.deepagents.generated.mdx
                 slug: credential-storage
+              - page: "OpenShell 0.0.72 Compatibility Review"
+                path: _build/agent-variants/security/openshell-0.0.72-compatibility-review.deepagents.generated.mdx
+                slug: openshell-0.0.72-compatibility-review
           - section: "Reference"
             slug: reference
             collapsed: open-by-default
@@ -360,18 +548,109 @@ navigation:
             slug: inference
             collapsed: open-by-default
             contents:
-              - page: "Inference Options"
-                path: _build/agent-variants/inference/inference-options.hermes.generated.mdx
-                slug: inference-options
-              - page: "Use Local Inference"
-                path: _build/agent-variants/inference/use-local-inference.hermes.generated.mdx
-                slug: use-local-inference
-              - page: "Model Capability Audit"
-                path: _build/agent-variants/inference/model-capability-audit.hermes.generated.mdx
-                slug: model-capability-audit
-              - page: "Switch Inference Providers"
-                path: _build/agent-variants/inference/switch-inference-providers.hermes.generated.mdx
-                slug: switch-inference-providers
+              - page: "About Inference Routing"
+                path: _build/agent-variants/inference/how-inference-routing-works.hermes.generated.mdx
+                slug: about-inference-routing
+              - section: "Choose a Provider and Model"
+                slug: learn-and-choose
+                contents:
+                  - page: "Choose an Inference Provider"
+                    path: _build/agent-variants/inference/choose-inference-provider.hermes.generated.mdx
+                    slug: choose-inference-provider
+                  - page: "Choose a Model"
+                    path: _build/agent-variants/inference/choose-model.hermes.generated.mdx
+                    slug: choose-model
+              - section: "Hosted Inference"
+                slug: hosted-inference
+                contents:
+                  - page: "Use NVIDIA Endpoints"
+                    path: _build/agent-variants/inference/use-nvidia-endpoints.hermes.generated.mdx
+                    slug: use-nvidia-endpoints
+                  - page: "Use OpenRouter"
+                    path: _build/agent-variants/inference/use-openrouter.hermes.generated.mdx
+                    slug: use-openrouter
+                  - page: "Use OpenAI"
+                    path: _build/agent-variants/inference/use-openai.hermes.generated.mdx
+                    slug: use-openai
+                  - page: "Use Anthropic"
+                    path: _build/agent-variants/inference/use-anthropic.hermes.generated.mdx
+                    slug: use-anthropic
+                  - page: "Use Google Gemini"
+                    path: _build/agent-variants/inference/use-google-gemini.hermes.generated.mdx
+                    slug: use-google-gemini
+                  - page: "Use Hermes Provider"
+                    path: inference/use-hermes-provider.mdx
+                    slug: use-hermes-provider
+                  - page: "Set Up Model Router"
+                    path: _build/agent-variants/inference/set-up-model-router.hermes.generated.mdx
+                    slug: set-up-model-router
+              - section: "Local Inference"
+                slug: local-inference
+                contents:
+                  - page: "Choose a Local Inference Server"
+                    path: _build/agent-variants/inference/choose-local-inference-server.hermes.generated.mdx
+                    slug: choose-local-inference-server
+                  - page: "Use Ollama"
+                    path: _build/agent-variants/inference/set-up-ollama.hermes.generated.mdx
+                    slug: set-up-ollama
+                  - page: "Set Up vLLM"
+                    path: _build/agent-variants/inference/set-up-vllm.hermes.generated.mdx
+                    slug: set-up-vllm
+                  - page: "Set Up NVIDIA NIM"
+                    path: _build/agent-variants/inference/set-up-nvidia-nim.hermes.generated.mdx
+                    slug: set-up-nvidia-nim
+              - section: "Custom Endpoints"
+                slug: custom-endpoints
+                contents:
+                  - page: "Set Up an OpenAI-Compatible Endpoint"
+                    path: _build/agent-variants/inference/set-up-openai-compatible-endpoint.hermes.generated.mdx
+                    slug: set-up-openai-compatible-endpoint
+                  - page: "Set Up an Anthropic-Compatible Endpoint"
+                    path: _build/agent-variants/inference/set-up-anthropic-compatible-endpoint.hermes.generated.mdx
+                    slug: set-up-anthropic-compatible-endpoint
+                  - page: "Choose a Compatible Inference API"
+                    path: _build/agent-variants/inference/choose-compatible-inference-api.hermes.generated.mdx
+                    slug: choose-compatible-inference-api
+                  - page: "Meet Custom Endpoint Security Requirements"
+                    path: _build/agent-variants/inference/custom-endpoint-security.hermes.generated.mdx
+                    slug: custom-endpoint-security
+              - section: "Manage Inference"
+                slug: manage-inference
+                contents:
+                  - page: "View the Active Inference Route"
+                    path: _build/agent-variants/inference/view-active-inference-route.hermes.generated.mdx
+                    slug: view-active-inference-route
+                  - page: "Switch Models"
+                    path: _build/agent-variants/inference/switch-models.hermes.generated.mdx
+                    slug: switch-models
+                  - page: "Switch Providers"
+                    path: _build/agent-variants/inference/switch-providers.hermes.generated.mdx
+                    slug: switch-providers
+                  - page: "Configure Model Limits"
+                    path: _build/agent-variants/inference/configure-model-limits.hermes.generated.mdx
+                    slug: configure-model-limits
+                  - page: "Configure Inference Timeouts"
+                    path: _build/agent-variants/inference/configure-inference-timeouts.hermes.generated.mdx
+                    slug: configure-inference-timeouts
+              - section: "Validate Inference"
+                slug: validate-inference
+                contents:
+                  - page: "Understand Provider Validation"
+                    path: _build/agent-variants/inference/understand-provider-validation.hermes.generated.mdx
+                    slug: understand-provider-validation
+                  - page: "Verify the Sandbox Inference Route"
+                    path: _build/agent-variants/inference/verify-inference-route.hermes.generated.mdx
+                    slug: verify-inference-route
+                  - page: "Audit Model Capabilities"
+                    path: _build/agent-variants/inference/model-capability-audit.hermes.generated.mdx
+                    slug: audit-model-capabilities
+          - section: "Configure Agents"
+            slug: configure-agents
+            collapsed: open-by-default
+            contents:
+              - page: "Configure Progressive Tool Disclosure"
+                path: _build/agent-variants/configure-agents/progressive-tool-disclosure.hermes.generated.mdx
+                slug: progressive-tool-disclosure
           - section: "Manage Sandboxes"
             slug: manage-sandboxes
             collapsed: open-by-default
@@ -427,6 +706,9 @@ navigation:
               - page: "Credential Storage"
                 path: _build/agent-variants/security/credential-storage.hermes.generated.mdx
                 slug: credential-storage
+              - page: "Credential Rotation"
+                path: _build/agent-variants/security/credential-rotation.hermes.generated.mdx
+                slug: credential-rotation
               - page: "Trusted Computing Base"
                 path: _build/agent-variants/security/tcb-boundary.hermes.generated.mdx
                 slug: trusted-computing-base

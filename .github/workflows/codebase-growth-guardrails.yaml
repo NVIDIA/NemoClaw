@@ -119,9 +119,22 @@ jobs:
           set -euo pipefail
 
           node <<'NODE'
+          // Fetch every blob we need in batched GraphQL queries instead of N
+          // sequential REST /contents/ calls. Each REST call has no retry and
+          // the endpoint intermittently returns 5xx; N calls per run compounded
+          // that flake into a ~30-50% job failure rate on fork PRs. This step
+          // now issues ~2 GraphQL requests (BASE budget + one batched HEAD
+          // query for budget/legacy/changed files) and retries each outbound
+          // request on 5xx and network errors. Behaviour is otherwise
+          // identical to the previous implementation.
           const BUDGET_FILE = "ci/test-file-size-budget.json";
           const FALLBACK_BUDGET = '{"defaultMaxLines":1500,"legacyMaxLines":{}}';
           const TEST_FILE_RE = /^(test|src|nemoclaw\/src)\/.*\.(test|spec)\.(ts|js|mts|mjs|cts|cjs)$/;
+          const GRAPHQL_URL = "https://api.github.com/graphql";
+          const GRAPHQL_BATCH_SIZE = 25;
+          const RETRY_ATTEMPTS = 4;
+          const RETRY_BASE_MS = 250;
+          const RETRY_MAX_MS = 4000;
           const { BASE_SHA, GH_TOKEN, HEAD_REPO, HEAD_SHA, PR_NUMBER, REPO } = process.env;
           const headers = { Authorization: `Bearer ${GH_TOKEN}`, "X-GitHub-Api-Version": "2022-11-28" };
           const violations = [];
@@ -147,10 +160,63 @@ jobs:
             return { defaultMaxLines: budget.defaultMaxLines, legacyMaxLines };
           }
 
-          async function getJson(url) {
-            const response = await fetch(url, { headers });
+          function isTransient(status) {
+            return status === 408 || status === 425 || status === 429 || (status >= 500 && status <= 599);
+          }
+
+          async function withRetry(label, fn) {
+            let lastError;
+            for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt += 1) {
+              try {
+                return await fn();
+              } catch (error) {
+                lastError = error;
+                const retriable = error && (error.transient === true || /HTTP (408|425|429|5\d{2})/.test(String(error.message ?? "")));
+                if (!retriable || attempt === RETRY_ATTEMPTS) throw error;
+                const jitter = Math.random() * RETRY_BASE_MS;
+                const delay = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** (attempt - 1)) + jitter;
+                console.error(`retry: ${label} attempt ${attempt} failed (${error.message}); sleeping ${Math.round(delay)}ms`);
+                await new Promise((resolve) => setTimeout(resolve, delay));
+              }
+            }
+            throw lastError;
+          }
+
+          async function requestJson(url, init) {
+            let response;
+            try {
+              response = await fetch(url, init);
+            } catch (error) {
+              const wrapped = new Error(`${url}: network error ${error?.message ?? error}`);
+              wrapped.transient = true;
+              throw wrapped;
+            }
             if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
             return response.json();
+          }
+
+          async function getJson(url) {
+            return withRetry(url, () => requestJson(url, { headers }));
+          }
+
+          async function graphql(query, variables) {
+            const body = JSON.stringify({ query, variables });
+            const label = `graphql ${variables?.owner ?? ""}/${variables?.name ?? ""}@${variables?.oid ?? ""}`;
+            return withRetry(label, async () => {
+              const payload = await requestJson(GRAPHQL_URL, {
+                method: "POST",
+                headers: { ...headers, "Content-Type": "application/json" },
+                body,
+              });
+              if (Array.isArray(payload.errors) && payload.errors.length > 0) {
+                const messages = payload.errors.map((entry) => entry.message).join("; ");
+                const transient = payload.errors.some((entry) => entry.type === "RATE_LIMITED" || /timed? *out|unavailable|internal/i.test(entry.message ?? ""));
+                const error = new Error(`${label}: GraphQL errors: ${messages}`);
+                if (transient) error.transient = true;
+                throw error;
+              }
+              return payload.data;
+            });
           }
 
           async function getPullFiles() {
@@ -162,69 +228,140 @@ jobs:
             }
           }
 
-          async function getContent(repo, ref, file) {
+          function splitRepoName(fullName) {
+            const [owner, name] = fullName.split("/");
+            if (!owner || !name) throw new Error(`Unexpected repository full name: ${fullName}`);
+            return { owner, name };
+          }
+
+          function buildBlobQuery(paths) {
+            const aliases = paths.map((_, index) => `      f${index}: object(expression: $e${index}) { __typename ... on Blob { text isBinary isTruncated byteSize } }`).join("\n");
+            const params = paths.map((_, index) => `$e${index}: String!`).join(", ");
+            return `query($owner: String!, $name: String!, ${params}) {\n  repository(owner: $owner, name: $name) {\n${aliases}\n  }\n}`;
+          }
+
+          async function fetchBlobs(repoFullName, oid, paths) {
+            const results = new Map();
+            if (paths.length === 0) return results;
+            const { owner, name } = splitRepoName(repoFullName);
+            const rest = [];
+            for (let start = 0; start < paths.length; start += GRAPHQL_BATCH_SIZE) {
+              const chunk = paths.slice(start, start + GRAPHQL_BATCH_SIZE);
+              const query = buildBlobQuery(chunk);
+              const variables = { owner, name, oid };
+              chunk.forEach((path, index) => { variables[`e${index}`] = `${oid}:${path}`; });
+              const data = await graphql(query, variables);
+              const repository = data?.repository;
+              if (!repository) throw new Error(`GraphQL repository not found: ${repoFullName}`);
+              chunk.forEach((path, index) => {
+                const node = repository[`f${index}`];
+                if (!node) { results.set(path, null); return; }
+                if (node.__typename !== "Blob") { results.set(path, null); return; }
+                if (node.isBinary) throw new Error(`${path} is binary; refusing to line-count`);
+                if (node.text === null || node.isTruncated) { rest.push(path); return; }
+                results.set(path, node.text);
+              });
+            }
+            for (const path of rest) {
+              const text = await getContentViaRest(repoFullName, oid, path);
+              results.set(path, text);
+            }
+            return results;
+          }
+
+          async function getContentViaRest(repo, ref, file) {
             const encodedPath = file.split("/").map(encodeURIComponent).join("/");
             const url = `https://api.github.com/repos/${repo}/contents/${encodedPath}?ref=${encodeURIComponent(ref)}`;
-            const response = await fetch(url, { headers });
-            if (response.status === 404) return null;
-            if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
-            const body = await response.json();
-            if (body.type !== "file" || body.encoding !== "base64" || typeof body.content !== "string") {
-              throw new Error(`Could not decode file contents for ${file}`);
-            }
-            return Buffer.from(body.content.replace(/\s/g, ""), "base64").toString("utf8");
-          }
-
-          async function checkLegacyFile(file, maxLines, headBudget) {
-            const text = await getContent(HEAD_REPO, HEAD_SHA, file);
-            if (text === null) {
-              violations.push(`${file} has a legacy budget but no matching test file at the PR head`);
-              return;
-            }
-            const lines = countLines(text);
-            if (lines > maxLines) violations.push(`${file} has ${lines} line(s), above its legacy budget ${maxLines}`);
-            if (lines < maxLines) {
-              violations.push(`${file}: ${lines} line(s) < ${maxLines} legacy budget; lower the budget entry`);
-            }
-          }
-
-          async function validateBudget(baseBudget, headBudget, baseWasFallback) {
-            if (baseWasFallback) return;
-            if (headBudget.defaultMaxLines > baseBudget.defaultMaxLines) {
-              violations.push(`defaultMaxLines increased from ${baseBudget.defaultMaxLines} to ${headBudget.defaultMaxLines}`);
-            }
-            for (const [file, baseMax] of Object.entries(baseBudget.legacyMaxLines)) {
-              const headMax = headBudget.legacyMaxLines[file];
-              const text = headMax === undefined ? await getContent(HEAD_REPO, HEAD_SHA, file) : null;
-              if (headMax > baseMax) violations.push(`${file} legacy budget increased from ${baseMax} to ${headMax}`);
-              if (headMax === undefined && text !== null && countLines(text) > headBudget.defaultMaxLines) {
-                violations.push(`${file} removed its legacy budget while still exceeding defaultMaxLines`);
+            return withRetry(url, async () => {
+              let response;
+              try {
+                response = await fetch(url, { headers });
+              } catch (error) {
+                const wrapped = new Error(`${url}: network error ${error?.message ?? error}`);
+                wrapped.transient = true;
+                throw wrapped;
               }
-            }
-            for (const [file, headMax] of Object.entries(headBudget.legacyMaxLines)) {
-              if (baseBudget.legacyMaxLines[file] === undefined && headMax > headBudget.defaultMaxLines) {
-                violations.push(`${file} adds a new legacy budget (${headMax}) above defaultMaxLines (${headBudget.defaultMaxLines})`);
+              if (response.status === 404) return null;
+              if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
+              const body = await response.json();
+              if (body.type !== "file" || body.encoding !== "base64" || typeof body.content !== "string") {
+                throw new Error(`Could not decode file contents for ${file}`);
               }
-              await checkLegacyFile(file, headMax, headBudget);
-            }
+              return Buffer.from(body.content.replace(/\s/g, ""), "base64").toString("utf8");
+            });
           }
 
           async function main() {
             const files = await getPullFiles();
-            const baseText = await getContent(REPO, BASE_SHA, BUDGET_FILE);
-            const baseWasFallback = baseText === null;
             const budgetChanged = files.some(({ filename, previous_filename }) => filename === BUDGET_FILE || previous_filename === BUDGET_FILE);
-            const headText = budgetChanged ? await getContent(HEAD_REPO, HEAD_SHA, BUDGET_FILE) : baseText;
-            if (budgetChanged && headText === null) throw new Error(`${BUDGET_FILE} must remain present and parseable at the PR head`);
-
-            const baseBudget = parseBudget(baseText ?? FALLBACK_BUDGET, "base budget");
-            const headBudget = parseBudget(headText ?? FALLBACK_BUDGET, "head budget");
             const changedTests = files.filter(({ filename, status }) => status !== "removed" && TEST_FILE_RE.test(filename));
 
-            await validateBudget(baseBudget, headBudget, baseWasFallback);
+            // Base budget lives in the trusted base repo; fetch it alone so we
+            // can parse legacy entries before deciding which HEAD blobs to load.
+            const [baseBlobs] = await Promise.all([
+              fetchBlobs(REPO, BASE_SHA, [BUDGET_FILE]),
+            ]);
+            const baseText = baseBlobs.get(BUDGET_FILE);
+            const baseWasFallback = baseText == null;
+            const baseBudget = parseBudget(baseText ?? FALLBACK_BUDGET, "base budget");
+
+            // Assemble every HEAD path we still need in one deduplicated batch:
+            // budget (only if the PR changed it), each HEAD legacy file, each
+            // BASE legacy file that HEAD dropped, and each changed test file.
+            const headPaths = new Set();
+            if (budgetChanged) headPaths.add(BUDGET_FILE);
+            // Placeholder; we resolve headBudget after fetching HEAD budget below.
+            let headBudget = baseBudget;
+
+            if (budgetChanged) {
+              const headBudgetBlobs = await fetchBlobs(HEAD_REPO, HEAD_SHA, [BUDGET_FILE]);
+              const headText = headBudgetBlobs.get(BUDGET_FILE);
+              if (headText == null) throw new Error(`${BUDGET_FILE} must remain present and parseable at the PR head`);
+              headBudget = parseBudget(headText, "head budget");
+            }
+
+            for (const file of Object.keys(headBudget.legacyMaxLines)) headPaths.add(file);
+            for (const file of Object.keys(baseBudget.legacyMaxLines)) {
+              if (headBudget.legacyMaxLines[file] === undefined) headPaths.add(file);
+            }
+            for (const { filename } of changedTests) headPaths.add(filename);
+
+            const headBlobs = await fetchBlobs(HEAD_REPO, HEAD_SHA, Array.from(headPaths));
+
+            if (!baseWasFallback) {
+              if (headBudget.defaultMaxLines > baseBudget.defaultMaxLines) {
+                violations.push(`defaultMaxLines increased from ${baseBudget.defaultMaxLines} to ${headBudget.defaultMaxLines}`);
+              }
+              for (const [file, baseMax] of Object.entries(baseBudget.legacyMaxLines)) {
+                const headMax = headBudget.legacyMaxLines[file];
+                if (headMax !== undefined && headMax > baseMax) {
+                  violations.push(`${file} legacy budget increased from ${baseMax} to ${headMax}`);
+                }
+                if (headMax === undefined) {
+                  const text = headBlobs.get(file);
+                  if (text != null && countLines(text) > headBudget.defaultMaxLines) {
+                    violations.push(`${file} removed its legacy budget while still exceeding defaultMaxLines`);
+                  }
+                }
+              }
+              for (const [file, headMax] of Object.entries(headBudget.legacyMaxLines)) {
+                if (baseBudget.legacyMaxLines[file] === undefined && headMax > headBudget.defaultMaxLines) {
+                  violations.push(`${file} adds a new legacy budget (${headMax}) above defaultMaxLines (${headBudget.defaultMaxLines})`);
+                }
+                const text = headBlobs.get(file);
+                if (text == null) {
+                  violations.push(`${file} has a legacy budget but no matching test file at the PR head`);
+                  continue;
+                }
+                const lines = countLines(text);
+                if (lines > headMax) violations.push(`${file} has ${lines} line(s), above its legacy budget ${headMax}`);
+                if (lines < headMax) violations.push(`${file}: ${lines} line(s) < ${headMax} legacy budget; lower the budget entry`);
+              }
+            }
+
             for (const { filename } of changedTests) {
-              const text = await getContent(HEAD_REPO, HEAD_SHA, filename);
-              if (text === null) throw new Error(`Changed test file ${filename} was not found at the PR head`);
+              const text = headBlobs.get(filename);
+              if (text == null) throw new Error(`Changed test file ${filename} was not found at the PR head`);
               const lines = countLines(text);
               const maxLines = headBudget.legacyMaxLines[filename] ?? headBudget.defaultMaxLines;
               if (lines > maxLines) violations.push(`${filename}: ${lines} line(s) > ${maxLines}`);

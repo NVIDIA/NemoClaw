@@ -34,10 +34,10 @@ export function enumValue<T extends readonly string[]>(
 }
 
 export function recordItems(value: unknown): Record<string, unknown>[] {
-  return Array.isArray(value) ? value.filter(isRecord) : [];
+  return Array.isArray(value) ? value.filter(isObjectRecord) : [];
 }
 
-export function isRecord(value: unknown): value is Record<string, unknown> {
+export function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
@@ -69,7 +69,7 @@ export function getPath<T>(value: unknown, pathParts: (string | number)[]): T | 
       current = current[part];
       continue;
     }
-    if (!isRecord(current)) return undefined;
+    if (!isObjectRecord(current)) return undefined;
     current = current[part];
   }
   return current as T | undefined;

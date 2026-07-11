@@ -153,7 +153,7 @@ For shell scripts use `#` comments. For Markdown use HTML comments.
 
 ### No External Project Links
 
-Do not add links to third-party code repositories, community collections, or unofficial resources. Links to official tool documentation (Node.js, Python, uv) are acceptable.
+Do not add links to third-party code repositories, community collections, or unofficial resources. Links to official tool documentation (Node.js and Python) are acceptable.
 
 ## Git Hooks (prek)
 
@@ -170,10 +170,11 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 ### Before Making Changes
 
 1. Read `CONTRIBUTING.md` for the full contributor guide
-2. For a first-time checkout, use `.agents/skills/nemoclaw-contributor-onboard/SKILL.md` or run `npm run dev:setup`
-3. Run `npm run dev:doctor` to verify the contributor environment without changing it
-4. Use `./scripts/dev-setup.sh --expose-cli` only with explicit approval for host-visible CLI exposure
-5. Run the tests targeted to the behavior you change once per relevant change set; rerun them after later edits or hook autofixes that can affect that behavior
+2. Apply its engineering posture to every coding task: surface material assumptions and outcome-changing ambiguity, make the smallest issue-scoped change, prove observable success criteria, and for QA-escaped defects address both the product root cause and the detection gap
+3. For a first-time checkout, use `.agents/skills/nemoclaw-contributor-onboard/SKILL.md` or run `npm run dev:setup`
+4. Run `npm run dev:doctor` to verify the contributor environment without changing it
+5. Use `./scripts/dev-setup.sh --expose-cli` only with explicit approval for host-visible CLI exposure
+6. Run the tests targeted to the behavior you change once per relevant change set; rerun them after later edits or hook autofixes that can affect that behavior
 
 ### Git and GitHub Access Failures
 

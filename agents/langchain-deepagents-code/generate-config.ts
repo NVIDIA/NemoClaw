@@ -15,13 +15,27 @@ type Settings = {
   baseUrl: string;
   providerKey: string;
   upstreamProvider: string;
+  upstreamEndpointUrl: string | null;
   inferenceApi: string;
+};
+
+type ManagedDeepAgentsProvider = "openai" | "openrouter";
+
+type ManagedDeepAgentsConfig = {
+  text: string;
+  provider: ManagedDeepAgentsProvider;
+  model: string;
+  defaultModel: string;
 };
 
 const NEMOTRON_ULTRA_MODEL_IDS = new Set([
   "nvidia/nemotron-3-ultra-550b-a55b",
   "nvidia/nvidia/nemotron-3-ultra",
 ]);
+
+const OPENROUTER_UPSTREAM_PROVIDERS = new Set(["openrouter", "openrouter-api"]);
+const OPENROUTER_ENDPOINT_HOST = "openrouter.ai";
+const OPENROUTER_ENDPOINT_PATH = "/api/v1";
 
 function readSettings(env: NodeJS.ProcessEnv): Settings {
   const providerKey = normalizeCommentMetadata(
@@ -37,6 +51,10 @@ function readSettings(env: NodeJS.ProcessEnv): Settings {
     upstreamProvider: normalizeCommentMetadata(
       env.NEMOCLAW_UPSTREAM_PROVIDER || env.NEMOCLAW_PROVIDER_KEY || "inference",
       "NEMOCLAW_UPSTREAM_PROVIDER",
+    ),
+    upstreamEndpointUrl: normalizeOptionalEndpointUrl(
+      env.NEMOCLAW_UPSTREAM_ENDPOINT_URL,
+      "NEMOCLAW_UPSTREAM_ENDPOINT_URL",
     ),
     inferenceApi: normalizeCommentMetadata(
       env.NEMOCLAW_INFERENCE_API || "openai-completions",
@@ -56,6 +74,30 @@ function normalizeCommentMetadata(value: string, name: string): string {
     throw new Error(`${name} must not contain control characters.`);
   }
   return value.trim();
+}
+
+function normalizeOptionalEndpointUrl(value: string | undefined, name: string): string | null {
+  if (value === undefined || value.trim() === "") return null;
+  if (/[\p{Cc}\p{Cf}]/u.test(value)) {
+    throw new Error(`${name} must not contain control characters.`);
+  }
+  const text = value.trim();
+  let url: URL;
+  try {
+    url = new URL(text);
+  } catch {
+    throw new Error(`${name} must be a valid URL.`);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(`${name} must use HTTP or HTTPS.`);
+  }
+  if (url.username || url.password) {
+    throw new Error(`${name} must not include credentials.`);
+  }
+  if (url.search || url.hash) {
+    throw new Error(`${name} must not include query strings or fragments.`);
+  }
+  return url.href;
 }
 
 function normalizeInferenceBaseUrl(value: string): string {
@@ -91,20 +133,42 @@ function tomlArray(values: readonly string[]): string {
   return `[${values.map(tomlString).join(", ")}]`;
 }
 
-function modelNameForOpenAiProvider(model: string): string {
-  const trimmed = model.trim();
-  return trimmed.startsWith("openai:") ? trimmed.slice("openai:".length) : trimmed;
+function managedDeepAgentsProviderFor(settings: Settings): ManagedDeepAgentsProvider {
+  if (OPENROUTER_UPSTREAM_PROVIDERS.has(settings.upstreamProvider)) return "openrouter";
+  if (
+    settings.upstreamProvider === "compatible-endpoint" &&
+    isOpenRouterEndpointUrl(settings.upstreamEndpointUrl)
+  ) {
+    return "openrouter";
+  }
+  return "openai";
 }
 
-function buildConfig(settings: Settings): string {
-  const model = modelNameForOpenAiProvider(settings.model);
-  const defaultModel = `openai:${model}`;
+function isOpenRouterEndpointUrl(value: string | null): boolean {
+  if (!value) return false;
+  const url = new URL(value);
+  return (
+    url.protocol === "https:" &&
+    url.hostname.toLowerCase() === OPENROUTER_ENDPOINT_HOST &&
+    url.pathname.replace(/\/+$/, "") === OPENROUTER_ENDPOINT_PATH
+  );
+}
+
+function modelNameForManagedProvider(model: string): string {
+  const trimmed = model.trim();
+  for (const prefix of ["openai:", "openrouter:"]) {
+    if (trimmed.startsWith(prefix)) return trimmed.slice(prefix.length);
+  }
+  return trimmed;
+}
+
+function openAiModelRequestParamLines(model: string): string[] {
   // Source boundary: NVIDIA's Ultra serving template owns the empty assistant
   // content behavior; this generator owns only the managed per-model request
   // parameters. Keep the exact invalid state, regression proof, and separate
   // removal conditions for this option and the dispatch guard in
   // dependency-review.md under "Managed Ultra compatibility workarounds."
-  const modelParams = NEMOTRON_ULTRA_MODEL_IDS.has(model)
+  return NEMOTRON_ULTRA_MODEL_IDS.has(model)
     ? [
         "",
         `[models.providers.openai.params.${tomlString(model)}]`,
@@ -112,30 +176,51 @@ function buildConfig(settings: Settings): string {
         "extra_body = { chat_template_kwargs = { force_nonempty_content = true } }",
       ]
     : [];
+}
+
+function providerConfigLines(
+  provider: ManagedDeepAgentsProvider,
+  model: string,
+  baseUrl: string,
+): string[] {
   return [
+    `[models.providers.${provider}]`,
+    `models = ${tomlArray([model])}`,
+    'api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"',
+    `base_url = ${tomlString(baseUrl)}`,
+    "enabled = true",
+    ...(provider === "openai"
+      ? [
+          "",
+          "[models.providers.openai.params]",
+          "# NemoClaw-managed inference.local currently exposes Chat Completions.",
+          "# Remove this override when that route supports OpenAI Responses API.",
+          "use_responses_api = false",
+          ...openAiModelRequestParamLines(model),
+        ]
+      : []),
+  ];
+}
+
+function buildConfig(settings: Settings): ManagedDeepAgentsConfig {
+  const provider = managedDeepAgentsProviderFor(settings);
+  const model = modelNameForManagedProvider(settings.model);
+  const defaultModel = `${provider}:${model}`;
+  const text = [
     "# Generated by NemoClaw. This file contains no provider secrets.",
     `# NemoClaw provider route: ${settings.providerKey}; upstream provider: ${settings.upstreamProvider}; API: ${settings.inferenceApi}.`,
     "",
     "[models]",
     `default = ${tomlString(defaultModel)}`,
     "",
-    "[models.providers.openai]",
-    `models = ${tomlArray([model])}`,
-    'api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"',
-    `base_url = ${tomlString(settings.baseUrl)}`,
-    "enabled = true",
-    "",
-    "[models.providers.openai.params]",
-    "# NemoClaw-managed inference.local currently exposes Chat Completions.",
-    "# Remove this override when that route supports OpenAI Responses API.",
-    "use_responses_api = false",
-    ...modelParams,
+    ...providerConfigLines(provider, model, settings.baseUrl),
     "",
     "[update]",
     "check = false",
     "auto_update = false",
     "",
   ].join("\n");
+  return { text, provider, model, defaultModel };
 }
 
 function main(): void {
@@ -145,11 +230,12 @@ function main(): void {
   mkdirSync(join(configDir, "skills"), { recursive: true, mode: 0o770 });
 
   const configPath = join(configDir, "config.toml");
-  writeFileSync(configPath, buildConfig(settings));
+  const config = buildConfig(settings);
+  writeFileSync(configPath, config.text);
   chmodSync(configPath, 0o600);
 
   console.log(
-    `[config] Wrote ${configPath} (model=openai:${modelNameForOpenAiProvider(settings.model)}, base_url=${settings.baseUrl})`,
+    `[config] Wrote ${configPath} (model=${config.defaultModel}, base_url=${settings.baseUrl})`,
   );
 }
 

@@ -9,13 +9,65 @@ const registryState = vi.hoisted(() => ({
   removeSandbox: vi.fn(),
   sandbox: null as SandboxEntry | null,
 }));
+const onboardSessionState = vi.hoisted(() => ({ sessionId: "session-owner" as string | null }));
 
-vi.mock("../state/registry", () => ({
-  getSandbox: () => registryState.sandbox,
-  removeSandbox: registryState.removeSandbox,
+vi.mock("../state/registry", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../state/registry")>();
+  return {
+    ...actual,
+    getSandbox: () => registryState.sandbox,
+    removeSandbox: registryState.removeSandbox,
+  };
+});
+vi.mock("../state/onboard-session", () => ({
+  loadSession: () =>
+    onboardSessionState.sessionId === null ? null : { sessionId: onboardSessionState.sessionId },
 }));
 
-import { createSandboxLifecycleHelpers } from "./sandbox-lifecycle";
+import {
+  createSandboxLifecycleHelpers,
+  removeSandboxUnlessSessionReservation,
+} from "./sandbox-lifecycle";
+
+describe("sandbox recreate reservation ownership", () => {
+  beforeEach(() => {
+    registryState.removeSandbox.mockReset();
+    onboardSessionState.sessionId = "session-owner";
+  });
+
+  it("preserves a pending reservation owned by the active session (#6562)", () => {
+    removeSandboxUnlessSessionReservation(
+      {
+        name: "alpha",
+        pendingRouteReservation: true,
+        reservationSessionId: "session-owner",
+      },
+      "alpha",
+    );
+
+    expect(registryState.removeSandbox).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      label: "foreign-session",
+      entry: {
+        name: "alpha",
+        pendingRouteReservation: true,
+        reservationSessionId: "session-other",
+      },
+    },
+    {
+      label: "unstamped",
+      entry: { name: "alpha", pendingRouteReservation: true },
+    },
+  ] as const)("removes a $label pending reservation before recreation (#6562)", ({ entry }) => {
+    removeSandboxUnlessSessionReservation(entry, "alpha");
+
+    expect(registryState.removeSandbox).toHaveBeenCalledOnce();
+    expect(registryState.removeSandbox).toHaveBeenCalledWith("alpha");
+  });
+});
 
 describe("sandbox lifecycle MCP destroy boundaries", () => {
   beforeEach(() => {

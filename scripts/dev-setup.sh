@@ -274,9 +274,7 @@ setup_minimum_version() {
 find_local_python() {
   local candidate path output version
 
-  for candidate in \
-    "${REPO_ROOT}/.venv/bin/python" \
-    python3 python3.14 python3.13 python3.12 python3.11; do
+  for candidate in python3 python3.14 python3.13 python3.12 python3.11; do
     if [[ "${candidate}" = */* ]]; then
       path="${candidate}"
       [ -x "${path}" ] || continue
@@ -316,7 +314,7 @@ run_setup_step() {
 }
 
 repair_repository() {
-  local setup_failed=0 hooks_path local_python
+  local setup_failed=0 hooks_path
 
   printf '\nNemoClaw contributor setup\n\n'
   printf 'Repository: %s\n' "${REPO_ROOT}"
@@ -330,7 +328,6 @@ repair_repository() {
 
   setup_requirement node "Install Node.js 22.16 or newer, then rerun this command." || setup_failed=1
   setup_requirement npm "Install npm 10 or newer, then rerun this command." || setup_failed=1
-  setup_requirement uv "Install uv from https://docs.astral.sh/uv/, then rerun this command." || setup_failed=1
   setup_requirement git "Install Git, then rerun this command." || setup_failed=1
   if ((setup_failed > 0)); then
     return 1
@@ -339,7 +336,7 @@ repair_repository() {
     "Install Node.js 22.16 or newer, then rerun this command." || setup_failed=1
   setup_minimum_version "npm" npm "10.0.0" \
     "Install npm 10 or newer, then rerun this command." || setup_failed=1
-  if ! local_python="$(find_local_python)"; then
+  if ! find_local_python >/dev/null; then
     printf 'Python 3.11 or newer was not found locally.\n' >&2
     printf 'Next: Install Python 3.11 or newer, then rerun this command.\n' >&2
     setup_failed=1
@@ -363,8 +360,6 @@ repair_repository() {
   run_setup_step "Install root dependencies" npm install --include=dev --ignore-scripts || return 1
   run_setup_step "Install plugin dependencies" \
     npm --prefix nemoclaw install --include=dev --ignore-scripts || return 1
-  run_setup_step "Synchronize the repository Python environment" \
-    uv sync --python "${local_python}" --no-python-downloads || return 1
   run_setup_step "Build the CLI" npm run build:cli || return 1
   run_setup_step "Build and type-check the plugin" npm --prefix nemoclaw run build || return 1
   # Keep the explicit checks aligned with the broader pre-push and CI contracts.
@@ -545,7 +540,7 @@ check_local_cli() {
 }
 
 run_doctor() {
-  local plugin_tsc ready_json root_tsc
+  local local_python plugin_tsc ready_json root_tsc
 
   PASS_COUNT=0
   WARN_COUNT=0
@@ -572,13 +567,10 @@ run_doctor() {
 
   check_minimum_version "Node.js" node "22.16.0" "Install Node.js 22.16 or newer."
   check_minimum_version "npm" npm "10.0.0" "Install npm 10 or newer."
-  check_command "uv" uv "Install uv from https://docs.astral.sh/uv/."
-  if [ -x "${REPO_ROOT}/.venv/bin/python" ]; then
-    check_minimum_version "Python repository environment" "${REPO_ROOT}/.venv/bin/python" "3.11.0" \
-      "Run: uv sync --python /path/to/python3.11-or-newer --no-python-downloads"
+  if local_python="$(find_local_python)"; then
+    check_minimum_version "Python" "${local_python}" "3.11.0" "Install Python 3.11 or newer."
   else
-    fail "Python repository environment: missing" \
-      "Run: uv sync --python /path/to/python3.11-or-newer --no-python-downloads"
+    fail "Python 3.11 or newer: not found" "Install Python 3.11 or newer."
   fi
   check_command "Git" git "Install Git."
   check_command "GitHub CLI" gh "Install GitHub CLI."

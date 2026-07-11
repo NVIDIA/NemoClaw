@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import YAML from "yaml";
+import { RISK_RULES } from "../advisors/risk-plan.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -14,6 +15,8 @@ const META_JOBS = new Set(["report-to-pr", "scorecard"]);
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
 const GITHUB_SCRIPT_NODE24_ACTION =
   "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3";
+const PR_GATE_REPORTER = "test/e2e/risk-signal-reporter.ts";
+const E2E_ARTIFACT_ACTION = "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@";
 const ISSUE_API_REFERENCE = /\bgithub\.rest\.issues\b/u;
 const ISSUE_MUTATION_BEYOND_COMMENT =
   /github\.rest\.issues\.(?:addAssignees|addLabels|create|deleteComment|lock|removeAssignees|removeLabel|setLabels|unlock|update|updateComment)\s*\(/u;
@@ -44,8 +47,14 @@ type WorkflowJob = {
 };
 
 export type OperationsWorkflow = {
+  concurrency?: {
+    "cancel-in-progress"?: unknown;
+    group?: unknown;
+  };
+  env?: Record<string, unknown>;
   jobs: Record<string, WorkflowJob>;
   permissions?: WorkflowPermissions;
+  "run-name"?: unknown;
   on?: {
     workflow_dispatch?: {
       inputs?: Record<string, Record<string, unknown>>;
@@ -101,6 +110,123 @@ function requireNode24GithubScript(errors: string[], step: WorkflowStep, owner: 
   }
 }
 
+function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow): void {
+  const inputs = workflow.on?.workflow_dispatch?.inputs ?? {};
+  for (const name of ["jobs", "pr_number", "checkout_sha", "plan_hash", "correlation_id"]) {
+    const input = inputs[name];
+    if (input?.type !== "string" || input.default !== "") {
+      errors.push(`workflow_dispatch ${name} must be an optional string with an empty default`);
+    }
+  }
+  const expectedEnvironment = {
+    NEMOCLAW_E2E_CORRELATION_ID: "${{ inputs.correlation_id }}",
+    NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.checkout_sha }}",
+    NEMOCLAW_E2E_PLAN_HASH: "${{ inputs.plan_hash }}",
+    NEMOCLAW_E2E_SHARD: "default",
+  };
+  for (const [name, value] of Object.entries(expectedEnvironment)) {
+    if (workflow.env?.[name] !== value) {
+      errors.push(`E2E workflow must bind ${name} to controller metadata`);
+    }
+  }
+  const runName = String(workflow["run-name"] ?? "");
+  for (const fragment of ["inputs.checkout_sha", "inputs.pr_number", "inputs.correlation_id"]) {
+    if (!runName.includes(fragment)) errors.push(`PR E2E run name must include ${fragment}`);
+  }
+  const concurrencyGroup = String(workflow.concurrency?.group ?? "");
+  if (
+    !concurrencyGroup.includes("inputs.checkout_sha") ||
+    !concurrencyGroup.includes("inputs.pr_number")
+  ) {
+    errors.push("PR E2E concurrency must be scoped to its pull request");
+  }
+  if (workflow.concurrency?.["cancel-in-progress"] !== "${{ inputs.checkout_sha != '' }}") {
+    errors.push("PR E2E concurrency must cancel obsolete runs");
+  }
+
+  const matrixJob = workflow.jobs["generate-matrix"] ?? {};
+  const steps = matrixJob.steps ?? [];
+  const validationIndex = steps.findIndex((step) => step.name === "Validate controller dispatch");
+  const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
+  const validation = validationIndex >= 0 ? steps[validationIndex] : {};
+  if (validation.if !== "${{ inputs.checkout_sha != '' }}") {
+    errors.push("Controller validation must be activated only by checkout_sha");
+  }
+  if (validationIndex < 0 || prepareIndex < 0 || validationIndex >= prepareIndex) {
+    errors.push("Controller validation must run before workspace preparation");
+  }
+  const expectedStepEnvironment = {
+    CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
+    JOBS: "${{ inputs.jobs }}",
+    PLAN_HASH: "${{ inputs.plan_hash }}",
+    PR_NUMBER: "${{ inputs.pr_number }}",
+    CORRELATION_ID: "${{ inputs.correlation_id }}",
+    TARGETS: "${{ inputs.targets }}",
+  };
+  for (const [name, value] of Object.entries(expectedStepEnvironment)) {
+    if (validation.env?.[name] !== value) {
+      errors.push(`Controller validation must bind ${name}`);
+    }
+  }
+  const validationScript = String(validation.run ?? "");
+  for (const fragment of [
+    '"$WORKFLOW_EVENT" == "workflow_dispatch"',
+    '"$WORKFLOW_REF" == "refs/heads/main"',
+    '"$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA"',
+    '"$PR_NUMBER" =~ ^[1-9][0-9]*$',
+    '[[ -n "$JOBS" && -z "$TARGETS" ]]',
+    "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
+    "'.state'",
+    "'.head.repo.full_name // \"\"'",
+    "'.head.sha'",
+  ]) {
+    if (!validationScript.includes(fragment)) {
+      errors.push(`Controller validation must retain ${fragment}`);
+    }
+  }
+
+  for (const [jobName, job] of Object.entries(workflow.jobs)) {
+    for (const step of job.steps ?? []) {
+      if (
+        step.uses?.startsWith("actions/checkout@") &&
+        step.with?.ref !== "${{ inputs.checkout_sha || github.sha }}"
+      ) {
+        errors.push(`${jobName} checkout must use the selected PR commit`);
+      }
+    }
+  }
+}
+
+function validatePrGateEvidenceProducers(errors: string[], workflow: OperationsWorkflow): void {
+  const requiredJobs = new Set(RISK_RULES.flatMap((rule) => rule.requiredJobs));
+  for (const jobId of requiredJobs) {
+    const job = workflow.jobs[jobId];
+    if (!job) {
+      errors.push(`Risk-plan job is missing from E2E workflow: ${jobId}`);
+      continue;
+    }
+    if (job.env?.E2E_JOB !== "1" || job.env?.E2E_TARGET_ID !== jobId) {
+      errors.push(`${jobId} must expose matching E2E job identity`);
+    }
+    if (typeof job.env?.E2E_ARTIFACT_DIR !== "string" || !job.env.E2E_ARTIFACT_DIR) {
+      errors.push(`${jobId} must expose an evidence artifact directory`);
+    }
+    const vitestSteps = (job.steps ?? []).filter((step) =>
+      String(step.run ?? "").includes("npx vitest"),
+    );
+    if (
+      vitestSteps.length === 0 ||
+      vitestSteps.some((step) => !String(step.run).includes(PR_GATE_REPORTER))
+    ) {
+      errors.push(`${jobId} must attach the risk-signal reporter to every Vitest invocation`);
+    }
+    const uploads = (job.steps ?? []).filter((step) => step.uses?.startsWith(E2E_ARTIFACT_ACTION));
+    if (uploads.length !== 1 || uploads[0]?.if !== "always()") {
+      errors.push(`${jobId} must always upload one evidence artifact`);
+    }
+  }
+}
+
 function validateAggregation(errors: string[], workflow: OperationsWorkflow): void {
   const executionJobs = Object.keys(workflow.jobs).filter((name) => !META_JOBS.has(name));
   const reportNeeds = needs(workflow.jobs["report-to-pr"] ?? {});
@@ -150,7 +276,7 @@ function validateIssueRoutingRetirement(errors: string[], workflow: OperationsWo
       }
       if (
         job.if !==
-        "${{ always() && github.event_name == 'workflow_dispatch' && !inputs.risk_shadow }}"
+        "${{ always() && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' }}"
       ) {
         errors.push("report-to-pr must run only for manual workflow dispatches");
       }
@@ -215,7 +341,7 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
   const permissions = permissionMap(job.permissions);
   if (
     job.if !==
-    "${{ always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.risk_shadow)) }}"
+    "${{ always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '')) }}"
   ) {
     errors.push("scorecard must run after scheduled and manual E2E executions");
   }
@@ -415,6 +541,8 @@ export function validateE2eOperationsWorkflow(
   advisorPath = DEFAULT_ADVISOR_PATH,
 ): string[] {
   const errors: string[] = [];
+  validatePrGateDispatch(errors, workflow);
+  validatePrGateEvidenceProducers(errors, workflow);
   validateAggregation(errors, workflow);
   validateIssueRoutingRetirement(errors, workflow);
   validateScorecard(errors, workflow);

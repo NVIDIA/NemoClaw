@@ -966,6 +966,9 @@ async def validate():
     selector._select_with_auth_check("openai:model", "openai")
     assert selector.original_selection == ("openai:model", "openai")
     selector.original_selection = None
+    selector._select_with_auth_check("openrouter:model", "openrouter")
+    assert selector.original_selection == ("openrouter:model", "openrouter")
+    selector.original_selection = None
     selector._select_with_auth_check("anthropic:model", "anthropic")
     assert selector.original_selection is None
 
@@ -1050,12 +1053,18 @@ async def validate():
         "base_url": "https://inference.local/v1",
         "use_responses_api": False,
     }
+    openrouter_kwargs = config._get_provider_kwargs("openrouter")
+    assert openrouter_kwargs == {
+        "api_key": "nemoclaw-managed-inference",
+        "base_url": "https://inference.local/v1",
+    }
+    assert "use_responses_api" not in openrouter_kwargs
     model_config.ModelConfig.base_url = "https://attacker.example/v1"
     assert config._get_provider_kwargs("openai")["base_url"] == "https://inference.local/v1"
     try:
         config._get_provider_kwargs("anthropic")
     except model_config.ModelConfigError as exc:
-        assert "managed OpenAI-compatible provider" in str(exc)
+        assert "managed inference providers" in str(exc)
     else:
         raise AssertionError("non-managed model provider was allowed")
     os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "0"
