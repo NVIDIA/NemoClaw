@@ -111,7 +111,11 @@ def run(argv: Sequence[str]) -> int:
         print("dcode session supervisor requires a command.", file=sys.stderr)
         return 64
     if sys.platform != "linux":
-        os.execvp(argv[0], list(argv))
+        print(
+            "dcode: session supervision requires a Linux OpenShell sandbox.",
+            file=sys.stderr,
+        )
+        return 1
 
     _enable_child_subreaper()
     child: subprocess.Popen[bytes] | None = None

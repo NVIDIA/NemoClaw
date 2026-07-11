@@ -339,6 +339,12 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     expect(markerText).not.toContain("NEMOCLAW_TUI_READY");
   });
 
+  // Invalid state: an already-deployed image lacks onboarding_complete.
+  // Source boundary: Dockerfile.base now creates the marker for every new image.
+  // Why retained here: existing sandboxes can still run an older image until rebuilt.
+  // Regression: "rejects managed images that still require first-run onboarding" fails
+  // closed for current images. Remove this diagnostic after rebuild telemetry shows
+  // no managed DCode sandboxes remain on pre-marker images.
   itWithTclsh("can diagnose a legacy image that still presents the first-run name prompt", () => {
     const { markerText, result, traceText } = runTuiExpectStateMachine(
       ["namePrompt", "ready", "exit"],
@@ -419,10 +425,11 @@ describe("Deep Agents Code TUI startup check helpers", () => {
         [
           "sandbox_exec() { printf 'NEMOCLAW_DCODE_PROBE:deepagents\\nNEMOCLAW_DCODE_ONBOARDING:complete\\n'; }",
           "ensure_expect_available() { return 0; }",
-          "current_dcode_process_count() {",
-          '  sed -n "1p" "$COUNT_FILE"',
+          "dcode_process_count() {",
+          '  value="$(sed -n "1p" "$COUNT_FILE")"',
           '  sed "1d" "$COUNT_FILE" >"$COUNT_FILE.next"',
           '  mv -- "$COUNT_FILE.next" "$COUNT_FILE"',
+          '  printf "NEMOCLAW_DCODE_PROCESS_COUNT:%s\\n" "$value"',
           "}",
           "sleep() { :; }",
           "run_tui_expect() {",
@@ -464,7 +471,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
         [
           "sandbox_exec() { printf 'NEMOCLAW_DCODE_PROBE:deepagents\\nNEMOCLAW_DCODE_ONBOARDING:complete\\n'; }",
           "ensure_expect_available() { return 0; }",
-          "current_dcode_process_count() { printf '0\\n'; }",
+          "dcode_process_count() { printf 'NEMOCLAW_DCODE_PROCESS_COUNT:0\\n'; }",
           "wait_for_dcode_process_baseline() { return 0; }",
           "run_tui_expect() {",
           '  printf "NEMOCLAW_TUI_EOF_BEFORE_READY\\n" >>"$2"',

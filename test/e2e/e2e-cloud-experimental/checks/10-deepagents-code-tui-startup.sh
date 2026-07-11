@@ -17,7 +17,7 @@ set -euo pipefail
 SANDBOX_NAME="${SANDBOX_NAME:-${NEMOCLAW_SANDBOX_NAME:-e2e-cloud-onboard}}"
 PREFIX="10-deepagents-code-tui-startup"
 TUI_TIMEOUT="${DEEPAGENTS_TUI_TIMEOUT:-90}"
-PROCESS_CLEANUP_TIMEOUT="${DEEPAGENTS_PROCESS_CLEANUP_TIMEOUT:-20}"
+PROCESS_CLEANUP_TIMEOUT=20
 # Shell-only live check fallback for remote e2e hosts; Vitest parity coverage in
 # test/deepagents-code-tui-startup-check.test.ts pins this to secret-patterns.ts.
 SECRET_PATTERN='(?:nvapi-[A-Za-z0-9_-]{10,}|nvcf-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9_-]{10,}|github_pat_[A-Za-z0-9_]{30,}|sk-proj-[A-Za-z0-9_-]{10,}|sk-ant-[A-Za-z0-9_-]{10,}|sk-[A-Za-z0-9_-]{20,}|(?:xox[bpas]|xapp)-[A-Za-z0-9-]{10,}|A(?:K|S)IA[A-Z0-9]{16}|hf_[A-Za-z0-9]{10,}|glpat-[A-Za-z0-9_-]{10,}|gsk_[A-Za-z0-9]{10,}|pypi-[A-Za-z0-9_-]{10,}|\bbot[0-9]{8,10}:[A-Za-z0-9_-]{35}\b|\b[0-9]{8,10}:[A-Za-z0-9_-]{35}\b|\b[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b|tvly-[A-Za-z0-9_-]{10,}|lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*)'
@@ -58,20 +58,14 @@ dcode_process_count() {
   sandbox_exec 'self=$$; parent=$PPID; count=0; for proc_dir in /proc/[0-9]*; do pid=${proc_dir##*/}; case " $self $parent " in *" $pid "*) continue ;; esac; [ -r "$proc_dir/cmdline" ] || continue; cmdline=$(tr "\000" " " <"$proc_dir/cmdline" 2>/dev/null) || continue; case "${cmdline,,}" in *dcode-session-supervisor* | *deepagents_code* | *langgraph* | */opt/venv/bin/dcode*) count=$((count + 1)) ;; esac; done; printf "NEMOCLAW_DCODE_PROCESS_COUNT:%s\n" "$count"'
 }
 
-current_dcode_process_count() {
-  local output count
-  output="$(dcode_process_count)" || return 1
-  count="$(sed -n 's/^NEMOCLAW_DCODE_PROCESS_COUNT:\([0-9][0-9]*\)$/\1/p' <<<"$output" | tail -n1)"
-  [[ "$count" =~ ^[0-9]+$ ]] || return 1
-  printf '%s\n' "$count"
-}
-
 wait_for_dcode_process_baseline() {
   local baseline="$1"
   local deadline=$((SECONDS + PROCESS_CLEANUP_TIMEOUT))
-  local count
+  local count output
   while :; do
-    count="$(current_dcode_process_count)" || return 1
+    output="$(dcode_process_count)" || return 1
+    count="$(sed -n 's/^NEMOCLAW_DCODE_PROCESS_COUNT:\([0-9][0-9]*\)$/\1/p' <<<"$output" | tail -n1)"
+    [[ "$count" =~ ^[0-9]+$ ]] || return 1
     if [ "$count" -le "$baseline" ]; then
       return 0
     fi
@@ -390,12 +384,6 @@ main() {
     exit 1
   fi
 
-  if ! is_positive_integer "$PROCESS_CLEANUP_TIMEOUT"; then
-    fail_test "DEEPAGENTS_PROCESS_CLEANUP_TIMEOUT must be a positive integer"
-    printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
-    exit 1
-  fi
-
   if ! command -v perl >/dev/null 2>&1; then
     fail_test "perl is required to sanitize and redact Deep Agents Code TUI captures"
     printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
@@ -434,8 +422,18 @@ main() {
 
   local capture_dir raw_capture_file marker_capture_file expect_log_file combined_capture_file plain_capture_file
   capture_dir="$(make_capture_dir)"
-  local baseline_process_count
-  if ! baseline_process_count="$(current_dcode_process_count)"; then
+  # The typed target may inherit agent processes from earlier checks, so the
+  # acceptance contract is no increase from one recorded baseline. The small
+  # local polling helper is reused for both sessions; separate capture names
+  # retain per-session evidence instead of overwriting the first failure.
+  local baseline_output baseline_process_count
+  if ! baseline_output="$(dcode_process_count)"; then
+    fail_test "unable to record the baseline DCode/LangGraph process count"
+    printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
+    exit 1
+  fi
+  baseline_process_count="$(sed -n 's/^NEMOCLAW_DCODE_PROCESS_COUNT:\([0-9][0-9]*\)$/\1/p' <<<"$baseline_output" | tail -n1)"
+  if [[ ! "$baseline_process_count" =~ ^[0-9]+$ ]]; then
     fail_test "unable to record the baseline DCode/LangGraph process count"
     printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
     exit 1
