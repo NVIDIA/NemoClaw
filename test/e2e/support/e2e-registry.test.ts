@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 
 import { target } from "../registry/builder.ts";
-import { buildTargetRegistry } from "../registry/registry.ts";
+import { buildTargetRegistry, listTargets } from "../registry/registry.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const RUN_TARGETS = path.join(REPO_ROOT, "test/e2e/registry/run.ts");
@@ -64,5 +64,21 @@ describe("deterministic target registry", () => {
       "ubuntu-repo-cloud-openclaw",
       "ubuntu-repo-cloud-hermes",
     ]);
+  });
+
+  it("models missing custom policy presets as an expected onboarding failure", () => {
+    const policyTarget = listTargets().find(
+      (entry) => entry.id === "ubuntu-policy-custom-missing-presets-negative",
+    );
+
+    expect(policyTarget).toBeTruthy();
+    expect(policyTarget?.manifestPath).toBe(
+      "test/e2e/manifests/openclaw-nvidia-policy-custom-missing-presets.yaml",
+    );
+    expect(policyTarget?.expectedStateId).toBe("onboarding-failure-policy-presets-required");
+    expect(policyTarget?.expectedFailure).toEqual({
+      phase: "onboarding",
+      errorClass: "policy-presets-required",
+    });
   });
 });
