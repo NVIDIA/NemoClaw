@@ -580,6 +580,35 @@ describe("pull request and main workflow contracts", () => {
     }
   });
 
+  it("runs repository checks for every operational dependency-pin authority and consumer", () => {
+    const hooks = prekConfig.repos.flatMap((repo) => repo.hooks ?? []);
+    const repositoryChecks = hooks.find((candidate) => candidate.id === "repository-checks");
+    const files = new RegExp(repositoryChecks?.files ?? "(?!)", "u");
+
+    for (const path of [
+      ".pre-commit-config.yaml",
+      "Dockerfile",
+      "Dockerfile.base",
+      "agents/openclaw/manifest.yaml",
+      "agents/hermes/Dockerfile",
+      "agents/hermes/Dockerfile.base",
+      "agents/hermes/manifest.yaml",
+      "agents/hermes/mcp-config-transaction.py",
+      "nemoclaw-blueprint/blueprint.yaml",
+      "nemoclaw/package.json",
+      "scripts/brev-launchable-ci-cpu.sh",
+      "scripts/check-installer-hash.sh",
+      "scripts/install-openshell.sh",
+      "scripts/update-hermes-agent.sh",
+      "src/lib/actions/sandbox/mcp-bridge-validation.ts",
+      "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.72.json",
+    ]) {
+      expect(files.test(path), path).toBe(true);
+    }
+    expect(files.test("dependency-pins.yaml")).toBe(false);
+    expect(files.test("docs/reference/commands.mdx")).toBe(false);
+  });
+
   it("scopes pre-push typechecks to project and transitive inputs", () => {
     const hooks = prekConfig.repos.flatMap((repo) => repo.hooks ?? []);
     const pluginTypecheck = hooks.find((candidate) => candidate.id === "tsc-plugin");
