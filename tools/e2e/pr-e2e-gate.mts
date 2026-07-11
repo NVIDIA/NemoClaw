@@ -38,7 +38,15 @@ const RUN_REASONS = new Set(["passed", "failed", "interrupted"]);
 const MAX_PLAN_BYTES = 1024 * 1024;
 const MAX_CONTROLLER_ERROR_CHARS = 512;
 const MAX_PR_FILES = 3000;
-const MAX_ACTIVE_RUN_PAGES = 10;
+const MAX_ACTIVE_RUN_PAGES_PER_STATUS = 10;
+const ACTIVE_WORKFLOW_RUN_STATUSES = [
+  "requested",
+  "waiting",
+  "pending",
+  "queued",
+  "in_progress",
+] as const;
+const ACTIVE_WORKFLOW_RUN_STATUS_SET = new Set<string>(ACTIVE_WORKFLOW_RUN_STATUSES);
 const EVIDENCE_LIMITS = {
   maxDepth: 8,
   maxEntries: 4096,
@@ -1197,39 +1205,45 @@ export async function cancelPrGate(prNumber: number): Promise<number> {
   const { token, repository } = tokenAndRepository();
   if (!Number.isSafeInteger(prNumber) || prNumber < 1) throw new Error("PR number is invalid");
   const titlePrefix = `E2E PR #${prNumber} (`;
-  const active: WorkflowRun[] = [];
-  for (let page = 1; page <= MAX_ACTIVE_RUN_PAGES; page += 1) {
-    const response = await githubApi<WorkflowRunsResponse>(
-      `repos/${repository}/actions/workflows/${E2E_WORKFLOW}/runs?event=workflow_dispatch&per_page=100&page=${page}`,
-      token,
-      { userAgent: USER_AGENT },
-    );
-    if (!response || !Array.isArray(response.workflow_runs)) {
-      throw new Error("GitHub returned an invalid workflow run list");
-    }
-    active.push(
-      ...response.workflow_runs.filter(
-        (run) => run.display_title.startsWith(titlePrefix) && run.status !== "completed",
-      ),
-    );
-    if (response.workflow_runs.length < 100) break;
-    if (page === MAX_ACTIVE_RUN_PAGES) {
-      throw new Error("Run listing exceeded its page limit");
+  const active = new Map<number, WorkflowRun>();
+  for (const status of ACTIVE_WORKFLOW_RUN_STATUSES) {
+    for (let page = 1; page <= MAX_ACTIVE_RUN_PAGES_PER_STATUS; page += 1) {
+      const response = await githubApi<WorkflowRunsResponse>(
+        `repos/${repository}/actions/workflows/${E2E_WORKFLOW}/runs?event=workflow_dispatch&status=${status}&per_page=100&page=${page}`,
+        token,
+        { userAgent: USER_AGENT },
+      );
+      if (!response || !Array.isArray(response.workflow_runs)) {
+        throw new Error("GitHub returned an invalid workflow run list");
+      }
+      for (const run of response.workflow_runs) {
+        if (
+          !run.display_title.startsWith(titlePrefix) ||
+          !ACTIVE_WORKFLOW_RUN_STATUS_SET.has(run.status)
+        ) {
+          continue;
+        }
+        if (!Number.isSafeInteger(run.id) || run.id < 1) {
+          throw new Error("GitHub returned an invalid active run ID");
+        }
+        active.set(run.id, run);
+      }
+      if (response.workflow_runs.length < 100) break;
+      if (page === MAX_ACTIVE_RUN_PAGES_PER_STATUS) {
+        throw new Error(`${status} run listing exceeded its page limit`);
+      }
     }
   }
-  for (const run of active) {
-    if (!Number.isSafeInteger(run.id) || run.id < 1) {
-      throw new Error("GitHub returned an invalid active run ID");
-    }
+  for (const run of active.values()) {
     await cancelChildRun(repository, token, run.id);
     console.log(
       `Cancelled superseded run: pr=${prNumber} run=${run.id} url=https://github.com/${repository}/actions/runs/${run.id}`,
     );
   }
-  if (active.length === 0) {
+  if (active.size === 0) {
     console.log(`No active E2E runs found for PR #${prNumber}`);
   }
-  return active.length;
+  return active.size;
 }
 
 function reportControllerError(error: unknown): void {
