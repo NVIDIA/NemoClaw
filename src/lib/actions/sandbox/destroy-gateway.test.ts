@@ -149,6 +149,28 @@ describe("cleanupGatewayAfterLastSandbox", () => {
     expect(mocks.dockerRemoveVolumesByPrefix).not.toHaveBeenCalled();
   });
 
+  it("fails before gateway and volume removal when PID-file ownership is unverifiable (#4662)", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    vi.spyOn(os, "homedir").mockReturnValue("/home/tester");
+    mocks.stopHostGatewayProcesses.mockReturnValue({
+      failed: [],
+      skippedDeadPids: [],
+      skippedNonMatchingPids: [456],
+      stopped: [],
+      sudoRemediationPids: [],
+    });
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+
+    expect(() => cleanupGatewayAfterLastSandbox("nemoclaw-8081", runOpenshell)).toThrow(
+      /PID-file process\(es\) 456.*do not prove ownership.*rerun destroy/,
+    );
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      ["gateway", "remove", "nemoclaw-8081"],
+      expect.anything(),
+    );
+    expect(mocks.dockerRemoveVolumesByPrefix).not.toHaveBeenCalled();
+  });
+
   it.each([
     [
       "host reaper",

@@ -113,6 +113,12 @@ export function cleanupGatewayAfterLastSandbox(
       stopOptions.openShellGatewayPort = perGatewayState.port;
     }
     const stopResult = stopHostGatewayProcesses({}, stopOptions);
+    const unverifiablePids = [...new Set(stopResult.skippedNonMatchingPids)];
+    if (unverifiablePids.length > 0) {
+      throw new Error(
+        `Refusing cleanup because PID-file process(es) ${unverifiablePids.join(", ")} do not prove ownership of gateway '${gatewayName}'. Inspect the process and per-gateway PID file, stop only the matching gateway listener, then rerun destroy.`,
+      );
+    }
     const failedPids = [...new Set([...stopResult.failed, ...stopResult.sudoRemediationPids])];
     if (failedPids.length > 0) {
       const remediation =
