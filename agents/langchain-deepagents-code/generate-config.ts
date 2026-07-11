@@ -219,6 +219,10 @@ function buildConfig(settings: Settings): ManagedDeepAgentsConfig {
     "check = false",
     "auto_update = false",
     "",
+    "[warnings]",
+    "# Tavily is optional in managed sandboxes; surface errors only when web search is invoked.",
+    'suppress = ["tavily"]',
+    "",
   ].join("\n");
   return { text, provider, model, defaultModel };
 }
