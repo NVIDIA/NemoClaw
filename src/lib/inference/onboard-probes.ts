@@ -300,6 +300,15 @@ function calibrateOpenAiLikeValidationTiming(baseUrl, options = {}) {
   });
 }
 
+function resolveOpenAiLikeValidationTiming(baseUrl, options = {}) {
+  return (
+    options.validationTiming ??
+    (options.calibrateTimeouts === true
+      ? calibrateOpenAiLikeValidationTiming(baseUrl, options)
+      : undefined)
+  );
+}
+
 // ── Responses API probe ──────────────────────────────────────────
 
 function probeResponsesToolCalling(endpointUrl, model, apiKey, options = {}) {
@@ -699,11 +708,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
   }
 
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
-  const validationTiming =
-    options.validationTiming ??
-    (options.calibrateTimeouts === true
-      ? calibrateOpenAiLikeValidationTiming(baseUrl, options)
-      : undefined);
+  const validationTiming = resolveOpenAiLikeValidationTiming(baseUrl, options);
   if (validationTiming) {
     options = { ...options, validationTiming };
   }
@@ -949,26 +954,33 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
 
 async function probeOpenAiLikeEndpointOptimized(endpointUrl, model, apiKey, options = {}) {
   const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
-  return probeOpenAiLikeEndpointWithValidationSession(endpointUrl, model, normalizedKey, options, {
-    legacyProbe: probeOpenAiLikeEndpoint,
-    hasResponsesToolCall,
-    hasChatCompletionsToolCall,
-    hasChatCompletionsToolCallLeak,
-    getChatPayload: getChatCompletionsProbePayload,
-    getResponsesTimeoutMs: (probeOptions) => {
-      const platformOptions =
-        typeof probeOptions.isWsl === "boolean" ? { isWsl: probeOptions.isWsl } : undefined;
-      return getCurlMaxTimeSeconds(getValidationProbeCurlArgs(platformOptions)) * 1000;
+  const baseUrl = String(endpointUrl).replace(/\/+$/, "");
+  const validationTiming = resolveOpenAiLikeValidationTiming(baseUrl, options);
+  const sessionProbeOptions = validationTiming ? { ...options, validationTiming } : options;
+  return probeOpenAiLikeEndpointWithValidationSession(
+    endpointUrl,
+    model,
+    normalizedKey,
+    sessionProbeOptions,
+    {
+      legacyProbe: probeOpenAiLikeEndpoint,
+      hasResponsesToolCall,
+      hasChatCompletionsToolCall,
+      hasChatCompletionsToolCallLeak,
+      getChatPayload: getChatCompletionsProbePayload,
+      getResponsesTimeoutMs: (probeOptions) =>
+        getCurlMaxTimeSeconds(getValidationProbeCurlArgs(getProbeTimingOptions(probeOptions))) *
+        1000,
+      getChatTimeoutMs: (probeModel, probeOptions) => {
+        const platformOptions = getProbeTimingOptions(probeOptions);
+        return (
+          getCurlMaxTimeSeconds(getChatCompletionsProbeTimingArgs(probeModel, platformOptions)) *
+          1000
+        );
+      },
+      sessionOptions: sessionProbeOptions.validationSessionOptions,
     },
-    getChatTimeoutMs: (probeModel, probeOptions) => {
-      const platformOptions =
-        typeof probeOptions.isWsl === "boolean" ? { isWsl: probeOptions.isWsl } : undefined;
-      return (
-        getCurlMaxTimeSeconds(getChatCompletionsProbeTimingArgs(probeModel, platformOptions)) * 1000
-      );
-    },
-    sessionOptions: options.validationSessionOptions,
-  });
+  );
 }
 
 // ── Anthropic probe ──────────────────────────────────────────────
