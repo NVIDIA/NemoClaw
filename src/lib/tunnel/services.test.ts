@@ -149,7 +149,12 @@ describe("sandbox name validation", () => {
   });
 
   it("accepts valid alphanumeric names", () => {
-    expect(() => getServiceStatuses({ sandboxName: "my-sandbox.1" })).not.toThrow();
+    const pidDir = mkdtempSync(join(tmpdir(), "nemoclaw-svc-valid-name-test-"));
+    try {
+      expect(() => getServiceStatuses({ pidDir, sandboxName: "my-sandbox.1" })).not.toThrow();
+    } finally {
+      rmSync(pidDir, { recursive: true, force: true });
+    }
   });
 });
 
