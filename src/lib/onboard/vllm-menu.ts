@@ -62,10 +62,12 @@ export function buildVllmMenuEntries(opts: BuildVllmMenuOptions): VllmMenuEntry[
         `  Note: NEMOCLAW_PROVIDER=install-vllm requested, but vLLM is already running on localhost:${VLLM_PORT} — selecting the running instance.`,
       );
     }
+    const experimentalLabel =
+      opts.platform && MANAGED_VLLM_DEFAULT_PLATFORMS.has(opts.platform) ? "" : " [experimental]";
     return [
       {
         key: "vllm",
-        label: `Local vLLM [experimental] (localhost:${VLLM_PORT}) — running (suggested)`,
+        label: `Local vLLM${experimentalLabel} (localhost:${VLLM_PORT}) — running (suggested)`,
       },
     ];
   }
