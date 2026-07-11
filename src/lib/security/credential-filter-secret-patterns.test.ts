@@ -3,15 +3,12 @@
 
 import { describe, expect, it } from "vitest";
 
+import {
+  makeEmptyClaimsJwtFixture,
+  makeJwtFixture,
+} from "../../../test/helpers/security-token-fixtures";
+
 import { isCredentialField, stripCredentials, valueLooksLikeSecret } from "./credential-filter.js";
-
-function makeJwtFixture(): string {
-  return ["eyJhbGciOiJIUzI1NiJ9", "eyJzdWIiOiIxMjM0NTY3ODkwIn0", "signatureABCDEFGHI"].join(".");
-}
-
-function makeEmptyClaimsJwtFixture(): string {
-  return ["eyJhbGciOiJIUzI1NiJ9", "e30", "signatureABCDEFGHI"].join(".");
-}
 
 describe("isCredentialField", () => {
   it("matches explicit field names", () => {

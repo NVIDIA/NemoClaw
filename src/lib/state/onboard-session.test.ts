@@ -610,20 +610,7 @@ describe("onboard session", () => {
     expect(requireLoadedSession(session.loadSession()).credentialEnv).toBeNull();
   });
 
-  it("redacts token-shaped values under benign endpoint query parameter names", () => {
-    const secret = "nvapi-sentinel-query-value-do-not-persist";
-    session.saveSession(session.createSession());
-
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", {
-      endpointUrl: `https://endpoint.example/v1?model=${secret}&keep=yes`,
-    });
-
-    const raw = fs.readFileSync(session.SESSION_FILE, "utf8");
-    expect(raw).not.toContain(secret);
-    expect(requireLoadedSession(session.loadSession()).endpointUrl).toBe(
-      "https://endpoint.example/v1?model=%3CREDACTED%3E&keep=yes",
-    );
-  });
+  // Focused endpoint secret-persistence coverage lives in onboard-session-redaction.test.ts.
 
   it("only persists known Hermes auth methods", () => {
     session.saveSession(session.createSession());

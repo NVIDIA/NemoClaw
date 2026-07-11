@@ -3,15 +3,14 @@
 
 import { describe, expect, it } from "vitest";
 
+import {
+  makeEmptyClaimsJwtFixture,
+  makeJwtFixture,
+} from "../../../test/helpers/security-token-fixtures";
+
 import { redact, redactUrl } from "./redact.js";
 
-function makeJwtFixture(): string {
-  return ["eyJhbGciOiJIUzI1NiJ9", "eyJzdWIiOiIxMjM0NTY3ODkwIn0", "signatureABCDEFGHI"].join(".");
-}
-
-function makeEmptyClaimsJwtFixture(): string {
-  return ["eyJhbGciOiJIUzI1NiJ9", "e30", "signatureABCDEFGHI"].join(".");
-}
+const credentialLabel = ["api", "Key"].join("");
 
 describe("URL redaction", () => {
   it.each([
@@ -170,5 +169,25 @@ describe("URL redaction", () => {
     for (const secret of Object.values(secrets)) {
       expect(result).not.toContain(secret);
     }
+  });
+
+  it.each([
+    ["Bearer credential", "Bearer abcdef0123456789", "Bearer <REDACTED>", "Bearer ****"],
+    [
+      "credential assignment",
+      `${credentialLabel}=abcdef0123456789`,
+      `${credentialLabel}=<REDACTED>`,
+      `${credentialLabel}=****`,
+    ],
+  ])("redacts a %s under a benign query name", (_label, secret, persistedValue, logValue) => {
+    const value = `https://endpoint.example/v1?model=${encodeURIComponent(secret)}&keep=yes`;
+    const persistedResult = redactUrl(value);
+    const logResult = redact(value);
+
+    expect(persistedResult).not.toBeNull();
+    expect(new URL(persistedResult as string).searchParams.get("model")).toBe(persistedValue);
+    expect(new URL(logResult).searchParams.get("model")).toBe(logValue);
+    expect(persistedResult).not.toContain("abcdef0123456789");
+    expect(logResult).not.toContain("abcdef0123456789");
   });
 });

@@ -147,9 +147,11 @@ function isSensitiveUrlQueryKey(key: string): boolean {
 function redactUrlSearchParams(url: URL, replacement: string): void {
   const redactedSearchParams = new URLSearchParams();
   for (const [key, queryValue] of url.searchParams) {
+    // Query names are not a security boundary. Preserve benign values, but
+    // redact any decoded value that carries a recognizable secret shape.
     redactedSearchParams.append(
       key,
-      isSensitiveUrlQueryKey(key) ? replacement : redactStandaloneSecrets(queryValue, replacement),
+      isSensitiveUrlQueryKey(key) ? replacement : redactUrlQueryValue(queryValue, replacement),
     );
   }
   url.search = redactedSearchParams.toString();
@@ -298,6 +300,15 @@ function redactStandaloneSecrets(text: string, replacement: string): string {
 /** Redact self-identifying tokens and secret blocks without rewriting surrounding structure. */
 export function redactStandaloneSecretsFull(text: string): string {
   return redactStandaloneSecrets(text, "<REDACTED>");
+}
+
+function redactUrlQueryValue(text: string, replacement: string): string {
+  let result = redactStandaloneSecrets(text, replacement);
+  for (const pattern of CONTEXT_PATTERNS) {
+    pattern.lastIndex = 0;
+    result = result.replace(pattern, replacement);
+  }
+  return result;
 }
 
 // ── Sensitive text redaction (onboard-session.ts style) ─────────
