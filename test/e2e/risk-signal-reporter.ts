@@ -7,11 +7,8 @@ import path from "node:path";
 
 import type { TestModule } from "vitest/node";
 import type { Reporter, TestRunEndReason } from "vitest/reporters";
-import {
-  readPrivateRegularFile,
-  writePrivateRegularFile,
-} from "../../tools/e2e-advisor/private-file.ts";
-import type { E2eRiskSignal } from "../../tools/e2e-advisor/risk-signal.ts";
+import { readPrivateRegularFile, writePrivateRegularFile } from "../../tools/e2e/private-file.ts";
+import type { E2eRiskSignal } from "../../tools/e2e/risk-signal.ts";
 
 export const RISK_SIGNAL_FILE = "risk-signal.json";
 
@@ -44,14 +41,14 @@ export function configuredEnvironment(
   env: NodeJS.ProcessEnv,
   resolveHead: (workspace: string) => string = checkedOutSha,
 ): RiskSignalEnvironment | null {
-  if (env.NEMOCLAW_E2E_RISK_SHADOW !== "1") return null;
+  if (!env.NEMOCLAW_E2E_EXPECTED_SHA) return null;
   const values = {
     artifactDir: env.E2E_ARTIFACT_DIR ?? "",
     jobId: env.E2E_TARGET_ID ?? "",
-    shardId: env.NEMOCLAW_E2E_RISK_SHARD ?? "",
-    expectedSha: env.NEMOCLAW_E2E_EXPECTED_SHA ?? "",
-    planHash: env.NEMOCLAW_E2E_RISK_PLAN_HASH ?? "",
-    correlationId: env.NEMOCLAW_E2E_RISK_CORRELATION ?? "",
+    shardId: env.NEMOCLAW_E2E_SHARD ?? "",
+    expectedSha: env.NEMOCLAW_E2E_EXPECTED_SHA,
+    planHash: env.NEMOCLAW_E2E_PLAN_HASH ?? "",
+    correlationId: env.NEMOCLAW_E2E_CORRELATION_ID ?? "",
   };
   if (!values.artifactDir) throw new Error("risk signal requires E2E_ARTIFACT_DIR");
   if (!JOB_PATTERN.test(values.jobId)) throw new Error("risk signal requires a safe E2E_TARGET_ID");

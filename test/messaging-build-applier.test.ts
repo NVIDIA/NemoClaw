@@ -606,9 +606,8 @@ describe("messaging-build-applier.mts: agent-install", () => {
       const trace = fs.readFileSync(tracePath, "utf-8");
       expect(trace).toContain("npm|view|@openclaw/discord@2026.6.10|dist.integrity");
       expect(trace).toContain("npm|pack|@openclaw/discord@2026.6.10|--pack-destination");
-      expect(trace).toContain("plugins|install|");
-      expect(trace).toContain("discord-2026.6.10.tgz|--pin");
-      expect(trace).toContain("ignore-scripts=true/true");
+      expect(trace).toContain("plugins|install|npm-pack:");
+      expect(trace).toContain("discord-2026.6.10.tgz|ignore-scripts=true/true");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -675,8 +674,8 @@ describe("messaging-build-applier.mts: agent-install", () => {
       expect(trace).toContain("npm|view|@openclaw/msteams@2026.6.10|dist.integrity");
       expect(trace).toContain("npm|view|@openclaw/msteams@2026.6.10|dist.tarball");
       expect(trace).toContain("npm|pack|@openclaw/msteams@2026.6.10|--pack-destination");
-      expect(trace).toContain("openclaw|plugins|install|");
-      expect(trace).toContain("msteams-2026.6.10.tgz|--pin");
+      expect(trace).toContain("openclaw|plugins|install|npm-pack:");
+      expect(trace).toContain("msteams-2026.6.10.tgz|");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -866,7 +865,8 @@ describe("messaging-build-applier.mts: agent-install", () => {
           expect(trace).toContain(`npm|view|${packageSpec}|dist.integrity`);
           expect(trace).toContain(`npm|view|${packageSpec}|dist.tarball`);
           expect(trace).toContain(`npm|pack|${packageSpec}|--pack-destination`);
-          expect(trace).toContain(`${archiveName}|--pin|||`);
+          expect(trace).toContain("plugins|install|npm-pack:");
+          expect(trace).toContain(`${archiveName}||||`);
         }
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
@@ -919,8 +919,8 @@ describe("messaging-build-applier.mts: agent-install", () => {
       expect(trace).toContain("npm|view|@openclaw/slack@2026.6.10|dist.integrity");
       expect(trace).toContain("npm|view|@openclaw/slack@2026.6.10|dist.tarball");
       expect(trace).toContain("npm|pack|@openclaw/slack@2026.6.10|--pack-destination");
-      expect(trace).toContain("openclaw|plugins|install|");
-      expect(trace).toContain("slack-2026.6.10.tgz|--pin");
+      expect(trace).toContain("openclaw|plugins|install|npm-pack:");
+      expect(trace).toContain("slack-2026.6.10.tgz|");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -1065,8 +1065,8 @@ describe("messaging-build-applier.mts: agent-install", () => {
         "const args = process.argv.slice(2);",
         'fs.appendFileSync(process.env.OPENCLAW_TRACE, `${args.join("|")}|${process.env.DISCORD_BOT_TOKEN || ""}|${process.env.BRAVE_API_KEY || ""}\\n`);',
         'if (args[0] === "plugins" && args[1] === "install") {',
-        '  if (!args[2].endsWith("discord-2026.6.10.tgz")) process.exit(41);',
-        '  if (args[3] !== "--pin") process.exit(47);',
+        '  if (!args[2].startsWith("npm-pack:") || !args[2].endsWith("discord-2026.6.10.tgz")) process.exit(41);',
+        "  if (args.length !== 3) process.exit(47);",
         "  process.exit(0);",
         "}",
         'if (args[0] === "doctor" && args[1] === "--fix" && args[2] === "--non-interactive") {',
@@ -1133,8 +1133,8 @@ describe("messaging-build-applier.mts: agent-install", () => {
       const trace = fs.readFileSync(tracePath, "utf-8");
       expect(trace).toContain("npm|view|@openclaw/discord@2026.6.10|dist.integrity||");
       expect(trace).toContain("npm|pack|@openclaw/discord@2026.6.10|--pack-destination||");
-      expect(trace).toContain("plugins|install|");
-      expect(trace).toContain("discord-2026.6.10.tgz|--pin||");
+      expect(trace).toContain("plugins|install|npm-pack:");
+      expect(trace).toContain("discord-2026.6.10.tgz||");
       expect(trace).toContain(
         "doctor|--fix|--non-interactive|openshell:resolve:env:DISCORD_BOT_TOKEN|openshell:resolve:env:BRAVE_API_KEY",
       );

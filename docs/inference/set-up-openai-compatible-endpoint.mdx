@@ -1,0 +1,131 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Set Up an OpenAI-Compatible Endpoint"
+sidebar-title: "OpenAI-Compatible Endpoint"
+description: "Connect NemoClaw to a self-hosted or custom OpenAI-compatible inference endpoint."
+description-agent: "Shows how to configure an OpenAI-compatible endpoint for NemoClaw, including raw model files and non-interactive onboarding."
+keywords: ["nemoclaw openai compatible endpoint", "custom inference endpoint", "self-hosted inference"]
+content:
+  type: "how_to"
+---
+
+Use the custom OpenAI-compatible provider for servers that implement `/v1/chat/completions` or a compatible `/v1/responses` API.
+Examples include vLLM, TensorRT-LLM, llama.cpp, LocalAI, and other compatible servers.
+
+The agent connects to `inference.local` inside the sandbox.
+OpenShell forwards that traffic to the endpoint configured during onboarding.
+
+## Start the Server
+
+Start the compatible server before onboarding.
+The following example starts vLLM on port `8000`.
+
+```bash
+vllm serve meta-llama/Llama-3.1-8B-Instruct --host 0.0.0.0 --port 8000
+```
+
+Port `8000` is one of NemoClaw's bundled host-gateway ports.
+
+<Warning>
+The examples on this page listen on every IPv4 interface so both host-side onboarding and a containerized gateway can reach the server.
+When the server does not require authentication, use a host firewall with default-deny inbound rules.
+Allow TCP port `8000` only from the OpenShell Docker subnet to its gateway address, keep loopback access, and deny the port on every other interface.
+Do not expose the port to your LAN or the internet.
+</Warning>
+
+## Run Onboarding
+
+Start the onboard wizard.
+
+```bash
+$$nemoclaw onboard
+```
+
+Select **Other OpenAI-compatible endpoint**.
+Enter the server base URL and the model ID reported by the server.
+
+Use a host-routable URL such as `http://localhost:8000/v1` when you want onboarding to verify the API, tool-calling, and streaming paths before gateway registration.
+To qualify for automatic rewriting, an HTTP endpoint URL must use the exact loopback host `localhost`, `127.0.0.1`, or `[::1]`.
+Automatic rewriting is limited to NemoClaw's bundled host-gateway ports: `8000`, `11434`, and `11435`.
+NemoClaw validates the entered URL from the host and registers the OpenShell gateway route through `host.openshell.internal:<port>` for sandbox traffic.
+Sandbox inference requests continue to use the base `inference.local` policy, so the managed compatible-endpoint route does not require adding the `local-inference` preset.
+NemoClaw leaves URLs without an explicit port, URLs on `:80` or another privileged port, and URLs on unsupported ports unchanged.
+Those URLs require a separately compatible runtime topology and network policy.
+This rewrite depends on an OpenShell topology that resolves `host.openshell.internal` inside the sandbox; if that bridge is unavailable, onboarding can still validate the host URL, but `$$nemoclaw <name> status` is the authoritative runtime check.
+Make sure the server listens on an address reachable from containers, such as `0.0.0.0`; a server bound only to `127.0.0.1` can still be unreachable from the sandbox route.
+
+If you manually enter a sandbox-internal alias such as `http://host.openshell.internal:8000/v1`, host-side endpoint probing is skipped during onboarding.
+Use a host-routable endpoint such as `localhost` when you need onboarding to verify the API, tool-calling, and streaming paths before gateway registration.
+Otherwise, verify the runtime route after onboarding with `$$nemoclaw <name> status` and a short agent request.
+
+The wizard prompts for an API key.
+Enter any non-empty placeholder such as `dummy` when the server does not require authentication.
+
+Refer to [Choose a Compatible Inference API](choose-compatible-inference-api) for the probe order and runtime API selection.
+
+## Serve a Raw Model File
+
+Start a compatible server for a raw model file instead of passing the file path to NemoClaw.
+The Ollama provider accepts Ollama model tags and does not accept a raw `.gguf` path.
+
+The following example starts `llama-server` with a GGUF model.
+
+```bash
+llama-server \
+  -m /models/NVIDIA-Nemotron3-Nano-4B-Q4_K_M.gguf \
+  --host 0.0.0.0 \
+  --port 8000 \
+  -c 16384 \
+  -ngl 999 \
+  --parallel 1 \
+  --chat-template chatml
+```
+
+During onboarding, select **Other OpenAI-compatible endpoint**.
+Enter the server base URL and the model ID returned by `/v1/models`.
+Use the model ID, not the raw file path.
+
+For the example above, the server commonly reports `NVIDIA-Nemotron3-Nano-4B-Q4_K_M.gguf` as its model ID.
+
+## Run Non-Interactive Onboarding
+
+Start the endpoint before running the non-interactive command because onboarding validates the server.
+Set `NEMOCLAW_REASONING=true` when the endpoint serves a reasoning-only model.
+
+<Warning>
+Reasoning mode validates only `/v1/chat/completions` and does not verify tool calling or streaming.
+Enable it only when the endpoint supports the capabilities your agent requires.
+</Warning>
+
+```bash
+NEMOCLAW_PROVIDER=custom \
+  NEMOCLAW_ENDPOINT_URL=http://localhost:8000/v1 \
+  NEMOCLAW_MODEL=meta-llama/Llama-3.1-8B-Instruct \
+  COMPATIBLE_API_KEY=dummy \
+  $$nemoclaw onboard --non-interactive
+```
+
+For the raw model example, use the ID returned by `/v1/models`.
+
+```bash
+NEMOCLAW_PROVIDER=custom \
+  NEMOCLAW_ENDPOINT_URL=http://localhost:8000/v1 \
+  NEMOCLAW_MODEL=NVIDIA-Nemotron3-Nano-4B-Q4_K_M.gguf \
+  COMPATIBLE_API_KEY=dummy \
+  $$nemoclaw onboard --non-interactive
+```
+
+| Variable | Purpose |
+|---|---|
+| `NEMOCLAW_PROVIDER` | Set to `custom`. |
+| `NEMOCLAW_ENDPOINT_URL` | Base URL of the server. |
+| `NEMOCLAW_MODEL` | Model ID reported by the server. |
+| `NEMOCLAW_REASONING` | Enables reasoning-only validation with the case-insensitive true values `true`, `1`, `yes`, and `y`. |
+| `COMPATIBLE_API_KEY` | Endpoint API key, or a non-empty placeholder when authentication is not required. |
+
+## Related Topics
+
+- [Choose a Compatible Inference API](choose-compatible-inference-api) to select Chat Completions or Responses.
+- [Meet Custom Endpoint Security Requirements](custom-endpoint-security) before saving a public custom endpoint.
+- [Verify the Inference Route](../validate-inference/verify-inference-route) after setup.

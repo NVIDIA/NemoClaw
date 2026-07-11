@@ -1,0 +1,51 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Configure OpenClaw Model Capabilities"
+sidebar-title: "Configure Model Capabilities"
+description: "Declare reasoning mode and input modalities for an OpenClaw model in a NemoClaw sandbox."
+description-agent: "Configures OpenClaw reasoning mode and text or image input support. Use when onboarding a reasoning or vision-capable model."
+keywords: ["nemoclaw reasoning model", "nemoclaw vision model", "NEMOCLAW_INFERENCE_INPUTS"]
+content:
+  type: "how_to"
+---
+
+Declare model capabilities before onboarding so NemoClaw can bake them into the OpenClaw configuration.
+Use these settings only when the selected model and provider support the capability you declare.
+
+## Configure Reasoning Mode
+
+Set `NEMOCLAW_REASONING=true` for a reasoning model.
+The default is `false`.
+
+```bash
+export NEMOCLAW_REASONING=true
+nemoclaw onboard
+```
+
+For a compatible Anthropic endpoint, reasoning mode also skips the onboarding streaming check intended for models that emit normal response content.
+Agent requests still use the streaming path, so confirm the endpoint's runtime behavior separately.
+
+## Configure Image Input
+
+Set `NEMOCLAW_INFERENCE_INPUTS=text,image` only when the model accepts image input through the selected provider.
+The default is `text`.
+
+```bash
+export NEMOCLAW_INFERENCE_INPUTS=text,image
+nemoclaw onboard
+```
+
+During interactive onboarding, NemoClaw prompts for **Text only** or **Text + Image** when the discovered model name appears multimodal and `NEMOCLAW_INFERENCE_INPUTS` is not already valid.
+Non-interactive onboarding uses the environment value or the default `text` setting.
+
+## Apply Capability Changes
+
+These settings are build-time inputs.
+Recreate an existing sandbox after changing either value.
+
+```bash
+nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
+```
+
+For context-window and output-token settings, refer to [Configure Model Limits](configure-model-limits).

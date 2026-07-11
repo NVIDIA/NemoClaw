@@ -15,6 +15,7 @@ audience: ["maintainers", "contributors"]
 status: "maintained"
 exclude-from-skills-gen: true
 ---
+import { AgentOnly } from "../_components/AgentGuide";
 Use this matrix to maintain model and provider audit evidence for NemoClaw agent behavior.
 Use it to determine whether a supported model works as an agent model, not only whether it can answer a one-shot chat prompt.
 
@@ -156,10 +157,12 @@ Do not leave placeholder text in a completed row.
 ## Related Artifacts
 
 - `nemoclaw-blueprint/model-specific-setup/README.md` documents where model-specific setup belongs once an intervention is justified.
-- `docs/inference/tool-calling-reliability` explains the local inference tool-call failure mode that audit rows should classify separately from provider connectivity.
+- `docs/reference/troubleshooting#tool-calls-appear-as-assistant-text` explains the local inference tool-call failure mode that audit rows should classify separately from provider connectivity.
 
 ## Next Steps
 
-- [Inference Options](inference-options) for choosing a provider path before adding audit evidence.
-- [Tool-Calling Reliability](tool-calling-reliability) for separating provider connectivity from model tool-use behavior.
-- [Architecture](../reference/architecture) for the model-specific setup registry location.
+- [Choose an Inference Provider](../learn-and-choose/choose-inference-provider) for choosing a provider path before adding audit evidence.
+<AgentOnly variant="openclaw">
+- [Troubleshooting](../../reference/troubleshooting#tool-calls-appear-as-assistant-text) for separating provider connectivity from model tool-use behavior.
+</AgentOnly>
+- [Architecture](../../reference/architecture) for the model-specific setup registry location.

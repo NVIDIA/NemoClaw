@@ -1,0 +1,55 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Meet Custom Endpoint Security Requirements"
+sidebar-title: "Endpoint Security"
+description: "Understand credential isolation and URL validation requirements for custom NemoClaw inference endpoints."
+description-agent: "Explains custom endpoint credential isolation, SSRF validation, address restrictions, and the host service exception."
+keywords: ["nemoclaw endpoint security", "inference endpoint ssrf", "custom endpoint validation"]
+content:
+  type: "concept"
+---
+
+NemoClaw keeps provider credentials on the host and validates explicit custom endpoint URLs before saving them through security-sensitive configuration paths.
+
+## Protect Provider Credentials
+
+The agent inside the sandbox sends requests to `inference.local` instead of connecting to the upstream endpoint directly.
+OpenShell forwards the traffic and injects the provider credential at egress.
+The sandbox does not receive the raw API key.
+
+Use `COMPATIBLE_API_KEY` for a custom OpenAI-compatible endpoint.
+Use `COMPATIBLE_ANTHROPIC_API_KEY` for a custom Anthropic-compatible endpoint.
+Both onboarding flows require a non-empty value, even when the upstream server does not authenticate requests.
+Use a non-empty placeholder such as `dummy` for an unauthenticated local server.
+
+## Understand URL Validation
+
+Explicit endpoint URLs saved through Hermes Provider setup, `inference set`, host-side `config set`, or a direct blueprint run must pass host-side server-side request forgery validation.
+NemoClaw rejects loopback, link-local, private, and internal addresses in these paths.
+It also rejects public hostnames that resolve to a private address.
+
+Managed provider defaults that do not provide an explicit custom endpoint through these paths are unaffected.
+
+## Use a Public Endpoint
+
+For a public HTTP URL, NemoClaw stores the validated IP address so the downstream runtime cannot resolve the hostname again and reach another address.
+
+NemoClaw rejects DNS-backed HTTPS URLs in these paths because it cannot pin the downstream peer address while preserving TLS Server Name Indication and host validation across the OpenShell runtime boundary.
+Use an HTTPS IP-literal endpoint with a certificate valid for that address.
+Use a public HTTP endpoint only when your deployment permits unencrypted traffic.
+
+## Use the Sandbox Host Alias
+
+NemoClaw accepts `http://host.openshell.internal:<port>` only when the URL includes an explicit port from `1024` through `65535`.
+This narrow exception supports sandbox-to-host inference routes and is not a general bypass for private endpoints.
+
+For example, a containerized gateway can commonly reach a local server at `http://host.openshell.internal:8000/v1`.
+Because this name is a sandbox-internal alias, onboarding skips the host-side endpoint probe.
+Verify the runtime route after onboarding when you use it.
+
+## Related Topics
+
+- [Set Up an OpenAI-Compatible Endpoint](set-up-openai-compatible-endpoint) for OpenAI-compatible servers.
+- [Set Up an Anthropic-Compatible Endpoint](set-up-anthropic-compatible-endpoint) for agent-specific compatible routing.
+- [Verify the Inference Route](../validate-inference/verify-inference-route) after setup.

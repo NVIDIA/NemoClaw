@@ -341,8 +341,8 @@ describe("sandbox provisioning: non-messaging OpenClaw plugins", () => {
       expect(calls).toContain(
         "npm pack https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.6.10.tgz --pack-destination",
       );
-      expect(calls).toContain("plugins install ");
-      expect(calls).toContain("brave-plugin-2026.6.10.tgz --pin|BRAVE_API_KEY=");
+      expect(calls).toContain("plugins install npm-pack:");
+      expect(calls).toContain("brave-plugin-2026.6.10.tgz|BRAVE_API_KEY=");
       expect(calls).toContain(
         "doctor --fix --non-interactive|BRAVE_API_KEY=openshell:resolve:env:BRAVE_API_KEY",
       );

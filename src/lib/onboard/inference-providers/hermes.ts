@@ -169,7 +169,12 @@ export async function setupHermesProviderInference(
   }
 
   verifyInferenceRoute(provider, model);
-  verifyOnboardInferenceSmoke({ provider, model, endpointUrl: resolvedEndpointUrl, credentialEnv });
+  await verifyOnboardInferenceSmoke({
+    provider,
+    model,
+    endpointUrl: resolvedEndpointUrl,
+    credentialEnv,
+  });
   if (sandboxName) {
     registry.updateSandbox(sandboxName, { model, provider });
   }
