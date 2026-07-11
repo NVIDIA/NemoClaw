@@ -4,6 +4,7 @@
 import os from "node:os";
 import path from "node:path";
 
+import { dockerRemoveVolumesByPrefix } from "../../adapters/docker/volume";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { DASHBOARD_PORT } from "../../core/ports";
 import {
@@ -26,14 +27,23 @@ const DASHBOARD_FORWARD_PORT = String(DASHBOARD_PORT);
 // `nemoclaw-<port>` sandbox would read the default instance's pid file and
 // stop the wrong host gateway process. Returns null when the gateway name is
 // outside the NemoClaw namespace (the caller then keeps the defaults).
-function resolvePerGatewayStateDir(gatewayName: string): string | null {
+function resolvePerGatewayState(gatewayName: string): { port: number; stateDir: string } | null {
   const port = resolveGatewayPortFromName(gatewayName);
   if (port === null) return null;
   const configured = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
   if (configured && configured.trim()) {
-    return path.resolve(configured.trim());
+    return { port, stateDir: path.resolve(configured.trim()) };
   }
-  return path.join(os.homedir(), ".local", "state", "nemoclaw", resolveGatewayStateDirName(port));
+  return {
+    port,
+    stateDir: path.join(
+      os.homedir(),
+      ".local",
+      "state",
+      "nemoclaw",
+      resolveGatewayStateDirName(port),
+    ),
+  };
 }
 
 export function selectGatewayForSandboxDestroy(
@@ -66,9 +76,6 @@ export function cleanupGatewayAfterLastSandbox(
     runOpenshell ??
     (require("../../adapters/openshell/runtime") as { runOpenshell: DestroyRunOpenshell })
       .runOpenshell;
-  const { dockerRemoveVolumesByPrefix } = require("../../adapters/docker") as {
-    dockerRemoveVolumesByPrefix: (prefix: string, opts?: { ignoreError?: boolean }) => void;
-  };
 
   openshell(["forward", "stop", DASHBOARD_FORWARD_PORT], {
     ignoreError: true,
@@ -79,23 +86,51 @@ export function cleanupGatewayAfterLastSandbox(
   // ports the live openshell tracks; this catches orphans whose openshell
   // record was lost across upgrades or failed onboards.
   stopStaleDashboardListeners();
-  if (process.platform === "linux") {
+  if (process.platform === "linux" || process.platform === "darwin") {
     // Sandbox destroy is conservative: only stop the host gateway whose PID
     // file we wrote during onboard. Disable the pgrep sweep so a stray
     // openshell-gateway under another user/project on the same host (rare but
     // possible on shared hosts) is not torn down by a NemoClaw `destroy`.
     // The uninstall path keeps the broader sweep on (run-plan.ts). The state
     // dir is per-gateway-name so a destroy of `nemoclaw-<port>` reads the
-    // per-port pid file rather than defaulting to the bare instance's.
-    const perGatewayStateDir = resolvePerGatewayStateDir(gatewayName);
-    const stopOptions: { usePgrepFallback: false; stateDir?: string; pidFile?: string } = {
+    // per-port pid file rather than defaulting to the bare instance's. The
+    // expected gateway name and port also gate `openshell gateway start`
+    // cmdlines so a stale pid file cannot kill another gateway instance.
+    const perGatewayState = resolvePerGatewayState(gatewayName);
+    const stopOptions: {
+      openShellGatewayName?: string;
+      openShellGatewayPort?: number;
+      preserveRuntimeFilesOnNonMatching: true;
+      usePgrepFallback: false;
+      stateDir?: string;
+      pidFile?: string;
+    } = {
+      preserveRuntimeFilesOnNonMatching: true,
       usePgrepFallback: false,
     };
-    if (perGatewayStateDir) {
-      stopOptions.stateDir = perGatewayStateDir;
-      stopOptions.pidFile = path.join(perGatewayStateDir, "openshell-gateway.pid");
+    if (perGatewayState) {
+      stopOptions.stateDir = perGatewayState.stateDir;
+      stopOptions.pidFile = path.join(perGatewayState.stateDir, "openshell-gateway.pid");
+      stopOptions.openShellGatewayName = gatewayName;
+      stopOptions.openShellGatewayPort = perGatewayState.port;
     }
-    stopHostGatewayProcesses({}, stopOptions);
+    const stopResult = stopHostGatewayProcesses({}, stopOptions);
+    const unverifiablePids = [...new Set(stopResult.skippedNonMatchingPids)];
+    if (unverifiablePids.length > 0) {
+      throw new Error(
+        `Refusing cleanup because PID-file process(es) ${unverifiablePids.join(", ")} do not prove ownership of gateway '${gatewayName}'. Inspect the process and per-gateway PID file, stop only the matching gateway listener, then rerun destroy.`,
+      );
+    }
+    const failedPids = [...new Set([...stopResult.failed, ...stopResult.sudoRemediationPids])];
+    if (failedPids.length > 0) {
+      const remediation =
+        stopResult.sudoRemediationPids.length > 0
+          ? ` Retry with sufficient permissions for PID(s) ${stopResult.sudoRemediationPids.join(", ")}, then rerun destroy.`
+          : " Retry destroy after stopping the listed process(es).";
+      throw new Error(
+        `Failed to stop the owned host gateway process(es) for '${gatewayName}': ${failedPids.join(", ")}.${remediation}`,
+      );
+    }
   }
   /**
    * SOURCE_OF_TRUTH
@@ -104,15 +139,21 @@ export function cleanupGatewayAfterLastSandbox(
    * an existing installation is being recovered or removed.
    * Source-fix constraint: NemoClaw cannot add the modern verb to historical
    * OpenShell builds, so cleanup tries their legacy verb best-effort.
-   * Regression proof: destroy-gateway-cleanup.test.ts covers successful remove
-   * and remove-nonzero fallback while preserving Docker-volume cleanup.
+   * Regression proof: test/cli/destroy-gateway-cleanup.test.ts covers successful
+   * remove and remove-nonzero fallback while preserving Docker-volume cleanup.
    * Removal condition: remove the fallback when every supported recovery and
    * teardown entry point upgrades OpenShell to the blueprint minimum (currently
    * 0.0.72) before this function can run.
    *
    * macOS previously ran only `gateway destroy`, which current OpenShell
    * rejects as an unrecognized subcommand (#6569). The host-process stop above
-   * remains Linux-only.
+   * now uses the same PID-file-scoped reaper as Linux so final unattended
+   * macOS destroys release the Docker-driver gateway listener (#4662).
+   * Removal tracker: #6639. Remove the macOS reliance on this host-process
+   * fallback after OpenShell releases the Docker-driver listener fix, NemoClaw
+   * raises its supported OpenShell floor to that fixed build, and a real macOS
+   * Docker-driver sandbox-operations run proves final unattended destroy
+   * releases the gateway port without this fallback.
    */
   const removeResult = openshell(["gateway", "remove", gatewayName], {
     ignoreError: true,
