@@ -336,7 +336,7 @@ const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
 const YAML = require(${yamlPath});
 const { loadAgent } = require(${agentDefsPath});
-
+require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "docker-driver-platform.ts"))}).isLinuxDockerDriverGatewayEnabled = () => false;
 const nonSlackMessagingEnvKeys = [
   "DISCORD_BOT_TOKEN",
   "DISCORD_SERVER_ID",
