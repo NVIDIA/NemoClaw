@@ -771,6 +771,7 @@ describe("handleProviderInferenceState", () => {
 
   it("revalidates recovered identity before reusing a gateway credential on messaging resume", async () => {
     const session = createSession({
+      sandboxName: "my-assistant",
       provider: "compatible-endpoint",
       model: "nvidia/nemotron",
       endpointUrl: "https://integrate.api.nvidia.com/v1",

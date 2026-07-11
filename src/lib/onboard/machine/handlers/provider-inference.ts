@@ -455,7 +455,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       }
     } else {
       await deps.startRecordedStep("provider_selection");
-      const recoverRecordedProvider = authoritativeResumeConfig || providerRecovery.shouldRecover();
+      const recoverRecordedProvider = providerRecovery.shouldRecover();
       const selection = await withProviderSelectionTrace(
         sandboxName,
         (agent as { name?: string } | null)?.name,
