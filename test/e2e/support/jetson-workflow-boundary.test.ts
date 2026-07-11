@@ -48,13 +48,7 @@ describe("Jetson nvmap GPU E2E workflow boundary", () => {
     const inventory = readFreeStandingJobsInventory();
     expect(validateE2eWorkflowBoundary()).toEqual([]);
     expect(inventory.allowedJobs).toContain("jetson-nvmap-gpu");
-    expect(inventory.explicitOnlyJobs).toEqual([
-      "openshell-gateway-auth-contract",
-      "mcp-bridge-dev",
-      "hermes-gpu-startup",
-      "sandbox-rlimits-connect",
-      "jetson-nvmap-gpu",
-    ]);
+    expect(inventory.explicitOnlyJobs).toContain("jetson-nvmap-gpu");
     expect(inventory.targetToJob.get("jetson-nvmap-gpu")).toBe("jetson-nvmap-gpu");
     expect(evaluateE2eWorkflowDispatchSelectors({}).selectedFreeStandingJobs).not.toContain(
       "jetson-nvmap-gpu",

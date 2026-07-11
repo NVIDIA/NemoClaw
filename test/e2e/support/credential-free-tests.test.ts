@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   CREDENTIAL_FREE_TEST_TAG,
   type CredentialFreeTestModule,
+  credentialFreeTestProjectForFile,
   credentialFreeTestRowFromModule,
   discoverCredentialFreeTestRows,
   discoverCredentialFreeTests,
@@ -29,6 +30,17 @@ function module(overrides: Partial<CredentialFreeTestModule> = {}): CredentialFr
 }
 
 describe("credential-free test discovery", () => {
+  it.each([
+    ["test/e2e/live/example.test.ts", "e2e-live"],
+    ["test/e2e/live/nested/example.test.ts", "e2e-live"],
+    ["test/example.test.ts", "integration"],
+    ["test/nested/example.test.js", "integration"],
+    ["test/e2e/support/example.test.ts", undefined],
+    ["src/example.test.ts", undefined],
+  ])("classifies %s in the expected Vitest project", (file, expected) => {
+    expect(credentialFreeTestProjectForFile(file)).toBe(expected);
+  });
+
   it("derives deterministic safe matrix rows without workflow capabilities", () => {
     const rows = discoverCredentialFreeTestRows([
       module({ file: "test/zeta.test.ts", project: "integration" }),

@@ -34,7 +34,19 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 const MODULE_TAG_BODY_PATTERN = /^@module-tag[\t ]+([A-Za-z0-9/_-]+)$/u;
 const SAFE_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const SAFE_PATH_SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/;
+const E2E_LIVE_CREDENTIAL_FREE_TEST_PATTERN =
+  /^test\/e2e\/live\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.test\.ts$/;
+const INTEGRATION_CREDENTIAL_FREE_TEST_PATTERN =
+  /^test\/(?!e2e\/)(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.test\.(?:js|ts)$/;
 const SUPPORTED_PROJECTS = new Set<CredentialFreeTestProject>(["e2e-live", "integration"]);
+
+export function credentialFreeTestProjectForFile(
+  file: string,
+): CredentialFreeTestProject | undefined {
+  if (E2E_LIVE_CREDENTIAL_FREE_TEST_PATTERN.test(file)) return "e2e-live";
+  if (INTEGRATION_CREDENTIAL_FREE_TEST_PATTERN.test(file)) return "integration";
+  return undefined;
+}
 
 function isInside(parent: string, child: string): boolean {
   const relative = path.relative(parent, child);
@@ -78,10 +90,11 @@ function validateTestFile(file: string, project: CredentialFreeTestProject): voi
     throw new Error(`Credential-free test path must be a safe repo-relative test file: ${file}`);
   }
 
-  if (project === "e2e-live" && !/^test\/e2e\/live\/.+\.test\.ts$/.test(file)) {
+  const inferredProject = credentialFreeTestProjectForFile(file);
+  if (project === "e2e-live" && inferredProject !== "e2e-live") {
     throw new Error(`e2e-live credential-free test must live under test/e2e/live/: ${file}`);
   }
-  if (project === "integration" && /^test\/e2e\//.test(file)) {
+  if (project === "integration" && inferredProject !== "integration") {
     throw new Error(`integration credential-free test must not live under test/e2e/: ${file}`);
   }
 }

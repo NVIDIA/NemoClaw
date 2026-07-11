@@ -43,6 +43,7 @@ import {
 } from "../advisors/session.mts";
 import {
   CREDENTIAL_FREE_TEST_TAG,
+  credentialFreeTestProjectForFile,
   credentialFreeTestRowFromModule,
   discoverCredentialFreeTests,
 } from "../e2e/credential-free-tests.mts";
@@ -58,10 +59,6 @@ const E2E_ALL_ID = "e2e-all";
 const REGISTRY_LIVE_ENTRYPOINT = "test/e2e/live/registry-targets.test.ts";
 const FREE_STANDING_LIVE_TEST_PATTERN = /^test\/e2e\/live\/[^/]+\.test\.ts$/;
 const FREE_STANDING_LIVE_FILE_PATTERN = /^test\/e2e\/live\/[^/]+\.ts$/;
-const E2E_LIVE_CREDENTIAL_FREE_TEST_PATTERN =
-  /^test\/e2e\/live\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.test\.ts$/;
-const INTEGRATION_CREDENTIAL_FREE_TEST_PATTERN =
-  /^test\/(?!e2e\/)(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.test\.(?:js|ts)$/;
 const ALLOWED_WORKFLOWS = new Set<string>([E2E_WORKFLOW]);
 // Target IDs and job IDs are embedded into the dispatch command we hand to
 // users; restrict them to shell-safe allowlists so a hallucinated id can never
@@ -508,14 +505,6 @@ function readE2eWorkflowText(): string | undefined {
   }
 }
 
-function credentialFreeTestProjectForChangedFile(
-  file: string,
-): "e2e-live" | "integration" | undefined {
-  if (E2E_LIVE_CREDENTIAL_FREE_TEST_PATTERN.test(file)) return "e2e-live";
-  if (INTEGRATION_CREDENTIAL_FREE_TEST_PATTERN.test(file)) return "integration";
-  return undefined;
-}
-
 function buildE2eTargetNormalizationContext(
   e2eWorkflowText = readE2eWorkflowText(),
   changedFiles: readonly string[] = [],
@@ -526,7 +515,7 @@ function buildE2eTargetNormalizationContext(
   const liveTestToJobs = new Map<string, string[]>();
   const changedCredentialFreeTestProjects = new Map(
     changedFiles.flatMap((file) => {
-      const project = credentialFreeTestProjectForChangedFile(file);
+      const project = credentialFreeTestProjectForFile(file);
       return project ? [[file, project] as const] : [];
     }),
   );
