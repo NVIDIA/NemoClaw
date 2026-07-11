@@ -26,7 +26,7 @@ NemoClaw v0.0.80 upgrades Hermes to the v0.18 line with richer Slack rendering, 
 - OpenRouter runtime traffic now flows through a host-local NemoClaw adapter that injects the OpenRouter attribution headers `HTTP-Referer` and `X-OpenRouter-Title`.
   The adapter binds to the OpenShell-held `OPENROUTER_API_KEY` by SHA-256 hash, never stores the key, and listens on port `11437` by default; set `NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT` to use a different host port.
   OpenRouter-backed LangChain Deep Agents Code sandboxes now use Deep Agents' native `openrouter` provider instead of OpenAI request shaping.
-  For more information, refer to [NemoClaw Inference Options](../inference/inference-options), [NemoClaw CLI Commands Reference](../reference/commands), and [Platform Support and Launch Claims](../reference/platform-support).
+  For more information, refer to [Use OpenRouter](../inference/hosted-inference/use-openrouter), [NemoClaw CLI Commands Reference](../reference/commands), and [Platform Support and Launch Claims](../reference/platform-support).
 - NemoClaw can import a host corporate proxy root CA into the sandbox trust bundle so external channel endpoints such as `api.telegram.org` verify TLS behind a corporate MITM proxy.
   Set `NEMOCLAW_CORPORATE_CA_BUNDLE` before onboarding, or rely on detection of the conventional CA variables and host administrator anchor directories.
   NemoClaw appends the validated CA and never replaces the OpenShell root, and you can opt out with `NEMOCLAW_CORPORATE_CA_IMPORT=0`.
@@ -40,7 +40,7 @@ NemoClaw v0.0.80 upgrades Hermes to the v0.18 line with richer Slack rendering, 
 - Onboarding and recovery preserve intent across more interrupted flows.
   Live inference recovery is scoped to the sandbox, pending route reservations survive a not-ready recreate, re-onboarding probes registered extra providers exactly, and compatible provider recovery is preserved through the rebuild handoff.
   Docker health checks no longer trust a stale gateway PID after the start supervisor exits, the installer's pre-upgrade backup abort message now names skipped sandboxes as well as failures, and the running Local vLLM provider entry drops the experimental label on DGX Spark and DGX Station.
-  For more information, refer to [NemoClaw Quickstart with OpenClaw](../get-started/quickstart), [NemoClaw CLI Commands Reference](../reference/commands), [Set Up Self-Hosted Inference Servers](../inference/local-compatible-inference-setup), and [Architecture Details](../reference/architecture).
+  For more information, refer to [NemoClaw Quickstart with OpenClaw](../get-started/quickstart), [NemoClaw CLI Commands Reference](../reference/commands), [Choose a Local Inference Server](../inference/local-inference/choose-local-inference-server), and [Architecture Details](../reference/architecture).
 - Terminal and MCP startup behavior is more robust.
   Hermes sandbox connections automatically apply a light-compatible terminal skin when the host terminal reports a light background, unless you set a Hermes theme override, and MCP stdio servers launched through `npx` now start non-interactively so a first-use install prompt no longer blocks the MCP `initialize` handshake.
   For more information, refer to [Set Up MCP Servers](/user-guide/openclaw/manage-sandboxes/set-up-mcp-servers) and [NemoClaw Quickstart with Hermes](/user-guide/hermes/get-started/quickstart).
