@@ -339,11 +339,11 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
       } else {
         wrapperLines.push("unset OPENCLAW_GATEWAY_URL");
       }
-      if (opts.gatewayToken !== undefined) {
-        wrapperLines.push(`export OPENCLAW_GATEWAY_TOKEN=${JSON.stringify(opts.gatewayToken)}`);
-      } else {
-        wrapperLines.push("unset OPENCLAW_GATEWAY_TOKEN");
-      }
+      wrapperLines.push(
+        opts.gatewayToken !== undefined
+          ? `export OPENCLAW_GATEWAY_TOKEN=${JSON.stringify(opts.gatewayToken)}`
+          : "unset OPENCLAW_GATEWAY_TOKEN",
+      );
       wrapperLines.push(
         opts.insecurePublicWs !== undefined
           ? `export OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=${JSON.stringify(opts.insecurePublicWs)}`
