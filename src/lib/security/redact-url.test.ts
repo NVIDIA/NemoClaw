@@ -59,6 +59,16 @@ describe("URL redaction", () => {
     expect(persistedResult).not.toContain(encodedSecret);
   });
 
+  it.each([
+    "file:///tmp/provider.json",
+    "custom+agent://runtime.example/session",
+  ])("redacts query secrets for the non-network URI %s", (baseUrl) => {
+    const value = `${baseUrl}?model=nvapi-abcdefghijklmnopqrstuvwxyz&keep=yes`;
+
+    expect(redact(value)).toContain("model=****&keep=yes");
+    expect(redactUrl(value)).toContain("model=%3CREDACTED%3E&keep=yes");
+  });
+
   it("preserves a credentialed IPv6 host while redacting its userinfo", () => {
     const result = redact("proxy https://ipv6-user:ipv6-password@[::1]:8443/path failed");
 

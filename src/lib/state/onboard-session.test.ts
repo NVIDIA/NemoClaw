@@ -592,8 +592,8 @@ describe("onboard session", () => {
     expect(loaded.migratedLegacyValueHashes?.NVIDIA_API_KEY).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it("serializes missing and explicit-null credentialEnv identically (#6224)", () => {
-    // #6224 contract gap: the schema cannot distinguish "never prompted",
+  it("serializes missing and explicit-null credentialEnv identically (#6228)", () => {
+    // #6228 contract gap: the schema cannot distinguish "never prompted",
     // "user declined", and "explicitly cleared" once they become null.
     session.saveSession(session.createSession());
     const unset = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf8")).credentialEnv;

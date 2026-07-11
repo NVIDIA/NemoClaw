@@ -7,9 +7,9 @@ type SensitiveKeyDetector = (key: string) => boolean;
 type StandaloneSecretRedactor = (text: string, replacement: string) => string;
 type MalformedUrlRedactor = (text: string) => string | null;
 
-// Proxy variables and diagnostics are not limited to lowercase HTTP(S) URLs.
-// Match any RFC-style URI scheme so credentials in uppercase or SOCKS proxy
-// URLs receive the same URL-parser-backed redaction.
+// Redaction intentionally accepts every RFC-style URI scheme. Proxy and
+// custom-scheme URLs can carry credentials too; an allowlist here would create
+// a bypass rather than enforce a network boundary.
 export const URL_TOKEN_PATTERN = /[a-z][a-z0-9+.-]*:\/\/[^\s'"]+/gi;
 
 const URL_TRAILING_DELIMITERS = ")]}>.,;:!?";
@@ -64,9 +64,10 @@ function parseUrlTokenForRedaction(value: string): { url: URL; suffix: string } 
   const parsed = parseUrlToken(value);
   if (parsed) return parsed;
 
-  // Avoid repeating URL construction for arbitrarily long malformed wrapper
-  // suffixes. Strip the remaining delimiter run in one linear pass, then make
-  // one final parse attempt so encoded query secrets still reach redaction.
+  // After the bounded detailed parse, strip an arbitrarily long delimiter run
+  // in one linear pass and make one final parse attempt. This path stays
+  // deliberately silent: logging malformed input from a redactor could leak
+  // the very credential it is trying to contain.
   let suffixStart = value.length;
   while (suffixStart > 0 && URL_TRAILING_DELIMITERS.includes(value.charAt(suffixStart - 1))) {
     suffixStart -= 1;
@@ -157,6 +158,8 @@ export function redactUrlTokenFull(
     parsed.url.password = "";
   }
   redactUrlSearchParams(parsed.url, "<REDACTED>", isSensitiveKey, redactStandaloneSecrets);
+  // Endpoint fragments are never sent to the server and can contain OAuth
+  // credentials, so persistence intentionally drops them instead of logging.
   parsed.url.hash = "";
   return `${parsed.url.toString()}${parsed.suffix}`;
 }
