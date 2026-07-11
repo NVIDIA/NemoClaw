@@ -107,6 +107,25 @@ function parseUrlToken(value: string): { url: URL; suffix: string } | null {
   return null;
 }
 
+function parseUrlTokenForRedaction(value: string): { url: URL; suffix: string } | null {
+  const parsed = parseUrlToken(value);
+  if (parsed) return parsed;
+
+  // Avoid repeating URL construction for arbitrarily long malformed wrapper
+  // suffixes. Strip the remaining delimiter run in one linear pass, then make
+  // one final parse attempt so encoded query secrets still reach redaction.
+  let suffixStart = value.length;
+  while (suffixStart > 0 && URL_TRAILING_DELIMITERS.includes(value.charAt(suffixStart - 1))) {
+    suffixStart -= 1;
+  }
+  if (suffixStart === value.length) return null;
+  try {
+    return { url: new URL(value.slice(0, suffixStart)), suffix: value.slice(suffixStart) };
+  } catch {
+    return null;
+  }
+}
+
 function redactMalformedUrlUserinfo(value: string, replacement: string | null): string {
   const schemeEnd = value.indexOf("://") + 3;
   if (schemeEnd < 3) return value;
@@ -121,17 +140,28 @@ function redactMalformedUrlUserinfo(value: string, replacement: string | null): 
   return `${value.slice(0, schemeEnd)}${redactedUserinfo}${authority.slice(userinfoEnd + 1)}${value.slice(authorityEnd)}`;
 }
 
+function isSensitiveUrlQueryKey(key: string): boolean {
+  return isSensitiveKey(key) || /(^|[-_])(?:signature|sig|token|auth|access_token)$/i.test(key);
+}
+
+function redactUrlSearchParams(url: URL, replacement: string): void {
+  const redactedSearchParams = new URLSearchParams();
+  for (const [key, queryValue] of url.searchParams) {
+    redactedSearchParams.append(
+      key,
+      isSensitiveUrlQueryKey(key) ? replacement : redactStandaloneSecrets(queryValue, replacement),
+    );
+  }
+  url.search = redactedSearchParams.toString();
+}
+
 function redactUrlPartial(value: string): string {
   if (typeof value !== "string" || value.length === 0) return value;
-  const parsed = parseUrlToken(value);
+  const parsed = parseUrlTokenForRedaction(value);
   if (!parsed) return redactMalformedUrlUserinfo(value, "****");
   if (parsed.url.username) parsed.url.username = "****";
   if (parsed.url.password) parsed.url.password = "****";
-  for (const key of [...parsed.url.searchParams.keys()]) {
-    if (/(^|[-_])(?:signature|sig|token|auth|access_token)$/i.test(key)) {
-      parsed.url.searchParams.set(key, "****");
-    }
-  }
+  redactUrlSearchParams(parsed.url, "****");
   return `${parsed.url.toString()}${parsed.suffix}`;
 }
 
@@ -252,8 +282,7 @@ export function redactFull(text: string): string {
   return result;
 }
 
-/** Redact self-identifying tokens and secret blocks without rewriting surrounding structure. */
-export function redactStandaloneSecretsFull(text: string): string {
+function redactStandaloneSecrets(text: string, replacement: string): string {
   let result = text;
   for (const pattern of [
     ...TOKEN_PREFIX_PATTERNS,
@@ -261,9 +290,14 @@ export function redactStandaloneSecretsFull(text: string): string {
     ...SECRET_BLOCK_PATTERNS,
   ]) {
     pattern.lastIndex = 0;
-    result = result.replace(pattern, "<REDACTED>");
+    result = result.replace(pattern, replacement);
   }
-  return result.replace(/\/bot[^/\s]+\//g, "/bot<REDACTED>/");
+  return result.replace(/\/bot[^/\s]+\//g, `/bot${replacement}/`);
+}
+
+/** Redact self-identifying tokens and secret blocks without rewriting surrounding structure. */
+export function redactStandaloneSecretsFull(text: string): string {
+  return redactStandaloneSecrets(text, "<REDACTED>");
 }
 
 // ── Sensitive text redaction (onboard-session.ts style) ─────────
@@ -291,22 +325,13 @@ function escapeRegExp(value: string): string {
 
 export function redactUrl(value: unknown): string | null {
   if (typeof value !== "string" || value.length === 0) return null;
-  const parsed = parseUrlToken(value);
+  const parsed = parseUrlTokenForRedaction(value);
   if (!parsed) return redactSensitiveText(redactMalformedUrlUserinfo(value, null));
   if (parsed.url.username || parsed.url.password) {
     parsed.url.username = "";
     parsed.url.password = "";
   }
-  const redactedSearchParams = new URLSearchParams();
-  for (const [key, queryValue] of parsed.url.searchParams) {
-    redactedSearchParams.append(
-      key,
-      isSensitiveKey(key) || /(^|[-_])(?:signature|sig|token|auth|access_token)$/i.test(key)
-        ? "<REDACTED>"
-        : redactStandaloneSecretsFull(queryValue),
-    );
-  }
-  parsed.url.search = redactedSearchParams.toString();
+  redactUrlSearchParams(parsed.url, "<REDACTED>");
   parsed.url.hash = "";
   return `${parsed.url.toString()}${parsed.suffix}`;
 }
