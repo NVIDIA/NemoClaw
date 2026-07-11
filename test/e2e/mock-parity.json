@@ -11,6 +11,10 @@
       ]
     },
     {
+      "live": "test/e2e/live/inference-routing-provider-smoke.test.ts",
+      "liveOnlyReason": "Requires real provider credentials to prove provider responses and sandbox credential isolation"
+    },
+    {
       "live": "test/e2e/live/full-e2e.test.ts",
       "fast": ["test/e2e/support/onboard-performance.test.ts"]
     },
@@ -24,6 +28,10 @@
     {
       "live": "test/e2e/live/dashboard-remote-bind.test.ts",
       "liveOnlyReason": "Requires a real OpenShell dashboard forward on a remote Brev host to prove all-interface bind behavior after background connect."
+    },
+    {
+      "live": "test/e2e/live/sandbox-operations.test.ts",
+      "liveOnlyReason": "The final-destroy gateway release contract needs two real Docker/OpenShell sandboxes plus host 127.0.0.1 port binding; a fast mock cannot prove the shared-gateway ownership boundary."
     },
     {
       "live": "test/e2e/live/onboard-repair.test.ts",
