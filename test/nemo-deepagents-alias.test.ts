@@ -29,7 +29,7 @@ function runDeepAgents(
       timeout: execTimeout(),
       env: {
         ...process.env,
-        HOME: "/tmp/nemo-deepagents-test-" + Date.now(),
+        HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemo-deepagents-test-")),
         // Clear inherited markers so the launcher under test sets them itself.
         NEMOCLAW_AGENT: undefined,
         NEMOCLAW_INVOKED_AS: undefined,
@@ -57,7 +57,7 @@ function runNemoClaw(
       timeout: execTimeout(),
       env: {
         ...process.env,
-        HOME: "/tmp/nemo-deepagents-test-" + Date.now(),
+        HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemo-deepagents-test-")),
         // Clear inherited markers so the base nemoclaw bin has a clean slate.
         NEMOCLAW_AGENT: undefined,
         NEMOCLAW_INVOKED_AS: undefined,

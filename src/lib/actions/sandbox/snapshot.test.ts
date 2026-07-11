@@ -309,7 +309,10 @@ describe("runSandboxSnapshot", () => {
   function runProbeScriptWithProcesses(
     script: string,
     processes: string,
-  ): { status: number; output: string } {
+  ): {
+    status: number;
+    output: string;
+  } {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-probe-"));
     const psPath = path.join(tempDir, "ps");
     const homeDir = path.join(tempDir, "home");

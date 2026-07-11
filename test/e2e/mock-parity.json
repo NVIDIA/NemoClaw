@@ -59,6 +59,13 @@
         "test/e2e/support/rlimit-connect-workflow-boundary.test.ts",
         "test/sandbox-rlimit-hooks.test.ts"
       ]
+    },
+    {
+      "live": "test/e2e/live/snapshot-commands.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-workflow.test.ts",
+        "test/e2e/support/snapshot-commands-helpers.test.ts"
+      ]
     }
   ]
 }
