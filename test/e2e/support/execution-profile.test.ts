@@ -9,23 +9,15 @@ import { describe, expect, it } from "vitest";
 import {
   discoverExecutionProfileRows,
   discoverExecutionProfileTests,
-  type ExecutionProfileMatrixRow,
   type ExecutionProfileModule,
   executionProfileRowFromModule,
   HERMETIC_EXECUTION_PROFILE,
-  selectExecutionProfileRows,
 } from "../../../tools/e2e/execution-profile.mts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 
 const EXECUTION_PROFILE_CLI = path.join(REPO_ROOT, "tools", "e2e", "execution-profile.mts");
 const TSX = path.join(REPO_ROOT, "node_modules", ".bin", "tsx");
 const TAG_COMMENT = `// @module-tag ${HERMETIC_EXECUTION_PROFILE.tag}`;
-
-const SELECTION_ROWS: ExecutionProfileMatrixRow[] = [
-  { id: "alpha", file: "test/e2e/live/alpha.test.ts", project: "e2e-live" },
-  { id: "beta", file: "test/beta.test.ts", project: "integration" },
-  { id: "gamma", file: "test/e2e/live/gamma.test.ts", project: "e2e-live" },
-];
 
 function module(overrides: Partial<ExecutionProfileModule> = {}): ExecutionProfileModule {
   return {
@@ -135,44 +127,30 @@ describe("hermetic E2E execution-profile discovery", () => {
     }
   });
 
-  it("selects the row intersection for jobs or targets and defaults to all rows", () => {
-    expect(selectExecutionProfileRows(SELECTION_ROWS)).toEqual(SELECTION_ROWS);
-    expect(
-      selectExecutionProfileRows(SELECTION_ROWS, {
-        jobs: "beta,alpha,unrelated-job",
-      }),
-    ).toEqual(SELECTION_ROWS.slice(0, 2));
-    expect(selectExecutionProfileRows(SELECTION_ROWS, { targets: "gamma" })).toEqual([
-      SELECTION_ROWS[2],
-    ]);
-    expect(selectExecutionProfileRows(SELECTION_ROWS, { jobs: "unrelated-job" })).toEqual([]);
-  });
-
-  it("rejects simultaneous jobs and targets selectors", () => {
-    expect(() =>
-      selectExecutionProfileRows(SELECTION_ROWS, {
-        jobs: "alpha",
-        targets: "gamma",
-      }),
-    ).toThrow("Use either jobs or targets, not both");
-  });
-
-  it("rejects non-canonical selector input", () => {
-    expect(() => selectExecutionProfileRows(SELECTION_ROWS, { jobs: "../escape" })).toThrow(
-      "Invalid jobs selector",
-    );
-  });
-
   it("prints one compact JSON matrix line from the CLI", () => {
-    const [selected] = discoverExecutionProfileTests();
-    expect(selected).toBeDefined();
-    const result = spawnSync(TSX, [EXECUTION_PROFILE_CLI, "--jobs", selected.id], {
+    const expected = discoverExecutionProfileTests();
+    expect(expected.length).toBeGreaterThan(0);
+    const result = spawnSync(TSX, [EXECUTION_PROFILE_CLI], {
       cwd: REPO_ROOT,
       encoding: "utf8",
       timeout: 30_000,
     });
 
     expect(result.status, result.stderr || result.stdout).toBe(0);
-    expect(result.stdout).toBe(`${JSON.stringify([selected])}\n`);
+    expect(result.stdout).toBe(`${JSON.stringify(expected)}\n`);
+  });
+
+  it("rejects selector arguments owned by the workflow planner", () => {
+    const result = spawnSync(TSX, [EXECUTION_PROFILE_CLI, "--jobs", "docs-validation"], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      timeout: 30_000,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain(
+      "::error::Execution-profile discovery does not accept selectors; use workflow-plan.mts",
+    );
   });
 });

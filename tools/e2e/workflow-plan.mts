@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { buildLiveTargetMatrix, type LiveTargetMatrixEntry } from "../../test/e2e/registry/run.ts";
 import {
-  buildExecutionProfileMatrix,
+  discoverExecutionProfileTests,
   type ExecutionProfileMatrixRow,
 } from "./execution-profile.mts";
 import { readFreeStandingJobsInventory } from "./workflow-boundary.mts";
@@ -53,7 +53,7 @@ export function buildE2eWorkflowPlan(selectors: WorkflowPlanSelectors = {}): E2e
   }
 
   const inventory = readFreeStandingJobsInventory();
-  const executionProfileRows = buildExecutionProfileMatrix();
+  const executionProfileRows = discoverExecutionProfileTests();
 
   if (jobs.length > 0) {
     const allowedJobs = new Set(inventory.allowedJobs);

@@ -6,7 +6,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { buildExecutionProfileMatrix } from "../../../tools/e2e/execution-profile.mts";
+import { discoverExecutionProfileTests } from "../../../tools/e2e/execution-profile.mts";
 import { readFreeStandingJobsInventory } from "../../../tools/e2e/workflow-boundary.mts";
 import { buildE2eWorkflowPlan, runE2eWorkflowPlanCli } from "../../../tools/e2e/workflow-plan.mts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
@@ -26,14 +26,14 @@ describe("E2E workflow plan", () => {
 
     expect(plan).toEqual({
       matrix: buildLiveTargetMatrix(),
-      hermeticMatrix: buildExecutionProfileMatrix(),
+      hermeticMatrix: discoverExecutionProfileTests(),
       hermesSelected: true,
       explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
     });
   });
 
   it("validates logical jobs and selects only matching hermetic tests", () => {
-    const hermeticId = firstId(buildExecutionProfileMatrix(), "hermetic test");
+    const hermeticId = firstId(discoverExecutionProfileTests(), "hermetic test");
     const plan = buildE2eWorkflowPlan({ jobs: `${hermeticId},hermes-e2e` });
 
     expect(plan.matrix).toEqual([]);
@@ -52,7 +52,7 @@ describe("E2E workflow plan", () => {
 
   it("partitions mixed registry and discovered free-standing targets", () => {
     const registryId = firstId(buildLiveTargetMatrix(), "supported registry target");
-    const hermeticId = firstId(buildExecutionProfileMatrix(), "hermetic test");
+    const hermeticId = firstId(discoverExecutionProfileTests(), "hermetic test");
     const plan = buildE2eWorkflowPlan({ targets: `${registryId},${hermeticId}` });
 
     expect(plan.matrix.map((row) => row.id)).toEqual([registryId]);

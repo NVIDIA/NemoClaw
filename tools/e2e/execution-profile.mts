@@ -28,11 +28,6 @@ export type ExecutionProfileModule = {
   source: string;
 };
 
-export type ExecutionProfileSelectors = {
-  jobs?: string;
-  targets?: string;
-};
-
 type VitestFile = {
   file: string;
   projectName: string;
@@ -42,7 +37,6 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 const PROFILE_TAG_PREFIX = "e2e-profile/";
 const MODULE_TAG_BODY_PATTERN = /^@module-tag[\t ]+([A-Za-z0-9/_-]+)$/u;
 const SAFE_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const SAFE_SELECTOR_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const SAFE_PATH_SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/;
 const SUPPORTED_PROJECTS = new Set<ExecutionProfileProject>(["e2e-live", "integration"]);
 
@@ -285,61 +279,15 @@ export function discoverExecutionProfileTests(repoRoot = REPO_ROOT): ExecutionPr
   return rows.map((row) => ({ ...row }));
 }
 
-function selectorIds(value: string | undefined, label: "jobs" | "targets"): Set<string> {
-  if (!value) return new Set();
-  const ids = value.split(",");
-  if (ids.some((id) => !SAFE_SELECTOR_PATTERN.test(id))) {
-    throw new Error(`Invalid ${label} selector; use comma-separated execution-profile test ids`);
-  }
-  return new Set(ids);
-}
-
-export function selectExecutionProfileRows(
-  rows: readonly ExecutionProfileMatrixRow[],
-  selectors: ExecutionProfileSelectors = {},
-): ExecutionProfileMatrixRow[] {
-  const jobs = selectorIds(selectors.jobs, "jobs");
-  const targets = selectorIds(selectors.targets, "targets");
-  if (jobs.size && targets.size) {
-    throw new Error("Use either jobs or targets, not both");
-  }
-  const selected = jobs.size ? jobs : targets;
-  if (!selected.size) return [...rows];
-  return rows.filter((row) => selected.has(row.id));
-}
-
-export function buildExecutionProfileMatrix(
-  selectors: ExecutionProfileSelectors = {},
-  repoRoot = REPO_ROOT,
-): ExecutionProfileMatrixRow[] {
-  return selectExecutionProfileRows(discoverExecutionProfileTests(repoRoot), selectors);
-}
-
-function parseArgs(argv: readonly string[]): ExecutionProfileSelectors {
-  const selectors: ExecutionProfileSelectors = {};
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    if (arg !== "--jobs" && arg !== "--targets") {
-      throw new Error(`Unknown argument: ${arg}`);
-    }
-    const value = argv[index + 1];
-    if (value === undefined) throw new Error(`${arg} requires a value`);
-    if (arg === "--jobs") selectors.jobs = value;
-    else selectors.targets = value;
-    index += 1;
-  }
-  return selectors;
-}
-
-export function runExecutionProfileCli(argv = process.argv.slice(2)): void {
-  const rows = buildExecutionProfileMatrix(parseArgs(argv));
-  process.stdout.write(`${JSON.stringify(rows)}\n`);
-}
-
 const invokedFile = process.argv[1] ? path.resolve(process.argv[1]) : "";
 if (invokedFile === fileURLToPath(import.meta.url)) {
   try {
-    runExecutionProfileCli();
+    if (process.argv.length > 2) {
+      throw new Error(
+        "Execution-profile discovery does not accept selectors; use workflow-plan.mts",
+      );
+    }
+    process.stdout.write(`${JSON.stringify(discoverExecutionProfileTests())}\n`);
   } catch (error) {
     console.error(`::error::${error instanceof Error ? error.message : String(error)}`);
     process.exitCode = 1;
