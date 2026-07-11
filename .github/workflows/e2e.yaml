@@ -4982,6 +4982,7 @@ jobs:
             }
 
             const hermeticResults = new Map();
+            let hermeticJobsLoaded = false;
             try {
               const apiJobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
                 owner: context.repo.owner,
@@ -4994,19 +4995,52 @@ jobs:
               for (const job of apiJobs) {
                 const match = /^Hermetic E2E \(([A-Za-z0-9_-]+)\)$/.exec(job.name || '');
                 if (!match || !selectedHermeticIds.has(match[1])) continue;
-                const result = ['success', 'failure', 'cancelled', 'skipped'].includes(job.conclusion)
-                  ? job.conclusion
-                  : 'failure';
+                const result =
+                  job.status === 'completed' &&
+                  ['success', 'failure', 'cancelled', 'skipped'].includes(job.conclusion)
+                    ? job.conclusion
+                    : 'unknown';
                 hermeticResults.set(match[1], { result });
               }
+              hermeticJobsLoaded = true;
             } catch (error) {
-              core.warning(`Could not load per-test hermetic results; using aggregate fallback: ${error.message}`);
+              // The Actions jobs API is the only source of matrix-child conclusions;
+              // `needs.hermetic` exposes only their aggregate. Keep missing children
+              // unknown instead of fabricating per-test evidence. This path is covered
+              // by e2e-report-to-pr-workflow-boundary.test.ts and can be removed when
+              // Actions exposes matrix-child conclusions directly to dependent jobs.
+              core.warning(`Could not load per-test hermetic results; reporting them as unknown: ${error.message}`);
+            }
+            const missingHermeticResults = hermeticIds.filter((id) => !hermeticResults.has(id));
+            if (hermeticJobsLoaded && missingHermeticResults.length > 0) {
+              core.warning(`Missing per-test hermetic results for ${missingHermeticResults.join(', ')}; reporting them as unknown.`);
+            }
+            const hermeticAggregateResult = needs.hermetic?.result;
+            const knownHermeticResults = hermeticIds.map((id) => hermeticResults.get(id)?.result);
+            const allHermeticResultsKnown =
+              knownHermeticResults.length > 0 &&
+              knownHermeticResults.every((result) => result && result !== 'unknown');
+            const expectedAggregateChildResult =
+              hermeticAggregateResult === 'failure'
+                ? 'failure'
+                : hermeticAggregateResult === 'cancelled'
+                  ? 'cancelled'
+                  : undefined;
+            const hermeticAttributionMismatch =
+              allHermeticResultsKnown &&
+              expectedAggregateChildResult &&
+              !knownHermeticResults.includes(expectedAggregateChildResult);
+            if (hermeticAttributionMismatch) {
+              core.warning(
+                `Per-test hermetic conclusions (${knownHermeticResults.join(', ')}) contradict aggregate ${hermeticAggregateResult}; reporting child attribution as unknown.`,
+              );
+              for (const id of hermeticIds) hermeticResults.set(id, { result: 'unknown' });
             }
 
             const allEntries = Object.entries(needs).filter(([name]) => name !== 'hermetic');
             if (needs.hermetic) {
               allEntries.push(
-                ...hermeticIds.map((id) => [id, hermeticResults.get(id) ?? needs.hermetic]),
+                ...hermeticIds.map((id) => [id, hermeticResults.get(id) ?? { result: 'unknown' }]),
               );
             }
             allEntries.sort(([a], [b]) => a.localeCompare(b));
@@ -5037,18 +5071,23 @@ jobs:
             const failed = ran.filter(([, v]) => v.result === 'failure');
             const skipped = reportedEntries.filter(([, v]) => v.result === 'skipped');
             const cancelled = ran.filter(([, v]) => v.result === 'cancelled');
+            const unknown = ran.filter(([, v]) => v.result === 'unknown');
+            const hermeticAggregateFailed = hermeticAggregateResult === 'failure';
+            const hermeticAggregateCancelled = hermeticAggregateResult === 'cancelled';
             const passingStatus = requestedJobList.length > 0
               ? '✅ All requested jobs passed'
               : selectiveDispatch
                 ? '✅ All selected jobs passed'
                 : '✅ All default jobs passed';
             const status =
-              failed.length > 0 || missingRequested.length > 0
+              failed.length > 0 || missingRequested.length > 0 || hermeticAggregateFailed
                 ? '❌ Some jobs failed'
-                : cancelled.length > 0 && passed.length === 0
+                : (cancelled.length > 0 || hermeticAggregateCancelled) && passed.length === 0
                   ? '⚠️ Run cancelled — no signal'
-                  : cancelled.length > 0 && passed.length > 0
+                  : cancelled.length > 0 || hermeticAggregateCancelled
                     ? '⚠️ Some jobs cancelled — partial pass'
+                    : unknown.length > 0
+                      ? '⚠️ Per-test results incomplete'
                     : skipped.length > 0 && passed.length === 0
                       ? '⚠️ No selected jobs ran'
                       : passingStatus;
@@ -5068,7 +5107,7 @@ jobs:
                 : requestedJobs
                   ? `**Requested jobs:** \`${requestedJobs}\``
                   : '**Requested jobs:** _(default — all default-enabled free-standing tests; explicit-only tests `openshell-gateway-auth-contract`, `mcp-bridge-dev`, `hermes-gpu-startup`, `sandbox-rlimits-connect`, and `jetson-nvmap-gpu` are skipped unless selected)_',
-              `**Summary:** ${passed.length} passed, ${failed.length} failed, ${cancelled.length} cancelled, ${skipped.length} skipped`,
+              `**Summary:** ${passed.length} passed, ${failed.length} failed, ${cancelled.length} cancelled, ${skipped.length} skipped, ${unknown.length} unknown`,
               '',
               '| Job | Result |',
               '|-----|--------|',
@@ -5091,6 +5130,13 @@ jobs:
               lines.push(
                 '',
                 `> **Missing requested jobs:** ${missingRequested.join(', ')}. The reporting workflow needs to include these jobs.`,
+              );
+            }
+            if (unknown.length > 0) {
+              const unknownNames = unknown.map(([name]) => name).join(', ');
+              lines.push(
+                '',
+                `> **Unknown per-test results:** ${unknownNames}. Hermetic matrix aggregate: ${needs.hermetic?.result ?? 'unavailable'}.`,
               );
             }
 
