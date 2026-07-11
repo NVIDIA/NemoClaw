@@ -200,7 +200,7 @@ function downloadAndExtractUserLocal(
  * require root: the `install -o0 -g0` chown, the systemd service file, and
  * the CUDA driver setup. The daemon is launched once at the end of the
  * install with a backgrounded `ollama serve`. Manual re-launch is required
- * after a reboot (this is documented in `docs/inference/use-local-inference.mdx`).
+ * after a reboot (this is documented in `docs/inference/set-up-ollama.mdx`).
  *
  * Refuses to proceed on unsupported architectures.
  */

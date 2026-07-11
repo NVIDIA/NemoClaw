@@ -1,9 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import * as onboardSession from "../state/onboard-session";
 import type { SandboxEntry, SandboxMcpState } from "../state/registry";
 import * as registry from "../state/registry";
 import type { SelectionDrift } from "./selection-drift";
+
+export function removeSandboxUnlessSessionReservation(
+  entry: SandboxEntry | null,
+  sandboxName: string,
+): void {
+  if (!registry.isPendingReservationForSession(entry, onboardSession.loadSession()?.sessionId)) {
+    registry.removeSandbox(sandboxName);
+  }
+}
 
 export interface SandboxLifecycleDeps {
   runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string | null;

@@ -3,7 +3,7 @@
 
 # Tier 0 — Plumbing Gates
 
-Mandatory prerequisites. Any gate failure means the PR cannot be merged in its current state. Six gates total. Run `scripts/collect-gates.sh <pr>` to evaluate gates 1-5 mechanically; run `scripts/check-coderabbit-threads.sh <pr>` for gate 6.
+Mandatory prerequisites. Any gate failure means the PR cannot be merged in its current state. Seven gates total. Run `scripts/collect-gates.sh <pr>` to evaluate gates 1-5 mechanically, use the shared maintainer-day gate result for gate 6, and run `scripts/check-coderabbit-threads.sh <pr>` for gate 7.
 
 ## Contents
 
@@ -12,7 +12,8 @@ Mandatory prerequisites. Any gate failure means the PR cannot be merged in its c
 - Gate 3: Mergeable, no conflicts
 - Gate 4: Contributor compliance satisfied
 - Gate 5: Branch protection satisfied
-- Gate 6: Automated reviewer threads resolved
+- Gate 6: PR Review Advisor recommends merge as-is
+- Gate 7: Automated reviewer threads resolved
 
 ## Gate 1: PR state OPEN
 
@@ -52,7 +53,13 @@ The PR body must include a valid contributor `Signed-off-by:` declaration, and e
 
 **Why defer:** Branch protection rules are the source of truth. Re-implementing the check in the skill would drift from repo policy. If your repo doesn't enforce CODEOWNERS via branch protection, set `codeowners_enforced_via_branch_protection: false` in `repo-policy.md` and add explicit team checks.
 
-## Gate 6: Automated reviewer threads resolved
+## Gate 6: PR Review Advisor recommends merge as-is
+
+The trusted, exact-head PR Review Advisor result must report `recommendation: merge_as_is`. Use `.gates.prAdvisor` from `nemoclaw-maintainer-day/scripts/check-gates.ts`, and set `pr_advisor_merge_as_is` to `true` only when both `pass` is `true` and `recommendation` is exactly `merge_as_is`.
+
+**Fail closed:** Missing, skipped, stale, malformed, untrusted, or non-`merge_as_is` Advisor results fail this gate. A successful CodeRabbit review or human approval does not substitute for the Advisor result.
+
+## Gate 7: Automated reviewer threads resolved
 
 All threads created by automated reviewers (e.g., CodeRabbit) must be in `resolved: true` state. **Zero unresolved threads is the bar.**
 

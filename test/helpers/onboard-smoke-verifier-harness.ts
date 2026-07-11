@@ -14,9 +14,9 @@ type VerifyOnboardSmokeInvocation = {
   provider?: string;
 };
 
-export function runVerifyOnboardSmokeHarness(
+export async function runVerifyOnboardSmokeHarness(
   invocations: VerifyOnboardSmokeInvocation[],
-): SmokeVerifierHarnessCall[] {
+): Promise<SmokeVerifierHarnessCall[]> {
   const harness = String.raw`
 const Module = require("node:module");
 const originalLoad = Module._load;
@@ -87,16 +87,20 @@ const { verifyOnboardInferenceSmoke } = require(process.env.PROBES_MODULE);
 const invocations = JSON.parse(process.env.SMOKE_INVOCATIONS || "[]");
 console.log = (...args) => calls.push(["log", args.join(" ")]);
 
-for (const invocation of invocations) {
-  verifyOnboardInferenceSmoke({
-    endpointUrl: "https://api.example.com/v1",
-    model: "nous/test-model",
-    provider: "hermes-provider",
-    ...invocation,
-  });
-}
-
-process.stdout.write(JSON.stringify(calls));
+(async () => {
+  for (const invocation of invocations) {
+    await verifyOnboardInferenceSmoke({
+      endpointUrl: "https://api.example.com/v1",
+      model: "nous/test-model",
+      provider: "hermes-provider",
+      ...invocation,
+    });
+  }
+  process.stdout.write(JSON.stringify(calls));
+})().catch((error) => {
+  process.stderr.write(String(error && error.stack ? error.stack : error));
+  process.exit(1);
+});
 `;
   const result = spawnSync(process.execPath, ["-e", harness], {
     cwd: process.cwd(),

@@ -9,6 +9,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildPublishedRouteIndex,
+  findBrokenPublishedInferenceRoutes,
+  findBrokenPublishedRedirects,
   findBrokenPublishedRoutes,
   resolvePublishedRoute,
 } from "../scripts/check-docs-published-routes.ts";
@@ -25,8 +27,8 @@ navigation:
               - page: Commands
                 path: _build/agent-variants/reference/commands.openclaw.generated.mdx
                 slug: commands
-          - section: Inference
-            slug: inference
+          - section: Configure Agents
+            slug: configure-agents
             contents:
               - page: Declarative Multi-Agent Manifest
                 path: inference/declarative-agents-manifest.mdx
@@ -72,7 +74,7 @@ describe("published docs route checking", () => {
     const index = buildPublishedRouteIndex(navYaml);
     const source = commandsSource(`
 <AgentOnly variant="openclaw">
-See [Declarative Multi-Agent Manifest](../inference/declarative-agents-manifest).
+See [Declarative Multi-Agent Manifest](../configure-agents/declarative-agents-manifest).
 </AgentOnly>
 
 See [Hermes Commands](/user-guide/hermes/reference/commands).
@@ -110,5 +112,72 @@ See [Hermes Commands](/user-guide/hermes/reference/commands).
     expect(
       resolvePublishedRoute("/user-guide/openclaw/reference/commands", "/user-guide/hermes/foo"),
     ).toBe("/user-guide/hermes/foo");
+  });
+
+  it("validates variant redirect destinations independently", () => {
+    const index = buildPublishedRouteIndex(navYaml);
+    const fernYaml = `
+redirects:
+  - source: /nemoclaw/user-guide/:variant/inference/legacy
+    destination: /nemoclaw/user-guide/:variant/reference/commands
+  - source: /nemoclaw/user-guide/openclaw/inference/static
+    destination: /nemoclaw/user-guide/openclaw/reference/commands
+  - source: /nemoclaw/user-guide/openclaw/inference/fixed-source
+    destination: /nemoclaw/user-guide/:variant/reference/commands
+`;
+
+    expect(findBrokenPublishedRedirects(index, fernYaml)).toEqual([
+      {
+        source: "/nemoclaw/user-guide/deepagents/inference/legacy",
+        destination: "/nemoclaw/user-guide/deepagents/reference/commands",
+        resolved: "/user-guide/deepagents/reference/commands",
+        variant: "deepagents",
+      },
+      {
+        source: "/nemoclaw/user-guide/openclaw/inference/fixed-source",
+        destination: "/nemoclaw/user-guide/deepagents/reference/commands",
+        resolved: "/user-guide/deepagents/reference/commands",
+        variant: "deepagents",
+      },
+    ]);
+  });
+
+  it("can guard inference links without expanding checks to unrelated links", () => {
+    const index = buildPublishedRouteIndex(navYaml);
+    const source = commandsSource(`
+See [Missing Inference](../inference/missing).
+See [Missing Other Page](../other/missing).
+`);
+
+    withDocsSource(source, (docsDir) => {
+      expect(findBrokenPublishedInferenceRoutes("reference/commands.mdx", index, docsDir)).toEqual([
+        expect.objectContaining({
+          fromRoute: "/user-guide/openclaw/reference/commands",
+          resolved: "/user-guide/openclaw/inference/missing",
+        }),
+        expect.objectContaining({
+          fromRoute: "/user-guide/hermes/reference/commands",
+          resolved: "/user-guide/hermes/inference/missing",
+        }),
+      ]);
+    });
+  });
+
+  it("includes inference section roots in focused route violations", () => {
+    const index = buildPublishedRouteIndex(navYaml);
+    const source = commandsSource("See [Missing Inference Root](../inference).");
+
+    withDocsSource(source, (docsDir) => {
+      expect(findBrokenPublishedInferenceRoutes("reference/commands.mdx", index, docsDir)).toEqual([
+        expect.objectContaining({
+          fromRoute: "/user-guide/openclaw/reference/commands",
+          resolved: "/user-guide/openclaw/inference",
+        }),
+        expect.objectContaining({
+          fromRoute: "/user-guide/hermes/reference/commands",
+          resolved: "/user-guide/hermes/inference",
+        }),
+      ]);
+    });
   });
 });

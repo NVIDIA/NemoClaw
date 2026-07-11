@@ -25,12 +25,11 @@ function expectNoRlimitStartupDiagnostics(text: string): void {
   );
 }
 
-function connectAcceptanceScript(cliPath: string, sandboxName: string): string {
+function connectAcceptanceScript(cliPath: string): string {
   const cli = JSON.stringify(cliPath);
-  const sandbox = JSON.stringify(sandboxName);
   return [
     "set -euo pipefail",
-    `cat <<'NEMOCLAW_CONNECT_RLIMITS' | ${cli} ${sandbox} connect`,
+    `cat <<'NEMOCLAW_CONNECT_RLIMITS' | ${cli} connect`,
     "set -euo pipefail",
     'printf "__NEMOCLAW_RLIMIT_CONNECT_BEGIN__\\n"',
     'bash -lc \'printf "login_nproc=%s\\nlogin_nofile=%s\\n" "$(ulimit -u)" "$(ulimit -n)"; ulimit -a\'',
@@ -60,7 +59,7 @@ runConnectRlimitTest(
       sandboxName: SANDBOX_NAME,
       acceptancePath: [
         "nemoclaw onboard --non-interactive --yes-i-accept-third-party-software",
-        `nemoclaw ${SANDBOX_NAME} connect`,
+        "nemoclaw connect (routes through the onboarded default sandbox)",
         "bash -lc 'ulimit -u; ulimit -n'",
         "bash -ic 'ulimit -u; ulimit -n'",
         "ulimit -a",
@@ -109,16 +108,12 @@ runConnectRlimitTest(
     );
     expect(onboard.exitCode, resultText(onboard)).toBe(0);
 
-    const connect = await host.command(
-      "bash",
-      ["-lc", connectAcceptanceScript(host.commandPath, SANDBOX_NAME)],
-      {
-        artifactName: "phase-2-connect-rlimits",
-        env: buildAvailabilityProbeEnv(),
-        redactionValues,
-        timeoutMs: 10 * 60_000,
-      },
-    );
+    const connect = await host.command("bash", ["-lc", connectAcceptanceScript(host.commandPath)], {
+      artifactName: "phase-2-connect-rlimits",
+      env: buildAvailabilityProbeEnv(),
+      redactionValues,
+      timeoutMs: 10 * 60_000,
+    });
     const output = resultText(connect);
     await artifacts.writeText("connect-rlimits-output.txt", output);
     expect(connect.exitCode, output).toBe(0);

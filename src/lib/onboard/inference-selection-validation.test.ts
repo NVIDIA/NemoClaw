@@ -274,7 +274,7 @@ describe("inference selection validation", () => {
         },
       ],
     }));
-    const probeOpenAiLikeEndpoint = vi.fn(() => ({
+    const probeOpenAiLikeEndpoint = vi.fn(async () => ({
       ok: true,
       api: "openai-completions",
       label: "Chat Completions API",

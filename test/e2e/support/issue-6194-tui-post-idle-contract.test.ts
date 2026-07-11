@@ -396,7 +396,24 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
         'artifacts.writeJson("issue2603-trace.json"',
         websocketCommand,
       );
-      const websocketAssertion = liveSource.indexOf("if (repro.error)", websocketResult);
+      const websocketAnalysis = liveSource.indexOf(
+        "const analysis = analyzeIssue2603Trace(repro)",
+        websocketCommand,
+      );
+      const websocketFailureSummary = liveSource.indexOf(
+        "const failureSummary = secrets.redact(",
+        websocketAnalysis,
+      );
+      const websocketObservedEvents = liveSource.indexOf("observedChatEvents,", websocketResult);
+      const websocketCorrelation = liveSource.indexOf("correlationAnalysis,", websocketResult);
+      const websocketAssertion = liveSource.indexOf("switch (classification)", websocketResult);
+      const setupFailure = liveSource.indexOf("INFRASTRUCTURE SETUP FAILURE", websocketAssertion);
+      const setupFailureSummary = liveSource.indexOf("${failureSummary}", setupFailure);
+      const captureFailure = liveSource.indexOf(
+        "INFRASTRUCTURE CAPTURE FAILURE",
+        setupFailureSummary,
+      );
+      const captureFailureSummary = liveSource.indexOf("${failureSummary}", captureFailure);
 
       expect(tuiPrecreate).toBeGreaterThanOrEqual(0);
       expect(tuiCommand).toBeGreaterThan(tuiPrecreate);
@@ -410,8 +427,20 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
       expect(approvalResult).toBeGreaterThan(approvalCommand);
       expect(approvalCaptureAssertion).toBeGreaterThan(approvalResult);
       expect(websocketCommand).toBeGreaterThan(approvalCaptureAssertion);
+      expect(websocketAnalysis).toBeGreaterThan(websocketCommand);
+      expect(websocketFailureSummary).toBeGreaterThan(websocketAnalysis);
+      expect(websocketFailureSummary).toBeLessThan(websocketResult);
+      expect(websocketAnalysis).toBeLessThan(websocketResult);
       expect(websocketResult).toBeGreaterThan(websocketCommand);
+      expect(websocketObservedEvents).toBeGreaterThan(websocketResult);
+      expect(websocketObservedEvents).toBeLessThan(websocketAssertion);
+      expect(websocketCorrelation).toBeGreaterThan(websocketResult);
+      expect(websocketCorrelation).toBeLessThan(websocketAssertion);
       expect(websocketAssertion).toBeGreaterThan(websocketResult);
+      expect(setupFailure).toBeGreaterThan(websocketAssertion);
+      expect(setupFailureSummary).toBeGreaterThan(setupFailure);
+      expect(captureFailure).toBeGreaterThan(setupFailureSummary);
+      expect(captureFailureSummary).toBeGreaterThan(captureFailure);
     } finally {
       rmSync(captureDir, { recursive: true, force: true });
     }

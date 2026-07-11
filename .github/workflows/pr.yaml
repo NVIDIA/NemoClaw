@@ -200,7 +200,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -226,7 +226,7 @@ jobs:
         uses: ./.trusted-ci-actions/.github/actions/ci-cli-coverage-shard
         with:
           shard: ${{ matrix.shard }}
-          shard-count: "5"
+          shard-count: "8"
 
   cli-tests:
     needs:
@@ -273,7 +273,7 @@ jobs:
       - name: Merge CLI coverage
         uses: ./.trusted-ci-actions/.github/actions/ci-cli-coverage-merge
         with:
-          shard-count: "5"
+          shard-count: "8"
 
   plugin-tests:
     needs: changes
@@ -317,6 +317,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Setup Node.js
@@ -327,6 +328,12 @@ jobs:
 
       - name: Install E2E support dependencies
         run: npm ci --ignore-scripts
+
+      - name: Validate changed live E2E mock parity
+        # The pull_request payload can retain an older base SHA while GitHub's
+        # checked-out merge ref already targets newer main. Diff the merge
+        # parents so base-only changes are never attributed to the PR.
+        run: npx tsx scripts/checks/e2e-mock-parity.ts --base HEAD^1 --head HEAD^2
 
       - name: Build CLI artifacts for E2E support
         run: npm run build:cli

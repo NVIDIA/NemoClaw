@@ -40,7 +40,7 @@ TABLES = [
         "provider-status",
         "providers",
         [
-            REPO_ROOT / "docs" / "inference" / "inference-options.mdx",
+            REPO_ROOT / "docs" / "inference" / "choose-inference-provider.mdx",
         ],
     ),
     (

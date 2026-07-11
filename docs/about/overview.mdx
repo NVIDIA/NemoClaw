@@ -70,7 +70,7 @@ NemoClaw provides these benefits to mitigate those risks.
 | Benefit                    | Description                                                                                                            |
 |----------------------------|------------------------------------------------------------------------------------------------------------------------|
 | Sandboxed execution        | Every agent runs inside an OpenShell sandbox with Landlock, seccomp, and network namespace isolation. The sandbox grants no access by default. |
-| Routed inference           | The OpenShell gateway routes model traffic to your selected provider, transparent to the agent. You can switch providers or models. Refer to [Inference Options](../inference/inference-options).          |
+| Routed inference           | The OpenShell gateway routes model traffic to your selected provider, transparent to the agent. You can switch providers or models. Refer to [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider).          |
 | Declarative network policy | YAML defines egress rules. OpenShell blocks unknown hosts and surfaces them to the operator for approval.                 |
 | Single CLI                 | The <AgentCli /> command orchestrates the full stack: gateway, sandbox, inference provider, and network policy.           |
 | Blueprint lifecycle        | Versioned blueprints handle sandbox creation, digest verification, and reproducible setup.                             |
@@ -97,7 +97,7 @@ Use these topics to learn more about NemoClaw and how to install and use it.
 - Follow [Quickstart with OpenClaw](../get-started/quickstart) to install NemoClaw and run your first OpenClaw sandbox.
 - Read [AI Agent Docs](../resources/agent-skills) to let your AI coding assistant fetch NemoClaw Markdown docs.
 - Explore [NemoClaw Community](https://github.com/NVIDIA/nemoclaw-community) for community-driven blueprint examples, showcases, and integrations.
-- Read [Inference Options](../inference/inference-options) to check the inference providers that NemoClaw supports and how inference routing works.
+- Read [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) to check the inference providers that NemoClaw supports and how inference routing works.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -107,7 +107,7 @@ Use these topics to learn more about NemoClaw and how to install and use it.
 - Follow [Quickstart with Hermes](../get-started/quickstart) to install NemoClaw and run your first Hermes sandbox with `$$nemoclaw`.
 - Read [AI Agent Docs](../resources/agent-skills) to let your AI coding assistant fetch NemoClaw Markdown docs.
 - Explore [NemoClaw Community](https://github.com/NVIDIA/nemoclaw-community) for community-driven blueprint examples, showcases, and integrations.
-- Read [Inference Options](../inference/inference-options) to check the inference providers that NemoClaw supports and how inference routing works.
+- Read [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) to check the inference providers that NemoClaw supports and how inference routing works.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
@@ -117,6 +117,6 @@ Use these topics to learn more about NemoClaw and how to install and use it.
 - Follow [Quickstart with Deep Agents](../get-started/quickstart) to install NemoClaw and run your first Deep Agents sandbox with `$$nemoclaw`.
 - Read [AI Agent Docs](../resources/agent-skills) to let your AI coding assistant fetch NemoClaw Markdown docs.
 - Explore [NemoClaw Community](https://github.com/NVIDIA/nemoclaw-community) for community-driven blueprint examples, showcases, and integrations.
-- Read [Inference Options](../inference/inference-options) to check the inference providers that NemoClaw supports and how inference routing works.
+- Read [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) to check the inference providers that NemoClaw supports and how inference routing works.
 
 </AgentOnly>
