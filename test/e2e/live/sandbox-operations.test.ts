@@ -647,12 +647,10 @@ test(
     await docker.requireDocker();
 
     await environment.assertReady(ENVIRONMENT);
-    cleanup.add("remove shared NemoClaw gateway registration", () =>
-      host.cleanupGatewayRegistration("nemoclaw", {
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 5 * 60_000,
-      }),
-    );
+    cleanup.trackGateway(host, "nemoclaw", {
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 5 * 60_000,
+    });
     await host.cleanupSandbox(SANDBOX_B);
     await host.cleanupSandbox(SANDBOX_A);
 

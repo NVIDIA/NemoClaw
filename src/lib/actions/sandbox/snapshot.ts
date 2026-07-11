@@ -43,6 +43,12 @@ import { getSandboxEntryInference } from "../../state/registry-entry-view";
 import * as sandboxState from "../../state/sandbox";
 import { cleanupShieldsDestroyArtifacts, removeSandboxRegistryEntry } from "./destroy";
 import {
+  DCODE_AGENT_NAME,
+  DCODE_BUSY_PROBE_SCRIPT,
+  DCODE_PROBE_STATE,
+  parseDcodeProbeState,
+} from "./dcode-activity-probe";
+import {
   buildSandboxExecMarkedCommand,
   createSandboxExecMarker,
   extractSandboxExecCommandStdoutFromStreams,
@@ -60,54 +66,6 @@ const G = useColor ? (trueColor ? "\x1b[38;2;118;185;0m" : "\x1b[38;5;148m") : "
 const B = useColor ? "\x1b[1m" : "";
 const D = useColor ? "\x1b[2m" : "";
 const R = useColor ? "\x1b[0m" : "";
-const DCODE_AGENT_NAME = "langchain-deepagents-code";
-const DCODE_PROBE_PREFIX = "NEMOCLAW_DCODE_PROBE=";
-const DCODE_PROBE_STATE = {
-  active: "active",
-  idleDcodeRuntime: "idle",
-  unverifiableDcodeRuntime: "unverifiable",
-  noDcodeRuntime: "no-runtime",
-} as const;
-type DcodeProbeState = (typeof DCODE_PROBE_STATE)[keyof typeof DCODE_PROBE_STATE];
-
-const DCODE_BUSY_PROBE_SCRIPT = String.raw`emit_dcode_probe_state() {
-  printf 'NEMOCLAW_DCODE_PROBE=%s\n' "$1"
-  exit 0
-}
-has_dcode_runtime=0
-dc_bin="$(printf 'd%s' code)"
-da_bin="$(printf 'deepagents-%s' code)"
-home_dir="$HOME"
-[ -n "$home_dir" ] || home_dir=/sandbox
-[ -d /sandbox/.deepagents ] && has_dcode_runtime=1
-[ -d "$home_dir/.deepagents" ] && has_dcode_runtime=1
-command -v "$dc_bin" >/dev/null 2>&1 && has_dcode_runtime=1
-command -v "$da_bin" >/dev/null 2>&1 && has_dcode_runtime=1
-processes="$(ps -eo pid=,args= 2>/dev/null)" || {
-  [ "$has_dcode_runtime" -eq 1 ] && emit_dcode_probe_state unverifiable
-  emit_dcode_probe_state no-runtime
-}
-printf '%s\n' "$processes" | awk '
-/^[[:space:]]*[0-9]+[[:space:]]+([^[:space:]]*\/)?python[0-9.]*[[:space:]]+(-I[[:space:]]+)?-m[[:space:]]+deepagents[_]code([[:space:]]|$)/ {
-  found = 1
-}
-/^[[:space:]]*[0-9]+[[:space:]]+([^[:space:]]*\/)?[d]code([[:space:]]|$)/ {
-  found = 1
-}
-/^[[:space:]]*[0-9]+[[:space:]]+([^[:space:]]*\/)?deepagents[-_]code([[:space:]]|$)/ {
-  found = 1
-}
-END { exit found ? 0 : 1 }
-'
-matched=$?
-[ "$matched" -eq 0 ] && emit_dcode_probe_state active
-[ "$matched" -ne 1 ] && {
-  [ "$has_dcode_runtime" -eq 1 ] && emit_dcode_probe_state unverifiable
-  emit_dcode_probe_state no-runtime
-}
-[ "$has_dcode_runtime" -eq 1 ] && emit_dcode_probe_state idle
-emit_dcode_probe_state no-runtime
-`;
 
 export type SnapshotRequest =
   | { kind: "help" }
@@ -426,15 +384,6 @@ function isSnapshotCreationAllowedByShields(sandboxName: string): boolean {
     return false;
   }
   return isShieldsDown(sandboxName);
-}
-
-function parseDcodeProbeState(output: string): DcodeProbeState | null {
-  const escapedPrefix = DCODE_PROBE_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const matches = [
-    ...output.matchAll(new RegExp(`^${escapedPrefix}(active|idle|unverifiable|no-runtime)$`, "gm")),
-  ];
-  if (matches.length !== 1) return null;
-  return (matches[0][1] as DcodeProbeState | undefined) ?? null;
 }
 
 function shouldCheckDcodeActivity(sandboxName: string): boolean {
