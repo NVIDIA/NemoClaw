@@ -146,6 +146,13 @@ references_managed_placeholder_key() {
   grep -Eq 'api_key_env[[:space:]]*=[[:space:]]*"DEEPAGENTS_CODE_OPENAI_API_KEY"'
 }
 
+uses_native_openrouter_config() {
+  local config
+  config="$(cat)"
+  printf '%s\n' "$config" | grep -Eq '^default[[:space:]]*=[[:space:]]*"openrouter:[^"]+"' \
+    && printf '%s\n' "$config" | grep -Fxq '[models.providers.openrouter]'
+}
+
 is_local_execution_failure() {
   grep -Eiq '(^|[[:space:]])(usage:|Traceback|SyntaxError|ImportError|ModuleNotFoundError|No module named|command not found|No such file or directory|Permission denied|invalid option)([[:space:]]|$)|DCODE_EXIT:12[67]'
 }
@@ -307,6 +314,20 @@ main() {
   else
     fail_test "config.toml does not use the managed placeholder API key env reference (captured config redacted from log)"
   fi
+  if printf '%s\n' "$config_output" | uses_native_openrouter_config; then
+    native_openrouter=1
+    openrouter_identity_output="$(sandbox_direct_dcode identity || true)"
+    if printf '%s\n' "$openrouter_identity_output" | grep -Fxq "Provider: openrouter" \
+      && printf '%s\n' "$openrouter_identity_output" | grep -Eq '^Model:[[:space:]]+openrouter:' \
+      && printf '%s\n' "$openrouter_identity_output" | grep -Fxq "Endpoint: https://inference.local/v1"; then
+      pass "installed dcode identity reports the native managed OpenRouter route"
+    else
+      fail_test "installed dcode identity does not report native OpenRouter consistently"
+    fi
+  else
+    native_openrouter=0
+    openrouter_identity_output=""
+  fi
 
   # 2. Record whether direct DNS/hosts is absent. When it is, the following
   # login, direct-exec, and connect successes prove they do not depend on it;
@@ -352,6 +373,14 @@ main() {
   dcode_exit="$(printf '%s' "$headless_output" | sed -n 's/.*DCODE_EXIT:\([0-9]\+\).*/\1/p' | tail -n1)"
   if classification="$(classify_headless_output "${dcode_exit:-unknown}" "$headless_output")"; then
     pass "login-shell dcode -n reached managed inference with ${classification} (exit ${dcode_exit:-unknown}; direct DNS/hosts ${direct_dns_state})"
+    if [ "$native_openrouter" -eq 1 ]; then
+      if printf '%s\n' "$headless_output" | grep -Fq "Usage Stats" \
+        && printf '%s\n' "$headless_output" | grep -Eiq '(^|[[:space:]])openrouter([[:space:]]|$)'; then
+        pass "headless usage output reports the native OpenRouter provider"
+      else
+        fail_test "headless usage output does not report the native OpenRouter provider"
+      fi
+    fi
   else
     fail_test "login-shell dcode -n did not exit 0 with PONG (${classification}, exit ${dcode_exit:-unknown})"
   fi
@@ -382,6 +411,7 @@ DCODE_EXIT:${direct_exit}"
   # 8. No real secrets in managed config, runtime env files, artifacts, logs, or captured output.
   leak_scan="$(sandbox_exec "$(sandbox_artifact_scan_command)" || true)"
   combined="${config_output}
+${openrouter_identity_output}
 ${leak_scan}
 ${entrypoint_rlimit_output}
 ${login_rlimit_output}
