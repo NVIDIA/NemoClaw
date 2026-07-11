@@ -108,49 +108,11 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(fs.existsSync(sentinel)).toBe(false);
   });
 
-  it("sends max_completion_tokens for GPT-5 family models (#6642)", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-gpt5-"));
-    const model = "gpt-5.4";
-    const configPath = writeSmokeConfig(tmpDir, model);
-    const { binDir, requestFile } = writeFakeCurl(
-      tmpDir,
-      `printf '%s\\n' '{"choices":[{"message":{"content":"PONG"},"finish_reason":"stop"}]}'`,
-    );
-    const script = buildCompatibleEndpointSandboxSmokeScript(model, {
-      configPath,
-      retryDelaySeconds: 0,
-    });
-    const result = runSmokeScript(script, tmpDir, binDir);
-    expect(result.status).toBe(0);
-    const payload = JSON.parse(fs.readFileSync(requestFile, "utf-8"));
-    expect(payload.max_completion_tokens).toBe(512);
-    expect(payload.max_tokens).toBeUndefined();
-  });
-
-  it("sends max_tokens for legacy models (#6642)", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-legacy-"));
-    const model = "nvidia/nemotron-3-super-120b-a12b";
-    const configPath = writeSmokeConfig(tmpDir, model);
-    const { binDir, requestFile } = writeFakeCurl(
-      tmpDir,
-      `printf '%s\\n' '{"choices":[{"message":{"content":"PONG"},"finish_reason":"stop"}]}'`,
-    );
-    const script = buildCompatibleEndpointSandboxSmokeScript(model, {
-      configPath,
-      retryDelaySeconds: 0,
-    });
-    const result = runSmokeScript(script, tmpDir, binDir);
-    expect(result.status).toBe(0);
-    const payload = JSON.parse(fs.readFileSync(requestFile, "utf-8"));
-    expect(payload.max_tokens).toBe(512);
-    expect(payload.max_completion_tokens).toBeUndefined();
-  });
-
   it("retries a reasoning-only length response before failing the sandbox smoke", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-reasoning-"));
-    const model = "gpt-5.4";
+    const model = "minimaxai/minimax-m2.7";
     const configPath = writeSmokeConfig(tmpDir, model);
-    const { binDir, callFile, requestFile } = writeFakeCurl(
+    const { binDir, callFile } = writeFakeCurl(
       tmpDir,
       String.raw`
 if [ "$count" -eq 1 ]; then
@@ -179,9 +141,6 @@ fi
     expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
     expect(result.stderr).toContain("exhausted max_tokens=32 in reasoning_content");
     expect(fs.readFileSync(callFile, "utf-8")).toBe("2");
-    const retryPayload = JSON.parse(fs.readFileSync(requestFile, "utf-8"));
-    expect(retryPayload.max_completion_tokens).toBe(512);
-    expect(retryPayload.max_tokens).toBeUndefined();
   });
 
   it("retries a transient non-JSON gateway response", () => {

@@ -670,7 +670,7 @@ exit 0
       );
     });
 
-    it("keeps timeout retries strict when chat-completions tool calling is required", () => {
+    it("keeps GPT-5 timeout retries strict when tool calling is required (#6642)", () => {
       const script = `#!/usr/bin/env bash
 outfile=""
 payload=""
@@ -706,7 +706,7 @@ exit 0
         ({ counter, tmpDir }) => {
           const result = probeOpenAiLikeEndpoint(
             "https://api.example.com/v1",
-            "test-model",
+            "gpt-5.4",
             "sk-test",
             { skipResponsesProbe: true, requireChatCompletionsToolCalling: true },
           );
@@ -719,9 +719,10 @@ exit 0
           );
           expect(retryPayload).toMatchObject({
             tool_choice: "required",
-            max_tokens: 256,
+            max_completion_tokens: 256,
             stream: false,
           });
+          expect(retryPayload.max_tokens).toBeUndefined();
         },
       );
     });
