@@ -260,6 +260,7 @@ $$nemoclaw backup-all
 ```
 
 `backup-all` walks the sandboxes registered on the host, creates a snapshot for each running sandbox, and stores the snapshot bundles under `~/.nemoclaw/rebuild-backups/<name>/`.
+If a registered sandbox is stopped, start the sandbox or its container and rerun `$$nemoclaw backup-all` so NemoClaw can capture a fresh snapshot before maintenance.
 Use `$$nemoclaw <name> snapshot list` and `$$nemoclaw <name> snapshot restore` to inspect or restore one sandbox's bundles later.
 
 ## Using the Backup Script

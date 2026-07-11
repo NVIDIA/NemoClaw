@@ -150,9 +150,12 @@ describe("backupAll", () => {
     const logOutput = logSpy.mock.calls.flat().join("\n");
     expect(logOutput).toContain("Skipping 'sb-stopped' (not running)");
     expect(logOutput).toContain("1 backed up, 1 failed, 1 skipped");
+    expect(logOutput).toContain("start the sandbox/container");
+    expect(logOutput).toContain("nemoclaw backup-all");
     expect(errorSpy.mock.calls.flat().join("\n")).toContain(
       "backup failed (identity (permission denied), settings.json)",
     );
+    logSpy.mockRestore();
   });
 
   it("fails installer-strict backup when a registered sandbox is not Ready (#6114)", async () => {
@@ -181,6 +184,8 @@ describe("backupAll", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
     const errorOutput = errorSpy.mock.calls.flat().join("\n");
     expect(errorOutput).toContain("requires every registered sandbox to be backed up");
+    expect(errorOutput).toContain("1 skipped sandbox(es) were not running");
+    expect(errorOutput).toContain("Start each sandbox/container");
     expect(errorOutput).toContain("Resolve each skipped sandbox using its reason above");
     expect(errorOutput).not.toContain("prepare the upgrade manually");
   });
