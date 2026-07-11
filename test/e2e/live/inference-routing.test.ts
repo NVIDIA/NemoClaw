@@ -972,8 +972,8 @@ test("TC-INF-03 Anthropic provider responds through inference.local", {
   await expectAnthropicMessageThroughSandbox(sandbox, sandboxName, model, [apiKey]);
 });
 
-test("TC-INF-09 custom OpenAI-compatible endpoint responds through inference.local", {
-  timeout: 15 * 60_000,
+test("TC-INF-09 Deep Agents Code uses a local compatible endpoint through inference.local (#5744)", {
+  timeout: 20 * 60_000,
 }, async ({ artifacts, cleanup, host, sandbox, skip }) => {
   const model = "nemoclaw-e2e-compatible";
   const apiKey = "sk-compatible-TEST-NOT-A-REAL-VALUE";
@@ -1004,8 +1004,9 @@ test("TC-INF-09 custom OpenAI-compatible endpoint responds through inference.loc
   await artifacts.target.declare({
     id: "inference-routing-compatible-endpoint",
     contract: [
-      "custom OpenAI-compatible endpoint onboards",
+      "Deep Agents Code custom OpenAI-compatible endpoint onboards",
       "sandbox inference.local routes chat to compatible endpoint",
+      "dcode returns the compatible endpoint response through the rewritten gateway route",
     ],
     endpointUrl: fake.baseUrl,
     model,
@@ -1016,6 +1017,7 @@ test("TC-INF-09 custom OpenAI-compatible endpoint responds through inference.loc
     sandboxName,
     {
       COMPATIBLE_API_KEY: apiKey,
+      NEMOCLAW_AGENT: "langchain-deepagents-code",
       NEMOCLAW_ENDPOINT_URL: fake.baseUrl,
       NEMOCLAW_MODEL: model,
       NEMOCLAW_PREFERRED_API: "openai-completions",
@@ -1023,6 +1025,7 @@ test("TC-INF-09 custom OpenAI-compatible endpoint responds through inference.loc
     },
     [apiKey],
     "tc-inf-09-onboard-compatible-endpoint",
+    15 * 60_000,
   );
   expectOnboardSuccess(onboard, "TC-INF-09 compatible-endpoint onboard");
   cleanup.add(`strict inference-routing compatible-endpoint cleanup for ${sandboxName}`, () =>
@@ -1057,6 +1060,31 @@ test("TC-INF-09 custom OpenAI-compatible endpoint responds through inference.loc
     "compatible-endpoint-inference-local-chat",
   );
   expect(fake.requests().slice(sandboxRequestOffset)).toContainEqual(
+    expect.objectContaining({
+      auth: "ok",
+      hostHeader: "host.openshell.internal:8000",
+      method: "POST",
+      model,
+      path: "/v1/chat/completions",
+    }),
+  );
+
+  const dcodeRequestOffset = fake.requests().length;
+  const dcode = await runNemoclawCli(
+    [sandboxName, "exec", "--", "dcode", "-n", "Reply with exactly one word: PONG"],
+    {
+      artifactName: "tc-inf-09-dcode-compatible-endpoint",
+      artifacts,
+      env: buildAvailabilityProbeEnv(),
+      redactionValues: [apiKey],
+      timeoutMs: 3 * 60_000,
+    },
+  );
+  const dcodeText = redactedResultText(dcode);
+  expect(dcode.timedOut, `TC-INF-09 dcode timed out\n${dcodeText}`).toBe(false);
+  expect(dcode.exitCode, `TC-INF-09 dcode failed\n${dcodeText}`).toBe(0);
+  expect(dcodeText).toMatch(/\bPONG\b/);
+  expect(fake.requests().slice(dcodeRequestOffset)).toContainEqual(
     expect.objectContaining({
       auth: "ok",
       hostHeader: "host.openshell.internal:8000",

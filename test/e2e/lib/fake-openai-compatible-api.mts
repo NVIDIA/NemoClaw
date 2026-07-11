@@ -64,11 +64,15 @@ function sendChatSse(res: ServerResponse, content: string): void {
   const chunk = JSON.stringify({
     id: "chatcmpl-fake-openai-compatible",
     object: "chat.completion.chunk",
+    created: 0,
+    model,
     choices: [{ index: 0, delta: { role: "assistant", content }, finish_reason: null }],
   });
   const doneChunk = JSON.stringify({
     id: "chatcmpl-fake-openai-compatible",
     object: "chat.completion.chunk",
+    created: 0,
+    model,
     choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
   });
   const body = `data: ${chunk}\n\ndata: ${doneChunk}\n\ndata: [DONE]\n\n`;
@@ -186,6 +190,8 @@ const server = createServer(async (req, res) => {
     sendJson(res, 200, {
       id: "chatcmpl-fake-openai-compatible",
       object: "chat.completion",
+      created: 0,
+      model,
       choices: [
         {
           index: 0,
