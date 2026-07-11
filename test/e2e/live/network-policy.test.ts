@@ -179,6 +179,31 @@ async function curlStatus(
   return text(result).trim();
 }
 
+async function expectEncodedSlashScopedToClawHub(
+  sandbox: SandboxClient,
+  policyMode: "restricted" | "permissive",
+): Promise<void> {
+  const encodedPath = "/@nemoclaw%2Fencoded-slash-boundary-probe";
+  const clawhubStatus = await curlStatus(
+    sandbox,
+    `https://clawhub.ai${encodedPath}`,
+    `tc-net-${policyMode}-clawhub-encoded-slash`,
+    "--path-as-is",
+  );
+  expect(clawhubStatus, `ClawHub encoded slash probe must reach the upstream service`).toMatch(
+    /^[1-5][0-9][0-9]$/,
+  );
+  expect(clawhubStatus, `ClawHub encoded slash probe must not be denied by policy`).not.toBe("403");
+
+  const nonClawhubStatus = await curlStatus(
+    sandbox,
+    `https://openclaw.ai${encodedPath}`,
+    `tc-net-${policyMode}-non-clawhub-encoded-slash`,
+    "--path-as-is",
+  );
+  expect(nonClawhubStatus, `encoded slashes must stay denied outside ClawHub`).toBe("403");
+}
+
 async function waitForDeniedReasonLog(host: HostCliClient) {
   return pollDeniedReasonLog({
     attempts: process.env.GITHUB_ACTIONS === "true" ? 12 : 8,
@@ -435,6 +460,7 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
       "inference.local exemption with direct-provider denial",
       "SSRF private-address rejection",
       "OpenClaw web_fetch host-gateway policy allow/deny",
+      "encoded scoped-package paths remain ClawHub-only in restricted and permissive policies",
       "permissive policy mode",
     ],
   });
@@ -575,6 +601,7 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
   expect(denyDefault, `example.com should be blocked under restricted policy`).toMatch(
     /STATUS_403|ERROR_/,
   );
+  await expectEncodedSlashScopedToClawHub(sandbox, "restricted");
 
   const longHostnameDenial = await sandboxBash(sandbox, `curl -m 5 -sS ${DENIED_REASON_URL}`, {
     artifactName: "tc-net-4760-denied-long-hostname",
@@ -943,6 +970,7 @@ nemoclaw-start node /tmp/nemoclaw-web-fetch-e2e.mjs 'http://host.openshell.inter
     artifactName: "tc-net-06-npm-ping-permissive",
   });
   expect(text(npmPing)).toContain("NPM_OK");
+  await expectEncodedSlashScopedToClawHub(sandbox, "permissive");
 
   await artifacts.target.complete({
     id: "network-policy",
@@ -959,6 +987,7 @@ nemoclaw-start node /tmp/nemoclaw-web-fetch-e2e.mjs 'http://host.openshell.inter
       inferenceExemption: true,
       ssrfValidation: true,
       hostGatewayWebFetch: true,
+      encodedSlashClawHubOnly: true,
       permissiveMode: true,
     },
   });
