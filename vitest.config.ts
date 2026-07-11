@@ -51,6 +51,12 @@ const integrationProjectScheduling = resolveIntegrationProjectScheduling({
 
 export default defineConfig({
   test: {
+    tags: [
+      {
+        name: "e2e-profile/hermetic",
+        description: "Runs without external credentials in the trusted hermetic E2E executor",
+      },
+    ],
     env: {
       NEMOCLAW_DISABLE_GATEWAY_DRIFT_PREFLIGHT: "1",
     },

@@ -21,6 +21,33 @@ The former top-level `test/e2e/test-*.sh` suite has been removed. Keep real
 shell, installer, process, Docker, OpenShell, `/proc`, and sandbox boundaries in
 E2E tests when those boundaries are the behavior under test.
 
+## Hermetic execution profile
+
+Credential-free tests that can use the standard Ubuntu runner, CLI build, and
+artifact policy opt into the `hermetic` execution profile beside the test:
+
+```typescript
+// @module-tag e2e-profile/hermetic
+```
+
+Discovery reads tagged files from the `e2e-live` and `integration` Vitest
+projects. It derives each logical test ID from the filename and supplies only
+the ID, repository-relative file, and Vitest project to the workflow. Keep the
+filename stem unique and lowercase kebab-case. Do not add the test to a separate
+catalog or workflow matrix.
+
+The trusted workflow owns the runner, timeout, setup, permissions, secrets, and
+artifact handling for the profile. Keep a dedicated workflow job when a test
+needs different capabilities, such as credentials, a custom runner, additional
+setup, or a different timeout.
+
+Both `jobs` and `targets` selectors continue to accept the logical test ID. Run
+the discovery command locally to inspect the generated matrix:
+
+```bash
+npx tsx tools/e2e/execution-profile.mts
+```
+
 ## Scheduled operations
 
 The consolidated workflow keeps its operational reporting in the same job

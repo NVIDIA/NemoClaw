@@ -434,6 +434,67 @@ describe("E2E target advisor — normalization contract", () => {
     expect(normalized.noTargetE2eReason).toContain("test/e2e/live/rebuild-openclaw.test.ts");
   });
 
+  it.each([
+    ["test/e2e/live/new-hermetic-proof.test.ts", "new-hermetic-proof"],
+    ["test/new-hermetic-integration.test.ts", "new-hermetic-integration"],
+  ])("recognizes a source-declared profile on a newly added test (%s)", (file, id) => {
+    const normalized = normalizeE2eTargetAdvisorResult(
+      {
+        required: [
+          {
+            id: "e2e-all",
+            workflow: E2E_WORKFLOW,
+            selectorType: "all",
+            reason: "model requested fan-out",
+          },
+        ],
+        optional: [],
+        confidence: "high",
+      },
+      metadata({ changedFiles: [file] }),
+      {
+        changedFileSources: {
+          [file]: "// @module-tag e2e-profile/hermetic\n",
+        },
+        e2eWorkflowText: "jobs:\n  hermetic:\n    steps: []\n",
+      },
+    );
+
+    expect(normalized.required.map((item) => item.id)).toContain(id);
+    expect(normalized.required.map((item) => item.id)).not.toContain("e2e-all");
+    expect(normalized.noTargetE2eReason).toBeNull();
+  });
+
+  it.each([
+    ["has its profile tag removed", "// profile removed\n"],
+    ["is deleted", null],
+  ])("treats the analyzed change as authoritative when a tagged test %s", (_case, source) => {
+    const file = "test/e2e/live/docs-validation.test.ts";
+    const normalized = normalizeE2eTargetAdvisorResult(
+      {
+        required: [
+          {
+            id: "e2e-all",
+            workflow: E2E_WORKFLOW,
+            selectorType: "all",
+            reason: "model requested fan-out",
+          },
+        ],
+        optional: [],
+        confidence: "high",
+      },
+      metadata({ changedFiles: [file] }),
+      {
+        changedFileSources: { [file]: source },
+        e2eWorkflowText: "jobs:\n  hermetic:\n    steps: []\n",
+      },
+    );
+
+    expect(normalized.required.map((item) => item.id)).not.toContain("docs-validation");
+    expect(normalized.required.map((item) => item.id)).not.toContain("e2e-all");
+    expect(normalized.noTargetE2eReason).toContain(file);
+  });
+
   it("keeps the deterministic floor while suppressing unwired-test fan-out", () => {
     const normalized = normalizeE2eTargetAdvisorResult(
       {

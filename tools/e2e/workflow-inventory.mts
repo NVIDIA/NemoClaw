@@ -10,7 +10,7 @@ function usage(): string {
   return [
     "Usage: npx tsx tools/e2e/workflow-inventory.mts [--shell] [--workflow PATH]",
     "",
-    "Derives free-standing E2E selector mappings from workflow job metadata.",
+    "Derives free-standing E2E selectors from test discovery and workflow execution metadata.",
   ].join("\n");
 }
 
@@ -51,6 +51,7 @@ try {
       `${JSON.stringify(
         {
           allowedJobs: inventory.allowedJobs,
+          executionJobs: inventory.executionJobs,
           explicitOnlyJobs: inventory.explicitOnlyJobs,
           freeStandingTargets: inventory.freeStandingTargets,
           targetJobs: Object.fromEntries(inventory.targetToJob),

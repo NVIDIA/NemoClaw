@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
+import { HERMETIC_EXECUTION_PROFILE } from "./execution-profile.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_ACTION_PATH = join(
@@ -34,8 +35,18 @@ const CALLER_ALWAYS = "always()";
 const MCP_SCANNED_UPLOAD_CONDITION =
   "${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}";
 const TARGET_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
-const EXPECTED_UPLOAD_JOB_COUNT = 75;
-const EXPECTED_DEFAULT_CALLER_COUNT = 63;
+const EXPECTED_UPLOAD_JOB_COUNT = 72;
+const EXPECTED_DEFAULT_CALLER_COUNT = 60;
+
+const EXECUTION_PROFILE_JOBS: ReadonlyMap<string, { profile: string; targetId: string }> = new Map([
+  [
+    HERMETIC_EXECUTION_PROFILE.executorJob,
+    {
+      profile: HERMETIC_EXECUTION_PROFILE.id,
+      targetId: "${{ matrix.id }}",
+    },
+  ],
+]);
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
@@ -262,7 +273,11 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
     Object.entries(jobs)
       .filter(([jobName, value]) => {
         const job = record(value);
-        return jobName === "live" || record(job.env).E2E_JOB === "1";
+        return (
+          jobName === "live" ||
+          record(job.env).E2E_JOB === "1" ||
+          EXECUTION_PROFILE_JOBS.has(jobName)
+        );
       })
       .map(([jobName]) => jobName),
   );
@@ -272,7 +287,7 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
 
   if (expectedJobs.size !== EXPECTED_UPLOAD_JOB_COUNT) {
     errors.push(
-      `upload-e2e-artifacts must cover exactly ${EXPECTED_UPLOAD_JOB_COUNT} live and E2E_JOB execution jobs`,
+      `upload-e2e-artifacts must cover exactly ${EXPECTED_UPLOAD_JOB_COUNT} live, E2E_JOB, and execution-profile jobs`,
     );
   }
   if (defaultJobs.length !== EXPECTED_DEFAULT_CALLER_COUNT) {
@@ -283,6 +298,21 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
   for (const jobName of EXPLICIT_UPLOAD_CONTRACTS.keys()) {
     if (!expectedJobs.has(jobName)) {
       errors.push(`upload-e2e-artifacts explicit caller is missing: ${jobName}`);
+    }
+  }
+
+  for (const [jobName, contract] of EXECUTION_PROFILE_JOBS) {
+    const value = jobs[jobName];
+    if (value === undefined) {
+      errors.push(`upload-e2e-artifacts execution-profile job is missing: ${jobName}`);
+      continue;
+    }
+    const env = record(record(value).env);
+    if (env.E2E_EXECUTION_PROFILE !== contract.profile) {
+      errors.push(`${jobName} E2E_EXECUTION_PROFILE must be '${contract.profile}'`);
+    }
+    if (Object.hasOwn(env, "E2E_JOB")) {
+      errors.push(`${jobName} must not declare E2E_JOB`);
     }
   }
 
@@ -359,6 +389,15 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
       errors.push(`${jobName} upload-e2e-artifacts must use the action defaults`);
     }
     const targetId = record(job.env).E2E_TARGET_ID;
+    const executionProfileContract = EXECUTION_PROFILE_JOBS.get(jobName);
+    if (executionProfileContract) {
+      if (targetId !== executionProfileContract.targetId) {
+        errors.push(
+          `${jobName} default upload caller E2E_TARGET_ID must be '${executionProfileContract.targetId}'`,
+        );
+      }
+      continue;
+    }
     if (typeof targetId !== "string" || !TARGET_ID_PATTERN.test(targetId)) {
       errors.push(`${jobName} default upload caller must declare a valid E2E_TARGET_ID`);
     } else if (targetId !== jobName) {

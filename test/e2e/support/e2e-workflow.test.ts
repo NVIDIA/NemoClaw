@@ -643,7 +643,9 @@ describe("e2e workflow boundary", () => {
     },
   );
 
-  it("derives the free-standing inventory from workflow job metadata", { timeout: 60_000 }, () => {
+  it("derives logical test selectors from code and execution jobs from workflow metadata", {
+    timeout: 60_000,
+  }, () => {
     const inventory = readFreeStandingJobsInventory();
     expect(validateFreeStandingWorkflowInventory()).toEqual([]);
     expect(inventory.allowedJobs).toContain("openshell-version-pin");
@@ -654,7 +656,7 @@ describe("e2e workflow boundary", () => {
     expect(inventory.targetToJob.get("openshell-gateway-auth-contract")).toBe(
       "openshell-gateway-auth-contract",
     );
-    expect(inventory.targetToJob.get("openshell-version-pin")).toBe("openshell-version-pin");
+    expect(inventory.targetToJob.get("openshell-version-pin")).toBe("hermetic");
     expect(inventory.targetToJob.get("upgrade-stale-sandbox")).toBe("upgrade-stale-sandbox");
     expect(inventory.targetToJob.get("credential-migration")).toBe("credential-migration");
     expect(inventory.targetToJob.get("launchable-smoke")).toBe("launchable-smoke");
@@ -663,7 +665,7 @@ describe("e2e workflow boundary", () => {
       "openclaw-plugin-runtime-exdev",
     );
     expect(
-      inventory.allowedJobs.every((job) =>
+      inventory.executionJobs.every((job) =>
         Object.keys((readWorkflow().jobs as Record<string, unknown>) ?? {}).includes(job),
       ),
     ).toBe(true);
@@ -788,11 +790,11 @@ jobs:
           registryTargets: [],
         });
       }
-      for (const [target, job] of inventory.targetToJob) {
+      for (const target of inventory.targetToJob.keys()) {
         expect(evaluateE2eWorkflowDispatchSelectors({ targets: target })).toMatchObject({
           valid: true,
           liveTargetsRun: false,
-          selectedFreeStandingJobs: [job],
+          selectedFreeStandingJobs: [target],
           registryTargets: [],
         });
       }
@@ -1020,7 +1022,7 @@ jobs:
           "artifact upload path must include e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json",
           "live must not invoke actions/upload-artifact directly",
           "live must use upload-e2e-artifacts exactly once",
-          "openshell-version-pin job must use the shared jobs selector condition",
+          "workflow missing hermetic execution job",
           "network-policy job env must not include NVIDIA_INFERENCE_API_KEY",
           "network-policy step 'Install OpenShell' env must not include GITHUB_TOKEN",
           "double-onboard job env must not include DOCKERHUB_TOKEN",
@@ -1384,7 +1386,7 @@ jobs:
     fs.writeFileSync(
       workflowPath,
       workflow.replace(
-        'echo "::error::Invalid jobs input; use comma-separated job ids" >&2',
+        'echo "::error::Invalid ${selector_name,,} input; use comma-separated ids" >&2',
         'echo "::error::Invalid jobs input: ${JOBS}" >&2',
       ),
     );
@@ -1393,7 +1395,7 @@ jobs:
       const errors = validateE2eWorkflowBoundary(workflowPath);
       expect(errors).toEqual(
         expect.arrayContaining([
-          "step 'Generate E2E target matrix' run script must include Invalid jobs input; use comma-separated job ids",
+          "step 'Generate E2E target matrix' run script must include Invalid ${selector_name,,} input; use comma-separated ids",
           "step 'Generate E2E target matrix' run script must not include Invalid jobs input: ${JOBS}",
         ]),
       );

@@ -20,6 +20,7 @@ import {
 } from "../advisors/risk-plan.mts";
 import { readPrivateRegularFile, writePrivateRegularFile } from "./private-file.ts";
 import type { E2eRiskSignal } from "./risk-signal.ts";
+import { HERMETIC_EXECUTION_PROFILE } from "./execution-profile.mts";
 import { readFreeStandingJobsInventory } from "./workflow-boundary.mts";
 
 const E2E_WORKFLOW = "e2e.yaml";
@@ -727,10 +728,21 @@ export function expectedSignalShards(
 ): Record<string, string[]> {
   const workflow = YAML.parse(fs.readFileSync(workflowPath, "utf8")) as unknown;
   const jobs = isObjectRecord(workflow) && isObjectRecord(workflow.jobs) ? workflow.jobs : {};
+  const inventory = readFreeStandingJobsInventory(workflowPath);
   return Object.fromEntries(
     jobIds.map((jobId) => {
-      if (!isObjectRecord(jobs[jobId])) throw new Error(`E2E workflow does not define ${jobId}`);
-      const job = jobs[jobId];
+      const executionJobId = inventory.targetToJob.get(jobId) ?? jobId;
+      if (!isObjectRecord(jobs[executionJobId])) {
+        throw new Error(`E2E workflow does not define ${executionJobId} for ${jobId}`);
+      }
+      const job = jobs[executionJobId];
+      const env = isObjectRecord(job.env) ? job.env : {};
+      if (executionJobId !== jobId) {
+        if (env.E2E_EXECUTION_PROFILE !== HERMETIC_EXECUTION_PROFILE.id) {
+          throw new Error(`${jobId} maps to an unknown shared execution profile`);
+        }
+        return [jobId, ["default"]];
+      }
       const strategy = isObjectRecord(job.strategy) ? job.strategy : {};
       const matrix = isObjectRecord(strategy.matrix) ? strategy.matrix : null;
       let shards = ["default"];

@@ -181,7 +181,7 @@ describe("deterministic PR risk plan", () => {
     expect(result.suggestedTests.join("\n")).toContain("`src/lib/state/registry.ts`");
   });
 
-  it("keeps every catalog job wired into the canonical E2E workflow", () => {
+  it("keeps every discovered test selector wired into the canonical E2E workflow", () => {
     const allowedJobs = new Set(readFreeStandingJobsInventory().allowedJobs);
     const configuredJobs = new Set(RISK_RULES.flatMap((rule) => rule.requiredJobs));
 

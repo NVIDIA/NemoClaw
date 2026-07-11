@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
+import { HERMETIC_EXECUTION_PROFILE } from "./execution-profile.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_ACTION_PATH = join(REPO_ROOT, ".github", "actions", "prepare-e2e", "action.yaml");
@@ -21,12 +22,14 @@ export const PREPARE_E2E_STEP = "Prepare E2E workspace";
 
 const CHECKOUT_LOCAL_PREPARE_E2E_ACTION = "./.github/actions/prepare-e2e";
 
+const EXECUTION_PROFILE_JOBS: ReadonlyMap<string, string> = new Map([
+  [HERMETIC_EXECUTION_PROFILE.executorJob, HERMETIC_EXECUTION_PROFILE.id],
+]);
+
 const NO_BUILD_JOBS = new Set([
-  "docs-validation",
   "generate-matrix",
   "launchable-smoke",
   "ollama-auth-proxy",
-  "openshell-version-pin",
   "rebuild-hermes",
   "rebuild-hermes-stale-base",
   "shields-config",
@@ -112,6 +115,22 @@ export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[
       })
       .map(([jobName]) => jobName),
   );
+
+  for (const [jobName, expectedProfile] of EXECUTION_PROFILE_JOBS) {
+    const value = jobs[jobName];
+    if (value === undefined) {
+      errors.push(`prepare-e2e execution-profile job is missing: ${jobName}`);
+      continue;
+    }
+    expectedJobs.add(jobName);
+    const env = record(record(value).env);
+    if (env.E2E_EXECUTION_PROFILE !== expectedProfile) {
+      errors.push(`${jobName} E2E_EXECUTION_PROFILE must be '${expectedProfile}'`);
+    }
+    if (Object.hasOwn(env, "E2E_JOB")) {
+      errors.push(`${jobName} must not declare E2E_JOB`);
+    }
+  }
 
   for (const [jobName, value] of Object.entries(jobs)) {
     const jobSteps = steps(record(value).steps);
