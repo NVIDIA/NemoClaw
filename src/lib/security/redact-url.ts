@@ -119,10 +119,10 @@ function redactSearchParams(
 ): string {
   const redactedSearchParams = new URLSearchParams();
   for (const [key, queryValue] of searchParams) {
-    // Query names are not a security boundary. Preserve benign values, but
-    // redact any decoded value that carries a recognizable secret shape.
+    // Query names are not a security boundary. Redact token-shaped names and
+    // values after URLSearchParams has decoded their percent escapes.
     redactedSearchParams.append(
-      key,
+      redactUrlQueryValue(key, replacement, redactStandaloneSecrets),
       isSensitiveUrlQueryKey(key, isSensitiveKey)
         ? replacement
         : redactUrlQueryValue(queryValue, replacement, redactStandaloneSecrets),
@@ -145,6 +145,38 @@ function redactUrlSearchParams(
   );
 }
 
+function redactUrlFragment(
+  fragment: string,
+  replacement: string,
+  isSensitiveKey: SensitiveKeyDetector,
+  redactStandaloneSecrets: StandaloneSecretRedactor,
+): string {
+  const prefix = fragment.startsWith("#") ? "#" : "";
+  const value = prefix ? fragment.slice(1) : fragment;
+  if (!value) return fragment;
+  if (value.includes("=")) {
+    return `${prefix}${redactSearchParams(
+      new URLSearchParams(value),
+      replacement,
+      isSensitiveKey,
+      redactStandaloneSecrets,
+    )}`;
+  }
+  // A synthetic form value decodes valid percent triplets while preserving
+  // malformed escapes, so one bad escape cannot hide an encoded token.
+  const decodedValue = new URLSearchParams(`value=${value}`).get("value") ?? value;
+  if (decodedValue.includes("=")) {
+    return `${prefix}${redactSearchParams(
+      new URLSearchParams(decodedValue),
+      replacement,
+      isSensitiveKey,
+      redactStandaloneSecrets,
+    )}`;
+  }
+  const redactedValue = redactUrlQueryValue(decodedValue, replacement, redactStandaloneSecrets);
+  return redactedValue === decodedValue ? fragment : `${prefix}${redactedValue}`;
+}
+
 function redactMalformedUrlQuery(
   value: string,
   replacement: string,
@@ -155,7 +187,15 @@ function redactMalformedUrlQuery(
   const fragmentStart = value.indexOf("#");
   const bodyEnd = fragmentStart < 0 ? value.length : fragmentStart;
   const body = value.slice(0, bodyEnd);
-  const suffix = stripFragment || fragmentStart < 0 ? "" : value.slice(fragmentStart);
+  const suffix =
+    stripFragment || fragmentStart < 0
+      ? ""
+      : redactUrlFragment(
+          value.slice(fragmentStart),
+          replacement,
+          isSensitiveKey,
+          redactStandaloneSecrets,
+        );
   const queryStart = body.indexOf("?");
   if (queryStart < 0) return `${body}${suffix}`;
   const redactedQuery = redactSearchParams(
@@ -186,6 +226,12 @@ export function redactUrlTokenPartial(
   if (parsed.url.username) parsed.url.username = "****";
   if (parsed.url.password) parsed.url.password = "****";
   redactUrlSearchParams(parsed.url, "****", isSensitiveKey, redactStandaloneSecrets);
+  parsed.url.hash = redactUrlFragment(
+    parsed.url.hash,
+    "****",
+    isSensitiveKey,
+    redactStandaloneSecrets,
+  );
   return `${parsed.url.toString()}${parsed.suffix}`;
 }
 
@@ -197,15 +243,17 @@ export function redactUrlTokenFull(
 ): string | null {
   const parsed = parseUrlTokenForRedaction(value);
   if (!parsed) {
-    return redactMalformedUrl(
-      redactMalformedUrlQuery(
-        redactMalformedUrlUserinfo(value, null),
-        "<REDACTED>",
-        true,
-        isSensitiveKey,
-        redactStandaloneSecrets,
-      ),
+    const redactedValue = redactMalformedUrlQuery(
+      redactMalformedUrlUserinfo(value, null),
+      "<REDACTED>",
+      true,
+      isSensitiveKey,
+      redactStandaloneSecrets,
     );
+    const queryStart = redactedValue.indexOf("?");
+    if (queryStart < 0) return redactMalformedUrl(redactedValue);
+    const redactedPrefix = redactMalformedUrl(redactedValue.slice(0, queryStart));
+    return redactedPrefix === null ? null : `${redactedPrefix}${redactedValue.slice(queryStart)}`;
   }
   if (parsed.url.username || parsed.url.password) {
     parsed.url.username = "";

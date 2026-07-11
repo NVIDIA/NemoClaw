@@ -39,4 +39,21 @@ describe("onboard session endpoint redaction", () => {
     expect(parsed.searchParams.get("model")).toBe(expected);
     expect(parsed.searchParams.get("keep")).toBe("yes");
   });
+
+  it("does not persist secrets from a malformed endpoint URL", async () => {
+    const session = await import("./onboard-session.js");
+    const decodedSecret = "sk-proj-abcdefghijklmnopqrstuvwxyz";
+    const encodedSecret = "sk%2Dproj%2Dabcdefghijklmnopqrstuvwxyz";
+    const endpointUrl = `https://user:pass@[not-an-ip/path?model=${encodedSecret}&${encodedSecret}=opaque&keep=yes#model=${encodedSecret}`;
+
+    session.saveSession(session.createSession({ endpointUrl }));
+
+    const raw = fs.readFileSync(session.SESSION_FILE, "utf8");
+    expect(raw).not.toContain(encodedSecret);
+    expect(raw).not.toContain(decodedSecret);
+    expect(raw).not.toContain("user:pass");
+    expect(session.loadSession()?.endpointUrl).toBe(
+      "https://[not-an-ip/path?model=%3CREDACTED%3E&%3CREDACTED%3E=opaque&keep=yes",
+    );
+  });
 });

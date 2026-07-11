@@ -71,6 +71,70 @@ describe("URL redaction", () => {
     expect(persistedResult).not.toContain("sk-proj-abcdefghijklmnopqrstuvwxyz");
   });
 
+  it.each([
+    ["parsed", "https://endpoint.example/path"],
+    ["malformed", "https://fallback-user:fallback-pass@[not-an-ip/path"],
+  ])("redacts encoded fragment secrets in a %s URL", (_label, baseUrl) => {
+    const encodedSecret = "sk%2Dproj%2Dabcdefghijklmnopqrstuvwxyz";
+    const value = `${baseUrl}#model=${encodedSecret}&keep=yes`;
+    const logResult = redact(value);
+    const persistedResult = redactUrl(value);
+
+    expect(logResult).toContain("#model=****&keep=yes");
+    expect(logResult).not.toContain(encodedSecret);
+    expect(logResult).not.toContain("sk-proj-abcdefghijklmnopqrstuvwxyz");
+    expect(persistedResult).not.toContain("#");
+    expect(persistedResult).not.toContain(encodedSecret);
+  });
+
+  it.each([
+    ["parsed", "https://endpoint.example/path", "%ZZsk%2Dproj%2Dabcdefghijklmnopqrstuvwxyz"],
+    [
+      "malformed",
+      "https://fallback-user:fallback-pass@[not-an-ip/path",
+      "sk%2Dproj%2Dabcdefghijklmnopqrstuvwxyz%ZZ",
+    ],
+  ])("redacts a standalone encoded fragment secret with malformed escapes in a %s URL", (_label, baseUrl, fragment) => {
+    const result = redact(`${baseUrl}#${fragment}`);
+
+    expect(result).not.toContain("sk%2Dproj%2Dabcdefghijklmnopqrstuvwxyz");
+    expect(result).not.toContain("sk-proj-abcdefghijklmnopqrstuvwxyz");
+  });
+
+  it.each([
+    ["parsed", "https://endpoint.example/path"],
+    ["malformed", "https://fallback-user:fallback-pass@[not-an-ip/path"],
+  ])("redacts a fully encoded sensitive fragment assignment in a %s URL", (_label, baseUrl) => {
+    const result = redact(`${baseUrl}#%74oken%3Dshort`);
+
+    expect(result).toContain("#token=****");
+    expect(result).not.toContain("short");
+  });
+
+  it("preserves benign persisted malformed query parameters after a sensitive key", () => {
+    const value =
+      "https://fallback-user:fallback-pass@[not-an-ip/path?%74oken=opaque-value&keep=yes";
+
+    expect(redact(value)).not.toContain("opaque-value");
+    expect(redactUrl(value)).toBe("https://[not-an-ip/path?token=%3CREDACTED%3E&keep=yes");
+  });
+
+  it.each([
+    ["parsed", "https://endpoint.example/path"],
+    ["malformed", "https://fallback-user:fallback-pass@[not-an-ip/path"],
+  ])("redacts an encoded token-shaped query name in a %s URL", (_label, baseUrl) => {
+    const encodedSecret = "sk%2Dproj%2Dabcdefghijklmnopqrstuvwxyz";
+    const value = `${baseUrl}?${encodedSecret}=opaque&keep=yes`;
+    const logResult = redact(value);
+    const persistedResult = redactUrl(value);
+
+    expect(logResult).not.toContain(encodedSecret);
+    expect(logResult).not.toContain("sk-proj-abcdefghijklmnopqrstuvwxyz");
+    expect(persistedResult).not.toContain(encodedSecret);
+    expect(persistedResult).not.toContain("sk-proj-abcdefghijklmnopqrstuvwxyz");
+    expect(persistedResult).toContain("%3CREDACTED%3E=opaque&keep=yes");
+  });
+
   it("redacts encoded query secrets after the bounded wrapper fallback (#6224)", () => {
     const wrappers = "]".repeat(4_096);
     const encodedSecret = "sk%2Dproj%2Dabcdefghijklmnopqrstuvwxyz";
