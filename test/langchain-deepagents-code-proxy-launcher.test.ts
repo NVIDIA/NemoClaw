@@ -56,6 +56,10 @@ function replaceManagedProxyFileConstants(source: string, tempDir: string): stri
     "utf8",
   );
   return source
+    .replace(
+      'exec /opt/venv/bin/python3 -I "$MANAGED_SESSION_SUPERVISOR" "$MANAGED_DCODE_WRAPPER" "$@"',
+      'exec "$MANAGED_DCODE_WRAPPER" "$@"',
+    )
     .replace("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
     .replace(
       'readonly MANAGED_PROXY_HOST_FILE="/usr/local/share/nemoclaw/dcode-proxy-host"',
@@ -146,6 +150,30 @@ function shellValidatorAccepts(source: string, name: string, value: string): boo
 }
 
 describe("Deep Agents Code direct-exec proxy launcher", () => {
+  it("keeps read-only identity commands outside the session supervisor", () => {
+    const launcher = readAgentFile("dcode-launcher.sh");
+    const directIdentity =
+      'status | whoami | identity | --version | -v | -V) exec "$MANAGED_DCODE_WRAPPER" "$@"';
+    const supervisedSession =
+      'exec /opt/venv/bin/python3 -I "$MANAGED_SESSION_SUPERVISOR" "$MANAGED_DCODE_WRAPPER" "$@"';
+
+    expect(launcher).toContain(directIdentity);
+    expect(launcher.indexOf(directIdentity)).toBeLessThan(launcher.indexOf(supervisedSession));
+  });
+
+  it("keeps one-shot non-interactive sessions outside the interactive supervisor", () => {
+    const launcher = readAgentFile("dcode-launcher.sh");
+    const nonInteractiveBypass =
+      '-n | -n?* | --non-interactive | --non-interactive=*) exec "$MANAGED_DCODE_WRAPPER" "$@" ;;';
+    const supervisedSession =
+      'exec /opt/venv/bin/python3 -I "$MANAGED_SESSION_SUPERVISOR" "$MANAGED_DCODE_WRAPPER" "$@"';
+
+    expect(launcher).toContain(nonInteractiveBypass);
+    expect(launcher.indexOf(nonInteractiveBypass)).toBeLessThan(
+      launcher.indexOf(supervisedSession),
+    );
+  });
+
   it("preserves the empty-prompt failure through the installed launcher chain (#6440)", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-empty-prompt-"));
     try {
