@@ -248,6 +248,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     }
     for (const s of [
       "managed-dcode-runtime.py",
+      "dcode-session-supervisor.py",
       "nemoclaw_observability.py",
       "patch-managed-deepagents-code.py",
       "validate-nemotron-ultra-profile.py",
@@ -258,6 +259,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "install -m 0755 /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/bin/dcode.real",
       "install -m 0755 /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/bin/deepagents-code",
       "install -o root -g root -m 0755 /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/lib/nemoclaw/dcode-managed-exec",
+      "COPY agents/langchain-deepagents-code/dcode-session-supervisor.py /usr/local/lib/nemoclaw/dcode-session-supervisor.py",
+      `test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/dcode-session-supervisor.py)" = "0:0:755"`,
       "test -f /usr/local/lib/nemoclaw/dcode-managed-exec",
       "test ! -L /usr/local/lib/nemoclaw/dcode-managed-exec",
       `test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/dcode-managed-exec)" = "0:0:755"`,
@@ -305,7 +308,15 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(dockerfile).toContain("ARG NEMOCLAW_TOOL_DISCLOSURE=progressive");
     expect(dockerfile).toContain("NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE}");
     expect(dockerfile).toContain("progressive|direct)");
-    expect(launcher).toContain('exec "$MANAGED_DCODE_WRAPPER" "$@"');
+    expect(launcher).toContain(
+      'exec /opt/venv/bin/python3 -I "$MANAGED_SESSION_SUPERVISOR" "$MANAGED_DCODE_WRAPPER" "$@"',
+    );
+    expect(launcher).toContain(
+      'readonly MANAGED_SESSION_SUPERVISOR="/usr/local/lib/nemoclaw/dcode-session-supervisor.py"',
+    );
+    expect(launcher).toContain(
+      'status | whoami | identity | --version | -v | -V) exec "$MANAGED_DCODE_WRAPPER" "$@"',
+    );
     expect(launcher).toContain("harden_resource_limits");
     expect(launcher).toContain("refusing to launch dcode unhardened");
     expect(policy).not.toContain("/usr/local/bin/dcode.real");
@@ -373,6 +384,15 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(startScript).toContain(`printf '%s\\n' 'export PATH="${DCODE_CANONICAL_PATH}"'`);
     expect(wrapper).toContain(`export PATH="${DCODE_CANONICAL_PATH}"`);
     expect(pathContractFiles).not.toContain('PATH="/usr/local/bin:${PATH}"');
+  });
+
+  it("preseeds managed first-run state and a usable ripgrep binary (#6678)", () => {
+    const baseDockerfile = readAgentFile("Dockerfile.base");
+
+    expect(baseDockerfile).toContain("ripgrep=14.1.1-1+b4");
+    expect(baseDockerfile).toContain(
+      "printf '1\\n' > /sandbox/.deepagents/.state/onboarding_complete",
+    );
   });
 
   it("keeps optional service egress out of the default policy and requires Landlock", () => {
@@ -571,7 +591,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "redact_secrets_in_file",
       "trap cleanup_sensitive_captures EXIT",
       "cleanup_sensitive_captures",
-      "${PREFIX}.sanitized.log",
+      "${PREFIX}${suffix}.sanitized.log",
+      "for session_index in 1 2",
+      'wait_for_dcode_process_baseline "$baseline_process_count"',
       "secret-shaped value found in sanitized TUI capture",
       "nvapi-",
       "sk-",
