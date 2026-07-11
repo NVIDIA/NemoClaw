@@ -91,6 +91,7 @@ function createPhases(
         requiredEndpointUrl: null,
         requiredInferenceApi: null,
       }),
+      getSandboxRecoveryAuthority: (): "missing" => "missing",
       withGatewayRouteMutationLock: async <T>(
         _gatewayName: string,
         operation: () => Promise<T> | T,
@@ -160,6 +161,7 @@ function createPhases(
     },
     sandbox: {
       resumeAgentChanged: false,
+      recreateSandbox: () => false,
       controlUiPort: null,
       rootDir: "/repo",
     },
@@ -205,6 +207,7 @@ function createPhases(
       selectResourceProfileForSandbox: vi.fn(async () => null),
       stopStaleDashboardListenersForSandbox: vi.fn(),
       listRegistrySandboxes: () => ({ sandboxes: [] }),
+      reconcileRegisteredExtraProviders: vi.fn(() => []),
       createSandbox: vi.fn(async () => "created-sandbox"),
       updateSandboxRegistry: vi.fn(),
       getSandboxAgentRegistryFields: () => ({ agent: "openclaw" }),
@@ -301,6 +304,7 @@ describe("core onboard flow phases", () => {
       "nemoclaw",
       expect.any(Function),
       expect.any(Function),
+      expect.any(String),
     );
   });
 

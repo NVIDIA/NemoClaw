@@ -1,0 +1,35 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Understand OpenClaw Context Compaction"
+sidebar-title: "Understand Context Compaction"
+description: "How NemoClaw bounds OpenClaw context compaction for managed inference routes."
+description-agent: "Explains OpenClaw context compaction behavior in NemoClaw-managed sandboxes. Use when diagnosing long compaction attempts or understanding transcript rotation."
+keywords: ["nemoclaw context compaction", "openclaw transcript compaction", "openclaw context management"]
+content:
+  type: "concept"
+---
+
+NemoClaw configures safeguard compaction for OpenClaw sandboxes that use its managed `inference.local` route, except for Local Ollama routes.
+The safeguard bounds each compaction attempt while leaving summarization behavior under OpenClaw's control.
+
+## Compaction Attempt Limit
+
+Each automatic or explicitly requested compaction attempt is limited to 120 seconds.
+OpenClaw reports progress while the attempt runs.
+
+After a successful attempt, OpenClaw rotates the active transcript while preserving the most recent turn.
+
+## Compaction Results
+
+The time limit prevents an individual attempt from running indefinitely.
+It does not guarantee that compaction succeeds or reduces the active context.
+
+OpenClaw owns the summarization behavior and decides whether the compacted transcript satisfies its requirements.
+
+## When the Setting Applies
+
+NemoClaw generates the safeguard setting when it builds or recreates the sandbox image.
+Recreate the sandbox when you need a new image to incorporate changed build-time settings.
+
+For model context-window and output-token limits, refer to [Configure Model Limits](../inference/manage-inference/configure-model-limits).

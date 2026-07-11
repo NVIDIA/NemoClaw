@@ -7,6 +7,7 @@ import {
   effectiveManagedToolGatewayPresets,
   loadManagedToolGatewayMatrix,
 } from "./managed-tool-gateway.ts";
+import { isObjectRecord } from "./object-record.ts";
 
 const REMOTE_PLATFORM_TOOLSETS = [
   "web",
@@ -239,9 +240,5 @@ function addEnabledPlatformToolsets(
 }
 
 function isEnabledPlatform(value: unknown): boolean {
-  return isObject(value) && value.enabled === true;
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return isObjectRecord(value) && value.enabled === true;
 }

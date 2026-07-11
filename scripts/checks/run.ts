@@ -32,6 +32,11 @@ const CHECKS: readonly CheckCommand[] = [
     args: ["scripts/checks/local-credential-helper-pin.ts"],
   },
   {
+    name: "hermes-light-skin-boundary",
+    command: TSX,
+    args: ["scripts/checks/hermes-light-skin-boundary.ts"],
+  },
+  {
     name: "no-coverage-ignore",
     command: TSX,
     args: ["scripts/checks/no-coverage-ignore.ts"],

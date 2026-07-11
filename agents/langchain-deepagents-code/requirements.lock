@@ -928,7 +928,9 @@ h11==0.16.0 \
 httpcore==1.0.9 \
     --hash=sha256:2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55 \
     --hash=sha256:6e34463af53fd2ab5d807f399a9b45ea31c3dfa2276f15a2c3f00afff6e176e8
-    # via httpx
+    # via
+    #   httpx
+    #   openrouter
 httptools==0.8.0 \
     --hash=sha256:0770728beb05094c809b98e814edff5fef69d26ad7d21185f2f6d5884a0ba683 \
     --hash=sha256:0ea897f0c729581ebf72131a438a7932d9b14efef72d75ada966700cac3caaeb \
@@ -994,6 +996,7 @@ httpx==0.28.1 \
     #   langsmith
     #   mcp
     #   openai
+    #   openrouter
     #   tavily-python
 httpx-sse==0.4.3 \
     --hash=sha256:0ac1c9fe3c0afad2e0ebb25a934a59f4c7823b60792691f779fad2c5568830fc \
@@ -1124,6 +1127,10 @@ jsonpatch==1.33 \
     --hash=sha256:0ae28c0cd062bbd8b8ecc26d7d164fbbea9652a1a3693f3b956c1eae5145dade \
     --hash=sha256:9fcd4009c41e6d12348b4a0ff2563ba56a2923a7dfee731d004e212e1ee5030c
     # via langchain-core
+jsonpath-python==1.1.6 \
+    --hash=sha256:a1c50afd8d3fbbaf47a4873bc890dcb3c15da96f5c020327977d844d8731a2d4 \
+    --hash=sha256:dded9932b4ec41fb8726e09c83afa4e6be618f938c2db287cc2a81723c639671
+    # via openrouter
 jsonpointer==3.1.1 \
     --hash=sha256:0b801c7db33a904024f6004d526dcc53bbb8a4a0f4e32bfd10beadf60adf1900 \
     --hash=sha256:8ff8b95779d071ba472cf5bc913028df06031797532f08a7d5b602d8b2a488ca
@@ -1191,6 +1198,7 @@ langchain-core==1.4.8 \
     #   langchain-mcp-adapters
     #   langchain-nvidia-ai-endpoints
     #   langchain-openai
+    #   langchain-openrouter
     #   langchain-quickjs
     #   langgraph
     #   langgraph-api
@@ -1215,6 +1223,10 @@ langchain-nvidia-ai-endpoints==1.4.3 \
 langchain-openai==1.3.3 \
     --hash=sha256:143769bf943820b80db769e47ca8fd0aac08ed18714519333b044c4431e9aa67 \
     --hash=sha256:e469659862c8aabba4f6653df973206e7be54f98cf2275c86be7f06b7abe20d7
+    # via deepagents-code
+langchain-openrouter==0.2.6 \
+    --hash=sha256:267127e34f921450298ab82fbbef8dd0d4bb2b440040769df0af203ce13048f4 \
+    --hash=sha256:dc77927cd70d837adea977b1253cf7cebc3055724c419169ac1321d936281ba8
     # via deepagents-code
 langchain-protocol==0.0.18 \
     --hash=sha256:70b53a86fbf9cedc863555effe44da192ab02d556ddbf2cf95b8873adcf41b5a \
@@ -1474,6 +1486,10 @@ openai==2.43.0 \
     --hash=sha256:65a670b54fadf2268c9e1330133373c963eb779ee969e5cbad419ec2c21dce97 \
     --hash=sha256:e74d238200a26868977002190fb6631613480a93dfe0c9c982e77021ed60a017
     # via langchain-openai
+openrouter==0.10.8 \
+    --hash=sha256:ac7f4cea1ec1c2a063b0ad9792a8f64dde68ed053279b6c42bee849a50afc47c \
+    --hash=sha256:ff9b3cd2f55a3f905d21f56517344da9f9556ffbd2cb9d31ddc388c4b930aab6
+    # via langchain-openrouter
 opentelemetry-api==1.42.1 \
     --hash=sha256:51a69edacadbc03a8950ace1c4c21099cacc538820ac2c9e36277e78cebba714 \
     --hash=sha256:56c63bea9f77b62856be8c47600474acad853b2924b99b1687c4cb6297166716
@@ -1922,6 +1938,7 @@ pydantic==2.13.4 \
     #   langsmith
     #   mcp
     #   openai
+    #   openrouter
     #   pydantic-settings
 pydantic-core==2.46.4 \
     --hash=sha256:00c603d540afdd6b80eb39f078f33ebd46211f02f33e34a32d9f053bba711de0 \
