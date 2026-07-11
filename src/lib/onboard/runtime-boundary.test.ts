@@ -12,7 +12,13 @@ import {
 } from "../state/onboard-session";
 import type { StepMutationOptions } from "../state/onboard-step-mutation";
 import type { OnboardMachineEvent } from "./machine/events";
-import { advanceTo, branchTo, completeOnboardMachine, retryTo } from "./machine/result";
+import {
+  advanceTo,
+  branchTo,
+  completeOnboardMachine,
+  failOnboardMachine,
+  retryTo,
+} from "./machine/result";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./machine/runtime";
 import type { OnboardMachineState } from "./machine/types";
 import { OnboardRuntimeBoundary } from "./runtime-boundary";
@@ -313,20 +319,23 @@ describe("OnboardRuntimeBoundary", () => {
     });
   });
 
-  it("emits diagnostics for explicit repaired resume compatibility results", async () => {
+  it("emits diagnostics for explicit repaired resume invalidated results", async () => {
     const harness = createRuntimeHarness();
     const boundary = new OnboardRuntimeBoundary({
       toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
       maybeForceE2eStepFailure: () => undefined,
       createRuntime: harness.createRuntime,
     });
+    const result = advanceTo("gateway", { metadata: { state: "preflight" } });
 
-    await boundary.recordCompatibleStateResult(
-      advanceTo("gateway", { metadata: { state: "preflight" } }),
-    );
+    await boundary.recordInvalidatedStateResult(result, {
+      reason: "source_state_mismatch",
+      currentState: "init",
+      sourceState: "preflight",
+    });
 
     expect(harness.events[0]).toMatchObject({
-      type: "state.result.skipped",
+      type: "state.result.invalidated",
       metadata: {
         reason: "source_state_mismatch",
         currentState: "init",
@@ -336,7 +345,31 @@ describe("OnboardRuntimeBoundary", () => {
     });
   });
 
-  it("emits diagnostics for explicit compatible replay of stale default results", async () => {
+  it.each([
+    { label: "complete", result: () => completeOnboardMachine() },
+    { label: "failed", result: () => failOnboardMachine("boom") },
+  ] as const)("rejects non-transition $label results before emitting invalidation (#6227)", async ({
+    result,
+  }) => {
+    const harness = createRuntimeHarness();
+    const boundary = new OnboardRuntimeBoundary({
+      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+      maybeForceE2eStepFailure: () => undefined,
+      createRuntime: harness.createRuntime,
+    });
+
+    await expect(
+      boundary.recordInvalidatedStateResult(result(), {
+        reason: "already_at_target",
+        currentState: "init",
+        sourceState: "init",
+      }),
+    ).rejects.toThrow(/Cannot invalidate non-transition/);
+
+    expect(harness.events).toHaveLength(0);
+  });
+
+  it("emits diagnostics for explicit invalidated replay of stale default results", async () => {
     const harness = createRuntimeHarness();
     const boundary = new OnboardRuntimeBoundary({
       toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
@@ -345,8 +378,86 @@ describe("OnboardRuntimeBoundary", () => {
     });
 
     const result = advanceTo("preflight", { metadata: { state: "missing" } });
-    await expect(boundary.recordCompatibleStateResult(result)).resolves.toMatchObject({
+    await expect(
+      boundary.recordInvalidatedStateResult(result, {
+        reason: "source_state_mismatch",
+        currentState: "init",
+        sourceState: "missing",
+      }),
+    ).resolves.toMatchObject({
       machine: { state: "init" },
+    });
+  });
+
+  it("applies the initial preflight transition on fresh onboarding", async () => {
+    const harness = createRuntimeHarness();
+    const boundary = new OnboardRuntimeBoundary({
+      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+      maybeForceE2eStepFailure: () => undefined,
+      createRuntime: harness.createRuntime,
+    });
+
+    await boundary.recordInitialPreflightTransition(false);
+
+    expect(harness.events.map((event) => event.type)).toEqual(["state.exited", "state.entered"]);
+    expect(harness.events.at(-1)).toMatchObject({ state: "preflight" });
+  });
+
+  it("invalidates the initial preflight transition when resume already stands at preflight (#6227)", async () => {
+    const harness = createRuntimeHarness({
+      machine: {
+        version: 1,
+        state: "preflight",
+        stateEnteredAt: "2026-06-09T00:00:00.000Z",
+        revision: 3,
+      },
+    });
+    const boundary = new OnboardRuntimeBoundary({
+      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+      maybeForceE2eStepFailure: () => undefined,
+      createRuntime: harness.createRuntime,
+    });
+
+    await boundary.recordInitialPreflightTransition(true);
+
+    expect(harness.events.map((event) => event.type)).toEqual(["state.result.invalidated"]);
+    expect(harness.events[0]).toMatchObject({
+      type: "state.result.invalidated",
+      metadata: {
+        reason: "already_at_target",
+        currentState: "preflight",
+        sourceState: "init",
+        targetState: "preflight",
+      },
+    });
+  });
+
+  it("invalidates the initial preflight transition when resume already advanced past init (#6227)", async () => {
+    const harness = createRuntimeHarness({
+      machine: {
+        version: 1,
+        state: "gateway",
+        stateEnteredAt: "2026-06-09T00:00:00.000Z",
+        revision: 5,
+      },
+    });
+    const boundary = new OnboardRuntimeBoundary({
+      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+      maybeForceE2eStepFailure: () => undefined,
+      createRuntime: harness.createRuntime,
+    });
+
+    await boundary.recordInitialPreflightTransition(true);
+
+    expect(harness.events.map((event) => event.type)).toEqual(["state.result.invalidated"]);
+    expect(harness.events[0]).toMatchObject({
+      type: "state.result.invalidated",
+      metadata: {
+        reason: "source_state_mismatch",
+        currentState: "gateway",
+        sourceState: "init",
+        targetState: "preflight",
+      },
     });
   });
 

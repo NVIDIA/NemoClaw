@@ -12,8 +12,8 @@ describe("Hermes onboard smoke verification", () => {
     expect(shouldSmokeOpenAiLikeOnboardRoute("openai-api")).toBe(true);
   });
 
-  it("skips only the Hermes OAuth smoke path in the runtime verifier", () => {
-    const calls = runVerifyOnboardSmokeHarness([
+  it("skips only the Hermes OAuth smoke path in the runtime verifier", async () => {
+    const calls = await runVerifyOnboardSmokeHarness([
       { credentialEnv: "OPENAI_API_KEY" },
       { credentialEnv: "NOUS_API_KEY" },
       { credentialEnv: "OPENAI_API_KEY", forceOpenAiLike: true },

@@ -31,6 +31,10 @@ import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
 import type { AgentStateFile } from "../agent/defs.js";
 import { loadAgent } from "../agent/defs.js";
 import { isObjectRecord, type UnknownRecord } from "../core/json-types.js";
+import {
+  BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION,
+  classifyFailedDirsFromTarStderr,
+} from "../domain/backup-failure.js";
 import { shellQuote } from "../runner.js";
 import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
 import { isSensitiveFile, sanitizeConfigFile } from "../security/credential-filter.js";
@@ -136,6 +140,12 @@ export interface BackupResult {
   manifest?: RebuildManifest;
   backedUpDirs: string[];
   failedDirs: string[];
+  // Per-dir failure cause for entries in failedDirs, keyed by dir name.
+  // Distinguishes "permission denied" (tar could not read the content) from
+  // "absent after extraction" (tar succeeded but the dir never materialized)
+  // so operators can tell an ownership problem from a missing dir (#6455).
+  // Dirs failed for other reasons may be absent from this map.
+  failedDirReasons?: Record<string, string>;
   // Set when the failure is a precondition (e.g. duplicate --name) rather
   // than a mid-backup error. CLI surfaces this to the user verbatim.
   error?: string;
@@ -730,27 +740,6 @@ function stateFileRemotePath(dir: string, filePath: string): string {
   return `${dir.replace(/\/+$/, "")}/${filePath}`;
 }
 
-function failedDirsFromTarStderr(stderr: string, existingDirs: string[]): Set<string> {
-  const failed = new Set<string>();
-  const dirs = [...existingDirs].sort((a, b) => b.length - a.length);
-  for (const rawLine of stderr.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line.startsWith("tar: ")) continue;
-    const message = line.slice("tar: ".length);
-    for (const dirName of dirs) {
-      if (
-        message === dirName ||
-        message.startsWith(`${dirName}:`) ||
-        message.startsWith(`${dirName}/`)
-      ) {
-        failed.add(dirName);
-        break;
-      }
-    }
-  }
-  return failed;
-}
-
 const SQLITE_BACKUP_PY = [
   "import sqlite3, sys",
   "src, dst = sys.argv[1], sys.argv[2]",
@@ -1128,6 +1117,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
 
   const backedUpDirs: string[] = [];
   const failedDirs: string[] = [];
+  const failedDirReasons: Record<string, string> = {};
   const backedUpFiles: string[] = [];
   const failedFiles: string[] = [];
   let unreachable = false;
@@ -1341,10 +1331,11 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
                 } else {
                   _log(`Dir ${d} missing from clean tar extraction — marking failed`);
                   failedDirs.push(d);
+                  failedDirReasons[d] = BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION;
                 }
               }
             } else {
-              const tarFailedDirs = failedDirsFromTarStderr(
+              const tarFailedDirs = classifyFailedDirsFromTarStderr(
                 result.stderr?.toString() || "",
                 existingDirs,
               );
@@ -1355,12 +1346,15 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
                 failedDirs.push(...existingDirs);
               } else {
                 for (const d of existingDirs) {
-                  if (tarFailedDirs.has(d)) {
-                    _log(`Dir ${d} had tar read errors — marking failed`);
+                  const tarFailureReason = tarFailedDirs.get(d);
+                  if (tarFailureReason !== undefined) {
+                    _log(`Dir ${d} had tar read errors (${tarFailureReason}) — marking failed`);
                     failedDirs.push(d);
+                    failedDirReasons[d] = tarFailureReason;
                   } else if (!extractedDirs.has(d)) {
                     _log(`Dir ${d} missing from partial tar extraction — marking failed`);
                     failedDirs.push(d);
+                    failedDirReasons[d] = BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION;
                   } else {
                     backedUpDirs.push(d);
                   }
@@ -1425,6 +1419,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     manifest,
     backedUpDirs,
     failedDirs,
+    ...(Object.keys(failedDirReasons).length > 0 ? { failedDirReasons } : {}),
     backedUpFiles,
     failedFiles,
   };
