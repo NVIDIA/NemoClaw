@@ -26,7 +26,8 @@ Spec shape:
     "supersession_edges": [{"superseder": 2851, "superseded": 2693}],
     "tiebreaker_fired": "smaller_diff",
     "winner": 2851,
-    "mode": "happy"  // or "degraded"
+    "closest_to_ready": null,
+    "mode": "happy"  // optional assertion; derived from Tier 0 gates
   }
 
 Usage:
@@ -44,6 +45,94 @@ from typing import Any
 TIER_1_WEIGHT = 2.0
 # Tier 2 weight per check (each pass = 1 point, yellow = 0.5, fail = 0).
 TIER_2_WEIGHT = 1.0
+
+TIER_0_GATES = (
+    ("state_open", "State open"),
+    ("ci_green_latest_sha", "CI green on latest SHA"),
+    ("mergeable", "Mergeable"),
+    ("contributor_compliance", "Contributor compliance"),
+    ("branch_protection", "Branch protection"),
+    ("pr_advisor_merge_as_is", "PR Review Advisor: merge as-is"),
+    ("coderabbit_threads_resolved", "Automated-review threads resolved"),
+)
+TIER_0_KEYS = tuple(key for key, _label in TIER_0_GATES)
+INVALID_SPEC_EXIT = 64
+
+
+class SpecValidationError(ValueError):
+    """Raised when a verdict spec cannot produce a safe recommendation."""
+
+
+def validate_spec(spec: Any) -> tuple[str, int | None]:
+    """Validate untrusted renderer input and derive the verdict mode."""
+    if not isinstance(spec, dict):
+        raise SpecValidationError("top-level value must be an object")
+
+    prs = spec.get("prs")
+    if not isinstance(prs, list) or not prs:
+        raise SpecValidationError("prs must be a non-empty array")
+
+    pr_numbers: set[int] = set()
+    eligible_numbers: set[int] = set()
+    salvageable_numbers: set[int] = set()
+    for index, pr in enumerate(prs):
+        if not isinstance(pr, dict):
+            raise SpecValidationError(f"prs[{index}] must be an object")
+        number = pr.get("number")
+        if type(number) is not int:
+            raise SpecValidationError(f"prs[{index}].number must be an integer")
+        if number in pr_numbers:
+            raise SpecValidationError(f"duplicate PR number: {number}")
+        pr_numbers.add(number)
+
+        gates = pr.get("tier_0")
+        if not isinstance(gates, dict):
+            raise SpecValidationError(f"PR #{number} tier_0 must be an object")
+        missing = [key for key in TIER_0_KEYS if key not in gates]
+        extra = sorted(set(gates) - set(TIER_0_KEYS))
+        if missing:
+            raise SpecValidationError(
+                f"PR #{number} tier_0 is missing required gates: {', '.join(missing)}"
+            )
+        if extra:
+            raise SpecValidationError(f"PR #{number} tier_0 has unknown gates: {', '.join(extra)}")
+        non_boolean = [key for key in TIER_0_KEYS if type(gates[key]) is not bool]
+        if non_boolean:
+            raise SpecValidationError(
+                f"PR #{number} tier_0 gates must be boolean: {', '.join(non_boolean)}"
+            )
+
+        if all(gates[key] for key in TIER_0_KEYS):
+            eligible_numbers.add(number)
+        if gates["state_open"] and gates["contributor_compliance"]:
+            salvageable_numbers.add(number)
+
+    mode = "happy" if eligible_numbers else "degraded"
+    winner = spec.get("winner")
+    if winner is not None:
+        if type(winner) is not int or winner not in pr_numbers:
+            raise SpecValidationError("winner must reference a candidate PR number")
+        if winner not in eligible_numbers:
+            raise SpecValidationError(f"winner PR #{winner} did not pass every Tier 0 gate")
+
+    closest_to_ready = spec.get("closest_to_ready")
+    if closest_to_ready is not None:
+        if type(closest_to_ready) is not int or closest_to_ready not in pr_numbers:
+            raise SpecValidationError("closest_to_ready must reference a candidate PR number")
+        if mode != "degraded":
+            raise SpecValidationError("closest_to_ready is only valid in degraded mode")
+        if closest_to_ready not in salvageable_numbers:
+            raise SpecValidationError(
+                f"closest_to_ready PR #{closest_to_ready} must be open and contributor-compliant"
+            )
+
+    supplied_mode = spec.get("mode")
+    if supplied_mode is not None and supplied_mode != mode:
+        raise SpecValidationError(
+            f"supplied mode {supplied_mode!r} contradicts derived mode {mode!r}"
+        )
+
+    return mode, closest_to_ready
 
 
 def status_emoji(status: str) -> str:
@@ -77,18 +166,10 @@ def render_scorecard(prs: list[dict[str, Any]]) -> str:
 
     # Tier 0
     rows.append(["**Tier 0 — gates**"] + [""] * len(prs))
-    tier_0_keys = [
-        "state_open",
-        "ci_green_latest_sha",
-        "mergeable",
-        "branch_protection",
-        "coderabbit_threads_resolved",
-    ]
-    for key in tier_0_keys:
-        label = key.replace("_", " ").capitalize()
+    for key, label in TIER_0_GATES:
         row = [label]
         for pr in prs:
-            row.append(status_emoji(pr.get("tier_0", {}).get(key, "fail")))
+            row.append(status_emoji(pr["tier_0"][key]))
         rows.append(row)
 
     # Tier 1
@@ -176,13 +257,18 @@ def main() -> int:
         spec = json.load(sys.stdin)
     except json.JSONDecodeError as e:
         print(f"Invalid JSON spec on stdin: {e}", file=sys.stderr)
-        return 64
+        return INVALID_SPEC_EXIT
+
+    try:
+        mode, closest_to_ready = validate_spec(spec)
+    except SpecValidationError as e:
+        print(f"Invalid verdict spec: {e}", file=sys.stderr)
+        return INVALID_SPEC_EXIT
 
     issue = spec["issue"]
     criteria = spec.get("criteria", [])
     prs = spec.get("prs", [])
     winner = spec.get("winner")
-    mode = spec.get("mode", "happy")
     tiebreaker = spec.get("tiebreaker_fired")
     supersession = spec.get("supersession_edges", [])
 
@@ -209,10 +295,10 @@ def main() -> int:
             print(f"\n### Verdict: MERGE PR #{winner}\n")
     else:
         print("\n### Verdict: Neither mergeable yet\n")
-        if winner is not None:
-            print(f"PR #{winner} is closer to ready.\n")
+        if closest_to_ready is not None:
+            print(f"PR #{closest_to_ready} is closer to ready.\n")
         else:
-            print("No PR is meaningfully closer; both need substantial salvage.\n")
+            print("No open, contributor-compliant PR is eligible for salvage.\n")
 
     print("Reasoning trace:")
     if supersession:

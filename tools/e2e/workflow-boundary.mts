@@ -5,7 +5,7 @@ import { readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
-import { validateDocsValidationWorkflowBoundary } from "./docs-validation-workflow-boundary.mts";
+import { discoverCredentialFreeTests, SHARED_E2E_JOB_ID } from "./credential-free-tests.mts";
 import { validateHermesDashboardWorkflowBoundary } from "./hermes-dashboard-workflow-boundary.mts";
 import { validateHermesGpuStartupWorkflowBoundary } from "./hermes-gpu-startup-workflow-boundary.mts";
 import { validateInferenceSwitchWorkflowBoundary } from "./inference-switch-workflow-boundary.mts";
@@ -17,7 +17,6 @@ import { validateUploadE2eArtifactsWorkflowBoundary } from "./upload-e2e-artifac
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_E2E_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
-export const FREE_STANDING_WORKFLOW_INVENTORY_SCRIPT = "tools/e2e/workflow-inventory.mts";
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
@@ -29,6 +28,7 @@ type WorkflowStep = WorkflowRecord & {
 
 export interface FreeStandingJobsInventory {
   allowedJobs: string[];
+  workflowJobs: string[];
   explicitOnlyJobs: string[];
   freeStandingTargets: string[];
   targetToJob: Map<string, string>;
@@ -57,13 +57,7 @@ const PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS = new Set([
   "device-auth-health",
   "model-router-provider-routed-inference",
 ]);
-const NO_IMAGE_E2E_JOBS = new Set([
-  "docs-validation",
-  "gateway-drift-preflight",
-  "gateway-health-honest",
-  "onboard-negative-paths",
-  "openshell-version-pin",
-]);
+const NO_IMAGE_E2E_JOBS = new Set(["gateway-health-honest", SHARED_E2E_JOB_ID]);
 const DOCKER_HUB_AUTH_STEP = "Authenticate to Docker Hub";
 const DOCKER_HUB_CLEANUP_STEP = "Clean up Docker auth";
 const DOCKER_HUB_CLEANUP_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
@@ -98,6 +92,7 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
 } {
   const errors: string[] = [];
   const allowedJobs: string[] = [];
+  const workflowJobs: string[] = [];
   const explicitOnlyJobs: string[] = [];
   const freeStandingTargets: string[] = [];
   const targetToJob = new Map<string, string>();
@@ -105,6 +100,7 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
   for (const [jobId, rawJob] of Object.entries(jobs)) {
     const job = asRecord(rawJob);
     const env = asRecord(job.env);
+    if (jobId === SHARED_E2E_JOB_ID) continue;
     const hasJobMarker = Object.hasOwn(env, FREE_STANDING_JOB_MARKER);
     const hasTargetMarker = Object.hasOwn(env, FREE_STANDING_TARGET_MARKER);
     if (!hasJobMarker && !hasTargetMarker) continue;
@@ -124,6 +120,7 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
     }
 
     allowedJobs.push(jobId);
+    workflowJobs.push(jobId);
     if (Object.hasOwn(env, FREE_STANDING_DEFAULT_ENABLED_MARKER)) {
       if (env[FREE_STANDING_DEFAULT_ENABLED_MARKER] !== "0") {
         errors.push(`${jobId} job ${FREE_STANDING_DEFAULT_ENABLED_MARKER} must be "0" when set`);
@@ -142,11 +139,29 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
     targetToJob.set(target, jobId);
   }
 
+  if (Object.hasOwn(jobs, SHARED_E2E_JOB_ID)) {
+    workflowJobs.push(SHARED_E2E_JOB_ID);
+    try {
+      for (const row of discoverCredentialFreeTests()) {
+        allowedJobs.push(row.id);
+        freeStandingTargets.push(row.id);
+        targetToJob.set(row.id, SHARED_E2E_JOB_ID);
+      }
+    } catch (error) {
+      errors.push(
+        `credential-free test discovery failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
   if (allowedJobs.length === 0) {
     errors.push("free-standing workflow metadata must declare at least one job");
   }
   for (const duplicate of findDuplicates(allowedJobs)) {
     errors.push(`free-standing workflow metadata repeats job id: ${duplicate}`);
+  }
+  for (const duplicate of findDuplicates(workflowJobs)) {
+    errors.push(`free-standing workflow metadata repeats workflow job id: ${duplicate}`);
   }
   for (const duplicate of findDuplicates(freeStandingTargets)) {
     errors.push(`free-standing workflow metadata repeats target id: ${duplicate}`);
@@ -156,6 +171,7 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
     errors,
     inventory: {
       allowedJobs,
+      workflowJobs,
       explicitOnlyJobs,
       freeStandingTargets,
       targetToJob,
@@ -174,6 +190,7 @@ function cloneFreeStandingJobsInventory(
 ): FreeStandingJobsInventory {
   return {
     allowedJobs: [...inventory.allowedJobs],
+    workflowJobs: [...inventory.workflowJobs],
     explicitOnlyJobs: [...inventory.explicitOnlyJobs],
     freeStandingTargets: [...inventory.freeStandingTargets],
     targetToJob: new Map(inventory.targetToJob),
@@ -207,19 +224,6 @@ export function readFreeStandingJobsInventory(
     inventory: cloneFreeStandingJobsInventory(inventory),
   });
   return inventory;
-}
-
-export function formatFreeStandingJobsInventoryForShell(
-  inventory: FreeStandingJobsInventory,
-): string {
-  const targetJobMappings = [...inventory.targetToJob].map(([target, job]) => `${target}:${job}`);
-  return [
-    `allowed_jobs=${inventory.allowedJobs.join(",")}`,
-    `explicit_only_jobs_csv=${inventory.explicitOnlyJobs.join(",")}`,
-    `free_standing_targets_csv=${inventory.freeStandingTargets.join(",")}`,
-    `free_standing_target_jobs_csv=${targetJobMappings.join(",")}`,
-    "",
-  ].join("\n");
 }
 
 export interface WorkflowDispatchSelectorEvaluation {
@@ -311,7 +315,7 @@ export function evaluateE2eWorkflowDispatchSelectors(input: {
   const registryTargets: string[] = [];
   for (const target of splitSelector(targets)) {
     const job = freeStandingTargetToJob.get(target);
-    if (job) selectedFreeStandingJobs.add(job);
+    if (job) selectedFreeStandingJobs.add(target);
     else registryTargets.push(target);
   }
 
@@ -574,11 +578,11 @@ function validateFreeStandingInventoryBoundary(
 ): void {
   const targetByJob = new Map([...inventory.targetToJob].map(([target, job]) => [job, target]));
 
-  for (const jobName of inventory.allowedJobs) {
+  for (const jobName of inventory.workflowJobs) {
     const job = asRecord(jobs[jobName]);
     if (Object.keys(job).length === 0) continue;
 
-    if (!FREE_STANDING_SELECTOR_SPECIAL_CASES.has(jobName)) {
+    if (jobName !== SHARED_E2E_JOB_ID && !FREE_STANDING_SELECTOR_SPECIAL_CASES.has(jobName)) {
       validateFreeStandingJobSelector(
         errors,
         jobs,
@@ -617,7 +621,7 @@ function validateFreeStandingInventoryCoverage(
   reportNeeds: readonly unknown[],
   inventory: FreeStandingJobsInventory,
 ): void {
-  for (const jobId of inventory.allowedJobs) {
+  for (const jobId of inventory.workflowJobs) {
     if (!Object.hasOwn(jobs, jobId)) {
       errors.push(`free-standing inventory job missing workflow job: ${jobId}`);
     }
@@ -626,10 +630,11 @@ function validateFreeStandingInventoryCoverage(
     }
   }
   for (const [target, jobId] of inventory.targetToJob) {
-    if (!inventory.allowedJobs.includes(jobId)) {
-      errors.push(`free-standing inventory maps ${target} to unknown job ${jobId}`);
+    if (!inventory.workflowJobs.includes(jobId)) {
+      errors.push(`free-standing inventory maps ${target} to unknown workflow job ${jobId}`);
       continue;
     }
+    if (jobId === SHARED_E2E_JOB_ID) continue;
     const job = asRecord(jobs[jobId]);
     if (Object.keys(job).length === 0) continue;
     const jobIf = stringValue(job.if);
@@ -644,58 +649,104 @@ function validateFreeStandingInventoryCoverage(
   }
 }
 
-function validateOpenShellVersionPinJob(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "openshell-version-pin";
-  const job = asRecord(jobs[jobName]);
+function validateSharedE2eJob(errors: string[], jobs: WorkflowRecord): void {
+  const job = asRecord(jobs[SHARED_E2E_JOB_ID]);
   if (Object.keys(job).length === 0) {
-    errors.push("workflow missing openshell-version-pin job");
+    errors.push("workflow missing shared E2E job");
     return;
   }
 
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("openshell-version-pin job must run on ubuntu-latest");
+  if (job.name !== "Shared E2E (${{ matrix.id }})") {
+    errors.push("shared E2E job name must expose the test ID");
   }
-  validateFreeStandingJobSelector(errors, jobs, jobName, "openshell-version-pin");
+  if (job.needs !== "generate-matrix") {
+    errors.push("shared E2E job must depend on generate-matrix");
+  }
+  if (job.if !== "${{ needs.generate-matrix.outputs.test_matrix != '[]' }}") {
+    errors.push("shared E2E job must run only for a non-empty test matrix");
+  }
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push("shared E2E job must run on ubuntu-latest");
+  }
+  if (job["timeout-minutes"] !== 15) {
+    errors.push("shared E2E job timeout must remain 15 minutes");
+  }
 
-  const jobEnv = asRecord(job.env);
-  if (jobEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
-    errors.push("openshell-version-pin job must set NEMOCLAW_RUN_LIVE_E2E=1");
+  const strategy = asRecord(job.strategy);
+  if (strategy["fail-fast"] !== false) {
+    errors.push("shared E2E strategy.fail-fast must be false");
   }
   if (
-    jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/live/openshell-version-pin"
+    asRecord(strategy.matrix).include !==
+    "${{ fromJSON(needs.generate-matrix.outputs.test_matrix) }}"
   ) {
-    errors.push(
-      "openshell-version-pin job must write artifacts under e2e-artifacts/live/openshell-version-pin",
-    );
+    errors.push("shared E2E matrix must come from tagged credential-free tests");
   }
-  requireEnvDoesNotExposeSecret(
-    errors,
-    "openshell-version-pin job",
-    jobEnv,
-    "NVIDIA_INFERENCE_API_KEY",
-  );
+
+  const jobEnv = asRecord(job.env);
+  const expectedEnv = {
+    CHECK_DOC_LINKS_REMOTE: "0",
+    E2E_ARTIFACT_DIR: "${{ github.workspace }}/e2e-artifacts/live/${{ matrix.id }}",
+    E2E_TARGET_ID: "${{ matrix.id }}",
+    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+    NEMOCLAW_CLI_BIN: "${{ github.workspace }}/bin/nemoclaw.js",
+    NEMOCLAW_NON_INTERACTIVE: "1",
+    NEMOCLAW_RUN_LIVE_E2E: "1",
+  };
+  for (const [name, expected] of Object.entries(expectedEnv)) {
+    if (jobEnv[name] !== expected) {
+      errors.push(`shared E2E job must set ${name} to ${expected}`);
+    }
+  }
+  if (Object.hasOwn(jobEnv, FREE_STANDING_JOB_MARKER)) {
+    errors.push("shared E2E job must not become a jobs selector");
+  }
+  if (Object.hasOwn(jobEnv, "E2E_EXECUTION_PROFILE")) {
+    errors.push("shared E2E job must not declare E2E_EXECUTION_PROFILE");
+  }
+  for (const secret of COMMON_SECRET_ENV_NAMES) {
+    requireEnvDoesNotExposeSecret(errors, "shared E2E job", jobEnv, secret);
+  }
 
   const steps = asSteps(job.steps);
   requireNoDispatchInputInterpolation(errors, steps);
   for (const step of steps) {
-    requireEnvDoesNotExposeSecret(
-      errors,
-      `openshell-version-pin step '${step.name ?? step.uses ?? "<unnamed>"}'`,
-      asRecord(step.env),
-      "NVIDIA_INFERENCE_API_KEY",
-    );
+    for (const secret of COMMON_SECRET_ENV_NAMES) {
+      requireEnvDoesNotExposeSecret(
+        errors,
+        `shared E2E step '${step.name ?? step.uses ?? "<unnamed>"}'`,
+        asRecord(step.env),
+        secret,
+      );
+    }
   }
 
   const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
-  if (!checkout) errors.push("openshell-version-pin job missing checkout step");
-  requireFullShaAction(errors, checkout, "openshell-version-pin checkout");
+  if (!checkout) errors.push("shared E2E job missing checkout step");
+  requireFullShaAction(errors, checkout, "shared E2E checkout");
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
-    errors.push("openshell-version-pin checkout step must set persist-credentials=false");
+    errors.push("shared E2E checkout must disable persisted credentials");
   }
 
-  const runVitest = requireJobStep(errors, jobName, steps, "Run OpenShell version-pin live test");
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
-  requireRunContains(errors, runVitest, "test/e2e/live/openshell-version-pin.test.ts");
+  const runVitest = requireJobStep(
+    errors,
+    SHARED_E2E_JOB_ID,
+    steps,
+    "Run tagged credential-free test",
+  );
+  const runEnv = asRecord(runVitest?.env);
+  if (runEnv.TEST_FILE !== "${{ matrix.file }}") {
+    errors.push("shared E2E test step must pass matrix.file through TEST_FILE");
+  }
+  if (runEnv.TEST_PROJECT !== "${{ matrix.project }}") {
+    errors.push("shared E2E test step must pass matrix.project through TEST_PROJECT");
+  }
+  requireRunContains(
+    errors,
+    runVitest,
+    'npx vitest run --project "${TEST_PROJECT}" "${TEST_FILE}"',
+  );
+  requireRunContains(errors, runVitest, "--reporter=test/e2e/risk-signal-reporter.ts");
 }
 
 function validateSkillAgentJob(errors: string[], jobs: WorkflowRecord): void {
@@ -1738,60 +1789,6 @@ function validateMessagingCompatibleEndpointJob(errors: string[], jobs: Workflow
   requireRunContains(errors, runVitest, "test/e2e/live/messaging-compatible-endpoint.test.ts");
 }
 
-function validateOnboardNegativePathsJob(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "onboard-negative-paths";
-  const job = asRecord(jobs[jobName]);
-  if (Object.keys(job).length === 0) {
-    errors.push("workflow missing onboard-negative-paths job");
-    return;
-  }
-
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("onboard-negative-paths job must run on ubuntu-latest");
-  }
-  validateFreeStandingJobSelector(errors, jobs, jobName, "onboard-negative-paths");
-
-  const jobEnv = asRecord(job.env);
-  if (jobEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
-    errors.push("onboard-negative-paths job must set NEMOCLAW_RUN_LIVE_E2E=1");
-  }
-  if (
-    jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/live/onboard-negative-paths"
-  ) {
-    errors.push(
-      "onboard-negative-paths job must write artifacts under e2e-artifacts/live/onboard-negative-paths",
-    );
-  }
-  requireEnvDoesNotExposeSecret(
-    errors,
-    "onboard-negative-paths job",
-    jobEnv,
-    "NVIDIA_INFERENCE_API_KEY",
-  );
-
-  const steps = asSteps(job.steps);
-  requireNoDispatchInputInterpolation(errors, steps);
-  for (const step of steps) {
-    requireEnvDoesNotExposeSecret(
-      errors,
-      `onboard-negative-paths step '${step.name ?? step.uses ?? "<unnamed>"}'`,
-      asRecord(step.env),
-      "NVIDIA_INFERENCE_API_KEY",
-    );
-  }
-
-  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
-  if (!checkout) errors.push("onboard-negative-paths job missing checkout step");
-  requireFullShaAction(errors, checkout, "onboard-negative-paths checkout");
-  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
-    errors.push("onboard-negative-paths checkout step must set persist-credentials=false");
-  }
-
-  const runVitest = requireJobStep(errors, jobName, steps, "Run onboard negative-paths live test");
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
-  requireRunContains(errors, runVitest, "test/e2e/live/onboard-negative-paths.test.ts");
-}
-
 function validateCloudInferenceJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "cloud-inference";
   const job = asRecord(jobs[jobName]);
@@ -2023,7 +2020,10 @@ function requireCanonicalDockerHubCleanupRun(
 
 function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): void {
   const e2eJobNames = Object.entries(jobs)
-    .filter(([, rawJob]) => asRecord(asRecord(rawJob).env).E2E_JOB === "1")
+    .filter(([jobName, rawJob]) => {
+      const env = asRecord(asRecord(rawJob).env);
+      return env.E2E_JOB === "1" || jobName === SHARED_E2E_JOB_ID;
+    })
     .map(([jobName]) => jobName);
   for (const exemptJobName of NO_IMAGE_E2E_JOBS) {
     if (!e2eJobNames.includes(exemptJobName)) {
@@ -2616,23 +2616,6 @@ function validateModelRouterProviderRoutedInferenceJob(
     runVitest,
     "test/e2e/live/model-router-provider-routed-inference.test.ts",
   );
-}
-
-function validateGatewayDriftPreflightJob(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "gateway-drift-preflight";
-  const job = asRecord(jobs[jobName]);
-  validateFreeStandingJobSelector(errors, jobs, jobName, "gateway-drift-preflight");
-  if (Object.keys(job).length === 0) return;
-
-  const runVitest = requireJobStep(
-    errors,
-    jobName,
-    asSteps(job.steps),
-    "Run gateway drift preflight Vitest test",
-  );
-  requireRunContains(errors, runVitest, "npx vitest run --project integration");
-  requireRunContains(errors, runVitest, "test/gateway-drift-preflight.test.ts");
-  requireRunDoesNotContain(errors, runVitest, "--project cli");
 }
 
 function runContainsCloudflaredAptInstall(run: string): boolean {
@@ -3506,7 +3489,6 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   errors.push(...validateHermesGpuStartupWorkflowBoundary(workflowPath));
   errors.push(...validateInferenceSwitchWorkflowBoundary(workflowPath));
   errors.push(...validateE2eOperationsWorkflowBoundary(workflowPath));
-  errors.push(...validateDocsValidationWorkflowBoundary(workflowPath));
   errors.push(...validateSecurityPostureWorkflowBoundary(workflowPath));
   const triggers = asRecord(workflow.on ?? workflow[true as unknown as string]);
 
@@ -3519,14 +3501,14 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   validateAllowJetsonRunnerQueueInput(errors, dispatchInputs);
   const jobsInput = requireInput(errors, dispatchInputs, "jobs");
   const jobsDescription = stringValue(jobsInput.description);
-  if (!jobsDescription.includes("default-enabled jobs")) {
+  if (!jobsDescription.includes("default-enabled tests")) {
     errors.push(
-      "workflow_dispatch jobs input description must say empty dispatch runs default-enabled jobs",
+      "workflow_dispatch jobs input description must say empty dispatch runs default-enabled tests",
     );
   }
-  if (!jobsDescription.includes("explicit-only jobs")) {
+  if (!jobsDescription.includes("explicit-only tests")) {
     errors.push(
-      "workflow_dispatch jobs input description must say explicit-only jobs are skipped unless selected",
+      "workflow_dispatch jobs input description must say explicit-only tests are skipped unless selected",
     );
   }
   if (Object.hasOwn(dispatchInputs, "test_filter")) {
@@ -3550,6 +3532,9 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   const generateOutputs = asRecord(generateMatrix.outputs);
   if (generateOutputs.matrix !== "${{ steps.matrix.outputs.matrix }}") {
     errors.push("generate-matrix job must expose matrix output");
+  }
+  if (generateOutputs.test_matrix !== "${{ steps.matrix.outputs.test_matrix }}") {
+    errors.push("generate-matrix job must expose test_matrix output");
   }
   if (generateOutputs.hermes_selected !== "${{ steps.matrix.outputs.hermes_selected }}") {
     errors.push("generate-matrix job must expose hermes_selected output");
@@ -3575,28 +3560,29 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   if (generateEnv.TARGETS !== "${{ inputs.targets }}") {
     errors.push("matrix generation step must pass targets through TARGETS env");
   }
-  requireRunContains(errors, generate, FREE_STANDING_WORKFLOW_INVENTORY_SCRIPT);
-  requireRunContains(
-    errors,
-    generate,
-    "free-standing workflow inventory must be data-only key=value",
-  );
-  requireRunContains(errors, generate, "free_standing_targets_csv must match target mapping keys");
-  requireRunContains(errors, generate, "Free-standing target maps to unknown job");
+  requireRunContains(errors, generate, "npx tsx tools/e2e/workflow-plan.mts");
   requireRunContains(errors, generate, "Use either targets or jobs, not both");
-  requireRunContains(errors, generate, "Unknown free-standing E2E job");
-  requireRunContains(errors, generate, 'matrix="[]"');
-  requireRunContains(errors, generate, "npx tsx test/e2e/registry/run.ts");
-  requireRunContains(errors, generate, "--emit-live-matrix");
+  requireRunContains(errors, generate, "for selector_name in JOBS TARGETS");
+  requireRunContains(errors, generate, "Invalid ${selector_name,,} input; use comma-separated ids");
+  requireRunContains(errors, generate, 'planner_args+=(--jobs "${JOBS}")');
+  requireRunContains(errors, generate, 'planner_args+=(--targets "${TARGETS}")');
   requireRunContains(errors, generate, "--targets");
   requireRunContains(errors, generate, "^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$");
-  requireRunContains(errors, generate, "Invalid target input; use comma-separated target ids");
-  requireRunContains(errors, generate, "Invalid jobs input; use comma-separated job ids");
   requireRunDoesNotContain(errors, generate, "Invalid jobs input: ${JOBS}");
   requireRunDoesNotContain(errors, generate, "Invalid target input: ${TARGETS}");
   requireRunDoesNotContain(errors, generate, "^[A-Za-z0-9._-]+");
-  requireRunContains(errors, generate, "hermes_selected=false");
-  requireRunContains(errors, generate, "hermes_selected=true");
+  requireRunContains(
+    errors,
+    generate,
+    '(keys | sort) == ["explicitOnlyJobs", "hermesSelected", "matrix", "testMatrix"]',
+  );
+  requireRunContains(errors, generate, "([.matrix[].id] | unique | length)");
+  requireRunContains(errors, generate, '(keys | sort) == ["file", "id", "project"]');
+  requireRunContains(errors, generate, "([.testMatrix[].id] | unique | length)");
+  requireRunContains(errors, generate, "E2E planner returned an invalid output schema");
+  requireRunContains(errors, generate, "expected_hermes_selected=false");
+  requireRunContains(errors, generate, "expected_hermes_selected=true");
+  requireRunContains(errors, generate, "E2E planner changed the trusted Hermes selection");
   requireRunContains(
     errors,
     generate,
@@ -3607,8 +3593,9 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     generate,
     'echo "explicit_only_jobs=${explicit_only_jobs_csv}" >> "$GITHUB_OUTPUT"',
   );
-  requireRunContains(errors, generate, "## E2E Target Matrix");
-  requireRunContains(errors, generate, "| Target | Runner | Label |");
+  requireRunContains(errors, generate, 'echo "test_matrix=${test_matrix}" >> "$GITHUB_OUTPUT"');
+  requireRunContains(errors, generate, "## E2E Execution Plan");
+  requireRunContains(errors, generate, "| Test | Execution | Runner |");
 
   const liveTargets = asRecord(jobs["live"]);
   if (Object.keys(liveTargets).length === 0) errors.push("workflow missing live job");
@@ -3923,8 +3910,7 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     errors.push("cloud-onboard DCode TUI host dependencies must precede workspace prep");
   }
 
-  validateOpenShellVersionPinJob(errors, jobs);
-  validateOnboardNegativePathsJob(errors, jobs);
+  validateSharedE2eJob(errors, jobs);
   validateSkillAgentJob(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "credential-migration", "credential-migration");
   validateFreeStandingJobSelector(errors, jobs, "sessions-agents-cli", "sessions-agents-cli");
@@ -3959,8 +3945,6 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   validateSnapshotCommandsJob(errors, jobs);
   errors.push(...validateSandboxOperationsWorkflow({ jobs }));
   validateSparkInstallJob(errors, jobs);
-  validateGatewayDriftPreflightJob(errors, jobs);
-
   validateFreeStandingJobSelector(
     errors,
     jobs,
@@ -4053,6 +4037,9 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     if (reportEnv.JOBS !== "${{ inputs.jobs }}") {
       errors.push("report-to-pr step must pass jobs through JOBS env");
     }
+    if (reportEnv.TEST_MATRIX !== "${{ needs.generate-matrix.outputs.test_matrix }}") {
+      errors.push("report-to-pr must receive the credential-free test matrix");
+    }
     if (reportEnv.JOB_PR_NUMBER !== "${{ inputs.pr_number }}") {
       errors.push("report-to-pr step must pass pr_number through JOB_PR_NUMBER env");
     }
@@ -4109,9 +4096,9 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
         "step 'Post E2E target results to PR' run script must check selector validation before echoing selectors",
       );
     }
-    if (!reportScript.includes("jobsRejected")) {
+    if (!reportScript.includes("testIdsRejected")) {
       errors.push(
-        "step 'Post E2E target results to PR' run script must omit rejected job selectors",
+        "step 'Post E2E target results to PR' run script must omit rejected test ID selectors",
       );
     }
     if (!reportScript.includes("targetsRejected")) {
@@ -4129,12 +4116,21 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
         "step 'Post E2E target results to PR' run script must report missing requested jobs",
       );
     }
+    if (
+      !reportScript.includes("github.rest.actions.listJobsForWorkflowRun") ||
+      !reportScript.includes("Shared E2E") ||
+      !reportScript.includes("testResults")
+    ) {
+      errors.push(
+        "step 'Post E2E target results to PR' must resolve discovered matrix test results from the jobs API",
+      );
+    }
     if (!reportScript.includes("cancelled")) {
       errors.push("step 'Post E2E target results to PR' run script must count cancelled jobs");
     }
-    if (!reportScript.includes("**Requested jobs:**")) {
+    if (!reportScript.includes("**Requested test IDs:**")) {
       errors.push(
-        "step 'Post E2E target results to PR' run script must include **Requested jobs:**",
+        "step 'Post E2E target results to PR' run script must include **Requested test IDs:**",
       );
     }
     if (!reportScript.includes("**Requested targets:**")) {
@@ -4142,14 +4138,14 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
         "step 'Post E2E target results to PR' run script must include **Requested targets:**",
       );
     }
-    if (!reportScript.includes("All default jobs passed")) {
+    if (!reportScript.includes("All default tests passed")) {
       errors.push(
-        "step 'Post E2E target results to PR' run script must label empty dispatch as default jobs passed",
+        "step 'Post E2E target results to PR' run script must label empty dispatch as default tests passed",
       );
     }
-    if (!reportScript.includes("default-enabled free-standing jobs")) {
+    if (!reportScript.includes("default-enabled tests")) {
       errors.push(
-        "step 'Post E2E target results to PR' run script must say empty dispatch uses default-enabled free-standing jobs",
+        "step 'Post E2E target results to PR' run script must say empty dispatch uses default-enabled tests",
       );
     }
     if (!reportScript.includes("Explicit-only jobs skipped")) {

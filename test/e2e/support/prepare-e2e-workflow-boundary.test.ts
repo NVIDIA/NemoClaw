@@ -23,7 +23,7 @@ type WorkflowStep = Record<string, unknown> & {
 };
 
 type Workflow = {
-  jobs: Record<string, { steps?: WorkflowStep[] }>;
+  jobs: Record<string, { env?: Record<string, unknown>; steps?: WorkflowStep[] }>;
 };
 
 describe("prepare-e2e workflow boundary", () => {
@@ -83,9 +83,15 @@ describe("prepare-e2e workflow boundary", () => {
       run: "npm run build:cli",
     });
 
-    const noBuildJob = workflow.jobs["docs-validation"];
+    const noBuildJob = workflow.jobs["launchable-smoke"];
     const noBuildPrepare = noBuildJob.steps!.find((step) => step.uses === PREPARE_E2E_ACTION)!;
     delete noBuildPrepare.with;
+
+    const sharedJob = workflow.jobs["shared-e2e"];
+    const sharedPrepare = sharedJob.steps!.find((step) => step.uses === PREPARE_E2E_ACTION)!;
+    sharedPrepare.with = { "build-cli": "false" };
+    sharedJob.env!.E2E_EXECUTION_PROFILE = "credential-free";
+    sharedJob.env!.E2E_JOB = "1";
 
     const untrustedJob = workflow.jobs["inference-routing"];
     const untrustedPrepare = untrustedJob.steps!.find((step) => step.uses === PREPARE_E2E_ACTION)!;
@@ -103,8 +109,12 @@ describe("prepare-e2e workflow boundary", () => {
         "sandbox-operations prepare-e2e must use the default CLI build",
         "sandbox-operations prepare-e2e invocation must not override its canonical contract",
         "sandbox-operations must not duplicate prepare-e2e step 'Build CLI'",
-        "docs-validation prepare-e2e must set build-cli to false",
-        "docs-validation prepare-e2e invocation must not override its canonical contract",
+        "launchable-smoke prepare-e2e must set build-cli to false",
+        "launchable-smoke prepare-e2e invocation must not override its canonical contract",
+        "shared-e2e must not declare E2E_EXECUTION_PROFILE",
+        "shared-e2e must not declare E2E_JOB",
+        "shared-e2e prepare-e2e must use the default CLI build",
+        "shared-e2e prepare-e2e invocation must not override its canonical contract",
         "inference-routing must not load prepare-e2e from the target checkout",
         "inference-routing must use prepare-e2e exactly once",
         "network-policy must check out the repository before prepare-e2e",

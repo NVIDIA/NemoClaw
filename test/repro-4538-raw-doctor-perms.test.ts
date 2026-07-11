@@ -30,7 +30,6 @@
  * real sandbox image and is gated behind NEMOCLAW_RUN_DOCTOR_PERMS_DOCKER_E2E=1.
  */
 
-import assert from "node:assert";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -51,28 +50,16 @@ function extractShellFunctionFromSource(src: string, name: string): string {
 /**
  * Extract the literal guard block emitted into /tmp/nemoclaw-proxy-env.sh — the
  * region between `# nemoclaw-configure-guard begin` and `# nemoclaw-configure-
- * guard end`. Most of the block lives inside single-quoted heredocs, while the
- * trusted gateway URL is generated between them. Materialize that generated
- * line so the test sources the same shell a connect session receives.
+ * guard end`. The block lives inside a single-quoted heredoc, so what the test
+ * sources is byte-identical to what a connect shell sources at runtime.
  */
-function extractGuardBlock(src: string, trustedGatewayUrl = "ws://127.0.0.1:18789"): string {
+function extractGuardBlock(src: string): string {
   const begin = src.indexOf("# nemoclaw-configure-guard begin");
   const end = src.indexOf("# nemoclaw-configure-guard end");
   if (begin < 0 || end < 0 || end < begin) {
     throw new Error("Expected nemoclaw-configure-guard begin/end markers in nemoclaw-start.sh");
   }
-  const guardSource = src.slice(begin, src.indexOf("\n", end) + 1);
-  const injectionStartMarker =
-    "GUARDENVEOF\n    # nemoclaw-trusted-gateway-literal-injection begin";
-  const injectionEndMarker =
-    "    # nemoclaw-trusted-gateway-literal-injection end\n    cat <<'GUARDENVEOF'\n";
-  const injectionStart = guardSource.indexOf(injectionStartMarker);
-  const injectionEnd = guardSource.indexOf(injectionEndMarker, injectionStart);
-  assert(
-    injectionStart !== -1 && injectionEnd !== -1,
-    "Expected the generated trusted gateway literal injection markers",
-  );
-  return `${guardSource.slice(0, injectionStart)}            _nemoclaw_whatsapp_trusted_url=${JSON.stringify(trustedGatewayUrl)}\n${guardSource.slice(injectionEnd + injectionEndMarker.length)}`;
+  return src.slice(begin, src.indexOf("\n", end) + 1);
 }
 
 function modeBits(filePath: string): number {
@@ -132,6 +119,23 @@ function seedTightenedConfigTree(): { tmpDir: string; configDir: string; configF
   fs.chmodSync(nestedDir, 0o700);
   fs.chmodSync(configDir, 0o700);
   return { tmpDir, configDir, configFile };
+}
+
+function writeDoctorFixFake(tmpDir: string): string {
+  const binDir = path.join(tmpDir, "bin");
+  fs.mkdirSync(binDir);
+  fs.writeFileSync(
+    path.join(binDir, "openclaw"),
+    [
+      "#!/bin/sh",
+      'chmod 700 "$OPENCLAW_STATE_DIR"',
+      'printf \'{"doctor":true}\\n\' > "$OPENCLAW_STATE_DIR/openclaw.json"',
+      'chmod 600 "$OPENCLAW_STATE_DIR/openclaw.json"',
+      "exit 7",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  return binDir;
 }
 
 describe("raw `openclaw doctor --fix` mutable-perm restore (#4538)", () => {
@@ -212,6 +216,7 @@ describe("raw `openclaw doctor --fix` mutable-perm restore (#4538)", () => {
     fs.chmodSync(configDir, 0o2770);
     fs.chmodSync(configFile, 0o660);
     try {
+      const fakeBin = writeDoctorFixFake(tmpDir);
       const result = spawnSync(
         "bash",
         [
@@ -219,18 +224,6 @@ describe("raw `openclaw doctor --fix` mutable-perm restore (#4538)", () => {
           [
             "set -uo pipefail",
             mutableSandboxOwnerStatShim(),
-            // Intercept `command openclaw ...` (the guard's terminal call) to
-            // simulate `doctor --fix`: tighten perms, then exit nonzero — the
-            // EACCES-on-.bashrc case the reporter hit.
-            "command() {",
-            '  if [ "${1:-}" = "openclaw" ]; then',
-            '    chmod 700 "$OPENCLAW_STATE_DIR";',
-            '    printf \'{"doctor":true}\\n\' > "$OPENCLAW_STATE_DIR/openclaw.json";',
-            '    chmod 600 "$OPENCLAW_STATE_DIR/openclaw.json";',
-            "    return 7;",
-            "  fi",
-            '  builtin command "$@";',
-            "}",
             extractGuardBlock(src),
             "openclaw doctor --fix",
             'echo "GUARD_EXIT:$?"',
@@ -239,7 +232,11 @@ describe("raw `openclaw doctor --fix` mutable-perm restore (#4538)", () => {
         {
           encoding: "utf-8",
           timeout: 5000,
-          env: { ...process.env, OPENCLAW_STATE_DIR: configDir },
+          env: {
+            ...process.env,
+            PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+            OPENCLAW_STATE_DIR: configDir,
+          },
         },
       );
 
@@ -264,6 +261,7 @@ describe("raw `openclaw doctor --fix` mutable-perm restore (#4538)", () => {
     fs.chmodSync(configDir, 0o2770);
     fs.chmodSync(configFile, 0o660);
     try {
+      const fakeBin = writeDoctorFixFake(tmpDir);
       const result = spawnSync(
         "bash",
         [
@@ -271,15 +269,6 @@ describe("raw `openclaw doctor --fix` mutable-perm restore (#4538)", () => {
           [
             "set -e",
             mutableSandboxOwnerStatShim(),
-            "command() {",
-            '  if [ "${1:-}" = "openclaw" ]; then',
-            '    chmod 700 "$OPENCLAW_STATE_DIR";',
-            '    printf \'{"doctor":true}\\n\' > "$OPENCLAW_STATE_DIR/openclaw.json";',
-            '    chmod 600 "$OPENCLAW_STATE_DIR/openclaw.json";',
-            "    return 7;",
-            "  fi",
-            '  builtin command "$@";',
-            "}",
             extractGuardBlock(src),
             "openclaw doctor --fix",
             'echo "UNREACHABLE_UNDER_ERREXIT"',
@@ -288,7 +277,11 @@ describe("raw `openclaw doctor --fix` mutable-perm restore (#4538)", () => {
         {
           encoding: "utf-8",
           timeout: 5000,
-          env: { ...process.env, OPENCLAW_STATE_DIR: configDir },
+          env: {
+            ...process.env,
+            PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+            OPENCLAW_STATE_DIR: configDir,
+          },
         },
       );
 
