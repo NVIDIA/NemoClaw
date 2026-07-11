@@ -93,7 +93,13 @@ export default defineConfig({
           // 7 GiB CI runner. The canonical local full suite instead runs this
           // project as a bounded four-worker phase after the other projects.
           ...integrationProjectScheduling,
-          env: { NODE_OPTIONS: sourceNodeOptions },
+          env: {
+            NODE_OPTIONS: sourceNodeOptions,
+            // Integration fixtures exercise onboarding against controlled fake
+            // Docker state. Keep a base-image Dockerfile change in the PR from
+            // redirecting those fixtures into the real local-build guard.
+            NEMOCLAW_SANDBOX_BASE_IMAGE_REF: "ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
+          },
           include: ["test/**/*.test.{js,ts}"],
           exclude: [
             "**/node_modules/**",
