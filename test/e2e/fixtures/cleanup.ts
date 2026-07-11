@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ShellProbeRunOptions } from "./shell-probe.ts";
+
 export interface CleanupFailure {
   name: string;
   message: string;
@@ -15,9 +17,9 @@ type CleanupFn = () => Promise<void> | void;
 type RedactFn = (text: string) => string;
 
 export interface CleanupHost {
-  cleanupSandbox(name: string): Promise<void>;
-  cleanupGatewayRegistration(name: string): Promise<void>;
-  cleanupForward(port: number): Promise<void>;
+  cleanupSandbox(name: string, options?: ShellProbeRunOptions): Promise<void>;
+  cleanupGatewayRegistration(name: string, options?: ShellProbeRunOptions): Promise<void>;
+  cleanupForward(port: number, options?: ShellProbeRunOptions): Promise<void>;
 }
 
 interface CleanupEntry {
@@ -40,16 +42,16 @@ export class CleanupRegistry {
     this.entries.push({ name, run });
   }
 
-  trackSandbox(host: CleanupHost, name: string): void {
-    this.add(`destroy sandbox ${name}`, () => host.cleanupSandbox(name));
+  trackSandbox(host: CleanupHost, name: string, options: ShellProbeRunOptions = {}): void {
+    this.add(`destroy sandbox ${name}`, () => host.cleanupSandbox(name, options));
   }
 
-  trackGateway(host: CleanupHost, name: string): void {
-    this.add(`remove gateway ${name}`, () => host.cleanupGatewayRegistration(name));
+  trackGateway(host: CleanupHost, name: string, options: ShellProbeRunOptions = {}): void {
+    this.add(`remove gateway ${name}`, () => host.cleanupGatewayRegistration(name, options));
   }
 
-  trackForward(host: CleanupHost, port: number): void {
-    this.add(`stop forward ${port}`, () => host.cleanupForward(port));
+  trackForward(host: CleanupHost, port: number, options: ShellProbeRunOptions = {}): void {
+    this.add(`stop forward ${port}`, () => host.cleanupForward(port, options));
   }
 
   trackDisposable(name: string, dispose: CleanupFn): void {

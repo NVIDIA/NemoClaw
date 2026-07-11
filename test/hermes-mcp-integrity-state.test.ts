@@ -797,6 +797,71 @@ print(json.dumps({"errors": errors, "hash_unchanged": open(strict, encoding="utf
     expect(proof.errors.join("\n")).not.toMatch(/changed-canary|drift-canary/u);
   });
 
+  it("fails closed when both-mode apply sees stale compatibility state", () => {
+    const result = spawnSync(
+      "python3",
+      [
+        "-c",
+        String.raw`
+import contextlib, importlib.util, io, json, os, sys, tempfile
+spec = importlib.util.spec_from_file_location("hermes_guard", sys.argv[1])
+guard = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = guard
+spec.loader.exec_module(guard)
+with tempfile.TemporaryDirectory(prefix="hermes-mcp-both-stale-compat-") as root:
+    hermes = os.path.join(root, ".hermes")
+    os.mkdir(hermes)
+    config = os.path.join(hermes, "config.yaml")
+    env = os.path.join(hermes, ".env")
+    strict = os.path.join(root, "hash")
+    compat = os.path.join(hermes, ".config-hash")
+    secret = "API_SERVER_KEY=stale-compat-secret-canary"
+    open(config, "w", encoding="utf-8").write("model: test\n")
+    open(env, "w", encoding="utf-8").write(secret + "\n")
+    initial, _config_snapshot, _env_snapshot = guard._hash_text(config, env)
+    guard._write_hash(strict, initial)
+    guard._write_hash(compat, initial)
+    open(config, "w", encoding="utf-8").write(
+        "model: test\nmcp_servers: {fake: {url: https://mcp.example.test/mcp}}\n"
+    )
+    guard.refresh_hashes(hermes, strict, "both", mcp_transition="intend")
+    pending_hash = open(strict, encoding="utf-8").read()
+    guard._write_hash(compat, initial)
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    error = ""
+    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+        try:
+            guard.refresh_hashes(hermes, strict, "both", mcp_transition="apply")
+        except Exception as caught:
+            error = str(caught)
+    print(json.dumps({
+        "compat_stale": open(compat, encoding="utf-8").read() == initial,
+        "error": error,
+        "logs": stdout.getvalue() + stderr.getvalue(),
+        "strict_unchanged": open(strict, encoding="utf-8").read() == pending_hash,
+    }))
+`,
+        GUARD,
+      ],
+      { encoding: "utf-8", timeout: 10_000 },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    const proof = JSON.parse(result.stdout) as {
+      compat_stale: boolean;
+      error: string;
+      logs: string;
+      strict_unchanged: boolean;
+    };
+    expect(proof.error).toBe(
+      "Hermes strict and compatibility MCP state differ before applied-state commit",
+    );
+    expect(proof.compat_stale).toBe(true);
+    expect(proof.strict_unchanged).toBe(true);
+    expect(`${proof.error}\n${proof.logs}`).not.toContain("stale-compat-secret-canary");
+  });
+
   it("fails closed on drift and malformed or missing MCP metadata", () => {
     const result = spawnSync(
       "python3",

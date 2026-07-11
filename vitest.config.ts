@@ -52,6 +52,7 @@ const integrationProjectScheduling = resolveIntegrationProjectScheduling({
 
 export default defineConfig({
   test: {
+    globalSetup: "test/helpers/vitest-temp-root.ts",
     tags: [
       {
         name: "e2e/credential-free",

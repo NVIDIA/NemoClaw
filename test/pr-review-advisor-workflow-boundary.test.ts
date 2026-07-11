@@ -10,6 +10,7 @@ import YAML from "yaml";
 import { validatePrReviewAdvisorWorkflowBoundary } from "../tools/pr-review-advisor/workflow-boundary.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
+const PR_REVIEW_ADVISOR_TARGET_DIR = "/tmp/pr-review-advisor-target";
 
 function prepareTargetCheckoutScript(): string {
   return workflowStepScript("Prepare target PR checkout");
@@ -47,22 +48,30 @@ function runPrepareTargetCheckout(env: {
     '#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >> "$FAKE_GIT_LOG"\n',
     { mode: 0o755 },
   );
-  const result = spawnSync("bash", ["-c", prepareTargetCheckoutScript()], {
-    cwd: ROOT,
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      ...env,
-      FAKE_GIT_LOG: gitLog,
-      GITHUB_ENV: githubEnv,
-      PATH: `${binDir}:${process.env.PATH ?? ""}`,
+  const targetDir = path.join(tmp, "target");
+  const workflowScript = prepareTargetCheckoutScript();
+  expect(workflowScript).toContain(PR_REVIEW_ADVISOR_TARGET_DIR);
+  const result = spawnSync(
+    "bash",
+    ["-c", workflowScript.replaceAll(PR_REVIEW_ADVISOR_TARGET_DIR, targetDir)],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        ...env,
+        FAKE_GIT_LOG: gitLog,
+        GITHUB_ENV: githubEnv,
+        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+      },
     },
-  });
+  );
   return {
     ...result,
     cleanup: () => fs.rmSync(tmp, { recursive: true, force: true }),
     gitCalls: fs.existsSync(gitLog) ? fs.readFileSync(gitLog, "utf8").trim().split(/\r?\n/u) : [],
     githubEnv: fs.existsSync(githubEnv) ? fs.readFileSync(githubEnv, "utf8") : "",
+    targetDir,
   };
 }
 
@@ -318,15 +327,13 @@ fi
     try {
       expect(valid.status).toBe(0);
       expect(valid.gitCalls).toEqual([
-        "-C /tmp/pr-review-advisor-target init",
-        "-C /tmp/pr-review-advisor-target remote add target https://github.com/NVIDIA/NemoClaw.git",
-        "-C /tmp/pr-review-advisor-target fetch --no-tags target main",
-        "-C /tmp/pr-review-advisor-target fetch --no-tags target pull/5756/head:refs/remotes/target/pr-5756",
-        "-C /tmp/pr-review-advisor-target checkout --detach refs/remotes/target/pr-5756",
+        `-C ${valid.targetDir} init`,
+        `-C ${valid.targetDir} remote add target https://github.com/NVIDIA/NemoClaw.git`,
+        `-C ${valid.targetDir} fetch --no-tags target main`,
+        `-C ${valid.targetDir} fetch --no-tags target pull/5756/head:refs/remotes/target/pr-5756`,
+        `-C ${valid.targetDir} checkout --detach refs/remotes/target/pr-5756`,
       ]);
-      expect(valid.githubEnv).toBe(
-        "ADVISOR_WORKDIR=/tmp/pr-review-advisor-target\nPR_NUMBER=5756\n",
-      );
+      expect(valid.githubEnv).toBe(`ADVISOR_WORKDIR=${valid.targetDir}\nPR_NUMBER=5756\n`);
     } finally {
       valid.cleanup();
     }

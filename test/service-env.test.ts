@@ -131,17 +131,30 @@ describe("service environment", () => {
 
     it("starts without messaging-related warnings", { timeout: 30000 }, () => {
       const workspace = mkdtempSync(join(tmpdir(), "nemoclaw-services-no-key-"));
-      const result = execFileSync("bash", [scriptPath], {
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          SANDBOX_NAME: "test-box",
-          TMPDIR: workspace,
-        },
-      });
+      const sandboxName = `test-box-${String(process.pid)}-${String(Date.now())}`;
+      const pidDir = `/tmp/nemoclaw-services-${sandboxName}`;
+      const env = {
+        ...process.env,
+        SANDBOX_NAME: sandboxName,
+        TMPDIR: workspace,
+      };
+      try {
+        const result = execFileSync("bash", [scriptPath], {
+          encoding: "utf-8",
+          env,
+        });
 
-      // Messaging channels are now native to OpenClaw inside the sandbox
-      expect(result).toContain("Messaging:   via OpenClaw native channels");
+        // Messaging channels are now native to OpenClaw inside the sandbox
+        expect(result).toContain("Messaging:   via OpenClaw native channels");
+      } finally {
+        try {
+          execFileSync("bash", [scriptPath, "--stop"], { env, stdio: "ignore" });
+        } catch {
+          // Startup may fail before there is a service to stop.
+        }
+        rmSync(pidDir, { recursive: true, force: true });
+        rmSync(workspace, { recursive: true, force: true });
+      }
     });
   });
 
@@ -964,7 +977,26 @@ describe("service environment", () => {
       const proxyEnvPath = join(fakeDataDir, "proxy-env.sh");
       const rcPath = join(fakeHome, ".bashrc");
       const tmpFile = join(tmpdir(), `nemoclaw-rc-skip-composed-${process.pid}.sh`);
+      const isolatedSandboxInitPath = join(fakeDataDir, "sandbox-init.sh");
+      const isolatedSandboxEnv = {
+        ...process.env,
+        ISOLATED_SANDBOX_INIT: isolatedSandboxInitPath,
+        NEMOCLAW_TEST_AUTO_PAIR_LOG: join(fakeDataDir, "auto-pair.log"),
+        NEMOCLAW_TEST_GATEWAY_LOG: join(fakeDataDir, "gateway.log"),
+        PLUGIN_REFRESH_LOG: join(fakeDataDir, "nemoclaw-plugin-refresh.log"),
+      };
       try {
+        const sandboxLibDir = join(import.meta.dirname, "../scripts/lib");
+        const sandboxInitFixture = readFileSync(join(sandboxLibDir, "sandbox-init.sh"), "utf-8")
+          .replaceAll("/tmp/gateway.log", '"${NEMOCLAW_TEST_GATEWAY_LOG}"')
+          .replaceAll("/tmp/auto-pair.log", '"${NEMOCLAW_TEST_AUTO_PAIR_LOG}"');
+        writeFileSync(isolatedSandboxInitPath, sandboxInitFixture, { mode: 0o600 });
+        writeFileSync(
+          join(fakeDataDir, "sandbox-rlimits.sh"),
+          readFileSync(join(sandboxLibDir, "sandbox-rlimits.sh"), "utf-8"),
+          { mode: 0o600 },
+        );
+
         const shimLine = `[ -f ${proxyEnvPath} ] && . ${proxyEnvPath}`;
         const originalBashrc = [
           "# user-managed bashrc owned by a foreign uid (e.g. root)",
@@ -985,7 +1017,7 @@ describe("service environment", () => {
         const wrapper = [
           "#!/usr/bin/env bash",
           "set -euo pipefail",
-          sandboxInitSource,
+          'source "$ISOLATED_SANDBOX_INIT"',
           'PROXY_HOST="10.200.0.1"',
           'PROXY_PORT="3128"',
           '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
@@ -1003,13 +1035,13 @@ describe("service environment", () => {
           "set +u",
           persistBlock,
           extractRuntimeShellEnvShimSnippet(),
-          // validate_tmp_permissions also inspects fixed runtime log paths; keep
-          // this fixture independent of ambient /tmp state left by other tests.
-          "install -m 600 /dev/null /tmp/gateway.log",
           "validate_tmp_permissions " + JSON.stringify(proxyEnvPath),
         ].join("\n");
         writeFileSync(tmpFile, wrapper, { mode: 0o700 });
-        const result = execFileSync("bash", [tmpFile], { encoding: "utf-8" });
+        const result = execFileSync("bash", [tmpFile], {
+          encoding: "utf-8",
+          env: isolatedSandboxEnv,
+        });
 
         expect(result).not.toContain("[SECURITY] " + proxyEnvPath + " has unsafe permissions");
 
