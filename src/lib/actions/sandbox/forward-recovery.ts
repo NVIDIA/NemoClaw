@@ -76,7 +76,7 @@ export function ensureSandboxPortForward(sandboxName: string): boolean {
   return ensureSandboxPortForwardForPort(sandboxName, port, {
     forwardTarget: remoteBindRequested ? `0.0.0.0:${port}` : String(port),
     forceRestart: remoteBindRequested,
-    expectedBind: remoteBindRequested ? "0.0.0.0" : undefined,
+    expectedBind: remoteBindRequested ? "0.0.0.0" : "127.0.0.1",
     beforeStart: remoteBindRequested
       ? () => registry.getSandbox(sandboxName)?.dashboardRemoteBindPrepared === true
       : undefined,
