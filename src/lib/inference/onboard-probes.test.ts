@@ -723,6 +723,7 @@ exit 0
             stream: false,
           });
           expect(retryPayload.max_tokens).toBeUndefined();
+          expect(retryPayload.temperature).toBeUndefined();
         },
       );
     });

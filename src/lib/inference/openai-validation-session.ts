@@ -137,7 +137,9 @@ function chatToolPayload(model: string): string {
       },
     ],
     tool_choice: "required",
-    temperature: 0,
+    // GPT-5/o-series models reject custom sampling temperatures. Keep the
+    // deterministic setting for models that still use the legacy field.
+    ...(maxTokensField === "max_tokens" ? { temperature: 0 } : {}),
     [maxTokensField]: 256,
     stream: false,
   });

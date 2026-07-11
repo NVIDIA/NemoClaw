@@ -39,6 +39,7 @@ describe("OpenAI validation keepalive sequence", () => {
       max_completion_tokens: 256,
     });
     expect(JSON.parse(observedBody)).not.toHaveProperty("max_tokens");
+    expect(JSON.parse(observedBody)).not.toHaveProperty("temperature");
     expect(harness.legacyProbe).not.toHaveBeenCalled();
   });
 

@@ -450,7 +450,9 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
           },
         ],
         tool_choice: "required",
-        temperature: 0,
+        // GPT-5/o-series models reject custom sampling temperatures. Keep the
+        // deterministic setting for models that still use the legacy field.
+        ...(maxTokensField === "max_tokens" ? { temperature: 0 } : {}),
         // Bound strict tool-call probes so a slow local model cannot keep
         // generating until the host-side curl process timeout kills validation.
         // This strict gate is currently used for Local Ollama; if it expands to
