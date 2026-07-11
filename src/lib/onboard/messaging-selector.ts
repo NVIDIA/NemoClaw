@@ -295,6 +295,10 @@ function promptMessagingSelectorLine(question: string): Promise<string> {
       rejectPrompt(Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" }));
       process.kill(process.pid, "SIGINT");
     });
+    rl.on("close", () => {
+      if (finished) return;
+      rejectPrompt(Object.assign(new Error("Prompt closed before input"), { code: "EOF" }));
+    });
     rl.question(question, resolvePrompt);
   });
 }
