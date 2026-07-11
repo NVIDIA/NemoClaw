@@ -134,6 +134,35 @@ describe("runSandboxCreateStep", () => {
     });
   });
 
+  it("persists the Hermes startup command for Docker-driver container restarts", async () => {
+    const launch = makeLaunch({
+      sandboxStartupCommand: ["env", "CHAT_UI_URL=http://127.0.0.1:8642", "nemoclaw-start"],
+    });
+    const patch = makePatch();
+    const deps = makeDeps(launch, patch, { status: 0, output: "created" });
+
+    await runSandboxCreateStep(
+      makeContext({
+        agent: { name: "hermes" } as SandboxCreateStepContext["agent"],
+        prebuild: {
+          buildCtx: "/tmp/ctx",
+          buildId: "b1",
+          dockerDriverGateway: true,
+          origin: "generated",
+        },
+      }),
+      deps,
+    );
+
+    expect(deps.createDockerGpuPatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        enabled: false,
+        persistStartupCommand: true,
+        openshellSandboxCommand: ["env", "CHAT_UI_URL=http://127.0.0.1:8642", "nemoclaw-start"],
+      }),
+    );
+  });
+
   it("separates readiness detection from GPU patch polling", async () => {
     const launch = makeLaunch();
     const patch = makePatch();

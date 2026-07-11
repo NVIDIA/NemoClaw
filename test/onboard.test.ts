@@ -1930,7 +1930,7 @@ const agentOnboard = require(${agentOnboardPath});
 const sandboxBaseImage = require(${sandboxBaseImagePath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
-
+require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "docker-driver-platform.ts"))}).isLinuxDockerDriverGatewayEnabled = () => false;
 const commands = [];
 const logs = [];
 const warnings = [];
