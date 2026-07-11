@@ -4,7 +4,8 @@
 #
 # Collect Tier 0 gate state for a PR and emit JSON for downstream scoring.
 # Covers gates 1-5 (state, CI on latest SHA, mergeable, contributor compliance,
-# branch protection). Gate 6 (CodeRabbit threads) is handled by
+# branch protection). Gate 6 (PR Review Advisor) comes from the shared
+# maintainer-day gate result, and gate 7 (CodeRabbit threads) is handled by
 # check-coderabbit-threads.sh.
 #
 # Usage: collect-gates.sh <pr-number> [--repo OWNER/REPO]

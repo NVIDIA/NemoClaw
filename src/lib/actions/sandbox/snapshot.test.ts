@@ -1474,6 +1474,7 @@ describe("runSandboxSnapshot", () => {
     backupSandboxStateMock.mockReturnValue({
       success: false,
       failedDirs: ["workspace", "skills"],
+      failedDirReasons: { workspace: "permission denied" },
       failedFiles: ["openclaw.json"],
     });
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -1486,7 +1487,7 @@ describe("runSandboxSnapshot", () => {
 
     const errors = consoleError.mock.calls.flat().join("\n");
     expect(errors).toContain("Snapshot failed.");
-    expect(errors).toContain("Failed directories: workspace, skills");
+    expect(errors).toContain("Failed directories: workspace (permission denied), skills");
     expect(errors).toContain("Failed files: openclaw.json");
   });
 });

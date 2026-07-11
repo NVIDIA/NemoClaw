@@ -27,9 +27,11 @@ describe("policy round-trip documentation examples", () => {
     expect(section).toBeDefined();
     expect(section).toContain('- allow: { method: GET, path: "/mcp" }');
     expect(section).toContain('- allow: { method: POST, path: "/mcp" }');
+    expect(section).toContain('- allow: { method: DELETE, path: "/mcp" }');
     expect(section).not.toContain('path: "/**"');
     expect(section?.match(/- \{ path: \/usr\/local\/bin\//g)).toHaveLength(1);
     expect(section).toContain("only the process that opens the connection");
+    expect(section).toContain("terminate a session");
     expect(section).toContain("do not replace it with `/**`");
     expect(section).toContain("does not disable OpenShell's SSRF protection");
     expect(section).toContain("getaddrinfo EAI_AGAIN");

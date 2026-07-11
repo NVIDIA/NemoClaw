@@ -532,7 +532,9 @@ describe("OpenClaw npm integrity pins", () => {
     expect(calls).toContain(
       "npm pack https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.6.10.tgz --pack-destination",
     );
-    expect(calls).toContain("diagnostics-otel-2026.6.10.tgz --pin");
+    expect(calls).toMatch(
+      /openclaw plugins install npm-pack:\S*\/diagnostics-otel-2026\.6\.10\.tgz\n/,
+    );
     expect(calls).toContain(
       `npm view @openclaw/brave-plugin@${PINNED_OPENCLAW_VERSION} dist.integrity`,
     );
@@ -542,7 +544,7 @@ describe("OpenClaw npm integrity pins", () => {
     expect(calls).toContain(
       "npm pack https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.6.10.tgz --pack-destination",
     );
-    expect(calls).toContain("brave-plugin-2026.6.10.tgz --pin");
+    expect(calls).toMatch(/openclaw plugins install npm-pack:\S*\/brave-plugin-2026\.6\.10\.tgz\n/);
     expect(calls).toContain("openclaw-env true true");
   });
 
