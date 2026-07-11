@@ -11,6 +11,7 @@ import {
   buildDockerGpuMode,
   collectDockerGpuPatchDiagnostics,
   type DockerContainerInspect,
+  printDockerGpuPatchFailureAndExit,
 } from "./docker-gpu-patch";
 
 describe("Docker GPU diagnostic redaction", () => {
@@ -185,6 +186,44 @@ describe("Docker GPU diagnostic redaction", () => {
     } finally {
       writeFileSpy.mockRestore();
       fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("redacts proxy credentials from terminal recreation failures", () => {
+    const rawProxy = "https://proxy-user-7a9c:proxy-secret-8b0d@proxy.example:8443";
+    const output: string[] = [];
+    const errorSpy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      output.push(args.map(String).join(" "));
+    });
+    const mkdirSpy = vi.spyOn(fs, "mkdirSync").mockImplementation(() => {
+      throw new Error("diagnostics disabled for test");
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((_code?: number) => {
+      throw new Error("__test_exit__");
+    }) as never);
+
+    try {
+      expect(() =>
+        printDockerGpuPatchFailureAndExit(
+          "alpha",
+          new Error(`Could not start recreated sandbox container: HTTPS_PROXY=${rawProxy}`),
+          {
+            runCaptureOpenshell: vi.fn(() => ""),
+            dockerCapture: vi.fn(() => ""),
+          },
+        ),
+      ).toThrow(/__test_exit__/);
+
+      const stderr = output.join("\n");
+      expect(stderr).toContain("https://****:****@proxy.example:8443/");
+      expect(stderr).not.toContain(rawProxy);
+      expect(stderr).not.toContain("proxy-user-7a9c");
+      expect(stderr).not.toContain("proxy-secret-8b0d");
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    } finally {
+      exitSpy.mockRestore();
+      mkdirSpy.mockRestore();
+      errorSpy.mockRestore();
     }
   });
 });
