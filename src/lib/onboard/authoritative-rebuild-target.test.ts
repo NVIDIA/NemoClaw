@@ -101,6 +101,8 @@ describe("prepared provider reconfiguration handoff", () => {
     resume: true,
     recreateSandbox: true,
     onboardLockAlreadyHeld: true,
+    targetGatewayName: "nemoclaw-8081",
+    targetGatewayPort: 8081,
     rebuildProviderReconfigure: providerTarget,
   };
 
@@ -115,13 +117,30 @@ describe("prepared provider reconfiguration handoff", () => {
     });
   });
 
+  it("authorizes incomplete-session recovery only for the locked rebuild context", () => {
+    const recoveryOptions = { ...authorizedOptions, rebuildProviderReconfigure: undefined };
+    expect(rebuildProviderFlowOptions(recoveryOptions, providerTarget)).toEqual({
+      authoritativeResumeConfig: true,
+      forceInferenceSetup: false,
+    });
+    for (const options of [
+      { ...recoveryOptions, resume: false },
+      { ...recoveryOptions, recreateSandbox: false },
+      { ...recoveryOptions, onboardLockAlreadyHeld: false },
+    ]) {
+      expect(() => rebuildProviderFlowOptions(options, providerTarget)).toThrow(
+        "requires a preflighted locked rebuild resume",
+      );
+    }
+  });
+
   it("rejects an unauthorized or mismatched handoff (#6114)", () => {
     expect(() =>
       rebuildProviderFlowOptions(
         { ...authorizedOptions, onboardLockAlreadyHeld: false },
         providerTarget,
       ),
-    ).toThrow("requires an authoritative locked rebuild resume");
+    ).toThrow("requires a preflighted locked rebuild resume");
     expect(() =>
       rebuildProviderFlowOptions(authorizedOptions, {
         ...providerTarget,

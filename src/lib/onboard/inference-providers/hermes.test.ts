@@ -59,6 +59,54 @@ function publicLookup() {
   return vi.fn(async () => [{ address: "8.8.8.8", family: 4 }]);
 }
 
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+describe("setupHermesProviderInference smoke verification", () => {
+  it("waits for the smoke check before persisting or logging success (#3771)", async () => {
+    const smoke = deferred();
+    const deps = makeDeps({
+      isNonInteractive: vi.fn(() => true),
+      verifyOnboardInferenceSmoke: vi.fn(() => smoke.promise),
+    });
+
+    const setup = setupHermesProviderInference(makeArgs(null), deps as never);
+
+    expect(deps.verifyOnboardInferenceSmoke).toHaveBeenCalledOnce();
+    expect(deps.registry.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.log).not.toHaveBeenCalled();
+
+    smoke.resolve();
+    await expect(setup).resolves.toEqual({ ok: true });
+
+    expect(deps.registry.updateSandbox).toHaveBeenCalledWith("alpha", {
+      model: "m",
+      provider: "p",
+    });
+    expect(deps.log).toHaveBeenCalledWith("  ✓ Inference route set: p / m");
+  });
+
+  it("rejects setup without persisting or logging success when the smoke check rejects (#3771)", async () => {
+    const smokeError = new Error("Hermes smoke failed");
+    const deps = makeDeps({
+      isNonInteractive: vi.fn(() => true),
+      verifyOnboardInferenceSmoke: vi.fn(() => Promise.reject(smokeError)),
+    });
+
+    await expect(setupHermesProviderInference(makeArgs(null), deps as never)).rejects.toThrow(
+      smokeError,
+    );
+
+    expect(deps.registry.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.log).not.toHaveBeenCalled();
+  });
+});
+
 describe("setupHermesProviderInference SSRF guard (#6072)", () => {
   it("rejects loopback address", async () => {
     await expect(

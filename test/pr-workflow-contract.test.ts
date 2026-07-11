@@ -83,7 +83,7 @@ const trustedActionDirs = [
   ".github/actions/ci-installer-integration",
 ] as const;
 
-const cliShardMatrix = [1, 2, 3, 4, 5] as const;
+const cliShardMatrix = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 const cliShardCount = String(cliShardMatrix.length);
 
 function stepRuns(jobOrAction: WorkflowJob | CompositeAction): string[] {
@@ -1193,7 +1193,7 @@ npx tsx scripts/checks/e2e-mock-parity.ts --base "$BASE_SHA" --head HEAD
   });
 
   it("selects an available shard to publish the compiled CLI artifact", () => {
-    for (const shardCount of [1, 2, 3, 5]) {
+    for (const shardCount of [1, 2, 3, cliShardMatrix.length]) {
       const expectedProducer = Math.min(4, shardCount);
       const producers = Array.from({ length: shardCount }, (_, index) => index + 1).filter(
         (shard) => uploadsCompiledCliArtifact(sharedActions.cliCoverageShard, shard, shardCount),

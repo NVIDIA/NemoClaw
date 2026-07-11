@@ -152,8 +152,65 @@ describe("onboard shared gateway route containment", () => {
     expect(exitProcess).toHaveBeenCalledWith(1);
   });
 
-  it("reserves a fresh route before smoke failure lets another setup mutate it (#6315)", async () => {
+  it("rechecks recovered-route ownership inside both mutation locks before setup (#6630)", async () => {
+    const events: string[] = [];
+    const checkGatewayRouteCompatibility = vi.fn(() => ({ ok: true as const }));
+    const updateSandbox = vi.fn(() => true);
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const exitProcess = vi.fn((code: number): never => {
+      events.push(`exit:${code}`);
+      throw new Error(`exit ${code}`);
+    });
+    const setupInference = createSetupInference({
+      checkGatewayRouteCompatibility,
+      withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) => {
+        events.push("sandbox-lock");
+        return await operation();
+      },
+      withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) => {
+        events.push("gateway-lock");
+        return await operation();
+      },
+      getGatewayName: () => "nemoclaw",
+      error: (message: string) => events.push(`error:${message}`),
+      exitProcess,
+      updateSandbox,
+      runOpenshell,
+    } as unknown as SetupInferenceDeps);
+
+    await expect(
+      setupInference(
+        "alpha",
+        "model-a",
+        "anthropic-prod",
+        "https://api.anthropic.com",
+        "ANTHROPIC_API_KEY",
+        null,
+        [],
+        {
+          reservationSessionId: "session-current",
+          isRecordedProviderRecoveryAuthorized: () => {
+            events.push("recovery-authority");
+            return false;
+          },
+        },
+      ),
+    ).rejects.toThrow("exit 1");
+
+    expect(events.slice(0, 3)).toEqual(["sandbox-lock", "gateway-lock", "recovery-authority"]);
+    expect(events).toContainEqual(expect.stringContaining("lost reservation ownership"));
+    expect(checkGatewayRouteCompatibility).not.toHaveBeenCalled();
+    expect(updateSandbox).not.toHaveBeenCalled();
+    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(exitProcess).toHaveBeenCalledWith(1);
+  });
+
+  it("keeps a pending reservation while async smoke failure blocks another setup (#6315)", async () => {
     const reservations: SandboxEntry[] = [];
+    let rejectSmoke!: (reason?: unknown) => void;
+    const smokePending = new Promise<void>((_resolve, reject) => {
+      rejectSmoke = reject;
+    });
     let lockTail = Promise.resolve();
     const withGatewayRouteMutationLock = async <T>(
       _gatewayName: string,
@@ -173,11 +230,13 @@ describe("onboard shared gateway route containment", () => {
     };
     const updateSandbox = vi.fn(
       (name: string, route: Parameters<SetupInferenceDeps["updateSandbox"]>[1]) => {
-        reservations.push({ name, ...route });
+        reservations.push({ name, pendingRouteReservation: true, ...route });
         return true;
       },
     );
     const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const verifyOnboardInferenceSmoke = vi.fn(() => smokePending);
+    const log = vi.fn();
     const exitProcess = vi.fn((code: number): never => {
       throw new Error(`exit ${code}`);
     });
@@ -194,9 +253,7 @@ describe("onboard shared gateway route containment", () => {
       updateSandbox,
       upsertProvider: vi.fn(() => ({ ok: true })),
       verifyInferenceRoute: vi.fn(),
-      verifyOnboardInferenceSmoke: vi.fn(() => {
-        throw new Error("smoke failed");
-      }),
+      verifyOnboardInferenceSmoke,
       isNonInteractive: () => true,
       hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
       isRoutedInferenceProvider: () => true,
@@ -217,15 +274,40 @@ describe("onboard shared gateway route containment", () => {
       },
       redact: (value: string) => value,
       compactText: (value: string) => value,
-      log: vi.fn(),
+      log,
       error: vi.fn(),
       exitProcess,
     } as unknown as SetupInferenceDeps);
 
-    const results = await Promise.allSettled([
-      setupInference("alpha", "model-a", "router-a", "http://router-a.test/v1", "ROUTER_KEY"),
-      setupInference("beta", "model-b", "router-b", "http://router-b.test/v1", "ROUTER_KEY"),
+    const firstSetup = setupInference(
+      "alpha",
+      "model-a",
+      "router-a",
+      "http://router-a.test/v1",
+      "ROUTER_KEY",
+    );
+    await vi.waitFor(() => expect(verifyOnboardInferenceSmoke).toHaveBeenCalledOnce());
+    expect(reservations).toEqual([
+      expect.objectContaining({
+        name: "alpha",
+        pendingRouteReservation: true,
+        provider: "router-a",
+        model: "model-a",
+      }),
     ]);
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("Inference route set"));
+
+    const secondSetup = setupInference(
+      "beta",
+      "model-b",
+      "router-b",
+      "http://router-b.test/v1",
+      "ROUTER_KEY",
+    );
+    const resultsPending = Promise.allSettled([firstSetup, secondSetup]);
+    expect(runOpenshell).toHaveBeenCalledTimes(1);
+    rejectSmoke(new Error("smoke failed"));
+    const results = await resultsPending;
 
     expect(results).toEqual([
       { status: "rejected", reason: expect.objectContaining({ message: "smoke failed" }) },
@@ -241,6 +323,8 @@ describe("onboard shared gateway route containment", () => {
       gatewayName: "nemoclaw",
     });
     expect(reservations).toHaveLength(1);
+    expect(updateSandbox).toHaveBeenCalledOnce();
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("Inference route set"));
     expect(exitProcess).toHaveBeenCalledWith(1);
   });
 

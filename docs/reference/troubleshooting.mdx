@@ -5,7 +5,7 @@ title: "Troubleshooting"
 sidebar-title: "Troubleshooting"
 description: "Diagnose and resolve common NemoClaw installation, onboarding, and runtime issues."
 description-agent: "Lists fixes for common installation, onboarding, and runtime issues. Use when diagnosing a reported NemoClaw error, a failed onboard, or unexpected sandbox behavior."
-keywords: ["nemoclaw troubleshooting", "nemoclaw debug sandbox issues"]
+keywords: ["nemoclaw troubleshooting", "nemoclaw debug sandbox issues", "openclaw tool calling", "raw tool call json"]
 content:
   type: "reference"
 ---
@@ -1521,6 +1521,44 @@ A fresh `$$nemoclaw onboard` is the reliable fix.
 
 <AgentOnly variant="openclaw">
 
+### Tool calls appear as assistant text
+
+Local model servers must return structured `tool_calls` for OpenClaw to dispatch a tool.
+When the inference response contains only text that resembles a tool request, the gateway treats it as ordinary assistant text and no tool runs.
+The TUI can display a response such as:
+
+```json
+{"arguments":{"query":"robotics"},"name":"memory_search"}
+```
+
+This symptom is different from a network or policy block.
+`$$nemoclaw <name> status`, `$$nemoclaw <name> logs`, and `$$nemoclaw debug --quick` can all look healthy while conversation-level tool dispatch fails.
+
+Ollama can serve local chat and some simple tool surfaces, but agent loops with several tools, long instructions, or multi-turn dispatch need a server that returns structured tool calls consistently.
+
+| Workload | Ollama is usually sufficient | Prefer vLLM with a parser |
+|---|---|---|
+| Plain chat | Yes | Optional |
+| One simple tool with short prompts | Often | Optional |
+| Agent loops with several tools | Risky | Yes |
+| Long system prompts or sender metadata | Risky | Yes |
+| Multi-turn tool dispatch | Risky | Yes |
+
+For persistent agent use, [set up vLLM](../inference/local-inference/set-up-vllm) with automatic tool choice and the tool-call parser that matches the model family.
+After the parser-aware server is ready, re-run onboarding.
+For a server detected on `localhost:8000`, select the **Local vLLM** entry marked **running (suggested)**; for another address, select **Other OpenAI-compatible endpoint**.
+On generic hosts, the Local vLLM entry includes an experimental label; on DGX Spark or DGX Station, it does not.
+
+Do not rely on direct edits to `openclaw.json` for a persistent provider change.
+NemoClaw-managed rebuilds can overwrite those edits, while onboarding keeps the sandbox image, OpenShell route, and host-managed credentials aligned.
+
+Ask the agent to perform an action that requires a tool, then confirm that the TUI does not show a JSON blob as assistant text, the gateway log shows tool dispatch followed by an answer, and `$$nemoclaw <name> status` reports the intended local vLLM or compatible provider.
+If JSON still appears as text, confirm that vLLM started with automatic tool choice and the parser required by the model family.
+
+</AgentOnly>
+
+<AgentOnly variant="openclaw">
+
 ### Onboarding fails with duplicate Anthropic message_start events
 
 Validation for an OpenClaw **Other Anthropic-compatible endpoint** selection ends with an error like:
@@ -1866,7 +1904,7 @@ It can also appear during a runtime `$$nemoclaw inference set` switch.
 Use an HTTPS IP-literal endpoint whose certificate is valid for that address.
 If your deployment permits non-TLS provider traffic, you can instead use a public HTTP endpoint that NemoClaw can rewrite to a DNS-pinned address.
 Do not bypass the check with a private or internal address or by editing the persisted sandbox config directly.
-For the full endpoint rules, refer to [Inference Options](../inference/inference-options#custom-endpoint-url-validation).
+For the full endpoint rules, refer to [Meet Custom Endpoint Security Requirements](../inference/custom-endpoints/custom-endpoint-security).
 
 ### Agent cannot reach external hosts through a proxy
 
