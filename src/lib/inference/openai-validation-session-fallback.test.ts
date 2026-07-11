@@ -21,16 +21,18 @@ afterEach(() => {
 describe("OpenAI validation curl fallback", () => {
   it("recovers natively after transient HTTP failures", async () => {
     vi.stubEnv("NEMOCLAW_TEST_NO_SLEEP", "1");
+    const responsePlan = [
+      [503, '{"error":{"message":"retry"}}'],
+      [429, '{"error":{"message":"retry"}}'],
+      [200, '{"choices":[{"message":{"content":"OK"}}]}'],
+    ] as const;
     let requests = 0;
     const server = http.createServer((request, response) => {
       request.resume();
+      const [statusCode, body] = responsePlan[requests] ?? responsePlan.at(-1)!;
       requests += 1;
-      if (requests < 3) {
-        response.statusCode = requests === 1 ? 503 : 429;
-        response.end('{"error":{"message":"retry"}}');
-        return;
-      }
-      response.end('{"choices":[{"message":{"content":"OK"}}]}');
+      response.statusCode = statusCode;
+      response.end(body);
     });
     const port = await listen(server);
     const harness = createOpenAiValidationTestDeps();
