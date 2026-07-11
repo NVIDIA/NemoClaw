@@ -293,7 +293,7 @@ export function findBrokenPublishedInferenceRoutes(
   docsDir: string = docsRoot,
 ): RouteViolation[] {
   return findBrokenPublishedRoutes(sourcePath, index, docsDir).filter((violation) =>
-    violation.resolved.includes("/inference/"),
+    /\/inference(?:\/|$)/.test(violation.resolved),
   );
 }
 

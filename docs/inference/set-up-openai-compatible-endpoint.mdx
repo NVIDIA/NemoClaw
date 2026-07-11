@@ -22,10 +22,17 @@ Start the compatible server before onboarding.
 The following example starts vLLM on port `8000`.
 
 ```bash
-vllm serve meta-llama/Llama-3.1-8B-Instruct --host 127.0.0.1 --port 8000
+vllm serve meta-llama/Llama-3.1-8B-Instruct --host 0.0.0.0 --port 8000
 ```
 
 Port `8000` is included in the `local-inference` network policy preset.
+
+<Warning>
+The examples on this page listen on every IPv4 interface so both host-side onboarding and a containerized gateway can reach the server.
+When the server does not require authentication, use a host firewall with default-deny inbound rules.
+Allow TCP port `8000` only from the OpenShell Docker subnet to its gateway address, keep loopback access, and deny the port on every other interface.
+Do not expose the port to your LAN or the internet.
+</Warning>
 
 ## Run Onboarding
 
@@ -59,7 +66,7 @@ The following example starts `llama-server` with a GGUF model.
 ```bash
 llama-server \
   -m /models/NVIDIA-Nemotron3-Nano-4B-Q4_K_M.gguf \
-  --host 127.0.0.1 \
+  --host 0.0.0.0 \
   --port 8000 \
   -c 16384 \
   -ngl 999 \

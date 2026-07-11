@@ -8,8 +8,8 @@ import { fileURLToPath } from "node:url";
 import type * as TypeScript from "typescript";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
-import { shouldForceCompletionsApi } from "../src/lib/validation.js";
 import { getSandboxRuntimeInferenceEndpoint } from "../src/lib/onboard/docker-gpu-local-inference.js";
+import { shouldForceCompletionsApi } from "../src/lib/validation.js";
 
 const require = createRequire(import.meta.url);
 const ts = require("typescript") as typeof TypeScript;
@@ -149,7 +149,32 @@ function readCuratedOnboardingModelIds(): string[] {
 }
 
 function stripFencedCodeBlocks(markdown: string): string {
-  return markdown.replace(/^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1[ \t]*$/gm, "");
+  let fenceChar: string | null = null;
+  let fenceLength = 0;
+
+  return markdown
+    .split("\n")
+    .map((line) => {
+      const match = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+      if (fenceChar === null) {
+        if (!match) return line;
+        fenceChar = match[1][0];
+        fenceLength = match[1].length;
+        return "";
+      }
+
+      if (
+        match &&
+        match[1][0] === fenceChar &&
+        match[1].length >= fenceLength &&
+        /^[ \t]*$/.test(match[2])
+      ) {
+        fenceChar = null;
+        fenceLength = 0;
+      }
+      return "";
+    })
+    .join("\n");
 }
 
 describe("inference options model task-fit docs (#4755)", () => {
@@ -188,6 +213,15 @@ describe("inference options model task-fit docs (#4755)", () => {
 });
 
 describe("inference setup navigation", () => {
+  it("strips indented fenced examples with longer closing markers", () => {
+    const prose = stripFencedCodeBlocks(
+      "  ````md\n- fenced item\n\n- fenced item\n  `````\n- prose item\n- prose item",
+    );
+
+    expect(prose).not.toContain("fenced item");
+    expect(prose).toContain("- prose item");
+  });
+
   it("keeps simple list items compact across inference topics", () => {
     const spacedListItems =
       /^([ \t]*)(?:[-*+]|\d+\.)[ \t]+[^\n]+\n[ \t]*\n\1(?:[-*+]|\d+\.)[ \t]+/m;
@@ -230,15 +264,16 @@ describe("inference setup navigation", () => {
     expect(markdown).toContain("[Set Up NVIDIA NIM](set-up-nvidia-nim)");
   });
 
-  it("uses loopback-only binds for every compatible local server example", () => {
+  it("uses container-reachable binds with restricted exposure guidance", () => {
     const markdown = fs.readFileSync(compatibleEndpointPath, "utf8");
-
-    expect(markdown).toContain(
-      "vllm serve meta-llama/Llama-3.1-8B-Instruct --host 127.0.0.1 --port 8000",
+    const hostValues = Array.from(
+      markdown.matchAll(/--host(?:=|\s+)([^\s`\\]+)/g),
+      (match) => match[1],
     );
-    expect(markdown).toContain("llama-server \\");
-    expect(markdown).toContain("--host 127.0.0.1 \\");
-    expect(markdown).not.toContain("--host 0.0.0.0");
+
+    expect(hostValues).toEqual(["0.0.0.0", "0.0.0.0"]);
+    expect(markdown).toContain("default-deny inbound rules");
+    expect(markdown).toContain("only from the OpenShell Docker subnet to its gateway address");
   });
 
   it("keeps broad flat local-inference redirects on the chooser", () => {
@@ -257,18 +292,24 @@ describe("inference setup navigation", () => {
     );
   });
 
-  it("uses a loopback-only bind for the local vLLM server example", () => {
+  it("uses a container-reachable bind with restricted exposure guidance", () => {
     const markdown = fs.readFileSync(vllmSetupPath, "utf8");
+    const hostValues = Array.from(
+      markdown.matchAll(/--host(?:=|\s+)([^\s`\\]+)/g),
+      (match) => match[1],
+    );
 
-    expect(markdown).toContain("--host 127.0.0.1");
-    expect(markdown).not.toContain("--host 0.0.0.0");
+    expect(hostValues).toEqual(["0.0.0.0"]);
+    expect(markdown).toContain("default-deny inbound rules");
+    expect(markdown).toContain("only from the OpenShell Docker subnet to its gateway address");
   });
 
   it("keeps tool-calling remediation canonical in troubleshooting", () => {
     const markdown = fs.readFileSync(troubleshootingPath, "utf8");
     const start = markdown.indexOf("### Tool calls appear as assistant text");
     expect(start).toBeGreaterThanOrEqual(0);
-    const end = markdown.indexOf("\n### ", start + 4);
+    const nextHeading = markdown.indexOf("\n### ", start + 4);
+    const end = nextHeading === -1 ? markdown.length : nextHeading;
     const section = markdown.slice(start, end);
 
     expect(section).toContain("[set up vLLM](../inference/local-inference/set-up-vllm)");

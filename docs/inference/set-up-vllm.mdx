@@ -17,6 +17,14 @@ NemoClaw forces the Chat Completions API path for vLLM.
 The vLLM `/v1/responses` endpoint does not run the configured tool-call parser, so tool calls can arrive as raw text.
 </Note>
 
+<Warning>
+Local vLLM does not require authentication by default.
+NemoClaw needs port `8000` on host loopback for validation and on the OpenShell Docker bridge for sandbox traffic.
+Use a host firewall with default-deny inbound rules.
+Allow TCP port `8000` only from the OpenShell Docker subnet to its gateway address, keep loopback access, and deny the port on every other interface.
+Do not expose the port to your LAN or the internet.
+</Warning>
+
 ## Use an Existing Server
 
 When vLLM is already running on `localhost:8000`, NemoClaw detects it and queries `/v1/models` for the loaded model.
@@ -44,7 +52,7 @@ vllm serve /models/Hermes-3-Llama-3.1-8B \
   --served-model-name hermes-3-llama-3.1-8b \
   --enable-auto-tool-choice \
   --tool-call-parser hermes \
-  --host 127.0.0.1 \
+  --host 0.0.0.0 \
   --port 8000
 ```
 

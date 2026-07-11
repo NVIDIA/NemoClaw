@@ -77,5 +77,7 @@ describe("model capability audit doc (#3123)", () => {
       "[Troubleshooting](../../reference/troubleshooting#tool-calls-appear-as-assistant-text)",
     );
     expect(markdown).toContain("[Architecture](../../reference/architecture)");
+    expect(markdown).not.toContain("[Inference Options](inference-options)");
+    expect(markdown).not.toContain("[Tool-Calling Reliability](tool-calling-reliability)");
   });
 });

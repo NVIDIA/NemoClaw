@@ -10,8 +10,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildPublishedRouteIndex,
   findBrokenPublishedInferenceRoutes,
-  findBrokenPublishedRoutes,
   findBrokenPublishedRedirects,
+  findBrokenPublishedRoutes,
   resolvePublishedRoute,
 } from "../scripts/check-docs-published-routes.ts";
 
@@ -122,11 +122,19 @@ redirects:
     destination: /nemoclaw/user-guide/:variant/reference/commands
   - source: /nemoclaw/user-guide/openclaw/inference/static
     destination: /nemoclaw/user-guide/openclaw/reference/commands
+  - source: /nemoclaw/user-guide/openclaw/inference/fixed-source
+    destination: /nemoclaw/user-guide/:variant/reference/commands
 `;
 
     expect(findBrokenPublishedRedirects(index, fernYaml)).toEqual([
       {
         source: "/nemoclaw/user-guide/deepagents/inference/legacy",
+        destination: "/nemoclaw/user-guide/deepagents/reference/commands",
+        resolved: "/user-guide/deepagents/reference/commands",
+        variant: "deepagents",
+      },
+      {
+        source: "/nemoclaw/user-guide/openclaw/inference/fixed-source",
         destination: "/nemoclaw/user-guide/deepagents/reference/commands",
         resolved: "/user-guide/deepagents/reference/commands",
         variant: "deepagents",
@@ -150,6 +158,24 @@ See [Missing Other Page](../other/missing).
         expect.objectContaining({
           fromRoute: "/user-guide/hermes/reference/commands",
           resolved: "/user-guide/hermes/inference/missing",
+        }),
+      ]);
+    });
+  });
+
+  it("includes inference section roots in focused route violations", () => {
+    const index = buildPublishedRouteIndex(navYaml);
+    const source = commandsSource("See [Missing Inference Root](../inference).");
+
+    withDocsSource(source, (docsDir) => {
+      expect(findBrokenPublishedInferenceRoutes("reference/commands.mdx", index, docsDir)).toEqual([
+        expect.objectContaining({
+          fromRoute: "/user-guide/openclaw/reference/commands",
+          resolved: "/user-guide/openclaw/inference",
+        }),
+        expect.objectContaining({
+          fromRoute: "/user-guide/hermes/reference/commands",
+          resolved: "/user-guide/hermes/inference",
         }),
       ]);
     });
