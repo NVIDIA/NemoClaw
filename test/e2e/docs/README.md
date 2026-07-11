@@ -106,16 +106,17 @@ test/e2e/
 ## CI Entry Points
 
 - `tools/advisors/risk-plan.mts` is the small deterministic selection policy
-  shared by PR Review Advisor, E2E Advisor, and the model-independent post-merge
-  shadow controller. It maps changed runtime surfaces to invariant families and
+  shared by PR Review Advisor, E2E Advisor, and the PR E2E controller. It maps
+  changed runtime surfaces to invariant families and
   canonical `e2e.yaml` jobs; it is not a second test runner or migration-status
-  ledger.
+  ledger. The advisors use it as recommendation context, while the controller
+  applies it independently without model output.
 
-- `.github/workflows/post-merge-e2e-risk-gate-shadow.yaml` runs only for trusted pushes to
-  `main`. `tools/e2e-advisor/post-merge-risk-gate.mts` builds a plan from the exact
-  before/after SHAs, dispatches at most three automatic jobs, and validates
-  `risk-signal.json` evidence for every expected job and matrix shard. The
-  resulting check is post-merge shadow evidence, not a required PR gate.
+- `.github/workflows/pr-e2e-gate.yaml` owns `E2E / PR Gate` for PRs from this
+  repository after `CI / Pull Request` completes. The controller builds the
+  risk plan from GitHub's complete file list, dispatches every selected job,
+  and verifies each expected `risk-signal.json`. See
+  [NemoClaw E2E CI](../README.md) for the full lifecycle.
 
 - `.github/workflows/e2e.yaml` runs selected or all supported
   live E2E targets and uploads an explicit artifact allowlist with
@@ -128,12 +129,10 @@ test/e2e/
   These per-target timing summaries are artifact evidence only.
   The Slack and GitHub scorecard timing comparison remains scoped to the
   dedicated `cloud-onboard` artifact.
-  Exact-commit shadow dispatches require the requested checkout to equal the
-  workflow's current `main` commit and verify its reachability before
-  preparation. The controller uses GitHub's returned workflow-dispatch run ID
-  as the sole child-run selector for waiting, evidence download, and
-  completion, attaches `test/e2e/risk-signal-reporter.ts` to live Vitest
-  invocations, and suppresses PR reporting and scorecards.
+  PR E2E dispatches validate the PR head commit and controller metadata before
+  preparation, attach `test/e2e/risk-signal-reporter.ts` to live Vitest
+  invocations, and suppress PR reporting and scorecards. The workflow boundary
+  requires every selected job shard to upload its evidence artifact.
 - `.github/workflows/e2e-branch-validation.yaml`, `macos-e2e.yaml`,
   `wsl-e2e.yaml`, `ollama-proxy-e2e.yaml`, and `regression-e2e.yaml` call
   focused E2E targets directly for their E2E coverage.

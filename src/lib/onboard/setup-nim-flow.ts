@@ -18,11 +18,11 @@ import type {
 } from "./nvidia-featured-model-selection";
 import type { InferenceProviderHostGpu, InferenceProviderHostState } from "./provider-host-state";
 import { buildInferenceProviderMenu, type ProviderMenuChoice } from "./provider-menu";
-import { providerNameToOptionKey } from "./provider-recovery";
 import { resolveRequestedProviderSelection } from "./provider-selection";
 import { reportProviderSelectionFailure } from "./provider-selection-failure";
 import { promptForInferenceProviderSelection } from "./provider-selection-prompt";
 import type { RebuildRouteHandoff, RegistryInferenceRoute } from "./rebuild-route-handoff";
+import { prepareProviderDiscovery } from "./setup-nim-provider-discovery";
 import type { SetupNimSelectionState as BaseSetupNimSelectionState } from "./setup-nim-selection";
 
 export type SetupNimGpu = ReturnType<typeof import("../inference/nim").detectGpu>;
@@ -44,6 +44,7 @@ export interface SetupNimRemoteSelectionArgs {
   recoveredModel: string | null;
   sandboxName: string | null;
   intendedInferenceApi: string | null;
+  recoverySessionId: string | null | undefined;
 }
 
 export type SetupNim = (
@@ -55,6 +56,7 @@ export type SetupNim = (
   gatewayName?: string | null,
   assertRouteCompatible?: (route: ProviderInferenceProbeRoute) => GatewayRouteDiscoveryConstraints,
   canProbeRoute?: (provider: string) => boolean,
+  recoverySessionId?: string | null,
 ) => Promise<ProviderSelectionResult>;
 
 export interface SetupNimFlowDeps {
@@ -77,9 +79,18 @@ export interface SetupNimFlowDeps {
   }): InferenceProviderHostState;
   getAgentInferenceProviderOptions(agent: AgentDefinition | null | undefined): string[];
   loadRoutedProfile(): { router?: { enabled?: boolean } } | null | undefined;
-  readRecordedProvider(sandboxName: string | null | undefined): string | null;
-  readRecordedNimContainer(sandboxName: string | null | undefined): string | null;
-  readRecordedModel(sandboxName: string | null | undefined): string | null;
+  readRecordedProvider(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): string | null;
+  readRecordedNimContainer(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): string | null;
+  readRecordedModel(
+    sandboxName: string | null | undefined,
+    recoverySessionId?: string | null,
+  ): string | null;
   rejectWindowsHostOllama(
     requirement: InferenceProviderHostState["windowsHostOllamaDockerRequirement"],
     providerKey: string,
@@ -205,106 +216,6 @@ function applyGatewayRouteDiscoveryConstraints(
   }
 }
 
-const OLLAMA_PROBE_PROVIDER_KEYS = new Set([
-  "ollama",
-  "install-ollama",
-  "start-windows-ollama",
-  "install-windows-ollama",
-]);
-const VLLM_ROUTE_PROVIDER_KEYS = new Set(["vllm", "install-vllm"]);
-const VLLM_PROBE_PROVIDER_KEYS = new Set(["vllm", "install-vllm"]);
-
-function localProviderProbeIntent(providerKey: string | null): {
-  ollama: boolean;
-  vllm: boolean;
-} {
-  if (!providerKey) return { ollama: true, vllm: true };
-  return {
-    ollama: OLLAMA_PROBE_PROVIDER_KEYS.has(providerKey),
-    vllm: VLLM_PROBE_PROVIDER_KEYS.has(providerKey),
-  };
-}
-
-function localProbeRouteProvider(providerKey: string | null): string | null {
-  if (providerKey && OLLAMA_PROBE_PROVIDER_KEYS.has(providerKey)) return "ollama-local";
-  if (providerKey && VLLM_ROUTE_PROVIDER_KEYS.has(providerKey)) return "vllm-local";
-  return null;
-}
-
-function prepareProviderDiscovery(options: {
-  deps: SetupNimFlowDeps;
-  sandboxName: string | null;
-  recoverProvider: boolean;
-  rebuildRegistryInferenceRoute: RebuildRouteHandoff | null;
-  assertRouteCompatible?: (route: ProviderInferenceProbeRoute) => GatewayRouteDiscoveryConstraints;
-  canProbeRoute?: (provider: string) => boolean;
-}): {
-  requestedProvider: string | null;
-  requestedModel: string | null;
-  recoveredRegistryRoute: RegistryInferenceRoute | null;
-  probeOllama: boolean;
-  probeVllm: boolean;
-} {
-  const {
-    deps,
-    sandboxName,
-    recoverProvider,
-    rebuildRegistryInferenceRoute,
-    assertRouteCompatible,
-    canProbeRoute,
-  } = options;
-  const nonInteractive = deps.isNonInteractive();
-  const requestedProvider = deps.getNonInteractiveProvider();
-  const requestedModel = nonInteractive
-    ? deps.getNonInteractiveModel(requestedProvider || "build")
-    : null;
-  const recoveredRegistryRoute =
-    rebuildRegistryInferenceRoute?.sandboxName === sandboxName &&
-    rebuildRegistryInferenceRoute.route.source === "registry"
-      ? rebuildRegistryInferenceRoute.route
-      : null;
-  const recoveredProbeProvider =
-    nonInteractive && !requestedProvider && recoverProvider
-      ? (recoveredRegistryRoute?.provider ?? deps.readRecordedProvider(sandboxName))
-      : null;
-  const recoveredProbeKey = providerNameToOptionKey(
-    deps.remoteProviderConfig,
-    recoveredProbeProvider,
-    {
-      hasNimContainer:
-        recoveredProbeProvider === "vllm-local" &&
-        Boolean(deps.readRecordedNimContainer(sandboxName)),
-    },
-  );
-  const providerIntentKey =
-    requestedProvider || recoveredProbeKey || (nonInteractive ? "build" : null);
-  const intent = localProviderProbeIntent(providerIntentKey);
-  const guardedProvider = localProbeRouteProvider(providerIntentKey);
-  if (guardedProvider && assertRouteCompatible) {
-    const recoveredModel =
-      recoveredRegistryRoute?.model ??
-      (!requestedProvider && recoverProvider ? deps.readRecordedModel(sandboxName) : null);
-    assertRouteCompatible({
-      provider: guardedProvider,
-      model: requestedModel || recoveredModel,
-      endpointUrl: null,
-      preferredInferenceApi: null,
-      credentialEnv: null,
-    });
-  }
-  const ollamaPreflightPassed =
-    guardedProvider === "ollama-local" && Boolean(assertRouteCompatible);
-  const vllmPreflightPassed = guardedProvider === "vllm-local" && Boolean(assertRouteCompatible);
-  return {
-    requestedProvider,
-    requestedModel,
-    recoveredRegistryRoute,
-    probeOllama:
-      intent.ollama && (ollamaPreflightPassed || (canProbeRoute?.("ollama-local") ?? true)),
-    probeVllm: intent.vllm && (vllmPreflightPassed || (canProbeRoute?.("vllm-local") ?? true)),
-  };
-}
-
 export function createSetupNim(
   defaults: SetupNimFlowDeps,
   overrides: Partial<SetupNimFlowDeps> = {},
@@ -322,6 +233,7 @@ export function createSetupNim(
       route: ProviderInferenceProbeRoute,
     ) => GatewayRouteDiscoveryConstraints,
     canProbeRoute?: (provider: string) => boolean,
+    recoverySessionId?: string | null,
   ): Promise<ProviderSelectionResult> {
     deps.step(3, 8, "Configuring inference provider");
 
@@ -384,15 +296,22 @@ export function createSetupNim(
       return state;
     };
 
-    const { requestedProvider, requestedModel, recoveredRegistryRoute, probeOllama, probeVllm } =
-      prepareProviderDiscovery({
-        deps,
-        sandboxName,
-        recoverProvider,
-        rebuildRegistryInferenceRoute,
-        assertRouteCompatible,
-        canProbeRoute,
-      });
+    const {
+      requestedProvider,
+      requestedModel,
+      recoveredRegistryRoute,
+      recordedProviderReaders,
+      probeOllama,
+      probeVllm,
+    } = prepareProviderDiscovery({
+      deps,
+      sandboxName,
+      recoverProvider,
+      rebuildRegistryInferenceRoute,
+      assertRouteCompatible,
+      canProbeRoute,
+      recoverySessionId,
+    });
     const providerHostState = deps.detectInferenceProviderHostState({
       gpu,
       experimental: deps.experimental,
@@ -452,10 +371,11 @@ export function createSetupNim(
       );
     }
 
+    let recoveredFromSandbox = false;
     if (options.length > 1) {
       selectionLoop: while (true) {
         let selected: ProviderMenuChoice | undefined;
-        let recoveredFromSandbox = false;
+        recoveredFromSandbox = false;
         let recoveredModel: string | null = null;
         let preparedVllmState: SetupNimSelectionState | null = null;
         hermesAuthMethod = null;
@@ -470,13 +390,7 @@ export function createSetupNim(
             isWindowsHostOllama,
             windowsHostOllamaSupported: windowsHostOllamaDockerRequirement.supported,
             hermesProviderAvailable,
-            readRecordedProvider: recoverProvider
-              ? (name) => recoveredRegistryRoute?.provider ?? deps.readRecordedProvider(name)
-              : () => null,
-            readRecordedNimContainer: recoverProvider ? deps.readRecordedNimContainer : () => null,
-            readRecordedModel: recoverProvider
-              ? (name) => recoveredRegistryRoute?.model ?? deps.readRecordedModel(name)
-              : () => null,
+            ...recordedProviderReaders,
           });
           if (providerSelection.kind === "failure") {
             reportProviderSelectionFailure({
@@ -522,6 +436,7 @@ export function createSetupNim(
               recoveredModel,
               sandboxName,
               gatewayName,
+              recoverySessionId,
               intendedInferenceApi: resolveValidationInferenceApi(
                 selected.key,
                 deps.remoteProviderConfig[selected.key].providerName,
@@ -718,6 +633,7 @@ export function createSetupNim(
       allowToolsIncompatible,
       skipHostInferenceSmoke: reuseGatewayCredential,
       reuseGatewayCredentialWithoutLocalKey: reuseGatewayCredential,
+      ...(recoveredFromSandbox ? { recoveredFromSandbox: true } : {}),
       ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
     };
   };

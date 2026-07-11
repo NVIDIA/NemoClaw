@@ -40,6 +40,7 @@ describe("handleProviderInferenceState", () => {
       "nemoclaw",
       expect.any(Function),
       expect.any(Function),
+      session.sessionId,
     );
     expect(calls.promptName).toHaveBeenCalledWith(null);
     expect(calls.log).toHaveBeenCalledWith("summary:nvidia-prod/nvidia/test/my-assistant");
@@ -303,26 +304,6 @@ describe("handleProviderInferenceState", () => {
     });
   });
 
-  it("disables recorded provider recovery during fresh provider selection", async () => {
-    const { deps, calls } = createDeps();
-
-    await handleProviderInferenceState({
-      ...baseOptions(deps),
-      fresh: true,
-      sandboxName: "dcode-station",
-    });
-
-    expect(calls.setupNim).toHaveBeenCalledWith(
-      { type: "nvidia" },
-      "dcode-station",
-      null,
-      false,
-      "nemoclaw",
-      expect.any(Function),
-      expect.any(Function),
-    );
-  });
-
   it("does not use resume shortcuts when fresh is also set", async () => {
     const session = createSession({ provider: "ollama-local", model: "llama3.1" });
     session.steps.provider_selection.status = "complete";
@@ -345,6 +326,7 @@ describe("handleProviderInferenceState", () => {
       "nemoclaw",
       expect.any(Function),
       expect.any(Function),
+      session.sessionId,
     );
     expect(calls.setupInference).toHaveBeenCalled();
   });
@@ -1139,6 +1121,28 @@ describe("handleProviderInferenceState", () => {
     const result = await handleProviderInferenceState(baseOptions(deps));
 
     expect(setupNim).toHaveBeenCalledTimes(2);
+    expect(setupNim).toHaveBeenNthCalledWith(
+      1,
+      { type: "nvidia" },
+      null,
+      null,
+      true,
+      "nemoclaw",
+      expect.any(Function),
+      expect.any(Function),
+      expect.any(String),
+    );
+    expect(setupNim).toHaveBeenNthCalledWith(
+      2,
+      { type: "nvidia" },
+      "my-assistant",
+      null,
+      false,
+      "nemoclaw",
+      expect.any(Function),
+      expect.any(Function),
+      expect.any(String),
+    );
     expect(setupInference).toHaveBeenCalledTimes(2);
     expect(result.model).toBe("good");
     expect(calls.startStep).toHaveBeenCalledWith("provider_selection");
