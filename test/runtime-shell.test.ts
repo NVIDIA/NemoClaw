@@ -244,8 +244,10 @@ describe("shell runtime helpers", () => {
     const result = runShell(
       `function colima() { cat > /dev/null || true; printf 'nameserver 100.100.100.100\\n'; }
        source "${RUNTIME_SH}"
+       nameserver_output="$(mktemp "\${TMPDIR:-/tmp}/nemoclaw-colima-ns.XXXXXX")"
+       trap 'rm -f "$nameserver_output"' EXIT
        printf 'sandbox-answer\\n' | {
-         get_colima_vm_nameserver > /tmp/nemoclaw-colima-ns.out
+         get_colima_vm_nameserver > "$nameserver_output"
          cat
        }`,
     );
