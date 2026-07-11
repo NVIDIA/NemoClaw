@@ -157,6 +157,24 @@ describe.skipIf(!canRun)(
       });
     });
 
+    it("reports native OpenRouter identity for a managed OpenRouter config (#6678)", () => {
+      withTempDir((dir) => {
+        const config = SAMPLE_CONFIG.replace(
+          "upstream provider: nvidia-prod",
+          "upstream provider: openrouter-api",
+        )
+          .replace('default = "openai:demo-model"', 'default = "openrouter:demo-model"')
+          .replace("[models.providers.openai]", "[models.providers.openrouter]");
+        const run = runBashWrapper(buildFixture(dir, config), ["status"], {});
+
+        expect(run.status).toBe(0);
+        expect(run.stdout).toContain("Provider: openrouter");
+        expect(run.stdout).toContain("Model:    openrouter:demo-model");
+        expect(run.stdout).toContain("Endpoint: https://inference.local/v1");
+        expect(run.stdout).not.toContain("Provider: openrouter-api");
+      });
+    });
+
     it("uses the upstream default agent when configured preferences are stale", () => {
       withTempDir((dir) => {
         const run = runBashWrapper(buildFixture(dir, SAMPLE_CONFIG), ["status"], {});

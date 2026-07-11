@@ -118,8 +118,8 @@ This agent-specific default does not change the shared Nemotron 3 Super default 
 NemoClaw/OpenShell keeps real provider credentials in credential handling and does not write them into the Deep Agents config file.
 Deep Agents Code reaches `inference.local` through the managed OpenShell L7 proxy rather than direct sandbox DNS.
 The image launcher normalizes the runtime proxy environment for interactive, login-shell, and direct-exec paths and removes inherited proxy credentials and bypass entries before `dcode` starts.
-Managed interactive sessions keep Deep Agents Code's optional first-run name prompt, skip its dependency and model selection screens, then open the TUI with the model selected during NemoClaw onboarding.
-Press Enter at the name prompt to continue without setting a name.
+Managed interactive sessions pre-complete Deep Agents Code's optional first-run onboarding, skip its dependency and model selection screens, then open the TUI with the model selected during NemoClaw onboarding.
+The image includes `ripgrep`, and ordinary sessions suppress the optional Tavily warning unless web search is configured or invoked.
 
   </Accordion>
 
@@ -151,6 +151,9 @@ dcode -n "Summarize this repository"
 ```
 
 The managed `dcode`, `dcode.real`, and `deepagents-code` launchers use `/opt/venv/bin/python3 -I` to run the pinned package with an isolated import path and `HOME=/sandbox`.
+For interactive sessions, each launcher supervises its own process descendants so terminal exit or disconnect terminates the associated LangGraph server tree without affecting another session.
+After a disconnect, the supervisor uses bounded grace periods before it kills unresponsive processes from that session.
+The supervisor runs inside the Linux OpenShell sandbox and fails closed if invoked outside Linux; the host operating system does not change this sandbox guarantee.
 They disable Deep Agents Code package update checks and the LangGraph server version check, block CLI and TUI update/install commands, and disable nested remote sandbox providers, remote async subagents, MCP commands and project auto-loading, startup commands, executable hooks, ACP mode, interpreter tool calling, shell allow-list overrides, native LangSmith tracing, and ambient OpenTelemetry exporter configuration.
 The managed model constructor accepts only Deep Agents Code's `openai` provider path and reads its endpoint from a root-owned image file.
 It supplies the non-secret gateway placeholder key and ignores mutable provider classes, credentials, endpoints, and constructor parameters in Deep Agents Code config.
