@@ -92,7 +92,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -103,7 +103,7 @@ jobs:
         uses: ./.github/actions/ci-cli-coverage-shard
         with:
           shard: ${{ matrix.shard }}
-          shard-count: "5"
+          shard-count: "8"
 
   cli-tests:
     needs: cli-test-shards
@@ -133,7 +133,7 @@ jobs:
       - name: Merge CLI coverage
         uses: ./.github/actions/ci-cli-coverage-merge
         with:
-          shard-count: "5"
+          shard-count: "8"
 
   plugin-tests:
     permissions:
@@ -158,6 +158,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Setup Node.js
@@ -168,6 +169,16 @@ jobs:
 
       - name: Install E2E support dependencies
         run: npm ci --ignore-scripts
+
+      - name: Validate changed live E2E mock parity
+        env:
+          BASE_SHA: ${{ github.event.before }}
+        run: |
+          if [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            echo "Skipping changed live E2E parity: main has no prior commit."
+            exit 0
+          fi
+          npx tsx scripts/checks/e2e-mock-parity.ts --base "$BASE_SHA" --head HEAD
 
       - name: Build CLI artifacts for E2E support
         run: npm run build:cli

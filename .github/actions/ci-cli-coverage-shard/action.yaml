@@ -10,7 +10,7 @@ inputs:
     required: true
   shard-count:
     description: Total number of CLI coverage shards.
-    default: "5"
+    default: "8"
 
 runs:
   using: composite

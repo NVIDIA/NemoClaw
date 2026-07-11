@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 name: E2E
-run-name: ${{ inputs.risk_correlation != '' && format('E2E risk {0}', inputs.risk_correlation) || format('E2E {0}', github.ref_name) }}
+run-name: "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1})', inputs.pr_number, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}"
 
 on:
   schedule:
@@ -35,39 +35,34 @@ on:
         default: false
         type: boolean
       checkout_sha:
-        description: Current main commit selected by the trusted post-merge shadow controller.
+        description: PR head commit selected by the controller.
         required: false
         default: ""
         type: string
-      risk_plan_hash:
-        description: Deterministic post-merge risk-plan hash for shadow evidence correlation.
+      plan_hash:
+        description: SHA-256 of the selected E2E plan.
         required: false
         default: ""
         type: string
-      risk_correlation:
-        description: UUIDv4 correlation id for an exact-commit shadow risk run.
+      correlation_id:
+        description: Run correlation ID (UUIDv4).
         required: false
         default: ""
         type: string
-      risk_shadow:
-        description: Mark this selective run as post-merge risk-gate shadow evidence.
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
-  group: e2e-${{ github.ref }}-${{ inputs.risk_shadow && github.run_id || inputs.targets || 'supported' }}-${{ inputs.risk_shadow && 'risk-shadow' || inputs.jobs || 'all-jobs' }}
-  cancel-in-progress: false
+  group: e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'pr-gate' || inputs.jobs || 'all-jobs' }}
+  cancel-in-progress: ${{ inputs.checkout_sha != '' }}
 
 env:
   NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
-  NEMOCLAW_E2E_RISK_PLAN_HASH: ${{ inputs.risk_plan_hash }}
-  NEMOCLAW_E2E_RISK_CORRELATION: ${{ inputs.risk_correlation }}
-  NEMOCLAW_E2E_RISK_SHARD: default
-  NEMOCLAW_E2E_RISK_SHADOW: ${{ inputs.risk_shadow && '1' || '0' }}
+  NEMOCLAW_E2E_PLAN_HASH: ${{ inputs.plan_hash }}
+  NEMOCLAW_E2E_CORRELATION_ID: ${{ inputs.correlation_id }}
+  NEMOCLAW_E2E_SHARD: default
 
 jobs:
   generate-matrix:
@@ -83,29 +78,36 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Validate exact-commit dispatch
-        if: ${{ inputs.checkout_sha != '' || inputs.risk_plan_hash != '' || inputs.risk_correlation != '' || inputs.risk_shadow }}
+      - name: Validate controller dispatch
+        if: ${{ inputs.checkout_sha != '' }}
         env:
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
           JOBS: ${{ inputs.jobs }}
-          PLAN_HASH: ${{ inputs.risk_plan_hash }}
-          RISK_CORRELATION: ${{ inputs.risk_correlation }}
-          RISK_SHADOW: ${{ inputs.risk_shadow }}
+          PLAN_HASH: ${{ inputs.plan_hash }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          CORRELATION_ID: ${{ inputs.correlation_id }}
           TARGETS: ${{ inputs.targets }}
           WORKFLOW_EVENT: ${{ github.event_name }}
           WORKFLOW_REF: ${{ github.ref }}
-          WORKFLOW_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          [[ "$WORKFLOW_EVENT" == "workflow_dispatch" && "$WORKFLOW_REF" == "refs/heads/main" ]] || { echo "::error::exact-commit runs require a workflow_dispatch from main"; exit 1; }
-          [[ "$RISK_SHADOW" == "true" ]] || { echo "::error::exact-commit inputs require risk_shadow=true"; exit 1; }
+          [[ "$WORKFLOW_EVENT" == "workflow_dispatch" && "$WORKFLOW_REF" == "refs/heads/main" ]] || { echo "::error::PR E2E runs must be dispatched from main"; exit 1; }
           [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::checkout_sha must be a lowercase 40-character SHA"; exit 1; }
-          [[ "$CHECKOUT_SHA" == "$WORKFLOW_SHA" ]] || { echo "::error::checkout_sha must equal the current main workflow commit"; exit 1; }
-          [[ "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]] || { echo "::error::checked-out HEAD does not match checkout_sha"; exit 1; }
-          git merge-base --is-ancestor "$CHECKOUT_SHA" origin/main || { echo "::error::checkout_sha must already be reachable from main"; exit 1; }
-          [[ "$PLAN_HASH" =~ ^[a-f0-9]{64}$ ]] || { echo "::error::risk_plan_hash must be a lowercase SHA-256"; exit 1; }
-          [[ "$RISK_CORRELATION" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]] || { echo "::error::risk_correlation must be a lowercase UUIDv4"; exit 1; }
-          [[ -n "$JOBS" && -z "$TARGETS" ]] || { echo "::error::shadow risk runs require selective jobs and forbid targets/fan-out"; exit 1; }
+          [[ "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]] || { echo "::error::checked-out commit does not match checkout_sha"; exit 1; }
+          [[ "$PLAN_HASH" =~ ^[a-f0-9]{64}$ ]] || { echo "::error::plan_hash must be a lowercase SHA-256"; exit 1; }
+          [[ "$CORRELATION_ID" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]] || { echo "::error::correlation_id must be a lowercase UUIDv4"; exit 1; }
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "::error::pr_number must be a positive integer"; exit 1; }
+          [[ -n "$JOBS" && -z "$TARGETS" ]] || { echo "::error::PR E2E runs require jobs and do not accept targets"; exit 1; }
+
+          pull_json="$(curl --fail --silent --show-error --proto '=https' \
+            --header "Authorization: Bearer ${GITHUB_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+          [[ "$(jq -r '.state' <<< "$pull_json")" == "open" ]] || { echo "::error::pull request must still be open"; exit 1; }
+          [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$GITHUB_REPOSITORY" ]] || { echo "::error::pull request must originate from this repository"; exit 1; }
+          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha must match the PR head commit"; exit 1; }
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
@@ -1044,16 +1046,17 @@ jobs:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
+      - *dockerhub-auth
+
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run inference routing live test
-        # Direct E2E coverage. The
-        # always-on PR-safe slices prove invalid-key and unreachable-endpoint
-        # classification/cleanup without spending live provider quota; real
-        # NVIDIA credential isolation and third-party provider smokes stay
-        # skipped unless their secrets are explicitly supplied by a future
-        # workflow.
+        # Direct E2E coverage. The always-on PR-safe slices prove invalid-key,
+        # unreachable-endpoint, and localhost-compatible gateway routing
+        # without spending live provider quota. Real NVIDIA credential
+        # isolation and third-party provider smokes stay skipped unless their
+        # secrets are explicitly supplied by a future workflow.
         run: |
           set -euo pipefail
           npx vitest run --project e2e-live \
@@ -1063,6 +1066,11 @@ jobs:
       - name: Upload inference routing artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   cloud-inference:
     needs: generate-matrix
@@ -3036,7 +3044,7 @@ jobs:
       # set, and NoNewPrivs remain evidence unless an opt-in expectation is set.
       NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST: "1"
       NEMOCLAW_E2E_SECURITY_POSTURE: "1"
-      NEMOCLAW_E2E_RISK_SHARD: ${{ matrix.agent }}
+      NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: "60"
       NEMOCLAW_RECREATE_SANDBOX: "1"
@@ -4559,7 +4567,7 @@ jobs:
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
-      NEMOCLAW_E2E_RISK_SHARD: ${{ matrix.agent }}
+      NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: ${{ matrix.agent }}
@@ -5035,7 +5043,7 @@ jobs:
         channels-stop-start,
         spark-install,
       ]
-    if: ${{ always() && github.event_name == 'workflow_dispatch' && !inputs.risk_shadow }}
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' }}
     permissions:
       # The issue-comment endpoint accepts pull request write permission for PR comments.
       # Keep issues: write absent so this job cannot restore general issue routing.
@@ -5238,7 +5246,7 @@ jobs:
   scorecard:
     runs-on: ubuntu-latest
     needs: *e2e-result-jobs
-    if: ${{ always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.risk_shadow)) }}
+    if: ${{ always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '')) }}
     permissions:
       actions: read
       contents: read

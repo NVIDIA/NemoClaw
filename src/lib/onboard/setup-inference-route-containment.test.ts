@@ -51,6 +51,9 @@ describe("onboard shared gateway route containment", () => {
       bedrockRuntimeOnboard: {
         setupBedrockRuntimeInference: vi.fn(async () => ({ handled: false as const })),
       },
+      openrouterRuntimeOnboard: {
+        setupOpenRouterRuntimeInference: vi.fn(async () => ({ handled: false as const })),
+      },
       redact: (value: string) => value,
       compactText: (value: string) => value,
       log: vi.fn(),
@@ -149,6 +152,59 @@ describe("onboard shared gateway route containment", () => {
     expect(exitProcess).toHaveBeenCalledWith(1);
   });
 
+  it("rechecks recovered-route ownership inside both mutation locks before setup (#6630)", async () => {
+    const events: string[] = [];
+    const checkGatewayRouteCompatibility = vi.fn(() => ({ ok: true as const }));
+    const updateSandbox = vi.fn(() => true);
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const exitProcess = vi.fn((code: number): never => {
+      events.push(`exit:${code}`);
+      throw new Error(`exit ${code}`);
+    });
+    const setupInference = createSetupInference({
+      checkGatewayRouteCompatibility,
+      withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) => {
+        events.push("sandbox-lock");
+        return await operation();
+      },
+      withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) => {
+        events.push("gateway-lock");
+        return await operation();
+      },
+      getGatewayName: () => "nemoclaw",
+      error: (message: string) => events.push(`error:${message}`),
+      exitProcess,
+      updateSandbox,
+      runOpenshell,
+    } as unknown as SetupInferenceDeps);
+
+    await expect(
+      setupInference(
+        "alpha",
+        "model-a",
+        "anthropic-prod",
+        "https://api.anthropic.com",
+        "ANTHROPIC_API_KEY",
+        null,
+        [],
+        {
+          reservationSessionId: "session-current",
+          isRecordedProviderRecoveryAuthorized: () => {
+            events.push("recovery-authority");
+            return false;
+          },
+        },
+      ),
+    ).rejects.toThrow("exit 1");
+
+    expect(events.slice(0, 3)).toEqual(["sandbox-lock", "gateway-lock", "recovery-authority"]);
+    expect(events).toContainEqual(expect.stringContaining("lost reservation ownership"));
+    expect(checkGatewayRouteCompatibility).not.toHaveBeenCalled();
+    expect(updateSandbox).not.toHaveBeenCalled();
+    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(exitProcess).toHaveBeenCalledWith(1);
+  });
+
   it("reserves a fresh route before smoke failure lets another setup mutate it (#6315)", async () => {
     const reservations: SandboxEntry[] = [];
     let lockTail = Promise.resolve();
@@ -206,6 +262,12 @@ describe("onboard shared gateway route containment", () => {
         })),
       },
       hydrateCredentialEnv: vi.fn(() => "secret"),
+      bedrockRuntimeOnboard: {
+        setupBedrockRuntimeInference: vi.fn(async () => ({ handled: false as const })),
+      },
+      openrouterRuntimeOnboard: {
+        setupOpenRouterRuntimeInference: vi.fn(async () => ({ handled: false as const })),
+      },
       redact: (value: string) => value,
       compactText: (value: string) => value,
       log: vi.fn(),
@@ -233,5 +295,65 @@ describe("onboard shared gateway route containment", () => {
     });
     expect(reservations).toHaveLength(1);
     expect(exitProcess).toHaveBeenCalledWith(1);
+  });
+
+  it("stamps the owning onboard session on the initial route reservation (#6562)", async () => {
+    const reservations: SandboxEntry[] = [];
+    const updateSandbox = vi.fn(
+      (name: string, route: Parameters<SetupInferenceDeps["updateSandbox"]>[1]) => {
+        reservations.push({ name, ...route });
+        return true;
+      },
+    );
+    const setupInference = createSetupInference({
+      checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
+      withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      step: vi.fn(),
+      getGatewayName: () => "nemoclaw",
+      runOpenshell: vi.fn(() => ({ status: 0 })),
+      updateSandbox,
+      upsertProvider: vi.fn(() => ({ ok: true })),
+      verifyInferenceRoute: vi.fn(),
+      verifyOnboardInferenceSmoke: vi.fn(),
+      isNonInteractive: () => true,
+      hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
+      isRoutedInferenceProvider: () => true,
+      reconcileModelRouter: vi.fn(async () => undefined),
+      routedInference: {
+        upsertRoutedProvider: vi.fn(() => ({
+          ok: true,
+          endpointUrl: "http://router.test/v1",
+          result: { ok: true },
+        })),
+      },
+      hydrateCredentialEnv: vi.fn(() => "secret"),
+      redact: (value: string) => value,
+      compactText: (value: string) => value,
+      log: vi.fn(),
+      error: vi.fn(),
+      exitProcess: vi.fn((code: number): never => {
+        throw new Error(`exit ${code}`);
+      }),
+    } as unknown as SetupInferenceDeps);
+
+    await expect(
+      setupInference(
+        "gamma",
+        "model-c",
+        "router-c",
+        "http://router-c.test/v1",
+        "ROUTER_KEY",
+        null,
+        [],
+        { skipHostInferenceSmoke: true, reservationSessionId: "session-gamma" },
+      ),
+    ).resolves.toEqual({ ok: true });
+
+    expect(reservations).toEqual([
+      expect.objectContaining({ name: "gamma", reservationSessionId: "session-gamma" }),
+    ]);
   });
 });

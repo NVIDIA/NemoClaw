@@ -120,7 +120,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function isRecord(value: unknown): value is JsonRecord {
+function isObjectRecord(value: unknown): value is JsonRecord {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
@@ -142,7 +142,7 @@ function readJson(filePath: string, label: string): JsonRecord {
   } catch (error) {
     fail(`could not parse ${label} at ${filePath}: ${errorMessage(error)}`);
   }
-  if (!isRecord(value)) fail(`${label} at ${filePath} must contain a JSON object`);
+  if (!isObjectRecord(value)) fail(`${label} at ${filePath} must contain a JSON object`);
   return value;
 }
 
@@ -265,9 +265,7 @@ async function importRuntimeFunctions(
 
   let runtimeModule: JsonRecord;
   try {
-    const loaded: unknown = await import(moduleUrl.href);
-    if (!isRecord(loaded)) fail(`compiled runtime ${filePath} did not export a module object`);
-    runtimeModule = loaded;
+    runtimeModule = await import(moduleUrl.href);
   } catch (error) {
     fail(`could not import compiled runtime ${filePath}: ${errorMessage(error)}`);
   }
@@ -311,7 +309,7 @@ function readToolSearchConfig(
   configPath: string,
 ): void {
   const tools = config.tools;
-  if (!isRecord(tools)) fail(`generated config ${configPath} is missing object tools`);
+  if (!isObjectRecord(tools)) fail(`generated config ${configPath} is missing object tools`);
   const toolSearch = tools.toolSearch;
   if (expectedMode === "progressive") {
     if (!isDeepStrictEqual(toolSearch, STRUCTURED_TOOL_SEARCH)) {
@@ -336,7 +334,7 @@ function assertResolvedConfig(
   expectedMode: ExpectedMode,
 ): void {
   const resolved = resolveToolSearchConfig(config);
-  if (!isRecord(resolved)) fail("resolveToolSearchConfig did not return an object");
+  if (!isObjectRecord(resolved)) fail("resolveToolSearchConfig did not return an object");
   if (expectedMode === "progressive") {
     const expected = {
       enabled: true,
@@ -375,7 +373,7 @@ function createProbeTool(): Tool {
 }
 
 function readToolResultPayload(result: unknown, toolName: string): unknown {
-  if (!isRecord(result)) fail(`${toolName} returned a non-object result`);
+  if (!isObjectRecord(result)) fail(`${toolName} returned a non-object result`);
   const toolResult: ToolResult = result;
   if (toolResult.details !== undefined) {
     return toolResult.details;
@@ -383,7 +381,7 @@ function readToolResultPayload(result: unknown, toolName: string): unknown {
   const content = Array.isArray(toolResult.content) ? toolResult.content : [];
   const textPart = content.find(
     (entry): entry is JsonRecord & { type: "text"; text: string } =>
-      isRecord(entry) && entry.type === "text" && typeof entry.text === "string",
+      isObjectRecord(entry) && entry.type === "text" && typeof entry.text === "string",
   );
   if (!textPart) fail(`${toolName} returned no JSON text or details payload`);
   try {
@@ -394,7 +392,9 @@ function readToolResultPayload(result: unknown, toolName: string): unknown {
 }
 
 function isTool(value: unknown): value is Tool {
-  return isRecord(value) && typeof value.name === "string" && typeof value.execute === "function";
+  return (
+    isObjectRecord(value) && typeof value.name === "string" && typeof value.execute === "function"
+  );
 }
 
 function assertExactToolNames(
@@ -468,7 +468,7 @@ async function validateProgressiveRuntime(
     runId,
     sessionId: runId,
   });
-  if (!isRecord(compacted)) fail("applyToolSearchCatalog did not return an object");
+  if (!isObjectRecord(compacted)) fail("applyToolSearchCatalog did not return an object");
   const visibleTools = assertExactToolNames(
     compacted.tools,
     STRUCTURED_CONTROL_NAMES,
@@ -490,14 +490,14 @@ async function validateProgressiveRuntime(
     "tool_search",
   );
   if (!Array.isArray(searchPayload)) fail("tool_search payload must be an array");
-  const hit = searchPayload.find((entry) => isRecord(entry) && entry.name === PROBE_NAME);
+  const hit = searchPayload.find((entry) => isObjectRecord(entry) && entry.name === PROBE_NAME);
   if (!hit || typeof hit.id !== "string") fail("tool_search did not discover the hidden probe");
 
   const described = readToolResultPayload(
     await describe.execute("nemoclaw-validator-describe", { id: hit.id }),
     "tool_describe",
   );
-  if (!isRecord(described) || described.name !== PROBE_NAME) {
+  if (!isObjectRecord(described) || described.name !== PROBE_NAME) {
     fail("tool_describe did not return the hidden probe schema");
   }
 
@@ -509,11 +509,11 @@ async function validateProgressiveRuntime(
     "tool_call",
   );
   if (
-    !isRecord(callPayload) ||
-    !isRecord(callPayload.tool) ||
+    !isObjectRecord(callPayload) ||
+    !isObjectRecord(callPayload.tool) ||
     callPayload.tool.name !== PROBE_NAME ||
-    !isRecord(callPayload.result) ||
-    !isRecord(callPayload.result.details) ||
+    !isObjectRecord(callPayload.result) ||
+    !isObjectRecord(callPayload.result.details) ||
     callPayload.result.details.sentinel !== PROBE_SENTINEL ||
     callPayload.result.details.value !== "progressive"
   ) {
@@ -538,7 +538,7 @@ async function validateDirectRuntime(
     runId,
     sessionId: runId,
   });
-  if (!isRecord(direct)) fail("applyToolSearchCatalog did not return an object");
+  if (!isObjectRecord(direct)) fail("applyToolSearchCatalog did not return an object");
   const visibleTools = assertExactToolNames(
     direct.tools,
     [PROBE_NAME],
@@ -550,7 +550,11 @@ async function validateDirectRuntime(
   const directProbe = visibleTools[0];
   if (directProbe === undefined) fail("direct probe disappeared after cardinality check");
   const proof = await directProbe.execute("nemoclaw-validator-direct", { value: "direct" });
-  if (!isRecord(proof) || !isRecord(proof.details) || proof.details.sentinel !== PROBE_SENTINEL) {
+  if (
+    !isObjectRecord(proof) ||
+    !isObjectRecord(proof.details) ||
+    proof.details.sentinel !== PROBE_SENTINEL
+  ) {
     fail("direct mode did not preserve executable direct tool exposure");
   }
   return visibleTools.map((tool) => tool.name);

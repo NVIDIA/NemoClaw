@@ -7,6 +7,7 @@ import {
   effectiveManagedToolGatewayPresets,
   loadManagedToolGatewayMatrix,
 } from "./managed-tool-gateway.ts";
+import { isObjectRecord } from "./object-record.ts";
 
 const REMOTE_PLATFORM_TOOLSETS = [
   "web",
@@ -103,7 +104,7 @@ export function buildHermesConfig(
   };
 
   const config: Record<string, unknown> = {
-    _config_version: 30,
+    _config_version: 32,
     _nemoclaw_upstream: upstream,
     model: modelConfig,
     providers: {
@@ -117,6 +118,10 @@ export function buildHermesConfig(
     agent: {
       max_turns: 60,
       reasoning_effort: "medium",
+      // Hermes config migrations v30 -> v32 disable the old implicit
+      // verify-on-stop behavior once. Generated configs start at v32, so
+      // persist the same migrated value instead of inheriting "auto".
+      verify_on_stop: false,
     },
     tools: {
       tool_search: {
@@ -235,9 +240,5 @@ function addEnabledPlatformToolsets(
 }
 
 function isEnabledPlatform(value: unknown): boolean {
-  return isObject(value) && value.enabled === true;
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return isObjectRecord(value) && value.enabled === true;
 }
