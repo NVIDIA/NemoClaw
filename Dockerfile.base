@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
 # NemoClaw sandbox base image — expensive, rarely-changing layers.
 #
 # Contains: node:22-trixie-slim, apt packages, gosu, user/group setup,
