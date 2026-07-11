@@ -127,6 +127,14 @@ function runEntryGuardInFixture(tmp: string, opts: EntryGuardOptions): StagingOu
   };
 }
 
+function ownedStagedFileOrPlaceholder(execLog: string, tmp: string): string {
+  const placeholder = path.join(tmp, "no-owned-staged-file");
+  const recordedPath = fs.existsSync(execLog)
+    ? fs.readFileSync(execLog, "utf-8").split("\n")[0]
+    : placeholder;
+  return /^\/tmp\/nemoclaw-installer-[A-Za-z0-9]+$/.test(recordedPath) ? recordedPath : placeholder;
+}
+
 function runEntryGuard(opts: EntryGuardOptions): StagingOutcome {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-stage-"));
   const execLog = path.join(tmp, "exec-intent.txt");
@@ -135,12 +143,7 @@ function runEntryGuard(opts: EntryGuardOptions): StagingOutcome {
     return runEntryGuardInFixture(tmp, opts);
   } finally {
     try {
-      if (fs.existsSync(execLog)) {
-        const [stagedPath] = fs.readFileSync(execLog, "utf-8").split("\n");
-        if (/^\/tmp\/nemoclaw-installer-[A-Za-z0-9]+$/.test(stagedPath)) {
-          fs.rmSync(stagedPath, { force: true });
-        }
-      }
+      fs.rmSync(ownedStagedFileOrPlaceholder(execLog, tmp), { force: true });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

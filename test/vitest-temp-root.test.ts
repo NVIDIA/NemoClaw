@@ -16,6 +16,11 @@ const ROOT_SETUP = "test/helpers/vitest-temp-root.ts";
 
 type TempEnv = Record<(typeof TEMP_ENV_KEYS)[number], string | undefined>;
 
+function restoreEnvValue(key: string, value: string | undefined): void {
+  Reflect.deleteProperty(process.env, key);
+  Object.assign(process.env, value === undefined ? {} : { [key]: value });
+}
+
 function readTempEnv(): TempEnv {
   return {
     TMPDIR: process.env.TMPDIR,
@@ -26,12 +31,7 @@ function readTempEnv(): TempEnv {
 
 function restoreTempEnv(previous: TempEnv): void {
   for (const key of TEMP_ENV_KEYS) {
-    const value = previous[key];
-    if (value === undefined) {
-      delete process.env[key];
-    } else {
-      process.env[key] = value;
-    }
+    restoreEnvValue(key, previous[key]);
   }
 }
 
@@ -55,8 +55,8 @@ describe("Vitest temp root", () => {
     const outerEnv = readTempEnv();
     const previousKeep = process.env.NEMOCLAW_TEST_KEEP_TEMP;
     const parent = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-vitest-parent-"));
-    let nestedRoot: string | undefined;
-    let teardown: (() => void) | undefined;
+    let nestedRoot = path.join(parent, "no-nested-root");
+    let teardown = (): void => {};
 
     try {
       delete process.env.NEMOCLAW_TEST_KEEP_TEMP;
@@ -75,19 +75,18 @@ describe("Vitest temp root", () => {
       expect(os.tmpdir()).toBe(nestedRoot);
 
       teardown();
-      teardown = undefined;
+      teardown = (): void => {};
 
       expect(fs.existsSync(nestedRoot)).toBe(false);
       expect(readTempEnv()).toEqual(previous);
     } finally {
-      teardown?.();
-      if (nestedRoot) fs.rmSync(nestedRoot, { recursive: true, force: true });
-      fs.rmSync(parent, { recursive: true, force: true });
-      restoreTempEnv(outerEnv);
-      if (previousKeep === undefined) {
-        delete process.env.NEMOCLAW_TEST_KEEP_TEMP;
-      } else {
-        process.env.NEMOCLAW_TEST_KEEP_TEMP = previousKeep;
+      try {
+        teardown();
+      } finally {
+        fs.rmSync(nestedRoot, { recursive: true, force: true });
+        fs.rmSync(parent, { recursive: true, force: true });
+        restoreTempEnv(outerEnv);
+        restoreEnvValue("NEMOCLAW_TEST_KEEP_TEMP", previousKeep);
       }
     }
   });
@@ -96,8 +95,8 @@ describe("Vitest temp root", () => {
     const previousKeep = process.env.NEMOCLAW_TEST_KEEP_TEMP;
     const outerEnv = readTempEnv();
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    let keptRoot: string | undefined;
-    let teardown: (() => void) | undefined;
+    let keptRoot = path.join(os.tmpdir(), "no-kept-root");
+    let teardown = (): void => {};
 
     try {
       process.env.NEMOCLAW_TEST_KEEP_TEMP = "1";
@@ -106,20 +105,19 @@ describe("Vitest temp root", () => {
       fs.writeFileSync(path.join(keptRoot, "sentinel"), "test");
 
       teardown();
-      teardown = undefined;
+      teardown = (): void => {};
 
       expect(fs.readFileSync(path.join(keptRoot, "sentinel"), "utf8")).toBe("test");
       expect(readTempEnv()).toEqual(outerEnv);
       expect(stderr).toHaveBeenCalledWith(expect.stringContaining(keptRoot));
     } finally {
-      teardown?.();
-      if (keptRoot) fs.rmSync(keptRoot, { recursive: true, force: true });
-      if (previousKeep === undefined) {
-        delete process.env.NEMOCLAW_TEST_KEEP_TEMP;
-      } else {
-        process.env.NEMOCLAW_TEST_KEEP_TEMP = previousKeep;
+      try {
+        teardown();
+      } finally {
+        fs.rmSync(keptRoot, { recursive: true, force: true });
+        restoreEnvValue("NEMOCLAW_TEST_KEEP_TEMP", previousKeep);
+        restoreTempEnv(outerEnv);
       }
-      restoreTempEnv(outerEnv);
     }
   });
 
