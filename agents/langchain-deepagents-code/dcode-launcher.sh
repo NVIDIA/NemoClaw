@@ -160,4 +160,11 @@ if [ "$0" = "$MANAGED_EXEC_LAUNCHER" ]; then
   exec "$@"
 fi
 
+# Read-only managed identity commands never start DCode or LangGraph children.
+# Keep onboard's live-route validation on the established wrapper path while
+# supervising every command that can create a terminal-agent process tree.
+case "${1:-}" in
+  status | whoami | identity) exec "$MANAGED_DCODE_WRAPPER" "$@" ;;
+esac
+
 exec /opt/venv/bin/python3 -I "$MANAGED_SESSION_SUPERVISOR" "$MANAGED_DCODE_WRAPPER" "$@"

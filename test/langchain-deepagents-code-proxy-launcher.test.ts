@@ -150,6 +150,16 @@ function shellValidatorAccepts(source: string, name: string, value: string): boo
 }
 
 describe("Deep Agents Code direct-exec proxy launcher", () => {
+  it("keeps read-only identity commands outside the session supervisor", () => {
+    const launcher = readAgentFile("dcode-launcher.sh");
+    const directIdentity = 'status | whoami | identity) exec "$MANAGED_DCODE_WRAPPER" "$@"';
+    const supervisedSession =
+      'exec /opt/venv/bin/python3 -I "$MANAGED_SESSION_SUPERVISOR" "$MANAGED_DCODE_WRAPPER" "$@"';
+
+    expect(launcher).toContain(directIdentity);
+    expect(launcher.indexOf(directIdentity)).toBeLessThan(launcher.indexOf(supervisedSession));
+  });
+
   it("preserves the empty-prompt failure through the installed launcher chain (#6440)", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-empty-prompt-"));
     try {
