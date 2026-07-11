@@ -27,6 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         e2fsprogs=1.47.2-3+b11 \
         openssh-sftp-server=1:10.0p1-7+deb13u4 \
         jq=1.7.1-6+deb13u2 \
+        ripgrep=14.1.1-1+b4 \
         vim-tiny=2:9.1.1230-2 \
     && rm -rf /var/lib/apt/lists/*
 
@@ -36,6 +37,7 @@ RUN groupadd -r sandbox \
     && mkdir -p /sandbox/.nemoclaw \
         /sandbox/.deepagents/.state \
         /sandbox/.deepagents/skills \
+    && printf '1\n' > /sandbox/.deepagents/.state/onboarding_complete \
     && chown -R sandbox:sandbox /sandbox \
     && chmod 2770 /sandbox/.deepagents \
     && chmod 770 /sandbox/.deepagents/.state /sandbox/.deepagents/skills

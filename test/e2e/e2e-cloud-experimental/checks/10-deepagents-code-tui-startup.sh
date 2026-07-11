@@ -337,7 +337,11 @@ main() {
     exit 1
   fi
   case "$probe_output" in
-    *NEMOCLAW_DCODE_PROBE:deepagents*NEMOCLAW_DCODE_ONBOARDING:pending*) expect_name_prompt=1 ;;
+    *NEMOCLAW_DCODE_PROBE:deepagents*NEMOCLAW_DCODE_ONBOARDING:pending*)
+      fail_test "managed Deep Agents Code first-run onboarding is still pending"
+      printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
+      exit 1
+      ;;
     *NEMOCLAW_DCODE_PROBE:deepagents*NEMOCLAW_DCODE_ONBOARDING:complete*) expect_name_prompt=0 ;;
     *NEMOCLAW_DCODE_PROBE:other*)
       info "SKIP: sandbox '${SANDBOX_NAME}' is not a Deep Agents Code sandbox"

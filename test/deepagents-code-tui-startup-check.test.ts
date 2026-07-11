@@ -245,7 +245,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
   it("fails closed without package-manager operations when expect is unavailable", () => {
     const result = runTuiStartupCheckHelperResult(
       [
-        "sandbox_exec() { printf 'NEMOCLAW_DCODE_PROBE:deepagents\\nNEMOCLAW_DCODE_ONBOARDING:pending\\n'; }",
+        "sandbox_exec() { printf 'NEMOCLAW_DCODE_PROBE:deepagents\\nNEMOCLAW_DCODE_ONBOARDING:complete\\n'; }",
         'command() { if [ "$1" = -v ] && [ "${2:-}" = expect ]; then return 1; fi; builtin command "$@"; }',
         "main",
       ].join("; "),
@@ -256,6 +256,20 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       "expect is required for the Deep Agents Code TUI startup check",
     );
     expect(tuiStartupCheckSource).not.toMatch(/\b(?:sudo|apt-get)\b/u);
+  });
+
+  it("rejects managed images that still require first-run onboarding (#6678)", () => {
+    const result = runTuiStartupCheckHelperResult(
+      [
+        "sandbox_exec() { printf 'NEMOCLAW_DCODE_PROBE:deepagents\\nNEMOCLAW_DCODE_ONBOARDING:pending\\n'; }",
+        "main",
+      ].join("; "),
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "managed Deep Agents Code first-run onboarding is still pending",
+    );
   });
 
   it("matches the pinned Select Agent modal without accepting startup-only text", () => {
@@ -293,7 +307,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     expect(isFirstRun("What would you like to build?")).toBe("other");
   });
 
-  it("matches the name prompt pattern that managed DCode allows on first run", () => {
+  it("matches the name prompt pattern that managed DCode rejects as unexpected first-run UX", () => {
     const isNamePrompt = (capture: string) =>
       runTuiStartupCheckHelper(
         'if printf "%s" "$CAPTURE" | grep -Eiq "$TUI_NAME_PROMPT_PATTERN"; then printf name-prompt; else printf other; fi',
@@ -319,7 +333,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     expect(markerText).not.toContain("NEMOCLAW_TUI_READY");
   });
 
-  itWithTclsh("allows the first-run name prompt and proceeds to ready state", () => {
+  itWithTclsh("can diagnose a legacy image that still presents the first-run name prompt", () => {
     const { markerText, result, traceText } = runTuiExpectStateMachine(
       ["namePrompt", "ready", "exit"],
       { closeAfterFirstCtrlC: true },
@@ -387,7 +401,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     try {
       const result = runTuiStartupCheckHelperResult(
         [
-          "sandbox_exec() { printf 'NEMOCLAW_DCODE_PROBE:deepagents\\nNEMOCLAW_DCODE_ONBOARDING:pending\\n'; }",
+          "sandbox_exec() { printf 'NEMOCLAW_DCODE_PROBE:deepagents\\nNEMOCLAW_DCODE_ONBOARDING:complete\\n'; }",
           "ensure_expect_available() { return 0; }",
           "run_tui_expect() {",
           '  printf "Select Agent\\nNEMOCLAW_TUI_READY\\nNEMOCLAW_TUI_EXIT_CAPTURED:130\\n" >>"$2"',
@@ -418,7 +432,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     try {
       const result = runTuiStartupCheckHelperResult(
         [
-          "sandbox_exec() { printf 'NEMOCLAW_DCODE_PROBE:deepagents\\nNEMOCLAW_DCODE_ONBOARDING:pending\\n'; }",
+          "sandbox_exec() { printf 'NEMOCLAW_DCODE_PROBE:deepagents\\nNEMOCLAW_DCODE_ONBOARDING:complete\\n'; }",
           "ensure_expect_available() { return 0; }",
           "run_tui_expect() {",
           '  printf "NEMOCLAW_TUI_EOF_BEFORE_READY\\n" >>"$2"',
