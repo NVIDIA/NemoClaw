@@ -1506,7 +1506,7 @@ If you want to upgrade the sandbox while preserving state, use `$$nemoclaw <name
 </Warning>
 
 If another terminal has an active SSH session to the sandbox, `destroy` prints an active-session warning and requires a second confirmation before it proceeds.
-Pass `--yes`, `-y`, or `--force` to skip the prompt in scripted workflows.
+Pass `--yes`, `-y`, or `--force`, or set `NEMOCLAW_NON_INTERACTIVE=1`, to authorize deletion without prompting in scripted workflows.
 
 <AgentOnly variant="hermes">
 
@@ -1526,6 +1526,9 @@ Pass `--cleanup-gateway` to force removal, or `--no-cleanup-gateway` to force pr
 These flags always override both `NEMOCLAW_CLEANUP_GATEWAY` and the platform default.
 If the pre-delete workspace wipe cannot run, use a different sandbox name for a clean start.
 Cleaning up the gateway after the last sandbox also purges the shared cluster volume that retains the per-name persistent volume.
+If final gateway cleanup finds a live PID-file process whose command line does not prove it owns the target gateway, `destroy` exits non-zero after sandbox and registry deletion and skips gateway and volume removal.
+NemoClaw preserves the per-gateway PID file and runtime marker so you can inspect the process.
+Stop only the listener that matches the target gateway, then rerun `destroy` to converge cleanup.
 If the OpenShell gateway is unreachable and the sandbox has no managed MCP ownership state, `--force` removes only NemoClaw's local registry entry and local artifacts.
 Gateway-side deletion remains unconfirmed, shared host-service and gateway teardown are skipped, and the sandbox and retained volume may still exist if the gateway returns.
 Start the gateway with `$$nemoclaw <name> status` and retry destroy when you need a confirmed deletion.
