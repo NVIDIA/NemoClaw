@@ -125,6 +125,48 @@ describe("dockerfile patch helpers", () => {
     );
   });
 
+  it("keeps legacy non-WSL Dockerfiles compatible without the exposure arg (#6024)", () => {
+    const dockerfilePath = dockerfileWith("ARG CHAT_UI_URL=http://127.0.0.1:18789\n");
+
+    expect(() =>
+      patchStagedDockerfile(
+        dockerfilePath,
+        "custom-model",
+        "http://127.0.0.1:18789",
+        "build-1",
+        null,
+        null,
+        null,
+        null,
+        false,
+        null,
+        [],
+        { wslDashboardExposure: false },
+      ),
+    ).not.toThrow();
+  });
+
+  it("fails closed when a WSL managed Dockerfile cannot record exposure (#6024)", () => {
+    const dockerfilePath = dockerfileWith("ARG CHAT_UI_URL=http://127.0.0.1:18789\n");
+
+    expect(() =>
+      patchStagedDockerfile(
+        dockerfilePath,
+        "custom-model",
+        "http://127.0.0.1:18789",
+        "build-1",
+        null,
+        null,
+        null,
+        null,
+        false,
+        null,
+        [],
+        { wslDashboardExposure: true },
+      ),
+    ).toThrow(/cannot record WSL dashboard exposure/);
+  });
+
   it("fails when an OTEL env value has no matching Dockerfile ARG", () => {
     process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT = "http://host.openshell.internal:4318";
     const dockerfilePath = dockerfileWith(

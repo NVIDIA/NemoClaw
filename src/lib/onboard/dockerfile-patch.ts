@@ -221,15 +221,18 @@ export function patchStagedDockerfile(
   );
   if (options.wslDashboardExposure !== undefined) {
     const wslDashboardExposureArg = /^ARG NEMOCLAW_WSL_DASHBOARD_EXPOSURE=.*$/m;
-    if (!wslDashboardExposureArg.test(dockerfile)) {
+    const hasWslDashboardExposureArg = wslDashboardExposureArg.test(dockerfile);
+    if (options.wslDashboardExposure && !hasWslDashboardExposureArg) {
       throw new Error(
         "Dockerfile is missing ARG NEMOCLAW_WSL_DASHBOARD_EXPOSURE; cannot record WSL dashboard exposure.",
       );
     }
-    dockerfile = dockerfile.replace(
-      wslDashboardExposureArg,
-      `ARG NEMOCLAW_WSL_DASHBOARD_EXPOSURE=${options.wslDashboardExposure ? "1" : "0"}`,
-    );
+    if (hasWslDashboardExposureArg) {
+      dockerfile = dockerfile.replace(
+        wslDashboardExposureArg,
+        `ARG NEMOCLAW_WSL_DASHBOARD_EXPOSURE=${options.wslDashboardExposure ? "1" : "0"}`,
+      );
+    }
   }
   const remoteDashboardBind = remoteDashboardBindContract.patchRequestedRemoteDashboardBindContract(
     dockerfile,
