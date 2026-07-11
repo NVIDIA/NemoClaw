@@ -10,6 +10,7 @@ import {
   shouldRunBranchValidationE2E,
   shouldRunLiveE2E,
 } from "./test/e2e/fixtures/live-project-gate.ts";
+import { CliCoverageSequencer } from "./test/helpers/cli-coverage-sequencer";
 import { resolveIntegrationProjectScheduling } from "./test/helpers/integration-project-scheduling";
 import { sourceLoaderNodeOptions } from "./test/helpers/source-loader-options";
 import { testTimeout } from "./test/helpers/timeouts";
@@ -59,6 +60,7 @@ export default defineConfig({
     reporters: isGithubActions ? ["github-actions"] : ["default"],
     silent: isCi,
     hideSkippedTests: isCi,
+    sequence: { sequencer: CliCoverageSequencer },
     projects: [
       {
         ...typedSourceTransform,
