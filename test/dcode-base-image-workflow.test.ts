@@ -63,7 +63,22 @@ const publishers = [
   },
 ] as const;
 
+function pinnedAptVersion(dockerfile: string, packageName: string): string {
+  const source = fs.readFileSync(path.join(repoRoot, dockerfile), "utf8");
+  const version = source.match(new RegExp(`^\\s*${packageName}=([^\\s\\\\]+)`, "m"))?.[1];
+  expect(version, `${dockerfile} must pin ${packageName}`).toBeDefined();
+  return version as string;
+}
+
 describe("Deep Agents Code base-image publication", () => {
+  it("keeps shared apt package pins aligned across all sandbox base images (#6679)", () => {
+    const dockerfiles = publishers.map(({ dockerfile }) => dockerfile);
+    const curlVersions = dockerfiles.map((dockerfile) => pinnedAptVersion(dockerfile, "curl"));
+
+    expect(curlVersions).toEqual(expect.arrayContaining(["8.14.1-2+deb13u4"]));
+    expect(new Set(curlVersions)).toEqual(new Set([curlVersions[0]]));
+  });
+
   it("triggers its publisher whenever the DCode base inputs change (#6456)", () => {
     expect(workflow.on?.push?.paths).toEqual(
       expect.arrayContaining([
