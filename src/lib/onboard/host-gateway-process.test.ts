@@ -8,10 +8,13 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  HOST_GATEWAY_PGREP_PATTERN,
   type HostGatewayProcessDeps,
   type RunResult,
   stopHostGatewayProcesses,
 } from "./host-gateway-process";
+
+const PGREP_KEY = `pgrep -f ${HOST_GATEWAY_PGREP_PATTERN}`;
 
 interface RunArgs {
   args: string[];
@@ -67,12 +70,12 @@ describe("stopHostGatewayProcesses", () => {
   it("uses pgrep fallback when the Docker-driver gateway PID file is missing", () => {
     const exited = new Set<number>();
     const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
-      ["pgrep -f ^(/[^ ]*/)?openshell-gateway( |$)", ok("9999887\n")],
+      [PGREP_KEY, ok("9999887\n")],
       ...psResponses(9999887, { exited }),
     ]);
     const { run } = makeRun(responses);
-    const kill = vi.fn<HostGatewayProcessDeps["kill"]>((pid, signal) => {
-      if (signal === "SIGTERM") exited.add(pid);
+    const kill = vi.fn<HostGatewayProcessDeps["kill"]>((pid) => {
+      exited.add(pid);
       return true;
     });
     const log = vi.fn();
@@ -92,7 +95,7 @@ describe("stopHostGatewayProcesses", () => {
     const signals: Array<NodeJS.Signals | number | undefined> = [];
     let pidChecks = 0;
     const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
-      ["pgrep -f ^(/[^ ]*/)?openshell-gateway( |$)", ok(`${pid}\n`)],
+      [PGREP_KEY, ok(`${pid}\n`)],
       [`ps -p ${pid} -o user=`, ok("tester\n")],
       [`ps -p ${pid} -o args=`, ok("/home/test/.local/bin/openshell-gateway --port 8080\n")],
       [
@@ -129,7 +132,7 @@ describe("stopHostGatewayProcesses", () => {
     fs.writeFileSync(pidFile, "9999551\n");
     const exited = new Set<number>();
     const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
-      ["pgrep -f ^(/[^ ]*/)?openshell-gateway( |$)", notFound()],
+      [PGREP_KEY, notFound()],
       ...psResponses(9999551, {
         cmdline:
           "/usr/bin/docker run --rm --name nemoclaw-openshell-gateway --network host /opt/nemoclaw/openshell-gateway\n",
@@ -138,7 +141,11 @@ describe("stopHostGatewayProcesses", () => {
     ]);
     const { run } = makeRun(responses);
     const kill = vi.fn<HostGatewayProcessDeps["kill"]>((pid, signal) => {
-      if (signal === "SIGTERM") exited.add(pid);
+      switch (signal) {
+        case "SIGTERM":
+          exited.add(pid);
+          break;
+      }
       return true;
     });
 
@@ -152,12 +159,44 @@ describe("stopHostGatewayProcesses", () => {
     expect(fs.existsSync(pidFile)).toBe(false);
   });
 
+  it("accepts the OpenShell CLI gateway-start process recorded in the PID file", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-gateway-"));
+    const pidFile = path.join(stateDir, "openshell-gateway.pid");
+    fs.writeFileSync(pidFile, "9999552\n");
+    const exited = new Set<number>();
+    const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
+      [PGREP_KEY, notFound()],
+      ...psResponses(9999552, {
+        cmdline: "/Users/test/.local/bin/openshell gateway start --name nemoclaw --port 8080\n",
+        exited,
+      }),
+    ]);
+    const { run } = makeRun(responses);
+    const kill = vi.fn<HostGatewayProcessDeps["kill"]>((pid, signal) => {
+      switch (signal) {
+        case "SIGTERM":
+          exited.add(pid);
+          break;
+      }
+      return true;
+    });
+
+    const result = stopHostGatewayProcesses(
+      { run, kill, env: { USER: "tester" }, commandExists: () => true, log: vi.fn() },
+      { stateDir },
+    );
+
+    expect(result.stopped).toEqual([9999552]);
+    expect(kill).toHaveBeenCalledWith(9999552, "SIGTERM");
+    expect(fs.existsSync(pidFile)).toBe(false);
+  });
+
   it("rejects a PID whose argv0 is not docker even if it touches the mount path", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-gateway-"));
     const pidFile = path.join(stateDir, "openshell-gateway.pid");
     fs.writeFileSync(pidFile, "9999662\n");
     const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
-      ["pgrep -f ^(/[^ ]*/)?openshell-gateway( |$)", notFound()],
+      [PGREP_KEY, notFound()],
       ...psResponses(9999662, {
         cmdline: "/usr/bin/vim /opt/nemoclaw/openshell-gateway\n",
         exited: new Set(),
@@ -204,7 +243,7 @@ describe("stopHostGatewayProcesses", () => {
   it("ignores unrelated command lines that merely mention openshell-gateway", () => {
     const exited = new Set<number>();
     const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
-      ["pgrep -f ^(/[^ ]*/)?openshell-gateway( |$)", ok("9999111\n9999222\n")],
+      [PGREP_KEY, ok("9999111\n9999222\n")],
       ...psResponses(9999111, { exited }),
       ...psResponses(9999222, {
         cmdline: "node /home/test/.npm-global/bin/codex issue text mentions openshell-gateway\n",
@@ -229,7 +268,7 @@ describe("stopHostGatewayProcesses", () => {
 
   it("prints sudo remediation when a privileged host gateway cannot be killed", () => {
     const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
-      ["pgrep -f ^(/[^ ]*/)?openshell-gateway( |$)", ok("9999042\n")],
+      [PGREP_KEY, ok("9999042\n")],
       ...psResponses(9999042, { exited: new Set(), owner: "root" }),
     ]);
     const { run } = makeRun(responses);
@@ -299,7 +338,7 @@ describe("stopHostGatewayProcesses", () => {
     fs.writeFileSync(pidFile, "9999123\n");
     const exited = new Set<number>();
     const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
-      ["pgrep -f ^(/[^ ]*/)?openshell-gateway( |$)", ok("9999456\n")],
+      [PGREP_KEY, ok("9999456\n")],
       ...(psResponses(9999123, { exited: new Set() }).map(([key, value]) =>
         key === "ps -p 9999123 -o pid=" ? [key, notFound()] : [key, value],
       ) as [string, RunResult | ((args: string[]) => RunResult)][]),

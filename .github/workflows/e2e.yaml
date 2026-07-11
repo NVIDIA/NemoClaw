@@ -902,9 +902,9 @@ jobs:
       - name: Run inference routing live test
         # Direct E2E coverage. The always-on PR-safe slices prove invalid-key,
         # unreachable-endpoint, and localhost-compatible gateway routing
-        # without spending live provider quota. Real NVIDIA credential
-        # isolation and third-party provider smokes stay skipped unless their
-        # secrets are explicitly supplied by a future workflow.
+        # without spending live provider quota. Credential-backed isolation
+        # and provider smokes live in inference-routing-provider-smoke.test.ts;
+        # any future secret-bearing lane must run that file from trusted main.
         run: |
           set -euo pipefail
           npx vitest run --project e2e-live \

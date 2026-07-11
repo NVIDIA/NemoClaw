@@ -771,6 +771,7 @@ describe("handleProviderInferenceState", () => {
 
   it("revalidates recovered identity before reusing a gateway credential on messaging resume", async () => {
     const session = createSession({
+      sandboxName: "my-assistant",
       provider: "compatible-endpoint",
       model: "nvidia/nemotron",
       endpointUrl: "https://integrate.api.nvidia.com/v1",
@@ -823,10 +824,21 @@ describe("handleProviderInferenceState", () => {
     await handleProviderInferenceState({
       ...baseOptions(deps, session),
       resume: true,
+      authoritativeResumeConfig: true,
       sandboxName: "my-assistant",
     });
 
     expect(setupNim).toHaveBeenCalledOnce();
+    expect(setupNim).toHaveBeenCalledWith(
+      { type: "nvidia" },
+      "my-assistant",
+      null,
+      true,
+      "nemoclaw",
+      expect.any(Function),
+      expect.any(Function),
+      session.sessionId,
+    );
     expect(calls.setupInference).toHaveBeenCalledWith(
       "my-assistant",
       "nvidia/nemotron",

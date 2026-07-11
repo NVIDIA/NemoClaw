@@ -78,6 +78,18 @@ describe("e2e workflow boundary", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
   });
 
+  it("keeps credential-backed provider smokes out of the PR-safe inference-routing job", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { steps?: Array<{ name?: string; run?: string }> }>;
+    };
+    const run = workflow.jobs["inference-routing"]?.steps?.find(
+      (step) => step.name === "Run inference routing live test",
+    )?.run;
+
+    expect(run).toContain("test/e2e/live/inference-routing.test.ts");
+    expect(run).not.toContain("inference-routing-provider-smoke.test.ts");
+  });
+
   it("starts hosted OpenClaw proofs in the first wave after matrix generation", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");

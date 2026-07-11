@@ -4,16 +4,16 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { CLI_NAME } from "../../cli/branding";
 import { G, R, YW } from "../../cli/terminal-style";
+import { isNonInteractiveEnv } from "../../core/non-interactive";
 import { prompt as askPrompt } from "../../credentials/store";
 import {
   type DestroySandboxOptions,
   normalizeDestroySandboxOptions,
 } from "../../domain/lifecycle/options";
 import {
-  shouldCleanupGatewayAfterDestroy,
+  resolveDestroyGatewayCleanupDecision,
   shouldStopHostServicesAfterDestroy,
 } from "../../domain/sandbox/destroy";
 import {
@@ -21,7 +21,6 @@ import {
   SANDBOX_PROVIDER_SUFFIXES,
 } from "../../onboard/sandbox-provider-cleanup";
 import { validateName } from "../../runner";
-import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { killTimer as defaultKillShieldsTimer } from "../../shields/timer-control";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import type { Session } from "../../state/onboard-session";
@@ -30,6 +29,7 @@ import { resolveNemoclawStateDir } from "../../state/paths";
 import * as registry from "../../state/registry";
 import { confirmSandboxDestroy } from "./destroy-confirmation";
 import { executeSandboxDestroy } from "./destroy-execution";
+import { shouldCleanupGatewayAfterConfirmedFinalDestroy } from "./destroy-gateway-cleanup";
 import { cleanupGatewayAfterLastSandbox } from "./destroy-gateway";
 import { prepareSandboxDestroy } from "./destroy-preflight";
 import { type WipeSandboxStateDeps, wipeSandboxState } from "./wipe-state";
@@ -79,30 +79,14 @@ type RemoveShieldsStateDeps = {
   warn?: (message: string) => void;
 };
 
-// Mirrors the body of `isNonInteractive()` in src/lib/onboard.ts. Duplicated
-// here to avoid an awkward sibling-action -> onboard import; the canonical
-// helper should be lifted to src/lib/core/ so this and the lazy requires in
-// policy-channel.ts and inference/ollama/proxy.ts can all share one source.
-function isNonInteractive(): boolean {
-  return process.env.NEMOCLAW_NON_INTERACTIVE === "1";
-}
-
-/**
- * Decide whether to tear down the shared NemoClaw gateway after destroying
- * the last sandbox. Default is to preserve it (#2166); explicit opt-in via
- * `cleanupGateway: true` (which `normalizeDestroySandboxOptions` also reads
- * from `--cleanup-gateway` / `NEMOCLAW_CLEANUP_GATEWAY`).
- *
- * Prompt rules:
- *   - explicit `cleanupGateway` set         → honour it without prompting
- *   - non-interactive or `--yes` / `--force` → preserve gateway (safe default)
- *   - interactive without `--yes`           → prompt the user
- */
 async function resolveCleanupGatewayDecision(options: DestroySandboxOptions): Promise<boolean> {
-  if (options.cleanupGateway === true) return true;
-  if (options.cleanupGateway === false) return false;
-  if (options.yes === true || options.force === true) return false;
-  if (isNonInteractive()) return false;
+  const decision = resolveDestroyGatewayCleanupDecision(options, {
+    nonInteractive: isNonInteractiveEnv(),
+    platform: process.platform,
+  });
+  if (decision === "cleanup") return true;
+  if (decision === "preserve") return false;
+
   console.log(`  ${YW}This was the last sandbox.${R}`);
   console.log(
     "  Also destroy the shared NemoClaw gateway (port forward, gateway pod, cluster volumes)?",
@@ -113,23 +97,6 @@ async function resolveCleanupGatewayDecision(options: DestroySandboxOptions): Pr
   );
   const trimmed = answer.trim().toLowerCase();
   return trimmed === "y" || trimmed === "yes";
-}
-
-function hasNoLiveSandboxes(): boolean {
-  const { captureOpenshell } = require("../../adapters/openshell/runtime") as {
-    captureOpenshell: (
-      args: string[],
-      opts?: { ignoreError?: boolean; timeout?: number },
-    ) => { status: number | null; output: string };
-  };
-  const liveList = captureOpenshell(["sandbox", "list"], {
-    ignoreError: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-  });
-  if (liveList.status !== 0) {
-    return false;
-  }
-  return parseLiveSandboxNames(liveList.output).size === 0;
 }
 
 export function cleanupSandboxServices(
@@ -428,11 +395,9 @@ async function destroySandboxUnlocked(
     });
   }
   if (
-    shouldCleanupGatewayAfterDestroy({
+    shouldCleanupGatewayAfterConfirmedFinalDestroy({
       deleteSucceededOrAlreadyGone,
       removedRegistryEntry: removed,
-      noRegisteredSandboxes: registry.listSandboxes().sandboxes.length === 0,
-      noLiveSandboxes: hasNoLiveSandboxes(),
     })
   ) {
     const shouldCleanupGateway = await resolveCleanupGatewayDecision(normalized);
