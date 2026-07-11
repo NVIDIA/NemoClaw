@@ -93,7 +93,7 @@ export function collectLiveSandboxProbeSnapshot(
       // destroy-gateway-cleanup.test.ts locks this fail-closed behavior. Remove
       // it only when final cleanup has one authoritative sandbox/container state
       // source; see the OpenShell listener-removal boundary tracked in #6639.
-      console.debug(
+      console.warn(
         `Docker container probe failed for sandbox '${sandboxName}'; preserving shared gateway: ${String(error)}`,
       );
       dockerContainersBySandboxName.set(sandboxName, { output: "", probeFailed: true });

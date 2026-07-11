@@ -108,7 +108,7 @@ describe("shouldCleanupGatewayAfterConfirmedFinalDestroy", () => {
   });
 
   it("records failed Docker probes as fail-closed snapshots", () => {
-    const debug = vi.spyOn(console, "debug").mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const snapshot = collectLiveSandboxProbeSnapshot({
       captureOpenshell: () => ({
         status: 0,
@@ -126,7 +126,7 @@ describe("shouldCleanupGatewayAfterConfirmedFinalDestroy", () => {
       output: "",
       probeFailed: true,
     });
-    expect(debug).toHaveBeenCalledWith(
+    expect(warn).toHaveBeenCalledWith(
       "Docker container probe failed for sandbox 'npmtest'; preserving shared gateway: Error: docker unavailable",
     );
   });
