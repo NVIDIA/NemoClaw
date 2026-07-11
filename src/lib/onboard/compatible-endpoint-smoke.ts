@@ -5,6 +5,7 @@ import type { StdioOptions } from "node:child_process";
 import { shellQuote } from "../core/shell-quote";
 import { compactText } from "../core/url-utils";
 import { INFERENCE_ROUTE_URL, MANAGED_PROVIDER_ID } from "../inference/config";
+import { resolveMaxTokensField } from "../inference/max-tokens-field";
 import {
   buildCompatibleEndpointSmokeRequestScript,
   RETRYABLE_HTTP_STATUS_PYTHON_EXPRESSION,
@@ -213,6 +214,10 @@ export function buildCompatibleEndpointSandboxSmokeScript(
     COMPATIBLE_ENDPOINT_SMOKE_RETRY_DELAY_SECONDS,
   );
   const retryMaxTokens = positiveInt(options.retryMaxTokens, 1024);
+  // GPT-5/o-series (incl. Azure OpenAI) require `max_completion_tokens`; every
+  // other model still expects `max_tokens`. Kept in lockstep with the host-side
+  // onboarding probe via the shared resolver.
+  const maxTokensField = resolveMaxTokensField(model);
   const smokeRequestScript = buildCompatibleEndpointSmokeRequestScript();
 
   return `
@@ -222,6 +227,7 @@ CONFIG=${shellQuote(configPath)}
 INFERENCE_URL=${shellQuote(inferenceUrl)}
 INITIAL_MAX_TOKENS=${initialMaxTokens}
 RETRY_MAX_TOKENS=${retryMaxTokens}
+MAX_TOKENS_FIELD=${shellQuote(maxTokensField)}
 SMOKE_ATTEMPTS=${attempts}
 SMOKE_REQUEST_TIMEOUT_SECONDS=${COMPATIBLE_ENDPOINT_SMOKE_REQUEST_TIMEOUT_SECONDS}
 SMOKE_RETRY_DELAY_SECONDS=${retryDelaySeconds}
@@ -271,18 +277,19 @@ status_file="$(mktemp)"
 trap 'rm -f "$payload_file" "$response_file" "$status_file"' EXIT
 
 write_payload() {
-  python3 - "$MODEL" "$1" >"$payload_file" <<'PYPAYLOAD'
+  python3 - "$MODEL" "$1" "$MAX_TOKENS_FIELD" >"$payload_file" <<'PYPAYLOAD'
 import json
 import sys
 
 model = sys.argv[1]
 max_tokens = int(sys.argv[2])
+max_tokens_field = sys.argv[3]
 print(json.dumps({
     "model": model,
     "messages": [
         {"role": "user", "content": "Reply with exactly: PONG"}
     ],
-    "max_tokens": max_tokens,
+    max_tokens_field: max_tokens,
 }))
 PYPAYLOAD
 }

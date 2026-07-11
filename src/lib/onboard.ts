@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Interactive onboarding wizard — 8 steps from zero to running sandbox.
-// Supports non-interactive mode via --non-interactive flag or
-// NEMOCLAW_NON_INTERACTIVE=1 env var for CI/CD pipelines.
 const {
   envInt,
   LOCAL_INFERENCE_TIMEOUT_SECS,
 }: typeof import("./onboard/env") = require("./onboard/env");
+const { isNonInteractiveEnv }: typeof import("./core/non-interactive") =
+  require("./core/non-interactive");
 const {
   agentProductName,
   cliDisplayName,
@@ -481,9 +481,6 @@ const {
   createInitialOnboardFlowPhases,
   runInitialOnboardFlowSlice,
 }: typeof import("./onboard/machine/initial-flow-phases") = require("./onboard/machine/initial-flow-phases");
-const {
-  advanceTo,
-}: typeof import("./onboard/machine/result") = require("./onboard/machine/result");
 const { skippedStepMessage }: typeof import("./onboard/skipped-step-message") =
   require("./onboard/skipped-step-message");
 const policies: typeof import("./policy") = require("./policy");
@@ -690,7 +687,7 @@ function getOnboardDashboardPort(): number {
 }
 
 function isNonInteractive(): boolean {
-  return NON_INTERACTIVE || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
+  return NON_INTERACTIVE || isNonInteractiveEnv();
 }
 
 function isRecreateSandbox(requested = false): boolean {
@@ -2087,20 +2084,16 @@ async function startDockerDriverGateway({
     },
   );
   if (cutover === "reused") return;
-  if (!gatewayBin) throw new Error("OpenShell gateway binary missing after cutover");
+  if (!gatewayBin || !gatewayLaunch) {
+    throw new Error("OpenShell gateway launch missing after cutover");
+  }
 
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const logPath = path.join(stateDir, "openshell-gateway.log");
   const logFd = dockerDriverGatewayLaunch.openDockerDriverGatewayLog(logPath, { exitOnFailure });
   console.log("  Starting OpenShell Docker-driver gateway...");
   console.log(`  Gateway log: ${logPath}`);
-  const launch = gatewayLaunch ?? {
-    command: gatewayBin,
-    args: [],
-    env: { ...process.env, ...gatewayEnv },
-    mode: "host" as const,
-    processGatewayBin: gatewayBin,
-  };
+  const launch = gatewayLaunch;
   dockerDriverGatewayLaunch.prepareAndLogDockerDriverGatewayLaunch(launch);
   const child = dockerDriverGatewayLaunch.spawnDockerDriverGateway(launch, logFd);
   const childExit = trackChildExit(child); // #3111 zombie-safe liveness
@@ -4001,8 +3994,10 @@ const recordStateSkipped = onboardRuntimeBoundary.recordStateSkipped.bind(onboar
 const recordRepairEvent = onboardRuntimeBoundary.recordRepairEvent.bind(onboardRuntimeBoundary);
 const recordStateResult =
   onboardRuntimeBoundary.recordStateResultWithStepCompatibility.bind(onboardRuntimeBoundary);
-const recordCompatibleStateResult =
-  onboardRuntimeBoundary.recordCompatibleStateResult.bind(onboardRuntimeBoundary);
+const recordInvalidatedStateResult =
+  onboardRuntimeBoundary.recordInvalidatedStateResult.bind(onboardRuntimeBoundary);
+const recordInitialPreflightTransition =
+  onboardRuntimeBoundary.recordInitialPreflightTransition.bind(onboardRuntimeBoundary);
 const recordPostVerifyStarted =
   onboardRuntimeBoundary.recordPostVerifyStarted.bind(onboardRuntimeBoundary);
 
@@ -4074,7 +4069,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     authoritativeGateway?.name ?? GATEWAY_NAME,
   );
   setOnboardBrandingAgent(opts.agent || process.env.NEMOCLAW_AGENT || null);
-  NON_INTERACTIVE = opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
+  NON_INTERACTIVE = opts.nonInteractive || isNonInteractiveEnv();
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
   AUTO_YES = opts.autoYes === true || process.env.NEMOCLAW_YES === "1";
   _preflightDashboardPort =
@@ -4228,9 +4223,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       },
     );
     await onboardRuntimeBoundary.recordOnboardStarted(resume);
-    await (resume ? recordCompatibleStateResult : recordStateResult)(
-      advanceTo("preflight", { metadata: { state: "init" } }),
-    );
+    await recordInitialPreflightTransition(resume);
     // Resume backstop: a session may exist without a sandboxName if sandbox
     // creation failed before that step. Non-interactive --from cannot infer a
     // safe name in that state.
@@ -4389,7 +4382,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       runtime: onboardRuntimeBoundary.getRuntime(),
       phases: [preflightPhase, gatewayPhase],
       resume,
-      recordStateResult: recordCompatibleStateResult,
+      recordStateResult,
+      recordInvalidatedStateResult,
     });
 
     const initialContext = initialFlowResult.context;
@@ -4564,7 +4558,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       runtime: onboardRuntimeBoundary.getRuntime(),
       phases: [providerInferencePhase, sandboxPhase],
       resume,
-      recordStateResult: recordCompatibleStateResult,
+      recordStateResult,
+      recordInvalidatedStateResult,
     });
     setupInferenceFactory.selectGatewayForFollowupOrExit(GATEWAY_NAME, runOpenshell);
     const coreContext = coreFlowResult.context;
@@ -4719,7 +4714,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       runtime: onboardRuntimeBoundary.getRuntime(),
       phases: [branchSetupPhase, policiesPhase, finalizationPhase],
       resume,
-      recordStateResult: recordCompatibleStateResult,
+      recordStateResult,
+      recordInvalidatedStateResult,
       afterPoliciesResultApplied: () => {
         sandboxCancelRollback.disarm();
       },

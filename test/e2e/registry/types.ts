@@ -118,6 +118,8 @@ export interface NemoClawInstanceManifest {
       provider: string;
       modelRoute?: string;
       policyTier?: string;
+      policyMode?: string;
+      policyPresets?: string[];
       messaging?: string[];
       features?: Record<string, unknown>;
       lifecycle?: string;

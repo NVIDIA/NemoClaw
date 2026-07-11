@@ -10,6 +10,7 @@ import {
   shouldRunBranchValidationE2E,
   shouldRunLiveE2E,
 } from "./test/e2e/fixtures/live-project-gate.ts";
+import { CliCoverageSequencer } from "./test/helpers/cli-coverage-sequencer";
 import { resolveIntegrationProjectScheduling } from "./test/helpers/integration-project-scheduling";
 import { sourceLoaderNodeOptions } from "./test/helpers/source-loader-options";
 import { testTimeout } from "./test/helpers/timeouts";
@@ -51,6 +52,13 @@ const integrationProjectScheduling = resolveIntegrationProjectScheduling({
 
 export default defineConfig({
   test: {
+    globalSetup: "test/helpers/vitest-temp-root.ts",
+    tags: [
+      {
+        name: "e2e/credential-free",
+        description: "Runs without external credentials in the shared E2E job",
+      },
+    ],
     env: {
       NEMOCLAW_DISABLE_GATEWAY_DRIFT_PREFLIGHT: "1",
     },
@@ -59,6 +67,7 @@ export default defineConfig({
     reporters: isGithubActions ? ["github-actions"] : ["default"],
     silent: isCi,
     hideSkippedTests: isCi,
+    sequence: { sequencer: CliCoverageSequencer },
     projects: [
       {
         ...typedSourceTransform,
@@ -85,7 +94,13 @@ export default defineConfig({
           // 7 GiB CI runner. The canonical local full suite instead runs this
           // project as a bounded four-worker phase after the other projects.
           ...integrationProjectScheduling,
-          env: { NODE_OPTIONS: sourceNodeOptions },
+          env: {
+            NODE_OPTIONS: sourceNodeOptions,
+            // Integration fixtures exercise onboarding against controlled fake
+            // Docker state. Keep a base-image Dockerfile change in the PR from
+            // redirecting those fixtures into the real local-build guard.
+            NEMOCLAW_SANDBOX_BASE_IMAGE_REF: "ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
+          },
           include: ["test/**/*.test.{js,ts}"],
           exclude: [
             "**/node_modules/**",

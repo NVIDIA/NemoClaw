@@ -54,6 +54,12 @@ describe("probesForState maps typed expected-state into probe ids", () => {
     ]);
   });
 
+  it("policy-selection failure state only requires the CLI to be installed", () => {
+    expect(
+      probesForState(requireExpectedState("onboarding-failure-policy-presets-required")),
+    ).toEqual(["cli-installed"]);
+  });
+
   it("optional-dimension state emits cli-installed only", () => {
     expect(probesForState(requireExpectedState("macos-cli-ready-docker-optional"))).toEqual([
       "cli-installed",

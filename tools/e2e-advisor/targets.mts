@@ -41,6 +41,12 @@ import {
   type RunAdvisorResult,
   runReadOnlyAdvisor,
 } from "../advisors/session.mts";
+import {
+  CREDENTIAL_FREE_TEST_TAG,
+  credentialFreeTestProjectForFile,
+  credentialFreeTestRowFromModule,
+  discoverCredentialFreeTests,
+} from "../e2e/credential-free-tests.mts";
 import { readFreeStandingJobsInventory } from "../e2e/workflow-boundary.mts";
 
 const root = process.cwd();
@@ -295,8 +301,8 @@ export function buildSystemPrompt(_schema?: AdvisorSchema): string {
     "- Required (targeted): fixture, live test, manifest, runtime-support, or target changes that affect a specific subset. Recommend the smallest set of live-supported typed target IDs that exercises the changed surface.",
     "- Onboarding resume rule: changes to src/lib/onboard/machine live slice orchestration, resume state handling, resume repair policy, session bootstrap, or onboarding state transitions MUST require `onboard-resume`. Also require `onboard-repair` when the change can affect repair/backstop execution from persisted sessions. Do not make repair optional for these state-machine resume paths.",
     "- Deterministic risk plan: required jobs are a trusted floor. You may add adjacent targets, but never remove or downgrade a listed job.",
-    "- Required (free-standing job): if a PR wires or changes a discrete live E2E job in `.github/workflows/e2e.yaml` for a specific `test/e2e/live/*.test.ts`, prefer that job over `e2e-all`. Use selectorType=`job`, id=`<job-id>`, workflow=`e2e.yaml`, and dispatchCommand exactly `gh workflow run e2e.yaml --ref <pr-head-ref> --field jobs=<job-id>`.",
-    "- Missing wiring: if a PR adds or changes a free-standing live E2E file under `test/e2e/live/*.test.ts` but that file is not referenced by `.github/workflows/e2e.yaml` and is not `registry-targets.test.ts`, do not recommend the fan-out as proof. Return no required/optional recommendations and set `noTargetE2eReason` to say the test must be wired into `e2e.yaml` before it can be dispatched.",
+    "- Required (E2E test): if a PR changes a test wired by a discrete workflow job or tagged as credential-free, prefer its test ID over `e2e-all`. Use selectorType=`job`, id=`<test-id>`, workflow=`e2e.yaml`, and dispatchCommand exactly `gh workflow run e2e.yaml --ref <pr-head-ref> --field jobs=<test-id>`.",
+    "- Missing wiring: if a PR adds or changes an E2E file under `test/e2e/live/*.test.ts` but that file is neither tagged as credential-free nor referenced by `.github/workflows/e2e.yaml`, and is not `registry-targets.test.ts`, do not recommend the fan-out as proof. Return no required/optional recommendations and set `noTargetE2eReason` to say the test must be wired before it can be dispatched.",
     "- Optional: adjacent targets that exercise the same suite on a different platform/onboarding (e.g. macOS, WSL, GPU) but are not the primary target. Special-runner targets (`gpu-`, `macos-`, `wsl-`, `brev-`) should usually be optional unless they are the only path that exercises the change.",
     "- None: docs-only, comment-only, tests-only outside `test/e2e/`, or changes that cannot affect E2E target behavior. Set `noTargetE2eReason` and return empty `required`/`optional` arrays.",
     "",
@@ -306,7 +312,7 @@ export function buildSystemPrompt(_schema?: AdvisorSchema): string {
     "- Each `dispatchCommand` for a single-target recommendation MUST be exactly: `gh workflow run e2e.yaml --ref <pr-head-ref> --field targets=<id>`.",
     "- Each `dispatchCommand` for a free-standing job recommendation MUST be exactly: `gh workflow run e2e.yaml --ref <pr-head-ref> --field jobs=<id>`.",
     "- For the fan-out, use exactly: `gh workflow run e2e.yaml --ref <pr-head-ref>` and set `id`/`workflow`/`selectorType` to `e2e-all`/`e2e.yaml`/`all`.",
-    "- The normalizer validates targeted IDs against the trusted advisor checkout's registry/runtime-support modules, not PR-local TypeScript. If a PR adds or newly wires a typed registry target that is not live-supported on trusted `main` yet, recommend the `e2e-all` fan-out rather than a targeted dispatch. This fallback does not apply to free-standing live test jobs.",
+    "- The normalizer validates targeted IDs against the trusted advisor checkout's registry/runtime-support modules, not PR-local TypeScript. If a PR adds or newly wires a typed registry target that is not live-supported on trusted `main` yet, recommend the `e2e-all` fan-out rather than a targeted dispatch. This fallback does not apply to tests wired by a discrete job or a literal credential-free tag; the normalizer reads tag declarations as inert text.",
     "- A `suiteFilter` may be set on a recommendation as analytical metadata explaining why the target was selected. It must NOT leak into the dispatch command.",
     "- `relevantChangedFiles` must be the subset of `changedFiles` under `test/e2e/`, `.github/workflows/e2e.yaml`, or other directly target-relevant paths.",
     "",
@@ -398,17 +404,25 @@ Call the real \`${contextToolNames}\` context tools before answering. Treat requ
 export function normalizeE2eTargetAdvisorResult(
   result: unknown,
   metadata: AdvisorMetadata,
-  options: { e2eWorkflowText?: string; riskPlan?: RiskPlan } = {},
+  options: {
+    changedFileSources?: Readonly<Record<string, string | null>>;
+    e2eWorkflowText?: string;
+    riskPlan?: RiskPlan;
+  } = {},
 ): E2eTargetAdvisorResult {
   if (!result || typeof result !== "object" || Array.isArray(result)) {
     throw new Error("Target advisor returned a non-object result");
   }
 
   const object = result as Record<string, unknown>;
-  const context = buildE2eTargetNormalizationContext(options.e2eWorkflowText);
+  const context = buildE2eTargetNormalizationContext(
+    options.e2eWorkflowText,
+    metadata.changedFiles,
+    options.changedFileSources,
+  );
   const unwiredFreeStandingLiveTests = findUnwiredFreeStandingLiveTests(
     metadata.changedFiles,
-    context.e2eWorkflowText,
+    context,
   );
   const suppressFanout = shouldSuppressFanoutForUnwiredLiveTests(
     metadata.changedFiles,
@@ -493,15 +507,56 @@ function readE2eWorkflowText(): string | undefined {
 
 function buildE2eTargetNormalizationContext(
   e2eWorkflowText = readE2eWorkflowText(),
+  changedFiles: readonly string[] = [],
+  changedFileSources?: Readonly<Record<string, string | null>>,
 ): E2eTargetNormalizationContext {
   const freeStandingJobs = extractFreeStandingE2eJobs(e2eWorkflowText ?? "");
   const allowedJobIds = new Set(readFreeStandingJobsInventory().allowedJobs);
   const liveTestToJobs = new Map<string, string[]>();
+  const changedCredentialFreeTestProjects = new Map(
+    changedFiles.flatMap((file) => {
+      const project = credentialFreeTestProjectForFile(file);
+      return project ? [[file, project] as const] : [];
+    }),
+  );
   for (const job of freeStandingJobs) {
     for (const file of job.liveTestFiles) {
       const jobs = liveTestToJobs.get(file) ?? [];
       jobs.push(job.id);
       liveTestToJobs.set(file, jobs);
+    }
+  }
+  for (const row of discoverCredentialFreeTests()) {
+    if (changedCredentialFreeTestProjects.has(row.file)) {
+      allowedJobIds.delete(row.id);
+      continue;
+    }
+    const jobs = liveTestToJobs.get(row.file) ?? [];
+    jobs.push(row.id);
+    liveTestToJobs.set(row.file, jobs);
+  }
+  for (const [file, project] of changedCredentialFreeTestProjects) {
+    let source: string | undefined;
+    if (changedFileSources && Object.hasOwn(changedFileSources, file)) {
+      source = changedFileSources[file] ?? undefined;
+      if (source === undefined) continue;
+    } else {
+      try {
+        source = fs.readFileSync(path.join(root, file), "utf8");
+      } catch {
+        continue;
+      }
+    }
+    if (!source.includes(`@module-tag ${CREDENTIAL_FREE_TEST_TAG}`)) continue;
+    try {
+      const row = credentialFreeTestRowFromModule({ file, project, source });
+      const jobs = liveTestToJobs.get(row.file) ?? [];
+      if (!jobs.includes(row.id)) jobs.push(row.id);
+      liveTestToJobs.set(row.file, jobs);
+      allowedJobIds.add(row.id);
+    } catch {
+      // Invalid or ambiguous credential-free tags remain unwired so the
+      // normalizer cannot recommend a selector the workflow would reject.
     }
   }
   return { e2eWorkflowText, freeStandingJobs, allowedJobIds, liveTestToJobs };
@@ -536,13 +591,14 @@ export function extractFreeStandingE2eJobs(workflowText: string): E2eWorkflowJob
 
 function findUnwiredFreeStandingLiveTests(
   changedFiles: string[],
-  e2eWorkflowText = readE2eWorkflowText(),
+  context: E2eTargetNormalizationContext,
 ): string[] {
   return changedFiles.filter(
     (file) =>
       FREE_STANDING_LIVE_TEST_PATTERN.test(file) &&
       file !== REGISTRY_LIVE_ENTRYPOINT &&
-      !(e2eWorkflowText ?? "").includes(file),
+      !context.liveTestToJobs.has(file) &&
+      !(context.e2eWorkflowText ?? "").includes(file),
   );
 }
 
@@ -563,16 +619,14 @@ function isE2eTargetRelevantFile(file: string): boolean {
 
 function missingFreeStandingLiveWiringReason(files: string[]): string {
   const fileList = files.map((file) => `\`${file}\``).join(", ");
-  return `New free-standing live E2E test ${fileList} is not wired into \`${E2E_WORKFLOW_PATH}\`, so the E2E target workflow cannot dispatch it yet. Add a discrete job or register it as a typed live target before treating the PR as E2E-runnable.`;
+  return `New E2E test ${fileList} is not wired into \`${E2E_WORKFLOW_PATH}\`, so the E2E workflow cannot dispatch it yet. Add the credential-free tag, a discrete job, or a typed live target before treating the PR as E2E-runnable.`;
 }
 
 function deterministicFreeStandingJobRecommendations(
   changedFiles: string[],
   context: E2eTargetNormalizationContext,
 ): E2eTargetRecommendation[] {
-  const liveFiles = changedFiles.filter(
-    (file) => FREE_STANDING_LIVE_FILE_PATTERN.test(file) && file !== REGISTRY_LIVE_ENTRYPOINT,
-  );
+  const liveFiles = changedFiles.filter((file) => context.liveTestToJobs.has(file));
   const output: E2eTargetRecommendation[] = [];
   const seen = new Set<string>();
   for (const file of liveFiles) {
@@ -584,7 +638,7 @@ function deterministicFreeStandingJobRecommendations(
         workflow: E2E_WORKFLOW,
         selectorType: "job",
         required: true,
-        reason: `Focused free-standing E2E job wired for changed live test \`${file}\`.`,
+        reason: `Focused free-standing E2E selector wired for changed test \`${file}\`.`,
         dispatchCommand: canonicalDispatchCommand(E2E_WORKFLOW, job, "job"),
       });
     }

@@ -29,7 +29,7 @@ const START = path.join(import.meta.dirname, "..", "agents", "hermes", "start.sh
 function runHermesRootMcpStartup(commitStatus: 0 | 1) {
   const source = fs.readFileSync(START, "utf-8");
   const startupBlock = source.match(
-    /^launch_hermes_gateway\nstart_gateway_log_stream\nwait_for_hermes_gateway_internal "\$GATEWAY_PID"\nensure_hermes_supervised_auxiliaries\nif ! commit_hermes_mcp_applied_if_pending; then\n[\s\S]*?^restore_hermes_config_permissions_after_dashboard_start$/m,
+    /^launch_hermes_gateway\nstart_gateway_log_stream\nwait_for_hermes_gateway_internal "\$GATEWAY_PID"\nensure_hermes_supervised_auxiliaries\nfinalize_tirith_marker_retry\nif ! commit_hermes_mcp_applied_if_pending; then\n[\s\S]*?^restore_hermes_config_permissions_after_dashboard_start$/m,
   )?.[0];
   expect(startupBlock).toBeDefined();
   const startupScript = startupBlock as string;
@@ -45,7 +45,7 @@ function runHermesRootMcpStartup(commitStatus: 0 | 1) {
       'launch_hermes_gateway() { GATEWAY_PID=4242; trace "launch:$GATEWAY_PID"; }',
       "start_gateway_log_stream() { trace log-stream; }",
       'wait_for_hermes_gateway_internal() { trace "health:$1"; }',
-      "ensure_hermes_supervised_auxiliaries() { trace auxiliaries; }",
+      "ensure_hermes_supervised_auxiliaries() { trace auxiliaries; }\nfinalize_tirith_marker_retry() { trace tirith-finalize; }",
       `commit_hermes_mcp_applied_if_pending() { trace commit-applied; return ${commitStatus}; }`,
       "stop_hermes_gateway_fail_closed() { trace stop-fail-closed; }",
       "restore_hermes_config_permissions_after_dashboard_start() { trace restore-permissions; }",
@@ -320,7 +320,7 @@ print(json.dumps({
             `NEMOCLAW_TEST_GUARD_PARENT_FILE=${bashPrintfQ(parentFile)}`,
             "export NEMOCLAW_TEST_GUARD_PARENT_FILE",
             "HERMES_MCP_RECONCILE_PENDING=9",
-            "caller_pid=$BASHPID",
+            "caller_pid=$$",
             "inspect_hermes_mcp_integrity",
             'IFS= read -r guard_parent <"$NEMOCLAW_TEST_GUARD_PARENT_FILE"',
             '[ "$guard_parent" = "$caller_pid" ]',
@@ -598,6 +598,7 @@ print(json.dumps({"state": state, "config_reads": config_reads}))
       "log-stream",
       "health:4242",
       "auxiliaries",
+      "tirith-finalize",
       "commit-applied",
       "restore-permissions",
       "startup-complete",
@@ -612,6 +613,7 @@ print(json.dumps({"state": state, "config_reads": config_reads}))
       "log-stream",
       "health:4242",
       "auxiliaries",
+      "tirith-finalize",
       "commit-applied",
       "stop-fail-closed",
     ]);
@@ -793,6 +795,71 @@ print(json.dumps({"errors": errors, "hash_unchanged": open(strict, encoding="utf
     expect(proof.errors).toHaveLength(2);
     expect(proof.hash_unchanged).toBe(true);
     expect(proof.errors.join("\n")).not.toMatch(/changed-canary|drift-canary/u);
+  });
+
+  it("fails closed when both-mode apply sees stale compatibility state", () => {
+    const result = spawnSync(
+      "python3",
+      [
+        "-c",
+        String.raw`
+import contextlib, importlib.util, io, json, os, sys, tempfile
+spec = importlib.util.spec_from_file_location("hermes_guard", sys.argv[1])
+guard = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = guard
+spec.loader.exec_module(guard)
+with tempfile.TemporaryDirectory(prefix="hermes-mcp-both-stale-compat-") as root:
+    hermes = os.path.join(root, ".hermes")
+    os.mkdir(hermes)
+    config = os.path.join(hermes, "config.yaml")
+    env = os.path.join(hermes, ".env")
+    strict = os.path.join(root, "hash")
+    compat = os.path.join(hermes, ".config-hash")
+    secret = "API_SERVER_KEY=stale-compat-secret-canary"
+    open(config, "w", encoding="utf-8").write("model: test\n")
+    open(env, "w", encoding="utf-8").write(secret + "\n")
+    initial, _config_snapshot, _env_snapshot = guard._hash_text(config, env)
+    guard._write_hash(strict, initial)
+    guard._write_hash(compat, initial)
+    open(config, "w", encoding="utf-8").write(
+        "model: test\nmcp_servers: {fake: {url: https://mcp.example.test/mcp}}\n"
+    )
+    guard.refresh_hashes(hermes, strict, "both", mcp_transition="intend")
+    pending_hash = open(strict, encoding="utf-8").read()
+    guard._write_hash(compat, initial)
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    error = ""
+    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+        try:
+            guard.refresh_hashes(hermes, strict, "both", mcp_transition="apply")
+        except Exception as caught:
+            error = str(caught)
+    print(json.dumps({
+        "compat_stale": open(compat, encoding="utf-8").read() == initial,
+        "error": error,
+        "logs": stdout.getvalue() + stderr.getvalue(),
+        "strict_unchanged": open(strict, encoding="utf-8").read() == pending_hash,
+    }))
+`,
+        GUARD,
+      ],
+      { encoding: "utf-8", timeout: 10_000 },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    const proof = JSON.parse(result.stdout) as {
+      compat_stale: boolean;
+      error: string;
+      logs: string;
+      strict_unchanged: boolean;
+    };
+    expect(proof.error).toBe(
+      "Hermes strict and compatibility MCP state differ before applied-state commit",
+    );
+    expect(proof.compat_stale).toBe(true);
+    expect(proof.strict_unchanged).toBe(true);
+    expect(`${proof.error}\n${proof.logs}`).not.toContain("stale-compat-secret-canary");
   });
 
   it("fails closed on drift and malformed or missing MCP metadata", () => {

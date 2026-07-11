@@ -232,6 +232,10 @@ _HERMES_RUNTIME_CONFIG_GUARD="/usr/local/lib/nemoclaw/hermes-runtime-config-guar
 if [ ! -f "$_HERMES_RUNTIME_CONFIG_GUARD" ]; then
   _HERMES_RUNTIME_CONFIG_GUARD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/runtime-config-guard.py"
 fi
+_HERMES_TIRITH_MARKER_FINALIZER="/usr/local/lib/nemoclaw/finalize-tirith-marker.py"
+if [ ! -f "$_HERMES_TIRITH_MARKER_FINALIZER" ]; then
+  _HERMES_TIRITH_MARKER_FINALIZER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/finalize-tirith-marker.py"
+fi
 _HERMES_GUARD_TIMEOUT=(timeout --signal=TERM --kill-after=5s 12m)
 _HERMES_BOUNDARY_TIMEOUT=(timeout --signal=TERM --kill-after=2s 15s)
 HERMES_RESTART_SEAL_STATE="/run/nemoclaw/hermes-restart-seal.json"
@@ -418,26 +422,60 @@ ensure_gateway_log_stream() {
   fi
 }
 
+TIRITH_RETRY_MARKER_CLEARED=0
+
 retry_tirith_marker_if_needed() {
   local marker="${HERMES_DIR}/.tirith-install-failed"
-  local reason
+  local rc
 
-  [ -e "$marker" ] || return 0
-  if [ -L "$marker" ] || [ ! -f "$marker" ]; then
+  if "$_HERMES_PYTHON" -I "$_HERMES_TIRITH_MARKER_FINALIZER" "$marker"; then
+    echo "[tirith-bootstrap] download_failed marker present; letting Hermes runtime fallback retry Tirith" >&2
+    TIRITH_RETRY_MARKER_CLEARED=1
+    return 0
+  else
+    rc=$?
+  fi
+  if [ "$rc" -eq 10 ]; then
+    if [ -e "$marker" ]; then
+      echo "[tirith-bootstrap] WARNING: Tirith install marker reason is not retryable; Hermes gateway startup will continue" >&2
+    fi
+    return 0
+  fi
+  if [ "$rc" -eq 11 ]; then
     echo "[tirith-bootstrap] WARNING: unsafe Tirith install marker at ${marker}; not reading it" >&2
     return 0
   fi
+  echo "[tirith-bootstrap] WARNING: could not safely inspect or remove retryable Tirith marker; Hermes gateway startup will continue" >&2
+}
 
-  reason="$(head -n 1 "$marker" 2>/dev/null | tr -d '\r\n' || true)"
-  if [ "$reason" != "download_failed" ]; then
-    echo "[tirith-bootstrap] WARNING: Tirith install marker reason '${reason:-unknown}' is not retryable; Hermes gateway startup will continue" >&2
+prepare_tirith_marker_retry() {
+  TIRITH_RETRY_MARKER_CLEARED=0
+  retry_tirith_marker_if_needed
+}
+
+# sourceBoundary: Hermes runtime fallback recreates download_failed when its background Tirith fetch fails.
+# whyNotSourceFix: Hermes is an upstream image dependency; this entrypoint owns restart recovery only.
+# regressionTest: test/hermes-tirith-retry-finalization.test.ts covers cleanup and unsafe-marker preservation.
+# removalCondition: Remove when Hermes no longer recreates the marker after a handled startup retry.
+finalize_tirith_marker_retry() {
+  local marker="${HERMES_DIR}/.tirith-install-failed"
+  local rc
+
+  [ "$TIRITH_RETRY_MARKER_CLEARED" -eq 1 ] || return 0
+  if "$_HERMES_PYTHON" -I "$_HERMES_TIRITH_MARKER_FINALIZER" "$marker"; then
+    echo "[tirith-bootstrap] Tirith retry completed with download_failed; clearing the handled retry marker" >&2
+    return 0
+  else
+    rc=$?
+  fi
+  if [ "$rc" -eq 10 ]; then
     return 0
   fi
-
-  echo "[tirith-bootstrap] download_failed marker present; letting Hermes runtime fallback retry Tirith" >&2
-  if ! rm -f "$marker" 2>/dev/null; then
-    echo "[tirith-bootstrap] WARNING: could not remove retryable Tirith marker; Hermes gateway startup will continue" >&2
+  if [ "$rc" -eq 11 ]; then
+    echo "[tirith-bootstrap] WARNING: unsafe Tirith install marker recreated during retry; not reading it" >&2
+    return 0
   fi
+  echo "[tirith-bootstrap] WARNING: could not safely inspect or clear handled Tirith retry marker; Hermes gateway startup will continue" >&2
 }
 
 cmdline_is_hermes_gateway() {
@@ -2639,7 +2677,19 @@ prepare_hermes_nonroot_runtime() {
   refresh_hermes_runtime_config_hashes compat || return 1
   inspect_hermes_mcp_integrity "${HERMES_DIR}/.config-hash" || return 1
   configure_messaging_channels || return 1
-  retry_tirith_marker_if_needed || return 1
+  prepare_tirith_marker_retry || return 1
+}
+
+prepare_hermes_root_runtime() {
+  verify_hermes_config_integrity || return 1
+  ensure_hermes_config_root_mode || return 1
+  ensure_hermes_runtime_api_server_key both || return 1
+  apply_shields_up_runtime_env || return 1
+  validate_hermes_env_secret_boundary || return 1
+  validate_hermes_runtime_env_secret_boundary || return 1
+  refresh_hermes_provider_placeholders both || return 1
+  configure_messaging_channels || return 1
+  prepare_tirith_marker_retry || return 1
 }
 
 launch_hermes_gateway_current_user() {
@@ -2820,6 +2870,7 @@ recover_hermes_gateway_current_user() {
             || ! hermes_gateway_healthy "$GATEWAY_PID"; then
             break
           fi
+          finalize_tirith_marker_retry
           if ! commit_hermes_mcp_applied_if_pending; then
             echo "[SECURITY] HERMES_MCP_APPLIED_COMMIT_FAILED: stopping the uncommitted Hermes gateway" >&2
             hermes_stop_tracked_role gateway "$GATEWAY_PID" current "$INTERNAL_PORT" || return 1
@@ -2906,6 +2957,7 @@ bootstrap_hermes_gateway_current_user() {
 
   if wait_for_hermes_gateway_internal "$GATEWAY_PID" \
     && ensure_hermes_supervised_auxiliaries; then
+    finalize_tirith_marker_retry
     if ! commit_hermes_mcp_applied_if_pending; then
       echo "[SECURITY] HERMES_MCP_APPLIED_COMMIT_FAILED: stopping the uncommitted Hermes gateway" >&2
       hermes_stop_tracked_role gateway "$GATEWAY_PID" current "$INTERNAL_PORT" || return 1
@@ -2997,15 +3049,7 @@ fi
 # ── Root path (full privilege separation via setpriv) ──────────
 
 export HERMES_HOME="${HERMES_DIR}"
-verify_hermes_config_integrity
-ensure_hermes_config_root_mode
-ensure_hermes_runtime_api_server_key both
-apply_shields_up_runtime_env
-validate_hermes_env_secret_boundary
-validate_hermes_runtime_env_secret_boundary
-refresh_hermes_provider_placeholders both
-configure_messaging_channels
-retry_tirith_marker_if_needed
+prepare_hermes_root_runtime
 
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
   exec "${STEP_DOWN_PREFIX_SANDBOX[@]}" "${NEMOCLAW_CMD[@]}"
@@ -3041,6 +3085,7 @@ launch_hermes_gateway
 start_gateway_log_stream
 wait_for_hermes_gateway_internal "$GATEWAY_PID"
 ensure_hermes_supervised_auxiliaries
+finalize_tirith_marker_retry
 if ! commit_hermes_mcp_applied_if_pending; then
   echo "[SECURITY] HERMES_MCP_APPLIED_COMMIT_FAILED: stopping the uncommitted Hermes gateway" >&2
   stop_hermes_gateway_fail_closed

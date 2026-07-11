@@ -45,14 +45,22 @@ const {
   runChatCompletionsRetryLoop,
 } = require("./probe-retry");
 const { probeAnthropicEndpoint } = require("./probe-anthropic");
+const { probeOpenAiLikeEndpointWithValidationSession } = require("./openai-validation-session");
+const {
+  getChatCompletionsProbePayload,
+  isDeepSeekV4ProModel,
+  isKimiK26Model,
+} = require("./openai-probe-models");
 const {
   buildValidationProbeTimingProfile,
   getValidationProbeCurlArgs,
   getDeepSeekV4ProValidationProbeCurlArgs,
   getKimiK26ValidationProbeCurlArgs,
   getExtendedNvidiaEndpointValidationProbeCurlArgs,
+  getCurlMaxTimeSeconds,
   getProbeProcessTimeoutMs,
 } = require("./probe-http-helpers");
+const { resolveMaxTokensField } = require("./max-tokens-field");
 
 const {
   getCurlTimingArgs,
@@ -293,6 +301,15 @@ function calibrateOpenAiLikeValidationTiming(baseUrl, options = {}) {
   });
 }
 
+function resolveOpenAiLikeValidationTiming(baseUrl, options = {}) {
+  return (
+    options.validationTiming ??
+    (options.calibrateTimeouts === true
+      ? calibrateOpenAiLikeValidationTiming(baseUrl, options)
+      : undefined)
+  );
+}
+
 // ── Responses API probe ──────────────────────────────────────────
 
 function probeResponsesToolCalling(endpointUrl, model, apiKey, options = {}) {
@@ -360,6 +377,9 @@ function probeResponsesToolCalling(endpointUrl, model, apiKey, options = {}) {
 
 function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {}) {
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
+  // GPT-5/o-series (incl. Azure OpenAI) reject `max_tokens` and require
+  // `max_completion_tokens`; every other model still expects `max_tokens`.
+  const maxTokensField = resolveMaxTokensField(model);
   let authConfig;
   try {
     authConfig = buildOpenAiLikeAuthConfig(apiKey, options);
@@ -430,13 +450,15 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
           },
         ],
         tool_choice: "required",
-        temperature: 0,
+        // GPT-5/o-series models reject custom sampling temperatures. Keep the
+        // deterministic setting for models that still use the legacy field.
+        ...(maxTokensField === "max_tokens" ? { temperature: 0 } : {}),
         // Bound strict tool-call probes so a slow local model cannot keep
         // generating until the host-side curl process timeout kills validation.
         // This strict gate is currently used for Local Ollama; if it expands to
         // reasoning models, add a thinking-suppression carve-out before lowering
         // this cap so reasoning traces cannot consume the whole budget (#4537).
-        max_tokens: 256,
+        [maxTokensField]: 256,
         stream: false,
       }),
       `${baseUrl}/chat/completions`,
@@ -482,14 +504,6 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
 }
 
 // ── OpenAI-like probe ────────────────────────────────────────────
-function isDeepSeekV4ProModel(model) {
-  return String(model || "").toLowerCase() === "deepseek-ai/deepseek-v4-pro";
-}
-
-function isKimiK26Model(model) {
-  return String(model || "").toLowerCase() === "moonshotai/kimi-k2.6";
-}
-
 function needsExtendedNvidiaEndpointValidationBudget(model) {
   return EXTENDED_NVIDIA_ENDPOINT_VALIDATION_MODELS.has(String(model || "").toLowerCase());
 }
@@ -501,35 +515,6 @@ function getChatCompletionsProbeTimingArgs(model, opts) {
     return getExtendedNvidiaEndpointValidationProbeCurlArgs(opts);
   }
   return getValidationProbeCurlArgs(opts);
-}
-
-function getChatCompletionsProbePayload(model) {
-  const payload = {
-    model,
-    messages: [{ role: "user", content: "Reply with exactly: OK" }],
-    max_tokens: 8,
-  };
-
-  if (isDeepSeekV4ProModel(model)) {
-    return {
-      ...payload,
-      temperature: 1,
-      top_p: 0.95,
-      max_tokens: 8192,
-      chat_template_kwargs: { thinking: false },
-      stream: true,
-    };
-  }
-
-  if (isKimiK26Model(model)) {
-    return {
-      ...payload,
-      max_tokens: 8,
-      chat_template_kwargs: { thinking: false },
-    };
-  }
-
-  return payload;
 }
 
 // credentialArgs is the curl argument slice that carries the auth credential
@@ -729,11 +714,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
   }
 
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
-  const validationTiming =
-    options.validationTiming ??
-    (options.calibrateTimeouts === true
-      ? calibrateOpenAiLikeValidationTiming(baseUrl, options)
-      : undefined);
+  const validationTiming = resolveOpenAiLikeValidationTiming(baseUrl, options);
   if (validationTiming) {
     options = { ...options, validationTiming };
   }
@@ -977,6 +958,37 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
   }
 }
 
+async function probeOpenAiLikeEndpointOptimized(endpointUrl, model, apiKey, options = {}) {
+  const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
+  const baseUrl = String(endpointUrl).replace(/\/+$/, "");
+  const validationTiming = resolveOpenAiLikeValidationTiming(baseUrl, options);
+  const sessionProbeOptions = validationTiming ? { ...options, validationTiming } : options;
+  return probeOpenAiLikeEndpointWithValidationSession(
+    endpointUrl,
+    model,
+    normalizedKey,
+    sessionProbeOptions,
+    {
+      legacyProbe: probeOpenAiLikeEndpoint,
+      hasResponsesToolCall,
+      hasChatCompletionsToolCall,
+      hasChatCompletionsToolCallLeak,
+      getChatPayload: getChatCompletionsProbePayload,
+      getResponsesTimeoutMs: (probeOptions) =>
+        getCurlMaxTimeSeconds(getValidationProbeCurlArgs(getProbeTimingOptions(probeOptions))) *
+        1000,
+      getChatTimeoutMs: (probeModel, probeOptions) => {
+        const platformOptions = getProbeTimingOptions(probeOptions);
+        return (
+          getCurlMaxTimeSeconds(getChatCompletionsProbeTimingArgs(probeModel, platformOptions)) *
+          1000
+        );
+      },
+      sessionOptions: sessionProbeOptions.validationSessionOptions,
+    },
+  );
+}
+
 // ── Anthropic probe ──────────────────────────────────────────────
 
 module.exports = {
@@ -997,6 +1009,7 @@ module.exports = {
   probeResponsesToolCalling,
   probeChatCompletionsToolCalling,
   probeOpenAiLikeEndpoint,
+  probeOpenAiLikeEndpointOptimized,
   probeAnthropicEndpoint,
   RETRIABLE_HTTP_PROBE_STATUSES,
 };
@@ -1028,7 +1041,7 @@ export function shouldSmokeOpenAiLikeOnboardRoute(
   );
 }
 
-export function verifyOnboardInferenceSmoke(options: any) {
+export async function verifyOnboardInferenceSmoke(options: any) {
   if (
     !options.forceOpenAiLike &&
     !shouldSmokeOpenAiLikeOnboardRoute(options.provider, options.credentialEnv)
@@ -1042,7 +1055,7 @@ export function verifyOnboardInferenceSmoke(options: any) {
   const apiKey = credentialEnv
     ? resolveProviderCredential(credentialEnv) || getCredential(credentialEnv) || ""
     : "";
-  const probe = probeOpenAiLikeEndpoint(endpointUrl, options.model, apiKey, {
+  const probe = await probeOpenAiLikeEndpointOptimized(endpointUrl, options.model, apiKey, {
     authMode: getProbeAuthMode(options.provider),
     extraHeaders: getProbeExtraHeaders(options.provider),
     skipResponsesProbe: true,

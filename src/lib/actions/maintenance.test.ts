@@ -39,6 +39,7 @@ vi.mock("../credentials/store", () => ({
 vi.mock("../domain/lifecycle/options", () => ({
   normalizeGarbageCollectImagesOptions: (o: unknown) => o || {},
 }));
+
 // ../domain/maintenance/images is left unmocked so the gc tests run the real
 // orphan-detection helpers and can assert on gc's actual output.
 
@@ -113,28 +114,45 @@ describe("backupAll", () => {
     expect(mocks.backupSandboxState).not.toHaveBeenCalled();
   });
 
-  it("backs up only sandboxes reported Ready by OpenShell", async () => {
+  it("preserves retry counters when ready sandboxes have mixed backup outcomes (#6455)", async () => {
     mocks.listSandboxes.mockReturnValue({
-      sandboxes: [{ name: "sb-good" }, { name: "sb-stopped" }],
+      sandboxes: [{ name: "sb-bad" }, { name: "sb-good" }, { name: "sb-stopped" }],
       defaultSandbox: null,
     });
-    mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-good"]));
-    mocks.backupSandboxState.mockReturnValue({
-      success: true,
-      backedUpDirs: ["workspace"],
-      failedDirs: [],
-      backedUpFiles: [],
-      failedFiles: [],
-      manifest: { backupPath: "/backups/sb-good/timestamp" },
-    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-bad", "sb-good"]));
+    mocks.backupSandboxState.mockImplementation((name: string) =>
+      name === "sb-bad"
+        ? {
+            success: false,
+            backedUpDirs: [],
+            failedDirs: ["identity"],
+            failedDirReasons: { identity: "permission denied" },
+            backedUpFiles: [],
+            failedFiles: ["settings.json"],
+          }
+        : {
+            success: true,
+            backedUpDirs: ["workspace"],
+            failedDirs: [],
+            backedUpFiles: [],
+            failedFiles: [],
+            manifest: { backupPath: "/backups/sb-good/timestamp" },
+          },
+    );
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("exit:1");
+    });
 
-    await backupAll();
+    await expect(backupAll()).rejects.toThrow("exit:1");
 
-    expect(mocks.backupSandboxState).toHaveBeenCalledOnce();
-    expect(mocks.backupSandboxState).toHaveBeenCalledWith("sb-good");
-    expect(logSpy.mock.calls.flat().join("\n")).toContain("Skipping 'sb-stopped' (not running)");
-    logSpy.mockRestore();
+    const logOutput = logSpy.mock.calls.flat().join("\n");
+    expect(logOutput).toContain("Skipping 'sb-stopped' (not running)");
+    expect(logOutput).toContain("1 backed up, 1 failed, 1 skipped");
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain(
+      "backup failed (identity (permission denied), settings.json)",
+    );
   });
 
   it("fails installer-strict backup when a registered sandbox is not Ready (#6114)", async () => {

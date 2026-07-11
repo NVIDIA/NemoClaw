@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createSession, type Session, type SessionUpdates } from "../../state/onboard-session";
+import { recordInvalidatedTargets } from "../__test-helpers__/machine-recorders";
 import {
   type CoreOnboardFlowPhaseOptions,
   createCoreOnboardFlowPhases,
@@ -444,6 +445,9 @@ describe("core onboard flow phases", () => {
       recordStateResult: async () => {
         throw new Error("compatibility recorder should not run");
       },
+      recordInvalidatedStateResult: async () => {
+        throw new Error("invalidation recorder should not run on fresh strict runner path");
+      },
     });
 
     expect(calls).toEqual(["provider_selection", "sandbox"]);
@@ -486,6 +490,7 @@ describe("core onboard flow phases", () => {
       recordStateResult: async (result) => {
         if (result.type === "transition") recorded.push(result.next);
       },
+      recordInvalidatedStateResult: recordInvalidatedTargets(recorded),
     });
 
     expect(recorded).toEqual(["sandbox", "openclaw"]);
@@ -527,6 +532,7 @@ describe("core onboard flow phases", () => {
       recordStateResult: async (result) => {
         recorded.push((result as ReturnType<typeof advanceTo>).next);
       },
+      recordInvalidatedStateResult: recordInvalidatedTargets(recorded),
     });
 
     expect(recorded).toEqual(["sandbox", "openclaw"]);
@@ -559,6 +565,7 @@ describe("core onboard flow phases", () => {
         phases: [phase],
         resume: true,
         recordStateResult: async () => undefined,
+        recordInvalidatedStateResult: recordInvalidatedTargets([]),
       }),
     ).rejects.toThrow("Unexpected onboarding live flow state before slice entry");
     expect(phase.run).not.toHaveBeenCalled();
@@ -618,17 +625,7 @@ describe("core onboard flow phases", () => {
       resume: false,
       recordStateResult: async (stateResult: OnboardStateResult) => {
         if (stateResult.type !== "transition") return runtimeSession;
-        const source =
-          stateResult.metadata && typeof stateResult.metadata.state === "string"
-            ? stateResult.metadata.state
-            : null;
-        if (
-          runtimeSession.machine.state === stateResult.next ||
-          source !== runtimeSession.machine.state
-        ) {
-          skipped.push(`${source ?? "unknown"}->${stateResult.next}`);
-          return runtimeSession;
-        }
+        const source = stateResult.metadata?.state;
         applied.push(`${source}->${stateResult.next}`);
         runtimeSession = createSession({
           machine: {
@@ -638,6 +635,11 @@ describe("core onboard flow phases", () => {
             revision: runtimeSession.machine.revision + 1,
           },
         });
+        return runtimeSession;
+      },
+      recordInvalidatedStateResult: async (stateResult, invalidation) => {
+        if (stateResult.type !== "transition") return runtimeSession;
+        skipped.push(`${invalidation.sourceState ?? "unknown"}->${stateResult.next}`);
         return runtimeSession;
       },
     });

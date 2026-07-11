@@ -46,7 +46,6 @@ function metadata(
       previousAdvisorReview: null,
       workflowSignals: [],
       localizedPatchSignals: [],
-      monolithDeltas: [],
       driftEvidence: [],
       github: null,
     },

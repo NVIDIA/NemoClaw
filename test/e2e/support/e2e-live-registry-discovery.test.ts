@@ -102,6 +102,16 @@ describe("live target registry discovery support", () => {
     });
   });
 
+  it("wires the policy custom missing presets negative target", () => {
+    const target = listTargets().find(
+      (entry) => entry.id === "ubuntu-policy-custom-missing-presets-negative",
+    );
+
+    expect(target).toBeTruthy();
+    expect(target!.expectedFailure?.errorClass).toBe("policy-presets-required");
+    expect(liveTargetSupport(target!)).toMatchObject({ supported: true, reasons: [] });
+  });
+
   it("wires the canonical DCode target through invalid-credential rebuild lifecycle", () => {
     const target = listTargets().find(
       (entry) => entry.id === "ubuntu-repo-cloud-langchain-deepagents-code",
