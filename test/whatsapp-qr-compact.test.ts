@@ -297,11 +297,12 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
       insecurePrivateWs?: string;
       preloadPresent?: boolean;
       fakeExit?: number;
+      poisonShellFunctions?: readonly ("[" | "command" | "return")[];
     },
   ): { status: number; stdout: string; stderr: string; preloadPath: string } {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wa-guard-"));
     try {
-      // Fake `openclaw` binary on PATH so `command openclaw` resolves to it.
+      // Fake `openclaw` binary on PATH so the absolute env dispatch resolves to it.
       const binDir = path.join(tempDir, "bin");
       fs.mkdirSync(binDir);
       const fakeOpenclaw = path.join(binDir, "openclaw");
@@ -363,7 +364,19 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
       const wrapperPath = path.join(tempDir, "run.sh");
       fs.writeFileSync(wrapperPath, wrapperLines.join("\n"), { mode: 0o700 });
 
-      const r = spawnSync("bash", [wrapperPath], { encoding: "utf-8", timeout: 10000 });
+      const poisonedFunctions = new Set(opts.poisonShellFunctions ?? []);
+      const poisonEnv = {
+        ...(poisonedFunctions.has("[") ? { "BASH_FUNC_[%%": "() { /usr/bin/false; }" } : {}),
+        ...(poisonedFunctions.has("command")
+          ? { "BASH_FUNC_command%%": "() { printf 'POISON_COMMAND_USED\\n'; }" }
+          : {}),
+        ...(poisonedFunctions.has("return") ? { "BASH_FUNC_return%%": "() { :; }" } : {}),
+      };
+      const r = spawnSync("bash", [wrapperPath], {
+        encoding: "utf-8",
+        env: { ...process.env, ...poisonEnv },
+        timeout: 10000,
+      });
       return {
         status: r.status ?? -1,
         stdout: r.stdout ?? "",
@@ -444,6 +457,46 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
     // presented to the caller-selected endpoint.
     expect(r.stdout).not.toContain("FAKE_OPENCLAW_ARGS");
     expect(r.stdout).not.toContain("FAKE_OPENCLAW_TOKEN");
+  });
+
+  it("fails closed on a non-loopback URL when an imported function shadows the bracket builtin", () => {
+    const r = runGuard(["channels", "login", "--channel=whatsapp"], {
+      gatewayUrl: "wss://attacker.example.test:443",
+      gatewayToken: "guard-secret-token",
+      poisonShellFunctions: ["["],
+      preloadPresent: true,
+    });
+    expect(r.stderr).toContain("is not a loopback gateway URL");
+    expect(r.stdout).toContain("GUARD_EXIT=1");
+    expect(r.stdout).not.toContain("FAKE_OPENCLAW_ARGS");
+    expect(r.stdout).not.toContain("FAKE_OPENCLAW_TOKEN");
+    expect(r.stdout).not.toContain("POISON_COMMAND_USED");
+  });
+
+  it("cannot continue into token-bearing dispatch when an imported function shadows return", () => {
+    const r = runGuard(["channels", "login", "--channel", "whatsapp"], {
+      gatewayUrl: "wss://attacker.example.test:443",
+      gatewayToken: "guard-secret-token",
+      poisonShellFunctions: ["return"],
+      preloadPresent: true,
+    });
+    expect(r.stderr).toContain("is not a loopback gateway URL");
+    expect(r.stdout).toContain("GUARD_EXIT=1");
+    expect(r.stdout).not.toContain("FAKE_OPENCLAW_ARGS");
+    expect(r.stdout).not.toContain("FAKE_OPENCLAW_TOKEN");
+  });
+
+  it("bypasses a shadowed command function for a validated loopback URL", () => {
+    const r = runGuard(["channels", "login", "--channel=whatsapp"], {
+      gatewayUrl: "ws://127.0.0.1:18789",
+      gatewayToken: "guard-secret-token",
+      poisonShellFunctions: ["command"],
+      preloadPresent: true,
+    });
+    expect(r.stdout).toContain("FAKE_OPENCLAW_ARGS=channels login --channel=whatsapp");
+    expect(r.stdout).toContain("FAKE_OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789");
+    expect(r.stdout).toContain("FAKE_OPENCLAW_TOKEN=guard-secret-token");
+    expect(r.stdout).not.toContain("POISON_COMMAND_USED");
   });
 
   it.each([
@@ -528,9 +581,10 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
     expect(r.stdout).toContain("GUARD_EXIT=0");
   });
 
-  it("surfaces gateway-close diagnostics separately from the QR on non-zero exit", () => {
+  it("surfaces gateway-close diagnostics and preserves exit status when return is shadowed", () => {
     const r = runGuard(["channels", "login", "--channel", "whatsapp"], {
       gatewayUrl: "ws://127.0.0.1:8080",
+      poisonShellFunctions: ["return"],
       preloadPresent: true,
       fakeExit: 7,
     });

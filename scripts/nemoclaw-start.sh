@@ -3584,110 +3584,123 @@ openclaw() {
               # repro to confirm before deleting).
               _nemoclaw_whatsapp_gateway_url="${OPENCLAW_GATEWAY_URL:-}"
               _nemoclaw_whatsapp_insecure_ws="${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}"
-              if [ -n "$_nemoclaw_whatsapp_gateway_url" ]; then
-                # The OpenClaw gateway is a WebSocket endpoint (set to
-                # ws://127.0.0.1:<port> at boot). Dispatch on the override:
-                #
-                #   URL containing '@' (userinfo)              -> reject
-                #   ws(s):// on 127.0.0.1 | localhost | [::1]  -> honor
-                #   ws(s):// on any other host                 -> reject
-                #   anything else (not a ws:// URL)            -> reject
-                #
-                # Reject userinfo first: a glob like ws://127.0.0.1:* also
-                # matches ws://127.0.0.1:1@evil.example, but the WHATWG URL
-                # parser reads 127.0.0.1:1 as user:password and connects to
-                # evil.example — so a raw host-prefix match would leak the
-                # token to a non-loopback host. A real loopback gateway URL
-                # never carries userinfo, so any '@' is rejected outright.
-                #
-                # Non-loopback hosts: the connect shell exports the gateway
-                # token, so a caller-selected endpoint would receive it —
-                # reject rather than silently strip (stripping would flip the
-                # login into device-pairing auth against a foreign host).
-                # Malformed values fail fast as a gateway/env problem instead
-                # of an ambiguous close inside the login.
-                case "$_nemoclaw_whatsapp_gateway_url" in
-                  *@*)
-                    echo "Error: WhatsApp pairing cannot start — gateway URL='${_nemoclaw_whatsapp_gateway_url}' must not contain '@' (userinfo)." >&2
-                    echo "A userinfo component (user:pass@host) makes the URL parser connect to the host after '@'," >&2
-                    echo "which would present the connect shell's gateway token to a non-loopback endpoint." >&2
-                    echo "The in-sandbox loopback gateway URL never carries credentials; unset OPENCLAW_GATEWAY_URL" >&2
-                    echo "to pair via the supported in-sandbox loopback resolution." >&2
-                    return 1
-                    ;;
-                  ws://127.0.0.1 | ws://127.0.0.1:* | ws://127.0.0.1/* | \
-                    wss://127.0.0.1 | wss://127.0.0.1:* | wss://127.0.0.1/* | \
-                    ws://localhost | ws://localhost:* | ws://localhost/* | \
-                    wss://localhost | wss://localhost:* | wss://localhost/* | \
-                    "ws://[::1]" | "ws://[::1]:"* | "ws://[::1]/"* | \
-                    "wss://[::1]" | "wss://[::1]:"* | "wss://[::1]/"*) ;;
-                  ws://* | wss://*)
-                    echo "Error: WhatsApp pairing cannot start — gateway URL='${_nemoclaw_whatsapp_gateway_url}' is not a loopback gateway URL." >&2
-                    echo "Explicit overrides are honored only for the in-sandbox loopback gateway (ws://127.0.0.1:<port>," >&2
-                    echo "ws://localhost:<port>, or ws://[::1]:<port>) so the connect shell's gateway token is never" >&2
-                    echo "presented to a non-local endpoint. Unset OPENCLAW_GATEWAY_URL to pair via the supported" >&2
-                    echo "in-sandbox loopback resolution." >&2
-                    return 1
-                    ;;
-                  *)
-                    echo "Error: WhatsApp pairing cannot start — gateway URL='${_nemoclaw_whatsapp_gateway_url}' is not a ws:// gateway URL." >&2
-                    echo "The OpenClaw gateway is a WebSocket endpoint (e.g. ws://127.0.0.1:<port>); a malformed value" >&2
-                    echo "would fail the login in a way that looks like a QR/pairing problem (this is a gateway/env problem)." >&2
-                    echo "" >&2
-                    echo "Reconnect with 'openshell sandbox connect <sandbox>' and retry. If it persists," >&2
-                    echo "exit the sandbox and rebuild with 'nemoclaw <sandbox> rebuild'." >&2
-                    return 1
-                    ;;
-                esac
-                echo "[whatsapp] Pairing via gateway ${_nemoclaw_whatsapp_gateway_url} (explicit override)." >&2
-              else
-                echo "[whatsapp] Pairing via the in-sandbox gateway (loopback)." >&2
-              fi
-              echo "[whatsapp] On your phone: WhatsApp > Linked devices > Link a device, then scan the QR below." >&2
-              # Defense-in-depth: connect-session NODE_OPTIONS already wires
-              # manifest-declared connect preloads for every openclaw
-              # invocation; injecting them again here covers non-connect
-              # shells. Runtime preload modules are idempotent, so a double
-              # --require is harmless.
-              _nemoclaw_connect_node_options="$(_nemoclaw_messaging_connect_node_options)"
-              # Run the login with errexit disabled so its exit status is
-              # always captured (and the post-login guidance always runs) even
-              # when the caller shell has `set -e`; mirrors the devices-approve
-              # and configure-guard branches. Restored before returning.
-              _nemoclaw_whatsapp_login_errexit=0
-              case $- in *e*) _nemoclaw_whatsapp_login_errexit=1 ;; esac
-              set +e
-              (
-                if [ -n "$_nemoclaw_whatsapp_gateway_url" ]; then
-                  # Assign-then-export: the generated runtime env file embeds
-                  # this guard body, and its emission contract forbids ambient
-                  # single-line gateway-URL export statements anywhere in that
-                  # file. These exports live only inside this login subshell.
-                  OPENCLAW_GATEWAY_URL="$_nemoclaw_whatsapp_gateway_url"
-                  OPENCLAW_ALLOW_INSECURE_PRIVATE_WS="$_nemoclaw_whatsapp_insecure_ws"
-                  export OPENCLAW_GATEWAY_URL OPENCLAW_ALLOW_INSECURE_PRIVATE_WS
-                fi
-                if [ -n "$_nemoclaw_connect_node_options" ]; then
-                  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }$_nemoclaw_connect_node_options"
-                fi
-                command openclaw "$@"
-              )
-              _whatsapp_login_exit=$?
-              if [ "$_whatsapp_login_exit" -ne 0 ]; then
-                echo "" >&2
-                echo "[whatsapp] Pairing exited with code ${_whatsapp_login_exit} before it completed." >&2
-                echo "[whatsapp] A gateway close (e.g. '1008 abnormal closure') is a gateway/session" >&2
-                echo "issue, not a QR-size issue — the QR above rendered independently of the gateway." >&2
-                echo "[whatsapp] Re-run 'openclaw channels login --channel whatsapp' to retry. If it keeps" >&2
-                echo "closing, exit the sandbox and run 'nemoclaw <sandbox> channels status --channel whatsapp'." >&2
-              fi
-              [ "$_nemoclaw_whatsapp_login_errexit" = "1" ] && set -e
-              # Defer the return to the final dispatch below. If a caller has
-              # an imported function named `return`, it may alter the status
-              # but it cannot fall through into the token-preserving generic
-              # invocation.
-              _nemoclaw_guard_request_handled=1
-              _nemoclaw_guard_request_status=$_whatsapp_login_exit
+              _nemoclaw_whatsapp_gateway_allowed=1
+              # Keep every URL/token decision in shell grammar. Imported Bash
+              # functions can shadow `[` and `return`, but cannot shadow
+              # `case`; rejected URLs therefore never reach a child process.
+              case "$_nemoclaw_whatsapp_gateway_url" in
+                "")
+                  echo "[whatsapp] Pairing via the in-sandbox gateway (loopback)." >&2
+                  ;;
+                *@*)
+                  echo "Error: WhatsApp pairing cannot start — gateway URL='${_nemoclaw_whatsapp_gateway_url}' must not contain '@' (userinfo)." >&2
+                  echo "A userinfo component (user:pass@host) makes the URL parser connect to the host after '@'," >&2
+                  echo "which would present the connect shell's gateway token to a non-loopback endpoint." >&2
+                  echo "The in-sandbox loopback gateway URL never carries credentials; unset OPENCLAW_GATEWAY_URL" >&2
+                  echo "to pair via the supported in-sandbox loopback resolution." >&2
+                  _nemoclaw_whatsapp_gateway_allowed=0
+                  ;;
+                ws://127.0.0.1 | ws://127.0.0.1:* | ws://127.0.0.1/* | \
+                  wss://127.0.0.1 | wss://127.0.0.1:* | wss://127.0.0.1/* | \
+                  ws://localhost | ws://localhost:* | ws://localhost/* | \
+                  wss://localhost | wss://localhost:* | wss://localhost/* | \
+                  "ws://[::1]" | "ws://[::1]:"* | "ws://[::1]/"* | \
+                  "wss://[::1]" | "wss://[::1]:"* | "wss://[::1]/"*)
+                  echo "[whatsapp] Pairing via gateway ${_nemoclaw_whatsapp_gateway_url} (explicit override)." >&2
+                  ;;
+                ws://* | wss://*)
+                  echo "Error: WhatsApp pairing cannot start — gateway URL='${_nemoclaw_whatsapp_gateway_url}' is not a loopback gateway URL." >&2
+                  echo "Explicit overrides are honored only for the in-sandbox loopback gateway (ws://127.0.0.1:<port>," >&2
+                  echo "ws://localhost:<port>, or ws://[::1]:<port>) so the connect shell's gateway token is never" >&2
+                  echo "presented to a non-local endpoint. Unset OPENCLAW_GATEWAY_URL to pair via the supported" >&2
+                  echo "in-sandbox loopback resolution." >&2
+                  _nemoclaw_whatsapp_gateway_allowed=0
+                  ;;
+                *)
+                  echo "Error: WhatsApp pairing cannot start — gateway URL='${_nemoclaw_whatsapp_gateway_url}' is not a ws:// gateway URL." >&2
+                  echo "The OpenClaw gateway is a WebSocket endpoint (e.g. ws://127.0.0.1:<port>); a malformed value" >&2
+                  echo "would fail the login in a way that looks like a QR/pairing problem (this is a gateway/env problem)." >&2
+                  echo "" >&2
+                  echo "Reconnect with 'openshell sandbox connect <sandbox>' and retry. If it persists," >&2
+                  echo "exit the sandbox and rebuild with 'nemoclaw <sandbox> rebuild'." >&2
+                  _nemoclaw_whatsapp_gateway_allowed=0
+                  ;;
+              esac
+              case "$_nemoclaw_whatsapp_gateway_allowed" in
+                1)
+                  echo "[whatsapp] On your phone: WhatsApp > Linked devices > Link a device, then scan the QR below." >&2
+                  # Defense-in-depth: connect-session NODE_OPTIONS already wires
+                  # manifest-declared connect preloads for every openclaw
+                  # invocation; injecting them again here covers non-connect
+                  # shells. Runtime preload modules are idempotent, so a double
+                  # --require is harmless.
+                  _nemoclaw_connect_node_options="$(_nemoclaw_messaging_connect_node_options)"
+                  # Run the login with errexit disabled so its exit status is
+                  # always captured (and the post-login guidance always runs) even
+                  # when the caller shell has `set -e`; mirrors the devices-approve
+                  # and configure-guard branches. Restored before returning.
+                  _nemoclaw_whatsapp_login_errexit=0
+                  case $- in *e*) _nemoclaw_whatsapp_login_errexit=1 ;; esac
+                  set +e
+                  (
+                    case "$_nemoclaw_whatsapp_gateway_url" in
+                      "") _nemoclaw_whatsapp_gateway_mode=unset ;;
+                      *) _nemoclaw_whatsapp_gateway_mode=explicit ;;
+                    esac
+                    case "$_nemoclaw_connect_node_options" in
+                      "") _nemoclaw_whatsapp_node_mode=plain ;;
+                      *) _nemoclaw_whatsapp_node_mode=preload ;;
+                    esac
+                    # An absolute executable cannot be replaced by an imported
+                    # `command` function. For the default path, explicitly drop
+                    # any URL markers so OpenClaw resolves its loopback config.
+                    case "$_nemoclaw_whatsapp_gateway_mode:$_nemoclaw_whatsapp_node_mode" in
+                      unset:plain)
+                        /usr/bin/env -u OPENCLAW_GATEWAY_URL -u OPENCLAW_ALLOW_INSECURE_PRIVATE_WS openclaw "$@"
+                        ;;
+                      unset:preload)
+                        NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }$_nemoclaw_connect_node_options" \
+                          /usr/bin/env -u OPENCLAW_GATEWAY_URL -u OPENCLAW_ALLOW_INSECURE_PRIVATE_WS openclaw "$@"
+                        ;;
+                      explicit:plain)
+                        OPENCLAW_GATEWAY_URL="$_nemoclaw_whatsapp_gateway_url" \
+                          OPENCLAW_ALLOW_INSECURE_PRIVATE_WS="$_nemoclaw_whatsapp_insecure_ws" \
+                          /usr/bin/env openclaw "$@"
+                        ;;
+                      explicit:preload)
+                        OPENCLAW_GATEWAY_URL="$_nemoclaw_whatsapp_gateway_url" \
+                          OPENCLAW_ALLOW_INSECURE_PRIVATE_WS="$_nemoclaw_whatsapp_insecure_ws" \
+                          NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }$_nemoclaw_connect_node_options" \
+                          /usr/bin/env openclaw "$@"
+                        ;;
+                    esac
+                  )
+                  _whatsapp_login_exit=$?
+                  case "$_whatsapp_login_exit" in
+                    0) ;;
+                    *)
+                      echo "" >&2
+                      echo "[whatsapp] Pairing exited with code ${_whatsapp_login_exit} before it completed." >&2
+                      echo "[whatsapp] A gateway close (e.g. '1008 abnormal closure') is a gateway/session" >&2
+                      echo "issue, not a QR-size issue — the QR above rendered independently of the gateway." >&2
+                      echo "[whatsapp] Re-run 'openclaw channels login --channel whatsapp' to retry. If it keeps" >&2
+                      echo "closing, exit the sandbox and run 'nemoclaw <sandbox> channels status --channel whatsapp'." >&2
+                      ;;
+                  esac
+                  case "$_nemoclaw_whatsapp_login_errexit" in
+                    1) set -e ;;
+                  esac
+                  _nemoclaw_guard_request_handled=1
+                  _nemoclaw_guard_request_status=$_whatsapp_login_exit
+                  ;;
+                *)
+                  # Do not return from the rejection site: an imported function
+                  # named `return` may alter status, but final dispatch cannot
+                  # fall through into the generic token-bearing invocation.
+                  _nemoclaw_guard_request_handled=1
+                  _nemoclaw_guard_request_status=1
+                  ;;
+              esac
               ;;
           esac
           ;;
@@ -3727,7 +3740,7 @@ openclaw() {
   esac
   case "$_nemoclaw_guard_request_handled" in
     1)
-      return "$_nemoclaw_guard_request_status"
+      builtin return "$_nemoclaw_guard_request_status"
       ;;
     *)
       # #4538: re-assert the mutable config perm contract after any openclaw run
