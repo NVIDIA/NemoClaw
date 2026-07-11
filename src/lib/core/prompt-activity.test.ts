@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { isAnyPromptActive, markPromptActive } from "./prompt-activity";
+import {
+  createPromptActivityCleanup,
+  isAnyPromptActive,
+  markPromptActive,
+} from "./prompt-activity";
 
 describe("prompt activity registry", () => {
   it("reports activity only between mark and release (#6651)", () => {
@@ -29,6 +33,19 @@ describe("prompt activity registry", () => {
     const releaseSecond = markPromptActive();
     expect(isAnyPromptActive()).toBe(true);
     releaseSecond();
+    expect(isAnyPromptActive()).toBe(false);
+  });
+
+  it("releases activity before delegated terminal cleanup", () => {
+    let activeDuringCleanup = true;
+    const cleanup = createPromptActivityCleanup(() => {
+      activeDuringCleanup = isAnyPromptActive();
+    });
+
+    expect(isAnyPromptActive()).toBe(true);
+    cleanup();
+
+    expect(activeDuringCleanup).toBe(false);
     expect(isAnyPromptActive()).toBe(false);
   });
 });

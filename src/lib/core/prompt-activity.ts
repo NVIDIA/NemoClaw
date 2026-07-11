@@ -32,6 +32,18 @@ export function markPromptActive(): () => void {
   };
 }
 
+/**
+ * Register prompt activity and release it before running terminal cleanup.
+ * Releasing first lets cleanup callbacks safely observe the settled state.
+ */
+export function createPromptActivityCleanup(cleanup: () => void): () => void {
+  const releasePromptActivity = markPromptActive();
+  return () => {
+    releasePromptActivity();
+    cleanup();
+  };
+}
+
 /** True while any registered async prompt is awaiting user input. */
 export function isAnyPromptActive(): boolean {
   return activePromptCount > 0;
