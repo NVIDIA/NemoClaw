@@ -161,9 +161,14 @@ def run(argv: Sequence[str]) -> int:
         child = subprocess.Popen(list(argv))
         for pending_signal in pending_signals:
             forward(pending_signal, None)
-        returncode = (
-            _wait_after_disconnect(child) if disconnect_received else child.wait()
-        )
+        while True:
+            try:
+                returncode = child.wait(timeout=_POLL_SECONDS)
+                break
+            except subprocess.TimeoutExpired:
+                if disconnect_received:
+                    returncode = _wait_after_disconnect(child)
+                    break
     finally:
         _cleanup_adopted_descendants()
     return _exit_code(returncode)

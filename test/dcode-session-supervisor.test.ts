@@ -33,6 +33,40 @@ describe("managed DCode session supervisor platform boundary", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toBe("dcode: session supervision requires a Linux OpenShell sandbox.\n");
   });
+
+  it("switches to bounded waiting when disconnect arrives after child spawn", () => {
+    const probe = [
+      "import importlib.util",
+      "import os",
+      "import signal",
+      `spec = importlib.util.spec_from_file_location('supervisor', ${JSON.stringify(supervisor)})`,
+      "module = importlib.util.module_from_spec(spec)",
+      "spec.loader.exec_module(module)",
+      "module.sys.platform = 'linux'",
+      "module._enable_child_subreaper = lambda: None",
+      "module._cleanup_adopted_descendants = lambda: None",
+      "real_kill = os.kill",
+      "forwarded = []",
+      "module.os.kill = lambda pid, sig: forwarded.append((pid, sig))",
+      "class FakeChild:",
+      "    pid = 4242",
+      "    waits = 0",
+      "    def __init__(self, _argv): pass",
+      "    def wait(self, timeout=None):",
+      "        if self.waits == 0:",
+      "            self.waits += 1",
+      "            real_kill(os.getpid(), signal.SIGHUP)",
+      "            raise module.subprocess.TimeoutExpired(['/fake/dcode'], timeout)",
+      "        return 0",
+      "module.subprocess.Popen = FakeChild",
+      "status = module.run(['/fake/dcode'])",
+      "expected = [(4242, signal.SIGHUP)]",
+      "raise SystemExit(0 if status == 0 and forwarded == expected else 1)",
+    ].join("\n");
+    const result = spawnSync("python3", ["-c", probe], { encoding: "utf8" });
+
+    expect(result.status, result.stderr).toBe(0);
+  });
 });
 
 describe.runIf(canRun)("managed DCode session supervisor", () => {
