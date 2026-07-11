@@ -673,6 +673,7 @@ describe("prompt machinery (unchanged)", () => {
   it("settles the outer prompt promise on secret prompt errors", () => {
     const script = `
 const { prompt } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "src", "lib", "credentials", "store.ts"))});
+const { isAnyPromptActive } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "src", "lib", "core", "prompt-activity.ts"))});
 process.stdin.isTTY = true;
 process.stderr.isTTY = true;
 process.stdin.ref = () => process.stdin;
@@ -681,7 +682,10 @@ process.stdin.unref = () => process.stdin;
 process.stdin.setRawMode = () => { throw new Error('raw mode unavailable'); };
 prompt('secret: ', { secret: true })
   .then(() => { console.error('unexpected resolve'); process.exit(1); })
-  .catch((err) => { console.log('REJECTED=' + err.message); });
+  .catch((err) => {
+    console.log('REJECTED=' + err.message);
+    console.log('PROMPT_ACTIVE=' + String(isAnyPromptActive()));
+  });
 `;
     const result = spawnSync(process.execPath, ["-e", script], {
       encoding: "utf-8",
@@ -689,6 +693,36 @@ prompt('secret: ', { secret: true })
     });
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("REJECTED=raw mode unavailable");
+    expect(result.stdout).toContain("PROMPT_ACTIVE=false");
+  });
+
+  it("releases secret prompt activity when stdin closes before an answer (#6651)", () => {
+    const script = `
+const { prompt } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "src", "lib", "credentials", "store.ts"))});
+const { isAnyPromptActive } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "src", "lib", "core", "prompt-activity.ts"))});
+process.stdin.isTTY = true;
+process.stderr.isTTY = true;
+process.stdin.ref = () => process.stdin;
+process.stdin.resume = () => process.stdin;
+process.stdin.pause = () => process.stdin;
+process.stdin.unref = () => process.stdin;
+process.stdin.setRawMode = () => process.stdin;
+const pending = prompt('secret: ', { secret: true });
+setImmediate(() => process.stdin.emit('close'));
+pending
+  .then(() => { console.error('unexpected resolve'); process.exit(1); })
+  .catch((err) => {
+    console.log('REJECTED_CODE=' + String(err.code));
+    console.log('PROMPT_ACTIVE=' + String(isAnyPromptActive()));
+  });
+`;
+    const result = spawnSync(process.execPath, ["-e", script], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("REJECTED_CODE=EOF");
+    expect(result.stdout).toContain("PROMPT_ACTIVE=false");
   });
 
   it("classifies secret credential prompts as navigation or credential intent", async () => {
@@ -800,6 +834,50 @@ createCredentialPromptHelpers(() => { throw new Error("unexpected exit"); }).rea
       rl.emit("close");
       await expect(pending).rejects.toMatchObject({ code: "EOF" });
       expect(rl.close).toHaveBeenCalled();
+    } finally {
+      createInterfaceSpy.mockRestore();
+      stdinRef.mockRestore();
+      stdinPause.mockRestore();
+      stdinUnref.mockRestore();
+    }
+  });
+
+  it("registers prompt activity while a readline prompt awaits input so heartbeats hold (#6651)", async () => {
+    const readline = require("node:readline") as typeof import("node:readline");
+    const rl = new EventEmitter() as EventEmitter & {
+      close: ReturnType<typeof vi.fn>;
+      question: ReturnType<typeof vi.fn>;
+    };
+    rl.close = vi.fn();
+    const questionCallbacks: Array<(answer: string) => void> = [];
+    rl.question = vi.fn((_question: string, callback: (answer: string) => void) => {
+      questionCallbacks.push(callback);
+    });
+
+    const createInterfaceSpy = vi.spyOn(readline, "createInterface").mockReturnValue(rl as any);
+    const stdinRef = vi.spyOn(process.stdin, "ref").mockImplementation(() => process.stdin);
+    const stdinPause = vi.spyOn(process.stdin, "pause").mockImplementation(() => process.stdin);
+    const stdinUnref = vi.spyOn(process.stdin, "unref").mockImplementation(() => process.stdin);
+
+    try {
+      const credentials = await import("../src/lib/credentials/store.js");
+      const promptActivity = await import("../src/lib/core/prompt-activity.js");
+      expect(promptActivity.isAnyPromptActive()).toBe(false);
+
+      const pending = credentials.prompt("question: ");
+      expect(promptActivity.isAnyPromptActive()).toBe(true);
+
+      questionCallbacks[0]?.("answer");
+      await expect(pending).resolves.toBe("answer");
+      expect(promptActivity.isAnyPromptActive()).toBe(false);
+
+      // The cancellation path must release the registry too, or one aborted
+      // prompt would silence heartbeats for the rest of onboarding.
+      const cancelled = credentials.prompt("question: ");
+      expect(promptActivity.isAnyPromptActive()).toBe(true);
+      rl.emit("close");
+      await expect(cancelled).rejects.toMatchObject({ code: "EOF" });
+      expect(promptActivity.isAnyPromptActive()).toBe(false);
     } finally {
       createInterfaceSpy.mockRestore();
       stdinRef.mockRestore();

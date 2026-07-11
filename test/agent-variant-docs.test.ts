@@ -174,4 +174,25 @@ title: "Example"
       "Deep Agents does not have a NemoClaw-managed web-search feature.",
     );
   });
+
+  it("keeps the troubleshooting security review link within each agent guide (#6558)", () => {
+    const troubleshooting = readFileSync(
+      new URL("../docs/reference/troubleshooting.mdx", import.meta.url),
+      "utf8",
+    );
+
+    for (const variant of ["openclaw", "hermes", "deepagents"] as const) {
+      const rendered = renderAgentVariantPage(troubleshooting, variant, {
+        outputPath: `/repo/docs/_build/agent-variants/reference/troubleshooting.${variant}.generated.mdx`,
+        sourcePath: "/repo/docs/reference/troubleshooting.mdx",
+      });
+
+      expect(rendered).toContain(
+        "[OpenShell 0.0.72 compatibility review](../security/openshell-0.0.72-compatibility-review#source-of-truth-boundaries)",
+      );
+      expect(rendered).not.toMatch(
+        /\/user-guide\/(?:openclaw|hermes|deepagents)\/security\/openshell-0\.0\.72-compatibility-review/,
+      );
+    }
+  });
 });

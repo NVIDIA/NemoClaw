@@ -535,6 +535,7 @@ describe("built-in channel manifests", () => {
     expect(renderJson(slackManifest)).toContain('"path":"channels.slack"');
     expect(renderJson(slackManifest)).toContain('"accounts"');
     expect(renderJson(slackManifest)).toContain("allowedIds.slack.channels");
+    expect(renderJson(slackManifest)).toContain('"rich_blocks":true');
     expectSlackSocketModeGatewayConflictHook();
     expectOpenClawNodePreload(slackManifest, "slack-channel-guard");
     expect(JSON.stringify(slackManifest.runtime?.openclaw)).toContain("slack-channel-guard");

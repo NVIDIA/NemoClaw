@@ -23,16 +23,19 @@ EXPECTED_BOOTSTRAP_SHA256 = (
 )
 
 CANONICAL_PROFILE_KEY = "nvidia:nvidia/nemotron-3-ultra-550b-a55b"
-MANAGED_PROFILE_KEYS = (
+NATIVE_MANAGED_PROFILE_KEY = "openrouter:nvidia/nemotron-3-ultra-550b-a55b"
+MANAGED_ALIAS_KEYS = (
     "openai:nvidia/nemotron-3-ultra-550b-a55b",
     "openai:nvidia/nvidia/nemotron-3-ultra",
+    "openrouter:nvidia/nvidia/nemotron-3-ultra",
 )
+MANAGED_PROFILE_KEYS = (NATIVE_MANAGED_PROFILE_KEY, *MANAGED_ALIAS_KEYS)
 _INVALID_EXECUTE_COMMAND = re.compile(r"\[\s*content\s*\]", re.IGNORECASE)
 _REGISTRATION_LOCK = threading.Lock()
 
 # invalidState: Deep Agents resolves pre-built ChatOpenAI models under `openai:`
 # keys, while its native Ultra profile is registered under an NVIDIA key.
-# sourceBoundary: NemoClaw owns only these two managed inference aliases and one
+# sourceBoundary: NemoClaw owns only these managed inference aliases and one
 # exact malformed-tool-call guard layered onto them; the prompt, tool overrides,
 # bootstrap, canonical profile, and upstream source remain byte-identical Deep
 # Agents artifacts.
@@ -183,7 +186,7 @@ def _register_aliases(
 
     existing = tuple(key in registry for key in MANAGED_PROFILE_KEYS)
     if all(existing):
-        managed_profile = registry[MANAGED_PROFILE_KEYS[0]]
+        managed_profile = registry[NATIVE_MANAGED_PROFILE_KEY]
         native_middleware = tuple(getattr(native_profile, "extra_middleware", ()))
         managed_middleware = tuple(getattr(managed_profile, "extra_middleware", ()))
         preserves_native_middleware = (
@@ -206,17 +209,22 @@ def _register_aliases(
         ):
             return
         raise _fail("managed aliases conflict with the reviewed managed profile")
-    if any(existing):
+    expected_native_state = (True, *(False for _key in MANAGED_ALIAS_KEYS))
+    if existing != expected_native_state:
         raise _fail("managed aliases are in a partial registration state")
+    if registry[NATIVE_MANAGED_PROFILE_KEY] is not native_profile:
+        raise _fail("built-in OpenRouter profile does not match the canonical profile")
 
     try:
-        first_key, second_key = MANAGED_PROFILE_KEYS
-        register_profile(first_key, native_profile)
-        register_profile(first_key, overlay)
-        managed_profile = registry.get(first_key)
+        # Deep Agents already registers the native Ultra profile for its exact
+        # OpenRouter model spec. Layer the NemoClaw guard onto that built-in key,
+        # then reuse the merged profile for the remaining managed aliases.
+        register_profile(NATIVE_MANAGED_PROFILE_KEY, overlay)
+        managed_profile = registry.get(NATIVE_MANAGED_PROFILE_KEY)
         if managed_profile is None or managed_profile is native_profile:
             raise _fail("managed profile overlay was not applied")
-        register_profile(second_key, managed_profile)
+        for alias_key in MANAGED_ALIAS_KEYS:
+            register_profile(alias_key, managed_profile)
         if registry.get(CANONICAL_PROFILE_KEY) is not native_profile:
             raise _fail("canonical profile changed during managed registration")
         if not all(
@@ -224,7 +232,8 @@ def _register_aliases(
         ):
             raise _fail("managed alias registration did not preserve managed identity")
     except Exception:
-        for key in MANAGED_PROFILE_KEYS:
+        registry[NATIVE_MANAGED_PROFILE_KEY] = native_profile
+        for key in MANAGED_ALIAS_KEYS:
             registry.pop(key, None)
         raise
 

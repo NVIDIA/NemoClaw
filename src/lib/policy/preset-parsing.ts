@@ -3,7 +3,7 @@
 
 import YAML from "yaml";
 
-import type { JsonObject, JsonValue } from "../core/json-types";
+import { isObjectRecord, type JsonObject, type JsonValue } from "../core/json-types";
 
 export type PolicyValue = JsonValue;
 export type PolicyObject = JsonObject;
@@ -13,11 +13,11 @@ export type PolicyDocument = PolicyObject & {
 };
 
 export function isPolicyDocument(value: PolicyValue): value is PolicyDocument {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return isObjectRecord(value);
 }
 
 export function isPolicyObject(value: PolicyValue): value is PolicyObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return isObjectRecord(value);
 }
 
 export function isPresetPolicyMap(value: PolicyValue): value is PolicyObject {

@@ -218,7 +218,9 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
 
     const output = result.stdout + result.stderr;
     expect(result.status).not.toBe(0);
-    expect(output).toContain("Resolve every reported sandbox backup failure");
+    expect(output).toContain(
+      "Resolve every reported sandbox backup failure or skipped sandbox using the CLI output above",
+    );
     expect(output).not.toContain("NEMOCLAW_OPENSHELL_UPGRADE_PREPARED");
     expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
     expect(openshellLog).toBe("");
@@ -300,6 +302,7 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
     ["a non-object sandboxes field", '{"sandboxes":[]}'],
     ["a malformed sandbox row", '{"sandboxes":{"alpha":null}}'],
     ["a sandbox row without a name", '{"sandboxes":{"alpha":{}}}'],
+    ["a sandbox row with a whitespace-only name", '{"sandboxes":{"   ":{"name":"   "}}}'],
     [
       "a sandbox row whose name differs from its registry key",
       '{"sandboxes":{"alpha":{"name":"beta"}}}',

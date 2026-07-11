@@ -16,6 +16,12 @@ import {
 } from "./events";
 import type { OnboardStateResult } from "./result";
 import {
+  buildResultInvalidatedEvent,
+  buildResultSkippedEvent,
+  type ResultInvalidatedInputs,
+  type ResultSkippedInputs,
+} from "./result-events";
+import {
   assertValidOnboardMachineTransition,
   canTransitionOnboardMachineState,
   isTerminalOnboardMachineState,
@@ -353,22 +359,15 @@ export class OnboardRuntime {
     return session;
   }
 
-  async emitResultSkipped(options: {
-    reason: "already_at_target" | "source_state_mismatch";
-    currentState: OnboardMachineState;
-    targetState: OnboardMachineState;
-    metadata?: Record<string, unknown> | null;
-  }): Promise<Session> {
+  async emitResultSkipped(options: ResultSkippedInputs): Promise<Session> {
     const session = this.ensureSession();
-    this.emit("state.result.skipped", session, {
-      state: session.machine.state,
-      metadata: {
-        ...eventMetadata(options.metadata),
-        reason: options.reason,
-        currentState: options.currentState,
-        targetState: options.targetState,
-      },
-    });
+    this.deps.emitEvent(buildResultSkippedEvent(session, options));
+    return session;
+  }
+
+  async emitResultInvalidated(options: ResultInvalidatedInputs): Promise<Session> {
+    const session = this.ensureSession();
+    this.deps.emitEvent(buildResultInvalidatedEvent(session, options));
     return session;
   }
 

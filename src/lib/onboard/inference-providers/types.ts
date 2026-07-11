@@ -66,7 +66,7 @@ export type VerifyOnboardInferenceSmoke = (input: {
   credentialEnv?: string | null;
   forceOpenAiLike?: boolean;
   pinnedAddresses?: readonly string[];
-}) => void;
+}) => void | Promise<void>;
 
 export type PromptValidationRecovery = (
   label: string,
@@ -109,7 +109,7 @@ export type RemoteProviderDeps = CommonDeps & {
     model: string,
     apiKey: string,
     options?: Record<string, unknown>,
-  ) => { ok: boolean; message?: string };
+  ) => { ok: boolean; message?: string } | Promise<{ ok: boolean; message?: string }>;
   readGatewayProviderMetadata?: (
     name: string,
     runOpenshell: RunOpenshell,
@@ -125,6 +125,26 @@ export type RemoteProviderDeps = CommonDeps & {
       model: string;
       endpointUrl: string | null;
       credentialEnv: string | null;
+      isNonInteractive: () => boolean;
+      runOpenshell: RunOpenshell;
+      upsertProvider: UpsertProvider;
+      verifyInferenceRoute: VerifyInferenceRoute;
+      verifyOnboardInferenceSmoke: any;
+      updateSandbox: Registry["updateSandbox"];
+      exitProcess: CommonDeps["exitProcess"];
+      error: (message: string) => void;
+      log: (message: string) => void;
+    }): Promise<{ handled: true; result: SetupInferenceResult } | { handled: false }>;
+  };
+  openrouterRuntimeOnboard: {
+    setupOpenRouterRuntimeInference(input: {
+      sandboxName: string | null;
+      provider: string;
+      model: string;
+      credentialEnv: string | null;
+      credentialValue: string | null;
+      reuseGatewayCredentialWithoutLocalKey?: boolean;
+      skipHostInferenceSmoke?: boolean;
       isNonInteractive: () => boolean;
       runOpenshell: RunOpenshell;
       upsertProvider: UpsertProvider;

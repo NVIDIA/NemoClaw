@@ -1,0 +1,87 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Configure Progressive Tool Disclosure"
+sidebar-title: "Progressive Tool Disclosure"
+description: "Understand and configure how NemoClaw agents discover tools without loading every schema into model context."
+description-agent: "Explains progressive tool disclosure for OpenClaw, Hermes, and Deep Agents Code. Use when configuring Tool Search, search_tools, result limits, or direct disclosure."
+keywords: ["nemoclaw tool disclosure", "progressive tool disclosure", "search_tools", "Tool Search"]
+content:
+  type: "how_to"
+---
+import { AgentOnly } from "../_components/AgentGuide";
+
+Progressive tool disclosure limits the tool schemas placed in the model's initial context.
+Each supported agent keeps its native discovery mechanism and configuration schema.
+
+## Compare Agent Behavior
+
+The keys, tool names, and result limits are not interchangeable across agents.
+
+| Agent | NemoClaw-generated mechanism | Default results | Maximum results |
+|---|---|---:|---:|
+| OpenClaw | `tools.toolSearch.mode: "tools"` with `searchDefaultLimit` and `maxSearchLimit` | 8 | 20 |
+| Hermes | `tools.tool_search.enabled: "on"` with `search_default_limit` and `max_search_limit` | 5 | 20 |
+| Deep Agents Code | NemoClaw `ProgressiveToolDisclosureMiddleware` and the `search_tools` model tool | Up to 20 | 20 |
+
+Progressive disclosure changes model context, not authorization.
+Final tool calls still use the agent's normal execution, policy, approval, and hook paths.
+
+## Understand OpenClaw Tool Search
+
+OpenClaw uses `mode: "tools"` to select its structured bridge instead of the JavaScript-based `tool_search_code` bridge.
+A model-specific `toolSearch: false` override disables Tool Search entirely.
+
+NemoClaw's generated default exposes `tool_search`, `tool_describe`, and `tool_call` through structured Tool Search.
+Managed Nemotron Super and Ultra routes retain model-specific `toolSearch: false` safeguards and use direct structured tool calling until a live structured-search trajectory clears the replacement.
+
+In the model-specific manifest contract, `false` disables Tool Search while `true` selects OpenClaw's default code mode.
+Neither boolean selects structured mode.
+
+## Understand Hermes Tool Search
+
+Hermes uses its native tool-search bridge when `enabled: "on"` and the session has at least one deferrable MCP or non-core plugin tool.
+Hermes core tools remain directly visible.
+
+## Understand Deep Agents Tool Search
+
+Deep Agents Code activates its middleware after at least one MCP tool loads successfully.
+It initially exposes `search_tools` and the core filesystem, shell, user-input, and todo tools.
+
+Each search returns up to 20 name-sorted tools whose names or descriptions match case-insensitively.
+The graph thread retains up to 64 discovered named tools.
+Search output is limited to 8 KiB, individual descriptions to 256 characters, individual tool-name representations to 120 bytes, individual named schemas to 16 KiB, and the discovered schemas visible in one model request to 128 KiB.
+
+Named tools that exceed the name or schema limits are not discoverable, while core tools remain visible.
+When a broad query exceeds a result or state limit, `search_tools` reports omitted matches so the model can refine the query.
+
+Provider-native definitions without a callable name remain visible because the middleware cannot search or checkpoint them by name.
+Main-agent and local-subagent discoveries use separate middleware instances.
+
+## Use Direct Disclosure
+
+Use direct disclosure when you want to present every registered tool to the model.
+
+```bash
+$$nemoclaw onboard --tool-disclosure direct
+```
+
+You can also set `NEMOCLAW_TOOL_DISCLOSURE=direct` before onboarding.
+
+For an existing sandbox with managed MCP servers, rebuild with the direct setting.
+
+```bash
+$$nemoclaw <name> rebuild --tool-disclosure direct
+```
+
+The transactional rebuild preserves MCP providers and adapter state while changing the disclosure mode.
+An explicit direct selection is authoritative.
+Model-specific safety settings can disable progressive search for a model, but cannot re-enable it over the direct selection.
+
+## Related Topics
+
+<AgentOnly variant="openclaw">
+- [Troubleshooting](../reference/troubleshooting#tool-calls-appear-as-assistant-text) when the model emits a tool call as assistant text instead of structured output.
+</AgentOnly>
+
+- [Set Up MCP Servers](../manage-sandboxes/set-up-mcp-servers) to configure the tool sources available to the agent.

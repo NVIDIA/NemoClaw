@@ -26,6 +26,7 @@ import { buildUninstallPlan, type UninstallPlan } from "../../domain/uninstall/p
 import { stopHostGatewayProcesses } from "../../onboard/host-gateway-process";
 import { isModelRouterCommandLineForPort } from "../../onboard/model-router-process";
 import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
+import { stopOpenRouterRuntimeAdapter } from "./openrouter-runtime-adapter-cleanup";
 import { classifyShimPath, type FileSystemDeps } from "./plan";
 
 export interface RunResult {
@@ -920,6 +921,7 @@ function executePlan(
         { logNoProcesses: true },
       );
       stopOllamaAuthProxy(paths, runtime);
+      stopOpenRouterRuntimeAdapter(paths, runtime);
       stopModelRouter(paths, runtime);
     } else if (step.name === "OpenShell resources") {
       removeOpenShellResources(options, runtime);

@@ -12,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { isErrnoException } from "../core/errno";
-import type { JsonObject, JsonValue } from "../core/json-types";
+import { isObjectRecord, type JsonObject, type JsonValue } from "../core/json-types";
 import { normalizeWebSearchConfig, type WebSearchConfig } from "../inference/web-search";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import { compactSandboxMessagingPlanForPersistence } from "../messaging/persistence";
@@ -289,7 +289,7 @@ function defaultSteps(): Record<string, StepState> {
 }
 
 export function isObject(value: unknown): value is UnknownRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return isObjectRecord(value);
 }
 
 function readString(value: SessionJsonValue | undefined): string | null {
