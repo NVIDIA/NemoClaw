@@ -31,8 +31,6 @@ import {
   recoverMessagingHostForward,
   resolveSandboxDashboardPort,
 } from "./forward-recovery";
-import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
-import { buildSandboxRuntimeEnvArgs } from "../../onboard/sandbox-create-launch";
 import {
   classifyGatewayRestartFailure,
   type GatewayRestartDeps,
@@ -53,6 +51,7 @@ import {
   buildSandboxExecMarkedCommand,
   extractSandboxExecCommandStdout,
 } from "./sandbox-exec-output";
+import { relaunchManagedSupervisorSession } from "./supervisor-relaunch";
 
 export type { SandboxForwardHealth, SandboxForwardListEntry } from "./forward-health";
 export {
@@ -279,72 +278,6 @@ export function executeGatewaySupervisorAction(
     stderr = ["SUPERVISOR_REBUILD_REQUIRED", stderr].filter(Boolean).join("\n");
   }
   return { status, stdout, stderr };
-}
-
-function reconstructSupervisorLaunchEnvArgs(sandboxName: string): string[] | null {
-  const entry = registry.getSandbox(sandboxName);
-  if (!entry) return null;
-  const agent = agentRuntime.getSessionAgent(sandboxName) ?? null;
-  const manageDashboard = shouldManageDashboardForAgent(agent);
-  const dashboardPort = String(resolveSandboxDashboardPort(sandboxName));
-  const chatUiUrl = manageDashboard ? `http://127.0.0.1:${dashboardPort}` : "";
-  const hermesDashboardEnabled = entry.hermesDashboardEnabled === true;
-  const { envArgs } = buildSandboxRuntimeEnvArgs({
-    agent,
-    chatUiUrl,
-    manageDashboard,
-    getDashboardForwardPort: () => dashboardPort,
-    hermesDashboardState: {
-      enabled: hermesDashboardEnabled,
-      config: hermesDashboardEnabled
-        ? {
-            enabled: true,
-            port: entry.hermesDashboardPort ?? 0,
-            internalPort: entry.hermesDashboardInternalPort ?? 0,
-            tuiEnabled: entry.hermesDashboardTui === true,
-          }
-        : null,
-    },
-    extraPlaceholderKeys: [],
-    observabilityEnabled: entry.observabilityEnabled === true,
-    sandboxName,
-    env: process.env,
-    omitCredentialEnv: true,
-  });
-  return envArgs;
-}
-
-function relaunchManagedSupervisorSession(
-  sandboxName: string,
-  { quiet }: { quiet: boolean },
-): boolean {
-  if (process.env.NEMOCLAW_DISABLE_SUPERVISOR_RELAUNCH === "1") return false;
-  const envArgs = reconstructSupervisorLaunchEnvArgs(sandboxName);
-  if (envArgs === null) return false;
-  const startedMarker = "NEMOCLAW_SUPERVISOR_RELAUNCHED";
-  const envPrefix = envArgs.map(shellQuote).join(" ");
-  const daemonCommand =
-    `echo ${startedMarker}; ` +
-    `setsid nohup env ${envPrefix} nemoclaw-start ` +
-    ">/tmp/nemoclaw-start-recover.log 2>&1 </dev/null &";
-  if (!quiet) console.log("  Relaunching the in-sandbox supervisor...");
-  let result: ReturnType<typeof spawnSync>;
-  try {
-    result = spawnSync(
-      getOpenshellBinary(),
-      ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", daemonCommand],
-      {
-        cwd: ROOT,
-        encoding: "utf-8",
-        env: buildSubprocessEnv(),
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
-      },
-    );
-  } catch {
-    return false;
-  }
-  return result.status === 0 && String(result.stdout || "").includes(startedMarker);
 }
 
 async function executeSandboxExecCommandForStatus(
@@ -961,7 +894,11 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         console.error("  Gateway process started but is not responding.");
         printGatewayWedgeDiagnostics(sandboxName, executeSandboxExecCommand);
         console.error("  Check /tmp/gateway.log inside the sandbox for details.");
-        printHostManagedGatewayRecoveryHints(sandboxName, recoveryAgent);
+        printHostManagedGatewayRecoveryHints(
+          sandboxName,
+          recoveryAgent,
+          managedRecoveryFailureLayer,
+        );
       }
       return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
     }
