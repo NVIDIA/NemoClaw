@@ -696,12 +696,20 @@ describe("e2e workflow boundary", () => {
       "free_standing_target_jobs_csv",
     ]);
     for (const testId of [
+      "mcp-bridge",
+      "network-policy",
+      "launchable-smoke",
+      "openclaw-tui-chat-correlation",
+    ]) {
+      expect(currentBaseWorkflowInventory).toContain(`${testId}:${testId}`);
+    }
+    for (const testId of [
       "docs-validation",
       "gateway-drift-preflight",
       "onboard-negative-paths",
       "openshell-version-pin",
     ]) {
-      expect(currentBaseWorkflowInventory).toContain(`${testId}:${testId}`);
+      expect(currentBaseWorkflowInventory).not.toContain(`${testId}:${testId}`);
     }
     expect(currentBaseWorkflowInventory).not.toContain("openshell-version-pin:shared-e2e");
     expect(currentBaseWorkflowInventory).not.toContain("ubuntu-repo-cli-smoke");
