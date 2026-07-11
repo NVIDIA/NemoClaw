@@ -78,16 +78,25 @@ describe("macOS E2E workflow boundary", () => {
     expect(String(docker.env?.LIMA_START_ARGS)).toContain("--cpus 4 --memory 8");
     expect(live.run).toContain("test/e2e/live/sandbox-operations.test.ts");
     expect(live.env?.NEMOCLAW_NON_INTERACTIVE).toBe("1");
-    expect(job.steps?.some((step) => step.uses?.startsWith("actions/upload-artifact@"))).toBe(
-      false,
-    );
   });
 
   it("uploads live macOS E2E artifacts when the workflow fails", () => {
     const upload = stepNamed("Upload logs on failure");
+    const dockerUpload = stepNamed(
+      "Upload macOS Docker logs on failure",
+      "macos-docker-final-destroy",
+    );
+
     expect(upload.if).toBe("failure() && github.event_name == 'pull_request'");
     expect(String(upload.with?.path)).toContain("/tmp/nemoclaw-e2e-*.log");
     expect(String(upload.with?.path)).toContain("${{ github.workspace }}/e2e-artifacts/live");
+
+    expect(dockerUpload.if).toBe("failure()");
+    expect(dockerUpload.uses).toBe(
+      "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+    );
+    expect(String(dockerUpload.with?.path)).toContain("/tmp/nemoclaw-e2e-*.log");
+    expect(String(dockerUpload.with?.path)).toContain("${{ github.workspace }}/e2e-artifacts/live");
   });
 
   it("bounds the fast and real-Docker macOS jobs independently", () => {

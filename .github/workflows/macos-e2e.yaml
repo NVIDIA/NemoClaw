@@ -184,3 +184,13 @@ jobs:
           npx vitest run --project e2e-live \
             test/e2e/live/sandbox-operations.test.ts \
             --silent=false --reporter=default
+
+      - name: Upload macOS Docker logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-docker-final-destroy-logs
+          path: |
+            /tmp/nemoclaw-e2e-*.log
+            ${{ github.workspace }}/e2e-artifacts/live
+          if-no-files-found: ignore
