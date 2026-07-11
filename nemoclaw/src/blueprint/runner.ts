@@ -22,6 +22,7 @@ import YAML from "yaml";
 
 import { DASHBOARD_PORT } from "../lib/ports.js";
 import { buildSubprocessEnv } from "../lib/subprocess-env.js";
+import { isPlainObject, type UnknownRecord } from "../shared/object-record.js";
 import * as importedOpenShellPolicyBoundary from "../shared/openshell-policy-boundary.cjs";
 import { safeEndpointUrlForDownstream, validateEndpointUrl } from "./ssrf.js";
 
@@ -37,7 +38,6 @@ const { parseOpenShellPolicy, withoutProviderComposedPolicies } =
 type Action = "plan" | "apply" | "status" | "rollback";
 
 type RollbackPlanSource = { sandbox_name?: unknown };
-type UnknownRecord = { [key: string]: unknown };
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
 type RestProtocol = "rest";
 type EndpointEnforcement = "enforce" | "audit";
@@ -76,13 +76,6 @@ function isAction(value: string | undefined): value is Action {
   return value === "plan" || value === "apply" || value === "status" || value === "rollback";
 }
 
-function isObjectLike(value: unknown): value is UnknownRecord {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  return Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null;
-}
-
 function isOptionalString(value: unknown): value is string | undefined {
   return value === undefined || typeof value === "string";
 }
@@ -110,11 +103,11 @@ function hasOnlyKeys(value: UnknownRecord, allowed: readonly string[]): boolean 
 }
 
 function isPolicyRule(value: unknown): value is PolicyRule {
-  if (!isObjectLike(value) || !hasOnlyKeys(value, ["allow"])) {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["allow"])) {
     return false;
   }
   const allow = value.allow;
-  if (!isObjectLike(allow) || !hasOnlyKeys(allow, ["method", "path"])) {
+  if (!isPlainObject(allow) || !hasOnlyKeys(allow, ["method", "path"])) {
     return false;
   }
   return (
@@ -127,7 +120,7 @@ function isPolicyRule(value: unknown): value is PolicyRule {
 
 function isPolicyEndpoint(value: unknown): value is PolicyEndpoint {
   if (
-    !isObjectLike(value) ||
+    !isPlainObject(value) ||
     !hasOnlyKeys(value, ["host", "port", "protocol", "enforcement", "tls", "access", "rules"])
   ) {
     return false;
@@ -154,7 +147,7 @@ function isPolicyEndpoint(value: unknown): value is PolicyEndpoint {
 }
 
 function isPolicyAddition(value: unknown): value is PolicyAddition {
-  if (!isObjectLike(value) || !hasOnlyKeys(value, ["name", "endpoints"])) {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["name", "endpoints"])) {
     return false;
   }
   return (
@@ -166,11 +159,11 @@ function isPolicyAddition(value: unknown): value is PolicyAddition {
 }
 
 function isPolicyAdditions(value: unknown): value is PolicyAdditions {
-  return isObjectLike(value) && Object.values(value).every((entry) => isPolicyAddition(entry));
+  return isPlainObject(value) && Object.values(value).every((entry) => isPolicyAddition(entry));
 }
 
 function isInferenceProfile(value: unknown): value is InferenceProfile {
-  if (!isObjectLike(value)) {
+  if (!isPlainObject(value)) {
     return false;
   }
 
@@ -186,7 +179,7 @@ function isInferenceProfile(value: unknown): value is InferenceProfile {
 }
 
 function isBlueprint(value: unknown): value is Blueprint {
-  if (!isObjectLike(value)) {
+  if (!isPlainObject(value)) {
     return false;
   }
 
@@ -198,19 +191,19 @@ function isBlueprint(value: unknown): value is Blueprint {
   if (components === undefined) {
     return true;
   }
-  if (!isObjectLike(components)) {
+  if (!isPlainObject(components)) {
     return false;
   }
 
   const inference = components.inference;
   if (inference !== undefined) {
-    if (!isObjectLike(inference)) {
+    if (!isPlainObject(inference)) {
       return false;
     }
     const profiles = inference.profiles;
     if (profiles !== undefined) {
       if (
-        !isObjectLike(profiles) ||
+        !isPlainObject(profiles) ||
         !Object.values(profiles).every((entry) => isInferenceProfile(entry))
       ) {
         return false;
@@ -220,7 +213,7 @@ function isBlueprint(value: unknown): value is Blueprint {
 
   const sandbox = components.sandbox;
   if (sandbox !== undefined) {
-    if (!isObjectLike(sandbox)) {
+    if (!isPlainObject(sandbox)) {
       return false;
     }
     if (
@@ -234,7 +227,7 @@ function isBlueprint(value: unknown): value is Blueprint {
 
   const router = components.router;
   if (router !== undefined) {
-    if (!isObjectLike(router)) {
+    if (!isPlainObject(router)) {
       return false;
     }
     if (
@@ -248,7 +241,7 @@ function isBlueprint(value: unknown): value is Blueprint {
 
   const policy = components.policy;
   if (policy !== undefined) {
-    if (!isObjectLike(policy)) {
+    if (!isPlainObject(policy)) {
       return false;
     }
     const additions = policy.additions;
@@ -337,12 +330,7 @@ const DEFAULT_ROUTER_PORT = 4000;
 function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditions): string {
   // sourceOfTruth: nemoclaw/src/shared/openshell-policy-boundary.cts
   const current = parseOpenShellPolicy(currentPolicyRaw).policy;
-  if (current.network_policies !== undefined && !isObjectLike(current.network_policies)) {
-    throw new Error("Current policy network_policies must be a YAML mapping");
-  }
-  const existingNetworkPolicies = isObjectLike(current.network_policies)
-    ? current.network_policies
-    : {};
+  const existingNetworkPolicies = current.network_policies ?? {};
   const output: UnknownRecord = {};
 
   // Stable OpenShell 0.0.72 exposes composable top-level policy sections as
@@ -351,15 +339,14 @@ function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditio
   // reviewed for the next supported OpenShell contract.
   for (const [key, value] of Object.entries(current)) {
     if (key !== "version" && key !== "network_policies") {
-      if (!isObjectLike(value)) {
+      if (!isPlainObject(value)) {
         throw new Error(`Current policy top-level field "${key}" must be a YAML mapping`);
       }
       output[key] = value;
     }
   }
 
-  output.version =
-    typeof current.version === "number" && Number.isFinite(current.version) ? current.version : 1;
+  output.version = current.version ?? 1;
   output.network_policies = withoutProviderComposedPolicies({
     ...existingNetworkPolicies,
     ...additions,
@@ -508,13 +495,12 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-function buildSafeInferencePlan(source: InferenceProfile | unknown): SafeInferencePlan {
-  const record = isObjectLike(source) ? source : {};
+function buildSafeInferencePlan(source: InferenceProfile | UnknownRecord): SafeInferencePlan {
   return {
-    provider_type: optionalString(record.provider_type),
-    provider_name: optionalString(record.provider_name),
-    endpoint: optionalString(record.endpoint),
-    model: optionalString(record.model),
+    provider_type: optionalString(source.provider_type),
+    provider_name: optionalString(source.provider_name),
+    endpoint: optionalString(source.endpoint),
+    model: optionalString(source.model),
   };
 }
 
@@ -568,7 +554,7 @@ function buildPersistedRunPlan(args: {
 }
 
 function buildStatusRunPlan(source: unknown, fallbackRunId: string): StatusRunPlan | null {
-  if (!isObjectLike(source)) {
+  if (!isPlainObject(source)) {
     return null;
   }
 
@@ -581,7 +567,7 @@ function buildStatusRunPlan(source: unknown, fallbackRunId: string): StatusRunPl
     safePlan.profile = profile;
   }
 
-  if (isObjectLike(source.sandbox)) {
+  if (isPlainObject(source.sandbox)) {
     const sandbox: StatusRunPlan["sandbox"] = {};
     const image = optionalString(source.sandbox.image);
     const name = optionalString(source.sandbox.name);
@@ -611,11 +597,11 @@ function buildStatusRunPlan(source: unknown, fallbackRunId: string): StatusRunPl
     safePlan.policy_additions = source.policy_additions;
   }
 
-  if (isObjectLike(source.inference)) {
+  if (isPlainObject(source.inference)) {
     safePlan.inference = buildSafeInferencePlan(source.inference);
   }
 
-  if (isObjectLike(source.router)) {
+  if (isPlainObject(source.router)) {
     const router: StatusRunPlan["router"] = {};
     if (typeof source.router.enabled === "boolean") {
       router.enabled = source.router.enabled;

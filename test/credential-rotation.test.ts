@@ -23,40 +23,36 @@ type CredentialRotationInternals = {
   ) => { changed: boolean; changedProviders: string[] };
 };
 
-function isRecord(value: object | null): value is ModuleRecord {
-  return value !== null && !Array.isArray(value);
+function isObjectRecord(value: unknown): value is ModuleRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isCredentialRotationInternals(value: object | null): value is CredentialRotationInternals {
+function isCredentialRotationInternals(value: unknown): value is CredentialRotationInternals {
   return (
-    isRecord(value) &&
+    isObjectRecord(value) &&
     typeof value.hashCredential === "function" &&
     typeof value.detectMessagingCredentialRotation === "function"
   );
 }
 
-function isRegistryModule(
-  value: object | null,
-): value is typeof import("../src/lib/state/registry.js") {
-  return isRecord(value) && typeof value.getSandbox === "function";
+function isRegistryModule(value: unknown): value is typeof import("../src/lib/state/registry.js") {
+  return isObjectRecord(value) && typeof value.getSandbox === "function";
 }
 
 function loadCredentialRotationInternals(): CredentialRotationInternals {
-  const loaded = require("../src/lib/onboard.js");
-  const record = typeof loaded === "object" && loaded !== null ? loaded : null;
-  if (!isCredentialRotationInternals(record)) {
+  const loaded: unknown = require("../src/lib/onboard.js");
+  if (!isCredentialRotationInternals(loaded)) {
     throw new Error("Expected onboard internals to expose credential rotation helpers");
   }
-  return record;
+  return loaded;
 }
 
 function loadRegistryModule(): typeof import("../src/lib/state/registry.js") {
-  const loaded = require("../src/lib/state/registry.js");
-  const record = typeof loaded === "object" && loaded !== null ? loaded : null;
-  if (!isRegistryModule(record)) {
+  const loaded: unknown = require("../src/lib/state/registry.js");
+  if (!isRegistryModule(loaded)) {
     throw new Error("Expected registry module to expose getSandbox");
   }
-  return record;
+  return loaded;
 }
 
 describe("credential rotation detection", () => {

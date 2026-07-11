@@ -1,0 +1,84 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Understand Provider Validation"
+sidebar-title: "Provider Validation"
+description: "Understand how NemoClaw validates inference credentials, models, APIs, and streaming behavior during onboarding."
+description-agent: "Explains provider-specific inference validation. Use when an onboarding credential, model, API, tool-calling, or streaming probe fails."
+keywords: ["nemoclaw provider validation", "inference validation", "compatible endpoint probe"]
+content:
+  type: "concept"
+---
+import { AgentOnly } from "../_components/AgentGuide";
+
+NemoClaw validates the selected provider and model before it creates a sandbox.
+The exact request depends on the provider API that the agent uses.
+
+## Credential Validation
+
+When credential validation fails, the onboarding wizard lets you re-enter the API key, choose another provider, retry, or exit.
+NemoClaw retries transient upstream failures before it reports a provider failure.
+
+The `nvapi-` prefix check applies only to `NVIDIA_INFERENCE_API_KEY`.
+OpenRouter keys must be non-empty and begin with `sk-or-`.
+Other provider keys use provider-aware validation during the retry flow.
+
+## Provider Requests
+
+NemoClaw sends a provider-specific request that exercises the API surface intended for the route.
+
+| Provider | Validation request |
+|---|---|
+| OpenAI | Tries `/responses`, then `/chat/completions`. |
+| NVIDIA Endpoints | Uses `/v1/chat/completions` and skips `/v1/responses`. |
+| OpenRouter | Uses `/v1/chat/completions` for catalog, model, and smoke validation. |
+| Google Gemini | Uses the OpenAI-compatible chat-completions path and skips `/v1/responses`. |
+| Other OpenAI-compatible endpoint | Tries `/v1/responses` with tool-calling and streaming checks, then falls back to `/v1/chat/completions`. |
+| Local NVIDIA NIM | Uses `/v1/chat/completions` and skips `/v1/responses`. |
+
+For an OpenAI-compatible endpoint, the runtime defaults to `/v1/chat/completions` even when the Responses probe succeeds.
+Set `NEMOCLAW_PREFERRED_API=openai-responses` before onboarding to select `/v1/responses` only after the probe verifies the required streaming behavior.
+Set `NEMOCLAW_PREFERRED_API=openai-completions` to skip the Responses probe and validate Chat Completions only.
+
+<AgentOnly variant="deepagents">
+
+The managed Deep Agents runtime keeps `use_responses_api = false` and uses Chat Completions through `https://inference.local/v1`.
+`NEMOCLAW_PREFERRED_API` does not change that runtime selection.
+
+</AgentOnly>
+
+## Anthropic-Compatible Requests
+
+<AgentOnly variant="openclaw">
+
+For OpenClaw, NemoClaw sends a non-streaming request to `/v1/messages`, then sends a streaming request to the same path.
+The streaming check requires exactly one `message_start`, at least one `content_block_delta`, and one `message_stop` event.
+
+Set `NEMOCLAW_REASONING=true` to skip the streaming check for a reasoning-only endpoint.
+Agent runs still use streaming, so this setting moves a streaming defect from onboarding to runtime.
+
+</AgentOnly>
+
+<AgentOnly variant="hermes,deepagents">
+
+For Hermes and other agents that use only OpenAI-compatible inference, NemoClaw validates `/v1/chat/completions` for a custom Anthropic selection.
+This is the API surface that the managed OpenAI frontend uses at runtime.
+
+</AgentOnly>
+
+## Compatible Endpoint Probes
+
+Compatible endpoint validation sends a real inference request because many proxies do not expose `/models`.
+For an OpenAI-compatible endpoint, a reasoning model that returns only reasoning content can receive a retry with a larger response budget before NemoClaw reports failure.
+Route, configuration, and authentication failures still fail immediately.
+
+An endpoint that is reachable only through `http://host.openshell.internal:<port>` cannot receive the host-side API probe.
+Verify that route from inside the sandbox after onboarding.
+
+## Related Topics
+
+- [Verify the Sandbox Inference Route](verify-inference-route) to test the route the agent uses.
+<AgentOnly variant="openclaw">
+- [Troubleshooting](../../reference/troubleshooting#tool-calls-appear-as-assistant-text) when a local server returns tool calls as text.
+</AgentOnly>
+- [Set Up an OpenAI-Compatible Endpoint](../custom-endpoints/set-up-openai-compatible-endpoint) for custom endpoint setup.

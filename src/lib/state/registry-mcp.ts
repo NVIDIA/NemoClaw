@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isObjectRecord } from "../core/json-types";
 import { isBlockedMcpUrlTargetHost, MCP_SERVER_URL_MAX_LENGTH } from "../security/mcp-url-target";
 
 export interface McpBridgeEntry {
@@ -50,10 +51,6 @@ const MCP_SAFE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const MCP_PROVIDER_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const MCP_ADAPTERS = new Set(["mcporter", "hermes-config", "deepagents-config"]);
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 export function serializeSandboxMcpStateForDisk(value: unknown): SandboxMcpState | undefined {
   const state = normalizeSandboxMcpState(value);
   if (!state) return undefined;
@@ -61,9 +58,9 @@ export function serializeSandboxMcpStateForDisk(value: unknown): SandboxMcpState
 }
 
 export function normalizeSandboxMcpState(value: unknown): SandboxMcpState | undefined {
-  if (!isRecord(value)) return undefined;
+  if (!isObjectRecord(value)) return undefined;
   const bridgesValue = value.bridges;
-  if (!isRecord(bridgesValue)) return undefined;
+  if (!isObjectRecord(bridgesValue)) return undefined;
   const bridges: Record<string, McpBridgeEntry> = {};
   for (const [name, rawEntry] of Object.entries(bridgesValue)) {
     const entry = normalizeMcpBridgeEntry(name, rawEntry);
@@ -122,7 +119,7 @@ function normalizeMcpUrl(value: string): string | null {
 }
 
 function normalizeMcpBridgeEntry(server: string, value: unknown): McpBridgeEntry | null {
-  if (!isRecord(value)) return null;
+  if (!isObjectRecord(value)) return null;
   const serverName = typeof value.server === "string" && value.server ? value.server : server;
   if (!MCP_SERVER_RE.test(serverName)) return null;
   const url = typeof value.url === "string" ? normalizeMcpUrl(value.url) : null;

@@ -13,6 +13,7 @@ const SERVER_SCRIPT = path.join(REPO_ROOT, "test/e2e/lib/fake-openai-compatible-
 export interface FakeOpenAiCompatibleRequest {
   readonly method: string;
   readonly path: string;
+  readonly hostHeader?: string;
   readonly bodyBytes: number;
   readonly auth?: string;
   readonly authorizationSent?: boolean;

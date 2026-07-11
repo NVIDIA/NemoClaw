@@ -297,6 +297,168 @@ describe("dockerfile patch helpers", () => {
     expect(patched).toContain("ARG NEMOCLAW_UPSTREAM_PROVIDER=nvidia-prod");
   });
 
+  it("writes the user-selected upstream endpoint into NEMOCLAW_UPSTREAM_ENDPOINT_URL", () => {
+    const dockerfilePath = dockerfileWith(
+      [
+        "ARG NEMOCLAW_MODEL=old",
+        "ARG NEMOCLAW_PROVIDER_KEY=old",
+        "ARG NEMOCLAW_UPSTREAM_PROVIDER=old",
+        "ARG NEMOCLAW_UPSTREAM_ENDPOINT_URL=old",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=old",
+        "ARG CHAT_UI_URL=old",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=old",
+        "ARG NEMOCLAW_INFERENCE_API=old",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=old",
+        "ARG NEMOCLAW_BUILD_ID=old",
+        "ARG NEMOCLAW_DARWIN_VM_COMPAT=0",
+      ].join("\n"),
+    );
+
+    patchStagedDockerfile(
+      dockerfilePath,
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "https://chat.example",
+      "build-1",
+      "compatible-endpoint",
+      null,
+      null,
+      null,
+      false,
+      null,
+      [],
+      { upstreamEndpointUrl: "https://openrouter.ai/api/v1" },
+    );
+
+    const patched = fs.readFileSync(dockerfilePath, "utf-8");
+    expect(patched).toContain("ARG NEMOCLAW_UPSTREAM_PROVIDER=compatible-endpoint");
+    expect(patched).toContain("ARG NEMOCLAW_UPSTREAM_ENDPOINT_URL=https://openrouter.ai/api/v1");
+  });
+
+  it("clears a stale upstream endpoint when no upstream endpoint is selected", () => {
+    const dockerfilePath = dockerfileWith(
+      [
+        "ARG NEMOCLAW_MODEL=old",
+        "ARG NEMOCLAW_PROVIDER_KEY=old",
+        "ARG NEMOCLAW_UPSTREAM_PROVIDER=old",
+        "ARG NEMOCLAW_UPSTREAM_ENDPOINT_URL=https://stale.example/v1",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=old",
+        "ARG CHAT_UI_URL=old",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=old",
+        "ARG NEMOCLAW_INFERENCE_API=old",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=old",
+        "ARG NEMOCLAW_BUILD_ID=old",
+        "ARG NEMOCLAW_DARWIN_VM_COMPAT=0",
+      ].join("\n"),
+    );
+
+    patchStagedDockerfile(
+      dockerfilePath,
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "https://chat.example",
+      "build-1",
+      "nvidia-prod",
+    );
+
+    const patched = fs.readFileSync(dockerfilePath, "utf-8");
+    expect(patched).toContain("ARG NEMOCLAW_UPSTREAM_ENDPOINT_URL=");
+    expect(patched).not.toContain("https://stale.example/v1");
+  });
+
+  it("canonicalizes upstream endpoint URLs before writing Dockerfile ARGs", () => {
+    const dockerfilePath = dockerfileWith(
+      [
+        "ARG NEMOCLAW_MODEL=old",
+        "ARG NEMOCLAW_PROVIDER_KEY=old",
+        "ARG NEMOCLAW_UPSTREAM_PROVIDER=old",
+        "ARG NEMOCLAW_UPSTREAM_ENDPOINT_URL=old",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=old",
+        "ARG CHAT_UI_URL=old",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=old",
+        "ARG NEMOCLAW_INFERENCE_API=old",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=old",
+        "ARG NEMOCLAW_BUILD_ID=old",
+        "ARG NEMOCLAW_DARWIN_VM_COMPAT=0",
+      ].join("\n"),
+    );
+
+    patchStagedDockerfile(
+      dockerfilePath,
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "https://chat.example",
+      "build-1",
+      "compatible-endpoint",
+      null,
+      null,
+      null,
+      false,
+      null,
+      [],
+      { upstreamEndpointUrl: "https://example.test/path\\name" },
+    );
+
+    const patched = fs.readFileSync(dockerfilePath, "utf-8");
+    expect(patched).toContain("ARG NEMOCLAW_UPSTREAM_ENDPOINT_URL=https://example.test/path/name");
+    expect(patched).not.toContain("\\");
+  });
+
+  it.each([
+    [
+      "credentials",
+      "https://user:pass@example.test/v1",
+      "NEMOCLAW_UPSTREAM_ENDPOINT_URL must not include credentials.",
+      "user:pass",
+    ],
+    [
+      "query string",
+      "https://example.test/v1?api_key=sk-test-secret",
+      "NEMOCLAW_UPSTREAM_ENDPOINT_URL must not include query strings or fragments.",
+      "sk-test-secret",
+    ],
+    [
+      "control character",
+      "https://example.test/v1\t[update]",
+      "NEMOCLAW_UPSTREAM_ENDPOINT_URL must not contain control characters.",
+      "[update]",
+    ],
+  ])("rejects unsafe upstream endpoint URLs with %s before Dockerfile write", (_label, upstreamEndpointUrl, error, leakedValue) => {
+    const dockerfilePath = dockerfileWith(
+      [
+        "ARG NEMOCLAW_MODEL=old",
+        "ARG NEMOCLAW_PROVIDER_KEY=old",
+        "ARG NEMOCLAW_UPSTREAM_PROVIDER=old",
+        "ARG NEMOCLAW_UPSTREAM_ENDPOINT_URL=old",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=old",
+        "ARG CHAT_UI_URL=old",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=old",
+        "ARG NEMOCLAW_INFERENCE_API=old",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=old",
+        "ARG NEMOCLAW_BUILD_ID=old",
+        "ARG NEMOCLAW_DARWIN_VM_COMPAT=0",
+      ].join("\n"),
+    );
+
+    expect(() =>
+      patchStagedDockerfile(
+        dockerfilePath,
+        "nvidia/nemotron-3-ultra-550b-a55b",
+        "https://chat.example",
+        "build-1",
+        "compatible-endpoint",
+        null,
+        null,
+        null,
+        false,
+        null,
+        [],
+        { upstreamEndpointUrl },
+      ),
+    ).toThrow(error);
+
+    const dockerfile = fs.readFileSync(dockerfilePath, "utf-8");
+    expect(dockerfile).toContain("ARG NEMOCLAW_UPSTREAM_ENDPOINT_URL=old");
+    expect(dockerfile).not.toContain(leakedValue);
+  });
+
   it("falls back to the provider key when no upstream provider is supplied", () => {
     const dockerfilePath = dockerfileWith(
       [
