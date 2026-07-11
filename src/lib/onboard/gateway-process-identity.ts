@@ -62,6 +62,11 @@ export function gatewayProcessCmdlineMatches(
         requireExpectedFlags: false,
       });
     }
+    if (base === "openclaw-gateway") {
+      return openShellGatewayMatchesTarget(tokens, opts.expectedOpenShellGateway, {
+        requireExpectedFlags: true,
+      });
+    }
     return true;
   }
   if (

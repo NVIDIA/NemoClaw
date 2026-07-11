@@ -58,7 +58,7 @@ describe("cleanupGatewayAfterLastSandbox runtime evidence", () => {
           stderr: "",
         }),
       ],
-      [`ps -p ${pid} -o args=`, () => ({ status: 0, stdout: "unrelated process\n", stderr: "" })],
+      [`ps -p ${pid} -o args=`, () => ({ status: 0, stdout: "openclaw-gateway\n", stderr: "" })],
     ]);
     mocks.spawnSync.mockImplementation((command: string, args: string[]) =>
       (processResponses.get(`${command} ${args.map(String).join(" ")}`) ?? missingProcess)(),
@@ -70,6 +70,10 @@ describe("cleanupGatewayAfterLastSandbox runtime evidence", () => {
     );
     expect(fs.readFileSync(pidFile, "utf-8")).toBe(`${pid}\n`);
     expect(fs.readFileSync(runtimeMarker, "utf-8")).toContain("keep-until-safe");
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      ["gateway", "remove", "nemoclaw-8081"],
+      expect.anything(),
+    );
     expect(mocks.dockerRemoveVolumesByPrefix).not.toHaveBeenCalled();
 
     pidIsAlive = false;

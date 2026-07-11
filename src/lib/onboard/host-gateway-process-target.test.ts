@@ -53,7 +53,7 @@ function psResponses(
   ];
 }
 
-function stopTargetedPid(pid: number, cmdline: string) {
+function stopTargetedPid(pid: number, cmdline: string, targeted = true) {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-gateway-target-"));
   const pidFile = path.join(stateDir, "openshell-gateway.pid");
   fs.writeFileSync(pidFile, `${pid}\n`);
@@ -80,8 +80,7 @@ function stopTargetedPid(pid: number, cmdline: string) {
       log: vi.fn(),
     },
     {
-      openShellGatewayName: "nemoclaw-8081",
-      openShellGatewayPort: 8081,
+      ...(targeted ? { openShellGatewayName: "nemoclaw-8081", openShellGatewayPort: 8081 } : {}),
       stateDir,
     },
   );
@@ -109,6 +108,22 @@ describe("stopHostGatewayProcesses target filtering", () => {
 
     expect(result.skippedNonMatchingPids).toEqual([9999554]);
     expect(kill).not.toHaveBeenCalled();
+    expect(fs.existsSync(pidFile)).toBe(false);
+  });
+
+  it("skips a bare openclaw-gateway process when cleanup supplies a target", () => {
+    const { kill, pidFile, result } = stopTargetedPid(9999560, "openclaw-gateway\n");
+
+    expect(result.skippedNonMatchingPids).toEqual([9999560]);
+    expect(kill).not.toHaveBeenCalled();
+    expect(fs.existsSync(pidFile)).toBe(false);
+  });
+
+  it("keeps legacy openclaw-gateway matching when cleanup has no target", () => {
+    const { kill, pidFile, result } = stopTargetedPid(9999561, "openclaw-gateway\n", false);
+
+    expect(result.stopped).toEqual([9999561]);
+    expect(kill).toHaveBeenCalledWith(9999561, "SIGTERM");
     expect(fs.existsSync(pidFile)).toBe(false);
   });
 
