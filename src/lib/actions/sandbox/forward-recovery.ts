@@ -100,7 +100,13 @@ export function ensureSandboxPortForward(sandboxName: string): boolean {
  * cannot prove that OpenShell assigned this sandbox the requested host port.
  */
 export function isSandboxForwardHealthy(sandboxName: string): SandboxForwardHealth {
-  return isSandboxPortForwardHealthy(sandboxName, resolveSandboxDashboardPort(sandboxName));
+  const allInterfaceBindRequired =
+    isRemoteDashboardBindRequested(process.env.NEMOCLAW_DASHBOARD_BIND) || isWsl();
+  return isSandboxPortForwardHealthy(
+    sandboxName,
+    resolveSandboxDashboardPort(sandboxName),
+    allInterfaceBindRequired ? "0.0.0.0" : "127.0.0.1",
+  );
 }
 
 export function isSandboxPortForwardHealthy(
