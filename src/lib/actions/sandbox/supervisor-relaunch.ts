@@ -12,6 +12,7 @@ import { buildSubprocessEnv } from "../../subprocess-env";
 import { resolveSandboxDashboardPort } from "./forward-recovery";
 
 const RELAUNCH_EXEC_TIMEOUT_MS = 15000;
+const NEMOCLAW_START_PATH = "/usr/local/bin/nemoclaw-start";
 
 function reconstructSupervisorLaunchEnvArgs(sandboxName: string): string[] | null {
   const entry = registry.getSandbox(sandboxName);
@@ -57,7 +58,7 @@ export function relaunchManagedSupervisorSession(
   const envPrefix = envArgs.map(shellQuote).join(" ");
   const daemonCommand =
     `echo ${startedMarker}; ` +
-    `setsid nohup env ${envPrefix} nemoclaw-start ` +
+    `setsid nohup env ${envPrefix} ${NEMOCLAW_START_PATH} ` +
     ">/tmp/nemoclaw-start-recover.log 2>&1 </dev/null &";
   if (!quiet) console.log("  Relaunching the in-sandbox supervisor...");
   let result: ReturnType<typeof spawnSync>;

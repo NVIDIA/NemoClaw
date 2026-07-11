@@ -180,4 +180,69 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     expect(daemonCommand).not.toContain("CUSTOM_PROVIDER_CREDENTIAL");
     expect(daemonCommand).not.toContain("proxypass");
   });
+
+  it("reaches a healthy recovery once the relaunched supervisor answers managed probes", () => {
+    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
+    const agentRuntime = requireSource("../src/lib/agent/runtime.js");
+    const registry = requireSource("../src/lib/state/registry.js");
+    const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
+    const childProcess = requireSource("node:child_process");
+    const runningForward = `SANDBOX  BIND  PORT  PID  STATUS
+recovered-box  127.0.0.1  18789  12345  running`;
+    const requestGatewaySupervisorAction = vi.fn((_name: string, action: string) =>
+      action === "recover"
+        ? { status: 1, stdout: "", stderr: "SUPERVISOR_UNAVAILABLE" }
+        : { status: 0, stdout: "GATEWAY_PID=4242\n", stderr: "" },
+    );
+
+    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS", "0");
+    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS", "2");
+    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS", "0");
+    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
+    vi.spyOn(childProcess, "spawnSync").mockImplementation(
+      (_command: unknown, rawArgs: unknown) => {
+        const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
+        const lastArg = args.at(-1) ?? "";
+        const isRelaunch = lastArg.includes("nemoclaw-start") && lastArg.includes("setsid");
+        const shellCommand = getSandboxExecShellCommand(rawArgs);
+        return isRelaunch
+          ? ({ status: 0, stdout: "NEMOCLAW_SUPERVISOR_RELAUNCHED\n", stderr: "" } as never)
+          : shellCommand.includes("HTTP_CODE=$(curl")
+            ? ({
+                status: 0,
+                stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nSTOPPED\n",
+                stderr: "",
+              } as never)
+            : ({ status: 1, stdout: "", stderr: "unexpected command" } as never);
+      },
+    );
+    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({
+      name: "openclaw",
+      displayName: "OpenClaw",
+      forwardPort: 18789,
+      healthProbe: { url: "http://127.0.0.1:18789/health", port: 18789, timeout_seconds: 30 },
+    });
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "recovered-box",
+      agent: "openclaw",
+      dashboardPort: 18789,
+    });
+    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
+      status: 0,
+      output: runningForward,
+    });
+    vi.spyOn(openshellRuntime, "runOpenshell").mockReturnValue({ status: 0 } as never);
+
+    const result = withFakeOpenshellBinary(() =>
+      checkAndRecoverSandboxProcesses("recovered-box", {
+        quiet: true,
+        requestGatewaySupervisorAction,
+      }),
+    );
+
+    expect(result).toMatchObject({ checked: true, wasRunning: false, recovered: true });
+    expect(requestGatewaySupervisorAction).toHaveBeenCalledWith("recovered-box", "recover");
+    expect(requestGatewaySupervisorAction).toHaveBeenCalledWith("recovered-box", "probe");
+  });
 });
