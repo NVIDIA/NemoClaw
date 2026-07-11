@@ -317,7 +317,202 @@ describe("gateway websocket url host derivation", () => {
       expect(explicit).toContain("PRIVATE_URL=ws://10.200.0.2:18790");
       expect(explicit).toContain("PRIVATE_INSECURE=1");
       expect(explicit).toContain("PORT=18790");
-      expect(explicit).toContain("TOKEN=test-gateway-token");
+      expect(explicit).toContain("TOKEN=");
+      expect(explicit).not.toContain("test-gateway-token");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("withholds the gateway token from caller URLs during generic dispatch (#6413)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gwenv-generic-"));
+    try {
+      const runtimeEnv = writeRuntimeShellEnv(tmpDir);
+      const fakeBin = path.join(tmpDir, "bin");
+      fs.mkdirSync(fakeBin);
+      fs.writeFileSync(
+        path.join(fakeBin, "openclaw"),
+        [
+          "#!/bin/sh",
+          'printf "ARGS=%s URL=%s TOKEN=%s\\n" "$*" "${OPENCLAW_GATEWAY_URL:-unset}" "${OPENCLAW_GATEWAY_TOKEN:-unset}"',
+          'exit "${FAKE_OPENCLAW_EXIT:-0}"',
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const runGeneric = (sourceGatewayUrl: string, lateGatewayUrl?: string) =>
+        spawnSync(
+          "bash",
+          [
+            "--noprofile",
+            "--norc",
+            "-c",
+            [
+              `. ${JSON.stringify(runtimeEnv)}`,
+              ...(lateGatewayUrl === undefined
+                ? []
+                : [`builtin export OPENCLAW_GATEWAY_URL=${JSON.stringify(lateGatewayUrl)}`]),
+              "_nemoclaw_restore_mutable_config_perms() { :; }",
+              "openclaw devices list",
+              'printf "GUARD_EXIT=%s\\n" "$?"',
+            ].join("; "),
+          ],
+          {
+            encoding: "utf-8",
+            timeout: 5000,
+            env: {
+              ...process.env,
+              "BASH_FUNC_[%%": "() { /usr/bin/false; }",
+              "BASH_FUNC_command%%": "() { printf 'POISON_COMMAND_USED\\n'; }",
+              "BASH_FUNC_exit%%": "() { printf 'POISON_EXIT_USED\\n'; }",
+              "BASH_FUNC_export%%":
+                "() { case \"${OPENCLAW_GATEWAY_TOKEN-unset}\" in test-gateway-token) printf 'POISON_EXPORT_SAW_GENERATED\\n' ;; *) printf 'POISON_EXPORT_CALLED\\n' ;; esac; }",
+              "BASH_FUNC_return%%": "() { :; }",
+              PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+              FAKE_OPENCLAW_EXIT: "0",
+              OPENCLAW_GATEWAY_TOKEN: "ambient-gateway-token",
+              OPENCLAW_GATEWAY_URL: sourceGatewayUrl,
+            },
+          },
+        );
+
+      const trusted = runGeneric("ws://10.200.0.2:18790");
+      expect(trusted.status, trusted.stderr).toBe(0);
+      expect(trusted.stdout).toContain("ARGS=devices list URL=unset TOKEN=test-gateway-token");
+      expect(trusted.stdout).toContain("GUARD_EXIT=0");
+      expect(trusted.stdout).not.toContain("POISON_COMMAND_USED");
+      expect(trusted.stdout).not.toContain("POISON_EXIT_USED");
+      expect(trusted.stdout).toContain("POISON_EXPORT_CALLED");
+      expect(trusted.stdout).not.toContain("POISON_EXPORT_SAW_GENERATED");
+
+      const posix = spawnSync(
+        "/bin/sh",
+        [
+          "-c",
+          [
+            `. ${JSON.stringify(runtimeEnv)}`,
+            "_nemoclaw_restore_mutable_config_perms() { :; }",
+            "openclaw devices list",
+            'printf "GUARD_EXIT=%s\\n" "$?"',
+          ].join("; "),
+        ],
+        {
+          encoding: "utf-8",
+          timeout: 5000,
+          env: {
+            ...process.env,
+            PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+            BASH_VERSION: "caller-controlled",
+            "BASH_FUNC_exit%%": "() { printf 'POISON_EXIT_USED\\n'; }",
+            FAKE_OPENCLAW_EXIT: "7",
+            OPENCLAW_GATEWAY_TOKEN: "ambient-gateway-token",
+            OPENCLAW_GATEWAY_URL: "ws://10.200.0.2:18790",
+          },
+        },
+      );
+      expect(posix.status, posix.stderr).toBe(0);
+      expect(posix.stdout).toContain("ARGS=devices list URL=unset TOKEN=test-gateway-token");
+      expect(posix.stdout).toContain("GUARD_EXIT=7");
+      expect(posix.stderr).not.toContain("builtin");
+      expect(`${posix.stdout}\n${posix.stderr}`).not.toContain("POISON_EXIT_USED");
+
+      const explicitLoopback = runGeneric("ws://127.0.0.1:18790");
+      expect(explicitLoopback.status, explicitLoopback.stderr).toBe(0);
+      expect(explicitLoopback.stdout).toContain(
+        "ARGS=devices list URL=ws://127.0.0.1:18790 TOKEN=unset",
+      );
+      expect(explicitLoopback.stdout).toContain("GUARD_EXIT=0");
+      expect(explicitLoopback.stdout).not.toContain("POISON_EXPORT_SAW_GENERATED");
+
+      const userinfoSource = spawnSync(
+        "bash",
+        [
+          "--noprofile",
+          "--norc",
+          "-c",
+          [
+            `. ${JSON.stringify(runtimeEnv)}`,
+            'printf "TOKEN=%s\\n" "${OPENCLAW_GATEWAY_TOKEN:-}"',
+          ].join("; "),
+        ],
+        {
+          encoding: "utf-8",
+          timeout: 5000,
+          env: {
+            ...process.env,
+            OPENCLAW_GATEWAY_TOKEN: "ambient-gateway-token",
+            OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:1@evil.example.test",
+          },
+        },
+      );
+      expect(userinfoSource.status, userinfoSource.stderr).toBe(0);
+      expect(userinfoSource.stdout).toContain("TOKEN=\n");
+      expect(`${userinfoSource.stdout}\n${userinfoSource.stderr}`).not.toContain(
+        "test-gateway-token",
+      );
+      expect(`${userinfoSource.stdout}\n${userinfoSource.stderr}`).not.toContain(
+        "ambient-gateway-token",
+      );
+
+      const runWhatsApp = (sourceGatewayUrl: string) =>
+        spawnSync(
+          "bash",
+          [
+            "--noprofile",
+            "--norc",
+            "-c",
+            [
+              `. ${JSON.stringify(runtimeEnv)}`,
+              "openclaw channels login --channel whatsapp",
+              'printf "GUARD_EXIT=%s\\n" "$?"',
+            ].join("; "),
+          ],
+          {
+            encoding: "utf-8",
+            timeout: 5000,
+            env: {
+              ...process.env,
+              PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+              FAKE_OPENCLAW_EXIT: "0",
+              OPENCLAW_GATEWAY_TOKEN: "ambient-gateway-token",
+              OPENCLAW_GATEWAY_URL: sourceGatewayUrl,
+            },
+          },
+        );
+
+      const explicitWhatsApp = runWhatsApp("ws://127.0.0.1:18790");
+      expect(explicitWhatsApp.status, explicitWhatsApp.stderr).toBe(0);
+      expect(explicitWhatsApp.stdout).toContain(
+        "ARGS=channels login --channel whatsapp URL=ws://127.0.0.1:18790 TOKEN=test-gateway-token",
+      );
+      expect(explicitWhatsApp.stdout).toContain("GUARD_EXIT=0");
+      expect(`${explicitWhatsApp.stdout}\n${explicitWhatsApp.stderr}`).not.toContain(
+        "ambient-gateway-token",
+      );
+
+      const rejectedWhatsApp = runWhatsApp("wss://attacker.example.test:443");
+      expect(rejectedWhatsApp.status, rejectedWhatsApp.stderr).toBe(0);
+      expect(rejectedWhatsApp.stdout).toContain("GUARD_EXIT=1");
+      expect(rejectedWhatsApp.stdout).not.toContain("ARGS=channels login");
+      expect(`${rejectedWhatsApp.stdout}\n${rejectedWhatsApp.stderr}`).not.toContain(
+        "test-gateway-token",
+      );
+      expect(`${rejectedWhatsApp.stdout}\n${rejectedWhatsApp.stderr}`).not.toContain(
+        "ambient-gateway-token",
+      );
+
+      const attacker = runGeneric("ws://10.200.0.2:18790", "wss://attacker.example.test:443");
+      expect(attacker.status, attacker.stderr).toBe(0);
+      expect(attacker.stdout).toContain(
+        "ARGS=devices list URL=wss://attacker.example.test:443 TOKEN=unset",
+      );
+      expect(attacker.stdout).toContain("GUARD_EXIT=0");
+      expect(attacker.stdout).not.toContain("POISON_COMMAND_USED");
+      expect(attacker.stdout).not.toContain("POISON_EXIT_USED");
+      expect(attacker.stdout).toContain("POISON_EXPORT_CALLED");
+      expect(attacker.stdout).not.toContain("POISON_EXPORT_SAW_GENERATED");
+      expect(`${attacker.stdout}\n${attacker.stderr}`).not.toContain("test-gateway-token");
+      expect(`${attacker.stdout}\n${attacker.stderr}`).not.toContain("ambient-gateway-token");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
