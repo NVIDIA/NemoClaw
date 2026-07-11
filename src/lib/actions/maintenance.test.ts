@@ -148,7 +148,7 @@ describe("backupAll", () => {
     await expect(backupAll()).rejects.toThrow("exit:1");
 
     const logOutput = logSpy.mock.calls.flat().join("\n");
-    expect(logOutput).toContain("Skipping 'sb-stopped' (not running)");
+    expect(logOutput).toContain("Skipping 'sb-stopped' (not running");
     expect(logOutput).toContain("1 backed up, 1 failed, 1 skipped");
     expect(logOutput).toContain("start the sandbox/container");
     expect(logOutput).toContain("nemoclaw backup-all");
@@ -186,6 +186,7 @@ describe("backupAll", () => {
     expect(errorOutput).toContain("requires every registered sandbox to be backed up");
     expect(errorOutput).toContain("1 skipped sandbox(es) were not running");
     expect(errorOutput).toContain("Start each sandbox/container");
+    expect(errorOutput).toContain("rerun the installer or");
     expect(errorOutput).toContain("Resolve each skipped sandbox using its reason above");
     expect(errorOutput).not.toContain("prepare the upgrade manually");
   });
