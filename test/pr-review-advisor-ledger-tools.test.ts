@@ -114,7 +114,6 @@ function reviewMetadata(): Parameters<typeof normalizeReviewResult>[1] {
       simplificationSignals: [],
       workflowSignals: [],
       localizedPatchSignals: [],
-      monolithDeltas: [],
       driftEvidence: [],
       previousAdvisorReview: null,
       github: null,
@@ -200,7 +199,7 @@ describe("PR review ledger tools", () => {
     );
 
     expect(result).toMatchObject({
-      summary: { confidence: "low", recommendation: "merge_after_fixes" },
+      summary: { confidence: "low", recommendation: "info_only" },
       findings: [{ title: finding().title }],
       reviewCompleteness: { requiresHumanReview: true },
     });
@@ -690,7 +689,7 @@ describe("PR review ledger tools", () => {
       withCanonicalReviewLedgerFindings(drifted, ledger.snapshot()).findings[0]?.severity,
     ).toBe("warning");
     expect(withCanonicalReviewLedgerFindings(drifted, ledger.snapshot()).summary).toMatchObject({
-      recommendation: "merge_after_fixes",
+      recommendation: "merge_as_is",
       topItem: "Refusal status is masked",
     });
   });
