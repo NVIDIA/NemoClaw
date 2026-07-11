@@ -39,6 +39,8 @@ export interface StopHostGatewayOptions {
   pids?: Iterable<number>;
   pidFile?: string;
   pollIntervalMs?: number;
+  /** Keep PID/runtime evidence when a PID-file process does not match the cleanup target. */
+  preserveRuntimeFilesOnNonMatching?: boolean;
   stateDir?: string;
   termWaitMs?: number;
   /** Whether to read and act on the resolved pid file. */
@@ -324,7 +326,12 @@ export function stopHostGatewayProcesses(
       )
     ) {
       result.skippedNonMatchingPids.push(pid);
-      if (clearRuntimeState && sources.has("pid-file") && !clearedRuntimeFiles) {
+      if (
+        clearRuntimeState &&
+        !options.preserveRuntimeFilesOnNonMatching &&
+        sources.has("pid-file") &&
+        !clearedRuntimeFiles
+      ) {
         clearRuntimeFiles(pidFile, stateDir);
         clearedRuntimeFiles = true;
       }

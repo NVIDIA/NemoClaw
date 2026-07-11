@@ -100,10 +100,12 @@ export function cleanupGatewayAfterLastSandbox(
     const stopOptions: {
       openShellGatewayName?: string;
       openShellGatewayPort?: number;
+      preserveRuntimeFilesOnNonMatching: true;
       usePgrepFallback: false;
       stateDir?: string;
       pidFile?: string;
     } = {
+      preserveRuntimeFilesOnNonMatching: true,
       usePgrepFallback: false,
     };
     if (perGatewayState) {
