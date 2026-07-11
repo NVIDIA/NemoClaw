@@ -87,6 +87,60 @@ export type SandboxReadinessFailureReportDeps = {
   exitProcess(code: number): never;
 };
 
+export type SandboxReadinessTerminalResolution =
+  | "deferred_to_docker_gpu_patch"
+  | "terminal_failure_deleted"
+  | "terminal_failure_retained"
+  | "timed_out_deleted"
+  | "timed_out_retained";
+
+/** Map the readiness reason and cleanup outcome into the receipt terminal state. */
+function readinessTerminalResolution(
+  readiness: CreatedSandboxReadinessResult,
+  deleted: boolean,
+): SandboxReadinessTerminalResolution {
+  if (readiness.reason === "terminal_failure_phase") {
+    return deleted ? "terminal_failure_deleted" : "terminal_failure_retained";
+  }
+  return deleted ? "timed_out_deleted" : "timed_out_retained";
+}
+
+/** Name the readiness gate that blocked the created sandbox from becoming Ready. */
+function readinessGate(readiness: CreatedSandboxReadinessResult): string {
+  if (readiness.reason === "terminal_failure_phase") {
+    const phase =
+      typeof readiness.failurePhase === "string" && readiness.failurePhase.length > 0
+        ? readiness.failurePhase
+        : "terminal_failure";
+    return `sandbox_list:${phase}`;
+  }
+  return "sandbox_list:not_ready_timeout";
+}
+
+/**
+ * Format the created-but-not-ready receipt so day-0 onboard failures retain a
+ * stable terminal state: the created sandbox identity, last readiness gate,
+ * cleanup result, and retry boundary are all visible in one block (#3344).
+ */
+function formatCreatedSandboxReadinessReceipt(options: {
+  sandboxName: string;
+  readiness: CreatedSandboxReadinessResult;
+  createStatus: number;
+  timeoutSecs: number;
+  terminalResolution: SandboxReadinessTerminalResolution;
+}): readonly string[] {
+  return [
+    "  Sandbox lifecycle receipt:",
+    `    state: created_but_not_ready`,
+    `    sandbox: ${options.sandboxName}`,
+    `    readiness_gate: ${readinessGate(options.readiness)}`,
+    `    readiness_reason: ${options.readiness.reason}`,
+    `    create_stream_status: ${options.createStatus}`,
+    `    timeout_seconds: ${options.timeoutSecs}`,
+    `    terminal_resolution: ${options.terminalResolution}`,
+  ];
+}
+
 /**
  * Report a sandbox that never reached Ready: print the readiness failure and
  * create diagnostics, then either defer cleanup to the Docker-GPU patch or
@@ -102,14 +156,43 @@ export function reportSandboxReadinessFailure(
     backupPath: options.restoreBackupPath,
   });
   if (options.useDockerGpuPatch) {
+    for (const line of formatCreatedSandboxReadinessReceipt({
+      sandboxName: options.sandboxName,
+      readiness: options.readiness,
+      createStatus: options.createStatus,
+      timeoutSecs: options.timeoutSecs,
+      terminalResolution: "deferred_to_docker_gpu_patch",
+    })) {
+      deps.error(line);
+    }
     deps.printDockerGpuReadinessFailure();
   } else {
     // Clean up non-GPU failures after preserving local diagnostics so the
     // next onboard retry with the same name does not fail on "sandbox already exists".
     const delResult = deps.deleteSandbox(options.sandboxName);
     if (delResult.status === 0) {
-      deps.error("  The failed sandbox has been removed; retry will recreate it.");
+      for (const line of formatCreatedSandboxReadinessReceipt({
+        sandboxName: options.sandboxName,
+        readiness: options.readiness,
+        createStatus: options.createStatus,
+        timeoutSecs: options.timeoutSecs,
+        terminalResolution: readinessTerminalResolution(options.readiness, true),
+      })) {
+        deps.error(line);
+      }
+      deps.error(
+        `  Deleted sandbox '${options.sandboxName}' after the readiness gate failed; retry will recreate it.`,
+      );
     } else {
+      for (const line of formatCreatedSandboxReadinessReceipt({
+        sandboxName: options.sandboxName,
+        readiness: options.readiness,
+        createStatus: options.createStatus,
+        timeoutSecs: options.timeoutSecs,
+        terminalResolution: readinessTerminalResolution(options.readiness, false),
+      })) {
+        deps.error(line);
+      }
       deps.error("  Could not remove the failed sandbox. Manual cleanup:");
       deps.error(`    openshell sandbox delete "${options.sandboxName}"`);
     }

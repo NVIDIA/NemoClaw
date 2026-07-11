@@ -77,11 +77,25 @@ describe("live E2E target matrix", () => {
 
   it("builds the default live matrix from fixture-supported targets only", () => {
     expect(buildLiveTargetMatrix().map((entry) => entry.id)).toEqual([
+      "ubuntu-policy-custom-missing-presets-negative",
       "ubuntu-repo-cloud-langchain-deepagents-code",
       "ubuntu-repo-cloud-openclaw",
       "ubuntu-repo-docker-post-reboot-recovery",
     ]);
     expect(buildLiveTargetMatrix()[0]).toMatchObject({
+      id: "ubuntu-policy-custom-missing-presets-negative",
+      runner: "ubuntu-latest",
+      platform: "ubuntu-local",
+      install: "repo-current",
+      runtime: "docker-running",
+      onboarding: "cloud-openclaw-policy-custom-missing-presets",
+      expectedStateId: "onboarding-failure-policy-presets-required",
+      requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
+      supported: true,
+      supportReasons: [],
+      pendingRuntimeSuites: [],
+    });
+    expect(buildLiveTargetMatrix()[1]).toMatchObject({
       id: "ubuntu-repo-cloud-langchain-deepagents-code",
       runner: "ubuntu-latest",
       platform: "ubuntu-local",
@@ -94,7 +108,7 @@ describe("live E2E target matrix", () => {
       supportReasons: [],
       pendingRuntimeSuites: ["smoke", "inference", "terminal-agent", "deepagents-code-policy"],
     });
-    expect(buildLiveTargetMatrix()[1]).toMatchObject({
+    expect(buildLiveTargetMatrix()[2]).toMatchObject({
       id: "ubuntu-repo-cloud-openclaw",
       runner: "ubuntu-latest",
       platform: "ubuntu-local",
@@ -111,7 +125,7 @@ describe("live E2E target matrix", () => {
     // confirm the lifecycle whitelist + post-reboot-recovery target
     // are wired together; the actual RED/GREEN behavior is exercised
     // by the live runner (gates on the fix landing in src/lib/).
-    expect(buildLiveTargetMatrix()[2]).toMatchObject({
+    expect(buildLiveTargetMatrix()[3]).toMatchObject({
       id: "ubuntu-repo-docker-post-reboot-recovery",
       runner: "ubuntu-latest",
       platform: "ubuntu-local",
@@ -142,6 +156,7 @@ describe("live E2E target matrix", () => {
     expect(lines.length, "live matrix output must be a single line").toBe(1);
     const parsed = JSON.parse(lines[0]);
     expect(parsed.map((entry: { id: string }) => entry.id)).toEqual([
+      "ubuntu-policy-custom-missing-presets-negative",
       "ubuntu-repo-cloud-langchain-deepagents-code",
       "ubuntu-repo-cloud-openclaw",
       "ubuntu-repo-docker-post-reboot-recovery",

@@ -83,6 +83,11 @@ const onboardingFailureGatewayPortConflict: ExpectedState = {
   sandbox: { expected: "absent" },
 };
 
+const onboardingFailurePolicyPresetsRequired: ExpectedState = {
+  id: "onboarding-failure-policy-presets-required",
+  cli: { installed: true },
+};
+
 // Post-reboot recovery contract for #4423. After the lifecycle phase
 // stops the labeled sandbox container, the host-side invariants this
 // target locks down are:
@@ -121,6 +126,7 @@ const REGISTRY: readonly ExpectedState[] = [
   preflightFailureNoSandbox,
   onboardingFailureInvalidNvidiaKey,
   onboardingFailureGatewayPortConflict,
+  onboardingFailurePolicyPresetsRequired,
   postRebootRecoveryReady,
 ];
 

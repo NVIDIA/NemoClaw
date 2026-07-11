@@ -22,6 +22,7 @@ export default defineConfig({
       },
     ],
     environment: "node",
+    globalSetup: path.resolve(import.meta.dirname, "../test/helpers/vitest-temp-root.ts"),
     include: ["src/**/*.test.ts"],
   },
 });

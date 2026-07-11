@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 import { generateHermesConfig } from "../agents/hermes/config/generate.ts";
+import { discoverModelSpecificSetups } from "../agents/hermes/config/model-specific-setup.ts";
 import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../src/lib/hermes-proxy-api-key";
 import {
   applyCompatibleEndpointContextWindow,
@@ -1101,6 +1102,38 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.model.default).toBe("fixture/hermes-model");
     expect(config.hermesCompat).toBeUndefined();
     expect(JSON.stringify(config)).not.toContain("future");
+  });
+
+  it("matches bounded bare model-family prefixes for Hermes manifests", () => {
+    const blueprintDir = path.join(tmpDir, "fixture-blueprint");
+    const registryDir = writeRegistryManifest(blueprintDir, "hermes/family.json", {
+      id: "fixture-hermes-family",
+      agent: "hermes",
+      description: "Fixture Hermes model family",
+      match: { modelIdPrefixes: ["gpt-5", "o3"] },
+      effects: { hermesCompat: {} },
+    });
+    const env = buildHermesTestEnv({ NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR: registryDir });
+
+    for (const [model, expectedMatches] of [
+      ["gpt-5.4-turbo", 1],
+      ["azure/gpt-5.4", 1],
+      ["openai/o3-mini", 1],
+      ["gpt-50", 0],
+      ["o30", 0],
+    ] as const) {
+      const matches = discoverModelSpecificSetups(
+        "hermes",
+        {
+          model,
+          providerKey: "custom",
+          inferenceApi: "openai-completions",
+          baseUrl: "https://inference.local/v1",
+        },
+        { env, scriptDir: SCRIPT_DIR },
+      );
+      expect(matches, model).toHaveLength(expectedMatches);
+    }
   });
 
   it("discovers the bundled registry from the script path when cwd differs", () => {

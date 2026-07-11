@@ -12,6 +12,37 @@ import {
 const listen = useOpenAiValidationTestServers();
 
 describe("OpenAI validation keepalive sequence", () => {
+  it("uses the GPT-5 reply-budget field for native tool-call validation (#6642)", async () => {
+    let observedBody = "";
+    const server = http.createServer((request, response) => {
+      request.setEncoding("utf8");
+      request.on("data", (chunk) => {
+        observedBody += chunk;
+      });
+      request.on("end", () => {
+        response.end('{"choices":[{"message":{"tool_calls":[{}]}}]}');
+      });
+    });
+    const port = await listen(server);
+    const harness = createOpenAiValidationTestDeps();
+
+    const result = await probeOpenAiLikeEndpointWithValidationSession(
+      `http://provider.example.test:${port}/v1`,
+      "gpt-5.4",
+      "test-key",
+      { skipResponsesProbe: true, requireChatCompletionsToolCalling: true },
+      harness,
+    );
+
+    expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+    expect(JSON.parse(observedBody)).toMatchObject({
+      max_completion_tokens: 256,
+    });
+    expect(JSON.parse(observedBody)).not.toHaveProperty("max_tokens");
+    expect(JSON.parse(observedBody)).not.toHaveProperty("temperature");
+    expect(harness.legacyProbe).not.toHaveBeenCalled();
+  });
+
   it("uses one connection for Responses semantic fallback and Chat success", async () => {
     let connections = 0;
     const paths: string[] = [];
