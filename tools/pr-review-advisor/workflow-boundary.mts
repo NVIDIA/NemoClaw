@@ -193,6 +193,7 @@ export function validatePrReviewAdvisorWorkflowBoundary(
   );
   requireJobEnvValue(errors, reviewJob, "PR_REVIEW_ADVISOR_COMMENT_TITLE", "PR Review Advisor");
   requireJobEnvValue(errors, reviewJob, "PR_REVIEW_ADVISOR_COMMENT_LABEL", "PR review advisor");
+  requireJobEnvValue(errors, reviewJob, "PR_REVIEW_ADVISOR_WORKFLOW_NAME", "PR Review / Advisor");
   requireJobEnvValue(
     errors,
     reviewJob,

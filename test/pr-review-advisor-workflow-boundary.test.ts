@@ -194,7 +194,7 @@ fi
     }
   });
 
-  it("loads previous-review context only in the publishing advisor lane", () => {
+  it("pins previous-review context to the publishing workflow", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-publisher-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
     const workflow = fs
@@ -202,12 +202,19 @@ fi
       .replace(
         "PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW: ${{ matrix.advisor.publish_comment }}",
         "PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW: true",
+      )
+      .replace(
+        'PR_REVIEW_ADVISOR_WORKFLOW_NAME: "PR Review / Advisor"',
+        'PR_REVIEW_ADVISOR_WORKFLOW_NAME: "Other Workflow"',
       );
     fs.writeFileSync(workflowPath, workflow);
 
     try {
-      expect(validatePrReviewAdvisorWorkflowBoundary(workflowPath)).toContain(
-        "review job env.PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW must be ${{ matrix.advisor.publish_comment }}",
+      expect(validatePrReviewAdvisorWorkflowBoundary(workflowPath)).toEqual(
+        expect.arrayContaining([
+          "review job env.PR_REVIEW_ADVISOR_WORKFLOW_NAME must be PR Review / Advisor",
+          "review job env.PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW must be ${{ matrix.advisor.publish_comment }}",
+        ]),
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
