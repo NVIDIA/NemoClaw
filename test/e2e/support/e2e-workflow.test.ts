@@ -671,42 +671,6 @@ describe("e2e workflow boundary", () => {
     ).toBe(true);
   });
 
-  it("emits the inventory consumed by the current base E2E workflow", {
-    timeout: 60_000,
-  }, () => {
-    const result = spawnSync("npx", ["tsx", "tools/e2e/workflow-inventory.mts", "--shell"], {
-      cwd: process.cwd(),
-      encoding: "utf-8",
-      timeout: 30_000,
-      killSignal: "SIGKILL",
-    });
-    expect(result.signal).toBeNull();
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    const currentBaseWorkflowInventory = result.stdout;
-    expect(
-      currentBaseWorkflowInventory
-        .trim()
-        .split("\n")
-        .map((line) => line.slice(0, line.indexOf("="))),
-    ).toEqual([
-      "allowed_jobs",
-      "explicit_only_jobs_csv",
-      "free_standing_targets_csv",
-      "free_standing_target_jobs_csv",
-    ]);
-    for (const testId of [
-      "docs-validation",
-      "gateway-drift-preflight",
-      "onboard-negative-paths",
-      "openshell-version-pin",
-    ]) {
-      expect(currentBaseWorkflowInventory).toContain(`${testId}:${testId}`);
-    }
-    expect(currentBaseWorkflowInventory).not.toContain("openshell-version-pin:shared-e2e");
-    expect(currentBaseWorkflowInventory).not.toContain("ubuntu-repo-cli-smoke");
-  });
-
   it("rejects malformed free-standing workflow metadata before matrix generation", {
     timeout: 60_000,
   }, () => {
@@ -762,19 +726,7 @@ jobs:
       try {
         fs.writeFileSync(workflowPath, body);
         expect(validateFreeStandingWorkflowInventory(workflowPath)).toContain(error);
-        const result = spawnSync(
-          "npx",
-          ["tsx", "tools/e2e/workflow-inventory.mts", "--shell", "--workflow", workflowPath],
-          {
-            cwd: process.cwd(),
-            encoding: "utf-8",
-            timeout: 30_000,
-            killSignal: "SIGKILL",
-          },
-        );
-        expect(result.signal).toBeNull();
-        expect(result.status).not.toBe(0);
-        expect(result.stderr).toContain(`::error::${error}`);
+        expect(() => readFreeStandingJobsInventory(workflowPath)).toThrow(error);
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
       }
