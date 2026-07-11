@@ -432,19 +432,19 @@ print(block)
     }
   });
 
-  it("self-hosted setup docs expose reasoning mode for scripted compatible endpoints (#3279)", () => {
+  it("compatible endpoint docs expose reasoning mode for scripted setup (#3279)", () => {
     const body = readFileSync(
       path.join(
         import.meta.dirname,
         "..",
         "docs",
         "inference",
-        "local-compatible-inference-setup.mdx",
+        "set-up-openai-compatible-endpoint.mdx",
       ),
       "utf-8",
     );
     expect(body).toContain("| `NEMOCLAW_REASONING` |");
-    expect(body).toContain("Set `NEMOCLAW_REASONING=true` when the compatible endpoint");
+    expect(body).toContain("Set `NEMOCLAW_REASONING=true` when the endpoint");
   });
 
   // PRA-2 on #5712 follow-up: a canonical launch-claims page that lives in the

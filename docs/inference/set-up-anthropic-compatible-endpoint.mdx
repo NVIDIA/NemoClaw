@@ -1,0 +1,89 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Set Up an Anthropic-Compatible Endpoint"
+sidebar-title: "Anthropic-Compatible Endpoint"
+description: "Connect NemoClaw to a custom Anthropic-compatible inference endpoint."
+description-agent: "Shows how to configure an Anthropic-compatible endpoint for NemoClaw and explains the OpenClaw, Hermes, and Deep Agents runtime differences."
+keywords: ["nemoclaw anthropic compatible", "custom anthropic endpoint", "anthropic messages endpoint"]
+content:
+  type: "how_to"
+---
+import { AgentOnly } from "../_components/AgentGuide";
+
+Use the custom Anthropic-compatible provider to configure a custom base URL and model with `COMPATIBLE_ANTHROPIC_API_KEY`.
+The runtime API differs by agent capability.
+
+## Run Onboarding
+
+Start the onboard wizard.
+
+```bash
+$$nemoclaw onboard
+```
+
+Select **Other Anthropic-compatible endpoint**.
+Enter the endpoint base URL, model ID, and API key when prompted.
+Use any non-empty placeholder such as `dummy` when the endpoint does not require authentication.
+
+<AgentOnly variant="openclaw">
+
+## Understand OpenClaw Validation
+
+OpenClaw uses the native Anthropic Messages frontend for this provider.
+NemoClaw validates the endpoint with a non-streaming `/v1/messages` request and then a `stream: true` request to the same path.
+
+The streaming check requires exactly one `message_start`, at least one `content_block_delta`, and one `message_stop` in a well-formed server-sent event sequence.
+An endpoint whose non-streaming response works but whose streaming response is malformed fails during onboarding.
+
+Set `NEMOCLAW_REASONING=true` to skip the streaming check for a reasoning-only model.
+Agent runs still use streaming, so this setting moves any streaming defect to runtime.
+
+Refer to [Onboarding fails with duplicate Anthropic message_start events](../../reference/troubleshooting#onboarding-fails-with-duplicate-anthropic-message_start-events) when the streaming validation fails with duplicate start events.
+
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+
+## Understand Hermes Routing
+
+Hermes uses the managed OpenAI Chat Completions frontend at `https://inference.local/v1` for this provider.
+NemoClaw validates `/v1/chat/completions`, verifies the same path during inference setup, and registers it with OpenShell as `type=openai` using `OPENAI_BASE_URL`.
+The route keeps `COMPATIBLE_ANTHROPIC_API_KEY` as its credential binding.
+
+This path avoids duplicate Anthropic SSE `message_start` events.
+If the endpoint only implements Anthropic Messages, onboarding stops instead of creating a Hermes sandbox with an unusable runtime route.
+
+OpenClaw custom Anthropic routes and first-party Anthropic routes remain on the native Anthropic Messages frontend.
+AWS Bedrock routes keep their existing OpenAI-compatible adapter behavior.
+
+</AgentOnly>
+
+<AgentOnly variant="deepagents">
+
+## Understand Deep Agents Routing
+
+Deep Agents Code supports only OpenAI-compatible inference for this provider.
+NemoClaw validates `/v1/chat/completions`, coerces the route to `openai-completions`, and writes `https://inference.local/v1` as the provider base URL in `/sandbox/.deepagents/config.toml`.
+
+If the endpoint implements only Anthropic Messages, onboarding stops instead of creating a Deep Agents sandbox with an unusable runtime route.
+
+</AgentOnly>
+
+## Run Non-Interactive Onboarding
+
+Set `NEMOCLAW_PROVIDER=anthropicCompatible` and provide the endpoint URL, model, and credential.
+
+```bash
+NEMOCLAW_PROVIDER=anthropicCompatible \
+  NEMOCLAW_ENDPOINT_URL=http://localhost:8080 \
+  NEMOCLAW_MODEL=my-model \
+  COMPATIBLE_ANTHROPIC_API_KEY=dummy \
+  $$nemoclaw onboard --non-interactive
+```
+
+## Related Topics
+
+- [Meet Custom Endpoint Security Requirements](custom-endpoint-security) before saving a public custom endpoint.
+- [Understand Provider Validation](../validate-inference/understand-provider-validation) for the provider validation workflow.
+- [Verify the Inference Route](../validate-inference/verify-inference-route) after setup.
