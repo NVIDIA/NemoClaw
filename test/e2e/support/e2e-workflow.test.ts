@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 import {
   evaluateE2eWorkflowDispatchSelectors,
+  formatFreeStandingJobsInventoryForShell,
   readFreeStandingJobsInventory,
   validateE2eWorkflowBoundary,
   validateFreeStandingWorkflowInventory,
@@ -669,6 +670,20 @@ describe("e2e workflow boundary", () => {
         Object.keys((readWorkflow().jobs as Record<string, unknown>) ?? {}).includes(job),
       ),
     ).toBe(true);
+    const legacyShellInventory = formatFreeStandingJobsInventoryForShell(inventory);
+    expect(
+      legacyShellInventory
+        .trim()
+        .split("\n")
+        .map((line) => line.slice(0, line.indexOf("="))),
+    ).toEqual([
+      "allowed_jobs",
+      "explicit_only_jobs_csv",
+      "free_standing_targets_csv",
+      "free_standing_target_jobs_csv",
+    ]);
+    expect(legacyShellInventory).toContain("openshell-version-pin:openshell-version-pin");
+    expect(legacyShellInventory).not.toContain("openshell-version-pin:hermetic");
   });
 
   it("rejects malformed free-standing workflow metadata before matrix generation", {

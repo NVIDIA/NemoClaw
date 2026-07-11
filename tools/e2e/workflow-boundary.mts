@@ -248,10 +248,13 @@ export function readFreeStandingJobsInventory(
 export function formatFreeStandingJobsInventoryForShell(
   inventory: FreeStandingJobsInventory,
 ): string {
-  const targetJobMappings = [...inventory.targetToJob].map(([target, job]) => `${target}:${job}`);
+  // The trusted PR controller runs the base workflow while checking out PR code. Keep this
+  // compatibility format consumable by that older workflow until it no longer calls --shell.
+  const targetJobMappings = [...inventory.targetToJob].map(([target, job]) => {
+    return `${target}:${job === HERMETIC_EXECUTION_JOB ? target : job}`;
+  });
   return [
     `allowed_jobs=${inventory.allowedJobs.join(",")}`,
-    `execution_jobs=${inventory.executionJobs.join(",")}`,
     `explicit_only_jobs_csv=${inventory.explicitOnlyJobs.join(",")}`,
     `free_standing_targets_csv=${inventory.freeStandingTargets.join(",")}`,
     `free_standing_target_jobs_csv=${targetJobMappings.join(",")}`,
