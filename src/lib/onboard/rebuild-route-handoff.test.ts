@@ -145,6 +145,15 @@ describe("createProviderRecoveryReceiptLedger", () => {
       }),
     ).toBeNull();
     expect(
+      ledger.activate(mint({}, "api"), {
+        target: receiptTarget({
+          route: { ...registryRoute(), preferredInferenceApi: "openai-responses" },
+        }),
+        sessionId: "sess-a",
+        nowMs: 500,
+      }),
+    ).toBeNull();
+    expect(
       ledger.activate(null, { target: receiptTarget(), sessionId: "sess-a", nowMs: 500 }),
     ).toBeNull();
   });

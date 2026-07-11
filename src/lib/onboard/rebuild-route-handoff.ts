@@ -121,7 +121,8 @@ function routesMatch(left: RegistryInferenceRoute, right: RegistryInferenceRoute
   return (
     left.provider === right.provider &&
     left.model === right.model &&
-    left.endpointUrl === right.endpointUrl
+    left.endpointUrl === right.endpointUrl &&
+    left.preferredInferenceApi === right.preferredInferenceApi
   );
 }
 
