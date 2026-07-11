@@ -104,7 +104,7 @@ test("TC-INF-05 real NVIDIA key is isolated from sandbox env, process list, and 
     "const digest=(value)=>crypto.createHash('sha256').update(salt).update(value).digest('hex')",
     "if(!len||!salt||!target){console.log('SCAN_CONFIG_MISSING');process.exit(0)}",
     "let out=''",
-    "try{out=execFileSync('sh',['-lc','find /sandbox /home /tmp -type f -size -1M 2>/dev/null | head -200'],{encoding:'utf8'})}catch{console.log('SCAN_ERROR');process.exit(0)}",
+    "try{out=execFileSync('sh',['-lc','find /tmp /sandbox /home -type f -size -1M 2>/dev/null | head -200'],{encoding:'utf8'})}catch{console.log('SCAN_ERROR');process.exit(0)}",
     "for(const file of out.trim().split(/\\n/).filter(Boolean)){try{const content=fs.readFileSync(file,'utf8');for(let i=0;i<=content.length-len;i++){if(digest(content.slice(i,i+len))===target){console.log('FOUND:'+file);break}}}catch{}}",
     "console.log('SCAN_DONE')",
   ].join(";");
