@@ -61,6 +61,7 @@ export interface SandboxGpuCreateFlowInput {
   prebuild: SandboxPrebuildResult;
   restoreBackupPath: string | null;
   terminalAgent: boolean;
+  persistStartupCommand?: boolean;
 }
 
 export interface SandboxGpuCreateFlowDeps {
@@ -150,6 +151,11 @@ export async function runSandboxGpuCreateFlow(
     }
     const dockerGpuCreatePatch = createDockerGpuSandboxCreatePatch({
       route,
+      // A startup-only container swap cannot safely reproduce OpenShell's
+      // native GPU attachment. The compatibility route already recreates the
+      // container with its GPU envelope, while the no-GPU route can use the
+      // restart-safe startup recreation from #6625.
+      persistStartupCommand: input.persistStartupCommand === true && route !== "native",
       sandboxName: input.sandboxName,
       gpuDevice: input.sandboxGpuConfig.sandboxGpuDevice,
       openshellSandboxCommand: input.sandboxStartupCommand,

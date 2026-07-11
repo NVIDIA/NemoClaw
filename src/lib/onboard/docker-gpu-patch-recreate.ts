@@ -26,6 +26,7 @@ import type {
   DockerContainerInspect,
   DockerGpuPatchDeps,
   DockerGpuPatchFailureContext,
+  DockerGpuPatchMode,
   DockerGpuPatchResult,
 } from "./docker-gpu-patch-types";
 import { waitForOpenShellSupervisorReconnect } from "./docker-gpu-supervisor-reconnect";
@@ -136,7 +137,7 @@ export function getDockerGpuPatchFailureContext(
   return null;
 }
 
-export function recreateOpenShellDockerSandboxWithGpu(
+export function recreateOpenShellDockerSandboxContainer(
   options: {
     sandboxName: string;
     gpuDevice?: string | null;
@@ -145,6 +146,7 @@ export function recreateOpenShellDockerSandboxWithGpu(
     openshellSandboxCommand?: readonly string[] | null;
     backend?: "generic" | "jetson";
     dockerDesktopWsl?: boolean;
+    modeOverride?: DockerGpuPatchMode;
   },
   deps: DockerGpuPatchDeps = {},
 ): DockerGpuPatchResult {
@@ -165,15 +167,17 @@ export function recreateOpenShellDockerSandboxWithGpu(
     const image = String(inspect.Config?.Image || "").trim();
     if (!image) throw new Error("OpenShell sandbox container inspect did not include an image.");
 
-    const selection = selectDockerGpuPatchMode(
-      {
-        image,
-        device: options.gpuDevice,
-        backend: options.backend,
-        dockerDesktopWsl: options.dockerDesktopWsl,
-      },
-      deps,
-    );
+    const selection = options.modeOverride
+      ? { mode: options.modeOverride, attempts: [] }
+      : selectDockerGpuPatchMode(
+          {
+            image,
+            device: options.gpuDevice,
+            backend: options.backend,
+            dockerDesktopWsl: options.dockerDesktopWsl,
+          },
+          deps,
+        );
     context.modeAttempts = selection.attempts;
     context.selectedMode = selection.mode;
     if (!selection.mode) {
@@ -191,7 +195,7 @@ export function recreateOpenShellDockerSandboxWithGpu(
     cloneOptions.openshellSandboxCommand = options.openshellSandboxCommand ?? null;
     const sandboxFallbackDns = d.detectSandboxFallbackDns();
     if (sandboxFallbackDns) cloneOptions.sandboxFallbackDns = sandboxFallbackDns;
-    if (options.backend === "jetson") {
+    if (selection.mode.kind !== "startup-command" && options.backend === "jetson") {
       const tegraGroupGids = d.detectTegraDeviceGroupGids();
       if (tegraGroupGids.length > 0) {
         cloneOptions.extraGroupGids = tegraGroupGids;
@@ -234,8 +238,12 @@ export function recreateOpenShellDockerSandboxWithGpu(
         { newContainerId: originalName, backupContainerName, originalName },
         deps,
       );
+      const containerDescription =
+        selection.mode.kind === "startup-command"
+          ? "recreated sandbox container"
+          : "GPU-enabled sandbox container";
       throw new Error(
-        `Could not start GPU-enabled sandbox container: ${resultText(runResult)}; ${
+        `Could not start ${containerDescription}: ${resultText(runResult)}; ${
           context.rolledBack
             ? "pre-patch sandbox restored"
             : "rollback failed; pre-patch sandbox was NOT restored"
@@ -252,7 +260,11 @@ export function recreateOpenShellDockerSandboxWithGpu(
         deps,
       );
     if (!newContainerId) {
-      throw new Error("GPU-enabled sandbox container started, but Docker did not report its ID.");
+      const containerDescription =
+        selection.mode.kind === "startup-command"
+          ? "Recreated sandbox container"
+          : "GPU-enabled sandbox container";
+      throw new Error(`${containerDescription} started, but Docker did not report its ID.`);
     }
     context.newContainerId = newContainerId;
     const selectedMode = selection.mode;
@@ -286,3 +298,8 @@ export function recreateOpenShellDockerSandboxWithGpu(
     throw decoratePatchError(error instanceof Error ? error : new Error(String(error)), context);
   }
 }
+
+export const recreateOpenShellDockerSandboxWithGpu: (
+  options: Omit<Parameters<typeof recreateOpenShellDockerSandboxContainer>[0], "modeOverride">,
+  deps?: DockerGpuPatchDeps,
+) => DockerGpuPatchResult = recreateOpenShellDockerSandboxContainer;

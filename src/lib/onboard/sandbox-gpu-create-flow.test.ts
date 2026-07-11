@@ -172,6 +172,40 @@ describe("runSandboxGpuCreateFlow fallback eligibility", () => {
     vi.clearAllMocks();
   });
 
+  it("persists the Hermes startup command on the no-GPU Docker route", async () => {
+    const input = createInput();
+    input.sandboxGpuConfig = {
+      ...input.sandboxGpuConfig,
+      mode: "0",
+      sandboxGpuEnabled: false,
+    };
+    input.gpuRoutePlan = "none";
+    input.initialGpuRoute = "none";
+    input.createArgv = ["openshell", "sandbox", "create"];
+    input.persistStartupCommand = true;
+
+    await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
+      route: "none",
+    });
+
+    expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledWith(
+      expect.objectContaining({ route: "none", persistStartupCommand: true }),
+    );
+  });
+
+  it("does not replace a native GPU container solely to persist its startup command", async () => {
+    const input = createInput();
+    input.persistStartupCommand = true;
+
+    await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
+      route: "native",
+    });
+
+    expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledWith(
+      expect.objectContaining({ route: "native", persistStartupCommand: false }),
+    );
+  });
+
   it.each([
     {
       failure: "image build",

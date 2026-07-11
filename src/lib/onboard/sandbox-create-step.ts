@@ -95,6 +95,8 @@ export async function runSandboxCreateStep(
   });
   const dockerGpuCreatePatch = deps.createDockerGpuPatch({
     route: context.useDockerGpuPatch ? "compatibility" : "native",
+    persistStartupCommand:
+      context.prebuild.dockerDriverGateway === true && context.agent?.name === "hermes",
     sandboxName: context.sandboxName,
     gpuDevice: context.gpuDevice,
     openshellSandboxCommand: sandboxStartupCommand,

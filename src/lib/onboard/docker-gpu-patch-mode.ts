@@ -45,6 +45,14 @@ export function buildDockerGpuMode(
   device?: string | null,
   options: { backend?: DockerGpuPatchBackend } = {},
 ): DockerGpuPatchMode {
+  if (kind === "startup-command") {
+    return {
+      kind,
+      label: "persistent sandbox startup command",
+      device: "",
+      args: [],
+    };
+  }
   const dockerDevice = normalizeGpuDeviceForDocker(device);
   if (kind === "gpus") {
     const gpuValue = dockerDevice === "all" ? "all" : `device=${dockerDevice}`;

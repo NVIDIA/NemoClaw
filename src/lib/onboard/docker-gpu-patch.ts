@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { dockerCapture } from "../adapters/docker";
+import { createDockerGpuDiagnosticRedactor } from "./docker-gpu-diagnostic-redaction";
 import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
 import type {
   DockerContainerState,
@@ -31,6 +32,7 @@ import {
 } from "./docker-gpu-patch-diagnostics";
 import {
   getDockerGpuPatchFailureContext,
+  recreateOpenShellDockerSandboxContainer,
   recreateOpenShellDockerSandboxWithGpu,
 } from "./docker-gpu-patch-recreate";
 import {
@@ -56,6 +58,7 @@ export {
 } from "./docker-gpu-patch-mode";
 export {
   getDockerGpuPatchFailureContext,
+  recreateOpenShellDockerSandboxContainer,
   recreateOpenShellDockerSandboxWithGpu,
 } from "./docker-gpu-patch-recreate";
 export type {
@@ -194,10 +197,14 @@ export function printDockerGpuPatchFailureAndExit(
     },
     inspectDeps,
   );
+  const errorMessage =
+    error instanceof Error && error.message
+      ? createDockerGpuDiagnosticRedactor().redactText(error.message)
+      : "";
   console.error("");
   console.error("  Docker GPU patch failed.");
-  if (error instanceof Error && error.message) {
-    console.error(`  ${error.message}`);
+  if (errorMessage) {
+    console.error(`  ${errorMessage}`);
   }
   printDockerGpuPatchClassificationLines(classification);
   if (diagnostics) {

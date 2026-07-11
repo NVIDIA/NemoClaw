@@ -2853,6 +2853,7 @@ async function createSandboxWithBaseImageResolution(
       prebuild,
       restoreBackupPath,
       terminalAgent: agentDefs.isTerminalAgent(agent),
+      persistStartupCommand: dockerDriverGateway === true && agent?.name === "hermes",
     },
     {
       runOpenshell,

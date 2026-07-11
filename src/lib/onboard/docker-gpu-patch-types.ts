@@ -52,7 +52,7 @@ export type DockerGpuPatchDeps = {
   errorPhaseDebouncePolls?: number;
 };
 
-export type DockerGpuPatchModeKind = "gpus" | "nvidia-runtime" | "cdi";
+export type DockerGpuPatchModeKind = "gpus" | "nvidia-runtime" | "cdi" | "startup-command";
 export type DockerGpuPatchBackend = "generic" | "jetson";
 
 export type DockerGpuPatchMode = {

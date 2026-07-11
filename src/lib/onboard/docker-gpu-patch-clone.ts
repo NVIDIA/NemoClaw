@@ -6,6 +6,7 @@ import type {
   DockerGpuCloneRunOptions,
   DockerGpuPatchMode,
 } from "./docker-gpu-patch-types";
+import { openshellSandboxCommandEnvValue } from "./docker-startup-command-env";
 
 const OPENSHELL_SANDBOX_COMMAND_ENV = "OPENSHELL_SANDBOX_COMMAND";
 const GPU_ENV_KEYS = new Set([
@@ -45,19 +46,6 @@ function envValue(env: string[] | null | undefined, key: string): string | null 
 function replaceEnvValue(entry: string, key: string, value: string | null | undefined): string {
   if (!value || envKey(entry) !== key) return entry;
   return `${key}=${value}`;
-}
-
-function openshellSandboxCommandEnvValue(
-  command: readonly string[] | null | undefined,
-): string | null {
-  const parts = (command || []).map((part) => String(part));
-  if (parts.length === 0) return null;
-  if (parts.some((part) => part.length === 0 || /[\s\u0085]/u.test(part))) {
-    throw new Error(
-      "OpenShell sandbox startup command tokens cannot be empty or contain whitespace.",
-    );
-  }
-  return parts.join(" ");
 }
 
 function dockerGpuHostEndpointFromOpenShellEndpoint(endpoint: string): string | null {
@@ -144,6 +132,7 @@ export function buildDockerGpuCloneRunArgs(
   if (!image) throw new Error("Docker inspect output did not include Config.Image.");
 
   const args: string[] = ["--name", dockerContainerName(inspect), ...mode.args];
+  const gpuAugment = mode.kind !== "startup-command";
   pushStringFlag(args, "--hostname", config.Hostname);
   pushStringFlag(args, "--user", config.User);
   pushStringFlag(args, "--workdir", config.WorkingDir);
@@ -152,7 +141,9 @@ export function buildDockerGpuCloneRunArgs(
 
   const sandboxCommand = openshellSandboxCommandEnvValue(options.openshellSandboxCommand);
   let sawSandboxCommand = false;
-  for (const env of stringArray(config.Env).filter((entry) => !GPU_ENV_KEYS.has(envKey(entry)))) {
+  for (const env of stringArray(config.Env).filter(
+    (entry) => !gpuAugment || !GPU_ENV_KEYS.has(envKey(entry)),
+  )) {
     const key = envKey(env);
     if (key === OPENSHELL_SANDBOX_COMMAND_ENV && sandboxCommand) {
       sawSandboxCommand = true;
@@ -186,11 +177,11 @@ export function buildDockerGpuCloneRunArgs(
   }
 
   const capAdd = new Set(stringArray(host.CapAdd));
-  capAdd.add("SYS_PTRACE");
+  if (gpuAugment) capAdd.add("SYS_PTRACE");
   for (const cap of capAdd) args.push("--cap-add", cap);
   for (const cap of stringArray(host.CapDrop)) args.push("--cap-drop", cap);
   const securityOpt = new Set(stringArray(host.SecurityOpt));
-  if (![...securityOpt].some((entry) => entry.startsWith("apparmor"))) {
+  if (gpuAugment && ![...securityOpt].some((entry) => entry.startsWith("apparmor"))) {
     securityOpt.add("apparmor=unconfined");
   }
   for (const option of securityOpt) args.push("--security-opt", option);
