@@ -16,6 +16,10 @@ function makeJwtFixture(): string {
   return ["eyJhbGciOiJIUzI1NiJ9", "eyJzdWIiOiIxMjM0NTY3ODkwIn0", "signatureABCDEFGHI"].join(".");
 }
 
+function makeEmptyClaimsJwtFixture(): string {
+  return ["eyJhbGciOiJIUzI1NiJ9", "e30", "signatureABCDEFGHI"].join(".");
+}
+
 describe("URL redaction", () => {
   it.each([
     ["SOCKS", "socks5://socks-user:socks-password@proxy.example:1080"],
@@ -102,18 +106,33 @@ describe("URL redaction", () => {
     expect(result).toBe("ftp://files.example/path?token=%3CREDACTED%3E");
   });
 
+  it.each([
+    "api_key",
+    "apiKey",
+    "password",
+    "secret",
+    "authorization",
+    "credential",
+  ])("redacts opaque query values under credential key %s", (key) => {
+    const result = redactUrl(`https://endpoint.example/api?${key}=opaque-value`);
+
+    expect(result).not.toBeNull();
+    expect(new URL(result as string).searchParams.get(key)).toBe("<REDACTED>");
+  });
+
   it("redacts encoded and repeated token-shaped query values under benign names", () => {
     const secrets = {
       anthropic: "sk-ant-abcdefghijklmnopqrstuvwxyz",
       github: "ghp_abcdefghijklmnopqrstuvwxyz",
       jwt: makeJwtFixture(),
+      jwtEmptyClaims: makeEmptyClaimsJwtFixture(),
       nvidia: "nvapi-abcdefghijklmnopqrstuvwxyz",
       openai: "sk-proj-abcdefghijklmnopqrstuvwxyz",
       slack: "xoxb-1234567890-abcdefghij",
     };
     const encodedOpenAi = secrets.openai.replaceAll("-", "%2D");
     const result = redactUrl(
-      `https://url-user:url-password@endpoint.example/api?value=${secrets.nvidia}&model=${encodedOpenAi}&provider=${secrets.anthropic}&session=${secrets.github}&channel=${secrets.slack}&assertion=${secrets.jwt}&repeat=safe&repeat=${secrets.github}&mixed=prefix:${secrets.nvidia}:suffix&token=opaque-value&keep=yes#session=${secrets.slack}`,
+      `https://url-user:url-password@endpoint.example/api?value=${secrets.nvidia}&model=${encodedOpenAi}&provider=${secrets.anthropic}&session=${secrets.github}&channel=${secrets.slack}&assertion=${secrets.jwt}&compact=${secrets.jwtEmptyClaims}&repeat=safe&repeat=${secrets.github}&mixed=prefix:${secrets.nvidia}:suffix&token=opaque-value&keep=yes#session=${secrets.slack}`,
     );
 
     expect(result).not.toBeNull();
@@ -127,6 +146,7 @@ describe("URL redaction", () => {
     expect(parsed.searchParams.get("session")).toBe("<REDACTED>");
     expect(parsed.searchParams.get("channel")).toBe("<REDACTED>");
     expect(parsed.searchParams.get("assertion")).toBe("<REDACTED>");
+    expect(parsed.searchParams.get("compact")).toBe("<REDACTED>");
     expect(parsed.searchParams.getAll("repeat")).toEqual(["safe", "<REDACTED>"]);
     expect(parsed.searchParams.get("mixed")).toBe("prefix:<REDACTED>:suffix");
     expect(parsed.searchParams.get("token")).toBe("<REDACTED>");

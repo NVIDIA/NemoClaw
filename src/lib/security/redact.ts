@@ -301,7 +301,7 @@ export function redactUrl(value: unknown): string | null {
   for (const [key, queryValue] of parsed.url.searchParams) {
     redactedSearchParams.append(
       key,
-      /(^|[-_])(?:signature|sig|token|auth|access_token)$/i.test(key)
+      isSensitiveKey(key) || /(^|[-_])(?:signature|sig|token|auth|access_token)$/i.test(key)
         ? "<REDACTED>"
         : redactStandaloneSecretsFull(queryValue),
     );

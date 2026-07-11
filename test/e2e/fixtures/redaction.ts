@@ -90,7 +90,7 @@ export const TOKEN_PREFIX_PATTERNS: RegExp[] = [
 
 export const STRUCTURED_TOKEN_PATTERNS: RegExp[] = [
   // JSON Web Tokens (base64url header.payload.signature).
-  /\beyJ[A-Za-z0-9_-]{5,}\.eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{10,}\b/g,
+  /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{10,}\b/g,
 ];
 
 export const CONTEXT_PATTERNS: RegExp[] = [
