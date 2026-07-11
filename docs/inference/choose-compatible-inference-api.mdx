@@ -1,0 +1,80 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Choose a Compatible Inference API"
+sidebar-title: "Choose a Compatible API"
+description: "Choose the Chat Completions or Responses API for a custom OpenAI-compatible endpoint."
+description-agent: "Explains how NemoClaw probes and selects the runtime API for OpenAI-compatible endpoints. Use when choosing between Chat Completions and Responses."
+keywords: ["nemoclaw preferred api", "openai responses api", "chat completions endpoint"]
+content:
+  type: "concept"
+---
+import { AgentOnly } from "../_components/AgentGuide";
+
+Custom OpenAI-compatible endpoints use `/v1/chat/completions` at runtime by default.
+Choose the Responses API only when your endpoint implements the required streaming and tool-calling behavior.
+
+## Understand the Default Probe
+
+During onboarding, NemoClaw probes `/v1/responses` first with tool-calling and streaming checks.
+It falls back to `/v1/chat/completions` when the Responses API does not provide the required behavior.
+
+A successful Responses probe does not change the runtime API by itself.
+Without an explicit preference, the sandbox still uses `/v1/chat/completions`.
+This default avoids local backends that accept Responses requests but drop system prompts or tool definitions.
+
+When a reasoning model returns only reasoning content before a final answer, NemoClaw retries the smoke request with a larger response budget.
+Route, configuration, and authentication failures still fail immediately.
+
+## Select the Responses API
+
+Set `NEMOCLAW_PREFERRED_API=openai-responses` before onboarding.
+
+```bash
+NEMOCLAW_PREFERRED_API=openai-responses $$nemoclaw onboard
+```
+
+NemoClaw selects `/v1/responses` only when the validation response includes the required streaming events.
+If that probe fails, onboarding falls back to `/v1/chat/completions` automatically.
+
+## Select Chat Completions Only
+
+Set `NEMOCLAW_PREFERRED_API=openai-completions` to skip the Responses probe and validate only `/v1/chat/completions`.
+This setting works in interactive and non-interactive onboarding.
+
+```bash
+NEMOCLAW_PREFERRED_API=openai-completions $$nemoclaw onboard
+```
+
+| Variable | Values | Default |
+|---|---|---|
+| `NEMOCLAW_PREFERRED_API` | `openai-completions`, `openai-responses` | Unset, which uses Chat Completions at runtime. |
+
+<AgentOnly variant="deepagents">
+
+## Understand the Deep Agents Runtime
+
+`NEMOCLAW_PREFERRED_API` does not change the managed Deep Agents `dcode` runtime.
+Deep Agents sandboxes keep `use_responses_api = false` in `/sandbox/.deepagents/config.toml` and use Chat Completions through the OpenShell route.
+
+</AgentOnly>
+
+## Reconfigure an Existing Sandbox
+
+Rerun onboarding after changing the preferred API.
+NemoClaw probes the endpoint again and writes the selected API path into the rebuilt sandbox image.
+
+```bash
+$$nemoclaw onboard
+```
+
+<Note>
+`NEMOCLAW_INFERENCE_API_OVERRIDE` changes the container-startup configuration but does not update the API path baked into the sandbox image.
+If you later recreate the sandbox without the override, the image returns to its original API path.
+Rerun onboarding to persist the API choice in both the session and image.
+</Note>
+
+## Related Topics
+
+- [Set Up an OpenAI-Compatible Endpoint](set-up-openai-compatible-endpoint) for endpoint configuration.
+- [Understand Provider Validation](../validate-inference/understand-provider-validation) for validation behavior across providers.

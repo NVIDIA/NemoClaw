@@ -144,10 +144,12 @@ RUN npm ci --omit=dev \
     && test -z "$json5_unsafe"
 COPY scripts/patch-openclaw-tool-catalog.js /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js
 COPY scripts/patch-openclaw-chat-send.js /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js
+COPY scripts/patch-openclaw-mcp-npx.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts
 COPY scripts/patch-openclaw-issue-4434-diagnostics.ts /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.ts
 COPY scripts/patch-openclaw-device-self-approval.ts /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.ts
 RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js \
         /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js \
+        /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.ts \
         /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.ts
 
@@ -743,6 +745,16 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-devic
 RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.ts \
     /usr/local/lib/node_modules/openclaw/dist
 
+# Patch OpenClaw's MCP stdio launcher so npx-backed MCP servers run with -y.
+# Without this, npx can prompt on cold package resolution and consume the MCP
+# JSON-RPC stdin pipe, causing the initialize handshake to time out.
+#
+# Removal criteria: drop when upstream OpenClaw normalizes npx MCP server args
+# and emits actionable MCP startup timeout diagnostics.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts \
+    /usr/local/lib/node_modules/openclaw/dist
+
 # Run the compact tool catalog shim for OpenClaw selection runtimes that still
 # need it. OpenClaw 2026.6.10 ships a built-in catalog surface, so the script
 # skips cleanly after classifying the compiled selection-*.js shape.
@@ -1009,6 +1021,10 @@ RUN set -eu; \
 # Install non-messaging OpenClaw plugins that need to match the runtime.
 # Reviewed-archive invariants (#5896): registry SRI, packed-byte SRI, contained
 # basename in a fresh directory, local-archive-only install, and cleanup.
+# The verified tarball installs through the `npm-pack:` spec so OpenClaw
+# records npm provenance; bare archive-path installs record archive
+# provenance, which fails the trusted-official-install check gating
+# openKeyedStore on OpenClaw >= 2026.6.10.
 # hadolint ignore=DL3059,DL4006
 RUN set -eu; \
     verify_openclaw_plugin_integrity() { \
@@ -1058,7 +1074,7 @@ RUN set -eu; \
         plugin_spec="${1}@${OPENCLAW_VERSION}"; \
         plugin_archive="$(verify_openclaw_plugin_integrity "$plugin_spec")"; \
         NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true \
-            openclaw plugins install "$plugin_archive" --pin; \
+            openclaw plugins install "npm-pack:${plugin_archive}"; \
     }; \
     NEMOCLAW_OPENCLAW_PLUGIN_PACK_DIR="$(mktemp -d)"; \
     if [ "$NEMOCLAW_OPENCLAW_OTEL" = "1" ] || [ "$NEMOCLAW_WEB_SEARCH_ENABLED" = "1" ]; then \

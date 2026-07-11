@@ -39,6 +39,7 @@ export type PrepareSandboxDockerfilePatchInput = {
   model: string;
   chatUiUrl: string;
   provider: string | null;
+  endpointUrl?: string | null;
   preferredInferenceApi: string | null;
   webSearchConfig: WebSearchConfig | null;
   toolDisclosure?: ToolDisclosure;
@@ -105,6 +106,7 @@ export async function prepareSandboxDockerfilePatch({
   model,
   chatUiUrl,
   provider,
+  endpointUrl = null,
   preferredInferenceApi,
   webSearchConfig,
   toolDisclosure = DEFAULT_TOOL_DISCLOSURE,
@@ -195,6 +197,7 @@ export async function prepareSandboxDockerfilePatch({
       return {
         buildIdPolicy,
         toolDisclosure,
+        ...(endpointUrl ? { upstreamEndpointUrl: endpointUrl } : {}),
         ...(dcodeAutoApprovalMode ? { dcodeAutoApprovalMode } : {}),
         requireToolDisclosureContract: Boolean(fromDockerfile),
         ...(metadata ? { baseImageResolutionMetadata: metadata } : {}),

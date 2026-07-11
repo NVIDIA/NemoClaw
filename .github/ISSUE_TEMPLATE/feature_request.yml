@@ -1,5 +1,5 @@
 name: Feature Request
-description: Propose a feature with a design. Not a "please build this" request.
+description: Propose a concrete behavior that solves a real problem.
 type: Enhancement
 labels: ["needs: triage"]
 body:
@@ -12,20 +12,30 @@ body:
       required: true
 
   - type: textarea
-    id: design
+    id: behavior
     attributes:
-      label: Proposed Design
+      label: Desired Behavior
       description: |
-        How should this work? Describe the system behavior, components involved, and user-facing interface.
-        This should be a design, not a wish list.
+        What should a user or contributor be able to do or observe?
+        Describe the before-and-after behavior and give one concrete example.
     validations:
       required: true
 
   - type: textarea
-    id: alternatives
+    id: constraints
     attributes:
-      label: Alternatives Considered
-      description: What other approaches did you evaluate? Why is the proposed design better?
+      label: Constraints and Non-goals
+      description: List only current constraints or exclusions that materially change the solution.
+    validations:
+      required: false
+
+  - type: textarea
+    id: implementation
+    attributes:
+      label: Implementation Idea
+      description: |
+        Optional, non-binding notes about the smallest direct change that might work.
+        Do not design for hypothetical future cases.
     validations:
       required: false
 
@@ -48,5 +58,5 @@ body:
       options:
         - label: I searched existing issues and this is not a duplicate
           required: true
-        - label: This is a design proposal, not a "please build this" request
+        - label: I described the problem and desired behavior
           required: true

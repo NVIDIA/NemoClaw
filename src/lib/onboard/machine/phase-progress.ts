@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isAnyPromptActive } from "../../core/prompt-activity";
 import type { OnboardSequencePhase } from "./sequence-runner";
 import type { OnboardNonTerminalMachineState } from "./types";
 
@@ -41,6 +42,7 @@ export interface PhaseProgressOptions {
   enabled?: boolean;
   interactive?: boolean;
   heartbeatIntervalMs?: number;
+  isPromptActive?: () => boolean;
   logLine?: (line: string) => void;
   now?: () => number;
   setTimer?: (callback: () => void, intervalMs: number) => PhaseProgressTimer;
@@ -60,6 +62,7 @@ export function createPhaseProgressReporter(
     ? HEARTBEAT_PHASE_STATES
     : new Set([...HEARTBEAT_PHASE_STATES, ...INTERACTIVE_PHASE_STATES]);
   const heartbeatIntervalMs = options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
+  const isPromptActive = options.isPromptActive ?? isAnyPromptActive;
   const logLine = options.logLine ?? console.log;
   const now = options.now ?? Date.now;
   const setTimer =
@@ -78,6 +81,12 @@ export function createPhaseProgressReporter(
           const label = ONBOARD_PHASE_LABELS[phase.state];
           const startedAt = now();
           const timer = setTimer(() => {
+            // Interactive prompts inside heartbeat phases (sandbox name
+            // confirmation, credential entry, …) yield the event loop, so
+            // this timer can fire mid-prompt and corrupt the menu the user
+            // is answering. Hold the beat; the next one reports cumulative
+            // elapsed time anyway. (#6651)
+            if (isPromptActive()) return;
             const elapsedSeconds = Math.max(0, Math.round((now() - startedAt) / 1000));
             try {
               logLine(`  ⏳ Still working on ${label}… (${elapsedSeconds}s elapsed)`);

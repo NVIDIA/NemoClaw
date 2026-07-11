@@ -255,6 +255,34 @@ describe("sandbox base-image warm resolution", () => {
     error.mockRestore();
   });
 
+  it("redacts a local rebuild spawn error before logging it", () => {
+    const token = ["spawn", "secret", "token"].join("-");
+    sourceMocks.inputsChanged.mockReturnValue(true);
+    dockerMocks.imageInspect.mockReturnValue({ status: 1 });
+    dockerMocks.pull.mockReturnValue({ status: 1 });
+    dockerMocks.build.mockReturnValue({
+      status: null,
+      error: new Error(`spawn docker EACCES: Bearer ${token}`),
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    expect(() =>
+      resolveSandboxBaseImage({
+        ...resolutionOptions(),
+        env: {
+          ...resolutionOptions().env,
+          NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: "1",
+        },
+      }),
+    ).toThrow(SandboxBaseImageResolutionError);
+
+    const logged = error.mock.calls.flat().join("\n");
+    expect(logged).toContain("spawn docker EACCES");
+    expect(logged).toContain("process launch failed");
+    expect(logged).not.toContain(token);
+    error.mockRestore();
+  });
+
   it("rebuilds dirty base inputs before considering published or existing local candidates (#4680)", () => {
     sourceMocks.inputsDirty.mockReturnValue(true);
     dockerMocks.imageInspect.mockReturnValue({ status: 0 });

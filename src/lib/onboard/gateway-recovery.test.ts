@@ -40,6 +40,7 @@ function createDeps(overrides: Partial<GatewayRecoveryDeps> = {}): GatewayRecove
     startGatewayWithOptions: vi.fn(
       async () => undefined,
     ) as GatewayRecoveryDeps["startGatewayWithOptions"],
+    shouldPatchCoredns: () => false,
     // Tests assert the plain-CLI fallback path by default; the Linux
     // Docker-driver branch is opted into explicitly per case.
     isLinuxDockerDriverGatewayEnabled: () => false,
@@ -167,7 +168,10 @@ describe("gateway recovery", () => {
     // break the side effects the caller relies on after readiness.
     vi.stubEnv("NEMOCLAW_HEALTH_POLL_COUNT", "3");
     vi.stubEnv("NEMOCLAW_HEALTH_POLL_INTERVAL", "2");
+    const clock = makeVirtualClock();
     const deps = createDeps({
+      sleepSeconds: clock.sleeper,
+      now: clock.now,
       runCaptureOpenshell: vi.fn(() => "Connected"),
       isGatewayHealthy: () => true,
       isGatewayHttpReady: async () => true,
@@ -188,7 +192,10 @@ describe("gateway recovery", () => {
     // Probe #1 fails the health predicate, probe #2 passes. Each probe
     // reads status + gateway info -g + gateway info (3 calls).
     let healthCalls = 0;
+    const clock = makeVirtualClock();
     const deps = createDeps({
+      sleepSeconds: clock.sleeper,
+      now: clock.now,
       runCaptureOpenshell: vi.fn(() => "Connected"),
       isGatewayHealthy: () => {
         healthCalls++;
