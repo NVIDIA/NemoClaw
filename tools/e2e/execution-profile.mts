@@ -6,6 +6,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import ts from "typescript";
+
 export const HERMETIC_EXECUTION_PROFILE = Object.freeze({
   id: "hermetic",
   tag: "e2e-profile/hermetic",
@@ -38,7 +40,7 @@ type VitestFile = {
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const PROFILE_TAG_PREFIX = "e2e-profile/";
-const MODULE_TAG_PATTERN = /^[\t ]*(?:\/\/|\/\*+|\*)[\t ]*@module-tag[\t ]+([A-Za-z0-9/_-]+)\b/gm;
+const MODULE_TAG_BODY_PATTERN = /^@module-tag[\t ]+([A-Za-z0-9/_-]+)$/u;
 const SAFE_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const SAFE_SELECTOR_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const SAFE_PATH_SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/;
@@ -94,10 +96,80 @@ function validateTestFile(file: string, project: ExecutionProfileProject): void 
   }
 }
 
+type ModuleTagDeclaration = {
+  tag: string;
+  start: number;
+  end: number;
+};
+
+function standaloneModuleTag(comment: string): string | undefined {
+  const body = comment.startsWith("//")
+    ? comment.slice(2).trim()
+    : comment
+        .slice(2, -2)
+        .split(/\r?\n/u)
+        .map((line) => line.replace(/^[\t ]*\**[\t ]?/u, "").trim())
+        .filter(Boolean)
+        .join("\n");
+  return MODULE_TAG_BODY_PATTERN.exec(body)?.[1];
+}
+
+function declarationLineRange(
+  source: string,
+  tokenStart: number,
+  tokenEnd: number,
+): Pick<ModuleTagDeclaration, "start" | "end"> | undefined {
+  const lineStart = source.lastIndexOf("\n", tokenStart - 1) + 1;
+  const nextNewline = source.indexOf("\n", tokenEnd);
+  const lineEnd = nextNewline < 0 ? source.length : nextNewline;
+  if (
+    !/^[\t ]*$/u.test(source.slice(lineStart, tokenStart)) ||
+    !/^[\t \r]*$/u.test(source.slice(tokenEnd, lineEnd))
+  ) {
+    return undefined;
+  }
+  return { start: lineStart, end: nextNewline < 0 ? source.length : nextNewline + 1 };
+}
+
+function moduleTagDeclarations(source: string): ModuleTagDeclaration[] {
+  const scanner = ts.createScanner(
+    ts.ScriptTarget.Latest,
+    false,
+    ts.LanguageVariant.Standard,
+    source,
+  );
+  const declarations: ModuleTagDeclaration[] = [];
+  for (let token = scanner.scan(); token !== ts.SyntaxKind.EndOfFileToken; token = scanner.scan()) {
+    if (
+      token !== ts.SyntaxKind.SingleLineCommentTrivia &&
+      token !== ts.SyntaxKind.MultiLineCommentTrivia
+    ) {
+      continue;
+    }
+    const tag = standaloneModuleTag(scanner.getTokenText());
+    const range = declarationLineRange(source, scanner.getTokenPos(), scanner.getTextPos());
+    if (tag && range) declarations.push({ tag, ...range });
+  }
+  return declarations;
+}
+
 function profileTags(source: string): string[] {
-  return [...source.matchAll(MODULE_TAG_PATTERN)]
-    .map((match) => match[1])
+  return moduleTagDeclarations(source)
+    .map(({ tag }) => tag)
     .filter((tag) => tag.startsWith(PROFILE_TAG_PREFIX));
+}
+
+export function stripExecutionProfileDeclarations(source: string): string {
+  const declarations = moduleTagDeclarations(source).filter(({ tag }) =>
+    tag.startsWith(PROFILE_TAG_PREFIX),
+  );
+  let cursor = 0;
+  let stripped = "";
+  for (const declaration of declarations) {
+    stripped += source.slice(cursor, declaration.start);
+    cursor = declaration.end;
+  }
+  return stripped + source.slice(cursor);
 }
 
 export function executionProfileRowFromModule(

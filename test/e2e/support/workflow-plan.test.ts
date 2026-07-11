@@ -16,9 +16,8 @@ const PLANNER_CLI = path.join(REPO_ROOT, "tools", "e2e", "workflow-plan.mts");
 const TSX = path.join(REPO_ROOT, "node_modules", ".bin", "tsx");
 
 function firstId<T extends { id: string }>(rows: readonly T[], label: string): string {
-  const id = rows[0]?.id;
-  if (!id) throw new Error(`expected at least one ${label}`);
-  return id;
+  expect(rows, `expected at least one ${label}`).not.toHaveLength(0);
+  return rows[0]!.id;
 }
 
 describe("E2E workflow plan", () => {

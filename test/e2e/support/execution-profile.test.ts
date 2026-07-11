@@ -76,6 +76,16 @@ describe("hermetic E2E execution-profile discovery", () => {
         module({ source: `const example = ${JSON.stringify(TAG_COMMENT)};` }),
       ),
     ).toThrow("found 0");
+    expect(() =>
+      executionProfileRowFromModule(module({ source: `const example = \`\n${TAG_COMMENT}\n\`;` })),
+    ).toThrow("found 0");
+    expect(
+      executionProfileRowFromModule(module({ source: `/* ${TAG_COMMENT.slice(3)} */` })),
+    ).toEqual({
+      id: "example",
+      file: "test/e2e/live/example.test.ts",
+      project: "e2e-live",
+    });
   });
 
   it("rejects duplicate ids derived from different test files", () => {
@@ -155,7 +165,7 @@ describe("hermetic E2E execution-profile discovery", () => {
 
   it("prints one compact JSON matrix line from the CLI", () => {
     const [selected] = discoverExecutionProfileTests();
-    if (!selected) throw new Error("expected at least one discovered execution-profile test");
+    expect(selected).toBeDefined();
     const result = spawnSync(TSX, [EXECUTION_PROFILE_CLI, "--jobs", selected.id], {
       cwd: REPO_ROOT,
       encoding: "utf8",

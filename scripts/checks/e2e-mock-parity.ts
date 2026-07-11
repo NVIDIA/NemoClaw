@@ -6,6 +6,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { stripExecutionProfileDeclarations } from "../../tools/e2e/execution-profile.mts";
+
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 export const DEFAULT_PARITY_MANIFEST = "test/e2e/mock-parity.json";
 
@@ -27,6 +29,15 @@ const FAST_TESTS = [
   /^test\/e2e\/support\/.+\.test\.ts$/u,
   /^test\/(?!e2e\/|package-contract\/).+\.test\.(?:js|ts)$/u,
 ] as const;
+export function isMockParityRelevantSourceChange(
+  baseSource: string | null,
+  headSource: string | null,
+): boolean {
+  if (baseSource === null || headSource === null) return true;
+  return (
+    stripExecutionProfileDeclarations(baseSource) !== stripExecutionProfileDeclarations(headSource)
+  );
+}
 
 function isSafeRepoPath(file: string): boolean {
   return (
@@ -116,13 +127,34 @@ function argument(name: string): string | undefined {
   return index >= 0 ? process.argv[index + 1] : undefined;
 }
 
+function sourceAtRef(ref: string, file: string): string | null {
+  try {
+    return execFileSync("git", ["show", `${ref}:${file}`], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      maxBuffer: 10 * 1024 * 1024,
+    });
+  } catch {
+    return null;
+  }
+}
+
 function changedFiles(base: string, head: string): string[] {
-  return execFileSync("git", ["diff", "--name-only", "--diff-filter=ACMR", `${base}...${head}`], {
-    cwd: REPO_ROOT,
-    encoding: "utf8",
-  })
+  const files = execFileSync(
+    "git",
+    ["diff", "--name-only", "--diff-filter=ACMR", `${base}...${head}`],
+    {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+    },
+  )
     .split(/\r?\n/u)
     .filter(Boolean);
+  return files.filter(
+    (file) =>
+      !LIVE_TEST.test(file) ||
+      isMockParityRelevantSourceChange(sourceAtRef(base, file), sourceAtRef(head, file)),
+  );
 }
 
 function main(): void {
