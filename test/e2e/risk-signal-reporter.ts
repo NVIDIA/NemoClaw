@@ -10,12 +10,6 @@ import type { Reporter, TestRunEndReason } from "vitest/reporters";
 import { readPrivateRegularFile, writePrivateRegularFile } from "../../tools/e2e/private-file.ts";
 import type { E2eRiskSignal } from "../../tools/e2e/risk-signal.ts";
 
-declare module "@vitest/runner" {
-  interface TaskMeta {
-    e2eEvidence?: "optional";
-  }
-}
-
 export const RISK_SIGNAL_FILE = "risk-signal.json";
 
 export type RiskSignalEnvironment = {
@@ -78,14 +72,10 @@ export function configuredEnvironment(
 }
 
 function counts(testModules: ReadonlyArray<TestModule>) {
-  const result = { passed: 0, failed: 0, skipped: 0, optionalSkipped: 0, pending: 0 };
+  const result = { passed: 0, failed: 0, skipped: 0, pending: 0 };
   for (const module of testModules) {
     for (const test of module.children.allTests()) {
-      const state = test.result().state;
-      result[state] += 1;
-      result.optionalSkipped += Number(
-        state === "skipped" && test.meta().e2eEvidence === "optional",
-      );
+      result[test.result().state] += 1;
     }
   }
   return result;
@@ -112,7 +102,6 @@ function mergeSignal(previous: E2eRiskSignal | null, current: E2eRiskSignal): E2
     passed: previous.passed + current.passed,
     failed: previous.failed + current.failed,
     skipped: previous.skipped + current.skipped,
-    optionalSkipped: (previous.optionalSkipped ?? 0) + (current.optionalSkipped ?? 0),
     pending: previous.pending + current.pending,
     unhandledErrors: previous.unhandledErrors + current.unhandledErrors,
     runReason:

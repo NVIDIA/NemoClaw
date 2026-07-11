@@ -286,34 +286,19 @@ describe("PR E2E controller", () => {
         expectedShards: gate.expectedShards,
         signals,
       });
+    const spoofedOptionalSkip = {
+      ...signal(gate, "onboard-repair", "default", { skipped: 1 }),
+      optionalSkipped: 1,
+    };
 
     expect(classify(complete).conclusion).toBe("success");
-    expect(
-      classify([
-        signal(gate, "onboard-repair", "default", {
-          passed: 4,
-          skipped: 3,
-          optionalSkipped: 3,
-        }),
-        complete[1]!,
-      ]).conclusion,
-    ).toBe("success");
-    expect(
-      classify([
-        signal(gate, "onboard-repair", "default", {
-          passed: 0,
-          skipped: 7,
-          optionalSkipped: 7,
-        }),
-        complete[1]!,
-      ]).title,
-    ).toBe("Evidence is incomplete");
     expect(classify([], "cancelled").conclusion).toBe("failure");
     expect(classify(complete.slice(0, 1)).title).toBe("Evidence is missing");
     expect(classify([...complete, complete[0]!]).title).toBe("Duplicate evidence");
     expect(
       classify([signal(gate, "onboard-repair", "default", { skipped: 1 }), complete[1]!]).title,
     ).toBe("Evidence is incomplete");
+    expect(classify([spoofedOptionalSkip, complete[1]!]).title).toBe("Evidence is incomplete");
     expect(
       classify([
         signal(gate, "onboard-repair", "default", { failed: 1, runReason: "failed" }),
@@ -327,11 +312,6 @@ describe("PR E2E controller", () => {
     const valid = signal(gate, "onboard-repair");
 
     expect(validateSignal(valid, gate)).toEqual(valid);
-    expect(validateSignal({ ...valid, skipped: 3, optionalSkipped: 3 }, gate)).toEqual({
-      ...valid,
-      skipped: 3,
-      optionalSkipped: 3,
-    });
     expect(() => validateSignal({ ...valid, testedSha: BASE_SHA }, gate)).toThrow(/tested SHA/u);
     expect(() => validateSignal({ ...valid, planHash: "c".repeat(64) }, gate)).toThrow(
       /plan hash/u,
@@ -340,12 +320,6 @@ describe("PR E2E controller", () => {
       validateSignal({ ...valid, correlationId: CORRELATION_ID.replace(/.$/u, "d") }, gate),
     ).toThrow(/correlation/u);
     expect(() => validateSignal({ ...valid, jobId: "other" }, gate)).toThrow(/unexpected/u);
-    expect(() => validateSignal({ ...valid, optionalSkipped: -1 }, gate)).toThrow(
-      /optionalSkipped/u,
-    );
-    expect(() => validateSignal({ ...valid, optionalSkipped: 1 }, gate)).toThrow(
-      /cannot exceed skipped/u,
-    );
   });
 
   it("derives shard policy from the checked-in workflow", () => {
@@ -612,7 +586,7 @@ describe("PR E2E controller", () => {
         conclusion: "success",
         output: {
           title: "All selected jobs passed",
-          summary: "Every expected job shard passed with no required skips or pending tests.",
+          summary: "Every expected job shard passed with no skips or pending tests.",
         },
       });
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
