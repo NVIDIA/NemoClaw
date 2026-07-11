@@ -322,6 +322,9 @@ describe("PR E2E controller", () => {
       "onboard-repair": ["default"],
       "onboard-resume": ["default"],
     });
+    expect(expectedSignalShards(["docs-validation"])).toEqual({
+      "docs-validation": ["default"],
+    });
     const broadPlan = buildRiskPlan({ headSha: HEAD_SHA, changedFiles: BROAD_FILES });
     const broadShards = expectedSignalShards(riskPlanRequiredJobIds(broadPlan));
     expect(Object.keys(broadShards)).toHaveLength(13);

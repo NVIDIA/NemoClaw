@@ -269,10 +269,11 @@ function validateIssueRoutingRetirement(errors: string[], workflow: OperationsWo
     if (name === "report-to-pr") {
       if (
         job.permissions === "write-all" ||
+        permissions.actions !== "read" ||
         permissions["pull-requests"] !== "write" ||
-        Object.keys(permissions).length !== 1
+        Object.keys(permissions).length !== 2
       ) {
-        errors.push("report-to-pr must hold only pull-requests: write");
+        errors.push("report-to-pr must hold only actions: read and pull-requests: write");
       }
       if (
         job.if !==

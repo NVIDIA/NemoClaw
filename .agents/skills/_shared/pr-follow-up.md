@@ -32,6 +32,9 @@ gh api "repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}/comments" --paginate \
 
 ## Triage
 
+- Before acting on automated feedback, state the concrete problem and intended outcome.
+- Do not add a generalized helper, configuration switch, fallback, migration, or compatibility path solely to satisfy reviewer wording.
+- If feedback cannot be tied to a concrete defect, demonstrated security or data-safety risk, supported contract, or needless complexity in changed code, treat it as a suggestion rather than implementation work.
 - **CI failure:** inspect the failing job logs, fix the root cause, rerun relevant local checks, commit, push, and monitor again.
 - **CodeRabbit or PR Review Advisor correctness/security/test-coverage finding:** address it when valid, rerun relevant checks, commit, push, and monitor again.
 - **Style nits or false positives:** avoid unnecessary churn. Note the rationale in your final report or comment on the PR when reviewer-visible context is useful.

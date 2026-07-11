@@ -661,14 +661,18 @@ export function installOpenClawMessagingPlugins(plan: MessagingBuildPlan | null,
   for (const install of collectOpenClawMessagingPluginInstalls(plan, env)) {
     const packed = packVerifiedOpenClawPluginArchive(install, env);
     try {
-      runCommand(
-        ["openclaw", "plugins", "install", packed.archivePath, ...(install.pin ? ["--pin"] : [])],
-        {
-          ...env,
-          NPM_CONFIG_IGNORE_SCRIPTS: "true",
-          npm_config_ignore_scripts: "true",
-        },
-      );
+      // Install through the `npm-pack:` spec so OpenClaw records npm
+      // provenance (source, resolved name/version, integrity) for the
+      // verified tarball. A bare archive path records archive provenance,
+      // which fails the trusted-official-install check gating openKeyedStore
+      // on OpenClaw >= 2026.6.10 and crash-loops channel plugins that use
+      // keyed state (e.g. WhatsApp). npm-pack installs always record the
+      // exact resolved version, so `--pin` is not needed.
+      runCommand(["openclaw", "plugins", "install", `npm-pack:${packed.archivePath}`], {
+        ...env,
+        NPM_CONFIG_IGNORE_SCRIPTS: "true",
+        npm_config_ignore_scripts: "true",
+      });
     } finally {
       rmSync(packed.rootDir, { recursive: true, force: true });
     }

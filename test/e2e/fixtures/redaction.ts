@@ -88,6 +88,11 @@ export const TOKEN_PREFIX_PATTERNS: RegExp[] = [
   /lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*/g,
 ];
 
+export const STRUCTURED_TOKEN_PATTERNS: RegExp[] = [
+  // JSON Web Tokens (base64url header.payload.signature).
+  /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{10,}\b/g,
+];
+
 export const CONTEXT_PATTERNS: RegExp[] = [
   /(?<=Bearer\s+)[A-Za-z0-9_.+/=-]{10,}/gi,
   /(?<=(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}_(?:KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)|(?:X[-_])?API[-_]KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)["']?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["']?)[^\s'"]{10,}/gi,
@@ -101,7 +106,7 @@ export const SECRET_BLOCK_PATTERNS: RegExp[] = [
 
 /**
  * Replace every secret-shaped token in `text` with `<REDACTED>`. Uses
- * the canonical TOKEN_PREFIX_PATTERNS + CONTEXT_PATTERNS sets.
+ * the canonical token, secret-block, and context pattern sets.
  *
  * When `explicitValues` is supplied, each non-empty value is replaced
  * verbatim with `[REDACTED]` before the regex passes run, so per-test
@@ -118,6 +123,10 @@ export const SECRET_BLOCK_PATTERNS: RegExp[] = [
 function redactCanonicalShapes(text: string): string {
   let out = text;
   for (const p of TOKEN_PREFIX_PATTERNS) {
+    p.lastIndex = 0;
+    out = out.replace(p, REDACTED);
+  }
+  for (const p of STRUCTURED_TOKEN_PATTERNS) {
     p.lastIndex = 0;
     out = out.replace(p, REDACTED);
   }
