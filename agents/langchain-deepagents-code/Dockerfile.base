@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3=3.13.5-1 \
         python3-pip=25.1.1+dfsg-1 \
         python3-venv=3.13.5-1 \
-        curl=8.14.1-2+deb13u3 \
+        curl=8.14.1-2+deb13u4 \
         git=1:2.47.3-0+deb13u1 \
         ca-certificates=20250419 \
         iproute2=6.15.0-1 \
@@ -27,6 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         e2fsprogs=1.47.2-3+b11 \
         openssh-sftp-server=1:10.0p1-7+deb13u4 \
         jq=1.7.1-6+deb13u2 \
+        ripgrep=14.1.1-1+b4 \
         vim-tiny=2:9.1.1230-2 \
     && rm -rf /var/lib/apt/lists/*
 
@@ -36,6 +37,12 @@ RUN groupadd -r sandbox \
     && mkdir -p /sandbox/.nemoclaw \
         /sandbox/.deepagents/.state \
         /sandbox/.deepagents/skills \
+    # Deep Agents Code owns the optional-name onboarding state, but managed
+    # terminals cannot answer that upstream first-run prompt before becoming
+    # usable. Preseed it here; the TUI startup E2E rejects pending onboarding
+    # and unexpected name prompts. Remove this when upstream supports a
+    # documented non-interactive managed-onboarding mode.
+    && printf '1\n' > /sandbox/.deepagents/.state/onboarding_complete \
     && chown -R sandbox:sandbox /sandbox \
     && chmod 2770 /sandbox/.deepagents \
     && chmod 770 /sandbox/.deepagents/.state /sandbox/.deepagents/skills
