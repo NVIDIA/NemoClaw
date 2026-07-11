@@ -159,7 +159,8 @@ CONNECT tunnel failed, response 403
 This recipe applies only when URL-based MCP traffic uses the sandbox proxy and fails with that CONNECT 403 response.
 An OAuth MCP login failure such as `getaddrinfo EAI_AGAIN`, or any direct-DNS path that bypasses the proxy, is a separate transport problem and is not fixed by widening this allowlist.
 
-Add a preset with the MCP host, the exact Streamable HTTP MCP route, the HTTP methods that route uses (`GET` and `POST`), and only the process binary that opens the connection:
+Add a preset with the MCP host, the exact Streamable HTTP MCP route, the HTTP methods that route uses (`GET`, `POST`, and `DELETE`), and only the process binary that opens the connection.
+Streamable HTTP MCP clients can use `DELETE` on the same endpoint to terminate a session, so keep that method scoped to the exact MCP route instead of widening the path:
 
 ```yaml
 preset:
@@ -176,6 +177,7 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/mcp" }
           - allow: { method: POST, path: "/mcp" }
+          - allow: { method: DELETE, path: "/mcp" }
     binaries:
       - { path: /usr/local/bin/node }
 ```

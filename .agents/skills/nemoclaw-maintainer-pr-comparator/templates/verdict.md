@@ -21,8 +21,10 @@ Render the final scorecard with `scripts/render-verdict.py`. Below is the human-
 | State OPEN | pass | pass |
 | CI green (latest SHA) | pass | fail (stale) |
 | Mergeable | pass | pass |
+| Contributor compliance | pass | pass |
 | Branch protection | pass | pass |
-| CodeRabbit threads | pass | yellow (2 unresolved) |
+| PR Review Advisor: merge as-is | pass | fail (changes requested) |
+| Automated-review threads resolved | pass | fail (2 unresolved) |
 | **Tier 1 — correctness** | | |
 | Test exercises bug path | pass | pass |
 | Comment-as-spec coverage | pass | yellow (misses ask 3) |

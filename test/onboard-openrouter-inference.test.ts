@@ -81,6 +81,44 @@ describe("OpenRouter onboarding inference setup", () => {
     });
   });
 
+  it("waits for host smoke verification before reporting OpenRouter success", async () => {
+    let finishSmoke: (() => void) | undefined;
+    const smokePending = new Promise<void>((resolve) => {
+      finishSmoke = resolve;
+    });
+    const log = vi.fn();
+
+    const setup = openrouterRuntimeOnboard.setupOpenRouterRuntimeInference({
+      sandboxName: null,
+      provider: "openrouter-api",
+      model: "test-model",
+      credentialEnv: "OPENROUTER_API_KEY",
+      credentialValue: "sk-or-test",
+      isNonInteractive: () => true,
+      runOpenshell: () => ({ status: 0 }),
+      upsertProvider: () => ({ ok: true }),
+      verifyInferenceRoute: vi.fn(),
+      verifyOnboardInferenceSmoke: vi.fn(() => smokePending),
+      ensureAdapter: vi.fn(async () => ({
+        baseUrl: "http://host.openshell.internal:11437/v1",
+        localBaseUrl: "http://127.0.0.1:11437/v1",
+        credentialEnv: "OPENROUTER_API_KEY",
+        logPath: "/tmp/openrouter-runtime-adapter.log",
+      })),
+      exitProcess: ((code: number) => {
+        throw new Error(`unexpected exit ${code}`);
+      }) as never,
+      error: vi.fn(),
+      log,
+    });
+
+    await vi.waitFor(() => expect(log).toHaveBeenCalledTimes(1));
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("Inference route set"));
+    finishSmoke?.();
+    await setup;
+    expect(log).toHaveBeenCalledWith("  ✓ Inference route set: openrouter-api / test-model");
+  });
+
   it("updates OpenRouter adapter config while reusing a gateway-held credential (#5826)", async () => {
     await withProcessEnv({ OPENROUTER_API_KEY: undefined }, async () => {
       const ensureAdapter = vi.fn(async () => ({

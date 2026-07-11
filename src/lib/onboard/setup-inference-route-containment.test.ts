@@ -205,8 +205,12 @@ describe("onboard shared gateway route containment", () => {
     expect(exitProcess).toHaveBeenCalledWith(1);
   });
 
-  it("reserves a fresh route before smoke failure lets another setup mutate it (#6315)", async () => {
+  it("keeps a pending reservation while async smoke failure blocks another setup (#6315)", async () => {
     const reservations: SandboxEntry[] = [];
+    let rejectSmoke!: (reason?: unknown) => void;
+    const smokePending = new Promise<void>((_resolve, reject) => {
+      rejectSmoke = reject;
+    });
     let lockTail = Promise.resolve();
     const withGatewayRouteMutationLock = async <T>(
       _gatewayName: string,
@@ -226,11 +230,13 @@ describe("onboard shared gateway route containment", () => {
     };
     const updateSandbox = vi.fn(
       (name: string, route: Parameters<SetupInferenceDeps["updateSandbox"]>[1]) => {
-        reservations.push({ name, ...route });
+        reservations.push({ name, pendingRouteReservation: true, ...route });
         return true;
       },
     );
     const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const verifyOnboardInferenceSmoke = vi.fn(() => smokePending);
+    const log = vi.fn();
     const exitProcess = vi.fn((code: number): never => {
       throw new Error(`exit ${code}`);
     });
@@ -247,9 +253,7 @@ describe("onboard shared gateway route containment", () => {
       updateSandbox,
       upsertProvider: vi.fn(() => ({ ok: true })),
       verifyInferenceRoute: vi.fn(),
-      verifyOnboardInferenceSmoke: vi.fn(() => {
-        throw new Error("smoke failed");
-      }),
+      verifyOnboardInferenceSmoke,
       isNonInteractive: () => true,
       hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
       isRoutedInferenceProvider: () => true,
@@ -270,15 +274,40 @@ describe("onboard shared gateway route containment", () => {
       },
       redact: (value: string) => value,
       compactText: (value: string) => value,
-      log: vi.fn(),
+      log,
       error: vi.fn(),
       exitProcess,
     } as unknown as SetupInferenceDeps);
 
-    const results = await Promise.allSettled([
-      setupInference("alpha", "model-a", "router-a", "http://router-a.test/v1", "ROUTER_KEY"),
-      setupInference("beta", "model-b", "router-b", "http://router-b.test/v1", "ROUTER_KEY"),
+    const firstSetup = setupInference(
+      "alpha",
+      "model-a",
+      "router-a",
+      "http://router-a.test/v1",
+      "ROUTER_KEY",
+    );
+    await vi.waitFor(() => expect(verifyOnboardInferenceSmoke).toHaveBeenCalledOnce());
+    expect(reservations).toEqual([
+      expect.objectContaining({
+        name: "alpha",
+        pendingRouteReservation: true,
+        provider: "router-a",
+        model: "model-a",
+      }),
     ]);
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("Inference route set"));
+
+    const secondSetup = setupInference(
+      "beta",
+      "model-b",
+      "router-b",
+      "http://router-b.test/v1",
+      "ROUTER_KEY",
+    );
+    const resultsPending = Promise.allSettled([firstSetup, secondSetup]);
+    expect(runOpenshell).toHaveBeenCalledTimes(1);
+    rejectSmoke(new Error("smoke failed"));
+    const results = await resultsPending;
 
     expect(results).toEqual([
       { status: "rejected", reason: expect.objectContaining({ message: "smoke failed" }) },
@@ -294,6 +323,8 @@ describe("onboard shared gateway route containment", () => {
       gatewayName: "nemoclaw",
     });
     expect(reservations).toHaveLength(1);
+    expect(updateSandbox).toHaveBeenCalledOnce();
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("Inference route set"));
     expect(exitProcess).toHaveBeenCalledWith(1);
   });
 

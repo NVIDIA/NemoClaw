@@ -125,6 +125,102 @@ fi
     expect(validatePrReviewAdvisorWorkflowBoundary()).toEqual([]);
   });
 
+  it("requires one advisor lane to publish the PR comment", () => {
+    const source = fs.readFileSync(
+      path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"),
+      "utf8",
+    );
+    const cases = [
+      {
+        workflow: source.replace("publish_comment: true", "publish_comment: false"),
+        expected: "advisor matrix must publish exactly one PR comment",
+      },
+      {
+        workflow: source.replace("publish_comment: false", "publish_comment: true"),
+        expected: "advisor matrix must publish exactly one PR comment",
+      },
+      {
+        workflow: source.replace("            publish_comment: false\n", ""),
+        expected: "advisor matrix entry 2 missing boolean publish_comment",
+      },
+    ];
+
+    for (const { workflow, expected } of cases) {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-publisher-"));
+      const workflowPath = path.join(tmp, "workflow.yaml");
+      fs.writeFileSync(workflowPath, workflow);
+      try {
+        expect(validatePrReviewAdvisorWorkflowBoundary(workflowPath)).toContain(expected);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("keeps comment publication gated to the publishing advisor lane", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-publisher-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = fs
+      .readFileSync(path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"), "utf8")
+      .replace(" && matrix.advisor.publish_comment }}", " }}");
+    fs.writeFileSync(workflowPath, workflow);
+
+    try {
+      expect(validatePrReviewAdvisorWorkflowBoundary(workflowPath)).toContain(
+        "Post PR review advisor comment must run only for the publishing advisor lane",
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps failures non-blocking only for non-publishing advisor lanes", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-publisher-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = fs
+      .readFileSync(path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"), "utf8")
+      .replace(
+        "continue-on-error: ${{ !matrix.advisor.publish_comment }}",
+        "continue-on-error: false",
+      );
+    fs.writeFileSync(workflowPath, workflow);
+
+    try {
+      expect(validatePrReviewAdvisorWorkflowBoundary(workflowPath)).toContain(
+        "review job failures must be non-blocking only for non-publishing advisor lanes",
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("pins previous-review context to the publishing workflow", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-publisher-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = fs
+      .readFileSync(path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"), "utf8")
+      .replace(
+        "PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW: ${{ matrix.advisor.publish_comment }}",
+        "PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW: true",
+      )
+      .replace(
+        'PR_REVIEW_ADVISOR_WORKFLOW_NAME: "PR Review / Advisor"',
+        'PR_REVIEW_ADVISOR_WORKFLOW_NAME: "Other Workflow"',
+      );
+    fs.writeFileSync(workflowPath, workflow);
+
+    try {
+      expect(validatePrReviewAdvisorWorkflowBoundary(workflowPath)).toEqual(
+        expect.arrayContaining([
+          "review job env.PR_REVIEW_ADVISOR_WORKFLOW_NAME must be PR Review / Advisor",
+          "review job env.PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW must be ${{ matrix.advisor.publish_comment }}",
+        ]),
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("rejects a workflow that masks an incomplete advisor analysis", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-outcome-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
@@ -241,10 +337,6 @@ fi
     const workflowPath = path.join(tmp, "workflow.yaml");
     const workflow = fs
       .readFileSync(path.join(ROOT, ".github", "workflows", "pr-review-advisor.yaml"), "utf-8")
-      .replace(
-        'comment_marker: "<!-- nemoclaw-pr-review-advisor-nemotron-ultra -->"',
-        'comment_marker: "<!-- nemoclaw-pr-review-advisor -->"',
-      )
       .replace("artifact_dir: pr-review-advisor-nemotron-ultra", "artifact_dir: pr-review-advisor")
       .replace(
         "artifact_name: pr-review-advisor-nemotron-ultra",
@@ -261,7 +353,6 @@ fi
           "advisor matrix field model must be unique: openai/openai/gpt-5.5",
           "advisor matrix field artifact_dir must be unique: pr-review-advisor",
           "advisor matrix field artifact_name must be unique: pr-review-advisor",
-          "advisor matrix field comment_marker must be unique: <!-- nemoclaw-pr-review-advisor -->",
           "step 'Post PR review advisor comment' run script must include --title \"$PR_REVIEW_ADVISOR_COMMENT_TITLE\"",
         ]),
       );
@@ -314,7 +405,7 @@ jobs:
           "workflow must run on pull_request, not only trusted-target events",
           "workflow must not run untrusted PR code under pull_request_target",
           "workflow permissions.contents must be read",
-          "review job must not be globally continue-on-error",
+          "review job failures must be non-blocking only for non-publishing advisor lanes",
           "PR checkout must use the pull request head SHA as inert analysis data",
           "Run PR review advisor must receive PR_REVIEW_ADVISOR_API_KEY only from secrets.PR_REVIEW_ADVISOR_API_KEY",
           "Run PR review advisor must not receive OPENAI_API_KEY",

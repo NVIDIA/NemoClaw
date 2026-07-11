@@ -154,12 +154,7 @@ hermes whatsapp                             # Hermes sandboxes
 ```
 
 <AgentOnly variant="openclaw">
-NemoClaw validates the gateway URL before pairing and renders the WhatsApp QR code in a compact terminal form so it fits in smaller terminal windows.
-After a successful QR login, NemoClaw restarts the WhatsApp channel through a bounded call to the sandbox's generated private gateway URL so the new session takes effect without granting `operator.admin` to the pairing device.
-NemoClaw sends the gateway token only to that generated private URL.
-If you set a different `OPENCLAW_GATEWAY_URL`, the login can save credentials, but NemoClaw does not automatically restart the channel.
-Exit the sandbox and run `$$nemoclaw <sandbox> channels status --channel whatsapp` to confirm that it reconnects.
-If the bounded restart fails for another reason, the pairing remains saved and the same status command reports the channel state.
+For OpenClaw sandboxes, NemoClaw validates the gateway URL before pairing and renders the WhatsApp QR code in a compact terminal form so it fits in smaller terminal windows.
 If pairing exits with a gateway close such as `1008`, rerun the login command one time and then check `$$nemoclaw <sandbox> channels status --channel whatsapp` so you can diagnose the gateway/session path separately from QR rendering.
 </AgentOnly>
 

@@ -69,6 +69,7 @@ describe("onboard machine vocabulary", () => {
       "state.repair.started",
       "state.repair.completed",
       "state.repair.failed",
+      "state.result.invalidated",
       "state.result.skipped",
       "context.updated",
       "resume.conflict",

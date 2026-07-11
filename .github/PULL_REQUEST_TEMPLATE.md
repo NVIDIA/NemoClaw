@@ -1,12 +1,12 @@
 <!-- markdownlint-disable MD041 -->
 ## Summary
-<!-- 1-3 sentences: what this PR does and why. -->
+<!-- 1-3 plain sentences: what changes and why. Describe before-and-after behavior when it applies. Use existing repository terms; do not invent a label for this PR. -->
 
 ## Related Issue
 <!-- Fixes #NNN or Closes #NNN. Remove this section if none. -->
 
 ## Changes
-<!-- Bullet list of key changes. -->
+<!-- List concrete changes. If this adds an abstraction, configuration, fallback, migration, or compatibility path, name its current requirement and consumer, explain why a direct change is insufficient, and identify the test that protects it. -->
 
 ## Type of Change
 
