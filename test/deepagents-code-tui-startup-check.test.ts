@@ -202,15 +202,6 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     expect(validate("1; touch /tmp/nemoclaw-tui-timeout-injection")).toBe("invalid");
   });
 
-  it("runs two managed TUI sessions and waits for the process count to return to baseline", () => {
-    expect(tuiStartupCheckSource).toContain("for session_index in 1 2");
-    expect(tuiStartupCheckSource).toContain("baseline_process_count");
-    expect(tuiStartupCheckSource).toContain(
-      'wait_for_dcode_process_baseline "$baseline_process_count"',
-    );
-    expect(tuiStartupCheckSource).toContain("DCode/LangGraph process count returned to baseline");
-  });
-
   it("skips non-Deep-Agents sandboxes before requiring expect", () => {
     const result = runTuiStartupCheckHelperResult(
       [
@@ -410,21 +401,27 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       captureDir,
       "10-deepagents-code-tui-startup.repeat.sanitized.log",
     );
+    const processCounts = path.join(captureDir, "process-counts.txt");
+    fs.writeFileSync(processCounts, "0\n1\n0\n1\n0\n");
 
     try {
       const result = runTuiStartupCheckHelperResult(
         [
           "sandbox_exec() { printf 'NEMOCLAW_DCODE_PROBE:deepagents\\nNEMOCLAW_DCODE_ONBOARDING:complete\\n'; }",
           "ensure_expect_available() { return 0; }",
-          "current_dcode_process_count() { printf '0\\n'; }",
-          "wait_for_dcode_process_baseline() { return 0; }",
+          "current_dcode_process_count() {",
+          '  sed -n "1p" "$COUNT_FILE"',
+          '  sed "1d" "$COUNT_FILE" >"$COUNT_FILE.next"',
+          '  mv -- "$COUNT_FILE.next" "$COUNT_FILE"',
+          "}",
+          "sleep() { :; }",
           "run_tui_expect() {",
           '  printf "Select Agent\\nNEMOCLAW_TUI_READY\\nNEMOCLAW_TUI_EXIT_CAPTURED:130\\n" >>"$2"',
           "  return 0",
           "}",
           "main",
         ].join("\n"),
-        { DEEPAGENTS_TUI_CAPTURE_DIR: captureDir },
+        { COUNT_FILE: processCounts, DEEPAGENTS_TUI_CAPTURE_DIR: captureDir },
       );
 
       const sanitizedText = fs.readFileSync(sanitizedCapture, "utf8");
@@ -443,6 +440,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       expect(result.stdout).toContain(
         "session 2: DCode/LangGraph process count returned to baseline",
       );
+      expect(fs.readFileSync(processCounts, "utf8")).toBe("");
     } finally {
       fs.rmSync(captureDir, { force: true, recursive: true });
     }
