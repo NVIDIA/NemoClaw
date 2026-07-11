@@ -673,6 +673,7 @@ describe("prompt machinery (unchanged)", () => {
   it("settles the outer prompt promise on secret prompt errors", () => {
     const script = `
 const { prompt } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "src", "lib", "credentials", "store.ts"))});
+const { isAnyPromptActive } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "src", "lib", "core", "prompt-activity.ts"))});
 process.stdin.isTTY = true;
 process.stderr.isTTY = true;
 process.stdin.ref = () => process.stdin;
@@ -681,7 +682,10 @@ process.stdin.unref = () => process.stdin;
 process.stdin.setRawMode = () => { throw new Error('raw mode unavailable'); };
 prompt('secret: ', { secret: true })
   .then(() => { console.error('unexpected resolve'); process.exit(1); })
-  .catch((err) => { console.log('REJECTED=' + err.message); });
+  .catch((err) => {
+    console.log('REJECTED=' + err.message);
+    console.log('PROMPT_ACTIVE=' + String(isAnyPromptActive()));
+  });
 `;
     const result = spawnSync(process.execPath, ["-e", script], {
       encoding: "utf-8",
@@ -689,6 +693,36 @@ prompt('secret: ', { secret: true })
     });
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("REJECTED=raw mode unavailable");
+    expect(result.stdout).toContain("PROMPT_ACTIVE=false");
+  });
+
+  it("releases secret prompt activity when stdin closes before an answer (#6651)", () => {
+    const script = `
+const { prompt } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "src", "lib", "credentials", "store.ts"))});
+const { isAnyPromptActive } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "src", "lib", "core", "prompt-activity.ts"))});
+process.stdin.isTTY = true;
+process.stderr.isTTY = true;
+process.stdin.ref = () => process.stdin;
+process.stdin.resume = () => process.stdin;
+process.stdin.pause = () => process.stdin;
+process.stdin.unref = () => process.stdin;
+process.stdin.setRawMode = () => process.stdin;
+const pending = prompt('secret: ', { secret: true });
+setImmediate(() => process.stdin.emit('close'));
+pending
+  .then(() => { console.error('unexpected resolve'); process.exit(1); })
+  .catch((err) => {
+    console.log('REJECTED_CODE=' + String(err.code));
+    console.log('PROMPT_ACTIVE=' + String(isAnyPromptActive()));
+  });
+`;
+    const result = spawnSync(process.execPath, ["-e", script], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("REJECTED_CODE=EOF");
+    expect(result.stdout).toContain("PROMPT_ACTIVE=false");
   });
 
   it("classifies secret credential prompts as navigation or credential intent", async () => {

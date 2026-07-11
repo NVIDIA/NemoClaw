@@ -541,6 +541,8 @@ export function promptSecret(question: string): Promise<string> {
     function cleanup() {
       releasePromptActivity();
       input.removeListener("data", onData);
+      input.removeListener("end", onInputClosed);
+      input.removeListener("close", onInputClosed);
       if (rawModeEnabled && typeof input.setRawMode === "function") {
         input.setRawMode(false);
       }
@@ -569,6 +571,10 @@ export function promptSecret(question: string): Promise<string> {
       cleanup();
       output.write("\n");
       reject(error);
+    }
+
+    function onInputClosed() {
+      rejectPrompt(Object.assign(new Error("Prompt closed before input"), { code: "EOF" }));
     }
 
     function onData(chunk: Buffer | string) {
@@ -610,16 +616,22 @@ export function promptSecret(question: string): Promise<string> {
       }
     }
 
-    output.write(question);
-    input.setEncoding("utf8");
-    if (typeof input.resume === "function") {
-      input.resume();
+    try {
+      output.write(question);
+      input.setEncoding("utf8");
+      if (typeof input.resume === "function") {
+        input.resume();
+      }
+      if (typeof input.setRawMode === "function") {
+        input.setRawMode(true);
+        rawModeEnabled = true;
+      }
+      input.on("data", onData);
+      input.on("end", onInputClosed);
+      input.on("close", onInputClosed);
+    } catch (error) {
+      rejectPrompt(error instanceof Error ? error : new Error(String(error)));
     }
-    if (typeof input.setRawMode === "function") {
-      input.setRawMode(true);
-      rawModeEnabled = true;
-    }
-    input.on("data", onData);
   });
 }
 
@@ -654,8 +666,8 @@ export function prompt(question: string, opts: { secret?: boolean } = {}): Promi
     }
     // The secret path above registers inside promptSecret(); this covers the
     // readline path. Released in cleanup() on every settle path. (#6651)
-    const releasePromptActivity = markPromptActive();
     const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+    const releasePromptActivity = markPromptActive();
     let finished = false;
 
     function cleanup() {
@@ -687,24 +699,28 @@ export function prompt(question: string, opts: { secret?: boolean } = {}): Promi
       reject(error);
     }
 
-    rl.on("SIGINT", () => {
-      const error = Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" });
-      rejectPrompt(error);
-      process.kill(process.pid, "SIGINT");
-    });
-    // Treat readline closing before the question is answered as cancellation.
-    // When stdin reaches EOF (e.g. `nemoclaw onboard ... < /dev/null`), the
-    // `question` callback never fires; without this the prompt promise would
-    // hang or the process would exit 0 silently. resolvePrompt/rejectPrompt set
-    // `finished` before calling cleanup() (which itself closes rl), so the
-    // post-answer close is ignored and only a premature EOF rejects here.
-    rl.on("close", () => {
-      if (finished) return;
-      rejectPrompt(Object.assign(new Error("Prompt closed before input"), { code: "EOF" }));
-    });
-    rl.question(question, (answer) => {
-      resolvePrompt(answer.trim());
-    });
+    try {
+      rl.on("SIGINT", () => {
+        const error = Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" });
+        rejectPrompt(error);
+        process.kill(process.pid, "SIGINT");
+      });
+      // Treat readline closing before the question is answered as cancellation.
+      // When stdin reaches EOF (e.g. `nemoclaw onboard ... < /dev/null`), the
+      // `question` callback never fires; without this the prompt promise would
+      // hang or the process would exit 0 silently. resolvePrompt/rejectPrompt set
+      // `finished` before calling cleanup() (which itself closes rl), so the
+      // post-answer close is ignored and only a premature EOF rejects here.
+      rl.on("close", () => {
+        if (finished) return;
+        rejectPrompt(Object.assign(new Error("Prompt closed before input"), { code: "EOF" }));
+      });
+      rl.question(question, (answer) => {
+        resolvePrompt(answer.trim());
+      });
+    } catch (error) {
+      rejectPrompt(error instanceof Error ? error : new Error(String(error)));
+    }
   });
 }
 

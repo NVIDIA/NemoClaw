@@ -165,6 +165,8 @@ export function readMessagingChannelSelection<T extends MessagingChannelSelector
     function cleanup() {
       releasePromptActivity();
       input.removeListener("data", onData);
+      input.removeListener("end", inputClosedHandler);
+      input.removeListener("close", inputClosedHandler);
       process.removeListener("SIGINT", sigintHandler);
       process.removeListener("SIGTERM", sigtermHandler);
       if (rawModeEnabled && typeof input.setRawMode === "function") {
@@ -194,12 +196,23 @@ export function readMessagingChannelSelection<T extends MessagingChannelSelector
       process.kill(process.pid, signal);
     }
 
+    function fail(error: unknown): void {
+      if (finished) return;
+      finished = true;
+      cleanup();
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
+
     function sigintHandler(): void {
       interrupt("SIGINT");
     }
 
     function sigtermHandler(): void {
       interrupt("SIGTERM");
+    }
+
+    function inputClosedHandler(): void {
+      fail(Object.assign(new Error("Prompt closed before input"), { code: "EOF" }));
     }
 
     function onData(chunk: Buffer | string): void {
@@ -220,20 +233,26 @@ export function readMessagingChannelSelection<T extends MessagingChannelSelector
       }
     }
 
-    if (typeof input.ref === "function") {
-      input.ref();
+    try {
+      if (typeof input.ref === "function") {
+        input.ref();
+      }
+      input.setEncoding("utf8");
+      if (typeof input.resume === "function") {
+        input.resume();
+      }
+      if (typeof input.setRawMode === "function") {
+        input.setRawMode(true);
+        rawModeEnabled = true;
+      }
+      process.on("SIGINT", sigintHandler);
+      process.on("SIGTERM", sigtermHandler);
+      input.on("data", onData);
+      input.on("end", inputClosedHandler);
+      input.on("close", inputClosedHandler);
+    } catch (error) {
+      fail(error);
     }
-    input.setEncoding("utf8");
-    if (typeof input.resume === "function") {
-      input.resume();
-    }
-    if (typeof input.setRawMode === "function") {
-      input.setRawMode(true);
-      rawModeEnabled = true;
-    }
-    process.on("SIGINT", sigintHandler);
-    process.on("SIGTERM", sigtermHandler);
-    input.on("data", onData);
   });
 }
 
@@ -262,8 +281,8 @@ function promptMessagingSelectorLine(question: string): Promise<string> {
 
     // Hold background heartbeat output while this prompt owns the terminal;
     // released in cleanup() on every settle path. (#6651)
-    const releasePromptActivity = markPromptActive();
     const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+    const releasePromptActivity = markPromptActive();
     let finished = false;
 
     function cleanup() {
@@ -291,14 +310,18 @@ function promptMessagingSelectorLine(question: string): Promise<string> {
       reject(error);
     }
 
-    rl.on("SIGINT", () => {
-      rejectPrompt(Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" }));
-      process.kill(process.pid, "SIGINT");
-    });
-    rl.on("close", () => {
-      if (finished) return;
-      rejectPrompt(Object.assign(new Error("Prompt closed before input"), { code: "EOF" }));
-    });
-    rl.question(question, resolvePrompt);
+    try {
+      rl.on("SIGINT", () => {
+        rejectPrompt(Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" }));
+        process.kill(process.pid, "SIGINT");
+      });
+      rl.on("close", () => {
+        if (finished) return;
+        rejectPrompt(Object.assign(new Error("Prompt closed before input"), { code: "EOF" }));
+      });
+      rl.question(question, resolvePrompt);
+    } catch (error) {
+      rejectPrompt(error instanceof Error ? error : new Error(String(error)));
+    }
   });
 }

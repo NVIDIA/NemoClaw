@@ -132,6 +132,56 @@ describe("messaging selector key handling", () => {
     expect(stdinUnref).toHaveBeenCalledOnce();
   });
 
+  it("releases raw-mode prompt activity when terminal setup throws (#6651)", async () => {
+    const input = createMockSelectorInput();
+    input.setRawMode.mockImplementation(() => {
+      throw new Error("raw mode unavailable");
+    });
+    const output = { write: vi.fn() };
+    Object.defineProperty(process, "stdin", {
+      configurable: true,
+      value: input,
+    });
+    Object.defineProperty(process, "stderr", {
+      configurable: true,
+      value: output,
+    });
+
+    expect(isAnyPromptActive()).toBe(false);
+    const selection = readMessagingChannelSelection(channels, new Set<string>(), () => {});
+
+    await expect(selection).rejects.toThrow("raw mode unavailable");
+    expect(isAnyPromptActive()).toBe(false);
+    expect(input.pause).toHaveBeenCalledOnce();
+    expect(input.unref).toHaveBeenCalledOnce();
+    expect(input.listenerCount("data")).toBe(0);
+  });
+
+  it("releases raw-mode prompt activity when stdin closes before a selection (#6651)", async () => {
+    const input = createMockSelectorInput();
+    const output = { write: vi.fn() };
+    Object.defineProperty(process, "stdin", {
+      configurable: true,
+      value: input,
+    });
+    Object.defineProperty(process, "stderr", {
+      configurable: true,
+      value: output,
+    });
+
+    expect(isAnyPromptActive()).toBe(false);
+    const selection = readMessagingChannelSelection(channels, new Set<string>(), () => {});
+    expect(isAnyPromptActive()).toBe(true);
+
+    input.emit("close");
+
+    await expect(selection).rejects.toMatchObject({ code: "EOF" });
+    expect(isAnyPromptActive()).toBe(false);
+    expect(input.listenerCount("data")).toBe(0);
+    expect(input.listenerCount("end")).toBe(0);
+    expect(input.listenerCount("close")).toBe(0);
+  });
+
   it("restores raw mode and removes listeners when SIGTERM interrupts", async () => {
     const input = createMockSelectorInput();
     const output = { write: vi.fn() };
