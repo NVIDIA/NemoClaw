@@ -91,6 +91,7 @@ export interface PatchStagedDockerfileOptions {
   baseImageResolutionMetadata?: SandboxBaseImageResolutionMetadata | null;
   dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
   upstreamEndpointUrl?: string | null;
+  wslDashboardExposure?: boolean;
 }
 
 export function patchDcodeAutoApprovalDockerArg(
@@ -218,6 +219,18 @@ export function patchStagedDockerfile(
     /^ARG CHAT_UI_URL=.*$/m,
     `ARG CHAT_UI_URL=${sanitizeDockerArg(chatUiUrl)}`,
   );
+  if (options.wslDashboardExposure !== undefined) {
+    const wslDashboardExposureArg = /^ARG NEMOCLAW_WSL_DASHBOARD_EXPOSURE=.*$/m;
+    if (!wslDashboardExposureArg.test(dockerfile)) {
+      throw new Error(
+        "Dockerfile is missing ARG NEMOCLAW_WSL_DASHBOARD_EXPOSURE; cannot record WSL dashboard exposure.",
+      );
+    }
+    dockerfile = dockerfile.replace(
+      wslDashboardExposureArg,
+      `ARG NEMOCLAW_WSL_DASHBOARD_EXPOSURE=${options.wslDashboardExposure ? "1" : "0"}`,
+    );
+  }
   const remoteDashboardBind = remoteDashboardBindContract.patchRequestedRemoteDashboardBindContract(
     dockerfile,
     process.env.NEMOCLAW_DASHBOARD_BIND,

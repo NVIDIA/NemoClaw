@@ -84,6 +84,7 @@ describe("prepareSandboxDockerfilePatch", () => {
       resolutionHint: resolutionMetadata,
       deps: {
         isLinuxDockerDriverGatewayEnabled: vi.fn(() => true),
+        isWsl: vi.fn(() => false),
         pullAndResolveBaseImageDigest,
         enforceDockerGpuPatchPreserveNetwork: vi.fn(async () => false),
         patchStagedDockerfile,
@@ -99,6 +100,7 @@ describe("prepareSandboxDockerfilePatch", () => {
       buildIdPolicy: "preserve",
       toolDisclosure: "progressive",
       trustedManagedDockerfile: true,
+      wslDashboardExposure: false,
       requireToolDisclosureContract: false,
       baseImageResolutionMetadata: resolutionMetadata,
     });
@@ -124,6 +126,7 @@ describe("prepareSandboxDockerfilePatch", () => {
       log,
       deps: {
         isLinuxDockerDriverGatewayEnabled: vi.fn(() => true),
+        isWsl: vi.fn(() => false),
         pullAndResolveBaseImageDigest: vi.fn(() => ({
           digest: "sha256:abcdef0123456789",
           ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:abcdef0123456789",
@@ -167,9 +170,41 @@ describe("prepareSandboxDockerfilePatch", () => {
         buildIdPolicy: "preserve",
         toolDisclosure: "progressive",
         trustedManagedDockerfile: true,
+        wslDashboardExposure: false,
         requireToolDisclosureContract: false,
       },
     );
+  });
+
+  it("records WSL all-interface dashboard exposure for managed OpenClaw builds (#6024)", async () => {
+    const patchStagedDockerfile = vi.fn();
+
+    await prepareSandboxDockerfilePatch({
+      agent: { name: "openclaw" } as any,
+      fromDockerfile: null,
+      sandboxBaseImage: "ghcr.io/nvidia/nemoclaw/sandbox-base",
+      sandboxBaseTag: "latest",
+      stagedDockerfile: "/tmp/Dockerfile",
+      model: "model-a",
+      chatUiUrl: "http://127.0.0.1:7000",
+      provider: null,
+      preferredInferenceApi: null,
+      webSearchConfig: null,
+      hermesToolGateways: [],
+      sandboxGpuConfig,
+      deps: {
+        isLinuxDockerDriverGatewayEnabled: vi.fn(() => false),
+        isWsl: vi.fn(() => true),
+        enforceDockerGpuPatchPreserveNetwork: vi.fn(async () => false),
+        patchStagedDockerfile,
+        now: () => 1,
+      },
+    });
+
+    expect(patchStagedDockerfile.mock.calls[0]?.[11]).toMatchObject({
+      trustedManagedDockerfile: true,
+      wslDashboardExposure: true,
+    });
   });
 
   it("skips base-image resolution for agent default Dockerfiles", async () => {
@@ -191,6 +226,7 @@ describe("prepareSandboxDockerfilePatch", () => {
       sandboxGpuConfig,
       deps: {
         isLinuxDockerDriverGatewayEnabled: vi.fn(() => false),
+        isWsl: vi.fn(() => false),
         pullAndResolveBaseImageDigest,
         dockerImageInspect,
         enforceDockerGpuPatchPreserveNetwork: vi.fn(async () => false),
@@ -228,6 +264,7 @@ describe("prepareSandboxDockerfilePatch", () => {
       sandboxGpuConfig,
       deps: {
         isLinuxDockerDriverGatewayEnabled: vi.fn(() => false),
+        isWsl: vi.fn(() => false),
         enforceDockerGpuPatchPreserveNetwork: vi.fn(async () => false),
         patchStagedDockerfile,
         now: () => 1,

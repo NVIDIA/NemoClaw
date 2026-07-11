@@ -102,6 +102,29 @@ describe("dockerfile patch helpers", () => {
     expect(isValidProxyPort("70000")).toBe(false);
   });
 
+  it("records WSL dashboard exposure in managed OpenClaw build input (#6024)", () => {
+    const dockerfilePath = dockerfileWith("ARG NEMOCLAW_WSL_DASHBOARD_EXPOSURE=0\n");
+
+    patchStagedDockerfile(
+      dockerfilePath,
+      "custom-model",
+      "http://127.0.0.1:18789",
+      "build-1",
+      null,
+      null,
+      null,
+      null,
+      false,
+      null,
+      [],
+      { wslDashboardExposure: true },
+    );
+
+    expect(fs.readFileSync(dockerfilePath, "utf-8")).toContain(
+      "ARG NEMOCLAW_WSL_DASHBOARD_EXPOSURE=1",
+    );
+  });
+
   it("fails when an OTEL env value has no matching Dockerfile ARG", () => {
     process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT = "http://host.openshell.internal:4318";
     const dockerfilePath = dockerfileWith(

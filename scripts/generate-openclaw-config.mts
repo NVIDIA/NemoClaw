@@ -16,7 +16,8 @@
 //   NEMOCLAW_TOOL_DISCLOSURE,
 //   NEMOCLAW_AGENT_TIMEOUT, NEMOCLAW_AGENT_HEARTBEAT_EVERY,
 //   NEMOCLAW_INFERENCE_COMPAT_B64,
-//   NEMOCLAW_DASHBOARD_BIND, NEMOCLAW_DISABLE_DEVICE_AUTH,
+//   NEMOCLAW_DASHBOARD_BIND, NEMOCLAW_WSL_DASHBOARD_EXPOSURE,
+//   NEMOCLAW_DISABLE_DEVICE_AUTH,
 //   NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE,
 //   NEMOCLAW_EXTRA_AGENTS_JSON_B64,
 //   NEMOCLAW_PROXY_HOST, NEMOCLAW_PROXY_PORT,
@@ -51,6 +52,7 @@ const MIN_DASHBOARD_PORT = 1024;
 const MAX_DASHBOARD_PORT = 65535;
 const REMOTE_DASHBOARD_BIND_VALUES = new Set(["0.0.0.0"]);
 const DEVICE_AUTH_OPT_OUT_SOURCES = new Set(["operator", "managed-onboard"]);
+const BOOLEAN_BUILD_FLAG_VALUES = new Set(["0", "1"]);
 
 function readOptionalEnumEnv(env: Env, name: string, allowedValues: ReadonlySet<string>): string {
   const value = env[name] ?? "";
@@ -58,6 +60,10 @@ function readOptionalEnumEnv(env: Env, name: string, allowedValues: ReadonlySet<
     throw new Error(`${name} must be empty or one of: ${[...allowedValues].join(", ")}`);
   }
   return value;
+}
+
+function readBooleanBuildFlag(env: Env, name: string): boolean {
+  return readOptionalEnumEnv(env, name, BOOLEAN_BUILD_FLAG_VALUES) === "1";
 }
 
 // Local Ollama small-context compaction policy (NemoClaw #5468).
@@ -1207,7 +1213,8 @@ export function buildConfig(env: Env = process.env): JsonObject {
     REMOTE_DASHBOARD_BIND_VALUES,
   );
   const remoteBindOptIn = dashboardBind === "0.0.0.0";
-  const hasRemoteDashboardExposure = isRemote || remoteBindOptIn;
+  const wslDashboardExposure = readBooleanBuildFlag(env, "NEMOCLAW_WSL_DASHBOARD_EXPOSURE");
+  const hasRemoteDashboardExposure = isRemote || remoteBindOptIn || wslDashboardExposure;
   const deviceAuthOptOut = env.NEMOCLAW_DISABLE_DEVICE_AUTH === "1";
   const deviceAuthOptOutSource = readOptionalEnumEnv(
     env,

@@ -64,6 +64,18 @@ describe("generate-openclaw-config.mts: managed security audit findings", () => 
     expect(config.security?.audit?.suppressions ?? []).toEqual([]);
   });
 
+  it("keeps loopback HTTP findings active for a WSL all-interface forward (#6024)", () => {
+    const config = buildSecurityAuditConfig("http://127.0.0.1:18789", {
+      NEMOCLAW_WSL_DASHBOARD_EXPOSURE: "1",
+      NEMOCLAW_DISABLE_DEVICE_AUTH: "1",
+      NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE: "managed-onboard",
+    });
+    expect(config.gateway.controlUi.allowInsecureAuth).toBe(true);
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback).toBeUndefined();
+    expect(config.security?.audit?.suppressions ?? []).toEqual([]);
+  });
+
   it("keeps explicit device auth findings active when the dashboard bind is remote (#6024)", () => {
     const config = buildSecurityAuditConfig("http://127.0.0.1:18789", {
       NEMOCLAW_DASHBOARD_BIND: "0.0.0.0",
@@ -104,6 +116,7 @@ describe("generate-openclaw-config.mts: managed security audit findings", () => 
 
   it.each([
     ["NEMOCLAW_DASHBOARD_BIND", "127.0.0.1"],
+    ["NEMOCLAW_WSL_DASHBOARD_EXPOSURE", "2"],
     ["NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE", "untrusted"],
   ])("rejects an invalid %s value (#6024)", (name, value) => {
     expect(() => buildSecurityAuditConfig("https://127.0.0.1:18789", { [name]: value })).toThrow(
