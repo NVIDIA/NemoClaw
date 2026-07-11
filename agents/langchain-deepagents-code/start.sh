@@ -71,6 +71,7 @@ unset _NEMOCLAW_SANDBOX_RLIMITS
 # or when dcode no longer uses inference.local.
 readonly MANAGED_PROXY_HOST_FILE="/usr/local/share/nemoclaw/dcode-proxy-host"
 readonly MANAGED_PROXY_PORT_FILE="/usr/local/share/nemoclaw/dcode-proxy-port"
+readonly MANAGED_FETCH_CA_BUNDLE_FILE="/etc/openshell-tls/ca-bundle.pem"
 readonly MANAGED_PROXY_OWNER_UID=0
 
 managed_proxy_file_metadata() {
@@ -104,10 +105,50 @@ read_managed_proxy_value() {
   printf '%s' "$value"
 }
 
+managed_fetch_ca_bundle_metadata() {
+  local file="$1"
+  local metadata
+  if metadata="$(stat -c '%u:%a:%s' "$file" 2>/dev/null)"; then
+    printf '%s' "$metadata"
+  else
+    stat -f '%u:%Lp:%z' "$file" 2>/dev/null
+  fi
+}
+
+validate_managed_fetch_ca_bundle() {
+  local file="$MANAGED_FETCH_CA_BUNDLE_FILE"
+  local metadata owner mode size extra
+  if [ -L "$file" ]; then
+    printf '%s\n' 'Missing or unsafe managed fetch CA bundle file.' >&2
+    return 1
+  fi
+  [ -e "$file" ] || return 0
+  if [ ! -f "$file" ] || [ ! -r "$file" ]; then
+    printf '%s\n' 'Missing or unsafe managed fetch CA bundle file.' >&2
+    return 1
+  fi
+  metadata="$(managed_fetch_ca_bundle_metadata "$file")" || {
+    printf '%s\n' 'Cannot inspect managed fetch CA bundle file.' >&2
+    return 1
+  }
+  IFS=: read -r owner mode size extra <<<"$metadata"
+  if [ -n "${extra:-}" ] \
+    || [[ ! "$owner" =~ ^[0-9]+$ ]] \
+    || [[ ! "$mode" =~ ^[0-7]{3,4}$ ]] \
+    || [[ ! "$size" =~ ^[0-9]+$ ]] \
+    || [ "$owner" != "$MANAGED_PROXY_OWNER_UID" ] \
+    || [ "$size" -le 0 ] \
+    || (((8#$mode & 0022) != 0)); then
+    printf '%s\n' 'Unsafe ownership or mode on managed fetch CA bundle file.' >&2
+    return 1
+  fi
+}
+
 # Fail closed if the root-owned image contract is missing. Process-level
 # NEMOCLAW_PROXY_* values are not a trusted runtime routing source.
 PROXY_HOST="$(read_managed_proxy_value "$MANAGED_PROXY_HOST_FILE" "host")"
 PROXY_PORT="$(read_managed_proxy_value "$MANAGED_PROXY_PORT_FILE" "port")"
+validate_managed_fetch_ca_bundle
 unset NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT
 # Generic proxy fallbacks are outside the managed dcode contract and may carry
 # host credentials even after the scheme-specific proxy values are normalized.
@@ -200,6 +241,46 @@ prepare_runtime_env() {
     write_export_if_set http_proxy
     write_export_if_set https_proxy
     write_export_if_set no_proxy
+    printf '_nemoclaw_dcode_ca_bundle=%q\n' "$MANAGED_FETCH_CA_BUNDLE_FILE"
+    printf '_nemoclaw_dcode_ca_owner_uid=%q\n' "$MANAGED_PROXY_OWNER_UID"
+    cat <<'NEMOCLAW_DCODE_CA_GUARD'
+if [ -L "$_nemoclaw_dcode_ca_bundle" ]; then
+  printf "%s\n" "Missing or unsafe managed fetch CA bundle file." >&2
+  return 1 2>/dev/null || exit 1
+elif [ -e "$_nemoclaw_dcode_ca_bundle" ]; then
+  if [ ! -f "$_nemoclaw_dcode_ca_bundle" ] || [ ! -r "$_nemoclaw_dcode_ca_bundle" ]; then
+    printf "%s\n" "Missing or unsafe managed fetch CA bundle file." >&2
+    return 1 2>/dev/null || exit 1
+  fi
+  _nemoclaw_dcode_ca_meta="$(stat -c "%u:%a:%s" "$_nemoclaw_dcode_ca_bundle" 2>/dev/null || stat -f "%u:%Lp:%z" "$_nemoclaw_dcode_ca_bundle" 2>/dev/null || true)"
+  IFS=: read -r _nemoclaw_dcode_ca_owner _nemoclaw_dcode_ca_mode _nemoclaw_dcode_ca_size _nemoclaw_dcode_ca_extra <<NEMOCLAW_DCODE_CA_METADATA
+$_nemoclaw_dcode_ca_meta
+NEMOCLAW_DCODE_CA_METADATA
+  _nemoclaw_dcode_ca_valid=1
+  case "$_nemoclaw_dcode_ca_owner" in
+    '' | *[!0-9]*) _nemoclaw_dcode_ca_valid=0 ;;
+  esac
+  case "$_nemoclaw_dcode_ca_owner_uid" in
+    '' | *[!0-9]*) _nemoclaw_dcode_ca_valid=0 ;;
+  esac
+  case "$_nemoclaw_dcode_ca_mode" in
+    [0-7][0-7][0-7] | [0-7][0-7][0-7][0-7]) ;;
+    *) _nemoclaw_dcode_ca_valid=0 ;;
+  esac
+  case "$_nemoclaw_dcode_ca_size" in
+    '' | *[!0-9]*) _nemoclaw_dcode_ca_valid=0 ;;
+  esac
+  if [ "$_nemoclaw_dcode_ca_valid" -ne 1 ] \
+    || [ -n "${_nemoclaw_dcode_ca_extra:-}" ] \
+    || [ "$_nemoclaw_dcode_ca_owner" != "$_nemoclaw_dcode_ca_owner_uid" ] \
+    || [ "$_nemoclaw_dcode_ca_size" -le 0 ] \
+    || [ "$((0$_nemoclaw_dcode_ca_mode & 022))" -ne 0 ]; then
+    printf "%s\n" "Unsafe ownership or mode on managed fetch CA bundle file." >&2
+    return 1 2>/dev/null || exit 1
+  fi
+fi
+unset _nemoclaw_dcode_ca_bundle _nemoclaw_dcode_ca_owner_uid _nemoclaw_dcode_ca_meta _nemoclaw_dcode_ca_owner _nemoclaw_dcode_ca_mode _nemoclaw_dcode_ca_size _nemoclaw_dcode_ca_extra _nemoclaw_dcode_ca_valid
+NEMOCLAW_DCODE_CA_GUARD
     write_export_if_set SSL_CERT_FILE
     write_export_if_set REQUESTS_CA_BUNDLE
     write_export_if_set NODE_EXTRA_CA_CERTS
