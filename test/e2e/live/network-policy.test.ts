@@ -182,7 +182,7 @@ async function curlStatus(
 async function expectScopedClawHubPluginLifecycle(sandbox: SandboxClient): Promise<void> {
   const install = await sandboxBash(
     sandbox,
-    "HOME=/sandbox openclaw plugins install 'clawhub:@openclaw/deepseek-provider@2026.6.9' 2>&1",
+    "HOME=/sandbox openclaw plugins install 'clawhub:@openclaw/sherpa-onnx-tts@2026.6.8' 2>&1",
     {
       artifactName: "tc-net-restricted-clawhub-scoped-plugin-install",
       timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
@@ -190,13 +190,26 @@ async function expectScopedClawHubPluginLifecycle(sandbox: SandboxClient): Promi
   );
   expect(install.exitCode, text(install)).toBe(0);
 
-  const list = await sandboxBash(sandbox, "HOME=/sandbox openclaw plugins list 2>&1", {
+  const list = await sandboxBash(sandbox, "HOME=/sandbox openclaw plugins list --verbose 2>&1", {
     artifactName: "tc-net-restricted-clawhub-scoped-plugin-list",
     timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
   });
   expect(list.exitCode, text(list)).toBe(0);
-  expect(text(list), "the installed scoped ClawHub plugin must be loaded").toMatch(
-    /deepseek[^\r\n]*loaded/i,
+  expect(text(list), "the installed scoped ClawHub plugin must be enabled").toMatch(
+    /Sherpa ONNX TTS[^\r\n]*enabled/i,
+  );
+
+  const inspect = await sandboxBash(
+    sandbox,
+    "HOME=/sandbox openclaw plugins inspect sherpa-onnx-tts --runtime 2>&1",
+    {
+      artifactName: "tc-net-restricted-clawhub-scoped-plugin-runtime-inspect",
+      timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
+    },
+  );
+  expect(inspect.exitCode, text(inspect)).toBe(0);
+  expect(text(inspect), "the installed scoped ClawHub plugin runtime must load").toMatch(
+    /Status:\s*loaded/i,
   );
 }
 
