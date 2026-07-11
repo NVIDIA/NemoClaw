@@ -4,9 +4,10 @@
 #
 # Case: Deep Agents Code interactive TUI startup (#5620).
 #
-# This live check runs against a real Deep Agents Code sandbox. It proves the
-# interactive `dcode` TUI starts in a PTY, opens and closes the `/agents` modal,
-# exits after Ctrl-C, and leaves only sanitized, secret-free capture artifacts.
+# This live check runs twice against a real Deep Agents Code sandbox. It proves
+# the interactive `dcode` TUI starts in a PTY, opens and closes the `/agents`
+# modal, exits after Ctrl-C without leaking DCode/LangGraph processes, and
+# leaves only sanitized, secret-free capture artifacts.
 #
 # shellcheck disable=SC2016
 # expect(1) Tcl: $env(...) and {...} are Tcl/sh expansion, not bash expansion.
@@ -16,6 +17,7 @@ set -euo pipefail
 SANDBOX_NAME="${SANDBOX_NAME:-${NEMOCLAW_SANDBOX_NAME:-e2e-cloud-onboard}}"
 PREFIX="10-deepagents-code-tui-startup"
 TUI_TIMEOUT="${DEEPAGENTS_TUI_TIMEOUT:-90}"
+PROCESS_CLEANUP_TIMEOUT="${DEEPAGENTS_PROCESS_CLEANUP_TIMEOUT:-20}"
 # Shell-only live check fallback for remote e2e hosts; Vitest parity coverage in
 # test/deepagents-code-tui-startup-check.test.ts pins this to secret-patterns.ts.
 SECRET_PATTERN='(?:nvapi-[A-Za-z0-9_-]{10,}|nvcf-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9_-]{10,}|github_pat_[A-Za-z0-9_]{30,}|sk-proj-[A-Za-z0-9_-]{10,}|sk-ant-[A-Za-z0-9_-]{10,}|sk-[A-Za-z0-9_-]{20,}|(?:xox[bpas]|xapp)-[A-Za-z0-9-]{10,}|A(?:K|S)IA[A-Z0-9]{16}|hf_[A-Za-z0-9]{10,}|glpat-[A-Za-z0-9_-]{10,}|gsk_[A-Za-z0-9]{10,}|pypi-[A-Za-z0-9_-]{10,}|\bbot[0-9]{8,10}:[A-Za-z0-9_-]{35}\b|\b[0-9]{8,10}:[A-Za-z0-9_-]{35}\b|\b[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b|tvly-[A-Za-z0-9_-]{10,}|lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*)'
@@ -47,6 +49,34 @@ sandbox_exec() {
 
 is_positive_integer() {
   [[ "$1" =~ ^[1-9][0-9]*$ ]]
+}
+
+dcode_process_count() {
+  sandbox_exec 'self=$$; parent=$PPID; count=0; for proc_dir in /proc/[0-9]*; do pid=${proc_dir##*/}; case " $self $parent " in *" $pid "*) continue ;; esac; [ -r "$proc_dir/cmdline" ] || continue; cmdline=$(tr "\000" " " <"$proc_dir/cmdline" 2>/dev/null) || continue; case "${cmdline,,}" in *dcode-session-supervisor* | *deepagents_code* | *langgraph* | */opt/venv/bin/dcode*) count=$((count + 1)) ;; esac; done; printf "NEMOCLAW_DCODE_PROCESS_COUNT:%s\n" "$count"'
+}
+
+current_dcode_process_count() {
+  local output count
+  output="$(dcode_process_count)" || return 1
+  count="$(sed -n 's/^NEMOCLAW_DCODE_PROCESS_COUNT:\([0-9][0-9]*\)$/\1/p' <<<"$output" | tail -n1)"
+  [[ "$count" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$count"
+}
+
+wait_for_dcode_process_baseline() {
+  local baseline="$1"
+  local deadline=$((SECONDS + PROCESS_CLEANUP_TIMEOUT))
+  local count
+  while :; do
+    count="$(current_dcode_process_count)" || return 1
+    if [ "$count" -le "$baseline" ]; then
+      return 0
+    fi
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      return 1
+    fi
+    sleep 1
+  done
 }
 
 ensure_expect_available() {
@@ -324,6 +354,12 @@ main() {
     exit 1
   fi
 
+  if ! is_positive_integer "$PROCESS_CLEANUP_TIMEOUT"; then
+    fail_test "DEEPAGENTS_PROCESS_CLEANUP_TIMEOUT must be a positive integer"
+    printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
+    exit 1
+  fi
+
   if ! command -v perl >/dev/null 2>&1; then
     fail_test "perl is required to sanitize and redact Deep Agents Code TUI captures"
     printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
@@ -362,67 +398,84 @@ main() {
 
   local capture_dir raw_capture_file marker_capture_file expect_log_file combined_capture_file plain_capture_file
   capture_dir="$(make_capture_dir)"
-  raw_capture_file="${capture_dir}/${PREFIX}.raw.log"
-  marker_capture_file="${capture_dir}/${PREFIX}.markers.log"
-  expect_log_file="${capture_dir}/${PREFIX}.expect.log"
-  combined_capture_file="${capture_dir}/${PREFIX}.combined.log"
-  plain_capture_file="${capture_dir}/${PREFIX}.sanitized.log"
-  SENSITIVE_CAPTURE_FILES=(
-    "$raw_capture_file"
-    "$marker_capture_file"
-    "$expect_log_file"
-    "$combined_capture_file"
-  )
-  : >"$raw_capture_file"
-  : >"$marker_capture_file"
-  : >"$expect_log_file"
+  local baseline_process_count
+  if ! baseline_process_count="$(current_dcode_process_count)"; then
+    fail_test "unable to record the baseline DCode/LangGraph process count"
+    printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
+    exit 1
+  fi
 
-  info "Running Deep Agents Code TUI startup check in sandbox: $SANDBOX_NAME"
+  info "Running two Deep Agents Code TUI sessions in sandbox: $SANDBOX_NAME"
   info "Capture directory: $capture_dir"
 
-  local expect_rc
-  set +e
-  run_tui_expect "$raw_capture_file" "$marker_capture_file" "$expect_name_prompt" >"$expect_log_file" 2>&1
-  expect_rc=$?
-  set -e
+  local session_index suffix expect_rc secret_detected
+  for session_index in 1 2; do
+    suffix=""
+    [ "$session_index" -eq 2 ] && suffix=".repeat"
+    raw_capture_file="${capture_dir}/${PREFIX}${suffix}.raw.log"
+    marker_capture_file="${capture_dir}/${PREFIX}${suffix}.markers.log"
+    expect_log_file="${capture_dir}/${PREFIX}${suffix}.expect.log"
+    combined_capture_file="${capture_dir}/${PREFIX}${suffix}.combined.log"
+    plain_capture_file="${capture_dir}/${PREFIX}${suffix}.sanitized.log"
+    SENSITIVE_CAPTURE_FILES+=(
+      "$raw_capture_file"
+      "$marker_capture_file"
+      "$expect_log_file"
+      "$combined_capture_file"
+    )
+    : >"$raw_capture_file"
+    : >"$marker_capture_file"
+    : >"$expect_log_file"
 
-  cat "$raw_capture_file" "$expect_log_file" "$marker_capture_file" >"$combined_capture_file"
-  strip_terminal_control_sequences <"$combined_capture_file" >"$plain_capture_file"
-  local secret_detected=0
-  if contains_secret <"$plain_capture_file"; then
-    secret_detected=1
-    if ! redact_secrets_in_file "$plain_capture_file"; then
-      :
+    set +e
+    run_tui_expect "$raw_capture_file" "$marker_capture_file" "$expect_name_prompt" >"$expect_log_file" 2>&1
+    expect_rc=$?
+    set -e
+
+    cat "$raw_capture_file" "$expect_log_file" "$marker_capture_file" >"$combined_capture_file"
+    strip_terminal_control_sequences <"$combined_capture_file" >"$plain_capture_file"
+    secret_detected=0
+    if contains_secret <"$plain_capture_file"; then
+      secret_detected=1
+      if ! redact_secrets_in_file "$plain_capture_file"; then
+        :
+      fi
+      if [ -e "$plain_capture_file" ] && contains_secret <"$plain_capture_file"; then
+        fail_test "session ${session_index}: secret-shaped value remained after redacting sanitized TUI capture"
+      fi
     fi
-    if [ -e "$plain_capture_file" ] && contains_secret <"$plain_capture_file"; then
-      fail_test "secret-shaped value remained after redacting sanitized TUI capture"
+    cleanup_sensitive_captures
+
+    if [ "$expect_rc" -eq 0 ]; then
+      pass "session ${session_index}: finite expect harness reached startup and observed exit"
+    else
+      fail_test "session ${session_index}: finite expect harness exited ${expect_rc}"
+      print_sanitized_capture_excerpt "$plain_capture_file"
     fi
-  fi
-  cleanup_sensitive_captures
 
-  if [ "$expect_rc" -eq 0 ]; then
-    pass "finite expect harness reached startup and observed exit"
-  else
-    fail_test "finite expect harness exited ${expect_rc}"
-    print_sanitized_capture_excerpt "$plain_capture_file"
-  fi
+    if grep -q "NEMOCLAW_TUI_READY" "$plain_capture_file" && is_tui_ready_capture <"$plain_capture_file"; then
+      pass "session ${session_index}: dcode TUI reached the main composer and opened Select Agent"
+    else
+      fail_test "session ${session_index}: dcode TUI Select Agent readiness marker missing from capture"
+    fi
 
-  if grep -q "NEMOCLAW_TUI_READY" "$plain_capture_file" && is_tui_ready_capture <"$plain_capture_file"; then
-    pass "dcode TUI reached the main composer and opened Select Agent"
-  else
-    fail_test "dcode TUI Select Agent readiness marker missing from capture"
-  fi
+    assert_clean_exit_code "$plain_capture_file"
 
-  assert_clean_exit_code "$plain_capture_file"
+    if [ "$secret_detected" -eq 1 ]; then
+      fail_test "session ${session_index}: secret-shaped value found in sanitized TUI capture"
+    else
+      pass "session ${session_index}: sanitized TUI capture does not contain secret-shaped values"
+    fi
 
-  if [ "$secret_detected" -eq 1 ]; then
-    fail_test "secret-shaped value found in sanitized TUI capture"
-  else
-    pass "sanitized TUI capture does not contain secret-shaped values"
-  fi
+    if wait_for_dcode_process_baseline "$baseline_process_count"; then
+      pass "session ${session_index}: DCode/LangGraph process count returned to baseline"
+    else
+      fail_test "session ${session_index}: DCode/LangGraph process count remained above baseline after ${PROCESS_CLEANUP_TIMEOUT}s"
+    fi
+    info "sanitized capture: ${plain_capture_file}"
+  done
 
   printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
-  info "sanitized capture: ${plain_capture_file}"
   [ "$FAILED" -eq 0 ] || exit 1
 }
 

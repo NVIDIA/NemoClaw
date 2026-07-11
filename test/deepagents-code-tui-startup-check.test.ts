@@ -202,6 +202,15 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     expect(validate("1; touch /tmp/nemoclaw-tui-timeout-injection")).toBe("invalid");
   });
 
+  it("runs two managed TUI sessions and waits for the process count to return to baseline", () => {
+    expect(tuiStartupCheckSource).toContain("for session_index in 1 2");
+    expect(tuiStartupCheckSource).toContain("baseline_process_count");
+    expect(tuiStartupCheckSource).toContain(
+      'wait_for_dcode_process_baseline "$baseline_process_count"',
+    );
+    expect(tuiStartupCheckSource).toContain("DCode/LangGraph process count returned to baseline");
+  });
+
   it("skips non-Deep-Agents sandboxes before requiring expect", () => {
     const result = runTuiStartupCheckHelperResult(
       [
@@ -397,12 +406,18 @@ describe("Deep Agents Code TUI startup check helpers", () => {
   it("preserves TUI lifecycle markers in the sanitized capture artifact", () => {
     const captureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-tui-markers-"));
     const sanitizedCapture = path.join(captureDir, "10-deepagents-code-tui-startup.sanitized.log");
+    const repeatedSanitizedCapture = path.join(
+      captureDir,
+      "10-deepagents-code-tui-startup.repeat.sanitized.log",
+    );
 
     try {
       const result = runTuiStartupCheckHelperResult(
         [
           "sandbox_exec() { printf 'NEMOCLAW_DCODE_PROBE:deepagents\\nNEMOCLAW_DCODE_ONBOARDING:complete\\n'; }",
           "ensure_expect_available() { return 0; }",
+          "current_dcode_process_count() { printf '0\\n'; }",
+          "wait_for_dcode_process_baseline() { return 0; }",
           "run_tui_expect() {",
           '  printf "Select Agent\\nNEMOCLAW_TUI_READY\\nNEMOCLAW_TUI_EXIT_CAPTURED:130\\n" >>"$2"',
           "  return 0",
@@ -413,14 +428,21 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       );
 
       const sanitizedText = fs.readFileSync(sanitizedCapture, "utf8");
+      const repeatedSanitizedText = fs.readFileSync(repeatedSanitizedCapture, "utf8");
       expect(result.status).toBe(0);
-      expect(result.stdout).toContain("finite expect harness reached startup and observed exit");
+      expect(result.stdout).toContain(
+        "session 1: finite expect harness reached startup and observed exit",
+      );
       expect(result.stdout).toContain(
         "dcode TUI reached the main composer and opened Select Agent",
       );
       expect(result.stdout).toContain("dcode TUI exited cleanly after Ctrl-C (exit 130)");
       expect(sanitizedText).toContain("NEMOCLAW_TUI_READY");
       expect(sanitizedText).toContain("NEMOCLAW_TUI_EXIT_CAPTURED:130");
+      expect(repeatedSanitizedText).toContain("NEMOCLAW_TUI_READY");
+      expect(result.stdout).toContain(
+        "session 2: DCode/LangGraph process count returned to baseline",
+      );
     } finally {
       fs.rmSync(captureDir, { force: true, recursive: true });
     }
@@ -434,6 +456,8 @@ describe("Deep Agents Code TUI startup check helpers", () => {
         [
           "sandbox_exec() { printf 'NEMOCLAW_DCODE_PROBE:deepagents\\nNEMOCLAW_DCODE_ONBOARDING:complete\\n'; }",
           "ensure_expect_available() { return 0; }",
+          "current_dcode_process_count() { printf '0\\n'; }",
+          "wait_for_dcode_process_baseline() { return 0; }",
           "run_tui_expect() {",
           '  printf "NEMOCLAW_TUI_EOF_BEFORE_READY\\n" >>"$2"',
           "  return 21",
@@ -444,7 +468,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       );
 
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain("finite expect harness exited 21");
+      expect(result.stderr).toContain("session 1: finite expect harness exited 21");
       expect(result.stderr).toContain("sanitized capture excerpt (last 20000 bytes)");
       expect(result.stderr).toContain("NEMOCLAW_TUI_EOF_BEFORE_READY");
     } finally {
