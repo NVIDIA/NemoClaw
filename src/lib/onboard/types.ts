@@ -60,8 +60,12 @@ export interface SandboxCreateIntent {
   /** Present only when the operator explicitly selected observability on or off. */
   readonly observabilityRequestedExplicitly?: true;
   readonly dcodeAutoApprovalMode?: import("./dcode-auto-approval").DcodeAutoApprovalMode;
+  /** Non-secret upstream endpoint metadata for managed image config generation. */
+  readonly endpointUrl?: string | null;
   /** Internal authoritative rebuild tier used before replacement registration completes. */
   readonly policyTier?: string | null;
+  /** Gateway-level extra providers reconciled immediately before sandbox creation. */
+  readonly extraProviders?: readonly string[];
 }
 
 export type OnboardOptions = {

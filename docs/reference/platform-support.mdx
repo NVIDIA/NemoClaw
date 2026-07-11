@@ -94,7 +94,7 @@ NemoClaw routes inference through the OpenShell gateway. Each row below is a pro
 | Provider | Status | Endpoint type | Notes |
 |----------|--------|---------------|-------|
 | NVIDIA Endpoints | Tested | OpenAI-compatible | Hosted models on integrate.api.nvidia.com |
-| OpenRouter | Tested | OpenAI-compatible | First-class onboarding route for OpenClaw, Hermes, and LangChain Deep Agents Code. NemoClaw registers the `openrouter-api` provider through OpenShell's `openai` profile with `OPENAI_BASE_URL=https://openrouter.ai/api/v1`; host-side validation and catalog probes send the default OpenRouter attribution headers. |
+| OpenRouter | Tested | OpenAI-compatible | First-class onboarding route for OpenClaw, Hermes, and LangChain Deep Agents Code. NemoClaw registers the `openrouter-api` provider through OpenShell's `openai` profile with a host runtime adapter URL; host-side validation and runtime traffic send the default OpenRouter attribution headers. |
 | OpenAI | Tested | Native OpenAI-compatible | Uses OpenAI model IDs |
 | Other OpenAI-compatible endpoint | Tested with limitations | Custom OpenAI-compatible | Custom base-URL adapter for servers that implement OpenAI-compatible `/v1/chat/completions` or `/v1/responses`. Behavior on OpenAI-compatible proxies, gateways, and self-hosted implementations may vary; this row claims the adapter, not the universe of compatible endpoints. |
 | Anthropic | Tested | Native Anthropic | Uses anthropic-messages |
@@ -189,6 +189,6 @@ They are listed here so launch material, sales conversations, and support triage
 ## Updating the Matrix
 
 1. Edit [`ci/platform-matrix.json`](https://github.com/NVIDIA/NemoClaw/blob/main/ci/platform-matrix.json).
-2. Run `python3 scripts/generate-platform-docs.py` to regenerate this page and the partial tables on prerequisites and inference-options.
+2. Run `python3 scripts/generate-platform-docs.py` to regenerate this page and the partial tables on prerequisites and provider selection.
 3. Open a PR. The engineering owner team is auto-assigned through CODEOWNERS and explicitly acknowledges launch impact in the PR review for any launch-facing claim change.
 4. The `platform-matrix-sync` pre-commit hook regenerates and stages the rendered tables before the commit lands; run `python3 scripts/generate-platform-docs.py --check` to verify drift without regenerating.

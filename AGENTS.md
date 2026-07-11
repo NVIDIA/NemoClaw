@@ -153,7 +153,7 @@ For shell scripts use `#` comments. For Markdown use HTML comments.
 
 ### No External Project Links
 
-Do not add links to third-party code repositories, community collections, or unofficial resources. Links to official tool documentation (Node.js, Python, uv) are acceptable.
+Do not add links to third-party code repositories, community collections, or unofficial resources. Links to official tool documentation (Node.js and Python) are acceptable.
 
 ## Git Hooks (prek)
 

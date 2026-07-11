@@ -8,11 +8,10 @@ Direct E2E coverage runs through Vitest.
 Interactive TUI targets require `expect`. The unified workflow installs it
 before those targets run; local runners must provide it themselves.
 
-- `.github/workflows/e2e.yaml` is the scheduled and manually
-  dispatchable live target workflow.
-- `.github/workflows/post-merge-e2e-risk-gate-shadow.yaml` is the trusted post-merge
-  controller that selects and dispatches a bounded exact-commit subset after
-  pushes to `main`.
+- `.github/workflows/e2e.yaml` is the scheduled, manually dispatchable, and
+  selectively dispatched live target workflow.
+- `.github/workflows/pr-e2e-gate.yaml` is the PR controller for
+  `E2E / PR Gate`.
 - `.github/workflows/e2e-branch-validation.yaml` provisions Brev instances and
   runs focused E2E targets from source on a clean machine.
 - Platform workflows such as macOS, WSL, Ollama proxy, sandbox image, and
@@ -56,41 +55,50 @@ artifact so baseline aggregation stays stable.
 Older issue references to Vitest target artifacts under `e2e-artifacts/vitest/`
 map to this consolidated `e2e-artifacts/live/` registry-target artifact layout.
 
-## Post-merge risk shadow
+## PR E2E check
 
-Every push to the `main` branch of `NVIDIA/NemoClaw` starts a model-independent
-shadow controller. It builds the deterministic risk plan from the exact
-`github.event.before` and `github.event.after` range after confirming that its checkout
-matches the pushed commit. If the plan matches runtime regression families,
-the controller dispatches at most three `automaticJobs` through `e2e.yaml`.
-The workflow definition stays on `main`, while every E2E checkout uses the
-merged commit supplied through `checkout_sha`. GitHub returns the
-dispatched workflow's run ID directly, and the controller uses that ID as the
-sole child-run selector for waiting, evidence download, and completion.
+When `CI / Pull Request` completes for a PR from this repository,
+`.github/workflows/pr-e2e-gate.yaml` creates `E2E / PR Gate` for the PR head
+commit. The controller reads all changed files and builds the deterministic
+risk plan. If a runtime risk family matches, it dispatches every selected
+`requiredJobs` entry through `e2e.yaml`; otherwise the check passes without an
+E2E run.
 
-Before E2E preparation or selected jobs can use repository secrets,
-`e2e.yaml` verifies that the requested SHA equals the workflow's own current
-`main` commit, confirms that checked-out `HEAD` matches it, proves reachability,
-and accepts only selective job dispatch with valid plan and correlation
-metadata. If `main` advances before an older controller dispatches, that child
-fails closed and the controller records failure instead of running historical
-code with current secrets. The shadow-only Vitest
-reporter then writes a `risk-signal.json` for each selected job and matrix
-shard. Each signal binds the observed checkout SHA, expected SHA, plan hash,
+Before dispatch, the controller verifies that the PR is unchanged and that
+`main` still points to its workflow commit. It accepts only an E2E run using
+that commit. Each selected job checks out `checkout_sha`. Before preparation or
+secret-bearing jobs can run, `e2e.yaml` verifies that the PR remains open,
+belongs to `NVIDIA/NemoClaw`, and still has that head commit. The dispatch
+includes selected jobs and valid plan and correlation metadata, but not
+`targets`. The controller uses GitHub's returned run ID for waiting, evidence
+download, and completion.
+
+The Vitest reporter writes one `risk-signal.json` for each selected job and
+matrix shard.
+The checked workflow boundary requires every policy-selected job to expose its
+matching job identity, attach the reporter to every Vitest invocation, and
+always upload its evidence artifact.
+Each signal binds the observed checkout SHA, expected SHA, plan hash,
 correlation ID, and pass, failure, skip, pending, and unhandled-error counts.
-The controller retains `post-merge-risk-plan-<sha>` for 14 days, while each
+The controller retains `pr-e2e-risk-plan-<sha>` for 14 days, while each
 signal travels in the selected job's existing E2E artifact.
+Its private dispatch state is protected by a SHA-256 digest that is verified
+before downloaded evidence is classified.
 
-The controller reports `E2E / Post-merge Risk Gate (shadow)` on the merged
-commit. It reports success only when every expected shard produces a complete,
-unskipped pass and the three-job cap did not omit required jobs. Selected E2E
-workflow or test failures for the merged commit report failure. Missing, partial, skipped,
-ambiguous, or manual-expansion evidence reports neutral. A plan with no matched
-runtime risk reports success without dispatching live E2E. This shadow check runs
-after merge and is not a required PR check. It disables PR comments and the
-scheduled/manual scorecard, including scorecard Slack reporting.
-Controller or evidence-verification errors close an already-created check as
-neutral so incomplete evidence cannot appear successful.
+When the plan selects jobs, the check passes only when the E2E run succeeds and
+every expected job shard uploads one complete passing signal with no skips or
+pending tests. Every other dispatched outcome fails.
+The coordinator has a 180-minute job budget and gives evidence download its
+own 10-minute limit, so a stalled download fails instead of consuming the
+remaining coordination time.
+These dispatches suppress PR comments and the scheduled or manual
+scorecard, including scorecard Slack reporting.
+
+Synchronizing, reopening, or closing the PR cancels its active E2E runs. A new
+dispatch also cancels the previous run, while the previous controller remains
+available to close its check as failed.
+The controller does not read PR Review Advisor or E2E Advisor output, so model
+availability and recommendations are not part of merge authority.
 
 ## Onboard performance budget
 

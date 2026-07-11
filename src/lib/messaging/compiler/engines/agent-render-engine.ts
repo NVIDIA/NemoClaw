@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isObjectRecord } from "../../../core/json-types";
 import { createBuiltInMessagingHookRegistry, runMessagingHook } from "../../hooks";
 import { COMMON_STATIC_OUTPUTS_HOOK_HANDLER_ID } from "../../hooks/common/static-outputs";
 import type {
@@ -113,17 +114,13 @@ function renderHookForManifestEntry(
 }
 
 function isChannelRenderSpec(value: unknown): value is ChannelRenderSpec {
-  if (!isObject(value)) return false;
+  if (!isObjectRecord(value)) return false;
   if (value.kind !== "json-fragment" && value.kind !== "env-lines") return false;
   if (typeof value.agent !== "string" || typeof value.target !== "string") return false;
   if (value.kind === "json-fragment") {
-    return isObject(value.fragment) && typeof value.fragment.path === "string";
+    return isObjectRecord(value.fragment) && typeof value.fragment.path === "string";
   }
   return Array.isArray(value.lines) && value.lines.every((line) => typeof line === "string");
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function assertSingleLineEnvRenderLines(

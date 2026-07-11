@@ -14,6 +14,7 @@ import {
   GATEWAY_PORT,
   OLLAMA_PORT,
   OLLAMA_PROXY_PORT,
+  OPENROUTER_RUNTIME_ADAPTER_PORT,
   VLLM_PORT,
   validateGatewayPort,
 } from "../core/ports";
@@ -59,6 +60,9 @@ export type GatewayRecoveryDeps = {
   // to the production implementations.
   isGatewayHealthy?: typeof isGatewayHealthy;
   isGatewayHttpReady?: typeof isGatewayHttpReady;
+  getContainerRuntime?: typeof getContainerRuntime;
+  shouldPatchCoredns?: typeof shouldPatchCoredns;
+  runCorednsPatch?(gatewayName: string): void;
   // Injected clock reader for deadline-driven tests. Defaults to Date.now.
   // A test can pair a virtual sleeper (that advances a captured value) with
   // this reader to drive deterministic deadline expiration without real
@@ -99,6 +103,7 @@ function resolveGatewayRecoveryTarget(options: StartGatewayForRecoveryOptions = 
     ollamaPort: OLLAMA_PORT,
     ollamaProxyPort: OLLAMA_PROXY_PORT,
     bedrockRuntimeAdapterPort: BEDROCK_RUNTIME_ADAPTER_PORT,
+    openrouterRuntimeAdapterPort: OPENROUTER_RUNTIME_ADAPTER_PORT,
   });
   return { gatewayName, gatewayPort };
 }
@@ -229,11 +234,15 @@ async function startTargetGatewayForRecovery(
 
   if (healthy) {
     process.env.OPENSHELL_GATEWAY = gatewayName;
-    const runtime = getContainerRuntime();
-    if (shouldPatchCoredns(runtime)) {
-      run(["bash", path.join(SCRIPTS, "fix-coredns.sh"), gatewayName], {
-        ignoreError: true,
-      });
+    const runtime = (deps.getContainerRuntime ?? getContainerRuntime)();
+    if ((deps.shouldPatchCoredns ?? shouldPatchCoredns)(runtime)) {
+      const runCorednsPatch =
+        deps.runCorednsPatch ??
+        ((targetGatewayName: string) =>
+          run(["bash", path.join(SCRIPTS, "fix-coredns.sh"), targetGatewayName], {
+            ignoreError: true,
+          }));
+      runCorednsPatch(gatewayName);
     }
     return;
   }

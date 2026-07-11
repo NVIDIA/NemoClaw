@@ -26,6 +26,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { formatBuildFailureDiagnostics } from "./sandbox-base-image";
+
 export type SnapshotterChoice = "fuse-overlayfs" | "native";
 
 export const DEFAULT_SNAPSHOTTER: SnapshotterChoice = "fuse-overlayfs";
@@ -51,6 +53,13 @@ export interface RunOpts {
   suppressOutput?: boolean;
 }
 
+export interface RunResult {
+  status: number | null;
+  error?: unknown;
+  stdout?: unknown;
+  stderr?: unknown;
+}
+
 export interface EnsurePatchedClusterImageOpts {
   /** Upstream OpenShell cluster image reference, e.g. `ghcr.io/nvidia/openshell/cluster:0.0.36`. */
   upstreamImage: string;
@@ -59,7 +68,7 @@ export interface EnsurePatchedClusterImageOpts {
   /** Captures stdout from a command (used to probe `docker image inspect`). */
   runCaptureImpl?: (cmd: readonly string[], opts?: RunOpts) => string;
   /** Streams a command's stdio (used for `docker pull` and `docker build`). */
-  runImpl?: (cmd: readonly string[], opts?: RunOpts) => { status: number | null };
+  runImpl?: (cmd: readonly string[], opts?: RunOpts) => RunResult;
   /** Logger for human-readable progress lines. Defaults to console.error. */
   logger?: (msg: string) => void;
   /** Filesystem implementation (testing seam). */
@@ -330,9 +339,11 @@ export function ensurePatchedClusterImage(opts: EnsurePatchedClusterImageOpts): 
     );
 
     if (buildResult.status !== 0) {
+      const diagnostics = formatBuildFailureDiagnostics(buildResult);
       throw new ClusterImagePatchError(
         `failed to build patched cluster image ` +
-          `(docker build exit ${buildResult.status}; timeout ${buildTimeoutMs} ms)`,
+          `(docker build exit ${buildResult.status}; timeout ${buildTimeoutMs} ms)` +
+          (diagnostics ? `\n${diagnostics}` : ""),
       );
     }
   } finally {
@@ -393,11 +404,16 @@ function defaultRunCapture(cmd: readonly string[], opts: RunOpts = {}): string {
   });
 }
 
-function defaultRun(cmd: readonly string[], opts: RunOpts = {}): { status: number | null } {
+function defaultRun(cmd: readonly string[], opts: RunOpts = {}): RunResult {
   const result = runner.run(cmd, {
     ignoreError: opts.ignoreError,
     suppressOutput: opts.suppressOutput,
     ...(opts.timeoutMs !== undefined ? { timeout: opts.timeoutMs } : {}),
   });
-  return { status: result.status ?? null };
+  return {
+    status: result.status ?? null,
+    error: result.error,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  };
 }
