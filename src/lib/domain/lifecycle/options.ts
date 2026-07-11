@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isNonInteractiveEnv } from "../../core/non-interactive";
 import {
   DCODE_AUTO_APPROVAL_MODES,
   type DcodeAutoApprovalMode,
@@ -61,6 +62,7 @@ export function normalizeDestroySandboxOptions(
   options: string[] | DestroySandboxOptions = {},
 ): DestroySandboxOptions {
   const envCleanupGateway = readCleanupGatewayEnv();
+  const nonInteractive = isNonInteractiveEnv();
   if (Array.isArray(options)) {
     const yesIdx = options.lastIndexOf("--cleanup-gateway");
     const noIdx = options.lastIndexOf("--no-cleanup-gateway");
@@ -68,12 +70,13 @@ export function normalizeDestroySandboxOptions(
       yesIdx === -1 && noIdx === -1 ? envCleanupGateway : yesIdx > noIdx;
     return {
       force: options.includes("--force"),
-      yes: options.includes("--yes"),
+      yes: options.includes("--yes") || nonInteractive,
       ...(cleanupGateway === undefined ? {} : { cleanupGateway }),
     };
   }
   return {
     ...options,
+    ...(nonInteractive ? { yes: true } : {}),
     ...(options.cleanupGateway === undefined && envCleanupGateway !== undefined
       ? { cleanupGateway: envCleanupGateway }
       : {}),

@@ -66,6 +66,7 @@ describe("destroySandbox flow", () => {
 
     await expect(harness.destroySandbox("alpha", options)).resolves.toBeUndefined();
 
+    expect(harness.promptSpy).not.toHaveBeenCalled();
     expect(harness.cleanupGatewaySpy.mock.calls).toEqual(
       cleanupExpected ? [["nemoclaw-19080", harness.runOpenshellSpy]] : [],
     );
