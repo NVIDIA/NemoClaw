@@ -211,7 +211,7 @@ beta  127.0.0.1  18789  12345  running`;
       .spyOn(openshellRuntime, "runOpenshell")
       .mockImplementation((rawArgs: unknown) => {
         const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
-        if (args[0] === "forward" && args[1] === "start") forwardStarted = true;
+        forwardStarted ||= args[0] === "forward" && args[1] === "start";
         return { status: 0 } as never;
       });
 
