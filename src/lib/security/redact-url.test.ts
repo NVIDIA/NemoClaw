@@ -46,6 +46,17 @@ describe("URL redaction", () => {
     expect(result).not.toContain("bounded-password");
   });
 
+  it("redacts userinfo when a malformed URL cannot be parsed", () => {
+    const value = "https://fallback-user:fallback-pass@[not-an-ip/path";
+    const logResult = redact(value);
+    const persistedResult = redactUrl(value);
+
+    expect(logResult).toBe("https://****:****@[not-an-ip/path");
+    expect(persistedResult).toBe("https://[not-an-ip/path");
+    expect(logResult).not.toContain("fallback-user");
+    expect(persistedResult).not.toContain("fallback-pass");
+  });
+
   it("redacts encoded query secrets after the bounded wrapper fallback (#6224)", () => {
     const wrappers = "]".repeat(4_096);
     const encodedSecret = "sk%2Dproj%2Dabcdefghijklmnopqrstuvwxyz";
