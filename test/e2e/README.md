@@ -106,15 +106,21 @@ The checked workflow boundary requires every policy-selected job to expose its
 matching job identity, attach the reporter to every Vitest invocation, and
 always upload its evidence artifact.
 Each signal binds the observed checkout SHA, expected SHA, plan hash,
-correlation ID, and pass, failure, skip, pending, and unhandled-error counts.
+correlation ID, and pass, failure, skip, optional-skip, pending, and
+unhandled-error counts. The optional-skip count is a validated subset of the
+total skip count, so older signals that omit it remain fail-closed.
 The controller retains `pr-e2e-risk-plan-<sha>` for 14 days, while each
 signal travels in the selected job's existing E2E artifact.
 Its private dispatch state is protected by a SHA-256 digest that is verified
 before downloaded evidence is classified.
 
 When the plan selects jobs, the check passes only when the E2E run succeeds and
-every expected job shard uploads one complete passing signal with no skips or
-pending tests. Every other dispatched outcome fails.
+every expected job shard uploads one complete passing signal with no required
+skips or pending tests. A credential-backed test may declare
+`meta: { e2eEvidence: "optional" }` beside its test definition when the selected
+job intentionally does not supply that credential; its skip remains recorded
+without making otherwise complete evidence fail. Failures and pending results
+remain fail-closed for every test. Every other dispatched outcome fails.
 The coordinator has a 180-minute job budget and gives evidence download its
 own 10-minute limit, so a stalled download fails instead of consuming the
 remaining coordination time.

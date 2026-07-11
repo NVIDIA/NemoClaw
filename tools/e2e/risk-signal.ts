@@ -12,6 +12,8 @@ export type E2eRiskSignal = {
   passed: number;
   failed: number;
   skipped: number;
+  // Additive version-1 field; older PR heads omit it and are treated as zero.
+  optionalSkipped?: number;
   pending: number;
   unhandledErrors: number;
   runReason: "passed" | "failed" | "interrupted";

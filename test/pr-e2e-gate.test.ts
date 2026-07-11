@@ -288,6 +288,26 @@ describe("PR E2E controller", () => {
       });
 
     expect(classify(complete).conclusion).toBe("success");
+    expect(
+      classify([
+        signal(gate, "onboard-repair", "default", {
+          passed: 4,
+          skipped: 3,
+          optionalSkipped: 3,
+        }),
+        complete[1]!,
+      ]).conclusion,
+    ).toBe("success");
+    expect(
+      classify([
+        signal(gate, "onboard-repair", "default", {
+          passed: 0,
+          skipped: 7,
+          optionalSkipped: 7,
+        }),
+        complete[1]!,
+      ]).title,
+    ).toBe("Evidence is incomplete");
     expect(classify([], "cancelled").conclusion).toBe("failure");
     expect(classify(complete.slice(0, 1)).title).toBe("Evidence is missing");
     expect(classify([...complete, complete[0]!]).title).toBe("Duplicate evidence");
@@ -307,6 +327,11 @@ describe("PR E2E controller", () => {
     const valid = signal(gate, "onboard-repair");
 
     expect(validateSignal(valid, gate)).toEqual(valid);
+    expect(validateSignal({ ...valid, skipped: 3, optionalSkipped: 3 }, gate)).toEqual({
+      ...valid,
+      skipped: 3,
+      optionalSkipped: 3,
+    });
     expect(() => validateSignal({ ...valid, testedSha: BASE_SHA }, gate)).toThrow(/tested SHA/u);
     expect(() => validateSignal({ ...valid, planHash: "c".repeat(64) }, gate)).toThrow(
       /plan hash/u,
@@ -315,6 +340,12 @@ describe("PR E2E controller", () => {
       validateSignal({ ...valid, correlationId: CORRELATION_ID.replace(/.$/u, "d") }, gate),
     ).toThrow(/correlation/u);
     expect(() => validateSignal({ ...valid, jobId: "other" }, gate)).toThrow(/unexpected/u);
+    expect(() => validateSignal({ ...valid, optionalSkipped: -1 }, gate)).toThrow(
+      /optionalSkipped/u,
+    );
+    expect(() => validateSignal({ ...valid, optionalSkipped: 1 }, gate)).toThrow(
+      /cannot exceed skipped/u,
+    );
   });
 
   it("derives shard policy from the checked-in workflow", () => {
@@ -579,7 +610,10 @@ describe("PR E2E controller", () => {
       expect(checkUpdates[1]?.body).toMatchObject({
         status: "completed",
         conclusion: "success",
-        output: { title: "All selected jobs passed" },
+        output: {
+          title: "All selected jobs passed",
+          summary: "Every expected job shard passed with no required skips or pending tests.",
+        },
       });
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
     } finally {
@@ -743,17 +777,20 @@ describe("PR E2E controller", () => {
       status: "completed",
       expectCancellation: false,
       expectedTitle: "Evidence is missing",
+      expectedError: /Missing signals: onboard-repair:default, onboard-resume:default/u,
     },
     {
       label: "an unfinished child",
       status: "in_progress",
       expectCancellation: true,
       expectedTitle: "E2E run did not succeed",
+      expectedError: /The run concluded unfinished \(in_progress\)/u,
     },
   ])("closes the check as failure for $label", async ({
     status,
     expectCancellation,
     expectedTitle,
+    expectedError,
   }) => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-finish-"));
     const outputPath = path.join(workDir, "github-output");
@@ -797,7 +834,7 @@ describe("PR E2E controller", () => {
           checkRunId: 17,
           childRunId: 23,
         }),
-      ).rejects.toThrow();
+      ).rejects.toThrow(expectedError);
       expect(requests.some((request) => request.url.endsWith("/actions/runs/23/cancel"))).toBe(
         expectCancellation,
       );

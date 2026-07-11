@@ -18,11 +18,22 @@ const EXPECTED_SHA = "a".repeat(40);
 const PLAN_HASH = "b".repeat(64);
 const CORRELATION_ID = "12345678-1234-4123-8123-123456789abc";
 
-function moduleWithStates(states: Array<"passed" | "failed" | "skipped" | "pending">): TestModule {
+type TestState = "passed" | "failed" | "skipped" | "pending";
+
+function moduleWithStates(
+  states: Array<TestState | { state: TestState; evidence: "optional" }>,
+): TestModule {
   return {
     children: {
       *allTests() {
-        for (const state of states) yield { result: () => ({ state }) };
+        for (const entry of states) {
+          const state = typeof entry === "string" ? entry : entry.state;
+          const evidence = typeof entry === "string" ? undefined : entry.evidence;
+          yield {
+            meta: () => (evidence ? { e2eEvidence: evidence } : {}),
+            result: () => ({ state }),
+          };
+        }
       },
     },
   } as unknown as TestModule;
@@ -71,7 +82,14 @@ describe("E2E risk signal reporter", () => {
     try {
       const signal = writeRiskSignal(
         environment(dir),
-        [moduleWithStates(["passed", "failed", "skipped", "pending"])],
+        [
+          moduleWithStates([
+            "passed",
+            { state: "failed", evidence: "optional" },
+            "skipped",
+            { state: "pending", evidence: "optional" },
+          ]),
+        ],
         [new Error("unhandled")],
         "failed",
       );
@@ -80,6 +98,7 @@ describe("E2E risk signal reporter", () => {
         passed: 1,
         failed: 1,
         skipped: 1,
+        optionalSkipped: 0,
         pending: 1,
         unhandledErrors: 1,
         runReason: "failed",
@@ -90,18 +109,62 @@ describe("E2E risk signal reporter", () => {
     }
   });
 
-  it("aggregates multiple Vitest invocations for one workflow job", () => {
+  it("records deliberately optional skips without weakening required evidence", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-risk-signal-"));
     try {
-      writeRiskSignal(environment(dir), [moduleWithStates(["passed"])], [], "passed");
       const signal = writeRiskSignal(
         environment(dir),
-        [moduleWithStates(["passed", "skipped"])],
+        [
+          moduleWithStates([
+            "passed",
+            "passed",
+            "passed",
+            "passed",
+            { state: "skipped", evidence: "optional" },
+            { state: "skipped", evidence: "optional" },
+            { state: "skipped", evidence: "optional" },
+          ]),
+        ],
         [],
         "passed",
       );
 
-      expect(signal).toMatchObject({ passed: 2, skipped: 1, failed: 0, pending: 0 });
+      expect(signal).toMatchObject({
+        passed: 4,
+        failed: 0,
+        skipped: 3,
+        optionalSkipped: 3,
+        pending: 0,
+        runReason: "passed",
+      });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("aggregates multiple Vitest invocations for one workflow job", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-risk-signal-"));
+    try {
+      writeRiskSignal(
+        environment(dir),
+        [moduleWithStates(["passed", { state: "skipped", evidence: "optional" }])],
+        [],
+        "passed",
+      );
+      const signal = writeRiskSignal(
+        environment(dir),
+        [moduleWithStates(["passed", "skipped", { state: "skipped", evidence: "optional" }])],
+        [],
+        "passed",
+      );
+
+      expect(signal).toMatchObject({
+        passed: 2,
+        skipped: 3,
+        optionalSkipped: 2,
+        failed: 0,
+        pending: 0,
+      });
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

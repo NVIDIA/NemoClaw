@@ -714,6 +714,9 @@ await main(["apply"]);
 
 test("TC-INF-05 real NVIDIA key is isolated from sandbox env, process list, and filesystem", {
   timeout: 15 * 60_000,
+  meta: {
+    e2eEvidence: process.env.NVIDIA_INFERENCE_API_KEY?.length ? undefined : "optional",
+  },
 }, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
   const apiKey =
     secrets.optional("NVIDIA_INFERENCE_API_KEY") ??
@@ -888,6 +891,9 @@ test("TC-INF-05 real NVIDIA key is isolated from sandbox env, process list, and 
 
 test("TC-INF-02 OpenAI provider responds through inference.local", {
   timeout: 15 * 60_000,
+  meta: {
+    e2eEvidence: shouldRunProviderSmoke("openai") ? undefined : "optional",
+  },
 }, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
   if (!shouldRunProviderSmoke("openai")) {
     skipLive(
@@ -932,6 +938,9 @@ test("TC-INF-02 OpenAI provider responds through inference.local", {
 
 test("TC-INF-03 Anthropic provider responds through inference.local", {
   timeout: 15 * 60_000,
+  meta: {
+    e2eEvidence: shouldRunProviderSmoke("anthropic") ? undefined : "optional",
+  },
 }, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
   if (!shouldRunProviderSmoke("anthropic")) {
     skipLive(

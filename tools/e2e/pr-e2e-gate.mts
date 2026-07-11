@@ -366,10 +366,21 @@ export function validateSignal(
   if (signal.correlationId !== state.correlationId) {
     throw new Error("E2E signal correlation mismatch");
   }
-  for (const key of ["passed", "failed", "skipped", "pending", "unhandledErrors"] as const) {
-    if (!Number.isSafeInteger(signal[key]) || signal[key] < 0) {
+  const optionalSkipped = signal.optionalSkipped === undefined ? 0 : signal.optionalSkipped;
+  for (const [key, value] of [
+    ["passed", signal.passed],
+    ["failed", signal.failed],
+    ["skipped", signal.skipped],
+    ["optionalSkipped", optionalSkipped],
+    ["pending", signal.pending],
+    ["unhandledErrors", signal.unhandledErrors],
+  ] as const) {
+    if (!Number.isSafeInteger(value) || value < 0) {
       throw new Error(`E2E signal ${key} must be a non-negative integer`);
     }
+  }
+  if (optionalSkipped > signal.skipped) {
+    throw new Error("E2E signal optionalSkipped cannot exceed skipped");
   }
   if (!RUN_REASONS.has(signal.runReason)) {
     throw new Error("E2E signal runReason is invalid");
@@ -437,7 +448,10 @@ export function classifyPrGateEvidence(options: {
   const partial = expectedEvidence.filter((key) => {
     const signal = byJobShard.get(key)!;
     return (
-      signal.passed < 1 || signal.skipped > 0 || signal.pending > 0 || signal.runReason !== "passed"
+      signal.passed < 1 ||
+      signal.skipped - (signal.optionalSkipped ?? 0) > 0 ||
+      signal.pending > 0 ||
+      signal.runReason !== "passed"
     );
   });
   if (partial.length > 0) {
@@ -450,7 +464,7 @@ export function classifyPrGateEvidence(options: {
   return {
     conclusion: "success",
     title: "All selected jobs passed",
-    summary: "Every expected job shard passed with no skips or pending tests.",
+    summary: "Every expected job shard passed with no required skips or pending tests.",
   };
 }
 
@@ -1164,7 +1178,9 @@ export async function finishPrGate(options: {
     console.log(
       `Run completed: run=${options.childRunId} conclusion=${verdict.conclusion} title=${verdict.title} url=${childRunUrl}`,
     );
-    if (verdict.conclusion === "failure") throw new Error(verdict.title);
+    if (verdict.conclusion === "failure") {
+      throw new Error(`${verdict.title}: ${verdict.summary}`);
+    }
   } catch (error) {
     if (!finalized) {
       const closed = await completeFailureAfterControllerError(
