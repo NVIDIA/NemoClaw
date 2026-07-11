@@ -90,6 +90,37 @@ describe("provider inference recovery gating", () => {
     );
   });
 
+  it("rejects an authoritative incomplete session for a different sandbox", async () => {
+    const session = createSession({
+      sandboxName: "dc-before",
+      provider: "compatible-endpoint",
+      model: "mock/channels-rebuild",
+      endpointUrl: "https://compatible.example.test/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+    });
+    const { deps, calls } = createDeps();
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      forceProviderSelection: true,
+      authoritativeResumeConfig: true,
+      sandboxName: "dc-after",
+    });
+
+    expect(calls.setupNim).toHaveBeenCalledWith(
+      { type: "nvidia" },
+      "dc-after",
+      null,
+      false,
+      "nemoclaw",
+      expect.any(Function),
+      expect.any(Function),
+      session.sessionId,
+    );
+  });
+
   it("allows recovery for a registered sandbox", async () => {
     const getAuthority = vi.fn((name: string) =>
       name === "dc-after" ? ("authorized" as const) : ("missing" as const),
