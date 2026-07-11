@@ -8,6 +8,7 @@ import {
   type ValidationSessionOptions,
 } from "../adapters/http/validation-session";
 import { addTraceEvent, withTraceSpan } from "../trace";
+import { resolveMaxTokensField } from "./max-tokens-field";
 import { isDeepSeekV4ProModel } from "./openai-probe-models";
 
 const RETRIABLE_HTTP_STATUSES = new Set([429, 502, 503, 504]);
@@ -79,6 +80,7 @@ function responsesPayload(model: string, requireToolCall: boolean, stream = fals
 }
 
 function chatToolPayload(model: string): string {
+  const maxTokensField = resolveMaxTokensField(model);
   return JSON.stringify({
     model,
     messages: [
@@ -135,8 +137,10 @@ function chatToolPayload(model: string): string {
       },
     ],
     tool_choice: "required",
-    temperature: 0,
-    max_tokens: 256,
+    // GPT-5/o-series models reject custom sampling temperatures. Keep the
+    // deterministic setting for models that still use the legacy field.
+    ...(maxTokensField === "max_tokens" ? { temperature: 0 } : {}),
+    [maxTokensField]: 256,
     stream: false,
   });
 }

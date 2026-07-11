@@ -60,6 +60,7 @@ const {
   getCurlMaxTimeSeconds,
   getProbeProcessTimeoutMs,
 } = require("./probe-http-helpers");
+const { resolveMaxTokensField } = require("./max-tokens-field");
 
 const {
   getCurlTimingArgs,
@@ -376,6 +377,9 @@ function probeResponsesToolCalling(endpointUrl, model, apiKey, options = {}) {
 
 function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {}) {
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
+  // GPT-5/o-series (incl. Azure OpenAI) reject `max_tokens` and require
+  // `max_completion_tokens`; every other model still expects `max_tokens`.
+  const maxTokensField = resolveMaxTokensField(model);
   let authConfig;
   try {
     authConfig = buildOpenAiLikeAuthConfig(apiKey, options);
@@ -446,13 +450,15 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
           },
         ],
         tool_choice: "required",
-        temperature: 0,
+        // GPT-5/o-series models reject custom sampling temperatures. Keep the
+        // deterministic setting for models that still use the legacy field.
+        ...(maxTokensField === "max_tokens" ? { temperature: 0 } : {}),
         // Bound strict tool-call probes so a slow local model cannot keep
         // generating until the host-side curl process timeout kills validation.
         // This strict gate is currently used for Local Ollama; if it expands to
         // reasoning models, add a thinking-suppression carve-out before lowering
         // this cap so reasoning traces cannot consume the whole budget (#4537).
-        max_tokens: 256,
+        [maxTokensField]: 256,
         stream: false,
       }),
       `${baseUrl}/chat/completions`,

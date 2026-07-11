@@ -359,7 +359,13 @@ function validateManifestPayload(payload: unknown, manifestPath: string): JsonOb
   if (Object.keys(match).length === 0) {
     throw new Error(`${manifestPath}: field 'match' must be a non-empty object`);
   }
-  const allowedMatchKeys = new Set(["modelIds", "providerKey", "inferenceApi", "baseUrl"]);
+  const allowedMatchKeys = new Set([
+    "modelIds",
+    "modelIdPrefixes",
+    "providerKey",
+    "inferenceApi",
+    "baseUrl",
+  ]);
   const unknownMatchKeys = Object.keys(match)
     .filter((key) => !allowedMatchKeys.has(key))
     .sort();
@@ -375,6 +381,28 @@ function validateManifestPayload(payload: unknown, manifestPath: string): JsonOb
       !modelIds.every((modelId) => typeof modelId === "string" && modelId.trim()))
   ) {
     throw new Error(`${manifestPath}: match.modelIds must be a non-empty string array`);
+  }
+  const modelIdPrefixes = match.modelIdPrefixes;
+  if (
+    modelIdPrefixes !== undefined &&
+    (!Array.isArray(modelIdPrefixes) ||
+      modelIdPrefixes.length === 0 ||
+      !modelIdPrefixes.every((prefix) => typeof prefix === "string" && prefix.trim()))
+  ) {
+    throw new Error(`${manifestPath}: match.modelIdPrefixes must be a non-empty string array`);
+  }
+  if (
+    Array.isArray(modelIdPrefixes) &&
+    modelIdPrefixes.some((prefix) => String(prefix).includes("/"))
+  ) {
+    throw new Error(
+      `${manifestPath}: match.modelIdPrefixes must contain bare model ids without namespaces`,
+    );
+  }
+  if (modelIds !== undefined && modelIdPrefixes !== undefined) {
+    throw new Error(
+      `${manifestPath}: match.modelIds and match.modelIdPrefixes are mutually exclusive`,
+    );
   }
   for (const key of ["providerKey", "inferenceApi", "baseUrl"]) {
     const value = match[key];
@@ -489,13 +517,31 @@ function validateSelectedAgentEffects(
 
 function modelSetupMatches(payload: JsonObject, context: JsonObject): boolean {
   const match = payload.match;
+  const normalizedModel = String(context.model).trim().toLowerCase();
   const modelIds = match.modelIds;
   if (
     Array.isArray(modelIds) &&
     modelIds.length > 0 &&
-    !new Set(modelIds.map((modelId) => String(modelId).trim().toLowerCase())).has(
-      String(context.model).trim().toLowerCase(),
-    )
+    !new Set(modelIds.map((modelId) => String(modelId).trim().toLowerCase())).has(normalizedModel)
+  ) {
+    return false;
+  }
+
+  const modelIdPrefixes = match.modelIdPrefixes;
+  const bareModel = normalizedModel.includes("/")
+    ? normalizedModel.slice(normalizedModel.lastIndexOf("/") + 1)
+    : normalizedModel;
+  if (
+    Array.isArray(modelIdPrefixes) &&
+    modelIdPrefixes.length > 0 &&
+    !modelIdPrefixes.some((value) => {
+      const prefix = String(value).trim().toLowerCase();
+      return (
+        bareModel === prefix ||
+        bareModel.startsWith(`${prefix}.`) ||
+        bareModel.startsWith(`${prefix}-`)
+      );
+    })
   ) {
     return false;
   }

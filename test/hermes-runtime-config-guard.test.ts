@@ -421,6 +421,74 @@ with tempfile.TemporaryDirectory() as tmp:
     expect(proof.write_paths[1]).toMatch(/\/hermes\.config-hash$/);
   });
 
+  it("rejects stale compatibility state before an applied-state commit without leaking secrets", () => {
+    const result = runPythonHarness(`${loadGuardModule}
+import contextlib
+import io
+import json
+import os
+import tempfile
+
+secret = "SECRET_CANARY_DO_NOT_LEAK"
+with tempfile.TemporaryDirectory() as tmp:
+    hermes_dir = os.path.join(tmp, ".hermes")
+    os.mkdir(hermes_dir)
+    config_path = os.path.join(hermes_dir, "config.yaml")
+    env_path = os.path.join(hermes_dir, ".env")
+    strict_hash_path = os.path.join(tmp, "hermes.config-hash")
+    compat_hash_path = os.path.join(hermes_dir, ".config-hash")
+    with open(config_path, "w", encoding="utf-8") as handle:
+        handle.write("model:\\n  default: test-model\\n")
+    with open(env_path, "w", encoding="utf-8") as handle:
+        handle.write(f"API_SERVER_KEY={secret}\\n")
+
+    initial_hash, _config_snapshot, _env_snapshot = guard._hash_text(config_path, env_path)
+    guard._write_hash(strict_hash_path, initial_hash)
+    guard._write_hash(compat_hash_path, initial_hash)
+    with open(config_path, "w", encoding="utf-8") as handle:
+        handle.write(
+            "model:\\n  default: test-model\\n"
+            "mcp_servers:\\n"
+            "  alpha:\\n"
+            "    url: https://alpha.example/mcp\\n"
+        )
+    guard.refresh_hashes(hermes_dir, strict_hash_path, "both", mcp_transition="intend")
+    with open(strict_hash_path, encoding="utf-8") as handle:
+        pending_hash = handle.read()
+    guard._write_hash(compat_hash_path, initial_hash)
+
+    logs = io.StringIO()
+    error = ""
+    with contextlib.redirect_stdout(logs), contextlib.redirect_stderr(logs):
+        try:
+            guard.refresh_hashes(hermes_dir, strict_hash_path, "both", mcp_transition="apply")
+        except guard.UnsafePathError as exc:
+            error = str(exc)
+
+    with open(strict_hash_path, encoding="utf-8") as handle:
+        strict_after = handle.read()
+    with open(compat_hash_path, encoding="utf-8") as handle:
+        compat_after = handle.read()
+    output = logs.getvalue()
+    print(json.dumps({
+        "error": error,
+        "strict_unchanged": strict_after == pending_hash,
+        "compat_unchanged": compat_after == initial_hash,
+        "secret_in_error": secret in error,
+        "secret_in_logs": secret in output,
+    }))
+`);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      error: "Hermes strict and compatibility MCP state differ before applied-state commit",
+      strict_unchanged: true,
+      compat_unchanged: true,
+      secret_in_error: false,
+      secret_in_logs: false,
+    });
+  });
+
   it("leaves the strict trust anchor uncommitted if compatibility refresh is interrupted", () => {
     const result = runPythonHarness(`${loadGuardModule}
 import json

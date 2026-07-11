@@ -2468,7 +2468,11 @@ function validateSnapshotCommandsJob(errors: string[], jobs: WorkflowRecord): vo
   if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
     errors.push("snapshot-commands job must force OPENSHELL_GATEWAY=nemoclaw");
   }
+  if ("NEMOCLAW_E2E_USE_HOSTED_INFERENCE" in jobEnv) {
+    errors.push("snapshot-commands job must not enable hosted inference");
+  }
   for (const secret of [
+    "NVIDIA_API_KEY",
     "NVIDIA_INFERENCE_API_KEY",
     "DOCKERHUB_USERNAME",
     "DOCKERHUB_TOKEN",
@@ -2482,9 +2486,9 @@ function validateSnapshotCommandsJob(errors: string[], jobs: WorkflowRecord): vo
   for (const step of steps) {
     const stepName = `snapshot-commands step '${step.name ?? step.uses ?? "<unnamed>"}'`;
     const stepEnv = asRecord(step.env);
-    if (step.name !== "Run snapshot commands live test") {
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
-    }
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NEMOCLAW_E2E_USE_HOSTED_INFERENCE");
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_API_KEY");
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
     if (step.name !== "Authenticate to Docker Hub") {
       requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
       requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
@@ -2503,12 +2507,6 @@ function validateSnapshotCommandsJob(errors: string[], jobs: WorkflowRecord): vo
   }
 
   const runVitest = requireJobStep(errors, jobName, steps, "Run snapshot commands live test");
-  const runVitestEnv = asRecord(runVitest?.env);
-  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
-    errors.push(
-      "snapshot-commands live E2E step must receive NVIDIA_INFERENCE_API_KEY from secrets",
-    );
-  }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/snapshot-commands.test.ts");
 }
