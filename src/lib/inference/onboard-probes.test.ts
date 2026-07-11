@@ -320,6 +320,16 @@ describe("OpenAI-compatible inference probes", () => {
     });
   });
 
+  it("uses max_completion_tokens for GPT-5 family and reasoning models (#6642)", () => {
+    for (const model of ["gpt-5.4", "azure/gpt-5.4", "o3-mini", "o1"]) {
+      expect(getChatCompletionsProbePayload(model)).toEqual({
+        model,
+        messages: [{ role: "user", content: "Reply with exactly: OK" }],
+        max_completion_tokens: 8,
+      });
+    }
+  });
+
   it("uses an extended validation budget for slow NVIDIA Build models", () => {
     for (const model of ["qwen/qwen3.5-397b-a17b", "deepseek-ai/deepseek-v4-flash"]) {
       const args = getChatCompletionsProbeCurlArgs({
@@ -660,7 +670,7 @@ exit 0
       );
     });
 
-    it("keeps timeout retries strict when chat-completions tool calling is required", () => {
+    it("keeps GPT-5 timeout retries strict when tool calling is required (#6642)", () => {
       const script = `#!/usr/bin/env bash
 outfile=""
 payload=""
@@ -696,7 +706,7 @@ exit 0
         ({ counter, tmpDir }) => {
           const result = probeOpenAiLikeEndpoint(
             "https://api.example.com/v1",
-            "test-model",
+            "gpt-5.4",
             "sk-test",
             { skipResponsesProbe: true, requireChatCompletionsToolCalling: true },
           );
@@ -709,9 +719,11 @@ exit 0
           );
           expect(retryPayload).toMatchObject({
             tool_choice: "required",
-            max_tokens: 256,
+            max_completion_tokens: 256,
             stream: false,
           });
+          expect(retryPayload.max_tokens).toBeUndefined();
+          expect(retryPayload.temperature).toBeUndefined();
         },
       );
     });

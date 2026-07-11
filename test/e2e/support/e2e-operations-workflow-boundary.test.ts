@@ -31,7 +31,10 @@ describe("E2E operations workflow boundary", () => {
     const workflow = readE2eOperationsWorkflow();
     const reportNeeds = workflow.jobs["report-to-pr"].needs as string[];
     expect(workflow.jobs["notify-on-failure"]).toBeUndefined();
-    expect(workflow.jobs["report-to-pr"].permissions).toEqual({ "pull-requests": "write" });
+    expect(workflow.jobs["report-to-pr"].permissions).toEqual({
+      actions: "read",
+      "pull-requests": "write",
+    });
     expect(workflow.jobs.scorecard.needs).toEqual(reportNeeds);
   });
 
@@ -149,7 +152,7 @@ describe("E2E operations workflow boundary", () => {
         "cloud-onboard must not hold issues: write",
         "cloud-onboard must not hold pull-requests: write",
         "report-to-pr must not hold issues: write",
-        "report-to-pr must hold only pull-requests: write",
+        "report-to-pr must hold only actions: read and pull-requests: write",
         "report-to-pr must run only for manual workflow dispatches",
         "report-to-pr must contain only its PR-comment step",
         "report-to-pr must not use issue mutations or generic GitHub write surfaces",

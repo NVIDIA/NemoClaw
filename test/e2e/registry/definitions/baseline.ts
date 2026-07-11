@@ -334,6 +334,19 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
       forbiddenSideEffects: ["gateway-started", "sandbox-created"],
     },
   },
+  {
+    id: "ubuntu-policy-custom-missing-presets-negative",
+    manifestName: "openclaw-nvidia-policy-custom-missing-presets",
+    environment: ubuntuRepoDocker("cloud-openclaw-policy-custom-missing-presets"),
+    expectedStateId: "onboarding-failure-policy-presets-required",
+    onboardingAssertionIds: ["base-installed", "preflight-passed"],
+    suiteIds: [],
+    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
+    expectedFailure: {
+      phase: "onboarding",
+      errorClass: "policy-presets-required",
+    },
+  },
 ];
 
 export function canonicalTargets(): TargetDefinition[] {

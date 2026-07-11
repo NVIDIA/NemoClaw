@@ -26,6 +26,7 @@ import {
   trustedSandboxShellScript,
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { NemoClawInstance } from "../fixtures/phases/onboarding.ts";
 import { ubuntuRepoDocker } from "../registry/matrix.ts";
 import { stripTerminalControl } from "../support/issue-4434-tui-capture.ts";
@@ -40,6 +41,12 @@ import {
   precreateIssue6194Capture,
   readIssue6194Capture,
 } from "./issue-6194-tui-expect.ts";
+import { verifyNemoClawRefFidelity } from "./openclaw-tui-ref-fidelity.ts";
+import {
+  classifyIssue2603Run,
+  type Issue2603AttemptOutcome,
+  normalizeIssue2603Trace,
+} from "./openclaw-tui-run-classification.ts";
 
 // Reuses the standard ubuntu-repo-docker environment with the
 // `cloud-openclaw` onboarding profile (already in
@@ -239,7 +246,7 @@ function analyzeIssue2603Trace({
 // The zero-chat-events failure is an observability race at the live
 // repro boundary: OpenClaw accepts the chat.send requests, but the
 // websocket client captures no chat stream events before assertions.
-// The source boundary is the pinned OpenClaw 2026.5.x gateway runtime,
+// The source boundary is the pinned OpenClaw gateway runtime declared above,
 // so this NemoClaw-side E2E retries once on a fresh session before
 // asserting. Remove when OpenClaw exposes a deterministic chat
 // subscription/readiness ack or the 10x sweep stops flagging this
@@ -255,6 +262,42 @@ function looksLikeEventCaptureFailure(repro: LiveIssue2603Trace): boolean {
     analysis.uncorrelatedReplies.length === 0 &&
     analysis.missingReplies.length === repro.sentRuns.length
   );
+}
+
+function issue2603AttemptOutcome(
+  repro: LiveIssue2603Trace,
+  index: number,
+): Issue2603AttemptOutcome & { attempt: number; eventCount: number; chatEventCount: number } {
+  const failedAttempt = {
+    attempt: index + 1,
+    captureFailure: false,
+    productRegression: false,
+    error: repro.error,
+    eventCount: repro.events?.length ?? 0,
+    chatEventCount: 0,
+  };
+  if (repro.error) return failedAttempt;
+
+  const analysis = analyzeIssue2603Trace(repro);
+  const expectedReplyOrder = repro.sentRuns.map((entry) => entry.replyMarker);
+  const expectedUserOrder = repro.sentRuns.map((entry) => entry.promptToken);
+  const productRegression =
+    analysis.emptyFinalsForSubmittedRuns.length > 0 ||
+    analysis.missingReplies.length > 0 ||
+    analysis.duplicateReplies.length > 0 ||
+    analysis.uncorrelatedReplies.length > 0 ||
+    analysis.missingUserTurns.length > 0 ||
+    analysis.duplicateUserTurns.length > 0 ||
+    analysis.finalReplyOrder.join("\0") !== expectedReplyOrder.join("\0") ||
+    analysis.userTurnOrder.join("\0") !== expectedUserOrder.join("\0");
+
+  return {
+    attempt: index + 1,
+    captureFailure: looksLikeEventCaptureFailure(repro),
+    productRegression,
+    eventCount: repro.events.length,
+    chatEventCount: analysis.chatEvents.length,
+  };
 }
 
 // ─── In-sandbox websocket repro driver ─────────────────────────────
@@ -334,6 +377,8 @@ ws.on("error", (error) => {
 });
 
 ws.on("open", async () => {
+  const sentRuns = [];
+  let historyMessages = [];
   try {
     await request("connect", {
       minProtocol: 4,
@@ -353,7 +398,6 @@ ws.on("open", async () => {
 
     await request("chat.history", { sessionKey, limit: 20 });
 
-    const sentRuns = [];
     const messages = [
       [
         "A2603",
@@ -392,12 +436,13 @@ ws.on("open", async () => {
     }
 
     const history = await request("chat.history", { sessionKey, limit: 50 });
+    historyMessages = history.messages ?? [];
     console.log(` +
-    "`ISSUE2603_RESULT ${JSON.stringify({ sessionKey, sentRuns, events, historyMessages: history.messages ?? [] })}`" +
+    "`ISSUE2603_RESULT ${JSON.stringify({ sessionKey, sentRuns, events, historyMessages })}`" +
     String.raw`);
   } catch (error) {
     console.log(` +
-    "`ISSUE2603_RESULT ${JSON.stringify({ error: String(error), events })}`" +
+    "`ISSUE2603_RESULT ${JSON.stringify({ error: String(error), sentRuns, events, historyMessages })}`" +
     String.raw`);
   } finally {
     ws.close();
@@ -477,7 +522,9 @@ async function runLiveIssue2603Repro(
         `live repro did not emit ISSUE2603_RESULT.\nstdout:\n${driver.stdout}\nstderr:\n${driver.stderr}`,
       );
     }
-    return JSON.parse(resultLine.slice("ISSUE2603_RESULT ".length)) as LiveIssue2603Trace;
+    return normalizeIssue2603Trace<SentRun, GatewayEvent, ChatMessage>(
+      JSON.parse(resultLine.slice("ISSUE2603_RESULT ".length)) as Partial<LiveIssue2603Trace>,
+    );
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
@@ -520,6 +567,23 @@ test(
       historicalReproScope:
         "#6194 reported NemoClaw v0.0.72 as the known-bad release; this live target guards the current branch against the same post-idle TUI regression instead of reinstalling the old bad version.",
     });
+
+    const checkoutRef = await host.command("git", ["rev-parse", "HEAD"], {
+      artifactName: "nemoclaw-checkout-ref",
+      cwd: REPO_ROOT,
+      timeoutMs: 30_000,
+    });
+    expect(checkoutRef.exitCode, resultText(checkoutRef)).toBe(0);
+    const refEvidence = verifyNemoClawRefFidelity({
+      expectedRef: process.env.NEMOCLAW_TUI_EXPECTED_CHECKOUT_SHA,
+      actualRef: checkoutRef.stdout.trim(),
+      cliPath: host.commandPath,
+      expectedCliPath: CLI_ENTRYPOINT,
+    });
+    await artifacts.writeJson("nemoclaw-ref-fidelity.json", refEvidence);
+    console.info(
+      `NEMOCLAW_REF_FIDELITY expected=${refEvidence.expectedRef} actual=${refEvidence.actualRef} cli=${refEvidence.cliPath}`,
+    );
 
     // Setup ────────────────────────────────────────────────────────
     const ready = await environment.assertReady(ENVIRONMENT);
@@ -800,28 +864,54 @@ test(
       sandbox,
       instance.sandboxName,
     );
+    const attemptDetails = attempts.map(issue2603AttemptOutcome);
+    const classification = classifyIssue2603Run(attemptDetails);
+    const analysis = analyzeIssue2603Trace(repro);
+    const { chatEvents: observedChatEvents, ...correlationAnalysis } = analysis;
+    const failureSummary = secrets.redact(
+      JSON.stringify(
+        {
+          sentRuns: repro.sentRuns,
+          eventCount: repro.events.length,
+          observedChatEvents,
+          correlationAnalysis,
+          attemptDetails,
+          classification,
+          error: repro.error,
+        },
+        null,
+        2,
+      ),
+      [apiKey],
+    );
 
     await artifacts.writeJson("issue2603-trace.json", {
       sentRuns: repro.sentRuns,
       eventCount: repro.events?.length ?? 0,
+      observedChatEvents,
+      correlationAnalysis,
       attempts: attempts.length,
+      attemptDetails,
+      classification,
       error: repro.error,
     });
 
-    if (repro.error) {
-      throw new Error(`live repro failed before assertions: ${repro.error}`);
+    switch (classification) {
+      case "infrastructure_setup_failure":
+        throw new Error(
+          `INFRASTRUCTURE SETUP FAILURE: live repro failed before assertions. ${failureSummary}`,
+        );
+      case "infrastructure_capture_failure":
+        throw new Error(
+          `INFRASTRUCTURE CAPTURE FAILURE: ${attempts.length} attempt(s) observed no chat events for their submitted runs. ${failureSummary}`,
+        );
+      case "recovered_infrastructure_capture":
+        console.warn("ISSUE2603_CLASSIFICATION recovered infrastructure capture failure on retry");
+        break;
+      case "passed":
+      case "product_regression":
+        break;
     }
-
-    const analysis = analyzeIssue2603Trace(repro);
-    const failureSummary = JSON.stringify(
-      {
-        sentRuns: repro.sentRuns,
-        eventCount: repro.events.length,
-        analysis,
-      },
-      null,
-      2,
-    );
 
     // #2603 protocol/history subset — every submitted run produces a
     // non-empty final, every reply correlates to the run that accepted

@@ -1311,9 +1311,40 @@ describe("model-specific-setup/schema.json", () => {
   const data = loadJSON(
     repoPath("nemoclaw-blueprint/model-specific-setup/openclaw/kimi-k2.6-managed-inference.json"),
   );
+  const familyData = loadJSON(
+    repoPath(
+      "nemoclaw-blueprint/model-specific-setup/openclaw/gpt-5-o-series-managed-inference.json",
+    ),
+  );
 
   it("accepts the OpenClaw Kimi manifest", () => {
     expectValid(validate, data, "kimi-k2.6-managed-inference.json");
+  });
+
+  it("accepts bounded model-family prefixes for OpenClaw", () => {
+    expectValid(validate, familyData, "gpt-5-o-series-managed-inference.json");
+  });
+
+  it("rejects ambiguous exact and prefix model selectors", () => {
+    const bad = {
+      ...cloneObject(familyData),
+      match: {
+        ...asRecord(familyData.match),
+        modelIds: ["gpt-5"],
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects namespaced model-family prefixes", () => {
+    const bad = {
+      ...cloneObject(familyData),
+      match: {
+        ...asRecord(familyData.match),
+        modelIdPrefixes: ["azure/gpt-5"],
+      },
+    };
+    expect(validate(bad)).toBe(false);
   });
 
   it("rejects OpenClaw manifests with Hermes effects", () => {

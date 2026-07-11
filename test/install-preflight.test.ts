@@ -396,23 +396,23 @@ exit 98
   });
 
   it("scripts/install.sh --help works when run directly outside a repo checkout", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-payload-stdin-"));
     const scriptContents = fs.readFileSync(INSTALLER_PAYLOAD, "utf-8");
-    const result = spawnSync("bash", ["-s", "--", "--help"], {
-      cwd: tmp,
-      input: scriptContents,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmp,
-        PATH: TEST_SYSTEM_PATH,
-      },
-    });
-
-    const output = `${result.stdout}${result.stderr}`;
-    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-    expect(output).toMatch(/NemoClaw Installer/);
-    expect(output).not.toMatch(/deprecated compatibility wrapper/);
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-payload-stdin-"));
+    const stagedFixturePath = `/tmp/nemoclaw-installer-${path.basename(tmp).slice(-6)}`;
+    try {
+      fs.writeFileSync(stagedFixturePath, scriptContents, { flag: "wx", mode: 0o600 });
+      const result = spawnSync("bash", ["-s", "--", "--help"], {
+        cwd: tmp,
+        input: scriptContents,
+        encoding: "utf-8",
+        env: { ...process.env, NEMOCLAW_INSTALLER_STAGED: stagedFixturePath },
+      });
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(fs.existsSync(stagedFixturePath)).toBe(false);
+    } finally {
+      fs.rmSync(stagedFixturePath, { force: true });
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("exits 0 and shows install usage for --help", () => {

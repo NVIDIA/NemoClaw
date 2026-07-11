@@ -8,7 +8,10 @@ import path from "node:path";
 
 import { waitUntil } from "../core/wait";
 import { clearDockerDriverGatewayRuntimeMarker } from "./docker-driver-gateway-runtime-marker";
-import { hostGatewayCmdlineMatches as sharedHostGatewayCmdlineMatches } from "./gateway-process-identity";
+import {
+  hostGatewayCmdlineMatches as sharedHostGatewayCmdlineMatches,
+  type OpenShellGatewayProcessTarget,
+} from "./gateway-process-identity";
 
 export interface RunResult {
   status: number | null;
@@ -31,9 +34,13 @@ export interface StopHostGatewayOptions {
   gatewayBin?: string | null;
   killWaitMs?: number;
   logNoProcesses?: boolean;
+  openShellGatewayName?: string;
+  openShellGatewayPort?: number | string;
   pids?: Iterable<number>;
   pidFile?: string;
   pollIntervalMs?: number;
+  /** Keep PID/runtime evidence when a PID-file process does not match the cleanup target. */
+  preserveRuntimeFilesOnNonMatching?: boolean;
   stateDir?: string;
   termWaitMs?: number;
   /** Whether to read and act on the resolved pid file. */
@@ -55,7 +62,8 @@ export interface StopHostGatewayResult {
 // path could match unrelated commands. The compat parent is rediscovered via
 // the PID file written at launch time.
 /** Anchored pgrep pattern for direct host openshell-gateway processes. */
-export const HOST_GATEWAY_PGREP_PATTERN = "^(/[^ ]*/)?openshell-gateway( |$)";
+export const HOST_GATEWAY_PGREP_PATTERN =
+  "^(/[^ ]*/)?openshell-gateway(\\[nemoclaw=nemoclaw(-[0-9]+)?;port=[0-9]+\\]| |$)";
 const DEFAULT_TERM_WAIT_MS = 1000;
 const DEFAULT_KILL_WAIT_MS = 1000;
 const DEFAULT_POLL_INTERVAL_MS = 50;
@@ -161,7 +169,13 @@ function pidOwner(pid: number, deps: HostGatewayProcessDeps): string | null {
   return result.stdout.trim() || null;
 }
 
-export const hostGatewayCmdlineMatches = sharedHostGatewayCmdlineMatches;
+export function hostGatewayCmdlineMatches(
+  cmdline: string,
+  gatewayBin: string | null | undefined,
+  expectedOpenShellGateway?: OpenShellGatewayProcessTarget,
+): boolean {
+  return sharedHostGatewayCmdlineMatches(cmdline, gatewayBin, expectedOpenShellGateway);
+}
 
 function waitForExit(
   pid: number,
@@ -287,6 +301,13 @@ export function stopHostGatewayProcesses(
     pollIntervalMs: options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
     termWaitMs: options.termWaitMs ?? DEFAULT_TERM_WAIT_MS,
   };
+  const expectedOpenShellGateway =
+    options.openShellGatewayName || options.openShellGatewayPort !== undefined
+      ? {
+          name: options.openShellGatewayName,
+          port: options.openShellGatewayPort,
+        }
+      : undefined;
   let clearedRuntimeFiles = false;
   for (const [pid, sources] of candidates) {
     if (!pidExists(pid, deps)) {
@@ -297,9 +318,20 @@ export function stopHostGatewayProcesses(
       }
       continue;
     }
-    if (!hostGatewayCmdlineMatches(processArgs(pid, deps), options.gatewayBin)) {
+    if (
+      !hostGatewayCmdlineMatches(
+        processArgs(pid, deps),
+        options.gatewayBin,
+        expectedOpenShellGateway,
+      )
+    ) {
       result.skippedNonMatchingPids.push(pid);
-      if (clearRuntimeState && sources.has("pid-file") && !clearedRuntimeFiles) {
+      if (
+        clearRuntimeState &&
+        !options.preserveRuntimeFilesOnNonMatching &&
+        sources.has("pid-file") &&
+        !clearedRuntimeFiles
+      ) {
         clearRuntimeFiles(pidFile, stateDir);
         clearedRuntimeFiles = true;
       }

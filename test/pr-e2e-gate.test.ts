@@ -286,6 +286,10 @@ describe("PR E2E controller", () => {
         expectedShards: gate.expectedShards,
         signals,
       });
+    const spoofedOptionalSkip = {
+      ...signal(gate, "onboard-repair", "default", { skipped: 1 }),
+      optionalSkipped: 1,
+    };
 
     expect(classify(complete).conclusion).toBe("success");
     expect(classify([], "cancelled").conclusion).toBe("failure");
@@ -294,6 +298,7 @@ describe("PR E2E controller", () => {
     expect(
       classify([signal(gate, "onboard-repair", "default", { skipped: 1 }), complete[1]!]).title,
     ).toBe("Evidence is incomplete");
+    expect(classify([spoofedOptionalSkip, complete[1]!]).title).toBe("Evidence is incomplete");
     expect(
       classify([
         signal(gate, "onboard-repair", "default", { failed: 1, runReason: "failed" }),
@@ -321,6 +326,9 @@ describe("PR E2E controller", () => {
     expect(expectedSignalShards(["onboard-repair", "onboard-resume"])).toEqual({
       "onboard-repair": ["default"],
       "onboard-resume": ["default"],
+    });
+    expect(expectedSignalShards(["docs-validation"])).toEqual({
+      "docs-validation": ["default"],
     });
     const broadPlan = buildRiskPlan({ headSha: HEAD_SHA, changedFiles: BROAD_FILES });
     const broadShards = expectedSignalShards(riskPlanRequiredJobIds(broadPlan));
@@ -576,7 +584,10 @@ describe("PR E2E controller", () => {
       expect(checkUpdates[1]?.body).toMatchObject({
         status: "completed",
         conclusion: "success",
-        output: { title: "All selected jobs passed" },
+        output: {
+          title: "All selected jobs passed",
+          summary: "Every expected job shard passed with no skips or pending tests.",
+        },
       });
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
     } finally {
@@ -740,17 +751,20 @@ describe("PR E2E controller", () => {
       status: "completed",
       expectCancellation: false,
       expectedTitle: "Evidence is missing",
+      expectedError: /Missing signals: onboard-repair:default, onboard-resume:default/u,
     },
     {
       label: "an unfinished child",
       status: "in_progress",
       expectCancellation: true,
       expectedTitle: "E2E run did not succeed",
+      expectedError: /The run concluded unfinished \(in_progress\)/u,
     },
   ])("closes the check as failure for $label", async ({
     status,
     expectCancellation,
     expectedTitle,
+    expectedError,
   }) => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-finish-"));
     const outputPath = path.join(workDir, "github-output");
@@ -794,7 +808,7 @@ describe("PR E2E controller", () => {
           checkRunId: 17,
           childRunId: 23,
         }),
-      ).rejects.toThrow();
+      ).rejects.toThrow(expectedError);
       expect(requests.some((request) => request.url.endsWith("/actions/runs/23/cancel"))).toBe(
         expectCancellation,
       );
@@ -810,22 +824,99 @@ describe("PR E2E controller", () => {
     }
   });
 
-  it("cancels only active child runs for the pull request", async () => {
+  it("queries active statuses without traversing completed run history", async () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     const gate = state();
+    const requests: RecordedGitHubRequest[] = [];
+    const fullCompletedPage = Array.from({ length: 100 }, (_, index) =>
+      workflowRun(gate, { id: 1_000 + index }),
+    );
+    const fullUnrelatedQueuedPage = Array.from({ length: 100 }, (_, index) =>
+      workflowRun(
+        { ...gate, prNumber: 420 },
+        { id: 2_000 + index, status: "queued", conclusion: null },
+      ),
+    );
+    const runsByQuery = new Map([
+      ["missing:1", fullCompletedPage],
+      ["queued:1", fullUnrelatedQueuedPage],
+      [
+        "queued:2",
+        [
+          workflowRun(gate, { status: "queued", conclusion: null }),
+          workflowRun(gate, { id: 24, status: "completed" }),
+          workflowRun(gate, {
+            id: 25,
+            status: "queued",
+            conclusion: null,
+            display_title: "E2E manual",
+          }),
+          workflowRun({ ...gate, prNumber: 420 }, { id: 26, status: "queued", conclusion: null }),
+        ],
+      ],
+    ]);
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url }) => url.includes("/actions/workflows/e2e.yaml/runs?"),
+            ({ url }) => {
+              const query = new URL(url);
+              const status = query.searchParams.get("status");
+              const page = query.searchParams.get("page");
+              return githubResponse({
+                workflow_runs: runsByQuery.get(`${status ?? "missing"}:${page}`) ?? [],
+              });
+            },
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/actions/runs/23/cancel") && method === "POST",
+            () => githubResponse(undefined, 202),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    await expect(cancelPrGate(42)).resolves.toBe(1);
+    const listQueries = requests
+      .filter((request) => request.url.includes("/actions/workflows/e2e.yaml/runs?"))
+      .map((request) => {
+        const query = new URL(request.url);
+        return `${query.searchParams.get("status")}:${query.searchParams.get("page")}`;
+      });
+    expect(listQueries).toEqual([
+      "requested:1",
+      "waiting:1",
+      "pending:1",
+      "queued:1",
+      "queued:2",
+      "in_progress:1",
+    ]);
+    expect(
+      fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/cancel")),
+    ).toHaveLength(1);
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/26/cancel"))).toBe(
+      false,
+    );
+  });
+
+  it("cancels a run once as it advances between active-status responses", async () => {
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    const gate = state();
+    const runsByStatus = new Map([
+      ["requested", [workflowRun(gate, { status: "queued", conclusion: null })]],
+      ["queued", [workflowRun(gate, { status: "in_progress", conclusion: null })]],
+    ]);
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter([
         githubFetchRoute(
           ({ url }) => url.includes("/actions/workflows/e2e.yaml/runs?"),
-          () =>
+          ({ url }) =>
             githubResponse({
-              workflow_runs: [
-                workflowRun(gate, { status: "in_progress" }),
-                workflowRun(gate, { id: 24, status: "completed" }),
-                workflowRun(gate, { id: 25, status: "queued", display_title: "E2E manual" }),
-                workflowRun({ ...gate, prNumber: 420 }, { id: 26, status: "queued" }),
-              ],
+              workflow_runs: runsByStatus.get(new URL(url).searchParams.get("status") ?? "") ?? [],
             }),
         ),
         githubFetchRoute(
@@ -837,11 +928,38 @@ describe("PR E2E controller", () => {
 
     await expect(cancelPrGate(42)).resolves.toBe(1);
     expect(
-      fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/cancel")),
+      fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/actions/runs/23/cancel")),
     ).toHaveLength(1);
-    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/26/cancel"))).toBe(
-      false,
+  });
+
+  it("fails before cancellation when an active-status search reaches its result limit", async () => {
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    const gate = state();
+    const requests: RecordedGitHubRequest[] = [];
+    const fullActivePage = Array.from({ length: 100 }, (_, index) =>
+      workflowRun(gate, { id: 3_000 + index, status: "in_progress", conclusion: null }),
     );
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url }) => url.includes("/actions/workflows/e2e.yaml/runs?"),
+            ({ url }) =>
+              githubResponse({
+                workflow_runs:
+                  new URL(url).searchParams.get("status") === "in_progress" ? fullActivePage : [],
+              }),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    await expect(cancelPrGate(42)).rejects.toThrow(
+      "in_progress run listing exceeded its page limit",
+    );
+    expect(requests.some((request) => request.url.endsWith("/cancel"))).toBe(false);
   });
 
   it("cancels a known child and closes an abandoned check as failure", async () => {

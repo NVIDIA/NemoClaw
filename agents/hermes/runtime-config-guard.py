@@ -1234,6 +1234,76 @@ def _hash_text(
     return text, config_snapshot, env_snapshot
 
 
+def _applied_mcp_hash_text(
+    config_path: str,
+    env_path: str,
+    compat_hash: str,
+    source_hash_text: str,
+    current_mcp: str,
+    state: McpHashState,
+    mode: str,
+) -> tuple[str, FileSnapshot, FileSnapshot]:
+    """Build the metadata-only MCP applied-state commit from one stable input."""
+    if not secrets.compare_digest(current_mcp, state.intended):
+        raise UnsafePathError("Hermes MCP config changed before applied-state commit")
+    # Applying intent is a metadata-only commit. Require the complete
+    # config/env snapshot to still match the pending trust anchor rather than
+    # re-hashing and blessing unrelated concurrent changes.
+    pending_hash_text, config_snapshot, env_snapshot = _hash_text(
+        config_path, env_path, state
+    )
+    if not secrets.compare_digest(pending_hash_text, source_hash_text):
+        raise UnsafePathError(
+            "Hermes config or env changed before applied-state commit"
+        )
+    if mode == "both" and not secrets.compare_digest(
+        _read_hash_file(compat_hash), source_hash_text
+    ):
+        raise UnsafePathError(
+            "Hermes strict and compatibility MCP state differ before "
+            "applied-state commit"
+        )
+    applied_state = McpHashState(state.intended, state.intended)
+    lines = pending_hash_text.splitlines(keepends=True)
+    state_line = (
+        f"{MCP_HASH_STATE_PREFIX} intended={applied_state.intended} "
+        f"applied={applied_state.applied}\n"
+    )
+    for index, line in enumerate(lines):
+        if line.startswith(MCP_HASH_STATE_PREFIX):
+            lines[index] = state_line
+            break
+    else:
+        raise UnsafePathError(
+            "Hermes MCP state marker missing before applied-state commit"
+        )
+    return "".join(lines), config_snapshot, env_snapshot
+
+
+def _hash_text_for_refresh(
+    config_path: str,
+    env_path: str,
+    compat_hash: str,
+    source_hash_text: str,
+    current_mcp: str,
+    state: McpHashState,
+    mode: str,
+    mcp_transition: str,
+) -> tuple[str, FileSnapshot, FileSnapshot]:
+    """Resolve the hash refresh payload and its input snapshots in one step."""
+    if mcp_transition == "apply":
+        return _applied_mcp_hash_text(
+            config_path,
+            env_path,
+            compat_hash,
+            source_hash_text,
+            current_mcp,
+            state,
+            mode,
+        )
+    return _hash_text(config_path, env_path, state)
+
+
 def _sealed_file_limit(name: str) -> int:
     if name == "config.yaml":
         return MAX_CONFIG_INPUT_BYTES
@@ -1333,38 +1403,16 @@ def refresh_hashes(
                 "Hermes MCP rollback config does not match the previously applied state"
             )
         state = McpHashState(current_mcp, state.intended)
-    else:
-        if not secrets.compare_digest(current_mcp, state.intended):
-            raise UnsafePathError(
-                "Hermes MCP config changed before applied-state commit"
-            )
-        # Applying intent is a metadata-only commit. Require the complete
-        # config/env snapshot to still match the pending trust anchor rather
-        # than re-hashing and blessing unrelated concurrent changes.
-        pending_hash_text, config_snapshot, env_snapshot = _hash_text(
-            config_path, env_path, state
-        )
-        if not secrets.compare_digest(pending_hash_text, source_hash_text):
-            raise UnsafePathError(
-                "Hermes config or env changed before applied-state commit"
-            )
-        if mode == "both" and not secrets.compare_digest(
-            _read_hash_file(compat_hash), source_hash_text
-        ):
-            raise UnsafePathError(
-                "Hermes strict and compatibility MCP state differ before applied-state commit"
-            )
-        state = McpHashState(state.intended, state.intended)
-        lines = pending_hash_text.splitlines(keepends=True)
-        lines[2] = (
-            f"{MCP_HASH_STATE_PREFIX} intended={state.intended} applied={state.applied}\n"
-        )
-        hash_text = "".join(lines)
-
-    if mcp_transition != "apply":
-        hash_text, config_snapshot, env_snapshot = _hash_text(
-            config_path, env_path, state
-        )
+    hash_text, config_snapshot, env_snapshot = _hash_text_for_refresh(
+        config_path,
+        env_path,
+        compat_hash,
+        source_hash_text,
+        current_mcp,
+        state,
+        mode,
+        mcp_transition,
+    )
 
     def assert_inputs_stable() -> None:
         config = _open_regular(config_path)

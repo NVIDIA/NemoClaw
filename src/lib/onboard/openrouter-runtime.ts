@@ -52,7 +52,7 @@ export async function setupOpenRouterRuntimeInference(
       endpointUrl?: string | null;
       credentialEnv?: string | null;
       forceOpenAiLike?: boolean;
-    }) => void;
+    }) => void | Promise<void>;
     ensureAdapter?: typeof ensureOpenRouterRuntimeAdapter;
     updateSandbox?: typeof registry.updateSandbox;
   } & OpenRouterRuntimeDependencies,
@@ -126,7 +126,7 @@ export async function setupOpenRouterRuntimeInference(
   if (options.skipHostInferenceSmoke === true || !options.credentialValue) {
     log("  Reusing existing gateway credential; skipping host inference smoke.");
   } else {
-    options.verifyOnboardInferenceSmoke({
+    await options.verifyOnboardInferenceSmoke({
       provider: options.provider,
       model: options.model,
       endpointUrl: adapter.localBaseUrl,

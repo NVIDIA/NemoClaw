@@ -43,25 +43,6 @@ type ReviewAdvisorResult = {
       safetyBoundary?: string;
     };
   }>;
-  acceptanceCoverage?: Array<{
-    clause?: string;
-    status?: string;
-    evidence?: string;
-  }>;
-  sourceOfTruthReview?: Array<{
-    surface?: string;
-    status?: string;
-    regressionTest?: string;
-    evidence?: string;
-  }>;
-  testDepth?: {
-    verdict?: string;
-    rationale?: string;
-    suggestedTests?: string[];
-  };
-  reviewCompleteness?: {
-    limitations?: string[];
-  };
 };
 
 type CommentMetadata = {
@@ -75,16 +56,6 @@ type Finding = NonNullable<ReviewAdvisorResult["findings"]>[number];
 type FindingRecord = {
   id: string;
   finding: Finding;
-};
-
-type TestingFollowup = {
-  label: string;
-  text: string;
-};
-
-type TestingFollowupRecord = {
-  id: string;
-  followup: TestingFollowup;
 };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -224,7 +195,6 @@ export function buildComment({
   metadata?: CommentMetadata;
 }): string {
   const findingRecords = collectFindingRecords(result);
-  const testingFollowups = collectTestingFollowupRecords(result);
   const blockerCount = findingRecords.filter(
     (record) => record.finding.severity === "blocker",
   ).length;
@@ -234,28 +204,27 @@ export function buildComment({
   const suggestionCount = findingRecords.filter(
     (record) => record.finding.severity === "suggestion",
   ).length;
-  const secondary = buildSecondarySummary(result, findingRecords);
-  const actionChecklist = renderActionChecklist(findingRecords, testingFollowups);
-  const findingsIndex = renderFindingsIndex(findingRecords);
+  const secondary = buildSecondarySummary(result);
+  const informational =
+    result?.summary?.recommendation === "info_only" && result.summary.oneLine
+      ? `**Status:** ${escapeCommentText(result.summary.oneLine)}\n`
+      : "";
   const findingsDetails = renderFindingsDetails(findingRecords);
-  const simplificationDetails = renderSimplificationDetails(findingRecords);
-  const testingFollowupsDetails = renderTestingFollowupsDetails(testingFollowups);
-  const previousReviewDetails = renderPreviousReviewDetails(result, findingRecords);
   const details = runUrl ? `\n[Workflow run details](${runUrl})` : "";
   const hiddenMetadata = renderHiddenMetadata(result, metadata);
-  const posture = reviewPosture(result?.summary?.recommendation);
-  const headline = reviewHeadline(result?.summary?.recommendation);
+  const posture = reviewPosture(result?.summary?.recommendation, blockerCount);
+  const headline = reviewHeadline(result?.summary?.recommendation, blockerCount);
   const heading = validateSingleLineCommentField(title || COMMENT_TITLE, "title");
   const renderedMarker = validateCommentMarker(marker || MARKER);
   return `${renderedMarker}
 ${hiddenMetadata}## ${heading} — ${headline}
 
 **Merge posture:** ${posture}
-**Primary next action:** ${primaryNextAction(findingRecords, testingFollowups)}
-**Open items:** ${compactCount(blockerCount, "required", "required")} · ${compactCount(warningCount, "warning")} · ${compactCount(suggestionCount, "suggestion")} · ${compactCount(testingFollowups.length, "test follow-up")}
-${secondary}${actionChecklist}${findingsIndex}${findingsDetails}${simplificationDetails}${testingFollowupsDetails}${previousReviewDetails}${details}
+**Primary next action:** ${primaryNextAction(findingRecords)}
+**Findings:** ${compactCount(blockerCount, "required", "required")} · ${compactCount(warningCount, "warning")} · ${compactCount(suggestionCount, "optional suggestion")}
+${informational}${secondary}${findingsDetails}${details}
 
-This is an automated, non-binding review; it still expects maintainers and agents to respond to each required or warning item. Treat suggestions as current-PR improvements when they touch changed code; defer only with maintainer rationale or a linked follow-up. A human maintainer must make the final merge decision.
+This is an automated review. Required findings need action before merge. Warnings and optional suggestions do not require a response or follow-up. A human maintainer makes the final merge decision.
 
 `;
 }
@@ -264,13 +233,6 @@ function collectFindingRecords(result?: ReviewAdvisorResult): FindingRecord[] {
   return (result?.findings || []).map((finding, index) => ({
     id: `PRA-${index + 1}`,
     finding,
-  }));
-}
-
-function collectTestingFollowupRecords(result?: ReviewAdvisorResult): TestingFollowupRecord[] {
-  return collectTestingFollowups(result).map((followup, index) => ({
-    id: `PRA-T${index + 1}`,
-    followup,
   }));
 }
 
@@ -294,118 +256,39 @@ function safeMetadataValue(value: string): string {
     .slice(0, 120);
 }
 
-function reviewHeadline(recommendation?: string): string {
-  if (recommendation === "merge_as_is") return "No blocking findings";
-  if (recommendation === "merge_after_fixes") return "Changes requested";
-  if (recommendation === "needs_rework" || recommendation === "blocked") return "Blocked";
+function reviewHeadline(recommendation: string | undefined, blockerCount: number): string {
+  if (blockerCount > 0) return "Changes requested";
   if (recommendation === "superseded") return "Superseded";
   if (recommendation === "info_only") return "Informational";
-  return "Review ready";
+  return "No blocking findings";
 }
 
-function reviewPosture(recommendation?: string): string {
-  if (recommendation === "merge_as_is") return "No blocking advisor findings";
-  if (recommendation === "merge_after_fixes") return "Do not merge yet";
-  if (recommendation === "needs_rework" || recommendation === "blocked") {
-    return "Do not merge until addressed";
-  }
+function reviewPosture(recommendation: string | undefined, blockerCount: number): string {
+  if (blockerCount > 0) return "Do not merge until required findings are fixed";
   if (recommendation === "superseded") return "Superseded by other work";
   if (recommendation === "info_only") return "Informational / low confidence";
-  return "Review findings and decide before merge";
+  return "No blocking advisor findings";
 }
 
-function primaryNextAction(
-  records: FindingRecord[],
-  testingFollowups: TestingFollowupRecord[],
-): string {
-  const blocker = records.find((record) => record.finding.severity === "blocker");
-  if (blocker) {
-    const testText =
-      testingFollowups.length > 0 ? `; then add or justify \`${testingFollowups[0]?.id}\`` : "";
-    return `Fix \`${blocker.id}\`: ${escapeCommentText(findingTitle(blocker.finding))}${testText}.`;
+function primaryNextAction(records: FindingRecord[]): string {
+  if (records.some((record) => record.finding.severity === "blocker")) {
+    return "Fix the required findings below.";
   }
-  const warning = records.find((record) => record.finding.severity === "warning");
-  if (warning) {
-    return `Resolve or justify \`${warning.id}\`: ${escapeCommentText(findingTitle(warning.finding))}.`;
+  if (records.some((record) => record.finding.severity === "warning")) {
+    return "Review the warnings below.";
   }
-  if (testingFollowups.length > 0) {
-    return `Add or justify \`${testingFollowups[0]?.id || "PRA-T1"}\` and any related test follow-ups.`;
-  }
-  const suggestion = records.find((record) => record.finding.severity === "suggestion");
-  if (suggestion) {
-    return `Consider \`${suggestion.id}\`: ${escapeCommentText(findingTitle(suggestion.finding))}.`;
+  if (records.some((record) => record.finding.severity === "suggestion")) {
+    return "Optional suggestions are listed below.";
   }
   return "No advisor follow-up required beyond maintainer review.";
 }
 
-function buildSecondarySummary(
-  result?: ReviewAdvisorResult,
-  records: FindingRecord[] = [],
-): string {
+function buildSecondarySummary(result?: ReviewAdvisorResult): string {
   const sinceLastReview = result?.summary?.sinceLastReview;
   if (sinceLastReview) {
     return `**Since last review:** ${countLabel(sinceLastReview.resolved, "prior item")} resolved · ${countLabel(sinceLastReview.stillApplies, "still applies", "still apply")} · ${countLabel(sinceLastReview.newItems, "new item")} found\n`;
   }
-  const topItem = result?.summary?.topItem || topFindingTitle(records);
-  return topItem ? `**Top item:** ${escapeCommentText(topItem)}\n` : "";
-}
-
-function topFindingTitle(records: FindingRecord[]): string | undefined {
-  return (
-    records.find((record) => record.finding.severity === "blocker")?.finding.title ||
-    records.find((record) => record.finding.severity === "warning")?.finding.title ||
-    records.find((record) => record.finding.severity === "suggestion")?.finding.title
-  );
-}
-
-function renderActionChecklist(
-  records: FindingRecord[],
-  testingFollowups: TestingFollowupRecord[],
-): string {
-  if (records.length === 0 && testingFollowups.length === 0) return "";
-  const lines = ["", "### Action checklist", ""];
-  for (const record of records.filter((item) => item.finding.severity === "blocker").slice(0, 10)) {
-    lines.push(formatChecklistFinding(record, "Fix"));
-  }
-  for (const record of records.filter((item) => item.finding.severity === "warning").slice(0, 10)) {
-    lines.push(formatChecklistFinding(record, "Resolve or justify"));
-  }
-  for (const followup of testingFollowups.slice(0, 8))
-    lines.push(formatChecklistFollowup(followup));
-  for (const record of records
-    .filter((item) => item.finding.severity === "suggestion")
-    .slice(0, 10)) {
-    lines.push(formatChecklistFinding(record, "In-scope improvement"));
-  }
-  return `${lines.join("\n")}\n`;
-}
-
-function formatChecklistFinding(record: FindingRecord, action: string): string {
-  const location = formatInlineLocation(record.finding);
-  const locationText = location ? ` in ${location}` : "";
-  return `- [ ] \`${record.id}\` ${action}: ${escapeCommentText(findingTitle(record.finding))}${locationText}`;
-}
-
-function formatChecklistFollowup(record: TestingFollowupRecord): string {
-  return `- [ ] \`${record.id}\` Add or justify test follow-up: ${escapeCommentText(record.followup.label)}`;
-}
-
-function renderFindingsIndex(records: FindingRecord[]): string {
-  if (records.length === 0) return "";
-  const lines = [
-    "",
-    "### Findings index",
-    "",
-    "| ID | Severity | Category | Location | Required action |",
-    "|---|---|---|---|---|",
-  ];
-  for (const record of records.slice(0, 20)) {
-    const finding = record.finding;
-    lines.push(
-      `| \`${record.id}\` | ${severityLabel(finding.severity)} | ${escapeCommentText(finding.category || "uncategorized")} | ${formatTableLocation(finding)} | ${escapeCommentText(finding.recommendation || findingTitle(finding))} |`,
-    );
-  }
-  return `${lines.join("\n")}\n`;
+  return "";
 }
 
 function renderFindingsDetails(records: FindingRecord[]): string {
@@ -415,163 +298,34 @@ function renderFindingsDetails(records: FindingRecord[]): string {
   const suggestionFindings = records.filter((record) => record.finding.severity === "suggestion");
   const lines: string[] = [];
   if (blockerFindings.length > 0) {
-    lines.push("", "### 🚨 Required before merge");
-    lines.push(
-      "_Address these before merging unless a maintainer explicitly overrides the advisor with rationale._",
-      "",
-    );
+    lines.push("", "### Required before merge", "");
     for (const record of blockerFindings.slice(0, 20)) lines.push(formatFinding(record), "");
   }
   if (warningFindings.length === 0 && suggestionFindings.length === 0)
     return `${lines.join("\n")}\n`;
   lines.push(
-    "<details>",
-    `<summary>Review findings by urgency: ${countLabel(blockerFindings.length, "required fix", "required fixes")}, ${countLabel(warningFindings.length, "item to resolve/justify", "items to resolve/justify")}, ${countLabel(suggestionFindings.length, "in-scope improvement", "in-scope improvements")}</summary>`,
-    "",
-  );
-  lines.push("### ⚠️ Resolve or justify before merge");
-  lines.push(
-    "_Investigate these in the current review; either fix them, explain why they are not applicable, or document the accepted risk._",
-  );
-  if (warningFindings.length === 0) {
-    lines.push("- _None._");
-  } else {
-    for (const record of warningFindings.slice(0, 20)) lines.push(formatFinding(record));
-  }
-  lines.push("", "### 💡 In-scope improvements");
-  lines.push(
-    "_These are lower-risk, not throwaway. Prefer fixing them in this PR when they are local to changed code; defer only with rationale or a linked follow-up._",
-  );
-  if (suggestionFindings.length === 0) {
-    lines.push("- _None._");
-  } else {
-    for (const record of suggestionFindings.slice(0, 20)) lines.push(formatFinding(record));
-  }
-  lines.push("", "</details>", "");
-  return `${lines.join("\n")}\n`;
-}
-
-function renderSimplificationDetails(records: FindingRecord[]): string {
-  const findings = records.filter((record) => record.finding.simplification);
-  if (findings.length === 0) return "";
-  const netLines = findings.reduce((total, record) => {
-    const value = record.finding.simplification?.estimatedNetLines;
-    return typeof value === "number" && Number.isFinite(value) ? total + value : total;
-  }, 0);
-  const netLabel = netLines < 0 ? `, net ${netLines} lines possible` : "";
-  const lines: string[] = [
     "",
     "<details>",
-    `<summary>Simplification opportunities: ${countLabel(findings.length, "possible cut", "possible cuts")}${netLabel}</summary>`,
+    `<summary>${countLabel(warningFindings.length, "warning")} · ${countLabel(suggestionFindings.length, "optional suggestion")}</summary>`,
     "",
-    "_These are safe simplification checks only. Do not remove validation, security controls, data-loss prevention, or required tests._",
-  ];
-  for (const record of findings.slice(0, 12)) {
-    const item = record.finding.simplification;
-    if (!item) continue;
-    const location = formatFindingLocation(record.finding);
+  );
+  if (warningFindings.length > 0) {
     lines.push(
-      `- \`${record.id}\` **${escapeCommentText(item.tag || "shrink")}**${location}: ${escapeCommentText(item.cut || record.finding.title || "Review simplification")}`,
+      "### Warnings",
+      "_These merit maintainer attention but do not block by themselves._",
+      "",
     );
+    for (const record of warningFindings.slice(0, 20)) lines.push(formatFinding(record), "");
+  }
+  if (suggestionFindings.length > 0) {
     lines.push(
-      `  - Replacement: ${escapeCommentText(item.replacement || "Use the simpler existing path.")}`,
+      "### Suggestions (optional)",
+      "_No response or follow-up is expected for these suggestions._",
+      "",
     );
-    if (typeof item.estimatedNetLines === "number") {
-      lines.push(`  - Net: ${item.estimatedNetLines} lines`);
-    }
-    lines.push(
-      `  - Safety boundary: ${escapeCommentText(item.safetyBoundary || "Keep validation, security, data-loss prevention, and required tests.")}`,
-    );
+    for (const record of suggestionFindings.slice(0, 20)) lines.push(formatFinding(record), "");
   }
-  lines.push("", "</details>", "");
-  return `${lines.join("\n")}\n`;
-}
-
-function renderTestingFollowupsDetails(records: TestingFollowupRecord[]): string {
-  if (records.length === 0) return "";
-  const lines: string[] = [
-    "",
-    "<details>",
-    "<summary>Test follow-ups to resolve or justify</summary>",
-    "",
-    "_If these cover changed behavior, prefer adding them in this PR; otherwise state why existing coverage is enough or link the follow-up._",
-  ];
-  for (const record of records) lines.push(formatTestingFollowup(record));
-  lines.push("", "</details>", "");
-  return `${lines.join("\n")}\n`;
-}
-
-function collectTestingFollowups(result?: ReviewAdvisorResult): TestingFollowup[] {
-  const followups: TestingFollowup[] = [];
-  if (!result) return followups;
-  if (result.testDepth?.verdict && result.testDepth.verdict !== "unit_sufficient") {
-    const label = testDepthLabel(result.testDepth.verdict);
-    const rationale = result.testDepth.rationale ? ` ${result.testDepth.rationale}` : "";
-    for (const suggestion of result.testDepth.suggestedTests?.slice(0, 5) || []) {
-      followups.push({ label, text: `${suggestion}.${rationale}` });
-    }
-  }
-  for (const finding of result.findings?.filter((item) => item.category === "tests").slice(0, 5) ||
-    []) {
-    followups.push({
-      label: finding.title || "Test coverage",
-      text:
-        finding.recommendation ||
-        finding.description ||
-        "Add targeted coverage for the changed behavior.",
-    });
-  }
-  for (const clause of result.acceptanceCoverage
-    ?.filter((item) => item.status && item.status !== "met")
-    .slice(0, 5) || []) {
-    followups.push({
-      label: "Acceptance clause",
-      text: `${clause.clause || "unspecified"} — add test evidence or identify existing coverage. ${clause.evidence || ""}`.trim(),
-    });
-  }
-  for (const review of result.sourceOfTruthReview
-    ?.filter((item) => item.status === "missing" || item.status === "needs_followup")
-    .slice(0, 5) || []) {
-    followups.push({
-      label: review.surface || "Localized behavior",
-      text: `${review.regressionTest || "add a regression test for the localized behavior"}. ${review.evidence || ""}`.trim(),
-    });
-  }
-  return uniqueTestingFollowups(followups).slice(0, 8);
-}
-
-function formatTestingFollowup(record: TestingFollowupRecord): string {
-  return `- \`${record.id}\` **${escapeCommentText(record.followup.label)}** — ${escapeCommentText(record.followup.text)}`;
-}
-
-function uniqueTestingFollowups(followups: TestingFollowup[]): TestingFollowup[] {
-  const seen = new Set<string>();
-  const unique: TestingFollowup[] = [];
-  for (const followup of followups) {
-    const key = `${followup.label}\u0000${followup.text}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    unique.push(followup);
-  }
-  return unique;
-}
-
-function testDepthLabel(verdict: string): string {
-  if (verdict === "runtime_validation_recommended") return "Runtime validation";
-  if (verdict === "mocks_recommended") return "Mocked behavioral coverage";
-  return "Test coverage";
-}
-
-function renderPreviousReviewDetails(
-  result: ReviewAdvisorResult | undefined,
-  records: FindingRecord[],
-): string {
-  const sinceLastReview = result?.summary?.sinceLastReview;
-  if (!sinceLastReview || records.length === 0) return "";
-  const lines: string[] = ["<details>", "<summary>Since last review details</summary>", ""];
-  lines.push("Current findings, using the urgency labels above:");
-  for (const record of records.slice(0, 20)) lines.push(formatFinding(record));
-  lines.push("", "</details>", "");
+  lines.push("</details>", "");
   return `${lines.join("\n")}\n`;
 }
 
@@ -588,17 +342,23 @@ function formatFinding(record: FindingRecord): string {
       `- **${actionFieldLabel(finding.severity)}:** ${escapeCommentText(finding.recommendation)}`,
     );
   }
-  const expectedFollowUp = findingExpectedFollowUp(finding.severity);
-  if (expectedFollowUp) lines.push(`- **Expected follow-up:** ${expectedFollowUp}`);
   if (finding.verificationHint) {
     lines.push(`- **Verification:** ${escapeCommentText(finding.verificationHint)}`);
   }
   if (finding.missingRegressionTest) {
-    lines.push(
-      `- **Missing regression test:** ${escapeCommentText(finding.missingRegressionTest)}`,
-    );
+    lines.push(`- **Test coverage:** ${escapeCommentText(finding.missingRegressionTest)}`);
   }
-  lines.push(`- **Done when:** ${doneWhenForFinding(finding)}`);
+  if (finding.simplification) {
+    const item = finding.simplification;
+    const net =
+      typeof item.estimatedNetLines === "number" ? ` Net: ${item.estimatedNetLines} lines.` : "";
+    lines.push(
+      `- **Simplification (${escapeCommentText(item.tag || "shrink")}):** Remove ${escapeCommentText(item.cut || finding.title || "the custom path")}; use ${escapeCommentText(item.replacement || "the simpler existing path")}.${net}`,
+    );
+    if (item.safetyBoundary) {
+      lines.push(`- **Keep:** ${escapeCommentText(item.safetyBoundary)}`);
+    }
+  }
   if (finding.evidence) lines.push(`- **Evidence:** ${escapeCommentText(finding.evidence)}`);
   return lines.join("\n");
 }
@@ -609,66 +369,22 @@ function findingTitle(finding: Finding): string {
 
 function severityLabel(severity?: string): string {
   if (severity === "blocker") return "Required";
-  if (severity === "warning") return "Resolve/justify";
-  if (severity === "suggestion") return "Improvement";
+  if (severity === "warning") return "Warning";
+  if (severity === "suggestion") return "Optional";
   return "Review";
 }
 
 function actionFieldLabel(severity?: string): string {
   if (severity === "blocker") return "Required action";
-  if (severity === "warning") return "Recommended action";
-  if (severity === "suggestion") return "Suggested action";
+  if (severity === "warning") return "Recommendation";
+  if (severity === "suggestion") return "Optional change";
   return "Recommendation";
-}
-
-function findingExpectedFollowUp(severity?: string): string {
-  if (severity === "blocker") return "Fix before merge or get explicit maintainer override.";
-  if (severity === "warning") return "Resolve in this PR or explain why the risk is acceptable.";
-  if (severity === "suggestion") {
-    return "Prefer a current-PR fix when local to changed code; defer only with rationale or linked follow-up.";
-  }
-  return "Review and decide whether this PR should act on it.";
-}
-
-function doneWhenForFinding(finding: Finding): string {
-  if (finding.severity === "blocker") {
-    const verification = finding.verificationHint
-      ? `and verification passes: ${stripTerminalPunctuation(finding.verificationHint)}`
-      : "and the fix is covered by relevant test or review evidence";
-    return escapeCommentText(`The required change is committed ${verification}.`);
-  }
-  if (finding.severity === "warning") {
-    const verification = finding.verificationHint
-      ? ` Verification: ${stripTerminalPunctuation(finding.verificationHint)}.`
-      : "";
-    return escapeCommentText(`The risk is fixed or explicitly justified in the PR.${verification}`);
-  }
-  if (finding.severity === "suggestion") {
-    return escapeCommentText(
-      "The local improvement is applied, or the PR notes why it should be deferred.",
-    );
-  }
-  return escapeCommentText("The PR records the maintainer decision for this item.");
-}
-
-function stripTerminalPunctuation(value: string): string {
-  return value.trim().replace(/[.!?]+$/g, "");
-}
-
-function formatFindingLocation(finding: Finding): string {
-  if (!finding.file) return "";
-  const line = Number.isInteger(finding.line) && Number(finding.line) > 0 ? `:${finding.line}` : "";
-  return ` (${escapeCommentText(finding.file)}${line})`;
 }
 
 function formatInlineLocation(finding: Finding): string {
   if (!finding.file) return "";
   const line = Number.isInteger(finding.line) && Number(finding.line) > 0 ? `:${finding.line}` : "";
   return `<code>${escapeLocationHtml(`${finding.file}${line}`)}</code>`;
-}
-
-function formatTableLocation(finding: Finding): string {
-  return formatInlineLocation(finding) || "—";
 }
 
 function escapeLocationHtml(value: string): string {

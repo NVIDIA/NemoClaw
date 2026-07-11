@@ -470,7 +470,7 @@ describe("redact", () => {
   it("masks dashboard URL hash tokens", () => {
     const token = "a".repeat(64);
     const output = redact(`http://127.0.0.1:18789/#token=${token}`);
-    expect(output).toBe("http://127.0.0.1:18789/#token=aaaa********************");
+    expect(output).toBe("http://127.0.0.1:18789/#token=****");
     expect(output).not.toContain(token);
   });
 

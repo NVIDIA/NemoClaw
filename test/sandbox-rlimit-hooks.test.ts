@@ -556,6 +556,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     const sessionListPreviewPatcher = path.join(localLib, "patch-hermes-session-list-preview.py");
     const dashboardSeeder = path.join(localLib, "seed-hermes-dashboard-config.py");
     const runtimeGuard = path.join(localLib, "hermes-runtime-config-guard.py");
+    const tirithMarkerFinalizer = path.join(localLib, "finalize-tirith-marker.py");
     const buildMcpDigest = path.join(localLib, "build-hermes-mcp-digest.py");
     const mcpTransaction = path.join(localLib, "hermes-mcp-config-transaction.py");
     const mcpCredentialBoundary = path.join(
@@ -582,6 +583,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       fs.writeFileSync(sessionListPreviewPatcher, "# session list preview patcher fixture\n");
       fs.writeFileSync(dashboardSeeder, "# dashboard seeder fixture\n");
       fs.writeFileSync(runtimeGuard, "# runtime guard fixture\n");
+      fs.writeFileSync(tirithMarkerFinalizer, "# Tirith marker finalizer fixture\n");
       fs.writeFileSync(buildMcpDigest, "# build MCP digest fixture\n");
       fs.writeFileSync(mcpTransaction, "# MCP transaction fixture\n");
       fs.writeFileSync(mcpCredentialBoundary, "{}\n");
@@ -614,6 +616,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
         )
         .replaceAll("/usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py", dashboardSeeder)
         .replaceAll("/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py", runtimeGuard)
+        .replaceAll("/usr/local/lib/nemoclaw/finalize-tirith-marker.py", tirithMarkerFinalizer)
         .replaceAll("/usr/local/lib/nemoclaw/build-hermes-mcp-digest.py", buildMcpDigest)
         .replaceAll("/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py", mcpTransaction)
         .replaceAll(
