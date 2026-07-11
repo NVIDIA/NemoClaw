@@ -84,6 +84,23 @@ function runTirithFinalizer(commands: readonly string[]) {
 }
 
 describe("agents/hermes/start.sh Tirith retry finalization", () => {
+  it("returns FAILED without a traceback when the marker parent is missing", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tirith-missing-parent-"));
+    try {
+      const marker = path.join(tmpDir, "missing", ".tirith-install-failed");
+      const result = spawnSync(process.env.PYTHON || "python3", ["-I", FINALIZER, marker], {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
+
+      expect(result.status).toBe(12);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe("");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("clears a download_failed marker recreated by the handled startup retry", () => {
     const run = runTirithFinalizer([
       "retry_tirith_marker_if_needed",

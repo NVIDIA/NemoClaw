@@ -17,7 +17,10 @@ FAILED = 12
 
 def finalize_marker(marker: Path, before_revalidate: Callable[[], None] | None = None) -> int:
     """Remove one unchanged regular download_failed marker without following links."""
-    directory_fd = os.open(marker.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        directory_fd = os.open(marker.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    except OSError:
+        return FAILED
     try:
         try:
             marker_fd = os.open(
