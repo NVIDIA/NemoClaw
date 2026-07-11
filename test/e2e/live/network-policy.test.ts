@@ -182,7 +182,7 @@ async function curlStatus(
 async function expectScopedClawHubPluginLifecycle(sandbox: SandboxClient): Promise<void> {
   const install = await sandboxBash(
     sandbox,
-    "HOME=/sandbox openclaw plugins install 'clawhub:@openclaw/kitchen-sink@0.2.10' 2>&1",
+    "HOME=/sandbox openclaw plugins install 'clawhub:@openclaw/deepseek-provider@2026.6.9' 2>&1",
     {
       artifactName: "tc-net-restricted-clawhub-scoped-plugin-install",
       timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
@@ -195,8 +195,9 @@ async function expectScopedClawHubPluginLifecycle(sandbox: SandboxClient): Promi
     timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
   });
   expect(list.exitCode, text(list)).toBe(0);
-  expect(text(list), "the installed scoped ClawHub plugin must be listed").toMatch(/kitchen-sink/i);
-  expect(text(list), "the installed scoped ClawHub plugin must be loaded").toMatch(/loaded/i);
+  expect(text(list), "the installed scoped ClawHub plugin must be loaded").toMatch(
+    /deepseek[^\r\n]*loaded/i,
+  );
 }
 
 async function expectEncodedSlashConfinedToClawHub(sandbox: SandboxClient): Promise<void> {
