@@ -10,7 +10,7 @@ import {
 
 const live = "test/e2e/live/example.test.ts";
 const fast = "test/e2e/support/example.test.ts";
-const TAGGED_NEW_SOURCE = "// @module-tag e2e-profile/hermetic\n";
+const TAGGED_NEW_SOURCE = "// @module-tag e2e/credential-free\n";
 const exists = (file: string) => file === live || file === fast;
 
 function manifest(entries: MockParityManifest["entries"]): MockParityManifest {
@@ -18,29 +18,41 @@ function manifest(entries: MockParityManifest["entries"]): MockParityManifest {
 }
 
 describe("changed live E2E mock parity", () => {
-  it("treats an execution-profile declaration-only diff as metadata", () => {
+  it("treats module-tag-only diffs as metadata", () => {
     expect(
       isMockParityRelevantSourceChange(
         "// SPDX-License-Identifier: Apache-2.0\n\nexport {};\n",
-        "// SPDX-License-Identifier: Apache-2.0\n// @module-tag e2e-profile/hermetic\n\nexport {};\n",
+        "// SPDX-License-Identifier: Apache-2.0\n// @module-tag e2e/credential-free\n\nexport {};\n",
       ),
     ).toBe(false);
     expect(
       isMockParityRelevantSourceChange(
-        "// @module-tag e2e-profile/hermetic\n\nexport {};\n",
-        "// @module-tag e2e-profile/hermetic\n\nexport const changed = true;\n",
+        `${"// @module"}-tag retired/value\n\nexport {};\n`,
+        "// @module-tag e2e/credential-free\n\nexport {};\n",
+      ),
+    ).toBe(false);
+    expect(
+      isMockParityRelevantSourceChange(
+        "// old terminology\nexport {};\n",
+        "// current terminology\nexport {};\n",
+      ),
+    ).toBe(false);
+    expect(
+      isMockParityRelevantSourceChange(
+        "// @module-tag e2e/credential-free\n\nexport {};\n",
+        "// @module-tag e2e/credential-free\n\nexport const changed = true;\n",
       ),
     ).toBe(true);
     expect(
       isMockParityRelevantSourceChange(
         "export const fixture = `before\nafter`;\n",
-        "export const fixture = `before\n// @module-tag e2e-profile/hermetic\nafter`;\n",
+        "export const fixture = `before\n// @module-tag e2e/credential-free\nafter`;\n",
       ),
     ).toBe(true);
     expect(
       isMockParityRelevantSourceChange(
         "// SPDX-License-Identifier: Apache-2.0\n\nexport {};\n",
-        "// SPDX-License-Identifier: Apache-2.0\n/* @module-tag e2e-profile/hermetic */\n\nexport {};\n",
+        "// SPDX-License-Identifier: Apache-2.0\n/* @module-tag e2e/credential-free */\n\nexport {};\n",
       ),
     ).toBe(false);
     expect(isMockParityRelevantSourceChange(null, null)).toBe(true);

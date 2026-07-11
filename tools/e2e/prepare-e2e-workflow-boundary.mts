@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
-import { HERMETIC_EXECUTION_PROFILE } from "./execution-profile.mts";
+import { SHARED_E2E_JOB_ID } from "./credential-free-tests.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_ACTION_PATH = join(REPO_ROOT, ".github", "actions", "prepare-e2e", "action.yaml");
@@ -21,10 +21,6 @@ export const PREPARE_E2E_ACTION = PREPARE_E2E_ACTION_PROVENANCE.reference;
 export const PREPARE_E2E_STEP = "Prepare E2E workspace";
 
 const CHECKOUT_LOCAL_PREPARE_E2E_ACTION = "./.github/actions/prepare-e2e";
-
-const EXECUTION_PROFILE_JOBS: ReadonlyMap<string, string> = new Map([
-  [HERMETIC_EXECUTION_PROFILE.executorJob, HERMETIC_EXECUTION_PROFILE.id],
-]);
 
 const NO_BUILD_JOBS = new Set([
   "generate-matrix",
@@ -116,19 +112,17 @@ export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[
       .map(([jobName]) => jobName),
   );
 
-  for (const [jobName, expectedProfile] of EXECUTION_PROFILE_JOBS) {
-    const value = jobs[jobName];
-    if (value === undefined) {
-      errors.push(`prepare-e2e execution-profile job is missing: ${jobName}`);
-      continue;
-    }
-    expectedJobs.add(jobName);
-    const env = record(record(value).env);
-    if (env.E2E_EXECUTION_PROFILE !== expectedProfile) {
-      errors.push(`${jobName} E2E_EXECUTION_PROFILE must be '${expectedProfile}'`);
-    }
+  const sharedE2eJob = jobs[SHARED_E2E_JOB_ID];
+  if (sharedE2eJob === undefined) {
+    errors.push(`prepare-e2e shared job is missing: ${SHARED_E2E_JOB_ID}`);
+  } else {
+    expectedJobs.add(SHARED_E2E_JOB_ID);
+    const env = record(record(sharedE2eJob).env);
     if (Object.hasOwn(env, "E2E_JOB")) {
-      errors.push(`${jobName} must not declare E2E_JOB`);
+      errors.push(`${SHARED_E2E_JOB_ID} must not declare E2E_JOB`);
+    }
+    if (Object.hasOwn(env, "E2E_EXECUTION_PROFILE")) {
+      errors.push(`${SHARED_E2E_JOB_ID} must not declare E2E_EXECUTION_PROFILE`);
     }
   }
 

@@ -8,23 +8,20 @@ import { fileURLToPath } from "node:url";
 
 import ts from "typescript";
 
-export const HERMETIC_EXECUTION_PROFILE = Object.freeze({
-  id: "hermetic",
-  tag: "e2e-profile/hermetic",
-  executorJob: "hermetic",
-});
+export const CREDENTIAL_FREE_TEST_TAG = "e2e/credential-free";
+export const SHARED_E2E_JOB_ID = "shared-e2e";
 
-export type ExecutionProfileProject = "e2e-live" | "integration";
+export type CredentialFreeTestProject = "e2e-live" | "integration";
 
-export type ExecutionProfileMatrixRow = {
+export type CredentialFreeTestMatrixRow = {
   id: string;
   file: string;
-  project: ExecutionProfileProject;
+  project: CredentialFreeTestProject;
 };
 
-export type ExecutionProfileModule = {
+export type CredentialFreeTestModule = {
   file: string;
-  project: ExecutionProfileProject;
+  project: CredentialFreeTestProject;
   source: string;
 };
 
@@ -34,11 +31,10 @@ type VitestFile = {
 };
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const PROFILE_TAG_PREFIX = "e2e-profile/";
 const MODULE_TAG_BODY_PATTERN = /^@module-tag[\t ]+([A-Za-z0-9/_-]+)$/u;
 const SAFE_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const SAFE_PATH_SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/;
-const SUPPORTED_PROJECTS = new Set<ExecutionProfileProject>(["e2e-live", "integration"]);
+const SUPPORTED_PROJECTS = new Set<CredentialFreeTestProject>(["e2e-live", "integration"]);
 
 function isInside(parent: string, child: string): boolean {
   const relative = path.relative(parent, child);
@@ -51,9 +47,9 @@ function normalizeVitestFile(
 ): {
   absoluteFile: string;
   file: string;
-  project: ExecutionProfileProject;
+  project: CredentialFreeTestProject;
 } {
-  if (!SUPPORTED_PROJECTS.has(candidate.projectName as ExecutionProfileProject)) {
+  if (!SUPPORTED_PROJECTS.has(candidate.projectName as CredentialFreeTestProject)) {
     throw new Error(`Unsupported Vitest project '${candidate.projectName}' for ${candidate.file}`);
   }
 
@@ -66,11 +62,11 @@ function normalizeVitestFile(
   return {
     absoluteFile,
     file: path.relative(absoluteRoot, absoluteFile).split(path.sep).join("/"),
-    project: candidate.projectName as ExecutionProfileProject,
+    project: candidate.projectName as CredentialFreeTestProject,
   };
 }
 
-function validateTestFile(file: string, project: ExecutionProfileProject): void {
+function validateTestFile(file: string, project: CredentialFreeTestProject): void {
   if (
     path.posix.isAbsolute(file) ||
     path.posix.normalize(file) !== file ||
@@ -79,14 +75,14 @@ function validateTestFile(file: string, project: ExecutionProfileProject): void 
     !file.split("/").every((segment) => SAFE_PATH_SEGMENT_PATTERN.test(segment)) ||
     !/\.test\.(?:js|ts)$/.test(file)
   ) {
-    throw new Error(`Execution-profile test path must be a safe repo-relative test file: ${file}`);
+    throw new Error(`Credential-free test path must be a safe repo-relative test file: ${file}`);
   }
 
   if (project === "e2e-live" && !/^test\/e2e\/live\/.+\.test\.ts$/.test(file)) {
-    throw new Error(`e2e-live execution-profile test must live under test/e2e/live/: ${file}`);
+    throw new Error(`e2e-live credential-free test must live under test/e2e/live/: ${file}`);
   }
   if (project === "integration" && /^test\/e2e\//.test(file)) {
-    throw new Error(`integration execution-profile test must not live under test/e2e/: ${file}`);
+    throw new Error(`integration credential-free test must not live under test/e2e/: ${file}`);
   }
 }
 
@@ -147,16 +143,16 @@ function moduleTagDeclarations(source: string): ModuleTagDeclaration[] {
   return declarations;
 }
 
-function profileTags(source: string): string[] {
-  return moduleTagDeclarations(source)
-    .map(({ tag }) => tag)
-    .filter((tag) => tag.startsWith(PROFILE_TAG_PREFIX));
+function credentialFreeTestTags(source: string, file?: string): string[] {
+  const tags = moduleTagDeclarations(source).map(({ tag }) => tag);
+  const unknownTag = tags.find((tag) => tag.startsWith("e2e/") && tag !== CREDENTIAL_FREE_TEST_TAG);
+  if (unknownTag) {
+    throw new Error(`Unknown E2E test tag '${unknownTag}'${file ? ` in ${file}` : ""}`);
+  }
+  return tags.filter((tag) => tag === CREDENTIAL_FREE_TEST_TAG);
 }
 
-export function stripExecutionProfileDeclarations(source: string): string {
-  const declarations = moduleTagDeclarations(source).filter(({ tag }) =>
-    tag.startsWith(PROFILE_TAG_PREFIX),
-  );
+function stripDeclarations(source: string, declarations: readonly ModuleTagDeclaration[]): string {
   let cursor = 0;
   let stripped = "";
   for (const declaration of declarations) {
@@ -166,32 +162,36 @@ export function stripExecutionProfileDeclarations(source: string): string {
   return stripped + source.slice(cursor);
 }
 
-export function executionProfileRowFromModule(
-  module: ExecutionProfileModule,
-): ExecutionProfileMatrixRow {
+export function stripCredentialFreeTestDeclarations(source: string): string {
+  return stripDeclarations(
+    source,
+    moduleTagDeclarations(source).filter(({ tag }) => tag === CREDENTIAL_FREE_TEST_TAG),
+  );
+}
+
+export function credentialFreeTestRowFromModule(
+  module: CredentialFreeTestModule,
+): CredentialFreeTestMatrixRow {
   validateTestFile(module.file, module.project);
-  const tags = profileTags(module.source);
+  const tags = credentialFreeTestTags(module.source, module.file);
   if (tags.length !== 1) {
     throw new Error(
-      `${module.file} must declare exactly one ${PROFILE_TAG_PREFIX} module tag; found ${tags.length}`,
+      `${module.file} must declare exactly one ${CREDENTIAL_FREE_TEST_TAG} module tag; found ${tags.length}`,
     );
-  }
-  if (tags[0] !== HERMETIC_EXECUTION_PROFILE.tag) {
-    throw new Error(`Unknown execution profile tag '${tags[0]}' in ${module.file}`);
   }
 
   const id = path.posix.basename(module.file).replace(/\.test\.(?:js|ts)$/, "");
   if (!SAFE_ID_PATTERN.test(id)) {
-    throw new Error(`Execution-profile test filename must derive a safe id: ${module.file}`);
+    throw new Error(`Credential-free test filename must derive a safe id: ${module.file}`);
   }
 
   return { id, file: module.file, project: module.project };
 }
 
-export function discoverExecutionProfileRows(
-  modules: readonly ExecutionProfileModule[],
-): ExecutionProfileMatrixRow[] {
-  const rows = modules.map(executionProfileRowFromModule).sort((left, right) => {
+export function discoverCredentialFreeTestRows(
+  modules: readonly CredentialFreeTestModule[],
+): CredentialFreeTestMatrixRow[] {
+  const rows = modules.map(credentialFreeTestRowFromModule).sort((left, right) => {
     return (
       left.id.localeCompare(right.id) ||
       left.file.localeCompare(right.file) ||
@@ -202,14 +202,16 @@ export function discoverExecutionProfileRows(
   for (const row of rows) {
     const previous = seen.get(row.id);
     if (previous) {
-      throw new Error(`Duplicate execution-profile test id '${row.id}': ${previous}, ${row.file}`);
+      throw new Error(`Duplicate credential-free test id '${row.id}': ${previous}, ${row.file}`);
     }
     seen.set(row.id, row.file);
   }
   return rows;
 }
 
-export function listVitestExecutionProfileModules(repoRoot = REPO_ROOT): ExecutionProfileModule[] {
+export function listVitestCredentialFreeTestModules(
+  repoRoot = REPO_ROOT,
+): CredentialFreeTestModule[] {
   const vitestEntrypoint = path.join(repoRoot, "node_modules", "vitest", "vitest.mjs");
   const result = spawnSync(
     process.execPath,
@@ -252,7 +254,7 @@ export function listVitestExecutionProfileModules(repoRoot = REPO_ROOT): Executi
     throw new Error("Vitest test-file list must be a JSON array");
   }
 
-  return candidates.flatMap((candidate): ExecutionProfileModule[] => {
+  return candidates.flatMap((candidate): CredentialFreeTestModule[] => {
     if (
       !candidate ||
       typeof candidate !== "object" ||
@@ -263,18 +265,18 @@ export function listVitestExecutionProfileModules(repoRoot = REPO_ROOT): Executi
     }
     const normalized = normalizeVitestFile(repoRoot, candidate as VitestFile);
     const source = fs.readFileSync(normalized.absoluteFile, "utf8");
-    if (!profileTags(source).length) return [];
+    if (!credentialFreeTestTags(source, normalized.file).length) return [];
     return [{ file: normalized.file, project: normalized.project, source }];
   });
 }
 
-const discoveryCache = new Map<string, ExecutionProfileMatrixRow[]>();
+const discoveryCache = new Map<string, CredentialFreeTestMatrixRow[]>();
 
-export function discoverExecutionProfileTests(repoRoot = REPO_ROOT): ExecutionProfileMatrixRow[] {
+export function discoverCredentialFreeTests(repoRoot = REPO_ROOT): CredentialFreeTestMatrixRow[] {
   const resolvedRoot = fs.realpathSync(repoRoot);
   const cached = discoveryCache.get(resolvedRoot);
   if (cached) return cached.map((row) => ({ ...row }));
-  const rows = discoverExecutionProfileRows(listVitestExecutionProfileModules(resolvedRoot));
+  const rows = discoverCredentialFreeTestRows(listVitestCredentialFreeTestModules(resolvedRoot));
   discoveryCache.set(resolvedRoot, rows);
   return rows.map((row) => ({ ...row }));
 }
@@ -284,10 +286,10 @@ if (invokedFile === fileURLToPath(import.meta.url)) {
   try {
     if (process.argv.length > 2) {
       throw new Error(
-        "Execution-profile discovery does not accept selectors; use workflow-plan.mts",
+        "Credential-free test discovery does not accept selectors; use workflow-plan.mts",
       );
     }
-    process.stdout.write(`${JSON.stringify(discoverExecutionProfileTests())}\n`);
+    process.stdout.write(`${JSON.stringify(discoverCredentialFreeTests())}\n`);
   } catch (error) {
     console.error(`::error::${error instanceof Error ? error.message : String(error)}`);
     process.exitCode = 1;

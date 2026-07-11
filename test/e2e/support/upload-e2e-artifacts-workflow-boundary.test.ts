@@ -106,7 +106,7 @@ describe("upload-e2e-artifacts workflow boundary", () => {
     const workflow = mutableWorkflow();
     uploadStep(workflow.jobs["inference-routing"]).uses = LOCAL_UPLOAD_ACTION;
     uploadStep(workflow.jobs["network-policy"]).uses = DIRECT_UPLOAD_ACTION;
-    uploadStep(workflow.jobs.hermetic).uses =
+    uploadStep(workflow.jobs["shared-e2e"]).uses =
       "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@main";
 
     expect(validateUploadE2eArtifactsInvocations(workflow)).toEqual(
@@ -115,15 +115,15 @@ describe("upload-e2e-artifacts workflow boundary", () => {
         "inference-routing must use upload-e2e-artifacts exactly once",
         "network-policy must not invoke actions/upload-artifact directly",
         "network-policy must use upload-e2e-artifacts exactly once",
-        "hermetic must use the reviewed immutable upload-e2e-artifacts reference",
-        "hermetic must use upload-e2e-artifacts exactly once",
+        "shared-e2e must use the reviewed immutable upload-e2e-artifacts reference",
+        "shared-e2e must use upload-e2e-artifacts exactly once",
       ]),
     );
   });
 
   it("rejects missing and duplicate shared upload invocations", () => {
     const workflow = mutableWorkflow();
-    const missingJob = workflow.jobs.hermetic;
+    const missingJob = workflow.jobs["shared-e2e"];
     missingJob.steps = missingJob.steps!.filter(
       (step) => step.uses !== UPLOAD_E2E_ARTIFACTS_ACTION,
     );
@@ -132,7 +132,7 @@ describe("upload-e2e-artifacts workflow boundary", () => {
 
     expect(validateUploadE2eArtifactsInvocations(workflow)).toEqual(
       expect.arrayContaining([
-        "hermetic must use upload-e2e-artifacts exactly once",
+        "shared-e2e must use upload-e2e-artifacts exactly once",
         "cloud-inference must use upload-e2e-artifacts exactly once",
       ]),
     );
@@ -147,10 +147,10 @@ describe("upload-e2e-artifacts workflow boundary", () => {
     uploadStep(workflow.jobs["hermes-slack"]).with!.path = "e2e-artifacts/live/hermes-slack/";
     uploadStep(workflow.jobs["gpu-e2e"]).if = "success()";
     uploadStep(workflow.jobs["mcp-bridge"]).if = "always()";
-    uploadStep(workflow.jobs.hermetic).env = { UNEXPECTED: "1" };
-    workflow.jobs.hermetic.env!.E2E_EXECUTION_PROFILE = "untrusted";
-    workflow.jobs.hermetic.env!.E2E_JOB = "1";
-    workflow.jobs.hermetic.env!.E2E_TARGET_ID = "hermetic";
+    uploadStep(workflow.jobs["shared-e2e"]).env = { UNEXPECTED: "1" };
+    workflow.jobs["shared-e2e"].env!.E2E_EXECUTION_PROFILE = "credential-free";
+    workflow.jobs["shared-e2e"].env!.E2E_JOB = "1";
+    workflow.jobs["shared-e2e"].env!.E2E_TARGET_ID = "shared-e2e";
     const orderedJob = workflow.jobs["network-policy"];
     const orderedUpload = uploadStep(orderedJob);
     orderedJob.steps!.splice(orderedJob.steps!.indexOf(orderedUpload), 1);
@@ -164,10 +164,10 @@ describe("upload-e2e-artifacts workflow boundary", () => {
         "hermes-slack upload-e2e-artifacts must preserve its explicit name/path contract",
         "gpu-e2e upload-e2e-artifacts invocation must run with always()",
         "mcp-bridge upload-e2e-artifacts invocation must remain gated by its reviewed pre-upload checks",
-        "hermetic E2E_EXECUTION_PROFILE must be 'hermetic'",
-        "hermetic must not declare E2E_JOB",
-        "hermetic upload-e2e-artifacts invocation must not override its contract",
-        "hermetic default upload caller E2E_TARGET_ID must be '${{ matrix.id }}'",
+        "shared-e2e must not declare E2E_EXECUTION_PROFILE",
+        "shared-e2e must not declare E2E_JOB",
+        "shared-e2e upload-e2e-artifacts invocation must not override its contract",
+        "shared-e2e default upload caller E2E_TARGET_ID must be '${{ matrix.id }}'",
         "network-policy upload-e2e-artifacts invocation must follow artifact producers and precede only Docker auth cleanup",
       ]),
     );
@@ -183,7 +183,7 @@ describe("upload-e2e-artifacts workflow boundary", () => {
 
     expect(validateUploadE2eArtifactsInvocations(workflow)).toEqual(
       expect.arrayContaining([
-        "upload-e2e-artifacts must cover exactly 72 live, E2E_JOB, and execution-profile jobs",
+        "upload-e2e-artifacts must cover exactly 72 live, E2E_JOB, and shared E2E jobs",
         "upload-e2e-artifacts must keep exactly 60 default callers",
       ]),
     );

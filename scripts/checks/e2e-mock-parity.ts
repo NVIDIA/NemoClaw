@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { stripExecutionProfileDeclarations } from "../../tools/e2e/execution-profile.mts";
+import ts from "typescript";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 export const DEFAULT_PARITY_MANIFEST = "test/e2e/mock-parity.json";
@@ -29,14 +29,36 @@ const FAST_TESTS = [
   /^test\/e2e\/support\/.+\.test\.ts$/u,
   /^test\/(?!e2e\/|package-contract\/).+\.test\.(?:js|ts)$/u,
 ] as const;
+
+function sourceTokens(source: string): string {
+  const sourceFile = ts.createSourceFile(
+    "source.ts",
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const tokens: Array<[ts.SyntaxKind, string]> = [];
+  const visit = (node: ts.Node): void => {
+    const children = node.getChildren(sourceFile);
+    if (children.length === 0) {
+      if (node.kind !== ts.SyntaxKind.EndOfFileToken) {
+        tokens.push([node.kind, node.getText(sourceFile)]);
+      }
+      return;
+    }
+    for (const child of children) visit(child);
+  };
+  visit(sourceFile);
+  return JSON.stringify(tokens);
+}
+
 export function isMockParityRelevantSourceChange(
   baseSource: string | null,
   headSource: string | null,
 ): boolean {
   if (baseSource === null || headSource === null) return true;
-  return (
-    stripExecutionProfileDeclarations(baseSource) !== stripExecutionProfileDeclarations(headSource)
-  );
+  return sourceTokens(baseSource) !== sourceTokens(headSource);
 }
 
 function isSafeRepoPath(file: string): boolean {

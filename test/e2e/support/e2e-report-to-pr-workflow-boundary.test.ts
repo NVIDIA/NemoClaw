@@ -8,7 +8,10 @@ import path from "node:path";
 
 import { expect, it, vi } from "vitest";
 import YAML from "yaml";
-import { discoverExecutionProfileTests } from "../../../tools/e2e/execution-profile.mts";
+import {
+  type CredentialFreeTestMatrixRow,
+  discoverCredentialFreeTests,
+} from "../../../tools/e2e/credential-free-tests.mts";
 import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundary.mts";
 import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 
@@ -83,19 +86,13 @@ function executeGenerateMatrixWithPlannerOutput(plan: unknown) {
   }
 }
 
-type HermeticMatrixRow = {
-  id: string;
-  file: string;
-  project: "e2e-live" | "integration";
-};
-
 type ApiJob = {
   conclusion: string | null;
   name: string;
   status: string;
 };
 
-const DEFAULT_HERMETIC_MATRIX: HermeticMatrixRow[] = [
+const DEFAULT_TEST_MATRIX: CredentialFreeTestMatrixRow[] = [
   {
     id: "alpha",
     file: "test/e2e/live/alpha.test.ts",
@@ -110,7 +107,7 @@ const DEFAULT_HERMETIC_MATRIX: HermeticMatrixRow[] = [
 
 async function executeReport(options: {
   apiJobs?: ApiJob[];
-  hermeticMatrix?: HermeticMatrixRow[];
+  testMatrix?: CredentialFreeTestMatrixRow[];
   jobs?: string;
   needs?: Record<string, { result: string }>;
   paginateError?: Error;
@@ -121,11 +118,11 @@ async function executeReport(options: {
 }> {
   const {
     apiJobs = [],
-    hermeticMatrix = DEFAULT_HERMETIC_MATRIX,
-    jobs = hermeticMatrix.map(({ id }) => id).join(","),
+    testMatrix = DEFAULT_TEST_MATRIX,
+    jobs = testMatrix.map(({ id }) => id).join(","),
     needs = {
       "generate-matrix": { result: "success" },
-      hermetic: { result: "failure" },
+      "shared-e2e": { result: "failure" },
       live: { result: "skipped" },
     },
     paginateError,
@@ -161,7 +158,7 @@ async function executeReport(options: {
   const processStub = {
     env: {
       EXPLICIT_ONLY_JOBS: "",
-      HERMETIC_MATRIX: JSON.stringify(hermeticMatrix),
+      TEST_MATRIX: JSON.stringify(testMatrix),
       JOB_PR_NUMBER: "42",
       JOB_TARGETS: "",
       JOBS: jobs,
@@ -235,12 +232,12 @@ it("rejects report-to-pr PR number validation drift", () => {
   }
 });
 
-it("reports matrix children by logical id without fabricating a missing child result", async () => {
+it("reports matrix children by test ID without fabricating a missing child result", async () => {
   const { body, setFailed, warning } = await executeReport({
     apiJobs: [
       {
         conclusion: "success",
-        name: "Hermetic E2E (alpha)",
+        name: "Shared E2E (alpha)",
         status: "completed",
       },
     ],
@@ -248,28 +245,28 @@ it("reports matrix children by logical id without fabricating a missing child re
 
   expect(setFailed).not.toHaveBeenCalled();
   expect(warning).toHaveBeenCalledWith(
-    "Missing per-test hermetic results for beta; reporting them as unknown.",
+    "Missing per-test results for beta; reporting them as unknown.",
   );
   expect(body).toContain("| alpha | ✅ success |");
   expect(body).toContain("| beta | ❓ unknown |");
-  expect(body).toContain("Some jobs failed");
-  expect(body).toContain("Hermetic matrix aggregate: failure");
+  expect(body).toContain("Some tests failed");
+  expect(body).toContain("Shared E2E job aggregate: failure");
 });
 
 it("reports API lookup failures as unknown rather than copying the aggregate result", async () => {
   const { body, setFailed, warning } = await executeReport({
-    hermeticMatrix: DEFAULT_HERMETIC_MATRIX.slice(0, 1),
+    testMatrix: DEFAULT_TEST_MATRIX.slice(0, 1),
     jobs: "alpha",
     needs: {
       "generate-matrix": { result: "success" },
-      hermetic: { result: "success" },
+      "shared-e2e": { result: "success" },
     },
     paginateError: new Error("API unavailable"),
   });
 
   expect(setFailed).not.toHaveBeenCalled();
   expect(warning).toHaveBeenCalledWith(
-    "Could not load per-test hermetic results; reporting them as unknown: API unavailable",
+    "Could not load per-test results; reporting them as unknown: API unavailable",
   );
   expect(body).toContain("Per-test results incomplete");
   expect(body).toContain("| alpha | ❓ unknown |");
@@ -281,15 +278,15 @@ it("keeps nonterminal API conclusions unknown", async () => {
     apiJobs: [
       {
         conclusion: null,
-        name: "Hermetic E2E (alpha)",
+        name: "Shared E2E (alpha)",
         status: "in_progress",
       },
     ],
-    hermeticMatrix: DEFAULT_HERMETIC_MATRIX.slice(0, 1),
+    testMatrix: DEFAULT_TEST_MATRIX.slice(0, 1),
     jobs: "alpha",
     needs: {
       "generate-matrix": { result: "success" },
-      hermetic: { result: "success" },
+      "shared-e2e": { result: "success" },
     },
   });
 
@@ -303,31 +300,31 @@ it("does not claim child success when complete API results contradict the aggreg
     apiJobs: [
       {
         conclusion: "success",
-        name: "Hermetic E2E (alpha)",
+        name: "Shared E2E (alpha)",
         status: "completed",
       },
     ],
-    hermeticMatrix: DEFAULT_HERMETIC_MATRIX.slice(0, 1),
+    testMatrix: DEFAULT_TEST_MATRIX.slice(0, 1),
     jobs: "alpha",
     needs: {
       "generate-matrix": { result: "success" },
-      hermetic: { result: "failure" },
+      "shared-e2e": { result: "failure" },
     },
   });
 
   expect(setFailed).not.toHaveBeenCalled();
   expect(warning).toHaveBeenCalledWith(
-    "Per-test hermetic conclusions (success) contradict aggregate failure; reporting child attribution as unknown.",
+    "Per-test conclusions (success) contradict shared E2E job aggregate failure; reporting child attribution as unknown.",
   );
-  expect(body).toContain("Some jobs failed");
+  expect(body).toContain("Some tests failed");
   expect(body).toContain("| alpha | ❓ unknown |");
   expect(body).not.toContain("| alpha | ✅ success |");
 });
 
 it("carries the generated planner matrix through the workflow output and PR report", async () => {
-  const [selected] = discoverExecutionProfileTests();
+  const [selected] = discoverCredentialFreeTests();
   expect(selected).toBeDefined();
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermetic-integration-"));
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shared-e2e-integration-"));
   const outputPath = path.join(directory, "github-output");
   const summaryPath = path.join(directory, "summary.md");
   try {
@@ -345,27 +342,27 @@ it("carries the generated planner matrix through the workflow output and PR repo
     });
     expect(generated.status, generated.stderr || generated.stdout).toBe(0);
     const outputs = parseSimpleOutput(fs.readFileSync(outputPath, "utf8"));
-    const hermeticMatrix = JSON.parse(outputs.hermetic_matrix) as HermeticMatrixRow[];
-    expect(hermeticMatrix).toEqual([selected]);
+    const testMatrix = JSON.parse(outputs.test_matrix) as CredentialFreeTestMatrixRow[];
+    expect(testMatrix).toEqual([selected]);
 
     const { body, setFailed } = await executeReport({
       apiJobs: [
         {
           conclusion: "success",
-          name: `Hermetic E2E (${selected.id})`,
+          name: `Shared E2E (${selected.id})`,
           status: "completed",
         },
       ],
-      hermeticMatrix,
+      testMatrix,
       jobs: selected.id,
       needs: {
         "generate-matrix": { result: "success" },
-        hermetic: { result: "success" },
+        "shared-e2e": { result: "success" },
       },
     });
 
     expect(setFailed).not.toHaveBeenCalled();
-    expect(body).toContain("All requested jobs passed");
+    expect(body).toContain("All requested tests passed");
     expect(body).toContain(`| ${selected.id} | ✅ success |`);
   } finally {
     fs.rmSync(directory, { force: true, recursive: true });
@@ -373,7 +370,7 @@ it("carries the generated planner matrix through the workflow output and PR repo
 });
 
 it("fails closed when planner output violates the workflow schema", () => {
-  const [selected] = discoverExecutionProfileTests();
+  const [selected] = discoverCredentialFreeTests();
   expect(selected).toBeDefined();
   const validPlan = buildE2eWorkflowPlan();
   const [registryRow] = validPlan.matrix;
@@ -382,7 +379,7 @@ it("fails closed when planner output violates the workflow schema", () => {
   const malformedPlans = [
     ["missing required field", missingField],
     ["duplicate matrix id", { ...validPlan, matrix: [...validPlan.matrix, { ...registryRow }] }],
-    ["invalid hermetic id", { ...validPlan, hermeticMatrix: [{ ...selected, id: "invalid_id" }] }],
+    ["invalid test ID", { ...validPlan, testMatrix: [{ ...selected, id: "invalid_id" }] }],
     ["nonboolean selection", { ...validPlan, hermesSelected: "false" }],
   ] as const;
 

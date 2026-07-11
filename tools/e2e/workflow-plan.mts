@@ -6,9 +6,9 @@ import { fileURLToPath } from "node:url";
 
 import { buildLiveTargetMatrix, type LiveTargetMatrixEntry } from "../../test/e2e/registry/run.ts";
 import {
-  discoverExecutionProfileTests,
-  type ExecutionProfileMatrixRow,
-} from "./execution-profile.mts";
+  type CredentialFreeTestMatrixRow,
+  discoverCredentialFreeTests,
+} from "./credential-free-tests.mts";
 import { readFreeStandingJobsInventory } from "./workflow-boundary.mts";
 
 export type WorkflowPlanSelectors = {
@@ -18,7 +18,7 @@ export type WorkflowPlanSelectors = {
 
 export type E2eWorkflowPlan = {
   matrix: LiveTargetMatrixEntry[];
-  hermeticMatrix: ExecutionProfileMatrixRow[];
+  testMatrix: CredentialFreeTestMatrixRow[];
   hermesSelected: boolean;
   explicitOnlyJobs: string[];
 };
@@ -36,10 +36,10 @@ function selectorIds(value: string | undefined, label: "jobs" | "targets"): stri
   return value.split(",");
 }
 
-function selectExecutionProfileRows(
-  rows: readonly ExecutionProfileMatrixRow[],
+function selectTestRows(
+  rows: readonly CredentialFreeTestMatrixRow[],
   ids: readonly string[],
-): ExecutionProfileMatrixRow[] {
+): CredentialFreeTestMatrixRow[] {
   if (ids.length === 0) return [...rows];
   const selected = new Set(ids);
   return rows.filter((row) => selected.has(row.id));
@@ -53,21 +53,21 @@ export function buildE2eWorkflowPlan(selectors: WorkflowPlanSelectors = {}): E2e
   }
 
   const inventory = readFreeStandingJobsInventory();
-  const executionProfileRows = discoverExecutionProfileTests();
+  const credentialFreeTests = discoverCredentialFreeTests();
 
   if (jobs.length > 0) {
     const allowedJobs = new Set(inventory.allowedJobs);
     for (const job of jobs) {
       if (!allowedJobs.has(job)) {
         throw new Error(
-          `Unknown free-standing E2E job: ${job}\nAllowed jobs: ${inventory.allowedJobs.join(",")}`,
+          `Unknown E2E test ID: ${job}\nAllowed test IDs: ${inventory.allowedJobs.join(",")}`,
         );
       }
     }
 
     return {
       matrix: [],
-      hermeticMatrix: selectExecutionProfileRows(executionProfileRows, jobs),
+      testMatrix: selectTestRows(credentialFreeTests, jobs),
       hermesSelected: jobs.includes(HERMES_JOB_ID),
       explicitOnlyJobs: [...inventory.explicitOnlyJobs],
     };
@@ -77,7 +77,7 @@ export function buildE2eWorkflowPlan(selectors: WorkflowPlanSelectors = {}): E2e
     const registryTargets = targets.filter((target) => !inventory.targetToJob.has(target));
     return {
       matrix: registryTargets.length > 0 ? buildLiveTargetMatrix(registryTargets) : [],
-      hermeticMatrix: selectExecutionProfileRows(executionProfileRows, targets),
+      testMatrix: selectTestRows(credentialFreeTests, targets),
       hermesSelected: targets.includes(HERMES_JOB_ID),
       explicitOnlyJobs: [...inventory.explicitOnlyJobs],
     };
@@ -85,7 +85,7 @@ export function buildE2eWorkflowPlan(selectors: WorkflowPlanSelectors = {}): E2e
 
   return {
     matrix: buildLiveTargetMatrix(),
-    hermeticMatrix: executionProfileRows,
+    testMatrix: credentialFreeTests,
     hermesSelected: true,
     explicitOnlyJobs: [...inventory.explicitOnlyJobs],
   };

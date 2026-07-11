@@ -408,7 +408,7 @@ describe("E2E target advisor — normalization contract", () => {
     ]);
   });
 
-  it("suppresses fan-out for a new free-standing live test that is not workflow-wired", () => {
+  it("suppresses fan-out for a new E2E test that is not workflow-wired", () => {
     const normalized = normalizeE2eTargetAdvisorResult(
       {
         required: [
@@ -435,9 +435,9 @@ describe("E2E target advisor — normalization contract", () => {
   });
 
   it.each([
-    ["test/e2e/live/new-hermetic-proof.test.ts", "new-hermetic-proof"],
-    ["test/new-hermetic-integration.test.ts", "new-hermetic-integration"],
-  ])("recognizes a source-declared profile on a newly added test (%s)", (file, id) => {
+    ["test/e2e/live/new-credential-free-proof.test.ts", "new-credential-free-proof"],
+    ["test/new-credential-free-integration.test.ts", "new-credential-free-integration"],
+  ])("recognizes a credential-free tag on a newly added test (%s)", (file, id) => {
     const normalized = normalizeE2eTargetAdvisorResult(
       {
         required: [
@@ -454,9 +454,9 @@ describe("E2E target advisor — normalization contract", () => {
       metadata({ changedFiles: [file] }),
       {
         changedFileSources: {
-          [file]: "// @module-tag e2e-profile/hermetic\n",
+          [file]: "// @module-tag e2e/credential-free\n",
         },
-        e2eWorkflowText: "jobs:\n  hermetic:\n    steps: []\n",
+        e2eWorkflowText: "jobs:\n  shared-e2e:\n    steps: []\n",
       },
     );
 
@@ -466,7 +466,7 @@ describe("E2E target advisor — normalization contract", () => {
   });
 
   it.each([
-    ["has its profile tag removed", "// profile removed\n"],
+    ["has its credential-free tag removed", "// tag removed\n"],
     ["is deleted", null],
   ])("treats the analyzed change as authoritative when a tagged test %s", (_case, source) => {
     const file = "test/e2e/live/docs-validation.test.ts";
@@ -486,7 +486,7 @@ describe("E2E target advisor — normalization contract", () => {
       metadata({ changedFiles: [file] }),
       {
         changedFileSources: { [file]: source },
-        e2eWorkflowText: "jobs:\n  hermetic:\n    steps: []\n",
+        e2eWorkflowText: "jobs:\n  shared-e2e:\n    steps: []\n",
       },
     );
 

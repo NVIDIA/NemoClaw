@@ -53,8 +53,8 @@ export default defineConfig({
   test: {
     tags: [
       {
-        name: "e2e-profile/hermetic",
-        description: "Runs without external credentials in the trusted hermetic E2E executor",
+        name: "e2e/credential-free",
+        description: "Runs without external credentials in the shared E2E job",
       },
     ],
     env: {

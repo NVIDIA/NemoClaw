@@ -10,7 +10,6 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 import {
   evaluateE2eWorkflowDispatchSelectors,
-  formatFreeStandingJobsInventoryForShell,
   readFreeStandingJobsInventory,
   validateE2eWorkflowBoundary,
   validateFreeStandingWorkflowInventory,
@@ -644,7 +643,7 @@ describe("e2e workflow boundary", () => {
     },
   );
 
-  it("derives logical test selectors from code and execution jobs from workflow metadata", {
+  it("derives test selectors from code and workflow jobs from workflow metadata", {
     timeout: 60_000,
   }, () => {
     const inventory = readFreeStandingJobsInventory();
@@ -657,7 +656,7 @@ describe("e2e workflow boundary", () => {
     expect(inventory.targetToJob.get("openshell-gateway-auth-contract")).toBe(
       "openshell-gateway-auth-contract",
     );
-    expect(inventory.targetToJob.get("openshell-version-pin")).toBe("hermetic");
+    expect(inventory.targetToJob.get("openshell-version-pin")).toBe("shared-e2e");
     expect(inventory.targetToJob.get("upgrade-stale-sandbox")).toBe("upgrade-stale-sandbox");
     expect(inventory.targetToJob.get("credential-migration")).toBe("credential-migration");
     expect(inventory.targetToJob.get("launchable-smoke")).toBe("launchable-smoke");
@@ -666,13 +665,27 @@ describe("e2e workflow boundary", () => {
       "openclaw-plugin-runtime-exdev",
     );
     expect(
-      inventory.executionJobs.every((job) =>
+      inventory.workflowJobs.every((job) =>
         Object.keys((readWorkflow().jobs as Record<string, unknown>) ?? {}).includes(job),
       ),
     ).toBe(true);
-    const legacyShellInventory = formatFreeStandingJobsInventoryForShell(inventory);
+  });
+
+  it("emits the inventory consumed by the current base E2E workflow", {
+    timeout: 60_000,
+  }, () => {
+    const result = spawnSync("npx", ["tsx", "tools/e2e/workflow-inventory.mts", "--shell"], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    expect(result.signal).toBeNull();
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    const currentBaseWorkflowInventory = result.stdout;
     expect(
-      legacyShellInventory
+      currentBaseWorkflowInventory
         .trim()
         .split("\n")
         .map((line) => line.slice(0, line.indexOf("="))),
@@ -682,8 +695,16 @@ describe("e2e workflow boundary", () => {
       "free_standing_targets_csv",
       "free_standing_target_jobs_csv",
     ]);
-    expect(legacyShellInventory).toContain("openshell-version-pin:openshell-version-pin");
-    expect(legacyShellInventory).not.toContain("openshell-version-pin:hermetic");
+    for (const testId of [
+      "docs-validation",
+      "gateway-drift-preflight",
+      "onboard-negative-paths",
+      "openshell-version-pin",
+    ]) {
+      expect(currentBaseWorkflowInventory).toContain(`${testId}:${testId}`);
+    }
+    expect(currentBaseWorkflowInventory).not.toContain("openshell-version-pin:shared-e2e");
+    expect(currentBaseWorkflowInventory).not.toContain("ubuntu-repo-cli-smoke");
   });
 
   it("rejects malformed free-standing workflow metadata before matrix generation", {
@@ -1037,7 +1058,7 @@ jobs:
           "artifact upload path must include e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json",
           "live must not invoke actions/upload-artifact directly",
           "live must use upload-e2e-artifacts exactly once",
-          "workflow missing hermetic execution job",
+          "workflow missing shared E2E job",
           "network-policy job env must not include NVIDIA_INFERENCE_API_KEY",
           "network-policy step 'Install OpenShell' env must not include GITHUB_TOKEN",
           "double-onboard job env must not include DOCKERHUB_TOKEN",
@@ -1050,7 +1071,7 @@ jobs:
           "report-to-pr job must wait for live",
           "report-to-pr step must pass jobs through JOBS env",
           "step 'Post E2E target results to PR' run script must check selector validation before echoing selectors",
-          "step 'Post E2E target results to PR' run script must omit rejected job selectors",
+          "step 'Post E2E target results to PR' run script must omit rejected test ID selectors",
           "step 'Post E2E target results to PR' run script must filter reported entries for selective dispatches",
           "step 'Post E2E target results to PR' run script must report missing requested jobs",
           "step 'Post E2E target results to PR' run script must count cancelled jobs",

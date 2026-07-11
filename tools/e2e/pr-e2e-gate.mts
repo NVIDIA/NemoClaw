@@ -18,9 +18,9 @@ import {
   type RiskPlan,
   riskPlanRequiredJobIds,
 } from "../advisors/risk-plan.mts";
+import { SHARED_E2E_JOB_ID } from "./credential-free-tests.mts";
 import { readPrivateRegularFile, writePrivateRegularFile } from "./private-file.ts";
 import type { E2eRiskSignal } from "./risk-signal.ts";
-import { HERMETIC_EXECUTION_PROFILE } from "./execution-profile.mts";
 import { readFreeStandingJobsInventory } from "./workflow-boundary.mts";
 
 const E2E_WORKFLOW = "e2e.yaml";
@@ -736,10 +736,9 @@ export function expectedSignalShards(
         throw new Error(`E2E workflow does not define ${executionJobId} for ${jobId}`);
       }
       const job = jobs[executionJobId];
-      const env = isObjectRecord(job.env) ? job.env : {};
       if (executionJobId !== jobId) {
-        if (env.E2E_EXECUTION_PROFILE !== HERMETIC_EXECUTION_PROFILE.id) {
-          throw new Error(`${jobId} maps to an unknown shared execution profile`);
+        if (executionJobId !== SHARED_E2E_JOB_ID) {
+          throw new Error(`${jobId} maps to an unknown shared E2E job`);
         }
         return [jobId, ["default"]];
       }

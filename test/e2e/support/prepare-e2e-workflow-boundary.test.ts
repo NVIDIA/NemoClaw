@@ -87,11 +87,11 @@ describe("prepare-e2e workflow boundary", () => {
     const noBuildPrepare = noBuildJob.steps!.find((step) => step.uses === PREPARE_E2E_ACTION)!;
     delete noBuildPrepare.with;
 
-    const profileJob = workflow.jobs.hermetic;
-    const profilePrepare = profileJob.steps!.find((step) => step.uses === PREPARE_E2E_ACTION)!;
-    profilePrepare.with = { "build-cli": "false" };
-    profileJob.env!.E2E_EXECUTION_PROFILE = "untrusted";
-    profileJob.env!.E2E_JOB = "1";
+    const sharedJob = workflow.jobs["shared-e2e"];
+    const sharedPrepare = sharedJob.steps!.find((step) => step.uses === PREPARE_E2E_ACTION)!;
+    sharedPrepare.with = { "build-cli": "false" };
+    sharedJob.env!.E2E_EXECUTION_PROFILE = "credential-free";
+    sharedJob.env!.E2E_JOB = "1";
 
     const untrustedJob = workflow.jobs["inference-routing"];
     const untrustedPrepare = untrustedJob.steps!.find((step) => step.uses === PREPARE_E2E_ACTION)!;
@@ -111,10 +111,10 @@ describe("prepare-e2e workflow boundary", () => {
         "sandbox-operations must not duplicate prepare-e2e step 'Build CLI'",
         "launchable-smoke prepare-e2e must set build-cli to false",
         "launchable-smoke prepare-e2e invocation must not override its canonical contract",
-        "hermetic E2E_EXECUTION_PROFILE must be 'hermetic'",
-        "hermetic must not declare E2E_JOB",
-        "hermetic prepare-e2e must use the default CLI build",
-        "hermetic prepare-e2e invocation must not override its canonical contract",
+        "shared-e2e must not declare E2E_EXECUTION_PROFILE",
+        "shared-e2e must not declare E2E_JOB",
+        "shared-e2e prepare-e2e must use the default CLI build",
+        "shared-e2e prepare-e2e invocation must not override its canonical contract",
         "inference-routing must not load prepare-e2e from the target checkout",
         "inference-routing must use prepare-e2e exactly once",
         "network-policy must check out the repository before prepare-e2e",

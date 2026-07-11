@@ -9,7 +9,6 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 import {
   evaluateE2eWorkflowDispatchSelectors,
-  formatFreeStandingJobsInventoryForShell,
   readFreeStandingJobsInventory,
   validateE2eWorkflowBoundary,
   validateFreeStandingWorkflowInventory,
@@ -49,10 +48,13 @@ describe("Jetson nvmap GPU E2E workflow boundary", () => {
     const inventory = readFreeStandingJobsInventory();
     expect(validateE2eWorkflowBoundary()).toEqual([]);
     expect(inventory.allowedJobs).toContain("jetson-nvmap-gpu");
-    expect(inventory.explicitOnlyJobs).toContain("jetson-nvmap-gpu");
-    expect(formatFreeStandingJobsInventoryForShell(inventory)).toContain(
-      "explicit_only_jobs_csv=openshell-gateway-auth-contract,mcp-bridge-dev,hermes-gpu-startup,sandbox-rlimits-connect,jetson-nvmap-gpu",
-    );
+    expect(inventory.explicitOnlyJobs).toEqual([
+      "openshell-gateway-auth-contract",
+      "mcp-bridge-dev",
+      "hermes-gpu-startup",
+      "sandbox-rlimits-connect",
+      "jetson-nvmap-gpu",
+    ]);
     expect(inventory.targetToJob.get("jetson-nvmap-gpu")).toBe("jetson-nvmap-gpu");
     expect(evaluateE2eWorkflowDispatchSelectors({}).selectedFreeStandingJobs).not.toContain(
       "jetson-nvmap-gpu",

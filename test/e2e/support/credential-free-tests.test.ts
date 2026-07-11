@@ -7,19 +7,19 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
-  discoverExecutionProfileRows,
-  discoverExecutionProfileTests,
-  type ExecutionProfileModule,
-  executionProfileRowFromModule,
-  HERMETIC_EXECUTION_PROFILE,
-} from "../../../tools/e2e/execution-profile.mts";
+  CREDENTIAL_FREE_TEST_TAG,
+  type CredentialFreeTestModule,
+  credentialFreeTestRowFromModule,
+  discoverCredentialFreeTestRows,
+  discoverCredentialFreeTests,
+} from "../../../tools/e2e/credential-free-tests.mts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 
-const EXECUTION_PROFILE_CLI = path.join(REPO_ROOT, "tools", "e2e", "execution-profile.mts");
+const CREDENTIAL_FREE_TESTS_CLI = path.join(REPO_ROOT, "tools", "e2e", "credential-free-tests.mts");
 const TSX = path.join(REPO_ROOT, "node_modules", ".bin", "tsx");
-const TAG_COMMENT = `// @module-tag ${HERMETIC_EXECUTION_PROFILE.tag}`;
+const TAG_COMMENT = `// @module-tag ${CREDENTIAL_FREE_TEST_TAG}`;
 
-function module(overrides: Partial<ExecutionProfileModule> = {}): ExecutionProfileModule {
+function module(overrides: Partial<CredentialFreeTestModule> = {}): CredentialFreeTestModule {
   return {
     file: "test/e2e/live/example.test.ts",
     project: "e2e-live",
@@ -28,9 +28,9 @@ function module(overrides: Partial<ExecutionProfileModule> = {}): ExecutionProfi
   };
 }
 
-describe("hermetic E2E execution-profile discovery", () => {
-  it("derives deterministic safe matrix rows without execution capabilities", () => {
-    const rows = discoverExecutionProfileRows([
+describe("credential-free test discovery", () => {
+  it("derives deterministic safe matrix rows without workflow capabilities", () => {
+    const rows = discoverCredentialFreeTestRows([
       module({ file: "test/zeta.test.ts", project: "integration" }),
       module({ file: "test/e2e/live/alpha.test.ts" }),
     ]);
@@ -42,37 +42,39 @@ describe("hermetic E2E execution-profile discovery", () => {
     expect(Object.keys(rows[0])).toEqual(["id", "file", "project"]);
   });
 
-  it("rejects a profile-managed input without a profile tag", () => {
-    expect(() => executionProfileRowFromModule(module({ source: "// no profile" }))).toThrow(
-      "must declare exactly one e2e-profile/ module tag; found 0",
+  it("rejects a candidate without the credential-free tag", () => {
+    expect(() => credentialFreeTestRowFromModule(module({ source: "// no tag" }))).toThrow(
+      "must declare exactly one e2e/credential-free module tag; found 0",
     );
   });
 
-  it("rejects unknown execution profiles", () => {
+  it("rejects unknown tags in the E2E namespace", () => {
     expect(() =>
-      executionProfileRowFromModule(
-        module({ source: `${"// @module"}-tag e2e-profile/privileged` }),
+      credentialFreeTestRowFromModule(
+        module({ source: `${"// @module"}-tag e2e/credential-bearing` }),
       ),
-    ).toThrow("Unknown execution profile tag 'e2e-profile/privileged'");
+    ).toThrow("Unknown E2E test tag 'e2e/credential-bearing' in test/e2e/live/example.test.ts");
   });
 
-  it("rejects duplicate execution-profile tags", () => {
+  it("rejects duplicate credential-free tags", () => {
     expect(() =>
-      executionProfileRowFromModule(module({ source: `${TAG_COMMENT}\n${TAG_COMMENT}` })),
-    ).toThrow("must declare exactly one e2e-profile/ module tag; found 2");
+      credentialFreeTestRowFromModule(module({ source: `${TAG_COMMENT}\n${TAG_COMMENT}` })),
+    ).toThrow("must declare exactly one e2e/credential-free module tag; found 2");
   });
 
-  it("only treats literal module-tag comments as profile declarations", () => {
+  it("only treats literal module-tag comments as credential-free declarations", () => {
     expect(() =>
-      executionProfileRowFromModule(
+      credentialFreeTestRowFromModule(
         module({ source: `const example = ${JSON.stringify(TAG_COMMENT)};` }),
       ),
     ).toThrow("found 0");
     expect(() =>
-      executionProfileRowFromModule(module({ source: `const example = \`\n${TAG_COMMENT}\n\`;` })),
+      credentialFreeTestRowFromModule(
+        module({ source: `const example = \`\n${TAG_COMMENT}\n\`;` }),
+      ),
     ).toThrow("found 0");
     expect(
-      executionProfileRowFromModule(module({ source: `/* ${TAG_COMMENT.slice(3)} */` })),
+      credentialFreeTestRowFromModule(module({ source: `/* ${TAG_COMMENT.slice(3)} */` })),
     ).toEqual({
       id: "example",
       file: "test/e2e/live/example.test.ts",
@@ -82,12 +84,12 @@ describe("hermetic E2E execution-profile discovery", () => {
 
   it("rejects duplicate ids derived from different test files", () => {
     expect(() =>
-      discoverExecutionProfileRows([
+      discoverCredentialFreeTestRows([
         module({ file: "test/e2e/live/nested/example.test.ts" }),
         module({ file: "test/example.test.ts", project: "integration" }),
       ]),
     ).toThrow(
-      "Duplicate execution-profile test id 'example': test/e2e/live/nested/example.test.ts, test/example.test.ts",
+      "Duplicate credential-free test id 'example': test/e2e/live/nested/example.test.ts, test/example.test.ts",
     );
   });
 
@@ -98,27 +100,27 @@ describe("hermetic E2E execution-profile discovery", () => {
     "test\\e2e\\live\\escape.test.ts",
     "test/e2e/live/bad id.test.ts",
   ])("rejects unsafe repo-relative test path %s", (file) => {
-    expect(() => executionProfileRowFromModule(module({ file }))).toThrow(
+    expect(() => credentialFreeTestRowFromModule(module({ file }))).toThrow(
       "must be a safe repo-relative test file",
     );
   });
 
   it("rejects unsafe ids derived from test filenames", () => {
     expect(() =>
-      executionProfileRowFromModule(module({ file: "test/e2e/live/Bad_Name.test.ts" })),
+      credentialFreeTestRowFromModule(module({ file: "test/e2e/live/Bad_Name.test.ts" })),
     ).toThrow("filename must derive a safe id");
   });
 
   it("rejects a file that does not belong to its declared Vitest project", () => {
     expect(() =>
-      executionProfileRowFromModule(
+      credentialFreeTestRowFromModule(
         module({ file: "test/e2e/live/example.test.ts", project: "integration" }),
       ),
-    ).toThrow("integration execution-profile test must not live under test/e2e/");
+    ).toThrow("integration credential-free test must not live under test/e2e/");
   });
 
   it("discovers the tagged repository files through their real Vitest projects", () => {
-    const rows = discoverExecutionProfileTests();
+    const rows = discoverCredentialFreeTests();
     expect(rows.length).toBeGreaterThan(0);
     expect(rows).toEqual([...rows].sort((left, right) => left.id.localeCompare(right.id)));
     for (const row of rows) {
@@ -128,9 +130,9 @@ describe("hermetic E2E execution-profile discovery", () => {
   });
 
   it("prints one compact JSON matrix line from the CLI", () => {
-    const expected = discoverExecutionProfileTests();
+    const expected = discoverCredentialFreeTests();
     expect(expected.length).toBeGreaterThan(0);
-    const result = spawnSync(TSX, [EXECUTION_PROFILE_CLI], {
+    const result = spawnSync(TSX, [CREDENTIAL_FREE_TESTS_CLI], {
       cwd: REPO_ROOT,
       encoding: "utf8",
       timeout: 30_000,
@@ -141,7 +143,7 @@ describe("hermetic E2E execution-profile discovery", () => {
   });
 
   it("rejects selector arguments owned by the workflow planner", () => {
-    const result = spawnSync(TSX, [EXECUTION_PROFILE_CLI, "--jobs", "docs-validation"], {
+    const result = spawnSync(TSX, [CREDENTIAL_FREE_TESTS_CLI, "--jobs", "docs-validation"], {
       cwd: REPO_ROOT,
       encoding: "utf8",
       timeout: 30_000,
@@ -150,7 +152,7 @@ describe("hermetic E2E execution-profile discovery", () => {
     expect(result.status).toBe(1);
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain(
-      "::error::Execution-profile discovery does not accept selectors; use workflow-plan.mts",
+      "::error::Credential-free test discovery does not accept selectors; use workflow-plan.mts",
     );
   });
 });

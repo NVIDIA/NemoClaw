@@ -6,7 +6,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { discoverExecutionProfileTests } from "../../../tools/e2e/execution-profile.mts";
+import { discoverCredentialFreeTests } from "../../../tools/e2e/credential-free-tests.mts";
 import { readFreeStandingJobsInventory } from "../../../tools/e2e/workflow-boundary.mts";
 import { buildE2eWorkflowPlan, runE2eWorkflowPlanCli } from "../../../tools/e2e/workflow-plan.mts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
@@ -21,23 +21,23 @@ function firstId<T extends { id: string }>(rows: readonly T[], label: string): s
 }
 
 describe("E2E workflow plan", () => {
-  it("defaults to every supported registry target and discovered hermetic test", () => {
+  it("defaults to every supported registry target and tagged credential-free test", () => {
     const plan = buildE2eWorkflowPlan();
 
     expect(plan).toEqual({
       matrix: buildLiveTargetMatrix(),
-      hermeticMatrix: discoverExecutionProfileTests(),
+      testMatrix: discoverCredentialFreeTests(),
       hermesSelected: true,
       explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
     });
   });
 
-  it("validates logical jobs and selects only matching hermetic tests", () => {
-    const hermeticId = firstId(discoverExecutionProfileTests(), "hermetic test");
-    const plan = buildE2eWorkflowPlan({ jobs: `${hermeticId},hermes-e2e` });
+  it("validates jobs and selects only matching credential-free tests", () => {
+    const testId = firstId(discoverCredentialFreeTests(), "credential-free test");
+    const plan = buildE2eWorkflowPlan({ jobs: `${testId},hermes-e2e` });
 
     expect(plan.matrix).toEqual([]);
-    expect(plan.hermeticMatrix.map((row) => row.id)).toEqual([hermeticId]);
+    expect(plan.testMatrix.map((row) => row.id)).toEqual([testId]);
     expect(plan.hermesSelected).toBe(true);
   });
 
@@ -46,22 +46,22 @@ describe("E2E workflow plan", () => {
     const plan = buildE2eWorkflowPlan({ targets: registryId });
 
     expect(plan.matrix.map((row) => row.id)).toEqual([registryId]);
-    expect(plan.hermeticMatrix).toEqual([]);
+    expect(plan.testMatrix).toEqual([]);
     expect(plan.hermesSelected).toBe(false);
   });
 
-  it("partitions mixed registry and discovered free-standing targets", () => {
+  it("partitions mixed registry and tagged test targets", () => {
     const registryId = firstId(buildLiveTargetMatrix(), "supported registry target");
-    const hermeticId = firstId(discoverExecutionProfileTests(), "hermetic test");
-    const plan = buildE2eWorkflowPlan({ targets: `${registryId},${hermeticId}` });
+    const testId = firstId(discoverCredentialFreeTests(), "credential-free test");
+    const plan = buildE2eWorkflowPlan({ targets: `${registryId},${testId}` });
 
     expect(plan.matrix.map((row) => row.id)).toEqual([registryId]);
-    expect(plan.hermeticMatrix.map((row) => row.id)).toEqual([hermeticId]);
+    expect(plan.testMatrix.map((row) => row.id)).toEqual([testId]);
   });
 
-  it("rejects an unknown logical job", () => {
+  it("rejects an unknown job", () => {
     expect(() => buildE2eWorkflowPlan({ jobs: "definitely-unknown-e2e-job" })).toThrow(
-      "Unknown free-standing E2E job: definitely-unknown-e2e-job",
+      "Unknown E2E test ID: definitely-unknown-e2e-job",
     );
   });
 
@@ -104,7 +104,7 @@ describe("E2E workflow plan", () => {
     const parsed = JSON.parse(output);
     expect(Object.keys(parsed)).toEqual([
       "matrix",
-      "hermeticMatrix",
+      "testMatrix",
       "hermesSelected",
       "explicitOnlyJobs",
     ]);
