@@ -197,20 +197,26 @@ assert rows and rows[0]["id"] == session_id, rows
 assert rows[0]["preview"] == "NEMOCLAW_PREVIEW_LATEST", rows
 PY
 
-# Cryptographic integrity gate for the two security-critical Python entrypoints
-# — the wrapper that enforces the runtime env secret boundary and the validator
-# it delegates to. Any content change to either file MUST be accompanied by an
-# updated hash below; otherwise the build fails. This blocks silent supply-
-# chain tampering of the build context (an attacker rewriting the file has to
-# also rewrite the Dockerfile-committed hash, which reviewers gate). Regenerate
-# with `sha256sum agents/hermes/{hermes-wrapper.py,validate-env-secret-boundary.py}`.
+# Cryptographic integrity gate for the security-critical Python entrypoints:
+# the wrapper and validator that enforce the runtime env secret boundary, plus
+# the descriptor-safe Tirith marker finalizer. Any content change MUST be
+# accompanied by an updated hash below; otherwise the build fails. This blocks
+# silent supply-chain tampering of the build context (an attacker rewriting a
+# file has to also rewrite the Dockerfile-committed hash, which reviewers gate).
+# Regenerate with `sha256sum agents/hermes/{hermes-wrapper.py,validate-env-secret-boundary.py,finalize-tirith-marker.py}`.
 ARG NEMOCLAW_HERMES_WRAPPER_SHA256=34ef50ea993c776f28312bcf659e908eeae3c07e4094a49e513cb320eee6538f
 ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=970d7ff03bc409ff1d5ca46bfdbd2a42ac28a32a810ccc147a508301bff38496
+ARG NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256=a1e6b1c53ab297569abb87c29d15c294d729e46005bfd022136b4c447a791819
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_VALIDATOR_SHA256" /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \
     | sha256sum -c - \
     || { echo "ERROR: validate-hermes-env-secret-boundary.py hash mismatch (update NEMOCLAW_HERMES_VALIDATOR_SHA256)" >&2; exit 1; }
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256" /usr/local/lib/nemoclaw/finalize-tirith-marker.py \
+    | sha256sum -c - \
+    || { echo "ERROR: finalize-tirith-marker.py hash mismatch (update NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256)" >&2; exit 1; }
 
 # Wrap the hermes CLI so the runtime env secret boundary is enforced for
 # `hermes gateway` no matter how it is invoked. The entrypoint guard alone left
