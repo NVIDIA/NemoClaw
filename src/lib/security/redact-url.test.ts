@@ -57,6 +57,20 @@ describe("URL redaction", () => {
     expect(persistedResult).not.toContain("fallback-pass");
   });
 
+  it("redacts encoded query secrets when a malformed URL cannot be parsed", () => {
+    const encodedSecret = "sk%2Dproj%2Dabcdefghijklmnopqrstuvwxyz";
+    const value = `https://fallback-user:fallback-pass@[not-an-ip/path?model=${encodedSecret}&keep=yes`;
+    const logResult = redact(value);
+    const persistedResult = redactUrl(value);
+
+    expect(logResult).toContain("model=****&keep=yes");
+    expect(persistedResult).toContain("model=%3CREDACTED%3E&keep=yes");
+    expect(logResult).not.toContain(encodedSecret);
+    expect(persistedResult).not.toContain(encodedSecret);
+    expect(logResult).not.toContain("sk-proj-abcdefghijklmnopqrstuvwxyz");
+    expect(persistedResult).not.toContain("sk-proj-abcdefghijklmnopqrstuvwxyz");
+  });
+
   it("redacts encoded query secrets after the bounded wrapper fallback (#6224)", () => {
     const wrappers = "]".repeat(4_096);
     const encodedSecret = "sk%2Dproj%2Dabcdefghijklmnopqrstuvwxyz";

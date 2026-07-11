@@ -111,14 +111,14 @@ function redactUrlQueryValue(
   return result;
 }
 
-function redactUrlSearchParams(
-  url: URL,
+function redactSearchParams(
+  searchParams: URLSearchParams,
   replacement: string,
   isSensitiveKey: SensitiveKeyDetector,
   redactStandaloneSecrets: StandaloneSecretRedactor,
-): void {
+): string {
   const redactedSearchParams = new URLSearchParams();
-  for (const [key, queryValue] of url.searchParams) {
+  for (const [key, queryValue] of searchParams) {
     // Query names are not a security boundary. Preserve benign values, but
     // redact any decoded value that carries a recognizable secret shape.
     redactedSearchParams.append(
@@ -128,7 +128,43 @@ function redactUrlSearchParams(
         : redactUrlQueryValue(queryValue, replacement, redactStandaloneSecrets),
     );
   }
-  url.search = redactedSearchParams.toString();
+  return redactedSearchParams.toString();
+}
+
+function redactUrlSearchParams(
+  url: URL,
+  replacement: string,
+  isSensitiveKey: SensitiveKeyDetector,
+  redactStandaloneSecrets: StandaloneSecretRedactor,
+): void {
+  url.search = redactSearchParams(
+    url.searchParams,
+    replacement,
+    isSensitiveKey,
+    redactStandaloneSecrets,
+  );
+}
+
+function redactMalformedUrlQuery(
+  value: string,
+  replacement: string,
+  stripFragment: boolean,
+  isSensitiveKey: SensitiveKeyDetector,
+  redactStandaloneSecrets: StandaloneSecretRedactor,
+): string {
+  const fragmentStart = value.indexOf("#");
+  const bodyEnd = fragmentStart < 0 ? value.length : fragmentStart;
+  const body = value.slice(0, bodyEnd);
+  const suffix = stripFragment || fragmentStart < 0 ? "" : value.slice(fragmentStart);
+  const queryStart = body.indexOf("?");
+  if (queryStart < 0) return `${body}${suffix}`;
+  const redactedQuery = redactSearchParams(
+    new URLSearchParams(body.slice(queryStart + 1)),
+    replacement,
+    isSensitiveKey,
+    redactStandaloneSecrets,
+  );
+  return `${body.slice(0, queryStart + 1)}${redactedQuery}${suffix}`;
 }
 
 export function redactUrlTokenPartial(
@@ -138,7 +174,15 @@ export function redactUrlTokenPartial(
 ): string {
   if (value.length === 0) return value;
   const parsed = parseUrlTokenForRedaction(value);
-  if (!parsed) return redactMalformedUrlUserinfo(value, "****");
+  if (!parsed) {
+    return redactMalformedUrlQuery(
+      redactMalformedUrlUserinfo(value, "****"),
+      "****",
+      false,
+      isSensitiveKey,
+      redactStandaloneSecrets,
+    );
+  }
   if (parsed.url.username) parsed.url.username = "****";
   if (parsed.url.password) parsed.url.password = "****";
   redactUrlSearchParams(parsed.url, "****", isSensitiveKey, redactStandaloneSecrets);
@@ -152,7 +196,17 @@ export function redactUrlTokenFull(
   redactMalformedUrl: MalformedUrlRedactor,
 ): string | null {
   const parsed = parseUrlTokenForRedaction(value);
-  if (!parsed) return redactMalformedUrl(redactMalformedUrlUserinfo(value, null));
+  if (!parsed) {
+    return redactMalformedUrl(
+      redactMalformedUrlQuery(
+        redactMalformedUrlUserinfo(value, null),
+        "<REDACTED>",
+        true,
+        isSensitiveKey,
+        redactStandaloneSecrets,
+      ),
+    );
+  }
   if (parsed.url.username || parsed.url.password) {
     parsed.url.username = "";
     parsed.url.password = "";
