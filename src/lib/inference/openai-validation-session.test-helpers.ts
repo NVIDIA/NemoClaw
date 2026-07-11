@@ -22,8 +22,20 @@ export function useOpenAiValidationTestServers(): (server: http.Server) => Promi
   });
 
   return async (server: http.Server): Promise<number> => {
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error) => {
+        server.off("listening", onListening);
+        reject(error);
+      };
+      const onListening = () => {
+        server.off("error", onError);
+        resolve();
+      };
+      server.once("error", onError);
+      server.once("listening", onListening);
+      server.listen(0, "127.0.0.1");
+    });
     servers.push(server);
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
     expect(address).toBeTruthy();
     expect(typeof address).toBe("object");
