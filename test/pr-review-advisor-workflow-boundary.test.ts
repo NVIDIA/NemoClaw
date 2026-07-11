@@ -349,7 +349,7 @@ fi
         "artifact_name: pr-review-advisor-nemotron-ultra",
         "artifact_name: pr-review-advisor",
       )
-      .replace("model: nvidia/nvidia/nemotron-3-ultra", "model: openai/openai/gpt-5.5")
+      .replace("model: nvidia/nvidia/nemotron-3-ultra", "model: azure/openai/gpt-5.6-terra")
       .replace('\n              --title "$PR_REVIEW_ADVISOR_COMMENT_TITLE" \\', "");
     fs.writeFileSync(workflowPath, workflow);
 
@@ -357,7 +357,7 @@ fi
       const errors = validatePrReviewAdvisorWorkflowBoundary(workflowPath);
       expect(errors).toEqual(
         expect.arrayContaining([
-          "advisor matrix field model must be unique: openai/openai/gpt-5.5",
+          "advisor matrix field model must be unique: azure/openai/gpt-5.6-terra",
           "advisor matrix field artifact_dir must be unique: pr-review-advisor",
           "advisor matrix field artifact_name must be unique: pr-review-advisor",
           "step 'Post PR review advisor comment' run script must include --title \"$PR_REVIEW_ADVISOR_COMMENT_TITLE\"",
