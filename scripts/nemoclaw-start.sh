@@ -3572,9 +3572,17 @@ openclaw() {
                 # The OpenClaw gateway is a WebSocket endpoint (set to
                 # ws://127.0.0.1:<port> at boot). Dispatch on the override:
                 #
+                #   URL containing '@' (userinfo)              -> reject
                 #   ws(s):// on 127.0.0.1 | localhost | [::1]  -> honor
                 #   ws(s):// on any other host                 -> reject
                 #   anything else (not a ws:// URL)            -> reject
+                #
+                # Reject userinfo first: a glob like ws://127.0.0.1:* also
+                # matches ws://127.0.0.1:1@evil.example, but the WHATWG URL
+                # parser reads 127.0.0.1:1 as user:password and connects to
+                # evil.example — so a raw host-prefix match would leak the
+                # token to a non-loopback host. A real loopback gateway URL
+                # never carries userinfo, so any '@' is rejected outright.
                 #
                 # Non-loopback hosts: the connect shell exports the gateway
                 # token, so a caller-selected endpoint would receive it —
@@ -3583,6 +3591,14 @@ openclaw() {
                 # Malformed values fail fast as a gateway/env problem instead
                 # of an ambiguous close inside the login.
                 case "$_nemoclaw_whatsapp_gateway_url" in
+                  *@*)
+                    echo "Error: WhatsApp pairing cannot start — gateway URL='${_nemoclaw_whatsapp_gateway_url}' must not contain '@' (userinfo)." >&2
+                    echo "A userinfo component (user:pass@host) makes the URL parser connect to the host after '@'," >&2
+                    echo "which would present the connect shell's gateway token to a non-loopback endpoint." >&2
+                    echo "The in-sandbox loopback gateway URL never carries credentials; unset OPENCLAW_GATEWAY_URL" >&2
+                    echo "to pair via the supported in-sandbox loopback resolution." >&2
+                    return 1
+                    ;;
                   ws://127.0.0.1 | ws://127.0.0.1:* | ws://127.0.0.1/* | \
                     wss://127.0.0.1 | wss://127.0.0.1:* | wss://127.0.0.1/* | \
                     ws://localhost | ws://localhost:* | ws://localhost/* | \

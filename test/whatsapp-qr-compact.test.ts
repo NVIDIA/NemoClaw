@@ -446,6 +446,27 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
     expect(r.stdout).not.toContain("FAKE_OPENCLAW_TOKEN");
   });
 
+  it.each([
+    "ws://127.0.0.1:1@evil.example",
+    "wss://127.0.0.1:1@evil.example",
+    "ws://localhost:1@evil.example",
+    "ws://[::1]:1@evil.example",
+  ])("fails closed on a loopback-prefixed userinfo gateway URL without invoking openclaw (%s)", (badUrl) => {
+    // The loopback host is userinfo, not the real host: the WHATWG URL
+    // parser reads `127.0.0.1:1` as user:password and connects to
+    // `evil.example`, so a raw ws://127.0.0.1:* prefix match would leak the
+    // gateway token to a non-loopback host.
+    const r = runGuard(["channels", "login", "--channel", "whatsapp"], {
+      gatewayUrl: badUrl,
+      gatewayToken: "guard-secret-token",
+      preloadPresent: true,
+    });
+    expect(r.stderr).toContain("must not contain '@' (userinfo)");
+    expect(r.stdout).toContain("GUARD_EXIT=1");
+    expect(r.stdout).not.toContain("FAKE_OPENCLAW_ARGS");
+    expect(r.stdout).not.toContain("FAKE_OPENCLAW_TOKEN");
+  });
+
   it("does not re-inject the stashed private gateway URL for WhatsApp (#6413)", () => {
     const r = runGuard(["channels", "login", "--channel", "whatsapp"], {
       privateGatewayUrl: "ws://10.200.0.2:18790",
