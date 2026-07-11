@@ -225,4 +225,28 @@ describe("URL redaction", () => {
     expect(persistedResult).not.toContain("abcdef0123456789");
     expect(logResult).not.toContain("abcdef0123456789");
   });
+
+  it.each([
+    ["non-JSON header", "abcde12345.payload12.signatureABCDEFGHI"],
+    ["short signature", "eyJheader123.payload12.short"],
+    ["two segments", "eyJheader123.payload12"],
+  ])("preserves the near-miss JWT shape %s", (_label, value) => {
+    const url = `https://endpoint.example/v1?model=${value}`;
+
+    expect(new URL(redact(url)).searchParams.get("model")).toBe(value);
+    expect(new URL(redactUrl(url) as string).searchParams.get("model")).toBe(value);
+  });
+
+  it("preserves a long Unicode query value while redacting an adjacent encoded secret", () => {
+    const benign = `model-\u96ea-${"a".repeat(10_000)}`;
+    const encodedSecret = "sk%2Dproj%2Dabcdefghijklmnopqrstuvwxyz";
+    const value = `https://endpoint.example/v1?model=${encodeURIComponent(benign)}&backup=${encodedSecret}`;
+    const logResult = redact(value);
+    const persistedResult = redactUrl(value) as string;
+
+    expect(new URL(logResult).searchParams.get("model")).toBe(benign);
+    expect(new URL(persistedResult).searchParams.get("model")).toBe(benign);
+    expect(new URL(logResult).searchParams.get("backup")).toBe("****");
+    expect(new URL(persistedResult).searchParams.get("backup")).toBe("<REDACTED>");
+  });
 });

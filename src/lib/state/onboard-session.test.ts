@@ -563,7 +563,8 @@ describe("onboard session", () => {
     expect(loaded.provider).toBe("openai");
   });
 
-  // ── Session secret boundary, consolidated from #6225 (epic #6224) ──
+  // Session secret boundary from #6225. Endpoint query coverage for #6224
+  // lives in onboard-session-redaction.test.ts.
 
   it("round-trips writer-shaped legacy migration hashes and drops non-string entries (#6225)", () => {
     // Digest shape mirrors legacyValueHash() in src/lib/onboard.ts, the only
