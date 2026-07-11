@@ -802,8 +802,12 @@ print_identity() {
   model="$(terminal_safe_identity_value "$(toml_section_scalar models default)")"
   [ -n "$model" ] || model="$(terminal_safe_identity_value "$(toml_section_scalar models recent)")"
   endpoint="$(toml_section_scalar models.providers.openai base_url)"
+  [ -n "$endpoint" ] || endpoint="$(toml_section_scalar models.providers.openrouter base_url)"
   route="$(terminal_safe_identity_value "$(toml_provider_metadata route)")"
   provider="$(terminal_safe_identity_value "$(toml_provider_metadata provider)")"
+  case "$model" in
+    openrouter:*) provider="openrouter" ;;
+  esac
   [ -n "$endpoint" ] || endpoint="${OPENAI_BASE_URL:-}"
   endpoint="$(safe_endpoint_identity_value "$endpoint")"
   printf 'Sandbox:  %s\n' "$sandbox_name"
