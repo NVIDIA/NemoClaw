@@ -827,6 +827,24 @@ describe("PR E2E controller", () => {
         { id: 2_000 + index, status: "queued", conclusion: null },
       ),
     );
+    const runsByQuery = new Map([
+      ["missing:1", fullCompletedPage],
+      ["queued:1", fullUnrelatedQueuedPage],
+      [
+        "queued:2",
+        [
+          workflowRun(gate, { status: "queued", conclusion: null }),
+          workflowRun(gate, { id: 24, status: "completed" }),
+          workflowRun(gate, {
+            id: 25,
+            status: "queued",
+            conclusion: null,
+            display_title: "E2E manual",
+          }),
+          workflowRun({ ...gate, prNumber: 420 }, { id: 26, status: "queued", conclusion: null }),
+        ],
+      ],
+    ]);
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter(
         [
@@ -836,29 +854,9 @@ describe("PR E2E controller", () => {
               const query = new URL(url);
               const status = query.searchParams.get("status");
               const page = query.searchParams.get("page");
-              if (!status) return githubResponse({ workflow_runs: fullCompletedPage });
-              if (status === "queued" && page === "1") {
-                return githubResponse({ workflow_runs: fullUnrelatedQueuedPage });
-              }
-              if (status === "queued" && page === "2") {
-                return githubResponse({
-                  workflow_runs: [
-                    workflowRun(gate, { status: "queued", conclusion: null }),
-                    workflowRun(gate, { id: 24, status: "completed" }),
-                    workflowRun(gate, {
-                      id: 25,
-                      status: "queued",
-                      conclusion: null,
-                      display_title: "E2E manual",
-                    }),
-                    workflowRun(
-                      { ...gate, prNumber: 420 },
-                      { id: 26, status: "queued", conclusion: null },
-                    ),
-                  ],
-                });
-              }
-              return githubResponse({ workflow_runs: [] });
+              return githubResponse({
+                workflow_runs: runsByQuery.get(`${status ?? "missing"}:${page}`) ?? [],
+              });
             },
           ),
           githubFetchRoute(
@@ -897,24 +895,18 @@ describe("PR E2E controller", () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     const gate = state();
+    const runsByStatus = new Map([
+      ["requested", [workflowRun(gate, { status: "queued", conclusion: null })]],
+      ["queued", [workflowRun(gate, { status: "in_progress", conclusion: null })]],
+    ]);
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter([
         githubFetchRoute(
           ({ url }) => url.includes("/actions/workflows/e2e.yaml/runs?"),
-          ({ url }) => {
-            const status = new URL(url).searchParams.get("status");
-            if (status === "requested") {
-              return githubResponse({
-                workflow_runs: [workflowRun(gate, { status: "queued", conclusion: null })],
-              });
-            }
-            if (status === "queued") {
-              return githubResponse({
-                workflow_runs: [workflowRun(gate, { status: "in_progress", conclusion: null })],
-              });
-            }
-            return githubResponse({ workflow_runs: [] });
-          },
+          ({ url }) =>
+            githubResponse({
+              workflow_runs: runsByStatus.get(new URL(url).searchParams.get("status") ?? "") ?? [],
+            }),
         ),
         githubFetchRoute(
           ({ url, method }) => url.endsWith("/actions/runs/23/cancel") && method === "POST",
