@@ -59,7 +59,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3=3.13.5-1 \
         python3-pip=25.1.1+dfsg-1 \
         python3-venv=3.13.5-1 \
-        curl=8.14.1-2+deb13u3 \
+        curl=8.14.1-2+deb13u4 \
         git=1:2.47.3-0+deb13u1 \
         gnupg=2.4.7-21+deb13u1 \
         ca-certificates=20250419 \
