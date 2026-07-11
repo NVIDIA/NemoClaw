@@ -1506,7 +1506,7 @@ If you want to upgrade the sandbox while preserving state, use `$$nemoclaw <name
 </Warning>
 
 If another terminal has an active SSH session to the sandbox, `destroy` prints an active-session warning and requires a second confirmation before it proceeds.
-Pass `--yes`, `-y`, or `--force` to skip the prompt in scripted workflows.
+Pass `--yes`, `-y`, or `--force`, or set `NEMOCLAW_NON_INTERACTIVE=1`, to authorize deletion without prompting in scripted workflows.
 
 <AgentOnly variant="hermes">
 
@@ -1521,10 +1521,14 @@ It restores and verifies lockdown and revokes the active timer before deletion.
 It clears the remaining local shields state only after deletion succeeds.
 If hardening fails, the command refuses deletion and leaves the timer authority available to retry lockdown.
 If deletion fails after hardening, the command keeps the surviving sandbox's locked shields state instead of cleaning it up as though deletion succeeded.
-By default, `destroy` preserves the shared NemoClaw gateway.
-Pass `--cleanup-gateway` to remove the shared gateway when destroying the last sandbox, or `--no-cleanup-gateway` to force preservation when environment defaults request cleanup.
+By default, unattended final-sandbox destroys (`--yes`, `--force`, or `NEMOCLAW_NON_INTERACTIVE=1`) remove the shared NemoClaw gateway on macOS so the host listener is released, while Linux preserves it for reuse.
+Pass `--cleanup-gateway` to force removal, or `--no-cleanup-gateway` to force preservation.
+These flags always override both `NEMOCLAW_CLEANUP_GATEWAY` and the platform default.
 If the pre-delete workspace wipe cannot run, use a different sandbox name for a clean start.
-When this is the last sandbox, pass `--cleanup-gateway` to purge the shared cluster volume that retains the per-name persistent volume.
+Cleaning up the gateway after the last sandbox also purges the shared cluster volume that retains the per-name persistent volume.
+If final gateway cleanup finds a live PID-file process whose command line does not prove it owns the target gateway, `destroy` exits non-zero after sandbox and registry deletion and skips gateway and volume removal.
+NemoClaw preserves the per-gateway PID file and runtime marker so you can inspect the process.
+Stop only the listener that matches the target gateway, then rerun `destroy` to converge cleanup.
 If the OpenShell gateway is unreachable and the sandbox has no managed MCP ownership state, `--force` removes only NemoClaw's local registry entry and local artifacts.
 Gateway-side deletion remains unconfirmed, shared host-service and gateway teardown are skipped, and the sandbox and retained volume may still exist if the gateway returns.
 Start the gateway with `$$nemoclaw <name> status` and retry destroy when you need a confirmed deletion.
@@ -3501,7 +3505,7 @@ The following flags change defaults for commands that manage existing sandboxes.
 
 | Variable | Format | Effect |
 |----------|--------|--------|
-| `NEMOCLAW_CLEANUP_GATEWAY` | `1`, `true`, or `yes` to enable; `0`, `false`, or `no` to disable | Sets the default for whether `$$nemoclaw <name> destroy` removes the shared gateway when destroying the last sandbox. Command-line `--cleanup-gateway` and `--no-cleanup-gateway` still take precedence. |
+| `NEMOCLAW_CLEANUP_GATEWAY` | `1`, `true`, or `yes` to enable; `0`, `false`, or `no` to disable | Overrides the platform default (macOS unattended: cleanup; Linux/Windows: preserve) for whether `$$nemoclaw <name> destroy` removes the shared gateway when destroying the last sandbox. Command-line `--cleanup-gateway` and `--no-cleanup-gateway` still take precedence. |
 | `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` | Exact JSON array of sandbox names | Confirms to the installer that the exact listed set of pre-fingerprint OpenClaw or Hermes sandboxes used NemoClaw-managed images, allowing recovery onto the current managed image. The normalized names must exactly match the installer's printed array. Set it only after verifying every named sandbox. Recorded custom-image evidence remains blocked. |
 | `NEMOCLAW_DISABLE_INFERENCE_ROUTE_REPAIR` | `1` to enable | Skips the automatic DNS-proxy repair for stale `inference.local` routes during `$$nemoclaw <name> connect` and `$$nemoclaw <name> connect --probe-only`. Use only as a troubleshooting escape hatch. |
 | `NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE` | `1` to opt in | Allows advanced immutable-config verification to trust the current on-disk bytes for older or partial content baselines. Use only after you have rebuilt or manually inspected the sandbox state and accepted that the baseline is operator-approved. |

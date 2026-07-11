@@ -14,7 +14,9 @@ const destroyModulePath = "./destroy.js";
 
 export type DestroyHarness = {
   cleanupGatewaySpy: MockInstance;
+  captureOpenshellSpy: MockInstance;
   destroySandbox: DestroySandbox;
+  dockerCaptureSpy: MockInstance;
   errorSpy: MockInstance;
   events: string[];
   finalizeMcpBridgesAfterSandboxDeleteSpy: MockInstance;
@@ -25,6 +27,7 @@ export type DestroyHarness = {
   logSpy: MockInstance;
   prepareMcpBridgesForAbsentSandboxDestroySpy: MockInstance;
   prepareMcpBridgesForDestroySpy: MockInstance;
+  promptSpy: MockInstance;
   removeSandboxSpy: MockInstance;
   restoreMcpBridgesAfterDestroyAbortSpy: MockInstance;
   runOpenshellSpy: MockInstance;
@@ -40,9 +43,12 @@ type DestroyHarnessOptions = {
   agent?: "openclaw" | "hermes";
   deleteOutput?: string;
   deleteStatus?: number;
+  dockerPsOutput?: string;
   finalizeMcpError?: string;
+  liveListOutput?: string;
   mcpAddState?: "prepared";
   mcpServers?: string[];
+  promptResponses?: string[];
   registeredSandboxCount?: number;
   restoreMcpError?: string;
   sandboxPresent?: boolean;
@@ -103,6 +109,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const resolve = requireDist("../../adapters/openshell/resolve.js");
   const runtime = requireDist("../../adapters/openshell/runtime.js");
   const destroyGateway = requireDist("./destroy-gateway.js");
+  const credentialStore = requireDist("../../credentials/store.js");
   const sandboxProviderCleanup = requireDist("../../onboard/sandbox-provider-cleanup.js");
   const nim = requireDist("../../inference/nim.js");
   const ollamaProxy = requireDist("../../inference/ollama/proxy.js");
@@ -113,8 +120,13 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const shields = requireDist("../../shields/index.js");
   const timerControl = requireDist("../../shields/timer-control.js");
   const mcpBridge = requireDist("./mcp-bridge.js");
+  const dockerRun = requireDist("../../adapters/docker/run.js");
 
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue("/usr/bin/openshell");
+  const promptSpy = vi.spyOn(credentialStore, "prompt").mockResolvedValue("yes");
+  for (const response of options.promptResponses ?? []) {
+    promptSpy.mockResolvedValueOnce(response);
+  }
   vi.spyOn(sandboxSession, "getActiveSandboxSessions").mockReturnValue({
     detected: true,
     sessions: [{ pid: 1 }],
@@ -182,10 +194,24 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
         return { status: 0, stdout: "", stderr: "" };
     }
   });
-  vi.spyOn(runtime, "captureOpenshell").mockReturnValue({
+  const captureOpenshellSpy = vi.spyOn(runtime, "captureOpenshell").mockReturnValue({
     status: 0,
-    output: "",
+    output: options.liveListOutput ?? "",
   });
+  const dockerCaptureSpy = vi
+    .spyOn(dockerRun, "dockerCapture")
+    .mockImplementation((args: unknown) => {
+      const argv = Array.isArray(args) ? args.map(String) : [];
+      if (argv[0] !== "ps") return "";
+      const filterIndex = argv.indexOf("--filter");
+      const filterValue = filterIndex >= 0 ? argv[filterIndex + 1] : undefined;
+      const nameFilter = filterValue?.startsWith("name=") ? filterValue.slice(5) : undefined;
+      const names = (options.dockerPsOutput ?? "").split("\n").filter(Boolean);
+      const matchedNames = nameFilter
+        ? names.filter((name) => `/${name}`.includes(nameFilter))
+        : names;
+      return matchedNames.length > 0 ? `${matchedNames.join("\n")}\n` : "";
+    });
   const selectGatewaySpy = vi
     .spyOn(destroyGateway, "selectGatewayForSandboxDestroy")
     .mockImplementation(() => undefined);
@@ -278,6 +304,8 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
 
   return {
     cleanupGatewaySpy,
+    captureOpenshellSpy,
+    dockerCaptureSpy,
     destroySandbox: requireDist(destroyModulePath).destroySandbox,
     errorSpy,
     events,
@@ -289,6 +317,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     logSpy,
     prepareMcpBridgesForAbsentSandboxDestroySpy,
     prepareMcpBridgesForDestroySpy,
+    promptSpy,
     removeSandboxSpy,
     restoreMcpBridgesAfterDestroyAbortSpy,
     runOpenshellSpy,
