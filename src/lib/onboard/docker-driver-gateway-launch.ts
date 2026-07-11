@@ -22,6 +22,7 @@ import {
   buildDockerDriverGatewayLocalTlsEnv,
   ensureDockerDriverGatewayLocalTlsBundle,
 } from "./docker-driver-gateway-local-tls";
+import { buildOwnedHostGatewayArgv0 } from "./gateway-process-identity";
 
 export {
   compareDottedVersions,
@@ -37,6 +38,7 @@ export { buildDockerDriverGatewayConfigToml };
 export type DockerDriverGatewayLaunch = {
   command: string;
   args: string[];
+  argv0?: string;
   env: NodeJS.ProcessEnv;
   mode: "host" | "container";
   processGatewayBin: string | null;
@@ -74,6 +76,7 @@ export function spawnDockerDriverGateway(
 ): ChildProcess {
   try {
     return spawn(launch.command, launch.args, {
+      argv0: launch.argv0,
       detached: true,
       stdio: ["ignore", logFd, logFd],
       env: launch.env,
@@ -144,6 +147,7 @@ export function buildDockerDriverGatewayLaunch(
     return {
       command: options.gatewayBin,
       args: [],
+      argv0: buildOwnedHostGatewayArgv0(options.gatewayName) ?? undefined,
       env,
       mode: "host",
       processGatewayBin: options.gatewayBin,

@@ -286,6 +286,10 @@ describe("PR E2E controller", () => {
         expectedShards: gate.expectedShards,
         signals,
       });
+    const spoofedOptionalSkip = {
+      ...signal(gate, "onboard-repair", "default", { skipped: 1 }),
+      optionalSkipped: 1,
+    };
 
     expect(classify(complete).conclusion).toBe("success");
     expect(classify([], "cancelled").conclusion).toBe("failure");
@@ -294,6 +298,7 @@ describe("PR E2E controller", () => {
     expect(
       classify([signal(gate, "onboard-repair", "default", { skipped: 1 }), complete[1]!]).title,
     ).toBe("Evidence is incomplete");
+    expect(classify([spoofedOptionalSkip, complete[1]!]).title).toBe("Evidence is incomplete");
     expect(
       classify([
         signal(gate, "onboard-repair", "default", { failed: 1, runReason: "failed" }),
@@ -579,7 +584,10 @@ describe("PR E2E controller", () => {
       expect(checkUpdates[1]?.body).toMatchObject({
         status: "completed",
         conclusion: "success",
-        output: { title: "All selected jobs passed" },
+        output: {
+          title: "All selected jobs passed",
+          summary: "Every expected job shard passed with no skips or pending tests.",
+        },
       });
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
     } finally {
@@ -743,17 +751,20 @@ describe("PR E2E controller", () => {
       status: "completed",
       expectCancellation: false,
       expectedTitle: "Evidence is missing",
+      expectedError: /Missing signals: onboard-repair:default, onboard-resume:default/u,
     },
     {
       label: "an unfinished child",
       status: "in_progress",
       expectCancellation: true,
       expectedTitle: "E2E run did not succeed",
+      expectedError: /The run concluded unfinished \(in_progress\)/u,
     },
   ])("closes the check as failure for $label", async ({
     status,
     expectCancellation,
     expectedTitle,
+    expectedError,
   }) => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-finish-"));
     const outputPath = path.join(workDir, "github-output");
@@ -797,7 +808,7 @@ describe("PR E2E controller", () => {
           checkRunId: 17,
           childRunId: 23,
         }),
-      ).rejects.toThrow();
+      ).rejects.toThrow(expectedError);
       expect(requests.some((request) => request.url.endsWith("/actions/runs/23/cancel"))).toBe(
         expectCancellation,
       );
