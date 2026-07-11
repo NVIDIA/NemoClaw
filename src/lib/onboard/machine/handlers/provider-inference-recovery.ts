@@ -26,8 +26,8 @@ interface ProviderRecoveryOptions {
    * Rebuild recreate replaces the durable session after deleting the old sandbox, so its sandbox
    * step must remain incomplete until creation succeeds. The locked rebuild pipeline validates the
    * target before deletion, then writes that exact identity into the pending session before onboard.
-   * Remove this exception once the handoff carries a dedicated provider-recovery authorization
-   * receipt.
+   * Remove this exception once #6666 replaces the handoff with a dedicated provider-recovery
+   * authorization receipt.
    */
   authoritativeResumeConfig?: boolean;
 }
