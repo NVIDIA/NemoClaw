@@ -179,29 +179,48 @@ async function curlStatus(
   return text(result).trim();
 }
 
-async function expectEncodedSlashScopedToClawHub(
-  sandbox: SandboxClient,
-  policyMode: "restricted" | "permissive",
-): Promise<void> {
+async function expectScopedClawHubPluginLifecycle(sandbox: SandboxClient): Promise<void> {
+  const install = await sandboxBash(
+    sandbox,
+    "HOME=/sandbox openclaw plugins install 'clawhub:@openclaw/kitchen-sink@0.2.10' 2>&1",
+    {
+      artifactName: "tc-net-restricted-clawhub-scoped-plugin-install",
+      timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
+    },
+  );
+  expect(install.exitCode, text(install)).toBe(0);
+
+  const list = await sandboxBash(sandbox, "HOME=/sandbox openclaw plugins list 2>&1", {
+    artifactName: "tc-net-restricted-clawhub-scoped-plugin-list",
+    timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
+  });
+  expect(list.exitCode, text(list)).toBe(0);
+  expect(text(list), "the installed scoped ClawHub plugin must be listed").toMatch(/kitchen-sink/i);
+  expect(text(list), "the installed scoped ClawHub plugin must be loaded").toMatch(/loaded/i);
+}
+
+async function expectEncodedSlashConfinedToClawHub(sandbox: SandboxClient): Promise<void> {
   const encodedPath = "/@nemoclaw%2Fencoded-slash-boundary-probe";
-  const clawhubStatus = await curlStatus(
+  const clawhubStatus = await fetchStatus(
     sandbox,
     `https://clawhub.ai${encodedPath}`,
-    `tc-net-${policyMode}-clawhub-encoded-slash`,
-    "--path-as-is",
+    "tc-net-permissive-clawhub-encoded-slash",
   );
   expect(clawhubStatus, `ClawHub encoded slash probe must reach the upstream service`).toMatch(
-    /^[1-5][0-9][0-9]$/,
+    /STATUS_[1-5][0-9][0-9]/,
   );
-  expect(clawhubStatus, `ClawHub encoded slash probe must not be denied by policy`).not.toBe("403");
+  expect(clawhubStatus, `ClawHub encoded slash probe must not be denied by policy`).not.toMatch(
+    /STATUS_403/,
+  );
 
-  const nonClawhubStatus = await curlStatus(
+  const nonClawhubStatus = await fetchStatus(
     sandbox,
     `https://openclaw.ai${encodedPath}`,
-    `tc-net-${policyMode}-non-clawhub-encoded-slash`,
-    "--path-as-is",
+    "tc-net-permissive-non-clawhub-encoded-slash",
   );
-  expect(nonClawhubStatus, `encoded slashes must stay denied outside ClawHub`).toBe("403");
+  expect(nonClawhubStatus, `encoded slashes must stay denied outside ClawHub`).toMatch(
+    /STATUS_403/,
+  );
 }
 
 async function waitForDeniedReasonLog(host: HostCliClient) {
@@ -460,7 +479,7 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
       "inference.local exemption with direct-provider denial",
       "SSRF private-address rejection",
       "OpenClaw web_fetch host-gateway policy allow/deny",
-      "encoded scoped-package paths remain ClawHub-only in restricted and permissive policies",
+      "scoped ClawHub plugins install and load under restricted policy while encoded paths remain ClawHub-only under permissive policy",
       "permissive policy mode",
     ],
   });
@@ -601,7 +620,7 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
   expect(denyDefault, `example.com should be blocked under restricted policy`).toMatch(
     /STATUS_403|ERROR_/,
   );
-  await expectEncodedSlashScopedToClawHub(sandbox, "restricted");
+  await expectScopedClawHubPluginLifecycle(sandbox);
 
   const longHostnameDenial = await sandboxBash(sandbox, `curl -m 5 -sS ${DENIED_REASON_URL}`, {
     artifactName: "tc-net-4760-denied-long-hostname",
@@ -970,7 +989,7 @@ nemoclaw-start node /tmp/nemoclaw-web-fetch-e2e.mjs 'http://host.openshell.inter
     artifactName: "tc-net-06-npm-ping-permissive",
   });
   expect(text(npmPing)).toContain("NPM_OK");
-  await expectEncodedSlashScopedToClawHub(sandbox, "permissive");
+  await expectEncodedSlashConfinedToClawHub(sandbox);
 
   await artifacts.target.complete({
     id: "network-policy",
@@ -987,6 +1006,7 @@ nemoclaw-start node /tmp/nemoclaw-web-fetch-e2e.mjs 'http://host.openshell.inter
       inferenceExemption: true,
       ssrfValidation: true,
       hostGatewayWebFetch: true,
+      scopedClawHubPluginLifecycle: true,
       encodedSlashClawHubOnly: true,
       permissiveMode: true,
     },
