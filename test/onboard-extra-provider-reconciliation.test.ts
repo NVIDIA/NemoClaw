@@ -17,7 +17,7 @@ const onboardScriptMocksPath = JSON.stringify(
 );
 
 describe("onboard extra-provider reconciliation", () => {
-  it("attaches live user extras, skips stale names, and preserves registry state (#6501)", {
+  it("attaches live user extras, prunes stale names, and converges registry state (#6501)", {
     timeout: 90_000,
   }, () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-extra-provider-reconcile-"));
@@ -35,6 +35,9 @@ describe("onboard extra-provider reconciliation", () => {
       const credentialsPath = JSON.stringify(
         path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
       );
+      const sandboxBaseImagePath = JSON.stringify(
+        path.join(repoRoot, "src", "lib", "sandbox-base-image.ts"),
+      );
 
       fs.mkdirSync(fakeBin, { recursive: true });
       writeOkOpenshell(fakeBin);
@@ -44,6 +47,7 @@ const runner = require(${runnerPath});
 const registry = require(${registryPath});
 const preflight = require(${preflightPath});
 const credentials = require(${credentialsPath});
+const sandboxBaseImage = require(${sandboxBaseImagePath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const _n = (command) => (Array.isArray(command) ? command.join(" ") : String(command)).replace(/'/g, "");
@@ -57,8 +61,17 @@ registry.addExtraProvider("my-slack-bridge");
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  if (normalized.includes("provider list -g nemoclaw --names")) {
-    return { status: 0, stdout: "brave-search\ncustom-provider\nmy-slack-bridge\n" };
+  if (normalized.includes("provider get -g nemoclaw tavily-search")) {
+    const stderr = Buffer.from("Error: provider 'tavily-search' not found");
+    return {
+      status: 1,
+      stderr,
+      stdout: Buffer.alloc(0),
+      output: [null, Buffer.alloc(0), stderr],
+    };
+  }
+  if (normalized.includes("provider get -g nemoclaw ")) {
+    return { status: 0, stdout: "" };
   }
   return { status: 0 };
 };
@@ -79,6 +92,12 @@ registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 preflight.checkPortAvailable = async () => ({ ok: true });
 credentials.prompt = async () => "";
+sandboxBaseImage.resolveSandboxBaseImage = () => ({
+  ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  source: "latest",
+  glibcVersion: "2.39",
+});
 
 childProcess.spawn = (...args) => {
   const child = new EventEmitter();
@@ -101,9 +120,12 @@ const { createSandbox } = require(${onboardPath});
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
-  const sandboxName = await createSandbox(null, "gpt-5.4");
+  const sandboxNames = [
+    await createSandbox(null, "gpt-5.4"),
+    await createSandbox(null, "gpt-5.4"),
+  ];
   console.log(JSON.stringify({
-    sandboxName,
+    sandboxNames,
     commands,
     extraProviders: registry.listExtraProviders(),
   }));
@@ -134,26 +156,53 @@ const { createSandbox } = require(${onboardPath});
         .find((line) => line.startsWith("{") && line.endsWith("}"));
       assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
       const payload = JSON.parse(payloadLine);
-      assert.equal(payload.sandboxName, "my-assistant");
+      assert.deepEqual(payload.sandboxNames, ["my-assistant", "my-assistant"]);
 
-      const createCommand = payload.commands.find((entry: CommandEntry) =>
+      const createCommands = payload.commands.filter((entry: CommandEntry) =>
         entry.command.includes("sandbox create"),
       );
-      assert.ok(createCommand, "expected sandbox create command");
+      assert.equal(createCommands.length, 2, "expected one sandbox create command per attempt");
+      const [createCommand, retryCreateCommand] = createCommands;
       assert.match(createCommand.command, /--provider brave-search/);
       assert.match(createCommand.command, /--provider custom-provider/);
       assert.match(createCommand.command, /--provider my-slack-bridge/);
       assert.doesNotMatch(createCommand.command, /--provider tavily-search/);
-
-      const providerLists = payload.commands.filter((entry: CommandEntry) =>
-        entry.command.includes("provider list -g nemoclaw --names"),
+      assert.deepEqual(
+        createCommand.command.match(/--provider\s+\S+/g),
+        retryCreateCommand.command.match(/--provider\s+\S+/g),
+        "retry must preserve the exact filtered provider arguments",
       );
-      assert.equal(providerLists.length, 1, "expected one gateway-scoped provider list");
+
+      const providerProbes = payload.commands.filter((entry: CommandEntry) =>
+        entry.command.includes("provider get -g nemoclaw "),
+      );
+      assert.deepEqual(
+        providerProbes
+          .map((entry: CommandEntry) =>
+            entry.command.slice(entry.command.indexOf("provider get -g nemoclaw ")),
+          )
+          .sort(),
+        [
+          "provider get -g nemoclaw brave-search",
+          "provider get -g nemoclaw brave-search",
+          "provider get -g nemoclaw custom-provider",
+          "provider get -g nemoclaw custom-provider",
+          "provider get -g nemoclaw my-slack-bridge",
+          "provider get -g nemoclaw my-slack-bridge",
+          "provider get -g nemoclaw tavily-search",
+        ].sort(),
+      );
+      assert.equal(
+        payload.commands.some((entry: CommandEntry) =>
+          entry.command.includes("provider list -g nemoclaw --names"),
+        ),
+        false,
+        "provider-list snapshots must not control extra-provider attachment",
+      );
       assert.deepEqual(payload.extraProviders, [
         "brave-search",
         "custom-provider",
         "my-slack-bridge",
-        "tavily-search",
       ]);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });

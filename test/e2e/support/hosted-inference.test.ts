@@ -437,6 +437,7 @@ describe("hosted inference E2E config", () => {
           expect.objectContaining({
             auth: "ok",
             forbiddenMarkerMatches: 0,
+            hostHeader: new URL(fake.baseUrl).host,
             model: "nvidia/nvidia/fake-model",
             path: "/v1/chat/completions",
             stream: false,

@@ -1,0 +1,83 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Switch Inference Models"
+sidebar-title: "Switch Models"
+description: "Change the model on a NemoClaw-managed inference route."
+description-agent: "Changes the active inference model. Use when selecting another model on an existing provider route."
+keywords: ["switch nemoclaw model", "change inference model", "nemoclaw inference set"]
+content:
+  type: "how_to"
+---
+import { AgentOnly } from "../_components/AgentGuide";
+
+Change the model on an existing provider route with a runtime update or a fresh sandbox recreation.
+The command requires both the provider and model even when the provider does not change.
+
+## Check the Current Route
+
+Read the live route before changing it.
+
+```bash
+$$nemoclaw inference get
+```
+
+Use the provider ID in the output with the new model ID.
+
+## Change the Model at Runtime
+
+<AgentOnly variant="openclaw,hermes">
+
+Runtime model changes update the OpenShell route and synchronize the selected running agent configuration.
+Pass `--sandbox <name>` when you do not want to use the default sandbox.
+
+Open the sandbox for managed configuration changes, switch the model, and restore shields.
+
+```bash
+$$nemoclaw <name> shields down
+$$nemoclaw inference set --provider <provider> --model <new-model> --sandbox <name>
+$$nemoclaw <name> shields up
+```
+
+For a compatible endpoint, omit `--endpoint-url` when the durable registry entry already contains the endpoint and API-family metadata.
+NemoClaw reuses the recorded route and does not repoint the gateway.
+If the route metadata is incomplete, NemoClaw stops and tells you to re-run onboarding.
+
+</AgentOnly>
+
+<AgentOnly variant="deepagents">
+
+Deep Agents uses the fresh recreation path for model changes.
+This path keeps the OpenShell route and `/sandbox/.deepagents/config.toml` aligned.
+
+```bash
+$$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
+```
+
+To validate a new model before replacing the current sandbox, onboard it under a new name and make it the default after validation.
+
+</AgentOnly>
+
+## Account for Shared Gateways
+
+OpenShell exposes one inference route per gateway.
+Every registered sandbox on the same gateway, including stopped sandboxes, must record the same provider and model.
+NemoClaw exits before changing state when the requested model conflicts with another sandbox on the gateway.
+
+Align the sandboxes to one route, remove a sandbox you no longer need, or onboard a sandbox with another `NEMOCLAW_GATEWAY_PORT`.
+
+## Verify the Change
+
+Read the route again after the switch.
+
+```bash
+$$nemoclaw inference get
+```
+
+Use a sandbox-route verification when you also need to prove that the agent can reach the model.
+
+## Related Topics
+
+- [View the Active Inference Route](view-active-inference-route) to inspect the current provider and model.
+- [Switch Providers](switch-providers) to move to another provider family.
+- [Verify the Sandbox Inference Route](../validate-inference/verify-inference-route) to test the agent path.

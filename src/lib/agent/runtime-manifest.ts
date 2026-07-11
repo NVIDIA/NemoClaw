@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isObjectRecord } from "../core/json-types";
+
 export type AgentRuntimeKind = "gateway" | "terminal";
 
 export interface AgentRuntime {
@@ -11,10 +13,6 @@ export interface AgentRuntime {
 }
 
 type RuntimeRecord = { [key: string]: unknown };
-
-function isRecord(value: unknown): value is RuntimeRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function readString(record: RuntimeRecord, key: string): string | undefined {
   const value = record[key];
@@ -32,7 +30,7 @@ function readStringArray(record: RuntimeRecord, key: string): string[] | undefin
 
 export function readAgentRuntime(record: RuntimeRecord): AgentRuntime {
   const runtime = record.runtime;
-  if (!isRecord(runtime)) return { kind: "gateway" };
+  if (!isObjectRecord(runtime)) return { kind: "gateway" };
 
   const rawKind = runtime.kind;
   if (rawKind !== undefined && rawKind !== "gateway" && rawKind !== "terminal") {

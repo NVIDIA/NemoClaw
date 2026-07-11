@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isErrnoException } from "../core/errno";
+import { isObjectRecord } from "../core/json-types";
 import type { InferenceSelection } from "../inference/selection";
 import {
   inferenceSelectionRegistryFields,
@@ -25,6 +26,7 @@ import {
   serializeSandboxMcpStateForDisk,
 } from "./registry-mcp";
 import type { SandboxMessagingState } from "./registry-messaging";
+import { parseSandboxRegistryEntries, retainedDefaultSandbox } from "./registry-normalization";
 import * as reversibleRemoval from "./registry-reversible-removal";
 
 export {
@@ -89,6 +91,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   name: string;
   /** Route-only placeholder created before sandbox creation; never eligible as the default. */
   pendingRouteReservation?: true;
+  /** Onboard session that owns a pending reservation, so resume preserves its own row while abandoned reservations stay reconcilable. */
+  reservationSessionId?: string;
   createdAt?: string;
   gpuEnabled?: boolean;
   hostGpuDetected?: boolean;
@@ -360,7 +364,7 @@ export function withLock<T>(fn: () => T): T {
 
 export function load(): SandboxRegistry {
   return normalizeRegistry(
-    readConfigFile<SandboxRegistry>(REGISTRY_FILE, { sandboxes: {}, defaultSandbox: null }),
+    readConfigFile<unknown>(REGISTRY_FILE, { sandboxes: {}, defaultSandbox: null }),
   );
 }
 
@@ -368,19 +372,23 @@ export function save(data: SandboxRegistry): void {
   writeConfigFile(REGISTRY_FILE, serializeRegistryForDisk(data));
 }
 
-function normalizeRegistry(data: SandboxRegistry): SandboxRegistry {
+function normalizeRegistry(value: unknown): SandboxRegistry {
+  const data = isObjectRecord(value) ? value : {};
   const extraProviders = normalizeExtraProviders(data.extraProviders);
+  const sandboxes = Object.fromEntries(
+    parseSandboxRegistryEntries(data.sandboxes).map(([name, entry]) => [
+      name,
+      normalizeSandboxEntryForRuntime(entry),
+    ]),
+  );
   const base: SandboxRegistry = {
-    defaultSandbox: data.defaultSandbox ?? null,
+    // Preserve a stale string pointer at read time so diagnostics can explain
+    // which sandbox disappeared. Mutation paths repair it before persistence.
+    defaultSandbox: typeof data.defaultSandbox === "string" ? data.defaultSandbox : null,
     defaultSelectionRevision: reversibleRemoval.normalizeDefaultSelectionRevision(
       data.defaultSelectionRevision,
     ),
-    sandboxes: Object.fromEntries(
-      sandboxRegistryEntries(data).map(([name, entry]) => [
-        name,
-        normalizeSandboxEntryForRuntime(entry),
-      ]),
-    ),
+    sandboxes,
   };
   if (extraProviders) base.extraProviders = extraProviders;
   return base;
@@ -388,35 +396,26 @@ function normalizeRegistry(data: SandboxRegistry): SandboxRegistry {
 
 function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
   const extraProviders = normalizeExtraProviders(data.extraProviders);
+  const sandboxes = Object.fromEntries(
+    Object.entries(data.sandboxes).map(([name, entry]) => [
+      name,
+      serializeSandboxEntryForDisk(entry),
+    ]),
+  );
+  const defaultSandbox = retainedDefaultSandbox(data.defaultSandbox, sandboxes);
+  const currentDefaultSelectionRevision = reversibleRemoval.normalizeDefaultSelectionRevision(
+    data.defaultSelectionRevision,
+  );
   const base: SandboxRegistry = {
-    defaultSandbox: data.defaultSandbox ?? null,
-    defaultSelectionRevision: reversibleRemoval.normalizeDefaultSelectionRevision(
-      data.defaultSelectionRevision,
-    ),
-    sandboxes: Object.fromEntries(
-      sandboxRegistryEntries(data).map(([name, entry]) => [
-        name,
-        serializeSandboxEntryForDisk(entry),
-      ]),
-    ),
+    defaultSandbox,
+    defaultSelectionRevision:
+      defaultSandbox === data.defaultSandbox
+        ? currentDefaultSelectionRevision
+        : reversibleRemoval.incrementDefaultSelectionRevision(currentDefaultSelectionRevision),
+    sandboxes,
   };
   if (extraProviders) base.extraProviders = extraProviders;
   return base;
-}
-
-function sandboxRegistryEntries(data: SandboxRegistry): Array<[string, SandboxEntry]> {
-  const sandboxes = isRecord(data.sandboxes) ? data.sandboxes : {};
-  return Object.entries(sandboxes).filter((entry): entry is [string, SandboxEntry] =>
-    isSandboxEntryLike(entry[1]),
-  );
-}
-
-function isSandboxEntryLike(entry: unknown): entry is SandboxEntry {
-  return isRecord(entry);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
@@ -481,6 +480,9 @@ export function getDefault(): string | null {
 export function registerSandbox(entry: SandboxEntry): void {
   withLock(() => {
     const data = load();
+    if (retainedDefaultSandbox(data.defaultSandbox, data.sandboxes) === null) {
+      data.defaultSandbox = null;
+    }
     data.sandboxes[entry.name] = {
       name: entry.name,
       createdAt: entry.createdAt || new Date().toISOString(),
@@ -553,6 +555,7 @@ type SandboxInferenceRouteReservation = Pick<
   "provider" | "model" | "endpointUrl" | "credentialEnv" | "preferredInferenceApi"
 > & {
   gatewayName: string;
+  reservationSessionId?: string;
 };
 
 /**
@@ -571,6 +574,7 @@ export function reserveSandboxInferenceRoute(
     data.sandboxes[name] = {
       ...(existing ?? { name, pendingRouteReservation: true as const }),
       pendingRouteReservation: true,
+      reservationSessionId: route.reservationSessionId ?? existing?.reservationSessionId,
       provider: normalized.provider,
       model: normalized.model,
       endpointUrl: normalized.endpointUrl,
@@ -582,6 +586,17 @@ export function reserveSandboxInferenceRoute(
     save(data);
     return true;
   });
+}
+
+export function isPendingReservationForSession(
+  entry: SandboxEntry | null,
+  sessionId: string | null | undefined,
+): boolean {
+  return (
+    entry?.pendingRouteReservation === true &&
+    Boolean(sessionId) &&
+    entry.reservationSessionId === sessionId
+  );
 }
 
 export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boolean {

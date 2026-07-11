@@ -261,4 +261,344 @@ describe("nemoclaw-start in-container gateway healthcheck marker (#4503, #4710)"
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  // #4952: the HEALTHCHECK's pidfile fallback trusts /tmp/nemoclaw-gateway.pid,
+  // which only this supervisor refreshes. On docker-driver sandboxes the script
+  // is not PID 1 (OpenShell's `sleep infinity` keeps the container alive), so
+  // the supervisor can exit while the container lives on. If the marker
+  // survived that exit, the healthcheck would trust a stale PID forever and
+  // report a working sandbox as permanently unhealthy. The fix drops the marker
+  // on every supervisor exit via a `trap clear_in_container_gateway_marker
+  // EXIT`, so the healthcheck then takes the marker-absent -> healthy branch
+  // (#4503). The marker is re-dropped at each launch, so the respawn loop (which
+  // never exits the script) keeps it in place.
+
+  it("clear_in_container_gateway_marker removes the marker and is a no-op when absent (#4952)", () => {
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gw-clear-"));
+    const markerPath = path.join(tmpDir, "nemoclaw-gateway-local");
+    const clearFn = extractShellFunctionFromSource(
+      src,
+      "clear_in_container_gateway_marker",
+    ).replaceAll("/tmp/nemoclaw-gateway-local", markerPath);
+
+    try {
+      const script = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        clearFn,
+        // No-op when the marker is absent: must succeed, not error.
+        "clear_in_container_gateway_marker",
+        `[ -e ${JSON.stringify(markerPath)} ] && echo UNEXPECTED_PRESENT || echo ABSENT_OK`,
+        // Now create it and confirm the helper removes it.
+        `: > ${JSON.stringify(markerPath)}`,
+        "clear_in_container_gateway_marker",
+        `[ -e ${JSON.stringify(markerPath)} ] && echo STILL_PRESENT || echo REMOVED`,
+      ].join("\n");
+      const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("ABSENT_OK");
+      expect(result.stdout).toContain("REMOVED");
+      expect(result.stdout).not.toContain("UNEXPECTED_PRESENT");
+      expect(result.stdout).not.toContain("STILL_PRESENT");
+      expect(fs.existsSync(markerPath)).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { label: "root launch helper", launchFunction: "launch_openclaw_gateway" },
+    { label: "non-root launch helper", launchFunction: "launch_openclaw_gateway_non_root" },
+  ])("clears the marker when $label exits before recording PID identity (#4952)", ({
+    launchFunction,
+  }) => {
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gw-early-exit-"));
+    const markerPath = path.join(tmpDir, "nemoclaw-gateway-local");
+
+    try {
+      const script = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        safeTmpHelpers(src),
+        extractShellFunctionFromSource(src, "mark_in_container_gateway").replaceAll(
+          "/tmp/nemoclaw-gateway-local",
+          markerPath,
+        ),
+        extractShellFunctionFromSource(src, "clear_in_container_gateway_marker").replaceAll(
+          "/tmp/nemoclaw-gateway-local",
+          markerPath,
+        ),
+        extractShellFunctionFromSource(src, "arm_openclaw_gateway_supervisor_cleanup"),
+        extractShellFunctionFromSource(src, launchFunction),
+        "cleanup_openclaw_on_signal() { exit 143; }",
+        "STEP_DOWN_PREFIX_GATEWAY=(env)",
+        "OPENCLAW=/bin/true",
+        "_DASHBOARD_PORT=18789",
+        "GATEWAY_PID=0",
+        "GATEWAY_PID_START_IDENTITY=",
+        "GATEWAY_PID_FILE=",
+        "capture_openclaw_pid_start_identity() { return 1; }",
+        "record_gateway_pid() { :; }",
+        "clear_gateway_pid_record() { :; }",
+        launchFunction,
+      ].join("\n");
+      const result = spawnSync("bash", ["-c", script], {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
+      expect(result.status).toBe(1);
+      expect(fs.existsSync(markerPath)).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { label: "non-root", signal: "TERM", exitCode: 143 },
+    { label: "non-root", signal: "INT", exitCode: 130 },
+    { label: "root", signal: "TERM", exitCode: 143 },
+    { label: "root", signal: "INT", exitCode: 130 },
+  ])("arms $signal cleanup before the $label marker write (#4952)", ({
+    label,
+    signal,
+    exitCode,
+  }) => {
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gw-early-signal-"));
+    const markerPath = path.join(tmpDir, "nemoclaw-gateway-local");
+    const clearFn = extractShellFunctionFromSource(
+      src,
+      "clear_in_container_gateway_marker",
+    ).replaceAll("/tmp/nemoclaw-gateway-local", markerPath);
+    const launchFunction =
+      label === "root" ? "launch_openclaw_gateway" : "launch_openclaw_gateway_non_root";
+
+    try {
+      const script = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        clearFn,
+        extractShellFunctionFromSource(src, "arm_openclaw_gateway_supervisor_cleanup"),
+        extractShellFunctionFromSource(src, launchFunction),
+        `cleanup_openclaw_on_signal() { exit ${exitCode}; }`,
+        `mark_in_container_gateway() { : > ${JSON.stringify(markerPath)}; kill -${signal} $$; }`,
+        "STEP_DOWN_PREFIX_GATEWAY=(env)",
+        "OPENCLAW=/bin/true",
+        "_DASHBOARD_PORT=18789",
+        launchFunction,
+      ].join("\n");
+      const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
+      expect(result.status, result.stderr).toBe(exitCode);
+      expect(fs.existsSync(markerPath)).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  // Exercises the real exit-trap wiring, not just the helper: registers the
+  // same `trap clear_in_container_gateway_marker EXIT` the supervisor installs,
+  // drops the marker via mark_in_container_gateway, then lets the shell reach a
+  // clean `exit 0`. The marker must be gone once the process exits, which is
+  // exactly the state that flips the healthcheck back to the marker-absent
+  // healthy branch.
+  it("drops the marker when the supervisor reaches a clean exit (#4952)", () => {
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gw-exit-"));
+    const markerPath = path.join(tmpDir, "nemoclaw-gateway-local");
+    const markFn = extractShellFunctionFromSource(src, "mark_in_container_gateway").replaceAll(
+      "/tmp/nemoclaw-gateway-local",
+      markerPath,
+    );
+    const clearFn = extractShellFunctionFromSource(
+      src,
+      "clear_in_container_gateway_marker",
+    ).replaceAll("/tmp/nemoclaw-gateway-local", markerPath);
+    const armCleanup = extractShellFunctionFromSource(
+      src,
+      "arm_openclaw_gateway_supervisor_cleanup",
+    );
+
+    try {
+      const script = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        safeTmpHelpers(src),
+        markFn,
+        clearFn,
+        armCleanup,
+        "cleanup_openclaw_on_signal() { :; }",
+        "arm_openclaw_gateway_supervisor_cleanup",
+        "mark_in_container_gateway",
+        `[ -e ${JSON.stringify(markerPath)} ] && echo MARKER_PRESENT_BEFORE_EXIT`,
+        "exit 0",
+      ].join("\n");
+      const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
+      expect(result.status).toBe(0);
+      // The marker existed while the supervisor was running...
+      expect(result.stdout).toContain("MARKER_PRESENT_BEFORE_EXIT");
+      // ...and is gone the moment it exits.
+      expect(fs.existsSync(markerPath)).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("drops the marker when the supervisor exits through errexit (#4952)", () => {
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gw-errexit-"));
+    const markerPath = path.join(tmpDir, "nemoclaw-gateway-local");
+    const markFn = extractShellFunctionFromSource(src, "mark_in_container_gateway").replaceAll(
+      "/tmp/nemoclaw-gateway-local",
+      markerPath,
+    );
+    const clearFn = extractShellFunctionFromSource(
+      src,
+      "clear_in_container_gateway_marker",
+    ).replaceAll("/tmp/nemoclaw-gateway-local", markerPath);
+    const armCleanup = extractShellFunctionFromSource(
+      src,
+      "arm_openclaw_gateway_supervisor_cleanup",
+    );
+
+    try {
+      const script = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        safeTmpHelpers(src),
+        markFn,
+        clearFn,
+        armCleanup,
+        "cleanup_openclaw_on_signal() { :; }",
+        "arm_openclaw_gateway_supervisor_cleanup",
+        "mark_in_container_gateway",
+        `[ -e ${JSON.stringify(markerPath)} ] && echo MARKER_PRESENT_BEFORE_ERREXIT`,
+        "false",
+        "echo UNREACHABLE",
+      ].join("\n");
+      const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
+      expect(result.status, result.stderr).toBe(1);
+      expect(result.stdout).toContain("MARKER_PRESENT_BEFORE_ERREXIT");
+      expect(result.stdout).not.toContain("UNREACHABLE");
+      expect(fs.existsSync(markerPath)).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  // Signal path: cleanup_openclaw_on_signal delegates to cleanup_on_signal
+  // (shared from sandbox-init.sh), which ends in `exit`, so the EXIT trap fires
+  // for SIGTERM/SIGINT teardown too. The marker must be cleared on a forwarded
+  // signal, not only on a clean gateway exit.
+  // Run synchronously: a backgrounded coroutine delivers SIGTERM to the script
+  // itself while it blocks in `wait`, mirroring the supervise loop being
+  // signalled. This avoids cross-process timing races.
+  it("drops the marker when the supervisor is terminated by a signal (#4952)", () => {
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gw-signal-"));
+    const markerPath = path.join(tmpDir, "nemoclaw-gateway-local");
+    const markFn = extractShellFunctionFromSource(src, "mark_in_container_gateway").replaceAll(
+      "/tmp/nemoclaw-gateway-local",
+      markerPath,
+    );
+    const clearFn = extractShellFunctionFromSource(
+      src,
+      "clear_in_container_gateway_marker",
+    ).replaceAll("/tmp/nemoclaw-gateway-local", markerPath);
+    const armCleanup = extractShellFunctionFromSource(
+      src,
+      "arm_openclaw_gateway_supervisor_cleanup",
+    );
+
+    try {
+      const script = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        safeTmpHelpers(src),
+        markFn,
+        clearFn,
+        // Minimal stand-ins for the production signal path: the OpenClaw wrapper
+        // delegates to the shared cleanup helper, which ends in `exit` and
+        // triggers the EXIT trap where marker cleanup lives.
+        "cleanup_on_signal() { exit 143; }",
+        "cleanup_openclaw_on_signal() { cleanup_on_signal; }",
+        armCleanup,
+        "arm_openclaw_gateway_supervisor_cleanup",
+        "mark_in_container_gateway",
+        `[ -e ${JSON.stringify(markerPath)} ] && echo MARKER_PRESENT_BEFORE_SIGNAL`,
+        // Deliver SIGTERM to ourselves while we block in `wait`, the same shape
+        // as the supervise loop being signalled mid-wait. Background stdio is
+        // redirected so spawnSync isn't held open by an inherited pipe after we
+        // exit.
+        "( sleep 0.2; kill -TERM $$ ) >/dev/null 2>&1 &",
+        "sleep 5 >/dev/null 2>&1 &",
+        "BLOCK_PID=$!",
+        "wait $BLOCK_PID",
+      ].join("\n");
+      const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 8000 });
+      // The script exits via the SIGTERM trap -> cleanup_openclaw_on_signal ->
+      // cleanup_on_signal -> exit 143.
+      expect(result.status).toBe(143);
+      expect(result.stdout).toContain("MARKER_PRESENT_BEFORE_SIGNAL");
+      // The EXIT trap fired on the signal teardown and cleared the marker.
+      expect(fs.existsSync(markerPath)).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  // Restart semantics: while the supervisor is alive and respawning the gateway
+  // (the script never exits), the marker must stay in place so the #4952
+  // pidfile fallback keeps probing the live gateway. Only a supervisor *exit*
+  // clears it. Here the EXIT trap is armed but the script keeps running, and a
+  // re-launch re-drops the marker idempotently — the marker is present
+  // throughout.
+  it("keeps the marker in place across respawns while the supervisor runs (#4952)", () => {
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gw-respawn-"));
+    const markerPath = path.join(tmpDir, "nemoclaw-gateway-local");
+    const markFn = extractShellFunctionFromSource(src, "mark_in_container_gateway").replaceAll(
+      "/tmp/nemoclaw-gateway-local",
+      markerPath,
+    );
+    const clearFn = extractShellFunctionFromSource(
+      src,
+      "clear_in_container_gateway_marker",
+    ).replaceAll("/tmp/nemoclaw-gateway-local", markerPath);
+    const armCleanup = extractShellFunctionFromSource(
+      src,
+      "arm_openclaw_gateway_supervisor_cleanup",
+    );
+
+    try {
+      const script = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        safeTmpHelpers(src),
+        markFn,
+        clearFn,
+        armCleanup,
+        "cleanup_openclaw_on_signal() { :; }",
+        "arm_openclaw_gateway_supervisor_cleanup",
+        // Initial launch.
+        "mark_in_container_gateway",
+        `[ -e ${JSON.stringify(markerPath)} ] && echo AFTER_LAUNCH`,
+        // Simulate a respawn iteration: the loop body re-marks before relaunch
+        // and the script does NOT exit between iterations.
+        "mark_in_container_gateway",
+        `[ -e ${JSON.stringify(markerPath)} ] && echo AFTER_RESPAWN`,
+        // The script is still running here — the EXIT trap has not fired.
+        "exit 0",
+      ].join("\n");
+      const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("AFTER_LAUNCH");
+      expect(result.stdout).toContain("AFTER_RESPAWN");
+      // Once the script finally exits, the trap clears it.
+      expect(fs.existsSync(markerPath)).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });

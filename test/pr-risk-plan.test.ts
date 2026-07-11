@@ -18,6 +18,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
+    expect(first.version).toBe(2);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -29,7 +30,6 @@ describe("deterministic PR risk plan", () => {
     expect(result.tier).toBe(0);
     expect(result.families).toEqual([]);
     expect(result.requiredJobs).toEqual([]);
-    expect(result.requiresManualExpansion).toBe(false);
   });
 
   it("keeps the canonical cloud-onboard live test in the platform floor (#6446)", () => {
@@ -145,19 +145,32 @@ describe("deterministic PR risk plan", () => {
     expect(riskPlanRequiredJobIds(result)).toEqual(expect.arrayContaining(jobs));
   });
 
-  it("caps automatic execution without dropping required evidence", () => {
+  it("keeps every required job selected for broad runtime changes (#6446)", () => {
     const result = plan(
       "src/lib/onboard.ts",
+      "src/lib/actions/upgrade-sandboxes.ts",
+      "src/lib/actions/sandbox/agents/apply.ts",
       "src/lib/messaging/applier/agent-config.ts",
       "src/lib/inference/health.ts",
+      "install.sh",
+      "src/lib/credentials/provider-list.ts",
     );
 
-    expect(result.requiredJobs.length).toBeGreaterThan(result.maxAutomaticJobs);
-    expect(result.automaticJobs).toHaveLength(result.maxAutomaticJobs);
-    expect(result.requiresManualExpansion).toBe(true);
-    expect(result.requiredJobs.map((job) => job.id)).toEqual(
-      expect.arrayContaining(result.automaticJobs),
-    );
+    expect(riskPlanRequiredJobIds(result)).toEqual([
+      "cloud-onboard",
+      "credential-sanitization",
+      "security-posture",
+      "channels-add-remove",
+      "channels-stop-start",
+      "full-e2e",
+      "hermes-e2e",
+      "inference-routing",
+      "network-policy",
+      "onboard-repair",
+      "onboard-resume",
+      "state-backup-restore",
+      "upgrade-stale-sandbox",
+    ]);
   });
 
   it("raises PR review test depth for a matched runtime risk", () => {

@@ -4,6 +4,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { isObjectRecord } from "../core/json-types";
+
 // Load YAML lazily via require to match the rest of the onboard pipeline
 // (see src/lib/sandbox/config.ts and src/lib/policy/index.ts). Importing
 // statically would force `yaml` into the CLI cold-start path even when no
@@ -56,12 +58,8 @@ function isCredentialName(key: string): boolean {
   return CREDENTIAL_NAME_SUBSTRINGS.some((needle) => normalised.includes(needle));
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function assertNoCredentialFields(value: unknown, label: string): void {
-  if (isObject(value)) {
+  if (isObjectRecord(value)) {
     for (const [key, child] of Object.entries(value)) {
       if (isCredentialName(key)) {
         throw new Error(
@@ -143,7 +141,7 @@ export function loadAgentsManifest(filePath: string): AgentsManifestPayload {
   if (parsed === null || parsed === undefined) {
     return { agents: [] };
   }
-  if (!isObject(parsed)) {
+  if (!isObjectRecord(parsed)) {
     throw new Error("agents manifest must be a YAML mapping (object) at the top level");
   }
   for (const key of Object.keys(parsed)) {
@@ -161,7 +159,7 @@ export function loadAgentsManifest(filePath: string): AgentsManifestPayload {
   } else if (!Array.isArray(agentsRaw)) {
     throw new Error("agents manifest 'agents' must be a list when present");
   } else {
-    agents = agentsRaw.map((entry) => (isObject(entry) ? fillAgentDefaults(entry) : entry));
+    agents = agentsRaw.map((entry) => (isObjectRecord(entry) ? fillAgentDefaults(entry) : entry));
   }
   const out: AgentsManifestPayload = { agents };
   if (parsed.defaults !== undefined) {
