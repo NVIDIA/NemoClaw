@@ -134,7 +134,7 @@ bootstrap_usage() {
   printf "    NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE\n"
   printf "                                 Exact JSON array of pre-fingerprint managed sandbox names\n"
   printf "    NEMOCLAW_PROVIDER            build | openrouter | openai | anthropic | anthropicCompatible\n"
-  printf "                                 | gemini | ollama | custom | nim-local | vllm | routed\n"
+  printf "                                 | gemini | copilot | ollama | custom | nim-local | vllm | routed\n"
   printf "                                 | hermes-provider\n"
   printf "                                 (aliases: cloud -> build, nim -> nim-local)\n"
   printf "    NEMOCLAW_POLICY_MODE         suggested | custom | skip\n"
