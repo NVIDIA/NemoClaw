@@ -149,32 +149,10 @@ function readCuratedOnboardingModelIds(): string[] {
 }
 
 function stripFencedCodeBlocks(markdown: string): string {
-  let fenceChar: string | null = null;
-  let fenceLength = 0;
-
-  return markdown
-    .split("\n")
-    .map((line) => {
-      const match = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
-      if (fenceChar === null) {
-        if (!match) return line;
-        fenceChar = match[1][0];
-        fenceLength = match[1].length;
-        return "";
-      }
-
-      if (
-        match &&
-        match[1][0] === fenceChar &&
-        match[1].length >= fenceLength &&
-        /^[ \t]*$/.test(match[2])
-      ) {
-        fenceChar = null;
-        fenceLength = 0;
-      }
-      return "";
-    })
-    .join("\n");
+  return markdown.replace(
+    /^ {0,3}(`{3,})(?!`)[^\n]*\n[\s\S]*?^ {0,3}\1`*[ \t]*$|^ {0,3}(~{3,})(?!~)[^\n]*\n[\s\S]*?^ {0,3}\2~*[ \t]*$/gm,
+    "",
+  );
 }
 
 describe("inference options model task-fit docs (#4755)", () => {
