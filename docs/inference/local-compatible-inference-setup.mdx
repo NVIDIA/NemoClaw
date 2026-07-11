@@ -59,6 +59,7 @@ Enter the base URL of your local server, for example `http://localhost:8000/v1` 
 To qualify for automatic rewriting, an HTTP endpoint URL must use the exact loopback host `localhost`, `127.0.0.1`, or `[::1]`.
 It must also specify a port allowed by NemoClaw's bundled `local-inference` policy: `8000`, `11434`, or `11435`.
 NemoClaw validates the entered URL from the host and registers the OpenShell gateway route through `host.openshell.internal:<port>` for sandbox traffic.
+During a rebuild that reuses this route without a host API key, NemoClaw applies the same config-only bridge rewrite without reading or passing the credential stored in OpenShell.
 The sandbox policy must allow the selected bridge port.
 NemoClaw leaves URLs without an explicit port, URLs on `:80` or another privileged port, and URLs on unsupported ports unchanged.
 Those URLs require a separately compatible runtime topology and network policy.
