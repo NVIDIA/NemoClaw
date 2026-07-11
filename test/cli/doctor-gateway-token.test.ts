@@ -299,7 +299,9 @@ describe("CLI dispatch", () => {
       expect(report.status).toBe("ok");
 
       const calls = fs.readFileSync(hostCalls, "utf8");
-      expect(calls).toContain("pgrep:-f ^(/[^ ]*/)?openshell-gateway( |$)");
+      expect(calls).toContain(
+        "pgrep:-f ^(/[^ ]*/)?openshell-gateway(\\[nemoclaw=nemoclaw(-[0-9]+)?;port=[0-9]+\\]| |$)",
+      );
       expect(calls).not.toContain("pgrep:-af openshell-gateway");
       expect(calls).not.toContain("docker:port");
     },

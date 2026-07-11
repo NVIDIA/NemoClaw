@@ -3,6 +3,19 @@
 
 import path from "node:path";
 
+import {
+  dockerCompatGatewayMatchesTarget,
+  gatewayTargetMatches,
+  type OpenShellGatewayProcessTarget,
+  openShellGatewayMatchesTarget,
+  ownedHostGatewayTarget,
+} from "./gateway-process-target-identity";
+
+export {
+  buildOwnedHostGatewayArgv0,
+  type OpenShellGatewayProcessTarget,
+} from "./gateway-process-target-identity";
+
 export const HOST_GATEWAY_PROCESS_NAMES = new Set(["openshell-gateway", "openclaw-gateway"]);
 export const OPENSHELL_GATEWAY_PROCESS_NAMES = new Set(["openshell-gateway"]);
 
@@ -28,6 +41,7 @@ export function gatewayProcessCmdlineMatches(
   cmdline: string,
   gatewayBin: string | null | undefined,
   opts: {
+    expectedOpenShellGateway?: OpenShellGatewayProcessTarget;
     processNames?: ReadonlySet<string>;
     resolveExecutablePath?: ResolveExecutablePath;
   } = {},
@@ -38,13 +52,43 @@ export function gatewayProcessCmdlineMatches(
 
   const processNames = opts.processNames ?? HOST_GATEWAY_PROCESS_NAMES;
   const base = path.basename(argv0);
-  if (processNames.has(base)) return true;
+  const ownedTarget = ownedHostGatewayTarget(base);
+  if (ownedTarget && processNames.has("openshell-gateway")) {
+    return gatewayTargetMatches(ownedTarget, opts.expectedOpenShellGateway);
+  }
+  if (processNames.has(base)) {
+    if (processNames.has("openshell-gateway") && base === "openshell-gateway") {
+      return openShellGatewayMatchesTarget(tokens, opts.expectedOpenShellGateway, {
+        requireExpectedFlags: false,
+      });
+    }
+    if (base === "openclaw-gateway") {
+      return openShellGatewayMatchesTarget(tokens, opts.expectedOpenShellGateway, {
+        requireExpectedFlags: true,
+      });
+    }
+    return true;
+  }
+  if (
+    processNames.has("openshell-gateway") &&
+    base === "openshell" &&
+    tokens[1] === "gateway" &&
+    tokens[2] === "start"
+  ) {
+    return openShellGatewayMatchesTarget(tokens, opts.expectedOpenShellGateway, {
+      requireExpectedFlags: true,
+    });
+  }
 
   if (typeof gatewayBin === "string" && gatewayBin.length > 0) {
     const normalize = opts.resolveExecutablePath ?? ((value: string) => path.resolve(value));
     const actual = normalize(argv0);
     const expected = normalize(gatewayBin);
-    if (actual && expected && actual === expected) return true;
+    if (actual && expected && actual === expected) {
+      return openShellGatewayMatchesTarget(tokens, opts.expectedOpenShellGateway, {
+        requireExpectedFlags: false,
+      });
+    }
   }
 
   // Docker compatibility mode: argv0 basename must be a known container
@@ -54,7 +98,7 @@ export function gatewayProcessCmdlineMatches(
     DOCKER_DRIVER_GATEWAY_CONTAINER_RUNTIME_NAMES.has(base) &&
     tokens.slice(1).includes(DOCKER_DRIVER_GATEWAY_COMPAT_MOUNT_PATH)
   ) {
-    return true;
+    return dockerCompatGatewayMatchesTarget(tokens, opts.expectedOpenShellGateway);
   }
 
   return false;
@@ -63,6 +107,9 @@ export function gatewayProcessCmdlineMatches(
 export function hostGatewayCmdlineMatches(
   cmdline: string,
   gatewayBin: string | null | undefined,
+  expectedOpenShellGateway?: OpenShellGatewayProcessTarget,
 ): boolean {
-  return gatewayProcessCmdlineMatches(cmdline, gatewayBin);
+  return gatewayProcessCmdlineMatches(cmdline, gatewayBin, {
+    expectedOpenShellGateway,
+  });
 }

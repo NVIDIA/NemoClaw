@@ -11,6 +11,8 @@ const path = require("path");
 const { spawn, spawnSync } = require("child_process");
 const { ROOT, SCRIPTS, redact, run, runCapture, shellQuote } = require("../../runner");
 const { OLLAMA_PORT, OLLAMA_PROXY_PORT } = require("../../core/ports");
+const { isNonInteractiveEnv }: typeof import("../../core/non-interactive") =
+  require("../../core/non-interactive");
 const { waitForPort } = require("../../core/wait");
 const { ensurePulledOllamaModel }: typeof import("./model-discovery") =
   require("./model-discovery");
@@ -793,7 +795,7 @@ async function promptProxyYesNo(question: string, defaultIsYes: boolean): Promis
 }
 
 const defaultOllamaToolCapabilityInteraction: OllamaToolCapabilityInteraction = {
-  isNonInteractive: () => process.env.NEMOCLAW_NON_INTERACTIVE === "1",
+  isNonInteractive: isNonInteractiveEnv,
   isAutoYes: () => process.env.NEMOCLAW_YES === "1",
   confirm: promptProxyYesNo,
 };
