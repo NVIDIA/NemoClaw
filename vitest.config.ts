@@ -10,6 +10,7 @@ import {
   shouldRunBranchValidationE2E,
   shouldRunLiveE2E,
 } from "./test/e2e/fixtures/live-project-gate.ts";
+import { CliCoverageSequencer } from "./test/helpers/cli-coverage-sequencer";
 import { resolveIntegrationProjectScheduling } from "./test/helpers/integration-project-scheduling";
 import { sourceLoaderNodeOptions } from "./test/helpers/source-loader-options";
 import { testTimeout } from "./test/helpers/timeouts";
@@ -51,6 +52,12 @@ const integrationProjectScheduling = resolveIntegrationProjectScheduling({
 
 export default defineConfig({
   test: {
+    tags: [
+      {
+        name: "e2e/credential-free",
+        description: "Runs without external credentials in the shared E2E job",
+      },
+    ],
     env: {
       NEMOCLAW_DISABLE_GATEWAY_DRIFT_PREFLIGHT: "1",
     },
@@ -59,6 +66,7 @@ export default defineConfig({
     reporters: isGithubActions ? ["github-actions"] : ["default"],
     silent: isCi,
     hideSkippedTests: isCi,
+    sequence: { sequencer: CliCoverageSequencer },
     projects: [
       {
         ...typedSourceTransform,

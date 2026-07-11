@@ -55,7 +55,7 @@ describe("PR review advisor deterministic test-depth floor", () => {
     ]);
   });
 
-  it("keeps the complete floor and model guidance visible within shared caps (#6446)", () => {
+  it("keeps the complete floor as internal context within shared caps (#6446)", () => {
     const deterministicTests = Array.from(
       { length: 13 },
       (_value, index) => `Run deterministic E2E job ${index + 1}.`,
@@ -80,10 +80,11 @@ describe("PR review advisor deterministic test-depth floor", () => {
     const summary = renderSummary(result);
     const comment = buildComment({ summary, result });
 
-    expect(summary).toContain("Run deterministic E2E job 1.");
-    expect(summary).toContain("Add model-specific regression test 1.");
-    expect(comment).toContain("Run deterministic E2E job 1.");
-    expect(comment).toContain("Add model-specific regression test 1.");
+    expect(summary).not.toContain("Run deterministic E2E job 1.");
+    expect(summary).not.toContain("Add model-specific regression test 1.");
+    expect(comment).not.toContain("Run deterministic E2E job 1.");
+    expect(comment).not.toContain("Add model-specific regression test 1.");
+    expect(comment).toContain("No blocking advisor findings");
     expect(testDepth.suggestedTests).toHaveLength(20);
     expect(testDepth.suggestedTests).toEqual(expect.arrayContaining(deterministicTests));
   });

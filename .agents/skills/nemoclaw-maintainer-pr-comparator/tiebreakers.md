@@ -15,6 +15,8 @@ Final decision logic. Two paths: happy mode when at least one PR passes all Tier
 
 Eliminate any PR failing Tier 0. Among survivors:
 
+- Set `winner` only to a survivor and leave `closest_to_ready` null.
+
 1. Compute weighted score across Tiers 1-2.
 2. Build the **behavior-coverage matrix** (see below). If matrix has a clear winner per criterion, that wins.
 3. Apply tiebreakers in order. First tiebreaker that distinguishes the PRs picks the winner.
@@ -43,6 +45,8 @@ Don't give up — pick the closest-to-ready and recommend salvage steps.
    - Tie → fewer trivial failures wins
    - Tie → higher Tier 1-2 weighted score wins (correctness beneath the broken plumbing)
 3. Output:
+   - Leave `winner` null; it is reserved for a fully eligible merge recommendation
+   - Set `closest_to_ready` only to an open PR that passes contributor compliance; leave it null for a rejection-only verdict
    - Per-PR Tier 0 failure list
    - Per-PR Tier 1-2 scorecard (so the winner has objective merit beneath the gates)
    - Verdict: "Neither mergeable yet. PR A is closer — fix [substantive list]. PR B has [issues]."

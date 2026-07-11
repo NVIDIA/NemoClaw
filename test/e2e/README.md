@@ -21,6 +21,33 @@ The former top-level `test/e2e/test-*.sh` suite has been removed. Keep real
 shell, installer, process, Docker, OpenShell, `/proc`, and sandbox boundaries in
 E2E tests when those boundaries are the behavior under test.
 
+## Credential-free tests
+
+Credential-free tests that can use the standard Ubuntu runner, CLI build, and
+artifact policy opt into the shared E2E job with a tag beside the test:
+
+```typescript
+// @module-tag e2e/credential-free
+```
+
+Discovery reads tagged files from the `e2e-live` and `integration` Vitest
+projects. It derives each test ID from the filename and supplies only the ID,
+repository-relative file, and Vitest project to the test matrix. Keep the
+filename stem unique and lowercase kebab-case. Do not add the test to a separate
+catalog or manually maintained workflow matrix.
+
+The E2E workflow owns the shared job's runner, timeout, setup, permissions,
+secrets, and artifact handling. Keep a dedicated workflow job when a test needs
+different capabilities, such as credentials, a custom runner, additional setup,
+or a different timeout.
+
+Both `jobs` and `targets` selectors continue to accept the test ID. Run the
+discovery command locally to inspect the generated test matrix:
+
+```bash
+npx tsx tools/e2e/credential-free-tests.mts
+```
+
 ## Scheduled operations
 
 The consolidated workflow keeps its operational reporting in the same job

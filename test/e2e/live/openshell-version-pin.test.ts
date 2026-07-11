@@ -1,5 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+// @module-tag e2e/credential-free
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -10,12 +11,12 @@ import { type ArtifactSink } from "../fixtures/artifacts.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 
-// #3474). The former bash script is a hermetic installer-script behavioral
+// #3474). The former bash script is a self-contained installer-script behavioral
 // test: it runs scripts/install-openshell.sh under a stubbed PATH where the
 // already-installed openshell reports a too-new version (0.0.73) and the
 // downloaded archives produce a binary that reports the pinned 0.0.72.
 //
-// This is a free-standing live test (per #5049's pattern) — it does not exercise
+// This credential-free E2E test does not exercise
 // the registry-driven steady-state probe model. There is no OpenClaw instance,
 // no environment phase, no lifecycle. The test consumes only the `artifacts`
 // fixture from e2e-test.ts so failures attach the per-target artifact root.
@@ -98,7 +99,7 @@ function writeExecutable(target: string, contents: string): void {
 
 // Bash helpers shared by the gh and curl stubs: write a fake archive and emit
 // the same pinned digest lines the real OpenShell v0.0.72 release uses. A fake
-// sha256sum below keeps this test hermetic even though the tarball bytes are
+// sha256sum below keeps this test self-contained even though the tarball bytes are
 // synthetic.
 const SHARED_DOWNLOAD_BASH_HELPERS = `\
 write_asset() {
