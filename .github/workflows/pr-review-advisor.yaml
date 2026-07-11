@@ -54,6 +54,7 @@ jobs:
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'NVIDIA/NemoClaw') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 40
+    continue-on-error: ${{ !matrix.advisor.publish_comment }}
     strategy:
       fail-fast: false
       matrix:
@@ -63,17 +64,13 @@ jobs:
             model: openai/openai/gpt-5.5
             artifact_dir: pr-review-advisor
             artifact_name: pr-review-advisor
-            comment_marker: "<!-- nemoclaw-pr-review-advisor -->"
-            comment_title: PR Review Advisor
-            comment_label: PR review advisor
+            publish_comment: true
           - id: nemotron-ultra
             label: Nemotron 3 Ultra
             model: nvidia/nvidia/nemotron-3-ultra
             artifact_dir: pr-review-advisor-nemotron-ultra
             artifact_name: pr-review-advisor-nemotron-ultra
-            comment_marker: "<!-- nemoclaw-pr-review-advisor-nemotron-ultra -->"
-            comment_title: PR Review Advisor (Nemotron Ultra)
-            comment_label: PR review advisor (Nemotron Ultra)
+            publish_comment: false
     env:
       # Pin the Pi SDK to a known-good version. Updates should go through
       # normal dependency review so a compromised upstream release cannot run
@@ -89,10 +86,11 @@ jobs:
       # so do not claim that this job waits for required checks to settle.
       PR_REVIEW_ADVISOR_MODEL: ${{ matrix.advisor.model }}
       PR_REVIEW_ADVISOR_ARTIFACT_DIR: ${{ matrix.advisor.artifact_dir }}
-      PR_REVIEW_ADVISOR_COMMENT_MARKER: ${{ matrix.advisor.comment_marker }}
-      PR_REVIEW_ADVISOR_COMMENT_TITLE: ${{ matrix.advisor.comment_title }}
-      PR_REVIEW_ADVISOR_COMMENT_LABEL: ${{ matrix.advisor.comment_label }}
+      PR_REVIEW_ADVISOR_COMMENT_MARKER: "<!-- nemoclaw-pr-review-advisor -->"
+      PR_REVIEW_ADVISOR_COMMENT_TITLE: PR Review Advisor
+      PR_REVIEW_ADVISOR_COMMENT_LABEL: PR review advisor
       PR_REVIEW_ADVISOR_WORKFLOW_NAME: "PR Review / Advisor"
+      PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW: ${{ matrix.advisor.publish_comment }}
       # Trusted implementation code is always checked out here. PR content is
       # only read as inert analysis data under ADVISOR_WORKDIR.
       ADVISOR_DIR: ${{ github.workspace }}/advisor
@@ -250,7 +248,7 @@ jobs:
           fi
 
       - name: Post PR review advisor comment
-        if: ${{ always() && github.event_name == 'pull_request' }}
+        if: ${{ always() && github.event_name == 'pull_request' && matrix.advisor.publish_comment }}
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.PR_REVIEW_ADVISOR_GITHUB_TOKEN || github.token }}
