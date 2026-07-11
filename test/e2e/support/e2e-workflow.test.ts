@@ -701,7 +701,7 @@ describe("e2e workflow boundary", () => {
       "onboard-negative-paths",
       "openshell-version-pin",
     ]) {
-      expect(currentBaseWorkflowInventory).toContain(`${testId}:${testId}`);
+      expect(currentBaseWorkflowInventory).not.toContain(`${testId}:${testId}`);
     }
     expect(currentBaseWorkflowInventory).not.toContain("openshell-version-pin:shared-e2e");
     expect(currentBaseWorkflowInventory).not.toContain("ubuntu-repo-cli-smoke");
