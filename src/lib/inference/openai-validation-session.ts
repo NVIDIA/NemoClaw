@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { CurlProbeResult } from "../adapters/http/probe";
 import { parseOpenAiLikeExtraHeaders } from "../adapters/http/auth-config";
+import type { CurlProbeResult } from "../adapters/http/probe";
 import {
   createValidationSession,
   type ValidationSessionOptions,
 } from "../adapters/http/validation-session";
 import { addTraceEvent, withTraceSpan } from "../trace";
+import { isDeepSeekV4ProModel } from "./openai-probe-models";
 
 const RETRIABLE_HTTP_STATUSES = new Set([429, 502, 503, 504]);
 const RETRY_DELAYS_MS = [5_000, 15_000, 30_000];
@@ -221,7 +222,7 @@ function shouldUseLegacyForModel(model: string): boolean {
   // locks direct legacy dispatch without native DNS. Remove this exception once
   // both transports share the streaming timeout-continuation helper and return
   // the same validation result.
-  return model.toLowerCase() === "deepseek-ai/deepseek-v4-pro";
+  return isDeepSeekV4ProModel(model);
 }
 
 export async function probeOpenAiLikeEndpointWithValidationSession(

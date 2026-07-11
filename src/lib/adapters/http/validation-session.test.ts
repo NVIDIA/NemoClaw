@@ -280,11 +280,6 @@ describe("provider validation session", () => {
         NO_PROXY: ".provider.example.test",
       }),
     ).toBeNull();
-    expect(
-      getValidationSessionIneligibility("https://provider.example.test/v1", {
-        CURL_CA_BUNDLE: "/tmp/corporate-ca.pem",
-      }),
-    ).toBe("curl_tls_configured");
     expect(getValidationSessionIneligibility("https://127.0.0.1/v1", {})).toBe("ip_literal");
     expect(getValidationSessionIneligibility("https://[::1]/v1", {})).toBe("ip_literal");
     expect(getValidationSessionIneligibility("http://localhost:8000/v1", {})).toBe(
@@ -302,5 +297,17 @@ describe("provider validation session", () => {
     expect(getValidationSessionIneligibility("http://host.docker.internal./v1", {})).toBe(
       "docker_internal_endpoint",
     );
+  });
+
+  it.each([
+    "CURL_CA_BUNDLE",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+  ] as const)("keeps the %s curl-specific TLS override on curl", (envName) => {
+    expect(
+      getValidationSessionIneligibility("https://provider.example.test/v1", {
+        [envName]: "/tmp/corporate-ca",
+      }),
+    ).toBe("curl_tls_configured");
   });
 });
