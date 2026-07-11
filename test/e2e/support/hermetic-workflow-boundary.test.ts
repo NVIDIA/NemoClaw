@@ -8,7 +8,10 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
-import { discoverExecutionProfileTests } from "../../../tools/e2e/execution-profile.mts";
+import {
+  discoverExecutionProfileTests,
+  stripExecutionProfileDeclarations,
+} from "../../../tools/e2e/execution-profile.mts";
 import {
   evaluateE2eWorkflowDispatchSelectors,
   validateE2eWorkflowBoundary,
@@ -40,6 +43,25 @@ function validateMutatedWorkflow(mutator: (workflow: Workflow) => void): string[
 }
 
 describe("hermetic E2E workflow boundary", () => {
+  it("keeps every source-declared execution profile visible to Vitest discovery", () => {
+    const declaredFiles = fs
+      .globSync(["**/*.test.js", "**/*.test.ts"], {
+        cwd: process.cwd(),
+        exclude: ["**/dist/**", "**/node_modules/**"],
+      })
+      .filter((file) => {
+        const source = fs.readFileSync(path.join(process.cwd(), file), "utf8");
+        return stripExecutionProfileDeclarations(source) !== source;
+      })
+      .sort();
+
+    expect(
+      discoverExecutionProfileTests()
+        .map(({ file }) => file)
+        .sort(),
+    ).toEqual(declaredFiles);
+  });
+
   it("keeps discovered tests default-enabled and selectively dispatchable", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
 
