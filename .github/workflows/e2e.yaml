@@ -3566,7 +3566,6 @@ jobs:
       E2E_TARGET_ID: "snapshot-commands"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/snapshot-commands
       NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-snapshot"
@@ -3585,11 +3584,8 @@ jobs:
           build-cli: "false"
 
       - name: Run snapshot commands live test
-        # Preserves the
-        # original ubuntu-latest + Docker/OpenShell + NVIDIA_INFERENCE_API_KEY runner
-        # contract by driving install.sh and the real snapshot CLI lifecycle.
-        env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+        # Drives install.sh and the real snapshot CLI lifecycle while the test
+        # supplies a sandbox-reachable fake OpenAI-compatible endpoint.
         run: |
           set -euo pipefail
           npx vitest run --project e2e-live \

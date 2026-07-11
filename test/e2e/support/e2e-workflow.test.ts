@@ -1088,11 +1088,17 @@ jobs:
     snapshotJob["timeout-minutes"] = 30;
     snapshotJob.env.DOCKER_CONFIG = "${{ github.workspace }}/.docker-config-shared";
     snapshotJob.env.NVIDIA_INFERENCE_API_KEY = "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
+    snapshotJob.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE = "1";
     for (const step of snapshotJob.steps) {
       if (typeof step.uses === "string" && step.uses.startsWith("actions/checkout@")) {
         step.with = { ...(step.with as Record<string, unknown>), "persist-credentials": true };
       }
       if (step.name === "Run snapshot commands live test") {
+        step.env = {
+          ...((step.env as Record<string, unknown> | undefined) ?? {}),
+          NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+          NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
+        };
         step.run = String(step.run).replace(
           "test/e2e/live/snapshot-commands.test.ts",
           "test/e2e/live/registry-targets.test.ts",
@@ -1113,8 +1119,11 @@ jobs:
         expect.arrayContaining([
           "snapshot-commands job must keep a 40 minute timeout",
           "snapshot-commands job must not set DOCKER_CONFIG at job level",
+          "snapshot-commands job must not enable hosted inference",
           "snapshot-commands checkout step must set persist-credentials=false",
           "snapshot-commands job env must not include NVIDIA_INFERENCE_API_KEY",
+          "snapshot-commands step 'Run snapshot commands live test' env must not include NEMOCLAW_E2E_USE_HOSTED_INFERENCE",
+          "snapshot-commands step 'Run snapshot commands live test' env must not include NVIDIA_API_KEY",
           "snapshot-commands upload-e2e-artifacts invocation must not override its contract",
           "snapshot-commands upload-e2e-artifacts must use the action defaults",
           "step 'Run snapshot commands live test' run script must include test/e2e/live/snapshot-commands.test.ts",

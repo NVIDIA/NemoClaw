@@ -431,21 +431,22 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
 
 /**
  * Prepare a sandbox entry for persistence: normalize messaging state and drop
- * transient #5714 display-only markers (`recoveredFromGateway`, `livePhase`)
+ * transient #5714 display-only markers plus legacy provider credential hashes
  * that must never reach sandboxes.json.
  */
 function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
-  // #5714: defensively drop transient, display-only recovery markers so they
-  // can never reach sandboxes.json even if a caller force-passed one through
-  // updateSandbox(). These are not part of the durable SandboxEntry type; they
-  // live only on the ephemeral list-recovery rows.
+  // Defensively drop non-durable recovery markers and legacy
+  // providerCredentialHashes so they can never reach sandboxes.json even if a
+  // caller force-passed them through updateSandbox().
   const {
     recoveredFromGateway: _recovered,
     livePhase: _phase,
+    providerCredentialHashes: _legacyProviderCredentialHashes,
     ...durable
   } = entry as SandboxEntry & {
     recoveredFromGateway?: boolean;
     livePhase?: string | null;
+    providerCredentialHashes?: unknown;
   };
   const messaging = serializeSandboxMessagingStateForDisk(durable.messaging);
   const mcp = serializeSandboxMcpStateForDisk(durable.mcp);
