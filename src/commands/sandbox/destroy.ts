@@ -26,7 +26,7 @@ export default class DestroyCliCommand extends NemoClawCommand {
     force: forceFlag(),
     "cleanup-gateway": Flags.boolean({
       description:
-        "When destroying the last sandbox, also tear down the shared NemoClaw gateway. Default: preserve. NEMOCLAW_CLEANUP_GATEWAY=1 sets the same default.",
+        "When destroying the last sandbox, also tear down the shared NemoClaw gateway. Default: preserve on Linux; cleanup for unattended macOS destroys. NEMOCLAW_CLEANUP_GATEWAY overrides the platform default.",
       allowNo: true,
     }),
   };

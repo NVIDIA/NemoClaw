@@ -199,15 +199,18 @@ describe("docker-driver gateway runtime helpers", () => {
           NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: stateDir,
         },
         () => {
+          const processOutput = new Map([
+            [`ps -p ${pid} -o args=`, "openshell-gateway[nemoclaw=nemoclaw-18080;port=18080]\n"],
+            [
+              "ps -axo pid=,ppid=,command=",
+              [
+                `${pid} 1 ${gatewayBin}`,
+                `${pid + 1} ${pid} /usr/local/bin/openshell-driver-vm --bind-socket /tmp/vm.sock`,
+              ].join("\n"),
+            ],
+          ]);
           const { helpers, runCapture } = makeHelpers({
-            runCapture: vi.fn((args) =>
-              args.join(" ") === "ps -axo pid=,ppid=,command="
-                ? [
-                    `${pid} 1 ${gatewayBin}`,
-                    `${pid + 1} ${pid} /usr/local/bin/openshell-driver-vm --bind-socket /tmp/vm.sock`,
-                  ].join("\n")
-                : "",
-            ),
+            runCapture: vi.fn((args) => processOutput.get(args.join(" ")) ?? ""),
           });
           const desiredEnv = helpers.getDockerDriverGatewayEnv(null, "darwin");
           writeDockerDriverGatewayRuntimeMarkerForStateDir(stateDir, {
@@ -357,7 +360,9 @@ describe("docker-driver gateway runtime helpers", () => {
     const identityGatewayBin = "/opt/openshell/openshell-gateway";
     const replacementGatewayBin = "/opt/openshell/replaced/openshell-gateway";
     const desiredEnv = { OPENSHELL_DRIVERS: "docker" };
-    const { helpers } = makeHelpers();
+    const { helpers } = makeHelpers({
+      runCapture: vi.fn(() => "openshell-gateway[nemoclaw=nemoclaw-18080;port=18080]\n"),
+    });
     const originalExistsSync = fs.existsSync.bind(fs);
     const originalReadFileSync = fs.readFileSync.bind(fs);
     const originalReadlinkSync = fs.readlinkSync.bind(fs);
