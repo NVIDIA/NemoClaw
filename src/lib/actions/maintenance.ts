@@ -4,6 +4,7 @@
 import { dockerListImagesFormat, dockerRmi } from "../adapters/docker";
 import { CLI_NAME } from "../cli/branding";
 import { prompt as askPrompt } from "../credentials/store";
+import { formatFailedBackupItems } from "../domain/backup-failure";
 import {
   type GarbageCollectImagesOptions,
   normalizeGarbageCollectImagesOptions,
@@ -113,7 +114,7 @@ export async function backupAll(): Promise<void> {
         }
         unreachableRunning++;
       }
-      const failedItems = sandboxState.formatFailedBackupItems(
+      const failedItems = formatFailedBackupItems(
         [...result.failedDirs, ...result.failedFiles],
         result.failedDirReasons,
       );

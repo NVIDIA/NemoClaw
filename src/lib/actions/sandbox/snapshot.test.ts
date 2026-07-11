@@ -228,11 +228,9 @@ vi.mock("../../state/registry", () => ({
   updateSandbox: updateSandboxMock,
 }));
 
-vi.mock("../../state/sandbox", async (importOriginal) => ({
+vi.mock("../../state/sandbox", () => ({
   backupSandboxState: backupSandboxStateMock,
   findBackup: findBackupMock,
-  formatFailedBackupItems: (await importOriginal<typeof import("../../state/sandbox")>())
-    .formatFailedBackupItems,
   getLatestBackup: getLatestBackupMock,
   listBackups: listBackupsMock,
   restoreSandboxState: restoreSandboxStateMock,

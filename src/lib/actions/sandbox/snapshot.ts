@@ -12,6 +12,7 @@ import {
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt } from "../../credentials/store";
+import { formatFailedBackupItems } from "../../domain/backup-failure";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import {
   checkGatewayRouteCompatibility,
@@ -545,10 +546,7 @@ function runSnapshotCreate(
     } else {
       console.error("  Snapshot failed.");
       if (result.failedDirs.length > 0) {
-        const failedDirs = sandboxState.formatFailedBackupItems(
-          result.failedDirs,
-          result.failedDirReasons,
-        );
+        const failedDirs = formatFailedBackupItems(result.failedDirs, result.failedDirReasons);
         console.error(`  Failed directories: ${failedDirs}`);
       }
       if (result.failedFiles.length > 0) {

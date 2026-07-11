@@ -31,6 +31,10 @@ import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
 import type { AgentStateFile } from "../agent/defs.js";
 import { loadAgent } from "../agent/defs.js";
 import { isObjectRecord, type UnknownRecord } from "../core/json-types.js";
+import {
+  BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION,
+  classifyFailedDirsFromTarStderr,
+} from "../domain/backup-failure.js";
 import { shellQuote } from "../runner.js";
 import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
 import { isSensitiveFile, sanitizeConfigFile } from "../security/credential-filter.js";
@@ -736,55 +740,6 @@ function stateFileRemotePath(dir: string, filePath: string): string {
   return `${dir.replace(/\/+$/, "")}/${filePath}`;
 }
 
-/** Failure cause: tar reported "Permission denied" while reading the dir. */
-export const BACKUP_FAILURE_PERMISSION_DENIED = "permission denied";
-/** Failure cause: tar reported other read errors for the dir. */
-export const BACKUP_FAILURE_TAR_READ_ERROR = "tar read error";
-/** Failure cause: tar succeeded but the dir never materialized on the host. */
-export const BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION = "absent after extraction";
-
-function failedDirsFromTarStderr(stderr: string, existingDirs: string[]): Map<string, string> {
-  const failed = new Map<string, string>();
-  const dirs = [...existingDirs].sort((a, b) => b.length - a.length);
-  for (const rawLine of stderr.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line.startsWith("tar: ")) continue;
-    const message = line.slice("tar: ".length);
-    for (const dirName of dirs) {
-      if (
-        message === dirName ||
-        message.startsWith(`${dirName}:`) ||
-        message.startsWith(`${dirName}/`)
-      ) {
-        // "permission denied" is the more actionable cause — keep it even if
-        // other read errors were attributed to the same dir first.
-        const reason = message.includes("Permission denied")
-          ? BACKUP_FAILURE_PERMISSION_DENIED
-          : BACKUP_FAILURE_TAR_READ_ERROR;
-        if (reason === BACKUP_FAILURE_PERMISSION_DENIED || !failed.has(dirName)) {
-          failed.set(dirName, reason);
-        }
-        break;
-      }
-    }
-  }
-  return failed;
-}
-
-/**
- * Render failed dirs/files for user-facing backup failure messages,
- * appending the known per-dir cause: "identity (permission denied)".
- * Items without a recorded cause render unchanged.
- */
-export function formatFailedBackupItems(
-  failedItems: string[],
-  reasons: Record<string, string> | undefined,
-): string {
-  return failedItems
-    .map((item) => (reasons?.[item] ? `${item} (${reasons[item]})` : item))
-    .join(", ");
-}
-
 const SQLITE_BACKUP_PY = [
   "import sqlite3, sys",
   "src, dst = sys.argv[1], sys.argv[2]",
@@ -1380,7 +1335,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
                 }
               }
             } else {
-              const tarFailedDirs = failedDirsFromTarStderr(
+              const tarFailedDirs = classifyFailedDirsFromTarStderr(
                 result.stderr?.toString() || "",
                 existingDirs,
               );
