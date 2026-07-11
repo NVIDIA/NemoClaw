@@ -1164,7 +1164,9 @@ export async function finishPrGate(options: {
     console.log(
       `Run completed: run=${options.childRunId} conclusion=${verdict.conclusion} title=${verdict.title} url=${childRunUrl}`,
     );
-    if (verdict.conclusion === "failure") throw new Error(verdict.title);
+    if (verdict.conclusion === "failure") {
+      throw new Error(`${verdict.title}: ${verdict.summary}`);
+    }
   } catch (error) {
     if (!finalized) {
       const closed = await completeFailureAfterControllerError(
