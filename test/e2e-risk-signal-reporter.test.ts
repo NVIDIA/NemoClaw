@@ -41,12 +41,12 @@ function environment(artifactDir: string): RiskSignalEnvironment {
 }
 
 describe("E2E risk signal reporter", () => {
-  it("stays disabled outside shadow runs", () => {
+  it("stays disabled when no expected commit is configured", () => {
     expect(configuredEnvironment({})).toBeNull();
   });
 
-  it("fails closed when shadow metadata is incomplete", () => {
-    expect(() => configuredEnvironment({ NEMOCLAW_E2E_RISK_SHADOW: "1" })).toThrow(
+  it("fails closed when run metadata is incomplete", () => {
+    expect(() => configuredEnvironment({ NEMOCLAW_E2E_EXPECTED_SHA: EXPECTED_SHA })).toThrow(
       /E2E_ARTIFACT_DIR/u,
     );
   });
@@ -57,10 +57,9 @@ describe("E2E risk signal reporter", () => {
       E2E_TARGET_ID: "onboard-resume",
       GITHUB_WORKSPACE: "/workspace",
       NEMOCLAW_E2E_EXPECTED_SHA: EXPECTED_SHA,
-      NEMOCLAW_E2E_RISK_PLAN_HASH: PLAN_HASH,
-      NEMOCLAW_E2E_RISK_CORRELATION: CORRELATION_ID,
-      NEMOCLAW_E2E_RISK_SHARD: "default",
-      NEMOCLAW_E2E_RISK_SHADOW: "1",
+      NEMOCLAW_E2E_PLAN_HASH: PLAN_HASH,
+      NEMOCLAW_E2E_CORRELATION_ID: CORRELATION_ID,
+      NEMOCLAW_E2E_SHARD: "default",
     };
 
     expect(configuredEnvironment(env, () => EXPECTED_SHA)?.testedSha).toBe(EXPECTED_SHA);

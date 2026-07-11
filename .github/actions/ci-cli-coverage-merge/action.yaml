@@ -7,7 +7,7 @@ description: Merge shared CLI coverage shard blob reports and run the coverage r
 inputs:
   shard-count:
     description: Total number of CLI coverage shards to merge.
-    default: "5"
+    default: "8"
 
 runs:
   using: composite

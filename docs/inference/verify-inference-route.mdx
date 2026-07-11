@@ -1,0 +1,60 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Verify the Sandbox Inference Route"
+sidebar-title: "Verify the Inference Route"
+description: "Verify that a NemoClaw sandbox can reach its configured model through the OpenShell inference route."
+description-agent: "Verifies the in-sandbox inference path. Use when checking that inference.local, proxy authentication, and the selected backend work together."
+keywords: ["verify inference.local", "nemoclaw inference route", "sandbox inference health"]
+content:
+  type: "how_to"
+---
+import { AgentOnly } from "../_components/AgentGuide";
+
+Verify inference through the same `inference.local` path that the agent uses inside the sandbox.
+Reading the active route confirms configuration, but it does not authenticate a model request.
+
+## Confirm the Configured Route
+
+Read the live gateway route first.
+
+```bash
+$$nemoclaw inference get
+```
+
+Confirm that the provider and model match the route you intended to configure.
+
+## Check Sandbox Inference Health
+
+Run the named sandbox status command.
+
+```bash
+$$nemoclaw <name> status
+```
+
+The `Inference` row checks the sandbox's `inference.local` path and reports the provider, model, and endpoint with the rest of the sandbox state.
+This path includes the OpenShell proxy and its authentication rewrite.
+
+## Understand Post-Ready Checks
+
+For local Ollama and vLLM, onboarding performs an additional check after the sandbox becomes ready.
+It requests `https://inference.local/v1/models` from inside the sandbox and accepts only a 2xx response.
+When this check fails, onboarding reports the endpoint and recovery steps before the first agent prompt.
+
+NVIDIA NIM and other compatible endpoints receive their provider validation during onboarding but do not receive this post-ready sandbox-route check.
+For those routes, use the status command and a short agent request after onboarding.
+
+## Send a Short Agent Request
+
+Connect to the sandbox and send a short request before starting long-running work.
+A successful response proves that the configured model can serve an agent request through the OpenShell route.
+
+If status is healthy but a tool action returns JSON as normal assistant text, troubleshoot structured tool calling instead of the network route.
+
+## Related Topics
+
+- [View the Active Inference Route](../manage-inference/view-active-inference-route) to inspect configuration without sending an inference request.
+- [Understand Provider Validation](understand-provider-validation) for the checks that run before sandbox creation.
+<AgentOnly variant="openclaw">
+- [Troubleshooting](../../reference/troubleshooting#tool-calls-appear-as-assistant-text) for structured tool-call problems.
+</AgentOnly>

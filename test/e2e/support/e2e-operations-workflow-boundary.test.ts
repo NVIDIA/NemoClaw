@@ -57,7 +57,7 @@ describe("E2E operations workflow boundary", () => {
     );
   });
 
-  it("keeps PR reporting and scorecards disabled for E2E risk shadow runs", () => {
+  it("keeps PR reporting and scorecards disabled for PR E2E runs", () => {
     const workflow = readE2eOperationsWorkflow();
     workflow.jobs["report-to-pr"].if =
       "${{ always() && github.event_name == 'workflow_dispatch' }}";
@@ -68,6 +68,53 @@ describe("E2E operations workflow boundary", () => {
       expect.arrayContaining([
         "report-to-pr must run only for manual workflow dispatches",
         "scorecard must run after scheduled and manual E2E executions",
+      ]),
+    );
+  });
+
+  it("rejects controller protocol and PR validation drift", () => {
+    const workflow = readE2eOperationsWorkflow();
+    delete workflow.on?.workflow_dispatch?.inputs?.plan_hash;
+    workflow.env!.NEMOCLAW_E2E_PLAN_HASH = "${{ inputs.checkout_sha }}";
+    workflow.concurrency!["cancel-in-progress"] = false;
+    const validation = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Validate controller dispatch",
+    )!;
+    validation.if = "${{ inputs.plan_hash != '' }}";
+    validation.run = "echo unchecked";
+    const checkout = workflow.jobs["generate-matrix"].steps!.find((step) =>
+      step.uses?.startsWith("actions/checkout@"),
+    )!;
+    checkout.with!.ref = "${{ github.sha }}";
+
+    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "workflow_dispatch plan_hash must be an optional string with an empty default",
+        "E2E workflow must bind NEMOCLAW_E2E_PLAN_HASH to controller metadata",
+        "PR E2E concurrency must cancel obsolete runs",
+        "Controller validation must be activated only by checkout_sha",
+        'Controller validation must retain "$PR_NUMBER" =~ ^[1-9][0-9]*$',
+        "generate-matrix checkout must use the selected PR commit",
+      ]),
+    );
+  });
+
+  it("keeps every planned job wired to bound evidence", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const job = workflow.jobs["cloud-onboard"];
+    job.env!.E2E_TARGET_ID = "different-job";
+    const run = job.steps!.find((step) => String(step.run ?? "").includes("npx vitest"))!;
+    run.run = run.run!.replace("test/e2e/risk-signal-reporter.ts", "default");
+    const upload = job.steps!.find((step) =>
+      step.uses?.startsWith("NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@"),
+    )!;
+    upload.if = "success()";
+
+    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "cloud-onboard must expose matching E2E job identity",
+        "cloud-onboard must attach the risk-signal reporter to every Vitest invocation",
+        "cloud-onboard must always upload one evidence artifact",
       ]),
     );
   });
