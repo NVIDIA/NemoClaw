@@ -9,9 +9,9 @@ import {
   createBearerAuthConfig,
   createCurlAuthConfig,
   createOpenAiLikeAuthConfig,
-  parseOpenAiLikeExtraHeaders,
   createQueryParamAuthConfig,
   createXApiKeyAuthConfig,
+  parseOpenAiLikeExtraHeaders,
 } from "./auth-config";
 
 describe("curl auth config helper", () => {
@@ -108,8 +108,10 @@ describe("curl auth config helper", () => {
   });
 
   it("accepts every HTTP token character in an OpenAI-like provider header name", () => {
-    expect(parseOpenAiLikeExtraHeaders(["!#$%&'*+-.^_`|~09AZaz: value"])).toEqual([
-      { name: "!#$%&'*+-.^_`|~09AZaz", value: "value" },
+    const tokenChars =
+      "!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    expect(parseOpenAiLikeExtraHeaders([`${tokenChars}: value`])).toEqual([
+      { name: tokenChars, value: "value" },
     ]);
   });
 
