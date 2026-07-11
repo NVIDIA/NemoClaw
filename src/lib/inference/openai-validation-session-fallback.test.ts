@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import http from "node:http";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type OpenAiValidationSessionDeps,
   probeOpenAiLikeEndpointWithValidationSession,
@@ -14,7 +14,69 @@ import {
 
 const listen = useOpenAiValidationTestServers();
 
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 describe("OpenAI validation curl fallback", () => {
+  it("recovers natively after transient HTTP failures", async () => {
+    vi.stubEnv("NEMOCLAW_TEST_NO_SLEEP", "1");
+    let requests = 0;
+    const server = http.createServer((request, response) => {
+      request.resume();
+      requests += 1;
+      if (requests < 3) {
+        response.statusCode = requests === 1 ? 503 : 429;
+        response.end('{"error":{"message":"retry"}}');
+        return;
+      }
+      response.end('{"choices":[{"message":{"content":"OK"}}]}');
+    });
+    const port = await listen(server);
+    const harness = createOpenAiValidationTestDeps();
+
+    const result = await probeOpenAiLikeEndpointWithValidationSession(
+      `http://provider.example.test:${port}/v1`,
+      "test-model",
+      "test-key",
+      { skipResponsesProbe: true },
+      harness,
+    );
+
+    expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+    expect(requests).toBe(3);
+    expect(harness.legacyProbe).not.toHaveBeenCalled();
+  });
+
+  it("falls back once after transient HTTP retries are exhausted", async () => {
+    vi.stubEnv("NEMOCLAW_TEST_NO_SLEEP", "1");
+    let requests = 0;
+    const server = http.createServer((request, response) => {
+      request.resume();
+      requests += 1;
+      response.statusCode = 503;
+      response.end('{"error":{"message":"still unavailable"}}');
+    });
+    const port = await listen(server);
+    const legacyProbe: OpenAiValidationSessionDeps["legacyProbe"] = vi.fn(() => ({
+      ok: false,
+      message: "curl retry diagnostic",
+    }));
+    const harness = createOpenAiValidationTestDeps(legacyProbe);
+
+    const result = await probeOpenAiLikeEndpointWithValidationSession(
+      `http://provider.example.test:${port}/v1`,
+      "test-model",
+      "test-key",
+      { skipResponsesProbe: true },
+      harness,
+    );
+
+    expect(result).toEqual({ ok: false, message: "curl retry diagnostic" });
+    expect(requests).toBe(4);
+    expect(legacyProbe).toHaveBeenCalledTimes(1);
+  });
+
   it("replays through curl after a terminal native failure", async () => {
     const server = http.createServer((request, response) => {
       request.resume();
