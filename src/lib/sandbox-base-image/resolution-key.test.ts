@@ -10,9 +10,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const dockerMocks = vi.hoisted(() => ({
   infoFormat: vi.fn(),
 }));
+const sourceMocks = vi.hoisted(() => ({
+  nearestTags: vi.fn(),
+}));
 
 vi.mock("../adapters/docker", () => ({
   dockerInfoFormat: dockerMocks.infoFormat,
+}));
+
+vi.mock("./source-identity", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./source-identity")>()),
+  getNearestVersionedBaseImageTags: sourceMocks.nearestTags,
 }));
 
 import { createSandboxBaseImageResolutionKey } from "./resolution-key";
@@ -45,6 +53,7 @@ afterEach(() => {
 beforeEach(() => {
   vi.clearAllMocks();
   dockerMocks.infoFormat.mockReturnValue("linux/amd64\n");
+  sourceMocks.nearestTags.mockReturnValue([]);
 });
 
 describe("sandbox base-image resolution key", () => {
@@ -133,6 +142,14 @@ describe("sandbox base-image resolution key", () => {
     expect(createSandboxBaseImageResolutionKey({ ...base, preferPinnedRemoteRef: false })).toBe(
       createSandboxBaseImageResolutionKey(base),
     );
+  });
+
+  it("isolates nearest release-tag candidates so warm hints do not mask new tags (#6456)", () => {
+    const root = fixture();
+    const before = createSandboxBaseImageResolutionKey(options(root));
+    sourceMocks.nearestTags.mockReturnValue(["v0.0.79"]);
+
+    expect(createSandboxBaseImageResolutionKey(options(root))).not.toBe(before);
   });
 
   it("bounds Docker platform detection before using the host fallback (#4680)", () => {

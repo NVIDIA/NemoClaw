@@ -116,11 +116,19 @@ jobs:
         run: |
           set -euo pipefail
           FERN_VERSION=$(node -p "require('./fern/fern.config.json').version")
+          FERN_ORG=$(node -p "require('./fern/fern.config.json').organization")
+          INSTANCE_PATH="${FERN_STAGING_INSTANCE#*/}"
+          if [[ "$INSTANCE_PATH" == "$FERN_STAGING_INSTANCE" ]]; then
+            INSTANCE_PATH=""
+          else
+            INSTANCE_PATH="/${INSTANCE_PATH}"
+          fi
           cd fern
           while IFS= read -r preview_id; do
             if [ -z "$preview_id" ]; then
               continue
             fi
-            npx --yes "fern-api@${FERN_VERSION}" docs preview delete --id "$preview_id"
+            preview_url="https://${FERN_ORG}-preview-${preview_id}.docs.buildwithfern.com${INSTANCE_PATH}"
+            npx --yes "fern-api@${FERN_VERSION}" docs preview delete "$preview_url"
             echo "Deleted Fern preview ${preview_id}."
           done <<< "$PREVIEW_IDS"

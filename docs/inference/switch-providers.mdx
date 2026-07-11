@@ -1,0 +1,116 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Switch Inference Providers"
+sidebar-title: "Switch Providers"
+description: "Move a NemoClaw-managed sandbox to another registered inference provider."
+description-agent: "Switches inference provider families. Use when moving a sandbox between hosted, local, or compatible provider routes."
+keywords: ["switch nemoclaw provider", "change inference provider", "nemoclaw inference set provider"]
+content:
+  type: "how_to"
+---
+import { AgentOnly } from "../_components/AgentGuide";
+
+Move a sandbox to another provider family while keeping the OpenShell route, agent configuration, and host registry aligned.
+Use onboarding first when the target provider is not registered.
+
+## Find a Registered Provider
+
+<AgentOnly variant="openclaw,hermes">
+
+List the configured provider credentials when you need the exact provider ID.
+
+```bash
+$$nemoclaw credentials list
+```
+
+`inference set` also accepts installer-facing provider names such as `anthropicCompatible`, `build`, and `custom`.
+NemoClaw normalizes an accepted alias to its canonical OpenShell provider ID and records the canonical name in the sandbox registry.
+
+If OpenShell cannot find the requested provider, NemoClaw leaves the route and sandbox state unchanged.
+Run `$$nemoclaw onboard` to register the provider, then retry the switch.
+
+</AgentOnly>
+
+## Switch the Provider at Runtime
+
+<AgentOnly variant="openclaw,hermes">
+
+Pass the target provider and model together.
+Pass `--sandbox <name>` when you do not want to use the default sandbox.
+
+```bash
+$$nemoclaw <name> shields down
+$$nemoclaw inference set --provider <provider> --model <model> --sandbox <name>
+$$nemoclaw <name> shields up
+```
+
+For OpenClaw, NemoClaw updates the provider namespace and selected model in the running configuration.
+Changes within the current API family hot-reload without replacing the gateway process.
+When the API family changes, NemoClaw commits the route and configuration, then restarts only the OpenClaw gateway and verifies its health.
+
+For Hermes, NemoClaw updates `/sandbox/.hermes/config.yaml`, including the model, base URL, API-family mode, and OpenShell proxy API-key placeholder.
+Hermes does not rebuild or restart for this runtime route change.
+
+If the in-sandbox configuration sync fails after the gateway route changes, NemoClaw keeps the gateway and host registry aligned and prints a rebuild hint.
+Run the rebuild before relying on the running agent.
+
+Use `--no-verify` only when OpenShell cannot verify the target provider at switch time and you have already confirmed its provider and credential.
+This flag does not bypass shared-gateway compatibility checks.
+
+</AgentOnly>
+
+## Recreate a Deep Agents Sandbox
+
+<AgentOnly variant="deepagents">
+
+Deep Agents uses fresh sandbox recreation for provider changes.
+The recreation validates the provider and rewrites `/sandbox/.deepagents/config.toml` with the OpenShell route.
+
+```bash
+$$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
+```
+
+</AgentOnly>
+
+## Handle Compatible Endpoints
+
+<AgentOnly variant="openclaw,hermes">
+
+When moving from another provider family to `compatible-endpoint` or `compatible-anthropic-endpoint`, provide the trusted endpoint URL and enough API metadata to record the complete route identity.
+Run this command within the shields-down window shown in the runtime switching workflow.
+
+```bash
+$$nemoclaw inference set \
+  --provider compatible-endpoint \
+  --model <model-name> \
+  --endpoint-url <trusted-url> \
+  --inference-api openai-completions \
+  --sandbox <name>
+```
+
+Supported API-family values are `openai-completions`, `anthropic-messages`, and `openai-responses`.
+For a Hermes `compatible-anthropic-endpoint` target, omit `--inference-api` because NemoClaw selects `openai-completions`.
+An explicit different API family is rejected for that route.
+
+To point a sandbox at a different custom endpoint, re-run onboarding with the new endpoint.
+A rebuild reuses the recorded endpoint and cannot change it.
+
+</AgentOnly>
+
+## Account for Shared Gateways
+
+Every sandbox registered on one OpenShell gateway must use the same provider and model.
+Custom routes must also use the same normalized endpoint and API family.
+NemoClaw includes stopped sandboxes because they depend on that route when restarted.
+
+When a route conflicts, NemoClaw exits before changing the gateway, agent configuration, or host registry and names the affected sandboxes.
+Align the routes, remove a conflicting sandbox, or onboard it with another `NEMOCLAW_GATEWAY_PORT`.
+
+Do not run `openshell inference set` directly on a shared NemoClaw gateway because that bypasses registry compatibility checks.
+
+## Related Topics
+
+- [View the Active Inference Route](view-active-inference-route) to inspect the route before and after a switch.
+- [Switch Models](switch-models) when the provider does not change.
+- [Set Up an OpenAI-Compatible Endpoint](../custom-endpoints/set-up-openai-compatible-endpoint) to register a custom route through onboarding.

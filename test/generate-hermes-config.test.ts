@@ -382,7 +382,8 @@ describe("agents/hermes/generate-config.ts", () => {
   it("generates API server config without messaging platform token blocks", () => {
     const { config, envFile } = runConfigScript();
 
-    expect(config._config_version).toBe(30);
+    expect(config._config_version).toBe(32);
+    expect(config.agent?.verify_on_stop).toBe(false);
     expect(config.display).toMatchObject({
       compact: false,
       tool_progress: "all",
@@ -926,7 +927,10 @@ describe("agents/hermes/generate-config.ts", () => {
 
     expect(config.telegram).toEqual({ require_mention: true });
     expect(config.platforms.telegram).toEqual({ enabled: true });
-    expect(config.platforms.slack).toEqual({ enabled: true });
+    expect(config.platforms.slack).toEqual({
+      enabled: true,
+      extra: { rich_blocks: true },
+    });
     expectRemotePlatformToolsets(config.platform_toolsets.telegram);
     expectRemotePlatformToolsets(config.platform_toolsets.slack);
     expect(envFile).toContain("TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN\n");
@@ -953,7 +957,10 @@ describe("agents/hermes/generate-config.ts", () => {
       NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["slack"]),
     });
 
-    expect(config.platforms.slack).toEqual({ enabled: true });
+    expect(config.platforms.slack).toEqual({
+      enabled: true,
+      extra: { rich_blocks: true },
+    });
     expect(config.platforms.api_server.enabled).toBe(true);
   });
 

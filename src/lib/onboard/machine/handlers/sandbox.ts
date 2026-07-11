@@ -64,6 +64,7 @@ export interface SandboxStateOptions<
   resumeAgentChanged: boolean;
   requestedObservabilityEnabled?: boolean | null;
   requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
+  recreateSandbox: (requested?: boolean) => boolean;
   gatewayName: string;
   session: Session | null;
   sandboxName: string | null;
@@ -152,6 +153,7 @@ export interface SandboxStateOptions<
     selectResourceProfileForSandbox(): Promise<ResourceProfile | null>;
     stopStaleDashboardListenersForSandbox(sandboxes: unknown[], sandboxName: string): void;
     listRegistrySandboxes(): { sandboxes: unknown[] };
+    reconcileRegisteredExtraProviders(gatewayName: string): readonly string[];
     createSandbox(
       gpu: Gpu,
       model: string,
@@ -421,6 +423,7 @@ class SandboxStateFlow<
       sandboxGpuConfigChanged: state.sandboxName
         ? this.deps.hasSandboxGpuDrift(state.sandboxName, this.options.sandboxGpuConfig)
         : false,
+      recreateSandboxRequested: this.options.recreateSandbox(false),
       messagingChannelConfigChanged: !this.deps.messagingChannelConfigsEqual(
         effectiveMessagingConfig,
         storedMessagingConfig,
@@ -608,6 +611,30 @@ class SandboxStateFlow<
     return state.webSearchConfig;
   }
 
+  private buildSandboxCreateIntent(
+    state: SandboxStepState<WebSearchConfig>,
+    decision: SandboxCreationDecision,
+    extraProviders: readonly string[],
+  ): SandboxCreateIntent {
+    return {
+      recreate: decision.kind !== "create",
+      toolDisclosure: toolDisclosureOrDefault(state.session?.toolDisclosure),
+      observabilityEnabled: state.session?.observabilityEnabled === true,
+      ...(this.options.endpointUrl ? { endpointUrl: this.options.endpointUrl } : {}),
+      ...(state.session?.observabilityRequestedExplicitly === true
+        ? { observabilityRequestedExplicitly: true as const }
+        : {}),
+      ...(!this.options.fromDockerfile &&
+      isDcodeAgent((this.options.agent as { name?: string } | null)?.name)
+        ? { dcodeAutoApprovalMode: this.dcodeAutoApprovalMode }
+        : {}),
+      ...(this.options.authoritativePolicyTier
+        ? { policyTier: this.options.authoritativePolicyTier }
+        : {}),
+      extraProviders,
+    };
+  }
+
   private async createAndRecordSandbox(
     state: SandboxStepState<WebSearchConfig>,
     requestedSandboxName: string,
@@ -619,6 +646,8 @@ class SandboxStateFlow<
       state.webSearchConfig as unknown as SharedWebSearchConfig | null,
       this.options.hermesToolGateways,
     );
+    const extraProviders = this.deps.reconcileRegisteredExtraProviders(this.options.gatewayName);
+    const createIntent = this.buildSandboxCreateIntent(state, decision, extraProviders);
     const resourceProfile = await this.deps.selectResourceProfileForSandbox();
     const createAndRecord = async (): Promise<SandboxStepState<WebSearchConfig>> => {
       this.assertGatewayRouteCompatible(requestedSandboxName);
@@ -658,21 +687,7 @@ class SandboxStateFlow<
             resourceProfile,
             effectiveHermesToolGateways,
             this.options.hermesAuthMethod,
-            {
-              recreate: decision.kind !== "create",
-              toolDisclosure: toolDisclosureOrDefault(state.session?.toolDisclosure),
-              observabilityEnabled: state.session?.observabilityEnabled === true,
-              ...(state.session?.observabilityRequestedExplicitly === true
-                ? { observabilityRequestedExplicitly: true as const }
-                : {}),
-              ...(!this.options.fromDockerfile &&
-              isDcodeAgent((this.options.agent as { name?: string } | null)?.name)
-                ? { dcodeAutoApprovalMode: this.dcodeAutoApprovalMode }
-                : {}),
-              ...(this.options.authoritativePolicyTier
-                ? { policyTier: this.options.authoritativePolicyTier }
-                : {}),
-            },
+            createIntent,
           ),
       );
       // createSandbox() owns the build fingerprint. In particular, reusing an

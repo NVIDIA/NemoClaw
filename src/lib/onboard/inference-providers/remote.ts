@@ -7,8 +7,13 @@
 // `onboard/bedrock-runtime.ts` exactly as the inline branch did.
 
 import { getCompatibleAnthropicOpenAiSurfaceBaseUrl } from "../../inference/config";
+import { OPENROUTER_PROVIDER_NAME } from "../../inference/openrouter";
 import { readGatewayProviderMetadata } from "../gateway-provider-metadata";
 import { deleteProviderWithRecovery, parseAttachedSandboxes } from "../sandbox-provider-cleanup";
+import {
+  gatewayReachableCompatibleEndpointUrl,
+  reuseRegisteredProviderWithGatewayEndpoint,
+} from "./compatible-endpoint-gateway-route";
 import type { RemoteProviderDeps, SetupInferenceResult } from "./types";
 
 const { probeOpenAiLikeEndpoint } = require("../../inference/onboard-probes") as {
@@ -121,6 +126,7 @@ export async function setupRemoteProviderInference(
     endpointUrl: string | null;
     credentialEnv: string | null;
     reuseGatewayCredentialWithoutLocalKey?: boolean;
+    skipHostInferenceSmoke?: boolean;
     preferredInferenceApi?: string | null;
     pinnedAddresses?: readonly string[];
   },
@@ -133,6 +139,7 @@ export async function setupRemoteProviderInference(
     endpointUrl,
     credentialEnv,
     reuseGatewayCredentialWithoutLocalKey,
+    skipHostInferenceSmoke,
     preferredInferenceApi,
     pinnedAddresses,
   } = args;
@@ -152,6 +159,7 @@ export async function setupRemoteProviderInference(
     classifyApplyFailure,
     LOCAL_INFERENCE_TIMEOUT_SECS,
     bedrockRuntimeOnboard,
+    openrouterRuntimeOnboard,
     redact,
     compactText,
   } = deps;
@@ -181,6 +189,28 @@ export async function setupRemoteProviderInference(
     log,
   });
   if (bedrockSetup.handled) return { done: true, result: bedrockSetup.result };
+  const openrouterCredentialEnv = credentialEnv || config.credentialEnv;
+  const openrouterCredentialValue =
+    provider === OPENROUTER_PROVIDER_NAME ? hydrateCredentialEnv(openrouterCredentialEnv) : null;
+  const openrouterSetup = await openrouterRuntimeOnboard.setupOpenRouterRuntimeInference({
+    sandboxName,
+    provider,
+    model,
+    credentialEnv: openrouterCredentialEnv,
+    credentialValue: openrouterCredentialValue,
+    reuseGatewayCredentialWithoutLocalKey,
+    skipHostInferenceSmoke,
+    isNonInteractive,
+    runOpenshell,
+    upsertProvider,
+    verifyInferenceRoute,
+    verifyOnboardInferenceSmoke,
+    updateSandbox: registry.updateSandbox,
+    exitProcess,
+    error,
+    log,
+  });
+  if (openrouterSetup.handled) return { done: true, result: openrouterSetup.result };
   // #6294: an OpenAI-/chat/completions-only agent (dcode) coerced off Anthropic
   // Messages must talk to the gateway route over the openai_chat_completions
   // protocol, and OpenShell routes that protocol only for providers registered
@@ -206,23 +236,18 @@ export async function setupRemoteProviderInference(
   while (true) {
     const resolvedCredentialEnv = credentialEnv || (config && config.credentialEnv);
     const resolvedEndpointUrl = endpointUrl || (config && config.endpointUrl);
+    const gatewayEndpointUrl = gatewayReachableCompatibleEndpointUrl(provider, resolvedEndpointUrl);
     let providerResult;
     if (reuseGatewayCredentialWithoutLocalKey) {
-      // This is only a last-moment existence probe. The primary authorization
-      // of the provider's non-secret credential/config binding identity is
-      // assessRecoveredProviderCredentialReuse in recovered-provider-reuse.ts.
-      const existing = runOpenshell(["provider", "get", provider], {
-        ignoreError: true,
-        suppressOutput: true,
+      providerResult = reuseRegisteredProviderWithGatewayEndpoint({
+        provider,
+        providerType: config.providerType,
+        credentialEnv: resolvedCredentialEnv,
+        endpointUrl: resolvedEndpointUrl,
+        gatewayEndpointUrl,
+        runOpenshell,
+        upsertProvider,
       });
-      providerResult =
-        existing.status === 0
-          ? { ok: true }
-          : {
-              ok: false,
-              status: existing.status || 1,
-              message: `Recovered provider '${provider}' is no longer registered in OpenShell.`,
-            };
     } else {
       const credentialValue = hydrateCredentialEnv(resolvedCredentialEnv);
       const env =
@@ -285,7 +310,7 @@ export async function setupRemoteProviderInference(
           provider,
           config.providerType,
           resolvedCredentialEnv,
-          resolvedEndpointUrl,
+          gatewayEndpointUrl,
           env,
         );
       }
@@ -310,7 +335,8 @@ export async function setupRemoteProviderInference(
       return exitProcess(providerResult.status || 1);
     }
     const argsv = ["inference", "set"];
-    if (config.skipVerify) {
+    if (config.skipVerify || gatewayEndpointUrl !== resolvedEndpointUrl) {
+      // Host-side verification cannot resolve the sandbox-only bridge URL.
       argsv.push("--no-verify");
     }
     argsv.push("--provider", provider, "--model", model);

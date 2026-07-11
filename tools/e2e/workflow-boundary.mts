@@ -61,7 +61,6 @@ const NO_IMAGE_E2E_JOBS = new Set([
   "docs-validation",
   "gateway-drift-preflight",
   "gateway-health-honest",
-  "inference-routing",
   "onboard-negative-paths",
   "openshell-version-pin",
 ]);
@@ -3487,9 +3486,7 @@ function validateJetsonRunnerDispatchGuard(errors: string[], jobs: WorkflowRecor
     asRecord(guard.env).JETSON_E2E_RUNNER_LABEL !==
     "${{ vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1' }}"
   ) {
-    errors.push(
-      "jetson-nvmap-gpu dispatch guard must receive the configured Jetson runner label",
-    );
+    errors.push("jetson-nvmap-gpu dispatch guard must receive the configured Jetson runner label");
   }
   requireRunContains(errors, guard, "allow_jetson_runner_queue=true");
   requireRunContains(errors, guard, "timeout-minutes");

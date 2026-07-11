@@ -83,6 +83,70 @@ describe("LangChain Deep Agents Code config generator", () => {
     expect(config).toContain('models = ["gpt-oss-120b"]');
   });
 
+  it("uses the native Deep Agents OpenRouter provider for OpenRouter routes (#6549)", () => {
+    const config = runGenerator({
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-ultra-550b-a55b",
+      NEMOCLAW_UPSTREAM_PROVIDER: "openrouter-api",
+    });
+
+    expect(config).toContain('default = "openrouter:nvidia/nemotron-3-ultra-550b-a55b"');
+    expect(config).toContain("[models.providers.openrouter]");
+    expect(config).toContain('models = ["nvidia/nemotron-3-ultra-550b-a55b"]');
+    expect(config).toContain('api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"');
+    expect(config).toContain('base_url = "https://inference.local/v1"');
+    expect(config).toContain(
+      "# NemoClaw provider route: inference; upstream provider: openrouter-api; API: openai-completions.",
+    );
+    expect(config).not.toContain("[models.providers.openai]");
+    expect(config).not.toContain("use_responses_api");
+    expect(config).not.toContain("force_nonempty_content");
+  });
+
+  it("uses the native OpenRouter provider for compatible-endpoint OpenRouter routes (#6549)", () => {
+    const config = runGenerator({
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-ultra-550b-a55b",
+      NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
+      NEMOCLAW_UPSTREAM_ENDPOINT_URL: "https://openrouter.ai/api/v1",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+    });
+
+    expect(config).toContain('default = "openrouter:nvidia/nemotron-3-ultra-550b-a55b"');
+    expect(config).toContain("[models.providers.openrouter]");
+    expect(config).toContain('api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"');
+    expect(config).toContain('base_url = "https://inference.local/v1"');
+    expect(config).toContain(
+      "# NemoClaw provider route: inference; upstream provider: compatible-endpoint; API: openai-completions.",
+    );
+    expect(config).not.toContain("[models.providers.openai]");
+    expect(config).not.toContain("use_responses_api");
+    expect(config).not.toContain("force_nonempty_content");
+  });
+
+  it("keeps ordinary compatible-endpoint routes on the OpenAI-compatible provider", () => {
+    const config = runGenerator({
+      NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
+      NEMOCLAW_UPSTREAM_ENDPOINT_URL: "https://example.test/v1",
+    });
+
+    expect(config).toContain('default = "openai:nvidia/nemotron-3-super-120b-a12b"');
+    expect(config).toContain("[models.providers.openai]");
+    expect(config).not.toContain("[models.providers.openrouter]");
+  });
+
+  it("rejects upstream endpoint URLs with control characters before writing config", () => {
+    const result = runGeneratorProcess({
+      NEMOCLAW_UPSTREAM_PROVIDER: "compatible-endpoint",
+      NEMOCLAW_UPSTREAM_ENDPOINT_URL: "https://example.test/v1\t[update]",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain(
+      "NEMOCLAW_UPSTREAM_ENDPOINT_URL must not contain control characters.",
+    );
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain("[update]");
+    expect(fs.existsSync(path.join(result.home, ".deepagents", "config.toml"))).toBe(false);
+  });
+
   it.each([
     "nvidia/nemotron-3-ultra-550b-a55b",
     "nvidia/nvidia/nemotron-3-ultra",

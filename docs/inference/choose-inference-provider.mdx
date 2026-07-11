@@ -1,0 +1,94 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Choose an Inference Provider"
+sidebar-title: "Choose a Provider"
+description: "Compare hosted, local, routed, and compatible inference providers available during NemoClaw onboarding."
+description-agent: "Compares NemoClaw inference provider options. Use when deciding which hosted provider, local server, model router, or compatible endpoint to select."
+keywords: ["choose inference provider", "nemoclaw providers", "hosted local inference"]
+content:
+  type: "concept"
+---
+import { AgentOnly } from "../_components/AgentGuide";
+
+Choose a provider based on where the model runs, which API it exposes, and which credential you can supply.
+NemoClaw validates the provider and model before it creates the sandbox.
+
+## Provider Support
+
+Use this status table to distinguish validated provider integrations from adapters whose behavior depends on the selected compatible implementation.
+
+{/* provider-status:begin */}
+| Provider | Status | Endpoint type | Notes |
+|----------|--------|---------------|-------|
+| NVIDIA Endpoints | Tested | OpenAI-compatible | Hosted models on integrate.api.nvidia.com |
+| OpenRouter | Tested | OpenAI-compatible | First-class onboarding route for OpenClaw, Hermes, and LangChain Deep Agents Code. NemoClaw registers the `openrouter-api` provider through OpenShell's `openai` profile with a host runtime adapter URL; host-side validation and runtime traffic send the default OpenRouter attribution headers. |
+| OpenAI | Tested | Native OpenAI-compatible | Uses OpenAI model IDs |
+| Other OpenAI-compatible endpoint | Tested with limitations | Custom OpenAI-compatible | Custom base-URL adapter for servers that implement OpenAI-compatible `/v1/chat/completions` or `/v1/responses`. Behavior on OpenAI-compatible proxies, gateways, and self-hosted implementations may vary; this row claims the adapter, not the universe of compatible endpoints. |
+| Anthropic | Tested | Native Anthropic | Uses anthropic-messages |
+| Other Anthropic-compatible endpoint | Tested with limitations | Custom Anthropic-compatible | Adapter path validated with AWS Bedrock (`src/lib/onboard/bedrock-runtime.ts`). Behavior on other Anthropic-compatible proxies and gateways may vary; this row claims the adapter, not the universe of compatible endpoints. |
+| Google Gemini | Tested | OpenAI-compatible | Uses Google's OpenAI-compatible endpoint |
+| Hermes Provider | Hermes only | OpenAI-compatible route | Available when onboarding Hermes Agent through `nemohermes` |
+| Local Ollama | Tested with limitations | Local Ollama API | Available when Ollama is installed or running on the host. Validated default models: `qwen3.6:35b` (high VRAM), `nemotron-3-nano:30b` (medium VRAM), `qwen3.5:9b` (low VRAM fallback). |
+| Local NVIDIA NIM | Experimental | Local OpenAI-compatible | Requires `NEMOCLAW_EXPERIMENTAL=1` and a NIM-capable NVIDIA GPU. Host must have the NVIDIA Container Toolkit installed and a CDI spec present (`onboard` asserts CDI presence with `assertCdiNvidiaGpuSpecPresent`, `src/lib/onboard/fatal-runtime-preflight.ts`). NIM images pull from `nvcr.io` and require NGC registry login. NemoClaw gates this path behind the experimental flag because it does not auto-select a NIM image for the host today. You must explicitly pick from the validated image list. On Linux arm64 DGX Spark and DGX Station hosts, onboarding warns that some NIM images may not publish a `linux/arm64` manifest; the warning is advisory, and the selected image pull can still fail when the registry has no matching platform manifest. Managed vLLM has host-specific default models and is not gated on the same boxes. Validated images referenced in `src/lib/inference/config.ts` and `nemoclaw/src/index.ts`: `nvidia/nemotron-3-super-120b-a12b` (default cloud model), `nvidia/nemotron-3-nano-30b-a3b`, `nvidia/llama-3.3-nemotron-super-49b-v1.5`. |
+| Local vLLM (already running) | Tested with limitations | Local OpenAI-compatible | Appears in the onboarding menu when NemoClaw detects a server already on `localhost:8000`. No flag required. Model is whatever the existing server serves. |
+| Local vLLM (managed install/start) | Tested with limitations | Local OpenAI-compatible | Appears by default on DGX Spark and DGX Station. Generic Linux NVIDIA GPU hosts require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm`. Host must have the NVIDIA Container Toolkit installed and a CDI spec present (`onboard` asserts CDI presence). NemoClaw pulls or starts the stable NGC vLLM container for each host profile. See `src/lib/inference/vllm.ts:55,177` for the pins. DGX Spark and DGX Station use `nvcr.io/nvidia/vllm:26.05.post1-py3`; generic Linux NVIDIA GPU hosts use `nvcr.io/nvidia/vllm:26.03.post1-py3`. Validated defaults are listed in `src/lib/inference/vllm-models.ts`: DGX Spark uses `nvidia/Qwen3.6-35B-A3B-NVFP4`, DGX Station uses `deepseek-ai/DeepSeek-V4-Flash`, and Linux NVIDIA GPU uses `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8`. Image pulls require NGC registry login (`docker login nvcr.io`); onboard prompts for the NGC API key when authentication is missing. |
+{/* provider-status:end */}
+
+## Hosted Providers
+
+Hosted providers use provider-managed endpoints and curated model choices.
+
+| Provider | API route | Credential | Setup guide |
+|---|---|---|---|
+| NVIDIA Endpoints | OpenAI-compatible Chat Completions | `NVIDIA_INFERENCE_API_KEY` | [Use NVIDIA Endpoints](../hosted-inference/use-nvidia-endpoints) |
+| OpenRouter | OpenAI-compatible Chat Completions | `OPENROUTER_API_KEY` | [Use OpenRouter](../hosted-inference/use-openrouter) |
+| OpenAI | Native OpenAI-compatible | `OPENAI_API_KEY` | [Use OpenAI](../hosted-inference/use-openai) |
+| Anthropic | Anthropic Messages | `ANTHROPIC_API_KEY` | [Use Anthropic](../hosted-inference/use-anthropic) |
+| Google Gemini | Google OpenAI-compatible Chat Completions | `GEMINI_API_KEY` | [Use Google Gemini](../hosted-inference/use-google-gemini) |
+
+<AgentOnly variant="hermes">
+Hermes onboarding also offers [Hermes Provider](../hosted-inference/use-hermes-provider), which uses the host OpenShell provider registered by NemoClaw.
+</AgentOnly>
+
+## Local Providers
+
+Local providers run on the host and keep inference traffic on infrastructure that you manage.
+
+<AgentOnly variant="openclaw,hermes">
+| Provider | When it appears | Setup guide |
+|---|---|---|
+| Local Ollama | Ollama is installed or running on the host. | [Use Ollama](../local-inference/set-up-ollama) |
+| Local vLLM already running | NemoClaw detects a server on `localhost:8000`. | [Set Up vLLM](../local-inference/set-up-vllm) |
+| Local vLLM managed install | The host matches a supported GPU profile and any required opt-in is present. | [Set Up vLLM](../local-inference/set-up-vllm) |
+| Local NVIDIA NIM | A NIM-capable NVIDIA GPU is present and experimental setup is enabled. | [Set Up NVIDIA NIM](../local-inference/set-up-nvidia-nim) |
+</AgentOnly>
+
+<AgentOnly variant="deepagents">
+| Provider | When it appears | Setup guide |
+|---|---|---|
+| Local vLLM already running | NemoClaw detects a server on `localhost:8000`. | [Set Up vLLM](../local-inference/set-up-vllm) |
+| Local vLLM managed install | The host matches a supported GPU profile and any required opt-in is present. | [Set Up vLLM](../local-inference/set-up-vllm) |
+| Local NVIDIA NIM | A NIM-capable NVIDIA GPU is present and experimental setup is enabled. | [Set Up NVIDIA NIM](../local-inference/set-up-nvidia-nim) |
+</AgentOnly>
+
+## Compatible Endpoints
+
+Use a compatible endpoint when you operate a server or gateway that implements a supported inference API.
+
+| Provider option | Required API | Credential | Setup guide |
+|---|---|---|---|
+| Other OpenAI-compatible endpoint | `/v1/chat/completions`, with optional `/v1/responses` selection | `COMPATIBLE_API_KEY` | [Set Up an OpenAI-Compatible Endpoint](../custom-endpoints/set-up-openai-compatible-endpoint) |
+| Other Anthropic-compatible endpoint | `/v1/messages` for supported agents or `/v1/chat/completions` for OpenAI-compatible-only agents | `COMPATIBLE_ANTHROPIC_API_KEY` | [Set Up an Anthropic-Compatible Endpoint](../custom-endpoints/set-up-anthropic-compatible-endpoint) |
+
+Behavior can vary across compatible proxies, gateways, and self-hosted implementations.
+The documented support applies to the NemoClaw adapter rather than every compatible endpoint implementation.
+
+## Routed Inference
+
+Use [Model Router](../hosted-inference/set-up-model-router) when you want a host-side router to select from a configured model pool.
+The router registers as an OpenAI-compatible provider while the sandbox remains on `inference.local`.
+
+## Next Step
+
+After you select a provider class, [Choose a Model](choose-model) to compare curated hosted models by task fit.

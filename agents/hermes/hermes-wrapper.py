@@ -289,9 +289,9 @@ _VALUE_FLAGS = {
     "--resume": "--resume",
 }
 # Keep this allowlist aligned with the top-level flags accepted by the pinned
-# Hermes Agent CLI in agents/hermes/Dockerfile.base (HERMES_VERSION=v2026.6.19,
-# HERMES_SEMVER=0.17.0) and agents/hermes/manifest.yaml (expected_version
-# "0.17.0"). Unknown flags deliberately fail closed by passing the original argv
+# Hermes Agent CLI in agents/hermes/Dockerfile.base (HERMES_VERSION=v2026.7.1,
+# HERMES_SEMVER=0.18.0) and agents/hermes/manifest.yaml (expected_version
+# "0.18.0"). Unknown flags deliberately fail closed by passing the original argv
 # through to upstream Hermes.
 _BOOLEAN_FLAGS = {
     "--worktree",
