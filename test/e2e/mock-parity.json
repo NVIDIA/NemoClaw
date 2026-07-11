@@ -16,7 +16,7 @@
     },
     {
       "live": "test/e2e/live/network-policy.test.ts",
-      "fast": ["test/validate-blueprint.test.ts", "test/validate-config-schemas.test.ts"]
+      "fast": ["test/validate-blueprint.test.ts"]
     },
     {
       "live": "test/e2e/live/onboard-repair.test.ts",
