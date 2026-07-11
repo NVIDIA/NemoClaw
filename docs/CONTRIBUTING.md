@@ -54,7 +54,7 @@ To print the pinned Fern CLI version, run:
 npm run docs:deps
 ```
 
-To validate the Fern configuration and migrated MDX pages, run:
+To validate the Fern configuration and MDX pages, run:
 
 ```bash
 npm run docs
@@ -233,7 +233,6 @@ Remove them during review.
 
 - Use tables for structured comparisons. Keep tables simple (no nested formatting).
 - Use Fern callout components (`<Note>`, `<Tip>`, `<Warning>`) for callouts in MDX pages, not bold text.
-- Use MyST admonitions (`:::{tip}`, `:::{note}`, `:::{warning}`) only in legacy `.md` pages that have not migrated yet.
 - Avoid nested admonitions.
 - Do not number section titles. Write "Deploy a Gateway" not "Section 1: Deploy a Gateway" or "Step 3: Verify."
 - Do not use colons in titles. Write "Deploy and Manage Gateways" not "Gateways: Deploy and Manage."

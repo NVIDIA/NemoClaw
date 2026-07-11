@@ -18,6 +18,7 @@ function resumeSignals(overrides: Partial<SandboxResumeSignals> = {}): SandboxRe
     inferenceRouteConfigChanged: false,
     webSearchConfigChanged: false,
     sandboxGpuConfigChanged: false,
+    recreateSandboxRequested: false,
     messagingChannelConfigChanged: false,
     hermesToolGatewayConfigChanged: false,
     toolDisclosureMigrationNeeded: false,
@@ -35,6 +36,7 @@ describe("decideSandboxResume", () => {
   it.each([
     ["agent", { resumeAgentChanged: true }, false],
     ["web search", { webSearchConfigChanged: true }, true],
+    ["explicit recreate", { recreateSandboxRequested: true }, false],
     ["sandbox GPU", { sandboxGpuConfigChanged: true }, true],
     ["messaging", { messagingChannelConfigChanged: true }, true],
     ["Hermes tool gateway", { hermesToolGatewayConfigChanged: true }, true],

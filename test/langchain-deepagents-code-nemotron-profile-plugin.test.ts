@@ -39,14 +39,15 @@ const UNMODIFIED_BOOTSTRAP_SHA256 =
   "005a91e7fc4ca6b21220673dd9d02d6686bf63e1e4f1102d124b01f96886efcf";
 const CANONICAL_MODEL_SPEC = "nvidia:nvidia/nemotron-3-ultra-550b-a55b";
 const MANAGED_MODEL_ALIASES = [
+  "openrouter:nvidia/nemotron-3-ultra-550b-a55b",
   "openai:nvidia/nemotron-3-ultra-550b-a55b",
   "openai:nvidia/nvidia/nemotron-3-ultra",
-  "openrouter:nvidia/nemotron-3-ultra-550b-a55b",
   "openrouter:nvidia/nvidia/nemotron-3-ultra",
 ] as const;
 const MANAGED_MODEL_IDS = [
   ...new Set(MANAGED_MODEL_ALIASES.map((alias) => alias.replace(/^(?:openai|openrouter):/, ""))),
 ];
+const BUILTIN_ONLY_PROFILE_STATE = MANAGED_MODEL_ALIASES.map((_alias, index) => index === 0);
 
 const NATIVE_PROFILE_SOURCE = `"""Focused native Nemotron profile fixture."""
 
@@ -419,20 +420,21 @@ from deepagents.profiles.harness.harness_profiles import HarnessProfile, _HARNES
 class NativeMiddleware:
     pass
 
+aliases = ${JSON.stringify(MANAGED_MODEL_ALIASES)}
 canonical = HarnessProfile(extra_middleware=[NativeMiddleware()])
 if ${(options.withCanonical ?? true) ? "True" : "False"}:
     _HARNESS_PROFILES[${JSON.stringify(CANONICAL_MODEL_SPEC)}] = canonical
+    _HARNESS_PROFILES[aliases[0]] = canonical
 unrelated = object()
 if ${options.withUnrelated ? "True" : "False"}:
     _HARNESS_PROFILES["openai:gpt-4.1-mini"] = unrelated
 
 state = ${JSON.stringify(options.aliasState ?? "")}
-aliases = ${JSON.stringify(MANAGED_MODEL_ALIASES)}
 if state == "complete":
     for key in aliases:
         _HARNESS_PROFILES[key] = canonical
 elif state == "partial":
-    _HARNESS_PROFILES[aliases[0]] = canonical
+    _HARNESS_PROFILES[aliases[1]] = canonical
 elif state == "conflict":
     for key in aliases:
         _HARNESS_PROFILES[key] = object()
@@ -728,7 +730,7 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
     );
   });
 
-  it("idempotently registers both aliases without changing wheel sources", () => {
+  it("layers managed aliases onto the built-in OpenRouter profile idempotently (#6653)", () => {
     const fixture = makePluginFixture();
     const result = runPlugin(fixture, { registerCalls: 2 });
 
@@ -848,7 +850,7 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
 
     expect(result.status).not.toBe(0);
     expect(result.probe.error).toContain(message);
-    expect(result.probe.aliases).toEqual(MANAGED_MODEL_ALIASES.map(() => false));
+    expect(result.probe.aliases).toEqual(BUILTIN_ONLY_PROFILE_STATE);
     expectOfficialSourcesUnchanged(fixture);
   });
 
@@ -867,7 +869,7 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
     expect(result.probe.error).toContain(
       "imported deepagents package does not match the reviewed distribution",
     );
-    expect(result.probe.aliases).toEqual(MANAGED_MODEL_ALIASES.map(() => false));
+    expect(result.probe.aliases).toEqual(BUILTIN_ONLY_PROFILE_STATE);
     expectOfficialSourcesUnchanged(fixture);
   });
 
@@ -887,7 +889,7 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
 
     expect(result.status).not.toBe(0);
     expect(result.probe.error).toMatch(/does not match the reviewed Deep Agents/i);
-    expect(result.probe.aliases).toEqual(MANAGED_MODEL_ALIASES.map(() => false));
+    expect(result.probe.aliases).toEqual(BUILTIN_ONLY_PROFILE_STATE);
     expectOfficialSourcesUnchanged(fixture, nativeSource, bootstrapSource);
   });
 
@@ -904,7 +906,7 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
 
     expect(result.status).not.toBe(0);
     expect(result.probe.error).toMatch(/not a trusted regular file/i);
-    expect(result.probe.aliases).toEqual(MANAGED_MODEL_ALIASES.map(() => false));
+    expect(result.probe.aliases).toEqual(BUILTIN_ONLY_PROFILE_STATE);
   });
 
   it("rejects a missing canonical profile without creating aliases", () => {
@@ -928,7 +930,7 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
     expect(result.status).not.toBe(0);
     expect(result.probe.error).toMatch(/partial|conflict/i);
     expect(result.probe.registryKeys).toHaveLength(
-      aliasState === "partial" ? 2 : MANAGED_MODEL_ALIASES.length + 1,
+      aliasState === "partial" ? 3 : MANAGED_MODEL_ALIASES.length + 1,
     );
     expectOfficialSourcesUnchanged(fixture);
   });
@@ -942,9 +944,11 @@ describe("LangChain Deep Agents Code managed Nemotron profile plugin (#6424)", (
 
     expect(result.status).not.toBe(0);
     expect(result.probe.error).toContain("injected registration failure");
-    expect(result.probe.aliases).toEqual(MANAGED_MODEL_ALIASES.map(() => false));
+    expect(result.probe.aliases).toEqual(BUILTIN_ONLY_PROFILE_STATE);
     expect(result.probe.unrelatedPresent).toBe(true);
-    expect(result.probe.registryKeys).toEqual([CANONICAL_MODEL_SPEC, "openai:gpt-4.1-mini"].sort());
+    expect(result.probe.registryKeys).toEqual(
+      [CANONICAL_MODEL_SPEC, MANAGED_MODEL_ALIASES[0], "openai:gpt-4.1-mini"].sort(),
+    );
     expectOfficialSourcesUnchanged(fixture);
   });
 });
