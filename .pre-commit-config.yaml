@@ -171,7 +171,7 @@ repos:
         name: Repository checks
         entry: npm run checks
         language: system
-        files: ^(bin/.*\.(cjs|js|mjs)$|src/.*\.(cts|mts|ts|tsx)$|scripts/.*\.(cjs|cts|js|mjs|mts|ts|tsx)$|test/.*\.(cjs|cts|js|mjs|mts|ts|tsx)$|nemoclaw/src/.*\.(cts|mts|ts|tsx)$)
+        files: ^(\.pre-commit-config\.yaml$|Dockerfile(?:\.base)?$|agents/openclaw/manifest\.yaml$|agents/hermes/(?:Dockerfile(?:\.base)?|manifest\.yaml|mcp-config-transaction\.py)$|nemoclaw-blueprint/blueprint\.yaml$|nemoclaw/package\.json$|scripts/(?:brev-launchable-ci-cpu|check-installer-hash|install-openshell|update-hermes-agent)\.sh$|src/lib/actions/sandbox/openshell-child-visible-credentials\.v[0-9]+\.[0-9]+\.[0-9]+\.json$|bin/.*\.(cjs|js|mjs)$|src/.*\.(cts|mts|ts|tsx)$|scripts/.*\.(cjs|cts|js|mjs|mts|ts|tsx)$|test/.*\.(cjs|cts|js|mjs|mts|ts|tsx)$|nemoclaw/src/.*\.(cts|mts|ts|tsx)$)
         pass_filenames: false
         priority: 10
 
