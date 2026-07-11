@@ -23,6 +23,7 @@ import {
   getImageGlibcVersion,
   type ResolveBaseImageOptions,
   resolveSandboxBaseImage,
+  SandboxBaseImageResolutionError,
   SANDBOX_BASE_TAG,
   type SandboxBaseImageResolution,
   type SandboxBaseImageResolutionMetadata,
@@ -255,7 +256,12 @@ export function ensureAgentBaseImage(
     }
     try {
       const pinnedBaseImageTag = pinAgentSandboxBaseImageRef(agent.name, forceBuildTag);
-      const resolved = resolveExactImage(pinnedBaseImageTag);
+      let resolved: SandboxBaseImageResolution | null = null;
+      try {
+        resolved = resolveExactImage(pinnedBaseImageTag);
+      } catch (error) {
+        if (!(error instanceof SandboxBaseImageResolutionError)) throw error;
+      }
       if (!resolved) {
         throw new Error(
           `Built ${agent.displayName} base image failed the required runtime compatibility checks`,

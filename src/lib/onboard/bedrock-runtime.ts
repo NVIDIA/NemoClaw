@@ -139,7 +139,7 @@ export async function setupBedrockRuntimeInference(
       endpointUrl?: string | null;
       credentialEnv?: string | null;
       forceOpenAiLike?: boolean;
-    }) => void;
+    }) => void | Promise<void>;
     ensureAdapter?: typeof ensureBedrockRuntimeAdapter;
     updateSandbox?: typeof registry.updateSandbox;
   } & BedrockRuntimeDependencies,
@@ -213,7 +213,7 @@ export async function setupBedrockRuntimeInference(
   }
 
   options.verifyInferenceRoute(options.provider, options.model);
-  options.verifyOnboardInferenceSmoke({
+  await options.verifyOnboardInferenceSmoke({
     provider: options.provider,
     model: options.model,
     endpointUrl: adapter.localBaseUrl,

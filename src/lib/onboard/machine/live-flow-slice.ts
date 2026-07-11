@@ -11,6 +11,15 @@ import type {
 import { DuplicateOnboardSequencePhaseError, type OnboardSequencePhase } from "./sequence-runner";
 import type { OnboardMachineState } from "./types";
 
+export type InvalidatedOnboardStateResultRecorder = (
+  result: OnboardStateResult,
+  options: {
+    reason: "already_at_target" | "source_state_mismatch";
+    currentState: OnboardMachineState;
+    sourceState?: string | null;
+  },
+) => Promise<unknown>;
+
 export interface LiveOnboardFlowSliceOptions<Context> {
   context: Context;
   runtime: OnboardMachineRunnerRuntime;
@@ -23,7 +32,8 @@ export interface LiveOnboardFlowSliceOptions<Context> {
     runtime: OnboardMachineRunnerRuntime;
     phases: readonly OnboardSequencePhase<Context>[];
   }): Promise<OnboardMachineRunnerResult<Context>>;
-  applyCompatibleResult(result: OnboardStateResult): Promise<unknown>;
+  recordStateResult(result: OnboardStateResult): Promise<unknown>;
+  recordInvalidatedStateResult: InvalidatedOnboardStateResultRecorder;
 }
 
 export class EmptyLiveOnboardFlowSliceResultError extends Error {
@@ -63,16 +73,52 @@ function asResultArray(
   return results;
 }
 
+function resultSourceState(result: OnboardStateResult): string | null {
+  const source = result.metadata?.state;
+  return typeof source === "string" ? source : null;
+}
+
+async function recordRecomputedResult<Context>(
+  options: Pick<
+    LiveOnboardFlowSliceOptions<Context>,
+    "runtime" | "recordStateResult" | "recordInvalidatedStateResult"
+  > & { phaseState: OnboardSequencePhase<Context>["state"]; result: OnboardStateResult },
+): Promise<void> {
+  if (options.result.type !== "transition") {
+    await options.recordStateResult(options.result);
+    return;
+  }
+
+  const current = await options.runtime.session();
+  const sourceState = resultSourceState(options.result) ?? options.phaseState;
+  if (current.machine.state === options.result.next) {
+    await options.recordInvalidatedStateResult(options.result, {
+      reason: "already_at_target",
+      currentState: current.machine.state,
+      sourceState,
+    });
+    return;
+  }
+  if (sourceState && current.machine.state !== sourceState) {
+    await options.recordInvalidatedStateResult(options.result, {
+      reason: "source_state_mismatch",
+      currentState: current.machine.state,
+      sourceState,
+    });
+    return;
+  }
+  await options.recordStateResult(options.result);
+}
+
 /**
  * Run a live onboard flow slice through the strict runner when the current
  * machine state is exactly at the slice entry point. Declared compatibility
- * states use the compatibility path so repair/backstop phase bodies still
- * execute during resume or when a saved session has already advanced beyond the
- * slice. Compatibility is limited to caller-declared states so earlier or
+ * states use the recompute path so repair/backstop phase bodies still execute
+ * during resume or when a saved session has already advanced beyond the slice.
+ * Recomputed results are applied only when they still match the durable machine
+ * state; stale transition results are explicitly invalidated with source/target
+ * diagnostics. Compatibility is limited to caller-declared states so earlier or
  * unexpected machine states fail before running slice side effects out of order.
- * Callers supply the compatibility recorder so each live slice keeps using the
- * runtime boundary that validates or intentionally skips stale legacy step
- * results.
  */
 export async function runLiveOnboardFlowSlice<Context>({
   context,
@@ -82,7 +128,8 @@ export async function runLiveOnboardFlowSlice<Context>({
   compatibilityWhenState = [],
   phaseProgress = createPhaseProgressReporter(),
   runSlice,
-  applyCompatibleResult,
+  recordStateResult,
+  recordInvalidatedStateResult,
 }: LiveOnboardFlowSliceOptions<Context>): Promise<OnboardMachineRunnerResult<Context>> {
   const current = await runtime.session();
   if (
@@ -105,7 +152,13 @@ export async function runLiveOnboardFlowSlice<Context>({
     const phase = phaseProgress.wrap(rawPhase);
     const phaseResult = await phase.run(nextContext);
     for (const result of asResultArray(phaseResult.result, phase.state)) {
-      await applyCompatibleResult(result);
+      await recordRecomputedResult({
+        runtime,
+        recordStateResult,
+        recordInvalidatedStateResult,
+        phaseState: phase.state,
+        result,
+      });
     }
     nextContext = phaseResult.context;
   }

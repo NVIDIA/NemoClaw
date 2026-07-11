@@ -2,27 +2,51 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Live E2E: OpenClaw TUI/chat correlation regression guard (#2603 + #3145).
+ * Live E2E: OpenClaw TUI/chat correlation regression guards (#2603 + #3145 + #6194).
  *
  * Focused coverage slice for the protocol/history assertions migrated from
  * entrypoint now hands off to this live target.
  *
  * Covered here: ordered, non-empty, correlated replies plus ordered,
- * non-duplicated user turns against a real cloud OpenClaw sandbox. TUI
- * rendering indicators and visible tool-call status stay out of scope.
+ * non-duplicated user turns against a real cloud OpenClaw sandbox, then
+ * terminal TUI input after the visible `connected idle` state.
  */
 
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { containsReplyTokenAllowingWhitespace } from "../../helpers/e2e-answer-assertions.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
+import { resultText } from "../fixtures/clients/command.ts";
+import {
+  type SandboxClient,
+  sandboxAccessEnv,
+  trustedSandboxShellScript,
+} from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { NemoClawInstance } from "../fixtures/phases/onboarding.ts";
 import { ubuntuRepoDocker } from "../registry/matrix.ts";
+import { stripTerminalControl } from "../support/issue-4434-tui-capture.ts";
+import {
+  buildIssue6194OpenShellApprovalExpectScript,
+  buildIssue6194TuiExpectScript,
+  ISSUE6194_NETWORK_APPROVAL_ENDPOINT,
+  ISSUE6194_NETWORK_APPROVAL_HOST,
+  ISSUE6194_OPENSHELL_APPROVAL_TIMEOUT_BUFFER_SEC,
+  ISSUE6194_TUI_SESSION_PREFIX,
+  ISSUE6194_TUI_TIMEOUT_SEC,
+  precreateIssue6194Capture,
+  readIssue6194Capture,
+} from "./issue-6194-tui-expect.ts";
+import { verifyNemoClawRefFidelity } from "./openclaw-tui-ref-fidelity.ts";
+import {
+  classifyIssue2603Run,
+  type Issue2603AttemptOutcome,
+  normalizeIssue2603Trace,
+} from "./openclaw-tui-run-classification.ts";
 
 // Reuses the standard ubuntu-repo-docker environment with the
 // `cloud-openclaw` onboarding profile (already in
@@ -222,7 +246,7 @@ function analyzeIssue2603Trace({
 // The zero-chat-events failure is an observability race at the live
 // repro boundary: OpenClaw accepts the chat.send requests, but the
 // websocket client captures no chat stream events before assertions.
-// The source boundary is the pinned OpenClaw 2026.5.x gateway runtime,
+// The source boundary is the pinned OpenClaw gateway runtime declared above,
 // so this NemoClaw-side E2E retries once on a fresh session before
 // asserting. Remove when OpenClaw exposes a deterministic chat
 // subscription/readiness ack or the 10x sweep stops flagging this
@@ -238,6 +262,42 @@ function looksLikeEventCaptureFailure(repro: LiveIssue2603Trace): boolean {
     analysis.uncorrelatedReplies.length === 0 &&
     analysis.missingReplies.length === repro.sentRuns.length
   );
+}
+
+function issue2603AttemptOutcome(
+  repro: LiveIssue2603Trace,
+  index: number,
+): Issue2603AttemptOutcome & { attempt: number; eventCount: number; chatEventCount: number } {
+  const failedAttempt = {
+    attempt: index + 1,
+    captureFailure: false,
+    productRegression: false,
+    error: repro.error,
+    eventCount: repro.events?.length ?? 0,
+    chatEventCount: 0,
+  };
+  if (repro.error) return failedAttempt;
+
+  const analysis = analyzeIssue2603Trace(repro);
+  const expectedReplyOrder = repro.sentRuns.map((entry) => entry.replyMarker);
+  const expectedUserOrder = repro.sentRuns.map((entry) => entry.promptToken);
+  const productRegression =
+    analysis.emptyFinalsForSubmittedRuns.length > 0 ||
+    analysis.missingReplies.length > 0 ||
+    analysis.duplicateReplies.length > 0 ||
+    analysis.uncorrelatedReplies.length > 0 ||
+    analysis.missingUserTurns.length > 0 ||
+    analysis.duplicateUserTurns.length > 0 ||
+    analysis.finalReplyOrder.join("\0") !== expectedReplyOrder.join("\0") ||
+    analysis.userTurnOrder.join("\0") !== expectedUserOrder.join("\0");
+
+  return {
+    attempt: index + 1,
+    captureFailure: looksLikeEventCaptureFailure(repro),
+    productRegression,
+    eventCount: repro.events.length,
+    chatEventCount: analysis.chatEvents.length,
+  };
 }
 
 // ─── In-sandbox websocket repro driver ─────────────────────────────
@@ -317,6 +377,8 @@ ws.on("error", (error) => {
 });
 
 ws.on("open", async () => {
+  const sentRuns = [];
+  let historyMessages = [];
   try {
     await request("connect", {
       minProtocol: 4,
@@ -336,7 +398,6 @@ ws.on("open", async () => {
 
     await request("chat.history", { sessionKey, limit: 20 });
 
-    const sentRuns = [];
     const messages = [
       [
         "A2603",
@@ -375,12 +436,13 @@ ws.on("open", async () => {
     }
 
     const history = await request("chat.history", { sessionKey, limit: 50 });
+    historyMessages = history.messages ?? [];
     console.log(` +
-    "`ISSUE2603_RESULT ${JSON.stringify({ sessionKey, sentRuns, events, historyMessages: history.messages ?? [] })}`" +
+    "`ISSUE2603_RESULT ${JSON.stringify({ sessionKey, sentRuns, events, historyMessages })}`" +
     String.raw`);
   } catch (error) {
     console.log(` +
-    "`ISSUE2603_RESULT ${JSON.stringify({ error: String(error), events })}`" +
+    "`ISSUE2603_RESULT ${JSON.stringify({ error: String(error), sentRuns, events, historyMessages })}`" +
     String.raw`);
   } finally {
     ws.close();
@@ -460,7 +522,9 @@ async function runLiveIssue2603Repro(
         `live repro did not emit ISSUE2603_RESULT.\nstdout:\n${driver.stdout}\nstderr:\n${driver.stderr}`,
       );
     }
-    return JSON.parse(resultLine.slice("ISSUE2603_RESULT ".length)) as LiveIssue2603Trace;
+    return normalizeIssue2603Trace<SentRun, GatewayEvent, ChatMessage>(
+      JSON.parse(resultLine.slice("ISSUE2603_RESULT ".length)) as Partial<LiveIssue2603Trace>,
+    );
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
@@ -486,17 +550,40 @@ async function runLiveIssue2603ReproWithEventCaptureRetry(
 // ─── The live regression guard ─────────────────────────────────────
 
 test(
-  "openclaw-tui-chat-correlation keeps rapid TUI and webchat sends correlated on a real OpenClaw sandbox (#2603, #3145)",
-  async ({ artifacts, environment, onboard, sandbox, secrets }) => {
-    secrets.required("NVIDIA_INFERENCE_API_KEY");
+  "openclaw-tui-chat-correlation keeps rapid sends correlated and accepts terminal input after connected idle (#2603, #3145, #6194)",
+  async ({ artifacts, environment, host, onboard, sandbox, secrets }) => {
+    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
 
     await artifacts.target.declare({
       id: "openclaw-tui-chat-correlation",
-      boundary: "openclaw-gateway-websocket",
-      issues: ["#2603", "#3145"],
+      boundary: [
+        "openclaw-gateway-websocket",
+        "openclaw-tui-terminal-after-connected-idle",
+        "openshell-network-rule-terminal-approval",
+      ],
+      issues: ["#2603", "#3145", "#6194"],
       ownerIssue: "#4347",
       pinnedOpenClawVersion: EXPECTED_OPENCLAW_VERSION,
+      historicalReproScope:
+        "#6194 reported NemoClaw v0.0.72 as the known-bad release; this live target guards the current branch against the same post-idle TUI regression instead of reinstalling the old bad version.",
     });
+
+    const checkoutRef = await host.command("git", ["rev-parse", "HEAD"], {
+      artifactName: "nemoclaw-checkout-ref",
+      cwd: REPO_ROOT,
+      timeoutMs: 30_000,
+    });
+    expect(checkoutRef.exitCode, resultText(checkoutRef)).toBe(0);
+    const refEvidence = verifyNemoClawRefFidelity({
+      expectedRef: process.env.NEMOCLAW_TUI_EXPECTED_CHECKOUT_SHA,
+      actualRef: checkoutRef.stdout.trim(),
+      cliPath: host.commandPath,
+      expectedCliPath: CLI_ENTRYPOINT,
+    });
+    await artifacts.writeJson("nemoclaw-ref-fidelity.json", refEvidence);
+    console.info(
+      `NEMOCLAW_REF_FIDELITY expected=${refEvidence.expectedRef} actual=${refEvidence.actualRef} cli=${refEvidence.cliPath}`,
+    );
 
     // Setup ────────────────────────────────────────────────────────
     const ready = await environment.assertReady(ENVIRONMENT);
@@ -504,9 +591,14 @@ test(
       sandboxName: SANDBOX_NAME,
     });
 
-    // Assertion: openclaw-version-pinned. The regression target only
-    // reproduces against the bundled OpenClaw build; if the sandbox installed
-    // a different version, the rest of the test is meaningless.
+    // Assertion: openclaw-version-pinned. The issue reporter used NemoClaw
+    // v0.0.72 to demonstrate the historical failure. Reinstalling that known
+    // bad release in PR CI would prove the old bug, not the proposed guard.
+    // This target provisions the current branch and validates the bundled
+    // OpenClaw build before exercising the same post-connected-idle terminal
+    // paths so future changes cannot reintroduce #6194. OpenShell's separate
+    // terminal UI owns network-rule approvals; this OpenClaw TUI flow must not
+    // rely on a hosted model choosing a network tool that may not exist.
     //
     // Every sandbox.* call must pass `env: buildAvailabilityProbeEnv()`:
     // ShellProbe.run spawns with an empty env when none is provided,
@@ -526,33 +618,300 @@ test(
         `actual: ${versionResult.stdout}`,
     ).toContain(EXPECTED_OPENCLAW_VERSION);
 
+    // Drive the #6194 terminal flow before websocket correlation so the
+    // post-idle TUI regression guard is independent of any gateway/session
+    // state created by the #2603/#3145 websocket replay below. Keeping both
+    // flows in this target reuses the same provisioned sandbox and avoids a
+    // second long cloud setup for a tests-only PR.
+    const captureDir = mkdtempSync(join(tmpdir(), "nemoclaw-issue6194-tui-"));
+    const captureFile = join(captureDir, "openclaw-tui-capture.log");
+    const expectScript = artifacts.pathFor("issue6194-openclaw-tui.expect");
+    const tuiSession = `${ISSUE6194_TUI_SESSION_PREFIX}-${instance.sandboxName}-${Date.now()}-${randomUUID()}`;
+    precreateIssue6194Capture(captureFile);
+    writeFileSync(expectScript, buildIssue6194TuiExpectScript(), { mode: 0o700 });
+    try {
+      const tui = await host.command("expect", [expectScript], {
+        artifactName: "issue6194-openclaw-tui-post-idle",
+        env: {
+          ...sandboxAccessEnv(),
+          NEMOCLAW_ISSUE_6194_SANDBOX: instance.sandboxName,
+          NEMOCLAW_ISSUE_6194_CAPTURE: captureFile,
+          NEMOCLAW_ISSUE_6194_SESSION: tuiSession,
+          NEMOCLAW_ISSUE_6194_TUI_TIMEOUT: String(ISSUE6194_TUI_TIMEOUT_SEC),
+        },
+        redactionValues: [apiKey],
+        timeoutMs: (ISSUE6194_TUI_TIMEOUT_SEC + 30) * 1000,
+      });
+      const tuiCapture = readIssue6194Capture(captureFile);
+      const rawCapture = tuiCapture.contents;
+      const redactedCapture = secrets.redact(rawCapture, [apiKey]);
+      const plainCapture = stripTerminalControl(redactedCapture);
+      const combined = `${resultText(tui)}\n${plainCapture}`;
+      const redactedArtifact = await artifacts.writeText(
+        "issue6194-openclaw-tui-capture.log",
+        redactedCapture,
+      );
+      const plainArtifact = await artifacts.writeText(
+        "issue6194-openclaw-tui-capture.plain.log",
+        plainCapture,
+      );
+      await artifacts.writeJson("issue6194-target-result.json", {
+        id: "issue-6194-tui-post-connected-idle",
+        expectExitCode: tui.exitCode,
+        captureExists: tuiCapture.exists,
+        captureNonEmpty: plainCapture.length > 0,
+        captureHasMarkers: plainCapture.includes("ISSUE6194_MARK"),
+        connectedIdleInitial: combined.includes("ISSUE6194_MARK connected_idle_initial"),
+        chatReply: combined.includes("ISSUE6194_MARK chat_reply"),
+        connectedIdleAfterChat: combined.includes("ISSUE6194_MARK connected_idle_after_chat"),
+        slashStatusOutput: combined.includes("ISSUE6194_MARK slash_status_output"),
+        connectedIdleAfterStatus: combined.includes("ISSUE6194_MARK connected_idle_after_status"),
+        cleanExit: combined.includes("ISSUE6194_MARK clean_exit"),
+      });
+
+      expect(tuiCapture.exists, "TUI expect capture must exist").toBe(true);
+      expect(plainCapture.length, "TUI expect capture must not be empty").toBeGreaterThan(0);
+      expect(plainCapture, "TUI expect capture must include expect-script markers").toContain(
+        "ISSUE6194_MARK",
+      );
+      expect(
+        readFileSync(redactedArtifact, "utf8"),
+        "published ANSI capture must redact API key",
+      ).not.toContain(apiKey);
+      expect(
+        readFileSync(plainArtifact, "utf8"),
+        "published plain capture must redact API key",
+      ).not.toContain(apiKey);
+      expect(tui.exitCode, combined).toBe(0);
+      expect(combined, "TUI must reach connected idle before post-idle input").toContain(
+        "ISSUE6194_MARK connected_idle_initial",
+      );
+      expect(combined, "post-idle chat must return a visible reply before timeout").toContain(
+        "ISSUE6194_MARK chat_reply",
+      );
+      expect(
+        combined,
+        "TUI must return to connected idle after the post-idle chat reply",
+      ).toContain("ISSUE6194_MARK connected_idle_after_chat");
+      expect(
+        combined,
+        "post-idle slash command must render status output before timeout",
+      ).toContain("ISSUE6194_MARK slash_status_output");
+      expect(combined, "rendered status output must include its sandbox field").toMatch(
+        /NemoClaw Status[\s\S]*Sandbox:/u,
+      );
+      expect(combined, "TUI must return to connected idle after /nemoclaw status").toContain(
+        "ISSUE6194_MARK connected_idle_after_status",
+      );
+      expect(combined, "post-idle Ctrl+C must close the TUI session").toContain(
+        "ISSUE6194_MARK clean_exit",
+      );
+
+      // OpenShell's terminal UI owns network-rule approval. Exercise that
+      // boundary separately with a direct sandbox curl so hosted models that
+      // expose no network tools cannot make this assertion nondeterministic.
+      const approvalCaptureFile = join(captureDir, "openshell-approval-capture.log");
+      const triggerCaptureFile = join(captureDir, "openshell-network-trigger.log");
+      const ruleCaptureFile = join(captureDir, "openshell-pending-rule.log");
+      const policyCaptureFile = join(captureDir, "openshell-policy-retry.log");
+      const approvalExpectScript = artifacts.pathFor("issue6194-openshell-approval.expect");
+      precreateIssue6194Capture(approvalCaptureFile);
+      precreateIssue6194Capture(triggerCaptureFile);
+      precreateIssue6194Capture(ruleCaptureFile);
+      precreateIssue6194Capture(policyCaptureFile);
+      writeFileSync(approvalExpectScript, buildIssue6194OpenShellApprovalExpectScript(), {
+        mode: 0o700,
+      });
+      const approval = await host.command("expect", [approvalExpectScript], {
+        artifactName: "issue6194-openshell-network-approval",
+        env: {
+          ...sandboxAccessEnv(),
+          NEMOCLAW_ISSUE_6194_SANDBOX: instance.sandboxName,
+          NEMOCLAW_ISSUE_6194_CAPTURE: approvalCaptureFile,
+          NEMOCLAW_ISSUE_6194_TRIGGER_CAPTURE: triggerCaptureFile,
+          NEMOCLAW_ISSUE_6194_RULE_CAPTURE: ruleCaptureFile,
+          NEMOCLAW_ISSUE_6194_POLICY_CAPTURE: policyCaptureFile,
+          NEMOCLAW_ISSUE_6194_NETWORK_ENDPOINT: ISSUE6194_NETWORK_APPROVAL_ENDPOINT,
+          NEMOCLAW_ISSUE_6194_NETWORK_HOST: ISSUE6194_NETWORK_APPROVAL_HOST,
+          NEMOCLAW_ISSUE_6194_TUI_TIMEOUT: String(ISSUE6194_TUI_TIMEOUT_SEC),
+        },
+        redactionValues: [apiKey],
+        timeoutMs:
+          (ISSUE6194_TUI_TIMEOUT_SEC + ISSUE6194_OPENSHELL_APPROVAL_TIMEOUT_BUFFER_SEC) * 1000,
+      });
+      const approvalCapture = readIssue6194Capture(approvalCaptureFile);
+      const triggerCapture = readIssue6194Capture(triggerCaptureFile);
+      const ruleCapture = readIssue6194Capture(ruleCaptureFile);
+      const policyCapture = readIssue6194Capture(policyCaptureFile);
+      const redactedApprovalCapture = secrets.redact(approvalCapture.contents, [apiKey]);
+      const redactedTriggerCapture = secrets.redact(triggerCapture.contents, [apiKey]);
+      const redactedRuleCapture = secrets.redact(ruleCapture.contents, [apiKey]);
+      const redactedPolicyCapture = secrets.redact(policyCapture.contents, [apiKey]);
+      const plainApprovalCapture = stripTerminalControl(redactedApprovalCapture);
+      const approvedPolicyVersion =
+        redactedPolicyCapture.match(/ISSUE6194_APPROVED_POLICY_VERSION=([0-9]+)/u)?.[1] ?? null;
+      const activePolicyVersion =
+        redactedPolicyCapture.match(/ISSUE6194_ACTIVE_POLICY_VERSION=([0-9]+)/u)?.[1] ?? null;
+      const observedPolicyStatus =
+        redactedPolicyCapture.match(/ISSUE6194_POLICY_STATUS=([a-z]+)/u)?.[1] ?? null;
+      const policyStatusAttempts =
+        redactedPolicyCapture.match(/ISSUE6194_POLICY_STATUS_ATTEMPT=/gu)?.length ?? 0;
+      const approvalCombined = `${resultText(approval)}\n${plainApprovalCapture}\n${redactedTriggerCapture}\n${redactedRuleCapture}\n${redactedPolicyCapture}`;
+      await artifacts.writeText(
+        "issue6194-openshell-approval-capture.log",
+        redactedApprovalCapture,
+      );
+      await artifacts.writeText(
+        "issue6194-openshell-approval-capture.plain.log",
+        plainApprovalCapture,
+      );
+      await artifacts.writeText("issue6194-openshell-network-trigger.log", redactedTriggerCapture);
+      await artifacts.writeText("issue6194-openshell-pending-rule.log", redactedRuleCapture);
+      await artifacts.writeText("issue6194-openshell-policy-retry.log", redactedPolicyCapture);
+      await artifacts.writeJson("issue6194-approval-result.json", {
+        id: "issue-6194-openshell-network-approval",
+        expectExitCode: approval.exitCode,
+        approvalCaptureExists: approvalCapture.exists,
+        approvalCaptureNonEmpty: plainApprovalCapture.length > 0,
+        triggerCaptureExists: triggerCapture.exists,
+        ruleCaptureExists: ruleCapture.exists,
+        ruleCaptureNonEmpty: redactedRuleCapture.length > 0,
+        policyCaptureExists: policyCapture.exists,
+        policyCaptureNonEmpty: redactedPolicyCapture.length > 0,
+        approvedPolicyVersion,
+        activePolicyVersion,
+        observedPolicyStatus,
+        policyStatusAttempts,
+        policyStatusLoaded: redactedPolicyCapture.includes("ISSUE6194_POLICY_STATUS=loaded"),
+        policyVersionActive:
+          approvedPolicyVersion !== null && approvedPolicyVersion === activePolicyVersion,
+        postApprovalEndpoint: ISSUE6194_NETWORK_APPROVAL_ENDPOINT,
+        postApprovalExpectedHttpStatus: 401,
+        postApprovalHttpStatus401: redactedPolicyCapture.includes(
+          "ISSUE6194_POLICY_HTTP_STATUS=401",
+        ),
+        pendingQueueEmpty: approvalCombined.includes("ISSUE6194_MARK pending_queue_empty"),
+        requestTriggered: approvalCombined.includes("ISSUE6194_MARK network_request_triggered"),
+        requestCompleted: approvalCombined.includes("ISSUE6194_MARK network_request_completed"),
+        singletonRule: approvalCombined.includes("ISSUE6194_MARK network_rule_singleton"),
+        rulesFocused: approvalCombined.includes("ISSUE6194_MARK network_rules_focused"),
+        endpointRendered: approvalCombined.includes("ISSUE6194_MARK network_rule_endpoint"),
+        detailBinary: approvalCombined.includes("ISSUE6194_MARK network_rule_detail_binary"),
+        approvalProcessed: approvalCombined.includes("ISSUE6194_MARK network_approval_processed"),
+        policyLoaded: approvalCombined.includes("ISSUE6194_MARK network_policy_loaded"),
+        policyUpdated: approvalCombined.includes("ISSUE6194_MARK network_policy_updated"),
+        cleanExit: approvalCombined.includes("ISSUE6194_MARK openshell_clean_exit"),
+      });
+
+      expect(approvalCapture.exists, "OpenShell approval capture must exist").toBe(true);
+      expect(
+        plainApprovalCapture.length,
+        "OpenShell approval capture must not be empty",
+      ).toBeGreaterThan(0);
+      expect(policyCapture.exists, "post-approval policy retry capture must exist").toBe(true);
+      expect(
+        redactedPolicyCapture.length,
+        "post-approval policy retry capture must not be empty",
+      ).toBeGreaterThan(0);
+      expect(approval.exitCode, approvalCombined).toBe(0);
+      expect(
+        approvalCombined,
+        "direct curl must create exactly one matching pending rule",
+      ).toContain("ISSUE6194_MARK network_rule_singleton");
+      expect(approvalCombined, "OpenShell must render the exact blocked endpoint").toContain(
+        "ISSUE6194_MARK network_rule_detail_endpoint",
+      );
+      expect(
+        approvalCombined,
+        "OpenShell must attribute the rule to the direct curl binary",
+      ).toContain("ISSUE6194_MARK network_rule_detail_binary");
+      expect(approvalCombined, "OpenShell approval input must be processed").toContain(
+        "ISSUE6194_MARK network_approval_processed",
+      );
+      expect(
+        approvedPolicyVersion,
+        "approval acknowledgement must identify its assigned policy revision",
+      ).not.toBeNull();
+      expect(
+        redactedPolicyCapture,
+        "acknowledged policy revision must reach loaded status before the retry",
+      ).toContain("ISSUE6194_POLICY_STATUS=loaded");
+      expect(
+        activePolicyVersion,
+        "loaded active policy revision must match the approval acknowledgement",
+      ).toBe(approvedPolicyVersion);
+      expect(
+        approvalCombined,
+        "post-approval probe must wait for the acknowledged policy revision to become active",
+      ).toContain("ISSUE6194_MARK network_policy_loaded");
+      expect(
+        redactedPolicyCapture,
+        "approved running policy must allow the exact post-approval Atlassian probe",
+      ).toContain("ISSUE6194_POLICY_HTTP_STATUS=401");
+      expect(
+        approvalCombined,
+        "post-approval probe must independently prove the running policy was updated",
+      ).toContain("ISSUE6194_MARK network_policy_updated");
+      expect(approvalCombined, "OpenShell terminal must exit cleanly after approval").toContain(
+        "ISSUE6194_MARK openshell_clean_exit",
+      );
+    } finally {
+      rmSync(captureDir, { recursive: true, force: true });
+    }
+
     // Drive the websocket repro and capture the trace ──────────────
     const { repro, attempts } = await runLiveIssue2603ReproWithEventCaptureRetry(
       sandbox,
       instance.sandboxName,
     );
+    const attemptDetails = attempts.map(issue2603AttemptOutcome);
+    const classification = classifyIssue2603Run(attemptDetails);
+    const analysis = analyzeIssue2603Trace(repro);
+    const { chatEvents: observedChatEvents, ...correlationAnalysis } = analysis;
+    const failureSummary = secrets.redact(
+      JSON.stringify(
+        {
+          sentRuns: repro.sentRuns,
+          eventCount: repro.events.length,
+          observedChatEvents,
+          correlationAnalysis,
+          attemptDetails,
+          classification,
+          error: repro.error,
+        },
+        null,
+        2,
+      ),
+      [apiKey],
+    );
 
     await artifacts.writeJson("issue2603-trace.json", {
       sentRuns: repro.sentRuns,
       eventCount: repro.events?.length ?? 0,
+      observedChatEvents,
+      correlationAnalysis,
       attempts: attempts.length,
+      attemptDetails,
+      classification,
       error: repro.error,
     });
 
-    if (repro.error) {
-      throw new Error(`live repro failed before assertions: ${repro.error}`);
+    switch (classification) {
+      case "infrastructure_setup_failure":
+        throw new Error(
+          `INFRASTRUCTURE SETUP FAILURE: live repro failed before assertions. ${failureSummary}`,
+        );
+      case "infrastructure_capture_failure":
+        throw new Error(
+          `INFRASTRUCTURE CAPTURE FAILURE: ${attempts.length} attempt(s) observed no chat events for their submitted runs. ${failureSummary}`,
+        );
+      case "recovered_infrastructure_capture":
+        console.warn("ISSUE2603_CLASSIFICATION recovered infrastructure capture failure on retry");
+        break;
+      case "passed":
+      case "product_regression":
+        break;
     }
-
-    const analysis = analyzeIssue2603Trace(repro);
-    const failureSummary = JSON.stringify(
-      {
-        sentRuns: repro.sentRuns,
-        eventCount: repro.events.length,
-        analysis,
-      },
-      null,
-      2,
-    );
 
     // #2603 protocol/history subset — every submitted run produces a
     // non-empty final, every reply correlates to the run that accepted

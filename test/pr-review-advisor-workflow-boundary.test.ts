@@ -12,14 +12,24 @@ import { validatePrReviewAdvisorWorkflowBoundary } from "../tools/pr-review-advi
 const ROOT = path.resolve(import.meta.dirname, "..");
 
 function prepareTargetCheckoutScript(): string {
+  return workflowStepScript("Prepare target PR checkout");
+}
+
+function workflowStepScript(name: string): string {
   const workflow = YAML.parse(
     fs.readFileSync(path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"), "utf8"),
   ) as { jobs?: { review?: { steps?: Array<{ name?: string; run?: string }> } } };
-  const step = workflow.jobs?.review?.steps?.find(
-    (candidate) => candidate.name === "Prepare target PR checkout",
-  );
+  const step = workflow.jobs?.review?.steps?.find((candidate) => candidate.name === name);
   expect(step?.run).toEqual(expect.any(String));
   return step!.run!;
+}
+
+function writeFakeCommand(binDir: string, name: string): void {
+  fs.writeFileSync(
+    path.join(binDir, name),
+    `#!/bin/bash\nprintf '${name} %s\\n' "$*" >> "$CALL_LOG"\n`,
+    { mode: 0o755 },
+  );
 }
 
 function runPrepareTargetCheckout(env: {
@@ -57,8 +67,220 @@ function runPrepareTargetCheckout(env: {
 }
 
 describe("PR review advisor workflow boundary", () => {
+  it("installs the grep dependency when the trusted runner lacks it", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-install-"));
+    const binDir = path.join(tmp, "bin");
+    const callLog = path.join(tmp, "calls.log");
+    const rgTemplate = path.join(tmp, "rg-template");
+    fs.mkdirSync(binDir);
+    for (const name of ["npm", "rm", "ln"]) writeFakeCommand(binDir, name);
+    fs.writeFileSync(rgTemplate, '#!/bin/bash\nprintf \'rg %s\\n\' "$*" >> "$CALL_LOG"\n', {
+      mode: 0o755,
+    });
+    fs.writeFileSync(
+      path.join(binDir, "sudo"),
+      `#!/bin/bash
+printf 'sudo %s\\n' "$*" >> "$CALL_LOG"
+if [[ "$*" == *"apt-get install"* ]]; then
+  /bin/cp "$RG_TEMPLATE" "$FAKE_BIN/rg"
+  /bin/chmod +x "$FAKE_BIN/rg"
+fi
+`,
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = spawnSync("/bin/bash", ["-c", workflowStepScript("Install Pi SDK")], {
+        cwd: ROOT,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          ADVISOR_DIR: path.join(tmp, "advisor"),
+          CALL_LOG: callLog,
+          FAKE_BIN: binDir,
+          PATH: binDir,
+          PI_SDK_VERSION: "test-version",
+          RIPGREP_VERSION: "14.1.0-1",
+          RG_TEMPLATE: rgTemplate,
+          RUNNER_TEMP: path.join(tmp, "runner"),
+        },
+      });
+      const calls = fs.readFileSync(callLog, "utf8").trim().split(/\r?\n/u);
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(calls).toEqual(
+        expect.arrayContaining([
+          "sudo apt-get update -qq",
+          "sudo apt-get install -y --no-install-recommends ripgrep=14.1.0-1",
+          "rg --version",
+          expect.stringMatching(/^npm install .*--ignore-scripts/u),
+        ]),
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("keeps the workflow inside the trusted-code boundary", () => {
     expect(validatePrReviewAdvisorWorkflowBoundary()).toEqual([]);
+  });
+
+  it("requires one advisor lane to publish the PR comment", () => {
+    const source = fs.readFileSync(
+      path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"),
+      "utf8",
+    );
+    const cases = [
+      {
+        workflow: source.replace("publish_comment: true", "publish_comment: false"),
+        expected: "advisor matrix must publish exactly one PR comment",
+      },
+      {
+        workflow: source.replace("publish_comment: false", "publish_comment: true"),
+        expected: "advisor matrix must publish exactly one PR comment",
+      },
+      {
+        workflow: source.replace("            publish_comment: false\n", ""),
+        expected: "advisor matrix entry 2 missing boolean publish_comment",
+      },
+    ];
+
+    for (const { workflow, expected } of cases) {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-publisher-"));
+      const workflowPath = path.join(tmp, "workflow.yaml");
+      fs.writeFileSync(workflowPath, workflow);
+      try {
+        expect(validatePrReviewAdvisorWorkflowBoundary(workflowPath)).toContain(expected);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("keeps comment publication gated to the publishing advisor lane", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-publisher-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = fs
+      .readFileSync(path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"), "utf8")
+      .replace(" && matrix.advisor.publish_comment }}", " }}");
+    fs.writeFileSync(workflowPath, workflow);
+
+    try {
+      expect(validatePrReviewAdvisorWorkflowBoundary(workflowPath)).toContain(
+        "Post PR review advisor comment must run only for the publishing advisor lane",
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps failures non-blocking only for non-publishing advisor lanes", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-publisher-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = fs
+      .readFileSync(path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"), "utf8")
+      .replace(
+        "continue-on-error: ${{ !matrix.advisor.publish_comment }}",
+        "continue-on-error: false",
+      );
+    fs.writeFileSync(workflowPath, workflow);
+
+    try {
+      expect(validatePrReviewAdvisorWorkflowBoundary(workflowPath)).toContain(
+        "review job failures must be non-blocking only for non-publishing advisor lanes",
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("pins previous-review context to the publishing workflow", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-publisher-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = fs
+      .readFileSync(path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"), "utf8")
+      .replace(
+        "PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW: ${{ matrix.advisor.publish_comment }}",
+        "PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW: true",
+      )
+      .replace(
+        'PR_REVIEW_ADVISOR_WORKFLOW_NAME: "PR Review / Advisor"',
+        'PR_REVIEW_ADVISOR_WORKFLOW_NAME: "Other Workflow"',
+      );
+    fs.writeFileSync(workflowPath, workflow);
+
+    try {
+      expect(validatePrReviewAdvisorWorkflowBoundary(workflowPath)).toEqual(
+        expect.arrayContaining([
+          "review job env.PR_REVIEW_ADVISOR_WORKFLOW_NAME must be PR Review / Advisor",
+          "review job env.PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW must be ${{ matrix.advisor.publish_comment }}",
+        ]),
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a workflow that masks an incomplete advisor analysis", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-outcome-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = YAML.parse(
+      fs.readFileSync(path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"), "utf8"),
+    ) as { jobs: { review: { steps: Array<{ name?: string }> } } };
+    workflow.jobs.review.steps = workflow.jobs.review.steps.filter(
+      (step) => step.name !== "Verify advisor analysis outcome",
+    );
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      expect(validatePrReviewAdvisorWorkflowBoundary(workflowPath)).toEqual([
+        "missing workflow step: Verify advisor analysis outcome",
+      ]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an outcome check whose failure is ignored", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-outcome-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = YAML.parse(
+      fs.readFileSync(path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"), "utf8"),
+    ) as {
+      jobs: { review: { steps: Array<{ name?: string; "continue-on-error"?: boolean }> } };
+    };
+    const outcome = workflow.jobs.review.steps.find(
+      (step) => step.name === "Verify advisor analysis outcome",
+    );
+    outcome!["continue-on-error"] = true;
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      expect(validatePrReviewAdvisorWorkflowBoundary(workflowPath)).toEqual([
+        "Verify advisor analysis outcome must not continue on error",
+      ]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an unpinned runtime package fallback", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-boundary-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = YAML.parse(
+      fs.readFileSync(path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"), "utf8"),
+    ) as { jobs: { review: { steps: Array<{ name?: string; run?: string }> } } };
+    const install = workflow.jobs.review.steps.find((step) => step.name === "Install Pi SDK");
+    install!.run = install!.run!.replace('"ripgrep=${RIPGREP_VERSION}"', "ripgrep");
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      expect(validatePrReviewAdvisorWorkflowBoundary(workflowPath)).toEqual([
+        "step 'Install Pi SDK' run script must include sudo apt-get install -y --no-install-recommends \"ripgrep=${RIPGREP_VERSION}\"",
+      ]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("rejects malformed manual target inputs before invoking git", () => {
@@ -115,10 +337,6 @@ describe("PR review advisor workflow boundary", () => {
     const workflowPath = path.join(tmp, "workflow.yaml");
     const workflow = fs
       .readFileSync(path.join(ROOT, ".github", "workflows", "pr-review-advisor.yaml"), "utf-8")
-      .replace(
-        'comment_marker: "<!-- nemoclaw-pr-review-advisor-nemotron-ultra -->"',
-        'comment_marker: "<!-- nemoclaw-pr-review-advisor -->"',
-      )
       .replace("artifact_dir: pr-review-advisor-nemotron-ultra", "artifact_dir: pr-review-advisor")
       .replace(
         "artifact_name: pr-review-advisor-nemotron-ultra",
@@ -135,7 +353,6 @@ describe("PR review advisor workflow boundary", () => {
           "advisor matrix field model must be unique: openai/openai/gpt-5.5",
           "advisor matrix field artifact_dir must be unique: pr-review-advisor",
           "advisor matrix field artifact_name must be unique: pr-review-advisor",
-          "advisor matrix field comment_marker must be unique: <!-- nemoclaw-pr-review-advisor -->",
           "step 'Post PR review advisor comment' run script must include --title \"$PR_REVIEW_ADVISOR_COMMENT_TITLE\"",
         ]),
       );
@@ -188,10 +405,12 @@ jobs:
           "workflow must run on pull_request, not only trusted-target events",
           "workflow must not run untrusted PR code under pull_request_target",
           "workflow permissions.contents must be read",
-          "review job must not be globally continue-on-error",
+          "review job failures must be non-blocking only for non-publishing advisor lanes",
           "PR checkout must use the pull request head SHA as inert analysis data",
           "Run PR review advisor must receive PR_REVIEW_ADVISOR_API_KEY only from secrets.PR_REVIEW_ADVISOR_API_KEY",
           "Run PR review advisor must not receive OPENAI_API_KEY",
+          "Run PR review advisor must continue-on-error until summaries, comments, and artifacts are published",
+          "missing workflow step: Verify advisor analysis outcome",
         ]),
       );
       expect(errors.some((error) => error.includes("full commit SHA"))).toBe(true);

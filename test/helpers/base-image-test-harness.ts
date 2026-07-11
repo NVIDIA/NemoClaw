@@ -76,6 +76,7 @@ export function withMockedDocker<T>(
     dockerRmiMock: ReturnType<typeof vi.fn>;
     dockerTagMock: ReturnType<typeof vi.fn>;
     resolveSandboxBaseImageMock: ReturnType<typeof vi.fn>;
+    SandboxBaseImageResolutionError: SandboxBaseImageModule["SandboxBaseImageResolutionError"];
     root: string;
   }) => T,
 ): T {
@@ -134,6 +135,7 @@ export function withMockedDocker<T>(
       dockerRmiMock,
       dockerTagMock,
       resolveSandboxBaseImageMock,
+      SandboxBaseImageResolutionError: sandboxBaseImageModule.SandboxBaseImageResolutionError,
       root: runnerModule.ROOT,
     });
   } finally {

@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createSession, type Session, type SessionUpdates } from "../../state/onboard-session";
+import { recordInvalidatedTargets } from "../__test-helpers__/machine-recorders";
 import {
   type CoreOnboardFlowPhaseOptions,
   createCoreOnboardFlowPhases,
@@ -91,6 +92,7 @@ function createPhases(
         requiredEndpointUrl: null,
         requiredInferenceApi: null,
       }),
+      getSandboxRecoveryAuthority: (): "missing" => "missing",
       withGatewayRouteMutationLock: async <T>(
         _gatewayName: string,
         operation: () => Promise<T> | T,
@@ -160,6 +162,7 @@ function createPhases(
     },
     sandbox: {
       resumeAgentChanged: false,
+      recreateSandbox: () => false,
       controlUiPort: null,
       rootDir: "/repo",
     },
@@ -205,6 +208,7 @@ function createPhases(
       selectResourceProfileForSandbox: vi.fn(async () => null),
       stopStaleDashboardListenersForSandbox: vi.fn(),
       listRegistrySandboxes: () => ({ sandboxes: [] }),
+      reconcileRegisteredExtraProviders: vi.fn(() => []),
       createSandbox: vi.fn(async () => "created-sandbox"),
       updateSandboxRegistry: vi.fn(),
       getSandboxAgentRegistryFields: () => ({ agent: "openclaw" }),
@@ -301,6 +305,7 @@ describe("core onboard flow phases", () => {
       "nemoclaw",
       expect.any(Function),
       expect.any(Function),
+      expect.any(String),
     );
   });
 
@@ -360,7 +365,11 @@ describe("core onboard flow phases", () => {
       "HERMES_API_KEY",
       "api_key",
       ["nous-web"],
-      { gatewayName: "nemoclaw", allowToolsIncompatible: false },
+      {
+        gatewayName: "nemoclaw",
+        allowToolsIncompatible: false,
+        reservationSessionId: session.sessionId,
+      },
     );
     expect(result.context.hermesToolGateways).toEqual(["nous-web"]);
 
@@ -436,6 +445,9 @@ describe("core onboard flow phases", () => {
       recordStateResult: async () => {
         throw new Error("compatibility recorder should not run");
       },
+      recordInvalidatedStateResult: async () => {
+        throw new Error("invalidation recorder should not run on fresh strict runner path");
+      },
     });
 
     expect(calls).toEqual(["provider_selection", "sandbox"]);
@@ -478,6 +490,7 @@ describe("core onboard flow phases", () => {
       recordStateResult: async (result) => {
         if (result.type === "transition") recorded.push(result.next);
       },
+      recordInvalidatedStateResult: recordInvalidatedTargets(recorded),
     });
 
     expect(recorded).toEqual(["sandbox", "openclaw"]);
@@ -519,6 +532,7 @@ describe("core onboard flow phases", () => {
       recordStateResult: async (result) => {
         recorded.push((result as ReturnType<typeof advanceTo>).next);
       },
+      recordInvalidatedStateResult: recordInvalidatedTargets(recorded),
     });
 
     expect(recorded).toEqual(["sandbox", "openclaw"]);
@@ -551,6 +565,7 @@ describe("core onboard flow phases", () => {
         phases: [phase],
         resume: true,
         recordStateResult: async () => undefined,
+        recordInvalidatedStateResult: recordInvalidatedTargets([]),
       }),
     ).rejects.toThrow("Unexpected onboarding live flow state before slice entry");
     expect(phase.run).not.toHaveBeenCalled();
@@ -610,17 +625,7 @@ describe("core onboard flow phases", () => {
       resume: false,
       recordStateResult: async (stateResult: OnboardStateResult) => {
         if (stateResult.type !== "transition") return runtimeSession;
-        const source =
-          stateResult.metadata && typeof stateResult.metadata.state === "string"
-            ? stateResult.metadata.state
-            : null;
-        if (
-          runtimeSession.machine.state === stateResult.next ||
-          source !== runtimeSession.machine.state
-        ) {
-          skipped.push(`${source ?? "unknown"}->${stateResult.next}`);
-          return runtimeSession;
-        }
+        const source = stateResult.metadata?.state;
         applied.push(`${source}->${stateResult.next}`);
         runtimeSession = createSession({
           machine: {
@@ -630,6 +635,11 @@ describe("core onboard flow phases", () => {
             revision: runtimeSession.machine.revision + 1,
           },
         });
+        return runtimeSession;
+      },
+      recordInvalidatedStateResult: async (stateResult, invalidation) => {
+        if (stateResult.type !== "transition") return runtimeSession;
+        skipped.push(`${invalidation.sourceState ?? "unknown"}->${stateResult.next}`);
         return runtimeSession;
       },
     });

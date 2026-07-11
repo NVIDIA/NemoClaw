@@ -16,7 +16,7 @@ const HERMES_BASE_DOCKERFILE = path.join(
   "Dockerfile.base",
 );
 const HERMES_MANIFEST = path.join(import.meta.dirname, "..", "agents", "hermes", "manifest.yaml");
-const TARGET_TAG = "v2026.6.19";
+const TARGET_TAG = "v2026.7.1";
 
 const CURRENT_INSTALLED_BASE = [
   "# Calver tag v2026.6.5 = Hermes Agent v0.16.0.",
@@ -88,7 +88,7 @@ printf 'fake archive' > "$output"
     );
     writeExecutable(
       path.join(fakeBin, "tar"),
-      "#!/usr/bin/env bash\nprintf 'version = \"0.17.0\"\\n'\n",
+      "#!/usr/bin/env bash\nprintf 'version = \"0.18.0\"\\n'\n",
     );
     writeExecutable(path.join(fakeBin, "npm"), "#!/usr/bin/env bash\nprintf 'sha512-test\\n'\n");
     writeExecutable(
@@ -107,7 +107,7 @@ esac
 set -euo pipefail
 printf '%s|%s\\n' "\${NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF:-}" "$*" >> "$FAKE_NEMOHERMES_LOG"
 if [[ "$*" == "hermes exec -- hermes --version" ]]; then
-  printf '0.17.0\\n'
+  printf '0.18.0\\n'
 fi
 `,
     );
@@ -130,7 +130,7 @@ fi
       expect(run.status, `${run.stdout}\n${run.stderr}`).toBe(0);
       expect(fs.readFileSync(dockerLog, "utf8")).toContain(`tag ${baseRef} ${pinnedRef}`);
       expect(fs.readFileSync(nemohermesLog, "utf8")).toContain(`${pinnedRef}|hermes rebuild`);
-      expect(run.stdout).toContain("OK: sandbox reports Hermes Agent v0.17.0");
+      expect(run.stdout).toContain("OK: sandbox reports Hermes Agent v0.18.0");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

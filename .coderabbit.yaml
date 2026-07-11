@@ -24,6 +24,30 @@ reviews:
   # them from each PR diff and the current workflows instead of a duplicated,
   # manually synchronized path-to-job catalog.
   path_instructions:
+    - path: "docs/**"
+      instructions: &fern-doc-links |
+        Review internal documentation links as Fern published routes, not as
+        source-file-relative paths.
+
+        - Resolve a link with the enclosing section slugs and page slug declared
+          in `docs/index.yml`. A valid route can differ from the target MDX file's
+          directory, and shared pages can be published from generated
+          `_build/agent-variants/*.generated.mdx` navigation entries.
+        - Account for the OpenClaw, Hermes, and Deep Agents navigation variants and
+          `<AgentOnly>` filtering. A route only needs to exist for every variant in
+          which the link is rendered.
+        - Treat extensionless route-style links as intentional. Do not suggest an
+          `.mdx` path or a source-directory-relative replacement merely because no
+          matching source file exists at that relative path.
+        - Before reporting a broken internal route or redirect, resolve it the same
+          way as `scripts/check-docs-published-routes.ts` and check the redirects in
+          `fern/docs.yml`. Flag a missing published route, missing generated-page
+          source, invalid relevant-variant route, or invalid anchor, but do not
+          report a route as broken solely because its filesystem path is absent.
+
+    - path: "fern/docs.yml"
+      instructions: *fern-doc-links
+
     - path: "src/**"
       instructions: |
         Apply a migration-completion review whenever a PR introduces a

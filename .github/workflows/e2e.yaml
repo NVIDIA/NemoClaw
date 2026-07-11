@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 name: E2E
-run-name: ${{ inputs.risk_correlation != '' && format('E2E risk {0}', inputs.risk_correlation) || format('E2E {0}', github.ref_name) }}
+run-name: "${{ inputs.checkout_sha != '' && format('E2E PR #{0} ({1})', inputs.pr_number, inputs.correlation_id) || format('E2E {0}', github.ref_name) }}"
 
 on:
   schedule:
@@ -15,10 +15,15 @@ on:
         default: ""
         type: string
       jobs:
-        description: "Optional comma-separated free-standing live E2E job ids. Empty runs default-enabled jobs only when targets is also empty; explicit-only jobs openshell-gateway-auth-contract, mcp-bridge-dev, hermes-gpu-startup, sandbox-rlimits-connect, and jetson-nvmap-gpu are skipped unless selected."
+        description: "Optional comma-separated E2E test IDs. Empty runs default-enabled tests only when targets is also empty; explicit-only tests openshell-gateway-auth-contract, mcp-bridge-dev, hermes-gpu-startup, sandbox-rlimits-connect, and jetson-nvmap-gpu are skipped unless selected."
         required: false
         default: ""
         type: string
+      allow_jetson_runner_queue:
+        description: "Repository administrators only: before setting true for jetson-nvmap-gpu, confirm an online Jetson runner in the authoritative NVIDIA/NemoClaw Settings -> Actions -> Runners inventory; queued jobs do not honor timeout-minutes before assignment."
+        required: false
+        default: false
+        type: boolean
       pr_number:
         description: Optional PR number for selective-dispatch result comments.
         required: false
@@ -30,45 +35,41 @@ on:
         default: false
         type: boolean
       checkout_sha:
-        description: Current main commit selected by the trusted post-merge shadow controller.
+        description: PR head commit selected by the controller.
         required: false
         default: ""
         type: string
-      risk_plan_hash:
-        description: Deterministic post-merge risk-plan hash for shadow evidence correlation.
+      plan_hash:
+        description: SHA-256 of the selected E2E plan.
         required: false
         default: ""
         type: string
-      risk_correlation:
-        description: UUIDv4 correlation id for an exact-commit shadow risk run.
+      correlation_id:
+        description: Run correlation ID (UUIDv4).
         required: false
         default: ""
         type: string
-      risk_shadow:
-        description: Mark this selective run as post-merge risk-gate shadow evidence.
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
-  group: e2e-${{ github.ref }}-${{ inputs.risk_shadow && github.run_id || inputs.targets || 'supported' }}-${{ inputs.risk_shadow && 'risk-shadow' || inputs.jobs || 'all-jobs' }}
-  cancel-in-progress: false
+  group: e2e-${{ github.ref }}-${{ inputs.checkout_sha != '' && format('pr-{0}', inputs.pr_number) || inputs.targets || 'supported' }}-${{ inputs.checkout_sha != '' && 'pr-gate' || inputs.jobs || 'all-jobs' }}
+  cancel-in-progress: ${{ inputs.checkout_sha != '' }}
 
 env:
   NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
-  NEMOCLAW_E2E_RISK_PLAN_HASH: ${{ inputs.risk_plan_hash }}
-  NEMOCLAW_E2E_RISK_CORRELATION: ${{ inputs.risk_correlation }}
-  NEMOCLAW_E2E_RISK_SHARD: default
-  NEMOCLAW_E2E_RISK_SHADOW: ${{ inputs.risk_shadow && '1' || '0' }}
+  NEMOCLAW_E2E_PLAN_HASH: ${{ inputs.plan_hash }}
+  NEMOCLAW_E2E_CORRELATION_ID: ${{ inputs.correlation_id }}
+  NEMOCLAW_E2E_SHARD: default
 
 jobs:
   generate-matrix:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
+      test_matrix: ${{ steps.matrix.outputs.test_matrix }}
       hermes_selected: ${{ steps.matrix.outputs.hermes_selected }}
       explicit_only_jobs: ${{ steps.matrix.outputs.explicit_only_jobs }}
     steps:
@@ -78,29 +79,36 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Validate exact-commit dispatch
-        if: ${{ inputs.checkout_sha != '' || inputs.risk_plan_hash != '' || inputs.risk_correlation != '' || inputs.risk_shadow }}
+      - name: Validate controller dispatch
+        if: ${{ inputs.checkout_sha != '' }}
         env:
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
           JOBS: ${{ inputs.jobs }}
-          PLAN_HASH: ${{ inputs.risk_plan_hash }}
-          RISK_CORRELATION: ${{ inputs.risk_correlation }}
-          RISK_SHADOW: ${{ inputs.risk_shadow }}
+          PLAN_HASH: ${{ inputs.plan_hash }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          CORRELATION_ID: ${{ inputs.correlation_id }}
           TARGETS: ${{ inputs.targets }}
           WORKFLOW_EVENT: ${{ github.event_name }}
           WORKFLOW_REF: ${{ github.ref }}
-          WORKFLOW_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          [[ "$WORKFLOW_EVENT" == "workflow_dispatch" && "$WORKFLOW_REF" == "refs/heads/main" ]] || { echo "::error::exact-commit runs require a workflow_dispatch from main"; exit 1; }
-          [[ "$RISK_SHADOW" == "true" ]] || { echo "::error::exact-commit inputs require risk_shadow=true"; exit 1; }
+          [[ "$WORKFLOW_EVENT" == "workflow_dispatch" && "$WORKFLOW_REF" == "refs/heads/main" ]] || { echo "::error::PR E2E runs must be dispatched from main"; exit 1; }
           [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::checkout_sha must be a lowercase 40-character SHA"; exit 1; }
-          [[ "$CHECKOUT_SHA" == "$WORKFLOW_SHA" ]] || { echo "::error::checkout_sha must equal the current main workflow commit"; exit 1; }
-          [[ "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]] || { echo "::error::checked-out HEAD does not match checkout_sha"; exit 1; }
-          git merge-base --is-ancestor "$CHECKOUT_SHA" origin/main || { echo "::error::checkout_sha must already be reachable from main"; exit 1; }
-          [[ "$PLAN_HASH" =~ ^[a-f0-9]{64}$ ]] || { echo "::error::risk_plan_hash must be a lowercase SHA-256"; exit 1; }
-          [[ "$RISK_CORRELATION" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]] || { echo "::error::risk_correlation must be a lowercase UUIDv4"; exit 1; }
-          [[ -n "$JOBS" && -z "$TARGETS" ]] || { echo "::error::shadow risk runs require selective jobs and forbid targets/fan-out"; exit 1; }
+          [[ "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]] || { echo "::error::checked-out commit does not match checkout_sha"; exit 1; }
+          [[ "$PLAN_HASH" =~ ^[a-f0-9]{64}$ ]] || { echo "::error::plan_hash must be a lowercase SHA-256"; exit 1; }
+          [[ "$CORRELATION_ID" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]] || { echo "::error::correlation_id must be a lowercase UUIDv4"; exit 1; }
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "::error::pr_number must be a positive integer"; exit 1; }
+          [[ -n "$JOBS" && -z "$TARGETS" ]] || { echo "::error::PR E2E runs require jobs and do not accept targets"; exit 1; }
+
+          pull_json="$(curl --fail --silent --show-error --proto '=https' \
+            --header "Authorization: Bearer ${GITHUB_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+          [[ "$(jq -r '.state' <<< "$pull_json")" == "open" ]] || { echo "::error::pull request must still be open"; exit 1; }
+          [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$GITHUB_REPOSITORY" ]] || { echo "::error::pull request must originate from this repository"; exit 1; }
+          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha must match the PR head commit"; exit 1; }
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
@@ -114,187 +122,98 @@ jobs:
           TARGETS: ${{ inputs.targets }}
         run: |
           set -euo pipefail
-          inventory_output="$(npx tsx tools/e2e/workflow-inventory.mts --shell)"
-          allowed_jobs=""
-          explicit_only_jobs_csv=""
-          free_standing_targets_csv=""
-          free_standing_target_jobs_csv=""
-          seen_inventory_keys=","
-          while IFS= read -r line || [ -n "${line}" ]; do
-            line="${line#"${line%%[![:space:]]*}"}"
-            line="${line%"${line##*[![:space:]]}"}"
-            if [[ -z "${line}" || "${line}" == \#* ]]; then
-              continue
-            fi
-            if [[ ! "${line}" =~ ^(allowed_jobs|explicit_only_jobs_csv|free_standing_targets_csv|free_standing_target_jobs_csv)=([A-Za-z0-9_:-]+(,[A-Za-z0-9_:-]+)*)?$ ]]; then
-              echo "::error::free-standing workflow inventory must be data-only key=value" >&2
-              exit 1
-            fi
-            inventory_key="${BASH_REMATCH[1]}"
-            inventory_value="${BASH_REMATCH[2]}"
-            if [[ "${seen_inventory_keys}" == *",${inventory_key},"* ]]; then
-              echo "::error::free-standing workflow inventory must not redefine ${inventory_key}" >&2
-              exit 1
-            fi
-            seen_inventory_keys="${seen_inventory_keys}${inventory_key},"
-            case "${inventory_key}" in
-              allowed_jobs) allowed_jobs="${inventory_value}" ;;
-              explicit_only_jobs_csv) explicit_only_jobs_csv="${inventory_value}" ;;
-              free_standing_targets_csv) free_standing_targets_csv="${inventory_value}" ;;
-              free_standing_target_jobs_csv) free_standing_target_jobs_csv="${inventory_value}" ;;
-            esac
-          done <<< "${inventory_output}"
-          for required_inventory_key in allowed_jobs explicit_only_jobs_csv free_standing_targets_csv free_standing_target_jobs_csv; do
-            if [[ "${seen_inventory_keys}" != *",${required_inventory_key},"* ]]; then
-              echo "::error::free-standing workflow inventory missing ${required_inventory_key}" >&2
-              exit 1
-            fi
-          done
-          for required_inventory_key in allowed_jobs free_standing_targets_csv free_standing_target_jobs_csv; do
-            if [[ -z "${!required_inventory_key:-}" ]]; then
-              echo "::error::free-standing workflow inventory missing ${required_inventory_key}" >&2
-              exit 1
-            fi
-          done
-          seen_allowed_jobs=","
-          IFS=',' read -r -a allowed_job_entries <<< "${allowed_jobs}"
-          for job in "${allowed_job_entries[@]}"; do
-            if [[ ! "${job}" =~ ^[A-Za-z0-9_-]+$ ]]; then
-              echo "::error::free-standing workflow inventory contains invalid job id" >&2
-              exit 1
-            fi
-            if [[ "${seen_allowed_jobs}" == *",${job},"* ]]; then
-              echo "::error::free-standing workflow inventory repeats job id" >&2
-              exit 1
-            fi
-            seen_allowed_jobs="${seen_allowed_jobs}${job},"
-          done
-          seen_explicit_only_jobs=","
-          if [ -n "${explicit_only_jobs_csv}" ]; then
-            IFS=',' read -r -a explicit_only_job_entries <<< "${explicit_only_jobs_csv}"
-            for job in "${explicit_only_job_entries[@]}"; do
-              if [[ "${seen_allowed_jobs}" != *",${job},"* ]]; then
-                echo "::error::Explicit-only job is not in allowed jobs" >&2
-                exit 1
-              fi
-              if [[ "${seen_explicit_only_jobs}" == *",${job},"* ]]; then
-                echo "::error::free-standing workflow inventory repeats explicit-only job" >&2
-                exit 1
-              fi
-              seen_explicit_only_jobs="${seen_explicit_only_jobs}${job},"
-            done
-          fi
-          seen_free_standing_targets=","
-          IFS=',' read -r -a free_standing_target_entries <<< "${free_standing_targets_csv}"
-          for target in "${free_standing_target_entries[@]}"; do
-            if [[ ! "${target}" =~ ^[A-Za-z0-9_-]+$ ]]; then
-              echo "::error::free-standing workflow inventory contains invalid target id" >&2
-              exit 1
-            fi
-            if [[ "${seen_free_standing_targets}" == *",${target},"* ]]; then
-              echo "::error::free-standing workflow inventory repeats target id" >&2
-              exit 1
-            fi
-            seen_free_standing_targets="${seen_free_standing_targets}${target},"
-          done
-          IFS=',' read -r -a target_job_entries <<< "${free_standing_target_jobs_csv}"
-          seen_target_mappings=","
-          derived_free_standing_targets=()
-          for entry in "${target_job_entries[@]}"; do
-            if [[ ! "${entry}" =~ ^[A-Za-z0-9_-]+:[A-Za-z0-9_-]+$ ]]; then
-              echo "::error::Invalid free-standing target mapping" >&2
-              exit 1
-            fi
-            target="${entry%%:*}"
-            job="${entry#*:}"
-            if [[ "${seen_target_mappings}" == *",${target},"* ]]; then
-              echo "::error::free-standing workflow inventory repeats target mapping" >&2
-              exit 1
-            fi
-            seen_target_mappings="${seen_target_mappings}${target},"
-            if [[ "${seen_allowed_jobs}" != *",${job},"* ]]; then
-              echo "::error::Free-standing target maps to unknown job" >&2
-              exit 1
-            fi
-            derived_free_standing_targets+=("${target}")
-          done
-          derived_free_standing_targets_csv="$(IFS=,; echo "${derived_free_standing_targets[*]}")"
-          if [[ "${free_standing_targets_csv}" != "${derived_free_standing_targets_csv}" ]]; then
-            echo "::error::free_standing_targets_csv must match target mapping keys" >&2
-            exit 1
-          fi
-          args=(--emit-live-matrix)
-          matrix=""
-          hermes_selected=false
-          registry_targets=()
-          is_free_standing_target() {
-            [[ ",${free_standing_targets_csv}," == *",$1,"* ]]
-          }
           if [ -n "${JOBS}" ] && [ -n "${TARGETS}" ]; then
             echo "::error::Use either targets or jobs, not both." >&2
             exit 1
           fi
+          for selector_name in JOBS TARGETS; do
+            selector_value="${!selector_name}"
+            if [ -n "${selector_value}" ] && [[ ! "${selector_value}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
+              echo "::error::Invalid ${selector_name,,} input; use comma-separated ids" >&2
+              exit 1
+            fi
+          done
+
+          planner_args=()
           if [ -n "${JOBS}" ]; then
-            if [[ ! "${JOBS}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
-              echo "::error::Invalid jobs input; use comma-separated job ids" >&2
-              exit 1
-            fi
-            IFS=',' read -r -a selected_jobs <<< "${JOBS}"
-            for job in "${selected_jobs[@]}"; do
-              if [[ ",${allowed_jobs}," != *",${job},"* ]]; then
-                echo "::error::Unknown free-standing E2E job: ${job}" >&2
-                echo "::error::Allowed jobs: ${allowed_jobs}" >&2
-                exit 1
-              fi
-              case "${job}" in
-                hermes-e2e)
-                  hermes_selected=true
-                  ;;
-              esac
-            done
-            matrix="[]"
+            planner_args+=(--jobs "${JOBS}")
           elif [ -n "${TARGETS}" ]; then
-            if [[ ! "${TARGETS}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
-              echo "::error::Invalid target input; use comma-separated target ids containing only letters, numbers, underscores, and hyphens." >&2
-              exit 1
-            fi
-            IFS=',' read -r -a requested_targets <<< "${TARGETS}"
-            for target in "${requested_targets[@]}"; do
-              case "${target}" in
-                hermes-e2e)
-                  hermes_selected=true
-                  ;;
-              esac
-              if is_free_standing_target "${target}"; then
-                continue
-              fi
-              registry_targets+=("${target}")
-            done
-            if [ "${#registry_targets[@]}" -gt 0 ]; then
-              registry_csv="$(IFS=,; echo "${registry_targets[*]}")"
-              args+=(--targets "${registry_csv}")
-              matrix="$(npx tsx test/e2e/registry/run.ts "${args[@]}")"
-            else
-              matrix="[]"
-            fi
-          else
-            hermes_selected=true
-            matrix="$(npx tsx test/e2e/registry/run.ts "${args[@]}")"
+            planner_args+=(--targets "${TARGETS}")
           fi
+          plan="$(npx tsx tools/e2e/workflow-plan.mts "${planner_args[@]}")"
+          plan_filter='
+            type == "object" and
+            (keys | sort) == ["explicitOnlyJobs", "hermesSelected", "matrix", "testMatrix"] and
+            (.matrix | type) == "array" and
+            all(.matrix[];
+              type == "object" and
+              (keys | sort) == ["expectedStateId", "id", "install", "label", "onboarding", "pendingRuntimeSuites", "platform", "requiredSecrets", "runner", "runtime", "suites", "supportReasons", "supported"] and
+              (.id | type == "string" and test("^[a-z0-9]+(?:-[a-z0-9]+)*$")) and
+              (.runner | type == "string" and test("^[A-Za-z0-9_-]+$")) and
+              (.label | type) == "string" and
+              (.platform | type) == "string" and
+              (.install | type) == "string" and
+              (.runtime | type) == "string" and
+              (.onboarding | type) == "string" and
+              (.expectedStateId | type) == "string" and
+              (.supported | type) == "boolean" and
+              all(.suites[], .requiredSecrets[], .supportReasons[], .pendingRuntimeSuites[]; type == "string")
+            ) and
+            (([.matrix[].id] | length) == ([.matrix[].id] | unique | length)) and
+            (.testMatrix | type) == "array" and
+            all(.testMatrix[];
+              type == "object" and
+              (keys | sort) == ["file", "id", "project"] and
+              (.id | test("^[a-z0-9]+(?:-[a-z0-9]+)*$")) and
+              (.file | test("^test/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+[.]test[.](?:js|ts)$")) and
+              ((.project == "e2e-live" and (.file | startswith("test/e2e/live/"))) or
+               (.project == "integration" and (.file | startswith("test/")) and
+                ((.file | startswith("test/e2e/")) | not)))
+            ) and
+            (([.testMatrix[].id] | length) == ([.testMatrix[].id] | unique | length)) and
+            (.hermesSelected | type) == "boolean" and
+            (.explicitOnlyJobs | type) == "array" and
+            all(.explicitOnlyJobs[]; type == "string" and test("^[A-Za-z0-9_-]+$")) and
+            ((.explicitOnlyJobs | length) == (.explicitOnlyJobs | unique | length))
+          '
+          if ! jq -e "${plan_filter}" <<< "${plan}" >/dev/null; then
+            echo "::error::E2E planner returned an invalid output schema" >&2
+            exit 1
+          fi
+
+          expected_hermes_selected=false
+          selected_csv="${JOBS:-${TARGETS}}"
+          if [ -z "${selected_csv}" ] || [[ ",${selected_csv}," == *",hermes-e2e,"* ]]; then
+            expected_hermes_selected=true
+          fi
+          hermes_selected="$(jq -r '.hermesSelected' <<< "${plan}")"
+          if [ "${hermes_selected}" != "${expected_hermes_selected}" ]; then
+            echo "::error::E2E planner changed the trusted Hermes selection" >&2
+            exit 1
+          fi
+
+          matrix="$(jq -c '.matrix' <<< "${plan}")"
+          test_matrix="$(jq -c '.testMatrix' <<< "${plan}")"
+          explicit_only_jobs_csv="$(jq -r '.explicitOnlyJobs | join(",")' <<< "${plan}")"
           echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+          echo "test_matrix=${test_matrix}" >> "$GITHUB_OUTPUT"
           echo "hermes_selected=${hermes_selected}" >> "$GITHUB_OUTPUT"
           echo "explicit_only_jobs=${explicit_only_jobs_csv}" >> "$GITHUB_OUTPUT"
-          MATRIX_JSON="${matrix}" python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+
+          MATRIX_JSON="${matrix}" TEST_MATRIX_JSON="${test_matrix}" python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json
           import os
 
-          rows = json.loads(os.environ["MATRIX_JSON"])
-          print("## E2E Target Matrix")
+          typed_rows = json.loads(os.environ["MATRIX_JSON"])
+          test_rows = json.loads(os.environ["TEST_MATRIX_JSON"])
+          print("## E2E Execution Plan")
           print()
-          print("| Target | Runner | Label |")
+          print("| Test | Execution | Runner |")
           print("| --- | --- | --- |")
-          for row in rows:
-              print(f"| `{row['id']}` | `{row['runner']}` | {row['label']} |")
+          for row in typed_rows:
+              print(f"| `{row['id']}` | typed registry | `{row['runner']}` |")
+          for row in test_rows:
+              print(f"| `{row['id']}` | shared E2E job | `ubuntu-latest` |")
           PY
 
   live:
@@ -525,19 +444,26 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  # Free-standing live tests under test/e2e/live/ that don't fit the
-  # registry-driven steady-state probe model. Each gets a discrete job here
-  # because the matrix above only runs registry-targets.test.ts. Modeled on
-  # #5049's free-standing pattern.
-  openshell-version-pin:
+  # Credential-free tests opt in with a tag beside the test. Discovery supplies
+  # only a validated test ID, file, and Vitest project; this E2E workflow owns
+  # the shared job's runner, setup, timeout, permissions, and artifact policy.
+  shared-e2e:
+    name: Shared E2E (${{ matrix.id }})
     needs: generate-matrix
-    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openshell-version-pin,') || contains(format(',{0},', inputs.targets), ',openshell-version-pin,') }}
+    if: ${{ needs.generate-matrix.outputs.test_matrix != '[]' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.generate-matrix.outputs.test_matrix) }}
     env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "openshell-version-pin"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openshell-version-pin
+      CHECK_DOC_LINKS_REMOTE: "0"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/${{ matrix.id }}
+      E2E_TARGET_ID: ${{ matrix.id }}
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -547,19 +473,17 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
-        with:
-          build-cli: "false"
 
-      - name: Run OpenShell version-pin live test
-        # Hermetic
-        # installer-script behavioral test — no real network, no real install.
+      - name: Run tagged credential-free test
+        env:
+          TEST_FILE: ${{ matrix.file }}
+          TEST_PROJECT: ${{ matrix.project }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/openshell-version-pin.test.ts \
+          npx vitest run --project "${TEST_PROJECT}" "${TEST_FILE}" \
             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
-      - name: Upload OpenShell version-pin artifacts
+      - name: Upload test artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
@@ -836,39 +760,6 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  onboard-negative-paths:
-    needs: generate-matrix
-    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',onboard-negative-paths,') || contains(format(',{0},', inputs.targets), ',onboard-negative-paths,') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "onboard-negative-paths"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/onboard-negative-paths
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          persist-credentials: false
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
-
-      - name: Run onboard negative-paths live test
-        # Direct E2E coverage
-        # invalid-key contract. This intentionally bypasses typed registry and
-        # state-validation machinery because the behavior is CLI exit/output.
-        run: |
-          set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/onboard-negative-paths.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
-
-      - name: Upload onboard negative-paths artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-
   # Live skill injection and real OpenClaw agent-turn contract.
   skill-agent:
     needs: generate-matrix
@@ -987,42 +878,6 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  # Checkout-local CLI/docs parity and deterministic local Markdown/MDX link
-  # validation. Keep this discrete until the focused docs workflows are
-  # required and demonstrably subsume the full-repository boundary.
-  docs-validation:
-    needs: generate-matrix
-    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',docs-validation,') || contains(format(',{0},', inputs.targets), ',docs-validation,') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "docs-validation"
-      CHECK_DOC_LINKS_REMOTE: "0"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/docs-validation
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          persist-credentials: false
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
-        with:
-          build-cli: "false"
-
-      - name: Run docs validation live Vitest test
-        run: |
-          set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/docs-validation.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
-
-      - name: Upload docs validation artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-
   inference-routing:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',inference-routing,') || contains(format(',{0},', inputs.targets), ',inference-routing,') }}
@@ -1039,16 +894,17 @@ jobs:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
+      - *dockerhub-auth
+
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run inference routing live test
-        # Direct E2E coverage. The
-        # always-on PR-safe slices prove invalid-key and unreachable-endpoint
-        # classification/cleanup without spending live provider quota; real
-        # NVIDIA credential isolation and third-party provider smokes stay
-        # skipped unless their secrets are explicitly supplied by a future
-        # workflow.
+        # Direct E2E coverage. The always-on PR-safe slices prove invalid-key,
+        # unreachable-endpoint, and localhost-compatible gateway routing
+        # without spending live provider quota. Real NVIDIA credential
+        # isolation and third-party provider smokes stay skipped unless their
+        # secrets are explicitly supplied by a future workflow.
         run: |
           set -euo pipefail
           npx vitest run --project e2e-live \
@@ -1058,6 +914,11 @@ jobs:
       - name: Upload inference routing artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   cloud-inference:
     needs: generate-matrix
@@ -2758,7 +2619,10 @@ jobs:
     # Required validation path: dispatch with jobs=jetson-nvmap-gpu or targets=jetson-nvmap-gpu.
     # Re-enable default dispatch only after a stable Jetson runner exists, then remove E2E_DEFAULT_ENABLED.
     if: ${{ contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu,') || contains(format(',{0},', inputs.targets), ',jetson-nvmap-gpu,') }}
-    runs-on: ${{ vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1' }}
+    # GitHub does not apply timeout-minutes until after runner assignment. Keep
+    # unconfirmed manual Jetson dispatches on a hosted runner so they fail fast
+    # instead of queueing forever on an offline self-hosted runner label.
+    runs-on: ${{ inputs.allow_jetson_runner_queue && (vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1') || 'ubuntu-latest' }}
     timeout-minutes: 60
     env:
       E2E_JOB: "1"
@@ -2778,6 +2642,18 @@ jobs:
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
+
+      - name: Guard Jetson runner dispatch
+        if: ${{ !inputs.allow_jetson_runner_queue }}
+        env:
+          JETSON_E2E_RUNNER_LABEL: ${{ vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1' }}
+        run: |
+          set -euo pipefail
+          echo "::error::jetson-nvmap-gpu was selected without allow_jetson_runner_queue=true."
+          echo "::error::GitHub Actions does not apply timeout-minutes while a self-hosted job is queued before runner assignment."
+          echo "::error::A repository administrator must confirm the runner is online in the authoritative NVIDIA/NemoClaw Settings -> Actions -> Runners inventory before enabling queueing."
+          echo "::error::Confirm an online runner with label ${JETSON_E2E_RUNNER_LABEL}, then re-run with allow_jetson_runner_queue=true."
+          exit 1
 
       - *dockerhub-auth
 
@@ -3016,7 +2892,7 @@ jobs:
       # set, and NoNewPrivs remain evidence unless an opt-in expectation is set.
       NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST: "1"
       NEMOCLAW_E2E_SECURITY_POSTURE: "1"
-      NEMOCLAW_E2E_RISK_SHARD: ${{ matrix.agent }}
+      NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: "60"
       NEMOCLAW_RECREATE_SANDBOX: "1"
@@ -3890,42 +3766,6 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  gateway-drift-preflight:
-    needs: generate-matrix
-    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',gateway-drift-preflight,') || contains(format(',{0},', inputs.targets), ',gateway-drift-preflight,') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    env:
-      E2E_JOB: "1"
-      E2E_TARGET_ID: "gateway-drift-preflight"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/gateway-drift-preflight
-      NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          ref: ${{ inputs.checkout_sha || github.sha }}
-          persist-credentials: false
-
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
-
-      - name: Run gateway drift preflight Vitest test
-        # This keeps
-        # the real repo CLI, PATH-resolved openshell/docker shims, host-process
-        # marker/PID probes, and process exit behavior while avoiding live
-        # Docker/OpenShell mutation.
-        run: |
-          set -euo pipefail
-          npx vitest run --project integration \
-            test/gateway-drift-preflight.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
-
-      - name: Upload gateway drift preflight artifacts
-        if: always()
-        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
-
   # Scheduled coverage for #6108 / #3513 / #3127. This exercises the complete
   # managed v0.0.71 runtime with a custom plugin, then proves restart/rebuild
   # persistence and target-side runtime-dependency replacement across devices.
@@ -3999,12 +3839,17 @@ jobs:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openclaw-tui-chat-correlation,') || contains(format(',{0},', inputs.targets), ',openclaw-tui-chat-correlation,') }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 75
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "openclaw-tui-chat-correlation"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openclaw-tui-chat-correlation
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      # This target runs the CLI built from this checkout; it does not use the public installer.
+      # Legacy target_ref dispatches were replaced by branch github.sha and validated checkout_sha runs.
+      NEMOCLAW_TUI_EXPECTED_CHECKOUT_SHA: "${{ inputs.checkout_sha || github.sha }}"
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_PROVIDER: custom
@@ -4019,6 +3864,33 @@ jobs:
           persist-credentials: false
 
       - *dockerhub-auth
+
+      # The #6194 terminal regression uses Expect as its PTY driver. Keep this
+      # privileged host setup inline in the reviewed workflow: the selected
+      # target ref may consume expect but cannot expand the package allowlist.
+      # invalidState: hosted-runner Ubuntu mirrors can fail transiently during update.
+      # sourceBoundary: only this trusted workflow chooses the exact root-installed package.
+      # whyNotSourceFix: GitHub's Ubuntu image and configured repository move together, so a
+      # fixed package version would make the target brittle across routine runner refreshes.
+      # The runner's configured Ubuntu repository is therefore an accepted trust source.
+      # regressionTest: e2e-host-dependency-workflow-boundary rejects package or order drift.
+      # removalCondition: remove this step when the hosted image provides Expect itself.
+      - name: Install OpenClaw TUI host dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if sudo apt-get update; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::apt-get update failed after 3 attempts." >&2
+              exit 1
+            fi
+            echo "::warning::apt-get update attempt ${attempt} failed; retrying." >&2
+            sleep $((attempt * 5))
+          done
+          sudo apt-get install -y --no-install-recommends expect
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
@@ -4512,7 +4384,7 @@ jobs:
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
-      NEMOCLAW_E2E_RISK_SHARD: ${{ matrix.agent }}
+      NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: ${{ matrix.agent }}
@@ -4913,14 +4785,12 @@ jobs:
       [
         generate-matrix,
         live,
-        openshell-version-pin,
+        shared-e2e,
         openshell-gateway-auth-contract,
         mcp-bridge,
         mcp-bridge-dev,
-        onboard-negative-paths,
         skill-agent,
         openclaw-skill-cli,
-        docs-validation,
         inference-routing,
         cloud-inference,
         gpu-e2e,
@@ -4970,7 +4840,6 @@ jobs:
         sandbox-survival,
         diagnostics,
         snapshot-commands,
-        gateway-drift-preflight,
         openclaw-plugin-runtime-exdev,
         openclaw-tui-chat-correlation,
         gateway-guard-recovery,
@@ -4988,8 +4857,9 @@ jobs:
         channels-stop-start,
         spark-install,
       ]
-    if: ${{ always() && github.event_name == 'workflow_dispatch' && !inputs.risk_shadow }}
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' }}
     permissions:
+      actions: read
       # The issue-comment endpoint accepts pull request write permission for PR comments.
       # Keep issues: write absent so this job cannot restore general issue routing.
       pull-requests: write
@@ -4998,6 +4868,7 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           EXPLICIT_ONLY_JOBS: ${{ needs.generate-matrix.outputs.explicit_only_jobs }}
+          TEST_MATRIX: ${{ needs.generate-matrix.outputs.test_matrix }}
           JOB_PR_NUMBER: ${{ inputs.pr_number }}
           JOB_TARGETS: ${{ inputs.targets }}
           JOBS: ${{ inputs.jobs }}
@@ -5008,10 +4879,10 @@ jobs:
             const workflowBranch = context.ref.replace('refs/heads/', '');
             const prNumberInput = process.env.JOB_PR_NUMBER || '';
             const rawRequestedTargets = process.env.JOB_TARGETS || '';
-            const rawRequestedJobs = process.env.JOBS || '';
+            const rawRequestedTestIds = process.env.JOBS || '';
             const selectorValidationPassed = needs['generate-matrix']?.result === 'success';
             const requestedTargets = selectorValidationPassed ? rawRequestedTargets : '';
-            const requestedJobs = selectorValidationPassed ? rawRequestedJobs : '';
+            const requestedTestIdsCsv = selectorValidationPassed ? rawRequestedTestIds : '';
             const explicitOnlyReasons = {
               'openshell-gateway-auth-contract': {
                 job: 'openshell-gateway-auth-contract',
@@ -5026,7 +4897,7 @@ jobs:
               'jetson-nvmap-gpu': {
                 job: 'jetson-nvmap-gpu',
                 target: 'jetson-nvmap-gpu',
-                reason: 'default dispatch excludes Jetson until a stable Jetson runner is available',
+                reason: 'default dispatch excludes Jetson; explicit dispatch requires allow_jetson_runner_queue=true after confirming an online Jetson runner because queued jobs do not honor timeout-minutes before assignment',
               },
               'sandbox-rlimits-connect': {
                 job: 'sandbox-rlimits-connect',
@@ -5043,7 +4914,7 @@ jobs:
                 reason: 'default dispatch excludes this explicit-only job unless selected',
               });
             const targetsRejected = rawRequestedTargets && !selectorValidationPassed;
-            const jobsRejected = rawRequestedJobs && !selectorValidationPassed;
+            const testIdsRejected = rawRequestedTestIds && !selectorValidationPassed;
 
             let prNumber;
             if (prNumberInput) {
@@ -5087,20 +4958,101 @@ jobs:
               prNumber = prs[0].number;
             }
 
-            const requestedJobList = requestedJobs
+            const requestedTestIds = requestedTestIdsCsv
               .split(',')
-              .map((job) => job.trim())
+              .map((testId) => testId.trim())
               .filter(Boolean);
-            const requestedJobSet = new Set(requestedJobList);
+            const requestedTestIdSet = new Set(requestedTestIds);
             const selectiveDispatch =
-              requestedJobList.length > 0 || Boolean(requestedTargets) || targetsRejected || jobsRejected;
+              requestedTestIds.length > 0 || Boolean(requestedTargets) || targetsRejected || testIdsRejected;
             const emoji = { success: '✅', failure: '❌', cancelled: '⚠️', skipped: '⏭️' };
-            const allEntries = Object.entries(needs).sort(([a], [b]) => a.localeCompare(b));
-            const missingRequested = selectorValidationPassed
-              ? requestedJobList.filter((job) => !(job in needs))
+            const safeSelector = /^[A-Za-z0-9_-]+$/;
+            let testIds;
+            try {
+              const testMatrix = JSON.parse(process.env.TEST_MATRIX || '[]');
+              if (!Array.isArray(testMatrix)) throw new Error('matrix must be an array');
+              testIds = testMatrix.map((row) => {
+                if (!row || typeof row !== 'object' || !safeSelector.test(row.id || '')) {
+                  throw new Error('matrix row has an invalid id');
+                }
+                return row.id;
+              });
+              if (new Set(testIds).size !== testIds.length) {
+                throw new Error('matrix repeats a test id');
+              }
+            } catch (error) {
+              core.setFailed(`Invalid test matrix: ${error.message}`);
+              return;
+            }
+
+            const testResults = new Map();
+            let sharedJobResultsLoaded = false;
+            try {
+              const apiJobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: context.runId,
+                filter: 'latest',
+                per_page: 100,
+              });
+              const selectedTestIds = new Set(testIds);
+              for (const job of apiJobs) {
+                const match = /^Shared E2E \(([A-Za-z0-9_-]+)\)$/.exec(job.name || '');
+                if (!match || !selectedTestIds.has(match[1])) continue;
+                const result =
+                  job.status === 'completed' &&
+                  ['success', 'failure', 'cancelled', 'skipped'].includes(job.conclusion)
+                    ? job.conclusion
+                    : 'unknown';
+                testResults.set(match[1], { result });
+              }
+              sharedJobResultsLoaded = true;
+            } catch (error) {
+              // The Actions jobs API is the only source of matrix-child conclusions;
+              // `needs['shared-e2e']` exposes only their aggregate. Keep missing children
+              // unknown instead of fabricating per-test evidence. This path is covered
+              // by e2e-report-to-pr-workflow-boundary.test.ts and can be removed when
+              // Actions exposes matrix-child conclusions directly to dependent jobs.
+              core.warning(`Could not load per-test results; reporting them as unknown: ${error.message}`);
+            }
+            const missingTestResults = testIds.filter((id) => !testResults.has(id));
+            if (sharedJobResultsLoaded && missingTestResults.length > 0) {
+              core.warning(`Missing per-test results for ${missingTestResults.join(', ')}; reporting them as unknown.`);
+            }
+            const sharedJobAggregateResult = needs['shared-e2e']?.result;
+            const knownTestResults = testIds.map((id) => testResults.get(id)?.result);
+            const allTestResultsKnown =
+              knownTestResults.length > 0 &&
+              knownTestResults.every((result) => result && result !== 'unknown');
+            const expectedAggregateChildResult =
+              sharedJobAggregateResult === 'failure'
+                ? 'failure'
+                : sharedJobAggregateResult === 'cancelled'
+                  ? 'cancelled'
+                  : undefined;
+            const testAttributionMismatch =
+              allTestResultsKnown &&
+              expectedAggregateChildResult &&
+              !knownTestResults.includes(expectedAggregateChildResult);
+            if (testAttributionMismatch) {
+              core.warning(
+                `Per-test conclusions (${knownTestResults.join(', ')}) contradict shared E2E job aggregate ${sharedJobAggregateResult}; reporting child attribution as unknown.`,
+              );
+              for (const id of testIds) testResults.set(id, { result: 'unknown' });
+            }
+
+            const allEntries = Object.entries(needs).filter(([name]) => name !== 'shared-e2e');
+            if (needs['shared-e2e']) {
+              allEntries.push(
+                ...testIds.map((id) => [id, testResults.get(id) ?? { result: 'unknown' }]),
+              );
+            }
+            allEntries.sort(([a], [b]) => a.localeCompare(b));
+            const missingRequestedTestIds = selectorValidationPassed
+              ? requestedTestIds.filter((testId) => !allEntries.some(([name]) => name === testId))
               : [];
-            const selectedEntries = requestedJobList.length > 0
-              ? allEntries.filter(([name]) => requestedJobSet.has(name))
+            const selectedEntries = requestedTestIds.length > 0
+              ? allEntries.filter(([name]) => requestedTestIdSet.has(name))
               : selectiveDispatch
                 ? allEntries.filter(
                     ([name, { result }]) => result !== 'skipped' && name !== 'generate-matrix',
@@ -5114,7 +5066,7 @@ jobs:
             const rows = reportedEntries.map(
               ([name, { result }]) => `| ${name} | ${emoji[result] || '❓'} ${result} |`,
             );
-            for (const name of missingRequested) {
+            for (const name of missingRequestedTestIds) {
               rows.push(`| ${name} | ❓ not reported |`);
             }
 
@@ -5123,20 +5075,25 @@ jobs:
             const failed = ran.filter(([, v]) => v.result === 'failure');
             const skipped = reportedEntries.filter(([, v]) => v.result === 'skipped');
             const cancelled = ran.filter(([, v]) => v.result === 'cancelled');
-            const passingStatus = requestedJobList.length > 0
-              ? '✅ All requested jobs passed'
+            const unknown = ran.filter(([, v]) => v.result === 'unknown');
+            const sharedJobAggregateFailed = sharedJobAggregateResult === 'failure';
+            const sharedJobAggregateCancelled = sharedJobAggregateResult === 'cancelled';
+            const passingStatus = requestedTestIds.length > 0
+              ? '✅ All requested tests passed'
               : selectiveDispatch
-                ? '✅ All selected jobs passed'
-                : '✅ All default jobs passed';
+                ? '✅ All selected tests passed'
+                : '✅ All default tests passed';
             const status =
-              failed.length > 0 || missingRequested.length > 0
-                ? '❌ Some jobs failed'
-                : cancelled.length > 0 && passed.length === 0
+              failed.length > 0 || missingRequestedTestIds.length > 0 || sharedJobAggregateFailed
+                ? '❌ Some tests failed'
+                : (cancelled.length > 0 || sharedJobAggregateCancelled) && passed.length === 0
                   ? '⚠️ Run cancelled — no signal'
-                  : cancelled.length > 0 && passed.length > 0
-                    ? '⚠️ Some jobs cancelled — partial pass'
+                  : cancelled.length > 0 || sharedJobAggregateCancelled
+                    ? '⚠️ Some tests cancelled — partial pass'
+                    : unknown.length > 0
+                      ? '⚠️ Per-test results incomplete'
                     : skipped.length > 0 && passed.length === 0
-                      ? '⚠️ No selected jobs ran'
+                      ? '⚠️ No selected tests ran'
                       : passingStatus;
 
             const lines = [
@@ -5149,14 +5106,14 @@ jobs:
                 : requestedTargets
                   ? `**Requested targets:** \`${requestedTargets}\``
                   : '**Requested targets:** _(default — all supported)_',
-              jobsRejected
-                ? '**Requested jobs:** _(selector rejected by workflow validation)_'
-                : requestedJobs
-                  ? `**Requested jobs:** \`${requestedJobs}\``
-                  : '**Requested jobs:** _(default — all default-enabled free-standing jobs; explicit-only jobs `openshell-gateway-auth-contract`, `mcp-bridge-dev`, `hermes-gpu-startup`, `sandbox-rlimits-connect`, and `jetson-nvmap-gpu` are skipped unless selected)_',
-              `**Summary:** ${passed.length} passed, ${failed.length} failed, ${cancelled.length} cancelled, ${skipped.length} skipped`,
+              testIdsRejected
+                ? '**Requested test IDs:** _(selector rejected by workflow validation)_'
+                : requestedTestIdsCsv
+                  ? `**Requested test IDs:** \`${requestedTestIdsCsv}\``
+                  : '**Requested test IDs:** _(default — all default-enabled tests; explicit-only tests `openshell-gateway-auth-contract`, `mcp-bridge-dev`, `hermes-gpu-startup`, `sandbox-rlimits-connect`, and `jetson-nvmap-gpu` are skipped unless selected)_',
+              `**Summary:** ${passed.length} passed, ${failed.length} failed, ${cancelled.length} cancelled, ${skipped.length} skipped, ${unknown.length} unknown`,
               '',
-              '| Job | Result |',
+              '| Test | Result |',
               '|-----|--------|',
               ...rows,
             ];
@@ -5171,12 +5128,19 @@ jobs:
             }
             if (failed.length > 0) {
               const failedNames = failed.map(([name]) => name).join(', ');
-              lines.push('', `> **Failed jobs:** ${failedNames}. Check [run artifacts](${runUrl}) for logs.`);
+              lines.push('', `> **Failed tests:** ${failedNames}. Check [run artifacts](${runUrl}) for logs.`);
             }
-            if (missingRequested.length > 0) {
+            if (missingRequestedTestIds.length > 0) {
               lines.push(
                 '',
-                `> **Missing requested jobs:** ${missingRequested.join(', ')}. The reporting workflow needs to include these jobs.`,
+                `> **Missing requested test IDs:** ${missingRequestedTestIds.join(', ')}. The reporting workflow needs to include these tests.`,
+              );
+            }
+            if (unknown.length > 0) {
+              const unknownNames = unknown.map(([name]) => name).join(', ');
+              lines.push(
+                '',
+                `> **Unknown per-test results:** ${unknownNames}. Shared E2E job aggregate: ${needs['shared-e2e']?.result ?? 'unavailable'}.`,
               );
             }
 
@@ -5191,7 +5155,7 @@ jobs:
   scorecard:
     runs-on: ubuntu-latest
     needs: *e2e-result-jobs
-    if: ${{ always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.risk_shadow)) }}
+    if: ${{ always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '')) }}
     permissions:
       actions: read
       contents: read

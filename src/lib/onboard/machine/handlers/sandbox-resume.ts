@@ -19,6 +19,7 @@ export interface SandboxResumeSignals {
   readonly inferenceRouteConfigChanged: boolean;
   readonly webSearchConfigChanged: boolean;
   readonly sandboxGpuConfigChanged: boolean;
+  readonly recreateSandboxRequested: boolean;
   readonly messagingChannelConfigChanged: boolean;
   readonly hermesToolGatewayConfigChanged: boolean;
   readonly observabilityChanged?: boolean;
@@ -135,6 +136,7 @@ function canReuseSandbox(signals: SandboxResumeSignals): boolean {
     !signals.inferenceSelectionChanged &&
     !signals.webSearchConfigChanged &&
     !signals.sandboxGpuConfigChanged &&
+    !signals.recreateSandboxRequested &&
     !signals.messagingChannelConfigChanged &&
     !signals.hermesToolGatewayConfigChanged &&
     !signals.observabilityChanged &&
@@ -196,6 +198,13 @@ function compatibilityResumeDecision(signals: SandboxResumeSignals): SandboxResu
 function runtimeConfigurationResumeDecision(
   signals: SandboxResumeSignals,
 ): SandboxResumeDecision | null {
+  if (signals.recreateSandboxRequested) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Recreate sandbox requested; recreating sandbox.",
+      removeRegistryEntry: false,
+    };
+  }
   if (signals.webSearchConfigChanged) {
     return {
       kind: "recreate",

@@ -1,0 +1,57 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Use OpenRouter"
+sidebar-title: "Use OpenRouter"
+description: "Configure NemoClaw to route hosted inference through OpenRouter."
+description-agent: "Sets up OpenRouter as the NemoClaw inference provider. Use when onboarding with an OpenRouter API key or tracing the OpenRouter host adapter."
+keywords: ["NemoClaw OpenRouter", "OpenRouter API key", "OpenRouter adapter"]
+content:
+  type: "how_to"
+---
+OpenRouter provides an OpenAI-compatible Chat Completions route for OpenClaw, Hermes, and LangChain Deep Agents Code.
+NemoClaw keeps the sandbox on `https://inference.local/v1` and sends upstream traffic through a host adapter.
+
+## Credential
+
+Set `OPENROUTER_API_KEY` in the host shell before onboarding.
+Valid OpenRouter keys begin with `sk-or-`.
+NemoClaw validates that the key is non-empty and uses the expected prefix.
+
+## Model Choices
+
+OpenRouter uses the same catalog-backed picker and featured model list as NVIDIA Endpoints.
+You can also enter any OpenRouter model ID manually.
+NemoClaw validates manual entries with OpenRouter before continuing.
+
+## Onboard
+
+Run the onboarding wizard and select **OpenRouter**.
+
+```bash
+$$nemoclaw onboard
+```
+
+NemoClaw registers the `openrouter-api` provider through the OpenShell `openai` profile.
+
+## Host Adapter
+
+NemoClaw starts or reuses a local host adapter on port `11437` by default.
+It registers OpenShell with `OPENAI_BASE_URL=http://host.openshell.internal:11437/v1`.
+
+The adapter accepts only the OpenShell bearer credential bound during setup and forwards requests to `https://openrouter.ai/api/v1`.
+It adds the default `HTTP-Referer` and `X-OpenRouter-Title` attribution headers.
+The adapter does not store the API key.
+
+The adapter exposes a host health endpoint and writes logs to `~/.nemoclaw/openrouter-runtime-adapter.log`.
+Set `NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT` before onboarding to use a different host port.
+
+## Validation
+
+Host-side catalog, model, and smoke validation use `/v1/chat/completions` only.
+NemoClaw skips the Responses API probe and uses managed Chat Completions at runtime.
+
+## Related Topics
+
+- [About Inference Routing](../about-inference-routing) explains why the sandbox does not call the adapter directly.
+- [Understand Provider Validation](../validate-inference/understand-provider-validation) describes provider validation behavior.

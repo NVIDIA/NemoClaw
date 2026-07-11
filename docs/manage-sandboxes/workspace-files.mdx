@@ -105,7 +105,7 @@ You can edit them in two ways:
 
 ## Next Steps
 
-- [Set Up Task-Specific Sub-Agents](../inference/set-up-sub-agent)
+- [Set Up Task-Specific Sub-Agents](../configure-agents/set-up-sub-agent)
 - [Backup and Restore workspace files](backup-restore)
 - [Commands reference](../reference/commands)
 
@@ -156,6 +156,9 @@ In a NemoClaw sandbox, `dcode` runs with `HOME=/sandbox`, so the upstream `~/.de
 For upstream behavior, refer to the official Deep Agents Code pages for [memory and skills](https://docs.langchain.com/oss/python/deepagents/code/memory-and-skills), [MCP tools](https://docs.langchain.com/oss/python/deepagents/code/mcp-tools), and [Deep Agents Code overview](https://docs.langchain.com/oss/python/deepagents/code/overview).
 
 ## Important Deep Agents State
+
+The `/sandbox/.deepagents/agent/` paths below do not exist immediately after onboarding.
+Deep Agents Code creates them when you start the first `dcode` session.
 
 | Path | Purpose |
 |---|---|

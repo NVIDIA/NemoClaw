@@ -12,6 +12,7 @@ import {
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt } from "../../credentials/store";
+import { formatFailedBackupItems } from "../../domain/backup-failure";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import {
   checkGatewayRouteCompatibility,
@@ -28,7 +29,7 @@ import {
 } from "../../onboard/observability-policy-presets";
 import { normalizePolicyTierName } from "../../onboard/policy-tier-suppression";
 import * as policies from "../../policy";
-import { ROOT, run, shellQuote, validateName } from "../../runner";
+import { ROOT, run, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { streamSandboxCreate } from "../../sandbox/create-stream";
 import * as shields from "../../shields";
@@ -240,8 +241,8 @@ async function autoCreateSandboxFromSource(
   const createEnv = { ...process.env };
   delete createEnv.NEMOCLAW_OBSERVABILITY;
 
-  const cmdParts = [
-    openshellBin,
+  const command = openshellBin;
+  const commandArgs = [
     "sandbox",
     "create",
     "--name",
@@ -253,12 +254,11 @@ async function autoCreateSandboxFromSource(
     "--auto-providers",
     "--",
     ...startupCommand,
-  ].map((p) => shellQuote(p));
-  const command = `${cmdParts.join(" ")} 2>&1`;
+  ];
 
   console.log(`  '${dstName}' does not exist. Creating from '${srcName}' image (${fromImage})...`);
 
-  const createResult = await streamSandboxCreate(command, createEnv, {
+  const createResult = await streamSandboxCreate(command, commandArgs, createEnv, {
     // Use a pre-built image, so skip build+push and jump to pod creation.
     initialPhase: "create",
     // Wait until the sandbox actually reaches Ready state, not just appears in the list.
@@ -546,7 +546,8 @@ function runSnapshotCreate(
     } else {
       console.error("  Snapshot failed.");
       if (result.failedDirs.length > 0) {
-        console.error(`  Failed directories: ${result.failedDirs.join(", ")}`);
+        const failedDirs = formatFailedBackupItems(result.failedDirs, result.failedDirReasons);
+        console.error(`  Failed directories: ${failedDirs}`);
       }
       if (result.failedFiles.length > 0) {
         console.error(`  Failed files: ${result.failedFiles.join(", ")}`);

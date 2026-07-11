@@ -52,8 +52,9 @@ jobs:
   review:
     name: PR review advisor (${{ matrix.advisor.label }})
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'NVIDIA/NemoClaw') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
+    continue-on-error: ${{ !matrix.advisor.publish_comment }}
     strategy:
       fail-fast: false
       matrix:
@@ -63,22 +64,21 @@ jobs:
             model: openai/openai/gpt-5.5
             artifact_dir: pr-review-advisor
             artifact_name: pr-review-advisor
-            comment_marker: "<!-- nemoclaw-pr-review-advisor -->"
-            comment_title: PR Review Advisor
-            comment_label: PR review advisor
+            publish_comment: true
           - id: nemotron-ultra
             label: Nemotron 3 Ultra
             model: nvidia/nvidia/nemotron-3-ultra
             artifact_dir: pr-review-advisor-nemotron-ultra
             artifact_name: pr-review-advisor-nemotron-ultra
-            comment_marker: "<!-- nemoclaw-pr-review-advisor-nemotron-ultra -->"
-            comment_title: PR Review Advisor (Nemotron Ultra)
-            comment_label: PR review advisor (Nemotron Ultra)
+            publish_comment: false
     env:
       # Pin the Pi SDK to a known-good version. Updates should go through
       # normal dependency review so a compromised upstream release cannot run
       # automatically in this secret-bearing job.
       PI_SDK_VERSION: "0.74.0"
+      # Keep the grep tool deterministic for the pinned Ubuntu runner. A newer
+      # package must be reviewed and updated explicitly instead of floating.
+      RIPGREP_VERSION: "14.1.0-1"
       PR_REVIEW_ADVISOR_TIMEOUT_MS: "900000"
       PR_REVIEW_ADVISOR_HEARTBEAT_MS: "60000"
       # CI status is captured as point-in-time GitHub context. Historical
@@ -86,10 +86,11 @@ jobs:
       # so do not claim that this job waits for required checks to settle.
       PR_REVIEW_ADVISOR_MODEL: ${{ matrix.advisor.model }}
       PR_REVIEW_ADVISOR_ARTIFACT_DIR: ${{ matrix.advisor.artifact_dir }}
-      PR_REVIEW_ADVISOR_COMMENT_MARKER: ${{ matrix.advisor.comment_marker }}
-      PR_REVIEW_ADVISOR_COMMENT_TITLE: ${{ matrix.advisor.comment_title }}
-      PR_REVIEW_ADVISOR_COMMENT_LABEL: ${{ matrix.advisor.comment_label }}
+      PR_REVIEW_ADVISOR_COMMENT_MARKER: "<!-- nemoclaw-pr-review-advisor -->"
+      PR_REVIEW_ADVISOR_COMMENT_TITLE: PR Review Advisor
+      PR_REVIEW_ADVISOR_COMMENT_LABEL: PR review advisor
       PR_REVIEW_ADVISOR_WORKFLOW_NAME: "PR Review / Advisor"
+      PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW: ${{ matrix.advisor.publish_comment }}
       # Trusted implementation code is always checked out here. PR content is
       # only read as inert analysis data under ADVISOR_WORKDIR.
       ADVISOR_DIR: ${{ github.workspace }}/advisor
@@ -159,6 +160,11 @@ jobs:
 
       - name: Install Pi SDK
         run: |
+          if ! command -v rg >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends "ripgrep=${RIPGREP_VERSION}"
+          fi
+          rg --version
           PI_SDK_DIR="$RUNNER_TEMP/pi-sdk"
           npm install --prefix "$PI_SDK_DIR" --ignore-scripts --no-save --package-lock=false --before=2026-05-14T00:00:00.000Z "@earendil-works/pi-coding-agent@${PI_SDK_VERSION}"
           rm -rf "$ADVISOR_DIR/node_modules"
@@ -242,7 +248,7 @@ jobs:
           fi
 
       - name: Post PR review advisor comment
-        if: ${{ always() && github.event_name == 'pull_request' }}
+        if: ${{ always() && github.event_name == 'pull_request' && matrix.advisor.publish_comment }}
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.PR_REVIEW_ADVISOR_GITHUB_TOKEN || github.token }}
@@ -272,3 +278,13 @@ jobs:
           name: ${{ matrix.advisor.artifact_name }}
           path: artifacts/${{ matrix.advisor.artifact_dir }}/
           if-no-files-found: warn
+
+      - name: Verify advisor analysis outcome
+        if: always()
+        env:
+          ANALYSIS_OUTCOME: ${{ steps.analysis.outcome }}
+        run: |
+          if [ "$ANALYSIS_OUTCOME" != "success" ]; then
+            echo "::error::PR review advisor analysis did not complete: outcome=$ANALYSIS_OUTCOME"
+            exit 1
+          fi

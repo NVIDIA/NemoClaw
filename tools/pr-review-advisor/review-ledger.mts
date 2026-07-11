@@ -19,10 +19,19 @@ const CATEGORIES = [
   "acceptance",
 ] as const;
 const SIMPLIFICATION_TAGS = ["delete", "stdlib", "native", "yagni", "shrink"] as const;
+const FINDING_BASIS_KINDS = [
+  "behavior_mismatch",
+  "unmet_acceptance",
+  "security_violation",
+  "missing_regression",
+  "unnecessary_complexity",
+  "documentation_mismatch",
+] as const;
 
 type Severity = (typeof SEVERITIES)[number];
 type Category = (typeof CATEGORIES)[number];
 type SimplificationTag = (typeof SIMPLIFICATION_TAGS)[number];
+type FindingBasisKind = (typeof FINDING_BASIS_KINDS)[number];
 
 export type ReviewFinding = Readonly<{
   id: string;
@@ -50,6 +59,13 @@ export type ReviewFinding = Readonly<{
 
 type FindingInput = Omit<ReviewFinding, "id" | "status" | "supersededBy">;
 type FindingPatch = Partial<Omit<FindingInput, "evidence">>;
+type CandidateFindingInput = FindingInput & {
+  basis: {
+    kind: FindingBasisKind;
+    observed: string;
+    expected: string;
+  };
+};
 type LedgerOperation =
   | { operation: "none"; reason: string }
   | { operation: "add"; reason?: string; finding: FindingInput }
@@ -63,9 +79,56 @@ type LedgerOperation =
       evidence: string[];
     };
 
-type LedgerBatchInput = Readonly<{
-  operations: readonly LedgerOperation[];
+type LedgerCommitInput = Readonly<{
+  additions: readonly CandidateFindingInput[];
+  updates: readonly {
+    id: string;
+    patch: FindingPatch;
+    reason: string;
+    evidence: readonly string[];
+  }[];
+  resolutions: readonly { id: string; reason: string; evidence: readonly string[] }[];
+  supersessions: readonly {
+    id: string;
+    supersededBy: string;
+    reason: string;
+    evidence: readonly string[];
+  }[];
+  noChangesReason: string | null;
 }>;
+
+type AdditionPolicy = Readonly<{
+  categories: readonly Category[];
+  basisKinds: readonly FindingBasisKind[];
+}>;
+
+const ADDITION_POLICIES: Readonly<Record<string, AdditionPolicy>> = {
+  "scope-risk-map": {
+    categories: ["scope", "architecture"],
+    basisKinds: ["behavior_mismatch", "unnecessary_complexity"],
+  },
+  "correctness-state": {
+    categories: ["correctness", "acceptance", "docs", "architecture"],
+    basisKinds: [
+      "behavior_mismatch",
+      "unmet_acceptance",
+      "documentation_mismatch",
+      "unnecessary_complexity",
+    ],
+  },
+  "security-trust": {
+    categories: ["security"],
+    basisKinds: ["security_violation"],
+  },
+  "tests-regressions": {
+    categories: ["tests"],
+    basisKinds: ["missing_regression"],
+  },
+  "ci-operations": {
+    categories: ["workflow", "docs", "architecture"],
+    basisKinds: ["behavior_mismatch", "documentation_mismatch", "unnecessary_complexity"],
+  },
+};
 
 type LedgerHistory = Readonly<{
   revision: number;
@@ -257,46 +320,51 @@ const findingFields = {
   missingRegressionTest: string,
   simplification: Type.Optional(simplification),
 };
-const findingSchema = Type.Object({ ...findingFields, evidence }, { additionalProperties: false });
-const patchSchema = Type.Partial(Type.Object(findingFields), { additionalProperties: false });
-const operationSchema = Type.Union([
-  Type.Object({ operation: Type.Literal("none"), reason: string }, { additionalProperties: false }),
-  Type.Object(
-    {
-      operation: Type.Literal("add"),
-      reason: Type.Optional(string),
-      finding: findingSchema,
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      operation: Type.Literal("update"),
-      id: string,
-      patch: patchSchema,
-      reason: Type.Optional(string),
-      evidence: Type.Optional(evidence),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    { operation: Type.Literal("resolve"), id: string, reason: string, evidence },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      operation: Type.Literal("supersede"),
-      id: string,
-      supersededBy: string,
-      reason: string,
-      evidence,
-    },
-    { additionalProperties: false },
-  ),
-]);
-const operationBatchSchema = Type.Object(
+const patchSchema = Type.Partial(
+  Type.Object({
+    ...findingFields,
+    file: string,
+    line: Type.Integer({ minimum: 1 }),
+  }),
+  { additionalProperties: false },
+);
+const basisSchema = Type.Object(
   {
-    operations: Type.Array(operationSchema, { minItems: 1 }),
+    kind: Type.Union(FINDING_BASIS_KINDS.map((value) => Type.Literal(value))),
+    observed: string,
+    expected: string,
+  },
+  { additionalProperties: false },
+);
+const additionSchema = Type.Object(
+  {
+    ...findingFields,
+    file: string,
+    line: Type.Integer({ minimum: 1 }),
+    evidence,
+    basis: basisSchema,
+  },
+  { additionalProperties: false },
+);
+const updateSchema = Type.Object(
+  { id: string, patch: patchSchema, reason: string, evidence },
+  { additionalProperties: false },
+);
+const resolutionSchema = Type.Object(
+  { id: string, reason: string, evidence },
+  { additionalProperties: false },
+);
+const supersessionSchema = Type.Object(
+  { id: string, supersededBy: string, reason: string, evidence },
+  { additionalProperties: false },
+);
+const ledgerCommitSchema = Type.Object(
+  {
+    additions: Type.Array(additionSchema),
+    updates: Type.Array(updateSchema),
+    resolutions: Type.Array(resolutionSchema),
+    supersessions: Type.Array(supersessionSchema),
+    noChangesReason: Type.Union([string, Type.Null()]),
   },
   { additionalProperties: false },
 );
@@ -314,11 +382,14 @@ export function createReviewLedgerToolController(
     name: REVIEW_LEDGER_UPDATE_TOOL,
     label: "Update review finding ledger",
     description:
-      "Submit every add, update, resolve, or supersede operation discovered by this stage in one atomic batch. Use one operation=none entry when this stage found no changes.",
-    parameters: operationBatchSchema,
+      "Commit one stage using flat additions, updates, resolutions, and supersessions arrays. Use empty arrays plus noChangesReason when there are no finding changes.",
+    parameters: ledgerCommitSchema,
     executionMode: "sequential",
     execute: async (_id, input) =>
-      ledgerResult(ledger.applyBatch((input as LedgerBatchInput).operations, stage), true),
+      ledgerResult(
+        ledger.applyBatch(ledgerCommitOperations(input as LedgerCommitInput, stage), stage),
+        true,
+      ),
   });
   const read = defineTool({
     name: REVIEW_LEDGER_READ_TOOL,
@@ -334,6 +405,108 @@ export function createReviewLedgerToolController(
       stage = nonempty(value, "stage");
     },
   };
+}
+
+export function reviewLedgerStageCommitGuidance(stage: string): string {
+  if (stage === "reconcile-findings") {
+    return "Reconciliation may update, resolve, or supersede existing findings, but may not add findings.";
+  }
+  const policy = ADDITION_POLICIES[stage];
+  if (!policy) return "This stage may not mutate the finding ledger.";
+  return `Allowed additions: categories ${policy.categories.join(", ")}; basis kinds ${policy.basisKinds.join(", ")}. Transition arrays must stay empty.`;
+}
+
+function ledgerCommitOperations(input: LedgerCommitInput, stage: string): LedgerOperation[] {
+  const activeStage = nonempty(stage, "stage");
+  const policy = ADDITION_POLICIES[activeStage];
+  const isReconciliation = activeStage === "reconcile-findings";
+  if (!policy && !isReconciliation) {
+    throw new Error(`Stage ${activeStage} may not update the finding ledger`);
+  }
+
+  const mutationCount =
+    input.additions.length +
+    input.updates.length +
+    input.resolutions.length +
+    input.supersessions.length;
+  if (input.noChangesReason !== null) {
+    if (mutationCount > 0) {
+      throw new Error("noChangesReason is mutually exclusive with finding mutations");
+    }
+    return [{ operation: "none", reason: nonempty(input.noChangesReason, "noChangesReason") }];
+  }
+  if (mutationCount === 0) {
+    throw new Error("Ledger commit requires a mutation or a non-null noChangesReason");
+  }
+
+  if (isReconciliation) {
+    if (input.additions.length > 0) {
+      throw new Error("reconcile-findings may not add new findings");
+    }
+  } else {
+    const transitionCount =
+      input.updates.length + input.resolutions.length + input.supersessions.length;
+    if (transitionCount > 0) {
+      throw new Error(`Only reconcile-findings may transition existing findings`);
+    }
+  }
+
+  const additions = input.additions.map((candidate): LedgerOperation => {
+    validateCandidateFinding(candidate, activeStage, policy);
+    const { basis, ...finding } = candidate;
+    return {
+      operation: "add",
+      reason: `${basis.kind}: observed ${basis.observed}; expected ${basis.expected}`,
+      finding,
+    };
+  });
+  return [
+    ...additions,
+    ...input.updates.map(
+      (update): LedgerOperation => ({
+        operation: "update",
+        ...update,
+        evidence: [...update.evidence],
+      }),
+    ),
+    ...input.resolutions.map(
+      (resolution): LedgerOperation => ({
+        operation: "resolve",
+        ...resolution,
+        evidence: [...resolution.evidence],
+      }),
+    ),
+    ...input.supersessions.map(
+      (supersession): LedgerOperation => ({
+        operation: "supersede",
+        ...supersession,
+        evidence: [...supersession.evidence],
+      }),
+    ),
+  ];
+}
+
+function validateCandidateFinding(
+  candidate: CandidateFindingInput,
+  stage: string,
+  policy: AdditionPolicy | undefined,
+): void {
+  if (!policy) throw new Error(`${stage} may not add findings`);
+  if (!policy.categories.includes(candidate.category)) {
+    throw new Error(`${stage} may not add category=${candidate.category} findings`);
+  }
+  if (!policy.basisKinds.includes(candidate.basis.kind)) {
+    throw new Error(`${stage} may not add basis.kind=${candidate.basis.kind} findings`);
+  }
+  const observed = normalizedBasisState(candidate.basis.observed, "basis.observed");
+  const expected = normalizedBasisState(candidate.basis.expected, "basis.expected");
+  if (observed === expected) {
+    throw new Error("basis.observed and basis.expected must describe different states");
+  }
+}
+
+function normalizedBasisState(value: string, name: string): string {
+  return nonempty(value, name).toLocaleLowerCase().replace(/\s+/gu, " ");
 }
 
 function ledgerResult(

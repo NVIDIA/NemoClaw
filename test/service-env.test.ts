@@ -633,9 +633,10 @@ describe("service environment", () => {
         expect(envFile).not.toContain("inference.local");
         expect(envFile).toContain("10.200.0.1");
         expect(envFile).toContain('export AWS_EC2_METADATA_DISABLED="true"');
-        expect(envFile).toContain("export OPENCLAW_GATEWAY_TOKEN='test-token-123'");
+        expect(envFile).toContain("export OPENCLAW_GATEWAY_TOKEN");
+        expect(envFile).toContain("OPENCLAW_GATEWAY_TOKEN='test-token-123'");
         expect(envFile).toContain("nemoclaw-configure-guard begin");
-        expect(envFile).toContain('command openclaw "$@"');
+        expect(envFile).toContain('/usr/bin/env openclaw "$@"');
         // Tool cache redirects should be present (#804)
         expect(envFile).toContain("npm_config_cache");
         expect(envFile).toContain("HISTFILE");
@@ -658,17 +659,17 @@ describe("service environment", () => {
         const perms = (lstatSync(join(fakeDataDir, "proxy-env.sh")).mode & 0o777).toString(8);
         expect(perms).toBe("444");
 
-        const connectedValue = execFileSync(
+        const connectedValues = execFileSync(
           "bash",
           [
             "--noprofile",
             "--norc",
             "-c",
-            `export AWS_EC2_METADATA_DISABLED=false; source ${JSON.stringify(join(fakeDataDir, "proxy-env.sh"))}; printf "%s" "$AWS_EC2_METADATA_DISABLED"`,
+            `export AWS_EC2_METADATA_DISABLED=false; source ${JSON.stringify(join(fakeDataDir, "proxy-env.sh"))}; printf "%s|%s" "$AWS_EC2_METADATA_DISABLED" "$OPENCLAW_GATEWAY_TOKEN"`,
           ],
           { encoding: "utf-8" },
         );
-        expect(connectedValue).toBe("true");
+        expect(connectedValues).toBe("true|test-token-123");
       } finally {
         try {
           unlinkSync(tmpFile);

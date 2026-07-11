@@ -1,0 +1,90 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Set Up Model Router"
+sidebar-title: "Set Up Model Router"
+description: "Configure the NemoClaw host-side model router and its model pool."
+description-agent: "Sets up the NemoClaw Model Router. Use when routing requests across a configured model pool or tuning the router tolerance."
+keywords: ["NemoClaw Model Router", "model routing", "router pool"]
+content:
+  type: "how_to"
+---
+Model Router runs on the host and selects a model from a configured pool for each request.
+OpenShell registers it as an OpenAI-compatible provider while the sandbox remains on `inference.local`.
+
+## How the Router Fits
+
+The Model Router option uses the `routed` inference profile in `nemoclaw-blueprint/blueprint.yaml`.
+During onboarding, NemoClaw starts the router proxy on host port `4000`, waits for its health endpoint, and registers the `nvidia-router` provider with OpenShell.
+The sandbox does not call port `4000` directly.
+
+```text
+Sandbox agent -> OpenShell -> Model Router on port 4000 -> NVIDIA API
+```
+
+Credentials flow through the OpenShell provider system.
+The sandbox never sees raw API keys.
+
+## Configure the Model Pool
+
+The router model pool lives in `nemoclaw-blueprint/router/pool-config.yaml`.
+Edit that file to define the model names that the router can select.
+
+The default pool routes between NVIDIA-hosted Nemotron models.
+It uses `tolerance` to select the lowest-cost model whose predicted quality stays within the configured threshold.
+
+```yaml
+routing:
+  method: prefill
+  checkpoint: llm-router/checkpoints/prefill_router_qwen08b.pt
+  tolerance: 0.20
+  encoder: Qwen/Qwen3.5-0.8B
+
+models:
+  - name: nano
+    litellm_model: "openai/nvidia/Nemotron-3-Nano-30B-A3B"
+    cost_per_m_input_tokens: 0.05
+    api_base: "https://integrate.api.nvidia.com"
+
+  - name: super
+    litellm_model: "openai/nvidia/nemotron-3-super-120b-a12b"
+    cost_per_m_input_tokens: 0.10
+    api_base: "https://integrate.api.nvidia.com"
+```
+
+Use these values to tune the accuracy and cost tradeoff.
+
+| Value | Behavior |
+|---|---|
+| `0.0` | Always select the most accurate model. |
+| `0.20` | Allow up to 20 percentage points below the best result for a cheaper model. |
+| `1.0` | Always select the cheapest model. |
+
+## Meet the Python Requirement
+
+NemoClaw creates a host-side virtual environment for Model Router during onboarding.
+It probes `python3.13`, `python3.12`, `python3.11`, `python3.10`, and `python3` in that order.
+The selected interpreter must have a version in the range `[3.10, 3.14)` and must import `ensurepip`, `pyexpat`, `ssl`, and `venv` without error.
+
+If no candidate qualifies, onboarding stops and prints the failure for each candidate.
+Set `NEMOCLAW_MODEL_ROUTER_PYTHON` to an absolute path to probe only one interpreter.
+
+```bash
+NEMOCLAW_MODEL_ROUTER_PYTHON=/opt/homebrew/bin/python3.12 $$nemoclaw onboard
+```
+
+The pin is strict.
+NemoClaw rejects relative command names and stops with the failure reason if the selected interpreter does not qualify.
+
+## Onboard Non-Interactively
+
+Set the routed provider and NVIDIA credential before running onboarding.
+
+```bash
+NEMOCLAW_PROVIDER=routed NVIDIA_INFERENCE_API_KEY=<your-key> $$nemoclaw onboard --non-interactive
+```
+
+## Related Topics
+
+- [About Inference Routing](../about-inference-routing) explains the host and sandbox boundary.
+- [View the Active Inference Route](../manage-inference/view-active-inference-route) shows the active provider and model.

@@ -1,0 +1,56 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
+  "version": 1,
+  "entries": [
+    {
+      "live": "test/e2e/live/inference-routing.test.ts",
+      "fast": [
+        "src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.test.ts",
+        "test/e2e/support/hosted-inference.test.ts",
+        "test/onboard-inference-gateway-scope.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/full-e2e.test.ts",
+      "fast": ["test/e2e/support/onboard-performance.test.ts"]
+    },
+    {
+      "live": "test/e2e/live/openclaw-tui-chat-correlation.test.ts",
+      "fast": [
+        "test/e2e/support/openclaw-tui-ref-fidelity.test.ts",
+        "test/e2e/support/openclaw-tui-run-classification.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/onboard-repair.test.ts",
+      "fast": [
+        "src/lib/onboard/extra-provider-reconciliation-diagnostics.test.ts",
+        "src/lib/onboard/extra-provider-reconciliation-probes.test.ts",
+        "src/lib/onboard/extra-provider-reconciliation.test.ts",
+        "src/lib/onboard/machine/handlers/sandbox-resume.test.ts",
+        "src/lib/onboard/sandbox-create-plan-extra-providers.test.ts",
+        "test/onboard-extra-provider-reconciliation.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/onboard-resume.test.ts",
+      "fast": [
+        "src/lib/onboard/extra-provider-reconciliation-diagnostics.test.ts",
+        "src/lib/onboard/extra-provider-reconciliation-probes.test.ts",
+        "src/lib/onboard/extra-provider-reconciliation.test.ts",
+        "src/lib/onboard/machine/handlers/sandbox-recreate-resume.test.ts",
+        "src/lib/onboard/machine/handlers/sandbox-resume.test.ts",
+        "src/lib/onboard/sandbox-create-plan-extra-providers.test.ts",
+        "test/onboard-extra-provider-reconciliation.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/sandbox-rlimits-connect.test.ts",
+      "fast": [
+        "test/cli/dispatch-basics.test.ts",
+        "test/e2e/support/rlimit-connect-workflow-boundary.test.ts",
+        "test/sandbox-rlimit-hooks.test.ts"
+      ]
+    }
+  ]
+}

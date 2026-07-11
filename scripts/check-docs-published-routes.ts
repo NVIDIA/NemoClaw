@@ -18,7 +18,7 @@
 // routes such as `/user-guide/openclaw/...` are valid too, and are checked
 // against the same published route map.
 
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parse } from "yaml";
@@ -135,6 +135,47 @@ export function buildPublishedRouteIndex(
   return index;
 }
 
+export type RedirectViolation = {
+  source: string;
+  destination: string;
+  resolved: string;
+  variant: AgentVariant | null;
+};
+
+/**
+ * Validate static inference redirect destinations against the published route map.
+ * Variant placeholders are expanded independently so one unsupported agent route
+ * cannot hide behind a redirect that works for the other variants.
+ */
+export function findBrokenPublishedRedirects(
+  index: PublishedRouteIndex,
+  fernYaml: string = readFileSync(path.join(repoRoot, "fern", "docs.yml"), "utf8"),
+): RedirectViolation[] {
+  const config = parse(fernYaml) as {
+    redirects?: Array<{ source: string; destination: string }>;
+  };
+  const violations: RedirectViolation[] = [];
+  for (const redirect of config.redirects ?? []) {
+    if (!redirect.source.includes("/inference") && !redirect.destination.includes("/inference")) {
+      continue;
+    }
+    const hasVariant =
+      redirect.source.includes(":variant") || redirect.destination.includes(":variant");
+    const variants: Array<AgentVariant | null> = hasVariant ? [...agentVariants] : [null];
+    for (const variant of variants) {
+      const source = variant ? redirect.source.replaceAll(":variant", variant) : redirect.source;
+      const destination = variant
+        ? redirect.destination.replaceAll(":variant", variant)
+        : redirect.destination;
+      if (destination.includes(":")) continue;
+      const resolved = destination.replace(/^\/nemoclaw(?:\/latest)?/, "");
+      if (!resolved.startsWith("/user-guide/") || index.routes.has(resolved)) continue;
+      violations.push({ source, destination, resolved, variant });
+    }
+  }
+  return violations;
+}
+
 /**
  * Resolve an internal link the way Fern serves it: root-absolute routes are
  * anchored after the docs base URL, and relative links are resolved against the
@@ -241,6 +282,21 @@ export function findBrokenPublishedRoutes(
   return violations;
 }
 
+/**
+ * Validate only inference links on a shared page whose other historical links
+ * are outside this checker's scope. This keeps the release-notes regression
+ * guard focused while still rendering and checking every agent variant.
+ */
+export function findBrokenPublishedInferenceRoutes(
+  sourcePath: string,
+  index: PublishedRouteIndex,
+  docsDir: string = docsRoot,
+): RouteViolation[] {
+  return findBrokenPublishedRoutes(sourcePath, index, docsDir).filter((violation) =>
+    /\/inference(?:\/|$)/.test(violation.resolved),
+  );
+}
+
 function renderBodyForPublishedRoute(
   source: string,
   sourcePath: string,
@@ -296,16 +352,30 @@ export function resolvePageLinksByText(
 }
 
 // Pages that have repeatedly regressed on source-path-vs-published-route drift
-// (NemoClaw#5445, #6290, #5465, #5460). Scoped intentionally: the wider docs
-// tree has unrelated pre-existing broken links tracked separately.
-const GUARDED_SOURCE_PAGES = ["reference/commands.mdx", "reference/platform-support.mdx"];
+// (NemoClaw#5445, #6290, #5465, #5460, #6601). Guard every inference page because
+// its nested navigation intentionally differs from the flat source directory.
+const GUARDED_SOURCE_PAGES = [
+  "reference/commands.mdx",
+  "reference/network-policies.mdx",
+  "reference/platform-support.mdx",
+  ...readdirSync(path.join(docsRoot, "configure-agents"))
+    .filter((name) => name.endsWith(".mdx"))
+    .sort()
+    .map((name) => `configure-agents/${name}`),
+  ...readdirSync(path.join(docsRoot, "inference"))
+    .filter((name) => name.endsWith(".mdx"))
+    .sort()
+    .map((name) => `inference/${name}`),
+];
 
 function main(): void {
   const index = buildPublishedRouteIndex();
-  const violations = GUARDED_SOURCE_PAGES.flatMap((source) =>
-    findBrokenPublishedRoutes(source, index),
-  );
-  if (violations.length > 0) {
+  const violations = [
+    ...GUARDED_SOURCE_PAGES.flatMap((source) => findBrokenPublishedRoutes(source, index)),
+    ...findBrokenPublishedInferenceRoutes("about/release-notes.mdx", index),
+  ];
+  const redirectViolations = findBrokenPublishedRedirects(index);
+  if (violations.length > 0 || redirectViolations.length > 0) {
     console.error(
       "check-docs-published-routes: internal links resolve to no published Fern route.",
     );
@@ -319,10 +389,17 @@ function main(): void {
           `    resolves to ${v.resolved} — not a published route`,
       );
     }
+    for (const v of redirectViolations) {
+      console.error(
+        `  fern/docs.yml redirect ${v.source}\n` +
+          `    targets ${v.destination}\n` +
+          `    resolves to ${v.resolved} — not a published route`,
+      );
+    }
     process.exit(1);
   }
   console.log(
-    `check-docs-published-routes: OK — ${GUARDED_SOURCE_PAGES.length} guarded page(s), all internal links resolve to published routes`,
+    `check-docs-published-routes: OK — ${GUARDED_SOURCE_PAGES.length} guarded page(s) plus release-note inference links, all checked links resolve to published routes`,
   );
 }
 

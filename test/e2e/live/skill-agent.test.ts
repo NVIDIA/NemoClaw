@@ -22,7 +22,7 @@ import {
 } from "../support/skill-agent-classifiers.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 
-// Keep this as a direct live test: the the contract is skill fixture
+// Keep this as a direct live test: the contract is skill fixture
 // injection into a real OpenClaw sandbox plus an agent turn that must read
 // hands off to this live target.
 

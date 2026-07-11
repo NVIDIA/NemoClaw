@@ -121,6 +121,23 @@ function seedTightenedConfigTree(): { tmpDir: string; configDir: string; configF
   return { tmpDir, configDir, configFile };
 }
 
+function writeDoctorFixFake(tmpDir: string): string {
+  const binDir = path.join(tmpDir, "bin");
+  fs.mkdirSync(binDir);
+  fs.writeFileSync(
+    path.join(binDir, "openclaw"),
+    [
+      "#!/bin/sh",
+      'chmod 700 "$OPENCLAW_STATE_DIR"',
+      'printf \'{"doctor":true}\\n\' > "$OPENCLAW_STATE_DIR/openclaw.json"',
+      'chmod 600 "$OPENCLAW_STATE_DIR/openclaw.json"',
+      "exit 7",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  return binDir;
+}
+
 describe("raw `openclaw doctor --fix` mutable-perm restore (#4538)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
@@ -199,6 +216,7 @@ describe("raw `openclaw doctor --fix` mutable-perm restore (#4538)", () => {
     fs.chmodSync(configDir, 0o2770);
     fs.chmodSync(configFile, 0o660);
     try {
+      const fakeBin = writeDoctorFixFake(tmpDir);
       const result = spawnSync(
         "bash",
         [
@@ -206,18 +224,6 @@ describe("raw `openclaw doctor --fix` mutable-perm restore (#4538)", () => {
           [
             "set -uo pipefail",
             mutableSandboxOwnerStatShim(),
-            // Intercept `command openclaw ...` (the guard's terminal call) to
-            // simulate `doctor --fix`: tighten perms, then exit nonzero — the
-            // EACCES-on-.bashrc case the reporter hit.
-            "command() {",
-            '  if [ "${1:-}" = "openclaw" ]; then',
-            '    chmod 700 "$OPENCLAW_STATE_DIR";',
-            '    printf \'{"doctor":true}\\n\' > "$OPENCLAW_STATE_DIR/openclaw.json";',
-            '    chmod 600 "$OPENCLAW_STATE_DIR/openclaw.json";',
-            "    return 7;",
-            "  fi",
-            '  builtin command "$@";',
-            "}",
             extractGuardBlock(src),
             "openclaw doctor --fix",
             'echo "GUARD_EXIT:$?"',
@@ -226,7 +232,11 @@ describe("raw `openclaw doctor --fix` mutable-perm restore (#4538)", () => {
         {
           encoding: "utf-8",
           timeout: 5000,
-          env: { ...process.env, OPENCLAW_STATE_DIR: configDir },
+          env: {
+            ...process.env,
+            PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+            OPENCLAW_STATE_DIR: configDir,
+          },
         },
       );
 
@@ -251,6 +261,7 @@ describe("raw `openclaw doctor --fix` mutable-perm restore (#4538)", () => {
     fs.chmodSync(configDir, 0o2770);
     fs.chmodSync(configFile, 0o660);
     try {
+      const fakeBin = writeDoctorFixFake(tmpDir);
       const result = spawnSync(
         "bash",
         [
@@ -258,15 +269,6 @@ describe("raw `openclaw doctor --fix` mutable-perm restore (#4538)", () => {
           [
             "set -e",
             mutableSandboxOwnerStatShim(),
-            "command() {",
-            '  if [ "${1:-}" = "openclaw" ]; then',
-            '    chmod 700 "$OPENCLAW_STATE_DIR";',
-            '    printf \'{"doctor":true}\\n\' > "$OPENCLAW_STATE_DIR/openclaw.json";',
-            '    chmod 600 "$OPENCLAW_STATE_DIR/openclaw.json";',
-            "    return 7;",
-            "  fi",
-            '  builtin command "$@";',
-            "}",
             extractGuardBlock(src),
             "openclaw doctor --fix",
             'echo "UNREACHABLE_UNDER_ERREXIT"',
@@ -275,7 +277,11 @@ describe("raw `openclaw doctor --fix` mutable-perm restore (#4538)", () => {
         {
           encoding: "utf-8",
           timeout: 5000,
-          env: { ...process.env, OPENCLAW_STATE_DIR: configDir },
+          env: {
+            ...process.env,
+            PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+            OPENCLAW_STATE_DIR: configDir,
+          },
         },
       );
 

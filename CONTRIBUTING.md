@@ -18,7 +18,7 @@ We welcome many types of contributions:
 | **Bug reports** | Confirmed bugs with reproduction steps — see [Before You Open an Issue](#before-you-open-an-issue) |
 | **Documentation fixes** | Typos, clarifications, and missing information in `docs/` |
 | **Tests** | New or improved test coverage in `test/` or `nemoclaw/test/` |
-| **Feature proposals** | Design-first proposals opened as issues before any implementation |
+| **Feature proposals** | Proposals that state the problem and desired behavior before implementation |
 | **Integrations** | Support for new inference backends, providers, or tools |
 | **Examples** | Worked usage examples added under `docs/` |
 
@@ -32,15 +32,41 @@ Before starting larger work:
 
 - Search open issues and pull requests to avoid duplicates.
 - Start a [GitHub Discussion](https://github.com/NVIDIA/NemoClaw/discussions) before writing code for significant changes.
-- Open an issue after the proposal has enough scope and design detail for maintainer review.
+- Open an issue after the problem, desired behavior, and current constraints are clear enough for maintainer review.
 - For questions, open a [GitHub Discussion](https://github.com/NVIDIA/NemoClaw/discussions) or comment on a related issue.
+
+Before editing, translate the request or issue into observable success criteria and define the intended change boundary.
+State assumptions only when they materially affect behavior, security, data safety, or a supported contract.
+If reasonable interpretations would produce meaningfully different outcomes, record the alternatives and tradeoffs and get alignment before implementation; use established local patterns for routine, reversible details.
+
+Prefer the existing architecture and the smallest direct change that satisfies those criteria.
+Do not introduce speculative features, configuration, extension points, or abstractions for possible future cases.
+Add complexity only when the current requirement demonstrates that the simpler design is insufficient.
+
+## Plain Language and Direct Design
+
+Use the shortest familiar term that accurately names the behavior. Prefer words already used by
+users, the CLI, and nearby code. Every modifier must distinguish a real case in the current system;
+if you cannot answer "as opposed to what?", remove it. Use one name for one concept across issues,
+code, workflows, checks, logs, tests, and documentation.
+
+Names shape designs. Do not create states, types, modules, configuration, adapters, aliases,
+compatibility paths, or extension points merely to support a label or a possible future use. Add a
+layer only when a current requirement, supported contract, repeated current behavior, or demonstrated
+trust boundary makes the direct solution insufficient. When a current consumer requires a
+compatibility path, name that consumer and protect the contract with a test.
+
+Explain decisions and evidence, not the path taken to reach them. State the problem, the observable
+outcome, the smallest change, and how it was verified. Explore alternatives only when they would
+change behavior, security, data safety, or a supported contract. Once the smallest safe change is
+clear and testable, stop exploring and implement it.
 
 ## Before You Open an Issue
 
 Open an issue when you encounter one of the following situations.
 
 - A real bug that you confirmed and could not fix.
-- A feature proposal with a design — not a "please build this" request.
+- A feature proposal with a clear problem and desired behavior — not a "please build this" request.
 - Security vulnerabilities must follow [SECURITY.md](SECURITY.md) — **not** GitHub issues.
 
 Use [GitHub Discussions](https://github.com/NVIDIA/NemoClaw/discussions) for questions, design exploration, and larger feature proposals before implementation.
@@ -63,7 +89,6 @@ Install the following before you begin.
 - Node.js 22.16+ and npm 10+
 - Python 3.11+ (for documentation tooling)
 - Docker (running)
-- [uv](https://docs.astral.sh/uv/) (for Python dependency management — install with `curl -LsSf https://astral.sh/uv/install.sh | sh`, or `brew install uv` on macOS)
 - [hadolint](https://github.com/hadolint/hadolint) (Dockerfile linter — `brew install hadolint` on macOS)
 
 ## Getting Started
@@ -74,7 +99,7 @@ From the repository root, prepare the checkout with one command:
 ./scripts/dev-setup.sh
 ```
 
-The setup command installs repository-local dependencies, synchronizes the root Python environment, builds and type-checks the CLI and plugin, and installs prek hooks.
+The setup command installs repository-local dependencies, verifies the available Python interpreter, builds and type-checks the CLI and plugin, and installs prek hooks.
 It is safe to rerun and does not install host packages, change accounts or global Git configuration, accept licenses, manage credentials, or create a runtime sandbox.
 Use `./scripts/dev-setup.sh --repair` to explicitly rerun the same repository-local repairs.
 
@@ -121,7 +146,6 @@ Use these commands when troubleshooting an individual setup step:
 ```bash
 npm install --include=dev --ignore-scripts
 npm --prefix nemoclaw install --include=dev --ignore-scripts
-uv sync --python /path/to/python3.11-or-newer --no-python-downloads
 npm run build:cli
 npm --prefix nemoclaw run build
 npm run typecheck:cli
@@ -240,8 +264,11 @@ npm run docs
 
 Leave the broad-gate verification item unchecked unless you actually ran the applicable command.
 If hooks were skipped or unavailable, run `npm run check:diff` before opening the PR.
-For code changes, run the targeted tests for changed behavior once per relevant change set and record that command as evidence.
-Do not rerun them solely because hooks passed, but do rerun after later edits or hook autofixes that can affect the tested behavior.
+For code changes, map each success criterion to the narrowest stable test or other evidence that proves it, then run those targeted checks once per relevant change set and record the commands as evidence.
+Reproduce defects before fixing them when feasible; when reproduction is not feasible, record why and preserve the strongest available pre-fix evidence.
+Add regression coverage at the earliest stable behavior boundary that could have caught the defect, and add higher-level coverage only when it protects a distinct integration boundary.
+Include relevant negative and state-safety evidence when the acceptance criteria or risk require it.
+Do not rerun targeted checks solely because hooks passed, but do rerun them after later edits or hook autofixes that can affect the tested behavior.
 Reserve `npm test` for broad runtime changes, test harness changes, or cases where targeted coverage is hard to justify.
 Reserve `npm run check` for repo-wide hook, formatter, generated-check, or coverage-baseline changes.
 
@@ -252,11 +279,11 @@ The repository is organized as follows.
 | Path | Purpose |
 |------|---------|
 | `nemoclaw/` | TypeScript plugin (Commander CLI, OpenClaw extension) |
-| `nemoclaw-blueprint/` | Python blueprint for sandbox orchestration |
+| `nemoclaw-blueprint/` | Blueprint definition and network policies |
 | `bin/` | CLI entry point (`nemoclaw.js`) |
 | `scripts/` | Install helpers and automation scripts |
 | `test/` | Root-level integration tests |
-| `docs/` | User-facing documentation (Fern MDX plus legacy MyST source during migration) |
+| `docs/` | User-facing Fern MDX documentation |
 | `fern/` | Fern site configuration, theme, and assets |
 
 ## Language Policy
@@ -297,6 +324,15 @@ Maintainers review pull requests according to project priority, security impact,
 PRs that solve issues with Priority set to Urgent or High are more likely to receive earlier review when maintainers have capacity.
 For substantial features or behavior changes, start with a GitHub Discussion before opening a large implementation PR.
 
+Keep each pull request issue-scoped: every changed line should support the problem, its observable success criteria, or the evidence required to verify them.
+Remove code made obsolete by the change, but keep drive-by refactoring, formatting, comment rewrites, and unrelated cleanup out of the diff.
+Report unrelated debt separately, and disclose a necessary scope deviation before implementing it so reviewers can assess the tradeoff.
+
+When QA finds a defect that escaped normal engineering controls, treat it as both a product failure and a detection gap.
+In the issue or pull-request narrative, record the product root cause, why the existing implementation, tests, review, CI, environment, or diagnostics did not catch it, and the smallest durable prevention evidence.
+Search adjacent code paths for the same failure class within a bounded scope; fix adjacent instances only when they share the root cause and fit the current change, otherwise report them separately.
+Keep the analysis proportionate to the escaped defect and avoid assigning individual blame; ordinary defects do not require a heavyweight RCA.
+
 ### DCO Sign-Off
 
 This project requires a [Developer Certificate of Origin (DCO)](https://developercertificate.org/) sign-off declaration in every pull request description.
@@ -330,7 +366,7 @@ If force-push is not allowed after an unverified commit is published, open a fre
 
 Do not add links to third-party code repositories, community collections, or unofficial resources in documentation, README files, or code. This includes "awesome lists," community template repositories, wrapper projects, and similar community-maintained resources — regardless of popularity or utility.
 
-Links to official documentation for tools we depend on (e.g., Node.js, Python, uv) and industry standards (e.g., Conventional Commits) are acceptable.
+Links to official documentation for tools we depend on (e.g., Node.js and Python) and industry standards (e.g., Conventional Commits) are acceptable.
 
 **Why:** External repositories are outside our control. They can change ownership, inject malicious content, or misrepresent an endorsement by NVIDIA. Keeping references within our own repo avoids these risks entirely.
 

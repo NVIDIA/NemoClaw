@@ -99,7 +99,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     const startScript = readAgentFile("start.sh");
 
     expect(startScript).toContain("Setting up NemoClaw Deep Agents Code runtime");
-    expect(startScript).toContain("exec tail -f /dev/null");
+    expect(startScript).toContain("exec -a nemoclaw-dcode-entrypoint tail -f /dev/null");
     expect(startScript).not.toContain("exec sleep infinity");
   });
 
@@ -306,6 +306,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(dockerfile).toContain("NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE}");
     expect(dockerfile).toContain("progressive|direct)");
     expect(launcher).toContain('exec "$MANAGED_DCODE_WRAPPER" "$@"');
+    expect(launcher).toContain("harden_resource_limits");
+    expect(launcher).toContain("refusing to launch dcode unhardened");
     expect(policy).not.toContain("/usr/local/bin/dcode.real");
     expect(policy).not.toContain("dcode.upstream");
   });
@@ -637,6 +639,23 @@ describe("LangChain Deep Agents Code image contracts", () => {
       '-- dcode "$@"',
       "sandbox_dcode_wrapper_contract",
       "NEMOCLAW_DCODE_WRAPPER_CHAIN_OK",
+      "cmp -s /usr/local/lib/nemoclaw/dcode-managed-exec /usr/local/lib/nemoclaw/dcode-launcher.sh",
+      "dcode_entrypoint_rlimit_contract_command",
+      "sandbox_entrypoint_rlimit_contract",
+      "nemoclaw-dcode-entrypoint",
+      "NEMOCLAW_DCODE_ENTRYPOINT_RLIMIT_OK",
+      "process-count",
+      "rlimit_shell_contract_command",
+      "sandbox_interactive_exec",
+      "sandbox_direct_rlimit_exec",
+      "/usr/local/lib/nemoclaw/dcode-managed-exec bash -c",
+      "NEMOCLAW_DCODE_SHELL_RLIMIT_OK",
+      "ulimit -Su 513",
+      "ulimit -Sn 65537",
+      "dcode entrypoint process tree enforces nproc=512 and nofile=65536",
+      "dcode login shell enforces and cannot raise nproc/nofile limits",
+      "dcode interactive/connect shell enforces and cannot raise nproc/nofile limits",
+      "direct dcode launcher enforces and cannot raise nproc/nofile limits",
       "NEMOCLAW_DCODE_EMPTY_EXIT",
       "login-shell dcode rejects an empty non-interactive prompt with exit 2",
       "direct-exec dcode rejects an empty non-interactive prompt with exit 2",
@@ -678,6 +697,50 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(headlessCheck).not.toContain('sandbox_login_exec ". /tmp/nemoclaw-proxy-env.sh');
     expect(headlessCheck).not.toContain("config_output:0:200");
     expect(headlessCheck).toMatch(/headless_output=.*sandbox_login_exec.*\|\| true\)"/);
+  });
+
+  it("binds the live rlimit probe to one exact managed entrypoint process (#6545)", () => {
+    const procRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-proc-"));
+    const limits = [
+      "Limit Soft Limit Hard Limit Units",
+      "Max processes 512 512 processes",
+      "Max open files 65536 65536 files",
+      "",
+    ].join("\n");
+    const writeProcess = (pid: number, argv: readonly string[], processLimits = limits) => {
+      const procDir = path.join(procRoot, String(pid));
+      fs.mkdirSync(procDir);
+      fs.writeFileSync(path.join(procDir, "cmdline"), Buffer.from(`${argv.join("\0")}\0`));
+      fs.writeFileSync(path.join(procDir, "limits"), processLimits, "utf8");
+    };
+
+    try {
+      writeProcess(1, ["/opt/openshell/bin/openshell-sandbox"]);
+      writeProcess(42, ["nemoclaw-dcode-entrypoint", "-f", "/dev/null"]);
+      expect(runHeadlessCheckHelper("entrypoint-rlimits", { PROC_ROOT: procRoot })).toBe(
+        "NEMOCLAW_DCODE_ENTRYPOINT_RLIMIT_OK\n",
+      );
+
+      writeProcess(43, ["nemoclaw-dcode-entrypoint", "-f", "/dev/null"]);
+      expect(() => runHeadlessCheckHelper("entrypoint-rlimits", { PROC_ROOT: procRoot })).toThrow();
+      fs.rmSync(path.join(procRoot, "43"), { force: true, recursive: true });
+
+      fs.writeFileSync(
+        path.join(procRoot, "42", "limits"),
+        limits.replace("Max processes 512 512", "Max processes unlimited unlimited"),
+        "utf8",
+      );
+      expect(() => runHeadlessCheckHelper("entrypoint-rlimits", { PROC_ROOT: procRoot })).toThrow();
+
+      fs.writeFileSync(
+        path.join(procRoot, "42", "limits"),
+        limits.replace("Max open files 65536 65536", "Max open files 1024 1024"),
+        "utf8",
+      );
+      expect(() => runHeadlessCheckHelper("entrypoint-rlimits", { PROC_ROOT: procRoot })).toThrow();
+    } finally {
+      fs.rmSync(procRoot, { force: true, recursive: true });
+    }
   });
 
   it("requires the managed inference route and placeholder key in Deep Agents Code config", () => {
@@ -758,13 +821,13 @@ describe("LangChain Deep Agents Code image contracts", () => {
     const review = readAgentFile("dependency-review.md");
 
     expect(review).toContain("requirements.lock");
-    expect(review).toContain("d8b01f36a0f325f38d18b4dc2cfdf452125987571a86ca58d9c93e08b7b06a14");
-    expect(review).toContain("Audit date: 2026-07-07");
+    expect(review).toContain("7889fd275175ceadde843480587a3ed5b3dc517537222e60fa6fdfe4d5b21332");
+    expect(review).toContain("Audit date: 2026-07-09");
     expect(review).toContain(
       "uv tool run --python 3.13 pip-audit -r agents/langchain-deepagents-code/requirements.lock --progress-spinner off --disable-pip",
     );
     expect(review).toContain("No known vulnerabilities found");
-    expect(review).toContain("1cee6afafcbe545f5d095c94cb0ad81ff2a1512f84ad9d128a69a9b3d72b3def");
+    expect(review).toContain("8fe85c62293c74147848732dc56c33e8ab60133fa41c071da4328ac60f2bf44f");
     expect(review).toContain("7ba7b77bd6f889cc861eddbe3e38fc1f4433a85b7bc2a9b516e19a19a37a7686");
     expect(review).toContain("Adapter dependency audit result: `No known vulnerabilities found`");
     expect(review).toContain("Deep Agents Code `0.1.34` pins `deepagents==0.7.0a6`");
