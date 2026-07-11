@@ -309,7 +309,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(launcher).toContain(
       'exec /opt/venv/bin/python3 -I "$MANAGED_SESSION_SUPERVISOR" "$MANAGED_DCODE_WRAPPER" "$@"',
     );
-    expect(launcher).toContain('status | whoami | identity) exec "$MANAGED_DCODE_WRAPPER" "$@"');
+    expect(launcher).toContain(
+      'status | whoami | identity | --version | -v | -V) exec "$MANAGED_DCODE_WRAPPER" "$@"',
+    );
     expect(launcher).toContain("harden_resource_limits");
     expect(launcher).toContain("refusing to launch dcode unhardened");
     expect(policy).not.toContain("/usr/local/bin/dcode.real");

@@ -152,7 +152,8 @@ function shellValidatorAccepts(source: string, name: string, value: string): boo
 describe("Deep Agents Code direct-exec proxy launcher", () => {
   it("keeps read-only identity commands outside the session supervisor", () => {
     const launcher = readAgentFile("dcode-launcher.sh");
-    const directIdentity = 'status | whoami | identity) exec "$MANAGED_DCODE_WRAPPER" "$@"';
+    const directIdentity =
+      'status | whoami | identity | --version | -v | -V) exec "$MANAGED_DCODE_WRAPPER" "$@"';
     const supervisedSession =
       'exec /opt/venv/bin/python3 -I "$MANAGED_SESSION_SUPERVISOR" "$MANAGED_DCODE_WRAPPER" "$@"';
 
