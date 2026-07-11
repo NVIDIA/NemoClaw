@@ -26,6 +26,9 @@ CONTEXT_SECRET_VALUE_PATTERN='[A-Za-z0-9_.+\/=-]{10,}'
 # proves input reached the main composer after optional onboarding; headless
 # check 07 independently owns backend readiness and inference acceptance.
 TUI_READY_PATTERN='(select agent)'
+# Wait for the pinned main TUI banner before sending `/agents`; a fixed delay
+# can race startup and submit `agents` as an ordinary chat prompt instead.
+TUI_COMPOSER_PATTERN='(dcode[^\r\n]*v0\.1\.34)'
 # NemoClaw configures DCode's model and managed provider before launch, so
 # the model picker is a regression. The name prompt is allowed on first run.
 TUI_FIRST_RUN_PATTERN='(choose a recommended model)'
@@ -172,6 +175,7 @@ run_tui_expect() {
   local expect_name_prompt="$3"
   env \
     NEMOCLAW_TUI_CAPTURE="$raw_capture_file" \
+    NEMOCLAW_TUI_COMPOSER_PATTERN="$TUI_COMPOSER_PATTERN" \
     NEMOCLAW_TUI_MARKERS="$marker_capture_file" \
     NEMOCLAW_TUI_FIRST_RUN_PATTERN="$TUI_FIRST_RUN_PATTERN" \
     NEMOCLAW_TUI_NAME_PROMPT_PATTERN="$TUI_NAME_PROMPT_PATTERN" \
@@ -183,6 +187,7 @@ run_tui_expect() {
 set timeout $env(NEMOCLAW_TUI_TIMEOUT)
 set sandbox $env(NEMOCLAW_TUI_SANDBOX_NAME)
 set capture $env(NEMOCLAW_TUI_CAPTURE)
+set composer_pattern $env(NEMOCLAW_TUI_COMPOSER_PATTERN)
 set markers $env(NEMOCLAW_TUI_MARKERS)
 set first_run_pattern $env(NEMOCLAW_TUI_FIRST_RUN_PATTERN)
 set name_prompt_pattern $env(NEMOCLAW_TUI_NAME_PROMPT_PATTERN)
@@ -249,8 +254,39 @@ if {$expect_name_prompt eq "1"} {
   }
 } else {
   append_marker $markers "NEMOCLAW_TUI_NO_NAME_PROMPT"
-  after 1000
-  submit_agents $markers
+  set timeout $env(NEMOCLAW_TUI_TIMEOUT)
+  expect {
+    -nocase -re $composer_pattern {
+      append_marker $markers "$expect_out(0,string)"
+      append_marker $markers "NEMOCLAW_TUI_COMPOSER_READY"
+      submit_agents $markers
+    }
+    -nocase -re $name_prompt_pattern {
+      append_marker $markers "$expect_out(0,string)"
+      append_marker $markers "NEMOCLAW_TUI_UNEXPECTED_NAME_PROMPT"
+      puts "\nNEMOCLAW_TUI_UNEXPECTED_NAME_PROMPT"
+      send -- "\003"
+      exit 25
+    }
+    -nocase -re $first_run_pattern {
+      append_marker $markers "$expect_out(0,string)"
+      append_marker $markers "NEMOCLAW_TUI_UNEXPECTED_FIRST_RUN"
+      puts "\nNEMOCLAW_TUI_UNEXPECTED_FIRST_RUN"
+      send -- "\003"
+      exit 24
+    }
+    timeout {
+      append_marker $markers "NEMOCLAW_TUI_TIMEOUT"
+      puts "\nNEMOCLAW_TUI_TIMEOUT"
+      send -- "\003"
+      exit 20
+    }
+    eof {
+      append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_READY"
+      puts "\nNEMOCLAW_TUI_EOF_BEFORE_READY"
+      exit 21
+    }
+  }
 }
 
 set ready_match ""

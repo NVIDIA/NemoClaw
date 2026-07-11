@@ -57,9 +57,10 @@ function secretFixture(...parts: string[]): string {
   return parts.join("");
 }
 
-type TuiExpectEvent = "eof" | "exit" | "firstRun" | "namePrompt" | "ready" | "timeout";
+type TuiExpectEvent = "composer" | "eof" | "exit" | "firstRun" | "namePrompt" | "ready" | "timeout";
 
 const tclEventLiterals: Record<TuiExpectEvent, string> = {
+  composer: "{composer}",
   eof: "{eof}",
   exit: "{exit}",
   firstRun: "{firstRun}",
@@ -113,6 +114,10 @@ proc expect {branches} {
     set event [lindex $::fake_events 0]
     set ::fake_events [lrange $::fake_events 1 end]
     switch -- $event {
+      composer {
+        set branch_index [lsearch -exact $branches {$composer_pattern}]
+        set ::expect_out(0,string) "> dcode  v0.1.34"
+      }
       namePrompt {
         set branch_index [lsearch -exact $branches {$name_prompt_pattern}]
         set ::expect_out(0,string) "What should Deep Agents call you"
@@ -170,6 +175,7 @@ proc exit {{code 0}} {
       ...process.env,
       NEMOCLAW_TUI_CAPTURE: capture,
       NEMOCLAW_TUI_CLOSE_AFTER_FIRST_CTRL_C: options.closeAfterFirstCtrlC ? "1" : "0",
+      NEMOCLAW_TUI_COMPOSER_PATTERN: "(dcode[^\\r\\n]*v0\\.1\\.34)",
       NEMOCLAW_TUI_EXPECT_NAME_PROMPT: options.expectNamePrompt === false ? "0" : "1",
       NEMOCLAW_TUI_MARKERS: markers,
       NEMOCLAW_TUI_FIRST_RUN_PATTERN: "(choose a recommended model)",
@@ -359,13 +365,17 @@ describe("Deep Agents Code TUI startup check helpers", () => {
   });
 
   itWithTclsh("captures a clean exit when dcode closes after the first Ctrl-C (tclsh)", () => {
-    const { markerText, result, traceText } = runTuiExpectStateMachine(["ready", "exit"], {
-      closeAfterFirstCtrlC: true,
-      expectNamePrompt: false,
-    });
+    const { markerText, result, traceText } = runTuiExpectStateMachine(
+      ["composer", "ready", "exit"],
+      {
+        closeAfterFirstCtrlC: true,
+        expectNamePrompt: false,
+      },
+    );
 
     expect(result.status, result.stderr).toBe(0);
     expect(traceText).toBe("2f,61,67,65,6e,74,73,0d,1b,03");
+    expect(markerText).toContain("NEMOCLAW_TUI_COMPOSER_READY");
     expect(markerText).toContain("NEMOCLAW_TUI_READY");
     expect(markerText).toContain("NEMOCLAW_TUI_EXIT_CAPTURED:0");
   });
