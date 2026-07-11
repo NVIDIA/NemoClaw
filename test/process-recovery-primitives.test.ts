@@ -187,13 +187,15 @@ describe("classifySandboxForwardHealth", () => {
       ),
     ).toBe(false);
     expect(
-      classifySandboxForwardHealth(
-        [{ sandboxName: "beta", bind: "::", port: "18790", status: "running" }],
-        "beta",
-        "18790",
-        "0.0.0.0",
+      ["::", "[::]", "*"].map((bind) =>
+        classifySandboxForwardHealth(
+          [{ sandboxName: "beta", bind, port: "18790", status: "running" }],
+          "beta",
+          "18790",
+          "0.0.0.0",
+        ),
       ),
-    ).toBe(true);
+    ).toEqual([true, true, true]);
   });
 });
 

@@ -255,7 +255,7 @@ describe("preflightRebuildImage", () => {
         await preflightRebuildImage(input(dockerfile), {
           prepareDockerfilePatch: vi.fn(async () => ({
             buildId: "1",
-            dashboardRemoteBindPrepared: false,
+            dashboardRemoteBindPrepared: true,
             resolvedBaseImage: null,
           })),
           buildImage: vi.fn(() => ({ status: 0 }) as never),
@@ -268,6 +268,7 @@ describe("preflightRebuildImage", () => {
       );
       expect(processOnce).toHaveBeenCalledWith("exit", expect.any(Function));
       expect(removeImage).toHaveBeenCalledTimes(2);
+      expect(result.prepared.dashboardRemoteBindPrepared).toBe(true);
       expect(disposePreparedBuildContext(result.prepared)).toBe(true);
     } finally {
       processOnce.mockRestore();
