@@ -14,6 +14,7 @@ unset _nemoclaw_auto_approval_env
 readonly MANAGED_DCODE_WRAPPER="/usr/local/lib/nemoclaw/dcode-wrapper.sh"
 readonly MANAGED_EXEC_LAUNCHER="/usr/local/lib/nemoclaw/dcode-managed-exec"
 readonly MANAGED_OBSERVABILITY_MARKER="/sandbox/.deepagents/.nemoclaw-observability-enabled"
+readonly MANAGED_SESSION_SUPERVISOR="/usr/local/lib/nemoclaw/dcode-session-supervisor.py"
 export HOME=/sandbox
 export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 
@@ -159,4 +160,23 @@ if [ "$0" = "$MANAGED_EXEC_LAUNCHER" ]; then
   exec "$@"
 fi
 
-exec "$MANAGED_DCODE_WRAPPER" "$@"
+# Read-only managed identity commands never start DCode or LangGraph children.
+# Keep onboard's live-route validation on the established wrapper path while
+# supervising every command that can create a terminal-agent process tree.
+case "${1:-}" in
+  status | whoami | identity | --version | -v | -V) exec "$MANAGED_DCODE_WRAPPER" "$@" ;;
+esac
+
+# DCode's one-shot mode owns and cleans up its server lifecycle before exiting.
+# Keep that established automation path outside the interactive-session
+# supervisor; this also preserves the wrapper's exact parser diagnostics.
+_nemoclaw_dcode_args=("$@")
+for ((_nemoclaw_arg_index = 0; _nemoclaw_arg_index < ${#_nemoclaw_dcode_args[@]}; _nemoclaw_arg_index++)); do
+  _nemoclaw_arg="${_nemoclaw_dcode_args[_nemoclaw_arg_index]}"
+  case "$_nemoclaw_arg" in
+    -n | -n?* | --non-interactive | --non-interactive=*) exec "$MANAGED_DCODE_WRAPPER" "$@" ;;
+  esac
+done
+unset _nemoclaw_dcode_args _nemoclaw_arg_index _nemoclaw_arg
+
+exec /opt/venv/bin/python3 -I "$MANAGED_SESSION_SUPERVISOR" "$MANAGED_DCODE_WRAPPER" "$@"

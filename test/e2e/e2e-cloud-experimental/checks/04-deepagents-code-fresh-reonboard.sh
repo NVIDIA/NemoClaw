@@ -118,7 +118,7 @@ initial_model, target_model = sys.argv[1:]
 text = path.read_text(encoding="utf-8")
 config = tomllib.loads(text)
 provider = config["models"]["providers"]["openai"]
-assert set(config) == {"models", "update", "ui", "threads"}
+assert set(config) == {"models", "update", "ui", "threads", "warnings"}
 assert config["models"]["default"] == f"openai:{target_model}"
 assert provider["models"] == [target_model]
 assert provider["api_key_env"] == "DEEPAGENTS_CODE_OPENAI_API_KEY"
@@ -126,6 +126,7 @@ assert provider["base_url"] == "https://inference.local/v1"
 assert config["update"] == {"check": False, "auto_update": False}
 assert config["ui"] == {"show_scrollbar": True, "show_url_open_toast": False}
 assert config["threads"] == {"relative_time": False, "sort_order": "created_at"}
+assert config["warnings"] == {"suppress": ["tavily"]}
 assert initial_model not in text
 for forbidden in (
     "compatible-anthropic-endpoint",
