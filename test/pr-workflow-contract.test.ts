@@ -637,7 +637,7 @@ describe("pull request and main workflow contracts", () => {
     for (const path of ["bin/nemoclaw.js", "jsconfig.json", "package.json", "package-lock.json"]) {
       expect(jsFiles.test(path), path).toBe(true);
     }
-    expect(jsFiles.test("docs/_ext/nemoclaw.js")).toBe(false);
+    expect(jsFiles.test("docs/_components/nemoclaw.js")).toBe(false);
   });
 
   it("executes repo-wide coverage and diff-scoped automatic hook commands", () => {

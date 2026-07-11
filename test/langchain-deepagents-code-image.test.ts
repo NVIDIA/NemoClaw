@@ -827,7 +827,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "uv tool run --python 3.13 pip-audit -r agents/langchain-deepagents-code/requirements.lock --progress-spinner off --disable-pip",
     );
     expect(review).toContain("No known vulnerabilities found");
-    expect(review).toContain("59f5e458f64964df94a5f95a27b693ffa54d3ded96dc5c865c53d72ba34b64c6");
+    expect(review).toContain("8fe85c62293c74147848732dc56c33e8ab60133fa41c071da4328ac60f2bf44f");
     expect(review).toContain("7ba7b77bd6f889cc861eddbe3e38fc1f4433a85b7bc2a9b516e19a19a37a7686");
     expect(review).toContain("Adapter dependency audit result: `No known vulnerabilities found`");
     expect(review).toContain("Deep Agents Code `0.1.34` pins `deepagents==0.7.0a6`");

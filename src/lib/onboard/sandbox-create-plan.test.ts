@@ -74,7 +74,10 @@ function expectCredentialBindingFailure({
     sandboxGpuLogMessage: null,
     policyTier: null,
   });
-  const preparePolicy = vi.fn(() => ({ policyPath: "/tmp/policy.yaml", appliedPresets: [] }));
+  const preparePolicy = vi.fn(() => ({
+    policyPath: "/tmp/policy.yaml",
+    appliedPresets: [],
+  }));
   const appendResources = vi.fn();
   const cleanupProviders = vi.fn();
   const upsertProviders = vi.fn(() => []);
@@ -456,8 +459,16 @@ describe("prepareSandboxCreatePlan", () => {
       enabledChannels: ["telegram", "slack", "whatsapp"],
       disabledChannelNames: new Set(["slack"]),
       messagingTokenDefs: [
-        { name: "sandbox-telegram-bridge", envKey: "TELEGRAM_BOT_TOKEN", token: "telegram" },
-        { name: "sandbox-slack-bridge", envKey: "SLACK_BOT_TOKEN", token: "slack" },
+        {
+          name: "sandbox-telegram-bridge",
+          envKey: "TELEGRAM_BOT_TOKEN",
+          token: "telegram",
+        },
+        {
+          name: "sandbox-slack-bridge",
+          envKey: "SLACK_BOT_TOKEN",
+          token: "slack",
+        },
       ],
       reusableMessagingChannels: ["slack", "whatsapp"],
       reusableMessagingProviders: ["sandbox-slack-bridge", "sandbox-existing-whatsapp"],
@@ -488,7 +499,13 @@ describe("prepareSandboxCreatePlan", () => {
     });
 
     expect(upsertMessagingProviders).toHaveBeenCalledWith(
-      [{ name: "sandbox-telegram-bridge", envKey: "TELEGRAM_BOT_TOKEN", token: "telegram" }],
+      [
+        {
+          name: "sandbox-telegram-bridge",
+          envKey: "TELEGRAM_BOT_TOKEN",
+          token: "telegram",
+        },
+      ],
       { replaceExisting: true },
     );
     expect(result.activeMessagingChannels).toEqual(["telegram", "whatsapp"]);
