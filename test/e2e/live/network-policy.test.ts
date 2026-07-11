@@ -52,6 +52,9 @@ const ONBOARD_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS
 const DENIED_REASON_HOST = "nemoclaw-prr-repro-long-hostname-for-truncation-test.example.invalid";
 const DENIED_REASON_ENDPOINT = `${DENIED_REASON_HOST}:443`;
 const DENIED_REASON_URL = `https://${DENIED_REASON_HOST}/some/long/path`;
+const ENCODED_SLASH_DENIED_ENDPOINT = "openclaw.ai:443";
+const ENCODED_SLASH_DENIED_REASON =
+  "request-target contains an encoded '/' (%2F) which is not allowed on this endpoint";
 type NemoEnv = NodeJS.ProcessEnv;
 
 function text(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
@@ -213,7 +216,10 @@ async function expectScopedClawHubPluginLifecycle(sandbox: SandboxClient): Promi
   );
 }
 
-async function expectEncodedSlashConfinedToClawHub(sandbox: SandboxClient): Promise<void> {
+async function expectEncodedSlashConfinedToClawHub(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+): Promise<void> {
   const encodedPath = "/@nemoclaw%2Fencoded-slash-boundary-probe";
   const clawhubStatus = await fetchStatus(
     sandbox,
@@ -232,18 +238,38 @@ async function expectEncodedSlashConfinedToClawHub(sandbox: SandboxClient): Prom
     `https://openclaw.ai${encodedPath}`,
     "tc-net-permissive-non-clawhub-encoded-slash",
   );
-  expect(nonClawhubStatus, `encoded slashes must stay denied outside ClawHub`).toMatch(
-    /STATUS_403/,
+  expect(nonClawhubStatus, `encoded slashes must fail closed outside ClawHub`).toMatch(
+    /^(?:STATUS_403|ERROR_UND_ERR_SOCKET)/,
   );
+  const denial = await waitForDeniedReasonLog(host, {
+    endpoint: ENCODED_SLASH_DENIED_ENDPOINT,
+    reasonIncludes: ENCODED_SLASH_DENIED_REASON,
+    artifactPrefix: "tc-net-permissive-non-clawhub-encoded-slash-logs-tail-50",
+  });
+  expect(denial.line).toContain("NET:OPEN");
+  expect(denial.line).toContain("DENIED");
+  expect(denial.line).toContain(ENCODED_SLASH_DENIED_ENDPOINT);
+  expect(denial.line).toContain("[policy:openclaw_api engine:l7]");
+  expect(denial.reason).toContain(ENCODED_SLASH_DENIED_REASON);
 }
 
-async function waitForDeniedReasonLog(host: HostCliClient) {
+async function waitForDeniedReasonLog(
+  host: HostCliClient,
+  options: {
+    endpoint?: string;
+    reasonIncludes?: string;
+    artifactPrefix?: string;
+  } = {},
+) {
+  const endpoint = options.endpoint ?? DENIED_REASON_ENDPOINT;
+  const artifactPrefix = options.artifactPrefix ?? "tc-net-4760-logs-tail-50";
   return pollDeniedReasonLog({
     attempts: process.env.GITHUB_ACTIONS === "true" ? 12 : 8,
-    endpoint: DENIED_REASON_ENDPOINT,
+    endpoint,
+    reasonIncludes: options.reasonIncludes,
     readLogs: async (attempt) => {
       const logs = await runNemoclaw(host, [SANDBOX_NAME, "logs", "--tail", "50"], {
-        artifactName: `tc-net-4760-logs-tail-50-attempt-${attempt}`,
+        artifactName: `${artifactPrefix}-attempt-${attempt}`,
         timeoutMs: 60_000,
       });
       expect(logs.exitCode, text(logs)).toBe(0);
@@ -1003,7 +1029,7 @@ nemoclaw-start node /tmp/nemoclaw-web-fetch-e2e.mjs 'http://host.openshell.inter
     artifactName: "tc-net-06-npm-ping-permissive",
   });
   expect(text(npmPing)).toContain("NPM_OK");
-  await expectEncodedSlashConfinedToClawHub(sandbox);
+  await expectEncodedSlashConfinedToClawHub(host, sandbox);
 
   await artifacts.target.complete({
     id: "network-policy",
