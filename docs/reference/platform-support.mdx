@@ -189,6 +189,6 @@ They are listed here so launch material, sales conversations, and support triage
 ## Updating the Matrix
 
 1. Edit [`ci/platform-matrix.json`](https://github.com/NVIDIA/NemoClaw/blob/main/ci/platform-matrix.json).
-2. Run `python3 scripts/generate-platform-docs.py` to regenerate this page and the partial tables on prerequisites and inference-options.
+2. Run `python3 scripts/generate-platform-docs.py` to regenerate this page and the partial tables on prerequisites and provider selection.
 3. Open a PR. The engineering owner team is auto-assigned through CODEOWNERS and explicitly acknowledges launch impact in the PR review for any launch-facing claim change.
 4. The `platform-matrix-sync` pre-commit hook regenerates and stages the rendered tables before the commit lands; run `python3 scripts/generate-platform-docs.py --check` to verify drift without regenerating.

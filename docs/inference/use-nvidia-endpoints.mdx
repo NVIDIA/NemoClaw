@@ -1,0 +1,51 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Use NVIDIA Endpoints"
+sidebar-title: "Use NVIDIA Endpoints"
+description: "Configure NemoClaw to use models hosted on NVIDIA Endpoints."
+description-agent: "Sets up NVIDIA Endpoints as the NemoClaw inference provider. Use when onboarding with an NVIDIA API key or selecting a hosted NVIDIA model."
+keywords: ["NVIDIA Endpoints", "NVIDIA inference API", "NemoClaw hosted inference"]
+content:
+  type: "how_to"
+---
+NVIDIA Endpoints routes NemoClaw to models hosted on [build.nvidia.com](https://build.nvidia.com) through an OpenAI-compatible API.
+The sandbox keeps using `inference.local` while OpenShell forwards requests to the NVIDIA endpoint.
+
+## Credential
+
+Set `NVIDIA_INFERENCE_API_KEY` in the host shell before onboarding.
+NemoClaw applies the `nvapi-` prefix check only to this credential and keeps the key on the host.
+
+## Model Choices
+
+The bundled fallback choices include these models.
+
+- `nvidia/nemotron-3-ultra-550b-a55b`.
+- `nvidia/nemotron-3-super-120b-a12b`.
+- `minimaxai/minimax-m3`.
+
+Interactive onboarding loads NVIDIA's public featured model catalog and can show additional live models.
+You can also choose **Other** and enter a model ID from the catalog.
+
+## Onboard
+
+Run the onboarding wizard and select **NVIDIA Endpoints**.
+
+```bash
+$$nemoclaw onboard
+```
+
+The wizard validates a manual model entry against the catalog before it continues.
+If the live catalog is unavailable or does not contain safe model IDs, the wizard warns you and uses the bundled fallback list.
+
+## Validation
+
+NemoClaw validates NVIDIA Endpoints through `/v1/chat/completions` only.
+It skips `/v1/responses` because NVIDIA Build does not expose that route.
+The wizard retries transient upstream failures before it reports a provider failure.
+
+## Related Topics
+
+- [Choose a Model](../learn-and-choose/choose-model) compares the curated models by task fit.
+- [Understand Provider Validation](../validate-inference/understand-provider-validation) describes the onboarding checks across providers.

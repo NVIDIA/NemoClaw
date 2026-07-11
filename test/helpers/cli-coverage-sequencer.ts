@@ -1,0 +1,191 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
+import { BaseSequencer, type TestSpecification } from "vitest/node";
+
+interface TimingHintSource {
+  runId: number;
+  headSha: string;
+  recordedAt: string;
+}
+
+export interface CliTestTimingHints {
+  schemaVersion: 1;
+  defaultDurationMs: number;
+  source: TimingHintSource;
+  files: Readonly<Record<string, number>>;
+}
+
+export interface WeightedShardEntry<T> {
+  key: string;
+  weightMs: number;
+  value: T;
+}
+
+export interface WeightedShard<T> {
+  index: number;
+  totalWeightMs: number;
+  entries: WeightedShardEntry<T>[];
+}
+
+const durationAwareProjects = new Set(["cli", "integration"]);
+// Only measured outliers are stored; new and ordinary files share the
+// conservative fallback so stale hints can affect speed, never correctness.
+const timingHintsUrl = new URL("../../ci/cli-test-timing-hints.json", import.meta.url);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function parseCliTestTimingHints(value: unknown): CliTestTimingHints {
+  if (!isRecord(value) || value.schemaVersion !== 1) {
+    throw new Error("CLI test timing hints must use schemaVersion 1");
+  }
+  if (!Number.isSafeInteger(value.defaultDurationMs) || Number(value.defaultDurationMs) <= 0) {
+    throw new Error("CLI test timing hints require a positive integer defaultDurationMs");
+  }
+  if (!isRecord(value.source)) {
+    throw new Error("CLI test timing hints require source metadata");
+  }
+
+  const { runId, headSha, recordedAt } = value.source;
+  if (!Number.isSafeInteger(runId) || Number(runId) <= 0) {
+    throw new Error("CLI test timing hint source requires a positive runId");
+  }
+  if (typeof headSha !== "string" || !/^[0-9a-f]{40}$/u.test(headSha)) {
+    throw new Error("CLI test timing hint source requires a full commit SHA");
+  }
+  if (typeof recordedAt !== "string" || Number.isNaN(Date.parse(recordedAt))) {
+    throw new Error("CLI test timing hint source requires an ISO timestamp");
+  }
+  if (!isRecord(value.files)) {
+    throw new Error("CLI test timing hints require a files map");
+  }
+
+  const defaultDurationMs = Number(value.defaultDurationMs);
+  const files: Record<string, number> = {};
+  for (const [file, durationMs] of Object.entries(value.files)) {
+    const segments = file.split("/");
+    if (
+      file.length === 0 ||
+      file.startsWith("/") ||
+      file.includes("\\") ||
+      segments.includes("..") ||
+      !Number.isSafeInteger(durationMs) ||
+      Number(durationMs) <= defaultDurationMs
+    ) {
+      throw new Error(`Invalid CLI test timing hint: ${file}`);
+    }
+    files[file] = Number(durationMs);
+  }
+
+  return {
+    schemaVersion: 1,
+    defaultDurationMs,
+    source: { runId: Number(runId), headSha, recordedAt },
+    files,
+  };
+}
+
+export const cliTestTimingHints = parseCliTestTimingHints(
+  JSON.parse(readFileSync(timingHintsUrl, "utf8")),
+);
+
+function compareKeys(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+export function assignWeightedShards<T>(
+  entries: readonly WeightedShardEntry<T>[],
+  shardCount: number,
+): WeightedShard<T>[] {
+  if (!Number.isSafeInteger(shardCount) || shardCount < 1) {
+    throw new Error(`Invalid shard count: ${shardCount}`);
+  }
+
+  const seenKeys = new Set<string>();
+  for (const entry of entries) {
+    if (
+      entry.key.length === 0 ||
+      seenKeys.has(entry.key) ||
+      !Number.isFinite(entry.weightMs) ||
+      entry.weightMs <= 0
+    ) {
+      throw new Error(`Invalid weighted shard entry: ${entry.key}`);
+    }
+    seenKeys.add(entry.key);
+  }
+
+  const ranked = [...entries].sort(
+    (left, right) => right.weightMs - left.weightMs || compareKeys(left.key, right.key),
+  );
+  const shards: WeightedShard<T>[] = Array.from({ length: shardCount }, (_, index) => ({
+    index: index + 1,
+    totalWeightMs: 0,
+    entries: [],
+  }));
+
+  // Longest-processing-time assignment separates the expensive files first,
+  // then deterministic key/index ties keep every runner's partition identical.
+  for (const entry of ranked) {
+    let target = shards[0];
+    if (!target) throw new Error("Weighted shard allocation requires at least one shard");
+    for (const candidate of shards.slice(1)) {
+      if (
+        candidate.totalWeightMs < target.totalWeightMs ||
+        (candidate.totalWeightMs === target.totalWeightMs &&
+          (candidate.entries.length < target.entries.length ||
+            (candidate.entries.length === target.entries.length && candidate.index < target.index)))
+      ) {
+        target = candidate;
+      }
+    }
+    target.entries.push(entry);
+    target.totalWeightMs += entry.weightMs;
+  }
+
+  return shards;
+}
+
+export function shouldUseDurationAwareSharding(projectNames: readonly string[]): boolean {
+  return (
+    projectNames.length > 0 &&
+    projectNames.every((projectName) => durationAwareProjects.has(projectName))
+  );
+}
+
+export function timingWeightForPath(file: string): number {
+  return cliTestTimingHints.files[file] ?? cliTestTimingHints.defaultDurationMs;
+}
+
+function relativeTestPath(root: string, moduleId: string): string {
+  return path.relative(root, moduleId).split(path.sep).join("/");
+}
+
+export class CliCoverageSequencer extends BaseSequencer {
+  override async shard(files: TestSpecification[]): Promise<TestSpecification[]> {
+    if (!shouldUseDurationAwareSharding(files.map((file) => file.project.name))) {
+      return super.shard(files);
+    }
+
+    const shard = this.ctx.config.shard;
+    if (!shard) return files;
+
+    const assignments = assignWeightedShards(
+      files.map((file) => {
+        const filePath = relativeTestPath(this.ctx.config.root, file.moduleId);
+        return {
+          key: `${file.project.name}:${filePath}:${file.pool}:${file.taskId}`,
+          weightMs: timingWeightForPath(filePath),
+          value: file,
+        };
+      }),
+      shard.count,
+    );
+
+    return assignments[shard.index - 1]?.entries.map((entry) => entry.value) ?? [];
+  }
+}

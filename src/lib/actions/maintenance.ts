@@ -4,6 +4,7 @@
 import { dockerListImagesFormat, dockerRmi } from "../adapters/docker";
 import { CLI_NAME } from "../cli/branding";
 import { prompt as askPrompt } from "../credentials/store";
+import { formatFailedBackupItems } from "../domain/backup-failure";
 import {
   type GarbageCollectImagesOptions,
   normalizeGarbageCollectImagesOptions,
@@ -113,8 +114,11 @@ export async function backupAll(): Promise<void> {
         }
         unreachableRunning++;
       }
-      const failedItems = [...result.failedDirs, ...result.failedFiles];
-      console.error(`  ${RD}✗${R} ${sb.name}: backup failed (${failedItems.join(", ")})`);
+      const failedItems = formatFailedBackupItems(
+        [...result.failedDirs, ...result.failedFiles],
+        result.failedDirReasons,
+      );
+      console.error(`  ${RD}✗${R} ${sb.name}: backup failed (${failedItems})`);
       failed++;
     }
   }

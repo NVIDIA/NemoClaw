@@ -563,7 +563,8 @@ describe("onboard session", () => {
     expect(loaded.provider).toBe("openai");
   });
 
-  // ── Session secret boundary, consolidated from #6225 (epic #6224) ──
+  // Session secret boundary from #6225. Endpoint query coverage for #6224
+  // lives in onboard-session-redaction.test.ts.
 
   it("round-trips writer-shaped legacy migration hashes and drops non-string entries (#6225)", () => {
     // Digest shape mirrors legacyValueHash() in src/lib/onboard.ts, the only
@@ -592,8 +593,8 @@ describe("onboard session", () => {
     expect(loaded.migratedLegacyValueHashes?.NVIDIA_API_KEY).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it("serializes missing and explicit-null credentialEnv identically (#6224)", () => {
-    // #6224 contract gap: the schema cannot distinguish "never prompted",
+  it("serializes missing and explicit-null credentialEnv identically (#6228)", () => {
+    // #6228 contract gap: the schema cannot distinguish "never prompted",
     // "user declined", and "explicitly cleared" once they become null.
     session.saveSession(session.createSession());
     const unset = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf8")).credentialEnv;
@@ -610,9 +611,7 @@ describe("onboard session", () => {
     expect(requireLoadedSession(session.loadSession()).credentialEnv).toBeNull();
   });
 
-  // Desired behavior tracked by #6224. redactUrl() currently masks sensitive
-  // parameter names but not token-shaped values under otherwise benign names.
-  it.todo("redacts token-shaped values under benign endpoint query param names (#6224)");
+  // Focused endpoint secret-persistence coverage lives in onboard-session-redaction.test.ts.
 
   it("only persists known Hermes auth methods", () => {
     session.saveSession(session.createSession());

@@ -344,7 +344,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     clearAutoDetectedCompatibleContextWindow(process.env);
     let forceInferenceSetup = initialForceInferenceSetup;
     let recoveredRecordedProvider = false;
-    const providerRecovery = createRecovery(fresh, sandboxName, session, deps);
+    const providerRecovery = createRecovery(fresh, sandboxName, session, deps, {
+      authoritativeResumeConfig,
+    });
     const resumeProviderSelection =
       !forceProviderSelection &&
       effectiveResume &&

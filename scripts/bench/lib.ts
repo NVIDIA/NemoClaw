@@ -402,7 +402,7 @@ export function renderMarkdownReport(report: BenchReport): string {
     "  the `Inference` line; for local Ollama/vLLM confirm the backend is reachable.",
     "- Missing sandbox/policy timings: re-run onboarding with `NEMOCLAW_TRACE=1` and pass",
     "  the written trace file with `--trace`.",
-    "- See docs/inference/use-local-inference and docs/reference/troubleshooting.",
+    "- See docs/inference/set-up-ollama and docs/reference/troubleshooting.",
     "",
   );
 

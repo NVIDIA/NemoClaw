@@ -59,6 +59,101 @@ describe("provider inference recovery gating", () => {
     );
   });
 
+  it("allows a preflighted authoritative rebuild to recover from its incomplete session", async () => {
+    const session = createSession({
+      provider: "compatible-endpoint",
+      model: "mock/channels-rebuild",
+      endpointUrl: "https://compatible.example.test/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+    });
+    session.sandboxName = "dc-after";
+    const { deps, calls } = createDeps();
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      forceProviderSelection: true,
+      authoritativeResumeConfig: true,
+      sandboxName: "dc-after",
+    });
+
+    expect(calls.setupNim).toHaveBeenCalledWith(
+      { type: "nvidia" },
+      "dc-after",
+      null,
+      true,
+      "nemoclaw",
+      expect.any(Function),
+      expect.any(Function),
+      session.sessionId,
+    );
+  });
+
+  it("rejects an authoritative incomplete session for a different sandbox", async () => {
+    const session = createSession({
+      sandboxName: "dc-before",
+      provider: "compatible-endpoint",
+      model: "mock/channels-rebuild",
+      endpointUrl: "https://compatible.example.test/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+    });
+    const { deps, calls } = createDeps();
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      forceProviderSelection: true,
+      authoritativeResumeConfig: true,
+      sandboxName: "dc-after",
+    });
+
+    expect(calls.setupNim).toHaveBeenCalledWith(
+      { type: "nvidia" },
+      "dc-after",
+      null,
+      false,
+      "nemoclaw",
+      expect.any(Function),
+      expect.any(Function),
+      session.sessionId,
+    );
+  });
+
+  it("rejects an authoritative incomplete session with a foreign reservation", async () => {
+    const session = createSession();
+    session.sandboxName = "dc-after";
+    const entry: SandboxEntry = {
+      name: "dc-after",
+      pendingRouteReservation: true,
+      reservationSessionId: "session-other",
+    };
+    const getAuthority = vi.fn((_name: string, sessionId: string | null | undefined) =>
+      classifySandboxRecoveryAuthority(entry, sessionId),
+    );
+    const { deps, calls } = createDeps({ getSandboxRecoveryAuthority: getAuthority });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      forceProviderSelection: true,
+      authoritativeResumeConfig: true,
+      sandboxName: "dc-after",
+    });
+
+    expect(calls.setupNim).toHaveBeenCalledWith(
+      { type: "nvidia" },
+      "dc-after",
+      null,
+      false,
+      "nemoclaw",
+      expect.any(Function),
+      expect.any(Function),
+      session.sessionId,
+    );
+  });
+
   it("allows recovery for a registered sandbox", async () => {
     const getAuthority = vi.fn((name: string) =>
       name === "dc-after" ? ("authorized" as const) : ("missing" as const),
@@ -154,10 +249,9 @@ describe("provider inference recovery gating", () => {
     expect(getAuthority).toHaveBeenCalledWith("dc-after", session.sessionId);
   });
 
-  it("forces route setup and rechecks ownership after recorded selection (#6630)", async () => {
+  it("rechecks an authoritative incomplete session after recorded selection (#6630)", async () => {
     const session = createSession();
     session.sandboxName = "dc-after";
-    session.steps.sandbox.status = "complete";
     const persistedAfterSelection = createSession({ sessionId: "session-after-selection" });
     let authority: "authorized" | "unauthorized" = "authorized";
     const getAuthority = vi.fn((_name: string, sessionId: string | null | undefined) =>
@@ -197,6 +291,7 @@ describe("provider inference recovery gating", () => {
     await handleProviderInferenceState({
       ...baseOptions(deps, session),
       resume: true,
+      authoritativeResumeConfig: true,
       sandboxName: "dc-after",
     });
 
