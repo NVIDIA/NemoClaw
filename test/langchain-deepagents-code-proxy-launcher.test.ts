@@ -161,6 +161,16 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     expect(launcher.indexOf(directIdentity)).toBeLessThan(launcher.indexOf(supervisedSession));
   });
 
+  it("keeps rejected empty prompts outside the session supervisor", () => {
+    const launcher = readAgentFile("dcode-launcher.sh");
+    const emptyPromptBypass = '*) exec "$MANAGED_DCODE_WRAPPER" "$@" ;;';
+    const supervisedSession =
+      'exec /opt/venv/bin/python3 -I "$MANAGED_SESSION_SUPERVISOR" "$MANAGED_DCODE_WRAPPER" "$@"';
+
+    expect(launcher).toContain(emptyPromptBypass);
+    expect(launcher.indexOf(emptyPromptBypass)).toBeLessThan(launcher.indexOf(supervisedSession));
+  });
+
   it("preserves the empty-prompt failure through the installed launcher chain (#6440)", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-empty-prompt-"));
     try {

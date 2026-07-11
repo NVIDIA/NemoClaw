@@ -167,4 +167,32 @@ case "${1:-}" in
   status | whoami | identity | --version | -v | -V) exec "$MANAGED_DCODE_WRAPPER" "$@" ;;
 esac
 
+# Empty non-interactive prompts are rejected by the wrapper before DCode or a
+# LangGraph child can start. Keep this validation-only path outside the session
+# supervisor so OpenShell's terminal smoke check observes the wrapper's exact
+# exit status and diagnostic.
+_nemoclaw_dcode_args=("$@")
+for ((_nemoclaw_arg_index = 0; _nemoclaw_arg_index < ${#_nemoclaw_dcode_args[@]}; _nemoclaw_arg_index++)); do
+  _nemoclaw_arg="${_nemoclaw_dcode_args[_nemoclaw_arg_index]}"
+  _nemoclaw_prompt=""
+  case "$_nemoclaw_arg" in
+    -n | --non-interactive)
+      _nemoclaw_value_index=$((_nemoclaw_arg_index + 1))
+      if [ "$_nemoclaw_value_index" -lt "${#_nemoclaw_dcode_args[@]}" ]; then
+        _nemoclaw_prompt="${_nemoclaw_dcode_args[_nemoclaw_value_index]}"
+      else
+        continue
+      fi
+      ;;
+    --non-interactive=*) _nemoclaw_prompt="${_nemoclaw_arg#--non-interactive=}" ;;
+    -n?*) _nemoclaw_prompt="${_nemoclaw_arg#-n}" ;;
+    *) continue ;;
+  esac
+  case "$_nemoclaw_prompt" in
+    *[![:space:]]*) ;;
+    *) exec "$MANAGED_DCODE_WRAPPER" "$@" ;;
+  esac
+done
+unset _nemoclaw_dcode_args _nemoclaw_arg_index _nemoclaw_arg _nemoclaw_prompt _nemoclaw_value_index
+
 exec /opt/venv/bin/python3 -I "$MANAGED_SESSION_SUPERVISOR" "$MANAGED_DCODE_WRAPPER" "$@"
