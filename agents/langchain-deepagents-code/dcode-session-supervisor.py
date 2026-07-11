@@ -16,6 +16,7 @@ from pathlib import Path
 
 _PR_SET_CHILD_SUBREAPER = 36
 _TERM_GRACE_SECONDS = 3.0
+_KILL_GRACE_SECONDS = 1.0
 _POLL_SECONDS = 0.05
 
 
@@ -106,6 +107,19 @@ def _exit_code(returncode: int) -> int:
     return returncode if returncode >= 0 else 128 + abs(returncode)
 
 
+def _wait_after_disconnect(child: subprocess.Popen[bytes]) -> int:
+    """Bound shutdown even when the direct DCode child ignores disconnect."""
+    try:
+        return child.wait(timeout=_TERM_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        child.terminate()
+    try:
+        return child.wait(timeout=_KILL_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        child.kill()
+        return child.wait()
+
+
 def run(argv: Sequence[str]) -> int:
     if not argv:
         print("dcode session supervisor requires a command.", file=sys.stderr)
@@ -120,8 +134,11 @@ def run(argv: Sequence[str]) -> int:
     _enable_child_subreaper()
     child: subprocess.Popen[bytes] | None = None
     pending_signals: list[int] = []
+    disconnect_received = False
 
     def forward(sig: int, _frame: object) -> None:
+        nonlocal disconnect_received
+        disconnect_received = True
         if child is None:
             pending_signals.append(sig)
             return
@@ -144,7 +161,9 @@ def run(argv: Sequence[str]) -> int:
         child = subprocess.Popen(list(argv))
         for pending_signal in pending_signals:
             forward(pending_signal, None)
-        returncode = child.wait()
+        returncode = (
+            _wait_after_disconnect(child) if disconnect_received else child.wait()
+        )
     finally:
         _cleanup_adopted_descendants()
     return _exit_code(returncode)

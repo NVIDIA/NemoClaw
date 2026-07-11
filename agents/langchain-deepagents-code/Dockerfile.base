@@ -37,6 +37,11 @@ RUN groupadd -r sandbox \
     && mkdir -p /sandbox/.nemoclaw \
         /sandbox/.deepagents/.state \
         /sandbox/.deepagents/skills \
+    # Deep Agents Code owns the optional-name onboarding state, but managed
+    # terminals cannot answer that upstream first-run prompt before becoming
+    # usable. Preseed it here; the TUI startup E2E rejects pending onboarding
+    # and unexpected name prompts. Remove this when upstream supports a
+    # documented non-interactive managed-onboarding mode.
     && printf '1\n' > /sandbox/.deepagents/.state/onboarding_complete \
     && chown -R sandbox:sandbox /sandbox \
     && chmod 2770 /sandbox/.deepagents \

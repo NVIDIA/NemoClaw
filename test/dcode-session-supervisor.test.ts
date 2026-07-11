@@ -55,7 +55,7 @@ describe.runIf(canRun)("managed DCode session supervisor", () => {
       "    def __init__(self, _argv):",
       "        real_kill(os.getpid(), signal.SIGHUP)",
       "        real_kill(os.getpid(), signal.SIGTERM)",
-      "    def wait(self):",
+      "    def wait(self, timeout=None):",
       "        return 0",
       "module.subprocess.Popen = FakeChild",
       "status = module.run(['/fake/dcode'])",
@@ -114,6 +114,64 @@ describe.runIf(canRun)("managed DCode session supervisor", () => {
       expect(() => process.kill(descendantPid, 0)).toThrow(
         expect.objectContaining({ code: "ESRCH" }),
       );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("bounds disconnect cleanup when the direct child ignores signals (#6678)", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-disconnect-"));
+    const pidFile = path.join(dir, "processes.pid");
+    const session = path.join(dir, "session.py");
+    const harness = path.join(dir, "harness.py");
+    fs.writeFileSync(
+      session,
+      [
+        "import os",
+        "import pathlib",
+        "import signal",
+        "import subprocess",
+        "import sys",
+        "import time",
+        "signal.signal(signal.SIGHUP, signal.SIG_IGN)",
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)",
+        "descendant = subprocess.Popen([sys.executable, '-c', 'import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)'])",
+        `pathlib.Path(${JSON.stringify(pidFile)}).write_text(f'{os.getpid()}\\n{descendant.pid}\\n', encoding='utf-8')`,
+        "time.sleep(30)",
+      ].join("\n"),
+    );
+    fs.writeFileSync(
+      harness,
+      [
+        "import os",
+        "import pathlib",
+        "import signal",
+        "import subprocess",
+        "import sys",
+        "import time",
+        `pid_file = pathlib.Path(${JSON.stringify(pidFile)})`,
+        `supervisor = subprocess.Popen([sys.executable, ${JSON.stringify(supervisor)}, sys.executable, ${JSON.stringify(session)}])`,
+        "deadline = time.monotonic() + 5",
+        "while not pid_file.exists() and time.monotonic() < deadline:",
+        "    time.sleep(0.05)",
+        "if not pid_file.exists():",
+        "    supervisor.kill()",
+        "    raise SystemExit('session did not publish process ids')",
+        "pids = [int(value) for value in pid_file.read_text(encoding='utf-8').splitlines()]",
+        "os.kill(supervisor.pid, signal.SIGHUP)",
+        "supervisor.wait(timeout=10)",
+        "for pid in pids:",
+        "    try:",
+        "        os.kill(pid, 0)",
+        "    except ProcessLookupError:",
+        "        continue",
+        "    raise SystemExit(f'process still alive: {pid}')",
+      ].join("\n"),
+    );
+
+    try {
+      const result = spawnSync("python3", [harness], { encoding: "utf8", timeout: 15_000 });
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
