@@ -38,6 +38,8 @@ Set `NEMOCLAW_PREFERRED_API=openai-completions` to skip the Responses probe and 
 
 <AgentOnly variant="openclaw">
 The Chat Completions default avoids local backends that accept Responses requests but drop system prompts or tool definitions.
+For GPT-5 and the `o1`, `o3`, and `o4` model families, NemoClaw configures OpenClaw to send the maximum reply token limit as `max_completion_tokens` instead of the legacy `max_tokens`.
+This automatic compatibility handling recognizes provider-prefixed and suffixed model IDs, such as `azure/gpt-5.4`, `gpt-5.4-turbo`, and `openai/o3-mini`.
 </AgentOnly>
 
 Start your model server.

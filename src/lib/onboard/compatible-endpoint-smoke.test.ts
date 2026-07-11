@@ -148,9 +148,9 @@ describe("compatible endpoint sandbox smoke helpers", () => {
 
   it("retries a reasoning-only length response before failing the sandbox smoke", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-reasoning-"));
-    const model = "minimaxai/minimax-m2.7";
+    const model = "gpt-5.4";
     const configPath = writeSmokeConfig(tmpDir, model);
-    const { binDir, callFile } = writeFakeCurl(
+    const { binDir, callFile, requestFile } = writeFakeCurl(
       tmpDir,
       String.raw`
 if [ "$count" -eq 1 ]; then
@@ -179,6 +179,9 @@ fi
     expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
     expect(result.stderr).toContain("exhausted max_tokens=32 in reasoning_content");
     expect(fs.readFileSync(callFile, "utf-8")).toBe("2");
+    const retryPayload = JSON.parse(fs.readFileSync(requestFile, "utf-8"));
+    expect(retryPayload.max_completion_tokens).toBe(512);
+    expect(retryPayload.max_tokens).toBeUndefined();
   });
 
   it("retries a transient non-JSON gateway response", () => {
