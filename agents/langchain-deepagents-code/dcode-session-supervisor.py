@@ -120,6 +120,8 @@ def run(argv: Sequence[str]) -> int:
         try:
             os.kill(child.pid, sig)
         except (ProcessLookupError, PermissionError):
+            # The child may exit between signal delivery and this forwarding
+            # attempt; cleanup below still reaps any adopted descendants.
             pass
 
     # Terminal-generated SIGINT already reaches every member of the foreground
