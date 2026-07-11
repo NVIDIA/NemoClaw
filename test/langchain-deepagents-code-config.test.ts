@@ -73,6 +73,8 @@ describe("LangChain Deep Agents Code config generator", () => {
     expect(config).not.toContain("force_nonempty_content");
     expect(config).toContain("check = false");
     expect(config).toContain("auto_update = false");
+    expect(config).toContain("[warnings]");
+    expect(config).toContain('suppress = ["tavily"]');
     expect(config).not.toMatch(/NVIDIA_API_KEY|OPENAI_API_KEY=|sk-/);
   });
 
