@@ -10,6 +10,10 @@ import type {
 } from "../../../inference/gateway-route-compatibility";
 import type { WebSearchConfig } from "../../../inference/web-search";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
+import type {
+  createProviderRecoveryReceiptLedger,
+  ProviderRecoveryReceipt,
+} from "../../rebuild-route-handoff";
 import { withInferenceTrace, withProviderSelectionTrace } from "../../tracing";
 import { advanceTo, type OnboardStateTransitionResult, retryTo } from "../result";
 import { createRecovery, type RecoveryAuthority } from "./provider-inference-recovery";
@@ -71,6 +75,9 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
   forceInferenceSetup?: boolean;
   /** Trust the rebuild-preflighted session selection even if its old step marker is incomplete. */
   authoritativeResumeConfig?: boolean;
+  /** One-shot authority, activated at selection, to recover a recorded provider during rebuild. */
+  providerRecoveryReceipt?: ProviderRecoveryReceipt | null;
+  providerRecoveryReceiptLedger?: ReturnType<typeof createProviderRecoveryReceiptLedger>;
   initial: {
     model: string | null;
     provider: string | null;
@@ -295,6 +302,8 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   forceProviderSelection: initialForceProviderSelection = false,
   forceInferenceSetup: initialForceInferenceSetup = false,
   authoritativeResumeConfig = false,
+  providerRecoveryReceipt = null,
+  providerRecoveryReceiptLedger,
   initial,
   selectedMessagingChannels,
   env,
@@ -345,7 +354,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     let forceInferenceSetup = initialForceInferenceSetup;
     let recoveredRecordedProvider = false;
     const providerRecovery = createRecovery(fresh, sandboxName, session, deps, {
-      authoritativeResumeConfig,
+      recoveryReceipt: providerRecoveryReceipt,
+      recoveryReceiptLedger: providerRecoveryReceiptLedger,
+      gatewayName,
     });
     const resumeProviderSelection =
       !forceProviderSelection &&

@@ -5,7 +5,13 @@ import { CLI_NAME } from "../../cli/branding";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { isSandboxBaseImageRefreshRequested } from "../../onboard/base-image-resolution-flow";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
-import { createRebuildProviderReconfigureHandoff } from "../../onboard/rebuild-route-handoff";
+import { randomUUID } from "node:crypto";
+
+import {
+  createRebuildProviderReconfigureHandoff,
+  mintProviderRecoveryReceipt,
+  type RegistryInferenceRoute,
+} from "../../onboard/rebuild-route-handoff";
 import { readSandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import * as registry from "../../state/registry";
 import type { ToolDisclosure } from "../../tool-disclosure";
@@ -35,6 +41,9 @@ import {
   type RebuildTargetConfig,
   stageRebuildHermesDashboardConfig,
 } from "./rebuild-target-preflight";
+
+/** Upper bound on how long a minted provider-recovery receipt stays valid. */
+const PROVIDER_RECOVERY_RECEIPT_TTL_MS = 60 * 60 * 1000;
 
 export interface RebuildPreparedTarget {
   targetConfig: RebuildTargetConfig;
@@ -150,6 +159,23 @@ export async function prepareRebuildTargetPreflights(args: {
   ) {
     return null;
   }
+  const recoveryRoute: RegistryInferenceRoute = resumeConfig.registryInferenceRoute ?? {
+    provider: resumeConfig.provider,
+    model: resumeConfig.model,
+    endpointUrl: resumeConfig.endpointUrl,
+    preferredInferenceApi: resumeConfig.preferredInferenceApi ?? "",
+    source: "registry",
+  };
+  recreateOptions.providerRecoveryReceipt = mintProviderRecoveryReceipt(
+    {
+      sandboxName,
+      gatewayName: recreateOptions.targetGatewayName,
+      provider: resumeConfig.provider,
+      model: resumeConfig.model,
+      route: recoveryRoute,
+    },
+    { nonce: randomUUID(), expiresAtMs: Date.now() + PROVIDER_RECOVERY_RECEIPT_TTL_MS },
+  );
   if (!(await ensureRebuildTargetGatewaySelected(sandboxName, sandboxEntry, log, bail)))
     return null;
   if (!checkRebuildGatewaySchemaPreflight(sandboxName, sandboxEntry, bail)) return null;

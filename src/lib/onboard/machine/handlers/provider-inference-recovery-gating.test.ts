@@ -10,7 +10,22 @@ import { createSession } from "../../../state/onboard-session";
 import type { SandboxEntry } from "../../../state/registry";
 import { classifySandboxRecoveryAuthority } from "../../provider-recovery";
 import { handleProviderInferenceState } from "./provider-inference";
-import { baseOptions, createDeps } from "./provider-inference.test-support";
+import {
+  activatedRecoveryReceipt,
+  baseOptions,
+  baseSelection,
+  createDeps,
+} from "./provider-inference.test-support";
+
+function captureInLockRecheck() {
+  let recheck: (() => boolean) | undefined;
+  const setupInference = vi.fn(async (...args: unknown[]) => {
+    recheck = (args[7] as { isRecordedProviderRecoveryAuthorized?: () => boolean } | undefined)
+      ?.isRecordedProviderRecoveryAuthorized;
+    return { ok: true as const };
+  });
+  return { setupInference, getRecheck: () => recheck };
+}
 
 describe("provider inference recovery gating", () => {
   it.each([
@@ -69,12 +84,18 @@ describe("provider inference recovery gating", () => {
     });
     session.sandboxName = "dc-after";
     const { deps, calls } = createDeps();
+    const { receipt, ledger } = activatedRecoveryReceipt({
+      sandboxName: "dc-after",
+      sessionId: session.sessionId,
+    });
 
     await handleProviderInferenceState({
       ...baseOptions(deps, session),
       resume: true,
       forceProviderSelection: true,
       authoritativeResumeConfig: true,
+      providerRecoveryReceipt: receipt,
+      providerRecoveryReceiptLedger: ledger,
       sandboxName: "dc-after",
     });
 
@@ -405,5 +426,89 @@ describe("provider inference recovery gating", () => {
       expect.any(Function),
       session.sessionId,
     );
+  });
+
+  it("lets only the reservation owner recover the same sandbox concurrently", async () => {
+    const owner = createSession();
+    const intruder = createSession();
+    owner.sandboxName = "dc-after";
+    intruder.sandboxName = "dc-after";
+    const entry: SandboxEntry = {
+      name: "dc-after",
+      pendingRouteReservation: true,
+      reservationSessionId: owner.sessionId,
+    };
+    const getAuthority = vi.fn((_name: string, sessionId: string | null | undefined) =>
+      classifySandboxRecoveryAuthority(entry, sessionId),
+    );
+
+    async function recoverAs(session: typeof owner): Promise<boolean> {
+      const { setupInference, getRecheck } = captureInLockRecheck();
+      const { deps } = createDeps({
+        getSandboxRecoveryAuthority: getAuthority,
+        setupNim: vi.fn(async () => ({ ...baseSelection, recoveredFromSandbox: true })),
+        setupInference,
+      });
+      const { receipt, ledger } = activatedRecoveryReceipt({
+        sandboxName: "dc-after",
+        sessionId: session.sessionId,
+      });
+      await handleProviderInferenceState({
+        ...baseOptions(deps, session),
+        resume: true,
+        forceProviderSelection: true,
+        authoritativeResumeConfig: true,
+        providerRecoveryReceipt: receipt,
+        providerRecoveryReceiptLedger: ledger,
+        sandboxName: "dc-after",
+      });
+      return getRecheck()?.() ?? false;
+    }
+
+    const [ownerAuthorized, intruderAuthorized] = await Promise.all([
+      recoverAs(owner),
+      recoverAs(intruder),
+    ]);
+
+    expect(ownerAuthorized).toBe(true);
+    expect(intruderAuthorized).toBe(false);
+  });
+
+  it("rejects a foreign reservation introduced after selection inside the mutation lock", async () => {
+    const session = createSession();
+    session.sandboxName = "dc-after";
+    const entry: SandboxEntry = {
+      name: "dc-after",
+      pendingRouteReservation: true,
+      reservationSessionId: session.sessionId,
+    };
+    const getAuthority = vi.fn((_name: string, sessionId: string | null | undefined) =>
+      classifySandboxRecoveryAuthority(entry, sessionId),
+    );
+    const { setupInference, getRecheck } = captureInLockRecheck();
+    const { deps } = createDeps({
+      getSandboxRecoveryAuthority: getAuthority,
+      setupNim: vi.fn(async () => ({ ...baseSelection, recoveredFromSandbox: true })),
+      setupInference,
+    });
+    const { receipt, ledger } = activatedRecoveryReceipt({
+      sandboxName: "dc-after",
+      sessionId: session.sessionId,
+    });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      forceProviderSelection: true,
+      authoritativeResumeConfig: true,
+      providerRecoveryReceipt: receipt,
+      providerRecoveryReceiptLedger: ledger,
+      sandboxName: "dc-after",
+    });
+
+    const recheck = getRecheck();
+    expect(recheck?.()).toBe(true);
+    entry.reservationSessionId = "session-foreign";
+    expect(recheck?.()).toBe(false);
   });
 });
