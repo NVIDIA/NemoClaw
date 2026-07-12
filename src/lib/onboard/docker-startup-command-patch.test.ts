@@ -154,7 +154,10 @@ describe("Docker startup-command patch", () => {
     expect(dockerRunDetached).not.toHaveBeenCalled();
   });
 
-  it("refuses to mutate when the pinned container identity changed", () => {
+  it.each([
+    "different-container-id",
+    "",
+  ])("refuses to mutate when the pinned container identity is changed or empty", (expectedOldContainerId) => {
     const dockerStop = vi.fn(() => ({ status: 0 }));
     const dockerRename = vi.fn(() => ({ status: 0 }));
     const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
@@ -164,7 +167,7 @@ describe("Docker startup-command patch", () => {
         {
           sandboxName: "alpha",
           openshellSandboxCommand: ["env", "nemoclaw-start"],
-          expectedOldContainerId: "different-container-id",
+          expectedOldContainerId,
         },
         {
           dockerCapture: vi.fn((args: readonly string[]) =>
@@ -179,7 +182,7 @@ describe("Docker startup-command patch", () => {
           dockerStop,
         },
       ),
-    ).toThrow("refusing an unpinned startup-command recreation");
+    ).toThrow("observed container differs from the pinned identity");
     expect(dockerStop).not.toHaveBeenCalled();
     expect(dockerRename).not.toHaveBeenCalled();
     expect(dockerRunDetached).not.toHaveBeenCalled();
@@ -228,6 +231,11 @@ describe("Docker startup-command patch", () => {
       .fn()
       .mockReturnValueOnce({ status: null, error: new Error("rename timed out") })
       .mockReturnValueOnce({ status: 0 });
+    const dockerCapture = vi
+      .fn()
+      .mockReturnValueOnce("old-container-id\n")
+      .mockReturnValueOnce(JSON.stringify([inspectFixture()]))
+      .mockReturnValueOnce(JSON.stringify([inspectFixture()]));
 
     expect(() =>
       recreateOpenShellDockerSandboxWithStartupCommand(
@@ -236,13 +244,7 @@ describe("Docker startup-command patch", () => {
           openshellSandboxCommand: ["env", "nemoclaw-start"],
         },
         {
-          dockerCapture: vi.fn((args: readonly string[]) =>
-            args[0] === "ps"
-              ? "old-container-id\n"
-              : args[0] === "inspect"
-                ? JSON.stringify([inspectFixture()])
-                : "",
-          ),
+          dockerCapture,
           dockerRunDetached,
           dockerRename,
           dockerStart,
@@ -259,6 +261,11 @@ describe("Docker startup-command patch", () => {
     expect(dockerStart).toHaveBeenCalledWith(
       "old-container-id",
       expect.objectContaining({ ignoreError: true }),
+    );
+    expect(dockerCapture).toHaveBeenNthCalledWith(
+      3,
+      ["inspect", "--type", "container", "old-container-id"],
+      expect.any(Object),
     );
     expect(dockerRunDetached).not.toHaveBeenCalled();
   });

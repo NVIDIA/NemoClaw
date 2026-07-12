@@ -1084,12 +1084,12 @@ export function recreateOpenShellDockerSandboxContainer(
       );
     }
     if (
-      options.expectedOldContainerId &&
+      options.expectedOldContainerId != null &&
       (containerIds.length !== 1 || oldContainerId !== options.expectedOldContainerId)
     ) {
       throw new Error(
         `OpenShell Docker container identity changed for sandbox '${options.sandboxName}'; ` +
-          "refusing an unpinned startup-command recreation.",
+          "refusing startup-command recreation because the observed container differs from the pinned identity.",
       );
     }
     if (options.openshellSandboxCommand != null) {
