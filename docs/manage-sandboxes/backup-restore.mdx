@@ -48,7 +48,8 @@ Use the built-in snapshot commands for the fastest backup and restore path.
 Snapshots capture all workspace state directories defined in the agent manifest and store them in `~/.nemoclaw/rebuild-backups/<name>/`.
 Agent manifests can also declare durable top-level state files.
 <AgentOnly variant="hermes">
-For Hermes, snapshots include `SOUL.md` and the SQLite database behind `.hermes/state.db` using SQLite's online backup API, then restore that database through SQLite instead of copying a live raw database file.
+For Hermes, snapshots include `SOUL.md`, the Web Dashboard profile under `.hermes/dashboard-home/`, and the SQLite database behind `.hermes/state.db` using SQLite's online backup API, then restore that database through SQLite instead of copying a live raw database file.
+The dashboard profile includes `MEMORY.md` and `USER.md`, and the automatic rebuild snapshot preserves both files.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 For Deep Agents, snapshots include manifest-declared state under `/sandbox/.deepagents`, including skills and runtime state, while omitting credential-bearing user files.
@@ -174,12 +175,17 @@ openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/memory/ "$BAC
 ```bash
 SANDBOX=my-hermes
 BACKUP_DIR=~/.nemoclaw/backups/$(date +%Y%m%d-%H%M%S)
-mkdir -p "$BACKUP_DIR"
+mkdir -p "$BACKUP_DIR/dashboard-home"
 
 openshell sandbox download "$SANDBOX" /sandbox/SOUL.md "$BACKUP_DIR/"
 openshell sandbox download "$SANDBOX" /sandbox/.hermes/state.db "$BACKUP_DIR/"
+openshell sandbox download "$SANDBOX" /sandbox/.hermes/dashboard-home/MEMORY.md "$BACKUP_DIR/dashboard-home/MEMORY.md"
+openshell sandbox download "$SANDBOX" /sandbox/.hermes/dashboard-home/USER.md "$BACKUP_DIR/dashboard-home/USER.md"
 openshell sandbox download "$SANDBOX" /sandbox/.hermes/platforms/ "$BACKUP_DIR/platforms/"
 ```
+
+Copy only the dashboard profile's `MEMORY.md` and `USER.md` files.
+Do not copy `.hermes/dashboard-home/.env` or `.hermes/dashboard-home/config.yaml`; NemoClaw regenerates both files, and `.env` contains dashboard authentication material.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
@@ -229,6 +235,8 @@ BACKUP_DIR=~/.nemoclaw/backups/20260320-120000  # pick a timestamp
 
 openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/SOUL.md" /sandbox/
 openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/state.db" /sandbox/.hermes/
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/dashboard-home/MEMORY.md" /sandbox/.hermes/dashboard-home/MEMORY.md
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/dashboard-home/USER.md" /sandbox/.hermes/dashboard-home/USER.md
 openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/platforms/" /sandbox/.hermes/platforms/
 ```
 
@@ -261,6 +269,7 @@ $$nemoclaw backup-all
 
 `backup-all` walks the sandboxes registered on the host, creates a snapshot for each running sandbox, and stores the snapshot bundles under `~/.nemoclaw/rebuild-backups/<name>/`.
 If a registered sandbox is stopped, start the sandbox or its container and rerun `$$nemoclaw backup-all` so NemoClaw can capture a fresh snapshot before maintenance.
+When a backup fails, NemoClaw identifies the affected state item and reports one of these causes when available: `permission denied`, `tar read error`, or `absent after extraction`.
 Use `$$nemoclaw <name> snapshot list` and `$$nemoclaw <name> snapshot restore` to inspect or restore one sandbox's bundles later.
 
 ## Using the Backup Script
