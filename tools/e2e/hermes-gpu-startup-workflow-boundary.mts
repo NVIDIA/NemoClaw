@@ -9,8 +9,15 @@ import YAML from "yaml";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
+const DEFAULT_FIXTURE_PATH = join(
+  REPO_ROOT,
+  "tools",
+  "e2e",
+  "hermes-gpu-docker-runtime-fixture.sh",
+);
 const JOB_NAME = "hermes-gpu-startup";
 const RUN_STEP_NAME = "Run Hermes GPU startup live Vitest test";
+const RECOVERY_STEP_NAME = "Recover Docker daemon after Hermes GPU fallback fixture";
 const LEGACY_PREPARE_STEP_NAME = "Prepare no-GPU native fallback fixture";
 const LEGACY_RESTORE_STEP_NAME = "Restore Docker default runtime after fallback fixture";
 const UPLOAD_STEP_NAME = "Upload Hermes GPU startup artifacts";
@@ -47,6 +54,7 @@ function stringValue(value: unknown): string {
 
 export function validateHermesGpuStartupWorkflowBoundary(
   workflowPath = DEFAULT_WORKFLOW_PATH,
+  fixturePath = DEFAULT_FIXTURE_PATH,
 ): string[] {
   const workflow = asRecord(YAML.parse(readFileSync(workflowPath, "utf8")));
   const job = asRecord(asRecord(workflow.jobs)[JOB_NAME]);
@@ -86,7 +94,6 @@ export function validateHermesGpuStartupWorkflowBoundary(
 
   const jobEnv = asRecord(job.env);
   const requiredEnv = {
-    E2E_DEFAULT_ENABLED: "0",
     E2E_ARTIFACT_DIR:
       "${{ github.workspace }}/e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}",
     E2E_HERMES_GPU_STARTUP_SCENARIO: "${{ matrix.scenario }}",
@@ -101,6 +108,11 @@ export function validateHermesGpuStartupWorkflowBoundary(
     if (jobEnv[name] !== expected) {
       errors.push(`${JOB_NAME} job must set ${name}=${expected}`);
     }
+  }
+  if (Object.hasOwn(jobEnv, "E2E_DEFAULT_ENABLED")) {
+    errors.push(
+      `${JOB_NAME} job must not set E2E_DEFAULT_ENABLED; the trusted inventory owns its explicit-only classification`,
+    );
   }
   if (Object.hasOwn(jobEnv, "NEMOCLAW_DOCKER_GPU_PATCH")) {
     errors.push(
@@ -146,15 +158,17 @@ export function validateHermesGpuStartupWorkflowBoundary(
     errors.push(`${JOB_NAME} fallback Docker mutation, Vitest, and restore must share one step`);
   }
   const cleanupBoundaryFragments = [
+    "umask 077",
+    "mktemp -d",
+    'chmod 0700 "$state_dir"',
+    "${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.fallback.XXXXXX",
     "restore_docker_default_runtime()",
     "trap restore_docker_default_runtime EXIT",
     "trap 'exit 130' INT",
     "trap 'exit 143' TERM",
-    'config["default-runtime"] = "runc"',
-    'sudo install -m 0644 "$state_dir/daemon.json.original" "$daemon_json"',
-    'sudo rm -f "$daemon_json"',
-    'sudo cmp -s "$state_dir/daemon.json.original" "$daemon_json"',
-    "docker-default-runtime-restored.txt",
+    "hermes-gpu-docker-runtime-fixture.sh capture",
+    "hermes-gpu-docker-runtime-fixture.sh select-runc",
+    "hermes-gpu-docker-runtime-fixture.sh restore",
   ];
   if (!cleanupBoundaryFragments.every((fragment) => runScript.includes(fragment))) {
     errors.push(`${JOB_NAME} fallback Docker mutation must remain under same-step cleanup traps`);
@@ -169,11 +183,84 @@ export function validateHermesGpuStartupWorkflowBoundary(
   if (!sourceBoundaryMarkers.every((marker) => runScript.includes(marker))) {
     errors.push(`${JOB_NAME} fallback Docker fixture must retain its source-boundary rationale`);
   }
+  if (/\b(?:install\s+-m|chmod)\s+0?644\b/u.test(runScript)) {
+    errors.push(`${JOB_NAME} fallback Docker fixture must reject permissive 0644 file modes`);
+  }
   if (!runScript.includes("npx vitest run --project e2e-live")) {
     errors.push(`${JOB_NAME} step must run the e2e-live Vitest project`);
   }
   if (!runScript.includes("test/e2e/live/hermes-gpu-startup.test.ts")) {
     errors.push(`${JOB_NAME} step must run the dedicated Hermes GPU startup test`);
+  }
+
+  const recoveryStep = steps.find((step) => step.name === RECOVERY_STEP_NAME);
+  if (!recoveryStep) {
+    errors.push(`${JOB_NAME} job missing step: ${RECOVERY_STEP_NAME}`);
+  } else {
+    if (recoveryStep.if !== "always()") {
+      errors.push(`${JOB_NAME} independent Docker recovery step must always run`);
+    }
+    if (recoveryStep.shell !== "bash") {
+      errors.push(`${JOB_NAME} independent Docker recovery step must use bash`);
+    }
+    const recoveryScript = stringValue(recoveryStep.run);
+    const recoveryFragments = [
+      'find "$RUNNER_TEMP"',
+      "${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.fallback.",
+      "hermes-gpu-docker-runtime-fixture.sh restore",
+      "recovery_failed=1",
+    ];
+    if (!recoveryFragments.every((fragment) => recoveryScript.includes(fragment))) {
+      errors.push(
+        `${JOB_NAME} independent Docker recovery step must discover and restore cancelled fallback state`,
+      );
+    }
+    if (/\b(?:install\s+-m|chmod)\s+0?644\b/u.test(recoveryScript)) {
+      errors.push(`${JOB_NAME} fallback Docker fixture must reject permissive 0644 file modes`);
+    }
+    if (steps.indexOf(recoveryStep) <= steps.indexOf(runStep)) {
+      errors.push(`${JOB_NAME} independent Docker recovery step must follow the live test step`);
+    }
+  }
+
+  let fixtureScript = "";
+  try {
+    fixtureScript = readFileSync(fixturePath, "utf8");
+  } catch {
+    errors.push(`${JOB_NAME} Docker runtime fixture helper is missing`);
+  }
+  if (fixtureScript) {
+    if (/\b(?:install\s+-m|chmod)\s+0?644\b/u.test(fixtureScript)) {
+      errors.push(`${JOB_NAME} fallback Docker fixture must reject permissive 0644 file modes`);
+    }
+    const fixtureFragments = [
+      "umask 077",
+      'install -m 0600 /dev/null "$state_dir/daemon.json.original"',
+      "sudo stat -c '%a %u %g' \"$daemon_json\"",
+      "daemon.json.metadata",
+      'sudo install -m "$original_mode"',
+      'sudo chown "$original_uid:$original_gid" "$daemon_json"',
+      'sudo chmod "$original_mode" "$daemon_json"',
+      'sudo cmp -s "$state_dir/daemon.json.original" "$daemon_json"',
+      "restored_mode $restored_uid $restored_gid",
+      '"$restored_runtime" != "$original_runtime"',
+      'rm -rf -- "$state_dir"',
+    ];
+    if (!fixtureFragments.every((fragment) => fixtureScript.includes(fragment))) {
+      errors.push(
+        `${JOB_NAME} Docker runtime fixture must preserve and verify content, mode, UID, GID, and runtime`,
+      );
+    }
+    const cleanupMatch = /^\s{2}rm -rf -- "\$state_dir" \|\| restore_failed=1$/mu.exec(
+      fixtureScript,
+    );
+    const cleanupIndex = cleanupMatch?.index ?? -1;
+    const failureIndex = fixtureScript.indexOf('if [ "$restore_failed" -ne 0 ]', cleanupIndex);
+    if (cleanupIndex < 0 || failureIndex < cleanupIndex) {
+      errors.push(
+        `${JOB_NAME} Docker runtime fixture must remove private state before reporting restore failure`,
+      );
+    }
   }
 
   const uploadStep = steps.find((step) => step.name === UPLOAD_STEP_NAME);

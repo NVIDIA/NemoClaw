@@ -2278,7 +2278,8 @@ Allowing environment input to weaken or extend the cleanup proof would make a se
 On a host that cannot prove absence within the bound, onboarding fails closed; select compatibility from the outset with `NEMOCLAW_DOCKER_GPU_PATCH=1` instead of weakening the handoff proof.
 If deletion or container cleanup cannot be proven safe, onboarding stops before the retry and prints manual cleanup guidance.
 Image build, upload, TLS, provider, policy, dashboard, and inference failures stay on their existing error paths and do not trigger the GPU compatibility fallback.
-Set `NEMOCLAW_DOCKER_GPU_PATCH=1`, or another legacy nonzero value, to use only the compatibility path for diagnostics or older host compatibility.
+Set `NEMOCLAW_DOCKER_GPU_PATCH=1` to use only the compatibility path for diagnostics or older host compatibility.
+Other legacy nonzero values keep that behavior through the `v0.0.x` release line and will be removed in `v0.1.0`.
 
 #### Docker Desktop WSL compatibility route
 

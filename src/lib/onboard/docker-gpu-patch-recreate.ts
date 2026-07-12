@@ -10,6 +10,7 @@ import {
   dockerStart,
   dockerStop,
 } from "../adapters/docker";
+import { hasZeroDockerExitStatus } from "./docker-command-result";
 import { detectSandboxFallbackDns } from "./docker-gpu-dns-fallback";
 import { detectTegraDeviceGroupGids } from "./docker-gpu-jetson-groups";
 import {
@@ -30,8 +31,8 @@ import type {
   DockerGpuPatchMode,
   DockerGpuPatchResult,
 } from "./docker-gpu-patch-types";
-import { openshellSandboxCommandEnvValue } from "./docker-startup-command-env";
 import { waitForOpenShellSupervisorReconnect } from "./docker-gpu-supervisor-reconnect";
+import { openshellSandboxCommandEnvValue } from "./docker-startup-command-env";
 import { findOpenShellDockerSandboxContainerIds } from "./openshell-docker-sandbox-containers";
 
 const DOCKER_GPU_PATCH_WAIT_SECS = 180;
@@ -85,10 +86,6 @@ function resultText(
   return `${String(result.stderr || "")} ${String(result.stdout || "")} ${String(
     result.error?.message || "",
   )}`.trim();
-}
-
-function isZeroStatus(result: { status?: number | null } | null | undefined): boolean {
-  return result?.status === 0;
 }
 
 function inspectDockerContainer(
@@ -253,8 +250,10 @@ export function recreateOpenShellDockerSandboxContainer(
       timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
     };
     const stopResult = d.dockerStop(oldContainerId, containerMutationOptions);
-    if (!isZeroStatus(stopResult)) {
-      context.rolledBack = isZeroStatus(d.dockerStart(oldContainerId, containerMutationOptions));
+    if (!hasZeroDockerExitStatus(stopResult)) {
+      context.rolledBack = hasZeroDockerExitStatus(
+        d.dockerStart(oldContainerId, containerMutationOptions),
+      );
       throw new Error(
         `Could not stop original sandbox container: ${resultText(stopResult)}; ${
           context.rolledBack
@@ -268,9 +267,11 @@ export function recreateOpenShellDockerSandboxContainer(
       backupContainerName,
       containerMutationOptions,
     );
-    if (!isZeroStatus(renameResult)) {
+    if (!hasZeroDockerExitStatus(renameResult)) {
       d.dockerRename(backupContainerName, originalName, containerMutationOptions);
-      const restarted = isZeroStatus(d.dockerStart(oldContainerId, containerMutationOptions));
+      const restarted = hasZeroDockerExitStatus(
+        d.dockerStart(oldContainerId, containerMutationOptions),
+      );
       let originalNameRestored = false;
       try {
         originalNameRestored =
@@ -293,7 +294,7 @@ export function recreateOpenShellDockerSandboxContainer(
       suppressOutput: true,
       timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
     });
-    if (!isZeroStatus(runResult)) {
+    if (!hasZeroDockerExitStatus(runResult)) {
       context.rolledBack = restoreDockerGpuPatchBackupAfterRecreateFailure(
         { newContainerId: originalName, backupContainerName, originalName },
         deps,

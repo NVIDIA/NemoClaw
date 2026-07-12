@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { dockerCapture, dockerRm, dockerRun } from "../adapters/docker";
+import { hasZeroDockerExitStatus } from "./docker-command-result";
 import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
 import type {
   DockerGpuPatchBackend,
@@ -210,7 +211,7 @@ function probeDockerGpuMode(
       suppressOutput: true,
       timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
     });
-    const ok = result.status === 0;
+    const ok = hasZeroDockerExitStatus(result);
     return { ok, error: ok ? null : resultText(result) || "docker create failed" };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };

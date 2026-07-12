@@ -23,6 +23,7 @@
 // and delete this module along with its callers in docker-gpu-patch.ts and
 // docker-gpu-sandbox-create.ts.
 
+import { hasZeroDockerExitStatus } from "./docker-command-result";
 import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
 import {
   resolveDockerGpuPatchRollbackDeps,
@@ -34,19 +35,6 @@ export {
   restoreDockerGpuPatchBackupAfterRecreateFailure as rollbackDockerGpuPatchOnRecreateFailure,
   rollbackToBackupContainer,
 } from "./docker-gpu-patch-rollback";
-
-type DockerRunResult = {
-  status?: number | null;
-  stdout?: string | Buffer | null;
-  stderr?: string | Buffer | null;
-};
-
-function isZeroStatus(result: DockerRunResult | null | undefined): boolean {
-  // spawnSync reports `status: null` when the process times out or cannot be
-  // spawned. Cleanup and rollback are safety gates, so only an explicit zero
-  // exit status is success.
-  return result?.status === 0;
-}
 
 export type DockerGpuPatchFinalizeOptions = {
   result: DockerGpuPatchResult;
@@ -78,7 +66,7 @@ export function finalizeDockerGpuPatchBackup(
     // daemon timeout). Reflect the actual rm status in the outcome so
     // diagnostics can flag a leaked backup container.
     const rmResult = resolved.dockerRm(options.result.backupContainerName, containerOpts);
-    return { backupRemoved: isZeroStatus(rmResult), rolledBack: false };
+    return { backupRemoved: hasZeroDockerExitStatus(rmResult), rolledBack: false };
   }
   const rolledBack = rollbackToBackupContainer(
     {
@@ -113,7 +101,7 @@ export function reconcileSupervisorReconnect(
     // Surface the actual rm status so callers can fold it into diagnostics
     // alongside the deferred-finalize path in `finalizeDockerGpuPatchBackup`.
     const rmResult = resolved.dockerRm(refs.backupContainerName, containerOpts);
-    return { execReady: true, backupRemoved: isZeroStatus(rmResult) };
+    return { execReady: true, backupRemoved: hasZeroDockerExitStatus(rmResult) };
   }
   const rolledBack = rollbackToBackupContainer(refs, resolved);
   return {

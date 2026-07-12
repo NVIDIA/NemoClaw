@@ -7,6 +7,7 @@ import {
   dockerStart as defaultDockerStart,
   dockerStop as defaultDockerStop,
 } from "../adapters/docker";
+import { hasZeroDockerExitStatus } from "./docker-command-result";
 import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
 import type { DockerGpuPatchDeps } from "./docker-gpu-patch-types";
 
@@ -31,13 +32,6 @@ export type ResolvedDockerGpuPatchRollbackDeps = {
   dockerStart: DockerContainerFn;
 };
 
-function isZeroStatus(result: DockerRunResult | null | undefined): boolean {
-  // spawnSync reports `status: null` when the process times out or cannot be
-  // spawned. Cleanup and rollback are safety gates, so only an explicit zero
-  // exit status is success.
-  return result?.status === 0;
-}
-
 export function resolveDockerGpuPatchRollbackDeps(
   deps: DockerGpuPatchDeps,
 ): ResolvedDockerGpuPatchRollbackDeps {
@@ -61,9 +55,9 @@ export function rollbackToBackupContainer(
   deps.dockerStop(refs.newContainerId, containerOpts);
   deps.dockerRm(refs.newContainerId, containerOpts);
   const restored = deps.dockerRename(refs.backupContainerName, refs.originalName, containerOpts);
-  if (!isZeroStatus(restored)) return false;
+  if (!hasZeroDockerExitStatus(restored)) return false;
   const started = deps.dockerStart(refs.originalName, containerOpts);
-  return isZeroStatus(started);
+  return hasZeroDockerExitStatus(started);
 }
 
 /** Restore the original sandbox after `docker run` fails during GPU recreation. */

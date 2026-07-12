@@ -182,6 +182,25 @@ describe("Docker GPU clone envelope", () => {
     ).toEqual({});
   });
 
+  it.each([
+    { name: "missing", endpoint: null },
+    { name: "unrewritable", endpoint: "http://gateway.example.test:8080/" },
+  ])("fails closed when host networking is requested with a $name OpenShell endpoint (#6110)", ({
+    endpoint,
+  }) => {
+    const inspect = inspectFixture();
+    inspect.Config!.Env = inspect.Config!.Env!.filter(
+      (entry) => !entry.startsWith("OPENSHELL_ENDPOINT="),
+    );
+    if (endpoint) inspect.Config!.Env.push(`OPENSHELL_ENDPOINT=${endpoint}`);
+
+    expect(() =>
+      buildDockerGpuCloneRunOptions(inspect, {
+        NEMOCLAW_DOCKER_GPU_PATCH_NETWORK: "host",
+      }),
+    ).toThrow(/NEMOCLAW_DOCKER_GPU_PATCH_NETWORK=host requires .*OPENSHELL_ENDPOINT/i);
+  });
+
   it("reports the Docker GPU patch network mode", () => {
     expect(getDockerGpuPatchNetworkMode({})).toBe("preserve");
     expect(getDockerGpuPatchNetworkMode({ NEMOCLAW_DOCKER_GPU_PATCH_NETWORK: "host" })).toBe(

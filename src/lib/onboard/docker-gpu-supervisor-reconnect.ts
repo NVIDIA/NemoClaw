@@ -24,6 +24,7 @@
  * recovers to Ready is the runtime evidence required.
  */
 
+import { hasZeroDockerExitStatus } from "./docker-command-result";
 import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
 import { envInt } from "./env";
 
@@ -76,10 +77,6 @@ function defaultSleep(seconds: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, seconds) * 1000);
 }
 
-function isZeroStatus(result: DockerRunResult | null | undefined): boolean {
-  return result?.status === 0;
-}
-
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 
 function parseSandboxListFailurePhase(output: string, sandboxName: string): string | null {
@@ -130,7 +127,7 @@ export function waitForOpenShellSupervisorReconnect(
       suppressOutput: true,
       timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
     });
-    if (isZeroStatus(result)) return true;
+    if (hasZeroDockerExitStatus(result)) return true;
     if (
       deps.runCaptureOpenshell &&
       sandboxListShowsErrorPhase(sandboxName, deps.runCaptureOpenshell)

@@ -49,6 +49,7 @@ const SELECTOR_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 const FREE_STANDING_JOB_MARKER = "E2E_JOB";
 const FREE_STANDING_TARGET_MARKER = "E2E_TARGET_ID";
 const FREE_STANDING_DEFAULT_ENABLED_MARKER = "E2E_DEFAULT_ENABLED";
+const EXPLICIT_ONLY_JOBS_WITHOUT_ENV_MARKER = new Set(["hermes-gpu-startup"]);
 const COMMON_SECRET_ENV_NAMES = [
   "NVIDIA_API_KEY",
   "NVIDIA_INFERENCE_API_KEY",
@@ -131,6 +132,8 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
       } else {
         explicitOnlyJobs.push(jobId);
       }
+    } else if (EXPLICIT_ONLY_JOBS_WITHOUT_ENV_MARKER.has(jobId)) {
+      explicitOnlyJobs.push(jobId);
     }
     if (!hasTargetMarker) continue;
 

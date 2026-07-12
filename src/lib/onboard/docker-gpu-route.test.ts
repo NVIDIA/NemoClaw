@@ -141,16 +141,21 @@ describe("resolveDockerGpuRoutePlan", () => {
     expect(matrixByKey.get("non-Linux host:true")).toBe("native-only");
   });
 
-  it("preserves legacy nonzero compatibility routing with a visible warning", () => {
+  it.each([
+    "2",
+    "yes",
+    "on",
+  ])("preserves legacy nonzero compatibility routing for $control with a removal warning (#6110)", (control) => {
     const log = vi.fn();
     const plan = resolveDockerGpuRoutePlan(GPU_CONFIG, {
       ...LINUX_DOCKER,
-      env: { NEMOCLAW_DOCKER_GPU_PATCH: "true" },
+      env: { NEMOCLAW_DOCKER_GPU_PATCH: control },
       log,
     });
 
     expect(plan).toBe("compatibility-only");
     expect(log).toHaveBeenCalledWith(expect.stringMatching(/unrecognized.*compatibility-only/i));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("removed in v0.1.0"));
     expect(
       renderSandboxCreateArgsForGpuRoute(
         ["--from", "sandbox:built", "--policy", "/tmp/native.yaml", "--gpu"],

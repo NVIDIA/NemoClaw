@@ -22,13 +22,15 @@ export type DockerGpuRouteOptions = {
   log?: (message: string) => void;
 };
 
+const LEGACY_NONZERO_CONTROL_REMOVAL_VERSION = "v0.1.0";
+
 /**
  * Legacy control boundary:
  * - invalidState: an undocumented nonzero value requests the old compatibility patch.
  * - sourceBoundary: operator and deployment automation set NEMOCLAW_DOCKER_GPU_PATCH.
  * - whyNotSourceFix: existing automation cannot be migrated atomically with this release.
  * - regressionTest: docker-gpu-route.test.ts covers legacy nonzero routing and its warning.
- * - removalCondition: remove after a breaking release explicitly retires legacy nonzero values.
+ * - removalCondition: remove legacy nonzero values in v0.1.0 as documented for operators.
  */
 function warnForLegacyNonzeroControl(control: string, log: (message: string) => void): void {
   if (
@@ -40,7 +42,7 @@ function warnForLegacyNonzeroControl(control: string, log: (message: string) => 
   )
     return;
   log(
-    `  Warning: unrecognized NEMOCLAW_DOCKER_GPU_PATCH value '${control}'; preserving legacy compatibility-only behavior. Use 0, 1, auto, or fallback.`,
+    `  Warning: unrecognized NEMOCLAW_DOCKER_GPU_PATCH value '${control}'; preserving legacy compatibility-only behavior through v0.0.x. Other nonzero values will be removed in ${LEGACY_NONZERO_CONTROL_REMOVAL_VERSION}; use 0, 1, auto, or fallback.`,
   );
 }
 
