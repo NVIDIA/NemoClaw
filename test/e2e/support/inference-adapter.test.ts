@@ -135,6 +135,36 @@ describe("E2E inference adapter", () => {
     expect(fetch).toHaveBeenCalledOnce();
   });
 
+  it("bounds mock fallback requests with provider-equivalent timeouts", async () => {
+    const modelSignal = new AbortController().signal;
+    const chatSignal = new AbortController().signal;
+    const timeout = vi
+      .spyOn(AbortSignal, "timeout")
+      .mockReturnValueOnce(modelSignal)
+      .mockReturnValueOnce(chatSignal);
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: [{ id: "nvidia/nvidia/nemotron-3-ultra" }] })),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ choices: [{ message: { content: "PONG" } }] })),
+      );
+    const adapter = await createAdapter({ env: {} });
+
+    await adapter.probeModels("mock-models-bounded");
+    await adapter.directChat("Reply PONG", { artifactName: "mock-chat-bounded" });
+
+    expect(timeout).toHaveBeenNthCalledWith(1, 30_000);
+    expect(timeout).toHaveBeenNthCalledWith(2, 120_000);
+    expect(fetch).toHaveBeenNthCalledWith(1, expect.any(String), { signal: modelSignal });
+    expect(fetch).toHaveBeenNthCalledWith(
+      2,
+      expect.any(String),
+      expect.objectContaining({ method: "POST", signal: chatSignal }),
+    );
+  });
+
   it("centralizes public NVIDIA nvapi validation", async () => {
     const adapter = await createAdapter({
       env: { NEMOCLAW_E2E_INFERENCE_MODE: "public-nvidia" },

@@ -49,6 +49,8 @@ export interface E2EInferenceAdapterOptions {
 const DEFAULT_MOCK_MODEL = "nvidia/nvidia/nemotron-3-ultra";
 const DEFAULT_MOCK_API_KEY = "fake-compatible-key";
 const DEFAULT_PUBLIC_NVIDIA_MODEL = "nvidia/nemotron-3-super-120b-a12b";
+const DIRECT_CHAT_TIMEOUT_MS = 120_000;
+const MODEL_PROBE_TIMEOUT_MS = 30_000;
 const SANDBOX_HOST_ALIAS = "host.openshell.internal";
 
 function normalizeMode(env: NodeJS.ProcessEnv): E2EInferenceMode {
@@ -150,12 +152,14 @@ class OpenAiCompatibleInferenceAdapter implements E2EInferenceAdapter {
           headers: [`Authorization: Bearer ${this.apiKey}`],
           env: buildAvailabilityProbeEnv(),
           redactionValues: this.redactionValues(),
-          timeoutMs: 30_000,
+          timeoutMs: MODEL_PROBE_TIMEOUT_MS,
         },
       );
       return response.json;
     }
-    const response = await fetch(joinEndpoint(this.requestEndpointUrl, "models"));
+    const response = await fetch(joinEndpoint(this.requestEndpointUrl, "models"), {
+      signal: AbortSignal.timeout(MODEL_PROBE_TIMEOUT_MS),
+    });
     const json = await responseJsonOrThrow(response, "model probe");
     await this.artifacts.writeJson(`${artifactName}.json`, json);
     return json;
@@ -178,7 +182,7 @@ class OpenAiCompatibleInferenceAdapter implements E2EInferenceAdapter {
           headers: ["Content-Type: application/json", `Authorization: Bearer ${this.apiKey}`],
           env: buildAvailabilityProbeEnv(),
           redactionValues: this.redactionValues(),
-          timeoutMs: 120_000,
+          timeoutMs: DIRECT_CHAT_TIMEOUT_MS,
         },
       );
       return response.json;
@@ -190,6 +194,7 @@ class OpenAiCompatibleInferenceAdapter implements E2EInferenceAdapter {
         "Content-Type": "application/json",
       },
       method: "POST",
+      signal: AbortSignal.timeout(DIRECT_CHAT_TIMEOUT_MS),
     });
     const json = await responseJsonOrThrow(response, "direct chat");
     await this.artifacts.writeJson(
@@ -248,7 +253,7 @@ class PublicNvidiaInferenceAdapter implements E2EInferenceAdapter {
         headers: [`Authorization: Bearer ${this.apiKey}`],
         env: buildAvailabilityProbeEnv(),
         redactionValues: this.redactionValues(),
-        timeoutMs: 30_000,
+        timeoutMs: MODEL_PROBE_TIMEOUT_MS,
       },
     );
     return response.json;
@@ -269,7 +274,7 @@ class PublicNvidiaInferenceAdapter implements E2EInferenceAdapter {
         headers: ["Content-Type: application/json", `Authorization: Bearer ${this.apiKey}`],
         env: buildAvailabilityProbeEnv(),
         redactionValues: this.redactionValues(),
-        timeoutMs: 120_000,
+        timeoutMs: DIRECT_CHAT_TIMEOUT_MS,
       },
     );
     return response.json;
