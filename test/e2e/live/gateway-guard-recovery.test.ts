@@ -84,6 +84,9 @@ process.stdout.write(matches[0].slice(prefix.length) + "\n");
 `;
 
 const SUPERVISOR_TOPOLOGY_SCRIPT = String.raw`from pathlib import Path
+import pwd
+expected_uid=str(pwd.getpwnam("sandbox").pw_uid)
+assert expected_uid != "0", expected_uid
 rows=[]
 for entry in Path("/proc").iterdir():
     if not entry.name.isdigit() or entry.name == "1":
@@ -99,7 +102,8 @@ for entry in Path("/proc").iterdir():
     if cmd[0].rsplit(b"/", 1)[-1] == b"nemoclaw-start" or (len(cmd) > 1 and cmd[0].rsplit(b"/", 1)[-1] == b"bash" and cmd[1].rsplit(b"/", 1)[-1] == b"nemoclaw-start"):
         rows.append((entry.name, status))
 assert len(rows) == 1, rows
-assert "Uid:\t1000\t1000\t1000\t1000" in rows[0][1], rows[0][1]
+uid_line=next(line for line in rows[0][1].splitlines() if line.startswith("Uid:"))
+assert uid_line.split()[1:] == [expected_uid] * 4, uid_line
 print("MANAGED_SUPERVISOR=" + rows[0][0] + ":PPID1")`;
 
 const SUPERVISOR_TOPOLOGY_COMMAND = `import base64;exec(base64.b64decode("${Buffer.from(
