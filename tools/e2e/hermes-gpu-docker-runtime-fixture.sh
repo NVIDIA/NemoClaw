@@ -7,7 +7,14 @@ set -euo pipefail
 command_name="${1:-}"
 state_dir="${2:-}"
 daemon_json="${3:-}"
-artifact_dir="${4:-}"
+fixture_uid="$(id -u)"
+if [ "$fixture_uid" -eq 0 ]; then
+  expected_state_root=/var/lib/nemoclaw-e2e
+  expected_daemon_json=/etc/docker/daemon.json
+else
+  expected_state_root="${NEMOCLAW_E2E_FIXTURE_STATE_ROOT:-/var/lib/nemoclaw-e2e}"
+  expected_daemon_json="${NEMOCLAW_E2E_FIXTURE_DAEMON_JSON:-/etc/docker/daemon.json}"
+fi
 
 fail() {
   echo "$*" >&2
@@ -30,11 +37,25 @@ wait_for_docker() {
 }
 
 validate_state_dir() {
+  local expected_root_real=""
+  local state_name=""
+  local state_real=""
   local state_mode=""
   local state_uid=""
-  [ -n "$state_dir" ] && [ "$state_dir" != / ] && [ -d "$state_dir" ] || return 1
+  [ -n "$state_dir" ] && [ "$state_dir" != / ] && [ -d "$state_dir" ] \
+    && [ ! -L "$state_dir" ] || return 1
+  expected_root_real="$(cd -P -- "$expected_state_root" && pwd -P)" || return 1
+  state_real="$(cd -P -- "$state_dir" && pwd -P)" || return 1
+  [ "$(dirname -- "$state_real")" = "$expected_root_real" ] || return 1
+  state_name="$(basename -- "$state_real")"
+  [[ "$state_name" =~ ^hermes-gpu-fallback-docker-runtime\.[0-9]+\.[0-9]+\.fallback\.[A-Za-z0-9]+$ ]] \
+    || return 1
   read -r state_mode state_uid < <(stat -c '%a %u' "$state_dir") || return 1
-  [ "$state_mode" = 700 ] && [ "$state_uid" = "$(id -u)" ]
+  [ "$state_mode" = 700 ] && [ "$state_uid" = "$fixture_uid" ]
+}
+
+validate_daemon_path() {
+  [ "$daemon_json" = "$expected_daemon_json" ]
 }
 
 capture_original() {
@@ -44,17 +65,14 @@ capture_original() {
   local original_gid=""
 
   umask 077
-  validate_state_dir || fail "Docker fallback state directory must be private and runner-owned"
-  [ -n "$daemon_json" ] || fail "Docker daemon path is required"
-  [ -n "$artifact_dir" ] || fail "Docker fixture artifact directory is required"
-  mkdir -p "$artifact_dir"
+  validate_state_dir || fail "Docker fallback state directory must be private and fixture-owned"
+  validate_daemon_path || fail "Docker daemon path must use the fixed fixture target"
   sudo -n true
 
   original_runtime="$(docker info --format '{{.DefaultRuntime}}')"
   [ -n "$original_runtime" ] || fail "Docker did not report its original default runtime"
   printf '%s\n' "$original_runtime" >"$state_dir/default-runtime.original"
   chmod 0600 "$state_dir/default-runtime.original"
-  printf '%s\n' "$original_runtime" >"$artifact_dir/docker-default-runtime-before.txt"
 
   if sudo test -f "$daemon_json"; then
     read -r original_mode original_uid original_gid < <(sudo stat -c '%a %u %g' "$daemon_json")
@@ -65,8 +83,8 @@ capture_original() {
       >"$state_dir/daemon.json.metadata"
     chmod 0600 "$state_dir/daemon.json.metadata"
     install -m 0600 /dev/null "$state_dir/daemon.json.original"
-    # The runner-owned redirection is intentional; sudo is needed only to read
-    # the root-owned source while the private backup remains runner-owned.
+    # The fixture-owned redirection is intentional; sudo is needed only to read
+    # the root-owned source while the private backup remains fixture-owned.
     # shellcheck disable=SC2024
     sudo cat "$daemon_json" >"$state_dir/daemon.json.original"
     chmod 0600 "$state_dir/daemon.json.original"
@@ -79,6 +97,7 @@ capture_original() {
   fi
 
   install -m 0600 /dev/null "$state_dir/capture.complete"
+  printf '%s\n' "$original_runtime"
 }
 
 select_runc() {
@@ -86,21 +105,14 @@ select_runc() {
   local selected_runtime=""
 
   umask 077
-  validate_state_dir || fail "Docker fallback state directory must be private and runner-owned"
+  validate_state_dir || fail "Docker fallback state directory must be private and fixture-owned"
+  validate_daemon_path || fail "Docker daemon path must use the fixed fixture target"
   [ -f "$state_dir/capture.complete" ] || fail "Docker fallback snapshot is incomplete"
   original_runtime="$(cat "$state_dir/default-runtime.original")"
   if [ "$original_runtime" != runc ]; then
-    node - "$state_dir/daemon.json.original" "$state_dir/daemon.json.runc" <<'NODE'
-const fs = require("node:fs");
-const [inputPath, outputPath] = process.argv.slice(2);
-const source = fs.readFileSync(inputPath, "utf8").trim();
-const config = source ? JSON.parse(source) : {};
-if (config === null || Array.isArray(config) || typeof config !== "object") {
-  throw new Error("Docker daemon.json must contain a top-level object");
-}
-config["default-runtime"] = "runc";
-fs.writeFileSync(outputPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
-NODE
+    /usr/bin/jq \
+      'if type == "object" then .["default-runtime"] = "runc" else error("Docker daemon.json must contain a top-level object") end' \
+      "$state_dir/daemon.json.original" >"$state_dir/daemon.json.runc"
     chmod 0600 "$state_dir/daemon.json.runc"
 
     # Mark the host mutation before it begins so either cleanup path knows that
@@ -115,7 +127,7 @@ NODE
   [ "$selected_runtime" = runc ] || fail "Docker did not select the runc default runtime"
   docker info --format '{{json .Runtimes}}' | grep -q 'nvidia' \
     || fail "Docker no longer reports the nvidia runtime"
-  printf '%s\n' "$selected_runtime" >"$artifact_dir/docker-default-runtime-during.txt"
+  printf '%s\n' "$selected_runtime"
 }
 
 restore_original() {
@@ -129,10 +141,13 @@ restore_original() {
   local restored_uid=""
   local restored_gid=""
 
+  if ! validate_state_dir || ! validate_daemon_path; then
+    fail "Refusing Docker restore outside the fixed private fixture boundary"
+    return 1
+  fi
+
   set +e
-  if ! validate_state_dir; then
-    restore_failed=1
-  elif [ -f "$state_dir/default-runtime.modified" ]; then
+  if [ -f "$state_dir/default-runtime.modified" ]; then
     if [ ! -f "$state_dir/capture.complete" ]; then
       restore_failed=1
     elif [ -f "$state_dir/daemon.json.absent" ]; then
@@ -185,12 +200,6 @@ restore_original() {
     restore_failed=1
   fi
 
-  if [ -n "$restored_runtime" ] && [ -n "$artifact_dir" ]; then
-    mkdir -p "$artifact_dir" || restore_failed=1
-    printf '%s\n' "$restored_runtime" \
-      >"$artifact_dir/docker-default-runtime-restored.txt" || restore_failed=1
-  fi
-
   # The snapshot may contain registry/proxy credentials. Remove it regardless of
   # whether restoration or verification succeeded, but preserve the failing exit.
   rm -rf -- "$state_dir" || restore_failed=1
@@ -198,6 +207,7 @@ restore_original() {
     fail "Failed to prove restoration of the Docker daemon after the fallback fixture"
     return 1
   fi
+  printf '%s\n' "$restored_runtime"
   return 0
 }
 
@@ -215,7 +225,7 @@ case "$command_name" in
     restore_original
     ;;
   *)
-    fail "usage: $0 {capture|select-runc|restore} STATE_DIR DAEMON_JSON ARTIFACT_DIR"
+    fail "usage: $0 {capture|select-runc|restore} STATE_DIR DAEMON_JSON"
     exit 2
     ;;
 esac

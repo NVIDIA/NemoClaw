@@ -57,7 +57,7 @@ const COMMON_SECRET_ENV_NAMES = [
   "DOCKERHUB_TOKEN",
   "GITHUB_TOKEN",
 ];
-const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set(["hermes-e2e"]);
+const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set(["hermes-e2e", "hermes-gpu-startup"]);
 const PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS = new Set([
   "device-auth-health",
   "model-router-provider-routed-inference",
@@ -2081,7 +2081,11 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
     const authIndex = steps.indexOf(auth);
     const cleanupIndex = steps.indexOf(cleanup);
     const expectedAuthIndex =
-      jobName === "jetson-nvmap-gpu" ? checkoutIndex + 2 : checkoutIndex + 1;
+      jobName === "jetson-nvmap-gpu"
+        ? checkoutIndex + 2
+        : jobName === "hermes-gpu-startup"
+          ? checkoutIndex + 3
+          : checkoutIndex + 1;
     if (checkoutIndex < 0 || authIndex !== expectedAuthIndex) {
       errors.push(
         jobName === "jetson-nvmap-gpu"

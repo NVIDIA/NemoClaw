@@ -121,7 +121,11 @@ describe("shared Docker Hub authentication workflow boundary", () => {
       const authIndex = job.steps?.findIndex((step) => step.name === AUTH_STEP_NAME) ?? -1;
       const cleanupIndex = job.steps?.findIndex((step) => step.name === CLEANUP_STEP_NAME) ?? -1;
       const expectedAuthIndex =
-        jobName === "jetson-nvmap-gpu" ? checkoutIndex + 2 : checkoutIndex + 1;
+        jobName === "jetson-nvmap-gpu"
+          ? checkoutIndex + 2
+          : jobName === "hermes-gpu-startup"
+            ? checkoutIndex + 3
+            : checkoutIndex + 1;
       expect(authIndex, `${jobName} auth order`).toBe(expectedAuthIndex);
       expect(cleanupIndex, `${jobName} cleanup order`).toBe((job.steps?.length ?? 0) - 1);
     }
