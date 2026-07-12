@@ -13,6 +13,8 @@ import {
 import { validateHermesDashboardWorkflowBoundary } from "./hermes-dashboard-workflow-boundary.mts";
 import { validateHermesGpuStartupWorkflowBoundary } from "./hermes-gpu-startup-workflow-boundary.mts";
 import { validateInferenceSwitchWorkflowBoundary } from "./inference-switch-workflow-boundary.mts";
+import { validateOpenClawPluginRuntimeExdevWorkflowBoundary } from "./openclaw-plugin-runtime-exdev-workflow-boundary.mts";
+import { validateOpenShellGatewayAuthContractWorkflowBoundary } from "./openshell-gateway-auth-contract-workflow-boundary.mts";
 import { validateE2eOperationsWorkflowBoundary } from "./operations-workflow-boundary.mts";
 import { validatePrepareE2eWorkflowBoundary } from "./prepare-e2e-workflow-boundary.mts";
 import { validateSandboxOperationsWorkflow } from "./sandbox-operations-workflow-boundary.mts";
@@ -556,6 +558,14 @@ function validateGatewayGuardRecoveryJob(errors: string[], jobs: WorkflowRecord)
   if (jobEnv.NEMOCLAW_E2E_USE_HOSTED_INFERENCE !== "1") {
     errors.push("gateway-guard-recovery job must enable hosted-compatible inference mode");
   }
+}
+
+function validateInferenceRoutingJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "inference-routing";
+  const steps = asSteps(asRecord(jobs[jobName]).steps);
+  const run = requireJobStep(errors, jobName, steps, "Run inference routing live test");
+  requireRunContains(errors, run, "test/e2e/live/inference-routing.test.ts");
+  requireRunDoesNotContain(errors, run, "inference-routing-provider-smoke.test.ts");
 }
 
 function jobPassesNvidiaInferenceSecret(job: WorkflowRecord): boolean {
@@ -2664,6 +2674,11 @@ function validateTunnelLifecycleJob(errors: string[], jobs: WorkflowRecord): voi
   if (jobEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
     errors.push("tunnel-lifecycle job must set NEMOCLAW_RUN_LIVE_E2E=1");
   }
+  if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/live/tunnel-lifecycle") {
+    errors.push(
+      "tunnel-lifecycle job must write artifacts under e2e-artifacts/live/tunnel-lifecycle",
+    );
+  }
   requireEnvDoesNotExposeSecret(errors, "tunnel-lifecycle job", jobEnv, "NVIDIA_INFERENCE_API_KEY");
 
   const steps = asSteps(job.steps);
@@ -3483,6 +3498,54 @@ function validateJetsonRunnerDispatchGuard(errors: string[], jobs: WorkflowRecor
   requireRunDoesNotContain(errors, guard, "linux-arm64-gpu-jetson-orin-latest-1");
 }
 
+function validateSandboxRlimitConnectJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "sandbox-rlimits-connect";
+  const job = asRecord(jobs[jobName]);
+  if (job.needs !== "generate-matrix") {
+    errors.push(`${jobName} job must depend on generate-matrix`);
+  }
+  if (job.if !== explicitOnlyFreeStandingJobIf(jobName, jobName)) {
+    errors.push(`${jobName} job must run only when explicitly selected`);
+  }
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push(`${jobName} job must run on ubuntu-latest`);
+  }
+  if (job["timeout-minutes"] !== 60) {
+    errors.push(`${jobName} job must retain its 60 minute connect budget`);
+  }
+
+  const env = asRecord(job.env);
+  if (env.E2E_DEFAULT_ENABLED !== "0") {
+    errors.push(`${jobName} job must remain explicit-only`);
+  }
+  if (env.NEMOCLAW_RUN_LIVE_E2E !== "1") {
+    errors.push(`${jobName} job must set NEMOCLAW_RUN_LIVE_E2E=1`);
+  }
+  if (env.NEMOCLAW_E2E_CONNECT_RLIMITS !== "1") {
+    errors.push(`${jobName} job must opt in with NEMOCLAW_E2E_CONNECT_RLIMITS=1`);
+  }
+  if (env.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
+    errors.push(`${jobName} job must use the repo CLI launcher`);
+  }
+  if (
+    env.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/live/sandbox-rlimits-connect"
+  ) {
+    errors.push(`${jobName} job must write artifacts under e2e-artifacts/live/${jobName}`);
+  }
+
+  const run = namedStep(asSteps(job.steps), "Run sandbox rlimit connect live test");
+  if (!run) {
+    errors.push(`${jobName} job missing step: Run sandbox rlimit connect live test`);
+    return;
+  }
+  if (!stringValue(run.run).includes("test/e2e/live/sandbox-rlimits-connect.test.ts")) {
+    errors.push(`${jobName} job must run sandbox-rlimits-connect.test.ts`);
+  }
+  if (asRecord(run.env).NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
+    errors.push(`${jobName} step must receive NVIDIA_API_KEY from secrets`);
+  }
+}
+
 export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_PATH): string[] {
   const workflow = readWorkflowRecord(workflowPath);
   const errors: string[] = [];
@@ -3491,6 +3554,8 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   errors.push(...validateHermesDashboardWorkflowBoundary(workflowPath));
   errors.push(...validateHermesGpuStartupWorkflowBoundary(workflowPath));
   errors.push(...validateInferenceSwitchWorkflowBoundary(workflowPath));
+  errors.push(...validateOpenClawPluginRuntimeExdevWorkflowBoundary(workflowPath));
+  errors.push(...validateOpenShellGatewayAuthContractWorkflowBoundary(workflowPath));
   errors.push(...validateE2eOperationsWorkflowBoundary(workflowPath));
   errors.push(...validateSecurityPostureWorkflowBoundary(workflowPath));
   const triggers = asRecord(workflow.on ?? workflow[true as unknown as string]);
@@ -3918,6 +3983,7 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   validateFreeStandingJobSelector(errors, jobs, "credential-migration", "credential-migration");
   validateFreeStandingJobSelector(errors, jobs, "sessions-agents-cli", "sessions-agents-cli");
   validateFreeStandingJobSelector(errors, jobs, "inference-routing", "inference-routing");
+  validateInferenceRoutingJob(errors, jobs);
   validateCloudInferenceJob(errors, jobs);
   validateDoubleOnboardJob(errors, jobs);
   validateHermesE2EJob(errors, jobs);
@@ -3964,48 +4030,7 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   validateFreeStandingJobSelector(errors, jobs, "gateway-health-honest", "gateway-health-honest");
 
   validateJetsonRunnerDispatchGuard(errors, jobs);
-
-  const sandboxRlimitConnectJob = asRecord(jobs["sandbox-rlimits-connect"]);
-  if (sandboxRlimitConnectJob.needs !== "generate-matrix") {
-    errors.push("sandbox-rlimits-connect job must depend on generate-matrix");
-  }
-  if (
-    sandboxRlimitConnectJob.if !==
-    explicitOnlyFreeStandingJobIf("sandbox-rlimits-connect", "sandbox-rlimits-connect")
-  ) {
-    errors.push("sandbox-rlimits-connect job must run only when explicitly selected");
-  }
-  const sandboxRlimitConnectEnv = asRecord(sandboxRlimitConnectJob.env);
-  if (sandboxRlimitConnectEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
-    errors.push("sandbox-rlimits-connect job must set NEMOCLAW_RUN_LIVE_E2E=1");
-  }
-  if (sandboxRlimitConnectEnv.NEMOCLAW_E2E_CONNECT_RLIMITS !== "1") {
-    errors.push("sandbox-rlimits-connect job must opt in with NEMOCLAW_E2E_CONNECT_RLIMITS=1");
-  }
-  if (
-    sandboxRlimitConnectEnv.E2E_ARTIFACT_DIR !==
-    "${{ github.workspace }}/e2e-artifacts/live/sandbox-rlimits-connect"
-  ) {
-    errors.push(
-      "sandbox-rlimits-connect job must write artifacts under e2e-artifacts/live/sandbox-rlimits-connect",
-    );
-  }
-  const sandboxRlimitConnectSteps = asSteps(sandboxRlimitConnectJob.steps);
-  const sandboxRlimitConnectRun = namedStep(
-    sandboxRlimitConnectSteps,
-    "Run sandbox rlimit connect live test",
-  );
-  if (!sandboxRlimitConnectRun) {
-    errors.push("sandbox-rlimits-connect job missing step: Run sandbox rlimit connect live test");
-  } else {
-    const runScript = stringValue(sandboxRlimitConnectRun.run);
-    if (!runScript.includes("test/e2e/live/sandbox-rlimits-connect.test.ts")) {
-      errors.push("sandbox-rlimits-connect job must run sandbox-rlimits-connect.test.ts");
-    }
-    if (asRecord(sandboxRlimitConnectRun.env).NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
-      errors.push("sandbox-rlimits-connect step must receive NVIDIA_API_KEY from secrets");
-    }
-  }
+  validateSandboxRlimitConnectJob(errors, jobs);
 
   validateFreeStandingJobSelector(
     errors,

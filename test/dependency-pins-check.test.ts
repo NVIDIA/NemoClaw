@@ -59,6 +59,12 @@ case "$NEMOCLAW_REF" in
   stable | auto) OPENSHELL_VERSION="v${overrides.brevVersion ?? openshellMax}" ;;
 esac
 `,
+    ".github/workflows/e2e.yaml": `
+jobs:
+  openshell-gateway-auth-contract:
+    env:
+      NEMOCLAW_OPENSHELL_PIN_VERSION: "${overrides.workflowPinVersion ?? openshellMax}"
+`,
     [`src/lib/actions/sandbox/openshell-child-visible-credentials.v${openshellMax}.json`]:
       JSON.stringify({
         openshellVersion: overrides.credentialVersion ?? openshellMax,
@@ -184,6 +190,7 @@ describe("dependency pin drift check", () => {
         supervisorMapVersion: "1.2.3",
         sandboxMapVersion: "1.2.3",
         brevVersion: "1.2.3",
+        workflowPinVersion: "1.2.3",
         credentialVersion: "1.2.3",
         mcpImportVersion: "1.2.3",
         hermesDockerfileBoundaryVersion: "1.2.3",
@@ -209,6 +216,7 @@ describe("dependency pin drift check", () => {
           "OpenShell supervisor manifest digest map: expected a reference to 1.2.4",
           "OpenShell sandbox build version map: expected a reference to 1.2.4",
           "Brev launchable stable OpenShell default: expected 1.2.4, found 1.2.3",
+          ".github/workflows/e2e.yaml gateway auth OpenShell version: expected 1.2.4, found 1.2.3",
           "OpenShell credential-boundary manifest version: expected 1.2.4, found 1.2.3",
           "OpenShell credential-boundary import: expected 1.2.4, found 1.2.3",
           "Hermes Dockerfile credential-boundary manifest version: expected 1.2.4, found 1.2.3",

@@ -72,6 +72,7 @@ describe("Docker startup-command patch", () => {
       ]),
     );
     expect(cloneArgs).not.toContain("--gpus");
+    expect(cloneArgs).not.toContain("--device");
     expect(cloneArgs).toEqual(expect.arrayContaining(["--env", "NVIDIA_VISIBLE_DEVICES=void"]));
     expect(cloneArgs).not.toEqual(expect.arrayContaining(["--cap-add", "SYS_PTRACE"]));
     expect(cloneArgs).not.toEqual(
@@ -82,6 +83,47 @@ describe("Docker startup-command patch", () => {
     expect(dockerCapture).toHaveBeenCalledWith(
       expect.arrayContaining(["ps", "-a", "--no-trunc"]),
       expect.objectContaining({ ignoreError: true }),
+    );
+  });
+
+  it("preserves OpenShell's native CDI GPU request during restart-persistence recreation", () => {
+    const inspect = inspectFixture();
+    inspect.HostConfig!.DeviceRequests = [
+      {
+        Driver: "cdi",
+        DeviceIDs: ["nvidia.com/gpu=all"],
+      },
+    ];
+    const dockerRunDetached = vi.fn((_args: readonly string[]) => ({
+      status: 0,
+      stdout: "new-container-id\n",
+    }));
+
+    recreateOpenShellDockerSandboxWithStartupCommand(
+      {
+        sandboxName: "alpha",
+        timeoutSecs: 1,
+        waitForSupervisor: false,
+        openshellSandboxCommand: ["env", "nemoclaw-start"],
+      },
+      {
+        dockerCapture: vi.fn((args: readonly string[]) =>
+          args[0] === "ps" ? "old-container-id\n" : JSON.stringify([inspect]),
+        ),
+        dockerRunDetached,
+        dockerRename: vi.fn(() => ({ status: 0 })),
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        sleep: vi.fn(),
+        now: () => new Date("2026-07-10T00:00:00Z"),
+      },
+    );
+
+    const cloneArgs = dockerRunDetached.mock.calls[0]?.[0] ?? [];
+    expect(cloneArgs).toEqual(expect.arrayContaining(["--device", "nvidia.com/gpu=all"]));
+    expect(cloneArgs).not.toContain("--gpus");
+    expect(cloneArgs).not.toEqual(expect.arrayContaining(["--cap-add", "SYS_PTRACE"]));
+    expect(cloneArgs).not.toEqual(
+      expect.arrayContaining(["--security-opt", "apparmor=unconfined"]),
     );
   });
 

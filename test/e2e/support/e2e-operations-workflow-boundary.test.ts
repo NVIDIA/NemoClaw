@@ -25,20 +25,9 @@ function workflowScript(jobName: string, stepName: string): string {
 }
 
 describe("E2E operations workflow boundary", () => {
-  it("keeps Actions reporting and scorecards aggregated over the report job set", () => {
+  it("accepts the checked-in workflow and rejects aggregation, permission, and secret-scope drift", () => {
     expect(validateE2eOperationsWorkflowBoundary()).toEqual([]);
 
-    const workflow = readE2eOperationsWorkflow();
-    const reportNeeds = workflow.jobs["report-to-pr"].needs as string[];
-    expect(workflow.jobs["notify-on-failure"]).toBeUndefined();
-    expect(workflow.jobs["report-to-pr"].permissions).toEqual({
-      actions: "read",
-      "pull-requests": "write",
-    });
-    expect(workflow.jobs.scorecard.needs).toEqual(reportNeeds);
-  });
-
-  it("rejects aggregation, permission, and secret-scope drift", () => {
     const workflow = readE2eOperationsWorkflow();
     workflow.jobs.scorecard.needs = [...(workflow.jobs.scorecard.needs as string[])];
     (workflow.jobs.scorecard.needs as string[]).pop();

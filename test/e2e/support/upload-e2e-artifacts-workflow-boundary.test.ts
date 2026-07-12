@@ -173,7 +173,7 @@ describe("upload-e2e-artifacts workflow boundary", () => {
     );
   });
 
-  it("rejects execution-inventory drift even when its upload disappears with it", () => {
+  it("derives execution jobs even when a marker and its upload disappear together", () => {
     const workflow = mutableWorkflow();
     const removedJob = workflow.jobs["credential-sanitization"];
     delete removedJob.env!.E2E_JOB;
@@ -181,11 +181,8 @@ describe("upload-e2e-artifacts workflow boundary", () => {
       (step) => step.uses !== UPLOAD_E2E_ARTIFACTS_ACTION,
     );
 
-    expect(validateUploadE2eArtifactsInvocations(workflow)).toEqual(
-      expect.arrayContaining([
-        "upload-e2e-artifacts must cover exactly 72 live, E2E_JOB, and shared E2E jobs",
-        "upload-e2e-artifacts must keep exactly 60 default callers",
-      ]),
+    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
+      "credential-sanitization must use upload-e2e-artifacts exactly once",
     );
   });
 });

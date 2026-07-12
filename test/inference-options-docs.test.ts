@@ -162,6 +162,7 @@ function stripFencedCodeBlocks(markdown: string): string {
 }
 
 describe("inference options model task-fit docs (#4755)", () => {
+  // source-shape-contract: compatibility -- Published task-fit guidance must cover every curated onboarding model identifier
   it("keeps a per-model task-fit comparison table for curated onboarding models", () => {
     const markdown = fs.readFileSync(chooseModelPath, "utf8");
     const start = markdown.indexOf("## Model Task Fit");

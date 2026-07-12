@@ -1,3 +1,455 @@
 {
-  "maxSourceShapeCases": 0
+  "maxSourceShapeCases": 0,
+  "sourceShapeContractExceptions": [
+    {
+      "file": "src/lib/actions/sandbox/mcp-bridge-input-validation.test.ts",
+      "test": "rejects host subprocess control and allowlist names as MCP credentials",
+      "category": "compatibility"
+    },
+    {
+      "file": "src/lib/actions/sandbox/mcp-bridge-input-validation.test.ts",
+      "test": "rejects OpenShell child-environment compatibility keys as MCP credentials",
+      "category": "compatibility"
+    },
+    {
+      "file": "src/lib/agent/base-image-hermes.test.ts",
+      "test": "accepts only the tracked published Hermes base digest",
+      "category": "security"
+    },
+    {
+      "file": "src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.test.ts",
+      "test": "matches the bundled local-inference host-gateway ports (#5744)",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/brev-nightly-workflow.test.ts",
+      "test": "does not expose stale published-launchable controls",
+      "category": "security"
+    },
+    {
+      "file": "test/brev-nightly-workflow.test.ts",
+      "test": "fails closed on unsupported reusable test-suite values before checkout",
+      "category": "security"
+    },
+    {
+      "file": "test/brev-nightly-workflow.test.ts",
+      "test": "grants the reusable workflow permission ceiling so GitHub can start the run",
+      "category": "security"
+    },
+    {
+      "file": "test/brev-nightly-workflow.test.ts",
+      "test": "keeps instance deletion inside the workflow ownership boundary",
+      "category": "security"
+    },
+    {
+      "file": "test/brev-nightly-workflow.test.ts",
+      "test": "keeps manual dispatch inputs out of the Brev credential boundary",
+      "category": "security"
+    },
+    {
+      "file": "test/brev-nightly-workflow.test.ts",
+      "test": "keeps write permissions out of the secret-bearing target-branch job",
+      "category": "security"
+    },
+    {
+      "file": "test/brev-nightly-workflow.test.ts",
+      "test": "passes only declared inputs and secrets to branch validation",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/brev-nightly-workflow.test.ts",
+      "test": "verifies the pinned Brev CLI digest before extracting it",
+      "category": "security"
+    },
+    {
+      "file": "test/cloudflared-update-check-workflow.test.ts",
+      "test": "keeps automatic and on-demand update checks reachable and credential-free",
+      "category": "security"
+    },
+    {
+      "file": "test/code-scanning-workflow.test.ts",
+      "test": "groups CodeQL action updates so Dependabot keeps the shared revision synchronized",
+      "category": "security"
+    },
+    {
+      "file": "test/code-scanning-workflow.test.ts",
+      "test": "keeps every CodeQL action on one immutable revision",
+      "category": "security"
+    },
+    {
+      "file": "test/dcode-base-image-workflow.test.ts",
+      "test": "accepts every discovered publisher and rejects supply-chain mutations",
+      "category": "security"
+    },
+    {
+      "file": "test/dcode-start-keepalive.test.ts",
+      "test": "execs an explicitly supplied command instead of idling",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/dcode-start-keepalive.test.ts",
+      "test": "refuses to launch when effective rlimits fail verification (#6545)",
+      "category": "security"
+    },
+    {
+      "file": "test/dcode-start-keepalive.test.ts",
+      "test": "refuses to launch when the required rlimit helper is missing (#6545)",
+      "category": "security"
+    },
+    {
+      "file": "test/dcode-start-keepalive.test.ts",
+      "test": "stays alive as a long-running process when invoked with no command",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e-advisor.test.ts",
+      "test": "strips untrusted symlinks before secret-bearing advisor steps",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e-fixture-dependency-review.test.ts",
+      "test": "keeps installed fixture dependencies on exact versions",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e-release-gate-workflow.test.ts",
+      "test": "replaces legacy target_ref dispatches with the validated checkout contract",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/live/hermes-e2e.test.ts",
+      "test": "hermes-e2e: install.sh onboards Hermes and proves health plus live inference",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/e2e-expected-state.test.ts",
+      "test": "compiles absence probes for every preflight failure contract",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/e2e-expected-state.test.ts",
+      "test": "compiles fail-closed absence probes for targets that forbid runtime side effects",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/e2e-expected-state.test.ts",
+      "test": "compiles host-preservation probes for every post-reboot recovery target",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/e2e-expected-state.test.ts",
+      "test": "indexes every registered state by its unique id",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/e2e-expected-state.test.ts",
+      "test": "keeps policy-selection failures limited to the installed CLI",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/e2e-expected-state.test.ts",
+      "test": "omits host gateway probes for targets whose loaded agent runtime is terminal",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/e2e-expected-state.test.ts",
+      "test": "rejects an unknown state with an actionable inventory",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/e2e-expected-state.test.ts",
+      "test": "resolves every state id consumed by the typed target registry",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/e2e-live-project-config.test.ts",
+      "test": "keeps the drift-preflight bypass out of live projects (#6692)",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/e2e-live-registry-discovery.test.ts",
+      "test": "classifies every shipped target as supported or with a concrete reason",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/e2e-live-skip-name-contract.test.ts",
+      "test": "matches the workflow's exact `-t \"^${TARGET_ID}$\"` regex for every target",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/e2e-live-skip-name-contract.test.ts",
+      "test": "registers every target under a name equal to its id",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/e2e-manifests.test.ts",
+      "test": "resolves every typed target manifest path to a validated manifest",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/e2e-matrix.test.ts",
+      "test": "builds the default live matrix from every fixture-supported target",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/e2e-registry.test.ts",
+      "test": "CLI should emit multiple selected live matrix entries",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/e2e-registry.test.ts",
+      "test": "should return actionable unknown target error",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/e2e-workflow.test.ts",
+      "test": "derives test selectors from code and workflow jobs from workflow metadata",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/e2e/support/e2e-workflow.test.ts",
+      "test": "rejects channels stop/start workflow-boundary drift for secret and artifact handling",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/e2e-workflow.test.ts",
+      "test": "rejects credential-backed provider smokes in the PR-safe inference-routing job",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/e2e-workflow.test.ts",
+      "test": "rejects diagnostics workflow-boundary drift for secret and Docker auth handling",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/e2e-workflow.test.ts",
+      "test": "rejects duplicate unguarded Docker Hub auth in messaging-compatible-endpoint",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/e2e-workflow.test.ts",
+      "test": "rejects free-standing E2E artifact uploads from raw temp paths",
+      "category": "security"
+    },
+    {
+      "file": "test/fetch-guard-patch-regression.test.ts",
+      "test": "requires classifier review and integrity evidence when the OpenClaw build pin changes",
+      "category": "security"
+    },
+    {
+      "file": "test/inference-options-docs.test.ts",
+      "test": "keeps a per-model task-fit comparison table for curated onboarding models",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/label-merged-pr-release-target-workflow.test.ts",
+      "test": "keeps fork-safe labeling inside the trusted metadata boundary",
+      "category": "security"
+    },
+    {
+      "file": "test/macos-e2e-workflow-boundary.test.ts",
+      "test": "keeps secret-bearing live E2E on trusted main-branch code",
+      "category": "security"
+    },
+    {
+      "file": "test/macos-e2e-workflow-boundary.test.ts",
+      "test": "pins live macOS artifact publishers to an immutable action",
+      "category": "security"
+    },
+    {
+      "file": "test/macos-e2e-workflow-boundary.test.ts",
+      "test": "runs final-destroy against a pinned Docker setup on trusted Intel macOS",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/mcp-openshell-workflow.test.ts",
+      "test": "keeps the setup docs aligned with the stable default",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/openclaw-dependency-review.test.ts",
+      "test": "runs and gates the real patched-distribution harness only from trusted main code",
+      "category": "security"
+    },
+    {
+      "file": "test/openclaw-lifecycle-policy.test.ts",
+      "test": "cross-checks the allowlist against every production archive install boundary",
+      "category": "security"
+    },
+    {
+      "file": "test/plugin-vitest-project.test.ts",
+      "test": "defines one canonical plugin project for root and standalone runs",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/plugin-vitest-project.test.ts",
+      "test": "pilots assertion presence only in expect-based plugin tests (#6692)",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/pr-e2e-gate-workflow.test.ts",
+      "test": "limits triggers and job permissions",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-e2e-gate-workflow.test.ts",
+      "test": "pins both controller checkouts and installs without lifecycle scripts or caches",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-review-advisor-workflow-boundary.test.ts",
+      "test": "requires one advisor lane to publish the PR comment",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-workflow-contract.test.ts",
+      "test": "does not persist checkout credentials in PR or main jobs",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-workflow-contract.test.ts",
+      "test": "does not run npm lifecycle scripts during CI dependency installs",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-workflow-contract.test.ts",
+      "test": "keeps the installer verifier inside the trusted composite action",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-workflow-contract.test.ts",
+      "test": "keeps the trusted test-size guard closed around budget policy changes",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-workflow-contract.test.ts",
+      "test": "pins downloaded CI tooling to reviewed integrity",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-workflow-contract.test.ts",
+      "test": "publishes coverage only from same-repository code (#6692)",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-workflow-contract.test.ts",
+      "test": "reuses the same shared CI actions in PR and main workflows",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-workflow-contract.test.ts",
+      "test": "routes only code-changing PRs through the code-check path",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/pr-workflow-contract.test.ts",
+      "test": "runs pull request installer verification from immutable trusted code",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-workflow-contract.test.ts",
+      "test": "runs repository checks for every operational dependency-pin authority and consumer",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/pr-workflow-contract.test.ts",
+      "test": "runs the source-shape guard for root and co-located tests",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/pr-workflow-contract.test.ts",
+      "test": "scopes pre-push typechecks to project and transitive inputs",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/regression-e2e-workflow.test.ts",
+      "test": "collects the gateway drift regression from its integration project (#6692)",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/regression-e2e-workflow.test.ts",
+      "test": "prepares every discovered non-hermetic Vitest job before execution (#6692)",
+      "category": "security"
+    },
+    {
+      "file": "test/regression-e2e-workflow.test.ts",
+      "test": "runs the OpenClaw custom-plugin lifecycle and EXDEV guard in a secret-free lane",
+      "category": "security"
+    },
+    {
+      "file": "test/regression-e2e-workflow.test.ts",
+      "test": "runs WhatsApp compact QR through Vitest instead of the retired shell script",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/regression-e2e-workflow.test.ts",
+      "test": "stages the public NVIDIA key for the Model Router's NVIDIA credential",
+      "category": "security"
+    },
+    {
+      "file": "test/repro-4538-raw-doctor-perms.test.ts",
+      "test": "emitted openclaw() guard restores the contract AND preserves a nonzero exit",
+      "category": "security"
+    },
+    {
+      "file": "test/repro-4538-raw-doctor-perms.test.ts",
+      "test": "emitted openclaw() guard restores the contract even under an inherited `set -e`",
+      "category": "security"
+    },
+    {
+      "file": "test/repro-4538-raw-doctor-perms.test.ts",
+      "test": "restore helper re-asserts 2770/660 after the tree is tightened to 700/600",
+      "category": "security"
+    },
+    {
+      "file": "test/repro-5978-policy-denial-hint.test.ts",
+      "test": "prints only once when the file is sourced twice in one login shell",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/runner.test.ts",
+      "test": "walkthrough.sh does not embed NVIDIA_INFERENCE_API_KEY in tmux or sandbox commands",
+      "category": "security"
+    },
+    {
+      "file": "test/validate-blueprint.test.ts",
+      "test": "pins the sandbox image by digest instead of a mutable tag (#1438)",
+      "category": "security"
+    },
+    {
+      "file": "test/validate-blueprint.test.ts",
+      "test": "populates the top-level digest field with the image digest (#1438)",
+      "category": "security"
+    },
+    {
+      "file": "test/vitest-coverage-thresholds.test.ts",
+      "test": "enforces the exact per-file security floors for full and merged coverage (#6692)",
+      "category": "security"
+    },
+    {
+      "file": "test/vitest-developer-feedback.test.ts",
+      "test": "lets Vitest select reporters and preserves failed-test logs in CI (#6692)",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/vitest-state-isolation.test.ts",
+      "test": "keeps root and live projects free of unvalidated automatic cleanup",
+      "category": "security"
+    },
+    {
+      "file": "test/vitest-state-isolation.test.ts",
+      "test": "keeps standalone plugin runs aligned without enabling mockReset",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/vitest-temp-root.test.ts",
+      "test": "wires cleanup into root and standalone plugin test runs",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/vitest-watch-triggers.test.ts",
+      "test": "registers the focused mappings at the root configuration boundary (#6692)",
+      "category": "compatibility"
+    }
+  ]
 }

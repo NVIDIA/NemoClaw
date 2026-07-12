@@ -257,6 +257,10 @@ export type DockerContainerInspect = {
     GroupAdd?: string[] | null;
     Dns?: string[] | null;
     DnsSearch?: string[] | null;
+    DeviceRequests?: Array<{
+      Driver?: string;
+      DeviceIDs?: string[] | null;
+    }> | null;
     ShmSize?: number;
     ReadonlyPaths?: string[] | null;
     MaskedPaths?: string[] | null;
@@ -675,6 +679,21 @@ export function buildDockerGpuCloneRunArgs(
 
   const args: string[] = ["--name", dockerContainerName(inspect), ...mode.args];
   const gpuAugment = mode.kind !== "startup-command";
+
+  // Hermes restart persistence recreates the OpenShell-managed container
+  // without selecting NemoClaw's compatibility GPU mode. Preserve Docker's
+  // native CDI requests from the inspected container so that recreation does
+  // not silently drop OpenShell's GPU attachment (and the injected libcuda).
+  if (!gpuAugment) {
+    const cdiDeviceIds = new Set(
+      (host.DeviceRequests ?? [])
+        .filter((request) => request.Driver === "cdi")
+        .flatMap((request) => stringArray(request.DeviceIDs))
+        .map((deviceId) => deviceId.trim())
+        .filter(Boolean),
+    );
+    for (const deviceId of cdiDeviceIds) args.push("--device", deviceId);
+  }
 
   pushStringFlag(args, "--hostname", config.Hostname);
   pushStringFlag(args, "--user", config.User);

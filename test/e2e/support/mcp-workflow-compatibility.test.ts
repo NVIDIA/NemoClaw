@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import { validateMcpOpenShellWorkflowBoundary } from "../../../tools/e2e/mcp-workflow-boundary.mts";
+import { requireFixture } from "./require-fixture";
 
 describe("MCP workflow runtime compatibility", () => {
   it("accepts harmless classifier key reordering (#6426)", () => {
@@ -23,7 +23,7 @@ describe("MCP workflow runtime compatibility", () => {
       const classifierIndex = steps.findIndex(
         (step) => step.name === "Classify OpenShell credential-boundary compatibility",
       );
-      assert(classifierIndex >= 0, "MCP dev classifier fixture is missing");
+      requireFixture(classifierIndex >= 0, "MCP dev classifier fixture is missing");
       const classifier = steps[classifierIndex]!;
       steps[classifierIndex] = {
         run: classifier.run,
@@ -56,7 +56,7 @@ describe("MCP workflow runtime compatibility", () => {
       const lifecycle = workflow.jobs["mcp-bridge-dev"].steps.find(
         (step) => step.name === "Run MCP OpenShell provider live test",
       );
-      assert(lifecycle, "MCP dev lifecycle fixture is missing");
+      requireFixture(lifecycle, "MCP dev lifecycle fixture is missing");
       delete lifecycle.if;
       fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
@@ -87,8 +87,8 @@ describe("MCP workflow runtime compatibility", () => {
       const lifecycleIndex = steps.findIndex(
         (step) => step.name === "Run MCP OpenShell provider live test",
       );
-      assert(classifierIndex >= 0, "MCP dev classifier fixture is missing");
-      assert(lifecycleIndex >= 0, "MCP dev lifecycle fixture is missing");
+      requireFixture(classifierIndex >= 0, "MCP dev classifier fixture is missing");
+      requireFixture(lifecycleIndex >= 0, "MCP dev lifecycle fixture is missing");
       const classifier = steps[classifierIndex]!;
       classifier.id = "uncanonical_classifier";
       classifier.run = "npx tsx tools/e2e/unreviewed-classifier.mts";
@@ -130,7 +130,7 @@ describe("MCP workflow runtime compatibility", () => {
       const classifier = workflow.jobs["mcp-bridge-dev"].steps.find(
         (step) => step.name === "Classify OpenShell credential-boundary compatibility",
       );
-      assert(classifier?.run, "MCP dev classifier fixture is missing");
+      requireFixture(classifier?.run, "MCP dev classifier fixture is missing");
       classifier.if = "false";
       classifier["continue-on-error"] = true;
       classifier.env = { E2E_ARTIFACT_DIR: "/tmp/unreviewed" };
@@ -158,7 +158,7 @@ describe("MCP workflow runtime compatibility", () => {
       const lifecycle = workflow.jobs["mcp-bridge"].steps.find(
         (step) => step.name === "Run MCP OpenShell provider live test",
       );
-      assert(lifecycle, "MCP stable lifecycle fixture is missing");
+      requireFixture(lifecycle, "MCP stable lifecycle fixture is missing");
       lifecycle.if = "${{ steps.mcp_runtime_compatibility.outputs.mode == 'full-lifecycle' }}";
       workflow.jobs["mcp-bridge"].steps.splice(
         workflow.jobs["mcp-bridge"].steps.indexOf(lifecycle),

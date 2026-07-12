@@ -16,6 +16,7 @@ type RootTestOptions = {
 const focusedProjects = "--project cli --project plugin --project e2e-support";
 
 describe("Vitest developer feedback", () => {
+  // source-shape-contract: compatibility -- Root Vitest feedback must preserve CI failure logs while deferring reporter selection
   it("lets Vitest select reporters and preserves failed-test logs in CI (#6692)", () => {
     const testOptions = rootVitestConfig.test as RootTestOptions;
 
