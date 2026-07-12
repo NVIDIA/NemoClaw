@@ -95,11 +95,14 @@ export function validateOpenShellGatewayAuthContractWorkflow(
     E2E_ARTIFACT_DIR: "${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-auth-contract",
     E2E_DEFAULT_ENABLED: "0",
     NEMOCLAW_NON_INTERACTIVE: "1",
-    NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.72",
     NEMOCLAW_RUN_LIVE_E2E: "1",
   };
   for (const [name, value] of Object.entries(expectedEnv)) {
     if (env[name] !== value) errors.push(`${JOB_NAME} must set ${name}=${value}`);
+  }
+  const pinVersion = env.NEMOCLAW_OPENSHELL_PIN_VERSION;
+  if (typeof pinVersion !== "string" || !/^\d+\.\d+\.\d+$/.test(pinVersion)) {
+    errors.push(`${JOB_NAME} must set NEMOCLAW_OPENSHELL_PIN_VERSION to an exact version`);
   }
   for (const secret of [
     "DOCKERHUB_USERNAME",

@@ -10,6 +10,22 @@ import {
 } from "../../../tools/e2e/openclaw-plugin-runtime-exdev-workflow-boundary.mts";
 
 describe("OpenClaw plugin runtime EXDEV workflow boundary", () => {
+  it("rejects arbitrary work while Docker Hub credentials are live", () => {
+    const workflow = readOpenClawPluginRuntimeExdevWorkflow();
+    const steps = workflow.jobs["openclaw-plugin-runtime-exdev"].steps!;
+    const revokeIndex = steps.findIndex(
+      (step) => step.name === "Remove Docker auth before release-pinned fixture",
+    );
+    steps.splice(revokeIndex, 0, {
+      name: "Read Docker credentials",
+      run: 'cat "$DOCKER_CONFIG/config.json"',
+    });
+
+    expect(validateOpenClawPluginRuntimeExdevWorkflow(workflow)).toContain(
+      "openclaw-plugin-runtime-exdev step 'Pre-pull release-matched Docker Hub builder image' must immediately precede 'Remove Docker auth before release-pinned fixture'",
+    );
+  });
+
   it("accepts the checked-in workflow and rejects trust-boundary mutations", () => {
     expect(validateOpenClawPluginRuntimeExdevWorkflowBoundary()).toEqual([]);
 

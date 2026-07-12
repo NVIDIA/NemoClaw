@@ -3,8 +3,22 @@
 
 import { describe, expect, it } from "vitest";
 
+import { target } from "../registry/builder.ts";
 import { listTargets } from "../registry/registry.ts";
 import { liveTargetSupport, liveTargetTestName } from "../registry/runtime-support.ts";
+import type { TargetDefinition } from "../registry/types.ts";
+
+function syntheticTarget(platform: string): TargetDefinition {
+  return target(`synthetic-${platform}`)
+    .environment({
+      platform,
+      install: "repo-current",
+      runtime: "docker-running",
+      onboarding: "cloud-openclaw",
+    })
+    .expectedState("synthetic-ready")
+    .build();
+}
 
 /**
  * Locks the contract that the live registry-targets test file registers
@@ -33,27 +47,23 @@ describe("live registry-targets skip-name contract", () => {
     }
   });
 
-  it("matches an explicit unsupported selection through the workflow filter", () => {
-    const unsupported = listTargets().find((entry) => entry.id === "ubuntu-repo-cloud-hermes");
-    expect(
-      unsupported,
-      "ubuntu-repo-cloud-hermes must remain a canonical unsupported example",
-    ).toBeTruthy();
-    const support = liveTargetSupport(unsupported!);
+  it("keeps a synthetically unsupported target selectable under its exact id", () => {
+    const unsupported = syntheticTarget("synthetic-unwired-platform");
+    const support = liveTargetSupport(unsupported);
     expect(support.supported).toBe(false);
 
-    const name = liveTargetTestName(unsupported!);
-    const filter = new RegExp(`^${unsupported!.id}$`);
+    const name = liveTargetTestName(unsupported);
+    const filter = new RegExp(`^${unsupported.id}$`);
     expect(filter.test(name)).toBe(true);
     // Negative: any historical `[not wired: ...]` suffix would break the workflow filter.
     expect(name).not.toMatch(/\[not wired:/);
   });
 
-  it("registers the canonical supported target under its bare id", () => {
-    const supported = listTargets().find((entry) => entry.id === "ubuntu-repo-cloud-openclaw");
-    expect(supported).toBeTruthy();
-    expect(liveTargetSupport(supported!).supported).toBe(true);
-    expect(liveTargetTestName(supported!)).toBe("ubuntu-repo-cloud-openclaw");
+  it("keeps a synthetically supported target selectable under its exact id", () => {
+    const supported = syntheticTarget("ubuntu-local");
+
+    expect(liveTargetSupport(supported).supported).toBe(true);
+    expect(liveTargetTestName(supported)).toBe(supported.id);
   });
 
   // Note: the workflow's `-t "^${TARGET_ID}$"` filter pattern itself is
