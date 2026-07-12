@@ -149,7 +149,7 @@ npm --prefix nemoclaw install --include=dev --ignore-scripts
 npm run build:cli
 npm --prefix nemoclaw run build
 npm run typecheck:cli
-./nemoclaw/node_modules/.bin/tsc --noEmit -p nemoclaw/tsconfig.json
+npm --prefix nemoclaw run typecheck
 ./node_modules/.bin/prek install
 ```
 
@@ -161,6 +161,7 @@ The TypeScript plugin lives in `nemoclaw/` and compiles with `tsc`:
 cd nemoclaw
 npm run build        # one-time compile
 npm run dev          # watch mode
+npm run typecheck    # type-check production and test sources without emitting
 ```
 
 The CLI (`bin/`, `scripts/`) is type-checked separately:
@@ -196,6 +197,7 @@ These are the primary npm scripts for day-to-day development:
 | `npm run check:diff` | Reproduce `pre-commit`, `commit-msg`, and `pre-push` checks for the diff from `origin/main` |
 | `npm run format` | Auto-format Biome-supported source files |
 | `npm run typecheck:cli` | Type-check the root TypeScript project using `tsconfig.cli.json` |
+| `npm --prefix nemoclaw run typecheck` | Type-check plugin production and test sources without emitting files |
 | `npm test` | Build package artifacts and run every non-live Vitest project for broad changes |
 | `npm run test:spec` | Run every non-live test with hierarchical behavior-oriented output |
 | `npm run test:fast` | Clean `dist/` and run source CLI, plugin, and E2E-support tests |

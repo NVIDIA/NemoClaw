@@ -3,26 +3,16 @@
 
 import path from "node:path";
 
-import { defineConfig } from "vitest/config";
+import { defineConfig, defineProject } from "vitest/config";
 
-const canonicalOpenShellPolicyBoundary = path.resolve(
-  import.meta.dirname,
-  "src/shared/openshell-policy-boundary.cts",
-);
+import pluginVitestProjectOptions from "./vitest.project.js";
+
+const pluginVitestProject = defineProject(pluginVitestProjectOptions);
 
 export default defineConfig({
-  oxc: {
-    include: /\.(?:[cm]?ts|[jt]sx)$/,
-  },
+  ...pluginVitestProject,
   test: {
-    alias: [
-      {
-        find: /^.*openshell-policy-boundary\.cjs$/,
-        replacement: canonicalOpenShellPolicyBoundary,
-      },
-    ],
-    environment: "node",
+    ...pluginVitestProject.test,
     globalSetup: path.resolve(import.meta.dirname, "../test/helpers/vitest-temp-root.ts"),
-    include: ["src/**/*.test.ts"],
   },
 });

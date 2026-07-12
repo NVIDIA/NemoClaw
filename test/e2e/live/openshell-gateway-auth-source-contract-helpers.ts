@@ -9,11 +9,9 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
-import { buildDockerDriverGatewayLaunch } from "../../../dist/lib/onboard/docker-driver-gateway-launch";
-import {
-  ensureDockerDriverGatewayLocalTlsBundle,
-  getDockerDriverGatewayLocalTlsBundle,
-} from "../../../dist/lib/onboard/docker-driver-gateway-local-tls";
+import type { buildDockerDriverGatewayLaunch as buildDockerDriverGatewayLaunchSource } from "../../../src/lib/onboard/docker-driver-gateway-launch";
+import type { ensureDockerDriverGatewayLocalTlsBundle as ensureDockerDriverGatewayLocalTlsBundleSource } from "../../../src/lib/onboard/docker-driver-gateway-local-tls";
+import { getDockerDriverGatewayLocalTlsBundle } from "../../../src/lib/onboard/docker-driver-gateway-local-tls";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
@@ -47,6 +45,11 @@ type ScenarioFixtures = {
   cleanup: CleanupRegistry;
   host: HostCliClient;
   skip: SkipFn;
+};
+
+export type GatewayAuthSourceContractDependencies = {
+  buildDockerDriverGatewayLaunch: typeof buildDockerDriverGatewayLaunchSource;
+  ensureDockerDriverGatewayLocalTlsBundle: typeof ensureDockerDriverGatewayLocalTlsBundleSource;
 };
 
 type GrpcResult = {
@@ -634,12 +637,10 @@ function createDockerBindableTempDir(prefix: string): string {
   return fs.mkdtempSync(path.join(root, prefix));
 }
 
-async function runOpenShellGatewayAuthSourceContractScenarioUnchecked({
-  artifacts,
-  cleanup,
-  host,
-  skip,
-}: ScenarioFixtures): Promise<void> {
+async function runOpenShellGatewayAuthSourceContractScenarioUnchecked(
+  { artifacts, cleanup, host, skip }: ScenarioFixtures,
+  dependencies: GatewayAuthSourceContractDependencies,
+): Promise<void> {
   const gatewayBin = requireGatewayBin(skip);
   const dockerBin = requireDockerBin(skip);
 
@@ -663,7 +664,7 @@ async function runOpenShellGatewayAuthSourceContractScenarioUnchecked({
   const networkCreate = run(dockerBin, ["network", "create", networkName]);
   expect(networkCreate.status, commandOutput(networkCreate)).toBe(0);
 
-  const certBundle = ensureDockerDriverGatewayLocalTlsBundle({
+  const certBundle = dependencies.ensureDockerDriverGatewayLocalTlsBundle({
     env: {
       ...process.env,
       XDG_CONFIG_HOME: path.join(stateDir, "xdg-config"),
@@ -684,7 +685,7 @@ async function runOpenShellGatewayAuthSourceContractScenarioUnchecked({
     OPENSHELL_SSH_GATEWAY_HOST: "127.0.0.1",
     OPENSHELL_SSH_GATEWAY_PORT: String(port),
   };
-  const launch = buildDockerDriverGatewayLaunch({
+  const launch = dependencies.buildDockerDriverGatewayLaunch({
     env: {
       ...process.env,
       NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH: "0",
@@ -808,13 +809,14 @@ async function runOpenShellGatewayAuthSourceContractScenarioUnchecked({
   await artifacts.writeText("openshell-gateway.log", gatewayLog);
 }
 
-export async function runOpenShellGatewayAuthSourceContractScenario({
-  artifacts,
-  cleanup,
-  host,
-  skip,
-}: ScenarioFixtures): Promise<void> {
+export async function runOpenShellGatewayAuthSourceContractScenario(
+  { artifacts, cleanup, host, skip }: ScenarioFixtures,
+  dependencies: GatewayAuthSourceContractDependencies,
+): Promise<void> {
   await withOpenShellGatewayAuthArtifactSafety(artifacts.rootDir, () =>
-    runOpenShellGatewayAuthSourceContractScenarioUnchecked({ artifacts, cleanup, host, skip }),
+    runOpenShellGatewayAuthSourceContractScenarioUnchecked(
+      { artifacts, cleanup, host, skip },
+      dependencies,
+    ),
   );
 }

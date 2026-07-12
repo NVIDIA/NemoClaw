@@ -29,7 +29,7 @@ function addSymlink(p: string): void {
 }
 
 vi.mock("node:fs", async (importOriginal) => {
-  const original = await importOriginal();
+  const original = await importOriginal<typeof import("node:fs")>();
   return {
     ...original,
     existsSync: (p: string) => store.has(p),
@@ -94,7 +94,6 @@ vi.mock("node:fs", async (importOriginal) => {
     unlinkSync: vi.fn((p: string) => {
       store.delete(p);
     }),
-    chmodSync: vi.fn(),
   };
 });
 

@@ -58,6 +58,7 @@ Package-specific guides:
 | Run repo-wide pre-commit and coverage checks | `npm run check` |
 | Reproduce `pre-commit`, `commit-msg`, and `pre-push` checks for the current diff | `npm run check:diff` |
 | Type-check CLI | `npm run typecheck:cli` |
+| Type-check plugin and plugin tests | `npm --prefix nemoclaw run typecheck` |
 | Auto-format | `npm run format` |
 | Build docs | `npm run docs` |
 | Serve docs locally | `npm run docs:live` |
@@ -143,7 +144,8 @@ For shell scripts use `#` comments. For Markdown use HTML comments.
 
 - Plugin code in `nemoclaw/src/` is linted and formatted by the root Biome config
 - CLI type-checking via `tsconfig.cli.json`
-- Plugin type-checking via `nemoclaw/tsconfig.json`
+- Plugin production and test type-checking via `npm --prefix nemoclaw run typecheck`, using
+  `nemoclaw/tsconfig.json` and `nemoclaw/tsconfig.test.json`
 
 ### Shell Scripts
 

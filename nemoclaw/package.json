@@ -26,7 +26,8 @@
     "lint:fix": "biome lint --write src",
     "format": "biome format --write src",
     "format:check": "biome format src",
-    "check": "npm run lint && npm run format:check && tsc --noEmit",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
+    "check": "npm run lint && npm run format:check && npm run typecheck",
     "clean": "rm -rf dist/"
   },
   "dependencies": {
@@ -39,7 +40,7 @@
     "@biomejs/biome": "^2.4.14",
     "@types/node": "^22.0.0",
     "typescript": "6.0.3",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.9"
   },
   "engines": {
     "node": ">=22.16.0"

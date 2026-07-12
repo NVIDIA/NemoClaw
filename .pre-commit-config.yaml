@@ -229,7 +229,7 @@ repos:
     hooks:
       - id: tsc-plugin
         name: TypeScript (plugin)
-        entry: bash -c 'cd nemoclaw && npx tsc --noEmit --incremental'
+        entry: npm --prefix nemoclaw run typecheck
         language: system
         pass_filenames: false
         files: ^nemoclaw/

@@ -618,6 +618,7 @@ describe("pull request and main workflow contracts", () => {
     const files = new RegExp(cliTypecheck?.files ?? "(?!)", "u");
     const jsFiles = new RegExp(jsTypecheck?.files ?? "(?!)", "u");
 
+    expect(pluginTypecheck?.entry).toBe("npm --prefix nemoclaw run typecheck");
     expect(cliTypecheck?.entry).toBe("npm run typecheck:cli -- --incremental");
     expect(cliTypecheck?.always_run).toBeUndefined();
     for (const include of cliTypeScriptConfig.include) {
@@ -966,7 +967,7 @@ describe("pull request and main workflow contracts", () => {
     expect(buildRuns).toContain("npm run build:cli");
     expect(buildRuns).toContain("npx vitest run --project package-contract");
     expect(buildRuns).toContain("npm run typecheck:cli");
-    expect(buildRuns).toContain("cd nemoclaw && npx tsc --noEmit --incremental");
+    expect(buildRuns).toContain("npm --prefix nemoclaw run typecheck");
     expect(buildRuns).toContain("npx tsc -p jsconfig.json");
     expect(buildRuns).toContain("bash scripts/check-version-tag-sync.sh");
 

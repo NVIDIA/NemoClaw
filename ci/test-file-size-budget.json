@@ -2,7 +2,7 @@
   "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
   "defaultMaxLines": 1500,
   "legacyMaxLines": {
-    "nemoclaw/src/commands/migration-state.test.ts": 1566,
+    "nemoclaw/src/commands/migration-state.test.ts": 1565,
     "src/lib/inference/nim.test.ts": 2068,
     "src/lib/onboard/preflight.test.ts": 1904,
     "test/generate-openclaw-config.test.ts": 1941,

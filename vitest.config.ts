@@ -4,8 +4,9 @@
 import { availableParallelism } from "node:os";
 import path from "node:path";
 
-import { defineConfig } from "vitest/config";
+import { defineConfig, defineProject } from "vitest/config";
 
+import pluginVitestProjectOptions from "./nemoclaw/vitest.project";
 import {
   shouldRunBranchValidationE2E,
   shouldRunLiveE2E,
@@ -46,6 +47,7 @@ const controlledNonLiveEnv = {
 // intentionally excluded below and keep their own stricter umask handling. See
 // test/helpers/normalize-fixture-umask.ts (#6448).
 const fixtureUmaskSetup = "test/helpers/normalize-fixture-umask.ts";
+const pluginVitestProject = defineProject(pluginVitestProjectOptions);
 const integrationProjectScheduling = resolveIntegrationProjectScheduling({
   isCi,
   npmLifecycleEvent: process.env.npm_lifecycle_event,
@@ -147,16 +149,7 @@ export default defineConfig({
           include: ["test/package-contract/**/*.test.ts"],
         },
       },
-      {
-        ...typedSourceTransform,
-        test: {
-          name: "plugin",
-          alias: canonicalOpenShellPolicyAlias,
-          env: controlledNonLiveEnv,
-          setupFiles: [fixtureUmaskSetup],
-          include: ["nemoclaw/src/**/*.test.ts"],
-        },
-      },
+      pluginVitestProject,
       {
         ...typedSourceTransform,
         test: {
