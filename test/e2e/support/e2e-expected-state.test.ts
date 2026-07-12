@@ -1,144 +1,212 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { loadAgent } from "../../../src/lib/agent/defs.ts";
 import {
   getExpectedState,
   listExpectedStates,
   probesForState,
   requireExpectedState,
 } from "../registry/expected-states.ts";
+import { loadManifest } from "../registry/manifests.ts";
 import { listTargets } from "../registry/registry.ts";
-import type { ExpectedState } from "../registry/types.ts";
+import type { ExpectedState, StateProbeId } from "../registry/types.ts";
 
-// The typed registry in `targets/expected-states.ts` is the single source
-// of truth for live Vitest state-validation fixtures.
-describe("typed expected-state registry id coverage", () => {
-  it("exposes a non-empty list of registered expected-state ids", () => {
-    const ids = listExpectedStates().map((s) => s.id);
-    expect(ids.length).toBeGreaterThan(0);
+describe("typed expected-state registry behavior", () => {
+  it("indexes every registered state by its unique id", () => {
+    const states = listExpectedStates();
+    const ids = states.map((state) => state.id);
+
+    expect(states.length).toBeGreaterThan(0);
     expect(new Set(ids).size).toBe(ids.length);
+    for (const state of states) {
+      expect(getExpectedState(state.id)).toBe(state);
+      expect(requireExpectedState(state.id)).toBe(state);
+    }
   });
 
-  it("requireExpectedState throws on unknown id with available list", () => {
-    expect(() => requireExpectedState("does-not-exist")).toThrow(/Unknown expected_state/);
-  });
+  it("rejects an unknown state with an actionable inventory", () => {
+    const unknown = "synthetic-unknown-state";
 
-  it("getExpectedState returns the state for known ids", () => {
-    expect(getExpectedState("cloud-openclaw-ready")?.id).toBe("cloud-openclaw-ready");
+    expect(() => requireExpectedState(unknown)).toThrow(
+      new RegExp(`Unknown expected_state id '${unknown}'.*available:`),
+    );
   });
 });
 
-describe("probesForState maps typed expected-state into probe ids", () => {
-  it("ready cloud state emits cli-installed, gateway-healthy, sandbox-running", () => {
-    expect(probesForState(requireExpectedState("cloud-openclaw-ready"))).toEqual([
+describe("expected-state probe compilation", () => {
+  it.each<{
+    dimension: string;
+    state: ExpectedState;
+    expected: StateProbeId[];
+  }>([
+    {
+      dimension: "installed CLI",
+      state: { id: "synthetic", cli: { installed: true } },
+      expected: ["cli-installed"],
+    },
+    {
+      dimension: "healthy gateway",
+      state: { id: "synthetic", gateway: { expected: "present", health: "healthy" } },
+      expected: ["gateway-healthy"],
+    },
+    {
+      dimension: "absent gateway",
+      state: { id: "synthetic", gateway: { expected: "absent" } },
+      expected: ["gateway-absent"],
+    },
+    {
+      dimension: "running sandbox",
+      state: { id: "synthetic", sandbox: { expected: "present", status: "running" } },
+      expected: ["sandbox-running"],
+    },
+    {
+      dimension: "absent sandbox",
+      state: { id: "synthetic", sandbox: { expected: "absent" } },
+      expected: ["sandbox-absent"],
+    },
+    {
+      dimension: "host registry preservation",
+      state: { id: "synthetic", localRegistry: { expected: "present" } },
+      expected: ["local-registry-entry-present"],
+    },
+    {
+      dimension: "Docker container preservation",
+      state: { id: "synthetic", dockerSandboxContainer: { expected: "present" } },
+      expected: ["docker-sandbox-container-present"],
+    },
+  ])("emits the implemented probe for $dimension", ({ state, expected }) => {
+    expect(probesForState(state)).toEqual(expected);
+  });
+
+  it("runs host-preservation probes before runtime-health probes", () => {
+    const state: ExpectedState = {
+      id: "synthetic-all-implemented-dimensions",
+      cli: { installed: true },
+      localRegistry: { expected: "present" },
+      dockerSandboxContainer: { expected: "present" },
+      gateway: { expected: "present", health: "healthy" },
+      sandbox: { expected: "present", status: "running" },
+    };
+
+    expect(probesForState(state)).toEqual([
       "cli-installed",
+      "local-registry-entry-present",
+      "docker-sandbox-container-present",
       "gateway-healthy",
       "sandbox-running",
     ]);
   });
 
-  it("Deep Agents Code ready state omits host dashboard health for terminal-agent parity", () => {
-    expect(probesForState(requireExpectedState("cloud-deepagents-code-ready"))).toEqual([
-      "cli-installed",
-      "sandbox-running",
-    ]);
-  });
-
-  it("preflight-failure state emits cli-installed, gateway-absent, sandbox-absent", () => {
-    expect(probesForState(requireExpectedState("preflight-failure-no-sandbox"))).toEqual([
-      "cli-installed",
-      "gateway-absent",
-      "sandbox-absent",
-    ]);
-  });
-
-  it("policy-selection failure state only requires the CLI to be installed", () => {
-    expect(
-      probesForState(requireExpectedState("onboarding-failure-policy-presets-required")),
-    ).toEqual(["cli-installed"]);
-  });
-
-  it("optional-dimension state emits cli-installed only", () => {
-    expect(probesForState(requireExpectedState("macos-cli-ready-docker-optional"))).toEqual([
-      "cli-installed",
-    ]);
-  });
-
-  it("inference and credentials probes are intentionally NOT emitted yet", () => {
-    // The typed registry declares inference.expected=available and
-    // credentials.expected=present for ready states; the compiler does
-    // not yet emit probe actions for those dimensions because the
-    // probe scripts aren't written. This test pins that gap so a
-    // future probe-script PR is forced to update probesForState too.
+  it("does not invent probes for optional, unimplemented, or negative host dimensions", () => {
     const state: ExpectedState = {
-      id: "synthetic",
-      inference: { expected: "available", provider: "nvidia" },
+      id: "synthetic-non-emitting-dimensions",
+      gateway: { expected: "optional", health: "optional" },
+      sandbox: { expected: "optional", status: "optional" },
+      inference: { expected: "available", provider: "synthetic" },
       credentials: { expected: "present" },
-    };
-    expect(probesForState(state)).toEqual([]);
-  });
-
-  it("localRegistry.expected=present emits the local-registry-entry-present probe", () => {
-    const state: ExpectedState = {
-      id: "synthetic-local-registry",
-      cli: { installed: true },
-      localRegistry: { expected: "present" },
-    };
-    expect(probesForState(state)).toEqual(["cli-installed", "local-registry-entry-present"]);
-  });
-
-  it("dockerSandboxContainer.expected=present emits the docker-sandbox-container-present probe", () => {
-    const state: ExpectedState = {
-      id: "synthetic-docker-container",
-      cli: { installed: true },
-      dockerSandboxContainer: { expected: "present" },
-    };
-    expect(probesForState(state)).toEqual(["cli-installed", "docker-sandbox-container-present"]);
-  });
-
-  it("localRegistry/dockerSandboxContainer 'absent' emits no probe today", () => {
-    // Negative-direction probes haven't landed yet. Pin the gap so a
-    // future negative-target PR is forced to add the absent probes.
-    const state: ExpectedState = {
-      id: "synthetic-host-absent",
       localRegistry: { expected: "absent" },
       dockerSandboxContainer: { expected: "absent" },
     };
-    expect(probesForState(state)).toEqual([]);
-  });
 
-  it("post-reboot-recovery-ready locks down host-side invariants only", () => {
-    // The post-reboot target locks the user-visible regression
-    // surface: registry preservation and Docker container
-    // preservation. Runtime liveness probes (gateway/sandbox) are
-    // intentionally omitted because they're environmental on
-    // `ubuntu-latest` after a simulated reboot and would mask the
-    // host-side signal. See the comment on `postRebootRecoveryReady`
-    // in `targets/expected-states.ts`.
-    expect(probesForState(requireExpectedState("post-reboot-recovery-ready"))).toEqual([
-      "cli-installed",
-      "local-registry-entry-present",
-      "docker-sandbox-container-present",
-    ]);
+    expect(probesForState(state)).toEqual([]);
   });
 });
 
-describe("expected-state registry covers every target referenced in the typed registry", () => {
-  it("every TargetDefinition.expectedStateId resolves in the typed expected-state registry", () => {
-    const referenced = new Set<string>();
-    for (const target of listTargets()) {
-      if (target.expectedStateId) {
-        referenced.add(target.expectedStateId);
-      }
+describe("target expected-state references", () => {
+  it("resolves every state id consumed by the typed target registry", () => {
+    const referenced = listTargets()
+      .map((target) => target.expectedStateId)
+      .filter((id): id is string => id !== undefined);
+
+    expect(referenced.length).toBeGreaterThan(0);
+    for (const id of new Set(referenced)) {
+      expect(getExpectedState(id), `expected_state '${id}' must resolve`).toBeDefined();
     }
-    expect(referenced.size).toBeGreaterThan(0);
-    for (const id of referenced) {
-      expect(
-        getExpectedState(id),
-        `expected_state '${id}' must be in the typed registry`,
-      ).toBeDefined();
+  });
+
+  it("compiles fail-closed absence probes for targets that forbid runtime side effects", () => {
+    const failClosedTargets = listTargets().filter((target) => {
+      const forbidden = target.expectedFailure?.forbiddenSideEffects ?? [];
+      return forbidden.includes("gateway-started") && forbidden.includes("sandbox-created");
+    });
+
+    expect(failClosedTargets.length).toBeGreaterThan(0);
+    for (const target of failClosedTargets) {
+      const probes = probesForState(requireExpectedState(target.expectedStateId!));
+      expect(probes, target.id).toEqual(
+        expect.arrayContaining(["gateway-absent", "sandbox-absent"]),
+      );
+    }
+  });
+
+  it("compiles absence probes for every preflight failure contract", () => {
+    const preflightFailures = listTargets().filter(
+      (target) => target.expectedFailure?.phase === "preflight",
+    );
+
+    expect(preflightFailures.length).toBeGreaterThan(0);
+    for (const target of preflightFailures) {
+      const probes = probesForState(requireExpectedState(target.expectedStateId!));
+      expect(probes, target.id).toEqual(
+        expect.arrayContaining(["gateway-absent", "sandbox-absent"]),
+      );
+    }
+  });
+
+  it("keeps policy-selection failures limited to the installed CLI", () => {
+    const policySelectionFailures = listTargets().filter(
+      (target) => target.expectedFailure?.errorClass === "policy-presets-required",
+    );
+
+    expect(policySelectionFailures.length).toBeGreaterThan(0);
+    for (const target of policySelectionFailures) {
+      expect(probesForState(requireExpectedState(target.expectedStateId!)), target.id).toEqual([
+        "cli-installed",
+      ]);
+    }
+  });
+
+  it("omits host gateway probes for targets whose loaded agent runtime is terminal", () => {
+    const targetAgents = listTargets()
+      .filter((target) => target.manifestPath !== undefined)
+      .map((target) => ({
+        target,
+        agent: loadAgent(
+          loadManifest(path.resolve(import.meta.dirname, "../../..", target.manifestPath!)).document
+            .spec.onboarding.agent,
+        ),
+      }));
+    const terminalTargets = targetAgents.filter(({ agent }) => agent.runtime?.kind === "terminal");
+
+    expect(targetAgents.length).toBe(listTargets().length);
+    expect(terminalTargets.length).toBeGreaterThan(0);
+    for (const { target } of terminalTargets) {
+      const probes = probesForState(requireExpectedState(target.expectedStateId!));
+      expect(probes, target.id).toContain("cli-installed");
+      expect(probes, target.id).toContain("sandbox-running");
+      expect(probes, target.id).not.toContain("gateway-healthy");
+      expect(probes, target.id).not.toContain("gateway-absent");
+    }
+  });
+
+  it("compiles host-preservation probes for every post-reboot recovery target", () => {
+    const recoveryTargets = listTargets().filter(
+      (target) => target.environment?.lifecycle === "post-reboot-recovery",
+    );
+
+    expect(recoveryTargets.length).toBeGreaterThan(0);
+    for (const target of recoveryTargets) {
+      const probes = probesForState(requireExpectedState(target.expectedStateId!));
+      expect(probes, target.id).toEqual(
+        expect.arrayContaining([
+          "local-registry-entry-present",
+          "docker-sandbox-container-present",
+        ]),
+      );
     }
   });
 });

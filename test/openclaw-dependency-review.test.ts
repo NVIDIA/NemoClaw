@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -64,28 +64,6 @@ function requiredStepIndex(job: WorkflowJob, name: string): number {
   return index;
 }
 
-function expectProductionDockerBuildGuard(job: WorkflowJob, stepName: string): void {
-  const run = requiredStep(job, stepName).run ?? "";
-  const guardIndex = run.indexOf("scripts/check-production-build-args.sh");
-  const buildIndex = run.indexOf("docker build");
-
-  expect(guardIndex, stepName).toBeGreaterThanOrEqual(0);
-  expect(buildIndex, stepName).toBeGreaterThanOrEqual(0);
-  expect(guardIndex, stepName).toBeLessThan(buildIndex);
-}
-
-function expectBuildPushGuard(job: WorkflowJob, guardStepName: string): void {
-  const guardIndex = requiredStepIndex(job, guardStepName);
-  const buildIndex =
-    job.steps?.findIndex((step) =>
-      String(step.uses ?? "").startsWith("docker/build-push-action@"),
-    ) ?? -1;
-
-  expect(buildIndex, guardStepName).toBeGreaterThanOrEqual(0);
-  expect(guardIndex, guardStepName).toBeLessThan(buildIndex);
-  expect(requiredStep(job, guardStepName).run).toContain("scripts/check-production-build-args.sh");
-}
-
 function findProductionBuildGuardCoverage(
   workflowName: string,
   workflow: Workflow,
@@ -114,6 +92,15 @@ function findProductionBuildGuardCoverage(
             ),
       }));
   });
+}
+
+function workflowContracts(): Array<{ name: string; workflow: Workflow }> {
+  return readdirSync(path.join(REPO_ROOT, ".github", "workflows"))
+    .filter((name) => /\.ya?ml$/.test(name))
+    .map((name) => ({
+      name: name.replace(/\.ya?ml$/, ""),
+      workflow: readYaml<Workflow>(`.github/workflows/${name}`),
+    }));
 }
 
 function runBaseImageBuildArgGuard(
@@ -450,52 +437,15 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
   });
 
   it("keeps production Docker build workflows behind the build-arg guard", () => {
-    const prSelfHosted = readYaml<Workflow>(".github/workflows/pr-self-hosted.yaml");
-    const sandboxImages = readYaml<Workflow>(".github/workflows/sandbox-images-and-e2e.yaml");
-    const baseImages = readYaml<Workflow>(".github/workflows/base-image.yaml");
-
-    expectProductionDockerBuildGuard(
-      prSelfHosted.jobs["build-sandbox-images"] as WorkflowJob,
-      "Build production image",
-    );
-    expectProductionDockerBuildGuard(
-      prSelfHosted.jobs["build-sandbox-images-arm64"] as WorkflowJob,
-      "Build production image on arm64",
-    );
-    expectProductionDockerBuildGuard(
-      sandboxImages.jobs["build-sandbox-images"] as WorkflowJob,
-      "Build production image",
-    );
-    expectProductionDockerBuildGuard(
-      sandboxImages.jobs["build-hermes-sandbox-image"] as WorkflowJob,
-      "Build Hermes production image",
-    );
-    expectProductionDockerBuildGuard(
-      sandboxImages.jobs["build-sandbox-images-arm64"] as WorkflowJob,
-      "Build production image on arm64",
-    );
-    expectBuildPushGuard(
-      baseImages.jobs["build-and-push"] as WorkflowJob,
-      "Validate production Docker build args",
-    );
-    expectBuildPushGuard(
-      baseImages.jobs["build-and-push-hermes"] as WorkflowJob,
-      "Validate Hermes production Docker build args",
-    );
-    expectBuildPushGuard(
-      baseImages.jobs["build-and-push-langchain-deepagents-code"] as WorkflowJob,
-      "Validate Deep Agents Code production Docker build args",
+    const workflows = workflowContracts();
+    const discoveredBuilds = workflows.flatMap(({ name, workflow }) =>
+      findProductionBuildGuardCoverage(name, workflow),
     );
 
-    const discoveredBuilds = [
-      ...findProductionBuildGuardCoverage("pr-self-hosted", prSelfHosted),
-      ...findProductionBuildGuardCoverage("sandbox-images-and-e2e", sandboxImages),
-      ...findProductionBuildGuardCoverage("base-image", baseImages),
-    ];
-    expect(discoveredBuilds.map(({ label }) => label)).toHaveLength(8);
+    expect(discoveredBuilds.length).toBeGreaterThan(0);
     expect(discoveredBuilds.filter(({ guarded }) => !guarded)).toEqual([]);
 
-    const productionWorkflowContract = JSON.stringify({ prSelfHosted, sandboxImages, baseImages });
+    const productionWorkflowContract = JSON.stringify(workflows);
     for (const fixtureSelector of [
       "NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1",
       "OPENCLAW_VERSION=2026.3.11",

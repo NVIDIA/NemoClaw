@@ -1,13 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
+import { loadAgent } from "../src/lib/agent/defs.ts";
+import { prepareInitialSandboxCreatePolicy } from "../src/lib/onboard/initial-policy.ts";
 import { TOKEN_PREFIX_PATTERNS } from "../src/lib/security/secret-patterns.ts";
 import { cloudExperimentalChecksForOnboarding } from "./e2e/live/cloud-experimental-check-list.ts";
 import {
@@ -47,11 +51,20 @@ const tuiStartupCheckPath = path.join(
   "10-deepagents-code-tui-startup.sh",
 );
 
-function policyBinaryPaths(policyText: string, policyName: string): string[] {
-  const parsed = YAML.parse(policyText) as {
-    network_policies?: Record<string, { binaries?: Array<{ path?: unknown }> }>;
-  };
-  const binaries = parsed.network_policies?.[policyName]?.binaries;
+type EffectivePolicy = {
+  filesystem_policy?: { read_only?: string[] };
+  landlock?: { compatibility?: string };
+  network_policies?: Record<
+    string,
+    {
+      binaries?: Array<{ path?: unknown }>;
+      endpoints?: Array<{ host?: string }>;
+    }
+  >;
+};
+
+function policyBinaryPaths(policy: EffectivePolicy, policyName: string): string[] {
+  const binaries = policy.network_policies?.[policyName]?.binaries;
   expect(Array.isArray(binaries), `${policyName} policy must declare binary-scoped egress`).toBe(
     true,
   );
@@ -61,6 +74,82 @@ function policyBinaryPaths(policyText: string, policyName: string): string[] {
     );
     return entry.path as string;
   });
+}
+
+function sha256(contents: string | Buffer): string {
+  return createHash("sha256").update(contents).digest("hex");
+}
+
+function writeMinimalWheel(directory: string): string {
+  const wheelPath = path.join(directory, "nemoclaw_hash_contract-1.0-py3-none-any.whl");
+  execFileSync(
+    "python3",
+    [
+      "-c",
+      `
+import sys
+import zipfile
+
+wheel_path = sys.argv[1]
+dist_info = "nemoclaw_hash_contract-1.0.dist-info"
+with zipfile.ZipFile(wheel_path, "w") as wheel:
+    wheel.writestr("nemoclaw_hash_contract/__init__.py", "")
+    wheel.writestr(
+        f"{dist_info}/METADATA",
+        "Metadata-Version: 2.1\\nName: nemoclaw-hash-contract\\nVersion: 1.0\\n",
+    )
+    wheel.writestr(
+        f"{dist_info}/WHEEL",
+        "Wheel-Version: 1.0\\nGenerator: nemoclaw-test\\nRoot-Is-Purelib: true\\nTag: py3-none-any\\n",
+    )
+    wheel.writestr(f"{dist_info}/RECORD", f"{dist_info}/RECORD,,\\n")
+`,
+      wheelPath,
+    ],
+    { stdio: "pipe" },
+  );
+  return wheelPath;
+}
+
+function baseImagePipInstallArgs(dockerfile: string, requirementsPath: string): string[] {
+  const logicalDockerfile = dockerfile.replace(/\\\r?\n\s*/g, " ");
+  const copiedLock = logicalDockerfile.match(
+    /COPY\s+agents\/langchain-deepagents-code\/requirements\.lock\s+(\S+)/,
+  );
+  expect(copiedLock, "base image must copy the reviewed lockfile").not.toBeNull();
+  const invocation = logicalDockerfile.match(/"\$VIRTUAL_ENV\/bin\/pip3" install\s+([^\n]+?)\s+&&/);
+  expect(
+    invocation,
+    "base image must install the reviewed lockfile with the managed venv",
+  ).not.toBeNull();
+  const args = (invocation?.[1] ?? "").trim().split(/\s+/);
+  const requirementsFlag = args.indexOf("-r");
+  expect(
+    requirementsFlag,
+    "base image pip install must consume a requirements file",
+  ).toBeGreaterThanOrEqual(0);
+  expect(args[requirementsFlag + 1]).toBe(copiedLock?.[1]);
+  return [...args.slice(0, requirementsFlag), "-r", requirementsPath];
+}
+
+function assertEveryRequirementIsHashLocked(requirementsLock: string): void {
+  const lines = requirementsLock.split(/\r?\n/);
+  const requirementStarts = lines
+    .map((line, index) => ({ line, index }))
+    .filter(({ line }) => line.length > 0 && !/^\s|#/.test(line));
+  expect(requirementStarts.length).toBeGreaterThan(0);
+
+  for (const [position, requirement] of requirementStarts.entries()) {
+    expect(
+      requirement.line,
+      `lock entry on line ${requirement.index + 1} must be exactly pinned`,
+    ).toMatch(/^[A-Za-z0-9][A-Za-z0-9_.-]*(?:\[[^\]]+\])?==[^\s\\]+\s+\\$/);
+    const nextIndex = requirementStarts[position + 1]?.index ?? lines.length;
+    const block = lines.slice(requirement.index, nextIndex).join("\n");
+    const hashTokens = block.match(/--hash=[^\s\\]+/g) ?? [];
+    expect(hashTokens.length, requirement.line).toBeGreaterThan(0);
+    expect(hashTokens.every((token) => /^--hash=sha256:[a-f0-9]{64}$/.test(token))).toBe(true);
+  }
 }
 
 describe("LangChain Deep Agents Code image contracts", () => {
@@ -214,14 +303,15 @@ describe("LangChain Deep Agents Code image contracts", () => {
     const dockerfile = readAgentFile("Dockerfile");
     const launcher = readAgentFile("dcode-launcher.sh");
     const wrapper = readAgentFile("dcode-wrapper.sh");
-    const policy = readAgentFile("policy-additions.yaml");
+    const expectedVersion = loadAgent("langchain-deepagents-code").expectedVersion;
 
     expect(dockerfile).not.toContain("NEMOCLAW_WEB_SEARCH_ENABLED");
     expect(dockerfile).not.toContain("NEMOCLAW_DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
     expect(dockerfile).not.toContain("dcode.upstream");
     expect(wrapper).not.toContain("NEMOCLAW_DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
     expect(wrapper).toContain("unset DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
-    expect(wrapper).toContain("deepagents-code==0.1.34");
+    expect(expectedVersion).not.toBeNull();
+    expect(wrapper).toContain(`deepagents-code==${expectedVersion}`);
     expect(wrapper).toContain("Schema pin");
     expect(wrapper).toContain("truthy top-level");
     expect(wrapper).toContain("unset PYTHONHOME PYTHONPATH");
@@ -319,8 +409,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
     );
     expect(launcher).toContain("harden_resource_limits");
     expect(launcher).toContain("refusing to launch dcode unhardened");
-    expect(policy).not.toContain("/usr/local/bin/dcode.real");
-    expect(policy).not.toContain("dcode.upstream");
   });
 
   it("exposes an exact managed MCP capability marker without starting dcode", () => {
@@ -343,17 +431,15 @@ describe("LangChain Deep Agents Code image contracts", () => {
   });
 
   it("keeps NemoClaw MCP state separate from user discovery", () => {
-    const requirements = readAgentFile("requirements.lock");
     const wrapper = readAgentFile("dcode-wrapper.sh");
     const managedRuntime = readAgentFile("managed-dcode-runtime.py");
     const patcher = readAgentFile("patch-managed-deepagents-code.py");
-    const manifest = readAgentFile("manifest.yaml");
+    const agent = loadAgent("langchain-deepagents-code");
     const managedPath = "/sandbox/.deepagents/.nemoclaw-mcp.json";
 
     // The pinned release's user/project .mcp.json files remain user-authored.
     // Managed images suppress discovery and pass only an integrity-bound
     // snapshot of NemoClaw's dedicated projection.
-    expect(requirements).toContain("deepagents-code==0.1.34");
     expect(wrapper).toContain("extra_args=(--sandbox none --no-mcp)");
     expect(managedRuntime).toContain(`_MCP_CONFIG_FILE = Path("${managedPath}")`);
     expect(patcher).toContain("managed_mcp_config = _nemoclaw_managed_mcp_config_path()");
@@ -362,8 +448,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(managedRuntime).toContain("or descriptor != _MANAGED_MCP_FD");
     expect(patcher).toContain("def discover_mcp_configs(");
     expect(patcher).toContain("return []");
-    expect(manifest).toContain("- .deepagents/.mcp.json");
-    expect(manifest).toContain(".deepagents/.nemoclaw-mcp.json projection");
+    expect(agent.userManagedFiles).toContain(".deepagents/.mcp.json");
+    expect(agent.userManagedFiles).not.toContain(".deepagents/.nemoclaw-mcp.json");
     expect(wrapper).not.toContain("--mcp-config /sandbox/.mcp.json");
     expect(wrapper).not.toContain("managed_mcp_config_path");
     expect(patcher).not.toContain('managed_mcp_config = "/sandbox/.mcp.json"');
@@ -396,45 +482,77 @@ describe("LangChain Deep Agents Code image contracts", () => {
   });
 
   it("keeps optional service egress out of the default policy and requires Landlock", () => {
-    const policy = readAgentFile("policy-additions.yaml");
-    expect(policy).not.toContain("api.tavily.com");
-    expect(policy).not.toContain("api.smith.langchain.com");
-    expect(policy).not.toContain("supabase.co");
-    expect(policy).toContain("    - /usr\n");
-    expect(policy).toContain("    - /opt/venv\n");
-    expect(policy).toContain("    - /etc\n");
-    expect(policy).toContain("compatibility: strict");
-    expect(policy).not.toContain("compatibility: best_effort");
-    expect(policy).toContain("fail closed when Landlock cannot be applied");
-    expect(policy).toContain("silently degrading");
-    expect(policy).toContain("observes Python module traffic from dcode as the Python");
-    expect(policy).toContain("process-wide only for the read-only PyPI hosts");
-    expect(policy).toContain(
-      "Tavily, LangSmith, MCP, and arbitrary hosts are intentionally absent",
+    const basePolicyPath = path.join(
+      repoRoot,
+      "agents",
+      "langchain-deepagents-code",
+      "policy-additions.yaml",
     );
+    const defaultPrepared = prepareInitialSandboxCreatePolicy(basePolicyPath, [], {
+      agentName: "langchain-deepagents-code",
+    });
+    const tavilyPrepared = prepareInitialSandboxCreatePolicy(basePolicyPath, [], {
+      agentName: "langchain-deepagents-code",
+      additionalPresets: ["tavily"],
+    });
+    const defaultPolicy = YAML.parse(
+      fs.readFileSync(defaultPrepared.policyPath, "utf8"),
+    ) as EffectivePolicy;
+    const tavilyPolicy = YAML.parse(
+      fs.readFileSync(tavilyPrepared.policyPath, "utf8"),
+    ) as EffectivePolicy;
 
-    const githubBinaries = policyBinaryPaths(policy, "github");
-    expect(githubBinaries).toEqual(
-      expect.arrayContaining(["/usr/bin/git", "/usr/local/bin/dcode", "/opt/venv/bin/python3*"]),
-    );
-    expect(githubBinaries).not.toEqual(expect.arrayContaining(["/usr/bin/python3*"]));
-    expect(githubBinaries).not.toEqual(expect.arrayContaining(["/usr/local/bin/python3*"]));
-    expect(githubBinaries).not.toEqual(expect.arrayContaining(["/usr/local/lib/python3.13/**"]));
+    try {
+      const defaultHosts = Object.values(defaultPolicy.network_policies ?? {}).flatMap((entry) =>
+        (entry.endpoints ?? []).map((endpoint) => endpoint.host),
+      );
+      expect(defaultHosts).not.toEqual(
+        expect.arrayContaining(["api.tavily.com", "api.smith.langchain.com", "supabase.co"]),
+      );
+      expect(defaultPolicy.filesystem_policy?.read_only).toEqual(
+        expect.arrayContaining(["/usr", "/opt/venv", "/etc"]),
+      );
+      expect(defaultPolicy.landlock).toMatchObject({ compatibility: "strict" });
 
-    const pypiBinaries = policyBinaryPaths(policy, "pypi");
-    expect(pypiBinaries).toEqual(
-      expect.arrayContaining([
-        "/opt/venv/bin/pip3",
-        "/sandbox/**/bin/pip3",
-        "/opt/venv/bin/python3*",
-        "/sandbox/**/bin/python3*",
-        "/usr/local/bin/dcode",
-      ]),
-    );
-    expect(pypiBinaries).not.toEqual(expect.arrayContaining(["/usr/bin/python3*"]));
-    expect(pypiBinaries).not.toEqual(expect.arrayContaining(["/usr/local/bin/python3*"]));
-    expect(pypiBinaries).not.toEqual(expect.arrayContaining(["/usr/local/bin/pip3"]));
-    expect(pypiBinaries).not.toEqual(expect.arrayContaining(["/usr/local/lib/python3.13/**"]));
+      const githubBinaries = policyBinaryPaths(defaultPolicy, "github");
+      expect(githubBinaries).toEqual(
+        expect.arrayContaining(["/usr/bin/git", "/usr/local/bin/dcode", "/opt/venv/bin/python3*"]),
+      );
+      expect(githubBinaries).not.toEqual(expect.arrayContaining(["/usr/bin/python3*"]));
+      expect(githubBinaries).not.toEqual(expect.arrayContaining(["/usr/local/bin/python3*"]));
+      expect(githubBinaries).not.toEqual(expect.arrayContaining(["/usr/local/lib/python3.13/**"]));
+
+      const pypiBinaries = policyBinaryPaths(defaultPolicy, "pypi");
+      expect(pypiBinaries).toEqual(
+        expect.arrayContaining([
+          "/opt/venv/bin/pip3",
+          "/sandbox/**/bin/pip3",
+          "/opt/venv/bin/python3*",
+          "/sandbox/**/bin/python3*",
+          "/usr/local/bin/dcode",
+        ]),
+      );
+      expect(pypiBinaries).not.toEqual(expect.arrayContaining(["/usr/bin/python3*"]));
+      expect(pypiBinaries).not.toEqual(expect.arrayContaining(["/usr/local/bin/python3*"]));
+      expect(pypiBinaries).not.toEqual(expect.arrayContaining(["/usr/local/bin/pip3"]));
+      expect(pypiBinaries).not.toEqual(expect.arrayContaining(["/usr/local/lib/python3.13/**"]));
+
+      const defaultBinaries = Object.values(defaultPolicy.network_policies ?? {}).flatMap((entry) =>
+        (entry.binaries ?? []).map((binary) => binary.path),
+      );
+      expect(defaultBinaries).not.toEqual(
+        expect.arrayContaining(["/usr/local/bin/dcode.real", "dcode.upstream"]),
+      );
+
+      expect(tavilyPrepared.appliedPresets).toContain("tavily");
+      expect(
+        tavilyPolicy.network_policies?.tavily?.endpoints?.map((endpoint) => endpoint.host),
+      ).toContain("api.tavily.com");
+      expect(policyBinaryPaths(tavilyPolicy, "tavily")).toContain("/opt/venv/bin/python3*");
+    } finally {
+      defaultPrepared.cleanup?.();
+      tavilyPrepared.cleanup?.();
+    }
   });
 
   it("ships live policy behavior checks for Deep Agents Code", () => {
@@ -808,51 +926,67 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(detectsSecret("managed-placeholder-key")).toBe("clean");
   });
 
-  it("hash-locks Deep Agents Code base image PyPI installs", () => {
+  it("makes the base image enforce the reviewed hash-locked dependency set", () => {
     const baseDockerfile = readAgentFile("Dockerfile.base");
-    const manifest = readAgentFile("manifest.yaml");
     const requirementsLock = readAgentFile("requirements.lock");
 
-    expect(baseDockerfile).toContain("COPY agents/langchain-deepagents-code/requirements.lock");
-    expect(baseDockerfile).toContain('python3 -m venv --copies "$VIRTUAL_ENV"');
-    expect(baseDockerfile).toContain(
-      '"$VIRTUAL_ENV/bin/pip3" install --no-cache-dir --require-hashes',
-    );
-    expect(baseDockerfile).toContain("--require-hashes");
-    expect(baseDockerfile).toContain("-r /tmp/deepagents-code-requirements.lock");
+    assertEveryRequirementIsHashLocked(requirementsLock);
     expect(baseDockerfile).not.toContain("--break-system-packages");
     expect(baseDockerfile).not.toContain("--ignore-installed");
-    expect(manifest).toContain("binary: /opt/venv/bin/pip3");
-    expect(manifest).not.toContain("binary: /usr/local/bin/pip3");
-    expect(baseDockerfile).not.toContain(
-      'pip3 install --no-cache-dir --break-system-packages \\"uv==',
-    );
-    expect(baseDockerfile).not.toContain("deepagents-code[nvidia]==${DEEPAGENTS_CODE_VERSION}");
-    expect(requirementsLock).toContain("uv==0.11.15 \\");
-    expect(requirementsLock).toContain("deepagents-code==0.1.34 \\");
-    expect(requirementsLock).toContain("deepagents==0.7.0a6 \\");
-    expect(requirementsLock).toContain("langchain-google-genai==4.2.7 \\");
-    expect(requirementsLock).toContain("nemo-relay==0.4.0 \\");
-    expect(requirementsLock).toContain("langchain-nvidia-ai-endpoints==1.4.3 \\");
-    expect(requirementsLock).toContain("aiohttp==3.14.1 \\");
-    expect(requirementsLock).toContain("langchain-nvidia-ai-endpoints==");
-    expect(requirementsLock).toMatch(/--hash=sha256:[a-f0-9]{64}/);
+
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pip-hash-contract-"));
+    try {
+      const venvPath = path.join(tempDir, "venv");
+      execFileSync("python3", ["-m", "venv", venvPath], { stdio: "pipe" });
+      const pipPath = path.join(venvPath, "bin", "pip3");
+      const wheelPath = writeMinimalWheel(tempDir);
+      const wheelDigest = sha256(fs.readFileSync(wheelPath));
+      const hashedRequirements = path.join(tempDir, "hashed-requirements.txt");
+      const unhashedRequirements = path.join(tempDir, "unhashed-requirements.txt");
+      const requirement = `nemoclaw-hash-contract @ ${pathToFileURL(wheelPath).href}`;
+      fs.writeFileSync(hashedRequirements, `${requirement} --hash=sha256:${wheelDigest}\n`, "utf8");
+      fs.writeFileSync(unhashedRequirements, `${requirement}\n`, "utf8");
+
+      const runPip = (requirementsPath: string) =>
+        spawnSync(
+          pipPath,
+          [
+            "install",
+            "--dry-run",
+            "--no-index",
+            "--no-deps",
+            ...baseImagePipInstallArgs(baseDockerfile, requirementsPath),
+          ],
+          { encoding: "utf8" },
+        );
+      const accepted = runPip(hashedRequirements);
+      expect(accepted.status, `${accepted.stdout}\n${accepted.stderr}`).toBe(0);
+
+      const rejected = runPip(unhashedRequirements);
+      expect(rejected.status).not.toBe(0);
+      expect(`${rejected.stdout}\n${rejected.stderr}`).toContain(
+        "Hashes are required in --require-hashes mode",
+      );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("records dependency advisory review for the lockfile", () => {
     const review = readAgentFile("dependency-review.md");
+    const requirementsLock = readAgentFile("requirements.lock");
+    const adapterModule = readAgentFile(
+      "profile-plugin/src/nemoclaw_deepagents_profile/__init__.py",
+    );
+    const adapterMetadata = readAgentFile("profile-plugin/pyproject.toml");
 
-    expect(review).toContain("requirements.lock");
-    expect(review).toContain("7889fd275175ceadde843480587a3ed5b3dc517537222e60fa6fdfe4d5b21332");
-    expect(review).toContain("Audit date: 2026-07-09");
+    expect(review).toContain(`Lockfile SHA-256: \`${sha256(requirementsLock)}\``);
     expect(review).toContain(
       "uv tool run --python 3.13 pip-audit -r agents/langchain-deepagents-code/requirements.lock --progress-spinner off --disable-pip",
     );
-    expect(review).toContain("No known vulnerabilities found");
-    expect(review).toContain("8fe85c62293c74147848732dc56c33e8ab60133fa41c071da4328ac60f2bf44f");
-    expect(review).toContain("7ba7b77bd6f889cc861eddbe3e38fc1f4433a85b7bc2a9b516e19a19a37a7686");
+    expect(review).toContain("Audit result: `No known vulnerabilities found`");
+    expect(review).toContain(`Adapter module SHA-256: \`${sha256(adapterModule)}\``);
+    expect(review).toContain(`Adapter project metadata SHA-256: \`${sha256(adapterMetadata)}\``);
     expect(review).toContain("Adapter dependency audit result: `No known vulnerabilities found`");
-    expect(review).toContain("Deep Agents Code `0.1.34` pins `deepagents==0.7.0a6`");
-    expect(review).toContain("NemoClaw no longer vendors or overlays that source");
   });
 });

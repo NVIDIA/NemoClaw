@@ -7,6 +7,10 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
+import {
+  createMinimumOpenClawPluginApi,
+  MINIMUM_OPENCLAW_PLUGIN_API_VERSION,
+} from "./fixtures/minimum-openclaw-plugin-api";
 
 const repoRoot = path.join(import.meta.dirname, "../..");
 const pluginRoot = path.join(repoRoot, "nemoclaw");
@@ -32,29 +36,34 @@ function readPluginPackage(): PluginPackage {
     encoding: "utf8",
     timeout: 30_000,
   });
-  if (result.status !== 0) {
-    throw new Error(`npm could not read the plugin metadata: ${result.stdout}${result.stderr}`);
-  }
+  expect(
+    result.status,
+    `npm could not read the plugin metadata: ${result.stdout}${result.stderr}`,
+  ).toBe(0);
   return JSON.parse(result.stdout);
 }
 
 function parseRelease(value: unknown, label: string): Release {
-  if (typeof value !== "string") {
-    throw new Error(`${label} must be a release string`);
-  }
-  const match = /^(\d{4})\.(\d{1,2})\.(\d{1,2})$/.exec(value);
-  if (!match) {
-    throw new Error(`${label} must use the YYYY.M.D release format`);
-  }
-  return [Number(match[1]), Number(match[2]), Number(match[3])];
+  expect(value, `${label} must be a release string`).toBeTypeOf("string");
+  const match = /^(\d{4})\.(\d{1,2})\.(\d{1,2})$/.exec(value as string);
+  expect(match, `${label} must use the YYYY.M.D release format`).not.toBeNull();
+  return [Number(match![1]), Number(match![2]), Number(match![3])];
 }
 
 function compareRelease(left: Release, right: Release): number {
-  for (let index = 0; index < left.length; index += 1) {
-    const difference = left[index]! - right[index]!;
-    if (difference !== 0) return difference;
-  }
-  return 0;
+  return (
+    left.map((value, index) => value - right[index]!).find((difference) => difference !== 0) ?? 0
+  );
+}
+
+function requireStringArray(value: unknown, label: string): string[] {
+  expect(Array.isArray(value), `${label} must be an array`).toBe(true);
+  const values = value as unknown[];
+  expect(
+    values.every((entry) => typeof entry === "string"),
+    `${label} must contain strings`,
+  ).toBe(true);
+  return values as string[];
 }
 
 describe("packed NemoClaw plugin metadata", () => {
@@ -62,22 +71,25 @@ describe("packed NemoClaw plugin metadata", () => {
     const packageJson = readPluginPackage();
     const extensions = packageJson.openclaw?.extensions;
     expect(extensions).toEqual([expect.stringMatching(/^\.\/dist\/.+\.js$/)]);
-    if (!Array.isArray(extensions) || typeof extensions[0] !== "string") {
-      throw new Error("openclaw.extensions must declare one compiled entry");
-    }
+    const [extension] = requireStringArray(extensions, "openclaw.extensions");
 
-    const extensionPath = path.join(pluginRoot, extensions[0]);
+    const extensionPath = path.join(pluginRoot, extension!);
     expect(fs.existsSync(extensionPath), "Run the plugin build before package contracts.").toBe(
       true,
     );
     const pluginModule = await import(pathToFileURL(extensionPath).href);
     expect(pluginModule.default).toBeTypeOf("function");
+    const { api, registrations } = createMinimumOpenClawPluginApi();
+    expect(() => pluginModule.default(api)).not.toThrow();
+    expect(registrations.commands).toEqual([expect.objectContaining({ name: "nemoclaw" })]);
+    expect(registrations.providers).toEqual([expect.objectContaining({ id: "inference" })]);
+    expect(registrations.hookNames).toEqual(
+      expect.arrayContaining(["before_prompt_build", "before_tool_call"]),
+    );
 
     const pluginApi = packageJson.openclaw?.compat?.pluginApi;
-    if (typeof pluginApi !== "string" || !pluginApi.startsWith(">=")) {
-      throw new Error("openclaw.compat.pluginApi must declare a minimum release");
-    }
-    const pluginApiMinimum = parseRelease(pluginApi.slice(2), "plugin API minimum");
+    expect(pluginApi).toEqual(expect.stringMatching(/^>=\d{4}\.\d{1,2}\.\d{1,2}$/));
+    const pluginApiMinimum = parseRelease((pluginApi as string).slice(2), "plugin API minimum");
     const gatewayMinimum = parseRelease(
       packageJson.openclaw?.compat?.minGatewayVersion,
       "gateway minimum",
@@ -86,18 +98,20 @@ describe("packed NemoClaw plugin metadata", () => {
       packageJson.openclaw?.build?.openclawVersion,
       "OpenClaw build version",
     );
+    const minimumHostApi = parseRelease(
+      MINIMUM_OPENCLAW_PLUGIN_API_VERSION,
+      "minimum executable host fixture",
+    );
 
-    expect(pluginApiMinimum).toEqual(gatewayMinimum);
+    expect(pluginApiMinimum).toEqual(minimumHostApi);
+    expect(gatewayMinimum).toEqual(minimumHostApi);
     expect(compareRelease(buildVersion, pluginApiMinimum)).toBeGreaterThanOrEqual(0);
     expect(compareRelease(buildVersion, gatewayMinimum)).toBeGreaterThanOrEqual(0);
   });
 
   it("includes every declared extension in the npm package", () => {
     const packageJson = readPluginPackage();
-    const extensions = packageJson.openclaw?.extensions;
-    if (!Array.isArray(extensions) || extensions.some((entry) => typeof entry !== "string")) {
-      throw new Error("openclaw.extensions must be a string array");
-    }
+    const extensions = requireStringArray(packageJson.openclaw?.extensions, "openclaw.extensions");
 
     const packed = spawnSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
       cwd: pluginRoot,

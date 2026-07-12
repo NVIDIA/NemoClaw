@@ -132,11 +132,12 @@ describe("effective built-in policy contracts", () => {
 
     for (const [policyName, policy] of Object.entries(effective.network_policies ?? {})) {
       expect(policy.rules, `${policyName} must put rules on endpoints`).toBeUndefined();
-      for (const endpoint of policy.endpoints ?? []) {
+      const endpoints = policy.endpoints ?? [];
+      for (const endpoint of endpoints) {
         expect(methods(endpoint), `${policyName}:${endpoint.host}`).not.toContain("*");
-        if (endpoint.protocol === "rest") {
-          expect(endpoint.tls, `${policyName}:${endpoint.host}`).not.toBe("terminate");
-        }
+      }
+      for (const endpoint of endpoints.filter(({ protocol }) => protocol === "rest")) {
+        expect(endpoint.tls, `${policyName}:${endpoint.host}`).not.toBe("terminate");
       }
     }
   });
@@ -268,7 +269,20 @@ describe("effective built-in policy contracts", () => {
     );
 
     const graph = requireEndpoint(outlook, "graph.microsoft.com");
-    expect(methods(graph)).toContain("PATCH");
+    expect((outlook.endpoints ?? []).map((endpoint) => endpoint.host).sort()).toEqual([
+      "graph.microsoft.com",
+      "login.microsoftonline.com",
+      "outlook.office.com",
+      "outlook.office365.com",
+    ]);
+    expect(methods(graph)).toEqual(["GET", "PATCH", "POST"]);
+    for (const host of [
+      "login.microsoftonline.com",
+      "outlook.office365.com",
+      "outlook.office.com",
+    ]) {
+      expect(methods(requireEndpoint(outlook, host))).toEqual(["GET", "POST"]);
+    }
 
     expect((pricing.endpoints ?? []).map((endpoint) => endpoint.host).sort()).toEqual([
       "openrouter.ai",
@@ -323,7 +337,7 @@ describe("effective built-in policy contracts", () => {
     ]);
 
     expect(JSON.stringify(observability)).not.toMatch(
-      /authorization|cookie|headers?|langsmith|secret|token/i,
+      /authorization|cookie|credential|headers?|langsmith|secret|token/i,
     );
   });
 
@@ -374,7 +388,7 @@ describe("effective built-in policy contracts", () => {
         expect((policy.endpoints ?? []).some((endpoint) => endpoint.host === host)).toBe(false);
       }
       const browserHosts = (policy.endpoints ?? []).filter((endpoint) =>
-        endpoint.host?.includes("browser-use.com"),
+        endpoint.host?.endsWith(".browser-use.com"),
       );
       expect(browserHosts.length > 0).toBe(presetName === "nous-browser");
     }
