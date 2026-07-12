@@ -17,7 +17,7 @@ export function nemoclawStateRoot(home: string, gatewayPort: number = GATEWAY_PO
 }
 
 export function resolveHome(env: NodeJS.ProcessEnv = process.env): string {
-  return env.HOME ?? os.homedir();
+  return env.HOME || os.homedir();
 }
 
 export function getNemoclawStateRoot(home: string = resolveHome()): string {

@@ -56,7 +56,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       fs.mkdirSync(path.join(stateDir, "gateways", "8091"), { recursive: true });
       fs.writeFileSync(path.join(stateDir, "managed_swap"), "/swapfile");
       const logs: string[] = [];
-      const swapCommands: string[] = [];
+      const runCalls: string[][] = [];
       const result = runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: true },
         {
@@ -68,7 +68,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           log: (line) => logs.push(line),
           rmSync: vi.fn(),
           run: (_command, args) => {
-            if (args[0] === "swapoff") swapCommands.push("swapoff");
+            runCalls.push(args);
             return ok();
           },
           runDocker: () => ok(""),
@@ -79,7 +79,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(logs).toContain(
         "Other NemoClaw gateway-port environments remain; keeping the host-shared /swapfile.",
       );
-      expect(swapCommands).not.toContain("swapoff");
+      expect(runCalls.some((args) => args[0] === "swapoff")).toBe(false);
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }

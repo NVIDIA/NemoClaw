@@ -3,10 +3,10 @@
 
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DEFAULT_GATEWAY_PORT } from "../core/ports";
-import { GATEWAYS_SUBDIR, getNemoclawStateRoot, nemoclawStateRoot } from "./state-root";
+import { GATEWAYS_SUBDIR, nemoclawStateRoot } from "./state-root";
 
 const HOME = "/home/alice";
 
@@ -35,7 +35,15 @@ describe("nemoclawStateRoot", () => {
 });
 
 describe("getNemoclawStateRoot", () => {
-  it("defaults to the shared root when NEMOCLAW_GATEWAY_PORT is unset (#3053)", () => {
-    expect(getNemoclawStateRoot(HOME)).toBe(path.join(HOME, ".nemoclaw"));
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it("defaults to the shared root when NEMOCLAW_GATEWAY_PORT is unset (#3053)", async () => {
+    vi.resetModules();
+    vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "");
+    const { getNemoclawStateRoot: freshGetNemoclawStateRoot } = await import("./state-root");
+    expect(freshGetNemoclawStateRoot(HOME)).toBe(path.join(HOME, ".nemoclaw"));
   });
 });

@@ -30,6 +30,7 @@ import {
   renderSandboxInventoryText,
 } from "../src/lib/inventory/index.js";
 import { recoverRegistryEntriesWithFallback } from "../src/lib/list-command-deps.js";
+import { nemoclawStateRoot } from "../src/lib/state/state-root.js";
 import { testTimeoutOptions } from "./helpers/timeouts";
 
 const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
@@ -206,24 +207,7 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
       { mode: 0o755 },
     );
 
-    const registryDir = path.join(home, ".nemoclaw");
-    fs.mkdirSync(registryDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(registryDir, "sandboxes.json"),
-      JSON.stringify({
-        sandboxes: {
-          "my-assist": {
-            name: "my-assist",
-            model: "test-model",
-            provider: "nvidia-prod",
-            gpuEnabled: false,
-            policies: [],
-          },
-        },
-        defaultSandbox: "my-assist",
-      }),
-      { mode: 0o600 },
-    );
+    seedRegistry(path.join(home, ".nemoclaw"));
   });
 
   afterEach(() => {
@@ -257,6 +241,26 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
 
   function writeFakeOpenshell(lines: string[]): void {
     fs.writeFileSync(path.join(binDir, "openshell"), lines.join("\n"), { mode: 0o755 });
+  }
+
+  function seedRegistry(stateDir: string): void {
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(stateDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          "my-assist": {
+            name: "my-assist",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "my-assist",
+      }),
+      { mode: 0o600 },
+    );
   }
 
   function expectLayerBefore(combined: string, layer: string, laterText: string): void {
@@ -379,6 +383,7 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
     const listener = net.createServer();
     await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
     const port = (listener.address() as { port: number }).port;
+    seedRegistry(nemoclawStateRoot(home, port));
 
     try {
       // Fake docker: info OK, ps shows nothing running, ps -a shows the
