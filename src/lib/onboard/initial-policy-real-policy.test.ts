@@ -253,14 +253,15 @@ describe("initial sandbox policy real preset merge", () => {
         }),
       );
       for (const [policyName, policy] of Object.entries(effective.network_policies ?? {})) {
-        for (const endpoint of policy.endpoints ?? []) {
+        const endpoints = policy.endpoints ?? [];
+        for (const endpoint of endpoints) {
           expect(
             (endpoint.rules ?? []).map((rule) => rule.allow?.method),
             `${policyCase.path.join("/")}:${policyName}:${endpoint.host}`,
           ).not.toContain("*");
-          if (endpoint.protocol === "rest") {
-            expect(endpoint.tls).not.toBe("terminate");
-          }
+        }
+        for (const endpoint of endpoints.filter(({ protocol }) => protocol === "rest")) {
+          expect(endpoint.tls).not.toBe("terminate");
         }
       }
     }
