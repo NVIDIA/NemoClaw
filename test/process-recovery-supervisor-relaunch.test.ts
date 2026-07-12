@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as forwardHealth from "../src/lib/actions/sandbox/forward-health.ts";
 import { checkAndRecoverSandboxProcesses } from "../src/lib/actions/sandbox/process-recovery.ts";
+import { relaunchManagedSupervisorSession } from "../src/lib/actions/sandbox/supervisor-relaunch.ts";
 import * as openshellRuntime from "../src/lib/adapters/openshell/runtime.ts";
 import * as agentRuntime from "../src/lib/agent/runtime.ts";
 import * as registry from "../src/lib/state/registry.ts";
@@ -80,7 +81,8 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     expect(relaunchManagedSupervisorSessionImpl).not.toHaveBeenCalled();
   });
 
-  it("directs a stable no-supervisor result to rebuild when trusted recreation cannot start", () => {
+  it("honors the relaunch kill switch through stable no-supervisor recovery", () => {
+    vi.stubEnv("NEMOCLAW_DISABLE_SUPERVISOR_RELAUNCH", "1");
     mockOpenClawSandbox("legacy-box");
     setImmediateRecoveryPolling();
     const requestGatewaySupervisorAction = vi.fn(() => ({
@@ -88,7 +90,18 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       stdout: "",
       stderr: "SUPERVISOR_NOT_RUNNING",
     }));
-    const relaunchManagedSupervisorSessionImpl = vi.fn(() => null);
+    const resolveContainer = vi.fn(() => "old-container-id");
+    const recreate = vi.fn(() => {
+      throw new Error("kill switch allowed container mutation");
+    });
+    const requestPinnedGatewaySupervisorAction = vi.fn(() => null);
+    const relaunchManagedSupervisorSessionImpl = vi.fn(
+      (sandboxName: string, options: Parameters<typeof relaunchManagedSupervisorSession>[1]) =>
+        relaunchManagedSupervisorSession(sandboxName, {
+          quiet: options.quiet,
+          deps: { ...options.deps, resolveContainer, recreate },
+        }),
+    );
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
 
@@ -96,6 +109,7 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       quiet: false,
       isSandboxGatewayRunningImpl: () => false,
       requestGatewaySupervisorAction,
+      requestPinnedGatewaySupervisorAction,
       relaunchManagedSupervisorSessionImpl,
     });
 
@@ -105,6 +119,9 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       "legacy-box",
       expect.objectContaining({ quiet: false }),
     );
+    expect(resolveContainer).not.toHaveBeenCalled();
+    expect(requestPinnedGatewaySupervisorAction).not.toHaveBeenCalled();
+    expect(recreate).not.toHaveBeenCalled();
     const errorLines = errorSpy.mock.calls.map((call) => String(call[0]));
     expect(errorLines).toContainEqual(
       expect.stringContaining("Failure layer: supervisor not running"),
