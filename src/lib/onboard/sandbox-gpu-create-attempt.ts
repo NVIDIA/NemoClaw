@@ -68,29 +68,15 @@ export type NativeGpuFallbackCleanupDeps = {
 };
 
 /**
- * Source-of-truth boundary for the localized native-GPU fallback (#6110).
- *
- * The invalid state is an ordinary-Linux native attempt with a strict
- * pre-progress `--gpu` parser rejection or an exact-container host runtime
- * injection error. Sandbox proof output is diagnostic only unless independent
- * host configuration proves that native GPU attachment is absent; it cannot by
- * itself authorize the less-confined compatibility route. Build, upload, TLS,
- * provider, policy, dashboard, and inference failures remain on their existing
- * error paths.
- *
- * NemoClaw cannot source-fix the native injector because supported deployments
- * can combine different OpenShell and Docker versions that cannot be upgraded
- * atomically. The classification, orchestration, and cleanup regressions live
- * in `sandbox-gpu-create-failure-classification.test.ts`,
- * `sandbox-gpu-fallback-orchestration.test.ts`, and
- * `sandbox-gpu-cleanup-verification.test.ts`; the live fallback scenario proves
- * the same boundary against OpenShell.
- *
- * The ordinary-Linux fallback plan is reachable only through the operator's
- * explicit `NEMOCLAW_DOCKER_GPU_PATCH=fallback` control. Trusted diagnostics
- * classify a failure after that authorization; they never grant the broader
- * compatibility envelope themselves. Docker Desktop WSL and Jetson/Tegra
- * compatibility retirement remain separately gated by their native support.
+ * SOURCE_OF_TRUTH_REVIEW (native failure classification; #6110)
+ * invalidState: non-GPU failure or sandbox-controlled output authorizes a broader retry.
+ * sourceBoundary: accept only strict pre-progress `--gpu` rejection or exact-container Docker
+ *   runtime evidence; proof output also requires host configuration proving attachment absent.
+ * whyNotSourceFix: supported OpenShell/Docker versions cannot be upgraded atomically.
+ * regressionTest: create failure classification, fallback orchestration, cleanup, and live Hermes.
+ * removalCondition: native injection replaces compatibility on every supported host.
+ * Ordinary Linux also requires explicit `NEMOCLAW_DOCKER_GPU_PATCH=fallback`; WSL/Jetson are
+ * separately gated, and unrelated create/readiness failures retain their existing paths.
  */
 export function isNativeGpuCreatePreBuildRejection(output: string): boolean {
   const text = String(output ?? "");

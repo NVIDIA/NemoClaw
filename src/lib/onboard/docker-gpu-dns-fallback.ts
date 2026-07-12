@@ -29,33 +29,19 @@ function isUsableUpstreamResolver(ip: string): boolean {
 }
 
 /**
- * Source-of-truth boundary for the compatibility container's DNS fallback:
- *
- * - Invalid state: a recreated container inherits a host-only systemd-resolved loopback stub and
- *   cannot resolve names from its own network namespace.
- * - Source boundary: the host resolver owns the upstream address and Docker owns the recreated
- *   container's `--dns` setting; the sandbox cannot repair either side after creation.
- * - Source-fix constraint: the compatibility path must recreate the OpenShell-managed container
- *   atomically, so it cannot reconfigure the host resolver or upgrade OpenShell/Docker in place.
- * - Regression coverage: docker-gpu-dns-fallback.test.ts validates resolver parsing and host-file
- *   failures; docker-gpu-patch-recreate-dns.test.ts validates the create-command envelope.
- * - Removal condition: remove this probe only when the compatibility recreation path is retired
- *   for every supported host, or the minimum supported OpenShell/Docker pair always supplies a
- *   non-loopback resolver to recreated containers.
- *
- * This host-only probe runs during container creation; only the selected address is passed to
- * Docker via `--dns`, and the sandbox receives no runtime access to either host file. These files
- * share the host trust boundary with the Docker daemon: an actor that can rewrite them can already
- * control host and Docker DNS. A downstream CIDR allowlist would not restore that boundary and
- * would reject legitimate private and link-local enterprise/cloud resolvers, so this probe accepts
- * syntactically valid unicast upstreams and rejects loopback, unspecified, and multicast addresses.
+ * SOURCE_OF_TRUTH_REVIEW (compatibility DNS fallback)
+ * invalidState: a recreated container inherits a host-only loopback resolver.
+ * sourceBoundary: host resolver files supply data only to Docker's `--dns`; the sandbox gets no
+ *   file access, and syntactically valid unicast includes legitimate private/link-local resolvers.
+ * whyNotSourceFix: atomic recreation cannot reconfigure the host or upgrade OpenShell/Docker.
+ * regressionTest: DNS parser/host-file tests and the recreate-command envelope test.
+ * removalCondition: compatibility is retired or supported stacks always supply non-loopback DNS.
  */
 export function detectSandboxFallbackDns(
   deps: { readFile?: (path: string) => string | null } = {},
 ): string | null {
-  // `readFile` is a test seam, not a production path input. Production calls omit it, and this
-  // function invokes either implementation only with the two hardcoded, host-trusted resolver
-  // paths below. The selected address is data for Docker's `--dns` argument, never a command.
+  // The test seam is invoked only with these hardcoded host-trusted paths; its result is data,
+  // never a command.
   const readFile =
     deps.readFile ??
     ((path: string): string | null => {

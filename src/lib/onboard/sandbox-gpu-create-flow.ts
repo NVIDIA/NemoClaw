@@ -59,39 +59,16 @@ export interface SandboxGpuCreateFlowResult {
 }
 
 /**
- * Operator-authorized native GPU compatibility fallback source-of-truth boundary:
- *
- * - Invalid state: OpenShell rejects `--gpu` before create progress, the exact
- *   labeled container records a host runtime GPU-injection error, or a
- *   structured driver proof is corroborated by host configuration showing
- *   that the exact native container has no GPU attachment.
- * - Source boundary: fallback never trusts free-form build/list output or the
- *   image-controlled proof by itself. Sandbox proof remains diagnostic and
- *   fails closed without host corroboration; immutable image identity, runtime
- *   state, and device attachment come from Docker.
- * - Source-fix constraint: supported OpenShell/Docker combinations cannot be
- *   upgraded atomically, so the existing compatibility path remains required.
- * - Regression tests: sandbox-gpu-create-failure-classification.test.ts and
- *   sandbox-gpu-fallback-orchestration.test.ts cover strict classification,
- *   non-GPU exclusions, safe cleanup, and the one-retry limit; the live Hermes
- *   GPU workflow proves native success and fallback after a real native create.
- * - Existing error boundary: build, upload, TLS, provider, policy, generic
- *   readiness, and refused-cleanup failures retain onboarding's established
- *   `process.exit` paths. The caller registers process-exit cleanup for its
- *   temporary policy/build context before entering this flow; only classified
- *   native GPU failures return into the compatibility orchestration.
- * - Authorization: ordinary Linux reaches this plan only through explicit
- *   `NEMOCLAW_DOCKER_GPU_PATCH=fallback`; diagnostics classify a failure after
- *   authorization and never independently grant broader confinement.
- *
- * The ordered boundary spans this orchestrator, the per-route executor in
- * `sandbox-gpu-create-run-attempt.ts`, and the retry and cleanup proof in
- * `sandbox-gpu-create-attempt.ts`. The executor owns attempt evidence, this
- * module renders the retry before cleanup, activates its network boundary only
- * after cleanup is proven safe, and the retry helper enforces that ordering.
- *
- * Create a sandbox through the selected GPU route, with one fail-closed
- * compatibility retry when the native-first plan permits it.
+ * SOURCE_OF_TRUTH_REVIEW (ordered native-GPU fallback; #6110)
+ * invalidState: native injection fails and a broader retry starts without exact evidence or cleanup.
+ * sourceBoundary: the operator authorizes fallback; Docker owns image, runtime, attachment, and
+ *   cleanup evidence, while image-controlled proof output remains diagnostic only.
+ * whyNotSourceFix: supported OpenShell and Docker versions cannot be upgraded atomically.
+ * regressionTest: the create classification/orchestration/cleanup suites and live Hermes GPU flow.
+ * removalCondition: native injection works on all supported hosts and compatibility is retired.
+ * Build/upload/TLS/provider/policy/general-readiness failures retain their existing exit paths.
+ * The runner captures evidence; this module renders before cleanup, activates networking only
+ * after proven cleanup, and the attempt helper permits at most one retry.
  */
 export async function runSandboxGpuCreateFlow(
   input: SandboxGpuCreateFlowInput,
