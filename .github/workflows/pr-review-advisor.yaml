@@ -59,9 +59,9 @@ jobs:
       fail-fast: false
       matrix:
         advisor:
-          - id: gpt-5.5
-            label: GPT-5.5
-            model: openai/openai/gpt-5.5
+          - id: gpt-5.6-terra
+            label: GPT-5.6 Terra
+            model: azure/openai/gpt-5.6-terra
             artifact_dir: pr-review-advisor
             artifact_name: pr-review-advisor
             publish_comment: true

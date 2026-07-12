@@ -4,8 +4,9 @@
 import os from "node:os";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { sandboxAccessEnv } from "../fixtures/clients/sandbox.ts";
+import { sandboxAccessEnv, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { parseJsonFromText } from "./json-envelope.ts";
 
 // Branch validation provisions and onboards a real remote sandbox first; this
 // test restarts only that sandbox's dashboard forward and proves the explicit
@@ -46,8 +47,26 @@ function remoteHostCandidate(): string {
   return process.env.NEMOCLAW_E2E_REMOTE_HOST || externalIpv4 || os.hostname();
 }
 
+function stripAnsi(output: string): string {
+  return output.replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "");
+}
+
+function connectStartedDashboardForward(
+  result: { exitCode: number | null; stdout: string; stderr: string },
+  sandboxName: string,
+  dashboardPort: string,
+): boolean {
+  const output = stripAnsi(`${result.stdout}\n${result.stderr}`);
+  return (
+    result.exitCode === 0 ||
+    (result.exitCode === null &&
+      output.includes(`Forwarding port ${dashboardPort}`) &&
+      output.includes(`sandbox ${sandboxName}`))
+  );
+}
+
 runDashboardRemoteBindTest(
-  "dashboard forward binds all interfaces when remote bind is explicitly requested",
+  "clean-host remote bind keeps audit risks active and binds all interfaces",
   async ({ artifacts, host, sandbox }) => {
     const sandboxName = process.env.NEMOCLAW_SANDBOX_NAME || "e2e-test";
     const dashboardPort = process.env.NEMOCLAW_DASHBOARD_PORT || "18789";
@@ -89,7 +108,10 @@ runDashboardRemoteBindTest(
       },
       timeoutMs: 120_000,
     });
-    expect(connect.exitCode, `nemoclaw connect failed\n${connect.stderr}`).toBe(0);
+    expect(
+      connectStartedDashboardForward(connect, sandboxName, dashboardPort),
+      `nemoclaw connect did not complete or print background-forward proof\nstdout:\n${connect.stdout}\nstderr:\n${connect.stderr}`,
+    ).toBe(true);
 
     const forwardList = await sandbox.openshell(["forward", "list"], {
       artifactName: "dashboard-remote-bind-forward-list",
@@ -112,5 +134,33 @@ runDashboardRemoteBindTest(
       bindsAllInterfaces(forwardLine, dashboardPort),
       `Could not prove dashboard forward uses 0.0.0.0:${dashboardPort}: ${forwardLine}`,
     ).toBe(true);
+
+    const audit = await sandbox.execShell(
+      sandboxName,
+      trustedSandboxShellScript("openclaw security audit --json"),
+      {
+        artifactName: "dashboard-remote-bind-security-audit",
+        env: sandboxAccessEnv(),
+        timeoutMs: 60_000,
+      },
+    );
+    expect(audit.exitCode, `OpenClaw security audit failed\n${audit.stderr}`).toBe(0);
+    const auditResult = parseJsonFromText(audit.stdout) as {
+      findings: Array<{ checkId: string; detail: string }>;
+      suppressedFindings?: unknown[];
+    };
+    expect(auditResult.suppressedFindings ?? []).toEqual([]);
+    expect(auditResult.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ checkId: "gateway.control_ui.insecure_auth" }),
+        expect.objectContaining({ checkId: "gateway.control_ui.device_auth_disabled" }),
+        expect.objectContaining({
+          checkId: "config.insecure_or_dangerous_flags",
+          detail: expect.stringContaining(
+            "gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback=true",
+          ),
+        }),
+      ]),
+    );
   },
 );

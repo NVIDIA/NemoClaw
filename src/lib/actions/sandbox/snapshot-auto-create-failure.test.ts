@@ -48,7 +48,10 @@ vi.mock("../../inference/nim", () => ({
   stopNimContainer: vi.fn(),
   stopNimContainerByName: vi.fn(),
 }));
-vi.mock("../../messaging/channels", () => ({ listMessagingProviderSuffixes: vi.fn(() => []) }));
+vi.mock("../../messaging/channels", () => ({
+  listMessagingProviderSuffixes: vi.fn(() => []),
+  listMessagingCredentialMetadata: vi.fn(() => []),
+}));
 vi.mock("../../policy", () => ({
   applyPreset: vi.fn(() => true),
   applyPresetContent: vi.fn(() => true),

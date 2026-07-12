@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import type { AgentDefinition } from "./defs";
 // Import source directly so tests cannot pass against a stale build.
 import {
@@ -100,22 +100,18 @@ const buildUrlsLoopback = (token: string | null, port: number): string[] => {
 };
 
 describe("printDashboardUi with port 8642 outside the chat UI (#2078)", () => {
-  const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  let logSpy: MockInstance<typeof console.log>;
   const noteSpy = vi.fn();
 
   beforeEach(() => {
-    logSpy.mockClear();
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     noteSpy.mockReset();
   });
 
   afterEach(() => {
-    logSpy.mockClear();
+    logSpy.mockRestore();
     delete process.env.NEMOCLAW_HERMES_DASHBOARD;
     delete process.env.NEMOCLAW_HERMES_DASHBOARD_PORT;
-  });
-
-  afterAll(() => {
-    logSpy.mockRestore();
   });
 
   it("labels an API-kind agent as the API — not a UI — and does not embed a token in the URL", () => {

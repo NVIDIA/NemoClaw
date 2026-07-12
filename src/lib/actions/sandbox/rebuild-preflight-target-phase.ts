@@ -1,11 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { randomUUID } from "node:crypto";
 import { CLI_NAME } from "../../cli/branding";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { isSandboxBaseImageRefreshRequested } from "../../onboard/base-image-resolution-flow";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
-import { createRebuildProviderReconfigureHandoff } from "../../onboard/rebuild-route-handoff";
+
+import {
+  createRebuildProviderReconfigureHandoff,
+  mintProviderRecoveryReceipt,
+  type ProviderRecoveryReceipt,
+  type RegistryInferenceRoute,
+} from "../../onboard/rebuild-route-handoff";
 import { readSandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import * as registry from "../../state/registry";
 import type { ToolDisclosure } from "../../tool-disclosure";
@@ -35,6 +42,31 @@ import {
   type RebuildTargetConfig,
   stageRebuildHermesDashboardConfig,
 } from "./rebuild-target-preflight";
+
+/** Upper bound on how long a minted provider-recovery receipt stays valid. */
+const PROVIDER_RECOVERY_RECEIPT_TTL_MS = 60 * 60 * 1000;
+
+/** Stage recovery authority only from a route captured from the registry. */
+export function stageRegistryProviderRecoveryReceipt(
+  recreateOptions: { providerRecoveryReceipt?: ProviderRecoveryReceipt },
+  target: {
+    sandboxName: string;
+    gatewayName: string;
+    provider: string;
+    model: string;
+  },
+  registryRoute: RegistryInferenceRoute | null,
+  minting?: { nonce: string; expiresAtMs: number },
+): void {
+  if (!registryRoute) return;
+  recreateOptions.providerRecoveryReceipt = mintProviderRecoveryReceipt(
+    { ...target, route: registryRoute },
+    minting ?? {
+      nonce: randomUUID(),
+      expiresAtMs: Date.now() + PROVIDER_RECOVERY_RECEIPT_TTL_MS,
+    },
+  );
+}
 
 export interface RebuildPreparedTarget {
   targetConfig: RebuildTargetConfig;
@@ -150,6 +182,16 @@ export async function prepareRebuildTargetPreflights(args: {
   ) {
     return null;
   }
+  stageRegistryProviderRecoveryReceipt(
+    recreateOptions,
+    {
+      sandboxName,
+      gatewayName: recreateOptions.targetGatewayName,
+      provider: resumeConfig.provider,
+      model: resumeConfig.model,
+    },
+    resumeConfig.registryInferenceRoute,
+  );
   if (!(await ensureRebuildTargetGatewaySelected(sandboxName, sandboxEntry, log, bail)))
     return null;
   if (!checkRebuildGatewaySchemaPreflight(sandboxName, sandboxEntry, bail)) return null;

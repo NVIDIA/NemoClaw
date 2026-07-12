@@ -48,7 +48,8 @@ Use the built-in snapshot commands for the fastest backup and restore path.
 Snapshots capture all workspace state directories defined in the agent manifest and store them in `~/.nemoclaw/rebuild-backups/<name>/`.
 Agent manifests can also declare durable top-level state files.
 <AgentOnly variant="hermes">
-For Hermes, snapshots include `SOUL.md` and the SQLite database behind `.hermes/state.db` using SQLite's online backup API, then restore that database through SQLite instead of copying a live raw database file.
+For Hermes, snapshots include `SOUL.md`, the Web Dashboard profile under `.hermes/dashboard-home/`, and the SQLite database behind `.hermes/state.db` using SQLite's online backup API, then restore that database through SQLite instead of copying a live raw database file.
+The dashboard profile includes `MEMORY.md` and `USER.md`, and the automatic rebuild snapshot preserves both files.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 For Deep Agents, snapshots include manifest-declared state under `/sandbox/.deepagents`, including skills and runtime state, while omitting credential-bearing user files.
@@ -61,6 +62,10 @@ The Hermes database can contain session metadata and message history needed for 
 </AgentOnly>
 Snapshots also preserve sandbox registry metadata that affects rebuild behavior, including custom policy presets applied with `policy-add --from-file` or `policy-add --from-dir`.
 When you restore a snapshot, NemoClaw replays those recorded custom presets with their stored YAML content, so you do not need the original preset files on disk for the restored sandbox to keep the same policy state.
+The target sandbox's current agent manifest remains authoritative for state-file restore behavior.
+NemoClaw rejects the restore when the snapshot's agent, config directory, state-file path, or state-file strategy conflicts with that manifest.
+For managed images, NemoClaw applies the current manifest's managed config merge rules by default and does not fall back to whole-file replacement.
+For Deep Agents targets, whole-file config replacement is limited to sandboxes created from a custom Dockerfile.
 
 ```bash
 $$nemoclaw my-assistant snapshot create
@@ -126,7 +131,11 @@ NemoClaw rejects unsafe symlinks and hard links inside sandbox state during back
 Credential-bearing Deep Agents files such as `.deepagents/.env` and user-authored `.deepagents/.mcp.json` are intentionally excluded from snapshots.
 Deep Agents auth state files such as `.deepagents/.state/auth.json` and `.deepagents/.state/chatgpt-auth.json` are also excluded because the managed launcher refuses to start when upstream credential state is present.
 The managed `.deepagents/.nemoclaw-mcp.json` projection and `hooks.json` are also excluded because NemoClaw reconstructs managed MCP state and disables executable Deep Agents Code hooks in the managed harness.
-NemoClaw recreates generated `config.toml`, managed MCP projection state, and provider credentials from host-side onboarding and OpenShell provider state during rebuild.
+NemoClaw recreates the current inference route headers, `models` and `update` tables, managed MCP projection state, and provider credentials from host-side onboarding and OpenShell provider state during rebuild.
+For a NemoClaw-managed Deep Agents image, it restores only the allowlisted `ui.show_scrollbar`, `ui.show_url_open_toast`, `threads.relative_time`, and `threads.sort_order` preferences from the previous `config.toml` when their values pass validation.
+Unknown, runtime-controlled, executable, and security-sensitive backup keys are dropped instead of replacing freshly generated settings on that managed path.
+A Deep Agents target created from a custom Dockerfile restores `config.toml` as a whole file because the custom image owns its config schema, so review that backup before restoring it.
+On the managed key-level restore path, if either config is malformed, required managed data is missing, or the restore detects an unsafe link or file replacement, NemoClaw marks the restore as failed and does not fall back to copying the backed-up file wholesale.
 Before a Deep Agents rebuild changes the sandbox, NemoClaw verifies the recorded inference route, provider, model, reasoning settings, web search selection, base image, and policy inputs.
 If a late check fails, NemoClaw restores the previous MCP state and keeps the existing sandbox intact.
 
@@ -166,12 +175,17 @@ openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/memory/ "$BAC
 ```bash
 SANDBOX=my-hermes
 BACKUP_DIR=~/.nemoclaw/backups/$(date +%Y%m%d-%H%M%S)
-mkdir -p "$BACKUP_DIR"
+mkdir -p "$BACKUP_DIR/dashboard-home"
 
 openshell sandbox download "$SANDBOX" /sandbox/SOUL.md "$BACKUP_DIR/"
 openshell sandbox download "$SANDBOX" /sandbox/.hermes/state.db "$BACKUP_DIR/"
+openshell sandbox download "$SANDBOX" /sandbox/.hermes/dashboard-home/MEMORY.md "$BACKUP_DIR/dashboard-home/MEMORY.md"
+openshell sandbox download "$SANDBOX" /sandbox/.hermes/dashboard-home/USER.md "$BACKUP_DIR/dashboard-home/USER.md"
 openshell sandbox download "$SANDBOX" /sandbox/.hermes/platforms/ "$BACKUP_DIR/platforms/"
 ```
+
+Copy only the dashboard profile's `MEMORY.md` and `USER.md` files.
+Do not copy `.hermes/dashboard-home/.env` or `.hermes/dashboard-home/config.yaml`; NemoClaw regenerates both files, and `.env` contains dashboard authentication material.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
@@ -221,6 +235,8 @@ BACKUP_DIR=~/.nemoclaw/backups/20260320-120000  # pick a timestamp
 
 openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/SOUL.md" /sandbox/
 openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/state.db" /sandbox/.hermes/
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/dashboard-home/MEMORY.md" /sandbox/.hermes/dashboard-home/MEMORY.md
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/dashboard-home/USER.md" /sandbox/.hermes/dashboard-home/USER.md
 openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/platforms/" /sandbox/.hermes/platforms/
 ```
 
@@ -252,6 +268,8 @@ $$nemoclaw backup-all
 ```
 
 `backup-all` walks the sandboxes registered on the host, creates a snapshot for each running sandbox, and stores the snapshot bundles under `~/.nemoclaw/rebuild-backups/<name>/`.
+If a registered sandbox is stopped, start the sandbox or its container and rerun `$$nemoclaw backup-all` so NemoClaw can capture a fresh snapshot before maintenance.
+When a backup fails, NemoClaw identifies the affected state item and reports one of these causes when available: `permission denied`, `tar read error`, or `absent after extraction`.
 Use `$$nemoclaw <name> snapshot list` and `$$nemoclaw <name> snapshot restore` to inspect or restore one sandbox's bundles later.
 
 ## Using the Backup Script

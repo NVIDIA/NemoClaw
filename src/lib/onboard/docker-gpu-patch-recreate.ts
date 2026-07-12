@@ -7,6 +7,7 @@ import {
   dockerRm,
   dockerRun,
   dockerRunDetached,
+  dockerStart,
   dockerStop,
 } from "../adapters/docker";
 import { detectSandboxFallbackDns } from "./docker-gpu-dns-fallback";
@@ -29,6 +30,7 @@ import type {
   DockerGpuPatchMode,
   DockerGpuPatchResult,
 } from "./docker-gpu-patch-types";
+import { openshellSandboxCommandEnvValue } from "./docker-startup-command-env";
 import { waitForOpenShellSupervisorReconnect } from "./docker-gpu-supervisor-reconnect";
 import { findOpenShellDockerSandboxContainerIds } from "./openshell-docker-sandbox-containers";
 
@@ -43,6 +45,7 @@ type RecreateDeps = Required<
     | "dockerRunDetached"
     | "dockerRename"
     | "dockerRm"
+    | "dockerStart"
     | "dockerStop"
     | "sleep"
     | "now"
@@ -59,6 +62,7 @@ function recreateDeps(deps: DockerGpuPatchDeps): RecreateDeps {
     dockerRunDetached,
     dockerRename,
     dockerRm,
+    dockerStart,
     dockerStop,
     sleep: (seconds: number) => {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, seconds) * 1000);
@@ -74,10 +78,13 @@ function resultText(
   result: {
     stdout?: string | Buffer | null;
     stderr?: string | Buffer | null;
+    error?: Error | null;
   } | null,
 ): string {
   if (!result) return "";
-  return `${String(result.stderr || "")} ${String(result.stdout || "")}`.trim();
+  return `${String(result.stderr || "")} ${String(result.stdout || "")} ${String(
+    result.error?.message || "",
+  )}`.trim();
 }
 
 function isZeroStatus(result: { status?: number | null } | null | undefined): boolean {
@@ -144,6 +151,7 @@ export function recreateOpenShellDockerSandboxContainer(
     timeoutSecs?: number;
     waitForSupervisor?: boolean;
     openshellSandboxCommand?: readonly string[] | null;
+    expectedOldContainerId?: string | null;
     backend?: "generic" | "jetson";
     dockerDesktopWsl?: boolean;
     modeOverride?: DockerGpuPatchMode;
@@ -156,16 +164,42 @@ export function recreateOpenShellDockerSandboxContainer(
     modeAttempts: [],
   };
   try {
-    const oldContainerId = findOpenShellDockerSandboxContainerIds(options.sandboxName, deps)[0];
+    const containerIds = findOpenShellDockerSandboxContainerIds(options.sandboxName, deps);
+    const oldContainerId = containerIds[0];
     if (!oldContainerId) {
       throw new Error(
         `Could not find OpenShell Docker container for sandbox '${options.sandboxName}'.`,
       );
     }
+    if (
+      options.expectedOldContainerId != null &&
+      (containerIds.length !== 1 || oldContainerId !== options.expectedOldContainerId)
+    ) {
+      throw new Error(
+        `OpenShell Docker container identity changed for sandbox '${options.sandboxName}'; ` +
+          "refusing startup-command recreation because the observed container differs from the pinned identity.",
+      );
+    }
+    if (options.openshellSandboxCommand != null) {
+      // Validate the persisted command before image selection so malformed
+      // tokens fail before any container mutation can begin.
+      openshellSandboxCommandEnvValue(options.openshellSandboxCommand);
+    }
     context.oldContainerId = oldContainerId;
     const inspect = inspectDockerContainer(oldContainerId, deps);
-    const image = String(inspect.Config?.Image || "").trim();
-    if (!image) throw new Error("OpenShell sandbox container inspect did not include an image.");
+    const configuredImage = String(inspect.Config?.Image || "").trim();
+    if (!configuredImage) {
+      throw new Error("OpenShell sandbox container inspect did not include an image.");
+    }
+    const immutableImage = String(inspect.Image || "").trim();
+    const requiresImmutableImage = options.openshellSandboxCommand != null;
+    if (requiresImmutableImage && !/^sha256:[0-9a-f]{64}$/i.test(immutableImage)) {
+      throw new Error(
+        "OpenShell sandbox container inspect did not include a valid immutable image ID; " +
+          "refusing startup-command recreation from a mutable image tag.",
+      );
+    }
+    const image = requiresImmutableImage ? immutableImage : configuredImage;
 
     const selection = options.modeOverride
       ? { mode: options.modeOverride, attempts: [] }
@@ -192,6 +226,7 @@ export function recreateOpenShellDockerSandboxContainer(
     const backupContainerName = buildBackupContainerName(originalName, d.now());
     context.backupContainerName = backupContainerName;
     const cloneOptions = buildDockerGpuCloneRunOptions(inspect);
+    cloneOptions.image = image;
     cloneOptions.openshellSandboxCommand = options.openshellSandboxCommand ?? null;
     const sandboxFallbackDns = d.detectSandboxFallbackDns();
     if (sandboxFallbackDns) cloneOptions.sandboxFallbackDns = sandboxFallbackDns;
@@ -212,19 +247,44 @@ export function recreateOpenShellDockerSandboxContainer(
     }
     const cloneArgs = buildDockerGpuCloneRunArgs(inspect, selection.mode, cloneOptions);
 
-    d.dockerStop(oldContainerId, {
+    const containerMutationOptions = {
       ignoreError: true,
       suppressOutput: true,
       timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
-    });
-    const renameResult = d.dockerRename(oldContainerId, backupContainerName, {
-      ignoreError: true,
-      suppressOutput: true,
-      timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
-    });
-    if (!isZeroStatus(renameResult)) {
+    };
+    const stopResult = d.dockerStop(oldContainerId, containerMutationOptions);
+    if (!isZeroStatus(stopResult)) {
+      context.rolledBack = isZeroStatus(d.dockerStart(oldContainerId, containerMutationOptions));
       throw new Error(
-        `Could not move original sandbox container aside: ${resultText(renameResult)}`,
+        `Could not stop original sandbox container: ${resultText(stopResult)}; ${
+          context.rolledBack
+            ? "original sandbox container confirmed running"
+            : "restart failed; original sandbox container may be stopped"
+        }`,
+      );
+    }
+    const renameResult = d.dockerRename(
+      oldContainerId,
+      backupContainerName,
+      containerMutationOptions,
+    );
+    if (!isZeroStatus(renameResult)) {
+      d.dockerRename(backupContainerName, originalName, containerMutationOptions);
+      const restarted = isZeroStatus(d.dockerStart(oldContainerId, containerMutationOptions));
+      let originalNameRestored = false;
+      try {
+        originalNameRestored =
+          dockerContainerName(inspectDockerContainer(oldContainerId, deps)) === originalName;
+      } catch {
+        originalNameRestored = false;
+      }
+      context.rolledBack = restarted && originalNameRestored;
+      throw new Error(
+        `Could not move original sandbox container aside: ${resultText(renameResult)}; ${
+          context.rolledBack
+            ? "original sandbox container restored"
+            : "restore failed; original sandbox container state is uncertain"
+        }`,
       );
     }
 
@@ -260,11 +320,21 @@ export function recreateOpenShellDockerSandboxContainer(
         deps,
       );
     if (!newContainerId) {
+      context.rolledBack = restoreDockerGpuPatchBackupAfterRecreateFailure(
+        { newContainerId: originalName, backupContainerName, originalName },
+        deps,
+      );
       const containerDescription =
         selection.mode.kind === "startup-command"
           ? "Recreated sandbox container"
           : "GPU-enabled sandbox container";
-      throw new Error(`${containerDescription} started, but Docker did not report its ID.`);
+      throw new Error(
+        `${containerDescription} started, but Docker did not report its ID; ${
+          context.rolledBack
+            ? "pre-patch sandbox restored"
+            : "rollback failed; pre-patch sandbox was NOT restored"
+        }`,
+      );
     }
     context.newContainerId = newContainerId;
     const selectedMode = selection.mode;

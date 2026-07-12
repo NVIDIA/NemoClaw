@@ -81,6 +81,20 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(dockerStart).not.toHaveBeenCalled();
   });
 
+  it("does not report rollback success when restarting the backup has no exit status", () => {
+    const outcome = finalizeDockerGpuPatchBackup(
+      { result: deferredCreateResult(), supervisorReady: false },
+      {
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        dockerRename: vi.fn(() => ({ status: 0 })),
+        dockerStart: vi.fn(() => ({ status: null, error: new Error("spawn timed out") })),
+      },
+    );
+
+    expect(outcome).toEqual({ backupRemoved: false, rolledBack: false });
+  });
+
   it("is a no-op when the backup was already removed by the patch helper", () => {
     const dockerRm = vi.fn((_name: string) => ({ status: 0 }));
     const result = { ...deferredCreateResult(), backupRemoved: true };

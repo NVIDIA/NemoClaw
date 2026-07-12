@@ -2,12 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session } from "../../../state/onboard-session";
+import type {
+  createProviderRecoveryReceiptLedger,
+  ProviderRecoveryReceipt,
+} from "../../rebuild-route-handoff";
 import {
   type SandboxRecoveryAuthority,
   shouldRecoverRecordedProvider,
 } from "../../provider-recovery";
 
 export type RecoveryAuthority = SandboxRecoveryAuthority;
+
+type ProviderRecoveryReceiptLedger = ReturnType<typeof createProviderRecoveryReceiptLedger>;
 
 interface ProviderRecoveryDeps {
   getSandboxRecoveryAuthority(
@@ -23,13 +29,15 @@ interface ProviderRecoverySetupOptions {
 
 interface ProviderRecoveryOptions {
   /**
-   * Rebuild recreate replaces the durable session after deleting the old sandbox, so its sandbox
-   * step must remain incomplete until creation succeeds. The locked rebuild pipeline validates the
-   * target before deletion, then writes that exact identity into the pending session before onboard.
-   * Remove this exception once #6666 replaces the handoff with a dedicated provider-recovery
-   * authorization receipt.
+   * Authorization minted after locked rebuild preflight and activated against
+   * this onboard session. Its presence lets the recreate path recover the
+   * recorded provider while the pending sandbox step is still incomplete; the
+   * mutation-lock recheck below re-binds it to the live reservation owner.
    */
-  authoritativeResumeConfig?: boolean;
+  recoveryReceipt?: ProviderRecoveryReceipt | null;
+  recoveryReceiptLedger?: ProviderRecoveryReceiptLedger;
+  gatewayName?: string;
+  now?: () => number;
 }
 
 export function createRecovery(
@@ -48,6 +56,14 @@ export function createRecovery(
   ): ProviderRecoverySetupOptions;
 } {
   const sessionId = session?.sessionId ?? null;
+  const receipt = options.recoveryReceipt ?? null;
+  const receiptAuthorizesIncompleteSession = Boolean(
+    receipt &&
+      receipt.sessionId &&
+      receipt.sessionId === sessionId &&
+      receipt.sandboxName === sandboxName,
+  );
+  const now = options.now ?? (() => Date.now());
   return {
     sessionId,
     shouldRecover: () =>
@@ -58,7 +74,7 @@ export function createRecovery(
           ? deps.getSandboxRecoveryAuthority(sandboxName, sessionId)
           : "missing",
         sessionSandboxName:
-          session?.steps?.sandbox?.status === "complete" || options.authoritativeResumeConfig
+          session?.steps?.sandbox?.status === "complete" || receiptAuthorizesIncompleteSession
             ? (session?.sandboxName ?? null)
             : null,
       }),
@@ -66,8 +82,20 @@ export function createRecovery(
       if (!recoveredRecordedProvider) return { reservationSessionId: currentSessionId };
       return {
         reservationSessionId: sessionId ?? undefined,
-        isRecordedProviderRecoveryAuthorized: () =>
-          deps.getSandboxRecoveryAuthority(selectedSandboxName, sessionId) !== "unauthorized",
+        isRecordedProviderRecoveryAuthorized: () => {
+          const reservationOwned =
+            deps.getSandboxRecoveryAuthority(selectedSandboxName, sessionId) !== "unauthorized";
+          if (!receipt || !options.recoveryReceiptLedger || !options.gatewayName) {
+            return reservationOwned;
+          }
+          return options.recoveryReceiptLedger.validateInLock(receipt, {
+            sandboxName: selectedSandboxName,
+            gatewayName: options.gatewayName,
+            sessionId,
+            nowMs: now(),
+            reservationOwned,
+          });
+        },
       };
     },
   };

@@ -37,7 +37,7 @@ runs:
 
     - name: Typecheck plugin
       shell: bash
-      run: cd nemoclaw && npx tsc --noEmit --incremental
+      run: npm --prefix nemoclaw run typecheck
 
     - name: Typecheck JavaScript config
       shell: bash

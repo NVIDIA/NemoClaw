@@ -299,6 +299,8 @@ async function rebuildSandboxUnlocked(
 
       const restored = runRebuildRestorePhase({
         sandboxName,
+        targetAgentType: rebuildAgent || "openclaw",
+        targetImageIsCustom: Boolean(fromDockerfile),
         backupManifest: backup.backupManifest,
         policyPresets: targetPolicyPresets,
         customPolicies:

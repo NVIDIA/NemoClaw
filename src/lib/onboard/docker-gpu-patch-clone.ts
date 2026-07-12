@@ -80,8 +80,18 @@ export function buildDockerGpuCloneRunOptions(
 ): DockerGpuCloneRunOptions {
   if (getDockerGpuPatchNetworkMode(env) !== "host") return {};
   const endpoint = envValue(inspect.Config?.Env, "OPENSHELL_ENDPOINT");
-  const hostEndpoint = endpoint ? dockerGpuHostEndpointFromOpenShellEndpoint(endpoint) : null;
-  return hostEndpoint ? { networkMode: "host", openshellEndpoint: hostEndpoint } : {};
+  if (!endpoint) {
+    throw new Error(
+      `${DOCKER_GPU_PATCH_NETWORK_ENV}=host requires the inspected sandbox to include OPENSHELL_ENDPOINT.`,
+    );
+  }
+  const hostEndpoint = dockerGpuHostEndpointFromOpenShellEndpoint(endpoint);
+  if (!hostEndpoint) {
+    throw new Error(
+      `${DOCKER_GPU_PATCH_NETWORK_ENV}=host requires OPENSHELL_ENDPOINT to use host.openshell.internal so NemoClaw can rewrite it to host loopback.`,
+    );
+  }
+  return { networkMode: "host", openshellEndpoint: hostEndpoint };
 }
 
 export function getDockerGpuPatchNetworkMode(
@@ -128,7 +138,7 @@ export function buildDockerGpuCloneRunArgs(
 ): string[] {
   const config = inspect.Config || {};
   const host = inspect.HostConfig || {};
-  const image = String(config.Image || "").trim();
+  const image = String(options.image || config.Image || "").trim();
   if (!image) throw new Error("Docker inspect output did not include Config.Image.");
 
   const args: string[] = ["--name", dockerContainerName(inspect), ...mode.args];

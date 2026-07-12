@@ -16,6 +16,7 @@ function sandboxContainerFilterArgs(sandboxName: string): string[] {
   return [
     "ps",
     "-a",
+    "--no-trunc",
     "--filter",
     `label=${OPENSHELL_MANAGED_BY_LABEL}=${OPENSHELL_MANAGED_BY_VALUE}`,
     "--filter",

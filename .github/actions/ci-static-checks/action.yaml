@@ -25,6 +25,10 @@ runs:
         [ "$HADOLINT_SHA256" = "$ACTUAL" ] || { echo "::error::hadolint checksum mismatch"; exit 1; }
         chmod +x /usr/local/bin/hadolint
 
+    - name: Validate sandbox payload lockfile
+      shell: bash
+      run: npm --prefix nemoclaw ci --ignore-scripts --dry-run
+
     - name: Install dependencies
       shell: bash
       run: npm install --ignore-scripts

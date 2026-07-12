@@ -138,7 +138,7 @@ describe("docker-gpu-patch CDI-first mode selection (#4948)", () => {
       { image: "openshell/sandbox:abc" },
       {
         dockerCapture: vi.fn(() => ""),
-        dockerRun: vi.fn(() => ({ status: null, stderr: "timed out" })),
+        dockerRun: vi.fn(() => ({ status: null, error: new Error("spawn timed out") })),
         dockerRm: vi.fn(() => ({ status: 0 })),
         readDir: vi.fn(() => null),
         readFile: vi.fn(() => null),
@@ -147,6 +147,10 @@ describe("docker-gpu-patch CDI-first mode selection (#4948)", () => {
 
     expect(selected.mode).toBeNull();
     expect(selected.attempts).toHaveLength(2);
+    expect(selected.attempts.map((attempt) => attempt.error)).toEqual([
+      "spawn timed out",
+      "spawn timed out",
+    ]);
   });
 
   it("falls back to NVIDIA runtime when Docker rejects --gpus", () => {

@@ -17,6 +17,7 @@ import type {
   PreparedImageRebuildHandoff,
 } from "../../onboard/prepared-dcode-rebuild";
 import type {
+  ProviderRecoveryReceipt,
   RebuildProviderReconfigureHandoff,
   RebuildRouteHandoff,
 } from "../../onboard/rebuild-route-handoff";
@@ -106,6 +107,7 @@ export type RebuildRecreateOnboardOpts = {
   preparedDcodeRebuild?: PreparedDcodeRebuildHandoff;
   rebuildRegistryInferenceRoute?: RebuildRouteHandoff;
   rebuildProviderReconfigure?: RebuildProviderReconfigureHandoff;
+  providerRecoveryReceipt?: ProviderRecoveryReceipt;
   preparedImageRebuild?: PreparedImageRebuildHandoff;
   autoYes: boolean;
   toolDisclosure: ToolDisclosure;

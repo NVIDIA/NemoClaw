@@ -93,7 +93,7 @@ export async function preflightRebuildImage(
       },
     });
     cleanup = createIdempotentBuildContextCleanup(staged.cleanupBuildCtx);
-    const { buildId } = await preparePatch({
+    const { buildId, dashboardRemoteBindPrepared } = await preparePatch({
       agent: input.agent,
       fromDockerfile: input.fromDockerfile,
       sandboxBaseImage: OPENCLAW_SANDBOX_BASE_IMAGE,
@@ -131,6 +131,7 @@ export async function preflightRebuildImage(
         ...staged,
         cleanupBuildCtx: cleanup,
         buildId,
+        dashboardRemoteBindPrepared,
         contextFingerprint,
         verifyBuildCtx: createBuildContextVerifier(staged.buildCtx, contextFingerprint),
         rebuildTarget: {

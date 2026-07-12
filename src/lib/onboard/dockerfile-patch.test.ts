@@ -102,6 +102,71 @@ describe("dockerfile patch helpers", () => {
     expect(isValidProxyPort("70000")).toBe(false);
   });
 
+  it("records WSL dashboard exposure in managed OpenClaw build input (#6024)", () => {
+    const dockerfilePath = dockerfileWith("ARG NEMOCLAW_WSL_DASHBOARD_EXPOSURE=0\n");
+
+    patchStagedDockerfile(
+      dockerfilePath,
+      "custom-model",
+      "http://127.0.0.1:18789",
+      "build-1",
+      null,
+      null,
+      null,
+      null,
+      false,
+      null,
+      [],
+      { wslDashboardExposure: true },
+    );
+
+    expect(fs.readFileSync(dockerfilePath, "utf-8")).toContain(
+      "ARG NEMOCLAW_WSL_DASHBOARD_EXPOSURE=1",
+    );
+  });
+
+  it("keeps legacy non-WSL Dockerfiles compatible without the exposure arg (#6024)", () => {
+    const dockerfilePath = dockerfileWith("ARG CHAT_UI_URL=http://127.0.0.1:18789\n");
+
+    expect(() =>
+      patchStagedDockerfile(
+        dockerfilePath,
+        "custom-model",
+        "http://127.0.0.1:18789",
+        "build-1",
+        null,
+        null,
+        null,
+        null,
+        false,
+        null,
+        [],
+        { wslDashboardExposure: false },
+      ),
+    ).not.toThrow();
+  });
+
+  it("fails closed when a WSL managed Dockerfile cannot record exposure (#6024)", () => {
+    const dockerfilePath = dockerfileWith("ARG CHAT_UI_URL=http://127.0.0.1:18789\n");
+
+    expect(() =>
+      patchStagedDockerfile(
+        dockerfilePath,
+        "custom-model",
+        "http://127.0.0.1:18789",
+        "build-1",
+        null,
+        null,
+        null,
+        null,
+        false,
+        null,
+        [],
+        { wslDashboardExposure: true },
+      ),
+    ).toThrow(/cannot record WSL dashboard exposure/);
+  });
+
   it("fails when an OTEL env value has no matching Dockerfile ARG", () => {
     process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT = "http://host.openshell.internal:4318";
     const dockerfilePath = dockerfileWith(
@@ -171,6 +236,7 @@ describe("dockerfile patch helpers", () => {
         "ARG NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME=old",
         "ARG NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE=old",
         "ARG NEMOCLAW_DISABLE_DEVICE_AUTH=0",
+        "ARG NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE=operator",
         "ARG NEMOCLAW_MESSAGING_PLAN_B64=old",
       ].join("\n"),
     );
@@ -208,6 +274,7 @@ describe("dockerfile patch helpers", () => {
     expect(patched).toContain("ARG NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME=nemoclaw-local");
     expect(patched).toContain("ARG NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE=0.5");
     expect(patched).toContain("ARG NEMOCLAW_DISABLE_DEVICE_AUTH=1");
+    expect(patched).toContain("ARG NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE=managed-onboard");
     const patchedMessagingPlan = readMessagingPlanArg(patched) as {
       channels?: Array<{ channelId?: string; active?: boolean }>;
       buildSteps?: unknown;

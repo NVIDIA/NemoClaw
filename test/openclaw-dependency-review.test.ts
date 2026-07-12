@@ -581,7 +581,7 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
 
     expect(pr.permissions).toEqual({ contents: "read" });
     expect(prJob).toBeUndefined();
-    expect(mainJob?.["timeout-minutes"]).toBe(12);
+    expect(mainJob?.["timeout-minutes"]).toBe(20);
     expect(requiredStep(mainJob, "Audit the real patched OpenClaw distribution").env).toMatchObject(
       {
         NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS: "1",
@@ -590,6 +590,12 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
     expect(requiredStep(mainJob, "Audit the real patched OpenClaw distribution").run).toContain(
       "test/openclaw-real-patched-dist-harness.test.ts",
     );
+    expect(
+      requiredStep(mainJob, "Audit managed OpenClaw security finding suppressions").env,
+    ).toEqual({ NEMOCLAW_REAL_OPENCLAW_AUDIT_HARNESS: "1" });
+    expect(
+      requiredStep(mainJob, "Audit managed OpenClaw security finding suppressions").run,
+    ).toContain("test/openclaw-security-audit-suppressions-real.test.ts");
     expect(requiredStep(mainJob, "Install test dependencies").run).toBe("npm ci --ignore-scripts");
     expect(mainJob.env).toMatchObject({
       npm_config_fetch_retries: "3",

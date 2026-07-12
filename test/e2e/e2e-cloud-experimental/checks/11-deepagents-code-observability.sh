@@ -19,9 +19,11 @@ PREFIX="11-deepagents-code-observability"
 COLLECTOR_HOST="host.openshell.internal"
 COLLECTOR_PORT=4318
 DECOY_PORT=4319
+OTLP_TRACE_URL="http://${COLLECTOR_HOST}:${COLLECTOR_PORT}/v1/traces"
 CAPTURE_DIR="$(mktemp -d /tmp/nemoclaw-otlp-live.XXXXXX)"
 COLLECTOR_LOG="${CAPTURE_DIR}/collector.log"
 COLLECTOR_PID=""
+OBSERVABILITY_POLICY_DIRTY=0
 CAPTURE_SERVER="${REPO}/test/e2e/live/deepagents-otlp-capture-server.ts"
 CONTRACT_HELPER="${REPO}/test/e2e/live/deepagents-observability-contract.ts"
 TSX="${REPO}/node_modules/.bin/tsx"
@@ -51,12 +53,47 @@ sandbox_exec() {
   openshell sandbox exec --name "$SANDBOX_NAME" -- bash -c "$1" 2>&1
 }
 
+observability_policy_state() {
+  "$CLI" "$SANDBOX_NAME" policy-list 2>&1 | "$TSX" "$CONTRACT_HELPER" policy-state
+}
+
+observability_marker_value() {
+  # shellcheck disable=SC2016 # marker expands inside the sandbox shell.
+  openshell sandbox exec --name "$SANDBOX_NAME" -- \
+    sh -c 'marker=/sandbox/.deepagents/.nemoclaw-observability-enabled; test -f "$marker" && ! test -L "$marker" && cat "$marker"' \
+    2>&1
+}
+
+restore_observability_policy() {
+  local state
+  [ "$OBSERVABILITY_POLICY_DIRTY" -eq 1 ] || return 0
+  state="$(observability_policy_state)" || return 1
+  case "$state" in
+    active) ;;
+    inactive)
+      "$CLI" "$SANDBOX_NAME" policy-add observability-otlp-local --yes >/dev/null 2>&1 \
+        || return 1
+      [ "$(observability_policy_state)" = "active" ] || return 1
+      ;;
+    *) return 1 ;;
+  esac
+  OBSERVABILITY_POLICY_DIRTY=0
+}
+
 cleanup() {
+  local exit_status="$?"
+  trap - EXIT
+  if ! restore_observability_policy; then
+    printf '%s: policy cleanup failed; run: nemoclaw %q policy-add observability-otlp-local --yes\n' \
+      "$PREFIX" "$SANDBOX_NAME" >&2
+    exit_status=1
+  fi
   if [ -n "$COLLECTOR_PID" ] && kill -0 "$COLLECTOR_PID" 2>/dev/null; then
     kill "$COLLECTOR_PID" 2>/dev/null || true
     wait "$COLLECTOR_PID" 2>/dev/null || true
   fi
   rm -rf "$CAPTURE_DIR"
+  exit "$exit_status"
 }
 trap cleanup EXIT
 
@@ -182,9 +219,7 @@ expect_blocked_without_capture() {
   pass "$label is denied before the host collector"
 }
 
-policy_output="$("$CLI" "$SANDBOX_NAME" policy-list 2>&1)" || fail "could not inspect active policy"
-policy_state="$(printf '%s\n' "$policy_output" | "$TSX" "$CONTRACT_HELPER" policy-state)" \
-  || fail "could not parse observability policy state: $policy_output"
+policy_state="$(observability_policy_state)" || fail "could not parse observability policy state"
 [ "$policy_state" = "active" ] \
   || fail "observability-otlp-local is not exactly active (state: $policy_state)"
 
@@ -201,16 +236,12 @@ NODE
 )"
 [ "$registry_output" = "enabled" ] || fail "host registry does not record observability enabled"
 
-# Expansion is intentionally deferred to the sandbox shell.
-# shellcheck disable=SC2016
-marker_output="$(openshell sandbox exec --name "$SANDBOX_NAME" -- \
-  sh -c 'marker=/sandbox/.deepagents/.nemoclaw-observability-enabled; test -f "$marker" && ! test -L "$marker" && cat "$marker"' \
-  2>&1)" || fail "managed observability marker is absent"
+marker_output="$(observability_marker_value)" || fail "managed observability marker is absent"
 [ "$marker_output" = "1" ] || fail "managed observability marker has an unexpected value"
 pass "host registry, live policy, and sandbox marker agree on enabled observability"
 
 allowed_output="$(sandbox_python_probe POST \
-  "http://${COLLECTOR_HOST}:${COLLECTOR_PORT}/v1/traces" \
+  "$OTLP_TRACE_URL" \
   "$ALLOWED_PROBE")" || fail "allowed OTLP request failed: $allowed_output"
 printf '%s\n' "$allowed_output" | grep -Fq 'REACHED:200' \
   || fail "allowed OTLP request lacked HTTP 200 evidence: $allowed_output"
@@ -271,7 +302,8 @@ from langchain.agents.middleware.types import ToolCallRequest
 from deepagents_code import nemoclaw_observability as observability
 
 tool_name, argument_marker, result_marker = sys.argv[1:]
-os.environ["NEMOCLAW_OBSERVABILITY"] = "1"
+if os.environ.get("NEMOCLAW_OBSERVABILITY") != "1":
+    raise RuntimeError("managed observability marker did not reach instrumentation")
 if not observability.initialize_observability():
     raise RuntimeError("managed observability did not initialize")
 try:
@@ -305,13 +337,55 @@ run_deterministic_tool_trace() {
   local encoded
   encoded="$(tool_trace_source | base64 | tr -d '\n')"
   "$CLI" "$SANDBOX_NAME" exec -- \
-    env NEMOCLAW_OBSERVABILITY=1 \
+    /usr/local/lib/nemoclaw/dcode-managed-exec \
+    env \
     OTEL_SERVICE_NAME="$AMBIENT_CANARY" \
     OTEL_RESOURCE_ATTRIBUTES="ambient.canary=${AMBIENT_CANARY}" \
     /opt/venv/bin/python3 -I -c \
     "import base64; exec(compile(base64.b64decode('${encoded}'), '<otlp-tool-trace>', 'exec'))" \
     "$TOOL_NAME" "$TOOL_ARGUMENT" "$TOOL_RESULT" 2>&1
 }
+
+# Prove the sandbox-writable marker is not an authorization source. Remove only
+# the host-managed OTLP preset, recreate the exact marker as the sandbox user,
+# and exercise both the raw route and real managed instrumentation. The EXIT
+# guard restores policy before any later sequential check can observe our test.
+OBSERVABILITY_POLICY_DIRTY=1
+remove_policy_output="$(
+  "$CLI" "$SANDBOX_NAME" policy-remove observability-otlp-local --yes 2>&1
+)" || fail "could not remove observability policy for the negative proof: $remove_policy_output"
+policy_state="$(observability_policy_state)" \
+  || fail "could not inspect observability policy after removal"
+[ "$policy_state" = "inactive" ] \
+  || fail "removed observability policy is not exactly inactive (state: $policy_state)"
+
+# shellcheck disable=SC2016 # marker expands inside the sandbox shell.
+marker_recreate_output="$(openshell sandbox exec --name "$SANDBOX_NAME" -- \
+  sh -c 'marker=/sandbox/.deepagents/.nemoclaw-observability-enabled; rm -f "$marker"; printf "%s\n" 1 >"$marker"; chmod 444 "$marker"' \
+  2>&1)" || fail "sandbox user could not recreate the observability marker: $marker_recreate_output"
+marker_output="$(observability_marker_value)" \
+  || fail "sandbox-created observability marker is absent or unsafe"
+[ "$marker_output" = "1" ] || fail "sandbox-created observability marker has an unexpected value"
+
+expect_blocked_without_capture \
+  "sandbox-created marker without host observability policy" POST "$OTLP_TRACE_URL"
+
+before_untrusted_trace="$(request_count)"
+untrusted_trace_output="$(run_deterministic_tool_trace)" \
+  || fail "marker-driven instrumentation failed before its denial proof: $untrusted_trace_output"
+printf '%s\n' "$untrusted_trace_output" | grep -Fq 'TOOL_TRACE_OK' \
+  || fail "marker-driven instrumentation lacked completion evidence: $untrusted_trace_output"
+sleep 2
+after_untrusted_trace="$(request_count)"
+[ "$after_untrusted_trace" = "$before_untrusted_trace" ] \
+  || fail "marker-driven instrumentation exported without host observability policy"
+pass "marker-driven instrumentation cannot export without host observability policy"
+
+restore_observability_policy || fail "could not restore observability policy after the negative proof"
+marker_output="$(observability_marker_value)" \
+  || fail "managed observability marker was lost while restoring policy"
+[ "$marker_output" = "1" ] || fail "managed observability marker changed while restoring policy"
+pass "host observability policy is restored before positive trace checks"
 
 direct_output="$(run_dcode_direct)" || fail "direct-exec dcode observability turn failed: $direct_output"
 printf '%s\n' "$direct_output" | grep -Fq "$DIRECT_RESPONSE" \
@@ -361,4 +435,4 @@ done
   || fail "captured OTLP contract did not become valid: $validation_output"
 
 pass "decoded OTLP associates model/tool content and excludes ambient exporter configuration"
-printf '%s: 11 passed, 0 failed\n' "$PREFIX"
+printf '%s: 14 passed, 0 failed\n' "$PREFIX"

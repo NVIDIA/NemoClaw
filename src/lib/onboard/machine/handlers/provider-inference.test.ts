@@ -16,6 +16,7 @@ import {
 } from "./provider-inference";
 import {
   type Agent,
+  activatedRecoveryReceipt,
   baseOptions,
   baseSelection,
   createDeps,
@@ -769,7 +770,7 @@ describe("handleProviderInferenceState", () => {
     );
   });
 
-  it("revalidates recovered identity before reusing a gateway credential on messaging resume", async () => {
+  it("uses an activated receipt to recover identity before reusing a gateway credential on messaging resume", async () => {
     const session = createSession({
       sandboxName: "my-assistant",
       provider: "compatible-endpoint",
@@ -803,7 +804,6 @@ describe("handleProviderInferenceState", () => {
         healthChecks: [],
       },
     });
-    session.steps.provider_selection.status = "complete";
     const setupNim = vi.fn(async () => ({
       ...baseSelection,
       model: "nvidia/nemotron",
@@ -813,22 +813,41 @@ describe("handleProviderInferenceState", () => {
       preferredInferenceApi: "openai-completions",
       skipHostInferenceSmoke: true,
       reuseGatewayCredentialWithoutLocalKey: true,
+      recoveredFromSandbox: true,
     }));
+    let recoveryAuthorization: (() => boolean) | undefined;
+    const setupInference = vi.fn<
+      ProviderInferenceStateOptions<Gpu, Agent, Host>["deps"]["setupInference"]
+    >(async (...args) => {
+      recoveryAuthorization = args[7]?.isRecordedProviderRecoveryAuthorized;
+      return { ok: true };
+    });
     const { deps, calls } = createDeps({
       setupNim,
+      setupInference,
       hydrateCredentialEnv: vi.fn(() => null),
       isInferenceRouteReady: vi.fn(() => true),
     });
     calls.complete.mockResolvedValue(session);
+    const { receipt, ledger } = activatedRecoveryReceipt({
+      sandboxName: "my-assistant",
+      sessionId: session.sessionId,
+      provider: "compatible-endpoint",
+      model: "nvidia/nemotron",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      preferredInferenceApi: "openai-completions",
+    });
 
     await handleProviderInferenceState({
       ...baseOptions(deps, session),
       resume: true,
-      authoritativeResumeConfig: true,
       sandboxName: "my-assistant",
+      providerRecoveryReceipt: receipt,
+      providerRecoveryReceiptLedger: ledger,
     });
 
     expect(setupNim).toHaveBeenCalledOnce();
+    expect(calls.skipped).not.toHaveBeenCalledWith("provider_selection", expect.anything());
     expect(setupNim).toHaveBeenCalledWith(
       { type: "nvidia" },
       "my-assistant",
@@ -839,7 +858,7 @@ describe("handleProviderInferenceState", () => {
       expect.any(Function),
       session.sessionId,
     );
-    expect(calls.setupInference).toHaveBeenCalledWith(
+    expect(setupInference).toHaveBeenCalledWith(
       "my-assistant",
       "nvidia/nemotron",
       "compatible-endpoint",
@@ -854,11 +873,10 @@ describe("handleProviderInferenceState", () => {
         reuseGatewayCredentialWithoutLocalKey: true,
         preferredInferenceApi: "openai-completions",
         reservationSessionId: session.sessionId,
+        isRecordedProviderRecoveryAuthorized: expect.any(Function),
       },
     );
-    expect(calls.log).toHaveBeenCalledWith(
-      "  [resume] Revalidating recovered compatible-endpoint identity before reusing its gateway credential.",
-    );
+    expect(recoveryAuthorization?.()).toBe(true);
   });
 
   it("keeps the compatible-endpoint resume shortcut when no messaging channels are selected", async () => {

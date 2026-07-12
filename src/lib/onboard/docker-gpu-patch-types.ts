@@ -5,6 +5,7 @@ type DockerRunResult = {
   status?: number | null;
   stdout?: string | Buffer | null;
   stderr?: string | Buffer | null;
+  error?: Error | null;
 };
 
 type DockerRunOptions = Record<string, unknown>;
@@ -94,6 +95,7 @@ export type DockerGpuPatchResult = {
 };
 
 export type DockerGpuCloneRunOptions = {
+  image?: string | null;
   networkMode?: string | null;
   openshellEndpoint?: string | null;
   sandboxFallbackDns?: string | null;
@@ -163,6 +165,7 @@ export type DockerGpuPatchFailureClassification = {
 
 export type DockerContainerInspect = {
   Id?: string;
+  Image?: string;
   Name?: string;
   Config?: {
     Image?: string;

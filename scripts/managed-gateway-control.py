@@ -748,18 +748,20 @@ def _sandbox_uid() -> int:
         raise ControlError("SUPERVISOR_UNAVAILABLE") from exc
 
 
-def _discover_supervisor(reader: ProcReader) -> ProcessIdentity:
-    pid1 = reader.capture(1)
-    if not _is_openshell(pid1):
-        raise ControlError("SUPERVISOR_UNAVAILABLE")
-    sandbox_uid = _sandbox_uid()
+def _supervisor_candidates(
+    reader: ProcReader, pid1: ProcessIdentity, sandbox_uid: int
+) -> tuple[list[ProcessIdentity], bool]:
     matches: list[ProcessIdentity] = []
+    inconclusive = False
     for pid in reader.pids():
         if pid == 1:
             continue
         try:
             identity = reader.capture(pid)
-        except (ControlError, FileNotFoundError, ProcessLookupError, PermissionError):
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        except (ControlError, PermissionError):
+            inconclusive = True
             continue
         if (
             _is_nemoclaw_start(identity, sandbox_uid)
@@ -771,6 +773,37 @@ def _discover_supervisor(reader: ProcReader) -> ProcessIdentity:
             matches.append(identity)
             if len(matches) > 1:
                 break
+    return matches, inconclusive
+
+
+def _discover_supervisor(reader: ProcReader) -> ProcessIdentity:
+    pid1 = reader.capture(1)
+    if not _is_openshell(pid1):
+        raise ControlError("SUPERVISOR_UNAVAILABLE")
+    sandbox_uid = _sandbox_uid()
+    matches, inconclusive = _supervisor_candidates(reader, pid1, sandbox_uid)
+    if inconclusive:
+        raise ControlError("SUPERVISOR_UNAVAILABLE")
+    if len(matches) == 0:
+        # A zero-match scan is the only absence signal that may authorize the
+        # host to recreate a legacy Docker container with its managed startup
+        # command. Re-scan the complete process table and pin PID 1 around both
+        # observations so ambiguity, process churn, and supervisor startup
+        # races remain generic unavailability rather than destructive-recovery
+        # authorization.
+        between_pid1 = reader.capture(1)
+        second_matches, second_inconclusive = _supervisor_candidates(
+            reader, pid1, sandbox_uid
+        )
+        after_pid1 = reader.capture(1)
+        if (
+            between_pid1.stable_key() == pid1.stable_key()
+            and after_pid1.stable_key() == pid1.stable_key()
+            and not second_inconclusive
+            and len(second_matches) == 0
+        ):
+            raise ControlError("SUPERVISOR_NOT_RUNNING")
+        raise ControlError("SUPERVISOR_UNAVAILABLE")
     if len(matches) != 1:
         raise ControlError("SUPERVISOR_UNAVAILABLE")
     current_pid1 = reader.capture(1)

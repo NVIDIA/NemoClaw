@@ -618,6 +618,7 @@ describe("pull request and main workflow contracts", () => {
     const files = new RegExp(cliTypecheck?.files ?? "(?!)", "u");
     const jsFiles = new RegExp(jsTypecheck?.files ?? "(?!)", "u");
 
+    expect(pluginTypecheck?.entry).toBe("npm --prefix nemoclaw run typecheck");
     expect(cliTypecheck?.entry).toBe("npm run typecheck:cli -- --incremental");
     expect(cliTypecheck?.always_run).toBeUndefined();
     for (const include of cliTypeScriptConfig.include) {
@@ -935,6 +936,10 @@ describe("pull request and main workflow contracts", () => {
     const installerRuns = stepRuns(sharedActions.installerIntegration).join("\n");
 
     expect(staticRuns).toContain("npm install --ignore-scripts");
+    expect(staticRuns).toContain("npm --prefix nemoclaw ci --ignore-scripts --dry-run");
+    expect(
+      requiredStepIndex(sharedActions.staticChecks, "Validate sandbox payload lockfile"),
+    ).toBeLessThan(requiredStepIndex(sharedActions.staticChecks, "Install dependencies"));
     expect(staticRuns).toContain("npm run validate:configs");
     expect(staticRuns).toContain("npm run typecheck:scorecard");
     expect(staticPrekRun).toContain("npx prek run --all-files --stage pre-commit");
@@ -962,7 +967,7 @@ describe("pull request and main workflow contracts", () => {
     expect(buildRuns).toContain("npm run build:cli");
     expect(buildRuns).toContain("npx vitest run --project package-contract");
     expect(buildRuns).toContain("npm run typecheck:cli");
-    expect(buildRuns).toContain("cd nemoclaw && npx tsc --noEmit --incremental");
+    expect(buildRuns).toContain("npm --prefix nemoclaw run typecheck");
     expect(buildRuns).toContain("npx tsc -p jsconfig.json");
     expect(buildRuns).toContain("bash scripts/check-version-tag-sync.sh");
 
@@ -1135,6 +1140,43 @@ npx tsx scripts/checks/e2e-mock-parity.ts --base "$BASE_SHA" --head HEAD
     expect(uploadStep.with?.path).toBe("coverage/cli/vitest-results.json");
     expect(uploadStep.with?.["if-no-files-found"]).toBe("warn");
     expect(uploadStep.with?.["retention-days"]).toBe(14);
+  });
+
+  it("uploads same-repository CLI and plugin Cobertura reports (#6692)", () => {
+    const sameRepositoryGuard =
+      "${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}";
+    const uploadAction = "actions/upload-code-coverage@abb5995db9e0199b0e2bb9dbd136fce4cb1ec4d3";
+    const reports = [
+      {
+        action: sharedActions.cliCoverageMerge,
+        coverageStep: "Merge CLI coverage",
+        uploadStep: "Upload CLI coverage report",
+        file: "coverage/cli/cobertura-coverage.xml",
+        label: "code-coverage/cli",
+      },
+      {
+        action: sharedActions.pluginCoverage,
+        coverageStep: "Run plugin coverage",
+        uploadStep: "Upload plugin coverage report",
+        file: "coverage/plugin/cobertura-coverage.xml",
+        label: "code-coverage/plugin",
+      },
+    ] as const;
+
+    for (const report of reports) {
+      expect(requiredStep(report.action, report.coverageStep).run).toContain(
+        "--coverage.reporter=cobertura",
+      );
+
+      const uploadStep = requiredStep(report.action, report.uploadStep);
+      expect(uploadStep.if).toBe(sameRepositoryGuard);
+      expect(uploadStep.uses).toBe(uploadAction);
+      expect(uploadStep.with).toEqual({
+        file: report.file,
+        language: "TypeScript",
+        label: report.label,
+      });
+    }
   });
 
   it("runs CLI coverage in shards and merges coverage before ratcheting", () => {

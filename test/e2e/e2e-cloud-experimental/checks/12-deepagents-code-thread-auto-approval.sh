@@ -259,17 +259,17 @@ main() {
   [ -x "$CLI" ] || fail "NemoClaw CLI is not executable at $CLI"
   [ -x "$NETWORK_BOUNDARY_CHECK" ] || fail "network boundary check is not executable"
   [ -x "$CREDENTIAL_BOUNDARY_CHECK" ] || fail "credential boundary check is not executable"
-  command -v expect >/dev/null 2>&1 || fail "expect is required for the DCode autorun TUI check"
-  command -v node >/dev/null 2>&1 || fail "node is required to inspect status JSON"
-  is_positive_integer "$TUI_TIMEOUT" \
-    || fail "DEEPAGENTS_AUTORUN_TIMEOUT must be a positive integer"
-
   # The generic cloud-onboard target runs shared checks against OpenClaw. Typed
   # DCode targets reject this SKIP through the required-check wrapper.
   if ! sandbox_exec "test -d /sandbox/.deepagents && command -v dcode >/dev/null 2>&1" >/dev/null; then
     printf '%s: SKIP: sandbox %q is not a Deep Agents Code sandbox\n' "$PREFIX" "$SANDBOX_NAME"
     exit 0
   fi
+
+  command -v expect >/dev/null 2>&1 || fail "expect is required for the DCode autorun TUI check"
+  command -v node >/dev/null 2>&1 || fail "node is required to inspect status JSON"
+  is_positive_integer "$TUI_TIMEOUT" \
+    || fail "DEEPAGENTS_AUTORUN_TIMEOUT must be a positive integer"
 
   trap cleanup_probe_files EXIT
   cleanup_probe_files

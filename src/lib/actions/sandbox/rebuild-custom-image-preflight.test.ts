@@ -67,7 +67,11 @@ describe("preflightRebuildImage", () => {
       const result = successful(
         await preflightRebuildImage(input(null), {
           stageBuildContext,
-          prepareDockerfilePatch: vi.fn(async () => ({ buildId: "1", resolvedBaseImage: null })),
+          prepareDockerfilePatch: vi.fn(async () => ({
+            buildId: "1",
+            dashboardRemoteBindPrepared: false,
+            resolvedBaseImage: null,
+          })),
           buildImage,
           removeImage: vi.fn(() => ({ status: 0 }) as never),
         }),
@@ -112,6 +116,7 @@ describe("preflightRebuildImage", () => {
             })),
             prepareDockerfilePatch: vi.fn(async () => ({
               buildId: "root-link",
+              dashboardRemoteBindPrepared: false,
               resolvedBaseImage: null,
             })),
             buildImage,
@@ -139,7 +144,11 @@ describe("preflightRebuildImage", () => {
     const removeImage = vi.fn(() => ({ status: 0 }) as never);
     try {
       const result = await preflightRebuildImage(input(dockerfile), {
-        prepareDockerfilePatch: vi.fn(async () => ({ buildId: "1", resolvedBaseImage: null })),
+        prepareDockerfilePatch: vi.fn(async () => ({
+          buildId: "1",
+          dashboardRemoteBindPrepared: false,
+          resolvedBaseImage: null,
+        })),
         buildImage: vi.fn(() => ({ status: 1, stderr: "dockerfile validation failed" }) as never),
         removeImage,
       });
@@ -159,7 +168,11 @@ describe("preflightRebuildImage", () => {
     try {
       const result = successful(
         await preflightRebuildImage(input(dockerfile), {
-          prepareDockerfilePatch: vi.fn(async () => ({ buildId: "1", resolvedBaseImage: null })),
+          prepareDockerfilePatch: vi.fn(async () => ({
+            buildId: "1",
+            dashboardRemoteBindPrepared: false,
+            resolvedBaseImage: null,
+          })),
           buildImage,
           removeImage,
         }),
@@ -188,7 +201,11 @@ describe("preflightRebuildImage", () => {
     try {
       const result = successful(
         await preflightRebuildImage(input(dockerfile), {
-          prepareDockerfilePatch: vi.fn(async () => ({ buildId: "1", resolvedBaseImage: null })),
+          prepareDockerfilePatch: vi.fn(async () => ({
+            buildId: "1",
+            dashboardRemoteBindPrepared: false,
+            resolvedBaseImage: null,
+          })),
           buildImage: vi.fn((stagedDockerfile) => {
             builtDockerfiles.push(fs.readFileSync(stagedDockerfile, "utf8"));
             return { status: 0 } as never;
@@ -236,7 +253,11 @@ describe("preflightRebuildImage", () => {
     try {
       const result = successful(
         await preflightRebuildImage(input(dockerfile), {
-          prepareDockerfilePatch: vi.fn(async () => ({ buildId: "1", resolvedBaseImage: null })),
+          prepareDockerfilePatch: vi.fn(async () => ({
+            buildId: "1",
+            dashboardRemoteBindPrepared: true,
+            resolvedBaseImage: null,
+          })),
           buildImage: vi.fn(() => ({ status: 0 }) as never),
           removeImage,
         }),
@@ -247,6 +268,7 @@ describe("preflightRebuildImage", () => {
       );
       expect(processOnce).toHaveBeenCalledWith("exit", expect.any(Function));
       expect(removeImage).toHaveBeenCalledTimes(2);
+      expect(result.prepared.dashboardRemoteBindPrepared).toBe(true);
       expect(disposePreparedBuildContext(result.prepared)).toBe(true);
     } finally {
       processOnce.mockRestore();

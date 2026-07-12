@@ -29,6 +29,10 @@ export function shouldSkipUnreachableSandboxBackup(env: NodeJS.ProcessEnv): bool
   return env.NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP === "1";
 }
 
+function notRunningBackupSkipMessage(name: string): string {
+  return `Skipping '${name}' (not running; start the sandbox/container and rerun '${CLI_NAME} backup-all' so NemoClaw can capture a fresh snapshot)`;
+}
+
 export async function backupAll(): Promise<void> {
   const { sandboxes } = registry.listSandboxes();
   if (sandboxes.length === 0) {
@@ -48,10 +52,12 @@ export async function backupAll(): Promise<void> {
   let failed = 0;
   let skipped = 0;
   let unreachableRunning = 0;
+  let notRunningSkipped = 0;
   for (const sb of sandboxes) {
     if (!readyNames.has(sb.name)) {
-      console.log(`  ${D}Skipping '${sb.name}' (not running)${R}`);
+      console.log(`  ${D}${notRunningBackupSkipMessage(sb.name)}${R}`);
       skipped++;
+      notRunningSkipped++;
       continue;
     }
     console.log(`  Backing up '${sb.name}'...`);
@@ -152,6 +158,11 @@ export async function backupAll(): Promise<void> {
     console.error(
       `  Strict pre-upgrade backup requires every registered sandbox to be backed up; ${skipped} sandbox(es) were skipped.`,
     );
+    if (notRunningSkipped > 0) {
+      console.error(
+        `  ${notRunningSkipped} skipped sandbox(es) were not running. Start each sandbox/container, then rerun the installer or '${CLI_NAME} backup-all'.`,
+      );
+    }
     console.error("  Resolve each skipped sandbox using its reason above and retry.");
   }
   if (failed > 0 || (requireAll && skipped > 0)) process.exit(1);

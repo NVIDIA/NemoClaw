@@ -40,6 +40,7 @@ export interface CreateSandboxBuildContextResult extends StagedBuildContext {
 /** Exact staged and patched context transferred from rebuild preflight to create. */
 export interface PreparedSandboxBuildContext extends CreateSandboxBuildContextResult {
   buildId: string;
+  dashboardRemoteBindPrepared?: boolean;
   /** Recheck retained bytes at the final one-shot consumption boundary. */
   verifyBuildCtx?(): boolean;
   /** Exact recorded target authorized to consume a generic rebuild handoff. */

@@ -73,7 +73,7 @@ describe("Docker GPU diagnostic redaction", () => {
     };
     const dockerResponses = new Map([
       [
-        "ps -a --filter label=openshell.ai/managed-by=openshell --filter label=openshell.ai/sandbox-name=alpha --format {{.ID}}",
+        "ps -a --no-trunc --filter label=openshell.ai/managed-by=openshell --filter label=openshell.ai/sandbox-name=alpha --format {{.ID}}",
         "new-container-id\n",
       ],
       ["inspect new-container-id", JSON.stringify([inspect])],

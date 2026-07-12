@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import type { OpenClawPluginApi } from "./index.js";
 
 vi.mock("node:fs", async (importOriginal) => {
@@ -32,7 +32,7 @@ const mockedReadFileSync = vi.mocked(readFileSync);
 const mockedLoadOnboardConfig = vi.mocked(loadOnboardConfig);
 const originalReadFileSync = (await vi.importActual<typeof import("node:fs")>("node:fs"))
   .readFileSync;
-let stderrWrite: ReturnType<typeof vi.spyOn>;
+let stderrWrite: MockInstance<typeof process.stderr.write>;
 
 function mockStderrWrite(): void {
   stderrWrite = vi

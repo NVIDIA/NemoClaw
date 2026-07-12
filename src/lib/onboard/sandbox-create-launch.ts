@@ -89,9 +89,24 @@ export function renderSandboxCreateCommand(
   ])} 2>&1`;
 }
 
-export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): SandboxCreateLaunch {
-  const env = input.env ?? process.env;
-  const manageDashboard = input.manageDashboard ?? true;
+export interface SandboxRuntimeEnvArgsInput {
+  agent: AgentDefinition | null;
+  chatUiUrl: string;
+  manageDashboard: boolean;
+  getDashboardForwardPort(chatUiUrl: string): string;
+  hermesDashboardState: HermesDashboardOnboardState;
+  extraPlaceholderKeys: readonly string[];
+  observabilityEnabled?: boolean;
+  sandboxName?: string;
+  env: NodeJS.ProcessEnv;
+  omitCredentialEnv?: boolean;
+}
+
+export function buildSandboxRuntimeEnvArgs(input: SandboxRuntimeEnvArgsInput): {
+  envArgs: string[];
+  effectiveDashboardPort: string;
+} {
+  const { agent, env, manageDashboard } = input;
   const envArgs = manageDashboard ? [formatEnvAssignment("CHAT_UI_URL", input.chatUiUrl)] : [];
 
   // When manageDashboard is enabled, pass the effective dashboard port into
@@ -105,13 +120,17 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     : "0";
   if (manageDashboard) {
     envArgs.push(formatEnvAssignment("NEMOCLAW_DASHBOARD_PORT", effectiveDashboardPort));
+    if (env.NEMOCLAW_DASHBOARD_BIND === "0.0.0.0") {
+      envArgs.push(formatEnvAssignment("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0"));
+    }
   }
 
-  appendOpenClawRuntimeEnvArgs(envArgs, input.agent ?? null);
-  appendOpenClawAutoPairRuntimeEnvArgs(envArgs, input.agent ?? null, env);
+  appendOpenClawRuntimeEnvArgs(envArgs, agent);
+  appendOpenClawAutoPairRuntimeEnvArgs(envArgs, agent, env);
   appendHermesDashboardEnvArgs(envArgs, input.hermesDashboardState, formatEnvAssignment);
   appendHostProxyEnvArgs(envArgs, env, {
-    dropCredentialBearingProxyUrls: input.agent?.name === "langchain-deepagents-code",
+    dropCredentialBearingProxyUrls:
+      agent?.name === "langchain-deepagents-code" || input.omitCredentialEnv === true,
   });
 
   // Propagate NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT to runtime containers
@@ -130,7 +149,7 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     envArgs.push(formatEnvAssignment("NEMOCLAW_PROXY_PORT", sandboxProxyPort));
   }
 
-  if (input.agent?.name === "langchain-deepagents-code") {
+  if (agent?.name === "langchain-deepagents-code") {
     const sandboxName = input.sandboxName;
     if (sandboxName) {
       envArgs.push(formatEnvAssignment("NEMOCLAW_SANDBOX_NAME", sandboxName));
@@ -143,7 +162,27 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     );
   }
 
-  appendExtraPlaceholderKeysEnvArg(envArgs, input.extraPlaceholderKeys, formatEnvAssignment);
+  if (!input.omitCredentialEnv) {
+    appendExtraPlaceholderKeysEnvArg(envArgs, input.extraPlaceholderKeys, formatEnvAssignment);
+  }
+
+  return { envArgs, effectiveDashboardPort };
+}
+
+export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): SandboxCreateLaunch {
+  const env = input.env ?? process.env;
+  const manageDashboard = input.manageDashboard ?? true;
+  const { envArgs, effectiveDashboardPort } = buildSandboxRuntimeEnvArgs({
+    agent: input.agent ?? null,
+    chatUiUrl: input.chatUiUrl,
+    manageDashboard,
+    getDashboardForwardPort: input.getDashboardForwardPort,
+    hermesDashboardState: input.hermesDashboardState,
+    extraPlaceholderKeys: input.extraPlaceholderKeys,
+    observabilityEnabled: input.observabilityEnabled,
+    sandboxName: input.sandboxName,
+    env,
+  });
 
   const sandboxEnv = (input.buildEnv ?? buildSubprocessEnv)();
   // Remove host-infrastructure credentials that the generic allowlist
@@ -157,7 +196,11 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
   // lets the real exit code flow through to run().
   const sandboxStartupCommand = ["env", ...envArgs, "nemoclaw-start"];
   const openshellArgs = ["sandbox", "create", ...input.createArgs, "--", ...sandboxStartupCommand];
-  const createCommand = `${input.openshellShellCommand(openshellArgs)} 2>&1`;
+  const createCommand = renderSandboxCreateCommand(
+    input.createArgs,
+    sandboxStartupCommand,
+    input.openshellShellCommand,
+  );
   const createArgv = input.openshellArgv
     ? input.openshellArgv(openshellArgs)
     : ["bash", "-lc", createCommand];

@@ -17,8 +17,11 @@ import type {
 function resultText(result: {
   stdout?: string | Buffer | null;
   stderr?: string | Buffer | null;
+  error?: Error | null;
 }): string {
-  return `${String(result.stderr || "")} ${String(result.stdout || "")}`.trim();
+  return `${String(result.stderr || "")} ${String(result.stdout || "")} ${String(
+    result.error?.message || "",
+  )}`.trim();
 }
 
 function normalizeGpuDeviceForDocker(device: string | null | undefined): string {

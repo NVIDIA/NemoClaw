@@ -26,6 +26,7 @@ export type SandboxDockerfilePatchDeps = {
   dockerImageInspect?: (target: string, opts?: Record<string, unknown>) => DockerRunResult;
   isLinuxDockerDriverGatewayEnabled?: () => boolean;
   enforceDockerGpuPatchPreserveNetwork?: EnforceDockerGpuPatchPreserveNetwork;
+  isWsl?: () => boolean;
   patchStagedDockerfile?: PatchStagedDockerfile;
   now?: () => number;
 };
@@ -58,6 +59,7 @@ export type PrepareSandboxDockerfilePatchInput = {
 
 export type SandboxDockerfilePatchResult = {
   buildId: string;
+  dashboardRemoteBindPrepared: boolean;
   resolvedBaseImage: ResolvedSandboxBaseImage | null;
 };
 
@@ -79,6 +81,11 @@ function linuxDockerDriverGatewayEnabled(): boolean {
   const { isLinuxDockerDriverGatewayEnabled } =
     require("./docker-driver-platform") as typeof import("./docker-driver-platform");
   return isLinuxDockerDriverGatewayEnabled();
+}
+
+function wslHostDetected(): boolean {
+  const { isWsl } = require("../platform") as typeof import("../platform");
+  return isWsl();
 }
 
 function enforceDockerGpuPatchPreserveNetwork(
@@ -176,11 +183,13 @@ export async function prepareSandboxDockerfilePatch({
   // checked in here and known not to consume it. Custom --from Dockerfiles
   // and other managed agents retain the historical per-run rewrite.
   const managedAgentName = agent?.name ?? "openclaw";
+  const managedOpenClawWslExposure =
+    !fromDockerfile && managedAgentName === "openclaw" && (deps.isWsl ?? wslHostDetected)();
   const buildIdPolicy =
     !fromDockerfile && STABLE_MANAGED_BUILD_ID_AGENTS.has(managedAgentName)
       ? "preserve"
       : "rewrite";
-  (deps.patchStagedDockerfile ?? patchStagedDockerfile)(
+  const patched = (deps.patchStagedDockerfile ?? patchStagedDockerfile)(
     stagedDockerfile,
     model,
     chatUiUrl,
@@ -197,6 +206,10 @@ export async function prepareSandboxDockerfilePatch({
       return {
         buildIdPolicy,
         toolDisclosure,
+        ...(!fromDockerfile ? { trustedManagedDockerfile: true } : {}),
+        ...(!fromDockerfile && managedAgentName === "openclaw"
+          ? { wslDashboardExposure: managedOpenClawWslExposure }
+          : {}),
         ...(endpointUrl ? { upstreamEndpointUrl: endpointUrl } : {}),
         ...(dcodeAutoApprovalMode ? { dcodeAutoApprovalMode } : {}),
         requireToolDisclosureContract: Boolean(fromDockerfile),
@@ -205,5 +218,9 @@ export async function prepareSandboxDockerfilePatch({
     })(),
   );
 
-  return { buildId, resolvedBaseImage: resolved };
+  return {
+    buildId,
+    dashboardRemoteBindPrepared: patched?.dashboardRemoteBindPrepared === true,
+    resolvedBaseImage: resolved,
+  };
 }

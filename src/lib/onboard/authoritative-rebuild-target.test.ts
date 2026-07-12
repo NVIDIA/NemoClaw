@@ -9,6 +9,10 @@ import {
   rebuildProviderFlowOptions,
   resolveAuthoritativeOnboardGatewayBinding,
 } from "./authoritative-rebuild-target";
+import {
+  mintProviderRecoveryReceipt,
+  type ProviderRecoveryReceiptTarget,
+} from "./rebuild-route-handoff";
 
 const target = {
   sandboxName: "alpha",
@@ -107,11 +111,11 @@ describe("prepared provider reconfiguration handoff", () => {
   };
 
   it("accepts an exact handoff only for a locked authoritative rebuild resume (#6114)", () => {
-    expect(rebuildProviderFlowOptions(authorizedOptions, providerTarget)).toEqual({
+    expect(rebuildProviderFlowOptions(authorizedOptions, providerTarget)).toMatchObject({
       authoritativeResumeConfig: true,
       forceInferenceSetup: true,
     });
-    expect(rebuildProviderFlowOptions({}, providerTarget)).toEqual({
+    expect(rebuildProviderFlowOptions({}, providerTarget)).toMatchObject({
       authoritativeResumeConfig: false,
       forceInferenceSetup: false,
     });
@@ -119,7 +123,7 @@ describe("prepared provider reconfiguration handoff", () => {
 
   it("authorizes incomplete-session recovery only for the locked rebuild context", () => {
     const recoveryOptions = { ...authorizedOptions, rebuildProviderReconfigure: undefined };
-    expect(rebuildProviderFlowOptions(recoveryOptions, providerTarget)).toEqual({
+    expect(rebuildProviderFlowOptions(recoveryOptions, providerTarget)).toMatchObject({
       authoritativeResumeConfig: true,
       forceInferenceSetup: false,
     });
@@ -132,6 +136,47 @@ describe("prepared provider reconfiguration handoff", () => {
         "requires a preflighted locked rebuild resume",
       );
     }
+  });
+
+  it("activates a matching provider-recovery receipt and binds it to the session", () => {
+    const receiptTarget: ProviderRecoveryReceiptTarget = {
+      sandboxName: "alpha",
+      gatewayName: "nemoclaw-8081",
+      provider: "compatible-endpoint",
+      model: "nvidia/model",
+      route: {
+        provider: "compatible-endpoint",
+        model: "nvidia/model",
+        endpointUrl: "https://inference.example.test/v1",
+        preferredInferenceApi: "openai-completions",
+        source: "registry",
+      },
+    };
+    const receipt = mintProviderRecoveryReceipt(receiptTarget, {
+      nonce: "n-alpha",
+      expiresAtMs: Number.MAX_SAFE_INTEGER,
+    });
+    const flowContext = {
+      ...providerTarget,
+      preferredInferenceApi: "openai-completions",
+      session: { sessionId: "sess-alpha" },
+    };
+
+    const activated = rebuildProviderFlowOptions(
+      { ...authorizedOptions, providerRecoveryReceipt: receipt },
+      flowContext,
+    );
+    expect(activated.providerRecoveryReceipt?.sessionId).toBe("sess-alpha");
+
+    const wrongSandbox = rebuildProviderFlowOptions(
+      {
+        ...authorizedOptions,
+        providerRecoveryReceipt: receipt,
+        rebuildProviderReconfigure: undefined,
+      },
+      { ...flowContext, sandboxName: "beta" },
+    );
+    expect(wrongSandbox.providerRecoveryReceipt).toBeNull();
   });
 
   it("rejects an unauthorized or mismatched handoff (#6114)", () => {

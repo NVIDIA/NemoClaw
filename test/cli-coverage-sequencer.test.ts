@@ -86,8 +86,8 @@ describe("CLI coverage duration-aware sharding", () => {
 
   it("wires the measured hints into the Vitest sequencer", async () => {
     const specifications = [
-      testSpecification("test/local-credential-helper.test.ts", "local-credentials"),
-      testSpecification("test/hermes-restart-config-seal.test.ts", "hermes-config"),
+      testSpecification("test/local-credential-helper-fields.test.ts", "local-credentials"),
+      testSpecification("test/hermes-restart-config-seal-write-lock.test.ts", "hermes-config"),
       ...Array.from({ length: 8 }, (_, index) =>
         testSpecification(`test/regular-${index}.test.ts`, `regular-${index}`),
       ),

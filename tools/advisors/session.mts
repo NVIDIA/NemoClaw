@@ -47,7 +47,7 @@ export {
 } from "./turn-protocol.mts";
 
 export const DEFAULT_ADVISOR_PROVIDER = "openai";
-export const DEFAULT_ADVISOR_MODEL = "openai/openai/gpt-5.5";
+export const DEFAULT_ADVISOR_MODEL = "azure/openai/gpt-5.6-terra";
 export const NEMOTRON_ULTRA_ADVISOR_MODEL = "nvidia/nvidia/nemotron-3-ultra";
 export const ADVISOR_OPENAI_COMPATIBLE_BASE_URL = "https://inference-api.nvidia.com/v1";
 
@@ -175,14 +175,22 @@ export function openAiAdvisorProviderConfig(credentialEnv: string): AdvisorProvi
     api: "openai-completions",
     baseUrl: ADVISOR_OPENAI_COMPATIBLE_BASE_URL,
     models: [
-      advisorModel(DEFAULT_ADVISOR_MODEL, "GPT-5.5", 256000, 32768, false, ["text", "image"], {
-        supportsDeveloperRole: false,
-        supportsReasoningEffort: false,
-        supportsStore: false,
-        supportsStrictMode: false,
-        supportsUsageInStreaming: false,
-        maxTokensField: "max_tokens",
-      }),
+      advisorModel(
+        DEFAULT_ADVISOR_MODEL,
+        "GPT-5.6 Terra",
+        256000,
+        32768,
+        false,
+        ["text", "image"],
+        {
+          supportsDeveloperRole: false,
+          supportsReasoningEffort: false,
+          supportsStore: false,
+          supportsStrictMode: false,
+          supportsUsageInStreaming: false,
+          maxTokensField: "max_tokens",
+        },
+      ),
       advisorModel(
         NEMOTRON_ULTRA_ADVISOR_MODEL,
         "Nemotron 3 Ultra",
