@@ -129,10 +129,10 @@ Start from a version-matched source checkout and append one final browser layer 
   </Step>
 
   <Step title="Onboard from the custom Dockerfile">
-    Pin the base image to the same NemoClaw release and create a registered custom-image sandbox.
+    Pin the base image to the verified v0.0.80 multi-platform image digest and create a registered custom-image sandbox.
 
     ```bash
-    NEMOCLAW_SANDBOX_BASE_IMAGE_REF=ghcr.io/nvidia/nemoclaw/sandbox-base:v0.0.80 \
+    NEMOCLAW_SANDBOX_BASE_IMAGE_REF=ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:9d7740515d8e4cf60b991f5859a0a32986aac37b329dde7c62d8c440d1051d76 \
       nemoclaw onboard \
         --fresh \
         --no-gpu \

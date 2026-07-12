@@ -10,6 +10,15 @@ const guide = readFileSync(
 );
 
 describe("Playwright browser agent guide", () => {
+  it("pins the custom-image base by digest (#4218)", () => {
+    const onboardingBlock = guide.match(
+      /```bash\n\s*NEMOCLAW_SANDBOX_BASE_IMAGE_REF=[\s\S]*?--from "\$PWD\/Dockerfile"\n\s*```/,
+    )?.[0];
+
+    expect(onboardingBlock).toMatch(/ghcr\.io\/nvidia\/nemoclaw\/sandbox-base@sha256:[0-9a-f]{64}/);
+    expect(onboardingBlock).not.toContain("sandbox-base:v0.0.80");
+  });
+
   it("keeps browser commands behind the credential-scrubbing exec boundary (#4218)", () => {
     const commandBlock = guide.match(/```bash\nnemoclaw playwright-agent upload[\s\S]*?\n```/)?.[0];
 
