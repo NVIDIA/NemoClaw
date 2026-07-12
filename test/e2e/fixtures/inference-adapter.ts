@@ -9,7 +9,6 @@ import {
   startFakeOpenAiCompatibleServer,
 } from "./fake-openai-compatible.ts";
 import {
-  DEFAULT_HOSTED_INFERENCE_BASE_URL,
   DEFAULT_HOSTED_INFERENCE_MODEL,
   HOSTED_INFERENCE_CREDENTIAL_ENV,
   HOSTED_INFERENCE_PROVIDER,
@@ -48,9 +47,12 @@ export interface E2EInferenceAdapterOptions {
 
 const DEFAULT_MOCK_MODEL = "nvidia/nvidia/nemotron-3-ultra";
 const DEFAULT_MOCK_API_KEY = "fake-compatible-key";
+const DEFAULT_PUBLIC_NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
 const DEFAULT_PUBLIC_NVIDIA_MODEL = "nvidia/nemotron-3-super-120b-a12b";
 const DIRECT_CHAT_TIMEOUT_MS = 120_000;
+const INTERNAL_NVIDIA_ALLOWED_HOSTS = ["inference-api.nvidia.com"] as const;
 const MODEL_PROBE_TIMEOUT_MS = 30_000;
+const PUBLIC_NVIDIA_ALLOWED_HOSTS = ["integrate.api.nvidia.com"] as const;
 const SANDBOX_HOST_ALIAS = "host.openshell.internal";
 
 function normalizeMode(env: NodeJS.ProcessEnv): E2EInferenceMode {
@@ -71,10 +73,6 @@ export function requirePublicNvidiaInferenceKey(value: string): string {
 
 function joinEndpoint(baseUrl: string, suffix: string): string {
   return `${baseUrl.replace(/\/+$/, "")}/${suffix.replace(/^\/+/, "")}`;
-}
-
-function providerAllowedHosts(endpointUrl: string): string[] {
-  return [new URL(endpointUrl).hostname];
 }
 
 function endpointForHost(endpointUrl: string): string {
@@ -115,6 +113,7 @@ class OpenAiCompatibleInferenceAdapter implements E2EInferenceAdapter {
     private readonly artifacts: ArtifactSink,
     private readonly fake: FakeOpenAiCompatibleServer | undefined,
   ) {
+    this.artifacts.addRedactionValues([apiKey]);
     this.contractLabel =
       mode === "mock"
         ? "fake OpenAI-compatible endpoint is staged as the compatible endpoint credential"
@@ -122,8 +121,11 @@ class OpenAiCompatibleInferenceAdapter implements E2EInferenceAdapter {
   }
 
   env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+    const sanitizedExtra = { ...extra };
+    delete sanitizedExtra[HOSTED_INFERENCE_SECRET];
+    delete sanitizedExtra.NEMOCLAW_E2E_USE_HOSTED_INFERENCE;
     return {
-      ...extra,
+      ...sanitizedExtra,
       NEMOCLAW_E2E_INFERENCE_MODE: this.mode,
       ...(this.mode === "internal-nvidia" ? { NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1" } : {}),
       NEMOCLAW_PROVIDER: this.provider,
@@ -132,7 +134,6 @@ class OpenAiCompatibleInferenceAdapter implements E2EInferenceAdapter {
       NEMOCLAW_COMPAT_MODEL: this.model,
       NEMOCLAW_PREFERRED_API: this.preferredApi,
       [HOSTED_INFERENCE_CREDENTIAL_ENV]: this.apiKey,
-      ...(this.mode === "internal-nvidia" ? { [HOSTED_INFERENCE_SECRET]: this.apiKey } : {}),
     };
   }
 
@@ -144,7 +145,7 @@ class OpenAiCompatibleInferenceAdapter implements E2EInferenceAdapter {
     if (this.providerClient) {
       const response = await this.providerClient.requestJson(
         trustedProviderEndpoint(joinEndpoint(this.requestEndpointUrl, "models"), {
-          allowedHosts: providerAllowedHosts(this.requestEndpointUrl),
+          allowedHosts: INTERNAL_NVIDIA_ALLOWED_HOSTS,
         }),
         {
           artifactName,
@@ -173,7 +174,7 @@ class OpenAiCompatibleInferenceAdapter implements E2EInferenceAdapter {
     if (this.providerClient) {
       const response = await this.providerClient.requestJson(
         trustedProviderEndpoint(joinEndpoint(this.requestEndpointUrl, "chat/completions"), {
-          allowedHosts: providerAllowedHosts(this.requestEndpointUrl),
+          allowedHosts: INTERNAL_NVIDIA_ALLOWED_HOSTS,
         }),
         {
           artifactName: options.artifactName ?? "direct-compatible-chat",
@@ -218,7 +219,7 @@ class PublicNvidiaInferenceAdapter implements E2EInferenceAdapter {
   readonly mode = "public-nvidia";
   readonly provider = "cloud";
   readonly providerName = "nvidia";
-  readonly endpointUrl = DEFAULT_HOSTED_INFERENCE_BASE_URL;
+  readonly endpointUrl = DEFAULT_PUBLIC_NVIDIA_BASE_URL;
   readonly expectedRouteProvider = "nvidia-prod";
   readonly contractLabel = "public NVIDIA Endpoints provider keeps nvapi validation centralized";
 
@@ -229,8 +230,11 @@ class PublicNvidiaInferenceAdapter implements E2EInferenceAdapter {
   ) {}
 
   env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+    const sanitizedExtra = { ...extra };
+    delete sanitizedExtra[HOSTED_INFERENCE_CREDENTIAL_ENV];
+    delete sanitizedExtra.NEMOCLAW_E2E_USE_HOSTED_INFERENCE;
     return {
-      ...extra,
+      ...sanitizedExtra,
       NEMOCLAW_E2E_INFERENCE_MODE: this.mode,
       NEMOCLAW_PROVIDER: this.provider,
       NEMOCLAW_MODEL: this.model,
@@ -245,7 +249,7 @@ class PublicNvidiaInferenceAdapter implements E2EInferenceAdapter {
   async probeModels(artifactName: string): Promise<unknown> {
     const response = await this.providerClient.requestJson(
       trustedProviderEndpoint(joinEndpoint(this.endpointUrl, "models"), {
-        allowedHosts: providerAllowedHosts(this.endpointUrl),
+        allowedHosts: PUBLIC_NVIDIA_ALLOWED_HOSTS,
       }),
       {
         artifactName,
@@ -265,7 +269,7 @@ class PublicNvidiaInferenceAdapter implements E2EInferenceAdapter {
   ): Promise<unknown> {
     const response = await this.providerClient.requestJson(
       trustedProviderEndpoint(joinEndpoint(this.endpointUrl, "chat/completions"), {
-        allowedHosts: providerAllowedHosts(this.endpointUrl),
+        allowedHosts: PUBLIC_NVIDIA_ALLOWED_HOSTS,
       }),
       {
         artifactName: options.artifactName ?? "direct-nvidia-chat",
@@ -294,6 +298,7 @@ export async function createE2EInferenceAdapter(
     const fake = await startFakeOpenAiCompatibleServer({
       apiKey,
       chatContent: "PONG",
+      // The Docker sandbox reaches this host listener through SANDBOX_HOST_ALIAS.
       host: "0.0.0.0",
       model,
       publicHost: SANDBOX_HOST_ALIAS,
@@ -326,6 +331,7 @@ export async function createE2EInferenceAdapter(
   }
   if (mode === "internal-nvidia") {
     const hosted = requireHostedInferenceConfig(options.secrets, env);
+    trustedProviderEndpoint(hosted.endpointUrl, { allowedHosts: INTERNAL_NVIDIA_ALLOWED_HOSTS });
     return new OpenAiCompatibleInferenceAdapter(
       mode,
       hosted.model,

@@ -580,10 +580,7 @@ function validateHostedCompatibleInferenceFlag(
   jobName: string,
   jobEnv: WorkflowRecord,
 ): void {
-  if (
-    PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS.has(jobName) ||
-    ADAPTER_MANAGED_INFERENCE_JOBS.has(jobName)
-  ) {
+  if (PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS.has(jobName) || ADAPTER_MANAGED_INFERENCE_JOBS.has(jobName)) {
     return;
   }
   if (jobEnv.NEMOCLAW_E2E_USE_HOSTED_INFERENCE !== "1") {
@@ -2243,6 +2240,9 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
   if (jobEnv.NEMOCLAW_AGENT !== "hermes") {
     errors.push("hermes-e2e job must set NEMOCLAW_AGENT=hermes");
   }
+  if (jobEnv.NEMOCLAW_E2E_INFERENCE_MODE !== "${{ inputs.inference_mode || 'mock' }}") {
+    errors.push("hermes-e2e job must consume the defaulted inference mode input");
+  }
   if ("NEMOCLAW_E2E_USE_HOSTED_INFERENCE" in jobEnv) {
     errors.push("hermes-e2e job must leave hosted inference selection to the adapter");
   }
@@ -3555,6 +3555,35 @@ function validateSandboxRlimitConnectJob(errors: string[], jobs: WorkflowRecord)
   }
 }
 
+function validateInferenceModeInput(
+  errors: string[],
+  workflow: WorkflowRecord,
+  dispatchInputs: WorkflowRecord,
+): void {
+  const input = requireInput(errors, dispatchInputs, "inference_mode");
+  if (
+    input.type !== "choice" ||
+    input.default !== "mock" ||
+    JSON.stringify(input.options) !== JSON.stringify(["mock", "internal-nvidia", "public-nvidia"])
+  ) {
+    errors.push("workflow_dispatch inference_mode must be the canonical three-mode choice");
+  }
+  if ("NEMOCLAW_E2E_INFERENCE_MODE" in asRecord(workflow.env)) {
+    errors.push("workflow env must leave inference mode scoped to adapter-consuming jobs");
+  }
+}
+
+function validateInferenceModeGeneration(
+  errors: string[],
+  step: WorkflowStep | undefined,
+  env: WorkflowRecord,
+): void {
+  if (env.INFERENCE_MODE !== "${{ inputs.inference_mode || 'mock' }}") {
+    errors.push("matrix generation step must pass the defaulted inference mode through env");
+  }
+  requireRunContains(errors, step, "Invalid inference_mode: ${INFERENCE_MODE}");
+}
+
 export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_PATH): string[] {
   const workflow = readWorkflowRecord(workflowPath);
   const errors: string[] = [];
@@ -3576,6 +3605,7 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   const dispatchInputs = asRecord(workflowDispatch.inputs);
   requireInput(errors, dispatchInputs, "targets");
   validateAllowJetsonRunnerQueueInput(errors, dispatchInputs);
+  validateInferenceModeInput(errors, workflow, dispatchInputs);
   const jobsInput = requireInput(errors, dispatchInputs, "jobs");
   const jobsDescription = stringValue(jobsInput.description);
   if (!jobsDescription.includes("default-enabled tests")) {
@@ -3637,6 +3667,7 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   if (generateEnv.TARGETS !== "${{ inputs.targets }}") {
     errors.push("matrix generation step must pass targets through TARGETS env");
   }
+  validateInferenceModeGeneration(errors, generate, generateEnv);
   requireRunContains(errors, generate, "npx tsx tools/e2e/workflow-plan.mts");
   requireRunContains(errors, generate, "Use either targets or jobs, not both");
   requireRunContains(errors, generate, "for selector_name in JOBS TARGETS");

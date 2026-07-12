@@ -42,6 +42,7 @@ function generateMatrixForDispatch(env: { JOBS: string; TARGETS: string }): Reco
         ...process.env,
         GITHUB_OUTPUT: outputPath,
         GITHUB_STEP_SUMMARY: summaryPath,
+        INFERENCE_MODE: "mock",
         JOBS: env.JOBS,
         TARGETS: env.TARGETS,
       },
@@ -78,7 +79,25 @@ describe("e2e workflow boundary", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
   });
 
-  it("rejects credential-backed provider smokes in the PR-safe inference-routing job", () => {
+  it("rejects unknown inference modes before planning", () => {
+    const result = spawnSync("bash", ["-c", generateMatrixScript()], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        GITHUB_OUTPUT: os.devNull,
+        GITHUB_STEP_SUMMARY: os.devNull,
+        INFERENCE_MODE: "internal-nvida",
+        JOBS: "",
+        TARGETS: "",
+      },
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("::error::Invalid inference_mode: internal-nvida");
+  });
+
+  it("keeps credential-backed provider smokes out of the PR-safe inference-routing job", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-inference-routing-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
     const workflow = readWorkflow() as {

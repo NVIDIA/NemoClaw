@@ -14,6 +14,8 @@ describe("Hermes E2E workflow boundary", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
 
     const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8"));
+    workflow.env.NEMOCLAW_E2E_INFERENCE_MODE = "internal-nvidia";
+    workflow.jobs["hermes-e2e"].env.NEMOCLAW_E2E_INFERENCE_MODE = "mock";
     workflow.jobs["hermes-e2e"].env.NEMOCLAW_MODEL = "minimaxai/minimax-m2.7";
     workflow.jobs["hermes-e2e"].env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE = "1";
     const gpuJob = workflow.jobs["hermes-gpu-startup"];
@@ -44,7 +46,9 @@ describe("Hermes E2E workflow boundary", () => {
       expect(validateE2eWorkflowBoundary(workflowPath)).toEqual(
         expect.arrayContaining([
           "hermes-e2e job must use the shared hosted-compatible model default",
+          "hermes-e2e job must consume the defaulted inference mode input",
           "hermes-e2e job must leave hosted inference selection to the adapter",
+          "workflow env must leave inference mode scoped to adapter-consuming jobs",
           "hermes-gpu-startup job must run on the native RTX PRO 6000 GPU runner",
           "hermes-gpu-startup job must remain explicit-only behind generate-matrix",
           "hermes-gpu-startup job must leave NEMOCLAW_DOCKER_GPU_PATCH unset to exercise auto routing",

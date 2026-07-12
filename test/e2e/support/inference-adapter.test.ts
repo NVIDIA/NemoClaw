@@ -76,7 +76,11 @@ afterEach(async () => {
 describe("E2E inference adapter", () => {
   it("defaults to hermetic mock mode with a fake compatible endpoint", async () => {
     const adapter = await createAdapter({ env: {} });
-    const env = adapter.env({ NEMOCLAW_AGENT: "hermes" });
+    const env = adapter.env({
+      NEMOCLAW_AGENT: "hermes",
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+      NVIDIA_INFERENCE_API_KEY: "ambient-source-key",
+    });
 
     expect(adapter.mode).toBe("mock");
     expect(adapter.expectedRouteProvider).toBe("compatible-endpoint");
@@ -90,6 +94,7 @@ describe("E2E inference adapter", () => {
       COMPATIBLE_API_KEY: "fake-compatible-key",
     });
     expect(env.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+    expect(env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE).toBeUndefined();
     expect(await adapter.probeModels("mock-models")).toMatchObject({
       data: [{ id: "nvidia/nvidia/nemotron-3-ultra" }],
     });
@@ -106,7 +111,7 @@ describe("E2E inference adapter", () => {
       },
       secrets: { NVIDIA_INFERENCE_API_KEY: "sk-compatible-hosted-key" },
     });
-    const env = adapter.env();
+    const env = adapter.env({ NVIDIA_INFERENCE_API_KEY: "ambient-source-key" });
 
     expect(adapter.mode).toBe("internal-nvidia");
     expect(adapter.expectedRouteProvider).toBe("compatible-endpoint");
@@ -118,9 +123,21 @@ describe("E2E inference adapter", () => {
       NEMOCLAW_MODEL: "nvidia/nvidia/nemotron-3-ultra",
       NEMOCLAW_COMPAT_MODEL: "nvidia/nvidia/nemotron-3-ultra",
       NEMOCLAW_PREFERRED_API: "responses",
-      NVIDIA_INFERENCE_API_KEY: "sk-compatible-hosted-key",
       COMPATIBLE_API_KEY: "sk-compatible-hosted-key",
     });
+    expect(env.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+  });
+
+  it("rejects internal NVIDIA endpoint overrides outside the fixture-owned host", async () => {
+    await expect(
+      createAdapter({
+        env: {
+          NEMOCLAW_E2E_INFERENCE_MODE: "internal-nvidia",
+          NEMOCLAW_ENDPOINT_URL: "https://untrusted.example/v1",
+        },
+        secrets: { NVIDIA_INFERENCE_API_KEY: "sk-compatible-hosted-key" },
+      }),
+    ).rejects.toThrow(/provider endpoint host is not allowed: untrusted\.example/);
   });
 
   it("rejects non-OK mock model probes before writing artifacts", async () => {
@@ -170,10 +187,14 @@ describe("E2E inference adapter", () => {
       env: { NEMOCLAW_E2E_INFERENCE_MODE: "public-nvidia" },
       secrets: { NVIDIA_INFERENCE_API_KEY: "nvapi-public-test-key" },
     });
-    const env = adapter.env();
+    const env = adapter.env({
+      COMPATIBLE_API_KEY: "ambient-compatible-key",
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+    });
 
     expect(adapter.mode).toBe("public-nvidia");
     expect(adapter.expectedRouteProvider).toBe("nvidia-prod");
+    expect(adapter.endpointUrl).toBe("https://integrate.api.nvidia.com/v1");
     expect(env).toMatchObject({
       NEMOCLAW_E2E_INFERENCE_MODE: "public-nvidia",
       NEMOCLAW_PROVIDER: "cloud",
@@ -181,6 +202,7 @@ describe("E2E inference adapter", () => {
       NVIDIA_INFERENCE_API_KEY: "nvapi-public-test-key",
     });
     expect(env.COMPATIBLE_API_KEY).toBeUndefined();
+    expect(env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE).toBeUndefined();
     expect(requirePublicNvidiaInferenceKey("nvapi-public-test-key")).toBe("nvapi-public-test-key");
   });
 
