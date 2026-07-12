@@ -13,33 +13,69 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, sep } from "node:path";
 
 import { execa } from "execa";
 import YAML from "yaml";
 
-import { validateEndpointUrl } from "./ssrf.js";
-import { buildSubprocessEnv } from "../lib/subprocess-env.js";
 import { DASHBOARD_PORT } from "../lib/ports.js";
+import { buildSubprocessEnv } from "../lib/subprocess-env.js";
+import { isPlainObject, type UnknownRecord } from "../shared/object-record.js";
+import * as importedOpenShellPolicyBoundary from "../shared/openshell-policy-boundary.cjs";
+import { actionSnapshots } from "./snapshot-command.js";
+import type { SnapshotCommandOptions } from "./snapshot-command.js";
+import { safeEndpointUrlForDownstream, validateEndpointUrl } from "./ssrf.js";
+
+// The compiled plugin exposes named CommonJS exports. Source-mode tsx maps the
+// .cjs specifier back to .cts and exposes that same module as its default.
+const sourceOrGeneratedOpenShellPolicyBoundary =
+  importedOpenShellPolicyBoundary as typeof importedOpenShellPolicyBoundary & {
+    default?: typeof importedOpenShellPolicyBoundary;
+  };
+const { parseOpenShellPolicy, withoutProviderComposedPolicies } =
+  sourceOrGeneratedOpenShellPolicyBoundary.default ?? sourceOrGeneratedOpenShellPolicyBoundary;
 
 type Action = "plan" | "apply" | "status" | "rollback";
 
-type BlueprintDataScalar = string | number | boolean | null;
-type BlueprintDataValue = BlueprintDataScalar | PolicyAdditions | BlueprintDataValue[];
-type RollbackPlanSource = { sandbox_name?: string };
-type UnknownRecord = { [key: string]: unknown };
+type RollbackPlanSource = { sandbox_name?: unknown };
+type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
+type RestProtocol = "rest";
+type EndpointEnforcement = "enforce" | "audit";
+type EndpointTls = "terminate" | "passthrough" | "skip";
+
+interface PolicyRule {
+  allow: {
+    method: HttpMethod;
+    path: string;
+  };
+}
+
+interface PolicyEndpoint {
+  host: string;
+  port: number;
+  protocol?: RestProtocol;
+  enforcement?: EndpointEnforcement;
+  tls?: EndpointTls;
+  access?: "full";
+  rules?: PolicyRule[];
+}
+
+interface PolicyAddition {
+  name: string;
+  endpoints: PolicyEndpoint[];
+}
+
+type PolicyAdditions = { [name: string]: PolicyAddition };
+
+const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
+const REST_PROTOCOLS = new Set(["rest"]);
+const ENDPOINT_ENFORCEMENT_MODES = new Set(["enforce", "audit"]);
+const ENDPOINT_TLS_MODES = new Set(["terminate", "passthrough", "skip"]);
 
 function isAction(value: string | undefined): value is Action {
   return value === "plan" || value === "apply" || value === "status" || value === "rollback";
-}
-
-function isObjectLike(value: unknown): value is UnknownRecord {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  return Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null;
 }
 
 function isOptionalString(value: unknown): value is string | undefined {
@@ -48,6 +84,10 @@ function isOptionalString(value: unknown): value is string | undefined {
 
 function isOptionalFiniteNumber(value: unknown): value is number | undefined {
   return value === undefined || (typeof value === "number" && Number.isFinite(value));
+}
+
+function isOptionalBoolean(value: unknown): value is boolean | undefined {
+  return value === undefined || typeof value === "boolean";
 }
 
 function isValidPort(value: unknown): value is number {
@@ -60,26 +100,72 @@ function isOptionalPortList(value: unknown): value is number[] | undefined {
   );
 }
 
-function isBlueprintDataValue(value: unknown): value is BlueprintDataValue {
-  if (
-    value === null ||
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean"
-  ) {
-    return true;
-  }
-  if (Array.isArray(value)) {
-    return value.every((entry) => isBlueprintDataValue(entry));
-  }
-  if (!isObjectLike(value)) {
+function hasOnlyKeys(value: UnknownRecord, allowed: readonly string[]): boolean {
+  return Object.keys(value).every((key) => allowed.includes(key));
+}
+
+function isPolicyRule(value: unknown): value is PolicyRule {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["allow"])) {
     return false;
   }
-  return Object.values(value).every((entry) => isBlueprintDataValue(entry));
+  const allow = value.allow;
+  if (!isPlainObject(allow) || !hasOnlyKeys(allow, ["method", "path"])) {
+    return false;
+  }
+  return (
+    typeof allow.method === "string" &&
+    HTTP_METHODS.has(allow.method) &&
+    typeof allow.path === "string" &&
+    allow.path.startsWith("/")
+  );
+}
+
+function isPolicyEndpoint(value: unknown): value is PolicyEndpoint {
+  if (
+    !isPlainObject(value) ||
+    !hasOnlyKeys(value, ["host", "port", "protocol", "enforcement", "tls", "access", "rules"])
+  ) {
+    return false;
+  }
+
+  const protocol = value.protocol;
+  const enforcement = value.enforcement;
+  const tls = value.tls;
+  const access = value.access;
+  const rules = value.rules;
+
+  return (
+    typeof value.host === "string" &&
+    isValidPort(value.port) &&
+    (protocol === undefined || (typeof protocol === "string" && REST_PROTOCOLS.has(protocol))) &&
+    (enforcement === undefined ||
+      (typeof enforcement === "string" && ENDPOINT_ENFORCEMENT_MODES.has(enforcement))) &&
+    (tls === undefined || (typeof tls === "string" && ENDPOINT_TLS_MODES.has(tls))) &&
+    (access === undefined || access === "full") &&
+    (rules === undefined ||
+      (Array.isArray(rules) && rules.length > 0 && rules.every((entry) => isPolicyRule(entry)))) &&
+    (protocol !== "rest" || rules !== undefined)
+  );
+}
+
+function isPolicyAddition(value: unknown): value is PolicyAddition {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["name", "endpoints"])) {
+    return false;
+  }
+  return (
+    typeof value.name === "string" &&
+    Array.isArray(value.endpoints) &&
+    value.endpoints.length > 0 &&
+    value.endpoints.every((entry) => isPolicyEndpoint(entry))
+  );
+}
+
+function isPolicyAdditions(value: unknown): value is PolicyAdditions {
+  return isPlainObject(value) && Object.values(value).every((entry) => isPolicyAddition(entry));
 }
 
 function isInferenceProfile(value: unknown): value is InferenceProfile {
-  if (!isObjectLike(value)) {
+  if (!isPlainObject(value)) {
     return false;
   }
 
@@ -95,12 +181,11 @@ function isInferenceProfile(value: unknown): value is InferenceProfile {
 }
 
 function isBlueprint(value: unknown): value is Blueprint {
-  if (!isObjectLike(value)) {
+  if (!isPlainObject(value)) {
     return false;
   }
 
-  const version = value.version;
-  if (!isOptionalString(version)) {
+  if (!isOptionalString(value.version)) {
     return false;
   }
 
@@ -108,19 +193,19 @@ function isBlueprint(value: unknown): value is Blueprint {
   if (components === undefined) {
     return true;
   }
-  if (!isObjectLike(components)) {
+  if (!isPlainObject(components)) {
     return false;
   }
 
   const inference = components.inference;
   if (inference !== undefined) {
-    if (!isObjectLike(inference)) {
+    if (!isPlainObject(inference)) {
       return false;
     }
     const profiles = inference.profiles;
     if (profiles !== undefined) {
       if (
-        !isObjectLike(profiles) ||
+        !isPlainObject(profiles) ||
         !Object.values(profiles).every((entry) => isInferenceProfile(entry))
       ) {
         return false;
@@ -130,7 +215,7 @@ function isBlueprint(value: unknown): value is Blueprint {
 
   const sandbox = components.sandbox;
   if (sandbox !== undefined) {
-    if (!isObjectLike(sandbox)) {
+    if (!isPlainObject(sandbox)) {
       return false;
     }
     if (
@@ -142,17 +227,28 @@ function isBlueprint(value: unknown): value is Blueprint {
     }
   }
 
+  const router = components.router;
+  if (router !== undefined) {
+    if (!isPlainObject(router)) {
+      return false;
+    }
+    if (
+      !isOptionalBoolean(router.enabled) ||
+      !(router.port === undefined || isValidPort(router.port)) ||
+      !isOptionalString(router.pool_config_path)
+    ) {
+      return false;
+    }
+  }
+
   const policy = components.policy;
   if (policy !== undefined) {
-    if (!isObjectLike(policy)) {
+    if (!isPlainObject(policy)) {
       return false;
     }
     const additions = policy.additions;
     if (additions !== undefined) {
-      if (
-        !isObjectLike(additions) ||
-        !Object.values(additions).every((entry) => isBlueprintDataValue(entry))
-      ) {
+      if (!isPolicyAdditions(additions)) {
         return false;
       }
     }
@@ -172,7 +268,11 @@ function progress(pct: number, label: string): void {
 }
 
 function readRollbackSandboxName(value: RollbackPlanSource | null): string {
-  return value && typeof value.sandbox_name === "string" ? value.sandbox_name : "openclaw";
+  if (!value || typeof value.sandbox_name !== "string" || value.sandbox_name.trim() === "") {
+    throw new Error("rollback plan sandbox_name must be a non-empty string");
+  }
+
+  return value.sandbox_name;
 }
 
 // ── Utilities ───────────────────────────────────────────────────
@@ -190,7 +290,6 @@ export function emitRunId(): string {
 }
 
 type InferenceProfileMap = { [profileName: string]: InferenceProfile };
-type PolicyAdditions = { [name: string]: BlueprintDataValue };
 
 interface Blueprint {
   version?: string;
@@ -199,6 +298,7 @@ interface Blueprint {
       profiles?: InferenceProfileMap;
     };
     sandbox?: SandboxConfig;
+    router?: RouterConfig;
     policy?: {
       additions?: PolicyAdditions;
     };
@@ -219,6 +319,41 @@ interface SandboxConfig {
   image?: string;
   name?: string;
   forward_ports?: number[];
+}
+
+interface RouterConfig {
+  enabled?: boolean;
+  port?: number;
+  pool_config_path?: string;
+}
+
+const DEFAULT_ROUTER_PORT = 4000;
+
+function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditions): string {
+  // sourceOfTruth: nemoclaw/src/shared/openshell-policy-boundary.cts
+  const current = parseOpenShellPolicy(currentPolicyRaw).policy;
+  const existingNetworkPolicies = current.network_policies ?? {};
+  const output: UnknownRecord = {};
+
+  // Stable OpenShell 0.0.72 exposes composable top-level policy sections as
+  // mappings. Preserve unknown mapping sections for forward compatibility, but
+  // fail closed on a scalar or sequence until its mutation semantics are
+  // reviewed for the next supported OpenShell contract.
+  for (const [key, value] of Object.entries(current)) {
+    if (key !== "version" && key !== "network_policies") {
+      if (!isPlainObject(value)) {
+        throw new Error(`Current policy top-level field "${key}" must be a YAML mapping`);
+      }
+      output[key] = value;
+    }
+  }
+
+  output.version = current.version ?? 1;
+  output.network_policies = withoutProviderComposedPolicies({
+    ...existingNetworkPolicies,
+    ...additions,
+  });
+  return YAML.stringify(output);
 }
 
 export function loadBlueprint(): Blueprint {
@@ -272,6 +407,7 @@ async function resolveRunConfig(
   inferenceProfiles: InferenceProfileMap;
   inferenceCfg: InferenceProfile;
   sandboxCfg: SandboxConfig;
+  routerCfg: RouterConfig;
 }> {
   const inferenceProfiles = blueprint.components?.inference?.profiles ?? {};
   if (!(profile in inferenceProfiles)) {
@@ -282,22 +418,18 @@ async function resolveRunConfig(
   let inferenceCfg = { ...inferenceProfiles[profile] };
   if (endpointUrl) {
     const validated = await validateEndpointUrl(endpointUrl);
-    // Use DNS-pinned URL for HTTP (full SSRF/rebinding protection). For HTTPS,
-    // keep the original hostname — TLS certificate validation prevents rebinding
-    // since the attacker cannot present a valid cert for the target.
-    const safe = endpointUrl.startsWith("https:") ? validated.url : validated.pinnedUrl;
-    inferenceCfg = { ...inferenceCfg, endpoint: safe };
+    inferenceCfg = { ...inferenceCfg, endpoint: safeEndpointUrlForDownstream(validated) };
   }
 
   // Validate the final endpoint (whether from CLI override or blueprint profile)
   if (inferenceCfg.endpoint) {
     const validated = await validateEndpointUrl(inferenceCfg.endpoint);
-    const safe = inferenceCfg.endpoint.startsWith("https:") ? validated.url : validated.pinnedUrl;
-    inferenceCfg = { ...inferenceCfg, endpoint: safe };
+    inferenceCfg = { ...inferenceCfg, endpoint: safeEndpointUrlForDownstream(validated) };
   }
 
   const sandboxCfg = blueprint.components?.sandbox ?? {};
-  return { inferenceProfiles, inferenceCfg, sandboxCfg };
+  const routerCfg = blueprint.components?.router ?? {};
+  return { inferenceProfiles, inferenceCfg, sandboxCfg, routerCfg };
 }
 
 // ── Actions ─────────────────────────────────────────────────────
@@ -315,10 +447,188 @@ export interface RunPlan {
     provider_name: string | undefined;
     endpoint: string | undefined;
     model: string | undefined;
-    credential_env: string | undefined;
+  };
+  router: {
+    enabled: boolean;
+    port: number;
+    pool_config_path: string | undefined;
   };
   policy_additions: PolicyAdditions;
   dry_run: boolean;
+}
+
+interface SafeInferencePlan {
+  provider_type: string | undefined;
+  provider_name: string | undefined;
+  endpoint: string | undefined;
+  model: string | undefined;
+}
+
+interface PersistedRunPlan {
+  run_id: string;
+  profile: string;
+  sandbox_name: string;
+  policy_additions: PolicyAdditions;
+  inference: SafeInferencePlan;
+  timestamp: string;
+}
+
+type StatusRunPlan = {
+  run_id: string;
+  profile?: string;
+  sandbox?: {
+    image?: string;
+    name?: string;
+    forward_ports?: number[];
+  };
+  sandbox_name?: string;
+  policy_additions?: PolicyAdditions;
+  inference?: SafeInferencePlan;
+  router?: {
+    enabled?: boolean;
+    port?: number;
+    pool_config_path?: string;
+  };
+  timestamp?: string;
+  dry_run?: boolean;
+};
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function buildSafeInferencePlan(source: InferenceProfile | UnknownRecord): SafeInferencePlan {
+  return {
+    provider_type: optionalString(source.provider_type),
+    provider_name: optionalString(source.provider_name),
+    endpoint: optionalString(source.endpoint),
+    model: optionalString(source.model),
+  };
+}
+
+function buildSafePublicRunPlan(args: {
+  runId: string;
+  profile: string;
+  inferenceCfg: InferenceProfile;
+  sandboxCfg: SandboxConfig;
+  routerCfg: RouterConfig;
+  policyAdditions: PolicyAdditions;
+  dryRun: boolean;
+}): RunPlan {
+  const routerEnabled = args.routerCfg.enabled === true;
+  const routerPort = args.routerCfg.port ?? DEFAULT_ROUTER_PORT;
+
+  return {
+    run_id: args.runId,
+    profile: args.profile,
+    sandbox: {
+      image: args.sandboxCfg.image ?? "openclaw",
+      name: args.sandboxCfg.name ?? "openclaw",
+      forward_ports: args.sandboxCfg.forward_ports ?? [DASHBOARD_PORT],
+    },
+    inference: buildSafeInferencePlan(args.inferenceCfg),
+    router: {
+      enabled: routerEnabled,
+      port: routerPort,
+      pool_config_path: args.routerCfg.pool_config_path,
+    },
+    policy_additions: args.policyAdditions,
+    dry_run: args.dryRun,
+  };
+}
+
+function buildPersistedRunPlan(args: {
+  runId: string;
+  profile: string;
+  sandboxName: string;
+  policyAdditions: PolicyAdditions;
+  inferenceCfg: InferenceProfile;
+  timestamp: string;
+}): PersistedRunPlan {
+  return {
+    run_id: args.runId,
+    profile: args.profile,
+    sandbox_name: args.sandboxName,
+    policy_additions: args.policyAdditions,
+    inference: buildSafeInferencePlan(args.inferenceCfg),
+    timestamp: args.timestamp,
+  };
+}
+
+function buildStatusRunPlan(source: unknown, fallbackRunId: string): StatusRunPlan | null {
+  if (!isPlainObject(source)) {
+    return null;
+  }
+
+  const safePlan: StatusRunPlan = {
+    run_id: optionalString(source.run_id) ?? fallbackRunId,
+  };
+
+  const profile = optionalString(source.profile);
+  if (profile !== undefined) {
+    safePlan.profile = profile;
+  }
+
+  if (isPlainObject(source.sandbox)) {
+    const sandbox: StatusRunPlan["sandbox"] = {};
+    const image = optionalString(source.sandbox.image);
+    const name = optionalString(source.sandbox.name);
+    const forwardPorts = isOptionalPortList(source.sandbox.forward_ports)
+      ? source.sandbox.forward_ports
+      : undefined;
+    if (image !== undefined) {
+      sandbox.image = image;
+    }
+    if (name !== undefined) {
+      sandbox.name = name;
+    }
+    if (forwardPorts !== undefined) {
+      sandbox.forward_ports = forwardPorts;
+    }
+    if (Object.keys(sandbox).length > 0) {
+      safePlan.sandbox = sandbox;
+    }
+  }
+
+  const sandboxName = optionalString(source.sandbox_name);
+  if (sandboxName !== undefined) {
+    safePlan.sandbox_name = sandboxName;
+  }
+
+  if (isPolicyAdditions(source.policy_additions)) {
+    safePlan.policy_additions = source.policy_additions;
+  }
+
+  if (isPlainObject(source.inference)) {
+    safePlan.inference = buildSafeInferencePlan(source.inference);
+  }
+
+  if (isPlainObject(source.router)) {
+    const router: StatusRunPlan["router"] = {};
+    if (typeof source.router.enabled === "boolean") {
+      router.enabled = source.router.enabled;
+    }
+    if (isValidPort(source.router.port)) {
+      router.port = source.router.port;
+    }
+    const poolConfigPath = optionalString(source.router.pool_config_path);
+    if (poolConfigPath !== undefined) {
+      router.pool_config_path = poolConfigPath;
+    }
+    if (Object.keys(router).length > 0) {
+      safePlan.router = router;
+    }
+  }
+
+  const timestamp = optionalString(source.timestamp);
+  if (timestamp !== undefined) {
+    safePlan.timestamp = timestamp;
+  }
+  if (typeof source.dry_run === "boolean") {
+    safePlan.dry_run = source.dry_run;
+  }
+
+  return safePlan;
 }
 
 export async function actionPlan(
@@ -329,7 +639,7 @@ export async function actionPlan(
   const rid = emitRunId();
   progress(10, "Validating blueprint");
 
-  const { inferenceCfg, sandboxCfg } = await resolveRunConfig(
+  const { inferenceCfg, sandboxCfg, routerCfg } = await resolveRunConfig(
     profile,
     blueprint,
     options?.endpointUrl,
@@ -342,24 +652,15 @@ export async function actionPlan(
     );
   }
 
-  const plan: RunPlan = {
-    run_id: rid,
+  const plan = buildSafePublicRunPlan({
+    runId: rid,
     profile,
-    sandbox: {
-      image: sandboxCfg.image ?? "openclaw",
-      name: sandboxCfg.name ?? "openclaw",
-      forward_ports: sandboxCfg.forward_ports ?? [DASHBOARD_PORT],
-    },
-    inference: {
-      provider_type: inferenceCfg.provider_type,
-      provider_name: inferenceCfg.provider_name,
-      endpoint: inferenceCfg.endpoint,
-      model: inferenceCfg.model,
-      credential_env: inferenceCfg.credential_env,
-    },
-    policy_additions: blueprint.components?.policy?.additions ?? {},
-    dry_run: options?.dryRun ?? false,
-  };
+    inferenceCfg,
+    sandboxCfg,
+    routerCfg,
+    policyAdditions: blueprint.components?.policy?.additions ?? {},
+    dryRun: options?.dryRun ?? false,
+  });
 
   progress(100, "Plan complete");
   log(JSON.stringify(plan, null, 2));
@@ -388,6 +689,9 @@ export async function actionApply(
   const sandboxName = sandboxCfg.name ?? "openclaw";
   const sandboxImage = sandboxCfg.image ?? "openclaw";
   const forwardPorts = sandboxCfg.forward_ports ?? [DASHBOARD_PORT];
+  const policyAdditions = blueprint.components?.policy?.additions ?? {};
+  const stateDir = join(homedir(), ".nemoclaw", "state", "runs", rid);
+  mkdirSync(stateDir, { recursive: true });
 
   progress(20, "Creating OpenClaw sandbox");
   const createArgs = [
@@ -467,25 +771,44 @@ export async function actionApply(
   }
   await runCmd(inferenceArgs, { reject: false });
 
+  if (Object.keys(policyAdditions).length > 0) {
+    progress(78, "Applying policy additions");
+    const currentPolicy = await runCmd(["openshell", "policy", "get", "--base", sandboxName], {
+      reject: false,
+    });
+    if (currentPolicy.exitCode !== 0) {
+      throw new Error(
+        `Failed to read current policy before applying additions: ${currentPolicy.stderr}`,
+      );
+    }
+
+    const mergedPolicyFile = join(stateDir, "merged-policy.yaml");
+    writeFileSync(mergedPolicyFile, mergePolicyAdditions(currentPolicy.stdout, policyAdditions), {
+      encoding: "utf-8",
+      mode: 0o600,
+    });
+
+    const policySet = await runCmd(
+      ["openshell", "policy", "set", "--policy", mergedPolicyFile, "--wait", sandboxName],
+      { reject: false },
+    );
+    if (policySet.exitCode !== 0) {
+      throw new Error(`Failed to apply policy additions: ${policySet.stderr}`);
+    }
+  }
+
   progress(85, "Saving run state");
-  const stateDir = join(homedir(), ".nemoclaw", "state", "runs", rid);
-  mkdirSync(stateDir, { recursive: true });
   writeFileSync(
     join(stateDir, "plan.json"),
     JSON.stringify(
-      {
-        run_id: rid,
+      buildPersistedRunPlan({
+        runId: rid,
         profile,
-        sandbox_name: sandboxName,
-        inference: {
-          provider_type: inferenceCfg.provider_type,
-          provider_name: inferenceCfg.provider_name,
-          endpoint: inferenceCfg.endpoint,
-          model: inferenceCfg.model,
-          // Omit credential_env and credential_default — secrets must not be persisted
-        },
+        sandboxName,
+        policyAdditions,
+        inferenceCfg,
         timestamp: new Date().toISOString(),
-      },
+      }),
       null,
       2,
     ),
@@ -535,10 +858,16 @@ export function actionStatus(rid?: string): void {
     runDir = join(runsDir, runs[0]);
   }
 
+  const name = runDir.split("/").pop() ?? "unknown";
   try {
-    log(readFileSync(join(runDir, "plan.json"), "utf-8"));
+    const planData = readFileSync(join(runDir, "plan.json"), "utf-8");
+    const parsedPlan: unknown = JSON.parse(planData);
+    const safePlan = buildStatusRunPlan(parsedPlan, name);
+    if (!safePlan) {
+      throw new Error("plan.json must contain a JSON object");
+    }
+    log(JSON.stringify(safePlan, null, 2));
   } catch {
-    const name = runDir.split("/").pop() ?? "unknown";
     log(JSON.stringify({ run_id: name, status: "unknown" }));
   }
 }
@@ -555,6 +884,7 @@ export async function actionRollback(rid: string): Promise<void> {
   }
 
   const planFile = join(stateDir, "plan.json");
+  let sandboxName: string;
   try {
     const planData = readFileSync(planFile, "utf-8");
     const parsedPlan: unknown = JSON.parse(planData);
@@ -562,15 +892,20 @@ export async function actionRollback(rid: string): Promise<void> {
       typeof parsedPlan === "object" && parsedPlan !== null && !Array.isArray(parsedPlan)
         ? parsedPlan
         : null;
-    const sandboxName = readRollbackSandboxName(rollbackPlan);
+    sandboxName = readRollbackSandboxName(rollbackPlan);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Cannot read rollback plan for run ${rid}: ${detail}`);
+  }
 
+  try {
     progress(30, `Stopping sandbox ${sandboxName}`);
     await runCmd(["openshell", "sandbox", "stop", sandboxName], { reject: false });
 
     progress(60, `Removing sandbox ${sandboxName}`);
     await runCmd(["openshell", "sandbox", "remove", sandboxName], { reject: false });
   } catch {
-    // plan.json missing or corrupt — skip sandbox stop/remove
+    // Sandbox cleanup is best-effort; the rollback marker still records this run as handled.
   }
 
   progress(90, "Cleaning up run state");
@@ -581,7 +916,10 @@ export async function actionRollback(rid: string): Promise<void> {
 
 // ── CLI ─────────────────────────────────────────────────────────
 
-export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
+export async function main(
+  argv: string[] = process.argv.slice(2),
+  options: { snapshotCommand?: SnapshotCommandOptions } = {},
+): Promise<void> {
   const rawAction = argv.at(0);
   const action = isAction(rawAction) ? rawAction : undefined;
   let profile = "default";
@@ -596,8 +934,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   }
 
   if (!action) {
+    if (rawAction === "snapshots") {
+      actionSnapshots(argv.slice(1), options.snapshotCommand);
+      return;
+    }
     throw new Error(
-      `Unknown action '${rawAction ?? "(missing)"}'. Use: plan, apply, status, rollback`,
+      `Unknown action '${rawAction ?? "(missing)"}'. Use: plan, apply, status, rollback, snapshots`,
     );
   }
 

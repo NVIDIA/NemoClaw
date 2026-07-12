@@ -1,15 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
 import path from "node:path";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   buildVersionedUninstallUrl,
-  exitWithSpawnResult,
   resolveUninstallScript,
   runUninstallCommand,
-} from "../../dist/lib/uninstall-command";
+} from "./uninstall-command";
 
 function exitWithCode(code: number): never {
   throw new Error(`exit:${code}`);
@@ -28,12 +27,6 @@ describe("uninstall command", () => {
   it("selects the first existing uninstall script", () => {
     const script = resolveUninstallScript(["/a", "/b"], (candidate) => candidate === "/b");
     expect(script).toBe("/b");
-  });
-
-  it("maps spawn signals to shell-style exit codes", () => {
-    expect(() => exitWithSpawnResult({ status: null, signal: "SIGTERM" }, exitWithCode)).toThrow(
-      "exit:143",
-    );
   });
 
   it("runs the local uninstall script when present", () => {

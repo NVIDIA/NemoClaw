@@ -1,0 +1,825 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+
+import { runWithEnv, testTimeoutOptions } from "./helpers";
+
+describe("CLI dispatch", () => {
+  it(
+    "uses the platform gateway default when the last sandbox is destroyed (#2166, #4662)",
+    testTimeoutOptions(30_000),
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-last-"));
+      const localBin = path.join(home, "bin");
+      const registryDir = path.join(home, ".nemoclaw");
+      const openshellLog = path.join(home, "openshell.log");
+      const bashLog = path.join(home, "docker.log");
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.mkdirSync(registryDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(registryDir, "sandboxes.json"),
+        JSON.stringify({
+          sandboxes: {
+            alpha: {
+              name: "alpha",
+              model: "test-model",
+              provider: "nvidia-prod",
+              gpuEnabled: false,
+              policies: [],
+            },
+          },
+          defaultSandbox: "alpha",
+        }),
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/bin/sh",
+          `log_file=${JSON.stringify(openshellLog)}`,
+          'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+          '  printf "NAME STATUS\\n" >> "$log_file"',
+          "  exit 0",
+          "fi",
+          'printf \'%s\\n\' "$*" >> "$log_file"',
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "docker"),
+        [
+          "#!/bin/sh",
+          `log_file=${JSON.stringify(bashLog)}`,
+          'printf \'%s\\n\' "$*" >> "$log_file"',
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const r = runWithEnv("alpha destroy -y", {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+
+      expect(r.code).toBe(0);
+      const openshellOutput = fs.readFileSync(openshellLog, "utf8");
+      const dockerOutput = fs.readFileSync(bashLog, "utf8");
+      const shouldCleanupGateway = process.platform === "darwin";
+      expect(openshellOutput).toContain("sandbox delete alpha");
+      expect(openshellOutput).toContain("NAME STATUS");
+      expect(openshellOutput.includes("forward stop 18789")).toBe(shouldCleanupGateway);
+      expect(openshellOutput.includes("gateway remove nemoclaw")).toBe(shouldCleanupGateway);
+      expect(dockerOutput.includes("volume ls -q --filter name=openshell-cluster-nemoclaw")).toBe(
+        shouldCleanupGateway,
+      );
+      expect(r.out.includes("openshell gateway remove nemoclaw")).toBe(!shouldCleanupGateway);
+      expect(r.out).not.toContain("gateway destroy");
+    },
+  );
+
+  it(
+    "falls back to legacy gateway destroy and still cleans volumes when remove fails (#6569)",
+    testTimeoutOptions(30_000),
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-last-cleanup-"));
+      const localBin = path.join(home, "bin");
+      const registryDir = path.join(home, ".nemoclaw");
+      const openshellLog = path.join(home, "openshell.log");
+      const bashLog = path.join(home, "docker.log");
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.mkdirSync(registryDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(registryDir, "sandboxes.json"),
+        JSON.stringify({
+          sandboxes: {
+            alpha: {
+              name: "alpha",
+              model: "test-model",
+              provider: "nvidia-prod",
+              gpuEnabled: false,
+              policies: [],
+              gatewayName: "nemoclaw-8081",
+              gatewayPort: 8081,
+            },
+          },
+          defaultSandbox: "alpha",
+        }),
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/bin/sh",
+          `log_file=${JSON.stringify(openshellLog)}`,
+          'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+          '  printf "NAME STATUS\\n" >> "$log_file"',
+          "  exit 0",
+          "fi",
+          'printf \'%s\\n\' "$*" >> "$log_file"',
+          'if [ "$1" = "gateway" ] && [ "$2" = "remove" ]; then',
+          "  exit 1",
+          "fi",
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "docker"),
+        [
+          "#!/bin/sh",
+          `log_file=${JSON.stringify(bashLog)}`,
+          'printf \'%s\\n\' "$*" >> "$log_file"',
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(path.join(localBin, "pgrep"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(localBin, "lsof"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+
+      const r = runWithEnv(
+        "alpha destroy -y --cleanup-gateway",
+        {
+          HOME: home,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
+        },
+        30_000,
+      );
+
+      expect(r.code, r.out).toBe(0);
+      const openshellOutput = fs.readFileSync(openshellLog, "utf8");
+      expect(openshellOutput).toContain("sandbox delete alpha");
+      expect(openshellOutput).toContain("forward stop 18789");
+      // `gateway remove` is the modern subcommand on every platform (#6569).
+      expect(openshellOutput).toContain("gateway remove nemoclaw-8081");
+      expect(openshellOutput).toContain("gateway destroy -g nemoclaw-8081");
+      expect(openshellOutput.indexOf("gateway remove nemoclaw-8081")).toBeLessThan(
+        openshellOutput.indexOf("gateway destroy -g nemoclaw-8081"),
+      );
+      expect(fs.readFileSync(bashLog, "utf8")).toContain(
+        "volume ls -q --filter name=openshell-cluster-nemoclaw-8081",
+      );
+    },
+  );
+
+  it(
+    "honours NEMOCLAW_CLEANUP_GATEWAY=1 as the env-driven opt-in (#2166)",
+    testTimeoutOptions(30_000),
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-last-env-"));
+      const localBin = path.join(home, "bin");
+      const registryDir = path.join(home, ".nemoclaw");
+      const openshellLog = path.join(home, "openshell.log");
+      const bashLog = path.join(home, "docker.log");
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.mkdirSync(registryDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(registryDir, "sandboxes.json"),
+        JSON.stringify({
+          sandboxes: {
+            alpha: {
+              name: "alpha",
+              model: "test-model",
+              provider: "nvidia-prod",
+              gpuEnabled: false,
+              policies: [],
+            },
+          },
+          defaultSandbox: "alpha",
+        }),
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/bin/sh",
+          `log_file=${JSON.stringify(openshellLog)}`,
+          'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+          '  printf "NAME STATUS\\n" >> "$log_file"',
+          "  exit 0",
+          "fi",
+          'printf \'%s\\n\' "$*" >> "$log_file"',
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "docker"),
+        [
+          "#!/bin/sh",
+          `log_file=${JSON.stringify(bashLog)}`,
+          'printf \'%s\\n\' "$*" >> "$log_file"',
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(path.join(localBin, "pgrep"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(localBin, "lsof"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+
+      const r = runWithEnv(
+        "alpha destroy -y",
+        {
+          HOME: home,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_CLEANUP_GATEWAY: "1",
+        },
+        30_000,
+      );
+
+      expect(r.code, r.out).toBe(0);
+      const openshellOutput = fs.readFileSync(openshellLog, "utf8");
+      expect(openshellOutput).toContain("forward stop 18789");
+      // `gateway remove` is the modern subcommand on every platform (#6569).
+      expect(openshellOutput).toContain("gateway remove nemoclaw");
+      expect(openshellOutput).not.toContain("gateway destroy -g nemoclaw");
+      expect(fs.readFileSync(bashLog, "utf8")).toContain(
+        "volume ls -q --filter name=openshell-cluster-nemoclaw",
+      );
+    },
+  );
+
+  it.runIf(process.platform === "linux")(
+    "clears only the per-port host gateway PID file when destroying nemoclaw-<port>",
+    testTimeoutOptions(30_000),
+    () => {
+      // A `nemoclaw-8081` sandbox's destroy must read and clear its own
+      // `openshell-docker-gateway-8081/openshell-gateway.pid`, NOT the default
+      // instance's `openshell-docker-gateway/openshell-gateway.pid`. Otherwise
+      // destroying a non-default sandbox tears down the default instance's
+      // tracked host gateway process.
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-perport-pid-"));
+      const localBin = path.join(home, "bin");
+      const registryDir = path.join(home, ".nemoclaw");
+      const defaultStateDir = path.join(home, ".local/state/nemoclaw/openshell-docker-gateway");
+      const perPortStateDir = path.join(
+        home,
+        ".local/state/nemoclaw/openshell-docker-gateway-8081",
+      );
+      const defaultPidFile = path.join(defaultStateDir, "openshell-gateway.pid");
+      const perPortPidFile = path.join(perPortStateDir, "openshell-gateway.pid");
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.mkdirSync(registryDir, { recursive: true });
+      fs.mkdirSync(defaultStateDir, { recursive: true });
+      fs.mkdirSync(perPortStateDir, { recursive: true });
+      // PIDs that are guaranteed to be dead so stopHostGatewayProcesses takes
+      // the clearRuntimeFiles branch without trying to kill anything.
+      fs.writeFileSync(defaultPidFile, "999998\n");
+      fs.writeFileSync(perPortPidFile, "999999\n");
+      fs.writeFileSync(
+        path.join(registryDir, "sandboxes.json"),
+        JSON.stringify({
+          sandboxes: {
+            alpha: {
+              name: "alpha",
+              model: "test-model",
+              provider: "nvidia-prod",
+              gpuEnabled: false,
+              policies: [],
+              gatewayName: "nemoclaw-8081",
+              gatewayPort: 8081,
+            },
+          },
+          defaultSandbox: "alpha",
+        }),
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/bin/sh",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+          '  printf "NAME STATUS\\n"',
+          "  exit 0",
+          "fi",
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(path.join(localBin, "docker"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(localBin, "pgrep"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(localBin, "lsof"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+
+      const r = runWithEnv(
+        "alpha destroy -y --cleanup-gateway",
+        {
+          HOME: home,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
+        },
+        30_000,
+      );
+
+      expect(r.code, r.out).toBe(0);
+      expect(fs.existsSync(perPortPidFile)).toBe(false);
+      expect(fs.existsSync(defaultPidFile)).toBe(true);
+      expect(fs.readFileSync(defaultPidFile, "utf8").trim()).toBe("999998");
+    },
+  );
+
+  it("keeps the gateway runtime when other sandboxes still exist", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-shared-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    const openshellLog = path.join(home, "openshell.log");
+    const bashLog = path.join(home, "docker.log");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+            gatewayName: "nemoclaw-8081",
+            gatewayPort: 8081,
+          },
+          beta: {
+            name: "beta",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/bin/sh",
+        `log_file=${JSON.stringify(openshellLog)}`,
+        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+        '  printf "NAME STATUS\\nbeta Ready\\n" >> "$log_file"',
+        '  printf "NAME STATUS\\nbeta Ready\\n"',
+        "  exit 0",
+        "fi",
+        'printf \'%s\\n\' "$*" >> "$log_file"',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "docker"),
+      [
+        "#!/bin/sh",
+        `log_file=${JSON.stringify(bashLog)}`,
+        'printf \'%s\\n\' "$*" >> "$log_file"',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("alpha destroy --yes", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(0);
+    expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete alpha");
+    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("forward stop 18789");
+    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway destroy -g nemoclaw");
+    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway remove nemoclaw");
+    if (fs.existsSync(bashLog)) {
+      expect(fs.readFileSync(bashLog, "utf8")).not.toContain("volume ls -q --filter");
+    }
+  });
+
+  it("keeps the gateway runtime when the live gateway still reports sandboxes", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-live-shared-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    const openshellLog = path.join(home, "openshell.log");
+    const bashLog = path.join(home, "docker.log");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/bin/sh",
+        `log_file=${JSON.stringify(openshellLog)}`,
+        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+        '  printf "NAME STATUS\\nbeta Ready\\n" >> "$log_file"',
+        '  printf "NAME STATUS\\nbeta Ready\\n"',
+        "  exit 0",
+        "fi",
+        'printf \'%s\\n\' "$*" >> "$log_file"',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "docker"),
+      [
+        "#!/bin/sh",
+        `log_file=${JSON.stringify(bashLog)}`,
+        'printf \'%s\\n\' "$*" >> "$log_file"',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("alpha destroy --yes", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(0);
+    expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete alpha");
+    expect(fs.readFileSync(openshellLog, "utf8")).toContain("beta Ready");
+    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("forward stop 18789");
+    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway destroy -g nemoclaw");
+    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway remove nemoclaw");
+    if (fs.existsSync(bashLog)) {
+      expect(fs.readFileSync(bashLog, "utf8")).not.toContain("volume ls -q --filter");
+    }
+  });
+
+  it("selects the sandbox persisted gateway before provider cleanup and delete", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-select-gateway-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    const openshellLog = path.join(home, "openshell.log");
+    const activeGateway = path.join(home, "active-gateway");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(activeGateway, "other-gateway\n");
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+            gatewayName: "nemoclaw-8081",
+            gatewayPort: 8081,
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/bin/sh",
+        `log_file=${JSON.stringify(openshellLog)}`,
+        `active_gateway=${JSON.stringify(activeGateway)}`,
+        'printf \'%s\\n\' "$*" >> "$log_file"',
+        'if [ "$1" = "gateway" ] && [ "$2" = "select" ]; then',
+        '  printf "%s\\n" "$3" > "$active_gateway"',
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "delete" ]; then',
+        '  active="$(cat "$active_gateway")"',
+        '  if [ "$active" != "nemoclaw-8081" ]; then',
+        '    printf "wrong gateway: %s\\n" "$active" >&2',
+        "    exit 42",
+        "  fi",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+        '  active="$(cat "$active_gateway")"',
+        '  if [ "$active" != "nemoclaw-8081" ]; then',
+        '    printf "wrong list gateway: %s\\n" "$active" >&2',
+        "    exit 43",
+        "  fi",
+        '  printf "NAME STATUS\\n"',
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(path.join(localBin, "docker"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+
+    const r = runWithEnv("alpha destroy --yes", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code, r.out).toBe(0);
+    const lines = fs.readFileSync(openshellLog, "utf8").trim().split("\n");
+    const selectIndex = lines.indexOf("gateway select nemoclaw-8081");
+    const deleteIndex = lines.indexOf("sandbox delete alpha");
+    expect(selectIndex).toBeGreaterThanOrEqual(0);
+    expect(deleteIndex).toBeGreaterThan(selectIndex);
+    expect(lines.slice(deleteIndex + 1)).toContain("sandbox list");
+
+    // #5455 PRA-2: the persistent-state wipe (`sandbox exec --name alpha ...`)
+    // MUST come after gateway select and before sandbox delete. Running the
+    // wipe before gateway selection would have it land on whichever gateway
+    // happened to be currently active (`other-gateway` in this fixture), so
+    // a same-named sandbox there could get its workspace wiped while the
+    // intended PVC on `nemoclaw-8081` is left intact. Lock the order in.
+    const wipeIndex = lines.findIndex((line) => line.startsWith("sandbox exec --name alpha"));
+    expect(wipeIndex, "destroy did not issue the persistent-state wipe exec").toBeGreaterThan(
+      selectIndex,
+    );
+    expect(wipeIndex).toBeLessThan(deleteIndex);
+  });
+
+  // #5455 Ultra PRA-3: when `--cleanup-gateway` is passed, the gateway-destroy
+  // tears the gateway runtime down after the sandbox is deleted. The wipe
+  // still has to land BEFORE `sandbox delete` (otherwise the PVC is gone),
+  // and the `gateway destroy / gateway remove` has to come AFTER it
+  // (otherwise the gateway the wipe exec targets is gone). Pin the full
+  // gateway-select -> wipe exec -> sandbox delete -> gateway teardown chain.
+  it(
+    "destroys with --cleanup-gateway and runs gateway-select -> wipe -> delete -> gateway-destroy in order",
+    testTimeoutOptions(30_000),
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-cleanup-order-"));
+      const localBin = path.join(home, "bin");
+      const registryDir = path.join(home, ".nemoclaw");
+      const openshellLog = path.join(home, "openshell.log");
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.mkdirSync(registryDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(registryDir, "sandboxes.json"),
+        JSON.stringify({
+          sandboxes: {
+            alpha: {
+              name: "alpha",
+              model: "test-model",
+              provider: "nvidia-prod",
+              gpuEnabled: false,
+              policies: [],
+              gatewayName: "nemoclaw-8081",
+              gatewayPort: 8081,
+            },
+          },
+          defaultSandbox: "alpha",
+        }),
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/bin/sh",
+          `log_file=${JSON.stringify(openshellLog)}`,
+          'printf \'%s\\n\' "$*" >> "$log_file"',
+          'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+          '  printf "NAME STATUS\\n"',
+          "fi",
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(path.join(localBin, "docker"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(localBin, "pgrep"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(localBin, "lsof"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+
+      const r = runWithEnv(
+        "alpha destroy -y --cleanup-gateway",
+        { HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` },
+        30_000,
+      );
+
+      expect(r.code, r.out).toBe(0);
+      const lines = fs.readFileSync(openshellLog, "utf8").trim().split("\n");
+      const selectIndex = lines.indexOf("gateway select nemoclaw-8081");
+      const wipeIndex = lines.findIndex((line) => line.startsWith("sandbox exec --name alpha"));
+      const deleteIndex = lines.indexOf("sandbox delete alpha");
+      const gatewayDestroyIndex = lines.findIndex(
+        (line) =>
+          line === "gateway remove nemoclaw-8081" || line === "gateway destroy -g nemoclaw-8081",
+      );
+
+      expect(selectIndex, "gateway select did not run").toBeGreaterThanOrEqual(0);
+      expect(wipeIndex, "wipe exec did not run").toBeGreaterThan(selectIndex);
+      expect(deleteIndex, "sandbox delete did not run").toBeGreaterThan(wipeIndex);
+      expect(gatewayDestroyIndex, "gateway teardown did not run").toBeGreaterThan(deleteIndex);
+    },
+  );
+
+  it("fails destroy when openshell sandbox delete returns a real error", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-failure-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    const openshellLog = path.join(home, "openshell.log");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/bin/sh",
+        `log_file=${JSON.stringify(openshellLog)}`,
+        'printf \'%s\\n\' "$*" >> "$log_file"',
+        'if [ "$1" = "sandbox" ] && [ "$2" = "delete" ]; then',
+        '  echo "transport error: gateway unavailable" >&2',
+        "  exit 1",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("alpha destroy --yes", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("transport error: gateway unavailable");
+    expect(r.out).toContain("Failed to destroy sandbox 'alpha'.");
+    expect(r.out).not.toContain("Sandbox 'alpha' destroyed");
+
+    const registryAfter = JSON.parse(
+      fs.readFileSync(path.join(registryDir, "sandboxes.json"), "utf8"),
+    );
+    expect(registryAfter.sandboxes.alpha).toBeTruthy();
+    expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete alpha");
+    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway destroy -g nemoclaw");
+    expect(fs.readFileSync(openshellLog, "utf8")).not.toContain("gateway remove nemoclaw");
+  });
+
+  it(
+    "treats an already-missing sandbox as destroyed using the platform gateway default (#4662)",
+    testTimeoutOptions(30_000),
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-missing-"));
+      const localBin = path.join(home, "bin");
+      const registryDir = path.join(home, ".nemoclaw");
+      const openshellLog = path.join(home, "openshell.log");
+      const bashLog = path.join(home, "docker.log");
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.mkdirSync(registryDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(registryDir, "sandboxes.json"),
+        JSON.stringify({
+          sandboxes: {
+            alpha: {
+              name: "alpha",
+              model: "test-model",
+              provider: "nvidia-prod",
+              gpuEnabled: false,
+              policies: [],
+            },
+          },
+          defaultSandbox: "alpha",
+        }),
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/bin/sh",
+          `log_file=${JSON.stringify(openshellLog)}`,
+          'if [ "$1" = "sandbox" ] && [ "$2" = "delete" ]; then',
+          '  printf \'%s\\n\' "$*" >> "$log_file"',
+          '  echo "Error: status: Not Found, message: \\"sandbox not found\\"" >&2',
+          "  exit 1",
+          "fi",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+          '  printf "NAME STATUS\\n" >> "$log_file"',
+          '  printf "NAME STATUS\\n"',
+          "  exit 0",
+          "fi",
+          'printf \'%s\\n\' "$*" >> "$log_file"',
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "docker"),
+        [
+          "#!/bin/sh",
+          `log_file=${JSON.stringify(bashLog)}`,
+          'printf \'%s\\n\' "$*" >> "$log_file"',
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const r = runWithEnv("alpha destroy --yes", {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+
+      expect(r.code).toBe(0);
+      expect(r.out).toContain("already absent from the live gateway");
+      expect(r.out).toContain("Sandbox 'alpha' destroyed");
+
+      const registryAfter = JSON.parse(
+        fs.readFileSync(path.join(registryDir, "sandboxes.json"), "utf8"),
+      );
+      expect(registryAfter.sandboxes.alpha).toBeFalsy();
+      expect(fs.readFileSync(openshellLog, "utf8")).toContain("sandbox delete alpha");
+      const openshellOutput = fs.readFileSync(openshellLog, "utf8");
+      const dockerOutput = fs.readFileSync(bashLog, "utf8");
+      const shouldCleanupGateway = process.platform === "darwin";
+      expect(openshellOutput.includes("forward stop 18789")).toBe(shouldCleanupGateway);
+      expect(openshellOutput.includes("gateway remove nemoclaw")).toBe(shouldCleanupGateway);
+      expect(dockerOutput.includes("volume ls -q --filter name=openshell-cluster-nemoclaw")).toBe(
+        shouldCleanupGateway,
+      );
+      expect(openshellOutput).not.toContain("gateway destroy -g nemoclaw");
+    },
+  );
+
+  it("deletes messaging providers when destroying a sandbox", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-providers-"));
+    const localBin = path.join(home, "bin");
+    const registryDir = path.join(home, ".nemoclaw");
+    const openshellLog = path.join(home, "openshell.log");
+    const bashLog = path.join(home, "docker.log");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(registryDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(registryDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "alpha",
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/bin/sh",
+        `log_file=${JSON.stringify(openshellLog)}`,
+        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+        '  printf "NAME STATUS\\n" >> "$log_file"',
+        "  exit 0",
+        "fi",
+        'printf \'%s\\n\' "$*" >> "$log_file"',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "docker"),
+      [
+        "#!/bin/sh",
+        `log_file=${JSON.stringify(bashLog)}`,
+        'printf \'%s\\n\' "$*" >> "$log_file"',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("alpha destroy --yes", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(0);
+    const log = fs.readFileSync(openshellLog, "utf8");
+    expect(log).toContain("provider delete alpha-telegram-bridge");
+    expect(log).toContain("provider delete alpha-discord-bridge");
+    expect(log).toContain("provider delete alpha-slack-bridge");
+    expect(log).toContain("provider delete alpha-slack-app");
+  });
+});

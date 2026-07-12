@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Local OpenTelemetry collector for OpenClaw diagnostics traces.
+# Intended for Jaeger or an OTLP/HTTP collector exposed from the host on 4318.
+preset:
+  name: openclaw-diagnostics-otel-local
+  description: "OpenClaw diagnostics OTLP/HTTP export to local host collector"
+
+network_policies:
+  openclaw-diagnostics-otel-local:
+    name: openclaw-diagnostics-otel-local
+    endpoints:
+      - host: host.openshell.internal
+        port: 4318
+        protocol: rest
+        enforcement: enforce
+        allowed_ips:
+          - 10.0.0.0/8
+          - 172.16.0.0/12
+          - 192.168.0.0/16
+        rules:
+          - allow: { method: POST, path: "/v1/traces" }
+          - allow: { method: POST, path: "/v1/traces/**" }
+    binaries:
+      - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }

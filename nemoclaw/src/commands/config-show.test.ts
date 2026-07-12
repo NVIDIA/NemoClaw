@@ -40,7 +40,7 @@ describe("commands/config-show", () => {
       ncpPartner: null,
       model: "nvidia/nemotron-3-super-120b-a12b",
       profile: "default",
-      credentialEnv: "NVIDIA_API_KEY",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       onboardedAt: "2026-04-10T14:22:00Z",
     };
     mockedLoadOnboardConfig.mockReturnValue(config);
@@ -50,7 +50,7 @@ describe("commands/config-show", () => {
     const result = slashConfigShow();
     expect(result.text).toContain("NemoClaw Config");
     expect(result.text).toContain("build (https://integrate.api.nvidia.com/v1)");
-    expect(result.text).toContain("$NVIDIA_API_KEY");
+    expect(result.text).toContain("$NVIDIA_INFERENCE_API_KEY");
     expect(result.text).toContain("NVIDIA Endpoint API");
     expect(result.text).toContain("nvidia/nemotron-3-super-120b-a12b");
     expect(result.text).toContain("2026-04-10T14:22:00Z");
@@ -63,7 +63,7 @@ describe("commands/config-show", () => {
       ncpPartner: null,
       model: "nvidia/nemotron-3-super-120b-a12b",
       profile: "default",
-      credentialEnv: "NVIDIA_API_KEY",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       onboardedAt: "2026-04-10T14:22:00Z",
     };
     mockedLoadOnboardConfig.mockReturnValue(config);
@@ -72,7 +72,7 @@ describe("commands/config-show", () => {
 
     const result = slashConfigShow();
     // Should show env var name, not the actual key value
-    expect(result.text).toContain("$NVIDIA_API_KEY");
+    expect(result.text).toContain("$NVIDIA_INFERENCE_API_KEY");
     expect(result.text).not.toContain("nvapi-");
   });
 
@@ -83,7 +83,7 @@ describe("commands/config-show", () => {
       ncpPartner: "PartnerCo",
       model: "nvidia/nemotron-3-super-120b-a12b",
       profile: "default",
-      credentialEnv: "NVIDIA_API_KEY",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       onboardedAt: "2026-04-10T14:22:00Z",
     };
     mockedLoadOnboardConfig.mockReturnValue(config);
@@ -119,7 +119,7 @@ describe("commands/config-show", () => {
       ncpPartner: null,
       model: "nvidia/nemotron-3-super-120b-a12b",
       profile: "default",
-      credentialEnv: "NVIDIA_API_KEY",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       onboardedAt: "2026-04-10T14:22:00Z",
     };
     mockedLoadOnboardConfig.mockReturnValue(config);

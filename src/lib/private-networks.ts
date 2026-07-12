@@ -42,7 +42,11 @@ interface LoadedNetworks {
 
 let cached: LoadedNetworks | null = null;
 
-function validateNetworkEntry(entry: unknown, family: "ipv4" | "ipv6", index: number): NetworkEntry {
+function validateNetworkEntry(
+  entry: unknown,
+  family: "ipv4" | "ipv6",
+  index: number,
+): NetworkEntry {
   const where = `${NETWORKS_FILE}: ${family}[${String(index)}]`;
   if (typeof entry !== "object" || entry === null) {
     throw new Error(`${where}: expected an object`);
@@ -56,7 +60,9 @@ function validateNetworkEntry(entry: unknown, family: "ipv4" | "ipv6", index: nu
   }
   const expectedFamily = family === "ipv4" ? 4 : 6;
   if (isIP(address) !== expectedFamily) {
-    throw new Error(`${where}: 'address' must be a valid ${family} literal, got ${JSON.stringify(address)}`);
+    throw new Error(
+      `${where}: 'address' must be a valid ${family} literal, got ${JSON.stringify(address)}`,
+    );
   }
   const maxPrefix = family === "ipv4" ? 32 : 128;
   if (typeof prefix !== "number" || !Number.isInteger(prefix) || prefix < 0 || prefix > maxPrefix) {
@@ -65,7 +71,9 @@ function validateNetworkEntry(entry: unknown, family: "ipv4" | "ipv6", index: nu
     );
   }
   if (typeof purpose !== "string" || purpose.trim().length === 0) {
-    throw new Error(`${where}: 'purpose' must be a non-empty string so reviewers can judge the block`);
+    throw new Error(
+      `${where}: 'purpose' must be a non-empty string so reviewers can judge the block`,
+    );
   }
   return { address, prefix, purpose };
 }
@@ -82,7 +90,9 @@ function validateNameEntry(entry: unknown, index: number): NameEntry {
     throw new Error(`${where}: missing or empty 'name'`);
   }
   if (typeof purpose !== "string" || purpose.trim().length === 0) {
-    throw new Error(`${where}: 'purpose' must be a non-empty string so reviewers can judge the block`);
+    throw new Error(
+      `${where}: 'purpose' must be a non-empty string so reviewers can judge the block`,
+    );
   }
   return { name, purpose };
 }
@@ -171,13 +181,36 @@ export function isPrivateHostname(hostname: string): boolean {
   // Strip URL IPv6 brackets before any check. Brackets are only legal
   // in URL syntax around IPv6 literals, so stripping them is safe for
   // both the name-level and IP-literal checks below.
-  const stripped = hostname.startsWith("[") && hostname.endsWith("]")
-    ? hostname.slice(1, -1)
-    : hostname;
+  const stripped =
+    hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
   const normalised = stripped.replace(/\.$/, "").toLowerCase();
   const { normalisedNames } = load();
   for (const reserved of normalisedNames) {
     if (normalised === reserved || normalised.endsWith(`.${reserved}`)) return true;
   }
   return isPrivateIp(normalised);
+}
+
+/**
+ * Return true when `hostname` is an IPv4/IPv6 loopback literal (127.0.0.0/8 or
+ * ::1) or the RFC 6761 `localhost` special-use name.
+ *
+ * Loopback is a proper subset of what isPrivateHostname matches, but it is
+ * semantically distinct for SSRF purposes: a loopback address only ever reaches
+ * a service on the probing host itself, so it is not a pivot to other internal
+ * infrastructure the way LAN ranges (10/8, 192.168/16) or link-local metadata
+ * (169.254.169.254) are. Host-side onboarding probes for locally-run inference
+ * servers (Ollama on 127.0.0.1, vLLM on localhost) legitimately target it, so
+ * callers that must still refuse genuine private-network SSRF can exempt
+ * loopback specifically without weakening the LAN/metadata blocks.
+ */
+export function isLoopbackHostname(hostname: string): boolean {
+  const stripped =
+    hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
+  const normalised = stripped.replace(/\.$/, "").toLowerCase();
+  if (normalised === "localhost") return true;
+  const family = isIP(normalised);
+  if (family === 4) return normalised.startsWith("127.");
+  if (family === 6) return normalised === "::1";
+  return false;
 }

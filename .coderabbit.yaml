@@ -1,114 +1,249 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+
+# Keep durable project guidance in the nearest AGENTS.md. CodeRabbit discovers
+# those files automatically, so path instructions here are reserved for review
+# gaps that need a narrower, change-specific lens.
 language: "en-US"
 early_access: false
 reviews:
   profile: "chill"
   request_changes_workflow: false
   high_level_summary: true
-  poem: true
+  in_progress_fortune: false
+  poem: false
   review_status: true
   review_details: false
   auto_review:
     enabled: true
     drafts: false
+
+  # E2E recommendations intentionally do not live here. The E2E Advisor derives
+  # them from each PR diff and the current workflows instead of a duplicated,
+  # manually synchronized path-to-job catalog.
   path_instructions:
     - path: "docs/**"
+      instructions: &fern-doc-links |
+        Review internal documentation links as Fern published routes, not as
+        source-file-relative paths.
+
+        - Resolve a link with the enclosing section slugs and page slug declared
+          in `docs/index.yml`. A valid route can differ from the target MDX file's
+          directory, and shared pages can be published from generated
+          `_build/agent-variants/*.generated.mdx` navigation entries.
+        - Account for the OpenClaw, Hermes, and Deep Agents navigation variants and
+          `<AgentOnly>` filtering. A route only needs to exist for every variant in
+          which the link is rendered.
+        - Treat extensionless route-style links as intentional. Do not suggest an
+          `.mdx` path or a source-directory-relative replacement merely because no
+          matching source file exists at that relative path.
+        - Before reporting a broken internal route or redirect, resolve it the same
+          way as `scripts/check-docs-published-routes.ts` and check the redirects in
+          `fern/docs.yml`. Flag a missing published route, missing generated-page
+          source, invalid relevant-variant route, or invalid anchor, but do not
+          report a route as broken solely because its filesystem path is absent.
+
+    - path: "fern/docs.yml"
+      instructions: *fern-doc-links
+
+    - path: "src/**"
       instructions: |
-        You are an editorial reviewer for NemoClaw documentation.
-        Review every docs change against the style guide below. Flag violations
-        inline as review comments. Do not rewrite the content — point out the
-        issue and cite the relevant rule so the author can fix it.
+        Apply a migration-completion review whenever a PR introduces a
+        replacement path, architecture, state model, or framework.
 
-        ## Voice and Tone
+        - Trace every in-scope entrypoint and lifecycle path, including fresh
+          execution, resume/retry/rebuild, persisted state, scripts, tests, docs,
+          and workflow wiring. The new path existing is not evidence of cutover.
+        - Require in-scope callers to use one authoritative path and delete the
+          superseded runtime path, forwarding glue, support helpers, and tests in
+          the same PR unless it is in an explicitly bounded compatibility or
+          confidence window.
+        - Retain an old path only for a demonstrated external/persisted-data
+          contract or a bounded confidence/rollback window. Keep the replacement
+          authoritative, freeze the old path against new callers and features, link
+          the retirement issue or PR in GitHub, and state observable exit criteria.
+        - If a PR intentionally migrates only a slice, it must say so and link the
+          remaining work in GitHub. Do not introduce repository-local migration
+          ledgers or describe the overall migration as complete.
+        - Tests must prove that public entrypoints reach the new path and that the
+          old path is deleted or cannot execute.
 
-        - Active voice required. Flag passive constructions.
-          Bad: "A gateway is created by the CLI."
-          Good: "The CLI creates a gateway."
-        - Second person ("you") when addressing the reader.
-        - Present tense. Flag future tense ("will") in descriptions of current behavior.
-        - No hedge words: flag "simply," "just," "easily," "of course."
-
-        ## LLM-Generated Patterns (Flag These)
-
-        These are common in AI-generated text and erode trust with technical readers.
-        Flag every occurrence:
-
-        - Unnecessary bold on routine instructions ("This is a **critical** step"
-          when nothing is actually critical). Bold is reserved for UI labels,
-          parameter names, and genuine warnings.
-        - Excessive em dashes. One per paragraph is fine; multiple per paragraph
-          or em dashes used instead of commas/periods should be flagged.
-        - Superlatives and marketing language ("powerful," "robust," "seamless,"
-          "cutting-edge"). Say what it does, not how great it is.
-        - Emoji in documentation prose.
-        - Rhetorical questions ("Want to secure your agents? Look no further!").
-          State the purpose directly.
-        - Filler introductions ("In this section, we will explore..."). Start
-          with the content.
-
-        ## Formatting Rules
-
-        - Every sentence must end with a period.
-        - One sentence per line in source (makes diffs readable). Flag paragraphs
-          where multiple sentences appear on the same line.
-        - CLI commands, file paths, flags, parameter names, and values must use
-          inline `code` formatting.
-        - CLI code blocks must use the `console` language tag with `$` prompt
-          prefix. Flag ```bash or ```shell for CLI examples.
-        - Use MyST admonitions (:::{tip}, :::{note}, :::{warning}) for callouts,
-          not bold text or blockquotes.
-        - No nested admonitions.
-        - Do not number section titles. Flag "Section 1: ...", "Step 3: ...", etc.
-        - No colons in titles. Flag "Inference: Cloud and Local" — should be
-          "Cloud and Local Inference."
-        - Colons should only introduce a list. Flag colons used as general
-          punctuation between clauses.
-
-        ## Word List (Flag Incorrect Usage)
-
-        | Correct        | Incorrect (flag these)                              |
-        |----------------|------------------------------------------------------|
-        | NVIDIA         | Nvidia, nvidia                                       |
-        | NemoClaw       | nemoclaw (in prose), Nemoclaw                        |
-        | OpenClaw       | openclaw (in prose), Openclaw                        |
-        | OpenShell      | Open Shell, openShell, Openshell, openshell (in prose)|
-        | CLI            | cli, Cli                                             |
-        | API key        | api key, API Key                                     |
-        | mTLS           | MTLS, mtls                                           |
-        | YAML           | yaml (in prose), Yaml                                |
-        | gateway        | Gateway (unless starting a sentence)                 |
-        | sandbox        | Sandbox (unless starting a sentence)                 |
-
-        Words inside code blocks or inline code spans are exempt from the word
-        list (e.g., `nemoclaw onboard` is correct).
-
-        ## Page Structure
-
-        When reviewing new pages, verify:
-        - SPDX license header is present after frontmatter.
-        - Frontmatter includes title, description, keywords, topics, tags,
-          content type, difficulty, audience, and status fields.
-        - H1 heading matches the `title.page` frontmatter value.
-        - Page starts with a one- or two-sentence introduction.
-        - Sections use H2 and H3, each starting with an introductory sentence.
-        - A "Next Steps" section at the bottom links to related pages.
-
-        ## Severity
-
-        - Word list and voice violations: flag as suggestions.
-        - Missing SPDX header, broken cross-references, or incorrect code
-          block language: flag as issues.
-        - LLM-generated patterns (bold overuse, em dashes, superlatives,
-          hedge words): flag as suggestions with the note "LLM pattern detected."
-    - path: "**/*.md"
+    - path: "src/lib/{actions,domain,adapters,state}/**"
       instructions: |
-        This rule applies to all Markdown files project-wide. For files
-        under docs/, the stricter docs/** rules defined earlier in this
-        file take precedence; this rule adds baseline checks for every
-        other Markdown file (README, CONTRIBUTING, architecture docs, etc.).
+        Review ownership against `src/lib/README.md`: actions orchestrate, domain
+        modules make pure decisions, adapters own host/process/network boundaries,
+        and state modules own persisted files and state I/O. Flag cross-layer
+        cycles, duplicate sources of truth, and forwarding wrappers that add a new
+        layer without retiring the old owner and its callers.
 
-        - NVIDIA must be all caps (not Nvidia, nvidia).
-        - NemoClaw, OpenClaw, and OpenShell must use correct casing.
-        - No emoji in technical prose.
+    - path: "src/{commands,lib/cli}/**"
+      instructions: |
+        Review this change against the single-path oclif architecture.
+
+        - Command classes own grammar, parsing, help, and translation into typed
+          action inputs. Behavior and orchestration belong in `src/lib/actions/**`.
+        - Flag manual argv parsing, ad hoc command routing, rebuilding string argv
+          after oclif has parsed it, or direct platform/registry/credential work in
+          a command class.
+        - Keep `src/lib/cli/**` limited to framework, metadata, routing, and help
+          infrastructure rather than product behavior.
+
+    - path: "src/nemoclaw.ts"
+      instructions: |
+        This file is a compatibility front controller, not a command router.
+        Keep it limited to loading and exposing `dispatchCli`. Flag new command
+        grammar, branching, lifecycle behavior, or manual parsing here. If the
+        final caller of a compatibility export is removed, require the export and
+        its tests to be deleted in the same PR.
+
+    - path: "src/lib/{onboard.ts,onboard/**,state/onboard-*.ts}"
+      instructions: |
+        Review onboarding and resume behavior against the target architecture in
+        `src/lib/onboard/machine/README.md`.
+
+        - Keep `src/lib/onboard.ts` as entry setup and dependency wiring. State
+          sequencing, prompts, repair decisions, and phase effects belong in state
+          handlers or focused services.
+        - `OnboardRuntime` owns machine transitions. Step helpers record step
+          status; flag any expansion of direct machine mutation escape hatches.
+        - Resume and repair bridges must correspond to real persisted older-session
+          shapes, be idempotent across interruption/replay, keep secrets redacted,
+          and converge on the same authoritative path as a fresh run.
+        - A migrated phase must remove its old sequencing branch and bridge helpers,
+          with fresh, resumed, repair, and failure coverage at the public boundary.
+
+    - path: "src/lib/messaging/**"
+      instructions: |
+        Review against the manifest-first architecture in
+        `src/lib/messaging/AGENTS.md`.
+
+        - Channel behavior belongs in manifests, resolvers, hooks, and appliers;
+          onboard and sandbox actions should only plan and orchestrate.
+        - A channel migration must remove its duplicated provider, policy, render,
+          credential, and runtime logic from legacy onboarding, rebuild, scripts,
+          and generated-config paths. Transitional tables must be derived from the
+          manifest registry rather than maintained independently.
+        - Verify persisted-plan hydration and parity across onboard, add/remove,
+          start/stop, rebuild, resume, diagnostics, and build-time application.
+        - Plans and persisted state must remain serializable and secret-free.
+
+    - path: "src/lib/{sandbox/**,actions/sandbox/**,state/sandbox.ts}"
+      instructions: |
+        Review sandbox behavior against the layer ownership in `src/lib/README.md`.
+
+        - `src/lib/sandbox/**` is transitional support code, not a new home for
+          workflow orchestration. Actions own lifecycle workflows, domain modules
+          own pure decisions, adapters own Docker/OpenShell/process calls, and state
+          modules own persisted registry data.
+        - When moving a sandbox operation to an action, require every command and
+          internal caller to use it and delete the superseded helper path rather
+          than leaving two lifecycle implementations.
+        - Destructive lifecycle operations must validate before mutation, preserve
+          state/backup invariants, and cover failure, recovery, rebuild, and resume
+          behavior without bypassing the public action boundary.
+
+    - path: "src/lib/{security,credentials,shields}/**"
+      instructions: &security-boundary |
+        Treat this as a security boundary.
+
+        - Trace untrusted input, credential material, filesystem paths, subprocess
+          arguments, and network targets across the full changed flow.
+        - Preserve deny-by-default behavior, least privilege, redaction, and
+          fail-closed handling. Do not weaken a guard only to retain legacy behavior.
+        - Prefer argv arrays and structured APIs over shell command construction.
+        - Require negative-path tests that prove the boundary rejects bypasses and
+          does not leak secrets in errors, logs, state, or process arguments.
+
+    - path: "src/lib/sandbox/{config,privileged-exec}.ts"
+      instructions: *security-boundary
+
+    - path: "nemoclaw/src/security/**"
+      instructions: *security-boundary
+
+    - path: "nemoclaw/src/blueprint/ssrf.ts"
+      instructions: *security-boundary
+
+    - path: "Dockerfile*"
+      instructions: *security-boundary
+
+    - path: "agents/**"
+      instructions: *security-boundary
+
+    - path: "scripts/nemoclaw-start.sh"
+      instructions: *security-boundary
+
+    - path: "scripts/lib/sandbox-init.sh"
+      instructions: *security-boundary
+
+    - path: "nemoclaw-blueprint/scripts/http-proxy-fix.js"
+      instructions: *security-boundary
+
+    - path: "nemoclaw-blueprint/policies/**"
+      instructions: *security-boundary
+
+    - path: "test/e2e/**"
+      instructions: &e2e-migration |
+        Review against the E2E guide in `test/e2e/`. Vitest is the one E2E
+        execution path, and fixtures are support code rather than another runner.
+
+        - Preserve real shell, process, installer, platform, and full-journey
+          boundaries by invoking them from Vitest when they are the contract.
+        - Flag any new top-level `test/e2e/test-*.sh` entry point, parallel E2E
+          workflow, or wrapper that recreates a second execution lane.
+        - Keep migration status and ownership in GitHub issues and PRs. Do not add a
+          repository-local inventory, checklist, or parallel status model.
+        - Flag new runners, compilers, fixture frameworks, or generalized registries
+          when a focused Vitest test and local helper would express the behavior.
+
+    - path: ".github/workflows/e2e.yaml"
+      instructions: *e2e-migration
+
+    - path: "**/*.test.{ts,js,mts,mjs,cts,cjs}"
+      instructions: |
+        Review tests for behavioral confidence rather than implementation lock-in.
+
+        - Prefer observable outcomes through the public boundary over source-text,
+          private-shape, or mock-call assertions.
+        - Flag copied production algorithms, broad mocks that bypass the behavior
+          under test, and conditionals that make a test pass without exercising its
+          claim.
+        - Migration tests must prove the superseded path is unreachable or removed,
+          not merely prove that the new path also works.
+
+    - path: ".github/workflows/**"
+      instructions: |
+        Review workflow changes as trusted automation.
+
+        - A `pull_request_target` workflow must not check out, import, install, or
+          execute PR-controlled code while holding base-repository secrets or write
+          permissions.
+        - Keep permissions least-privileged and pass untrusted values as data rather
+          than interpolating them into shell programs.
+        - Derive job inventories and aggregate dependencies from one source of truth
+          or validate them deterministically. Do not add another manually maintained
+          path-to-job mirror in `.coderabbit.yaml`.
+
+    - path: "scripts/checks/**"
+      instructions: &guardrail |
+        Review guardrails and advisors as product code, not policy prose.
+
+        - Enforce objective invariants with deterministic code. Reserve model prompts
+          for judgment that cannot be computed reliably.
+        - Derive inventories and limits from a canonical source where possible; flag
+          duplicated lists that can silently drift.
+        - A ratchet must be monotonic and must not be weakenable by the PR it checks.
+        - Require focused tests for both detection and false-positive behavior.
+        - Do not duplicate GitHub issue tracking, CI status, or another advisor's
+          responsibility.
+
+    - path: "tools/{pr-review-advisor,e2e-advisor}/**"
+      instructions: *guardrail
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+
 chat:
   auto_reply: true

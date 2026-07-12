@@ -19,7 +19,8 @@ homepage: "https://openclaw.ai"
 install_method: npm  # npm install -g openclaw@<version>
 binary_path: /usr/local/bin/openclaw
 version_command: "openclaw --version"
-expected_version: "2026.4.9"
+expected_version: "2026.6.10"
+version_scheme: calendar
 gateway_command: "openclaw gateway run"
 
 # ── Health probe ────────────────────────────────────────────────
@@ -34,9 +35,8 @@ forward_ports:
 
 # ── Configuration ───────────────────────────────────────────────
 config:
-  immutable_dir: /sandbox/.openclaw
-  writable_dir: /sandbox/.openclaw-data
-  config_file: openclaw.json      # relative to immutable_dir
+  dir: /sandbox/.openclaw
+  config_file: openclaw.json
   format: json
 
 # ── State directories ──────────────────────────────────────────
@@ -52,23 +52,41 @@ state_dirs:
   - cron
   - memory
   - telegram
+  - wechat
+  - whatsapp
   - credentials
+
+# ── Top-level durable state files ───────────────────────────────
+# openclaw.json holds the core OpenClaw settings the state dirs above do not
+# cover: model/provider config, MCP servers, custom agents, and channel
+# account blocks. Without this entry `nemoclaw backup-all` snapshotted the
+# data directories but dropped these settings, so they were lost on rebuild
+# (issue #5027). Backed up with the default copy strategy; the local backup is
+# credential-sanitized (gateway section dropped, secret-bearing fields scrubbed)
+# while OpenShell `resolve:env` placeholders and the `unused` provider sentinel
+# are preserved so the restored config keeps routing through proxy-injected
+# credentials.
+state_files:
+  - path: openclaw.json
+    restore:
+      merge: openclaw-config
+user_managed_files:
+  - .env
+  - .mcp.json
 
 # ── Authentication ──────────────────────────────────────────────
 device_pairing: true
 web_auth_method: device_pairing
 
-# ── Messaging platforms ─────────────────────────────────────────
-messaging_platforms:
-  supported:
-    - telegram
-    - discord
-    - slack
-
 # ── Inference ───────────────────────────────────────────────────
 inference:
   provider_type: gateway_managed
   proxy_support: explicit  # configured in openclaw.json providers block
+
+# ── MCP server support ───────────────────────────────────────────
+mcp:
+  support: bridge
+  adapter: mcporter
 
 # ── Phone-home hosts ───────────────────────────────────────────
 phone_home_hosts:

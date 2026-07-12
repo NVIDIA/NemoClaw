@@ -1,0 +1,219 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.4.14/schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "files": {
+    "ignoreUnknown": true,
+    "includes": [
+      "biome.json",
+      "commitlint.config.js",
+      "package.json",
+      "package-lock.json",
+      "nemoclaw/package.json",
+      "nemoclaw/package-lock.json",
+      "*.ts",
+      "**/*.ts",
+      "**/*.mts",
+      "bin/**/*.js",
+      "scripts/**/*.js",
+      "scripts/**/*.mjs",
+      "test/**/*.js",
+      "!dist",
+      "!nemoclaw/dist",
+      "!node_modules",
+      "!nemoclaw/node_modules",
+      "!docs/_build"
+    ]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100,
+    "lineEnding": "lf"
+  },
+  "javascript": {
+    "globals": [
+      "Buffer",
+      "CustomEvent",
+      "DOMParser",
+      "DocumentLoader",
+      "Element",
+      "Event",
+      "HTMLElement",
+      "MutationObserver",
+      "SearchEngine",
+      "SearchPageManager",
+      "URL",
+      "URLSearchParams",
+      "Utils",
+      "__dirname",
+      "__filename",
+      "clearInterval",
+      "clearTimeout",
+      "console",
+      "document",
+      "exports",
+      "fetch",
+      "lunr",
+      "module",
+      "process",
+      "require",
+      "setInterval",
+      "setTimeout",
+      "window"
+    ],
+    "formatter": {
+      "quoteStyle": "double",
+      "semicolons": "always",
+      "trailingCommas": "all"
+    }
+  },
+  "json": {
+    "formatter": {
+      "trailingCommas": "none"
+    }
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": false,
+      "complexity": {
+        "noExcessiveCognitiveComplexity": {
+          "level": "error",
+          "options": {
+            "maxAllowedComplexity": 149
+          }
+        }
+      },
+      "correctness": {
+        "noUndeclaredVariables": "error"
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": [
+        "bin/**/*.js",
+        "commitlint.config.js",
+        "scripts/**/*.js",
+        "scripts/**/*.mjs",
+        "test/**/*.js",
+        "test/credentials-shim.test.ts",
+        "test/runner-basic.test.ts"
+      ],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noUnusedVariables": "error"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/lib/actions/sandbox/status.ts", "src/lib/actions/sandbox/status-text.ts"],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "error",
+              "options": {
+                "maxAllowedComplexity": 10
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "src/lib/actions/sandbox/doctor.ts",
+        "src/lib/actions/sandbox/doctor-messaging.ts",
+        "src/lib/actions/sandbox/doctor-report.ts",
+        "src/lib/actions/sandbox/doctor-system-checks.ts"
+      ],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "error",
+              "options": {
+                "maxAllowedComplexity": 10
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "src/lib/onboard/machine/handlers/sandbox.ts",
+        "src/lib/onboard/machine/handlers/sandbox-messaging.ts",
+        "src/lib/onboard/machine/handlers/sandbox-resume.ts"
+      ],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "error",
+              "options": {
+                "maxAllowedComplexity": 10
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "src/commands/onboard.ts",
+        "src/commands/setup.ts",
+        "src/commands/setup-spark.ts",
+        "src/lib/actions/onboard.ts",
+        "src/lib/onboard/command.ts",
+        "src/lib/onboard/command-support.ts"
+      ],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "error",
+              "options": {
+                "maxAllowedComplexity": 10
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["nemoclaw/src/**/*.ts"],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "useOptionalChain": "error"
+          },
+          "correctness": {
+            "noUnusedVariables": "error"
+          },
+          "nursery": {
+            "noFloatingPromises": "error",
+            "useExhaustiveSwitchCases": "error",
+            "useNullishCoalescing": "error"
+          },
+          "style": {
+            "noCommonJs": "error",
+            "useExportType": "error",
+            "useImportType": "error"
+          },
+          "suspicious": {
+            "noExplicitAny": "error"
+          }
+        }
+      }
+    }
+  ]
+}

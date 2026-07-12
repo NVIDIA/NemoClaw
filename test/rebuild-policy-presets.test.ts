@@ -10,9 +10,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
-const REPO_ROOT = path.join(import.meta.dirname, "..");
+import { pruneDisabledMessagingPolicyPresets } from "../src/lib/onboard/messaging-policy-presets";
 
 type ManifestWithOptionalPresets = {
   version: number;
@@ -22,14 +22,11 @@ type ManifestWithOptionalPresets = {
   agentVersion: string | null;
   expectedVersion: string | null;
   stateDirs: string[];
-  writableDir: string;
+  dir: string;
   backupPath: string;
   blueprintDigest: string | null;
   policyPresets?: string[] | null;
 };
-
-// Import compiled modules from dist/
-const sandboxState = await import(path.join(REPO_ROOT, "dist", "lib", "sandbox-state.js"));
 
 describe("rebuild policy preset restoration (#1952)", () => {
   describe("RebuildManifest policyPresets field", () => {
@@ -43,7 +40,7 @@ describe("rebuild policy preset restoration (#1952)", () => {
         agentVersion: "1.0.0",
         expectedVersion: "1.0.0",
         stateDirs: ["workspace"],
-        writableDir: "/sandbox/.openclaw",
+        dir: "/sandbox/.openclaw",
         backupPath: "/tmp/backup",
         blueprintDigest: null,
         policyPresets: ["telegram", "npm"],
@@ -60,7 +57,7 @@ describe("rebuild policy preset restoration (#1952)", () => {
         agentVersion: null,
         expectedVersion: null,
         stateDirs: [],
-        writableDir: "/sandbox/.openclaw",
+        dir: "/sandbox/.openclaw",
         backupPath: "/tmp/backup",
         blueprintDigest: null,
       };
@@ -76,7 +73,7 @@ describe("rebuild policy preset restoration (#1952)", () => {
         agentVersion: null,
         expectedVersion: null,
         stateDirs: [],
-        writableDir: "/sandbox/.openclaw",
+        dir: "/sandbox/.openclaw",
         backupPath: "/tmp/backup",
         blueprintDigest: null,
         policyPresets: [],
@@ -105,7 +102,7 @@ describe("rebuild policy preset restoration (#1952)", () => {
         agentVersion: "1.0.0",
         expectedVersion: "1.0.0",
         stateDirs: ["workspace", "memory"],
-        writableDir: "/sandbox/.openclaw",
+        dir: "/sandbox/.openclaw",
         backupPath: tmpDir,
         blueprintDigest: "abc123",
         policyPresets: ["telegram", "npm", "pypi"],
@@ -128,7 +125,7 @@ describe("rebuild policy preset restoration (#1952)", () => {
         agentVersion: "1.0.0",
         expectedVersion: "1.0.0",
         stateDirs: ["workspace"],
-        writableDir: "/sandbox/.openclaw",
+        dir: "/sandbox/.openclaw",
         backupPath: tmpDir,
         blueprintDigest: null,
       };
@@ -170,6 +167,22 @@ describe("rebuild policy preset restoration (#1952)", () => {
       expect(savedPresets.length).toBe(2);
       expect(savedPresets).toContain("telegram");
       expect(savedPresets).toContain("npm");
+    });
+
+    it("disabled messaging channel policy presets are not restored", () => {
+      const manifest = { policyPresets: ["npm", "slack", "pypi"] };
+      const savedPresets = pruneDisabledMessagingPolicyPresets(manifest.policyPresets || [], [
+        "slack",
+      ]);
+      expect(savedPresets).toEqual(["npm", "pypi"]);
+    });
+
+    it("removes optional channel presets when their channel is disabled", () => {
+      const manifest = { policyPresets: ["telegram", "npm", "pypi"] };
+      const savedPresets = pruneDisabledMessagingPolicyPresets(manifest.policyPresets || [], [
+        "telegram",
+      ]);
+      expect(savedPresets).toEqual(["npm", "pypi"]);
     });
   });
 });

@@ -17,22 +17,23 @@ import { resolve } from "node:path";
 
 import {
   isRiskyFile,
-  run,
-  parseStringArg,
-  parseIntArg,
-  REQUIRED_CHECK_NAMES,
-  type StatusCheck,
-  SCORE_MERGE_NOW,
-  SCORE_REVIEW_READY,
-  SCORE_NEAR_MISS,
-  SCORE_SECURITY_ACTIONABLE,
-  SCORE_LABEL_SECURITY,
-  SCORE_LABEL_PRIORITY_HIGH,
-  SCORE_STALE_AGE,
-  PENALTY_DRAFT_OR_CONFLICT,
-  PENALTY_CODERABBIT_MAJOR,
   PENALTY_BROAD_CI_RED,
+  PENALTY_CODERABBIT_MAJOR,
+  PENALTY_DRAFT_OR_CONFLICT,
   PENALTY_MERGE_BLOCKED,
+  parseIntArg,
+  parseStringArg,
+  REQUIRED_CHECK_NAMES,
+  run,
+  SCORE_LABEL_SECURITY,
+  SCORE_MERGE_NOW,
+  SCORE_NEAR_MISS,
+  SCORE_PROJECT_PRIORITY_HIGH,
+  SCORE_PROJECT_PRIORITY_URGENT,
+  SCORE_REVIEW_READY,
+  SCORE_SECURITY_ACTIONABLE,
+  SCORE_STALE_AGE,
+  type StatusCheck,
 } from "./shared.ts";
 
 // ---------------------------------------------------------------------------
@@ -73,6 +74,7 @@ interface ClassifiedPr {
   createdAt: string;
   draft: boolean;
   labels: string[];
+  projectPriority: string | null;
 }
 
 interface QueueItem {
@@ -90,6 +92,7 @@ interface QueueItem {
   nextAction: string;
   ageHours: number;
   labels: string[];
+  projectPriority: string | null;
 }
 
 interface HotCluster {
@@ -131,13 +134,17 @@ function ghApi(path: string): unknown {
 // Data fetching
 // ---------------------------------------------------------------------------
 
-function fetchOpenPrs(repo: string, approvedOnly: boolean): PrData[] {
+function fetchOpenPrs(repo: string): PrData[] {
   // Use gh api --paginate with REST for lightweight pagination (no GraphQL timeout).
   // --jq outputs one JSON object per PR per page; we collect them as NDJSON then parse.
-  const out = run("gh", [
-    "api", "--paginate",
-    `repos/${repo}/pulls?state=open&per_page=100`,
-    "--jq", `.[] | {
+  const out = run(
+    "gh",
+    [
+      "api",
+      "--paginate",
+      `repos/${repo}/pulls?state=open&per_page=100`,
+      "--jq",
+      `.[] | {
       number, title, url: .html_url,
       author: {login: .user.login},
       additions: 0, deletions: 0, changedFiles: 0,
@@ -152,7 +159,9 @@ function fetchOpenPrs(repo: string, approvedOnly: boolean): PrData[] {
       labels: [.labels[] | {name}],
       statusCheckRollup: []
     }`,
-  ], 300_000);
+    ],
+    300_000,
+  );
   if (!out) return [];
 
   try {
@@ -163,9 +172,6 @@ function fetchOpenPrs(repo: string, approvedOnly: boolean): PrData[] {
       if (trimmed && trimmed.startsWith("{")) {
         prs.push(JSON.parse(trimmed) as PrData);
       }
-    }
-    if (approvedOnly) {
-      return prs.filter((pr) => pr.reviewDecision === "APPROVED");
     }
     return prs;
   } catch {
@@ -179,8 +185,13 @@ function fetchOpenPrs(repo: string, approvedOnly: boolean): PrData[] {
  */
 function enrichPr(repo: string, pr: PrData): void {
   const out = run("gh", [
-    "pr", "view", String(pr.number), "--repo", repo,
-    "--json", "reviewDecision,statusCheckRollup,additions,deletions,changedFiles",
+    "pr",
+    "view",
+    String(pr.number),
+    "--repo",
+    repo,
+    "--json",
+    "reviewDecision,statusCheckRollup,additions,deletions,changedFiles",
   ]);
   if (!out) return;
   try {
@@ -196,7 +207,9 @@ function enrichPr(repo: string, pr: PrData): void {
     pr.additions = data.additions;
     pr.deletions = data.deletions;
     pr.changedFiles = data.changedFiles;
-  } catch { /* leave as-is */ }
+  } catch {
+    /* leave as-is */
+  }
 }
 
 function classifyPr(pr: PrData): ClassifiedPr {
@@ -215,9 +228,7 @@ function classifyPr(pr: PrData): ClassifiedPr {
   // contributors need "Approve and run" before pull_request workflows
   // execute. Until then only pull_request_target checks and external
   // bots appear — treat that as not-green.
-  const presentNames = new Set(
-    checks.map((c) => c.name ?? c.context ?? "").filter(Boolean),
-  );
+  const presentNames = new Set(checks.map((c) => c.name ?? c.context ?? "").filter(Boolean));
   if (REQUIRED_CHECK_NAMES.some((name) => !presentNames.has(name))) {
     checksGreen = false;
   }
@@ -257,8 +268,10 @@ function classifyPr(pr: PrData): ClassifiedPr {
   const blocked = mergeState === "BLOCKED";
   if (blocked && !hasConflict) reasons.push("merge-blocked");
 
-  // Simple CodeRabbit heuristic: check labels for major findings
-  // (Full CodeRabbit check is in check-gates.ts via GraphQL)
+  // CodeRabbit and PR Review Advisor are not checked here — fetching per-PR
+  // comments/threads for every open PR would make triage too slow. Both are
+  // checked as hard gates in check-gates.ts. A PR may appear as merge-now
+  // here but still fail the gate — always run check-gates.ts before approving.
   const coderabbitMajor = false; // conservative — gate checker does the real check
 
   // Classify into buckets
@@ -267,8 +280,7 @@ function classifyPr(pr: PrData): ClassifiedPr {
   // review-ready: green CI + no conflicts + not draft — best candidates for review
   const reviewReady = !draft && !mergeNow && checksGreen && !hasConflict;
   // near-miss: not draft, has fixable blockers (failing CI or minor conflict)
-  const nearMiss = !draft && !mergeNow && !reviewReady && reasons.length <= 2 &&
-    !hasConflict;
+  const nearMiss = !draft && !mergeNow && !reviewReady && reasons.length <= 2 && !hasConflict;
 
   return {
     number: pr.number,
@@ -287,15 +299,77 @@ function classifyPr(pr: PrData): ClassifiedPr {
     createdAt: pr.createdAt,
     draft,
     labels: (pr.labels ?? []).map((l) => l.name),
+    projectPriority: null,
   };
 }
 
 function fetchPrFiles(repo: string, number: number): string[] {
-  const data = ghApi(`repos/${repo}/pulls/${number}/files?per_page=100`) as
-    | Array<{ filename: string }>
-    | null;
+  const data = ghApi(`repos/${repo}/pulls/${number}/files?per_page=100`) as Array<{
+    filename: string;
+  }> | null;
   if (!Array.isArray(data)) return [];
   return data.map((f) => f.filename);
+}
+
+function fetchProjectPriorities(repo: string): Map<number, string> {
+  if (repo !== "NVIDIA/NemoClaw") return new Map();
+
+  const out = run("gh", [
+    "api",
+    "graphql",
+    "--paginate",
+    "-f",
+    `query=query($endCursor: String) {
+      organization(login: "NVIDIA") {
+        projectV2(number: 199) {
+          items(first: 100, after: $endCursor) {
+            nodes {
+              content {
+                ... on PullRequest { number repository { nameWithOwner } }
+              }
+              fieldValues(first: 100) {
+                nodes {
+                  ... on ProjectV2ItemFieldSingleSelectValue {
+                    name
+                    field { ... on ProjectV2SingleSelectField { name } }
+                  }
+                }
+              }
+            }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }
+    }`,
+    "--jq",
+    '.data.organization.projectV2.items.nodes[] | {number: .content.number, repository: .content.repository.nameWithOwner, priority: ([.fieldValues.nodes[] | select(.field.name == "Priority") | .name][0] // null)}',
+  ]);
+  if (!out) return new Map();
+
+  try {
+    const priorities = new Map<number, string>();
+    for (const line of out.split("\n")) {
+      if (!line.trim()) continue;
+      const item = JSON.parse(line) as {
+        number?: number;
+        repository?: string;
+        priority?: string | null;
+      };
+      if (
+        item.repository === repo &&
+        typeof item.number === "number" &&
+        typeof item.priority === "string"
+      ) {
+        priorities.set(item.number, item.priority);
+      }
+    }
+    return priorities;
+  } catch {
+    process.stderr.write(
+      "Could not parse Project 199 item data; continuing without priority boosts.\n",
+    );
+    return new Map();
+  }
 }
 
 function loadState(): StateFile | null {
@@ -316,7 +390,11 @@ function loadState(): StateFile | null {
 function scoreItem(
   item: ClassifiedPr,
   riskyFiles: string[],
-): { score: number; bucket: "merge-now" | "review-ready" | "salvage-now" | "blocked"; nextAction: string } {
+): {
+  score: number;
+  bucket: "merge-now" | "review-ready" | "salvage-now" | "blocked";
+  nextAction: string;
+} {
   let score = 0;
   let bucket: "merge-now" | "review-ready" | "salvage-now" | "blocked" = "blocked";
   let nextAction = "review";
@@ -340,10 +418,11 @@ function scoreItem(
     nextAction = bucket === "merge-now" ? "security-sweep → merge-gate" : "security-sweep → review";
   }
 
-  // GitHub label boosts
+  // Canonical routing-label and Project Priority boosts
   const labelSet = new Set(item.labels.map((l) => l.toLowerCase()));
   if (labelSet.has("security")) score += SCORE_LABEL_SECURITY;
-  if (labelSet.has("priority: high")) score += SCORE_LABEL_PRIORITY_HIGH;
+  if (item.projectPriority === "Urgent") score += SCORE_PROJECT_PRIORITY_URGENT;
+  if (item.projectPriority === "High") score += SCORE_PROJECT_PRIORITY_HIGH;
 
   if (item.updatedAt) {
     const age = Date.now() - new Date(item.updatedAt).getTime();
@@ -405,39 +484,60 @@ function main(): void {
 
   // 1. Fetch all open PRs via REST (lightweight, paginated, no GraphQL timeout)
   process.stderr.write("Fetching all open PRs via REST...\n");
-  const prs = fetchOpenPrs(repo, false);
+  const prs = fetchOpenPrs(repo);
   if (prs.length === 0) {
     console.error("No open PRs found. GitHub API may be experiencing issues.");
     process.exit(1);
   }
   process.stderr.write(`Found ${prs.length} open PRs. Filtering non-draft candidates...\n`);
 
-  // 2. Filter to non-draft, then enrich top candidates with CI + review data.
+  // 2. Fetch Project Priority before choosing the capped enrichment set so an
+  // Urgent or High PR cannot be hidden outside the REST list's initial order.
+  const projectPriorities = fetchProjectPriorities(repo);
+  const priorityRank = new Map([
+    ["Urgent", 2],
+    ["High", 1],
+  ]);
+
+  // 3. Filter to non-draft, prioritize Urgent/High, then enrich top candidates
+  // with CI + review data.
   // NOTE: Enrichment is capped at limit*3 by design — each enrichPr() call is
   // a separate GitHub API request, so we intentionally limit the blast radius.
   // Un-enriched PRs will classify as "blocked" (empty checks), which is the
   // safe default. This is NOT a bug.
-  const candidates = prs.filter((pr) => !pr.isDraft);
+  const candidates = prs
+    .filter((pr) => !pr.isDraft)
+    .sort(
+      (a, b) =>
+        (priorityRank.get(projectPriorities.get(b.number) ?? "") ?? 0) -
+        (priorityRank.get(projectPriorities.get(a.number) ?? "") ?? 0),
+    );
   const enrichCount = Math.min(candidates.length, limit * 3);
   process.stderr.write(`Enriching ${enrichCount} of ${candidates.length} candidates...\n`);
   for (let i = 0; i < enrichCount; i++) {
     enrichPr(repo, candidates[i]);
   }
 
-  // 3. Classify all PRs (un-enriched ones will be blocked due to empty checks)
-  const classified = prs.map(classifyPr);
+  // 4. Apply --approved-only after enrichment, when reviewDecision is known,
+  // then classify all retained PRs. Un-enriched PRs have an empty review
+  // decision and are excluded in approved-only mode; otherwise they classify
+  // as blocked due to empty checks.
+  const classified = prs
+    .filter((pr) => !approvedOnly || pr.reviewDecision === "APPROVED")
+    .map(classifyPr);
+  for (const item of classified) {
+    item.projectPriority = projectPriorities.get(item.number) ?? null;
+  }
   process.stderr.write(
     `Classified: ${classified.filter((c) => c.mergeNow).length} merge-now, ` +
-    `${classified.filter((c) => c.reviewReady).length} review-ready, ` +
-    `${classified.filter((c) => c.nearMiss).length} near-miss, ` +
-    `${classified.filter((c) => !c.mergeNow && !c.reviewReady && !c.nearMiss).length} blocked\n`,
+      `${classified.filter((c) => c.reviewReady).length} review-ready, ` +
+      `${classified.filter((c) => c.nearMiss).length} near-miss, ` +
+      `${classified.filter((c) => !c.mergeNow && !c.reviewReady && !c.nearMiss).length} blocked\n`,
   );
 
   // 2. Load exclusions
   const state = loadState();
-  const excludedPrs = new Set(
-    Object.keys(state?.excluded?.prs ?? {}).map(Number),
-  );
+  const excludedPrs = new Set(Object.keys(state?.excluded?.prs ?? {}).map(Number));
 
   const allItems = classified.filter((item) => !excludedPrs.has(item.number));
 
@@ -478,12 +578,15 @@ function main(): void {
         ? Math.floor((Date.now() - new Date(item.createdAt).getTime()) / 3_600_000)
         : 0,
       labels: item.labels,
+      projectPriority: item.projectPriority,
     });
   }
 
   // 4. Sort and rank
   scored.sort((a, b) => b.score - a.score);
-  const queue = scored.filter((s) => s.bucket === "merge-now" || s.bucket === "review-ready").slice(0, limit);
+  const queue = scored
+    .filter((s) => s.bucket === "merge-now" || s.bucket === "review-ready")
+    .slice(0, limit);
   const nearMisses = scored.filter((s) => s.bucket === "salvage-now").slice(0, limit);
   queue.forEach((item, i) => (item.rank = i + 1));
   nearMisses.forEach((item, i) => (item.rank = i + 1));

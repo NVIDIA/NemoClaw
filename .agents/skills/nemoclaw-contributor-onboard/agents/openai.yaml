@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+interface:
+  display_name: "NemoClaw Contributor Setup"
+  short_description: "Prepare a checkout for a first PR"
+  default_prompt: "Use $nemoclaw-contributor-onboard to set up this machine as a NemoClaw contributor and prepare it for a first PR."

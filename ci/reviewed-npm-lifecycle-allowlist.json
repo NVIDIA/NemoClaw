@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "defaultPolicy": "deny",
+  "reviewedArchivePackages": [
+    "@openclaw/brave-plugin@2026.6.10",
+    "@openclaw/diagnostics-otel@2026.6.10",
+    "@openclaw/discord@2026.6.10",
+    "@openclaw/msteams@2026.6.10",
+    "@openclaw/slack@2026.6.10",
+    "@openclaw/whatsapp@2026.6.10",
+    "@tencent-weixin/openclaw-weixin@2.4.3",
+    "@zed-industries/codex-acp@0.11.1",
+    "openclaw@2026.3.11",
+    "openclaw@2026.4.24",
+    "openclaw@2026.6.10"
+  ],
+  "allowedLifecycleScripts": [
+    {
+      "packageSpec": "openclaw@2026.4.24",
+      "event": "postinstall",
+      "manifestCommand": "node scripts/postinstall-bundled-plugins.mjs",
+      "explicitCommand": "node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs"
+    },
+    {
+      "packageSpec": "openclaw@2026.6.10",
+      "event": "postinstall",
+      "manifestCommand": "node scripts/postinstall-bundled-plugins.mjs",
+      "explicitCommand": "node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs"
+    }
+  ]
+}

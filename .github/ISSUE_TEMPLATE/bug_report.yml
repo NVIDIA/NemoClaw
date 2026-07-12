@@ -1,7 +1,30 @@
 name: Bug Report
-description: Report a bug you confirmed and could not fix.
-labels: ["bug", "status: triage"]
+description: Report a reproduced bug with concise evidence. See CONTRIBUTING.md.
+type: Bug
+labels: ["needs: triage"]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Before Filing
+
+        Before filing, ask your coding agent to reproduce the bug and collect only the evidence needed to show the actual and expected behavior. Use the relevant NemoClaw skills when helpful. Stop once you have the minimal reproduction, environment, and debug output. See [CONTRIBUTING.md](https://github.com/NVIDIA/NemoClaw/blob/main/CONTRIBUTING.md) for issue expectations.
+
+  - type: textarea
+    id: investigation-summary
+    attributes:
+      label: Investigation Summary
+      description: |
+        In at most five bullets, summarize confirmed evidence and what remains unknown.
+        Do not paste an analysis transcript.
+      placeholder: |
+        Example:
+        - `nemoclaw status` reports the sandbox as registered but not ready
+        - The failure reproduces after onboarding on a clean machine
+        - The attached debug bundle shows the gateway never became healthy
+    validations:
+      required: false
+
   - type: textarea
     id: description
     attributes:
@@ -28,7 +51,8 @@ body:
       label: Environment
       description: OS, Node.js version, Docker version, NemoClaw version, and any other relevant details.
       placeholder: |
-        - OS: macOS 15.2 / Ubuntu 24.04 / Windows 11 + WSL2
+        - OS: Ubuntu 24.04 / Windows 11 + WSL2 / macOS 15.2
+        - Hardware: DGX Spark / DGX Station / N1X / Jetson / x86_64 workstation / other
         - Node.js: v20.x
         - Docker: Docker Desktop 4.x / Docker Engine 27.x
         - NemoClaw: v0.x.x (output of `nemoclaw --version`)
@@ -42,9 +66,8 @@ body:
       description: |
         Run `nemoclaw debug --output /tmp/nemoclaw-debug.tar.gz` and attach the
         tarball, or paste the output of `nemoclaw debug --quick` below.
-      render: shell
     validations:
-      required: false
+      required: true
 
   - type: textarea
     id: logs

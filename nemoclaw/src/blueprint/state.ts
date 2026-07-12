@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { isObjectRecord } from "../shared/object-record.js";
 
 const STATE_DIR = join(homedir(), ".nemoclaw", "state");
 
@@ -18,20 +20,6 @@ export interface NemoClawState {
   updatedAt: string;
   lastRebuildAt: string | null;
   lastRebuildBackupPath: string | null;
-
-  // Shields state (RFC: Sandbox Management Commands, Phase 1)
-  shieldsDown: boolean;
-  shieldsDownAt: string | null;
-  shieldsDownTimeout: number | null;
-  shieldsDownReason: string | null;
-  shieldsDownPolicy: string | null;
-  shieldsPolicySnapshotPath: string | null;
-}
-
-type UnknownRecord = { [key: string]: unknown };
-
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function readNullableString(value: unknown): string | null | undefined {
@@ -42,16 +30,8 @@ function readString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-function readBoolean(value: unknown): boolean | undefined {
-  return typeof value === "boolean" ? value : undefined;
-}
-
-function readNullableNumber(value: unknown): number | null | undefined {
-  return value === undefined || value === null || typeof value === "number" ? value : undefined;
-}
-
 function readStatePatch(value: unknown): Partial<NemoClawState> {
-  if (!isRecord(value)) {
+  if (!isObjectRecord(value)) {
     return {};
   }
 
@@ -76,18 +56,6 @@ function readStatePatch(value: unknown): Partial<NemoClawState> {
     patch.lastRebuildAt = readNullableString(value.lastRebuildAt);
   if (readNullableString(value.lastRebuildBackupPath) !== undefined)
     patch.lastRebuildBackupPath = readNullableString(value.lastRebuildBackupPath);
-  if (readBoolean(value.shieldsDown) !== undefined)
-    patch.shieldsDown = readBoolean(value.shieldsDown);
-  if (readNullableString(value.shieldsDownAt) !== undefined)
-    patch.shieldsDownAt = readNullableString(value.shieldsDownAt);
-  if (readNullableNumber(value.shieldsDownTimeout) !== undefined)
-    patch.shieldsDownTimeout = readNullableNumber(value.shieldsDownTimeout);
-  if (readNullableString(value.shieldsDownReason) !== undefined)
-    patch.shieldsDownReason = readNullableString(value.shieldsDownReason);
-  if (readNullableString(value.shieldsDownPolicy) !== undefined)
-    patch.shieldsDownPolicy = readNullableString(value.shieldsDownPolicy);
-  if (readNullableString(value.shieldsPolicySnapshotPath) !== undefined)
-    patch.shieldsPolicySnapshotPath = readNullableString(value.shieldsPolicySnapshotPath);
 
   return patch;
 }
@@ -118,12 +86,6 @@ function blankState(): NemoClawState {
     updatedAt: new Date().toISOString(),
     lastRebuildAt: null,
     lastRebuildBackupPath: null,
-    shieldsDown: false,
-    shieldsDownAt: null,
-    shieldsDownTimeout: null,
-    shieldsDownReason: null,
-    shieldsDownPolicy: null,
-    shieldsPolicySnapshotPath: null,
   };
 }
 
@@ -135,8 +97,8 @@ export function loadState(): NemoClawState {
   }
 
   try {
-    // Merge over blankState so that state files created before shields fields
-    // were added still return valid NemoClawState with sensible defaults.
+    // Merge validated persisted values over current defaults so older state
+    // files remain compatible as the plugin state schema evolves.
     const persisted: unknown = JSON.parse(readFileSync(path, "utf-8"));
     return { ...blankState(), ...readStatePatch(persisted) };
   } catch {
@@ -144,17 +106,21 @@ export function loadState(): NemoClawState {
   }
 }
 
+function writeStateFile(state: NemoClawState): void {
+  const finalPath = statePath();
+  const tmpPath = `${finalPath}.${process.pid}.${randomUUID()}.tmp`;
+  writeFileSync(tmpPath, JSON.stringify(state, null, 2), { mode: 0o600 });
+  renameSync(tmpPath, finalPath);
+}
+
 export function saveState(state: NemoClawState): void {
   ensureStateDir();
   state.updatedAt = new Date().toISOString();
   state.createdAt ??= state.updatedAt;
-  writeFileSync(statePath(), JSON.stringify(state, null, 2));
+  writeStateFile(state);
 }
 
 export function clearState(): void {
   ensureStateDir();
-  const path = statePath();
-  if (existsSync(path)) {
-    writeFileSync(path, JSON.stringify(blankState(), null, 2));
-  }
+  writeStateFile(blankState());
 }

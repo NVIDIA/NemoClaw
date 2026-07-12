@@ -1,0 +1,155 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Set Up vLLM"
+sidebar-title: "Set Up vLLM"
+description: "Connect NemoClaw to an existing vLLM server or start a managed vLLM container."
+description-agent: "Shows how to configure existing and managed vLLM servers for NemoClaw, including model overrides and non-interactive setup."
+keywords: ["nemoclaw vllm", "managed vllm", "local vllm inference"]
+content:
+  type: "how_to"
+---
+
+NemoClaw can connect to an existing vLLM server or install and start a managed vLLM container on supported NVIDIA GPU hosts.
+
+<Note>
+NemoClaw forces the Chat Completions API path for vLLM.
+The vLLM `/v1/responses` endpoint does not run the configured tool-call parser, so tool calls can arrive as raw text.
+</Note>
+
+<Warning>
+Local vLLM does not require authentication by default.
+NemoClaw needs port `8000` on host loopback for validation and on the OpenShell Docker bridge for sandbox traffic.
+Use a host firewall with default-deny inbound rules.
+Allow TCP port `8000` only from the OpenShell Docker subnet to its gateway address, keep loopback access, and deny the port on every other interface.
+Do not expose the port to your LAN or the internet.
+</Warning>
+
+## Use an Existing Server
+
+When vLLM is already running on `localhost:8000`, NemoClaw detects it and queries `/v1/models` for the loaded model.
+
+Run onboarding.
+
+```bash
+$$nemoclaw onboard
+```
+
+Select **Local vLLM**.
+On generic hosts, the entry includes an experimental label; on DGX Spark or DGX Station, it does not.
+NemoClaw validates the detected endpoint and records the model reported by `/v1/models`.
+When vLLM exposes runtime metadata such as `max_model_len`, NemoClaw uses that value for the configured context window unless you set `NEMOCLAW_CONTEXT_WINDOW`.
+
+Start vLLM with the model you want before onboarding because NemoClaw uses the model already served by the endpoint.
+
+## Configure Structured Tool Calls
+
+Start vLLM with automatic tool choice and the tool-call parser that matches the model family when the model serves a tool-using agent.
+For a Hermes 3 style model, use this command shape.
+
+```bash
+vllm serve /models/Hermes-3-Llama-3.1-8B \
+  --served-model-name hermes-3-llama-3.1-8b \
+  --enable-auto-tool-choice \
+  --tool-call-parser hermes \
+  --host 0.0.0.0 \
+  --port 8000
+```
+
+Use the parser required by your selected model instead of copying `hermes` for another model family.
+Without both `--enable-auto-tool-choice` and a matching parser, tool calls can appear as raw assistant text instead of structured `tool_calls`.
+
+## Install or Start Managed vLLM
+
+NemoClaw displays the **Install vLLM** or **Start vLLM** entry by default on DGX Spark and DGX Station.
+Generic Linux NVIDIA GPU hosts require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm` before the managed entry appears.
+
+In an interactive run, the managed path lists the supported model registry for your host profile.
+Press **Enter** to use the profile default or select another validated model with its registered `vllm serve` arguments.
+
+NemoClaw pulls the vLLM image, downloads model weights into `~/.cache/huggingface`, starts the `nemoclaw-vllm` container on `localhost:8000`, streams Hugging Face download progress, and polls `/v1/models` until the model is ready.
+Managed DGX Spark and DGX Station profiles use `nvcr.io/nvidia/vllm:26.05.post1-py3`.
+Image pulls from `nvcr.io` require NGC registry login.
+
+The first run can take 10 to 30 minutes.
+Later runs reuse the cached image and model weights.
+The managed container uses Docker's `--restart unless-stopped` policy, so Docker restarts it unless an operator explicitly stops it.
+
+If image pull output stops making progress, a watchdog stops the stalled pull without imposing a fixed wall-clock limit on slow but active downloads.
+If vLLM does not become ready, NemoClaw prints a short tail of the container logs before exiting.
+
+Managed vLLM uses these profile defaults:
+
+| Host profile | Default model |
+|---|---|
+| DGX Spark | `nvidia/Qwen3.6-35B-A3B-NVFP4` |
+| DGX Station | `deepseek-ai/DeepSeek-V4-Flash` |
+| Linux with an NVIDIA GPU | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` |
+
+## Run Non-Interactive Onboarding
+
+Use an already-running server.
+
+```bash
+NEMOCLAW_PROVIDER=vllm \
+  $$nemoclaw onboard --non-interactive
+```
+
+Install or start managed vLLM on a supported host.
+
+```bash
+NEMOCLAW_PROVIDER=install-vllm \
+  $$nemoclaw onboard --non-interactive
+```
+
+On DGX Spark and DGX Station, `NEMOCLAW_PROVIDER=install-vllm` is sufficient for a non-interactive run.
+Add `NEMOCLAW_EXPERIMENTAL=1` on a generic Linux NVIDIA GPU host.
+Non-interactive runs use the profile default unless you set `NEMOCLAW_VLLM_MODEL`.
+
+## Select a Managed Model
+
+Set `NEMOCLAW_VLLM_MODEL=<slug>` before onboarding to select a model without prompting.
+NemoClaw applies the registered `vllm serve` arguments, including the reasoning parser, tool-call parser, and `--max-model-len`.
+
+| Slug | Hugging Face model | Notes |
+|---|---|---|
+| `qwen3.6-27b` | `Qwen/Qwen3.6-27B-FP8` | Supported override. |
+| `qwen3.6-35b-a3b-nvfp4` | `nvidia/Qwen3.6-35B-A3B-NVFP4` | DGX Spark default. |
+| `nemotron-3-nano-4b` | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` | Generic Linux NVIDIA GPU default. |
+| `deepseek-v4-flash` | `deepseek-ai/DeepSeek-V4-Flash` | DGX Station default. |
+| `deepseek-r1-distill-70b` | `deepseek-ai/DeepSeek-R1-Distill-Llama-70B` | Gated and requires license acceptance. |
+
+Slugs are case-insensitive, and NemoClaw also accepts the full Hugging Face model ID.
+An unrecognized value fails before image or model downloads and prints the valid slugs.
+
+Gated models require a Hugging Face token.
+Export `HF_TOKEN` before onboarding so NemoClaw can forward it to the managed container.
+
+```bash
+export HF_TOKEN="<your-hf-token>"
+NEMOCLAW_PROVIDER=install-vllm \
+  NEMOCLAW_VLLM_MODEL=deepseek-r1-distill-70b \
+  $$nemoclaw onboard --non-interactive
+```
+
+NemoClaw also accepts `HUGGING_FACE_HUB_TOKEN`.
+The host checks the token before `docker pull`, so a missing or empty token stops onboarding before bandwidth is spent on a request that would return `401`.
+
+## Add Managed Serve Arguments
+
+Set `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` to a JSON array of individual non-blank `vllm serve` tokens for operator-owned options that are not in the registry.
+NemoClaw trims and validates the array before downloads, shell-quotes each token, and appends the tokens after the registry defaults.
+
+```bash
+NEMOCLAW_PROVIDER=install-vllm \
+  NEMOCLAW_VLLM_EXTRA_ARGS_JSON='["--max-num-seqs","2","--disable-log-requests"]' \
+  $$nemoclaw onboard --non-interactive
+```
+
+If the selected image does not support an argument, the managed container exits and NemoClaw prints the log tail.
+
+## Related Topics
+
+- [Choose a Local Inference Server](choose-local-inference-server) to compare vLLM with Ollama and NVIDIA NIM.
+- [Configure Inference Timeouts](../manage-inference/configure-inference-timeouts) when model startup or validation needs more time.
+- [Verify the Inference Route](../validate-inference/verify-inference-route) after setup.

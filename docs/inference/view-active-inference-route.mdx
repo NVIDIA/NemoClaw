@@ -1,0 +1,75 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "View the Active Inference Route"
+sidebar-title: "View the Active Route"
+description: "Inspect the provider and model on the live NemoClaw-managed OpenShell inference route."
+description-agent: "Shows the live inference provider and model. Use when checking the active route before or after an inference change."
+keywords: ["nemoclaw inference get", "active inference provider", "active inference model"]
+content:
+  type: "how_to"
+---
+
+Use the NemoClaw CLI to read the provider and model on the live OpenShell inference route.
+This command reports configuration state and does not authenticate a model request.
+
+## Read the Live Route
+
+Run the direct route command when you only need the active provider and model.
+
+```bash
+$$nemoclaw inference get
+```
+
+Expected output:
+
+```text
+Provider: nvidia-prod
+Model:    nvidia/nemotron-3-super-120b-a12b
+```
+
+Pass `--json` for machine-readable output.
+
+```bash
+$$nemoclaw inference get --json
+```
+
+Expected output:
+
+```json
+{
+  "provider": "nvidia-prod",
+  "model": "nvidia/nemotron-3-super-120b-a12b"
+}
+```
+
+The command exits non-zero with `OpenShell inference route is not configured.` when the gateway has no registered inference route.
+Run `$$nemoclaw onboard` to configure one.
+
+## Use the Sandbox-First Form
+
+Use the sandbox-first form when you are already working with a named sandbox.
+
+```bash
+$$nemoclaw <name> inference get
+```
+
+The command resolves the gateway recorded for that sandbox and reads its gateway-wide route.
+OpenShell exposes one inference route to every sandbox registered on the same gateway.
+
+## Include Sandbox Health
+
+Run the sandbox status command when you also need service, messaging, and inference health.
+
+```bash
+$$nemoclaw <name> status
+```
+
+The status output includes the configured provider, model, and endpoint with the rest of the sandbox state.
+Use the route verification workflow when you need to prove that an inference request succeeds through the sandbox path.
+
+## Related Topics
+
+- [Verify the Sandbox Inference Route](../validate-inference/verify-inference-route) for an end-to-end route check.
+- [Switch Models](switch-models) to select another model.
+- [Switch Providers](switch-providers) to move to another provider family.

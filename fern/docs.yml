@@ -1,0 +1,284 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Fern site config for the NemoClaw documentation site.
+instances:
+  - url: nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw
+    multi-source: true
+  - url: nvidia-nemoclaw.docs.buildwithfern.com/nemoclaw
+    custom-domain: docs.nvidia.com/nemoclaw
+    multi-source: true
+
+title: NVIDIA NemoClaw
+
+global-theme: nvidia
+
+layout:
+  searchbar-placement: header
+  page-width: 1376px
+  sidebar-width: 248px
+  content-width: 812px
+  tabs-placement: header
+  hide-feedback: true
+
+colors:
+  accentPrimary:
+    dark: "#76B900"
+    light: "#76B900"
+  background:
+    light: "#FFFFFF"
+    dark: "#000000"
+
+theme:
+  page-actions: toolbar
+  footer-nav: minimal
+
+logo:
+  href: /nemoclaw/latest
+  right-text: NemoClaw
+
+favicon: ./assets/NVIDIA_symbol.svg
+
+js:
+  - url: https://assets.adobedtm.com/5d4962a43b79/c1061d2c5e7b/launch-191c2462b890.min.js
+    strategy: beforeInteractive
+
+css:
+  - ./main.css
+
+navbar-links:
+  - type: github
+    value: https://github.com/NVIDIA/NemoClaw
+
+experimental:
+  mdx-components:
+    - ../docs/_components
+    - ./components
+
+versions:
+  - display-name: Latest
+    path: ../docs/index.yml
+    slug: latest
+
+redirects:
+  # Paths are relative to the site root; subpath prefix matches instances + custom-domain.
+  # Legacy HTML URLs used .../path/to/page/index.html; Fern canonical URLs omit index.html.
+  # List explicit /index.html routes before :path*/index.html so empty path segments do not
+  # mis-resolve (see NeMo-Curator fern/docs.yml). :path*.html must follow :path*/index.html rules.
+  # https://www.buildwithfern.com/learn/docs/configuration/site-level-settings#redirects-configuration
+  - source: "/nemoclaw/index.html"
+    destination: "/nemoclaw/latest"
+  - source: "/nemoclaw/index"
+    destination: "/nemoclaw/latest"
+  - source: "/nemoclaw/latest/index.html"
+    destination: "/nemoclaw/latest"
+  - source: "/nemoclaw/latest/index"
+    destination: "/nemoclaw/latest"
+  - source: "/nemoclaw/latest"
+    destination: "/nemoclaw/latest/user-guide/openclaw/home"
+  - source: "/nemoclaw/home"
+    destination: "/nemoclaw/latest/user-guide/openclaw/home"
+  - source: "/nemoclaw/latest/home"
+    destination: "/nemoclaw/latest/user-guide/openclaw/home"
+  - source: "/nemoclaw/latest/:path*/index.html"
+    destination: "/nemoclaw/latest/:path*"
+  - source: "/nemoclaw/:path*/index.html"
+    destination: "/nemoclaw/:path*"
+  - source: "/nemoclaw/:path*.html"
+    destination: "/nemoclaw/:path*"
+  - source: "/nemoclaw/latest/reference/inference-profiles"
+    destination: "/nemoclaw/latest/user-guide/openclaw/inference/learn-and-choose/choose-inference-provider"
+  - source: "/nemoclaw/latest/get-started/windows-setup"
+    destination: "/nemoclaw/latest/user-guide/openclaw/get-started/prerequisites/windows-preparation"
+  - source: "/nemoclaw/latest/deployment/set-up-telegram-bridge"
+    destination: "/nemoclaw/latest/user-guide/openclaw/manage-sandboxes/messaging-channels"
+  - source: "/nemoclaw/latest/workspace/workspace-files"
+    destination: "/nemoclaw/latest/user-guide/openclaw/manage-sandboxes/workspace-files"
+  - source: "/nemoclaw/latest/workspace/backup-restore"
+    destination: "/nemoclaw/latest/user-guide/openclaw/manage-sandboxes/backup-restore"
+  # Variant titles can differ from URL slugs; redirect auto-derived slugs to stable openclaw/hermes paths.
+  - source: "/nemoclaw/latest/user-guide/open-claw/:path*"
+    destination: "/nemoclaw/latest/user-guide/openclaw/:path*"
+  - source: "/nemoclaw/user-guide/open-claw/:path*"
+    destination: "/nemoclaw/user-guide/openclaw/:path*"
+  - source: "/nemoclaw/latest/user-guide/nemoclaw-for-openclaw/:path*"
+    destination: "/nemoclaw/latest/user-guide/openclaw/:path*"
+  - source: "/nemoclaw/latest/user-guide/nemoclaw-for-hermes/:path*"
+    destination: "/nemoclaw/latest/user-guide/hermes/:path*"
+  - source: "/nemoclaw/user-guide/nemoclaw-for-openclaw/:path*"
+    destination: "/nemoclaw/user-guide/openclaw/:path*"
+  - source: "/nemoclaw/user-guide/nemoclaw-for-hermes/:path*"
+    destination: "/nemoclaw/user-guide/hermes/:path*"
+  - source: "/nemoclaw/latest/user-guide/hermes/get-started/quickstart-hermes"
+    destination: "/nemoclaw/latest/user-guide/hermes/get-started/quickstart"
+  - source: "/nemoclaw/user-guide/hermes/get-started/quickstart-hermes"
+    destination: "/nemoclaw/user-guide/hermes/get-started/quickstart"
+  - source: "/nemoclaw/latest/user-guide/openclaw/get-started/quickstart-langchain-deepagents-code"
+    destination: "/nemoclaw/latest/user-guide/deepagents/get-started/quickstart"
+  - source: "/nemoclaw/user-guide/openclaw/get-started/quickstart-langchain-deepagents-code"
+    destination: "/nemoclaw/user-guide/deepagents/get-started/quickstart"
+  # Inference information architecture before the nested topic split.
+  - source: "/nemoclaw/latest/user-guide/:variant/inference"
+    destination: "/nemoclaw/latest/user-guide/:variant/inference/about-inference-routing"
+  - source: "/nemoclaw/user-guide/:variant/inference"
+    destination: "/nemoclaw/user-guide/:variant/inference/about-inference-routing"
+  - source: "/nemoclaw/latest/user-guide/:variant/inference/inference-options"
+    destination: "/nemoclaw/latest/user-guide/:variant/inference/about-inference-routing"
+  - source: "/nemoclaw/user-guide/:variant/inference/inference-options"
+    destination: "/nemoclaw/user-guide/:variant/inference/about-inference-routing"
+  - source: "/nemoclaw/latest/user-guide/:variant/inference/inference-overview"
+    destination: "/nemoclaw/latest/user-guide/:variant/inference/about-inference-routing"
+  - source: "/nemoclaw/user-guide/:variant/inference/inference-overview"
+    destination: "/nemoclaw/user-guide/:variant/inference/about-inference-routing"
+  - source: "/nemoclaw/latest/user-guide/:variant/inference/learn-and-choose/how-inference-routing-works"
+    destination: "/nemoclaw/latest/user-guide/:variant/inference/about-inference-routing"
+  - source: "/nemoclaw/user-guide/:variant/inference/learn-and-choose/how-inference-routing-works"
+    destination: "/nemoclaw/user-guide/:variant/inference/about-inference-routing"
+  - source: "/nemoclaw/latest/user-guide/:variant/inference/use-local-inference"
+    destination: "/nemoclaw/latest/user-guide/:variant/inference/local-inference/choose-local-inference-server"
+  - source: "/nemoclaw/user-guide/:variant/inference/use-local-inference"
+    destination: "/nemoclaw/user-guide/:variant/inference/local-inference/choose-local-inference-server"
+  - source: "/nemoclaw/latest/user-guide/:variant/inference/local-compatible-inference-setup"
+    destination: "/nemoclaw/latest/user-guide/:variant/inference/local-inference/choose-local-inference-server"
+  - source: "/nemoclaw/user-guide/:variant/inference/local-compatible-inference-setup"
+    destination: "/nemoclaw/user-guide/:variant/inference/local-inference/choose-local-inference-server"
+  - source: "/nemoclaw/latest/user-guide/:variant/inference/local-inference"
+    destination: "/nemoclaw/latest/user-guide/:variant/inference/local-inference/choose-local-inference-server"
+  - source: "/nemoclaw/user-guide/:variant/inference/local-inference"
+    destination: "/nemoclaw/user-guide/:variant/inference/local-inference/choose-local-inference-server"
+  - source: "/nemoclaw/latest/user-guide/:variant/inference/switch-inference-providers"
+    destination: "/nemoclaw/latest/user-guide/:variant/inference/manage-inference/switch-providers"
+  - source: "/nemoclaw/user-guide/:variant/inference/switch-inference-providers"
+    destination: "/nemoclaw/user-guide/:variant/inference/manage-inference/switch-providers"
+  - source: "/nemoclaw/latest/user-guide/:variant/inference/model-capability-audit"
+    destination: "/nemoclaw/latest/user-guide/:variant/inference/validate-inference/audit-model-capabilities"
+  - source: "/nemoclaw/user-guide/:variant/inference/model-capability-audit"
+    destination: "/nemoclaw/user-guide/:variant/inference/validate-inference/audit-model-capabilities"
+  - source: "/nemoclaw/latest/user-guide/openclaw/inference/tool-calling-reliability"
+    destination: "/nemoclaw/latest/user-guide/openclaw/reference/troubleshooting"
+  - source: "/nemoclaw/user-guide/openclaw/inference/tool-calling-reliability"
+    destination: "/nemoclaw/user-guide/openclaw/reference/troubleshooting"
+  - source: "/nemoclaw/latest/user-guide/:variant/inference/validate-and-troubleshoot/understand-provider-validation"
+    destination: "/nemoclaw/latest/user-guide/:variant/inference/validate-inference/understand-provider-validation"
+  - source: "/nemoclaw/user-guide/:variant/inference/validate-and-troubleshoot/understand-provider-validation"
+    destination: "/nemoclaw/user-guide/:variant/inference/validate-inference/understand-provider-validation"
+  - source: "/nemoclaw/latest/user-guide/:variant/inference/validate-and-troubleshoot/verify-inference-route"
+    destination: "/nemoclaw/latest/user-guide/:variant/inference/validate-inference/verify-inference-route"
+  - source: "/nemoclaw/user-guide/:variant/inference/validate-and-troubleshoot/verify-inference-route"
+    destination: "/nemoclaw/user-guide/:variant/inference/validate-inference/verify-inference-route"
+  - source: "/nemoclaw/latest/user-guide/:variant/inference/validate-and-troubleshoot/audit-model-capabilities"
+    destination: "/nemoclaw/latest/user-guide/:variant/inference/validate-inference/audit-model-capabilities"
+  - source: "/nemoclaw/user-guide/:variant/inference/validate-and-troubleshoot/audit-model-capabilities"
+    destination: "/nemoclaw/user-guide/:variant/inference/validate-inference/audit-model-capabilities"
+  - source: "/nemoclaw/latest/user-guide/openclaw/inference/validate-and-troubleshoot/fix-tool-calling-failures"
+    destination: "/nemoclaw/latest/user-guide/openclaw/reference/troubleshooting"
+  - source: "/nemoclaw/user-guide/openclaw/inference/validate-and-troubleshoot/fix-tool-calling-failures"
+    destination: "/nemoclaw/user-guide/openclaw/reference/troubleshooting"
+  - source: "/nemoclaw/latest/user-guide/openclaw/inference/set-up-sub-agent"
+    destination: "/nemoclaw/latest/user-guide/openclaw/configure-agents/set-up-sub-agent"
+  - source: "/nemoclaw/user-guide/openclaw/inference/set-up-sub-agent"
+    destination: "/nemoclaw/user-guide/openclaw/configure-agents/set-up-sub-agent"
+  - source: "/nemoclaw/latest/user-guide/openclaw/inference/declarative-agents-manifest"
+    destination: "/nemoclaw/latest/user-guide/openclaw/configure-agents/declarative-agents-manifest"
+  - source: "/nemoclaw/user-guide/openclaw/inference/declarative-agents-manifest"
+    destination: "/nemoclaw/user-guide/openclaw/configure-agents/declarative-agents-manifest"
+  # Preserve the pre-variant flat inference routes without relying on redirect chaining.
+  - source: "/nemoclaw/latest/inference/inference-options"
+    destination: "/nemoclaw/latest/user-guide/openclaw/inference/about-inference-routing"
+  - source: "/nemoclaw/inference/inference-options"
+    destination: "/nemoclaw/user-guide/openclaw/inference/about-inference-routing"
+  - source: "/nemoclaw/latest/inference/use-local-inference"
+    destination: "/nemoclaw/latest/user-guide/openclaw/inference/local-inference/choose-local-inference-server"
+  - source: "/nemoclaw/inference/use-local-inference"
+    destination: "/nemoclaw/user-guide/openclaw/inference/local-inference/choose-local-inference-server"
+  - source: "/nemoclaw/latest/inference/local-compatible-inference-setup"
+    destination: "/nemoclaw/latest/user-guide/openclaw/inference/local-inference/choose-local-inference-server"
+  - source: "/nemoclaw/inference/local-compatible-inference-setup"
+    destination: "/nemoclaw/user-guide/openclaw/inference/local-inference/choose-local-inference-server"
+  - source: "/nemoclaw/latest/inference/switch-inference-providers"
+    destination: "/nemoclaw/latest/user-guide/openclaw/inference/manage-inference/switch-providers"
+  - source: "/nemoclaw/inference/switch-inference-providers"
+    destination: "/nemoclaw/user-guide/openclaw/inference/manage-inference/switch-providers"
+  - source: "/nemoclaw/latest/inference/model-capability-audit"
+    destination: "/nemoclaw/latest/user-guide/openclaw/inference/validate-inference/audit-model-capabilities"
+  - source: "/nemoclaw/inference/model-capability-audit"
+    destination: "/nemoclaw/user-guide/openclaw/inference/validate-inference/audit-model-capabilities"
+  - source: "/nemoclaw/latest/inference/tool-calling-reliability"
+    destination: "/nemoclaw/latest/user-guide/openclaw/reference/troubleshooting"
+  - source: "/nemoclaw/inference/tool-calling-reliability"
+    destination: "/nemoclaw/user-guide/openclaw/reference/troubleshooting"
+  - source: "/nemoclaw/latest/inference/set-up-sub-agent"
+    destination: "/nemoclaw/latest/user-guide/openclaw/configure-agents/set-up-sub-agent"
+  - source: "/nemoclaw/inference/set-up-sub-agent"
+    destination: "/nemoclaw/user-guide/openclaw/configure-agents/set-up-sub-agent"
+  - source: "/nemoclaw/latest/inference/declarative-agents-manifest"
+    destination: "/nemoclaw/latest/user-guide/openclaw/configure-agents/declarative-agents-manifest"
+  - source: "/nemoclaw/inference/declarative-agents-manifest"
+    destination: "/nemoclaw/user-guide/openclaw/configure-agents/declarative-agents-manifest"
+  # User Guide tab with OpenClaw/Hermes variants: preserve legacy flat URLs (OpenClaw default).
+  - source: "/nemoclaw/latest/about/:path*"
+    destination: "/nemoclaw/latest/user-guide/openclaw/about/:path*"
+  - source: "/nemoclaw/latest/get-started/quickstart-hermes"
+    destination: "/nemoclaw/latest/user-guide/hermes/get-started/quickstart"
+  - source: "/nemoclaw/latest/get-started/quickstart-langchain-deepagents-code"
+    destination: "/nemoclaw/latest/user-guide/deepagents/get-started/quickstart"
+  - source: "/nemoclaw/latest/get-started/:path*"
+    destination: "/nemoclaw/latest/user-guide/openclaw/get-started/:path*"
+  - source: "/nemoclaw/latest/inference/:path*"
+    destination: "/nemoclaw/latest/user-guide/openclaw/inference/:path*"
+  - source: "/nemoclaw/latest/manage-sandboxes/:path*"
+    destination: "/nemoclaw/latest/user-guide/openclaw/manage-sandboxes/:path*"
+  - source: "/nemoclaw/latest/network-policy/:path*"
+    destination: "/nemoclaw/latest/user-guide/openclaw/network-policy/:path*"
+  - source: "/nemoclaw/latest/deployment/:path*"
+    destination: "/nemoclaw/latest/user-guide/openclaw/deployment/:path*"
+  - source: "/nemoclaw/latest/monitoring/:path*"
+    destination: "/nemoclaw/latest/user-guide/openclaw/monitoring/:path*"
+  - source: "/nemoclaw/latest/security/:path*"
+    destination: "/nemoclaw/latest/user-guide/openclaw/security/:path*"
+  - source: "/nemoclaw/latest/reference/:path*"
+    destination: "/nemoclaw/latest/user-guide/openclaw/reference/:path*"
+  - source: "/nemoclaw/latest/resources/:path*"
+    destination: "/nemoclaw/latest/user-guide/openclaw/resources/:path*"
+  # Prior tab layout redirects → User Guide OpenClaw variant.
+  - source: "/nemoclaw/latest/guides/:path*"
+    destination: "/nemoclaw/latest/user-guide/openclaw/:path*"
+  - source: "/nemoclaw/latest/get-started/openclaw/:path*"
+    destination: "/nemoclaw/latest/user-guide/openclaw/get-started/:path*"
+  - source: "/nemoclaw/latest/get-started/hermes/quickstart-hermes"
+    destination: "/nemoclaw/latest/user-guide/hermes/get-started/quickstart"
+  - source: "/nemoclaw/latest/get-started/hermes/:path*"
+    destination: "/nemoclaw/latest/user-guide/hermes/get-started/:path*"
+  # Same redirects without the version slug (Fern check canonical paths).
+  - source: "/nemoclaw/about/:path*"
+    destination: "/nemoclaw/user-guide/openclaw/about/:path*"
+  - source: "/nemoclaw/get-started/quickstart-hermes"
+    destination: "/nemoclaw/user-guide/hermes/get-started/quickstart"
+  - source: "/nemoclaw/get-started/quickstart-langchain-deepagents-code"
+    destination: "/nemoclaw/user-guide/deepagents/get-started/quickstart"
+  - source: "/nemoclaw/get-started/:path*"
+    destination: "/nemoclaw/user-guide/openclaw/get-started/:path*"
+  - source: "/nemoclaw/inference/:path*"
+    destination: "/nemoclaw/user-guide/openclaw/inference/:path*"
+  - source: "/nemoclaw/manage-sandboxes/:path*"
+    destination: "/nemoclaw/user-guide/openclaw/manage-sandboxes/:path*"
+  - source: "/nemoclaw/network-policy/:path*"
+    destination: "/nemoclaw/user-guide/openclaw/network-policy/:path*"
+  - source: "/nemoclaw/deployment/:path*"
+    destination: "/nemoclaw/user-guide/openclaw/deployment/:path*"
+  - source: "/nemoclaw/monitoring/:path*"
+    destination: "/nemoclaw/user-guide/openclaw/monitoring/:path*"
+  - source: "/nemoclaw/security/:path*"
+    destination: "/nemoclaw/user-guide/openclaw/security/:path*"
+  - source: "/nemoclaw/reference/:path*"
+    destination: "/nemoclaw/user-guide/openclaw/reference/:path*"
+  - source: "/nemoclaw/resources/:path*"
+    destination: "/nemoclaw/user-guide/openclaw/resources/:path*"
+  - source: "/nemoclaw/guides/:path*"
+    destination: "/nemoclaw/user-guide/openclaw/:path*"
+  - source: "/nemoclaw/get-started/openclaw/:path*"
+    destination: "/nemoclaw/user-guide/openclaw/get-started/:path*"
+  - source: "/nemoclaw/get-started/hermes/quickstart-hermes"
+    destination: "/nemoclaw/user-guide/hermes/get-started/quickstart"
+  - source: "/nemoclaw/get-started/hermes/:path*"
+    destination: "/nemoclaw/user-guide/hermes/get-started/:path*"

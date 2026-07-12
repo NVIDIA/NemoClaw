@@ -1,0 +1,49 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Configure OpenClaw Agent Heartbeats"
+sidebar-title: "Configure Agent Heartbeats"
+description: "Configure or disable periodic OpenClaw main-session agent turns in a NemoClaw sandbox."
+description-agent: "Configures OpenClaw heartbeat cadence through NemoClaw onboarding. Use when changing periodic agent wake-ups or disabling heartbeat instructions."
+keywords: ["nemoclaw heartbeat", "openclaw heartbeat", "HEARTBEAT.md"]
+content:
+  type: "how_to"
+---
+
+OpenClaw heartbeats run periodic main-session agent turns.
+Configure their cadence before onboarding or recreating the sandbox.
+
+## Set the Heartbeat Cadence
+
+Set `NEMOCLAW_AGENT_HEARTBEAT_EVERY` to a Go-style duration such as `5m` or `2h`.
+OpenClaw defaults to 30 minutes, or 1 hour for Anthropic OAuth and Claude CLI reuse, when the variable is unset.
+
+```bash
+export NEMOCLAW_AGENT_HEARTBEAT_EVERY=2h
+nemoclaw onboard
+```
+
+At each interval, the agent wakes to review follow-ups and read `HEARTBEAT.md` when that file exists in the workspace.
+
+## Disable Heartbeats
+
+Set the interval to `0m` to disable periodic turns.
+
+```bash
+export NEMOCLAW_AGENT_HEARTBEAT_EVERY=0m
+nemoclaw onboard
+```
+
+Disabling heartbeats also removes `HEARTBEAT.md` from normal-run bootstrap context according to OpenClaw behavior.
+The model no longer receives heartbeat-only instructions.
+
+## Apply the Change
+
+NemoClaw writes the heartbeat setting into `openclaw.json` during onboarding.
+Direct `openclaw config set` changes are not the supported path for this NemoClaw-managed build-time default, and a rebuild overwrites direct file edits.
+
+Recreate an existing sandbox to apply a new cadence.
+
+```bash
+nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox
+```

@@ -11,11 +11,11 @@
 // The fix validates all tar entry paths before extraction and audits
 // symlinks after extraction.
 
-import { describe, it, expect } from "vitest";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { describe, expect, it } from "vitest";
 
 // ═══════════════════════════════════════════════════════════════════
 // Helpers — tar archive construction
@@ -115,13 +115,13 @@ function buildTar(
  * Import the actual validation/extraction functions from the source.
  */
 type SandboxStateModule = Pick<
-  typeof import("../dist/lib/sandbox-state.js"),
+  typeof import("../src/lib/state/sandbox.js"),
   "validateTarEntries" | "safeTarExtract" | "rejectHardLinks"
 >;
 
 function isSandboxStateModule(
   value: object | null,
-): value is typeof import("../dist/lib/sandbox-state.js") {
+): value is typeof import("../src/lib/state/sandbox.js") {
   return (
     value !== null &&
     typeof Reflect.get(value, "validateTarEntries") === "function" &&
@@ -131,9 +131,9 @@ function isSandboxStateModule(
 }
 
 async function loadSandboxState(): Promise<SandboxStateModule> {
-  // The CLI compiles to dist/lib/ — import from there
+  // Load source through the integration project's CommonJS hook.
   const loaded = await import(
-    path.join(import.meta.dirname, "..", "dist", "lib", "sandbox-state.js")
+    path.join(import.meta.dirname, "..", "src", "lib", "state", "sandbox.ts")
   );
   const mod = typeof loaded === "object" && loaded !== null ? loaded : null;
   if (!isSandboxStateModule(mod)) {
@@ -385,6 +385,175 @@ describe("Fix: safeTarExtract blocks malicious archives and extracts safe ones",
       fs.rmSync(workDir, { recursive: true, force: true });
     }
   });
+
+  // Regression #2317: /sandbox/.openclaw-data/* symlinks are created by
+  // Dockerfile.base for the .openclaw / .openclaw-data split. When a backup
+  // is extracted on the host, these absolute targets don't exist on the host
+  // and were falsely rejected as escapes. The fix maps /sandbox/ paths onto
+  // the extraction root before checking, matching the sandbox-internal view.
+  it("allows known-safe /sandbox/.openclaw-data symlinks in backup archives (#2317)", async () => {
+    const { safeTarExtract } = await loadSandboxState();
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2317-"));
+    try {
+      const targetDir = path.join(workDir, "backup");
+      fs.mkdirSync(targetDir, { recursive: true });
+
+      // Simulate the workspace/media symlink created by Dockerfile.base
+      const tar = buildTar([
+        {
+          path: "workspace/media",
+          type: "2",
+          linkTarget: "/sandbox/.openclaw-data/media",
+        },
+      ]);
+
+      const result = safeTarExtract(tar, targetDir);
+      expect(result.success).toBe(true);
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("still blocks absolute symlinks outside /sandbox/.openclaw-data (#2317)", async () => {
+    const { safeTarExtract } = await loadSandboxState();
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2317-block-"));
+    try {
+      const targetDir = path.join(workDir, "backup");
+      fs.mkdirSync(targetDir, { recursive: true });
+
+      // /etc/passwd should still be rejected — not in /sandbox/.openclaw-data/
+      const tar = buildTar([
+        {
+          path: "evil-link",
+          type: "2",
+          linkTarget: "/etc/passwd",
+        },
+      ]);
+
+      const result = safeTarExtract(tar, targetDir);
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("symlink");
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    "weather",
+    "slack",
+  ])("allows the %s OpenClaw extension peer link with the exact global package target", async (extensionName) => {
+    const { safeTarExtract } = await loadSandboxState();
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-whitelist-extract-"));
+    try {
+      const targetDir = path.join(workDir, "backup");
+      fs.mkdirSync(targetDir, { recursive: true });
+
+      // Archive-installed plugins symlink their OpenClaw peer dependency to
+      // the global package. The exact target escapes both the archive and
+      // /sandbox/, so it requires the narrow extension peer-link exception.
+      const tar = buildTar([
+        {
+          path: `extensions/${extensionName}/node_modules/openclaw`,
+          type: "2",
+          linkTarget: "/usr/local/lib/node_modules/openclaw",
+        },
+      ]);
+
+      const result = safeTarExtract(tar, targetDir);
+      expect(result.success).toBe(true);
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["a tampered weather target", "extensions/weather/node_modules/openclaw", "/etc/passwd"],
+    ["a tampered slack target", "extensions/slack/node_modules/openclaw", "/etc/passwd"],
+    [
+      "a glob basename",
+      "extensions/*/node_modules/openclaw",
+      "/usr/local/lib/node_modules/openclaw",
+    ],
+    [
+      "a nested extension path",
+      "extensions/nested/weather/node_modules/openclaw",
+      "/usr/local/lib/node_modules/openclaw",
+    ],
+    [
+      "a noncanonical target",
+      "extensions/weather/node_modules/openclaw",
+      "/usr/local/lib/node_modules/openclaw/",
+    ],
+  ])("rejects an OpenClaw extension peer link with %s", async (_case, source, target) => {
+    const { safeTarExtract } = await loadSandboxState();
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-target-tampered-"));
+    try {
+      const targetDir = path.join(workDir, "backup");
+      fs.mkdirSync(targetDir, { recursive: true });
+
+      const tar = buildTar([
+        {
+          path: source,
+          type: "2",
+          linkTarget: target,
+        },
+      ]);
+
+      const result = safeTarExtract(tar, targetDir);
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("symlink");
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("still rejects an absolute /usr/local symlink at a non-whitelisted path", async () => {
+    const { safeTarExtract } = await loadSandboxState();
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-whitelist-block-"));
+    try {
+      const targetDir = path.join(workDir, "backup");
+      fs.mkdirSync(targetDir, { recursive: true });
+
+      // Same target, but the symlink path is NOT in the whitelist.
+      const tar = buildTar([
+        {
+          path: "workspace/sneaky-openclaw",
+          type: "2",
+          linkTarget: "/usr/local/lib/node_modules/openclaw",
+        },
+      ]);
+
+      const result = safeTarExtract(tar, targetDir);
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("symlink");
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks path traversal within the allowed /sandbox/.openclaw-data prefix (#2317)", async () => {
+    const { safeTarExtract } = await loadSandboxState();
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2317-traversal-"));
+    try {
+      const targetDir = path.join(workDir, "backup");
+      fs.mkdirSync(targetDir, { recursive: true });
+
+      // Crafted target starts with allowed prefix but traverses out of it
+      const tar = buildTar([
+        {
+          path: "evil-traversal",
+          type: "2",
+          linkTarget: "/sandbox/.openclaw-data/../../etc/passwd",
+        },
+      ]);
+
+      const result = safeTarExtract(tar, targetDir);
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("symlink");
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("Fix: rejectHardLinks blocks hard-link entries at validation time", () => {
@@ -430,6 +599,37 @@ describe("Fix: rejectHardLinks blocks hard-link entries at validation time", () 
     expect(violations.length).toBe(0);
   });
 
+  it("accepts a large archive whose verbose listing exceeds Node's default spawn buffer", async () => {
+    const { rejectHardLinks } = await loadSandboxState();
+    const entries = Array.from({ length: 20_000 }, (_, index) => ({
+      path: `workspace/file-${index.toString().padStart(5, "0")}.txt`,
+      content: "x",
+    }));
+
+    const violations = rejectHardLinks(buildTar(entries));
+
+    expect(violations).toEqual([]);
+  });
+
+  it("accepts a large archive whose path listing exceeds Node's default spawn buffer", async () => {
+    const { validateTarEntries } = await loadSandboxState();
+    const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-large-listing-"));
+    try {
+      const entries = Array.from({ length: 20_000 }, (_, index) => ({
+        path: `workspace/${index.toString().padStart(5, "0")}-${"segment".repeat(10)}.txt`,
+        content: "x",
+      }));
+
+      const result = validateTarEntries(buildTar(entries), targetDir);
+
+      expect(result.safe).toBe(true);
+      expect(result.violations).toEqual([]);
+      expect(result.entries).toHaveLength(entries.length);
+    } finally {
+      fs.rmSync(targetDir, { recursive: true, force: true });
+    }
+  });
+
   it("safeTarExtract rejects archive containing hard links", async () => {
     const { safeTarExtract } = await loadSandboxState();
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hardlink-"));
@@ -448,75 +648,5 @@ describe("Fix: rejectHardLinks blocks hard-link entries at validation time", () 
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════════
-// 3. Regression guard — sandbox-state.ts must use safe extraction
-// ═══════════════════════════════════════════════════════════════════
-describe("Regression: sandbox-state.ts uses validated tar extraction", () => {
-  function getSourceCode(): string {
-    return fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "sandbox-state.ts"),
-      "utf-8",
-    );
-  }
-
-  it("backupSandboxState calls safeTarExtract (not raw tar -xf)", () => {
-    const src = getSourceCode();
-    // Find the backupSandboxState function body
-    const fnStart = src.indexOf("function backupSandboxState");
-    expect(fnStart).not.toBe(-1);
-    const fnBody = src.slice(fnStart);
-
-    // Must call safeTarExtract
-    expect(fnBody).toContain("safeTarExtract");
-  });
-
-  it("no raw tar -xf extraction without validation exists", () => {
-    const src = getSourceCode();
-    // Find all tar extraction calls: spawnSync("tar", ["-xf", ...])
-    // The only tar -xf should be inside safeTarExtract itself (after validation)
-    const tarExtractions = src.match(/spawnSync\(\s*"tar"[\s\S]*?"-xf"/g) || [];
-
-    // There should be exactly one: inside safeTarExtract
-    expect(tarExtractions.length).toBe(1);
-
-    // And it should be preceded by validateTarEntries in the safeTarExtract function
-    const safeFnStart = src.indexOf("function safeTarExtract");
-    expect(safeFnStart).not.toBe(-1);
-    const safeFnBody = src.slice(safeFnStart);
-    const validateCall = safeFnBody.indexOf("validateTarEntries");
-    const extractCall = safeFnBody.indexOf('"-xf"');
-    expect(validateCall).not.toBe(-1);
-    expect(extractCall).not.toBe(-1);
-    expect(validateCall).toBeLessThan(extractCall);
-  });
-
-  it("safeTarExtract includes --no-same-owner flag", () => {
-    const src = getSourceCode();
-    const safeFnStart = src.indexOf("function safeTarExtract");
-    const safeFnBody = src.slice(safeFnStart);
-    expect(safeFnBody).toContain("--no-same-owner");
-  });
-
-  it("auditExtractedSymlinks is called after extraction", () => {
-    const src = getSourceCode();
-    const safeFnStart = src.indexOf("function safeTarExtract");
-    const safeFnBody = src.slice(safeFnStart);
-    const extractCall = safeFnBody.indexOf('"-xf"');
-    const auditCall = safeFnBody.indexOf("auditExtractedSymlinks");
-    expect(auditCall).not.toBe(-1);
-    expect(auditCall).toBeGreaterThan(extractCall);
-  });
-
-  it("rejectHardLinks is called before extraction", () => {
-    const src = getSourceCode();
-    const safeFnStart = src.indexOf("function safeTarExtract");
-    const safeFnBody = src.slice(safeFnStart);
-    const hardLinkCall = safeFnBody.indexOf("rejectHardLinks");
-    const extractCall = safeFnBody.indexOf('"-xf"');
-    expect(hardLinkCall).not.toBe(-1);
-    expect(hardLinkCall).toBeLessThan(extractCall);
   });
 });

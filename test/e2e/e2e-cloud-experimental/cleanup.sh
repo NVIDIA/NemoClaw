@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Shared teardown for e2e-cloud-experimental (extracted from test-e2e-cloud-experimental.sh Phase 0 + Phase 6).
+# Shared teardown for e2e-cloud-experimental sandboxes.
 #
 # Destroys nemoclaw sandbox, OpenShell sandbox, port 18789 forward, and nemoclaw gateway.
 #

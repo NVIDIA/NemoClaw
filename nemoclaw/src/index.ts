@@ -11,29 +11,29 @@
  * time.
  */
 
-import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { renderBox } from "./banner.js";
 import { handleSlashCommand } from "./commands/slash.js";
 import {
   describeOnboardEndpoint,
   describeOnboardProvider,
   loadOnboardConfig,
 } from "./onboard/config.js";
+import { registerRuntimeContext } from "./runtime-context.js";
 import { scanForSecrets, isMemoryPath } from "./security/secret-scanner.js";
+import { safeResolvePath } from "./security/safe-resolve-path.js";
 
 type PluginScalar = string | number | boolean | null | undefined;
 type PluginValue = PluginScalar | PluginRecord | PluginValue[];
 type PluginRecord = { [key: string]: PluginValue };
 
-function isToolParams(value: PluginValue | object | null | undefined): value is ToolParams {
+function isToolParams(value: unknown): value is ToolParams {
   return (
     value !== null && value !== undefined && typeof value === "object" && !Array.isArray(value)
   );
 }
 
-function readStringProperty(
-  value: PluginValue | object | null | undefined,
-  key: string,
-): string | undefined {
+function readStringProperty(value: unknown, key: string): string | undefined {
   if (!isToolParams(value)) {
     return undefined;
   }
@@ -41,9 +41,15 @@ function readStringProperty(
   return typeof property === "string" ? property : undefined;
 }
 
-function readBeforeToolCallEvent(
-  value: PluginValue | object | null | undefined,
-): Partial<BeforeToolCallEvent> | undefined {
+function readObjectProperty(value: unknown, key: string): ToolParams | undefined {
+  if (!isToolParams(value)) {
+    return undefined;
+  }
+  const property = value[key];
+  return isToolParams(property) ? property : undefined;
+}
+
+function readBeforeToolCallEvent(value: unknown): Partial<BeforeToolCallEvent> | undefined {
   if (!isToolParams(value)) {
     return undefined;
   }
@@ -52,31 +58,6 @@ function readBeforeToolCallEvent(
     toolName: readStringProperty(value, "toolName"),
     params: isToolParams(params) ? params : undefined,
   };
-}
-
-// Resolve live inference config from OpenShell as a fallback when the
-// onboard config file is not available (e.g. when running inside the
-// sandbox). Returns empty strings if the probe fails.
-function probeOpenShellInference(): { endpoint: string; provider: string; model: string } {
-  try {
-    const raw = execFileSync("openshell", ["inference", "get", "--json"], {
-      encoding: "utf-8",
-      timeout: 3000,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    const parsed: unknown = JSON.parse(raw);
-    const parsedObject = typeof parsed === "object" && parsed !== null ? parsed : null;
-    const endpoint = readStringProperty(parsedObject, "endpoint");
-    const provider = readStringProperty(parsedObject, "provider");
-    const model = readStringProperty(parsedObject, "model");
-    return {
-      endpoint: endpoint ?? "",
-      provider: provider ?? "",
-      model: model ?? "",
-    };
-  } catch {
-    return { endpoint: "", provider: "", model: "" };
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -129,6 +110,7 @@ export interface PluginCommandDefinition {
 
 /** Auth method for a provider plugin. */
 export interface ProviderAuthMethod {
+  id?: string;
   type: string;
   envVar?: string;
   headerName?: string;
@@ -182,6 +164,18 @@ export interface BeforeToolCallResult {
   blockReason?: string;
 }
 
+/** Return value from a before_prompt_build hook. */
+export interface BeforePromptBuildResult {
+  systemPrompt?: string;
+  prependContext?: string;
+  appendContext?: string;
+  prependSystemContext?: string;
+  appendSystemContext?: string;
+}
+
+/** Union of all hook result types. */
+export type HookResult = BeforeToolCallResult | BeforePromptBuildResult | undefined;
+
 /**
  * The API object injected into the plugin's register function by the OpenClaw
  * host. Only the methods we actually call are listed here.
@@ -199,7 +193,7 @@ export interface OpenClawPluginApi {
   resolvePath: (input: string) => string;
   on: (
     hookName: string,
-    handler: (...args: readonly PluginValue[]) => BeforeToolCallResult | undefined,
+    handler: (...args: readonly PluginValue[]) => HookResult | Promise<HookResult>,
   ) => void;
 }
 
@@ -214,11 +208,37 @@ export interface NemoClawConfig {
   inferenceProvider: string;
 }
 
-function activeModelEntries(
-  onboardCfg: ReturnType<typeof loadOnboardConfig>,
-  fallbackModel = "",
-): ModelProviderEntry[] {
-  const activeModel = onboardCfg?.model ?? fallbackModel;
+// Gateway plugins run inside the sandbox, where OpenClaw keeps its active config here.
+const OPENCLAW_CONFIG_PATH = "/sandbox/.openclaw/openclaw.json";
+const DEFAULT_INFERENCE_MODEL = "nvidia/nemotron-3-super-120b-a12b";
+
+function normalizeInferenceModel(value: string): string {
+  const trimmed = value.trim();
+  return trimmed.startsWith("inference/") ? trimmed.slice("inference/".length) : trimmed;
+}
+
+function readOpenClawPrimaryModel(
+  logger?: PluginLogger,
+  configPath = OPENCLAW_CONFIG_PATH,
+): string {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(configPath, "utf-8"));
+    const agents = readObjectProperty(parsed, "agents");
+    const defaults = readObjectProperty(agents, "defaults");
+    const model = readObjectProperty(defaults, "model");
+    const primary = readStringProperty(model, "primary");
+    return primary ? normalizeInferenceModel(primary) : "";
+  } catch (err) {
+    logger?.debug(
+      `Could not read OpenClaw primary model from ${configPath}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return "";
+  }
+}
+
+function activeModelEntries(activeModel: string): ModelProviderEntry[] {
   if (!activeModel) {
     return [
       {
@@ -259,23 +279,25 @@ function activeModelEntries(
 }
 
 function registeredProviderForConfig(
-  onboardCfg: ReturnType<typeof loadOnboardConfig>,
+  activeModel: string,
   providerCredentialEnv: string,
-  fallbackModel = "",
 ): ProviderPlugin {
-  const authLabel =
-    providerCredentialEnv === "NVIDIA_API_KEY"
-      ? `NVIDIA API Key (${providerCredentialEnv})`
-      : `OpenAI API Key (${providerCredentialEnv})`;
+  const isNvidiaCredential =
+    providerCredentialEnv === "NVIDIA_INFERENCE_API_KEY" ||
+    providerCredentialEnv === "NVIDIA_API_KEY";
+  const authLabel = isNvidiaCredential
+    ? `NVIDIA API Key (${providerCredentialEnv})`
+    : `OpenAI API Key (${providerCredentialEnv})`;
 
   return {
     id: "inference",
     label: "Managed Inference Route",
     aliases: ["inference-local", "nemoclaw"],
     envVars: [providerCredentialEnv],
-    models: { chat: activeModelEntries(onboardCfg, fallbackModel) },
+    models: { chat: activeModelEntries(activeModel) },
     auth: [
       {
+        id: "bearer",
         type: "bearer",
         envVar: providerCredentialEnv,
         headerName: "Authorization",
@@ -330,31 +352,27 @@ export default function register(api: OpenClawPluginApi): void {
     handler: (ctx) => handleSlashCommand(ctx, api),
   });
 
-  // 2. Register nvidia-nim provider — use onboard config if available
+  // 2. Register nvidia-nim provider from the active OpenClaw config, falling
+  // back to the onboard snapshot and then the NemoClaw default.
   const onboardCfg = loadOnboardConfig();
+  const activeModel = readOpenClawPrimaryModel(api.logger) || onboardCfg?.model || "";
 
-  // Prefer onboard config; fall back to live OpenShell inference state when
-  // the config file is unavailable (e.g. inside the sandbox). Only resort to
-  // hardcoded defaults if both lookups fail.
-  let bannerEndpoint = onboardCfg ? describeOnboardEndpoint(onboardCfg) : "";
-  let bannerProvider = onboardCfg ? describeOnboardProvider(onboardCfg) : "";
-  let bannerModel = onboardCfg?.model ?? "";
-  let probedModel = "";
-
-  if (!bannerEndpoint || !bannerProvider || !bannerModel) {
-    const probed = probeOpenShellInference();
-    if (!bannerEndpoint) bannerEndpoint = probed.endpoint;
-    if (!bannerProvider) bannerProvider = probed.provider;
-    if (!bannerModel) bannerModel = probed.model;
-    probedModel = probed.model;
+  // 4. Register runtime context injection (sandbox-awareness hook)
+  const pluginConfig = getPluginConfig(api);
+  try {
+    registerRuntimeContext(api, pluginConfig);
+  } catch (err) {
+    api.logger.warn(
+      `Could not register runtime context hook: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
-  if (!bannerEndpoint) bannerEndpoint = "build.nvidia.com";
-  if (!bannerProvider) bannerProvider = "NVIDIA Endpoints";
-  if (!bannerModel) bannerModel = "nvidia/nemotron-3-super-120b-a12b";
+  const bannerEndpoint = onboardCfg ? describeOnboardEndpoint(onboardCfg) : "build.nvidia.com";
+  const bannerProvider = onboardCfg ? describeOnboardProvider(onboardCfg) : "NVIDIA Endpoints";
+  const bannerModel = activeModel || DEFAULT_INFERENCE_MODEL;
 
-  const providerCredentialEnv = onboardCfg?.credentialEnv ?? "NVIDIA_API_KEY";
-  api.registerProvider(registeredProviderForConfig(onboardCfg, providerCredentialEnv, probedModel));
+  const providerCredentialEnv = onboardCfg?.credentialEnv ?? "NVIDIA_INFERENCE_API_KEY";
+  api.registerProvider(registeredProviderForConfig(activeModel, providerCredentialEnv));
 
   // 3. Register before_tool_call hook to block secrets in memory writes (#1233)
   // NOTE: This relies on OpenClaw's before_tool_call plugin hook contract
@@ -376,8 +394,13 @@ export default function register(api: OpenClawPluginApi): void {
         const rawPath = event.params["file_path"] ?? event.params["path"];
         if (typeof rawPath !== "string" || rawPath.length === 0) return undefined;
         // Resolve symlinks and traversal before checking — prevents bypasses like
-        // /sandbox/project/../../.openclaw-data/memory/secrets.md
-        const filePath = api.resolvePath(rawPath);
+        // /sandbox/project/../../.openclaw/memory/secrets.md. The host's
+        // resolver may be missing or return undefined under embedded-fallback
+        // runtimes, so route through safeResolvePath which falls back to the
+        // raw path rather than crashing the hook. isMemoryPath knows how to
+        // classify both absolute resolved paths and canonical memory
+        // basenames written through a relative path.
+        const filePath = safeResolvePath(api, rawPath);
         if (!isMemoryPath(filePath)) return undefined;
 
         const content =
@@ -405,14 +428,18 @@ export default function register(api: OpenClawPluginApi): void {
     );
   }
 
-  api.logger.info("");
-  api.logger.info("  ┌─────────────────────────────────────────────────────┐");
-  api.logger.info("  │  NemoClaw registered                                │");
-  api.logger.info("  │                                                     │");
-  api.logger.info(`  │  Endpoint:  ${bannerEndpoint.padEnd(40)}│`);
-  api.logger.info(`  │  Provider:  ${bannerProvider.padEnd(40)}│`);
-  api.logger.info(`  │  Model:     ${bannerModel.padEnd(40)}│`);
-  api.logger.info("  │  Slash:     /nemoclaw                               │");
-  api.logger.info("  └─────────────────────────────────────────────────────┘");
-  api.logger.info("");
+  const bannerLines = [
+    "  NemoClaw registered",
+    null,
+    `  Endpoint:  ${bannerEndpoint}`,
+    `  Provider:  ${bannerProvider}`,
+    `  Model:     ${bannerModel}`,
+    "  Slash:     /nemoclaw",
+  ];
+
+  process.stderr.write("\n");
+  for (const line of renderBox(bannerLines)) {
+    process.stderr.write(`${line}\n`);
+  }
+  process.stderr.write("\n");
 }

@@ -12,31 +12,38 @@
  *   /nemoclaw          - show help
  */
 
-import type { PluginCommandContext, PluginCommandResult, OpenClawPluginApi } from "../index.js";
 import { loadState } from "../blueprint/state.js";
+import {
+  getPluginConfig,
+  type OpenClawPluginApi,
+  type PluginCommandContext,
+  type PluginCommandResult,
+} from "../index.js";
 import {
   describeOnboardEndpoint,
   describeOnboardProvider,
   loadOnboardConfig,
 } from "../onboard/config.js";
-import { slashShieldsStatus } from "./shields-status.js";
 import { slashConfigShow } from "./config-show.js";
+import { slashShieldsStatus } from "./shields-status.js";
 
 export function handleSlashCommand(
   ctx: PluginCommandContext,
-  _api: OpenClawPluginApi,
+  api: OpenClawPluginApi,
 ): PluginCommandResult {
-  const subcommand = ctx.args?.trim().split(/\s+/)[0] ?? "";
+  const tokens = ctx.args?.trim().split(/\s+/).filter(Boolean) ?? [];
+  const subcommand = tokens[0] ?? "";
+  const subArg = tokens[1];
 
   switch (subcommand) {
     case "status":
-      return slashStatus();
+      return slashStatus(api);
     case "eject":
       return slashEject();
     case "onboard":
       return slashOnboard();
     case "shields":
-      return slashShieldsStatus();
+      return slashShieldsStatus(subArg);
     case "config":
       return slashConfigShow();
     default:
@@ -53,7 +60,7 @@ function slashHelp(): PluginCommandResult {
       "",
       "Subcommands:",
       "  `status`  - Show sandbox, blueprint, and inference state",
-      "  `shields` - Show shields status (up/down, timeout, policy)",
+      "  `shields` - Show how to check shields status from the host",
       "  `config`  - Show sandbox configuration (credentials redacted)",
       "  `eject`   - Show rollback instructions",
       "  `onboard` - Show onboarding status and instructions",
@@ -69,25 +76,27 @@ function slashHelp(): PluginCommandResult {
   };
 }
 
-function slashStatus(): PluginCommandResult {
-  const state = loadState();
+function slashStatus(api: OpenClawPluginApi): PluginCommandResult {
+  const onboardConfig = loadOnboardConfig();
+  const { sandboxName } = getPluginConfig(api);
 
-  if (!state.lastAction) {
+  if (!onboardConfig) {
     return {
-      text: "**NemoClaw**: No operations performed yet. Run `nemoclaw onboard` to get started.",
+      text: "**NemoClaw**: No onboard configuration found. Run `nemoclaw onboard` to get started.",
     };
   }
 
   const lines = [
     "**NemoClaw Status**",
     "",
-    `Last action: ${state.lastAction}`,
-    `Blueprint: ${state.blueprintVersion ?? "unknown"}`,
-    `Run ID: ${state.lastRunId ?? "none"}`,
-    `Sandbox: ${state.sandboxName ?? "none"}`,
-    `Updated: ${state.updatedAt}`,
+    `Sandbox: ${sandboxName}`,
+    `Endpoint: ${describeOnboardEndpoint(onboardConfig)}`,
+    `Provider: ${describeOnboardProvider(onboardConfig)}`,
+    `Model: ${onboardConfig.model}`,
+    `Onboarded: ${onboardConfig.onboardedAt}`,
   ];
 
+  const state = loadState();
   if (state.migrationSnapshot) {
     lines.push("", `Rollback snapshot: ${state.migrationSnapshot}`);
   }

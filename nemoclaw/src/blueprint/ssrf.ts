@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { promises as dnsPromises } from "node:dns";
+import { isIP } from "node:net";
 
 import { isPrivateIp, isPrivateHostname } from "./private-networks.js";
 
@@ -11,6 +12,10 @@ export { isPrivateIp, isPrivateHostname };
 
 const ALLOWED_SCHEMES = new Set(["https:", "http:"]);
 
+function hostnameForDnsLookup(hostname: string): string {
+  return hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
+}
+
 /**
  * Result of endpoint URL validation with DNS pinning.
  *
@@ -19,13 +24,21 @@ const ALLOWED_SCHEMES = new Set(["https:", "http:"]);
  * DNS rebinding TOCTOU attacks where an attacker returns a public IP at
  * validation time and a private IP at connection time.
  *
- * Callers should use `pinnedUrl` for HTTP endpoints (full protection) and `url`
- * for HTTPS endpoints (TLS certificate validation prevents rebinding since the
- * attacker cannot present a valid cert for the rebinding target).
+ * Callers should use `safeEndpointUrlForDownstream` before passing the endpoint
+ * to a downstream provider. DNS-backed HTTP endpoints are rewritten to
+ * `pinnedUrl`; DNS-backed HTTPS endpoints currently fail closed because the
+ * downstream provider would otherwise perform a second DNS lookup while NemoClaw
+ * cannot pin the TCP peer and preserve TLS SNI/Host across the OpenShell runtime
+ * boundary.
  */
 export interface ValidatedEndpoint {
   url: string;
   pinnedUrl: string;
+  protocol: "http:" | "https:";
+  hostname: string;
+  resolvedAddress?: string;
+  resolvedFamily?: number;
+  dnsResolved: boolean;
 }
 
 export async function validateEndpointUrl(url: string): Promise<ValidatedEndpoint> {
@@ -47,12 +60,27 @@ export async function validateEndpointUrl(url: string): Promise<ValidatedEndpoin
   if (!hostname) {
     throw new Error(`No hostname found in URL: ${url}`);
   }
+  if (isPrivateHostname(hostname)) {
+    throw new Error(
+      `Endpoint URL points to private/internal address ${hostname}. ` +
+        "Connections to internal networks are not allowed.",
+    );
+  }
+
+  const lookupHostname = hostnameForDnsLookup(hostname);
+  const protocol = parsed.protocol as "http:" | "https:";
+  if (isIP(lookupHostname)) {
+    return { url, pinnedUrl: url, protocol, hostname, dnsResolved: false };
+  }
 
   let addresses: Array<{ address: string; family: number }>;
   try {
-    addresses = await dnsPromises.lookup(hostname, { all: true });
+    addresses = await dnsPromises.lookup(lookupHostname, { all: true });
   } catch (err) {
     throw new Error(`Cannot resolve hostname '${hostname}': ${String(err)}`);
+  }
+  if (addresses.length === 0) {
+    throw new Error(`Cannot resolve hostname '${hostname}': no addresses returned.`);
   }
 
   for (const { address } of addresses) {
@@ -70,5 +98,27 @@ export async function validateEndpointUrl(url: string): Promise<ValidatedEndpoin
   const first = addresses[0];
   pinned.hostname = first.family === 6 ? `[${first.address}]` : first.address;
 
-  return { url, pinnedUrl: pinned.toString() };
+  return {
+    url,
+    pinnedUrl: pinned.toString(),
+    protocol,
+    hostname,
+    resolvedAddress: first.address,
+    resolvedFamily: first.family,
+    dnsResolved: true,
+  };
+}
+
+export function safeEndpointUrlForDownstream(validated: ValidatedEndpoint): string {
+  if (validated.protocol === "https:" && validated.dnsResolved) {
+    throw new Error(
+      `DNS-backed HTTPS endpoint '${validated.hostname}' is not supported yet because ` +
+        "NemoClaw cannot guarantee the downstream provider connects to the same IP " +
+        "that passed SSRF validation across the OpenShell runtime boundary. " +
+        "Use an HTTPS IP-literal endpoint, an HTTP endpoint that can be DNS-pinned, " +
+        "or wait for the runtime-aware HTTPS pinning transport.",
+    );
+  }
+
+  return validated.protocol === "http:" ? validated.pinnedUrl : validated.url;
 }

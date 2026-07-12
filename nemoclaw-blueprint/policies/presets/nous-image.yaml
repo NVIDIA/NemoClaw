@@ -1,0 +1,42 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: nous-image
+  description: "Nous Portal managed image generation gateway"
+
+network_policies:
+  nous_image:
+    name: nous_image
+    endpoints:
+      - host: host.openshell.internal
+        port: 11436
+        protocol: rest
+        enforcement: enforce
+        # host.openshell.internal resolves to the Docker host gateway, which
+        # is intentionally private. Keep the L7 broker path allowlist, and
+        # explicitly allow only RFC1918 host-gateway resolutions for this
+        # fixed hostname/port so OpenShell SSRF protection still blocks other
+        # private destinations.
+        allowed_ips:
+          - 10.0.0.0/8
+          - 172.16.0.0/12
+          - 192.168.0.0/16
+        rules:
+          - allow: { method: GET, path: "/fal-queue" }
+          - allow: { method: GET, path: "/fal-queue/**" }
+          - allow: { method: POST, path: "/fal-queue" }
+          - allow: { method: POST, path: "/fal-queue/**" }
+          - allow: { method: PUT, path: "/fal-queue" }
+          - allow: { method: PUT, path: "/fal-queue/**" }
+          - allow: { method: PATCH, path: "/fal-queue" }
+          - allow: { method: PATCH, path: "/fal-queue/**" }
+          - allow: { method: DELETE, path: "/fal-queue" }
+          - allow: { method: DELETE, path: "/fal-queue/**" }
+    binaries:
+      - { path: /usr/local/bin/hermes }
+      - { path: /usr/bin/python3 }
+      - { path: /usr/bin/python3.11 }
+      - { path: /opt/hermes/.venv/bin/python }
+      - { path: /usr/bin/curl }
+      - { path: /usr/local/bin/curl }

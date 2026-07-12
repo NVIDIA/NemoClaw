@@ -1,0 +1,91 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: public-reference
+  description: "Read-only structured public reference APIs"
+
+network_policies:
+  public_reference:
+    name: public_reference
+    endpoints:
+      - host: "*.wikipedia.org"
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/w/api.php" }
+          - allow: { method: HEAD, path: "/w/api.php" }
+          - allow: { method: GET, path: "/api/rest_v1/**" }
+          - allow: { method: HEAD, path: "/api/rest_v1/**" }
+      - host: api.wikimedia.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/core/v1/**" }
+          - allow: { method: HEAD, path: "/core/v1/**" }
+      - host: commons.wikimedia.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/w/api.php" }
+          - allow: { method: HEAD, path: "/w/api.php" }
+          - allow: { method: GET, path: "/api/rest_v1/**" }
+          - allow: { method: HEAD, path: "/api/rest_v1/**" }
+      - host: www.wikidata.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/w/api.php" }
+          - allow: { method: HEAD, path: "/w/api.php" }
+          - allow: { method: GET, path: "/wiki/Special:EntityData/**" }
+          - allow: { method: HEAD, path: "/wiki/Special:EntityData/**" }
+      - host: query.wikidata.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/sparql" }
+          - allow: { method: HEAD, path: "/sparql" }
+          - allow: { method: GET, path: "/bigdata/namespace/wdq/sparql" }
+          - allow: { method: HEAD, path: "/bigdata/namespace/wdq/sparql" }
+      - host: commons-query.wikimedia.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/sparql" }
+          - allow: { method: HEAD, path: "/sparql" }
+      - host: nominatim.openstreetmap.org
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/search" }
+          - allow: { method: HEAD, path: "/search" }
+          - allow: { method: GET, path: "/reverse" }
+          - allow: { method: HEAD, path: "/reverse" }
+          - allow: { method: GET, path: "/lookup" }
+          - allow: { method: HEAD, path: "/lookup" }
+          - allow: { method: GET, path: "/status" }
+          - allow: { method: HEAD, path: "/status" }
+      - host: restcountries.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/v3.1/**" }
+          - allow: { method: HEAD, path: "/v3.1/**" }
+    binaries:
+      - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }
+      - { path: /usr/local/bin/hermes }
+      - { path: /opt/hermes/.venv/bin/python }
+      - { path: /usr/bin/python3 }
+      - { path: /usr/bin/python3.11 }
+      - { path: /usr/bin/curl }
+      - { path: /usr/local/bin/curl }

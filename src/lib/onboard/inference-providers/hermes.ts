@@ -1,0 +1,183 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+//
+// Hermes Provider inference setup flow.
+// Extracted verbatim from onboard.setupInference (#767).
+
+import { rewriteConfigUrlsWithDnsPinning } from "../../sandbox/config";
+import type { HermesAuthMethod } from "../hermes-auth";
+import type { HermesDeps, SetupInferenceResult } from "./types";
+
+export async function setupHermesProviderInference(
+  args: {
+    sandboxName: string | null;
+    model: string;
+    provider: string;
+    endpointUrl: string | null;
+    credentialEnv: string | null;
+    hermesAuthMethod: HermesAuthMethod | string | null;
+    hermesToolGateways: string[];
+  },
+  deps: HermesDeps,
+): Promise<SetupInferenceResult> {
+  const {
+    sandboxName,
+    model,
+    provider,
+    endpointUrl,
+    credentialEnv,
+    hermesAuthMethod,
+    hermesToolGateways,
+  } = args;
+  // A null/absent endpointUrl is intentionally accepted: the Hermes
+  // managed/OAuth path supplies the endpoint later (using the default managed
+  // inference route), so SSRF validation only applies to an explicitly-supplied
+  // custom endpoint.
+  let resolvedEndpointUrl = endpointUrl;
+  if (endpointUrl) {
+    let parsedEndpoint: URL;
+    try {
+      parsedEndpoint = new URL(endpointUrl);
+    } catch {
+      throw new Error(`Inference endpoint URL is not a valid URL.`);
+    }
+    if (parsedEndpoint.protocol !== "http:" && parsedEndpoint.protocol !== "https:") {
+      throw new Error(
+        `Inference endpoint URL uses an unsupported scheme. Only http and https are allowed.`,
+      );
+    }
+    if (parsedEndpoint.username || parsedEndpoint.password) {
+      throw new Error(
+        `Inference endpoint URL must not contain credentials. Remove the username and password from the URL.`,
+      );
+    }
+    // DNS-resolving + pinning validation closes the DNS-rebinding gap a
+    // string-only hostname check leaves open. For HTTP this returns the
+    // pinned-IP URL. DNS-backed HTTPS fails closed until NemoClaw has a
+    // runtime-aware transport that can preserve TLS SNI/Host while pinning the
+    // resolved peer IP across the downstream OpenShell boundary.
+    try {
+      const validated = await rewriteConfigUrlsWithDnsPinning(endpointUrl, deps.lookup);
+      resolvedEndpointUrl = typeof validated === "string" ? validated : endpointUrl;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `Inference endpoint URL points to a private or internal address, or could not be resolved: ${message}`,
+      );
+    }
+  }
+  const {
+    runOpenshell,
+    upsertProvider: _upsertProvider, // intentionally unused; matches inline branch
+    verifyInferenceRoute,
+    verifyOnboardInferenceSmoke,
+    isNonInteractive,
+    registry,
+    exitProcess,
+    error,
+    log,
+    hermesProviderAuth,
+    getHermesToolGatewayBroker,
+    providerExistsInGateway,
+    normalizeHermesAuthMethod,
+    resolveHermesNousApiKey,
+    checkHermesProviderStoreReachable,
+    hermesAuthMethodLabel,
+    hermesConstants: {
+      HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
+      HERMES_AUTH_METHOD_API_KEY,
+      HERMES_AUTH_METHOD_OAUTH,
+    },
+    requireValue,
+    redact,
+    compactText,
+  } = deps;
+  void _upsertProvider;
+
+  const targetSandbox = requireValue(sandboxName, "Hermes Provider requires a sandbox name");
+  const resolvedHermesAuthMethod =
+    normalizeHermesAuthMethod(hermesAuthMethod) ||
+    (credentialEnv === HERMES_NOUS_API_KEY_CREDENTIAL_ENV
+      ? HERMES_AUTH_METHOD_API_KEY
+      : HERMES_AUTH_METHOD_OAUTH);
+  const providerStore = checkHermesProviderStoreReachable(runOpenshell);
+  if (!providerStore.ok) {
+    error("  ✗ OpenShell provider storage is unreachable.");
+    error(`    ${providerStore.message}`);
+    error("    Restart or recreate the OpenShell gateway, then rerun onboarding.");
+    if (isNonInteractive()) return exitProcess(1);
+    return { retry: "selection" };
+  }
+  const providerRegistered = hermesProviderAuth.isHermesProviderRegistered(runOpenshell);
+  const toolGatewayProviderRegistered =
+    hermesToolGateways.length === 0
+      ? true
+      : providerExistsInGateway(
+          getHermesToolGatewayBroker().getHermesToolGatewayProviderName(targetSandbox),
+        );
+  const hasFreshNousApiKey =
+    resolvedHermesAuthMethod === HERMES_AUTH_METHOD_API_KEY && !!resolveHermesNousApiKey();
+  const shouldPrepareHermesCredentials =
+    !providerRegistered ||
+    !toolGatewayProviderRegistered ||
+    hasFreshNousApiKey ||
+    (resolvedHermesAuthMethod === HERMES_AUTH_METHOD_OAUTH && !isNonInteractive());
+  if (shouldPrepareHermesCredentials) {
+    let state: unknown;
+    try {
+      state =
+        resolvedHermesAuthMethod === HERMES_AUTH_METHOD_API_KEY
+          ? await hermesProviderAuth.ensureHermesProviderApiKeyCredentials(targetSandbox, {
+              apiKey: resolveHermesNousApiKey(),
+              runOpenshell,
+              baseUrl: resolvedEndpointUrl || undefined,
+            })
+          : await hermesProviderAuth.ensureHermesProviderOAuthCredentials(targetSandbox, {
+              allowInteractiveLogin: !isNonInteractive(),
+              runOpenshell,
+              baseUrl: resolvedEndpointUrl || undefined,
+              toolGatewayPresets: hermesToolGateways,
+            });
+    } catch (err) {
+      error(
+        `  ✗ Failed to prepare Hermes Provider credentials: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      if (isNonInteractive()) return exitProcess(1);
+      return { retry: "selection" };
+    }
+    if (!state) {
+      const authLabel = hermesAuthMethodLabel(resolvedHermesAuthMethod);
+      error(`  ✗ Hermes Provider ${authLabel} is not available on the host.`);
+      error("    Re-run `nemoclaw onboard --agent hermes` interactively to configure credentials.");
+      return exitProcess(1);
+    }
+  }
+
+  const applyResult = runOpenshell(
+    ["inference", "set", "--no-verify", "--provider", provider, "--model", model],
+    { ignoreError: true },
+  );
+  if (applyResult.status !== 0) {
+    const message =
+      compactText(redact(`${applyResult.stderr || ""} ${applyResult.stdout || ""}`)) ||
+      `Failed to configure inference provider '${provider}'.`;
+    error(`  ${message}`);
+    if (isNonInteractive()) return exitProcess(applyResult.status || 1);
+    return { retry: "selection" };
+  }
+
+  verifyInferenceRoute(provider, model);
+  await verifyOnboardInferenceSmoke({
+    provider,
+    model,
+    endpointUrl: resolvedEndpointUrl,
+    credentialEnv,
+  });
+  if (sandboxName) {
+    registry.updateSandbox(sandboxName, { model, provider });
+  }
+  log(`  ✓ Inference route set: ${provider} / ${model}`);
+  return { ok: true };
+}

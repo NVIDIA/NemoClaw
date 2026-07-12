@@ -1,0 +1,406 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { createSession, type Session } from "../../state/onboard-session";
+import {
+  EmptyLiveOnboardFlowSliceResultError,
+  runLiveOnboardFlowSlice,
+  UnexpectedLiveOnboardFlowSliceStateError,
+} from "./live-flow-slice";
+import { advanceTo, type OnboardStateResult } from "./result";
+import type { OnboardMachineRunnerRuntime } from "./runner";
+import { DuplicateOnboardSequencePhaseError, type OnboardSequencePhase } from "./sequence-runner";
+
+interface Context {
+  value: number;
+}
+
+function runtime(state: Session["machine"]["state"]): {
+  runtime: OnboardMachineRunnerRuntime;
+  applyResult(result: OnboardStateResult): Promise<Session>;
+  session(): Session;
+} {
+  let session = createSession({
+    machine: { version: 1, state, stateEnteredAt: null, revision: 1 },
+  });
+  const runtimeApi: OnboardMachineRunnerRuntime = {
+    async session() {
+      return session;
+    },
+    async applyResult(result) {
+      if (result.type === "transition") {
+        session = {
+          ...session,
+          machine: {
+            ...session.machine,
+            state: result.next,
+            revision: session.machine.revision + 1,
+          },
+        };
+      }
+      return session;
+    },
+  };
+  return {
+    runtime: runtimeApi,
+    applyResult(result) {
+      return runtimeApi.applyResult(result);
+    },
+    session() {
+      return session;
+    },
+  };
+}
+
+function phase(
+  state: OnboardSequencePhase<Context>["state"],
+  next: number,
+  result: OnboardStateResult | readonly OnboardStateResult[] = advanceTo("gateway"),
+): OnboardSequencePhase<Context> {
+  return {
+    state,
+    run: vi.fn((context) => ({
+      context: { value: next },
+      result,
+    })),
+  };
+}
+
+function invalidatedRecorder() {
+  return vi.fn(async () => undefined);
+}
+
+describe("runLiveOnboardFlowSlice", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("uses the strict slice runner for fresh matching entry states", async () => {
+    const runSlice = vi.fn(async ({ context }) => ({
+      context: { value: context.value + 1 },
+      session: createSession(),
+    }));
+    const recordStateResult = vi.fn(async () => undefined);
+
+    const result = await runLiveOnboardFlowSlice({
+      context: { value: 1 },
+      runtime: runtime("preflight").runtime,
+      phases: [phase("preflight", 2)],
+      runWhenState: ["preflight"],
+      compatibilityWhenState: ["provider_selection"],
+      runSlice,
+      recordStateResult,
+      recordInvalidatedStateResult: invalidatedRecorder(),
+    });
+
+    expect(result.context).toEqual({ value: 2 });
+    expect(runSlice).toHaveBeenCalledOnce();
+    expect(recordStateResult).not.toHaveBeenCalled();
+  });
+
+  it("applies recomputed results in exact phase order while they match durable state", async () => {
+    const liveRuntime = runtime("preflight");
+    const runSlice = vi.fn(async ({ context }) => ({ context, session: createSession() }));
+    const results = [
+      advanceTo("gateway"),
+      advanceTo("provider_selection", { metadata: { state: "gateway" } }),
+      advanceTo("inference", { metadata: { state: "provider_selection" } }),
+    ];
+    const recordStateResult = vi.fn(async (result: OnboardStateResult) =>
+      liveRuntime.applyResult(result),
+    );
+    const recordInvalidatedStateResult = invalidatedRecorder();
+    const wrappedStates: string[] = [];
+
+    const result = await runLiveOnboardFlowSlice({
+      context: { value: 1 },
+      runtime: liveRuntime.runtime,
+      phases: [
+        phase("preflight", 2, results[0]),
+        {
+          state: "gateway",
+          run: vi.fn((context) => ({
+            context: { value: context.value + 1 },
+            result: [results[1], results[2]],
+          })),
+        },
+      ],
+      runWhenState: ["preflight"],
+      compatibilityWhenState: ["preflight"],
+      phaseProgress: {
+        wrap: (candidate) => {
+          wrappedStates.push(candidate.state);
+          return candidate;
+        },
+      },
+      runSlice,
+      recordStateResult,
+      recordInvalidatedStateResult,
+    });
+
+    expect(result.context).toEqual({ value: 3 });
+    expect(result.session.machine.state).toBe("inference");
+    expect(runSlice).not.toHaveBeenCalled();
+    expect(wrappedStates).toEqual(["preflight", "gateway"]);
+    expect(recordStateResult.mock.calls.map(([result]) => result)).toEqual(results);
+    expect(recordInvalidatedStateResult).not.toHaveBeenCalled();
+  });
+
+  it("keeps resume-at-entry flows on compatibility execution", async () => {
+    const liveRuntime = runtime("preflight");
+    const runSlice = vi.fn(async ({ context }) => ({ context, session: createSession() }));
+    const recordStateResult = vi.fn(async (result: OnboardStateResult) =>
+      liveRuntime.applyResult(result),
+    );
+
+    await runLiveOnboardFlowSlice({
+      context: { value: 1 },
+      runtime: liveRuntime.runtime,
+      phases: [phase("preflight", 2)],
+      runWhenState: ["preflight"],
+      compatibilityWhenState: ["preflight"],
+      runSlice,
+      recordStateResult,
+      recordInvalidatedStateResult: invalidatedRecorder(),
+    });
+
+    expect(runSlice).not.toHaveBeenCalled();
+    expect(recordStateResult).toHaveBeenCalledOnce();
+  });
+
+  it("keeps non-resume ahead-state flows on compatibility execution", async () => {
+    const liveRuntime = runtime("provider_selection");
+    const runSlice = vi.fn(async ({ context }) => ({ context, session: createSession() }));
+    const recordStateResult = vi.fn(async (result: OnboardStateResult) =>
+      liveRuntime.applyResult(result),
+    );
+    const recordInvalidatedStateResult = invalidatedRecorder();
+    // Preflight replays advanceTo('gateway', { state: 'preflight' }) while the
+    // durable machine already stands at 'provider_selection'. The compatibility
+    // phase body must still execute (backstop side effects) and the recomputed
+    // transition must be routed through invalidation, not applied. Assert both:
+    // stalePhase.run fired once, and invalidation carries the correct source /
+    // current state ownership for #6227.
+    const stalePhase = phase("preflight", 2);
+
+    await runLiveOnboardFlowSlice({
+      context: { value: 1 },
+      runtime: liveRuntime.runtime,
+      phases: [stalePhase],
+      runWhenState: ["preflight"],
+      compatibilityWhenState: ["provider_selection"],
+      runSlice,
+      recordStateResult,
+      recordInvalidatedStateResult,
+    });
+
+    expect(runSlice).not.toHaveBeenCalled();
+    expect(stalePhase.run).toHaveBeenCalledOnce();
+    expect(recordStateResult).not.toHaveBeenCalled();
+    expect(recordInvalidatedStateResult).toHaveBeenCalledOnce();
+    expect(recordInvalidatedStateResult).toHaveBeenCalledWith(
+      expect.objectContaining({ next: "gateway" }),
+      {
+        reason: "source_state_mismatch",
+        currentState: "provider_selection",
+        sourceState: "preflight",
+      },
+    );
+  });
+
+  it("keeps compatibility phases visible through the default heartbeat reporter", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    let markPhaseStarted!: () => void;
+    let releasePhase!: () => void;
+    const phaseStarted = new Promise<void>((resolve) => {
+      markPhaseStarted = resolve;
+    });
+    const phaseReleased = new Promise<void>((resolve) => {
+      releasePhase = resolve;
+    });
+    const liveRuntime = runtime("provider_selection");
+    const pendingGateway: OnboardSequencePhase<Context> = {
+      state: "gateway",
+      async run(context) {
+        markPhaseStarted();
+        await phaseReleased;
+        return { context, result: advanceTo("inference") };
+      },
+    };
+
+    const running = runLiveOnboardFlowSlice({
+      context: { value: 1 },
+      runtime: liveRuntime.runtime,
+      phases: [pendingGateway],
+      runWhenState: ["gateway"],
+      compatibilityWhenState: ["provider_selection"],
+      runSlice: vi.fn(),
+      recordStateResult: (result) => liveRuntime.applyResult(result),
+      recordInvalidatedStateResult: invalidatedRecorder(),
+    });
+    await phaseStarted;
+    try {
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(log).toHaveBeenCalledWith("  ⏳ Still working on Gateway startup… (30s elapsed)");
+    } finally {
+      releasePhase();
+      await running;
+    }
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("rejects non-resume states before the slice entry before running side effects", async () => {
+    const liveRuntime = runtime("init");
+    const blocked = phase("provider_selection", 2);
+    const runSlice = vi.fn(async ({ context }) => ({ context, session: createSession() }));
+    const recordStateResult = vi.fn(async () => undefined);
+
+    await expect(
+      runLiveOnboardFlowSlice({
+        context: { value: 1 },
+        runtime: liveRuntime.runtime,
+        phases: [blocked],
+        runWhenState: ["provider_selection"],
+        compatibilityWhenState: ["inference", "sandbox"],
+        runSlice,
+        recordStateResult,
+        recordInvalidatedStateResult: invalidatedRecorder(),
+      }),
+    ).rejects.toBeInstanceOf(UnexpectedLiveOnboardFlowSliceStateError);
+
+    expect(runSlice).not.toHaveBeenCalled();
+    expect(blocked.run).not.toHaveBeenCalled();
+    expect(recordStateResult).not.toHaveBeenCalled();
+  });
+
+  it("rejects undeclared resume states before running side effects", async () => {
+    const liveRuntime = runtime("provider_selection");
+    const blocked = phase("preflight", 2);
+    const runSlice = vi.fn(async ({ context }) => ({ context, session: createSession() }));
+    const recordStateResult = vi.fn(async () => undefined);
+
+    await expect(
+      runLiveOnboardFlowSlice({
+        context: { value: 1 },
+        runtime: liveRuntime.runtime,
+        phases: [blocked],
+
+        runWhenState: ["preflight"],
+        compatibilityWhenState: ["sandbox"],
+        runSlice,
+        recordStateResult,
+        recordInvalidatedStateResult: invalidatedRecorder(),
+      }),
+    ).rejects.toBeInstanceOf(UnexpectedLiveOnboardFlowSliceStateError);
+
+    expect(runSlice).not.toHaveBeenCalled();
+    expect(blocked.run).not.toHaveBeenCalled();
+    expect(recordStateResult).not.toHaveBeenCalled();
+  });
+
+  it("rejects duplicate compatibility phases before running side effects", async () => {
+    const liveRuntime = runtime("provider_selection");
+    const first = phase("preflight", 2);
+    const second = phase("preflight", 3);
+    const recordStateResult = vi.fn(async () => undefined);
+
+    await expect(
+      runLiveOnboardFlowSlice({
+        context: { value: 1 },
+        runtime: liveRuntime.runtime,
+        phases: [first, second],
+        runWhenState: ["preflight"],
+        compatibilityWhenState: ["provider_selection"],
+        runSlice: vi.fn(),
+        recordStateResult,
+        recordInvalidatedStateResult: invalidatedRecorder(),
+      }),
+    ).rejects.toBeInstanceOf(DuplicateOnboardSequencePhaseError);
+
+    expect(first.run).not.toHaveBeenCalled();
+    expect(second.run).not.toHaveBeenCalled();
+    expect(recordStateResult).not.toHaveBeenCalled();
+  });
+
+  it("rejects empty compatibility phase results", async () => {
+    const liveRuntime = runtime("provider_selection");
+    const recordStateResult = vi.fn(async () => undefined);
+
+    await expect(
+      runLiveOnboardFlowSlice({
+        context: { value: 1 },
+        runtime: liveRuntime.runtime,
+        phases: [phase("preflight", 2, [])],
+        runWhenState: ["preflight"],
+        compatibilityWhenState: ["provider_selection"],
+        runSlice: vi.fn(),
+        recordStateResult,
+        recordInvalidatedStateResult: invalidatedRecorder(),
+      }),
+    ).rejects.toBeInstanceOf(EmptyLiveOnboardFlowSliceResultError);
+
+    expect(recordStateResult).not.toHaveBeenCalled();
+  });
+
+  it("invalidates a recomputed transition when the machine already stands at its target (#6227)", async () => {
+    const liveRuntime = runtime("gateway");
+    const recordStateResult = vi.fn(async (result: OnboardStateResult) =>
+      liveRuntime.applyResult(result),
+    );
+    const recordInvalidatedStateResult = invalidatedRecorder();
+    // Recompute of the preflight phase in ahead-state resume: machine is
+    // already at 'gateway' when preflight replays advanceTo('gateway',
+    // { state: 'preflight' }). Recording must route through the invalidated
+    // path with reason 'already_at_target', not the standard apply path.
+    await runLiveOnboardFlowSlice({
+      context: { value: 1 },
+      runtime: liveRuntime.runtime,
+      phases: [phase("preflight", 2)],
+      runWhenState: ["preflight"],
+      compatibilityWhenState: ["gateway"],
+      runSlice: vi.fn(),
+      recordStateResult,
+      recordInvalidatedStateResult,
+    });
+
+    expect(recordStateResult).not.toHaveBeenCalled();
+    expect(recordInvalidatedStateResult).toHaveBeenCalledOnce();
+    expect(recordInvalidatedStateResult).toHaveBeenCalledWith(
+      expect.objectContaining({ next: "gateway" }),
+      {
+        reason: "already_at_target",
+        currentState: "gateway",
+        sourceState: "preflight",
+      },
+    );
+  });
+
+  it("propagates recomputed result application failures without running later phases", async () => {
+    const liveRuntime = runtime("preflight");
+    const later = phase("gateway", 3);
+    const recordStateResult = vi.fn(async () => {
+      throw new Error("compatibility failed");
+    });
+
+    await expect(
+      runLiveOnboardFlowSlice({
+        context: { value: 1 },
+        runtime: liveRuntime.runtime,
+        phases: [phase("preflight", 2), later],
+        runWhenState: ["preflight"],
+        compatibilityWhenState: ["preflight"],
+        runSlice: vi.fn(),
+        recordStateResult,
+        recordInvalidatedStateResult: invalidatedRecorder(),
+      }),
+    ).rejects.toThrow("compatibility failed");
+
+    expect(recordStateResult).toHaveBeenCalledOnce();
+    expect(later.run).not.toHaveBeenCalled();
+  });
+});

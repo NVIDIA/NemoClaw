@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { execTimeout, testTimeoutOptions } from "./helpers/timeouts";
 
 const tmpFixtures: string[] = [];
 
@@ -68,6 +69,11 @@ if (args[0] === "sandbox" && args[1] === "list") {
   process.exit(0);
 }
 
+if (args[0] === "sandbox" && args[1] === "exec") {
+  process.stdout.write("OK 200\\n");
+  process.exit(0);
+}
+
 if (args[0] === "policy" && args[1] === "get") {
   process.exit(1);
 }
@@ -94,7 +100,20 @@ process.exit(0);
     { mode: 0o755 },
   );
 
-  return { tmpDir, sandboxName };
+  // Healthy `docker info` stub so these stuck-phase tests exercise the genuine
+  // "Docker up, sandbox wedged" path rather than the #4428 Docker-outage
+  // reclassification (which fires when `docker info` fails). Lives next to the
+  // fake openshell; runCli puts this dir on PATH.
+  fs.writeFileSync(
+    path.join(homeLocalBin, "docker"),
+    `#!${process.execPath}
+if (process.argv[2] === "info") { process.stdout.write("24.0.0\\n"); process.exit(0); }
+process.exit(0);
+`,
+    { mode: 0o755 },
+  );
+
+  return { tmpDir, sandboxName, homeLocalBin };
 }
 
 function runCli(
@@ -104,6 +123,9 @@ function runCli(
   extraEnv: Record<string, string> = {},
 ) {
   const repoRoot = path.join(import.meta.dirname, "..");
+  // Put the fixture bin (with the healthy docker stub) first so the #4428
+  // Docker preflight sees a reachable daemon regardless of the host runner.
+  const homeLocalBin = path.join(tmpDir, ".local", "bin");
   return spawnSync(
     process.execPath,
     [path.join(repoRoot, "bin", "nemoclaw.js"), sandboxName, subcommand],
@@ -113,11 +135,11 @@ function runCli(
       env: {
         ...process.env,
         HOME: tmpDir,
-        PATH: "/usr/bin:/bin",
+        PATH: `${homeLocalBin}:/usr/bin:/bin`,
         NEMOCLAW_NO_CONNECT_HINT: "1",
         ...extraEnv,
       },
-      timeout: Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 15_000),
+      timeout: execTimeout(15_000),
     },
   );
 }
@@ -125,15 +147,14 @@ function runCli(
 describe("sandbox stuck in non-Ready phase (#2016)", () => {
   it(
     "connect times out with guidance when sandbox is stuck in Provisioning",
-    { timeout: Number(process.env.NEMOCLAW_TEST_TIMEOUT || 20_000) },
+    testTimeoutOptions(20_000),
     () => {
       const { tmpDir, sandboxName } = setupFixture("stuck-sandbox", "Provisioning");
 
-      // Short connect timeout so the test doesn't wait 120s. Provisioning
-      // is not a terminal state, so the readiness poll introduced in #466
-      // waits until NEMOCLAW_CONNECT_TIMEOUT elapses.
+      // Use the shortest accepted whole-second timeout so this still exercises
+      // the non-terminal readiness wait without adding avoidable wall time.
       const result = runCli(tmpDir, sandboxName, "connect", {
-        NEMOCLAW_CONNECT_TIMEOUT: "3",
+        NEMOCLAW_CONNECT_TIMEOUT: "1",
       });
       expect(result.status).not.toBe(0);
 
@@ -146,7 +167,7 @@ describe("sandbox stuck in non-Ready phase (#2016)", () => {
 
   it(
     "connect exits immediately with recovery hint when sandbox is in a terminal failure state",
-    { timeout: Number(process.env.NEMOCLAW_TEST_TIMEOUT || 20_000) },
+    testTimeoutOptions(20_000),
     () => {
       const { tmpDir, sandboxName } = setupFixture("failed-sandbox", "Failed");
 
@@ -162,7 +183,7 @@ describe("sandbox stuck in non-Ready phase (#2016)", () => {
 
   it(
     "status shows recovery hint when sandbox is stuck in Provisioning",
-    { timeout: Number(process.env.NEMOCLAW_TEST_TIMEOUT || 20_000) },
+    testTimeoutOptions(20_000),
     () => {
       const { tmpDir, sandboxName } = setupFixture("stuck-status", "Provisioning");
 
@@ -173,17 +194,13 @@ describe("sandbox stuck in non-Ready phase (#2016)", () => {
     },
   );
 
-  it(
-    "connect succeeds when sandbox phase is Ready",
-    { timeout: Number(process.env.NEMOCLAW_TEST_TIMEOUT || 20_000) },
-    () => {
-      const { tmpDir, sandboxName } = setupFixture("ready-sandbox", "Ready");
+  it("connect succeeds when sandbox phase is Ready", testTimeoutOptions(20_000), () => {
+    const { tmpDir, sandboxName } = setupFixture("ready-sandbox", "Ready");
 
-      const result = runCli(tmpDir, sandboxName, "connect");
-      expect(result.status).toBe(0);
+    const result = runCli(tmpDir, sandboxName, "connect");
+    expect(result.status).toBe(0);
 
-      const combined = (result.stdout || "") + (result.stderr || "");
-      expect(combined).not.toContain("stuck in");
-    },
-  );
+    const combined = (result.stdout || "") + (result.stderr || "");
+    expect(combined).not.toContain("stuck in");
+  });
 });

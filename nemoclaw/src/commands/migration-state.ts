@@ -20,6 +20,7 @@ import { create as createTar } from "tar";
 import { createHash } from "node:crypto";
 import JSON5 from "json5";
 import type { PluginLogger } from "../index.js";
+import { isObjectRecord, type UnknownRecord } from "../shared/object-record.js";
 
 const SANDBOX_MIGRATION_DIR = "/sandbox/.nemoclaw/migration";
 const SNAPSHOT_VERSION = 3;
@@ -88,12 +89,7 @@ type CandidateRoot = {
   required: boolean;
 };
 
-type UnknownRecord = { [key: string]: unknown };
 type OpenClawConfigDocument = UnknownRecord;
-
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function readString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
@@ -105,7 +101,7 @@ function readTrimmedString(value: unknown): string | null {
 }
 
 function readRecord(value: unknown): UnknownRecord | null {
-  return isRecord(value) ? value : null;
+  return isObjectRecord(value) ? value : null;
 }
 
 function readRecordKey(
@@ -121,7 +117,7 @@ function readArrayKey(record: UnknownRecord | null | undefined, key: string): un
 }
 
 function parseConfigDocument(value: unknown, context: string): OpenClawConfigDocument {
-  if (!isRecord(value)) {
+  if (!isObjectRecord(value)) {
     throw new Error(`${context} is not a JSON object.`);
   }
   return value;
@@ -185,6 +181,18 @@ function loadConfigDocument(configPath: string): OpenClawConfigDocument | null {
     return null;
   }
   const raw = readFileSync(configPath, "utf-8");
+  // Empty / whitespace-only openclaw.json — the upstream openshell-inference-set
+  // truncate-then-write window can leave the file at 0 bytes (#3118). JSON5.parse
+  // would throw "JSON5: invalid end of input at 1:1"; surface a recovery hint
+  // instead so callers can route the user to the restart-recovery path rather
+  // than chasing the parser error.
+  if (raw.trim() === "") {
+    throw new Error(
+      `Config at ${configPath} is empty (0 bytes or whitespace-only). ` +
+        "Restart the sandbox to trigger baseline recovery, or restore the " +
+        "file from a known-good copy (see #3118).",
+    );
+  }
   return parseConfigDocument(JSON5.parse(raw), `Config at ${configPath}`);
 }
 
@@ -537,11 +545,13 @@ function isCredentialField(key: string): boolean {
  * Returns a new object with sensitive values replaced by a placeholder.
  */
 function stripCredentials(obj: unknown): unknown {
-  if (obj === null || obj === undefined) return obj;
-  if (typeof obj !== "object") return obj;
   if (Array.isArray(obj)) return obj.map(stripCredentials);
-  if (!isRecord(obj)) return obj;
+  if (!isObjectRecord(obj)) return obj;
 
+  return stripCredentialsFromRecord(obj);
+}
+
+function stripCredentialsFromRecord(obj: UnknownRecord): UnknownRecord {
   const result: UnknownRecord = {};
   for (const [key, value] of Object.entries(obj)) {
     if (isCredentialField(key)) {
@@ -561,8 +571,7 @@ function sanitizeConfigFile(configPath: string): void {
   const config = loadConfigDocument(configPath);
   if (!config) return;
   delete config.gateway;
-  const sanitized = stripCredentials(config);
-  if (!isRecord(sanitized)) return;
+  const sanitized = stripCredentialsFromRecord(config);
   writeFileSync(configPath, JSON.stringify(sanitized, null, 2));
   chmodSync(configPath, 0o600);
 }
@@ -594,12 +603,12 @@ function writeSnapshotManifest(snapshotDir: string, manifest: SnapshotManifest):
 }
 
 function isMigrationRootBinding(value: unknown): value is MigrationRootBinding {
-  return isRecord(value) && typeof value.configPath === "string";
+  return isObjectRecord(value) && typeof value.configPath === "string";
 }
 
 function isMigrationExternalRoot(value: unknown): value is MigrationExternalRoot {
   return (
-    isRecord(value) &&
+    isObjectRecord(value) &&
     typeof value.id === "string" &&
     (value.kind === "workspace" || value.kind === "agentDir" || value.kind === "skillsExtraDir") &&
     typeof value.label === "string" &&
@@ -615,7 +624,7 @@ function isMigrationExternalRoot(value: unknown): value is MigrationExternalRoot
 
 function isSnapshotManifest(value: unknown): value is SnapshotManifest {
   return (
-    isRecord(value) &&
+    isObjectRecord(value) &&
     typeof value.version === "number" &&
     typeof value.createdAt === "string" &&
     typeof value.homeDir === "string" &&
@@ -661,7 +670,7 @@ function requireArray(value: unknown, configPath: string): unknown[] {
 }
 
 function requireRecord(value: unknown, configPath: string): UnknownRecord {
-  if (!isRecord(value)) {
+  if (!isObjectRecord(value)) {
     throw new Error(`Invalid config path segment in ${configPath}`);
   }
   return value;
@@ -692,8 +701,7 @@ export function setConfigValue(document: UnknownRecord, configPath: string, valu
     if (isArrayIndex) {
       const array = requireArray(current, configPath);
       const arrayIndex = Number.parseInt(token, 10);
-      const entry = array[arrayIndex];
-      if (entry == null) {
+      if (array[arrayIndex] == null) {
         array[arrayIndex] = isArrayIndexToken(nextToken) ? [] : {};
       }
       current = array[arrayIndex];

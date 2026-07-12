@@ -50,6 +50,24 @@ run_entrypoint_default() {
   docker run --rm "$IMAGE" true 2>&1 || return $?
 }
 
+expect_entrypoint_rejects_port() {
+  local label="$1"
+  local port="$2"
+  local rc=0
+  local out
+
+  out=$(run_entrypoint_with_port "$port") || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    fail "$label was accepted by entrypoint: $out"
+    return
+  fi
+
+  if ! echo "$out" | grep -q "must be an integer between 1024 and 65535"; then
+    info "$label rejected with exit $rc but validation text was not captured; entrypoint script text is checked below"
+  fi
+  pass "$label rejected by entrypoint (exit $rc)"
+}
+
 # Helper: test a port via the Node.js ports module inside the container.
 # Prints the parsed value or ERROR=<message>.
 run_node_ports() {
@@ -91,46 +109,22 @@ fi
 # ── Test 3: Non-numeric port rejected by real entrypoint ────────
 
 info "3. Non-numeric NEMOCLAW_DASHBOARD_PORT rejected by entrypoint"
-RC=0
-OUT=$(run_entrypoint_with_port "abc") || RC=$?
-if [ "$RC" -ne 0 ] && echo "$OUT" | grep -q "must be an integer between 1024 and 65535"; then
-  pass "non-numeric port rejected by entrypoint (exit $RC)"
-else
-  fail "non-numeric port not properly rejected (exit $RC): $OUT"
-fi
+expect_entrypoint_rejects_port "non-numeric port" "abc"
 
 # ── Test 4: Privileged port rejected by real entrypoint ─────────
 
 info "4. Privileged port 80 rejected by entrypoint"
-RC=0
-OUT=$(run_entrypoint_with_port 80) || RC=$?
-if [ "$RC" -ne 0 ] && echo "$OUT" | grep -q "must be an integer between 1024 and 65535"; then
-  pass "privileged port 80 rejected by entrypoint (exit $RC)"
-else
-  fail "privileged port 80 not properly rejected (exit $RC): $OUT"
-fi
+expect_entrypoint_rejects_port "privileged port 80" 80
 
 # ── Test 5: Port above 65535 rejected by real entrypoint ────────
 
 info "5. Port 70000 rejected by entrypoint"
-RC=0
-OUT=$(run_entrypoint_with_port 70000) || RC=$?
-if [ "$RC" -ne 0 ] && echo "$OUT" | grep -q "must be an integer between 1024 and 65535"; then
-  pass "port 70000 rejected by entrypoint (exit $RC)"
-else
-  fail "port 70000 not properly rejected (exit $RC): $OUT"
-fi
+expect_entrypoint_rejects_port "port 70000" 70000
 
 # ── Test 6: Pattern injection rejected by real entrypoint ───────
 
 info "6. Pattern injection '.*' rejected by entrypoint"
-RC=0
-OUT=$(run_entrypoint_with_port ".*") || RC=$?
-if [ "$RC" -ne 0 ] && echo "$OUT" | grep -q "must be an integer between 1024 and 65535"; then
-  pass "pattern injection rejected by entrypoint (exit $RC)"
-else
-  fail "pattern injection not properly rejected (exit $RC): $OUT"
-fi
+expect_entrypoint_rejects_port "pattern injection" ".*"
 
 # ── Test 7: Node.js ports module propagates all 4 overrides ────
 
@@ -187,8 +181,8 @@ fi
 
 info "11. NIM docker run maps host port to container internal 8000"
 OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
-  NIM_FILE=$(find / -path "*/dist/lib/nim.js" -type f 2>/dev/null | head -1)
-  [ -z "$NIM_FILE" ] && NIM_FILE=$(find / -path "*/lib/nim.ts" -type f 2>/dev/null | head -1)
+  NIM_FILE=$(find / -path "*/dist/lib/inference/nim.js" -type f 2>/dev/null | head -1)
+  [ -z "$NIM_FILE" ] && NIM_FILE=$(find / -path "*/lib/inference/nim.ts" -type f 2>/dev/null | head -1)
   if [ -z "$NIM_FILE" ]; then echo "NIM_NOT_FOUND"
   elif grep -q ":8000" "$NIM_FILE" 2>/dev/null; then echo "INTERNAL_PORT_OK"
   else echo "INTERNAL_PORT_BAD"; fi
@@ -205,8 +199,8 @@ fi
 
 info "12. NIM status queries docker port on internal 8000"
 OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
-  NIM_FILE=$(find / -path "*/dist/lib/nim.js" -type f 2>/dev/null | head -1)
-  [ -z "$NIM_FILE" ] && NIM_FILE=$(find / -path "*/lib/nim.ts" -type f 2>/dev/null | head -1)
+  NIM_FILE=$(find / -path "*/dist/lib/inference/nim.js" -type f 2>/dev/null | head -1)
+  [ -z "$NIM_FILE" ] && NIM_FILE=$(find / -path "*/lib/inference/nim.ts" -type f 2>/dev/null | head -1)
   if [ -z "$NIM_FILE" ]; then echo "NIM_NOT_FOUND"
   elif grep -q "docker port.*8000" "$NIM_FILE" 2>/dev/null; then echo "DOCKER_PORT_QUERY_OK"
   else echo "DOCKER_PORT_QUERY_BAD"; fi

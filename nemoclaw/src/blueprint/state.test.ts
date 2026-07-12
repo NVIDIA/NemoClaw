@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
 import type fs from "node:fs";
 import { homedir } from "node:os";
-import { loadState, saveState, clearState, type NemoClawState } from "./state.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { clearState, loadState, type NemoClawState, saveState } from "./state.js";
 
 const store = new Map<string, string>();
+const writes: Array<{ path: string; options: unknown }> = [];
+const renames: Array<{ from: string; to: string }> = [];
 
 vi.mock("node:fs", async (importOriginal) => {
   const original = await importOriginal<typeof fs>();
@@ -19,8 +21,16 @@ vi.mock("node:fs", async (importOriginal) => {
       if (content === undefined) throw new Error(`ENOENT: ${p}`);
       return content;
     },
-    writeFileSync: (p: string, data: string) => {
+    writeFileSync: (p: string, data: string, options?: unknown) => {
+      writes.push({ path: p, options });
       store.set(p, data);
+    },
+    renameSync: (from: string, to: string) => {
+      renames.push({ from, to });
+      const content = store.get(from);
+      if (content === undefined) throw new Error(`ENOENT: ${from}`);
+      store.set(to, content);
+      store.delete(from);
     },
   };
 });
@@ -30,6 +40,8 @@ const STATE_PATH = `${homedir()}/.nemoclaw/state/nemoclaw.json`;
 describe("blueprint/state", () => {
   beforeEach(() => {
     store.clear();
+    writes.length = 0;
+    renames.length = 0;
   });
 
   describe("loadState", () => {
@@ -43,13 +55,6 @@ describe("blueprint/state", () => {
       expect(state.hostBackupPath).toBeNull();
       expect(state.createdAt).toBeNull();
       expect(state.updatedAt).toBeDefined();
-      // Shields defaults
-      expect(state.shieldsDown).toBe(false);
-      expect(state.shieldsDownAt).toBeNull();
-      expect(state.shieldsDownTimeout).toBeNull();
-      expect(state.shieldsDownReason).toBeNull();
-      expect(state.shieldsDownPolicy).toBeNull();
-      expect(state.shieldsPolicySnapshotPath).toBeNull();
     });
 
     it("returns parsed state when file exists", () => {
@@ -64,48 +69,15 @@ describe("blueprint/state", () => {
         updatedAt: "2026-03-01T12:00:00.000Z",
         lastRebuildAt: null,
         lastRebuildBackupPath: null,
-        shieldsDown: false,
-        shieldsDownAt: null,
-        shieldsDownTimeout: null,
-        shieldsDownReason: null,
-        shieldsDownPolicy: null,
-        shieldsPolicySnapshotPath: null,
       };
       store.set(STATE_PATH, JSON.stringify(saved));
       expect(loadState()).toEqual(saved);
-    });
-
-    it("fills shields defaults for pre-shields state files", () => {
-      // Simulate a state file written before shields fields were added
-      const legacyState = {
-        lastRunId: "run-1",
-        lastAction: "deploy",
-        blueprintVersion: "1.0.0",
-        sandboxName: "sb",
-        migrationSnapshot: null,
-        hostBackupPath: null,
-        createdAt: "2026-03-01T00:00:00.000Z",
-        updatedAt: "2026-03-01T12:00:00.000Z",
-      };
-      store.set(STATE_PATH, JSON.stringify(legacyState));
-      const loaded = loadState();
-      // Original fields preserved
-      expect(loaded.lastRunId).toBe("run-1");
-      expect(loaded.lastAction).toBe("deploy");
-      // Shields fields filled with defaults
-      expect(loaded.shieldsDown).toBe(false);
-      expect(loaded.shieldsDownAt).toBeNull();
-      expect(loaded.shieldsDownTimeout).toBeNull();
-      expect(loaded.shieldsDownReason).toBeNull();
-      expect(loaded.shieldsDownPolicy).toBeNull();
-      expect(loaded.shieldsPolicySnapshotPath).toBeNull();
     });
 
     it("falls back to blank defaults when the persisted JSON root is not an object", () => {
       store.set(STATE_PATH, JSON.stringify(["not", "an", "object"]));
       const loaded = loadState();
       expect(loaded.lastRunId).toBeNull();
-      expect(loaded.shieldsDown).toBe(false);
     });
 
     it("ignores malformed persisted field types while preserving valid partial state", () => {
@@ -115,18 +87,12 @@ describe("blueprint/state", () => {
           lastRunId: "run-1",
           sandboxName: "sb",
           updatedAt: {},
-          shieldsDown: "false",
-          shieldsDownTimeout: "300",
-          shieldsDownReason: ["bad"],
         }),
       );
       const loaded = loadState();
       expect(loaded.lastRunId).toBe("run-1");
       expect(loaded.sandboxName).toBe("sb");
       expect(typeof loaded.updatedAt).toBe("string");
-      expect(loaded.shieldsDown).toBe(false);
-      expect(loaded.shieldsDownTimeout).toBeNull();
-      expect(loaded.shieldsDownReason).toBeNull();
     });
   });
 
@@ -170,10 +136,19 @@ describe("blueprint/state", () => {
       expect(loaded.lastRunId).toBeNull();
     });
 
-    it("does nothing when no file exists", () => {
+    it("creates blank state when no file exists", () => {
       expect(() => {
         clearState();
       }).not.toThrow();
+      expect(store.has(STATE_PATH)).toBe(true);
+      const write = writes.at(-1);
+      const rename = renames.at(-1);
+      expect(write?.path.startsWith(`${STATE_PATH}.${process.pid}.`)).toBe(true);
+      expect(write?.path.endsWith(".tmp")).toBe(true);
+      expect(write?.options).toMatchObject({ mode: 0o600 });
+      expect(rename).toEqual({ from: write?.path, to: STATE_PATH });
+      expect(store.has(write?.path || "")).toBe(false);
+      expect(JSON.parse(store.get(STATE_PATH) || "{}").lastAction).toBeNull();
     });
   });
 });

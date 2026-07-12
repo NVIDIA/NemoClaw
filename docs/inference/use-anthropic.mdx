@@ -1,0 +1,48 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Use Anthropic"
+sidebar-title: "Use Anthropic"
+description: "Configure NemoClaw to use the Anthropic Messages API for hosted inference."
+description-agent: "Sets up Anthropic as the NemoClaw inference provider. Use when onboarding with an Anthropic API key or selecting a curated Claude model."
+keywords: ["NemoClaw Anthropic", "Anthropic Messages", "ANTHROPIC_API_KEY"]
+content:
+  type: "how_to"
+---
+The Anthropic provider routes supported agents to the native Anthropic Messages API through OpenShell.
+The provider uses the `anthropic-messages` protocol.
+
+## Credential
+
+Set `ANTHROPIC_API_KEY` in the host shell before onboarding.
+NemoClaw keeps the credential on the host and uses provider-aware validation during retries.
+
+## Model Choices
+
+The onboarding wizard offers these curated model IDs.
+
+- `claude-sonnet-4-6`.
+- `claude-haiku-4-5`.
+- `claude-opus-4-6`.
+
+## Onboard
+
+Run the onboarding wizard and select **Anthropic**.
+
+```bash
+$$nemoclaw onboard
+```
+
+Select a model when the wizard prompts you.
+NemoClaw validates the selected provider and model before creating the sandbox.
+
+## Validation
+
+NemoClaw uses provider-aware validation during credential retries.
+The wizard retries transient upstream failures before it reports a provider failure.
+
+## Related Topics
+
+- [Choose a Model](../learn-and-choose/choose-model) compares the curated Claude models by task fit.
+- [Set Up an Anthropic-Compatible Endpoint](../custom-endpoints/set-up-anthropic-compatible-endpoint) covers custom gateways and proxies instead of the native Anthropic provider.
+- [Understand Provider Validation](../validate-inference/understand-provider-validation) describes provider validation behavior.

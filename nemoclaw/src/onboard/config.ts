@@ -1,9 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+  unlinkSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { isObjectRecord } from "../shared/object-record.js";
 
 let configDir = join(homedir(), ".nemoclaw");
 
@@ -30,23 +38,7 @@ export interface NemoClawOnboardConfig {
   onboardedAt: string;
 }
 
-type OnboardConfigSource = {
-  endpointType?: string | null;
-  endpointUrl?: string;
-  ncpPartner?: string | null;
-  model?: string;
-  profile?: string;
-  credentialEnv?: string;
-  provider?: string;
-  providerLabel?: string;
-  onboardedAt?: string;
-};
-
-function isRecord(value: object | null): value is OnboardConfigSource {
-  return value !== null && !Array.isArray(value);
-}
-
-function isEndpointType(value: string | null | undefined): value is EndpointType {
+function isEndpointType(value: unknown): value is EndpointType {
   return (
     value === "build" ||
     value === "openai" ||
@@ -60,13 +52,13 @@ function isEndpointType(value: string | null | undefined): value is EndpointType
   );
 }
 
-function isOptionalString(value: string | null | undefined): boolean {
+function isOptionalString(value: unknown): value is string | undefined {
   return value === undefined || typeof value === "string";
 }
 
-function isOnboardConfig(value: OnboardConfigSource | null): value is NemoClawOnboardConfig {
+function isOnboardConfig(value: unknown): value is NemoClawOnboardConfig {
   return (
-    isRecord(value) &&
+    isObjectRecord(value) &&
     isEndpointType(value.endpointType) &&
     typeof value.endpointUrl === "string" &&
     (value.ncpPartner === null || typeof value.ncpPartner === "string") &&
@@ -138,10 +130,7 @@ function ensureConfigDir(): void {
     try {
       mkdirSync(configDir, { recursive: true });
     } catch {
-      configDir = join(tmpdir(), ".nemoclaw");
-      if (!existsSync(configDir)) {
-        mkdirSync(configDir, { recursive: true });
-      }
+      configDir = mkdtempSync(join(tmpdir(), "nemoclaw-config-"));
     }
   }
   configDirCreated = true;
@@ -157,9 +146,13 @@ export function loadOnboardConfig(): NemoClawOnboardConfig | null {
   if (!existsSync(path)) {
     return null;
   }
-  const parsed: unknown = JSON.parse(readFileSync(path, "utf-8"));
-  const parsedObject = typeof parsed === "object" && parsed !== null ? parsed : null;
-  return isOnboardConfig(parsedObject) ? parsedObject : null;
+  // Treat unreadable config as "no config" so plugin register doesn't abort.
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf-8"));
+    return isOnboardConfig(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 export function saveOnboardConfig(config: NemoClawOnboardConfig): void {

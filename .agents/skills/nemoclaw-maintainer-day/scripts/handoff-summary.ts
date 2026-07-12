@@ -28,9 +28,19 @@ interface HandoffOutput {
 }
 
 const AREA_LABELS: Record<string, RegExp[]> = {
-  "Installer / bootstrap": [/^install\.sh$/, /^setup\.sh$/, /^brev-setup\.sh$/, /^scripts\/.*\.sh$/],
+  "Installer / bootstrap": [
+    /^install\.sh$/,
+    /^setup\.sh$/,
+    /^brev-setup\.sh$/,
+    /^scripts\/.*\.sh$/,
+  ],
   "Onboarding / host glue": [/^bin\/lib\/onboard\.js$/, /^bin\/.*\.js$/],
-  "Sandbox / policy / SSRF": [/^nemoclaw\/src\/blueprint\//, /^nemoclaw-blueprint\//, /policy/i, /ssrf/i],
+  "Sandbox / policy / SSRF": [
+    /^nemoclaw\/src\/blueprint\//,
+    /^nemoclaw-blueprint\//,
+    /policy/i,
+    /ssrf/i,
+  ],
   "Workflow / enforcement": [/^\.github\/workflows\//, /\.prek\./],
   "Credentials / inference": [/credential/i, /inference/i],
 };
@@ -57,9 +67,7 @@ function main(): void {
   const targetVersion = bumpPatch(previousTag);
 
   // Commits since last tag
-  const logOut = run("git", [
-    "log", "--oneline", "--format=%h %s", `${previousTag}..origin/main`,
-  ]);
+  const logOut = run("git", ["log", "--oneline", "--format=%h %s", `${previousTag}..origin/main`]);
   const commits: CommitInfo[] = [];
   if (logOut) {
     for (const line of logOut.split("\n")) {
@@ -74,10 +82,13 @@ function main(): void {
   }
 
   // Files changed since last tag
-  const diffOut = run("git", [
-    "diff", "--name-only", `${previousTag}..origin/main`,
-  ]);
-  const changedFiles = diffOut ? diffOut.split("\n").map((f) => f.trim()).filter(Boolean) : [];
+  const diffOut = run("git", ["diff", "--name-only", `${previousTag}..origin/main`]);
+  const changedFiles = diffOut
+    ? diffOut
+        .split("\n")
+        .map((f) => f.trim())
+        .filter(Boolean)
+    : [];
   const riskyFilesTouched = changedFiles.filter(isRiskyFile);
 
   // Map risky files to area labels
@@ -93,12 +104,18 @@ function main(): void {
 
   // Suggest test focus based on areas
   const suggestedTestFocus: string[] = [];
-  if (areasHit.has("Installer / bootstrap")) suggestedTestFocus.push("Fresh install and upgrade paths");
-  if (areasHit.has("Onboarding / host glue")) suggestedTestFocus.push("Onboarding wizard, sandbox creation");
-  if (areasHit.has("Sandbox / policy / SSRF")) suggestedTestFocus.push("Policy enforcement, network egress, SSRF protections");
-  if (areasHit.has("Workflow / enforcement")) suggestedTestFocus.push("CI checks, pre-commit hooks, DCO signing");
-  if (areasHit.has("Credentials / inference")) suggestedTestFocus.push("Credential storage, inference provider routing");
-  if (suggestedTestFocus.length === 0 && commits.length > 0) suggestedTestFocus.push("General smoke test — no risky areas touched");
+  if (areasHit.has("Installer / bootstrap"))
+    suggestedTestFocus.push("Fresh install and upgrade paths");
+  if (areasHit.has("Onboarding / host glue"))
+    suggestedTestFocus.push("Onboarding wizard, sandbox creation");
+  if (areasHit.has("Sandbox / policy / SSRF"))
+    suggestedTestFocus.push("Policy enforcement, network egress, SSRF protections");
+  if (areasHit.has("Workflow / enforcement"))
+    suggestedTestFocus.push("CI checks, pre-commit hooks, DCO signing");
+  if (areasHit.has("Credentials / inference"))
+    suggestedTestFocus.push("Credential storage, inference provider routing");
+  if (suggestedTestFocus.length === 0 && commits.length > 0)
+    suggestedTestFocus.push("General smoke test — no risky areas touched");
 
   const output: HandoffOutput = {
     previousTag,

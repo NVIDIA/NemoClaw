@@ -1,0 +1,137 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Monitor Sandbox Activity and Debug Issues"
+sidebar-title: "Monitor Sandbox Activity"
+description: "Inspect sandbox health, trace agent behavior, and diagnose problems."
+description-agent: "Inspects sandbox health, traces agent behavior, and diagnoses problems. Use when monitoring a running sandbox, debugging agent issues, or checking sandbox logs."
+keywords: ["monitor nemoclaw sandbox", "debug nemoclaw agent issues"]
+content:
+  type: "how_to"
+skill:
+  priority: 10
+---
+import { AgentOnly } from "../_components/AgentGuide";
+
+Use NemoClaw status commands, log streams, and OpenShell TUI views to inspect sandbox health, trace agent behavior, and diagnose problems.
+
+## Prerequisites
+
+- A running NemoClaw sandbox.
+- The OpenShell CLI on your `PATH`.
+
+## Check Sandbox Health
+
+Run the status command to view sandbox state, gateway health, and the active inference configuration.
+
+```bash
+$$nemoclaw <name> status
+```
+
+`$$nemoclaw <name> status` probes `https://inference.local/v1/models` from inside the sandbox as the authoritative inference check.
+For local Ollama and local vLLM routes, it also prints labeled host-side backend diagnostics that help identify which hop failed.
+
+Review these output fields.
+
+- Sandbox details show the configured model, provider, GPU mode, and applied policy presets.
+- Gateway and process health show whether NemoClaw can reach the OpenShell gateway and whether the in-sandbox agent process is running.
+- The main inference health line reflects the in-sandbox route the agent uses; labeled upstream, local-backend, and auth-proxy lines are diagnostic only.
+- NIM status shows whether a NIM container is running and healthy when that path is in use.
+
+Run `$$nemoclaw <name> status` on the host to check sandbox state.
+Use `openshell sandbox list` for the underlying sandbox details.
+
+## View Blueprint and Sandbox Logs
+
+Stream recent log output from the blueprint runner and sandbox.
+
+```bash
+$$nemoclaw <name> logs
+```
+
+Follow log output in real time.
+
+```bash
+$$nemoclaw <name> logs --follow
+```
+
+The `logs` command shows lifecycle and gateway output.
+It does not export the structured per-session agent state that OpenClaw stores under `.openclaw/agents/`.
+
+## Inspect Agent Session State
+
+OpenClaw stores structured session state inside the sandbox.
+Use these files for audit trails, compliance review, or replay tooling that includes assistant messages and tool activity.
+
+| File | Purpose |
+|---|---|
+| `/sandbox/.openclaw/agents/main/sessions/<session-id>.jsonl` | Per-session event log for audit trails and compliance dashboards that can include assistant messages, `thinking` blocks, tool calls, tool results, token usage, and cost metadata. |
+| `/sandbox/.openclaw/agents/main/sessions/<session-id>.trajectory.jsonl` | Lower-level trajectory data for fine-grained replay that can be large, so avoid it for routine audit summaries. |
+| `/sandbox/.openclaw/agents/main/sessions/sessions.json` | Session index that maps known session keys to their persisted state. |
+
+Inspect the session directory from the host by running a sandbox command.
+
+```bash
+$$nemoclaw <name> exec -- ls -lh /sandbox/.openclaw/agents/main/sessions
+```
+
+Copy a session log for offline review with the OpenShell sandbox download command.
+
+```bash
+openshell sandbox download <name> /sandbox/.openclaw/agents/main/sessions/<session-id>.jsonl .
+```
+
+Handle exported session logs as sensitive data.
+They can contain prompts, tool inputs, tool outputs, file paths, and cost metadata from the agent run.
+
+## Monitor Network Activity in the TUI
+
+Open the OpenShell terminal UI to view sandbox network activity and egress requests live.
+
+```bash
+openshell term
+```
+
+For a remote sandbox, SSH to the instance and run `openshell term` there.
+
+The TUI shows these signals.
+
+- Active network connections from the sandbox.
+- Blocked egress requests awaiting operator approval.
+- Inference routing status.
+
+Refer to [Approve or Deny Agent Network Requests](../network-policy/approve-network-requests) for details about handling blocked requests.
+
+## Test Inference
+
+Send a test inference request to verify that the provider responds.
+
+<AgentOnly variant="openclaw">
+```bash
+$$nemoclaw <name> connect
+openclaw agent --agent main -m "Test inference" --session-id debug
+```
+</AgentOnly>
+<AgentOnly variant="hermes">
+```bash
+$$nemoclaw <name> connect
+hermes
+```
+</AgentOnly>
+
+If the request fails, check these items.
+
+1. Run `$$nemoclaw <name> status` to confirm the active provider and endpoint.
+   Check the main `Inference` line first.
+   If it shows `unhealthy`, `unreachable`, or `not probed`, inspect the labeled upstream, local-backend, and auth-proxy diagnostics to identify the failing hop.
+   Restart a local backend only when its own diagnostic fails.
+2. Run `$$nemoclaw <name> logs --follow` to view error messages from the blueprint runner.
+3. Verify that the host can reach the inference endpoint.
+4. If the agent reports a context-overflow or token-limit error, clear the conversation with `/reset` (or start a fresh one with `/new`) in the TUI before retrying.
+
+## Related Topics
+
+- [Troubleshooting](../reference/troubleshooting) for common issues and resolution steps.
+- [Commands](../reference/commands) for the full CLI reference.
+- [Approve or Deny Agent Network Requests](../network-policy/approve-network-requests) for the operator approval flow.
+- [Switch Inference Providers](../inference/manage-inference/switch-providers) to change the active provider.

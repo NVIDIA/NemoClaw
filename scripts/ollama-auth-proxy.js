@@ -29,15 +29,25 @@ const LISTEN_PORT = parseInt(process.env.OLLAMA_PROXY_PORT || "11435", 10);
 const BACKEND_PORT = parseInt(process.env.OLLAMA_BACKEND_PORT || "11434", 10);
 
 const server = http.createServer((clientReq, clientRes) => {
+  // Every request must present a valid Bearer token. The proxy binds 0.0.0.0
+  // so the OpenShell sandbox container can reach it via the docker bridge —
+  // which also means anything else with network reach to the host could,
+  // so unauthenticated requests are uniformly rejected (no health-check
+  // bypass for /api/tags). DevTest T5987914: "calls without
+  // Authorization: Bearer TOKEN should NOT return 200." See #3338.
+  // Compare buffers, not JS strings: a non-ASCII Authorization header
+  // can have the same .length as the expected string but a different byte
+  // length, which would make crypto.timingSafeEqual throw and crash the
+  // proxy (it binds 0.0.0.0). Build buffers first, gate timingSafeEqual on
+  // matching byte length.
   const auth = clientReq.headers.authorization;
-  // Allow unauthenticated health checks (model list only, not inference)
-  const isHealthCheck = clientReq.method === "GET" && clientReq.url === "/api/tags";
-  const expected = `Bearer ${TOKEN}`;
+  const expectedBuf = Buffer.from(`Bearer ${TOKEN}`);
+  const authBuf = typeof auth === "string" ? Buffer.from(auth) : null;
   const tokenMatch =
-    auth &&
-    auth.length === expected.length &&
-    crypto.timingSafeEqual(Buffer.from(auth), Buffer.from(expected));
-  if (!isHealthCheck && !tokenMatch) {
+    authBuf !== null &&
+    authBuf.length === expectedBuf.length &&
+    crypto.timingSafeEqual(authBuf, expectedBuf);
+  if (!tokenMatch) {
     clientRes.writeHead(401, { "Content-Type": "text/plain" });
     clientRes.end("Unauthorized");
     return;
@@ -68,6 +78,20 @@ const server = http.createServer((clientReq, clientRes) => {
   });
 
   clientReq.pipe(proxyReq);
+});
+
+// The proxy binds 0.0.0.0, so an unhandled listen error (most commonly
+// EADDRINUSE when the port is already taken) would crash with an uncaught
+// exception. Exit cleanly with a non-zero code instead; the host-side
+// startOllamaAuthProxy() detects the missing process and reports the port
+// owner with remediation. See #4820.
+server.on("error", (/** @type {NodeJS.ErrnoException} */ err) => {
+  if (err && err.code === "EADDRINUSE") {
+    console.error(`Ollama auth proxy: port ${LISTEN_PORT} is already in use`);
+  } else {
+    console.error(`Ollama auth proxy failed to start: ${err && err.message ? err.message : err}`);
+  }
+  process.exit(1);
 });
 
 server.listen(LISTEN_PORT, "0.0.0.0", () => {

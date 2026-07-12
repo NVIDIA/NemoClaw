@@ -9,13 +9,23 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-LOCAL_PAYLOAD="${SCRIPT_DIR}/scripts/install.sh"
+if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+else
+  SCRIPT_DIR=""
+fi
+LOCAL_PAYLOAD="${SCRIPT_DIR:+${SCRIPT_DIR}/scripts/install.sh}"
 BOOTSTRAP_TMPDIR=""
 PAYLOAD_MARKER="NEMOCLAW_VERSIONED_INSTALLER_PAYLOAD=1"
+DEFAULT_INSTALL_REF="lkg"
+INSTALL_TAG_EXAMPLE="vX.Y.Z"
 
 resolve_release_tag() {
-  printf "%s" "${NEMOCLAW_INSTALL_TAG:-latest}"
+  if [[ -n "${NEMOCLAW_INSTALL_REF:-}" ]]; then
+    printf "%s" "${NEMOCLAW_INSTALL_REF}"
+    return
+  fi
+  printf "%s" "${NEMOCLAW_INSTALL_TAG:-$DEFAULT_INSTALL_REF}"
 }
 
 verify_downloaded_script() {
@@ -52,6 +62,19 @@ has_payload_marker() {
   [[ -f "$file" ]] && grep -q "$PAYLOAD_MARKER" "$file"
 }
 
+clone_nemoclaw_ref() {
+  local ref="$1" dest="$2"
+
+  git init --quiet "$dest"
+  git -C "$dest" remote add origin https://github.com/NVIDIA/NemoClaw.git
+  if ! git -C "$dest" fetch --quiet --depth 1 origin "$ref"; then
+    printf "[ERROR] Requested install ref '%s' is not available from https://github.com/NVIDIA/NemoClaw.git.\n" "$ref" >&2
+    printf "        Check NEMOCLAW_INSTALL_TAG/NEMOCLAW_INSTALL_REF and try again.\n" >&2
+    exit 1
+  fi
+  git -C "$dest" -c advice.detachedHead=false checkout --quiet --detach FETCH_HEAD
+}
+
 exec_installer_from_ref() {
   local ref="$1"
   shift
@@ -62,8 +85,7 @@ exec_installer_from_ref() {
   trap 'rm -rf "${BOOTSTRAP_TMPDIR:-}"' EXIT
   source_root="${tmpdir}/source"
 
-  git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$ref" \
-    https://github.com/NVIDIA/NemoClaw.git "$source_root"
+  clone_nemoclaw_ref "$ref" "$source_root"
 
   payload_script="${source_root}/scripts/install.sh"
   legacy_script="${source_root}/install.sh"
@@ -91,18 +113,29 @@ bootstrap_usage() {
   printf "    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- [options]\n\n"
   printf "  Options:\n"
   printf "    --non-interactive    Skip prompts (uses env vars / defaults)\n"
-  printf "    --yes-i-accept-third-party-software Accept the third-party software notice in non-interactive mode\n"
+  printf "    --yes-i-accept-third-party-software Accept the third-party software notice without prompting\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
   printf "    --version, -v        Print installer version and exit\n"
   printf "    --help, -h           Show this help message and exit\n\n"
   printf "  Environment:\n"
-  printf "    NEMOCLAW_INSTALL_TAG         Git ref to install (default: latest release)\n"
+  printf "    NEMOCLAW_INSTALL_REF         Exact Git ref/SHA to install\n"
+  printf "    NEMOCLAW_INSTALL_TAG         Git ref to install (default: %s)\n" "$DEFAULT_INSTALL_REF"
+  printf "                                 In curl pipes, set this on bash or export it first.\n"
+  printf "                                 Example: curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=%s bash\n" "$INSTALL_TAG_EXAMPLE"
   printf "    NEMOCLAW_NON_INTERACTIVE=1   Same as --non-interactive\n"
   printf "    NEMOCLAW_FRESH=1             Same as --fresh\n"
   printf "    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 Same as --yes-i-accept-third-party-software\n"
+  printf "    NEMOCLAW_NO_EXPRESS=1        Skip express install prompt on supported platforms\n"
   printf "    NEMOCLAW_SANDBOX_NAME        Sandbox name to create/use\n"
-  printf "    NEMOCLAW_PROVIDER            build | openai | anthropic | anthropicCompatible\n"
-  printf "                                 | gemini | ollama | custom | nim-local | vllm\n"
+  printf "    NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1\n"
+  printf "                                 Allow automatic pre-0.0.37 OpenShell gateway upgrade\n"
+  printf "    NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1\n"
+  printf "                                 Continue after manually backing up and retiring old gateway\n"
+  printf "    NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE\n"
+  printf "                                 Exact JSON array of pre-fingerprint managed sandbox names\n"
+  printf "    NEMOCLAW_PROVIDER            build | openrouter | openai | anthropic | anthropicCompatible\n"
+  printf "                                 | gemini | ollama | custom | nim-local | vllm | routed\n"
+  printf "                                 | hermes-provider\n"
   printf "                                 (aliases: cloud -> build, nim -> nim-local)\n"
   printf "    NEMOCLAW_POLICY_MODE         suggested | custom | skip\n"
   printf "\n"

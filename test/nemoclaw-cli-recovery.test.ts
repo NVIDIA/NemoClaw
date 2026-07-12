@@ -7,11 +7,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "vitest";
+import { testTimeoutOptions } from "./helpers/timeouts";
 
 describe("nemoclaw CLI runtime recovery", () => {
   it(
     "recovers sandbox status when openshell is only available via the resolved fallback path",
-    { timeout: Number(process.env.NEMOCLAW_TEST_TIMEOUT || 15_000) },
+    testTimeoutOptions(15_000),
     () => {
       const repoRoot = path.join(import.meta.dirname, "..");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-recovery-"));
@@ -79,6 +80,11 @@ if (args[0] === "sandbox" && args[1] === "get" && args[2] === "my-assistant") {
     process.exit(1);
   }
   process.stdout.write("Sandbox:\\n\\n  Id: abc\\n  Name: my-assistant\\n  Namespace: openshell\\n  Phase: Ready\\n");
+  process.exit(0);
+}
+
+if (args[0] === "sandbox" && args[1] === "exec") {
+  process.stdout.write("OK 200\\n");
   process.exit(0);
 }
 

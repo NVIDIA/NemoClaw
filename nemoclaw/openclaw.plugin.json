@@ -3,6 +3,15 @@
   "name": "NemoClaw",
   "version": "0.1.0",
   "description": "Migrate and run OpenClaw inside OpenShell with optional NIM-backed inference",
+  "commandAliases": [
+    {
+      "name": "nemoclaw",
+      "kind": "runtime-slash"
+    }
+  ],
+  "activation": {
+    "onStartup": true
+  },
   "configSchema": {
     "type": "object",
     "properties": {

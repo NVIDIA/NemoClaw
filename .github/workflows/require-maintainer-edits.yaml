@@ -1,0 +1,40 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: CI / Require Maintainer Edits
+
+# pull_request_target runs in the base repo context. This workflow is safe for
+# fork PRs because it never checks out or executes pull request code; it only
+# reads event metadata from the pull_request payload.
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, edited, ready_for_review]
+
+permissions:
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  require-maintainer-edits:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require maintainer edits for fork PRs
+        env:
+          HEAD_REPO_FORK: ${{ github.event.pull_request.head.repo.fork }}
+          MAINTAINER_CAN_MODIFY: ${{ github.event.pull_request.maintainer_can_modify }}
+        run: |
+          set -euo pipefail
+
+          echo "head_repo_fork=${HEAD_REPO_FORK}"
+          echo "maintainer_can_modify=${MAINTAINER_CAN_MODIFY}"
+
+          if [ "${HEAD_REPO_FORK}" = "true" ] && [ "${MAINTAINER_CAN_MODIFY}" != "true" ]; then
+            echo "::error title=Maintainer edits required::Enable 'Allow edits by maintainers' on this pull request so maintainers can help resolve review feedback and CI issues."
+            exit 1
+          fi
+
+          echo "Maintainer edits requirement satisfied."

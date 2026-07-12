@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-contributor-update-docs
-description: Scan recent git commits for changes that affect user-facing behavior, then draft or update the corresponding documentation pages. Use when docs have fallen behind code changes, after a batch of features lands, or when preparing a release. Trigger keywords - update docs, draft docs, docs from commits, sync docs, catch up docs, doc debt, docs behind, docs drift.
+description: Scan recent git commits for changes that affect user-facing behavior, then draft or update the corresponding documentation pages for release prep. Use when docs have fallen behind code changes, after a batch of features lands, during daily release prep, before cutting a release tag, or when recovering missed post-release docs. Trigger keywords - update docs, draft docs, docs from commits, sync docs, catch up docs, doc debt, docs behind, docs drift, release prep docs, pre-tag docs, release note docs.
 ---
 
 # Update Docs from Commits
@@ -16,6 +16,10 @@ Scan recent git history for commits that affect user-facing behavior and draft d
 
 - After a batch of features or fixes has landed and docs may be stale.
 - Before a release, to catch any doc gaps.
+- During daily release prep, before opening the release-note docs PR.
+- Before cutting a release tag, so release-note docs land on the same release train.
+- When maintainers run `/nemoclaw-contributor-update-docs for vX.Y.Z`, treat it as pre-tag release-prep docs for `vX.Y.Z` unless the tag already exists.
+- After a release only when maintainers missed the pre-tag docs step and need a catch-up PR.
 - When a contributor asks "what docs need updating?"
 
 ## Step 0: Load the Skip List
@@ -35,6 +39,37 @@ Ignore comment lines (starting with `#`) and inline comments (everything after `
 
 Keep the loaded skip list in memory for use throughout the skill execution and the whole documentation process.
 
+## Step 0.5: Find Release Announcement Notes
+
+When the user asks for release-prep docs for a specific version `n` (for example `0.0.63`), first determine whether this is pre-tag release prep or post-release recovery.
+For pre-tag release prep, use the draft release plan, maintainer context, PR list, and commit scan as source context because the announcement may not exist yet.
+For post-release recovery, find the NemoClaw GitHub discussion announcement for that release before drafting release notes.
+Use any available announcement as source context alongside the commit scan, especially for release themes, PR grouping, contributor thanks, and maintainer wording.
+
+For post-release recovery, or when the user says the announcement already exists, search recent discussions and select the announcement whose title or body references `v<n>` or `NemoClaw v<n>`:
+
+```bash
+gh api graphql -f owner=NVIDIA -f name=NemoClaw -f query='
+query($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    discussions(first: 50, orderBy: {field: CREATED_AT, direction: DESC}) {
+      nodes {
+        number
+        title
+        url
+        body
+        createdAt
+        category { name }
+      }
+    }
+  }
+}'
+```
+
+Prefer discussions in the `Announcements` category. If the discussion body is unavailable through `gh api`, use the GitHub discussion URL supplied by the user or fetch the discussion page content through the available tools.
+If no matching discussion exists during pre-tag release prep, continue from the commit scan and report that no announcement source was used.
+If no matching discussion exists during post-release recovery, continue from the commit scan and report the missing announcement in the final summary.
+
 ## Step 1: Identify Relevant Commits
 
 Determine the commit range. The user may provide one explicitly (e.g., "since v0.1.0" or "last 30 commits"). If not, default to commits since the head of the main branch.
@@ -49,7 +84,7 @@ git log -50 --oneline --no-merges
 
 Filter to commits that are likely to affect docs. Apply every rule below before proceeding. A commit excluded by any rule must not produce doc changes.
 
-1. **Commit type**: `feat`, `fix`, `refactor`, `perf` commits often change behavior. `docs` commits are already doc changes. `chore`, `ci`, `test` commits rarely need doc updates.
+1. **Commit type**: `feat`, `fix`, `refactor`, `perf` commits often change behavior. `docs` commits are already doc changes, but still need a review pass when they fall in the scanned range.
 2. **Files changed**: Changes to `nemoclaw/src/`, `nemoclaw-blueprint/`, `bin/`, `scripts/`, or policy-related code are high-signal.
 3. **Ignore**: Changes limited to `test/`, `.github/`, or internal-only modules.
 4. **Skip list**: Exclude any commit whose short hash appears in `skip-commits`, or whose commit message or changed file paths contain a `skip-features` substring. Report skipped commits in the final summary under a "Skipped (docs-skip)" heading.
@@ -65,19 +100,21 @@ git log v0.1.0..HEAD --oneline --no-merges --name-only
 For each relevant commit, determine which doc page(s) it affects. Use this mapping as a starting point:
 
 | Code area | Likely doc page(s) |
-|---|---|
-| `nemoclaw/src/commands/` (launch, connect, status, logs) | `docs/reference/commands.md` |
-| `nemoclaw/src/commands/` (new command) | May need a new page or entry in `docs/reference/commands.md` |
-| `nemoclaw/src/blueprint/` | `docs/about/architecture.md` |
-| `nemoclaw/src/cli.ts` or `nemoclaw/src/index.ts` | `docs/reference/commands.md`, `docs/get-started/quickstart.md` |
-| `nemoclaw-blueprint/orchestrator/` | `docs/about/architecture.md` |
-| `nemoclaw-blueprint/policies/` | `docs/reference/network-policies.md` |
-| `nemoclaw-blueprint/blueprint.yaml` | `docs/about/architecture.md`, `docs/reference/inference-profiles.md` |
-| `scripts/` (setup, start) | `docs/get-started/quickstart.md` |
-| `Dockerfile` | `docs/about/architecture.md` |
-| Inference-related changes | `docs/reference/inference-profiles.md` |
+| --- | --- |
+| `nemoclaw/src/commands/` (launch, connect, status, logs) | `docs/reference/commands.mdx` |
+| `nemoclaw/src/commands/` (new command) | May need a new page or entry in `docs/reference/commands.mdx` |
+| `nemoclaw/src/blueprint/` | `docs/reference/architecture.mdx` |
+| `nemoclaw/src/cli.ts` or `nemoclaw/src/index.ts` | `docs/reference/commands.mdx`, `docs/get-started/quickstart.mdx` |
+| `nemoclaw-blueprint/orchestrator/` | `docs/reference/architecture.mdx` |
+| `nemoclaw-blueprint/policies/` | `docs/reference/network-policies.mdx` |
+| `nemoclaw-blueprint/blueprint.yaml` | `docs/reference/architecture.mdx`, `docs/inference/how-inference-routing-works.mdx` |
+| `scripts/` (setup, start) | `docs/get-started/quickstart.mdx` |
+| `Dockerfile` | `docs/reference/architecture.mdx` |
+| Inference-related changes | Start at `docs/inference/how-inference-routing-works.mdx`, then update the focused provider, model, setup, management, or validation page that owns the behavior. |
 
 If a commit does not map to any existing page but introduces a user-visible concept, flag it as needing a new page.
+If a commit already changes files under `docs/`, include those pages in the target page list and run a docs review or edit pass against them using the style guidance in Step 5.
+Do not assume an existing doc change is complete, correctly placed, or style-compliant just because it landed with the source commit.
 
 ## Step 3: Read the Commit Details
 
@@ -97,6 +134,7 @@ Extract:
 ## Step 4: Read the Current Doc Page
 
 Before editing, read the full target doc page to understand its current content and structure.
+For target pages that were already changed by a scanned commit, compare the committed doc diff against the source behavior and the style guidance before deciding whether to edit further.
 
 Identify where the new content should go. Follow the page's existing structure.
 
@@ -111,7 +149,10 @@ Write the doc update following these conventions:
 - **No em dashes** unless used sparingly. Prefer commas or separate sentences.
 - **Start sections with an introductory sentence** that orients the reader.
 - **No superlatives.** Say what the feature does, not how great it is.
-- **Code examples use `console` language** with `$` prompt prefix.
+- **Copyable code examples use language-specific fences** such as `bash`, `sh`, or `powershell`, without prompt markers.
+- **Shared NemoClaw CLI examples use `$$nemoclaw`.** In shared OpenClaw/Hermes variant pages, write host CLI examples with the `$$nemoclaw` build-time placeholder so the docs build renders `nemoclaw` on OpenClaw pages and `nemohermes` on Hermes pages before Fern renders fenced code blocks.
+- **Do not duplicate code blocks for binary-name-only differences.** Use one fenced block with `$$nemoclaw` when the only difference is `nemoclaw` versus `nemohermes`; keep `<AgentOnly>` only when the surrounding text, flags, behavior, or setup steps actually differ.
+- **Use `console` only for terminal transcripts** that include prompts, output, or interactive sessions.
 - **Include the SPDX header** if creating a new page.
 - **Match existing frontmatter format** if creating a new page.
 - **Always write NVIDIA in all caps.** Wrong: Nvidia, nvidia.
@@ -127,10 +168,17 @@ When updating an existing page:
 - Do not reorganize sections unless the change requires it.
 - Update any cross-references or "Next Steps" links if relevant.
 
+**Release prep only:** When updating `docs/about/release-notes.mdx`:
+
+- For each release-note bullet that corresponds to a deeper doc page, end the bullet with `For more information, refer to [DOC PAGE](/doc/path).`
+- Link to the most specific existing page that explains the behavior, command, setup flow, or troubleshooting path.
+- Do not add a link when no deeper page exists or when the only possible target is unrelated or too broad.
+- Keep the source docs link as a normal MDX link so Fern can publish both rendered and Markdown routes.
+
 When creating a new page:
 
 - Follow the frontmatter template from existing pages in `docs/`.
-- Add the page to the appropriate `toctree` in `docs/index.md`.
+- Add the page to the appropriate navigation entry in `docs/index.yml`.
 
 ## Step 6: Present the Results
 
@@ -140,8 +188,8 @@ After drafting all updates, present a summary to the user:
 ## Doc Updates from Commits
 
 ### Updated pages
-- `docs/reference/commands.md`: Added `eject` command documentation (from commit abc1234).
-- `docs/reference/network-policies.md`: Updated policy schema for new egress rule (from commit def5678).
+- `docs/reference/commands.mdx`: Added `eject` command documentation (from commit abc1234).
+- `docs/reference/network-policies.mdx`: Updated policy schema for new egress rule (from commit def5678).
 
 ### New pages needed
 - None (or list any new pages created).
@@ -154,12 +202,23 @@ After drafting all updates, present a summary to the user:
 - `test: add launch command test` (def5678) — test-only change.
 ```
 
-## Step 7: Build and Verify
+## Step 7: Apply Release Prep Updates
+
+Skip this step when the user only asked for ordinary doc catch-up and no release prep is involved.
+
+If the user invoked this skill for release prep, finish the release-specific doc work before verification:
+
+1. Determine the documented release version `n` from the user's request. If the user did not provide a release version, ask for it before opening the release-prep PR.
+2. For the default pre-tag path, label the PR with the release being prepared. Release labels use `vX.Y.Z` format. For example, release-note docs for release `0.0.63` use label `v0.0.63`.
+3. Use the next patch release label only as a post-release recovery fallback when the release tag or announcement already exists and maintainers missed the pre-tag docs step. For example, a catch-up docs PR after release `0.0.63` uses label `v0.0.64`. Increment only the patch component; if the version is nonstandard or pre-release, ask before choosing a label.
+4. Update `.agents/skills/nemoclaw-user-guide/SKILL.md` only if the release changes the AI-agent documentation entry points or routing guidance.
+
+## Step 8: Build and Verify
 
 After making changes, build the docs locally:
 
 ```bash
-make docs
+npm run docs
 ```
 
 Check for:
@@ -167,14 +226,21 @@ Check for:
 - Build warnings or errors.
 - Broken cross-references.
 - Correct rendering of new content.
+- Markdown documentation routes and navigation still match the changed source pages.
 
-## Step 8: Label PRs
+## Step 9: Open the Docs PR
 
-When the workflow produces a pull request, apply the `documentation` label so reviewers can identify doc-only changes:
+Commit changes and open a pull request with a concise summary of the doc updates and a source summary that links each identified merged PR to its matching doc page. Include the PR number, affected doc page, links, and description of the doc change in this shape:
 
-```bash
-gh pr edit <number> --add-label documentation
+```markdown
+- #<doc-impacting-PR-number> -> `docs/path.mdx`: Description of the doc change reflecting the source code changes in the PR.
 ```
+
+Apply the `area: docs` label and the correct release label so reviewers can identify doc-only changes for the intended release train.
+Add `area: skills` only if the PR changes a file under `.agents/skills/`.
+When creating the PR with `gh pr create`, pass the labels. For example, a pre-tag release-note docs PR for `0.0.63` uses `--label "area: docs" --label v0.0.63`. A post-release recovery docs refresh for `0.0.63` uses `--label "area: docs" --label v0.0.64`.
+If the release label does not exist, report that instead of substituting another label.
+Follow `nemoclaw-contributor-create-pr` for the PR mechanics, including [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md) and [PR CI and Automated Review Follow-Up](../_shared/pr-follow-up.md).
 
 ## Tips
 
@@ -184,7 +250,7 @@ gh pr edit <number> --add-label documentation
 - PRs that are purely internal refactors with no behavior change do not need doc updates, even if they touch high-signal directories.
 - To suppress documentation for a merged feature that is not ready for public docs, add it to `docs/.docs-skip`. Remove the entry once the feature is ready to document.
 
-## Example Usage
+## Summary of Steps
 
 User says: "Catch up the docs for everything merged since v0.1.0."
 
@@ -192,6 +258,18 @@ User says: "Catch up the docs for everything merged since v0.1.0."
 2. Filter to `feat`, `fix`, `refactor`, `perf` commits touching user-facing code.
 3. Map each to a doc page.
 4. Read the commit diffs and current doc pages.
-5. Draft updates following the style guide.
-6. Present the summary.
-7. Build with `make docs` to verify.
+5. For release-specific docs, use the draft release plan, maintainer context, PR list, commit scan, and any available announcement as source context.
+6. Draft doc updates reflecting the source code changes in the commits following the style guide.
+7. **Release prep only:** Determine the release label from the user-requested documented release version. For the default pre-tag path, use the release being prepared, such as `v0.0.63` for release `0.0.63`.
+8. **Post-release recovery only:** If maintainers missed the pre-tag docs step and the release already shipped, use the next patch release label. For a post-release docs refresh for `0.0.63`, use label `v0.0.64`.
+9. **Release prep only:** Update `.agents/skills/nemoclaw-user-guide/SKILL.md` only if the AI-agent documentation entry points or routing guidance changed.
+10. Present the summary.
+11. Build with `npm run docs` to verify.
+12. **Release prep only:** Commit changes and open a pull request with the `area: docs` label and the selected release label. Use the current release label for pre-tag release-note docs, and use the next patch label only for post-release recovery. Include `area: skills` only if the PR changes `.agents/skills/`. Include a concise summary of the doc updates and a source summary that links each identified merged PR to its matching doc page. Include the PR number, affected doc page, links, and description of the doc change in this shape:
+
+   ```markdown
+   - #<doc-impacting-PR-number> -> `docs/path.mdx`: Description of the doc change reflecting the source code changes in the PR.
+   ```
+
+   If the selected release label does not exist, report that the PR was created without the release label or that PR creation failed because the label was missing.
+   Follow up after PR creation using [PR CI and Automated Review Follow-Up](../_shared/pr-follow-up.md); use [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md) if access or authentication blocks progress.

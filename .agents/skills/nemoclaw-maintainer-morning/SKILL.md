@@ -16,7 +16,7 @@ See [PR-REVIEW-PRIORITIES.md](../nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md
 node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/version-target.ts
 ```
 
-This fetches tags, computes the next patch version, and finds open items still carrying older version labels. Surface stragglers first — the team needs to decide: relabel to today's target, or defer further.
+This fetches tags, computes the next patch version, and finds open items still carrying older version labels. Surface stragglers first — they indicate post-tag housekeeping was interrupted or an item slipped across multiple cycles. Decide whether to relabel them to today's target or defer them out of the daily release flow.
 
 ## Step 2: Triage
 
@@ -26,9 +26,9 @@ Run the triage script to rank the full backlog:
 node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/triage.ts --approved-only
 ```
 
-If too few results, run without `--approved-only`. The script calls `gh-pr-merge-now --json`, enriches candidates with risky-area detection, and applies the scoring model documented in [PR-REVIEW-PRIORITIES.md](../nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md).
+If too few results, run without `--approved-only`. The script fetches open PRs through `gh`, reads Project 199 Priority, enriches candidates with review, CI, file, and risky-area data, and applies the scoring model documented in [PR-REVIEW-PRIORITIES.md](../nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md).
 
-Also use `find-review-pr` to surface PRs with `security` + `priority: high` labels. Merge these into the candidate pool.
+Also use `find-review-pr` to surface `security` PRs whose Project Priority is `Urgent` or `High`. Merge these into the candidate pool.
 
 ## Step 3: Label Version Targets
 
@@ -61,5 +61,6 @@ Include: total items targeted, how many are PRs vs issues, how many are already 
 ## Notes
 
 - This skill runs once at the start of the day. Use `/nemoclaw-maintainer-day` during the day to execute.
-- The target version label is the source of truth for "what we're shipping today."
+- On a PR, the target version label activates daily release work; actual release inclusion requires that PR to be merged with the label at cutoff.
+- On an issue, the target version label is tracking or "needs PR" coordination only.
 - Stragglers from previous versions should be addressed first — they already slipped once.

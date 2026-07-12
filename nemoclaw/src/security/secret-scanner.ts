@@ -26,7 +26,7 @@ const SECRET_PATTERNS: SecretPattern[] = [
   { name: "NVIDIA API key", regex: /\bnvapi-[A-Za-z0-9_-]{20,}\b/ },
 
   // OpenAI — exclude sk-ant- (Anthropic) to avoid double-matching
-  { name: "OpenAI API key", regex: /\bsk-(?!ant-)[A-Za-z0-9]{20,}\b/ },
+  { name: "OpenAI API key", regex: /\bsk-(?!ant-)[A-Za-z0-9_-]{20,}\b/ },
 
   // GitHub
   { name: "GitHub token", regex: /\b(ghp|gho|ghu|ghs|ghr|github_pat)_[A-Za-z0-9]{36,}\b/ },
@@ -39,7 +39,7 @@ const SECRET_PATTERNS: SecretPattern[] = [
   },
 
   // Slack
-  { name: "Slack token", regex: /\bxox[bpas]-[A-Za-z0-9-]{10,}\b/ },
+  { name: "Slack token", regex: /\b(?:xox[bpas]|xapp)-[A-Za-z0-9-]{10,}\b/ },
 
   // Discord — require contextual prefix to avoid matching JWT/base64 strings
   {
@@ -107,30 +107,105 @@ export function scanForSecrets(content: string): SecretMatch[] {
 // secrets split across multiple writes are not detectable by regex alone.
 // These are inherent limitations of content-based scanning.
 const MEMORY_PATH_SEGMENTS = [
-  "/.openclaw-data/memory/",
-  "/.openclaw-data/workspace/",
-  "/.openclaw-data/agents/",
-  "/.openclaw-data/skills/",
-  "/.openclaw-data/hooks/",
-  "/.openclaw-data/credentials/",
-  "/.openclaw-data/canvas/",
-  "/.openclaw-data/identity/",
-  "/.openclaw-data/cron/",
-  "/.openclaw-data/telegram/",
-  "/.openclaw-data/sandbox/",
   "/.openclaw/memory/",
   "/.openclaw/workspace/",
   "/.openclaw/agents/",
   "/.openclaw/skills/",
   "/.openclaw/hooks/",
-  "/.openclaw-data/MEMORY.md",
+  "/.openclaw/credentials/",
+  "/.openclaw/canvas/",
+  "/.openclaw/identity/",
+  "/.openclaw/cron/",
+  "/.openclaw/telegram/",
+  "/.openclaw/sandbox/",
   "/.openclaw/MEMORY.md",
+  "/.openclaw/openclaw.json",
   "/.nemoclaw/",
 ];
 
 /**
- * Returns true if the given file path targets a persistent memory location.
+ * Canonical OpenClaw workspace files — these basenames are always treated as
+ * persistent memory regardless of the surrounding path. Catches the case
+ * where the host has CWD'd into the workspace directory and the agent
+ * writes the bare basename (e.g. `IDENTITY.md`) instead of an absolute
+ * `/sandbox/.openclaw/workspace/IDENTITY.md`.
+ *
+ * Keep in sync with `docs/manage-sandboxes/workspace-files.mdx`.
  */
-export function isMemoryPath(filePath: string): boolean {
-  return MEMORY_PATH_SEGMENTS.some((segment) => filePath.includes(segment));
+const MEMORY_BASENAMES: ReadonlySet<string> = new Set([
+  "IDENTITY.md",
+  "MEMORY.md",
+  "SOUL.md",
+  "USER.md",
+  "AGENTS.md",
+]);
+
+/**
+ * Relative path prefixes that target NemoClaw / OpenClaw persistent state
+ * (workspace, memory). `memory/` is included because the OpenClaw workspace
+ * docs define `memory/` as the canonical persistent daily-note directory; the
+ * agent's CWD inside the sandbox is the workspace, so a relative `memory/...`
+ * write is a memory write. Project subdirectories that happen to be named
+ * `memory/` get scanned for secrets — the tradeoff is intentional.
+ */
+const MEMORY_RELATIVE_PREFIXES: readonly string[] = [".openclaw/", ".nemoclaw/", "memory/"];
+const WORKSPACE_MEMORY_PREFIX = /^workspace(?:-[^/]+)?\/memory(?:\/|$)/;
+
+function normalizePathForMemoryClassification(filePath: string): string {
+  const isAbsolute = filePath.startsWith("/");
+  const parts: string[] = [];
+
+  for (const part of filePath.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      const last = parts[parts.length - 1];
+      if (last !== undefined && last !== "..") {
+        parts.pop();
+      } else if (!isAbsolute) {
+        parts.push(part);
+      }
+      continue;
+    }
+    parts.push(part);
+  }
+
+  if (parts.length === 0) return isAbsolute ? "/" : "";
+  return `${isAbsolute ? "/" : ""}${parts.join("/")}`;
+}
+
+function dropLeadingParentSegments(filePath: string): string {
+  let normalized = filePath;
+  while (normalized.startsWith("../")) {
+    normalized = normalized.slice("../".length);
+  }
+  return normalized;
+}
+
+function basenameOf(filePath: string): string {
+  const slash = filePath.lastIndexOf("/");
+  return slash === -1 ? filePath : filePath.slice(slash + 1);
+}
+
+/**
+ * Returns true if the given file path targets a persistent memory location.
+ * Accepts `unknown` so a host runtime that hands us a non-string value cannot
+ * trigger a TypeError. Handles three flavours:
+ *   1. Absolute paths containing one of the known memory segments
+ *      (e.g. `/sandbox/.openclaw/memory/notes.md`).
+ *   2. Relative paths whose basename matches a canonical workspace file
+ *      (e.g. `IDENTITY.md`, `MEMORY.md`).
+ *   3. Lexically-normalized relative paths targeting `.openclaw/`,
+ *      `.nemoclaw/`, `memory/`, or named workspace daily memory.
+ */
+export function isMemoryPath(filePath: unknown): boolean {
+  if (typeof filePath !== "string" || filePath.length === 0) return false;
+  const normalizedPath = normalizePathForMemoryClassification(filePath);
+  const normalizedRelativePath = dropLeadingParentSegments(normalizedPath);
+  if (MEMORY_PATH_SEGMENTS.some((segment) => normalizedPath.includes(segment))) return true;
+  if (MEMORY_BASENAMES.has(basenameOf(normalizedPath))) return true;
+  if (MEMORY_RELATIVE_PREFIXES.some((prefix) => normalizedRelativePath.startsWith(prefix))) {
+    return true;
+  }
+  if (WORKSPACE_MEMORY_PREFIX.test(normalizedRelativePath)) return true;
+  return false;
 }

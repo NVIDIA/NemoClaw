@@ -1,0 +1,41 @@
+{
+  "name": "@nemoclaw/e2e-weather-plugin",
+  "version": "1.0.0",
+  "description": "Deterministic OpenClaw weather tool fixture for NemoClaw live tests",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist/",
+    "openclaw.plugin.json"
+  ],
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.5.22",
+      "minGatewayVersion": "2026.5.22"
+    },
+    "build": {
+      "openclawVersion": "2026.5.27"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "typebox": "1.1.38"
+  },
+  "devDependencies": {
+    "openclaw": "2026.5.27",
+    "typescript": "6.0.3"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.5.17"
+  },
+  "engines": {
+    "node": ">=22.16.0"
+  }
+}

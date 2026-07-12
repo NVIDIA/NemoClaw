@@ -1,0 +1,476 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+/** JSON-compatible primitive used by manifests and plans. */
+export type MessagingSerializableScalar = string | number | boolean | null;
+
+/** Recursive JSON-compatible value; functions and class instances stay out of contracts. */
+export type MessagingSerializableValue =
+  | MessagingSerializableScalar
+  | MessagingSerializableObject
+  | readonly MessagingSerializableValue[];
+
+/** JSON-compatible object map used for render fragments and persisted state values. */
+export type MessagingSerializableObject = {
+  readonly [key: string]: MessagingSerializableValue;
+};
+
+/** Stable channel identifier, such as "telegram" or "wechat". */
+export type MessagingChannelId = string;
+
+/** Agent runtimes that messaging manifests can target today. */
+export type MessagingAgentId = "openclaw" | "hermes";
+
+/** Dot-separated path into NemoClaw's persisted sandbox or channel state. */
+export type MessagingStatePath = string;
+
+/** String value that may contain placeholders resolved by a later compiler/applier. */
+export type MessagingTemplateString = string;
+
+/** Static, serializable declaration for one messaging channel. */
+export interface ChannelManifest {
+  readonly schemaVersion: 1;
+  readonly id: MessagingChannelId;
+  readonly displayName: string;
+  readonly description?: string;
+  readonly enrollmentHelp?: string;
+  readonly enrollmentNotes?: readonly string[];
+  readonly supportedAgents: readonly MessagingAgentId[];
+  readonly auth: ChannelAuthSpec;
+  readonly inputs: readonly ChannelInputSpec[];
+  readonly credentials: readonly ChannelCredentialSpec[];
+  /** Policy presets needed when this channel is active. */
+  readonly policyPresets?: readonly ChannelPolicyPresetReference[];
+  readonly render: readonly ChannelRenderSpec[];
+  readonly hostForward?: ChannelHostForwardSpec;
+  readonly runtime?: ChannelRuntimeByAgentSpec;
+  readonly agentPackages?: readonly ChannelAgentPackageSpec[];
+  readonly hooks: readonly ChannelHookSpec[];
+}
+
+/** Manifest-owned network policy preset metadata. */
+export type ChannelPolicyPresetReference = string | ChannelPolicyPresetSpec;
+
+/** Concrete network policy keys may differ from the operator-facing preset name. */
+export interface ChannelPolicyPresetSpec {
+  readonly name: string;
+  readonly policyKeys?: readonly string[];
+  readonly agentPolicyKeys?: Partial<Record<MessagingAgentId, readonly string[]>>;
+  readonly requiredAtCreate?: boolean;
+  readonly validationWarningLines?: readonly string[];
+}
+
+/** How a channel obtains credential or session material. */
+export type ChannelAuthMode = "none" | "token-paste" | "host-qr" | "in-sandbox-qr";
+
+/** Authentication declaration for a channel, without any secret values. */
+export interface ChannelAuthSpec {
+  readonly mode: ChannelAuthMode;
+}
+
+/** Operator-facing prompt metadata for collecting a manifest input. */
+export interface ChannelInputPromptSpec {
+  readonly label: string;
+  readonly help?: string;
+  readonly emptyValueMessage?: string;
+}
+
+/** Shared fields for secret and non-secret manifest inputs. */
+interface ChannelInputBaseSpec {
+  readonly id: string;
+  readonly required: boolean;
+  readonly envKey?: string;
+  readonly prompt?: ChannelInputPromptSpec;
+  readonly validValues?: readonly string[];
+  readonly formatPattern?: string;
+  readonly formatHint?: string;
+}
+
+/** Secret input metadata; values must be referenced, not stored in manifests or plans. */
+export interface ChannelSecretInputSpec extends ChannelInputBaseSpec {
+  readonly kind: "secret";
+  readonly statePath?: never;
+}
+
+/** Non-secret input metadata that may persist into channel state. */
+export interface ChannelConfigInputSpec extends ChannelInputBaseSpec {
+  readonly kind: "config";
+  readonly defaultValue?: string;
+  readonly statePath?: MessagingStatePath;
+  readonly promptWhenInput?: string;
+}
+
+/** Manifest input declaration, split so secrets cannot declare defaults or state paths. */
+export type ChannelInputSpec = ChannelSecretInputSpec | ChannelConfigInputSpec;
+
+/** Provider binding declaration derived from a secret input. */
+export interface ChannelCredentialSpec {
+  readonly id: string;
+  readonly sourceInput: string;
+  readonly providerName: MessagingTemplateString;
+  readonly providerEnvKey: string;
+  readonly placeholder: MessagingTemplateString;
+  readonly primary?: boolean;
+}
+
+/** Manifest render declaration for supported output formats. */
+export type ChannelRenderSpec = ChannelJsonRenderSpec | ChannelEnvLinesRenderSpec;
+
+/** Shared render target metadata. */
+interface ChannelRenderBaseSpec {
+  readonly id?: string;
+  readonly agent: MessagingAgentId;
+  readonly target: string;
+  readonly when?: MessagingTemplateString;
+}
+
+/** JSON fragment a compiler can merge into an agent config file. */
+export interface ChannelJsonRenderSpec extends ChannelRenderBaseSpec {
+  readonly kind: "json-fragment";
+  readonly fragment: ChannelRenderFragmentSpec;
+}
+
+/** Env-file lines a compiler can append or rewrite for an agent. */
+export interface ChannelEnvLinesRenderSpec extends ChannelRenderBaseSpec {
+  readonly kind: "env-lines";
+  readonly lines: readonly MessagingTemplateString[];
+}
+
+/** JSON path/value pair for one rendered config fragment. */
+export interface ChannelRenderFragmentSpec {
+  readonly path: MessagingStatePath;
+  readonly value: MessagingSerializableValue;
+}
+
+/** Host-side OpenShell forward needed for inbound channel webhooks. */
+export interface ChannelHostForwardSpec {
+  readonly port: MessagingTemplateString;
+  readonly label: string;
+  readonly when?: MessagingTemplateString;
+}
+
+/** Agent-runtime metadata consumed by shared runtime setup and diagnostics. */
+export interface ChannelRuntimeByAgentSpec
+  extends Partial<Record<MessagingAgentId, ChannelRuntimeSpec>> {
+  readonly openclaw?: ChannelOpenClawRuntimeSpec;
+  readonly hermes?: ChannelRuntimeSpec;
+}
+
+/** OpenClaw-specific runtime metadata. */
+export interface ChannelOpenClawRuntimeSpec extends ChannelRuntimeSpec {
+  /** Key owned under openclaw.json `channels`, when this manifest manages one. */
+  readonly channelName?: string;
+}
+
+/** Agent-runtime metadata consumed by shared runtime setup and diagnostics. */
+export interface ChannelRuntimeSpec {
+  readonly visibility?: ChannelRuntimeVisibilitySpec;
+  readonly nodePreloads?: readonly ChannelRuntimeNodePreloadSpec[];
+  readonly envAliases?: readonly ChannelRuntimeEnvAliasSpec[];
+  readonly secretScans?: readonly ChannelRuntimeSecretScanSpec[];
+}
+
+/** Agent-runtime metadata for common channel visibility diagnostics. */
+export interface ChannelRuntimeVisibilitySpec {
+  readonly configKeys: readonly string[];
+  readonly logPatterns: readonly string[];
+}
+
+export type ChannelRuntimeNodePreloadScope = "boot" | "connect";
+
+/** Node preload module to inject inside the OpenClaw runtime process. */
+export interface ChannelRuntimeNodePreloadSpec {
+  readonly module: string;
+  readonly injectInto?: readonly ChannelRuntimeNodePreloadScope[];
+  readonly optional?: boolean;
+  readonly installMessage?: string;
+  readonly installedMessage?: string;
+}
+
+export interface ChannelRuntimeEnvAliasSpec {
+  readonly envKey: string;
+  readonly match: string;
+  readonly value: string;
+  readonly message?: string;
+}
+
+export interface ChannelRuntimeSecretScanSpec {
+  readonly path: string;
+  readonly pattern: string;
+  readonly message?: string;
+  readonly exitCode?: number;
+}
+
+export type ChannelAgentPackageManager = "openclaw-plugin" | "hermes-uv-pip";
+
+/** Agent package/plugin install the sandbox image build should apply. */
+export interface ChannelAgentPackageSpec {
+  readonly id: string;
+  readonly agent: MessagingAgentId;
+  readonly manager: ChannelAgentPackageManager;
+  readonly spec: MessagingTemplateString;
+  readonly pin?: boolean;
+  readonly integrity?: string;
+  readonly integrityByVersion?: Readonly<Record<string, string>>;
+  readonly tarballUrl?: string;
+  readonly tarballUrlByVersion?: Readonly<Record<string, string>>;
+  readonly required?: boolean;
+}
+
+/** Lifecycle phase where a referenced hook may run. */
+export type ChannelHookPhase =
+  | "enroll"
+  | "reachability-check"
+  | "pre-enable"
+  | "agent-install"
+  | "render"
+  | "apply"
+  | "post-agent-install"
+  | "health-check"
+  | "diagnostic"
+  | "status";
+
+/** How the planner/applier should treat a hook failure. */
+export type ChannelHookFailureMode = "abort" | "skip-channel";
+
+/** Declarative hook reference; handler names are resolved by a separate registry. */
+export interface ChannelHookSpec {
+  readonly id: string;
+  readonly phase: ChannelHookPhase;
+  readonly handler: string;
+  readonly agents?: readonly MessagingAgentId[];
+  readonly inputs?: readonly string[];
+  readonly outputs?: readonly ChannelHookOutputSpec[];
+  readonly onFailure?: ChannelHookFailureMode;
+}
+
+/** Output shape a hook promises, without embedding hook implementation details. */
+export interface ChannelHookOutputSpec {
+  readonly id: string;
+  readonly kind:
+    | "secret"
+    | "config"
+    | "build-arg"
+    | "build-file"
+    | "package-install"
+    | "agent-render"
+    | "health-check"
+    | "status";
+  readonly required?: boolean;
+  readonly value?: MessagingSerializableValue;
+}
+
+/** Serializable compiled plan for all selected messaging channels. */
+export interface SandboxMessagingPlan {
+  readonly schemaVersion: 1;
+  readonly sandboxName: string;
+  readonly agent: MessagingAgentId;
+  readonly workflow: MessagingCompilerWorkflow;
+  readonly channels: readonly SandboxMessagingChannelPlan[];
+  readonly disabledChannels: readonly MessagingChannelId[];
+  readonly credentialBindings: readonly SandboxMessagingCredentialBindingPlan[];
+  readonly networkPolicy: SandboxMessagingNetworkPolicyPlan;
+  readonly agentRender: readonly SandboxMessagingAgentRenderPlan[];
+  readonly buildSteps: readonly SandboxMessagingBuildStepPlan[];
+  /** New plans include runtime setup; optional keeps older serialized plans readable. */
+  readonly runtimeSetup?: SandboxMessagingRuntimeSetupPlan;
+  readonly stateUpdates: readonly SandboxMessagingStateUpdatePlan[];
+  readonly healthChecks: readonly SandboxMessagingHealthCheckPlan[];
+}
+
+/** Workflow that requested a compiled messaging plan. */
+export type MessagingCompilerWorkflow =
+  | "onboard"
+  | "add-channel"
+  | "remove-channel"
+  | "start-channel"
+  | "stop-channel"
+  | "rebuild";
+
+/** Compiled metadata for one requested channel. */
+export interface SandboxMessagingChannelPlan {
+  readonly channelId: MessagingChannelId;
+  readonly displayName: string;
+  readonly authMode: ChannelAuthMode;
+  readonly active: boolean;
+  readonly selected: boolean;
+  readonly configured: boolean;
+  readonly disabled: boolean;
+  readonly inputs: readonly SandboxMessagingInputReference[];
+  readonly hostForward?: SandboxMessagingHostForwardPlan;
+  readonly hooks: readonly SandboxMessagingHookReferencePlan[];
+}
+
+/** Resolved input metadata carried into the plan without raw secret values. */
+export interface SandboxMessagingInputReference {
+  readonly channelId: MessagingChannelId;
+  readonly inputId: string;
+  readonly kind: "secret" | "config";
+  readonly required: boolean;
+  readonly sourceEnv?: string;
+  readonly statePath?: MessagingStatePath;
+  readonly credentialAvailable?: boolean;
+  readonly value?: MessagingSerializableValue;
+}
+
+/** Resolved host-side OpenShell forward for an active messaging channel. */
+export interface SandboxMessagingHostForwardPlan {
+  readonly channelId: MessagingChannelId;
+  readonly port: number;
+  readonly label: string;
+}
+
+/** Plan entry describing an OpenShell provider/env binding to create or attach. */
+export interface SandboxMessagingCredentialBindingPlan {
+  readonly channelId: MessagingChannelId;
+  readonly credentialId: string;
+  readonly sourceInput: string;
+  readonly providerName: MessagingTemplateString;
+  readonly providerEnvKey: string;
+  readonly placeholder: MessagingTemplateString;
+  readonly credentialAvailable: boolean;
+  readonly credentialHash?: string;
+}
+
+/** Network policy presets and concrete policy keys required by active channels. */
+export interface SandboxMessagingNetworkPolicyPlan {
+  readonly presets: readonly string[];
+  readonly entries: readonly SandboxMessagingNetworkPolicyEntryPlan[];
+}
+
+/** One active channel's requested policy preset and resolved policy keys. */
+export interface SandboxMessagingNetworkPolicyEntryPlan {
+  readonly channelId: MessagingChannelId;
+  readonly presetName: string;
+  readonly policyKeys: readonly string[];
+  readonly source: "agent-alias" | "manifest";
+}
+
+/** Compiled render output for supported target formats. */
+export type SandboxMessagingAgentRenderPlan =
+  | SandboxMessagingJsonRenderPlan
+  | SandboxMessagingEnvLinesRenderPlan;
+
+/** Compatibility alias for older phase-1 tests and callers. */
+export type SandboxMessagingRenderFragmentPlan = SandboxMessagingAgentRenderPlan;
+
+/** Shared metadata for compiled render outputs. */
+interface SandboxMessagingAgentRenderBasePlan {
+  readonly channelId: MessagingChannelId;
+  readonly renderId?: string;
+  readonly hookId?: string;
+  readonly handler?: string;
+  readonly agent: MessagingAgentId;
+  readonly target: string;
+}
+
+/** Compiled JSON fragment ready for an applier/render engine. */
+export interface SandboxMessagingJsonRenderPlan extends SandboxMessagingAgentRenderBasePlan {
+  readonly kind: "json-fragment";
+  readonly path: MessagingStatePath;
+  readonly value: MessagingSerializableValue;
+  readonly templateRefs: readonly string[];
+}
+
+/** Compiled env-file lines ready for an applier/render engine. */
+export interface SandboxMessagingEnvLinesRenderPlan extends SandboxMessagingAgentRenderBasePlan {
+  readonly kind: "env-lines";
+  readonly lines: readonly MessagingTemplateString[];
+  readonly templateRefs: readonly string[];
+}
+
+/** Build-time input the applier may pass into sandbox create/rebuild. */
+export type SandboxMessagingBuildStepPlan =
+  | SandboxMessagingBuildArgStepPlan
+  | SandboxMessagingBuildFileStepPlan
+  | SandboxMessagingPackageInstallStepPlan;
+
+/** Compatibility alias for older phase-1 tests and callers. */
+export type SandboxMessagingBuildInputPlan = SandboxMessagingBuildStepPlan;
+
+/** Docker/build argument planned for sandbox create or rebuild. */
+export interface SandboxMessagingBuildArgStepPlan {
+  readonly channelId: MessagingChannelId;
+  readonly kind: "build-arg";
+  readonly hookId?: string;
+  readonly handler?: string;
+  readonly outputId: string;
+  readonly required: boolean;
+  readonly value?: MessagingSerializableValue;
+}
+
+/** File planned for the sandbox build context, optionally sourced from a hook. */
+export interface SandboxMessagingBuildFileStepPlan {
+  readonly channelId: MessagingChannelId;
+  readonly kind: "build-file";
+  readonly hookId?: string;
+  readonly handler?: string;
+  readonly outputId: string;
+  readonly required: boolean;
+  readonly value?: MessagingSerializableValue;
+}
+
+/** Agent package install planned for the sandbox image build. */
+export interface SandboxMessagingPackageInstallStepPlan {
+  readonly channelId: MessagingChannelId;
+  readonly kind: "package-install";
+  readonly hookId?: string;
+  readonly handler?: string;
+  readonly outputId: string;
+  readonly required: boolean;
+  readonly value?: MessagingSerializableValue;
+}
+
+export interface SandboxMessagingRuntimeSetupPlan {
+  readonly nodePreloads: readonly SandboxMessagingRuntimeNodePreloadPlan[];
+  readonly envAliases: readonly SandboxMessagingRuntimeEnvAliasPlan[];
+  readonly secretScans: readonly SandboxMessagingRuntimeSecretScanPlan[];
+}
+
+export interface SandboxMessagingRuntimeNodePreloadPlan extends ChannelRuntimeNodePreloadSpec {
+  readonly channelId: MessagingChannelId;
+  readonly source: string;
+  readonly target: string;
+}
+
+export interface SandboxMessagingRuntimeEnvAliasPlan extends ChannelRuntimeEnvAliasSpec {
+  readonly channelId: MessagingChannelId;
+}
+
+export interface SandboxMessagingRuntimeSecretScanPlan extends ChannelRuntimeSecretScanSpec {
+  readonly channelId: MessagingChannelId;
+}
+
+/** Hook reference carried into a compiled plan. */
+export interface SandboxMessagingHookReferencePlan extends ChannelHookSpec {
+  readonly channelId: MessagingChannelId;
+}
+
+/** Planned state persistence or rebuild hydration produced from channel manifests. */
+export type SandboxMessagingStateUpdatePlan =
+  | SandboxMessagingPersistInputsStateUpdatePlan
+  | SandboxMessagingRebuildHydrationStateUpdatePlan;
+
+/** State input persistence planned for later workflow integration. */
+export interface SandboxMessagingPersistInputsStateUpdatePlan {
+  readonly channelId: MessagingChannelId;
+  readonly kind: "persist-inputs";
+  readonly stateKey: string;
+  readonly inputIds: readonly string[];
+}
+
+/** Rebuild-time state hydration planned for later build integration. */
+export interface SandboxMessagingRebuildHydrationStateUpdatePlan {
+  readonly channelId: MessagingChannelId;
+  readonly kind: "rebuild-hydration";
+  readonly statePath: MessagingStatePath;
+  readonly env: string;
+}
+
+/** Health gates that must run before a lifecycle can report success. */
+export interface SandboxMessagingHealthCheckPlan {
+  readonly channelId: MessagingChannelId;
+  readonly phase: "health-check";
+  readonly requiredBefore: "lifecycle-success";
+  readonly hookIds: readonly string[];
+}

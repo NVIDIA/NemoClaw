@@ -2,16 +2,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Ephemeral Brev E2E test suite.
+ * Branch Validation E2E — installs NemoClaw FROM SOURCE on a fresh Brev instance.
  *
- * Creates a fresh Brev instance via the launchable bootstrap path, bootstraps it,
- * runs E2E tests remotely, then tears it down.
+ * Answers: "Does this branch work if you install from source on a clean machine?"
+ *
+ * Creates a fresh Brev instance, rsyncs the checked-out branch code, runs
+ * install.sh from source, onboards a sandbox, then executes the selected test
+ * suite against the live environment. Tears down the instance when done.
+ *
+ * NOTE: This does NOT test the community Launchable install path
+ * (launch-plugin.sh). For that, run e2e-launchable-smoke in
+ * e2e.yaml.
  *
  * Intended to be run from CI via:
- *   npx vitest run --project e2e-brev
+ *   npx vitest run --project e2e-branch-validation
  *
  * Required env vars:
- *   NVIDIA_API_KEY   — passed to VM for inference config during onboarding
+ *   NVIDIA_INFERENCE_API_KEY   — passed to VM for inference config during onboarding
  *   GITHUB_TOKEN     — passed to VM for OpenShell binary download
  *   INSTANCE_NAME    — Brev instance name (e.g. pr-156-test)
  *
@@ -19,13 +26,18 @@
  *   The local `brev` CLI must already be authenticated before this suite runs.
  *
  * Optional env vars:
- *   TEST_SUITE             — which test to run: full (default), deploy-cli, credential-sanitization,
- *                             telegram-injection, messaging-providers, all
- *   LAUNCHABLE_SETUP_SCRIPT — URL to setup script for launchable path (default: brev-launchable-ci-cpu.sh on main)
+ *   TEST_SUITE             — which test to run: full (default), deploy-cli, gpu,
+ *                             credential-sanitization, telegram-injection, messaging-providers,
+ *                             messaging-compatible-endpoint, dashboard-remote-bind, all
  *   BREV_MIN_VCPU          — Minimum vCPUs for CPU instance (default: 4)
  *   BREV_MIN_RAM           — Minimum RAM in GB for CPU instance (default: 16)
- *   BREV_PROVIDER          — Cloud provider filter for brev search (default: gcp)
+ *   BREV_PROVIDER          — Cloud provider filter for brev search (default: gcp for CPU, any for GPU)
  *   BREV_MIN_DISK          — Minimum disk size in GB (default: 50)
+ *   BREV_GPU_TYPE          — Optional GPU instance type for TEST_SUITE=gpu
+ *   BREV_GPU_NAME          — GPU name filter when BREV_GPU_TYPE is unset (default: any GPU)
+ *   BREV_GPU_MIN_VRAM      — Minimum total VRAM GB when BREV_GPU_TYPE is unset (default: 20)
+ *   BREV_CREATE_TIMEOUT_SECONDS — Brev create timeout, seconds (default: 1200 for GPU)
+ *   BREV_SSH_READY_TIMEOUT_SECONDS — SSH readiness timeout, seconds (default: 900 CPU, 1800 GPU)
  *   TELEGRAM_BOT_TOKEN       — Telegram bot token for messaging-providers test (fake OK)
  *   DISCORD_BOT_TOKEN        — Discord bot token for messaging-providers test (fake OK)
  *   SLACK_BOT_TOKEN          — Slack bot token for messaging-providers test (fake OK)
@@ -37,19 +49,57 @@
  *   TELEGRAM_CHAT_ID_E2E     — Telegram chat ID for optional sendMessage test
  */
 
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { execSync, execFileSync, type StdioOptions } from "node:child_process";
+import { execFileSync, execSync, type StdioOptions, spawnSync } from "node:child_process";
 import path from "node:path";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { shellQuote } from "../../src/lib/core/shell-quote";
+import {
+  BREV_MESSAGING_COMPAT_TIMEOUT_MS,
+  BREV_MESSAGING_PROVIDER_TIMEOUT_MS,
+  BREV_REMOTE_WRAPPER_GRACE_MS,
+  BREV_SECURITY_SUITE_TIMEOUT_MS,
+  brevSuiteHarnessSandboxName,
+  brevSuiteNeedsHarnessSandbox,
+  brevWorkflowOwnsInstance,
+  buildBrevRemoteVitestCommand,
+} from "../../tools/e2e/brev-remote-vitest.mts";
 
 // Instance configuration
 const BREV_MIN_VCPU = parseInt(process.env.BREV_MIN_VCPU || "4", 10);
 const BREV_MIN_RAM = parseInt(process.env.BREV_MIN_RAM || "16", 10);
-const BREV_PROVIDER = process.env.BREV_PROVIDER || "gcp";
 const BREV_MIN_DISK = parseInt(process.env.BREV_MIN_DISK || "50", 10);
+const BREV_GPU_TYPE = process.env.BREV_GPU_TYPE || "";
+const BREV_GPU_NAME = process.env.BREV_GPU_NAME || "";
+const BREV_GPU_MIN_VRAM = process.env.BREV_GPU_MIN_VRAM || "20";
 const INSTANCE_NAME = process.env.INSTANCE_NAME;
 const TEST_SUITE = process.env.TEST_SUITE || "full";
 const REPO_DIR = path.resolve(import.meta.dirname, "../..");
 const CLI_PATH = path.join(REPO_DIR, "bin", "nemoclaw.js");
+const GPU_TEST_SUITE = TEST_SUITE === "gpu";
+const BREV_PROVIDER = process.env.BREV_PROVIDER || (GPU_TEST_SUITE ? "" : "gcp");
+const BREV_CREATE_TIMEOUT_SECONDS = parseInt(
+  process.env.BREV_CREATE_TIMEOUT_SECONDS || (GPU_TEST_SUITE ? "1200" : "180"),
+  10,
+);
+const BREV_CREATE_TIMEOUT_MS =
+  (Number.isFinite(BREV_CREATE_TIMEOUT_SECONDS) && BREV_CREATE_TIMEOUT_SECONDS > 0
+    ? BREV_CREATE_TIMEOUT_SECONDS
+    : GPU_TEST_SUITE
+      ? 1200
+      : 180) * 1000;
+const BREV_SSH_READY_TIMEOUT_SECONDS = parseInt(
+  process.env.BREV_SSH_READY_TIMEOUT_SECONDS || (GPU_TEST_SUITE ? "1800" : "900"),
+  10,
+);
+const BREV_SSH_READY_TIMEOUT_MS =
+  (Number.isFinite(BREV_SSH_READY_TIMEOUT_SECONDS) && BREV_SSH_READY_TIMEOUT_SECONDS > 0
+    ? BREV_SSH_READY_TIMEOUT_SECONDS
+    : GPU_TEST_SUITE
+      ? 1800
+      : 900) * 1000;
+const OPENSHELL_GATEWAY_PORT = 8080;
+const OLLAMA_AUTH_PROXY_PORT = 11435;
+const DOCKER_DEFAULT_BRIDGE_POOL_CIDR = "172.16.0.0/12";
 
 function requireInstanceName(): string {
   if (!INSTANCE_NAME) {
@@ -59,13 +109,11 @@ function requireInstanceName(): string {
 }
 
 // Launchable configuration
-// CI-Ready CPU setup script: pre-bakes Docker, Node.js, OpenShell CLI, npm deps, Docker images.
+// CI-Ready CPU setup script: pre-bakes Docker, Node.js, OpenShell CLI, and npm deps.
 // The Brev CLI (v0.6.322+) uses `brev search cpu | brev create --startup-script @file`.
-// Default: use the repo-local script (hermetic — always matches the checked-out branch).
-// Override via LAUNCHABLE_SETUP_SCRIPT env var to test a remote URL instead.
-const DEFAULT_SETUP_SCRIPT_PATH =
-  process.env.LAUNCHABLE_SETUP_SCRIPT ||
-  path.join(REPO_DIR, "scripts", "brev-launchable-ci-cpu.sh");
+// Use the repo-local script so secret-bearing branch validation cannot execute
+// mutable setup code selected outside the reviewed checkout.
+const SETUP_SCRIPT_PATH = path.join(REPO_DIR, "scripts", "brev-launchable-ci-cpu.sh");
 // Sentinel file written by brev-launchable-ci-cpu.sh when setup is complete.
 // More reliable than grepping log files.
 const LAUNCHABLE_SENTINEL = "/var/run/nemoclaw-launchable-ready";
@@ -75,6 +123,7 @@ let instanceCreated = false;
 
 const STREAM_STDIO: StdioOptions = ["inherit", "inherit", "inherit"];
 const CAPTURE_STDIO: StdioOptions = ["pipe", "pipe", "pipe"];
+const CAPTURE_OUTPUT_STDIO: StdioOptions = ["ignore", "pipe", "inherit"];
 const PIPE_INPUT_STDIO: StdioOptions = ["pipe", "inherit", "inherit"];
 
 // --- low-level helpers ------------------------------------------------------
@@ -87,11 +136,58 @@ function brev(...args: string[]): string {
   }).trim();
 }
 
-function listBrevInstances(): Array<{ name: string; status?: string }> {
+type BrevInstance = { name: string; status?: string };
+
+function normalizeBrevInstance(raw: unknown): BrevInstance | null {
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+  const name = record.name ?? record.workspaceName ?? record.instanceName ?? record.Name;
+  if (typeof name !== "string" || !name.trim()) return null;
+  const status = record.status ?? record.state ?? record.lifecycleStatus ?? record.Status;
+  return {
+    name: name.trim(),
+    status: typeof status === "string" ? status.trim().toUpperCase() : undefined,
+  };
+}
+
+function parseBrevListOutput(output: string): BrevInstance[] {
+  const instances: BrevInstance[] = [];
+  for (const line of output.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const fields = trimmed.split(/\s+/);
+    const [name] = fields;
+    if (!name || /^(NAME|TYPE|Usage:|Error:|no)$/i.test(name)) continue;
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) continue;
+    const status = fields.find((field) =>
+      /^(CREATING|DELETING|FAILED|OFF|ON|READY|RUNNING|STARTING|STOPPED|STOPPING)$/i.test(field),
+    );
+    instances.push({
+      name,
+      status: status?.toUpperCase(),
+    });
+  }
+  return instances;
+}
+
+function listBrevInstances(): BrevInstance[] {
   try {
-    return JSON.parse(brev("ls", "--json"));
+    const parsed = JSON.parse(brev("ls", "--json"));
+    const rawInstances = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray(parsed?.workspaces)
+        ? parsed.workspaces
+        : [];
+    return rawInstances.flatMap((instance: unknown) => {
+      const normalized = normalizeBrevInstance(instance);
+      return normalized ? [normalized] : [];
+    });
   } catch {
-    return [];
+    try {
+      return parseBrevListOutput(brev("ls"));
+    } catch {
+      return [];
+    }
   }
 }
 
@@ -112,8 +208,10 @@ function deleteBrevInstance(instanceName: string): boolean {
     return true;
   }
 
+  let deleteRequested = false;
   try {
     brev("delete", instanceName);
+    deleteRequested = true;
   } catch {
     // Best-effort delete
   }
@@ -124,17 +222,36 @@ function deleteBrevInstance(instanceName: string): boolean {
     return true;
   }
 
-  return false;
+  return deleteRequested;
+}
+
+function waitForBrevInstanceRemoved(
+  instanceName: string,
+  elapsed: () => string,
+  maxWaitMs = 300_000,
+): void {
+  const deadline = Date.now() + maxWaitMs;
+  let polls = 0;
+  while (hasBrevInstance(instanceName)) {
+    if (Date.now() > deadline) {
+      throw new Error(`Brev instance "${instanceName}" was not removed within ${maxWaitMs}ms`);
+    }
+    polls += 1;
+    if (polls === 1 || polls % 3 === 0) {
+      console.log(`[${elapsed()}] Waiting for Brev instance "${instanceName}" to disappear...`);
+    }
+    execSync("sleep 10");
+  }
 }
 
 function ssh(
   cmd: string,
   { timeout = 120_000, stream = false }: { timeout?: number; stream?: boolean } = {},
 ): string {
-  const escaped = cmd.replace(/'/g, "'\\''");
   const stdio = stream ? STREAM_STDIO : CAPTURE_STDIO;
-  const result = execSync(
-    `ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR "${INSTANCE_NAME}" '${escaped}'`,
+  const result = execFileSync(
+    "ssh",
+    ["-o", "StrictHostKeyChecking=no", "-o", "LogLevel=ERROR", requireInstanceName(), cmd],
     { encoding: "utf-8", timeout, stdio },
   );
   return stream ? "" : result.trim();
@@ -153,13 +270,24 @@ function sshEnv(
   cmd: string,
   { timeout = 600_000, stream = false }: { timeout?: number; stream?: boolean } = {},
 ): string {
+  const gpuE2eModel = process.env.NEMOCLAW_GPU_E2E_MODEL || "qwen3.5:9b";
+  const harnessSandboxName = brevSuiteHarnessSandboxName(TEST_SUITE);
   const envParts = [
-    `export NVIDIA_API_KEY='${shellEscape(process.env.NVIDIA_API_KEY)}'`,
+    `export NVIDIA_INFERENCE_API_KEY='${shellEscape(process.env.NVIDIA_INFERENCE_API_KEY)}'`,
     `export GITHUB_TOKEN='${shellEscape(process.env.GITHUB_TOKEN)}'`,
     `export NEMOCLAW_NON_INTERACTIVE=1`,
     `export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1`,
-    `export NEMOCLAW_SANDBOX_NAME=e2e-test`,
+    ...(harnessSandboxName
+      ? [`export NEMOCLAW_SANDBOX_NAME='${shellEscape(harnessSandboxName)}'`]
+      : []),
+    `export NEMOCLAW_TRACE_DIR=/tmp/nemoclaw-traces`,
   ];
+  if (GPU_TEST_SUITE) {
+    // This suite validates Docker GPU passthrough and sandbox inference wiring.
+    // Pin a small model so Brev's cheaper GPU shapes do not fail before
+    // sandbox creation while auto-loading a very large default Ollama model.
+    envParts.push(`export NEMOCLAW_MODEL='${shellEscape(gpuE2eModel)}'`);
+  }
   // Forward optional messaging tokens for the messaging-providers test
   for (const key of [
     "TELEGRAM_BOT_TOKEN",
@@ -181,18 +309,31 @@ function sshEnv(
   return ssh(`${envPrefix} && ${cmd}`, { timeout, stream });
 }
 
-function waitForSsh(maxAttempts = 40, intervalMs = 5_000): void {
-  for (let i = 1; i <= maxAttempts; i++) {
+function waitForSsh(maxWaitMs = BREV_SSH_READY_TIMEOUT_MS, intervalMs = 5_000): void {
+  const deadline = Date.now() + maxWaitMs;
+  let attempts = 0;
+  let dnsFailures = 0;
+  let lastError = "";
+  while (Date.now() < deadline) {
+    attempts += 1;
     try {
       ssh("echo ok", { timeout: 10_000 });
       return;
-    } catch {
-      if (i === maxAttempts)
-        throw new Error(
-          `SSH not ready after ${maxAttempts} attempts (~${Math.round((maxAttempts * (intervalMs + 10_000)) / 60_000)} min)`,
-        );
-      console.log(`  SSH attempt ${i}/${maxAttempts} failed, retrying in ${intervalMs / 1000}s...`);
-      if (i % 5 === 0) {
+    } catch (error) {
+      lastError = commandErrorOutput(error);
+      if (
+        /Could not resolve hostname|Name or service not known|Temporary failure in name resolution/i.test(
+          lastError,
+        )
+      ) {
+        dnsFailures += 1;
+      } else {
+        dnsFailures = 0;
+      }
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) break;
+      console.log(`  SSH attempt ${attempts} failed, retrying in ${intervalMs / 1000}s...`);
+      if (attempts % 5 === 0) {
         console.log(`  Refreshing brev SSH config...`);
         try {
           brev("refresh");
@@ -200,9 +341,14 @@ function waitForSsh(maxAttempts = 40, intervalMs = 5_000): void {
           /* ignore */
         }
       }
-      execSync(`sleep ${intervalMs / 1000}`);
+      execSync(`sleep ${Math.max(1, Math.ceil(Math.min(intervalMs, remainingMs) / 1000))}`);
     }
   }
+  throw new Error(
+    `SSH not ready after ${Math.round(maxWaitMs / 60_000)} min ` +
+      `(${attempts} attempts, ${dnsFailures} hostname-resolution failures). ` +
+      `Last SSH error: ${lastError}`,
+  );
 }
 
 /**
@@ -261,22 +407,79 @@ function waitForLaunchableReady(maxWaitMs = 1_200_000, pollIntervalMs = 15_000):
   );
 }
 
-function runRemoteTest(scriptPath: string): string {
+function runRemoteCommand(
+  command: string,
+  timeoutMs = GPU_TEST_SUITE ? 1_800_000 : 900_000,
+): string {
+  const dockerGroupCommand = shellQuote(`${command} 2>&1 | tee /tmp/test-output.log`);
   const cmd = [
     `set -o pipefail`,
     `source ~/.nvm/nvm.sh 2>/dev/null || true`,
     `cd ${remoteDir}`,
     `export npm_config_prefix=$HOME/.local`,
     `export PATH=$HOME/.local/bin:$PATH`,
-    // Docker socket is chmod 666 by setup script, no sg docker needed.
-
-    `bash ${scriptPath} 2>&1 | tee /tmp/test-output.log`,
+    // The setup adds this user to the docker group without weakening the
+    // host-root-equivalent socket. `sg` also handles a session created before
+    // that group membership became visible.
+    `sg docker -c ${dockerGroupCommand}`,
   ].join(" && ");
 
   // Stream test output to CI log AND capture it for assertions
-  sshEnv(cmd, { timeout: 900_000, stream: true });
+  try {
+    sshEnv(cmd, { timeout: timeoutMs, stream: true });
+  } catch (error) {
+    printRemoteFailureDiagnostics();
+    throw error;
+  }
   // Retrieve the captured output for assertion checking
   return ssh("cat /tmp/test-output.log", { timeout: 30_000 });
+}
+
+function runRemoteVitest(project: "cli" | "e2e-live", target: string, timeoutMs?: number): string {
+  return runRemoteCommand(buildBrevRemoteVitestCommand(project, target), timeoutMs);
+}
+
+function expectVitestPassed(output: string): void {
+  expect(output).toContain("Test Files");
+  expect(output).toMatch(/\bpassed\b/);
+  expect(output).not.toMatch(/\bfailed\b/i);
+}
+
+function printRemoteFailureDiagnostics(): void {
+  try {
+    const diagnostics = ssh(
+      [
+        `set +e`,
+        `echo "===== remote failure diagnostics ====="`,
+        `echo "--- openshell sandbox list ---"`,
+        `PATH=$HOME/.local/bin:$PATH openshell sandbox list 2>&1 || true`,
+        `echo "--- docker ps ---"`,
+        `sg docker -c 'docker ps -a --filter label=openshell.ai/managed-by=openshell' 2>&1 || true`,
+        `echo "--- openshell gateway log ---"`,
+        `tail -200 "$HOME/.local/state/nemoclaw/openshell-docker-gateway/openshell-gateway.log" 2>&1 || true`,
+        `latest="$(find "$HOME/.nemoclaw/onboard-failures" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | tail -1)"`,
+        `if [ -n "$latest" ]; then`,
+        `  echo "--- latest onboard failure: $latest ---"`,
+        `  for file in summary.txt docker-network-summary.txt docker-ps.txt openshell-sandbox-list.txt openshell-sandbox-get.txt; do`,
+        `    if [ -s "$latest/$file" ]; then`,
+        `      echo "--- $file ---"`,
+        `      sed -n '1,160p' "$latest/$file"`,
+        `    fi`,
+        `  done`,
+        `  for file in docker-logs.txt openshell-logs.txt; do`,
+        `    if [ -s "$latest/$file" ]; then`,
+        `      echo "--- tail $file ---"`,
+        `      tail -160 "$latest/$file"`,
+        `    fi`,
+        `  done`,
+        `fi`,
+      ].join("\n"),
+      { timeout: 60_000 },
+    );
+    console.log(diagnostics);
+  } catch (diagnosticsError) {
+    console.log(`Failed to collect remote diagnostics: ${String(diagnosticsError)}`);
+  }
 }
 
 function runLocalDeploy(instanceName: string): void {
@@ -311,6 +514,8 @@ function cleanupLeftoverInstance(elapsed: () => string): void {
     if (!deleteBrevInstance(instanceName)) {
       throw new Error(`Failed to delete leftover instance "${instanceName}"`);
     }
+    console.log(`[${elapsed()}] Requested deletion of leftover instance "${instanceName}"`);
+    waitForBrevInstanceRemoved(instanceName, elapsed);
     console.log(`[${elapsed()}] Deleted leftover instance "${instanceName}"`);
   }
 }
@@ -329,8 +534,62 @@ function refreshAndWaitForSsh(elapsed: () => string): void {
   console.log(`[${elapsed()}] SSH is up`);
 }
 
+function createBrevInstanceAndWaitForSsh(elapsed: () => string): void {
+  const configuredAttempts = Number(process.env.BREV_PROVISION_ATTEMPTS || 2);
+  const maxAttempts = GPU_TEST_SUITE
+    ? Math.max(1, Number.isFinite(configuredAttempts) ? configuredAttempts : 2)
+    : 1;
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (attempt > 1) {
+      console.log(`[${elapsed()}] Retrying Brev provisioning (${attempt}/${maxAttempts})...`);
+      cleanupLeftoverInstance(elapsed);
+    }
+    try {
+      createBrevInstance(elapsed);
+      instanceCreated = true;
+      refreshAndWaitForSsh(elapsed);
+      return;
+    } catch (error) {
+      lastError = error;
+      console.log(`[${elapsed()}] Brev provisioning attempt ${attempt}/${maxAttempts} failed.`);
+      const details = commandErrorOutput(error);
+      if (details) console.log(details);
+      if (hasBrevInstance(requireInstanceName())) {
+        if (deleteBrevInstance(requireInstanceName())) {
+          console.log(`[${elapsed()}] Requested deletion after failed provisioning attempt`);
+          waitForBrevInstanceRemoved(requireInstanceName(), elapsed);
+        }
+      }
+      instanceCreated = false;
+    }
+  }
+  throw new Error(`Brev instance did not become SSH-ready after ${maxAttempts} attempt(s).`, {
+    cause: lastError,
+  });
+}
+
+function commandErrorOutput(error: unknown): string {
+  const err = error as { message?: string; stdout?: Buffer | string; stderr?: Buffer | string };
+  return [err.message, err.stdout?.toString(), err.stderr?.toString()]
+    .filter((part): part is string => Boolean(part?.trim()))
+    .join("\n")
+    .trim();
+}
+
+function summarizeBrevCandidates(output: string, maxLines = 10): string {
+  const lines = output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return "(none)";
+  const shown = lines.slice(0, maxLines);
+  const suffix = lines.length > shown.length ? `\n... ${lines.length - shown.length} more` : "";
+  return `${shown.join("\n")}${suffix}`;
+}
+
 /**
- * Create a Brev instance via `brev search cpu | brev create` with a startup script.
+ * Create a Brev launchable instance with a startup script.
  *
  * The Brev API sometimes returns "unexpected EOF" after the instance is actually
  * created server-side. The CLI then falls back to the next instance type, which
@@ -338,36 +597,114 @@ function refreshAndWaitForSsh(elapsed: () => string): void {
  * check if the instance exists anyway.
  */
 function createBrevInstance(elapsed: () => string): void {
-  console.log(
-    `[${elapsed()}] Creating instance via launchable (brev search cpu | brev create + startup-script)...`,
-  );
-  console.log(`[${elapsed()}]   setup-script: ${DEFAULT_SETUP_SCRIPT_PATH}`);
-  console.log(
-    `[${elapsed()}]   cpu: min ${BREV_MIN_VCPU} vCPU, ${BREV_MIN_RAM} GB RAM, ${BREV_MIN_DISK} GB disk, provider: ${BREV_PROVIDER}`,
-  );
-
-  // Resolve the setup script to a local file path.
-  // Default: repo-local scripts/brev-launchable-ci-cpu.sh (hermetic).
-  // Override: set LAUNCHABLE_SETUP_SCRIPT to a URL and it gets downloaded.
-  let setupScriptPath: string;
-  if (DEFAULT_SETUP_SCRIPT_PATH.startsWith("http")) {
-    setupScriptPath = "/tmp/brev-ci-setup.sh";
-    execSync(`curl -fsSL -o ${setupScriptPath} "${DEFAULT_SETUP_SCRIPT_PATH}"`, {
-      encoding: "utf-8",
-      timeout: 30_000,
-    });
-    console.log(`[${elapsed()}] Setup script downloaded to ${setupScriptPath}`);
+  const instanceKind = GPU_TEST_SUITE ? "gpu" : "cpu";
+  console.log(`[${elapsed()}] Creating ${instanceKind} instance via launchable...`);
+  console.log(`[${elapsed()}]   setup-script: ${SETUP_SCRIPT_PATH}`);
+  console.log(`[${elapsed()}]   create timeout: ${Math.round(BREV_CREATE_TIMEOUT_MS / 1000)}s`);
+  if (GPU_TEST_SUITE) {
+    if (BREV_GPU_TYPE) {
+      console.log(`[${elapsed()}]   gpu type: ${BREV_GPU_TYPE}`);
+    } else {
+      console.log(
+        `[${elapsed()}]   gpu: ${BREV_GPU_NAME ? `name ${BREV_GPU_NAME}, ` : ""}min ${BREV_GPU_MIN_VRAM} GB VRAM${BREV_PROVIDER ? `, provider: ${BREV_PROVIDER}` : ""}`,
+      );
+    }
   } else {
-    setupScriptPath = DEFAULT_SETUP_SCRIPT_PATH;
-    console.log(`[${elapsed()}] Using repo-local setup script`);
+    console.log(
+      `[${elapsed()}]   cpu: min ${BREV_MIN_VCPU} vCPU, ${BREV_MIN_RAM} GB RAM, ${BREV_MIN_DISK} GB disk, provider: ${BREV_PROVIDER}`,
+    );
   }
 
+  const setupScriptPath = SETUP_SCRIPT_PATH;
+  console.log(`[${elapsed()}] Using repo-local setup script`);
+
   try {
-    execSync(
-      `brev search cpu --min-vcpu ${BREV_MIN_VCPU} --min-ram ${BREV_MIN_RAM} --min-disk ${BREV_MIN_DISK} --provider ${BREV_PROVIDER} --sort price | ` +
-        `brev create ${INSTANCE_NAME} --startup-script @${setupScriptPath} --detached`,
-      { encoding: "utf-8", timeout: 180_000, stdio: PIPE_INPUT_STDIO },
-    );
+    if (GPU_TEST_SUITE) {
+      const createArgs = [
+        "create",
+        requireInstanceName(),
+        "--startup-script",
+        `@${setupScriptPath}`,
+        "--detached",
+        "--timeout",
+        String(Math.round(BREV_CREATE_TIMEOUT_MS / 1000)),
+      ];
+      if (BREV_GPU_TYPE) {
+        createArgs.push("--type", BREV_GPU_TYPE);
+        execFileSync("brev", createArgs, {
+          encoding: "utf-8",
+          timeout: BREV_CREATE_TIMEOUT_MS + 180_000,
+          stdio: STREAM_STDIO,
+        });
+      } else {
+        const gpuSearchArgs = [
+          "search",
+          "gpu",
+          ...(BREV_GPU_NAME ? ["--gpu-name", BREV_GPU_NAME] : []),
+          "--min-total-vram",
+          BREV_GPU_MIN_VRAM,
+          "--min-disk",
+          String(Math.max(BREV_MIN_DISK, 100)),
+          "--sort",
+          "price",
+          ...(BREV_PROVIDER ? ["--provider", BREV_PROVIDER] : []),
+        ];
+        let gpuCandidates: string;
+        try {
+          gpuCandidates = execFileSync("brev", gpuSearchArgs, {
+            encoding: "utf-8",
+            timeout: 120_000,
+            stdio: CAPTURE_OUTPUT_STDIO,
+          });
+        } catch (searchErr) {
+          throw new Error(
+            `brev GPU search failed before provisioning. ${commandErrorOutput(searchErr)}`,
+            { cause: searchErr },
+          );
+        }
+        if (!gpuCandidates.trim()) {
+          throw new Error(`brev GPU search returned no candidates for: ${gpuSearchArgs.join(" ")}`);
+        }
+        console.log(
+          `[${elapsed()}] Brev GPU candidates:\n${summarizeBrevCandidates(gpuCandidates)}`,
+        );
+        execFileSync("brev", createArgs, {
+          encoding: "utf-8",
+          input: gpuCandidates,
+          timeout: BREV_CREATE_TIMEOUT_MS + 180_000,
+          stdio: PIPE_INPUT_STDIO,
+        });
+      }
+    } else {
+      const cpuCandidates = execFileSync(
+        "brev",
+        [
+          "search",
+          "cpu",
+          "--min-vcpu",
+          String(BREV_MIN_VCPU),
+          "--min-ram",
+          String(BREV_MIN_RAM),
+          "--min-disk",
+          String(BREV_MIN_DISK),
+          "--provider",
+          BREV_PROVIDER,
+          "--sort",
+          "price",
+        ],
+        { encoding: "utf-8", timeout: 120_000, stdio: CAPTURE_OUTPUT_STDIO },
+      );
+      execFileSync(
+        "brev",
+        ["create", requireInstanceName(), "--startup-script", `@${setupScriptPath}`, "--detached"],
+        {
+          encoding: "utf-8",
+          input: cpuCandidates,
+          timeout: 180_000,
+          stdio: PIPE_INPUT_STDIO,
+        },
+      );
+    }
   } catch (createErr) {
     console.log(
       `[${elapsed()}] brev create exited with error — checking if instance was created anyway...`,
@@ -395,6 +732,41 @@ function createBrevInstance(elapsed: () => string): void {
 }
 
 /**
+ * GPU Brev instances provide the host driver, but Docker may still need the
+ * NVIDIA container runtime configured before sandbox containers can use GPUs.
+ */
+function gpuDockerRuntimeSetupCommands(): string[] {
+  return [
+    `set -euo pipefail`,
+    `nvidia-smi`,
+    `sudo apt-get update -qq`,
+    `sudo apt-get install -y -qq ca-certificates curl gnupg >/dev/null`,
+    `sudo rm -f /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg`,
+    `curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg`,
+    `curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null`,
+    `sudo apt-get update -qq`,
+    `sudo apt-get install -y -qq nvidia-container-toolkit >/dev/null`,
+    `sudo nvidia-ctk runtime configure --runtime=docker`,
+    `sudo systemctl restart docker`,
+    // Brev GPU branch-validation VMs are single-use CI hosts. The
+    // openshell-docker network is created later by gateway startup, so this
+    // setup cannot know the exact future bridge subnet. Allow Docker's default
+    // local bridge pool to the OpenShell host-service ports needed by the GPU
+    // path; product-side reachability checks still fail closed if the sandbox
+    // route is actually broken (#3959).
+    `if command -v ufw >/dev/null 2>&1; then sudo ufw allow from ${DOCKER_DEFAULT_BRIDGE_POOL_CIDR} to any port ${OPENSHELL_GATEWAY_PORT} proto tcp >/dev/null || echo "warning: could not add UFW OpenShell gateway allow rule" >&2; fi`,
+    `if command -v ufw >/dev/null 2>&1; then sudo ufw allow from ${DOCKER_DEFAULT_BRIDGE_POOL_CIDR} to any port ${OLLAMA_AUTH_PROXY_PORT} proto tcp >/dev/null || echo "warning: could not add UFW Ollama auth proxy allow rule" >&2; fi`,
+    `sg docker -c 'docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi'`,
+  ];
+}
+
+function prepareGpuDockerRuntime(elapsed: () => string): void {
+  console.log(`[${elapsed()}] Preparing NVIDIA Docker runtime on Brev GPU instance...`);
+  ssh(gpuDockerRuntimeSetupCommands().join(" && "), { timeout: 900_000, stream: true });
+  console.log(`[${elapsed()}] NVIDIA Docker runtime ready`);
+}
+
+/**
  * Bootstrap the launchable environment on the remote VM:
  * rsync branch code, install deps, build plugin, and npm link the CLI.
  *
@@ -408,8 +780,22 @@ function bootstrapLaunchable(elapsed: () => string): { remoteDir: string; needsO
 
   // Rsync PR branch code over the launchable's clone
   console.log(`[${elapsed()}] Syncing PR branch code over launchable's clone...`);
-  execSync(
-    `rsync -az --delete --exclude node_modules --exclude .git --exclude dist --exclude .venv "${REPO_DIR}/" "${INSTANCE_NAME}:${resolvedRemoteDir}/"`,
+  execFileSync(
+    "rsync",
+    [
+      "-az",
+      "--delete",
+      "--exclude",
+      "node_modules",
+      "--exclude",
+      ".git",
+      "--exclude",
+      "dist",
+      "--exclude",
+      ".venv",
+      `${REPO_DIR}/`,
+      `${requireInstanceName()}:${resolvedRemoteDir}/`,
+    ],
     { encoding: "utf-8", timeout: 120_000 },
   );
   console.log(`[${elapsed()}] Code synced`);
@@ -433,12 +819,12 @@ function bootstrapLaunchable(elapsed: () => string): { remoteDir: string; needsO
   );
   console.log(`[${elapsed()}] Dependencies synced`);
 
-  // When TEST_SUITE=full, test-full-e2e.sh runs install.sh which handles
+  // When TEST_SUITE=full or gpu, the shell test runs install.sh which handles
   // plugin build, npm link, and onboard from scratch. Skip those steps
   // to avoid ~8 min of redundant work.
-  if (TEST_SUITE === "full") {
+  if (TEST_SUITE === "full" || GPU_TEST_SUITE) {
     console.log(
-      `[${elapsed()}] Skipping plugin build, npm link, and onboard (TEST_SUITE=full — install.sh handles it)`,
+      `[${elapsed()}] Skipping plugin build, npm link, and onboard (TEST_SUITE=${TEST_SUITE} — install.sh handles it)`,
     );
     return { remoteDir: resolvedRemoteDir, needsOnboard: false };
   }
@@ -483,7 +869,13 @@ function bootstrapLaunchable(elapsed: () => string): { remoteDir: string; needsO
   );
   console.log(`[${elapsed()}] nemoclaw CLI linked`);
 
-  return { remoteDir: resolvedRemoteDir, needsOnboard: true };
+  return {
+    remoteDir: resolvedRemoteDir,
+    // The composite security suite provisions and tears down its own sandbox
+    // in each live target. Seeding a second harness-owned registry here leaves
+    // stale state after the first target destroys the shared gateway.
+    needsOnboard: brevSuiteNeedsHarnessSandbox(TEST_SUITE),
+  };
 }
 
 /**
@@ -496,12 +888,12 @@ function bootstrapLaunchable(elapsed: () => string): { remoteDir: string; needsO
  * hand off to writeManualRegistry() to kill the hung process.
  */
 function pollForSandboxReady(elapsed: () => string): void {
-  // Launch onboard fully detached. We chmod the docker socket so we don't
-  // need sg docker (which complicates backgrounding). nohup + </dev/null +
-  // disown ensures the SSH session can exit cleanly without waiting for
-  // the background process.
+  // Launch onboard fully detached inside a docker-group shell. nohup plus
+  // redirected descriptors lets the SSH session exit cleanly while retaining
+  // least-privilege Docker socket ownership.
   console.log(`[${elapsed()}] Starting nemoclaw onboard in background...`);
-  ssh(`sudo chmod 666 /var/run/docker.sock 2>/dev/null || true`, { timeout: 10_000 });
+  const remoteBindEnv =
+    TEST_SUITE === "dashboard-remote-bind" ? "NEMOCLAW_DASHBOARD_BIND=0.0.0.0 " : "";
   // Launch onboard in background. The SSH command may exit with code 255
   // (SSH error) because background processes keep file descriptors open.
   // That's fine — we just need the process to start; we'll poll for
@@ -511,7 +903,7 @@ function pollForSandboxReady(elapsed: () => string): void {
       [
         `source ~/.nvm/nvm.sh 2>/dev/null || true`,
         `cd ${remoteDir}`,
-        `nohup nemoclaw onboard --non-interactive </dev/null >/tmp/nemoclaw-onboard.log 2>&1 & disown`,
+        `sg docker -c ${shellQuote(`${remoteBindEnv}nohup nemoclaw onboard --non-interactive </dev/null >/tmp/nemoclaw-onboard.log 2>&1 &`)}`,
         `sleep 2`,
         `echo "onboard launched"`,
       ].join(" && "),
@@ -596,17 +988,60 @@ function pollForSandboxReady(elapsed: () => string): void {
   }
 }
 
+function readProductDashboardRemoteBindPrepared(): boolean {
+  const script = [
+    `const fs = require("fs");`,
+    `const os = require("os");`,
+    `const path = require("path");`,
+    `const file = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");`,
+    `const data = JSON.parse(fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "{}");`,
+    `process.stdout.write(String(data?.sandboxes?.["e2e-test"]?.dashboardRemoteBindPrepared === true));`,
+  ].join("");
+  return ssh(`node -e ${shellQuote(script)}`, { timeout: 10_000 }).trim() === "true";
+}
+
+const DASHBOARD_REMOTE_BIND_PROOF_WAIT_MS = 180_000;
+const DASHBOARD_REMOTE_BIND_PROOF_POLL_MS = 5_000;
+
+function waitForProductDashboardRemoteBindPrepared(elapsed: () => string): true {
+  console.log(`[${elapsed()}] Waiting for product-written dashboard remote-bind registry proof...`);
+  const deadline = Date.now() + DASHBOARD_REMOTE_BIND_PROOF_WAIT_MS;
+  let prepared = readProductDashboardRemoteBindPrepared();
+  while (!prepared && Date.now() < deadline) {
+    execSync(`sleep ${DASHBOARD_REMOTE_BIND_PROOF_POLL_MS / 1000}`);
+    prepared = readProductDashboardRemoteBindPrepared();
+  }
+
+  const failLog = prepared
+    ? ""
+    : ssh("tail -120 /tmp/nemoclaw-onboard.log 2>/dev/null || echo 'no log'", {
+        timeout: 10_000,
+      });
+  expect(
+    prepared,
+    "dashboard-remote-bind E2E did not observe product-written remote bind proof before " +
+      `manual registry handoff.\n${failLog}`,
+  ).toBe(true);
+  return true;
+}
+
 /**
  * Kill the hung onboard process tree and write the sandbox registry manually.
  *
  * The onboard hangs on the dashboard port-forward step and never writes
  * sandboxes.json. We kill it and write the registry ourselves.
  *
- * Note: The registry shape matches SandboxRegistry from src/lib/registry.ts
+ * Note: The registry shape matches SandboxRegistry from src/lib/state/registry.ts
  * (sandboxes + defaultSandbox only — no version field).
  */
 function writeManualRegistry(elapsed: () => string): void {
   console.log(`[${elapsed()}] Sandbox ready — killing hung onboard and writing registry...`);
+  const dashboardRemoteBindPrepared =
+    TEST_SUITE === "dashboard-remote-bind" && waitForProductDashboardRemoteBindPrepared(elapsed);
+  expect(
+    dashboardRemoteBindPrepared || TEST_SUITE !== "dashboard-remote-bind",
+    "dashboard-remote-bind E2E must preserve the product-written remote bind proof",
+  ).toBe(true);
   // Kill hung onboard processes. pkill may kill the SSH connection itself
   // if the pattern matches too broadly, so wrap in try/catch.
   try {
@@ -633,6 +1068,7 @@ function writeManualRegistry(elapsed: () => string): void {
           provider: null,
           gpuEnabled: false,
           policies: ["pypi", "npm"],
+          ...(dashboardRemoteBindPrepared ? { dashboardRemoteBindPrepared: true } : {}),
         },
       },
     },
@@ -648,7 +1084,7 @@ function writeManualRegistry(elapsed: () => string): void {
 
 // --- suite ------------------------------------------------------------------
 
-const REQUIRED_VARS = ["NVIDIA_API_KEY", "GITHUB_TOKEN", "INSTANCE_NAME"];
+const REQUIRED_VARS = ["NVIDIA_INFERENCE_API_KEY", "GITHUB_TOKEN", "INSTANCE_NAME"];
 const hasRequiredVars = REQUIRED_VARS.every((key) => process.env[key]);
 const hasAuthenticatedBrev = (() => {
   try {
@@ -658,6 +1094,50 @@ const hasAuthenticatedBrev = (() => {
     return false;
   }
 })();
+
+describe("Brev deploy input validation", () => {
+  it("rejects invalid sandbox names before provisioning or remote work", () => {
+    const result = spawnSync(process.execPath, [CLI_PATH, "deploy", "brev-target"], {
+      cwd: REPO_DIR,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: process.env.HOME,
+        NEMOCLAW_SANDBOX_NAME: "bad name",
+        NEMOCLAW_PROVIDER: "build",
+        NEMOCLAW_DEPLOY_NO_CONNECT: "1",
+        NEMOCLAW_DEPLOY_NO_START_SERVICES: "1",
+      },
+      timeout: 60_000,
+    });
+
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status).toBe(1);
+    expect(output).toContain("Invalid sandbox name: 'bad name'");
+    expect(output).toContain("Sandbox names cannot contain spaces.");
+    expect(output).toContain(
+      "Allowed format: 1-63 characters, lowercase, starts with a letter, letters/numbers/internal hyphens only, ends with letter/number.",
+    );
+    expect(output).not.toContain("brev CLI not found");
+    expect(output).not.toContain("Creating Brev instance");
+    expect(output).not.toContain("Waiting for Brev instance readiness");
+    expect(output).not.toContain("Waiting for SSH");
+    expect(output).not.toContain("bash scripts/install.sh");
+  }, 65_000);
+});
+
+describe("Brev GPU runtime setup", () => {
+  it("allows Docker bridge traffic to reach OpenShell host-service ports", () => {
+    const setup = gpuDockerRuntimeSetupCommands().join("\n");
+
+    expect(setup).toContain(
+      `if command -v ufw >/dev/null 2>&1; then sudo ufw allow from ${DOCKER_DEFAULT_BRIDGE_POOL_CIDR} to any port ${OPENSHELL_GATEWAY_PORT} proto tcp >/dev/null || echo "warning: could not add UFW OpenShell gateway allow rule" >&2; fi`,
+    );
+    expect(setup).toContain(
+      `if command -v ufw >/dev/null 2>&1; then sudo ufw allow from ${DOCKER_DEFAULT_BRIDGE_POOL_CIDR} to any port ${OLLAMA_AUTH_PROXY_PORT} proto tcp >/dev/null || echo "warning: could not add UFW Ollama auth proxy allow rule" >&2; fi`,
+    );
+  });
+});
 
 describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
   beforeAll(() => {
@@ -675,17 +1155,18 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
       remoteDir = `${remoteHome}/nemoclaw`;
     } else {
       // ── Launchable path: pre-baked CI environment ──────────────────
-      // Uses brev search cpu | brev create with --startup-script.
-      // The script pre-installs Docker, Node.js, OpenShell CLI, npm deps,
-      // and pre-pulls Docker images. We just need to rsync branch code and
-      // run onboard.
-      createBrevInstance(elapsed);
-      instanceCreated = true;
-      refreshAndWaitForSsh(elapsed);
+      // Uses brev create with --startup-script.
+      // The script pre-installs Docker, Node.js, OpenShell CLI, and npm deps.
+      // We just need to rsync branch code and run onboard.
+      createBrevInstanceAndWaitForSsh(elapsed);
 
       // Wait for launchable setup to finish (sentinel file)
       console.log(`[${elapsed()}] Waiting for launchable setup to complete...`);
       waitForLaunchableReady();
+
+      if (GPU_TEST_SUITE) {
+        prepareGpuDockerRuntime(elapsed);
+      }
 
       const result = bootstrapLaunchable(elapsed);
       remoteDir = result.remoteDir;
@@ -697,7 +1178,7 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
     }
 
     // Verify sandbox registry (only when beforeAll created a sandbox)
-    if (TEST_SUITE !== "full") {
+    if (brevSuiteNeedsHarnessSandbox(TEST_SUITE) && !GPU_TEST_SUITE) {
       console.log(`[${elapsed()}] Verifying sandbox registry...`);
       const registry = JSON.parse(ssh(`cat ~/.nemoclaw/sandboxes.json`, { timeout: 10_000 }));
       expect(registry.defaultSandbox).toBe("e2e-test");
@@ -716,47 +1197,67 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
 
   afterAll(() => {
     if (!instanceCreated) return;
-    if (process.env.KEEP_ALIVE === "true") {
-      console.log(`\n  Instance "${INSTANCE_NAME}" kept alive for debugging.`);
-      console.log(`  To connect: brev refresh && ssh ${INSTANCE_NAME}`);
-      console.log(`  To delete:  brev delete ${INSTANCE_NAME}\n`);
+    const keepAlive = process.env.KEEP_ALIVE === "true";
+    const workflowOwnsInstance = brevWorkflowOwnsInstance();
+    if (keepAlive || workflowOwnsInstance) {
+      const lines = keepAlive
+        ? [
+            `\n  Instance "${INSTANCE_NAME}" kept alive for debugging.`,
+            `  To connect: brev refresh && ssh ${INSTANCE_NAME}`,
+            `  To delete:  brev delete ${INSTANCE_NAME}\n`,
+          ]
+        : [`Instance "${INSTANCE_NAME}" deletion deferred to workflow-owned cleanup.`];
+      console.log(lines.join("\n"));
       return;
     }
     deleteBrevInstance(requireInstanceName());
   }, 120_000); // 2 min for cleanup
 
-  // NOTE: The full E2E test runs install.sh --non-interactive which destroys and
-  // rebuilds the sandbox from scratch. It cannot run alongside the security tests
-  // (credential-sanitization, telegram-injection) which depend on the sandbox
-  // that beforeAll already created. Run it only when TEST_SUITE=full.
+  // NOTE: The full E2E test runs install.sh --non-interactive and owns the
+  // complete sandbox lifecycle. The composite security suite also lets each
+  // remote target own that lifecycle, without a shared harness registry.
   it.runIf(TEST_SUITE === "full")(
     "full E2E suite passes on remote VM",
     () => {
-      const output = runRemoteTest("test/e2e/test-full-e2e.sh");
-      expect(output).toContain("PASS");
-      expect(output).not.toMatch(/FAIL:/);
+      const output = runRemoteVitest("e2e-live", "test/e2e/live/full-e2e.test.ts");
+      expectVitestPassed(output);
     },
     900_000,
+  );
+
+  it.runIf(GPU_TEST_SUITE)(
+    "GPU E2E suite passes on Brev GPU VM",
+    () => {
+      const output = runRemoteVitest("e2e-live", "test/e2e/live/gpu-e2e.test.ts");
+      expectVitestPassed(output);
+    },
+    1_800_000,
   );
 
   it.runIf(TEST_SUITE === "credential-sanitization" || TEST_SUITE === "all")(
     "credential sanitization suite passes on remote VM",
     () => {
-      const output = runRemoteTest("test/e2e/test-credential-sanitization.sh");
-      expect(output).toContain("PASS");
-      expect(output).not.toMatch(/FAIL:/);
+      const output = runRemoteVitest(
+        "e2e-live",
+        "test/e2e/live/credential-sanitization.test.ts",
+        BREV_SECURITY_SUITE_TIMEOUT_MS,
+      );
+      expectVitestPassed(output);
     },
-    600_000,
+    BREV_SECURITY_SUITE_TIMEOUT_MS + BREV_REMOTE_WRAPPER_GRACE_MS,
   );
 
   it.runIf(TEST_SUITE === "telegram-injection" || TEST_SUITE === "all")(
     "telegram bridge injection suite passes on remote VM",
     () => {
-      const output = runRemoteTest("test/e2e/test-telegram-injection.sh");
-      expect(output).toContain("PASS");
-      expect(output).not.toMatch(/FAIL:/);
+      const output = runRemoteVitest(
+        "e2e-live",
+        "test/e2e/live/telegram-injection.test.ts",
+        BREV_SECURITY_SUITE_TIMEOUT_MS,
+      );
+      expectVitestPassed(output);
     },
-    600_000,
+    BREV_SECURITY_SUITE_TIMEOUT_MS + BREV_REMOTE_WRAPPER_GRACE_MS,
   );
 
   it.runIf(TEST_SUITE === "deploy-cli")(
@@ -776,16 +1277,54 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
     120_000,
   );
 
-  // NOTE: The messaging-providers test creates its own sandbox (e2e-msg-provider)
-  // with messaging tokens attached. It does not conflict with the e2e-test sandbox
-  // used by other tests, but it may recreate the gateway.
-  it.runIf(TEST_SUITE === "messaging-providers" || TEST_SUITE === "all")(
+  // This stateful target owns its sandbox and gateway lifecycle. Brev runs it
+  // single-shot on a dedicated instance; a retry means a new workflow run and
+  // therefore a new VM, never a second installer behind a live onboard lock.
+  it.runIf(TEST_SUITE === "messaging-providers")(
     "messaging credential provider suite passes on remote VM",
     () => {
-      const output = runRemoteTest("test/e2e/test-messaging-providers.sh");
-      expect(output).toContain("PASS");
-      expect(output).not.toMatch(/FAIL:/);
+      const output = runRemoteVitest(
+        "e2e-live",
+        "test/e2e/live/messaging-providers.test.ts",
+        BREV_MESSAGING_PROVIDER_TIMEOUT_MS,
+      );
+      expectVitestPassed(output);
     },
-    900_000, // 15 min — creates a new sandbox with messaging providers
+    BREV_MESSAGING_PROVIDER_TIMEOUT_MS + BREV_REMOTE_WRAPPER_GRACE_MS,
+  );
+
+  // The compatible-endpoint target also owns its sandbox lifecycle and runs
+  // on a separate Brev instance so provider cleanup cannot leak across it.
+  it.runIf(TEST_SUITE === "messaging-compatible-endpoint")(
+    "messaging compatible endpoint suite passes on remote VM",
+    () => {
+      const output = runRemoteVitest(
+        "e2e-live",
+        "test/e2e/live/messaging-compatible-endpoint.test.ts",
+        BREV_MESSAGING_COMPAT_TIMEOUT_MS,
+      );
+      expectVitestPassed(output);
+    },
+    BREV_MESSAGING_COMPAT_TIMEOUT_MS + BREV_REMOTE_WRAPPER_GRACE_MS,
+  );
+
+  it.runIf(TEST_SUITE === "dashboard-remote-bind")(
+    "clean-host remote bind reaches Ready with active audit findings and wildcard forwarding",
+    () => {
+      const output = runRemoteCommand(
+        [
+          `NEMOCLAW_RUN_LIVE_E2E=1`,
+          `NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND=1`,
+          `NEMOCLAW_SANDBOX_NAME=e2e-test`,
+          `npx vitest run --project e2e-live`,
+          `test/e2e/live/dashboard-remote-bind.test.ts`,
+          `--silent=false --reporter=default`,
+        ].join(" "),
+        300_000,
+      );
+      expect(output).toContain("clean-host remote bind keeps audit risks active");
+      expect(output).not.toMatch(/FAIL|Failed/i);
+    },
+    300_000,
   );
 });

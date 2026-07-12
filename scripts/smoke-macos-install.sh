@@ -63,7 +63,7 @@ Options:
   -h, --help                  Show this help
 
 Environment:
-  NVIDIA_API_KEY              Required for the cloud install path
+  NVIDIA_INFERENCE_API_KEY              Required for the cloud install path
 EOF
 }
 
@@ -110,7 +110,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-[ -n "${NVIDIA_API_KEY:-}" ] || fail "NVIDIA_API_KEY must be set for the smoke install flow."
+[ -n "${NVIDIA_INFERENCE_API_KEY:-}" ] || fail "NVIDIA_INFERENCE_API_KEY must be set for the smoke install flow."
 [ -x "$REPO_DIR/install.sh" ] || fail "install.sh not found at repo root."
 [ -x "$REPO_DIR/uninstall.sh" ] || fail "uninstall.sh not found at repo root."
 

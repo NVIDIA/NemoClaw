@@ -1,28 +1,41 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Skill install logic for `nemoclaw <sandbox> skill install <path>`.
+// Skill install/remove logic for `nemoclaw <sandbox> skill install <path>`
+// and `nemoclaw <sandbox> skill remove <name>`.
 // Validates a local SKILL.md, uploads it to the sandbox via SSH, and
-// performs agent-specific post-install steps (OpenClaw mirror + session
-// refresh). Non-OpenClaw agents get a "restart gateway" hint until a
+// performs agent-specific post-install steps (session refresh for
+// OpenClaw). Non-OpenClaw agents get a "restart gateway" hint until a
 // generic refresh contract is defined in the manifest schema.
 
 import fs from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 
 // yaml is a production dependency (used by policies.ts, onboard.ts)
 import YAML from "yaml";
+
+import { isObjectRecord } from "./core/json-types";
+import { validateSkillName } from "./skill-name";
+import type { SshContext, SshResult } from "./skill-remote";
+import { shellQuote, sshExec } from "./skill-remote";
+
+export { validateSkillName } from "./skill-name";
+export {
+  checkExisting,
+  type RemoveResult,
+  removeSkill,
+  type SshContext,
+  type SshResult,
+  shellQuote,
+  sshExec,
+  verifyRemove,
+} from "./skill-remote";
 
 // ── Frontmatter parsing ──────────────────────────────────────────
 
 type FrontmatterScalar = string | number | boolean | null | undefined;
 type FrontmatterValue = FrontmatterScalar | FrontmatterRecord | FrontmatterValue[];
 type FrontmatterRecord = { [key: string]: FrontmatterValue };
-
-function isRecord(value: FrontmatterValue): value is FrontmatterRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 export interface SkillFrontmatter {
   name: string;
@@ -60,7 +73,7 @@ export function parseFrontmatter(content: string): SkillFrontmatter {
     throw new Error(`SKILL.md frontmatter is not valid YAML: ${msg}`);
   }
 
-  if (!isRecord(parsed)) {
+  if (!isObjectRecord(parsed)) {
     throw new Error("SKILL.md frontmatter must be a YAML mapping (key: value pairs)");
   }
 
@@ -69,9 +82,9 @@ export function parseFrontmatter(content: string): SkillFrontmatter {
     throw new Error("SKILL.md frontmatter is missing required 'name' field");
   }
 
-  if (!/^[A-Za-z0-9._-]+$/.test(nameValue)) {
+  if (!validateSkillName(nameValue)) {
     throw new Error(
-      `SKILL.md name '${nameValue}' contains invalid characters. Only [A-Za-z0-9._-] allowed.`,
+      `SKILL.md name '${nameValue}' is invalid. Use [A-Za-z0-9._-] and do not use '.' or '..'.`,
     );
   }
 
@@ -81,50 +94,41 @@ export function parseFrontmatter(content: string): SkillFrontmatter {
 // ── Path resolution ──────────────────────────────────────────────
 
 export interface SkillPaths {
-  /** Primary upload target — the immutableDir/skills/{name}/ symlink path */
+  /** Upload target directory for the skill */
   uploadDir: string;
-  /** OpenClaw-only: $HOME/.openclaw/skills/{name}/ mirror path, or null */
+  /** OpenClaw-only mirror directory under the remote home dir, or null */
   mirrorDir: string | null;
   /** OpenClaw-only: session index to clear, or null */
   sessionFile: string | null;
-  /** Whether the agent is OpenClaw (drives mirror + refresh behavior) */
+  /** Whether the agent is OpenClaw (drives refresh behavior) */
   isOpenClaw: boolean;
 }
 
 /**
  * Resolve skill install paths from the agent definition.
+ * Uses a single directory for skill uploads (no immutable/writable split).
  * @param agent - AgentDefinition from getSessionAgent(), or null for OpenClaw
  * @param skillName - validated skill name from frontmatter
  */
 export function resolveSkillPaths(
-  agent: { name: string; configPaths: { immutableDir: string; writableDir: string } } | null,
+  agent: { name: string; configPaths: { dir: string } } | null,
   skillName: string,
 ): SkillPaths {
   const isOpenClaw = !agent || agent.name === "openclaw";
 
-  const immutableDir = agent ? agent.configPaths.immutableDir : "/sandbox/.openclaw";
-  const writableDir = agent ? agent.configPaths.writableDir : "/sandbox/.openclaw-data";
+  const dir = agent ? agent.configPaths.dir : "/sandbox/.openclaw";
 
-  const uploadDir = `${immutableDir}/skills/${skillName}`;
+  const uploadDir = `${dir}/skills/${skillName}`;
 
   return {
     uploadDir,
-    // Mirror uses $HOME at runtime — the sandbox user's home varies
-    // (/sandbox on stock images, /home/sandbox on some custom images).
-    // We expand $HOME in the SSH command rather than hardcoding a path.
-    mirrorDir: isOpenClaw ? `\$HOME/.openclaw/skills/${skillName}` : null,
-    sessionFile: isOpenClaw ? `${writableDir}/agents/main/sessions/sessions.json` : null,
+    mirrorDir: isOpenClaw ? `$HOME/.openclaw/skills/${skillName}` : null,
+    sessionFile: isOpenClaw ? `${dir}/agents/main/sessions/sessions.json` : null,
     isOpenClaw,
   };
 }
 
 // ── Shell safety ─────────────────────────────────────────────────
-
-// Re-export shellQuote from runner.ts — a repo-wide test enforces
-// a single definition lives in runner.ts.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { shellQuote } = require("./runner");
-export { shellQuote };
 
 const SAFE_PATH_RE = /^[A-Za-z0-9._\-/]+$/;
 
@@ -139,61 +143,7 @@ export function validateRelativePath(rel: string): boolean {
   return segments.every((s) => s !== "" && s !== ".." && s !== ".");
 }
 
-// ── SSH helpers ──────────────────────────────────────────────────
-
-export interface SshContext {
-  configFile: string;
-  sandboxName: string;
-}
-
-export interface SshResult {
-  status: number;
-  stdout: string;
-  stderr: string;
-}
-
-/**
- * Run a command on the sandbox via SSH with optional stdin content.
- * Uses the same SSH flags as executeSandboxCommand in nemoclaw.ts.
- */
-export function sshExec(
-  ctx: SshContext,
-  command: string,
-  opts: { input?: string | Buffer; timeout?: number } = {},
-): SshResult | null {
-  try {
-    const result = spawnSync(
-      "ssh",
-      [
-        "-F",
-        ctx.configFile,
-        "-o",
-        "StrictHostKeyChecking=no",
-        "-o",
-        "UserKnownHostsFile=/dev/null",
-        "-o",
-        "ConnectTimeout=10",
-        "-o",
-        "LogLevel=ERROR",
-        `openshell-${ctx.sandboxName}`,
-        command,
-      ],
-      {
-        encoding: "utf-8",
-        stdio: [opts.input !== undefined ? "pipe" : "ignore", "pipe", "pipe"],
-        input: opts.input,
-        timeout: opts.timeout ?? 30_000,
-      },
-    );
-    return {
-      status: result.status ?? 1,
-      stdout: (result.stdout || "").trim(),
-      stderr: (result.stderr || "").trim(),
-    };
-  } catch {
-    return null;
-  }
-}
+// ── Upload helpers ───────────────────────────────────────────────
 
 /**
  * Upload a file to the sandbox by piping its content through SSH stdin.
@@ -276,14 +226,13 @@ export function uploadDirectory(
 }
 
 /**
- * Run post-install steps: OpenClaw mirror + session refresh, or
+ * Run post-install steps: session refresh for OpenClaw, or
  * non-OpenClaw restart hint.
- * @param localSkillDir - the skill directory (contains SKILL.md and optional siblings)
  */
 export function postInstall(
   ctx: SshContext,
   paths: SkillPaths,
-  localSkillDir: string,
+  _localSkillDir: string,
   opts: {
     skipRefresh?: boolean;
     sshExecImpl?: typeof sshExec;
@@ -293,31 +242,31 @@ export function postInstall(
   const runSsh = opts.sshExecImpl ?? sshExec;
 
   if (paths.isOpenClaw) {
-    // Mirror to $HOME/.openclaw/skills/ — OpenClaw resolves skills from
-    // ~/.openclaw/skills/ via os.homedir(). Use double quotes so $HOME
-    // expands on the remote shell (the sandbox user's home varies:
-    // /sandbox on stock images, /home/sandbox on custom images).
+    // Mirror the uploaded skill into the agent's home dir
+    // ($HOME/.openclaw/skills/<name>). The skill is uploaded to the OpenClaw
+    // state dir (uploadDir), which `openclaw skills list` reads, but the agent
+    // loads skills from $HOME/.openclaw/skills at session start. On sandboxes
+    // where the agent's $HOME differs from the state dir these paths diverge,
+    // so without this mirror the skill is listed but never invoked (#4819).
+    // `skill remove` already deletes this mirror, so install must create it to
+    // stay symmetric. The copy is skipped when both paths resolve to the same
+    // directory (the common case where $HOME is the state dir's parent), so it
+    // is a safe no-op there.
     if (paths.mirrorDir) {
-      const { files } = collectFiles(localSkillDir);
-      let mirrorFailed = false;
-      for (const rel of files) {
-        const content = fs.readFileSync(path.join(localSkillDir, rel));
-        const mirrorSubdir = rel.includes("/")
-          ? `${paths.mirrorDir}/${path.dirname(rel)}`
-          : paths.mirrorDir;
-        const mirrorFile = `${paths.mirrorDir}/${rel}`;
-        // mirrorDir contains $HOME which must expand, so we use double
-        // quotes (not shellQuote). Safe because validateRelativePath
-        // restricts filenames to [A-Za-z0-9._-/] before we reach here.
-        const result = runSsh(ctx, `mkdir -p "${mirrorSubdir}" && cat > "${mirrorFile}"`, {
-          input: content,
-        });
-        if (!result || result.status !== 0) {
-          mirrorFailed = true;
-        }
-      }
-      if (mirrorFailed) {
-        messages.push("Warning: failed to mirror some files to $HOME/.openclaw/skills/");
+      const src = shellQuote(paths.uploadDir);
+      // mirrorDir contains $HOME, which must expand on the remote shell, so we
+      // use double quotes (not shellQuote). Safe because skill names are
+      // restricted to [A-Za-z0-9._-] by parseFrontmatter / the name regex.
+      const dst = `"${paths.mirrorDir}"`;
+      const mirrorParent = `"${paths.mirrorDir.slice(0, paths.mirrorDir.lastIndexOf("/"))}"`;
+      const mirrorResult = runSsh(
+        ctx,
+        `[ ${src} -ef ${dst} ] || { mkdir -p ${mirrorParent} && rm -rf ${dst} && cp -a ${src} ${dst}; }`,
+      );
+      if (!mirrorResult || mirrorResult.status !== 0) {
+        messages.push(
+          `Warning: failed to mirror skill into ${paths.mirrorDir} (agent may not load it)`,
+        );
       }
     }
 
@@ -337,19 +286,27 @@ export function postInstall(
 }
 
 /**
- * Check whether a skill already exists on the sandbox at the upload path.
+ * Verify the SKILL.md file exists on the sandbox.
+ *
+ * For OpenClaw the home mirror ($HOME/.openclaw/skills/<name>) must also exist:
+ * that is the path the agent loads skills from at session start (#4819), so a
+ * successful upload whose mirror copy failed must NOT verify as installed —
+ * otherwise the CLI reports success while the skill stays invisible to the
+ * agent. This mirrors verifyRemove(), which already checks both paths.
  */
-export function checkExisting(ctx: SshContext, paths: SkillPaths): boolean {
-  const target = shellQuote(`${paths.uploadDir}/SKILL.md`);
-  const result = sshExec(ctx, `test -f ${target} && echo EXISTS`);
-  return result !== null && result.stdout === "EXISTS";
-}
-
-/**
- * Verify the SKILL.md file exists on the sandbox at the expected path.
- */
-export function verifyInstall(ctx: SshContext, paths: SkillPaths): boolean {
-  const target = shellQuote(`${paths.uploadDir}/SKILL.md`);
-  const result = sshExec(ctx, `test -f ${target} && echo EXISTS`);
+export function verifyInstall(
+  ctx: SshContext,
+  paths: SkillPaths,
+  opts: { sshExecImpl?: typeof sshExec } = {},
+): boolean {
+  const checks = [`test -f ${shellQuote(`${paths.uploadDir}/SKILL.md`)}`];
+  if (paths.isOpenClaw && paths.mirrorDir) {
+    // mirrorDir contains $HOME, which must expand on the remote shell, so we
+    // use double quotes (not shellQuote) — safe because skill names are
+    // restricted to [A-Za-z0-9._-].
+    checks.push(`test -f "${paths.mirrorDir}/SKILL.md"`);
+  }
+  const runSsh = opts.sshExecImpl ?? sshExec;
+  const result = runSsh(ctx, `${checks.join(" && ")} && echo EXISTS`);
   return result !== null && result.stdout === "EXISTS";
 }

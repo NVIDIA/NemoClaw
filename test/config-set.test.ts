@@ -2,17 +2,26 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createRequire } from "node:module";
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
-// Build must run before these tests (imports from dist/)
+// The shared source hook preserves the writable CommonJS cache used by these tests.
 const require = createRequire(import.meta.url);
 const {
   extractDotpath,
-  isRecognizedConfigPath,
+  validateConfigDotpath,
+  findClobberingAncestor,
+  classifyNewKeyGate,
   setDotpath,
   validateUrlValue,
+  validateUrlValueWithDns,
+  rewriteConfigUrlsWithDnsPinning,
+  restartSandboxAgentAfterConfigSet,
+  formatConfigValueForLogs,
   resolveAgentConfig,
-} = require("../dist/lib/sandbox-config");
+  buildConfigSetRestartGuidance,
+  buildRecomputeSandboxConfigHashScript,
+} = require("../src/lib/sandbox/config");
+const { selectDirectSandboxContainer } = require("../src/lib/sandbox/privileged-exec");
 
 type MutableScalar = string | number | boolean | null | undefined;
 type MutableValue = MutableScalar | MutableMap | MutableValue[];
@@ -38,7 +47,99 @@ describe("resolveAgentConfig", () => {
   });
 });
 
+describe("buildRecomputeSandboxConfigHashScript", () => {
+  it("does not run a pathname hash pass after an OpenClaw config transaction", () => {
+    const script = buildRecomputeSandboxConfigHashScript({
+      agentName: "openclaw",
+      configPath: "/sandbox/.openclaw/openclaw.json",
+      configDir: "/sandbox/.openclaw",
+      format: "json",
+      configFile: "openclaw.json",
+      sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
+    });
+
+    expect(script).toBeNull();
+  });
+
+  it("does not run a second pathname-based hash pass after a Hermes config transaction", () => {
+    const script = buildRecomputeSandboxConfigHashScript({
+      agentName: "hermes",
+      configPath: "/sandbox/.hermes/config.yaml",
+      configDir: "/sandbox/.hermes",
+      format: "yaml",
+      configFile: "config.yaml",
+      sensitiveFiles: ["/sandbox/.hermes/.config-hash", "/sandbox/.hermes/.env"],
+    });
+
+    expect(script).toBeNull();
+  });
+});
+
+describe("selectDirectSandboxContainer", () => {
+  it("returns the immutable id for an exact direct sandbox container", () => {
+    const selected = selectDirectSandboxContainer("demo", "exact-id\topenshell-demo\n", ["demo"]);
+
+    expect(selected).toBe("exact-id");
+  });
+
+  it("returns the immutable id for a generated direct sandbox container", () => {
+    const selected = selectDirectSandboxContainer("demo", "generated-id\topenshell-demo-abc123\n", [
+      "demo",
+    ]);
+
+    expect(selected).toBe("generated-id");
+  });
+
+  it("rejects a prefix-collision container owned by a longer sandbox name", () => {
+    expect(() =>
+      selectDirectSandboxContainer("demo", "child-id\topenshell-demo-child\n", [
+        "demo",
+        "demo-child",
+      ]),
+    ).toThrow(/labels and names disagree.*refusing lifecycle execution/);
+  });
+});
+
 describe("config set helpers", () => {
+  describe("buildConfigSetRestartGuidance", () => {
+    it("keeps managed restart guidance for OpenClaw and Hermes", () => {
+      for (const agentName of ["openclaw", "hermes"]) {
+        const output = buildConfigSetRestartGuidance("alpha", agentName).join("\n");
+
+        expect(output).toContain("--restart");
+        expect(output).toContain("nemoclaw 'alpha' gateway restart");
+      }
+    });
+
+    it("uses runtime-specific guidance for custom agents", () => {
+      const output = buildConfigSetRestartGuidance("custom-box", "custom-agent").join("\n");
+
+      expect(output).toContain("Follow the restart procedure for 'custom-agent'");
+      expect(output).toContain("NemoClaw does not manage restarts for this agent");
+      expect(output).not.toContain("--restart");
+      expect(output).not.toContain("gateway restart");
+    });
+  });
+
+  describe("restartSandboxAgentAfterConfigSet", () => {
+    it("routes --restart through the managed gateway supervisor flow", () => {
+      const calls: string[] = [];
+
+      restartSandboxAgentAfterConfigSet("alpha", (sandboxName: string) => {
+        calls.push(sandboxName);
+        return { ok: true };
+      });
+
+      expect(calls).toEqual(["alpha"]);
+    });
+
+    it("fails the config command when the managed restart fails", () => {
+      expect(() => restartSandboxAgentAfterConfigSet("alpha", () => ({ ok: false }))).toThrow(
+        "Config was updated, but the managed gateway restart failed for 'alpha'.",
+      );
+    });
+  });
+
   describe("extractDotpath", () => {
     it("extracts a top-level key", () => {
       expect(extractDotpath({ foo: "bar" }, "foo")).toBe("bar");
@@ -93,46 +194,151 @@ describe("config set helpers", () => {
     });
   });
 
-  describe("isRecognizedConfigPath", () => {
-    it("accepts an existing top-level key", () => {
-      expect(isRecognizedConfigPath({ version: 1 }, "version")).toBe(true);
+  describe("validateConfigDotpath", () => {
+    it("accepts a top-level key", () => {
+      expect(validateConfigDotpath("version")).toEqual({ ok: true });
     });
 
-    it("accepts an existing nested key path", () => {
-      expect(
-        isRecognizedConfigPath(
-          { agents: { defaults: { model: { primary: "gpt-5.4" } } } },
-          "agents.defaults.model.primary",
-        ),
-      ).toBe(true);
+    it("accepts a deeply nested path", () => {
+      expect(validateConfigDotpath("provider.compatible-endpoint.timeoutSeconds")).toEqual({
+        ok: true,
+      });
     });
 
-    it("accepts existing keys whose value is null", () => {
-      expect(isRecognizedConfigPath({ provider: { endpoint: null } }, "provider.endpoint")).toBe(
-        true,
+    it("rejects empty input", () => {
+      expect(validateConfigDotpath("").ok).toBe(false);
+    });
+
+    it("rejects an empty segment in the middle", () => {
+      expect(validateConfigDotpath("agents..defaults").ok).toBe(false);
+    });
+
+    it("rejects a leading or trailing dot", () => {
+      expect(validateConfigDotpath(".agents").ok).toBe(false);
+      expect(validateConfigDotpath("agents.").ok).toBe(false);
+    });
+
+    it("rejects prototype-pollution segments anywhere in the path", () => {
+      expect(validateConfigDotpath("__proto__").ok).toBe(false);
+      expect(validateConfigDotpath("agents.constructor").ok).toBe(false);
+      expect(validateConfigDotpath("agents.prototype.config").ok).toBe(false);
+      expect(validateConfigDotpath("provider.__proto__.polluted").ok).toBe(false);
+      expect(validateConfigDotpath("tools.hasOwnProperty").ok).toBe(false);
+      expect(validateConfigDotpath("toString").ok).toBe(false);
+    });
+
+    it("returns a reason describing the failure", () => {
+      const result = validateConfigDotpath("agents..defaults");
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toMatch(/empty segment/);
+    });
+  });
+
+  describe("findClobberingAncestor", () => {
+    it("returns null for a top-level path (no ancestors to clobber)", () => {
+      expect(findClobberingAncestor({ a: 1 }, "a")).toBeNull();
+      expect(findClobberingAncestor({}, "newKey")).toBeNull();
+    });
+
+    it("returns null when every existing ancestor is a config object", () => {
+      expect(findClobberingAncestor({ a: { b: { c: 1 } } }, "a.b.c")).toBeNull();
+      expect(findClobberingAncestor({ a: { b: {} } }, "a.b.newLeaf")).toBeNull();
+    });
+
+    it("returns null when an ancestor segment is missing entirely", () => {
+      expect(findClobberingAncestor({}, "a.b.c")).toBeNull();
+      expect(findClobberingAncestor({ a: { b: {} } }, "a.b.c.d.e")).toBeNull();
+    });
+
+    it("refuses numeric segments anywhere in the path", () => {
+      const top = findClobberingAncestor({}, "0");
+      expect(top).not.toBeNull();
+      expect(top?.segment).toBe("0");
+      expect(top?.reason).toMatch(/numeric/i);
+
+      const mid = findClobberingAncestor({}, "tools.0.name");
+      expect(mid).not.toBeNull();
+      expect(mid?.segment).toBe("tools.0");
+      expect(mid?.reason).toMatch(/array editing/i);
+    });
+
+    it("describes a string ancestor as 'a string'", () => {
+      const result = findClobberingAncestor({ a: "scalar" }, "a.b");
+      expect(result).toEqual({ segment: "a", reason: "is a string, not a config object" });
+    });
+
+    it("describes a number or boolean ancestor by typeof", () => {
+      expect(findClobberingAncestor({ a: 42 }, "a.b")?.reason).toBe(
+        "is a number, not a config object",
+      );
+      expect(findClobberingAncestor({ a: { b: true } }, "a.b.c")?.reason).toBe(
+        "is a boolean, not a config object",
       );
     });
 
-    it("rejects an unknown top-level key", () => {
-      expect(isRecognizedConfigPath({ version: 1 }, "inference.endpoint")).toBe(false);
+    it("describes a null ancestor as 'null'", () => {
+      const result = findClobberingAncestor({ a: null }, "a.b");
+      expect(result).toEqual({ segment: "a", reason: "is null, not a config object" });
     });
 
-    it("rejects an unknown nested key", () => {
+    it("describes an array ancestor as 'an array'", () => {
+      const result = findClobberingAncestor({ a: [1, 2, 3] }, "a.b");
+      expect(result).toEqual({ segment: "a", reason: "is an array, not a config object" });
+    });
+
+    it("identifies the deepest blocking ancestor along the path", () => {
+      const result = findClobberingAncestor({ a: { b: { c: "leaf" } } }, "a.b.c.d");
+      expect(result?.segment).toBe("a.b.c");
+      expect(result?.reason).toMatch(/string/);
+    });
+  });
+
+  describe("classifyNewKeyGate", () => {
+    it("accepts when --config-accept-new-path is set, even without a TTY", () => {
+      expect(classifyNewKeyGate({ acceptNewPath: true, isTTY: false })).toEqual({
+        mode: "accept",
+      });
+    });
+
+    it("accepts when NEMOCLAW_CONFIG_ACCEPT_NEW_PATH=1, even without a TTY", () => {
+      expect(classifyNewKeyGate({ acceptEnv: "1", isTTY: false })).toEqual({
+        mode: "accept",
+      });
+    });
+
+    it("treats env values other than '1' as not accepted", () => {
+      expect(classifyNewKeyGate({ acceptEnv: "true", isTTY: false })).toEqual({
+        mode: "refuse",
+      });
+      expect(classifyNewKeyGate({ acceptEnv: "yes", isTTY: false })).toEqual({
+        mode: "refuse",
+      });
+      expect(classifyNewKeyGate({ acceptEnv: "", isTTY: false })).toEqual({
+        mode: "refuse",
+      });
+    });
+
+    it("refuses when stdin is not a TTY and no override is in effect", () => {
+      expect(classifyNewKeyGate({ isTTY: false })).toEqual({ mode: "refuse" });
+    });
+
+    it("refuses when NEMOCLAW_NON_INTERACTIVE=1, even on a TTY", () => {
+      expect(classifyNewKeyGate({ isTTY: true, nonInteractiveEnv: "1" })).toEqual({
+        mode: "refuse",
+      });
+    });
+
+    it("prompts on a TTY when no override is in effect", () => {
+      expect(classifyNewKeyGate({ isTTY: true })).toEqual({ mode: "prompt" });
+    });
+
+    it("override beats NEMOCLAW_NON_INTERACTIVE", () => {
       expect(
-        isRecognizedConfigPath(
-          { agents: { defaults: { model: { primary: "gpt-5.4" } } } },
-          "agents.defaults.model.secondary",
-        ),
-      ).toBe(false);
-    });
-
-    it("rejects malformed dotpaths", () => {
-      expect(isRecognizedConfigPath({ version: 1 }, "agents..defaults")).toBe(false);
-    });
-
-    it("rejects prototype-inherited keys", () => {
-      expect(isRecognizedConfigPath({}, "toString")).toBe(false);
-      expect(isRecognizedConfigPath({ safe: {} }, "safe.constructor")).toBe(false);
+        classifyNewKeyGate({ acceptNewPath: true, isTTY: true, nonInteractiveEnv: "1" }),
+      ).toEqual({ mode: "accept" });
+      expect(classifyNewKeyGate({ acceptEnv: "1", isTTY: false, nonInteractiveEnv: "1" })).toEqual({
+        mode: "accept",
+      });
     });
   });
 
@@ -181,6 +387,161 @@ describe("config set helpers", () => {
 
     it("rejects IPv6 loopback", () => {
       expect(() => validateUrlValue("http://[::1]:8080")).toThrow(/private/i);
+    });
+
+    it("rejects localhost subdomains", () => {
+      expect(() => validateUrlValue("http://api.localhost:8080")).toThrow(/private/i);
+    });
+
+    it("rejects reserved hostname suffixes from the shared blocklist", () => {
+      expect(() => validateUrlValue("http://printer.local:8080")).toThrow(/private/i);
+      expect(() => validateUrlValue("http://my-vm.internal:8080")).toThrow(/private/i);
+    });
+
+    it("rejects additional reserved special-use ranges from the shared blocklist", () => {
+      expect(() => validateUrlValue("http://192.0.2.1:80")).toThrow(/private/i);
+      expect(() => validateUrlValue("http://240.0.0.1:80")).toThrow(/private/i);
+      expect(() => validateUrlValue("http://[64:ff9b::a00:1]:80")).toThrow(/private/i);
+      expect(() => validateUrlValue("http://[2001::1]:80")).toThrow(/private/i);
+      expect(() => validateUrlValue("http://[2002::1]:80")).toThrow(/private/i);
+    });
+  });
+
+  describe("formatConfigValueForLogs", () => {
+    it("redacts scalar strings and URLs in preview output", () => {
+      expect(formatConfigValueForLogs("super-secret-value")).toBe('"[REDACTED_STRING]"');
+      expect(formatConfigValueForLogs("https://user:pass@example.com/v1?token=secret#frag")).toBe(
+        '"[REDACTED_URL]"',
+      );
+    });
+
+    it("redacts nested credential fields and string leaves", () => {
+      const output = formatConfigValueForLogs({
+        endpoint: "https://user:pass@example.com/v1?token=secret#frag",
+        apiKey: "sk-secret",
+        nested: { model: "nemotron", temperature: 0.2 },
+      });
+      expect(output).toContain("[REDACTED_URL]");
+      expect(output).toContain("[REDACTED]");
+      expect(output).toContain("[REDACTED_STRING]");
+      expect(output).toContain("0.2");
+      expect(output).not.toContain("user:pass");
+      expect(output).not.toContain("token=secret");
+      expect(output).not.toContain("sk-secret");
+      expect(output).not.toContain("nemotron");
+    });
+  });
+
+  describe("validateUrlValueWithDns", () => {
+    it("rejects hostname resolving to private IPv4", async () => {
+      const lookup = async () => [{ address: "169.254.169.254", family: 4 }];
+      await expect(validateUrlValueWithDns("https://example.com/v1", lookup)).rejects.toThrow(
+        /private\/internal/i,
+      );
+    });
+
+    it("rejects hostname resolving to private IPv6", async () => {
+      const lookup = async () => [{ address: "fd00::1", family: 6 }];
+      await expect(validateUrlValueWithDns("https://example.com/v1", lookup)).rejects.toThrow(
+        /private\/internal/i,
+      );
+    });
+
+    it("rejects hostname when any resolved address is private", async () => {
+      const lookup = async () => [
+        { address: "93.184.216.34", family: 4 },
+        { address: "::ffff:127.0.0.1", family: 6 },
+      ];
+      await expect(validateUrlValueWithDns("https://example.com/v1", lookup)).rejects.toThrow(
+        /private\/internal/i,
+      );
+    });
+
+    it("allows hostname when all resolved addresses are public", async () => {
+      const lookup = async () => [
+        { address: "93.184.216.34", family: 4 },
+        { address: "2607:f8b0:4004:800::200e", family: 6 },
+      ];
+      await expect(validateUrlValueWithDns("https://example.com/v1", lookup)).resolves.toBe(
+        undefined,
+      );
+    });
+
+    it("allows public IPv4 literals without DNS lookup", async () => {
+      const lookup = async () => {
+        throw new Error("lookup should not run for IP literals");
+      };
+      await expect(validateUrlValueWithDns("https://93.184.216.34/v1", lookup)).resolves.toBe(
+        undefined,
+      );
+    });
+
+    it("allows public bracketed IPv6 literals without DNS lookup", async () => {
+      const lookup = async () => {
+        throw new Error("lookup should not run for IP literals");
+      };
+      await expect(
+        validateUrlValueWithDns("https://[2606:4700:4700::1111]/v1", lookup),
+      ).resolves.toBe(undefined);
+    });
+
+    it("fails closed when DNS lookup errors", async () => {
+      const lookup = async () => {
+        throw new Error("NXDOMAIN");
+      };
+      await expect(validateUrlValueWithDns("https://missing.example/v1", lookup)).rejects.toThrow(
+        /Cannot resolve hostname/i,
+      );
+    });
+
+    it("fails closed when DNS lookup returns no addresses", async () => {
+      const lookup = async () => [];
+      await expect(validateUrlValueWithDns("https://empty.example/v1", lookup)).rejects.toThrow(
+        /no addresses returned/i,
+      );
+    });
+  });
+
+  describe("rewriteConfigUrlsWithDnsPinning", () => {
+    it("pins HTTP hostname URLs to the validated DNS address", async () => {
+      const lookup = async () => [{ address: "93.184.216.34", family: 4 }];
+      await expect(rewriteConfigUrlsWithDnsPinning("http://example.com/v1", lookup)).resolves.toBe(
+        "http://93.184.216.34/v1",
+      );
+    });
+
+    it("fails closed for DNS-backed HTTPS hostname URLs", async () => {
+      const lookup = async () => [{ address: "93.184.216.34", family: 4 }];
+      await expect(
+        rewriteConfigUrlsWithDnsPinning("https://example.com/v1", lookup),
+      ).rejects.toThrow(/DNS-backed HTTPS URLs are not supported/);
+    });
+
+    it("preserves HTTPS IP-literal URLs without DNS lookup", async () => {
+      const lookup = async () => {
+        throw new Error("lookup should not run for IP literals");
+      };
+      await expect(
+        rewriteConfigUrlsWithDnsPinning("https://93.184.216.34/v1", lookup),
+      ).resolves.toBe("https://93.184.216.34/v1");
+    });
+
+    it("recursively rewrites nested HTTP URLs and leaves non-URLs unchanged", async () => {
+      const lookup = async () => [{ address: "93.184.216.34", family: 4 }];
+      await expect(
+        rewriteConfigUrlsWithDnsPinning(
+          {
+            primary: "http://api.example.com/v1",
+            label: "production",
+            fallbacks: ["http://backup.example.com/v2"],
+          },
+          lookup,
+        ),
+      ).resolves.toEqual({
+        primary: "http://93.184.216.34/v1",
+        label: "production",
+        fallbacks: ["http://93.184.216.34/v2"],
+      });
     });
   });
 });

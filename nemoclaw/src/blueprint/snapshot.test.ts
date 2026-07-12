@@ -251,27 +251,45 @@ describe("snapshot", () => {
       );
     });
 
-    it("runs best-effort chown after successful copy", async () => {
+    it("rejects invalid sandbox names before invoking openshell", async () => {
+      addDir(`${SNAP}/openclaw`);
+      mockExeca.mockResolvedValue({ exitCode: 0, stderr: "" });
+
+      await expect(restoreIntoSandbox(SNAP, "mybox;id")).rejects.toThrow(/Invalid sandbox name/);
+      expect(mockExeca).not.toHaveBeenCalled();
+    });
+
+    it("truncates extremely long sandbox names in error message", async () => {
+      addDir(`${SNAP}/openclaw`);
+      const longName = "a".repeat(200);
+
+      const error = await restoreIntoSandbox(SNAP, longName).catch((e: Error) => e);
+      expect(error).toBeInstanceOf(Error);
+      // The full 200-char name must NOT appear — only the first 80 chars + ellipsis
+      expect((error as Error).message).toContain("…");
+      expect((error as Error).message).not.toContain(longName);
+      expect(mockExeca).not.toHaveBeenCalled();
+    });
+
+    it("repairs legacy symlinks before best-effort chown after successful copy", async () => {
       addDir(`${SNAP}/openclaw`);
       mockExeca
         .mockResolvedValueOnce({ exitCode: 0 }) // cp
+        .mockResolvedValueOnce({ exitCode: 0, stderr: "" }) // legacy symlink repair
         .mockResolvedValueOnce({ exitCode: 0, stderr: "" }); // chown
 
       expect(await restoreIntoSandbox(SNAP, "mybox")).toBe(true);
-      expect(mockExeca).toHaveBeenCalledTimes(2);
+      expect(mockExeca).toHaveBeenCalledTimes(3);
       expect(mockExeca).toHaveBeenNthCalledWith(
         2,
         "openshell",
-        [
-          "sandbox",
-          "exec",
-          "mybox",
-          "--",
-          "chown",
-          "-R",
-          "sandbox:sandbox",
-          "/sandbox/.openclaw-data",
-        ],
+        expect.arrayContaining(["sandbox", "exec", "mybox", "--", "bash", "-lc"]),
+        { reject: false },
+      );
+      expect(mockExeca).toHaveBeenNthCalledWith(
+        3,
+        "openshell",
+        ["sandbox", "exec", "mybox", "--", "chown", "-R", "sandbox:sandbox", "/sandbox/.openclaw"],
         { reject: false },
       );
     });
@@ -280,6 +298,7 @@ describe("snapshot", () => {
       addDir(`${SNAP}/openclaw`);
       mockExeca
         .mockResolvedValueOnce({ exitCode: 0 }) // cp succeeds
+        .mockResolvedValueOnce({ exitCode: 0, stderr: "" }) // legacy symlink repair
         .mockResolvedValueOnce({ exitCode: 1, stderr: "chown: operation not permitted" }); // chown fails
 
       expect(await restoreIntoSandbox(SNAP, "mybox")).toBe(true);

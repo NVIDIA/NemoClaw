@@ -1,6 +1,7 @@
 name: Documentation Issue
 description: Report incorrect, missing, or unclear documentation.
-labels: ["documentation", "status: triage"]
+type: Documentation
+labels: ["needs: triage"]
 body:
   - type: textarea
     id: description
@@ -14,8 +15,8 @@ body:
     id: page
     attributes:
       label: Affected Page
-      description: URL or file path of the doc page (e.g., docs/get-started/quickstart.md).
-      placeholder: docs/reference/commands.md
+      description: URL or file path of the doc page (e.g., docs/get-started/quickstart.mdx).
+      placeholder: docs/reference/commands.mdx
     validations:
       required: false
 

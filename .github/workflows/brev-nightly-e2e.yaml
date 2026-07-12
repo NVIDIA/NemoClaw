@@ -1,0 +1,57 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: E2E / Brev Nightly
+
+# Runs Brev launchable validation as a standalone nightly workflow while the
+# main E2E workflow remains isolated from Brev platform flakiness.
+#
+# Suites:
+#   all                 credential-sanitization + telegram-injection
+#   messaging-providers Telegram + Discord provider/L7 proxy validation
+#   messaging-compatible-endpoint local compatible-endpoint Telegram validation
+#   full                install/onboard/inference/CLI path
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      keep_alive:
+        description: "Keep Brev instances alive after tests (for SSH debugging)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  # GitHub validates a reusable workflow's complete permission ceiling before
+  # evaluating skipped jobs. The called workflow explicitly downgrades its
+  # secret-bearing validation job to read-only; only its no-checkout reporter
+  # may use these write grants when a different caller supplies pr_number.
+  checks: write
+  pull-requests: write
+
+concurrency:
+  group: brev-nightly-e2e-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && github.ref || 'schedule' }}
+  cancel-in-progress: true
+
+jobs:
+  brev-nightly-e2e:
+    if: github.repository == 'NVIDIA/NemoClaw'
+    strategy:
+      fail-fast: false
+      matrix:
+        test_suite: [all, messaging-providers, messaging-compatible-endpoint, full]
+    uses: ./.github/workflows/e2e-branch-validation.yaml
+    with:
+      # Bind tested code to the ref that supplied this reviewed workflow. Do
+      # not let a write-scoped trusted caller select a second arbitrary branch.
+      branch: ${{ github.ref_name }}
+      test_suite: ${{ matrix.test_suite }}
+      use_launchable: true
+      keep_alive: ${{ github.event_name == 'workflow_dispatch' && inputs.keep_alive || false }}
+    secrets:
+      BREV_API_KEY: ${{ secrets.BREV_API_KEY }}
+      BREV_ORG_ID: ${{ secrets.BREV_ORG_ID }}
+      NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}

@@ -1,0 +1,60 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Use NemoClaw Agent Prompts, Docs MCP Server, and Skills with Your AI Coding Agent"
+sidebar-title: "Prompts, MCP, and Skills"
+description: "NemoClaw exposes an MCP docs server and Markdown documentation that AI coding agents can use when they help you install, configure, or operate a sandbox."
+description-agent: "Guides users and their AI coding agents to the NemoClaw docs MCP server, canonical Markdown documentation, llms.txt index, and optional docs-routing skill. Use when users ask about AI agent support, Markdown docs, MCP docs server, agent skills, Cursor, Claude Code, Codex, or Copilot."
+keywords: ["nemoclaw ai agent docs", "nemoclaw mcp docs", "nemoclaw markdown docs", "llms.txt", "cursor", "claude code", "copilot"]
+content:
+  type: "how_to"
+---
+import { StarterPromptButton } from "../_components/StarterPromptButton";
+import { StarterPromptFallback } from "../_components/StarterPrompt";
+
+NemoClaw publishes an MCP docs server and Markdown versions of its Fern documentation for AI coding agents.
+Your agent can search or fetch the same canonical pages that appear on the docs site and apply that guidance to your local setup.
+
+Use this page when you want your agent to help with installation, inference configuration, network policies, monitoring, deployment, security, workspace management, or command reference lookup.
+
+## Give Your Agent the Starter Prompt
+
+The fastest path is to copy the starter prompt from the NemoClaw home page and paste it into your local coding agent.
+The prompt tells the agent to use NemoClaw skills when available, bootstrap the docs-routing skill when missing, use the Markdown docs, ask one question at a time, run commands only with permission, and use the checked-in local credential helper and form after you approve the exact command that will receive the credentials.
+NemoClaw keeps the prompt text in a shared docs source so the copy button and manual fallback render the same content.
+
+<StarterPromptButton />
+
+<StarterPromptFallback />
+
+## Configure the Docs MCP Server
+
+If your coding agent supports MCP, configure the NemoClaw docs server before you ask installation, configuration, or troubleshooting questions.
+The server URL is `https://docs.nvidia.com/nemoclaw/_mcp/server`.
+It exposes a read-only `searchDocs` tool that searches the NemoClaw documentation and returns source URLs.
+
+For Claude Code, run:
+
+```bash
+claude mcp add --transport http fern-docs https://docs.nvidia.com/nemoclaw/_mcp/server
+```
+
+For Cursor, add `https://docs.nvidia.com/nemoclaw/_mcp/server` to your MCP server configuration.
+For other MCP clients, configure a streamable HTTP MCP server at that URL.
+
+## Optional Docs-Routing Skill
+
+If your coding agent supports local project skills, fetch the user skill that encodes the same routing rules.
+The skill stays small because it points back to the Markdown docs instead of copying page content into the repository.
+
+Fetch only the docs-routing skill and root instructions without downloading the full source tree:
+
+```bash
+git clone --filter=blob:none --no-checkout https://github.com/NVIDIA/NemoClaw.git
+cd NemoClaw
+git sparse-checkout set --no-cone '/.agents/skills/nemoclaw-user-guide/**' '/.claude/**' '/AGENTS.md' '/CLAUDE.md'
+git checkout
+```
+
+Open the `NemoClaw` directory in your AI coding assistant.
+The assistant discovers `nemoclaw-user-guide` and uses it to fetch relevant Markdown documentation.

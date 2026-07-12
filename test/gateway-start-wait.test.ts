@@ -1,24 +1,30 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it } from "vitest";
 import { createRequire } from "node:module";
+import { afterEach, describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
 const ORIGINAL_ENV = { ...process.env };
-const ONBOARD_MODULE = require.resolve("../dist/lib/onboard.js");
-const PORTS_MODULE = require.resolve("../dist/lib/ports.js");
+const ONBOARD_MODULE = require.resolve("../src/lib/onboard.js");
+const PORTS_MODULE = require.resolve("../src/lib/core/ports.js");
+const GATEWAY_ADDRESS_MODULE = require.resolve("../src/lib/core/gateway-address.js");
+const GATEWAY_ENV_MODULE = require.resolve("../src/lib/onboard/docker-driver-gateway-env.js");
 
 function loadOnboard() {
   delete require.cache[ONBOARD_MODULE];
+  delete require.cache[GATEWAY_ENV_MODULE];
   delete require.cache[PORTS_MODULE];
-  return require("../dist/lib/onboard");
+  delete require.cache[GATEWAY_ADDRESS_MODULE];
+  return require("../src/lib/onboard");
 }
 
 afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
   delete require.cache[ONBOARD_MODULE];
+  delete require.cache[GATEWAY_ENV_MODULE];
   delete require.cache[PORTS_MODULE];
+  delete require.cache[GATEWAY_ADDRESS_MODULE];
 });
 
 describe("gateway startup wait config", () => {
@@ -119,11 +125,31 @@ describe("gateway bootstrap secret repair", () => {
     expect(getGatewayLocalEndpoint()).toBe("https://127.0.0.1:9443");
   });
 
+  it("uses wildcard only as the gateway bind address, not the local endpoint", () => {
+    process.env.NEMOCLAW_GATEWAY_PORT = "9443";
+    process.env.NEMOCLAW_GATEWAY_BIND_ADDRESS = "0.0.0.0";
+    process.env.NEMOCLAW_DISABLE_OVERLAY_FIX = "1";
+    const { getDockerDriverGatewayEnv, getGatewayLocalEndpoint, getGatewayStartEnv } =
+      loadOnboard();
+
+    expect(getGatewayLocalEndpoint()).toBe("https://127.0.0.1:9443");
+    expect(getDockerDriverGatewayEnv("openshell 0.0.37", "linux")).toMatchObject({
+      OPENSHELL_BIND_ADDRESS: "0.0.0.0",
+      OPENSHELL_GRPC_ENDPOINT: "https://127.0.0.1:9443",
+      OPENSHELL_SSH_GATEWAY_HOST: "127.0.0.1",
+      OPENSHELL_SSH_GATEWAY_PORT: "9443",
+    });
+    expect(getGatewayStartEnv()).toMatchObject({
+      OPENSHELL_BIND_ADDRESS: "0.0.0.0",
+      OPENSHELL_SERVER_PORT: "9443",
+      OPENSHELL_SSH_GATEWAY_HOST: "127.0.0.1",
+      OPENSHELL_SSH_GATEWAY_PORT: "9443",
+    });
+  });
+
   it("repairs the client CA and client TLS secrets together", () => {
     const { getGatewayBootstrapRepairPlan } = loadOnboard();
-    expect(
-      getGatewayBootstrapRepairPlan(["openshell-client-tls"]),
-    ).toEqual({
+    expect(getGatewayBootstrapRepairPlan(["openshell-client-tls"])).toEqual({
       missingSecrets: ["openshell-client-tls"],
       needsRepair: true,
       needsServerTls: false,
@@ -136,7 +162,12 @@ describe("gateway bootstrap secret repair", () => {
     const { getGatewayBootstrapRepairPlan } = loadOnboard();
 
     expect(
-      getGatewayBootstrapRepairPlan(["openshell-client-tls", "noise", " openshell-server-tls ", ""]),
+      getGatewayBootstrapRepairPlan([
+        "openshell-client-tls",
+        "noise",
+        " openshell-server-tls ",
+        "",
+      ]),
     ).toEqual({
       missingSecrets: ["openshell-client-tls", "openshell-server-tls"],
       needsRepair: true,
@@ -159,8 +190,8 @@ describe("gateway bootstrap secret repair", () => {
     expect(script).toContain("openshell-server-client-ca");
     expect(script).toContain("openshell-client-tls");
     expect(script).toContain("openshell-ssh-handshake");
-    expect(script).toContain('CN=openshell-client-ca');
-    expect(script).toContain('CN=openshell-client');
+    expect(script).toContain("CN=openshell-client-ca");
+    expect(script).toContain("CN=openshell-client");
     expect(script).toContain("subjectAltName=DNS:openshell");
   });
 

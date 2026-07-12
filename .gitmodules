@@ -1,0 +1,4 @@
+[submodule "nemoclaw-blueprint/router/llm-router"]
+	path = nemoclaw-blueprint/router/llm-router
+	url = https://github.com/NVIDIA-AI-Blueprints/llm-router.git
+	branch = v3

@@ -1,136 +1,214 @@
 ---
 name: nemoclaw-maintainer-cut-release-tag
-description: Cut a new semver release — bump all version strings via bump-version.ts, open a release PR, and after merge tag main and push. Use when cutting a release, tagging a version, shipping a build, or preparing a deployment. Trigger keywords - cut tag, release tag, new tag, cut release, tag version, ship it.
+description: Creates deterministic NemoClaw semver release tags on origin/main, handles release housekeeping, drafts release notes, and verifies the maintainer-published Announcement. Use when cutting a release, tagging a version, shipping a build, creating vX.Y.Z tags, publishing release announcements, or completing release communication.
 user_invocable: true
 ---
 
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Cut Release Tag
 
-Bump all version strings, open a release PR, and after merge create annotated semver + `latest` tags on `origin/main`.
+Use the release scripts for normal release operations. Do not run raw `git tag`, `git push`, `gh api`, or version-bump commands by hand for the normal release flow.
 
-This skill delegates the version-bump work to `scripts/bump-version.ts` (invoked via `npm run bump:version`). That script updates package.json (root + plugin), blueprint.yaml, installer defaults, docs config, and versioned doc links — then runs the build and tests before opening a PR.
+The release is one annotated semver tag on an already-merged `origin/main` commit. The GitHub workflow moves `latest`; release admins promote `lkg` manually after validation. After the tag and `latest` are verified, automatically move remaining open issues/PRs from the released version label to the next patch label, draft release notes, then verify the maintainer-published Announcement before final handoff.
 
-## Prerequisites
+## Hard Rules
 
-- You must be in the NemoClaw git repository.
-- You must have push access to `origin` (NVIDIA/NemoClaw).
-- The nightly E2E suite should have passed before tagging. Check with the user if unsure.
+- Tag only the commit captured in a generated release plan.
+- Do not generate the release plan until release-prep docs are merged or explicitly waived.
+- If `origin/main` changes after plan generation, regenerate the plan before cutting the tag.
+- Before asking for release confirmation, satisfy the canonical [pre-tag E2E evidence policy](../nemoclaw-maintainer-policies/references/release-train.md#pre-tag-e2e-evidence) for that exact commit.
+- Ask the maintainer to paste the exact confirmation phrase from the plan before cutting the tag.
+- Push only the semver tag (`vX.Y.Z`) from the agent-controlled step.
+- Never push `latest` or `lkg` from this skill.
+- Never move, delete, or force-push an existing remote semver tag unless the maintainer explicitly starts protected-tag remediation.
+- Draft release notes locally. Do not create the GitHub Discussion; the maintainer does that.
+- Do not mark the announcement step complete until the maintainer provides a valid Discussion URL and the published Announcement is verified.
+- Follow the shared [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md) for SSH, authentication, remote access, authorization, or permission failures.
 
-## Step 1: Determine the Current Version
+## Workflow
 
-Fetch all tags and find the latest semver tag:
+Copy this checklist and update it as you proceed:
 
-```bash
-git fetch origin --tags
-git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1
+```text
+Release Progress:
+- [ ] Step 1: Generate release plan
+- [ ] Step 2: Show plan, E2E evidence, and exact confirmation phrase
+- [ ] Step 3: Cut the semver tag from the confirmed plan
+- [ ] Step 4: Wait for workflow-managed latest
+- [ ] Step 5: Bump remaining open issues/PRs
+- [ ] Step 6: Generate release-note data and draft Markdown
+- [ ] Step 7: Wait for maintainer-published Announcement
+- [ ] Step 8: Verify Announcement and hand off sharing
 ```
 
-Parse the major, minor, and patch components from this tag.
+### Step 1: Generate Release Plan
 
-## Step 2: Ask the User Which Bump
+Before this step, confirm release-prep docs are merged or explicitly waived.
+Return to `nemoclaw-maintainer-evening` if docs are still pending.
 
-Present the options with the **patch bump as default**:
-
-- **Patch** (default): `vX.Y.(Z+1)` — bug fixes, small changes
-- **Minor**: `vX.(Y+1).0` — new features, larger changes
-- **Major**: `v(X+1).0.0` — breaking changes
-
-Show the concrete version strings. Example prompt:
-
-> Current tag: `v0.0.2`
->
-> Which version bump?
->
-> 1. **Patch** → `v0.0.3` (default)
-> 2. **Minor** → `v0.1.0`
-> 3. **Major** → `v1.0.0`
-
-Wait for the user to confirm before proceeding. If they just say "yes", "go", "do it", or similar, use the patch default.
-
-## Step 3: Show What's Being Tagged
-
-Show the user the commit that will be tagged and the changelog since the last tag:
+Run exactly one of:
 
 ```bash
-git log --oneline origin/main -1
-git log --oneline <previous-tag>..origin/main
+npm run release:plan -- --bump patch
+npm run release:plan -- --bump minor
+npm run release:plan -- --bump major
 ```
 
-Ask for confirmation before proceeding.
+Patch is the default if the maintainer says "yes", "go", or similar without choosing.
 
-## Step 4: Run the Version Bump Script
+The script writes a plan outside the checkout root, for example:
 
-First, preview the plan with `--dry-run`:
+```text
+../nemoclaw-release-v0.0.58/plan.json
+```
+
+### Step 2: Show Plan, E2E Evidence, and Ask for Exact Confirmation
+
+Read the generated `plan.json` and show the maintainer:
+
+- previous tag,
+- next tag,
+- target `origin/main` commit and headline,
+- plan hash,
+- forbidden operations,
+- exact confirmation phrase,
+- open issue/PR housekeeping plan for the release label.
+
+For the plan's full `origin/main` SHA, review `.github/workflows/e2e.yaml` at that commit and build the evidence ledger required by the canonical [pre-tag E2E evidence policy](../nemoclaw-maintainer-policies/references/release-train.md#pre-tag-e2e-evidence). The workflow is the sole source of truth; do not substitute or maintain a separate release-gating test list.
+
+Before showing the confirmation prompt, present:
+
+- the exact candidate SHA;
+- the number of tests with green evidence out of the number required by the workflow;
+- each required test mapped to a successful run or job URL and attempt; and
+- an itemized maintainer exception for every test without green evidence, including its current result or failure summary and the rationale for proceeding.
+
+Do not ask for the exact phrase until every test has green evidence or an explicit itemized maintainer exception. If `origin/main` moves or the candidate SHA otherwise changes, regenerate the plan and rebuild the ledger for the new SHA.
+
+Ask the maintainer to paste the exact phrase:
+
+```text
+CONFIRM RELEASE vX.Y.Z <full-origin-main-sha>
+```
+
+Do not proceed on a generic "yes" at this step.
+
+### Step 3: Cut the Semver Tag
+
+Run the cut script with the plan and the maintainer's exact phrase:
 
 ```bash
-npm run bump:version -- <version-without-v-prefix> --dry-run
+npm run release:cut -- --plan <plan.json> --confirm "CONFIRM RELEASE vX.Y.Z <full-origin-main-sha>"
 ```
 
-Show the dry-run output to the user. After confirmation, ask the user which mode they want:
+The script verifies a clean worktree, unchanged `origin/main`, tag availability, target reachability, and remote peeled tag state. It writes:
 
-### Option A: PR mode (default, recommended)
+```text
+<release-dir>/cut-result.json
+```
+
+If the script fails because of SSH, authentication, remote access, authorization, or permissions, follow [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md). For other precondition failures, report the failed precondition and use the recovery guidance below. Do not improvise git commands.
+
+### Step 4: Wait for Workflow-Managed `latest`
+
+Run:
 
 ```bash
-npm run bump:version -- <version-without-v-prefix>
+npm run release:wait-latest -- --plan <plan.json>
 ```
 
-This will:
+The script waits until `vX.Y.Z^{}` and `latest^{}` both peel to the planned commit and verifies `lkg` did not change from the plan. It writes:
 
-1. Update all version strings across the repo
-2. Run the build and tests
-3. Create a `release/<version>` branch and open a release PR against `main`
+```text
+<release-dir>/latest-result.json
+```
 
-In PR mode, tagging is deferred — proceed to Step 5 after the PR merges.
+If it fails, report the failed workflow/status. Do not manually move `latest`.
 
-### Option B: Direct mode (no PR)
+### Step 5: Bump Remaining Open Issues/PRs
+
+Move every remaining open issue or PR carrying the released version to the next patch label:
 
 ```bash
-npm run bump:version -- <version-without-v-prefix> --no-create-pr --push
+node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/bump-stragglers.ts <released-version> <next-version>
 ```
 
-This will:
+This is automatic post-tag housekeeping covered by the release plan and exact confirmation in Step 2. The script creates the next patch label when needed, removes the released-version label, and adds the next-version label to every open straggler. Do not run it before Step 4 verifies both the semver tag and workflow-managed `latest`.
 
-1. Update all version strings across the repo
-2. Run the build and tests
-3. Commit directly on `main`
-4. Create annotated `v<version>` and `latest` tags
-5. Push the commit and both tags to origin
-
-In direct mode, tagging and pushing are handled by the script — skip to Step 6.
-
-If the user wants to skip tests (e.g., they already ran them), add `--skip-tests` to either mode.
-
-## Step 5: Create and Push Tags (PR mode only, after PR merge)
-
-Skip this step if you used direct mode in Step 4 — the script already tagged and pushed.
-
-Once the release PR is merged into `main`, create the annotated tag, move `latest`, and push:
+Then verify the released version has no open stragglers:
 
 ```bash
-git fetch origin main --tags
-git tag -a <new-version> origin/main -m "<new-version>"
-
-# Move the latest tag (delete old, create new)
-git tag -d latest 2>/dev/null || true
-git tag -a latest origin/main -m "latest"
-
-# Push both tags (force-push latest since it moves)
-git push origin <new-version>
-git push origin latest --force
+gh issue list --repo NVIDIA/NemoClaw --state open --label <released-version> --limit 100
+gh pr list --repo NVIDIA/NemoClaw --state open --label <released-version> --limit 100
 ```
 
-## Step 6: Verify
+Summarize:
+
+- open issues/PRs bumped to `<next-version>`;
+- any items that need manual maintainer attention.
+
+### Step 6: Generate Release-Note Data and Draft Markdown
+
+Collect deterministic release-note input:
 
 ```bash
-git ls-remote --tags origin | grep -E '(<new-version>|latest)'
+npm run release:notes-data -- --plan <plan.json>
 ```
 
-Confirm both tags point to the same commit on the remote.
+This writes:
 
-## Important Notes
+```text
+<release-dir>/notes-data.json
+```
 
-- NEVER tag without explicit user confirmation of the version.
-- NEVER tag a branch other than `origin/main`.
-- Always use annotated tags (`-a`), not lightweight tags.
-- The `latest` tag is a floating tag that always points to the most recent release — it requires `--force` to push.
-- The version string passed to `npm run bump:version` should NOT have a `v` prefix (e.g., `0.0.3`, not `v0.0.3`). The script adds the `v` prefix for tags internally.
+If `notes-data.json` has `status: "partial"` or non-empty `pullRequestWarnings`, report the warnings and ask the maintainer whether to fetch/fill the missing PR metadata before drafting.
+
+Load and follow `nemoclaw-maintainer-release-notes`, then use its output as the draft. Save only Markdown, outside the checkout root:
+
+```text
+<release-dir>/release-note-draft.md
+```
+
+Before continuing to Step 7, verify the draft has exactly three lead paragraphs, categorized shipped changes, one what-changed-and-why-it-matters bullet with a visible `#NNNN` link for every included change, and thanks for external contributors only.
+
+Do not create or update a GitHub Discussion.
+
+### Step 7: Wait for Maintainer-Published Announcement
+
+Return:
+
+- release tag,
+- confirmed release commit,
+- plan path and plan hash,
+- `cut-result.json`, `latest-result.json`, and `notes-data.json` paths,
+- Markdown draft path,
+- issue/PR housekeeping summary,
+- suggested discussion title: `NemoClaw <new-version> is out`.
+
+Ask the maintainer to publish the draft in the `Announcements` Discussion category and return the resulting Discussion URL. Do not create or update the Discussion. Keep Step 7 in progress until the maintainer provides the URL.
+
+### Step 8: Verify Announcement and Hand Off Sharing
+
+Before making any network request, reject the maintainer-provided URL unless it exactly matches `https://github.com/NVIDIA/NemoClaw/discussions/<positive-integer>` with no query string or fragment. Only then open it using a read-only GitHub or web capability and verify:
+
+- the title is `NemoClaw <new-version> is out`;
+- the category is `Announcements`;
+- the body preserves the draft's three lead paragraphs, category headings, every included PR link, comparison URL, and external contributor usernames; formatting-only edits are acceptable;
+- the comparison link targets `<previous-version>...<new-version>` and visible PR links target `github.com/NVIDIA/NemoClaw/pull/<number>`.
+
+If the Announcement is valid, return its URL with the release artifacts and mark the release workflow complete. Remind the maintainer to share that Discussion URL in the appropriate external channels. Do not create a duplicate Announcement.
+
+## Recovery
+
+- Plan generation fails: fix the named precondition, then regenerate the plan.
+- `origin/main` moved after plan generation: regenerate the plan and ask for the new exact confirmation phrase.
+- Remote semver tag already exists: stop; do not retag unless the maintainer explicitly starts protected-tag remediation.
+- `latest` workflow fails or times out: report the workflow/status; do not move `latest` manually.
+- `latest` workflow rejects a rollback: keep `latest` unchanged, inspect the plan target commit, and regenerate the plan for the current `origin/main` tip if appropriate.
+- `lkg` changed: stop and escalate to a release admin.
+- Post-tag housekeeping fails: report the error and list items still carrying the released label. After the failure is fixed, rerun the same bump command; already-moved items no longer match the source label.
+- Announcement is not published yet: keep Step 7 in progress and return the draft path and suggested title; the tag and housekeeping remain complete.
+- Announcement title, category, body, or links are wrong: ask the maintainer to edit the existing Discussion, then verify the same URL again. Do not create a replacement. After three failed verification attempts for the same Discussion, stop and escalate to a release admin.
+- Announcement cannot be inspected: report the read failure and ask the maintainer to confirm access or provide a public URL; do not mark Step 8 complete.

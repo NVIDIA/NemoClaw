@@ -182,7 +182,9 @@ function cmdSetQueue(): void {
   try {
     triageOutput = JSON.parse(input);
   } catch (err) {
-    console.error(`Failed to parse triage JSON from stdin: ${err instanceof Error ? err.message : String(err)}`);
+    console.error(
+      `Failed to parse triage JSON from stdin: ${err instanceof Error ? err.message : String(err)}`,
+    );
     process.exit(1);
   }
   const state = loadState();
@@ -194,7 +196,9 @@ function cmdSetQueue(): void {
     nearMisses: triageOutput.nearMisses ?? [],
   };
   saveState(state);
-  console.log(`Queue updated: ${state.queue.items.length} items, ${state.queue.nearMisses.length} near misses`);
+  console.log(
+    `Queue updated: ${state.queue.items.length} items, ${state.queue.nearMisses.length} near misses`,
+  );
 }
 
 function cmdSetHotspots(): void {
@@ -203,7 +207,9 @@ function cmdSetHotspots(): void {
   try {
     hotspotOutput = JSON.parse(input);
   } catch (err) {
-    console.error(`Failed to parse hotspot JSON from stdin: ${err instanceof Error ? err.message : String(err)}`);
+    console.error(
+      `Failed to parse hotspot JSON from stdin: ${err instanceof Error ? err.message : String(err)}`,
+    );
     process.exit(1);
   }
   const state = loadState();

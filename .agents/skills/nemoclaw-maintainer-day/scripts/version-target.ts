@@ -28,9 +28,7 @@ interface VersionTargetOutput {
 }
 
 function getLatestTag(): string {
-  const out = run("git", [
-    "tag", "--sort=-v:refname",
-  ]);
+  const out = run("git", ["tag", "--sort=-v:refname"]);
   if (!out) return "v0.0.0";
 
   for (const line of out.split("\n")) {
@@ -65,13 +63,23 @@ function findStragglers(repo: string, targetVersion: string): Straggler[] {
 
   // Get all open PRs with version labels
   const prOut = run("gh", [
-    "pr", "list", "--repo", repo, "--state", "open",
-    "--json", "number,title,url,labels", "--limit", "200",
+    "pr",
+    "list",
+    "--repo",
+    repo,
+    "--state",
+    "open",
+    "--json",
+    "number,title,url,labels",
+    "--limit",
+    "200",
   ]);
   if (prOut) {
     try {
       const prs = JSON.parse(prOut) as Array<{
-        number: number; title: string; url: string;
+        number: number;
+        title: string;
+        url: string;
         labels: Array<{ name: string }>;
       }>;
       for (const pr of prs) {
@@ -90,19 +98,31 @@ function findStragglers(repo: string, targetVersion: string): Straggler[] {
         }
       }
     } catch (err: unknown) {
-      process.stderr.write(`[version-target] Failed to parse PR list: ${err instanceof Error ? err.message : err}\n`);
+      process.stderr.write(
+        `[version-target] Failed to parse PR list: ${err instanceof Error ? err.message : err}\n`,
+      );
     }
   }
 
   // Get all open issues with version labels
   const issueOut = run("gh", [
-    "issue", "list", "--repo", repo, "--state", "open",
-    "--json", "number,title,url,labels", "--limit", "200",
+    "issue",
+    "list",
+    "--repo",
+    repo,
+    "--state",
+    "open",
+    "--json",
+    "number,title,url,labels",
+    "--limit",
+    "200",
   ]);
   if (issueOut) {
     try {
       const issues = JSON.parse(issueOut) as Array<{
-        number: number; title: string; url: string;
+        number: number;
+        title: string;
+        url: string;
         labels: Array<{ name: string }>;
       }>;
       for (const issue of issues) {
@@ -119,7 +139,9 @@ function findStragglers(repo: string, targetVersion: string): Straggler[] {
         }
       }
     } catch (err: unknown) {
-      process.stderr.write(`[version-target] Failed to parse issue list: ${err instanceof Error ? err.message : err}\n`);
+      process.stderr.write(
+        `[version-target] Failed to parse issue list: ${err instanceof Error ? err.message : err}\n`,
+      );
     }
   }
 

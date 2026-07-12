@@ -1,19 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
-// Import from compiled dist/ so coverage is attributed correctly.
+import { describe, expect, it } from "vitest";
+// Import source directly so tests cannot pass against a stale build.
 import {
-  classifyValidationFailure,
   classifyApplyFailure,
   classifySandboxCreateFailure,
-  validateNvidiaApiKeyValue,
-  isSafeModelId,
+  classifyValidationFailure,
   isNvcfFunctionNotFoundForAccount,
+  isSafeModelId,
   nvcfFunctionNotFoundMessage,
-  shouldSkipResponsesProbe,
+  planSandboxCreateRecovery,
   shouldForceCompletionsApi,
-} from "../../dist/lib/validation";
+  shouldSkipResponsesProbe,
+  validateNvidiaApiKeyValue,
+  validateOpenRouterApiKeyValue,
+} from "./validation";
 
 describe("classifyValidationFailure", () => {
   it("classifies curl failures as transport", () => {
@@ -58,7 +60,7 @@ describe("classifyValidationFailure", () => {
     });
   });
 
-  it("classifies 400 + expired key message as credential (#1942 — Gemini)", () => {
+  it("classifies a Gemini 400 with an expired-key message as a credential error (#1942)", () => {
     // Gemini returns HTTP 400 with this exact message when the API key has expired.
     // Must classify as "credential" so the onboard wizard prompts to re-enter the
     // key instead of looping back to provider selection.
@@ -73,7 +75,7 @@ describe("classifyValidationFailure", () => {
     });
   });
 
-  it("classifies 400 + API_KEY_INVALID message as credential (#1942 — Gemini)", () => {
+  it("classifies a Gemini 400 with API_KEY_INVALID as a credential error (#1942)", () => {
     // Gemini also uses "API_KEY_INVALID" as the status string for revoked keys.
     expect(
       classifyValidationFailure({
@@ -86,7 +88,7 @@ describe("classifyValidationFailure", () => {
     });
   });
 
-  it("classifies bare 'API key not valid' message as credential (#1942 — Gemini .message only)", () => {
+  it("classifies a bare Gemini 'API key not valid' .message as a credential error (#1942)", () => {
     // When the message field is extracted without the API_KEY_INVALID status
     // prefix, the bare wording must still classify as credential. Flagged by
     // CodeRabbit on #2132.
@@ -104,9 +106,7 @@ describe("classifyValidationFailure", () => {
   it("classifies 400 without credential message as model (regression guard)", () => {
     // HTTP 400 without a credential-bearing message still routes to "model"
     // so existing gemini model-selection retry behavior stays intact.
-    expect(
-      classifyValidationFailure({ httpStatus: 400, message: "model xyz not found" }),
-    ).toEqual({
+    expect(classifyValidationFailure({ httpStatus: 400, message: "model xyz not found" })).toEqual({
       kind: "model",
       retry: "model",
     });
@@ -117,6 +117,39 @@ describe("classifyValidationFailure", () => {
       kind: "model",
       retry: "model",
     });
+  });
+
+  it("classifies model-related 404/405 responses as model retries before endpoint retries", () => {
+    expect(
+      classifyValidationFailure({
+        httpStatus: 404,
+        message: "HTTP 404: model not found",
+      }),
+    ).toEqual({ kind: "model", retry: "model" });
+    expect(
+      classifyValidationFailure({
+        httpStatus: 405,
+        message: "HTTP 405: unsupported model",
+      }),
+    ).toEqual({ kind: "model", retry: "model" });
+  });
+
+  it("classifies TLS certificate errors as transport", () => {
+    expect(
+      classifyValidationFailure({
+        message: "transport error: invalid peer certificate: UnknownIssuer",
+      }),
+    ).toEqual({ kind: "transport", retry: "retry" });
+    expect(
+      classifyValidationFailure({
+        message: "SSL certificate problem: unable to get local issuer certificate",
+      }),
+    ).toEqual({ kind: "transport", retry: "retry" });
+    expect(
+      classifyValidationFailure({
+        message: "TLS handshake failure",
+      }),
+    ).toEqual({ kind: "transport", retry: "retry" });
   });
 
   it("classifies 404 as endpoint", () => {
@@ -182,6 +215,117 @@ describe("classifySandboxCreateFailure", () => {
     const result = classifySandboxCreateFailure("something else happened");
     expect(result.kind).toBe("unknown");
   });
+
+  it("detects TLS cert error from 'invalid peer certificate: BadSignature'", () => {
+    const result = classifySandboxCreateFailure("invalid peer certificate: BadSignature");
+    expect(result.kind).toBe("tls_cert_mismatch");
+  });
+
+  it("detects TLS cert error from 'handshake verification failed'", () => {
+    const result = classifySandboxCreateFailure("handshake verification failed");
+    expect(result.kind).toBe("tls_cert_mismatch");
+  });
+
+  it("detects TLS cert error from 'certificate verify failed'", () => {
+    const result = classifySandboxCreateFailure("certificate verify failed");
+    expect(result.kind).toBe("tls_cert_mismatch");
+  });
+
+  it("detects TLS cert error from 'SSL certificate problem'", () => {
+    const result = classifySandboxCreateFailure(
+      "SSL certificate problem: unable to get local issuer certificate",
+    );
+    expect(result.kind).toBe("tls_cert_mismatch");
+  });
+
+  it("detects TLS cert error from 'x509: certificate'", () => {
+    const result = classifySandboxCreateFailure("x509: certificate signed by unknown authority");
+    expect(result.kind).toBe("tls_cert_mismatch");
+  });
+
+  it("detects TLS cert error from 'unknown authority'", () => {
+    const result = classifySandboxCreateFailure("failed: unknown authority");
+    expect(result.kind).toBe("tls_cert_mismatch");
+  });
+
+  it("does NOT classify generic TLS transport errors as tls_cert_mismatch", () => {
+    expect(classifySandboxCreateFailure("TLS error: connection refused by proxy").kind).toBe(
+      "unknown",
+    );
+    expect(classifySandboxCreateFailure("SSL error: unsupported protocol version").kind).toBe(
+      "unknown",
+    );
+    expect(classifySandboxCreateFailure("TLS error later during notify").kind).toBe("unknown");
+    expect(classifySandboxCreateFailure("ssl error: peer closed connection").kind).toBe("unknown");
+  });
+
+  it("classifies tls_cert_mismatch even when 'Created sandbox:' is also present", () => {
+    const output = "Created sandbox: test-sandbox\nError: handshake verification failed";
+    const result = classifySandboxCreateFailure(output);
+    expect(result.kind).toBe("tls_cert_mismatch");
+  });
+
+  it("detects the misleading image-tar upload 404 from the upload-tar phrase (#3266)", () => {
+    const result = classifySandboxCreateFailure("Error: failed to upload image tar into container");
+    expect(result.kind).toBe("image_upload_container_missing");
+  });
+
+  it("detects the misleading image-tar upload 404 from the reported aarch64 output shape (#3266)", () => {
+    const output = [
+      "  Built image openshell/sandbox-from-nemoclaw:abcd1234",
+      "Docker responded with status code 404: the container does not exist",
+      'no container with name or ID "openshell-cluster-nemoclaw" found',
+    ].join("\n");
+    const result = classifySandboxCreateFailure(output);
+    expect(result.kind).toBe("image_upload_container_missing");
+  });
+
+  it("does not classify an unrelated 404 as image_upload_container_missing (#3266)", () => {
+    // A generic 404 with no upload-tar phrase and no gateway container name
+    // must not be mistaken for the ARM64 upload failure.
+    expect(
+      classifySandboxCreateFailure(
+        "Docker responded with status code 404: the container does not exist",
+      ).kind,
+    ).toBe("unknown");
+    expect(classifySandboxCreateFailure("HTTP 404: model not found").kind).toBe("unknown");
+  });
+});
+
+describe("planSandboxCreateRecovery", () => {
+  const uploadFailure = {
+    kind: "image_upload_container_missing" as const,
+    uploadedToGateway: false,
+  };
+
+  it("offers the image-ref workaround on Linux ARM64 (#3266)", () => {
+    expect(planSandboxCreateRecovery(uploadFailure, { platform: "linux", arch: "arm64" })).toEqual({
+      arm64ImageRefWorkaround: true,
+    });
+  });
+
+  it("does not offer the ARM64 workaround on x86_64 Linux (preserve x86_64 path)", () => {
+    expect(planSandboxCreateRecovery(uploadFailure, { platform: "linux", arch: "x64" })).toEqual({
+      arm64ImageRefWorkaround: false,
+    });
+  });
+
+  it("does not offer the ARM64 workaround on macOS ARM64 (Linux-only signature)", () => {
+    expect(planSandboxCreateRecovery(uploadFailure, { platform: "darwin", arch: "arm64" })).toEqual(
+      {
+        arm64ImageRefWorkaround: false,
+      },
+    );
+  });
+
+  it("does not offer the workaround for unrelated failure kinds even on Linux ARM64", () => {
+    expect(
+      planSandboxCreateRecovery(
+        { kind: "image_transfer_timeout", uploadedToGateway: false },
+        { platform: "linux", arch: "arm64" },
+      ),
+    ).toEqual({ arm64ImageRefWorkaround: false });
+  });
 });
 
 describe("validateNvidiaApiKeyValue", () => {
@@ -195,6 +339,16 @@ describe("validateNvidiaApiKeyValue", () => {
 
   it("rejects key without nvapi- prefix", () => {
     expect(validateNvidiaApiKeyValue("sk-abc123")).toBeTruthy();
+  });
+
+  it("accepts non-nvapi keys when credentialEnv is not NVIDIA_INFERENCE_API_KEY", () => {
+    expect(validateNvidiaApiKeyValue("sk-ant-abc123", "ANTHROPIC_API_KEY")).toBeNull();
+    expect(validateNvidiaApiKeyValue("sk-openai-xyz", "OPENAI_API_KEY")).toBeNull();
+    expect(validateNvidiaApiKeyValue("AIza-gemini", "GEMINI_API_KEY")).toBeNull();
+  });
+
+  it("still rejects empty keys for non-NVIDIA providers", () => {
+    expect(validateNvidiaApiKeyValue("", "ANTHROPIC_API_KEY")).toBeTruthy();
   });
 });
 
@@ -270,15 +424,36 @@ describe("shouldSkipResponsesProbe", () => {
     expect(shouldSkipResponsesProbe("nvidia-prod")).toBe(true);
   });
 
+  it("skips the Responses probe for nvidia-nim (same endpoint as nvidia-prod, no /v1/responses)", () => {
+    expect(shouldSkipResponsesProbe("nvidia-nim")).toBe(true);
+  });
+
   it("skips the Responses probe for gemini-api (Gemini does not support /v1/responses)", () => {
     expect(shouldSkipResponsesProbe("gemini-api")).toBe(true);
   });
 
+  it("skips the Responses probe for openrouter-api (OpenRouter uses Chat Completions here)", () => {
+    expect(shouldSkipResponsesProbe("openrouter-api")).toBe(true);
+  });
+
   it("does not skip the Responses probe for other providers", () => {
     expect(shouldSkipResponsesProbe("openai-api")).toBe(false);
-    expect(shouldSkipResponsesProbe("anthropic-api")).toBe(false);
+    expect(shouldSkipResponsesProbe("anthropic-prod")).toBe(false);
     expect(shouldSkipResponsesProbe("compatible-endpoint")).toBe(false);
     expect(shouldSkipResponsesProbe("")).toBe(false);
+  });
+});
+
+describe("validateOpenRouterApiKeyValue", () => {
+  it("accepts OpenRouter sk-or keys", () => {
+    expect(validateOpenRouterApiKeyValue("sk-or-test")).toBeNull();
+  });
+
+  it("rejects missing or non-OpenRouter keys", () => {
+    expect(validateOpenRouterApiKeyValue("")).toBe("  OpenRouter API Key is required.");
+    expect(validateOpenRouterApiKeyValue("sk-test")).toBe(
+      "  Invalid OpenRouter API key. Must start with sk-or-",
+    );
   });
 });
 

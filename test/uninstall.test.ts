@@ -1,28 +1,63 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { describe, expect, it } from "vitest";
 
 const UNINSTALL_SCRIPT = path.join(import.meta.dirname, "..", "uninstall.sh");
 
-function createFakeNpmEnv(tmp: string): Record<string, string | undefined> {
-  const fakeBin = path.join(tmp, "bin");
-  const npmPath = path.join(fakeBin, "npm");
-  fs.mkdirSync(fakeBin, { recursive: true });
-  fs.writeFileSync(npmPath, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
-  return {
-    ...process.env,
-    HOME: tmp,
-    PATH: `${fakeBin}:${process.env.PATH || "/usr/bin:/bin"}`,
-  };
-}
-
 describe("uninstall CLI flags", () => {
-  it("--help exits 0 and shows usage", () => {
+  function writeFakeTools(fakeBin: string) {
+    fs.mkdirSync(fakeBin);
+    for (const cmd of ["npm", "openshell", "docker", "ollama", "pgrep"]) {
+      fs.writeFileSync(path.join(fakeBin, cmd), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+    }
+  }
+
+  function seedPreservedState(tmp: string): string {
+    const stateDir = path.join(tmp, ".nemoclaw");
+    fs.mkdirSync(path.join(stateDir, "rebuild-backups", "sb1", "20260101"), { recursive: true });
+    fs.writeFileSync(
+      path.join(stateDir, "rebuild-backups", "sb1", "20260101", "manifest.json"),
+      "{}",
+    );
+    fs.mkdirSync(path.join(stateDir, "backups", "20260320-120000"), { recursive: true });
+    fs.writeFileSync(path.join(stateDir, "backups", "20260320-120000", "USER.md"), "hello");
+    fs.writeFileSync(path.join(stateDir, "sandboxes.json"), "[]");
+    return stateDir;
+  }
+
+  function sanitizedParentEnv(): NodeJS.ProcessEnv {
+    return Object.fromEntries(
+      Object.entries(process.env).filter(([key]) => !key.startsWith("NEMOCLAW_")),
+    ) as NodeJS.ProcessEnv;
+  }
+
+  function runUninstall(
+    tmp: string,
+    args: string[],
+    extraEnv: NodeJS.ProcessEnv = {},
+  ): ReturnType<typeof spawnSync> {
+    return spawnSync("bash", [UNINSTALL_SCRIPT, ...args], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+      env: {
+        ...sanitizedParentEnv(),
+        HOME: tmp,
+        PATH: `${path.join(tmp, "bin")}:/usr/bin:/bin`,
+        NEMOCLAW_NODE: process.execPath,
+        TMPDIR: tmp,
+        ...extraEnv,
+      },
+    });
+  }
+
+  it("exits 0 and shows usage for --help", () => {
     const result = spawnSync("bash", [UNINSTALL_SCRIPT, "--help"], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
@@ -34,30 +69,33 @@ describe("uninstall CLI flags", () => {
     expect(output).toMatch(/--yes/);
     expect(output).toMatch(/--keep-openshell/);
     expect(output).toMatch(/--delete-models/);
+    expect(output).toMatch(/--destroy-user-data/);
   });
 
-  it("--yes skips the confirmation prompt and completes successfully", () => {
+  it("uses NemoHermes branding for --help when Hermes is active", () => {
+    const result = spawnSync("bash", [UNINSTALL_SCRIPT, "--help"], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        NEMOCLAW_AGENT: "hermes",
+        NEMOCLAW_NODE: process.execPath,
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output).toMatch(/NemoHermes Uninstaller/);
+    expect(output).toMatch(/Remove host-side NemoHermes resources/);
+    expect(output).toMatch(/Remove NemoHermes-pulled Ollama models/);
+    expect(output).not.toMatch(/NemoClaw Uninstaller/);
+  });
+
+  it("skips the confirmation prompt and completes successfully for --yes", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-yes-"));
-    const fakeBin = path.join(tmp, "bin");
-    fs.mkdirSync(fakeBin);
-
+    writeFakeTools(path.join(tmp, "bin"));
     try {
-      for (const cmd of ["npm", "openshell", "docker", "ollama", "pgrep"]) {
-        fs.writeFileSync(path.join(fakeBin, cmd), "#!/usr/bin/env bash\nexit 0\n", {
-          mode: 0o755,
-        });
-      }
-
-      const result = spawnSync("bash", [UNINSTALL_SCRIPT, "--yes"], {
-        cwd: path.join(import.meta.dirname, ".."),
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          HOME: tmp,
-          PATH: `${fakeBin}:/usr/bin:/bin`,
-          SCRIPT_DIR: path.join(import.meta.dirname, ".."),
-        },
-      });
+      const result = runUninstall(tmp, ["--yes"]);
 
       expect(result.status).toBe(0);
       const output = `${result.stdout}${result.stderr}`;
@@ -67,139 +105,59 @@ describe("uninstall CLI flags", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   }, 60_000);
-});
 
-describe("uninstall helpers", () => {
-  it("returns the expected gateway volume candidate", () => {
-    const result = spawnSync(
-      "bash",
-      ["-c", `source "${UNINSTALL_SCRIPT}"; gateway_volume_candidates nemoclaw`],
-      {
-        cwd: path.join(import.meta.dirname, ".."),
-        encoding: "utf-8",
-      },
-    );
+  it("preserves rebuild-backups, backups, and sandboxes.json under ~/.nemoclaw for --yes", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-yes-preserve-"));
+    writeFakeTools(path.join(tmp, "bin"));
+    const stateDir = seedPreservedState(tmp);
+    try {
+      const result = runUninstall(tmp, ["--yes"]);
 
-    expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe("openshell-cluster-nemoclaw");
-  });
+      expect(result.status).toBe(0);
+      expect(
+        fs.existsSync(path.join(stateDir, "rebuild-backups", "sb1", "20260101", "manifest.json")),
+      ).toBe(true);
+      expect(fs.existsSync(path.join(stateDir, "backups", "20260320-120000", "USER.md"))).toBe(
+        true,
+      );
+      expect(fs.existsSync(path.join(stateDir, "sandboxes.json"))).toBe(true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  }, 60_000);
 
-  it("removes the user-local nemoclaw shim", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-shim-"));
-    const shimDir = path.join(tmp, ".local", "bin");
-    const shimPath = path.join(shimDir, "nemoclaw");
-    const targetPath = path.join(tmp, "prefix", "bin", "nemoclaw");
+  it("purges preserved ~/.nemoclaw entries through the public wrapper for --yes --destroy-user-data", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-destroy-"));
+    writeFakeTools(path.join(tmp, "bin"));
+    const stateDir = seedPreservedState(tmp);
+    try {
+      const result = runUninstall(tmp, ["--yes", "--destroy-user-data"]);
 
-    fs.mkdirSync(shimDir, { recursive: true });
-    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-    fs.writeFileSync(targetPath, "#!/usr/bin/env bash\n", { mode: 0o755 });
-    fs.symlinkSync(targetPath, shimPath);
+      expect(result.status).toBe(0);
+      const output = `${result.stdout}${result.stderr}`;
+      expect(output).toMatch(/--destroy-user-data set; purging user data under ~\/\.nemoclaw\//);
+      expect(fs.existsSync(stateDir)).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  }, 60_000);
 
-    const result = spawnSync("bash", ["-c", `source "${UNINSTALL_SCRIPT}"; remove_nemoclaw_cli`], {
-      cwd: path.join(import.meta.dirname, ".."),
-      encoding: "utf-8",
-      env: createFakeNpmEnv(tmp),
-    });
+  it("uses NemoHermes branding for --yes when Hermes is active", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemohermes-uninstall-yes-"));
+    writeFakeTools(path.join(tmp, "bin"));
+    try {
+      const result = runUninstall(tmp, ["--yes"], { NEMOCLAW_AGENT: "hermes" });
 
-    expect(result.status).toBe(0);
-    expect(fs.existsSync(shimPath)).toBe(false);
-  });
-
-  it("preserves a user-managed nemoclaw file in the shim directory", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-preserve-"));
-    const shimDir = path.join(tmp, ".local", "bin");
-    const shimPath = path.join(shimDir, "nemoclaw");
-
-    fs.mkdirSync(shimDir, { recursive: true });
-    fs.writeFileSync(shimPath, "#!/usr/bin/env bash\n", { mode: 0o755 });
-
-    const result = spawnSync("bash", ["-c", `source "${UNINSTALL_SCRIPT}"; remove_nemoclaw_cli`], {
-      cwd: path.join(import.meta.dirname, ".."),
-      encoding: "utf-8",
-      env: createFakeNpmEnv(tmp),
-    });
-
-    expect(result.status).toBe(0);
-    expect(fs.existsSync(shimPath)).toBe(true);
-    expect(`${result.stdout}${result.stderr}`).toMatch(/not an installer-managed shim/);
-  });
-
-  it("removes an installer-managed nemoclaw wrapper file in the shim directory", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-wrapper-"));
-    const shimDir = path.join(tmp, ".local", "bin");
-    const shimPath = path.join(shimDir, "nemoclaw");
-
-    fs.mkdirSync(shimDir, { recursive: true });
-    fs.writeFileSync(
-      shimPath,
-      [
-        "#!/usr/bin/env bash",
-        'export PATH="/tmp/node-bin:$PATH"',
-        'exec "/tmp/prefix/bin/nemoclaw" "$@"',
-        "",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
-
-    const result = spawnSync("bash", ["-c", `source "${UNINSTALL_SCRIPT}"; remove_nemoclaw_cli`], {
-      cwd: path.join(import.meta.dirname, ".."),
-      encoding: "utf-8",
-      env: createFakeNpmEnv(tmp),
-    });
-
-    expect(result.status).toBe(0);
-    expect(fs.existsSync(shimPath)).toBe(false);
-  });
-
-  it("preserves a wrapper-like shim when extra content is appended", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-wrapper-extra-"));
-    const shimDir = path.join(tmp, ".local", "bin");
-    const shimPath = path.join(shimDir, "nemoclaw");
-
-    fs.mkdirSync(shimDir, { recursive: true });
-    fs.writeFileSync(
-      shimPath,
-      [
-        "#!/usr/bin/env bash",
-        'export PATH="/tmp/node-bin:$PATH"',
-        'exec "/tmp/prefix/bin/nemoclaw" "$@"',
-        "echo user-extra",
-        "",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
-
-    const result = spawnSync("bash", ["-c", `source "${UNINSTALL_SCRIPT}"; remove_nemoclaw_cli`], {
-      cwd: path.join(import.meta.dirname, ".."),
-      encoding: "utf-8",
-      env: createFakeNpmEnv(tmp),
-    });
-
-    expect(result.status).toBe(0);
-    expect(fs.existsSync(shimPath)).toBe(true);
-    expect(`${result.stdout}${result.stderr}`).toMatch(/not an installer-managed shim/);
-  });
-
-  it("removes the onboard session file as part of NemoClaw state cleanup", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-session-"));
-    const stateDir = path.join(tmp, ".nemoclaw");
-    const sessionPath = path.join(stateDir, "onboard-session.json");
-
-    fs.mkdirSync(stateDir, { recursive: true });
-    fs.writeFileSync(sessionPath, JSON.stringify({ status: "complete" }));
-
-    const result = spawnSync(
-      "bash",
-      ["-c", `source "${UNINSTALL_SCRIPT}"; remove_nemoclaw_state`],
-      {
-        cwd: path.join(import.meta.dirname, ".."),
-        encoding: "utf-8",
-        env: { ...process.env, HOME: tmp },
-      },
-    );
-
-    expect(result.status).toBe(0);
-    expect(fs.existsSync(sessionPath)).toBe(false);
-    expect(fs.existsSync(stateDir)).toBe(false);
-  });
+      expect(result.status).toBe(0);
+      const output = `${result.stdout}${result.stderr}`;
+      expect(output).toMatch(/NemoHermes Uninstaller/);
+      expect(output).toMatch(/\[3\/6\] NemoHermes CLI/);
+      expect(output).toMatch(/Removed global NemoHermes CLI package/);
+      expect(output).toMatch(/Hermes has left the tidepool/);
+      expect(output).not.toMatch(/NemoClaw Uninstaller/);
+      expect(output).not.toMatch(/\[3\/6\] NemoClaw CLI/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  }, 60_000);
 });

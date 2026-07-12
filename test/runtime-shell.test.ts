@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
+import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync, type SpawnSyncReturns } from "node:child_process";
+import { describe, expect, it } from "vitest";
 
 const RUNTIME_SH = path.join(import.meta.dirname, "..", "scripts", "lib", "runtime.sh");
 
@@ -13,7 +13,7 @@ function runShell(
   script: string,
   env: Record<string, string | undefined> = {},
 ): SpawnSyncReturns<string> {
-  return spawnSync("bash", ["-lc", script], {
+  return spawnSync("bash", ["--noprofile", "--norc", "-c", script], {
     cwd: path.join(import.meta.dirname, ".."),
     encoding: "utf-8",
     env: { ...process.env, ...env },
@@ -162,6 +162,44 @@ describe("shell runtime helpers", () => {
     expect(result.status).not.toBe(0);
   });
 
+  // An out-of-range or non-numeric NEMOCLAW_VLLM_PORT / NEMOCLAW_OLLAMA_PORT
+  // must be rejected by _validate_port so get_local_provider_base_url and
+  // check_local_provider_health fail closed instead of building a bogus URL.
+  it.each([
+    { name: "NEMOCLAW_VLLM_PORT", value: "99999" },
+    { name: "NEMOCLAW_VLLM_PORT", value: "0" },
+    { name: "NEMOCLAW_VLLM_PORT", value: "abc" },
+    { name: "NEMOCLAW_OLLAMA_PORT", value: "99999" },
+    { name: "NEMOCLAW_OLLAMA_PORT", value: "0" },
+    { name: "NEMOCLAW_OLLAMA_PORT", value: "abc" },
+  ])("get_local_provider_base_url fails closed on invalid $name=$value", ({ name, value }) => {
+    const provider = name === "NEMOCLAW_VLLM_PORT" ? "vllm-local" : "ollama-local";
+    const result = runShell(`source "${RUNTIME_SH}"; get_local_provider_base_url ${provider}`, {
+      [name]: value,
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout.trim()).toBe("");
+    expect(result.stderr).toContain(`Invalid ${name}=${value} (expected 1024-65535)`);
+  });
+
+  it.each([
+    { name: "NEMOCLAW_VLLM_PORT", value: "99999" },
+    { name: "NEMOCLAW_VLLM_PORT", value: "0" },
+    { name: "NEMOCLAW_VLLM_PORT", value: "abc" },
+    { name: "NEMOCLAW_OLLAMA_PORT", value: "99999" },
+    { name: "NEMOCLAW_OLLAMA_PORT", value: "0" },
+    { name: "NEMOCLAW_OLLAMA_PORT", value: "abc" },
+  ])("check_local_provider_health fails closed on invalid $name=$value", ({ name, value }) => {
+    const provider = name === "NEMOCLAW_VLLM_PORT" ? "vllm-local" : "ollama-local";
+    const result = runShell(`source "${RUNTIME_SH}"; check_local_provider_health ${provider}`, {
+      [name]: value,
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(`Invalid ${name}=${value} (expected 1024-65535)`);
+  });
+
   it("returns the first non-loopback nameserver", () => {
     const result = runShell(
       `source "${RUNTIME_SH}"; first_non_loopback_nameserver $'nameserver 127.0.0.11\\nnameserver 10.0.0.2'`,
@@ -202,51 +240,14 @@ describe("shell runtime helpers", () => {
     expect(result.stdout.trim()).toBe("9.9.9.9");
   });
 
-  it("detect_kubelet_conflict skips on non-Linux (macOS)", () => {
-    const result = runShell(
-      `uname() { printf 'Darwin\\n'; }; source "${RUNTIME_SH}"; detect_kubelet_conflict`,
-    );
-    // Should return 1 (no conflict) on non-Linux
-    expect(result.status).toBe(1);
-  });
-
-  it("detect_kubelet_conflict returns 0 when kubelet process is found", () => {
-    const result = runShell(
-      `uname() { printf 'Linux\\n'; }
-       pgrep() { [[ "$2" == "kubelet" ]] && return 0 || return 1; }
-       source "${RUNTIME_SH}"; detect_kubelet_conflict
-       echo "$KUBELET_CONFLICT_DETAIL"`,
-    );
-    expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe("kubelet process detected");
-  });
-
-  it("detect_kubelet_conflict returns 1 when no kubelet is found", () => {
-    const result = runShell(
-      `uname() { printf 'Linux\\n'; }
-       pgrep() { return 1; }
-       command() { return 1; }
-       systemctl() { return 1; }
-       source "${RUNTIME_SH}"; detect_kubelet_conflict`,
-    );
-    expect(result.status).toBe(1);
-  });
-
-  it("warn_kubelet_conflict emits conflict detail to stderr", () => {
-    const result = runShell(
-      `warn() { echo >&2 "$1"; }; source "${RUNTIME_SH}"; warn_kubelet_conflict "MicroK8s is running"`,
-    );
-    expect(result.status).toBe(0);
-    expect(result.stderr).toContain("MicroK8s is running");
-    expect(result.stderr).toContain("CrashLoopBackOff");
-  });
-
   it("does not consume installer stdin when reading the Colima VM nameserver", () => {
     const result = runShell(
       `function colima() { cat > /dev/null || true; printf 'nameserver 100.100.100.100\\n'; }
        source "${RUNTIME_SH}"
+       nameserver_output="$(mktemp "\${TMPDIR:-/tmp}/nemoclaw-colima-ns.XXXXXX")"
+       trap 'rm -f "$nameserver_output"' EXIT
        printf 'sandbox-answer\\n' | {
-         get_colima_vm_nameserver > /tmp/nemoclaw-colima-ns.out
+         get_colima_vm_nameserver > "$nameserver_output"
          cat
        }`,
     );
