@@ -19,6 +19,16 @@ describe("Playwright browser agent guide", () => {
     expect(onboardingBlock).not.toContain("sandbox-base:v0.0.80");
   });
 
+  it("keeps the browser policy and TLS trust boundaries (#4218)", () => {
+    const policyBlock = guide.match(/```yaml\npreset:[\s\S]*?\n```/)?.[0];
+    const browserBlock = guide.match(/```python\nimport hashlib[\s\S]*?\n```/)?.[0];
+
+    expect(policyBlock).toContain("- { path: /usr/local/lib/ms-playwright/** }");
+    expect(browserBlock).toContain('ca_bundle = os.environ.get("SSL_CERT_FILE")');
+    expect(browserBlock).toMatch(/["']certutil["'][\s\S]*?["']-A["']/);
+    expect(browserBlock).not.toMatch(/ignore_https_errors|--ignore-certificate-errors/i);
+  });
+
   it("keeps browser commands behind the credential-scrubbing exec boundary (#4218)", () => {
     const commandBlock = guide.match(/```bash\nnemoclaw playwright-agent upload[\s\S]*?\n```/)?.[0];
 
