@@ -124,6 +124,7 @@ Runtime state, such as logs, memory, platform sessions, and the SQLite state dat
 | `/sandbox/.hermes/config.yaml` | NemoClaw-generated Hermes runtime configuration. |
 | `/sandbox/.hermes/.env` | NemoClaw-generated environment and messaging placeholders. |
 | `/sandbox/.hermes/state.db` | Hermes SQLite state database. |
+| `/sandbox/.hermes/dashboard-home/` | Hermes Web Dashboard profile, including `MEMORY.md` and `USER.md`. |
 | `/sandbox/.hermes/platforms/` | Messaging platform state, including QR-paired sessions such as WhatsApp. |
 | `/sandbox/.hermes/logs/` | Hermes runtime logs. |
 | `/sandbox/SOUL.md` | Durable top-level Hermes persona file preserved by NemoClaw snapshots. |
@@ -132,7 +133,7 @@ Runtime state, such as logs, memory, platform sessions, and the SQLite state dat
 
 Hermes state lives in the sandbox's persistent state volume, not in the container image alone.
 Normal restarts preserve that state.
-Rebuilds and upgrades use NemoClaw's snapshot flow to preserve manifest-defined Hermes state, including `SOUL.md` and the SQLite database behind `.hermes/state.db`.
+Rebuilds and upgrades use NemoClaw's snapshot flow to preserve manifest-defined Hermes state, including `SOUL.md`, the Web Dashboard profile under `.hermes/dashboard-home/`, and the SQLite database behind `.hermes/state.db`.
 
 Running `$$nemoclaw <name> destroy` deletes the sandbox and its persistent state volume.
 Back up important state before destroying a Hermes sandbox.

@@ -43,7 +43,7 @@ If you see `registry.json` in older tests, notes, or discussions, treat it as le
 | Path | Purpose | Safe to delete |
 |---|---|---|
 | `~/.nemoclaw/state/` | Operational coordination and history for lifecycle locks, shields transitions, timers, and audit events, local routing, and port-forward helpers. | No. Deleting it can disrupt an active operation and discard security or recovery context. |
-| `~/.nemoclaw/snapshots/` | Full copies of host `~/.openclaw` state created by blueprint migration and rollback flows. | Only after you no longer need the corresponding rollback or restore point. Use the blueprint runner retention commands instead of deleting entries manually. |
+| `~/.nemoclaw/snapshots/` | Full copies of host `~/.openclaw` state created by blueprint migration and rollback flows. | Only after you no longer need the corresponding rollback or restore point. The host CLI does not expose the direct runner's retention actions. |
 | `~/.nemoclaw/rebuild-backups/` | Host-side snapshots written by `backup-all`, `snapshot create`, and rebuild flows. | Only after you no longer need rollback or restore points. |
 | `~/.nemoclaw/backups/` | Workspace backups written by legacy backup helpers and some recovery flows. | Only after confirming you no longer need those workspace archives. |
 | `~/.nemoclaw/mounts/` | Default local mount points created by share or mount commands. | Unmount first, then remove unused directories. |
@@ -51,7 +51,7 @@ If you see `registry.json` in older tests, notes, or discussions, treat it as le
 
 ## Migration Snapshot Retention
 
-The blueprint runner accepts these commands for migration snapshots:
+The direct blueprint runner accepts these action arguments for migration snapshots:
 
 ```text
 snapshots list
@@ -59,7 +59,8 @@ snapshots prune --keep 3
 snapshots delete --path ~/.nemoclaw/snapshots/20260101T000000Z
 ```
 
-Run `snapshots list` first to inspect the available timestamped copies.
+These fragments are not standalone shell commands, and the host `nemoclaw` CLI does not expose them.
+An integration that invokes the direct runner can use `snapshots list` first to inspect the available timestamped copies.
 `snapshots prune` keeps the requested number of newest snapshots; `--keep 0` removes all of them.
 `snapshots delete` accepts only one timestamped directory directly under `~/.nemoclaw/snapshots/`.
 Both deletion commands are irreversible: they do not modify a running sandbox, but they remove host state that could otherwise be used for rollback or restore.
