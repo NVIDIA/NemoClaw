@@ -132,11 +132,12 @@ describe("effective built-in policy contracts", () => {
 
     for (const [policyName, policy] of Object.entries(effective.network_policies ?? {})) {
       expect(policy.rules, `${policyName} must put rules on endpoints`).toBeUndefined();
-      for (const endpoint of policy.endpoints ?? []) {
+      const endpoints = policy.endpoints ?? [];
+      for (const endpoint of endpoints) {
         expect(methods(endpoint), `${policyName}:${endpoint.host}`).not.toContain("*");
-        if (endpoint.protocol === "rest") {
-          expect(endpoint.tls, `${policyName}:${endpoint.host}`).not.toBe("terminate");
-        }
+      }
+      for (const endpoint of endpoints.filter(({ protocol }) => protocol === "rest")) {
+        expect(endpoint.tls, `${policyName}:${endpoint.host}`).not.toBe("terminate");
       }
     }
   });
