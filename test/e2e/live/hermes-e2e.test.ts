@@ -8,14 +8,9 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText, shellQuote } from "../fixtures/clients/command.ts";
-import { trustedProviderEndpoint } from "../fixtures/clients/provider.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { exportHermesSession, hermesLastActive } from "../fixtures/hermes-session.ts";
-import {
-  DEFAULT_HOSTED_INFERENCE_MODEL,
-  requireHostedInferenceConfig,
-} from "../fixtures/hosted-inference.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import {
   assertSecurityPosture,
@@ -34,7 +29,6 @@ const HERMES_DASHBOARD_INTERNAL_PORT =
 const SESSION_FILE = path.join(os.homedir(), ".nemoclaw", "onboard-session.json");
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
 const LIVE_TIMEOUT_MS = 70 * 60_000;
-const CHAT_MODEL = process.env.NEMOCLAW_MODEL ?? DEFAULT_HOSTED_INFERENCE_MODEL;
 const ONBOARD_VALIDATION_TIMEOUT_SECONDS =
   process.env.NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS ?? "60";
 
@@ -62,15 +56,14 @@ function hermesDashboardE2eEnabled(): boolean {
   );
 }
 
-function commandEnv(hostedEnv: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+function commandEnv(inferenceEnv: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...buildAvailabilityProbeEnv(),
-    ...hostedEnv,
+    ...inferenceEnv,
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_AGENT: "hermes",
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_RECREATE_SANDBOX: "1",
-    NEMOCLAW_MODEL: hostedEnv.NEMOCLAW_MODEL ?? CHAT_MODEL,
     NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: ONBOARD_VALIDATION_TIMEOUT_SECONDS,
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     ...securityPostureModeEnv(),
@@ -239,20 +232,18 @@ async function retryHostedInference<T>(
 
 test("hermes-e2e: install.sh onboards Hermes and proves health plus live inference", {
   timeout: LIVE_TIMEOUT_MS,
-}, async ({ artifacts, cleanup, host, provider, sandbox, secrets }) => {
-  const hosted = requireHostedInferenceConfig(secrets);
-  const apiKey = hosted.apiKey;
-
+}, async ({ artifacts, cleanup, host, inference, sandbox }) => {
   await artifacts.target.declare({
     id: "hermes-e2e",
-    boundary: "install.sh --non-interactive --fresh + Hermes sandbox runtime",
+    boundary: `install.sh --non-interactive --fresh + Hermes sandbox runtime + ${inference.mode} inference adapter`,
     sandboxName: SANDBOX_NAME,
     dashboardEnabled: hermesDashboardE2eEnabled(),
+    inferenceMode: inference.mode,
     securityPostureEnabled: securityPostureEnabled(),
   });
 
-  const env = commandEnv(hosted.env);
-  const redactionValues = [apiKey];
+  const env = commandEnv(inference.env());
+  const redactionValues = inference.redactionValues();
 
   const cleanupHermes = async (label: string) => {
     await bestEffort(() =>
@@ -296,19 +287,9 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
 
   expect(fs.existsSync(path.join(REPO_ROOT, "agents", "hermes", "manifest.yaml"))).toBe(true);
 
-  const providerReachability = await provider.probeReachability(
-    trustedProviderEndpoint(hosted.endpointUrl, { allowedHosts: ["inference-api.nvidia.com"] }),
-    {
-      artifactName: "phase-1-inference-reachability",
-      env: buildAvailabilityProbeEnv(),
-      redactionValues,
-      timeoutMs: 30_000,
-    },
-  );
-  const reachabilityStatus = providerReachability.stdout.trim();
-  expect(providerReachability.exitCode, resultText(providerReachability)).toBe(0);
-  expect(["000", "401", "403"], resultText(providerReachability)).not.toContain(reachabilityStatus);
-  expect(Number(reachabilityStatus), resultText(providerReachability)).toBeLessThan(500);
+  await expect(inference.probeModels("phase-1-inference-models")).resolves.toMatchObject({
+    data: expect.arrayContaining([expect.objectContaining({ id: inference.model })]),
+  });
 
   // Phase 2: real installer + non-interactive Hermes onboard.
   const install = await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {
@@ -392,13 +373,13 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
   expect(fs.existsSync(SESSION_FILE), `${SESSION_FILE} missing`).toBe(true);
   expect(readJsonFile(SESSION_FILE)).toMatchObject({ agent: "hermes" });
 
-  const inference = await sandbox.openshell(["inference", "get"], {
+  const inferenceGet = await sandbox.openshell(["inference", "get"], {
     artifactName: "phase-3-openshell-inference-get",
     env: commandEnv(),
     timeoutMs: 30_000,
   });
-  expect(inference.exitCode, resultText(inference)).toBe(0);
-  expect(resultText(inference)).toContain(hosted.providerName);
+  expect(inferenceGet.exitCode, resultText(inferenceGet)).toBe(0);
+  expect(resultText(inferenceGet)).toContain(inference.providerName);
 
   const policy = await sandbox.openshell(["policy", "get", "--full", SANDBOX_NAME], {
     artifactName: "phase-3-openshell-policy-get",
@@ -1234,31 +1215,20 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
 
   // Phase 6: live inference through both the external provider and the
   // sandbox's inference.local route.
-  const directChat = await retryHostedInference("direct NVIDIA Endpoints chat", async (attempt) => {
-    const response = await provider.requestJson(
-      trustedProviderEndpoint("https://inference-api.nvidia.com/v1/chat/completions", {
-        allowedHosts: ["inference-api.nvidia.com"],
-      }),
-      {
-        artifactName: `phase-6-direct-nvidia-chat-attempt-${attempt}`,
-        body: chatPayload(
-          hosted.model,
-          "Reply with exactly one word: PONG",
-          attempt === 1 ? 256 : 1024,
-        ),
-        curlMaxTimeSeconds: 90,
-        headers: ["Content-Type: application/json", `Authorization: Bearer ${apiKey}`],
-        env: buildAvailabilityProbeEnv(),
-        redactionValues,
-        timeoutMs: 120_000,
-      },
-    );
-    if (shouldRetryForReasoningBudget(response.json)) {
-      throw new Error("direct chat exhausted response budget while reasoning before PONG");
-    }
-    return response;
-  });
-  expectPong("direct NVIDIA Endpoints chat", directChat.json);
+  const directChat = await retryHostedInference(
+    `${inference.mode} direct chat`,
+    async (attempt) => {
+      const response = await inference.directChat("Reply with exactly one word: PONG", {
+        artifactName: `phase-6-direct-inference-chat-attempt-${attempt}`,
+        maxTokens: attempt === 1 ? 256 : 1024,
+      });
+      if (shouldRetryForReasoningBudget(response)) {
+        throw new Error("direct chat exhausted response budget while reasoning before PONG");
+      }
+      return response;
+    },
+  );
+  expectPong(`${inference.mode} direct chat`, directChat);
 
   const sandboxChatJson = await retryHostedInference(
     "Hermes sandbox inference.local chat",
@@ -1274,7 +1244,7 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
           "Content-Type: application/json",
           "--data-raw",
           chatPayload(
-            hosted.model,
+            inference.model,
             "Reply with exactly one word: PONG",
             attempt === 1 ? 256 : 1024,
           ),

@@ -19,6 +19,15 @@ on:
         required: false
         default: ""
         type: string
+      inference_mode:
+        description: "Inference adapter mode for compatible Vitest E2E jobs: mock, internal-nvidia, or public-nvidia."
+        required: false
+        default: "mock"
+        type: choice
+        options:
+          - mock
+          - internal-nvidia
+          - public-nvidia
       allow_jetson_runner_queue:
         description: "Repository administrators only: before setting true for jetson-nvmap-gpu, confirm an online Jetson runner in the authoritative NVIDIA/NemoClaw Settings -> Actions -> Runners inventory; queued jobs do not honor timeout-minutes before assignment."
         required: false
@@ -63,6 +72,7 @@ env:
   NEMOCLAW_E2E_PLAN_HASH: ${{ inputs.plan_hash }}
   NEMOCLAW_E2E_CORRELATION_ID: ${{ inputs.correlation_id }}
   NEMOCLAW_E2E_SHARD: default
+  NEMOCLAW_E2E_INFERENCE_MODE: ${{ inputs.inference_mode || 'mock' }}
 
 jobs:
   generate-matrix:
