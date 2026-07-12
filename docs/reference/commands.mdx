@@ -3115,7 +3115,7 @@ Passthrough commands do not consume flags intended for the downstream command as
 | `NEMOCLAW_OLLAMA_PROXY_PORT` | 11435 | Ollama auth proxy |
 | `NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT` | 11437 | Host-side OpenRouter runtime adapter |
 <AgentOnly variant="openclaw,hermes">
-| `NEMOCLAW_DASHBOARD_BIND` | *unset* (loopback) | Dashboard or API forward bind address. Set to `0.0.0.0` to opt in to remote bind for SSH-deployed hosts. |
+| `NEMOCLAW_DASHBOARD_BIND` | *unset* (loopback outside WSL) | Dashboard or API forward bind address. WSL uses an all-interface forward for Windows-host reachability. Set to `0.0.0.0` to opt in to remote bind on other SSH-deployed hosts. |
 </AgentOnly>
 <AgentOnly variant="openclaw">
 | `NEMOCLAW_GATEWAY_WS_HOST` | *unset* (auto-derived inside the sandbox; loopback elsewhere) | Host used for the in-sandbox `OPENCLAW_GATEWAY_URL`; inside the sandbox it defaults to the primary interface address so `sessions_spawn` sub-agents can dial the gateway through the enforced network path. |
@@ -3133,9 +3133,10 @@ If you run Ollama on port 11435, set `NEMOCLAW_OLLAMA_PROXY_PORT` to another fre
 Keep the OpenShell gateway on loopback and use `NEMOCLAW_DASHBOARD_BIND` when you need remote browser/API access.
 
 `NEMOCLAW_DASHBOARD_BIND` controls the dashboard or API port forward bind address.
-By default the forward stays on `127.0.0.1` (loopback only).
-Set `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` before `$$nemoclaw onboard` (or `$$nemoclaw <sandbox> connect`) to bind the forward on all interfaces, which is useful when the host is reached over SSH or a cloud workstation.
-Only `0.0.0.0` enables the remote bind; other values are ignored.
+Outside WSL, the forward stays on `127.0.0.1` (loopback only) by default.
+On WSL, NemoClaw binds the host-side forward on all interfaces so the Windows host can reach it, while the ready summary continues to print a loopback dashboard URL.
+Set `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` before `$$nemoclaw onboard` to prepare the sandbox for remote exposure and bind the forward on all interfaces. Use the same setting for later `$$nemoclaw <sandbox> connect` calls. A sandbox created without this opt-in must be recreated with `NEMOCLAW_DASHBOARD_BIND=0.0.0.0 $$nemoclaw onboard --recreate-sandbox` before a remote-bind connect is allowed.
+Only `0.0.0.0` enables the remote bind; onboarding rejects any other non-empty value.
 </AgentOnly>
 
 <AgentOnly variant="openclaw">

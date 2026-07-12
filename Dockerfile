@@ -838,6 +838,10 @@ ARG NEMOCLAW_UPSTREAM_PROVIDER=
 ARG NEMOCLAW_PRIMARY_MODEL_REF=inference/nvidia/nemotron-3-super-120b-a12b
 # Default dashboard port 18789 — override at runtime via NEMOCLAW_DASHBOARD_PORT.
 ARG CHAT_UI_URL=http://127.0.0.1:18789
+ARG NEMOCLAW_DASHBOARD_BIND=
+# Internal audit provenance for WSL's default all-interface dashboard forward.
+# Onboarding rewrites this for managed OpenClaw images built on WSL.
+ARG NEMOCLAW_WSL_DASHBOARD_EXPOSURE=0
 ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
 ARG NEMOCLAW_INFERENCE_API=openai-completions
 ARG NEMOCLAW_CONTEXT_WINDOW=131072
@@ -876,6 +880,9 @@ ARG NEMOCLAW_EXTRA_AGENTS_JSON_B64=W10=
 # since terminal-based pairing is impossible in those contexts.
 # Default: "0" (device auth enabled for local deployments — secure by default).
 ARG NEMOCLAW_DISABLE_DEVICE_AUTH=0
+# Internal audit provenance for the opt-out above. Standard onboarding rewrites
+# this to managed-onboard; direct image builders retain operator provenance.
+ARG NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE=operator
 # Compatibility build arg for older custom Dockerfiles and rebuild tooling.
 # NemoClaw-managed images intentionally do not consume it; gateway auth tokens
 # are generated at container startup and are never baked into image layers.
@@ -932,7 +939,10 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_MESSAGING_PLAN_B64=${NEMOCLAW_MESSAGING_PLAN_B64} \
     NEMOCLAW_EXTRA_AGENTS_JSON_B64=${NEMOCLAW_EXTRA_AGENTS_JSON_B64} \
     NEMOCLAW_OPENCLAW_WECHAT_PLUGIN_PREINSTALLED=1 \
+    NEMOCLAW_DASHBOARD_BIND=${NEMOCLAW_DASHBOARD_BIND} \
+    NEMOCLAW_WSL_DASHBOARD_EXPOSURE=${NEMOCLAW_WSL_DASHBOARD_EXPOSURE} \
     NEMOCLAW_DISABLE_DEVICE_AUTH=${NEMOCLAW_DISABLE_DEVICE_AUTH} \
+    NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE=${NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE} \
     NEMOCLAW_PROXY_HOST=${NEMOCLAW_PROXY_HOST} \
     NEMOCLAW_PROXY_PORT=${NEMOCLAW_PROXY_PORT} \
     NEMOCLAW_WEB_SEARCH_ENABLED=${NEMOCLAW_WEB_SEARCH_ENABLED} \

@@ -91,6 +91,9 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     : "0";
   if (manageDashboard) {
     envArgs.push(formatEnvAssignment("NEMOCLAW_DASHBOARD_PORT", effectiveDashboardPort));
+    if (env.NEMOCLAW_DASHBOARD_BIND === "0.0.0.0") {
+      envArgs.push(formatEnvAssignment("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0"));
+    }
   }
 
   appendOpenClawRuntimeEnvArgs(envArgs, input.agent ?? null);

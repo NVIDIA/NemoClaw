@@ -57,7 +57,7 @@ Configure this repository secret for E2E recommendations:
 
 - `PI_E2E_ADVISOR_API_KEY`
 
-The analyzer uses the fixed `openai/openai/gpt-5.5` advisor model through the
+The analyzer uses the fixed `azure/openai/gpt-5.6-terra` advisor model through the
 OpenAI-compatible `https://inference-api.nvidia.com/v1` service.
 
 If advisor credentials are unavailable, the advisor writes a low-confidence unavailable result instead of

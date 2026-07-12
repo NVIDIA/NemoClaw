@@ -935,6 +935,10 @@ describe("pull request and main workflow contracts", () => {
     const installerRuns = stepRuns(sharedActions.installerIntegration).join("\n");
 
     expect(staticRuns).toContain("npm install --ignore-scripts");
+    expect(staticRuns).toContain("npm --prefix nemoclaw ci --ignore-scripts --dry-run");
+    expect(
+      requiredStepIndex(sharedActions.staticChecks, "Validate sandbox payload lockfile"),
+    ).toBeLessThan(requiredStepIndex(sharedActions.staticChecks, "Install dependencies"));
     expect(staticRuns).toContain("npm run validate:configs");
     expect(staticRuns).toContain("npm run typecheck:scorecard");
     expect(staticPrekRun).toContain("npx prek run --all-files --stage pre-commit");

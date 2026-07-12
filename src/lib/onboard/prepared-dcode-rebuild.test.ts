@@ -349,7 +349,11 @@ describe("prepared DCode rebuild adapter", () => {
   });
 
   it("uses the prepared build ID without patching and patches ordinary contexts", async () => {
-    const patch = vi.fn(async () => ({ buildId: "fresh-build", resolvedBaseImage: null }));
+    const patch = vi.fn(async () => ({
+      buildId: "fresh-build",
+      dashboardRemoteBindPrepared: false,
+      resolvedBaseImage: null,
+    }));
 
     await expect(
       resolveSandboxBuildId(preparedBuildIdInput, { prepareSandboxDockerfilePatch: patch }),

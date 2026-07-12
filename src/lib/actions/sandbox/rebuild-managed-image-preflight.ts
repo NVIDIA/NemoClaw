@@ -138,7 +138,7 @@ export async function prepareManagedDcodeRebuildImage(
     });
     cleanupBuildContext = createIdempotentBuildContextCleanup(staged.cleanupBuildCtx);
 
-    const { buildId } = await preparePatch({
+    const { buildId, dashboardRemoteBindPrepared } = await preparePatch({
       agent: input.agent,
       fromDockerfile: null,
       sandboxBaseImage: OPENCLAW_SANDBOX_BASE_IMAGE,
@@ -177,6 +177,7 @@ export async function prepareManagedDcodeRebuildImage(
         ...staged,
         cleanupBuildCtx: cleanupBuildContext,
         buildId,
+        dashboardRemoteBindPrepared,
         contextFingerprint,
         dcodeAutoApprovalMode: input.dcodeAutoApprovalMode,
         verifyBuildCtx: createBuildContextVerifier(staged.buildCtx, contextFingerprint),

@@ -44,7 +44,7 @@ function createRepoPathGuard(cwd: string): RepoPathGuard {
             ? path.join(os.homedir(), normalizedCandidate.slice(2))
             : normalizedCandidate;
       const lexicalPath = path.resolve(lexicalRoot, expandedCandidate);
-      if (!isContainedPath(lexicalRoot, lexicalPath)) {
+      if (!isContainedPath(lexicalRoot, lexicalPath) && !isContainedPath(realRoot, lexicalPath)) {
         throw new Error(`Advisor read-only path is outside the workspace: ${candidate}`);
       }
 

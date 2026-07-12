@@ -142,6 +142,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   hermesDashboardInternalPort?: number | null;
   hermesDashboardTui?: boolean;
   dashboardPort?: number | null;
+  /** Remote dashboard exposure was included in the sandbox's generated config. */
+  dashboardRemoteBindPrepared?: boolean;
   // OpenShell gateway registration name and host port bound to this sandbox.
   // Persisted so later lifecycle commands operate on the sandbox's own gateway
   // instead of the process-global `nemoclaw` singleton — a second sandbox on a
@@ -544,6 +546,7 @@ export function registerSandbox(entry: SandboxEntry): void {
       hermesDashboardInternalPort: entry.hermesDashboardInternalPort ?? undefined,
       hermesDashboardTui: entry.hermesDashboardTui === true ? true : undefined,
       dashboardPort: entry.dashboardPort ?? undefined,
+      dashboardRemoteBindPrepared: entry.dashboardRemoteBindPrepared === true ? true : undefined,
       gatewayName: entry.gatewayName ?? undefined,
       gatewayPort: entry.gatewayPort ?? undefined,
     };

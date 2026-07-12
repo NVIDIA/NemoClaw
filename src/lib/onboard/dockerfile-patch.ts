@@ -29,6 +29,7 @@ import {
   type DcodeAutoApprovalMode,
   isDcodeAutoApprovalMode,
 } from "./dcode-auto-approval";
+import * as remoteDashboardBindContract from "./dockerfile-remote-dashboard-bind-contract";
 import {
   dockerfileInstructions,
   readDockerfilePatchSnapshot,
@@ -86,9 +87,11 @@ export interface PatchStagedDockerfileOptions {
   buildIdPolicy?: DockerfileBuildIdPolicy;
   toolDisclosure?: ToolDisclosure;
   requireToolDisclosureContract?: boolean;
+  trustedManagedDockerfile?: boolean;
   baseImageResolutionMetadata?: SandboxBaseImageResolutionMetadata | null;
   dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
   upstreamEndpointUrl?: string | null;
+  wslDashboardExposure?: boolean;
 }
 
 export function patchDcodeAutoApprovalDockerArg(
@@ -118,6 +121,10 @@ export function isValidProxyPort(value: string): boolean {
   return port >= 1 && port <= 65535;
 }
 
+export type PatchedDockerfileMetadata = { dashboardRemoteBindPrepared: boolean };
+
+export { hasPreparedRemoteDashboardBind } from "./dockerfile-remote-dashboard-bind-contract";
+
 export function patchStagedDockerfile(
   dockerfilePath: string,
   model: string,
@@ -131,7 +138,7 @@ export function patchStagedDockerfile(
   inferenceBaseUrlOverride: string | null = null,
   hermesToolGateways: string[] = [],
   options: PatchStagedDockerfileOptions = {},
-): void {
+): PatchedDockerfileMetadata {
   const sanitizedModel = sanitizeDockerArg(model);
   const sandboxInference = getSandboxInferenceConfig(
     sanitizedModel,
@@ -212,6 +219,28 @@ export function patchStagedDockerfile(
     /^ARG CHAT_UI_URL=.*$/m,
     `ARG CHAT_UI_URL=${sanitizeDockerArg(chatUiUrl)}`,
   );
+  if (options.wslDashboardExposure !== undefined) {
+    const wslDashboardExposureArg = /^ARG NEMOCLAW_WSL_DASHBOARD_EXPOSURE=.*$/m;
+    const hasWslDashboardExposureArg = wslDashboardExposureArg.test(dockerfile);
+    if (options.wslDashboardExposure && !hasWslDashboardExposureArg) {
+      throw new Error(
+        "Dockerfile is missing ARG NEMOCLAW_WSL_DASHBOARD_EXPOSURE; cannot record WSL dashboard exposure.",
+      );
+    }
+    if (hasWslDashboardExposureArg) {
+      dockerfile = dockerfile.replace(
+        wslDashboardExposureArg,
+        `ARG NEMOCLAW_WSL_DASHBOARD_EXPOSURE=${options.wslDashboardExposure ? "1" : "0"}`,
+      );
+    }
+  }
+  const remoteDashboardBind = remoteDashboardBindContract.patchRequestedRemoteDashboardBindContract(
+    dockerfile,
+    process.env.NEMOCLAW_DASHBOARD_BIND,
+    options.trustedManagedDockerfile === true,
+  );
+  dockerfile = remoteDashboardBind.dockerfile;
+  const { dashboardRemoteBindPrepared } = remoteDashboardBind;
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_INFERENCE_BASE_URL=.*$/m,
     `ARG NEMOCLAW_INFERENCE_BASE_URL=${sanitizeDockerArg(inferenceBaseUrl)}`,
@@ -340,12 +369,8 @@ export function patchStagedDockerfile(
       dockerfile = dockerfile.replace(argPattern, `ARG ${envKey}=${sanitizeDockerArg(rawValue)}`);
     }
   }
-  // Onboard flow expects immediate dashboard access without device pairing,
-  // so disable device auth for images built during onboard (see #1217).
-  dockerfile = dockerfile.replace(
-    /^ARG NEMOCLAW_DISABLE_DEVICE_AUTH=.*$/m,
-    `ARG NEMOCLAW_DISABLE_DEVICE_AUTH=${sanitizeDockerArg("1")}`,
-  );
+  // Keep the managed pairing opt-out distinct from an operator's choice.
+  dockerfile = remoteDashboardBindContract.patchManagedDeviceAuthOptOutContract(dockerfile);
   const messagingPlan = MessagingSetupApplier.readPlanFromEnv();
   if (messagingPlan) {
     const hydratedMessagingPlan = hydrateDerivedSandboxMessagingPlanFields(
@@ -424,4 +449,5 @@ export function patchStagedDockerfile(
   }
 
   replaceDockerfilePatchSnapshot(dockerfilePath, patchSnapshot, dockerfile);
+  return { dashboardRemoteBindPrepared };
 }

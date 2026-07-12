@@ -16,6 +16,8 @@ import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 
 export interface RebuildRestorePhaseInput {
   sandboxName: string;
+  targetAgentType: string;
+  targetImageIsCustom: boolean;
   backupManifest: RebuildBackupManifest;
   policyPresets: string[];
   customPolicies: NonNullable<RebuildSandboxEntry["customPolicies"]>;
@@ -176,6 +178,8 @@ function reconcileFinalManagedObservability(
 export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): RebuildRestorePhaseResult {
   const {
     sandboxName,
+    targetAgentType,
+    targetImageIsCustom,
     backupManifest,
     policyPresets,
     customPolicies,
@@ -190,7 +194,10 @@ export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): Rebuild
     const restore = sandboxState.restoreRecreatedSandboxState(
       sandboxName,
       backupManifest.backupPath,
-      { targetAgentType: backupManifest.agentType },
+      {
+        targetAgentType,
+        ...(targetImageIsCustom ? { allowCustomImageWholeStateFileRestore: true } : {}),
+      },
     );
     log(
       `Restore result: success=${restore.success}, restored=${restore.restoredDirs.join(",")}; files=${restore.restoredFiles.join(",")}, failed=${restore.failedDirs.join(",")}; failedFiles=${restore.failedFiles.join(",")}${restore.error ? `; error=${restore.error}` : ""}`,
