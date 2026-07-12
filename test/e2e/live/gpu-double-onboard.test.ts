@@ -73,7 +73,17 @@ async function cleanup(host: HostCliClient, sandbox: SandboxClient): Promise<voi
       "bash",
       [
         "-lc",
-        "pkill -f 'ollama serve' 2>/dev/null || true; pkill -f 'ollama-auth-proxy' 2>/dev/null || true",
+        String.raw`set +e
+status=0
+for pattern in '[o]llama serve' '[o]llama-auth-proxy'; do
+  pkill -f "$pattern"
+  rc=$?
+  case "$rc" in
+    0|1) ;;
+    *) status="$rc" ;;
+  esac
+done
+exit "$status"`,
       ],
       {
         artifactName: "cleanup-ollama-processes",
@@ -176,7 +186,94 @@ test("gpu double onboard keeps Ollama auth proxy token consistent after re-onboa
     skip(`NVIDIA GPU is required: ${resultText(smi)}`);
   }
 
-  cleanupRegistry.add("remove gpu double-onboard state", () => cleanup(host, sandbox));
+  cleanupRegistry.trackDisposable("stop gpu double-onboard Ollama processes", async () => {
+    const stop = await host.command(
+      "bash",
+      [
+        "-lc",
+        String.raw`set +e
+status=0
+for pattern in '[o]llama serve' '[o]llama-auth-proxy'; do
+  pkill -f "$pattern"
+  rc=$?
+  case "$rc" in
+    0|1) ;;
+    *) status="$rc" ;;
+  esac
+done
+exit "$status"`,
+      ],
+      {
+        artifactName: "cleanup-ollama-processes",
+        env: env(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(stop.exitCode, resultText(stop)).toBe(0);
+  });
+  const gatewayCleanupOptions = {
+    artifactName: "cleanup-openshell-gateway-destroy",
+    env: env(),
+    timeoutMs: 60_000,
+  };
+  cleanupRegistry.trackGateway(
+    {
+      cleanupGatewayRegistration: async (name: string) => {
+        if (
+          !(await host.isCommandAvailable("openshell", {
+            artifactName: "cleanup-probe-openshell-gateway",
+            env: gatewayCleanupOptions.env,
+            timeoutMs: 30_000,
+          }))
+        ) {
+          return;
+        }
+        await host.cleanupGatewayRegistration(name, gatewayCleanupOptions);
+      },
+    },
+    "nemoclaw",
+    gatewayCleanupOptions,
+  );
+  const openshellSandboxCleanupOptions = {
+    artifactName: "cleanup-openshell-sandbox-delete",
+    env: env(),
+    timeoutMs: 60_000,
+  };
+  cleanupRegistry.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, async () => {
+    if (
+      !(await host.isCommandAvailable(process.env.OPENSHELL_BIN ?? "openshell", {
+        artifactName: "cleanup-probe-openshell-sandbox",
+        env: openshellSandboxCleanupOptions.env,
+        timeoutMs: 30_000,
+      }))
+    ) {
+      return;
+    }
+    await sandbox.cleanupSandbox(SANDBOX_NAME, openshellSandboxCleanupOptions);
+  });
+  const nemoclawSandboxCleanupOptions = {
+    artifactName: "cleanup-nemoclaw-destroy",
+    env: env(),
+    timeoutMs: 120_000,
+  };
+  cleanupRegistry.trackSandbox(
+    {
+      cleanupSandbox: async (name: string) => {
+        if (
+          !(await host.isCommandAvailable(host.commandPath, {
+            artifactName: "cleanup-probe-nemoclaw-sandbox",
+            env: nemoclawSandboxCleanupOptions.env,
+            timeoutMs: 30_000,
+          }))
+        ) {
+          return;
+        }
+        await host.cleanupSandbox(name, nemoclawSandboxCleanupOptions);
+      },
+    },
+    SANDBOX_NAME,
+    nemoclawSandboxCleanupOptions,
+  );
   await cleanup(host, sandbox);
 
   const installOllama = await host.command(

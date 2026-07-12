@@ -57,6 +57,8 @@ const ENCODED_SLASH_DENIED_REASON =
   "request-target contains an encoded '/' (%2F) which is not allowed on this endpoint";
 type NemoEnv = NodeJS.ProcessEnv;
 
+process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
+
 function text(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
@@ -550,17 +552,19 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
   expect(text(openshellVersion)).toContain("0.0.72");
 
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-  cleanup.add(`destroy network-policy sandbox ${SANDBOX_NAME}`, async () => {
-    await runNemoclaw(host, [SANDBOX_NAME, "destroy", "--yes"], {
-      artifactName: "cleanup-nemoclaw-destroy-network-policy",
-      env: baseEnv(),
-      timeoutMs: 120_000,
-    });
-    await sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
+  cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
       artifactName: "cleanup-openshell-delete-network-policy",
       env: baseEnv(),
+      redactionValues: [apiKey],
       timeoutMs: 60_000,
-    });
+    }),
+  );
+  cleanup.trackSandbox(host, SANDBOX_NAME, {
+    artifactName: "cleanup-nemoclaw-destroy-network-policy",
+    env: baseEnv(),
+    redactionValues: [apiKey],
+    timeoutMs: 120_000,
   });
 
   await runNemoclaw(host, [SANDBOX_NAME, "destroy", "--yes"], {
@@ -1120,17 +1124,19 @@ test("network-policy: default restricted OpenClaw onboard leaves policy-list wit
   // credential through this historical env name. The real onboard below is
   // the authoritative credential validation boundary, regardless of prefix.
 
-  cleanup.add(`destroy restricted-zero-presets sandbox ${SUPPRESSION_SANDBOX_NAME}`, async () => {
-    await runNemoclaw(host, [SUPPRESSION_SANDBOX_NAME, "destroy", "--yes"], {
-      artifactName: "cleanup-nemoclaw-destroy-restricted-zero-presets",
-      env: baseEnv(),
-      timeoutMs: 120_000,
-    });
-    await sandbox.openshell(["sandbox", "delete", SUPPRESSION_SANDBOX_NAME], {
+  cleanup.trackDisposable(`delete OpenShell sandbox ${SUPPRESSION_SANDBOX_NAME}`, () =>
+    sandbox.cleanupSandbox(SUPPRESSION_SANDBOX_NAME, {
       artifactName: "cleanup-openshell-delete-restricted-zero-presets",
       env: baseEnv(),
+      redactionValues: [apiKey],
       timeoutMs: 60_000,
-    });
+    }),
+  );
+  cleanup.trackSandbox(host, SUPPRESSION_SANDBOX_NAME, {
+    artifactName: "cleanup-nemoclaw-destroy-restricted-zero-presets",
+    env: baseEnv(),
+    redactionValues: [apiKey],
+    timeoutMs: 120_000,
   });
 
   await runNemoclaw(host, [SUPPRESSION_SANDBOX_NAME, "destroy", "--yes"], {

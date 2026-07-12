@@ -47,15 +47,15 @@ function commandEnv(endpointUrl?: string): NodeJS.ProcessEnv {
   };
 }
 
-async function cleanup(host: HostCliClient, label: string): Promise<void> {
+async function preClean(host: HostCliClient): Promise<void> {
   await host.bestEffortCleanupSandbox(SANDBOX_NAME, {
-    artifactName: `${label}-destroy-sandbox`,
+    artifactName: "pre-cleanup-destroy-sandbox",
     env: commandEnv(),
     timeoutMs: 15 * 60_000,
   });
   await host
     .cleanupGatewayRegistration(GATEWAY_NAME, {
-      artifactName: `${label}-destroy-gateway`,
+      artifactName: "pre-cleanup-destroy-gateway",
       env: commandEnv(),
       timeoutMs: 60_000,
     })
@@ -176,14 +176,61 @@ test("hermes-shields-config: fresh non-root Hermes sandbox completes two shields
     publicHost: "host.openshell.internal",
     requireAuth: true,
   });
-  cleanupRegistry.add("close Hermes shields fake inference endpoint", async () => {
+  cleanupRegistry.trackDisposable("close Hermes shields fake inference endpoint", async () => {
     await artifacts.writeJson("fake-openai-compatible-requests.json", fake.requests());
     await fake.close();
   });
-  cleanupRegistry.add(`destroy Hermes shields sandbox ${SANDBOX_NAME}`, async () => {
-    await cleanup(host, "cleanup");
-  });
-  await cleanup(host, "pre-cleanup");
+  const gatewayCleanupOptions = {
+    artifactName: "cleanup-destroy-gateway",
+    env: commandEnv(),
+    redactionValues: [COMPATIBLE_API_KEY],
+    timeoutMs: 60_000,
+  };
+  cleanupRegistry.trackGateway(
+    {
+      cleanupGatewayRegistration: async (name: string) => {
+        if (
+          !(await host.isCommandAvailable("openshell", {
+            artifactName: "cleanup-probe-openshell-gateway",
+            env: gatewayCleanupOptions.env,
+            redactionValues: gatewayCleanupOptions.redactionValues,
+            timeoutMs: 30_000,
+          }))
+        ) {
+          return;
+        }
+        await host.cleanupGatewayRegistration(name, gatewayCleanupOptions);
+      },
+    },
+    GATEWAY_NAME,
+    gatewayCleanupOptions,
+  );
+  const sandboxCleanupOptions = {
+    artifactName: "cleanup-destroy-sandbox",
+    env: commandEnv(),
+    redactionValues: [COMPATIBLE_API_KEY],
+    timeoutMs: 15 * 60_000,
+  };
+  cleanupRegistry.trackSandbox(
+    {
+      cleanupSandbox: async (name: string) => {
+        if (
+          !(await host.isCommandAvailable(host.commandPath, {
+            artifactName: "cleanup-probe-nemoclaw-sandbox",
+            env: sandboxCleanupOptions.env,
+            redactionValues: sandboxCleanupOptions.redactionValues,
+            timeoutMs: 30_000,
+          }))
+        ) {
+          return;
+        }
+        await host.cleanupSandbox(name, sandboxCleanupOptions);
+      },
+    },
+    SANDBOX_NAME,
+    sandboxCleanupOptions,
+  );
+  await preClean(host);
 
   const env = commandEnv(fake.baseUrl);
   const install = await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {

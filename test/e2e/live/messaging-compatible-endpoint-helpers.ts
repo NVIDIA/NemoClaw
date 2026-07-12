@@ -4,6 +4,7 @@
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { assertExitZero } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 
@@ -17,7 +18,7 @@ export function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   };
 }
 
-async function bestEffort(run: () => Promise<unknown>): Promise<void> {
+async function preCleanBestEffort(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
   } catch {
@@ -27,8 +28,48 @@ async function bestEffort(run: () => Promise<unknown>): Promise<void> {
   }
 }
 
+export async function cleanupOwnedGatewayRuntimeStrict(
+  host: HostCliClient,
+  artifactName: string,
+): Promise<void> {
+  const result = await host.command(
+    "bash",
+    [
+      "-lc",
+      [
+        "set -uo pipefail",
+        'pid_file="$HOME/.local/state/nemoclaw/openshell-docker-gateway/openshell-gateway.pid"',
+        'if [ -f "$pid_file" ]; then',
+        '  pid="$(tr -d "[:space:]" <"$pid_file" 2>/dev/null || true)"',
+        '  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then',
+        '    kill "$pid"',
+        "    for _ in $(seq 1 10); do",
+        '      kill -0 "$pid" 2>/dev/null || break',
+        "      sleep 1",
+        "    done",
+        '    if kill -0 "$pid" 2>/dev/null; then kill -9 "$pid"; fi',
+        "    for _ in $(seq 1 5); do",
+        '      kill -0 "$pid" 2>/dev/null || break',
+        "      sleep 1",
+        "    done",
+        '    kill -0 "$pid" 2>/dev/null && exit 1 || true',
+        "  fi",
+        "fi",
+        'cid="$(docker ps -qf "name=openshell-cluster-nemoclaw" | head -1)" || exit $?',
+        'if [ -n "$cid" ]; then docker stop "$cid" >/dev/null; fi',
+      ].join("\n"),
+    ],
+    {
+      artifactName,
+      env: commandEnv(),
+      timeoutMs: 90_000,
+    },
+  );
+  assertExitZero(result, "cleanup messaging-compatible owned gateway runtime");
+}
+
 export async function stopGatewayRuntime(host: HostCliClient, artifactName: string): Promise<void> {
-  await bestEffort(() =>
+  await preCleanBestEffort(() =>
     host.command(
       "bash",
       [
@@ -72,14 +113,14 @@ export async function cleanupMessagingState(
   // Endpoint-validation skips can happen before the sandbox exists. Keep
   // teardown non-throwing so "Sandbox ... does not exist" stays a normal
   // pre-contract cleanup outcome instead of masking the original evidence.
-  await bestEffort(() =>
+  await preCleanBestEffort(() =>
     host.command("node", [CLI_ENTRYPOINT, sandboxName, "destroy", "--yes"], {
       artifactName: `cleanup-nemoclaw-destroy-${sandboxName}`,
       env: commandEnv(),
       timeoutMs: 120_000,
     }),
   );
-  await bestEffort(() =>
+  await preCleanBestEffort(() =>
     host.command("openshell", ["sandbox", "delete", sandboxName], {
       artifactName: `cleanup-openshell-sandbox-delete-${sandboxName}`,
       env: commandEnv(),

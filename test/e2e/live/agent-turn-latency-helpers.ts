@@ -4,6 +4,7 @@
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   type SandboxClient,
@@ -73,7 +74,10 @@ export function env(
   return out;
 }
 
-export async function bestEffort(label: string, run: () => Promise<unknown>): Promise<void> {
+export async function bestEffortPreclean(
+  label: string,
+  run: () => Promise<unknown>,
+): Promise<void> {
   try {
     await run();
   } catch (error) {
@@ -283,14 +287,10 @@ export async function cleanupTurnSandboxes(
     [OPENCLAW_SANDBOX, "openclaw"],
     [HERMES_SANDBOX, "hermes"],
   ] as const) {
-    await bestEffort(`destroy ${agent} sandbox`, () =>
-      host.command("node", [CLI, name, "destroy", "--yes"], {
-        artifactName: `cleanup-${agent}-destroy`,
-        env: env(name, agent),
-        timeoutMs: 120_000,
-      }),
+    await bestEffortPreclean(`destroy ${agent} sandbox`, () =>
+      cleanupTurnSandbox(host, name, agent),
     );
-    await bestEffort(`delete ${agent} sandbox`, () =>
+    await bestEffortPreclean(`delete ${agent} sandbox`, () =>
       sandbox.openshell(["sandbox", "delete", name], {
         artifactName: `cleanup-${agent}-delete`,
         env: env(name, agent),
@@ -298,20 +298,40 @@ export async function cleanupTurnSandboxes(
       }),
     );
   }
-  await bestEffort("stop Hermes API forward", () =>
+  await bestEffortPreclean("stop Hermes API forward", () =>
     sandbox.openshell(["forward", "stop", "8642"], {
       artifactName: "cleanup-forward-stop-hermes-api",
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 30_000,
     }),
   );
-  await bestEffort("destroy OpenShell gateway", () =>
+  await bestEffortPreclean("destroy OpenShell gateway", () =>
     sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
       artifactName: "cleanup-gateway-destroy-turn-latency",
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 60_000,
     }),
   );
+}
+
+export async function cleanupTurnSandbox(
+  host: HostCliClient,
+  name: string,
+  agent: "openclaw" | "hermes",
+): Promise<void> {
+  const result = await host.command("node", [CLI, name, "destroy", "--yes"], {
+    artifactName: `cleanup-${agent}-destroy`,
+    env: env(name, agent),
+    timeoutMs: 120_000,
+  });
+  const output = resultText(result);
+  expect(
+    result.exitCode === 0 ||
+      /Sandbox '.+' does not exist|Run 'nemoclaw onboard' to create one|sandbox .* not found|no such sandbox/iu.test(
+        output,
+      ),
+    `cleanup ${agent} sandbox ${name}: ${output}`,
+  ).toBe(true);
 }
 
 export async function route(

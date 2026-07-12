@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { resultText } from "../fixtures/clients/index.ts";
+import { assertExitZero, resultText } from "../fixtures/clients/index.ts";
 import { sandboxAccessEnv, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
@@ -95,7 +95,7 @@ function isNvidiaEndpointValidationUnavailable(text: string): boolean {
   );
 }
 
-async function bestEffort(run: () => Promise<unknown>): Promise<void> {
+async function bestEffortLifecycleCleanup(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
   } catch {
@@ -114,7 +114,7 @@ async function destroySandboxUntilAbsent(
 ): Promise<void> {
   let lastList = "";
   for (let attempt = 1; attempt <= DESTROY_ATTEMPTS; attempt += 1) {
-    await bestEffort(() => destroy(`phase-3-destroy-attempt-${attempt}`));
+    await bestEffortLifecycleCleanup(() => destroy(`phase-3-destroy-attempt-${attempt}`));
     const listResult = await list(`phase-3-list-after-destroy-${attempt}`);
     lastList = resultText(listResult);
     if (listResult.exitCode === 0 && !lastList.includes(sandboxName)) return;
@@ -172,10 +172,10 @@ test("state-backup-restore: backup-workspace.sh restores workspace files and mem
 
   const stateSnapshot = snapshotRegistryAndSession();
   let createdBackupDir: string | undefined;
-  cleanup.add(`restore NemoClaw state files for ${SANDBOX_NAME}`, () => {
+  cleanup.trackDisposable(`restore NemoClaw state files for ${SANDBOX_NAME}`, () => {
     restoreRegistryAndSession(stateSnapshot);
   });
-  cleanup.add("remove generated backup-workspace.sh backup", () => {
+  cleanup.trackDisposable("remove generated backup-workspace.sh backup", () => {
     if (!createdBackupDir) return;
     const root = backupRoot();
     const resolved = path.resolve(createdBackupDir);
@@ -183,29 +183,33 @@ test("state-backup-restore: backup-workspace.sh restores workspace files and mem
       fs.rmSync(resolved, { recursive: true, force: true });
     }
   });
-  cleanup.add(`destroy sandbox ${SANDBOX_NAME}`, async () => {
-    if (process.env.NEMOCLAW_E2E_KEEP_SANDBOX === "1") return;
-    await bestEffort(() => onboard.destroySandbox(SANDBOX_NAME, "cleanup-nemoclaw-destroy"));
-    await bestEffort(() =>
-      sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
+  if (process.env.NEMOCLAW_E2E_KEEP_SANDBOX !== "1") {
+    cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+      sandbox.cleanupSandbox(SANDBOX_NAME, {
         artifactName: "cleanup-openshell-sandbox-delete",
         env: sandboxAccessEnv(),
         timeoutMs: 60_000,
       }),
     );
-  });
-  cleanup.add("stop NemoClaw gateway", async () => {
-    await bestEffort(() =>
-      host.nemoclaw(["stop"], {
-        artifactName: "cleanup-nemoclaw-stop",
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 60_000,
-      }),
-    );
+    cleanup.trackSandbox(host, SANDBOX_NAME, {
+      artifactName: "cleanup-nemoclaw-destroy",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 15 * 60_000,
+    });
+  }
+  cleanup.trackDisposable("stop NemoClaw gateway", async () => {
+    const result = await host.nemoclaw(["stop"], {
+      artifactName: "cleanup-nemoclaw-stop",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 60_000,
+    });
+    assertExitZero(result, "cleanup nemoclaw stop");
   });
 
-  await bestEffort(() => onboard.destroySandbox(SANDBOX_NAME, "pre-cleanup-nemoclaw-destroy"));
-  await bestEffort(() =>
+  await bestEffortLifecycleCleanup(() =>
+    onboard.destroySandbox(SANDBOX_NAME, "pre-cleanup-nemoclaw-destroy"),
+  );
+  await bestEffortLifecycleCleanup(() =>
     sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
       artifactName: "pre-cleanup-openshell-sandbox-delete",
       env: sandboxAccessEnv(),

@@ -13,6 +13,7 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
+import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import {
   agentSectionContainsToken,
   isAgentVerificationFailClosed,
@@ -20,7 +21,6 @@ import {
   shouldSkipExternalAgentVerificationFailure,
   VERIFY_PHRASE,
 } from "../support/skill-agent-classifiers.ts";
-import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 
 // Keep this as a direct live test: the contract is skill fixture
 // injection into a real OpenClaw sandbox plus an agent turn that must read
@@ -147,6 +147,41 @@ test(
 
     let sandboxProvisioned = false;
     const cleanupEnv = buildAvailabilityProbeEnv();
+    type CleanupAttemptState = {
+      outcome: "pending" | "passed" | "failed";
+      error?: string;
+    };
+    const cleanupAttempts: {
+      nemoclaw: CleanupAttemptState;
+      openshell: CleanupAttemptState;
+    } = {
+      nemoclaw: { outcome: "pending" },
+      openshell: { outcome: "pending" },
+    };
+    const cleanupResultEvidence = (artifactName: string) => {
+      const resultArtifact = `shell/${artifactName}.result.json`;
+      try {
+        const result = JSON.parse(fs.readFileSync(artifacts.pathFor(resultArtifact), "utf8")) as {
+          exitCode: number | null;
+          signal: NodeJS.Signals | null;
+          timedOut: boolean;
+        };
+        return {
+          exitCode: result.exitCode,
+          resultArtifact,
+          signal: result.signal,
+          timedOut: result.timedOut,
+        };
+      } catch (error) {
+        return {
+          evidenceError: error instanceof Error ? error.message : String(error),
+          exitCode: null,
+          resultArtifact,
+          signal: null,
+          timedOut: null,
+        };
+      }
+    };
     await ignoreCleanupError(() =>
       host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
         artifactName: "pre-cleanup-nemoclaw-destroy-skill-agent",
@@ -162,32 +197,57 @@ test(
       }),
     );
 
-    cleanup.add(`destroy skill-agent sandbox ${SANDBOX_NAME}`, async () => {
-      const destroy = await host.command(
-        "node",
-        [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"],
-        {
-          artifactName: "cleanup-nemoclaw-destroy-skill-agent",
-          env: buildAvailabilityProbeEnv(),
-          timeoutMs: 120_000,
-        },
-      );
-      const deleteSandbox = await sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
-        artifactName: "cleanup-openshell-sandbox-delete-skill-agent",
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 60_000,
-      });
+    cleanup.trackDisposable("write skill-agent cleanup summary", async () => {
+      const destroyEvidence = cleanupResultEvidence("cleanup-nemoclaw-destroy-skill-agent");
+      const deleteEvidence = cleanupResultEvidence("cleanup-openshell-sandbox-delete-skill-agent");
       await artifacts.writeJson("cleanup-skill-agent-summary.json", {
         sandboxProvisioned,
-        destroyExitCode: destroy.exitCode,
-        deleteExitCode: deleteSandbox.exitCode,
+        destroyExitCode: destroyEvidence.exitCode,
+        deleteExitCode: deleteEvidence.exitCode,
+        resources: ["nemoclaw sandbox", "OpenShell sandbox fallback"],
+        attempts: {
+          nemoclaw: { ...cleanupAttempts.nemoclaw, ...destroyEvidence },
+          openshell: { ...cleanupAttempts.openshell, ...deleteEvidence },
+        },
       });
-      if (sandboxProvisioned && destroy.exitCode !== 0 && deleteSandbox.exitCode !== 0) {
-        throw new Error(
-          `skill-agent cleanup failed\n${resultText(destroy)}\n${resultText(deleteSandbox)}`,
-        );
+    });
+    const openshellCleanupOptions = {
+      artifactName: "cleanup-openshell-sandbox-delete-skill-agent",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 60_000,
+    };
+    cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, async () => {
+      try {
+        await sandbox.cleanupSandbox(SANDBOX_NAME, openshellCleanupOptions);
+        cleanupAttempts.openshell.outcome = "passed";
+      } catch (error) {
+        cleanupAttempts.openshell.outcome = "failed";
+        cleanupAttempts.openshell.error = error instanceof Error ? error.message : String(error);
+        throw error;
       }
     });
+    const nemoclawCleanupOptions = {
+      artifactName: "cleanup-nemoclaw-destroy-skill-agent",
+      env: buildAvailabilityProbeEnv(),
+      redactionValues: [apiKey],
+      timeoutMs: 120_000,
+    };
+    cleanup.trackSandbox(
+      {
+        cleanupSandbox: async (name: string) => {
+          try {
+            await host.cleanupSandbox(name, nemoclawCleanupOptions);
+            cleanupAttempts.nemoclaw.outcome = "passed";
+          } catch (error) {
+            cleanupAttempts.nemoclaw.outcome = "failed";
+            cleanupAttempts.nemoclaw.error = error instanceof Error ? error.message : String(error);
+            throw error;
+          }
+        },
+      },
+      SANDBOX_NAME,
+      nemoclawCleanupOptions,
+    );
 
     const onboard = await host.command(
       "node",

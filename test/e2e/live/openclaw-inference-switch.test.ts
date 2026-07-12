@@ -181,7 +181,7 @@ function commandEnv(home: string, extra: NodeJS.ProcessEnv = {}): NodeJS.Process
   };
 }
 
-async function bestEffort(run: () => Promise<unknown>): Promise<void> {
+async function bestEffortStateReset(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
   } catch {
@@ -229,26 +229,26 @@ async function sandboxShell(
   );
 }
 
-async function cleanupOpenClawInferenceSwitchState(
+async function resetOpenClawInferenceSwitchState(
   host: HostCliClient,
   sandbox: SandboxClient,
   home: string,
   artifactPrefix: string,
 ): Promise<void> {
-  await bestEffort(() =>
+  await bestEffortStateReset(() =>
     runNemoclaw(host, home, [SANDBOX_NAME, "destroy", "--yes"], {
       artifactName: `${artifactPrefix}-nemoclaw-destroy-openclaw-inference-switch`,
       timeoutMs: 120_000,
     }),
   );
-  await bestEffort(() =>
+  await bestEffortStateReset(() =>
     sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
       artifactName: `${artifactPrefix}-openshell-sandbox-delete-openclaw-inference-switch`,
       env: commandEnv(home),
       timeoutMs: 60_000,
     }),
   );
-  await bestEffort(() =>
+  await bestEffortStateReset(() =>
     sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
       artifactName: `${artifactPrefix}-openshell-gateway-destroy-openclaw-inference-switch`,
       env: commandEnv(home),
@@ -955,14 +955,34 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
 
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-switch-home-"));
   let mockProvider: MockAnthropicProvider | undefined;
-  cleanup.add(`destroy OpenClaw inference switch sandbox ${SANDBOX_NAME}`, async () => {
-    await cleanupOpenClawInferenceSwitchState(host, sandbox, home, "cleanup");
-    await baselineProvider?.close();
-    if (mockProvider) await mockProvider.close();
+  cleanup.trackDisposable(`remove OpenClaw inference switch test home for ${SANDBOX_NAME}`, () => {
     fs.rmSync(home, { recursive: true, force: true });
   });
+  cleanup.trackDisposable("close switched Anthropic provider", async () => {
+    await mockProvider?.close();
+  });
+  cleanup.trackDisposable("close baseline inference provider", async () => {
+    await baselineProvider?.close();
+  });
+  cleanup.trackGateway(host, "nemoclaw", {
+    artifactName: "cleanup-openshell-gateway-destroy-openclaw-inference-switch",
+    env: commandEnv(home),
+    timeoutMs: 120_000,
+  });
+  cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "cleanup-openshell-sandbox-delete-openclaw-inference-switch",
+      env: commandEnv(home),
+      timeoutMs: 60_000,
+    }),
+  );
+  cleanup.trackSandbox(host, SANDBOX_NAME, {
+    artifactName: "cleanup-nemoclaw-destroy-openclaw-inference-switch",
+    env: commandEnv(home),
+    timeoutMs: 120_000,
+  });
 
-  await cleanupOpenClawInferenceSwitchState(host, sandbox, home, "pre-cleanup");
+  await resetOpenClawInferenceSwitchState(host, sandbox, home, "pre-cleanup");
 
   const install = await host.command(
     "bash",
@@ -1068,7 +1088,7 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
   }
 
   if (process.env.NEMOCLAW_E2E_KEEP_SANDBOX !== "1") {
-    await cleanupOpenClawInferenceSwitchState(host, sandbox, home, "final");
+    await resetOpenClawInferenceSwitchState(host, sandbox, home, "final");
     const registryPath = path.join(home, ".nemoclaw", "sandboxes.json");
     const registryText = fs.existsSync(registryPath) ? fs.readFileSync(registryPath, "utf8") : "";
     expect(registryText).not.toContain(`"${SANDBOX_NAME}"`);

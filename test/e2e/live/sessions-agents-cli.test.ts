@@ -67,14 +67,6 @@ function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   };
 }
 
-async function bestEffort(run: () => Promise<unknown>): Promise<void> {
-  try {
-    await run();
-  } catch {
-    // Cleanup is best effort so an early setup failure keeps the original error.
-  }
-}
-
 async function runNemoclaw(
   host: HostCliClient,
   args: string[],
@@ -131,7 +123,7 @@ async function ensureOpenshellAvailable(host: HostCliClient): Promise<void> {
   ).toBe(0);
 }
 
-async function cleanupSandbox(host: HostCliClient, hosted: HostedInferenceConfig): Promise<void> {
+async function precleanSandbox(host: HostCliClient, hosted: HostedInferenceConfig): Promise<void> {
   if (process.env.NEMOCLAW_E2E_KEEP_SANDBOX === "1") return;
 
   const destroy = await runNemoclaw(host, [SANDBOX_NAME, "destroy", "--yes"], hosted, {
@@ -307,7 +299,7 @@ async function expectJsonCommand(
 
 test("sessions/agents host CLI routes to OpenClaw and preserves JSON envelopes", {
   timeout: TEST_TIMEOUT_MS,
-}, async ({ artifacts, cleanup, host, secrets, skip }) => {
+}, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
   expect(fs.existsSync(CLI_ENTRYPOINT), "bin/nemoclaw.js missing").toBe(true);
   expect(
     fs.existsSync(CLI_DIST_ENTRYPOINT),
@@ -340,10 +332,22 @@ test("sessions/agents host CLI routes to OpenClaw and preserves JSON envelopes",
 
   const hosted = requireHostedInferenceConfig(secrets);
   await ensureOpenshellAvailable(host);
-  cleanup.add(`destroy sessions/agents sandbox ${SANDBOX_NAME}`, async () =>
-    bestEffort(() => cleanupSandbox(host, hosted)),
-  );
-  await cleanupSandbox(host, hosted);
+  if (process.env.NEMOCLAW_E2E_KEEP_SANDBOX !== "1") {
+    cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+      sandbox.cleanupSandbox(SANDBOX_NAME, {
+        artifactName: "cleanup-openshell-sandbox-delete-sessions-agents-cli",
+        env: commandEnv(),
+        timeoutMs: 60_000,
+      }),
+    );
+    cleanup.trackSandbox(host, SANDBOX_NAME, {
+      artifactName: "cleanup-nemoclaw-destroy-sessions-agents-cli",
+      env: commandEnv(hosted.env),
+      redactionValues: [hosted.apiKey],
+      timeoutMs: 5 * 60_000,
+    });
+  }
+  await precleanSandbox(host, hosted);
   fs.rmSync(path.join(process.env.HOME ?? "", ".nemoclaw", "onboard.lock"), { force: true });
 
   const onboard = await runNemoclaw(

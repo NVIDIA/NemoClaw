@@ -256,12 +256,31 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
     skip(`Docker is required: ${resultText(docker)}`);
   }
 
-  cleanupRegistry.add("remove full-e2e sandbox", () => cleanup(host, sandbox));
+  cleanupRegistry.trackGateway(host, "nemoclaw", {
+    artifactName: "cleanup-openshell-gateway-destroy",
+    env: env(),
+    redactionValues: [hosted.apiKey],
+    timeoutMs: 60_000,
+  });
+  cleanupRegistry.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "cleanup-openshell-sandbox-delete",
+      env: env(),
+      redactionValues: [hosted.apiKey],
+      timeoutMs: 60_000,
+    }),
+  );
+  cleanupRegistry.trackSandbox(host, SANDBOX_NAME, {
+    artifactName: "cleanup-nemoclaw-destroy",
+    env: env(),
+    redactionValues: [hosted.apiKey],
+    timeoutMs: 120_000,
+  });
   await cleanup(host, sandbox);
 
   const coldOnboard = createColdOnboardCapture();
   coldOnboard &&
-    cleanupRegistry.add("remove raw full-e2e trace", async () => {
+    cleanupRegistry.trackDisposable("remove raw full-e2e trace", async () => {
       fs.rmSync(coldOnboard.traceDirectory, { recursive: true, force: true });
     });
 

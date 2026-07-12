@@ -70,6 +70,12 @@ interface CleanupAttempt {
   outputTail: string;
 }
 
+interface CleanupSummary {
+  nemoclawDestroy?: CleanupAttempt;
+  openshellDelete?: CleanupAttempt;
+  errors: string[];
+}
+
 interface ActivePolicyPreset {
   name: string;
   provenance: string;
@@ -182,23 +188,13 @@ async function assertPrerequisites(
   return hosted;
 }
 
-async function bestEffortDestroySandbox(
+async function bestEffortPrecleanSandbox(
   host: HostCliClient,
   sandbox: SandboxClient,
   sandboxName: string,
   artifactPrefix: string,
-): Promise<{
-  nemoclawDestroy?: CleanupAttempt;
-  openshellDelete?: CleanupAttempt;
-  errors: string[];
-}> {
-  const result: {
-    nemoclawDestroy?: CleanupAttempt;
-    openshellDelete?: CleanupAttempt;
-    errors: string[];
-  } = {
-    errors: [],
-  };
+): Promise<CleanupSummary> {
+  const result: CleanupSummary = { errors: [] };
   try {
     const destroy = await host.command("node", [CLI_ENTRYPOINT, sandboxName, "destroy", "--yes"], {
       artifactName: `${artifactPrefix}-nemoclaw-destroy-${sandboxName}`,
@@ -238,12 +234,47 @@ async function registerSandboxCleanup(
     });
     return;
   }
-  cleanup.add(`destroy common-egress sandbox ${sandboxName}`, async () => {
-    const summary = await bestEffortDestroySandbox(host, sandbox, sandboxName, "cleanup");
+  const summary: CleanupSummary = { errors: [] };
+  cleanup.trackDisposable(`write common-egress cleanup summary for ${sandboxName}`, async () => {
     await artifacts.writeJson(`cleanup-common-egress-${sandboxName}.json`, summary);
   });
-  const summary = await bestEffortDestroySandbox(host, sandbox, sandboxName, "pre-cleanup");
-  await artifacts.writeJson(`pre-cleanup-common-egress-${sandboxName}.json`, summary);
+  cleanup.trackDisposable(`delete common-egress OpenShell sandbox ${sandboxName}`, async () => {
+    try {
+      await sandbox.cleanupSandbox(sandboxName, {
+        artifactName: `cleanup-openshell-delete-${sandboxName}`,
+        env: commandEnv(),
+        timeoutMs: 60_000,
+      });
+      summary.openshellDelete = {
+        exitCode: 0,
+        missingSandboxTolerated: false,
+        outputTail: "",
+      };
+    } catch (error) {
+      summary.errors.push(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  });
+  cleanup.trackDisposable(`destroy common-egress sandbox ${sandboxName}`, async () => {
+    const destroy = await host.command("node", [CLI_ENTRYPOINT, sandboxName, "destroy", "--yes"], {
+      artifactName: `cleanup-nemoclaw-destroy-${sandboxName}`,
+      env: commandEnv(),
+      timeoutMs: 120_000,
+    });
+    summary.nemoclawDestroy = cleanupAttempt(destroy);
+    if (destroy.exitCode !== 0 && !summary.nemoclawDestroy.missingSandboxTolerated) {
+      const error = new Error(`cleanup destroy sandbox ${sandboxName}: ${text(destroy)}`);
+      summary.errors.push(error.message);
+      throw error;
+    }
+  });
+  const precleanSummary = await bestEffortPrecleanSandbox(
+    host,
+    sandbox,
+    sandboxName,
+    "pre-cleanup",
+  );
+  await artifacts.writeJson(`pre-cleanup-common-egress-${sandboxName}.json`, precleanSummary);
 }
 
 async function runOnboard(

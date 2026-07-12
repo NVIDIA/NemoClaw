@@ -32,6 +32,15 @@ function writeExecutable(file: string, content: string): void {
   fs.chmodSync(file, 0o755);
 }
 
+function terminateGatewayProcess(pid: number): void {
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
+    throw error;
+  }
+}
+
 test("onboard surfaces crashed Docker-driver gateway instead of reporting healthy (#3111)", async ({
   artifacts,
   cleanup,
@@ -83,30 +92,17 @@ test("onboard surfaces crashed Docker-driver gateway instead of reporting health
     },
   );
 
-  cleanup.add("remove sabotaged OpenShell gateway metadata", async () => {
-    await host.command(
-      "sh",
-      [
-        "-lc",
-        `command -v openshell >/dev/null 2>&1 && openshell gateway remove ${GATEWAY_NAME} || true`,
-      ],
-      {
-        artifactName: "cleanup-openshell-gateway-remove-gateway-health-honest",
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 30_000,
-      },
-    );
+  cleanup.trackGateway(host, GATEWAY_NAME, {
+    artifactName: "cleanup-openshell-gateway-health-honest",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
   });
-  cleanup.add("remove sabotaged gateway runtime files", () => {
+  cleanup.trackDisposable("remove sabotaged gateway runtime files", () => {
     const pid = fs.existsSync(gatewayPidFile)
       ? Number.parseInt(fs.readFileSync(gatewayPidFile, "utf8"), 10)
       : Number.NaN;
     if (Number.isInteger(pid) && pid > 0) {
-      try {
-        process.kill(pid, "SIGTERM");
-      } catch {
-        // Best-effort: the expected child has already exited.
-      }
+      terminateGatewayProcess(pid);
     }
     fs.rmSync(gatewayPidFile, { force: true });
     fs.rmSync(path.join(stateDir, "runtime-marker.json"), { force: true });

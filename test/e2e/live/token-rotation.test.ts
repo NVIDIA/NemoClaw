@@ -24,6 +24,8 @@ validateSandboxName(SANDBOX_NAME);
 const ONBOARD_TIMEOUT_MS = 25 * 60_000;
 const PHASE_TIMEOUT_MS = 40 * 60_000;
 
+process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
+
 interface TokenSet {
   telegram: string;
   discord: string;
@@ -261,7 +263,7 @@ async function destroyGatewayIfOpenshellExists(
 test(
   "messaging token rotation rebuilds only the changed provider and reuses unchanged credentials",
   testTimeoutOptions(PHASE_TIMEOUT_MS),
-  async ({ artifacts, cleanup, host, skip }) => {
+  async ({ artifacts, cleanup, host, sandbox, skip }) => {
     expect(
       fs.existsSync(CLI_ENTRYPOINT),
       "run `npm run build:cli` before live repo CLI targets",
@@ -287,7 +289,7 @@ test(
       publicHost: "host.openshell.internal",
       responseText: "OK",
     });
-    cleanup.add("stop fake OpenAI-compatible endpoint for token rotation", async () => {
+    cleanup.trackDisposable("stop fake OpenAI-compatible endpoint for token rotation", async () => {
       await artifacts.writeJson("fake-openai-compatible-requests.json", fakeOpenAI.requests());
       await fakeOpenAI.close();
     });
@@ -318,18 +320,75 @@ test(
     });
 
     const cleanupEnv = buildAvailabilityProbeEnv();
-    cleanup.add(`destroy token-rotation sandbox ${SANDBOX_NAME}`, async () => {
-      await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
-        artifactName: "cleanup-nemoclaw-destroy-token-rotation",
-        env: cleanupEnv,
-        timeoutMs: 120_000,
-      });
-      await deleteSandboxIfOpenshellExists(host, "cleanup-openshell-sandbox-delete-token-rotation");
-      await destroyGatewayIfOpenshellExists(
-        host,
-        "cleanup-openshell-gateway-destroy-token-rotation",
-      );
+    const gatewayCleanupOptions = {
+      artifactName: "cleanup-openshell-gateway-destroy-token-rotation",
+      env: cleanupEnv,
+      redactionValues: redactionValues(),
+      timeoutMs: 60_000,
+    };
+    cleanup.trackGateway(
+      {
+        cleanupGatewayRegistration: async (name: string) => {
+          if (
+            !(await host.isCommandAvailable("openshell", {
+              artifactName: "cleanup-probe-openshell-gateway-token-rotation",
+              env: gatewayCleanupOptions.env,
+              redactionValues: gatewayCleanupOptions.redactionValues,
+              timeoutMs: 30_000,
+            }))
+          ) {
+            return;
+          }
+          await host.cleanupGatewayRegistration(name, gatewayCleanupOptions);
+        },
+      },
+      "nemoclaw",
+      gatewayCleanupOptions,
+    );
+    const openshellSandboxCleanupOptions = {
+      artifactName: "cleanup-openshell-sandbox-delete-token-rotation",
+      env: cleanupEnv,
+      redactionValues: redactionValues(),
+      timeoutMs: 60_000,
+    };
+    cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, async () => {
+      if (
+        !(await host.isCommandAvailable(process.env.OPENSHELL_BIN ?? "openshell", {
+          artifactName: "cleanup-probe-openshell-sandbox-token-rotation",
+          env: openshellSandboxCleanupOptions.env,
+          redactionValues: openshellSandboxCleanupOptions.redactionValues,
+          timeoutMs: 30_000,
+        }))
+      ) {
+        return;
+      }
+      await sandbox.cleanupSandbox(SANDBOX_NAME, openshellSandboxCleanupOptions);
     });
+    const nemoclawSandboxCleanupOptions = {
+      artifactName: "cleanup-nemoclaw-destroy-token-rotation",
+      env: cleanupEnv,
+      redactionValues: redactionValues(),
+      timeoutMs: 120_000,
+    };
+    cleanup.trackSandbox(
+      {
+        cleanupSandbox: async (name: string) => {
+          if (
+            !(await host.isCommandAvailable(host.commandPath, {
+              artifactName: "cleanup-probe-nemoclaw-sandbox-token-rotation",
+              env: nemoclawSandboxCleanupOptions.env,
+              redactionValues: nemoclawSandboxCleanupOptions.redactionValues,
+              timeoutMs: 30_000,
+            }))
+          ) {
+            return;
+          }
+          await host.cleanupSandbox(name, nemoclawSandboxCleanupOptions);
+        },
+      },
+      SANDBOX_NAME,
+      nemoclawSandboxCleanupOptions,
+    );
 
     await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
       artifactName: "pre-cleanup-nemoclaw-destroy-token-rotation",
@@ -365,12 +424,13 @@ test(
       },
     );
     expect(retainBuildCache.exitCode, resultText(retainBuildCache)).toBe(0);
-    cleanup.add("remove token-rotation build cache tag", async () => {
-      await host.command("docker", ["image", "rm", cacheImageTag], {
+    cleanup.trackDisposable("remove token-rotation build cache tag", async () => {
+      const remove = await host.command("docker", ["image", "rm", cacheImageTag], {
         artifactName: "cleanup-token-rotation-build-cache",
         env: buildAvailabilityProbeEnv(),
         timeoutMs: 30_000,
       });
+      expect(remove.exitCode, resultText(remove)).toBe(0);
     });
 
     const openshellVersion = await host.command("openshell", ["--version"], {

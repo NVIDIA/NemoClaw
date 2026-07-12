@@ -144,7 +144,7 @@ function expectEqual(actual: string | undefined, expected: string, message: stri
   }
 }
 
-async function cleanupHermesResources(
+async function bestEffortPrecleanHermesResources(
   host: HostCliClient,
   apiKey: string | undefined,
   artifactName: string,
@@ -173,6 +173,75 @@ async function cleanupHermesResources(
       timeoutMs: 3 * 60_000,
     },
   );
+}
+
+function hermesCleanupEnv(apiKey: string | undefined): NodeJS.ProcessEnv {
+  return testEnv(apiKey, {
+    DISCORD_PROVIDER: `${SANDBOX_NAME}-discord-bridge`,
+    OLD_BASE_TAG,
+  });
+}
+
+function hermesCleanupRedactions(apiKey: string | undefined): string[] {
+  return [apiKey ?? "", DISCORD_FAKE_TOKEN];
+}
+
+async function cleanupHermesNemoClawSandbox(
+  host: HostCliClient,
+  apiKey: string | undefined,
+): Promise<void> {
+  const result = await host.command("nemoclaw", [SANDBOX_NAME, "destroy", "--yes"], {
+    artifactName: "cleanup-hermes-rebuild-resources-nemoclaw-destroy",
+    env: hermesCleanupEnv(apiKey),
+    redactionValues: hermesCleanupRedactions(apiKey),
+    timeoutMs: 3 * 60_000,
+  });
+  if (
+    result.exitCode === 0 ||
+    /Sandbox '.+' does not exist|Run 'nemoclaw onboard' to create one|sandbox .* not found|no such sandbox/iu.test(
+      resultText(result),
+    )
+  ) {
+    return;
+  }
+  expectExitZero(result, `cleanup Hermes rebuild sandbox ${SANDBOX_NAME}`);
+}
+
+async function cleanupHermesDiscordProvider(
+  host: HostCliClient,
+  apiKey: string | undefined,
+): Promise<void> {
+  const provider = `${SANDBOX_NAME}-discord-bridge`;
+  const result = await host.command("openshell", ["provider", "delete", provider], {
+    artifactName: "cleanup-hermes-rebuild-resources-provider-delete",
+    env: hermesCleanupEnv(apiKey),
+    redactionValues: hermesCleanupRedactions(apiKey),
+    timeoutMs: 3 * 60_000,
+  });
+  if (
+    result.exitCode === 0 ||
+    /\bNotFound\b|provider[^\n]*(?:not found|does not exist)|No provider|No active gateway|No gateway metadata/iu.test(
+      resultText(result),
+    )
+  ) {
+    return;
+  }
+  expectExitZero(result, `cleanup Hermes Discord provider ${provider}`);
+}
+
+async function cleanupOldHermesBaseImage(
+  host: HostCliClient,
+  apiKey: string | undefined,
+): Promise<void> {
+  const result = await host.command("docker", ["rmi", OLD_BASE_TAG], {
+    artifactName: "cleanup-hermes-rebuild-resources-docker-rmi-old-base",
+    env: hermesCleanupEnv(apiKey),
+    redactionValues: hermesCleanupRedactions(apiKey),
+    timeoutMs: 3 * 60_000,
+  });
+  if (result.exitCode === 0 || /No such image|image .* not found/iu.test(resultText(result)))
+    return;
+  expectExitZero(result, `cleanup old Hermes base image ${OLD_BASE_TAG}`);
 }
 
 function oldHermesDockerfile(): string {
@@ -343,7 +412,7 @@ test(STALE_BASE_REBUILD
   ? "rebuild-hermes: stale base cache is refreshed while Hermes state survives rebuild"
   : "rebuild-hermes: old Hermes sandbox rebuild preserves messaging state and upgrades runtime", {
   timeout: LIVE_TIMEOUT_MS,
-}, async ({ artifacts, cleanup, host, secrets, skip }) => {
+}, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   const redactionValues = [apiKey, DISCORD_FAKE_TOKEN];
   const expectedVersion = expectedHermesVersion();
@@ -351,15 +420,11 @@ test(STALE_BASE_REBUILD
   const registrySnapshot = snapshotFile(REGISTRY_FILE);
   const sessionSnapshot = snapshotFile(SESSION_FILE);
   const sandboxBackupRoot = path.join(BACKUP_ROOT, SANDBOX_NAME);
-  cleanup.add(`restore NemoClaw state files for ${SANDBOX_NAME}`, () => {
+  cleanup.trackDisposable(`restore NemoClaw state files for ${SANDBOX_NAME}`, () => {
     restoreFile(REGISTRY_FILE, registrySnapshot);
     restoreFile(SESSION_FILE, sessionSnapshot);
     fs.rmSync(sandboxBackupRoot, { recursive: true, force: true });
   });
-  cleanup.add(`destroy Hermes rebuild resources for ${SANDBOX_NAME}`, async () => {
-    await cleanupHermesResources(host, apiKey, "cleanup-hermes-rebuild-resources");
-  });
-
   await artifacts.writeJson("contract.json", {
     staleBaseMode: STALE_BASE_REBUILD,
     sandboxName: SANDBOX_NAME,
@@ -398,7 +463,37 @@ test(STALE_BASE_REBUILD
       }
   }
 
-  await cleanupHermesResources(host, apiKey, "pre-cleanup-hermes-rebuild-resources");
+  await bestEffortPrecleanHermesResources(host, apiKey, "pre-cleanup-hermes-rebuild-resources");
+
+  cleanup.trackDisposable(`remove old Hermes base image ${OLD_BASE_TAG}`, () =>
+    cleanupOldHermesBaseImage(host, apiKey),
+  );
+  cleanup.trackGateway(host, "nemoclaw", {
+    artifactName: "cleanup-hermes-rebuild-resources-gateway",
+    env: hermesCleanupEnv(apiKey),
+    redactionValues: hermesCleanupRedactions(apiKey),
+    timeoutMs: 3 * 60_000,
+  });
+  cleanup.trackDisposable(`remove Hermes Discord provider for ${SANDBOX_NAME}`, () =>
+    cleanupHermesDiscordProvider(host, apiKey),
+  );
+  cleanup.trackForward(host, 8642, {
+    artifactName: "cleanup-hermes-rebuild-resources-forward-stop",
+    env: hermesCleanupEnv(apiKey),
+    redactionValues: hermesCleanupRedactions(apiKey),
+    timeoutMs: 3 * 60_000,
+  });
+  cleanup.trackDisposable(`delete Hermes rebuild OpenShell sandbox ${SANDBOX_NAME}`, () =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "cleanup-hermes-rebuild-resources-openshell-sandbox-delete",
+      env: hermesCleanupEnv(apiKey),
+      redactionValues: hermesCleanupRedactions(apiKey),
+      timeoutMs: 3 * 60_000,
+    }),
+  );
+  cleanup.trackDisposable(`destroy Hermes rebuild sandbox ${SANDBOX_NAME}`, () =>
+    cleanupHermesNemoClawSandbox(host, apiKey),
+  );
 
   const install = await host.command("bash", ["install.sh", "--non-interactive"], {
     artifactName: "phase-1-install-hermes",

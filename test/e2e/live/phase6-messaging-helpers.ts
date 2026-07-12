@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import {
   assertExitZero as expectExitZero,
   resultText,
@@ -64,7 +65,7 @@ export function redactionValues(apiKey: string | undefined): string[] {
   return [apiKey].filter((value): value is string => typeof value === "string" && value.length > 0);
 }
 
-export async function bestEffort(run: () => Promise<unknown>): Promise<void> {
+export async function runSecondaryCleanup(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
   } catch {
@@ -79,7 +80,7 @@ export async function precleanSandbox(
   redactions: string[],
   prefix: string,
 ): Promise<void> {
-  await bestEffort(() =>
+  await runSecondaryCleanup(() =>
     host.command("node", [CLI, sandboxName, "destroy", "--yes"], {
       artifactName: `${prefix}-nemoclaw-destroy`,
       env,
@@ -87,7 +88,7 @@ export async function precleanSandbox(
       timeoutMs: 15 * 60_000,
     }),
   );
-  await bestEffort(() =>
+  await runSecondaryCleanup(() =>
     host.command("openshell", ["sandbox", "delete", sandboxName], {
       artifactName: `${prefix}-openshell-sandbox-delete`,
       env,
@@ -105,6 +106,31 @@ export async function cleanupSandbox(
   prefix: string,
 ): Promise<void> {
   await precleanSandbox(host, sandboxName, env, redactions, prefix);
+}
+
+export function trackSandboxCleanup(
+  cleanup: CleanupRegistry,
+  host: HostCliClient,
+  sandbox: SandboxClient,
+  sandboxName: string,
+  env: NodeJS.ProcessEnv,
+  redactions: string[],
+  prefix: string,
+): void {
+  cleanup.trackDisposable(`delete OpenShell sandbox ${sandboxName}`, () =>
+    sandbox.cleanupSandbox(sandboxName, {
+      artifactName: `${prefix}-openshell-sandbox-delete`,
+      env,
+      redactionValues: redactions,
+      timeoutMs: 120_000,
+    }),
+  );
+  cleanup.trackSandbox(host, sandboxName, {
+    artifactName: `${prefix}-nemoclaw-destroy`,
+    env,
+    redactionValues: redactions,
+    timeoutMs: 15 * 60_000,
+  });
 }
 
 export async function installSandbox(

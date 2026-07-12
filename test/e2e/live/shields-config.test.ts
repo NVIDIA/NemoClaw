@@ -139,7 +139,7 @@ async function statPath(
   return { ...parsed, raw: result.stdout.trim() };
 }
 
-async function cleanupSandbox(
+async function preCleanSandbox(
   host: HostCliClient,
   sandbox: SandboxClient,
   artifactPrefix: string,
@@ -250,10 +250,84 @@ test("shields-config: live shields up/down locks config and detects drift", {
   const hosted = requireHostedInferenceConfig(secrets);
   const apiKey = hosted.apiKey;
 
-  await cleanupSandbox(host, sandbox, "pre-cleanup");
-  cleanup.add(`destroy shields-config sandbox ${SANDBOX_NAME}`, async () => {
-    await cleanupSandbox(host, sandbox, "cleanup");
+  await preCleanSandbox(host, sandbox, "pre-cleanup");
+  cleanup.trackDisposable(`remove shields state for ${SANDBOX_NAME}`, () => {
+    for (const file of [STATE_FILE(SANDBOX_NAME), TIMER_FILE(SANDBOX_NAME), AUDIT_FILE]) {
+      fs.rmSync(file, { force: true });
+    }
+    fs.rmSync(path.join(os.homedir(), ".nemoclaw", "onboard.lock"), {
+      force: true,
+    });
   });
+  const gatewayCleanupOptions = {
+    artifactName: "cleanup-openshell-gateway-destroy",
+    env: commandEnv(),
+    redactionValues: [apiKey],
+    timeoutMs: 60_000,
+  };
+  cleanup.trackGateway(
+    {
+      cleanupGatewayRegistration: async (name: string) => {
+        if (
+          !(await host.isCommandAvailable("openshell", {
+            artifactName: "cleanup-probe-openshell-gateway",
+            env: gatewayCleanupOptions.env,
+            redactionValues: gatewayCleanupOptions.redactionValues,
+            timeoutMs: 30_000,
+          }))
+        ) {
+          return;
+        }
+        await host.cleanupGatewayRegistration(name, gatewayCleanupOptions);
+      },
+    },
+    "nemoclaw",
+    gatewayCleanupOptions,
+  );
+  const openshellSandboxCleanupOptions = {
+    artifactName: "cleanup-openshell-sandbox-delete",
+    env: commandEnv(),
+    redactionValues: [apiKey],
+    timeoutMs: 60_000,
+  };
+  cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, async () => {
+    if (
+      !(await host.isCommandAvailable(process.env.OPENSHELL_BIN ?? "openshell", {
+        artifactName: "cleanup-probe-openshell-sandbox",
+        env: openshellSandboxCleanupOptions.env,
+        redactionValues: openshellSandboxCleanupOptions.redactionValues,
+        timeoutMs: 30_000,
+      }))
+    ) {
+      return;
+    }
+    await sandbox.cleanupSandbox(SANDBOX_NAME, openshellSandboxCleanupOptions);
+  });
+  const nemoclawSandboxCleanupOptions = {
+    artifactName: "cleanup-nemoclaw-destroy",
+    env: commandEnv(),
+    redactionValues: [apiKey],
+    timeoutMs: 120_000,
+  };
+  cleanup.trackSandbox(
+    {
+      cleanupSandbox: async (name: string) => {
+        if (
+          !(await host.isCommandAvailable(host.commandPath, {
+            artifactName: "cleanup-probe-nemoclaw-sandbox",
+            env: nemoclawSandboxCleanupOptions.env,
+            redactionValues: nemoclawSandboxCleanupOptions.redactionValues,
+            timeoutMs: 30_000,
+          }))
+        ) {
+          return;
+        }
+        await host.cleanupSandbox(name, nemoclawSandboxCleanupOptions);
+      },
+    },
+    SANDBOX_NAME,
+    nemoclawSandboxCleanupOptions,
+  );
 
   const install = await installedShellCommand(
     host,

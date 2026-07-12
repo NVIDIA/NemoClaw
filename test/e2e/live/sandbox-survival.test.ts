@@ -160,25 +160,54 @@ test(
       force: true,
     });
 
-    cleanup.add(`destroy sandbox ${SANDBOX_NAME}`, async () => {
-      await host.bestEffortCleanupSandbox(SANDBOX_NAME, {
-        artifactName: "cleanup-nemoclaw-destroy-sandbox-survival",
-      });
-    });
-    cleanup.add("destroy shared NemoClaw gateway", async () => {
-      await host.command(
-        "sh",
-        [
-          "-lc",
-          "command -v openshell >/dev/null 2>&1 && openshell gateway destroy -g nemoclaw || true",
-        ],
-        {
-          artifactName: "cleanup-openshell-gateway-destroy",
-          env: buildAvailabilityProbeEnv(),
-          timeoutMs: 120_000,
+    const gatewayCleanupOptions = {
+      artifactName: "cleanup-openshell-gateway-destroy",
+      env: buildAvailabilityProbeEnv(),
+      redactionValues: [apiKey],
+      timeoutMs: 120_000,
+    };
+    cleanup.trackGateway(
+      {
+        cleanupGatewayRegistration: async (name: string) => {
+          if (
+            !(await host.isCommandAvailable("openshell", {
+              artifactName: "cleanup-probe-openshell-gateway-sandbox-survival",
+              env: gatewayCleanupOptions.env,
+              redactionValues: gatewayCleanupOptions.redactionValues,
+              timeoutMs: 30_000,
+            }))
+          ) {
+            return;
+          }
+          await host.cleanupGatewayRegistration(name, gatewayCleanupOptions);
         },
-      );
-    });
+      },
+      "nemoclaw",
+      gatewayCleanupOptions,
+    );
+    const sandboxCleanupOptions = {
+      artifactName: "cleanup-nemoclaw-destroy-sandbox-survival",
+      redactionValues: [apiKey],
+    };
+    cleanup.trackSandbox(
+      {
+        cleanupSandbox: async (name: string) => {
+          if (
+            !(await host.isCommandAvailable(host.commandPath, {
+              artifactName: "cleanup-probe-nemoclaw-sandbox-survival",
+              env: buildAvailabilityProbeEnv(),
+              redactionValues: sandboxCleanupOptions.redactionValues,
+              timeoutMs: 30_000,
+            }))
+          ) {
+            return;
+          }
+          await host.cleanupSandbox(name, sandboxCleanupOptions);
+        },
+      },
+      SANDBOX_NAME,
+      sandboxCleanupOptions,
+    );
 
     const install = await host.command("bash", ["install.sh", "--non-interactive"], {
       artifactName: "install-sh-sandbox-survival",
