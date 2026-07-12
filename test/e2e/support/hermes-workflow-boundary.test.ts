@@ -103,6 +103,27 @@ function restore(harness: ReturnType<typeof restoreHarness>) {
   });
 }
 
+function snapshotFile(file: string) {
+  const fd = fs.openSync(file, "r");
+  try {
+    return { stat: fs.fstatSync(fd), text: fs.readFileSync(fd, "utf8") };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function withRestore(
+  fail: boolean,
+  check: (result: ReturnType<typeof restore>, harness: ReturnType<typeof restoreHarness>) => void,
+): void {
+  tmp((tmp) => {
+    const harness = restoreHarness(tmp, '{"default-runtime":"nvidia"}\n', fail);
+    const result = restore(harness);
+    expect(fs.existsSync(harness.state)).toBe(false);
+    check(result, harness);
+  });
+}
+
 describe("Hermes GPU boundary", () => {
   it("accepts baseline", () => {
     expect(validateHermesGpuStartupWorkflowBoundary()).toEqual([]);
@@ -193,28 +214,28 @@ describe("Hermes GPU boundary", () => {
     );
   });
 
-  it("restores and cleans failure", () => {
-    const content = '{"default-runtime":"nvidia"}\n';
-    for (const fail of [false, true]) {
-      tmp((tmp) => {
-        const harness = restoreHarness(tmp, content, fail);
-        const result = restore(harness);
-        expect(fs.existsSync(harness.state)).toBe(false);
-        if (fail) {
-          expect(result.status).not.toBe(0);
-          expect(result.stderr).toContain("Failed to prove restoration of the Docker daemon");
-          expect(fs.readFileSync(harness.sudoLog, "utf8")).toContain("install -m 640");
-          return;
-        }
-        const stat = fs.statSync(harness.daemon);
-        expect(result.status, result.stderr).toBe(0);
-        expect(result.stdout).toBe("nvidia\n");
-        expect(fs.readFileSync(harness.daemon, "utf8")).toBe(content);
-        expect([stat.mode & 0o777, stat.uid, stat.gid]).toEqual([0o640, harness.uid, harness.gid]);
-        expect(fs.readFileSync(harness.sudoLog, "utf8")).toContain(
-          `chown ${harness.uid}:${harness.gid} ${harness.daemon}`,
-        );
-      });
-    }
+  it("restores daemon content, metadata, ownership, and runtime", () => {
+    withRestore(false, (result, harness) => {
+      const snapshot = snapshotFile(harness.daemon);
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("nvidia\n");
+      expect(snapshot.text).toBe('{"default-runtime":"nvidia"}\n');
+      expect([snapshot.stat.mode & 0o777, snapshot.stat.uid, snapshot.stat.gid]).toEqual([
+        0o640,
+        harness.uid,
+        harness.gid,
+      ]);
+      expect(fs.readFileSync(harness.sudoLog, "utf8")).toContain(
+        `chown ${harness.uid}:${harness.gid} ${harness.daemon}`,
+      );
+    });
+  });
+
+  it("cleans private state after daemon restoration fails", () => {
+    withRestore(true, (result, harness) => {
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("Failed to prove restoration of the Docker daemon");
+      expect(fs.readFileSync(harness.sudoLog, "utf8")).toContain("install -m 640");
+    });
   });
 });

@@ -48,7 +48,6 @@ import {
   GPU_IMAGE_ID as IMAGE_ID,
   resetGpuFlowMocks,
   setupGpuFlowMocks,
-  VERIFIED_GPU_PROOF as VERIFIED_PROOF,
 } from "./__test-helpers__/sandbox-gpu-create-flow";
 import {
   runSandboxGpuCreateFlow,

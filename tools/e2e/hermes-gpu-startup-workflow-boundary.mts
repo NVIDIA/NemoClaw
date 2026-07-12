@@ -8,6 +8,14 @@ import { fileURLToPath } from "node:url";
 
 import YAML from "yaml";
 
+/**
+ * SOURCE_OF_TRUTH_REVIEW
+ * invalidState: untrusted workflow drift weakens privileged host mutation or daemon restoration.
+ * sourceBoundary: this shared workflow guard pins trust semantics that GitHub validates only as syntax.
+ * whyNotSourceFix: Actions cannot enforce fixture digest, mode, ownership, path, or recovery ordering.
+ * regressionTest: hermes-workflow-boundary.test.ts mutates each trust invariant independently.
+ * removalCondition: the Hermes GPU job no longer mutates privileged self-hosted runner state.
+ */
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
 const FIXTURE = join(REPO_ROOT, "tools", "e2e", "hermes-gpu-docker-runtime-fixture.sh");
