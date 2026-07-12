@@ -33,6 +33,23 @@ runs:
           --coverage.exclude="**/*.test.ts"
         npx tsx scripts/check-coverage-ratchet.ts coverage/plugin/coverage-summary.json ci/coverage-threshold-plugin.json "Plugin coverage"
 
+    - name: Report changed plugin coverage
+      continue-on-error: true
+      shell: bash
+      env:
+        CHANGED_COVERAGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+      run: |
+        if [ -z "$CHANGED_COVERAGE_BASE" ] || [ "$CHANGED_COVERAGE_BASE" = "0000000000000000000000000000000000000000" ]; then
+          echo "Changed plugin coverage is unavailable without a prior base commit."
+          exit 0
+        fi
+        git fetch --no-tags --depth=1 origin "$CHANGED_COVERAGE_BASE"
+        npx tsx scripts/report-changed-coverage.ts \
+          coverage/plugin/coverage-summary.json \
+          "$CHANGED_COVERAGE_BASE" \
+          HEAD \
+          "Changed plugin coverage"
+
     - name: Upload plugin coverage report
       if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
       uses: actions/upload-code-coverage@abb5995db9e0199b0e2bb9dbd136fce4cb1ec4d3 # v1

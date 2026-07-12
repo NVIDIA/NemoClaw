@@ -17,6 +17,7 @@ type PluginVitestProjectOptions = {
     alias: Array<{ find: RegExp; replacement: string }>;
     env: Record<string, string>;
     environment: "node";
+    expect: { requireAssertions: true };
     setupFiles: string[];
     include: string[];
   };
@@ -39,6 +40,7 @@ const pluginVitestProjectOptions = {
       NEMOCLAW_DISABLE_GATEWAY_DRIFT_PREFLIGHT: "1",
     },
     environment: "node",
+    expect: { requireAssertions: true },
     setupFiles: ["test/helpers/normalize-fixture-umask.ts"],
     include: ["nemoclaw/src/**/*.test.ts"],
   },

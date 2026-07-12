@@ -1004,11 +1004,23 @@ describe("pull request and main workflow contracts", () => {
     expect(cliMergeRuns).toContain(
       'scripts/check-coverage-ratchet.ts coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json "CLI coverage"',
     );
+    const changedCliCoverageStep = requiredStep(
+      sharedActions.cliCoverageMerge,
+      "Report changed CLI coverage",
+    );
+    expect(changedCliCoverageStep["continue-on-error"]).toBe(true);
+    expect(changedCliCoverageStep.run).toContain("scripts/report-changed-coverage.ts");
 
     expect(pluginRuns).toContain("npx vitest run --project plugin");
     expect(pluginRuns).toContain(
       'scripts/check-coverage-ratchet.ts coverage/plugin/coverage-summary.json ci/coverage-threshold-plugin.json "Plugin coverage"',
     );
+    const changedPluginCoverageStep = requiredStep(
+      sharedActions.pluginCoverage,
+      "Report changed plugin coverage",
+    );
+    expect(changedPluginCoverageStep["continue-on-error"]).toBe(true);
+    expect(changedPluginCoverageStep.run).toContain("scripts/report-changed-coverage.ts");
 
     expect(installerRuns).toContain("npm install --ignore-scripts");
     expect(installerRuns).toContain("cd nemoclaw && npm install --ignore-scripts");

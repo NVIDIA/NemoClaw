@@ -13,6 +13,7 @@ import {
 } from "./test/e2e/fixtures/live-project-gate.ts";
 import { CliCoverageSequencer } from "./test/helpers/cli-coverage-sequencer";
 import { resolveIntegrationProjectScheduling } from "./test/helpers/integration-project-scheduling";
+import { securityCoverageThresholdsForRun } from "./test/helpers/security-coverage-thresholds";
 import { sourceLoaderNodeOptions } from "./test/helpers/source-loader-options";
 import { testTimeout } from "./test/helpers/timeouts";
 
@@ -224,6 +225,7 @@ export default defineConfig({
       include: ["src/**/*.ts", "bin/**/*.js", "nemoclaw/src/**/*.ts", "nemoclaw/src/**/*.cts"],
       exclude: ["**/*.test.ts", "dist/**"],
       reporter: ["text-summary", "json-summary"],
+      thresholds: securityCoverageThresholdsForRun(process.env),
     },
   },
 });

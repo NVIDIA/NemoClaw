@@ -50,6 +50,7 @@ describe("plugin Vitest project contract", () => {
     expect(sourceTransform.include).toEqual(/\.(?:[cm]?ts|[jt]sx)$/);
     expect(pluginVitestProjectOptions.test.name).toBe("plugin");
     expect(pluginVitestProjectOptions.test.environment).toBe("node");
+    expect(pluginVitestProjectOptions.test.expect).toEqual({ requireAssertions: true });
     expect(pluginVitestProjectOptions.test.env).toEqual({
       NEMOCLAW_DISABLE_GATEWAY_DRIFT_PREFLIGHT: "1",
     });
