@@ -5,9 +5,9 @@
 # Case: Deep Agents Code interactive TUI startup (#5620).
 #
 # This live check runs a headless request and two interactive sessions against a
-# real Deep Agents Code sandbox. It proves completed and disconnected sessions
-# do not leak DCode/LangGraph processes and leaves only sanitized, secret-free
-# capture artifacts.
+# real Deep Agents Code sandbox. It proves completed sessions do not leak
+# DCode/LangGraph processes and leaves only sanitized, secret-free capture
+# artifacts.
 #
 # shellcheck disable=SC2016
 # expect(1) Tcl: $env(...) and {...} are Tcl/sh expansion, not bash expansion.
@@ -180,7 +180,6 @@ run_tui_expect() {
   local raw_capture_file="$1"
   local marker_capture_file="$2"
   local expect_name_prompt="$3"
-  local termination_mode="$4"
   env \
     NEMOCLAW_TUI_CAPTURE="$raw_capture_file" \
     NEMOCLAW_TUI_COMPOSER_PATTERN="$TUI_COMPOSER_PATTERN" \
@@ -189,7 +188,6 @@ run_tui_expect() {
     NEMOCLAW_TUI_NAME_PROMPT_PATTERN="$TUI_NAME_PROMPT_PATTERN" \
     NEMOCLAW_TUI_READY_PATTERN="$TUI_READY_PATTERN" \
     NEMOCLAW_TUI_EXPECT_NAME_PROMPT="$expect_name_prompt" \
-    NEMOCLAW_TUI_TERMINATION_MODE="$termination_mode" \
     NEMOCLAW_TUI_SANDBOX_NAME="$SANDBOX_NAME" \
     NEMOCLAW_TUI_TIMEOUT="$TUI_TIMEOUT" \
     expect <<'EXPECT'
@@ -202,7 +200,6 @@ set first_run_pattern $env(NEMOCLAW_TUI_FIRST_RUN_PATTERN)
 set name_prompt_pattern $env(NEMOCLAW_TUI_NAME_PROMPT_PATTERN)
 set ready_pattern $env(NEMOCLAW_TUI_READY_PATTERN)
 set expect_name_prompt $env(NEMOCLAW_TUI_EXPECT_NAME_PROMPT)
-set termination_mode $env(NEMOCLAW_TUI_TERMINATION_MODE)
 log_file -a $capture
 
 proc append_marker {markers marker} {
@@ -328,25 +325,6 @@ expect {
 append_marker $markers "$ready_match"
 append_marker $markers "NEMOCLAW_TUI_READY"
 puts "\nNEMOCLAW_TUI_READY"
-if {$termination_mode eq "disconnect"} {
-  # OpenSSH recognizes ~. at the start of a line as an immediate connection
-  # close. This tears down its OpenShell ProxyCommand relay without delivering
-  # Ctrl-C or another terminal-generated signal to DCode.
-  send -- "\r~."
-  set timeout 20
-  expect {
-    eof {}
-    timeout {
-      append_marker $markers "NEMOCLAW_TUI_DISCONNECT_TIMEOUT"
-      puts "\nNEMOCLAW_TUI_DISCONNECT_TIMEOUT"
-      exit 26
-    }
-  }
-  append_marker $markers "NEMOCLAW_TUI_DISCONNECTED"
-  puts "\nNEMOCLAW_TUI_DISCONNECTED"
-  catch {wait}
-  exit 0
-}
 # Close the Select Agent modal before exercising the idle-app quit path.
 send -- "\033"
 after 500
@@ -501,10 +479,10 @@ main() {
     fail_test "sandbox was not Ready after headless completion"
   fi
 
-  info "Running disconnect and Ctrl-C Deep Agents Code TUI sessions in sandbox: $SANDBOX_NAME"
+  info "Running two Deep Agents Code TUI sessions in sandbox: $SANDBOX_NAME"
   info "Capture directory: $capture_dir"
 
-  local session_index suffix expect_rc secret_detected termination_mode
+  local session_index suffix expect_rc secret_detected
   for session_index in 1 2; do
     suffix=""
     [ "$session_index" -eq 2 ] && suffix=".repeat"
@@ -523,10 +501,8 @@ main() {
     : >"$marker_capture_file"
     : >"$expect_log_file"
 
-    termination_mode="disconnect"
-    [ "$session_index" -eq 2 ] && termination_mode="ctrl-c"
     set +e
-    run_tui_expect "$raw_capture_file" "$marker_capture_file" "$expect_name_prompt" "$termination_mode" >"$expect_log_file" 2>&1
+    run_tui_expect "$raw_capture_file" "$marker_capture_file" "$expect_name_prompt" >"$expect_log_file" 2>&1
     expect_rc=$?
     set -e
 
@@ -557,15 +533,7 @@ main() {
       fail_test "session ${session_index}: dcode TUI Select Agent readiness marker missing from capture"
     fi
 
-    if [ "$termination_mode" = "disconnect" ]; then
-      if grep -q "NEMOCLAW_TUI_DISCONNECTED" "$plain_capture_file"; then
-        pass "session ${session_index}: PTY relay disconnected without Ctrl-C"
-      else
-        fail_test "session ${session_index}: PTY relay disconnect marker missing from capture"
-      fi
-    else
-      assert_clean_exit_code "$plain_capture_file"
-    fi
+    assert_clean_exit_code "$plain_capture_file"
 
     if [ "$secret_detected" -eq 1 ]; then
       fail_test "session ${session_index}: secret-shaped value found in sanitized TUI capture"

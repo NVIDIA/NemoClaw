@@ -74,11 +74,7 @@ const itWithTclsh = it.runIf(tclshAvailable);
 
 function runTuiExpectStateMachine(
   events: TuiExpectEvent[],
-  options: {
-    closeAfterFirstCtrlC?: boolean;
-    expectNamePrompt?: boolean;
-    terminationMode?: "ctrl-c" | "disconnect";
-  } = {},
+  options: { closeAfterFirstCtrlC?: boolean; expectNamePrompt?: boolean } = {},
 ) {
   const captureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-tui-expect-"));
   const capture = path.join(captureDir, "raw.log");
@@ -103,9 +99,6 @@ proc send {args} {
     error "fake spawn id is closed"
   }
   lappend ::fake_sent $key_hex
-  if {$key_hex eq "0d7e2e"} {
-    set ::fake_closed 1
-  }
   if {$key_hex eq "03" && $::env(NEMOCLAW_TUI_CLOSE_AFTER_FIRST_CTRL_C) eq "1"} {
     set ::fake_closed 1
   }
@@ -184,7 +177,6 @@ proc exit {{code 0}} {
       NEMOCLAW_TUI_CLOSE_AFTER_FIRST_CTRL_C: options.closeAfterFirstCtrlC ? "1" : "0",
       NEMOCLAW_TUI_COMPOSER_PATTERN: "(dcode[^\\r\\n]*v0\\.1\\.34)",
       NEMOCLAW_TUI_EXPECT_NAME_PROMPT: options.expectNamePrompt === false ? "0" : "1",
-      NEMOCLAW_TUI_TERMINATION_MODE: options.terminationMode ?? "ctrl-c",
       NEMOCLAW_TUI_MARKERS: markers,
       NEMOCLAW_TUI_FIRST_RUN_PATTERN: "(choose a recommended model)",
       NEMOCLAW_TUI_NAME_PROMPT_PATTERN:
@@ -394,22 +386,6 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     expect(markerText).toContain("NEMOCLAW_TUI_EXIT_CAPTURED:0");
   });
 
-  itWithTclsh("terminates the PTY relay without sending Ctrl-C (#6720)", () => {
-    const { markerText, result, traceText } = runTuiExpectStateMachine(
-      ["composer", "ready", "eof"],
-      {
-        expectNamePrompt: false,
-        terminationMode: "disconnect",
-      },
-    );
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(traceText).toBe("2f,61,67,65,6e,74,73,0d,0d7e2e");
-    expect(markerText).toContain("NEMOCLAW_TUI_READY");
-    expect(markerText).toContain("NEMOCLAW_TUI_DISCONNECTED");
-    expect(markerText).not.toContain("NEMOCLAW_TUI_EXIT_CAPTURED");
-  });
-
   it("does not treat generic TUI exit status 1 as a clean Ctrl-C exit", () => {
     const assertExit = (exitCode: string) =>
       runTuiStartupCheckHelper(
@@ -459,12 +435,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
           "}",
           "sleep() { :; }",
           "run_tui_expect() {",
-          '  printf "Select Agent\\nNEMOCLAW_TUI_READY\\n" >>"$2"',
-          '  if [ "$4" = disconnect ]; then',
-          '    printf "NEMOCLAW_TUI_DISCONNECTED\\n" >>"$2"',
-          "  else",
-          '    printf "NEMOCLAW_TUI_EXIT_CAPTURED:130\\n" >>"$2"',
-          "  fi",
+          '  printf "Select Agent\\nNEMOCLAW_TUI_READY\\nNEMOCLAW_TUI_EXIT_CAPTURED:130\\n" >>"$2"',
           "  return 0",
           "}",
           "main",
@@ -488,7 +459,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       );
       expect(result.stdout).toContain("dcode TUI exited cleanly after Ctrl-C (exit 130)");
       expect(sanitizedText).toContain("NEMOCLAW_TUI_READY");
-      expect(sanitizedText).toContain("NEMOCLAW_TUI_DISCONNECTED");
+      expect(sanitizedText).toContain("NEMOCLAW_TUI_EXIT_CAPTURED:130");
       expect(repeatedSanitizedText).toContain("NEMOCLAW_TUI_READY");
       expect(repeatedSanitizedText).toContain("NEMOCLAW_TUI_EXIT_CAPTURED:130");
       expect(result.stdout).toContain(

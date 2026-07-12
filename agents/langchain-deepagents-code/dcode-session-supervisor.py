@@ -7,7 +7,6 @@ from __future__ import annotations
 import ctypes
 import errno
 import os
-import select
 import signal
 import subprocess
 import sys
@@ -121,29 +120,6 @@ def _wait_after_disconnect(child: subprocess.Popen[bytes]) -> int:
         return child.wait()
 
 
-def _stdin_disconnect_poller() -> select.poll | None:
-    try:
-        fd = sys.stdin.fileno()
-        if not os.isatty(fd):
-            return None
-        poller = select.poll()
-        poller.register(fd, select.POLLHUP | select.POLLERR | select.POLLNVAL)
-    except (AttributeError, OSError, ValueError):
-        return None
-    return poller
-
-
-def _stdin_disconnected(poller: select.poll | None) -> bool:
-    if poller is None:
-        return False
-    try:
-        events = poller.poll(0)
-    except (OSError, ValueError):
-        return True
-    disconnect_events = select.POLLHUP | select.POLLERR | select.POLLNVAL
-    return any(event & disconnect_events for _fd, event in events)
-
-
 def run(argv: Sequence[str]) -> int:
     if not argv:
         print("dcode session supervisor requires a command.", file=sys.stderr)
@@ -157,7 +133,6 @@ def run(argv: Sequence[str]) -> int:
 
     _enable_child_subreaper()
     child: subprocess.Popen[bytes] | None = None
-    disconnect_poller = _stdin_disconnect_poller()
     pending_signals: list[int] = []
     disconnect_received = False
 
@@ -191,14 +166,6 @@ def run(argv: Sequence[str]) -> int:
                 returncode = child.wait(timeout=_POLL_SECONDS)
                 break
             except subprocess.TimeoutExpired:
-                if _stdin_disconnected(disconnect_poller):
-                    try:
-                        child.terminate()
-                    except ProcessLookupError:
-                        returncode = child.wait()
-                        break
-                    returncode = _wait_after_disconnect(child)
-                    break
                 if disconnect_received:
                     returncode = _wait_after_disconnect(child)
                     break
