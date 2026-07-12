@@ -33,6 +33,20 @@ const LITERAL_PIN_PATTERN = /^v([0-9]+\.[0-9]+\.[0-9]+):([A-Za-z0-9._+-]+)$/u;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const FUNCTION_SELECTOR_VALUES = new Set(["${release_tag}:${asset}", "$release_tag:$asset"]);
 const MAX_INSTALLER_INPUT_BYTES = 1024 * 1024;
+const EXPECTED_INSTALLER_ASSETS = [
+  "openshell-x86_64-unknown-linux-musl.tar.gz",
+  "openshell-aarch64-unknown-linux-musl.tar.gz",
+  "openshell-aarch64-apple-darwin.tar.gz",
+  "openshell-gateway-x86_64-unknown-linux-gnu.tar.gz",
+  "openshell-gateway-aarch64-unknown-linux-gnu.tar.gz",
+  "openshell-gateway-aarch64-apple-darwin.tar.gz",
+  "openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz",
+  "openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz",
+] as const;
+const EXPECTED_BREV_ASSETS = [
+  "openshell-x86_64-unknown-linux-musl.tar.gz",
+  "openshell-aarch64-unknown-linux-musl.tar.gz",
+] as const;
 
 function fail(message: string): never {
   throw new Error(`Installer pin extraction failed: ${message}`);
@@ -102,6 +116,33 @@ function readInstallerInput(inputPath: string, sourceLabel: string): string {
     return buffer.subarray(0, bytesRead).toString("utf8");
   } finally {
     fs.closeSync(descriptor);
+  }
+}
+
+// invalidState: base-trusted CI accepts the right number of valid published
+// hashes while a pull request swaps in a different official release asset.
+// sourceBoundary: these expected asset names live only in base-trusted parser
+// code; the PR-head installer and Brev script remain inert input data.
+// whyNotSourceFix: OpenShell can attest what it publishes but cannot determine
+// which exact downstream assets NemoClaw consumes.
+// regressionTest: test/installer-hash-check.test.ts substitutes official but
+// unexpected assets while keeping valid upstream digests and record counts.
+// removalCondition: remove this set check only when one base-trusted canonical
+// dependency manifest directly drives both installer consumers.
+function assertExactAssetSet(
+  pins: InstallerPin[],
+  expectedAssets: readonly string[],
+  label: string,
+): void {
+  const actual = [...new Set(pins.map((pin) => pin.asset))].sort();
+  const expected = [...expectedAssets].sort();
+  const missing = expected.filter((asset) => !actual.includes(asset));
+  const unexpected = actual.filter((asset) => !expected.includes(asset));
+  if (missing.length > 0 || unexpected.length > 0) {
+    fail(
+      `${label} must contain the exact consumed asset set; ` +
+        `missing=[${missing.join(", ")}], unexpected=[${unexpected.join(", ")}]`,
+    );
   }
 }
 
@@ -455,6 +496,8 @@ function runCli(): void {
       sourceLabel: "Brev launchable",
     },
   );
+  assertExactAssetSet(installerPins, EXPECTED_INSTALLER_ASSETS, "installer pin table");
+  assertExactAssetSet(brevPins, EXPECTED_BREV_ASSETS, "Brev pin table");
   const pins = [...installerPins, ...brevPins];
   const releaseVersions = [...new Set(pins.map((pin) => pin.releaseVersion))].sort();
   if (releaseVersions.length !== 1) {

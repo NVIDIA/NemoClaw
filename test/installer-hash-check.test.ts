@@ -46,6 +46,12 @@ const ASSET_DIGESTS = new Map([
 ]);
 const ASSETS = [...ASSET_DIGESTS.keys()];
 const UNPUBLISHED_ASSET = "openshell-sandbox-aarch64-unknown-linux-gnu-unpublished.tar.gz";
+const OFFICIAL_UNEXPECTED_INSTALLER_ASSET = "openshell-driver-vm-x86_64-unknown-linux-gnu.tar.gz";
+const OFFICIAL_UNEXPECTED_INSTALLER_DIGEST =
+  "911dd804074c620b3ba353f17e39a8195222c0764072621a154164432d7906d0";
+const OFFICIAL_UNEXPECTED_BREV_ASSET = "openshell-driver-vm-aarch64-unknown-linux-gnu.tar.gz";
+const OFFICIAL_UNEXPECTED_BREV_DIGEST =
+  "5e6ba04030938e7be21b8b83af9a34b888deffb4c65e7e70dd6845c3bc7e264f";
 const SYMLINK_INPUT_MARKER = "LEAK565";
 type FixtureMode =
   | "allowlisted-alternate-version"
@@ -58,6 +64,8 @@ type FixtureMode =
   | "missing-brev-pin"
   | "multiple-installer-versions"
   | "non-regular-brev-input"
+  | "official-but-unexpected-brev-asset"
+  | "official-but-unexpected-installer-asset"
   | "oversized-installer-input"
   | "partial"
   | "partial-asset-missing"
@@ -85,12 +93,23 @@ const BREV_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> =
   "missing-brev-pin": (source) =>
     source.replace(ASSET_DIGESTS.get(ASSETS[1]) ?? "missing", "missing"),
   "mismatched-table-versions": (source) => source.replaceAll("v0.0.72:", "v0.0.73:"),
+  "official-but-unexpected-brev-asset": (source) =>
+    source
+      .replace(ASSETS[1] ?? "missing", OFFICIAL_UNEXPECTED_BREV_ASSET)
+      .replace(ASSET_DIGESTS.get(ASSETS[1] ?? "") ?? "missing", OFFICIAL_UNEXPECTED_BREV_DIGEST),
   "pr-checker-bypass": corruptFirstBrevPin,
   "pr-parser-bypass": corruptFirstBrevPin,
 };
 const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> = {
   "multiple-installer-versions": (source) =>
     source.replace(`v0.0.72:${ASSETS[0]}`, `v0.0.73:${ASSETS[0]}`),
+  "official-but-unexpected-installer-asset": (source) =>
+    source
+      .replace(ASSETS.at(-1) ?? "missing", OFFICIAL_UNEXPECTED_INSTALLER_ASSET)
+      .replace(
+        ASSET_DIGESTS.get(ASSETS.at(-1) ?? "") ?? "missing",
+        OFFICIAL_UNEXPECTED_INSTALLER_DIGEST,
+      ),
   "partial-asset-missing": (source) =>
     source.replace(ASSETS.at(-1) ?? "missing", UNPUBLISHED_ASSET),
 };
@@ -447,6 +466,28 @@ describe("installer hash verification", () => {
   });
 
   it.each([
+    [
+      "official-but-unexpected-installer-asset",
+      "installer pin table must contain the exact consumed asset set",
+      OFFICIAL_UNEXPECTED_INSTALLER_ASSET,
+    ],
+    [
+      "official-but-unexpected-brev-asset",
+      "Brev pin table must contain the exact consumed asset set",
+      OFFICIAL_UNEXPECTED_BREV_ASSET,
+    ],
+  ] as const)("rejects %s despite a valid published digest", (mode, diagnostic, unexpected) => {
+    const result = runFixture(mode, undefined, true);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
+    expect(result.stdout).toContain(diagnostic);
+    expect(result.stdout).toContain(`unexpected=[${unexpected}]`);
+    expect(result.stdout).not.toContain("Checking OpenShell v0.0.72 release assets");
+    expect(result.stdout).not.toContain("All installer hashes are current");
+  });
+
+  it.each([
     "equals-whitespace",
     "comments",
     "line-continuations",
@@ -553,15 +594,16 @@ describe("installer hash verification", () => {
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
-  it("fails closed when a pinned installer asset is absent from every manifest", () => {
+  it("fails closed when a pinned installer asset is outside the exact consumed set", () => {
     const result = runFixture("partial-asset-missing");
 
     expect(result.status).toBe(1);
+    expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
     expect(result.stdout).toContain(
-      `STALE: installer ${UNPUBLISHED_ASSET} does not match exactly one v0.0.72 checksum entry`,
+      "installer pin table must contain the exact consumed asset set",
     );
-    expect(result.stdout).toContain("upstream: missing");
-    expect(result.stdout).toContain("matches:  0");
+    expect(result.stdout).toContain(`unexpected=[${UNPUBLISHED_ASSET}]`);
+    expect(result.stdout).not.toContain("Checking OpenShell v0.0.72 release assets");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
