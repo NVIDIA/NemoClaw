@@ -7,6 +7,10 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
+import {
+  createMinimumOpenClawPluginApi,
+  MINIMUM_OPENCLAW_PLUGIN_API_VERSION,
+} from "./fixtures/minimum-openclaw-plugin-api";
 
 const repoRoot = path.join(import.meta.dirname, "../..");
 const pluginRoot = path.join(repoRoot, "nemoclaw");
@@ -75,6 +79,13 @@ describe("packed NemoClaw plugin metadata", () => {
     );
     const pluginModule = await import(pathToFileURL(extensionPath).href);
     expect(pluginModule.default).toBeTypeOf("function");
+    const { api, registrations } = createMinimumOpenClawPluginApi();
+    expect(() => pluginModule.default(api)).not.toThrow();
+    expect(registrations.commands).toEqual([expect.objectContaining({ name: "nemoclaw" })]);
+    expect(registrations.providers).toEqual([expect.objectContaining({ id: "inference" })]);
+    expect(registrations.hookNames).toEqual(
+      expect.arrayContaining(["before_prompt_build", "before_tool_call"]),
+    );
 
     const pluginApi = packageJson.openclaw?.compat?.pluginApi;
     expect(pluginApi).toEqual(expect.stringMatching(/^>=\d{4}\.\d{1,2}\.\d{1,2}$/));
@@ -87,8 +98,13 @@ describe("packed NemoClaw plugin metadata", () => {
       packageJson.openclaw?.build?.openclawVersion,
       "OpenClaw build version",
     );
+    const minimumHostApi = parseRelease(
+      MINIMUM_OPENCLAW_PLUGIN_API_VERSION,
+      "minimum executable host fixture",
+    );
 
-    expect(pluginApiMinimum).toEqual(gatewayMinimum);
+    expect(pluginApiMinimum).toEqual(minimumHostApi);
+    expect(gatewayMinimum).toEqual(minimumHostApi);
     expect(compareRelease(buildVersion, pluginApiMinimum)).toBeGreaterThanOrEqual(0);
     expect(compareRelease(buildVersion, gatewayMinimum)).toBeGreaterThanOrEqual(0);
   });
