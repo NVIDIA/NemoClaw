@@ -8,6 +8,8 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 
+import { prepareInitialSandboxCreatePolicy } from "../src/lib/onboard/initial-policy.ts";
+
 import { addDarwinFcntlSealConstants } from "./helpers/darwin-fcntl-seal-fixture.ts";
 import {
   makeStartScriptFixture,
@@ -125,24 +127,46 @@ print("root-owned-proxy-verification-ok")
     }
   });
 
-  it("allows raw GitHub content only through GET and HEAD", () => {
-    const policy = YAML.parse(readAgentFile("policy-additions.yaml")) as {
-      network_policies?: Record<string, { endpoints?: Array<Record<string, unknown>> }>;
-    };
-    const rawGitHub = policy.network_policies?.github?.endpoints?.find(
-      (endpoint) => endpoint.host === "raw.githubusercontent.com",
+  it("prepares read-only raw GitHub access without opening denied fetch targets", () => {
+    const prepared = prepareInitialSandboxCreatePolicy(
+      path.join(agentDir, "policy-additions.yaml"),
+      [],
+      {
+        agentName: "langchain-deepagents-code",
+        policyTier: "balanced",
+        additionalPresets: ["observability-otlp-local"],
+      },
     );
 
-    expect(rawGitHub).toEqual({
-      host: "raw.githubusercontent.com",
-      port: 443,
-      protocol: "rest",
-      enforcement: "enforce",
-      rules: [
-        { allow: { method: "GET", path: "/**" } },
-        { allow: { method: "HEAD", path: "/**" } },
-      ],
-    });
+    try {
+      const policy = YAML.parse(fs.readFileSync(prepared.policyPath, "utf8")) as {
+        network_policies?: Record<string, { endpoints?: Array<Record<string, unknown>> }>;
+      };
+      const endpoints = Object.values(policy.network_policies ?? {}).flatMap(
+        (networkPolicy) => networkPolicy.endpoints ?? [],
+      );
+      const rawGitHub = endpoints.find((endpoint) => endpoint.host === "raw.githubusercontent.com");
+
+      expect(rawGitHub).toMatchObject({
+        port: 443,
+        protocol: "rest",
+        enforcement: "enforce",
+        rules: [
+          { allow: { method: "GET", path: "/**" } },
+          { allow: { method: "HEAD", path: "/**" } },
+        ],
+      });
+      expect(rawGitHub).not.toHaveProperty("access");
+
+      const effectiveHosts = new Set(endpoints.map((endpoint) => endpoint.host));
+      for (const deniedHost of ["example.com", "169.254.169.254", "127.0.0.1"]) {
+        expect(effectiveHosts, `${deniedHost} must remain denied by default`).not.toContain(
+          deniedHost,
+        );
+      }
+    } finally {
+      prepared.cleanup?.();
+    }
   });
 
   it("pins the cloud E2E wiring for fetch_url success and denied-host paths", () => {
