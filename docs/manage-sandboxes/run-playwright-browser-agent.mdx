@@ -383,13 +383,17 @@ if __name__ == "__main__":
 ```
 
 Upload and run the script through the supported NemoClaw commands.
-Source the managed proxy environment so the browser receives the proxy settings and `SSL_CERT_FILE` path.
+In v0.0.80, sandbox startup creates `/tmp/nemoclaw-proxy-env.sh` as root-owned, read-only runtime state, and managed shell hooks source it.
+It exports NemoClaw's `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` settings and, when a corporate CA is merged, the updated CA-bundle variables; OpenShell supplies `SSL_CERT_FILE` for its L7 proxy.
+Source the file explicitly so this non-interactive command uses the same managed proxy and trust environment.
 
 ```bash
 nemoclaw playwright-agent upload \
   ./fill_form_example.py /sandbox/fill_form_example.py
 nemoclaw playwright-agent exec -- bash -lc \
-  '. /tmp/nemoclaw-proxy-env.sh && python3 /sandbox/fill_form_example.py'
+  'test -r /tmp/nemoclaw-proxy-env.sh \
+    && . /tmp/nemoclaw-proxy-env.sh \
+    && python3 /sandbox/fill_form_example.py'
 ```
 
 For production automation, prefer role, label, or test-ID locators that match the target site's stable user-facing contract.
