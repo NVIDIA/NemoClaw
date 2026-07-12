@@ -54,7 +54,7 @@ export async function assertHermesGpuStartupProof({
     expect(installText).toContain(
       "Recreating OpenShell Docker sandbox container with NVIDIA GPU access",
     );
-    expect(installText).toContain("Docker GPU mode selected:");
+    expect(installText).toContain("Docker container mode selected:");
     for (const fragment of HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS) {
       expect(installText).not.toContain(fragment);
     }
@@ -68,7 +68,7 @@ export async function assertHermesGpuStartupProof({
     expect(installText).toContain(
       "Recreating OpenShell Docker sandbox container with NVIDIA GPU access",
     );
-    expect(installText).toContain("Docker GPU mode selected:");
+    expect(installText).toContain("Docker container mode selected:");
   } else {
     expect(installText).toContain(
       "Direct sandbox GPU enabled; allowing OpenShell GPU policy enrichment.",
@@ -76,7 +76,7 @@ export async function assertHermesGpuStartupProof({
     expect(installText).not.toContain(
       "Recreating OpenShell Docker sandbox container with NVIDIA GPU access",
     );
-    expect(installText).not.toContain("Docker GPU mode selected:");
+    expect(installText).not.toContain("Docker container mode selected:");
     for (const fragment of HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS) {
       expect(installText).not.toContain(fragment);
     }
