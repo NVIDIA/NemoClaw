@@ -39,7 +39,7 @@ non-zero.
 
 ## Prerequisites
 
-- Node `>=22.16` (`tsx` is a dev dependency; run via `npm`/`npx`).
+- Node `>=22.19` (`tsx` is a dev dependency; run via `npm`/`npx`).
 - An OpenAI-compatible inference endpoint and model you can reach from the host
   (e.g. an NVIDIA endpoint, a local vLLM/Ollama server, or — from inside a
   sandbox — `https://inference.local/v1`).

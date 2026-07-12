@@ -112,6 +112,7 @@ fi
           RIPGREP_VERSION: "14.1.0-1",
           RG_TEMPLATE: rgTemplate,
           RUNNER_TEMP: path.join(tmp, "runner"),
+          TYPEBOX_VERSION: "test-typebox-version",
         },
       });
       const calls = fs.readFileSync(callLog, "utf8").trim().split(/\r?\n/u);
@@ -124,6 +125,9 @@ fi
           "rg --version",
           expect.stringMatching(/^npm install .*--ignore-scripts/u),
         ]),
+      );
+      expect(calls.find((call) => call.startsWith("npm install "))).toContain(
+        "typebox@test-typebox-version",
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

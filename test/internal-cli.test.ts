@@ -82,7 +82,7 @@ describe("internal oclif namespace", () => {
         "--provider",
         "cloud",
         "--node-version",
-        "v22.16.0",
+        "v22.19.0",
         "--npm-version",
         "10.0.0",
       ],

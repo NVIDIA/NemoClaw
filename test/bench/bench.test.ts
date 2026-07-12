@@ -544,7 +544,7 @@ describe("renderMarkdownReport", () => {
     environment: {
       os: "Linux 6.0",
       arch: "x64",
-      node: "v22.16.0",
+      node: "v22.19.0",
       cpus: 8,
       cpu_model: "Test CPU",
       total_mem_gib: 32,
@@ -586,7 +586,7 @@ describe("hasBlockingError", () => {
       environment: {
         os: "Linux",
         arch: "x64",
-        node: "v22.16.0",
+        node: "v22.19.0",
         cpus: 1,
         cpu_model: "x",
         total_mem_gib: 1,

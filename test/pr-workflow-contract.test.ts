@@ -286,7 +286,7 @@ describe("pull request and main workflow contracts", () => {
     expect(installerHashWorkflow.on?.pull_request?.paths).toBeUndefined();
     expect(installerHashWorkflow.permissions).toEqual({ contents: "read" });
     expect(parserRuntimeSetup.uses).toBe(trustedSetupNodeAction);
-    expect(parserRuntimeSetup.with?.["node-version"]).toBe("22.16.0");
+    expect(parserRuntimeSetup.with?.["node-version"]).toBe("22.19.0");
     expect(prCheckout.with?.repository).toBe(
       "${{ github.event.pull_request.head.repo.full_name }}",
     );

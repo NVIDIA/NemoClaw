@@ -86,7 +86,7 @@ That section is a planning aid, not a commitment that a specific issue or featur
 
 Install the following before you begin.
 
-- Node.js 22.16+ and npm 10+
+- Node.js 22.19+ and npm 10+
 - Python 3.11+ (for documentation tooling)
 - Docker (running)
 - [hadolint](https://github.com/hadolint/hadolint) (Dockerfile linter — `brew install hadolint` on macOS)

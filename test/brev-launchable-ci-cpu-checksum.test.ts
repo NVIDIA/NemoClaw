@@ -106,7 +106,7 @@ exec bash -c "\${1:-}"
     path.join(fakeBin, "node"),
     `#!/usr/bin/env bash
 if [ "\${1:-}" = "-p" ]; then printf '${options.nodeSourceChecksumTool === false ? "20" : "22"}\\n'; exit 0; fi
-if [ "\${1:-}" = "--version" ]; then printf 'v22.16.0\\n'; exit 0; fi
+if [ "\${1:-}" = "--version" ]; then printf 'v22.19.0\\n'; exit 0; fi
 exit 0
 `,
   );

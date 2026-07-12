@@ -179,6 +179,7 @@ export function validatePrReviewAdvisorWorkflowBoundary(
   }
   requireJobEnvValue(errors, reviewJob, "PR_REVIEW_ADVISOR_MODEL", "${{ matrix.advisor.model }}");
   requireJobEnvValue(errors, reviewJob, "RIPGREP_VERSION", "14.1.0-1");
+  requireJobEnvValue(errors, reviewJob, "TYPEBOX_VERSION", "1.1.38");
   requireJobEnvValue(
     errors,
     reviewJob,
@@ -273,6 +274,7 @@ export function validatePrReviewAdvisorWorkflowBoundary(
   );
   requireRunContains(errors, install, "rg --version");
   requireRunContains(errors, install, "--ignore-scripts");
+  requireRunContains(errors, install, '"typebox@${TYPEBOX_VERSION}"');
   requireRunContains(errors, install, "$ADVISOR_DIR/node_modules");
 
   const analyze = requireStep(errors, steps, "Run PR review advisor");
