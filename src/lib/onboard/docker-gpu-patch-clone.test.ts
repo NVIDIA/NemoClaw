@@ -189,10 +189,10 @@ describe("Docker GPU clone envelope", () => {
     endpoint,
   }) => {
     const inspect = inspectFixture();
-    inspect.Config!.Env = inspect.Config!.Env!.filter(
-      (entry) => !entry.startsWith("OPENSHELL_ENDPOINT="),
-    );
-    if (endpoint) inspect.Config!.Env.push(`OPENSHELL_ENDPOINT=${endpoint}`);
+    inspect.Config!.Env = [
+      ...inspect.Config!.Env!.filter((entry) => !entry.startsWith("OPENSHELL_ENDPOINT=")),
+      ...(endpoint === null ? [] : [`OPENSHELL_ENDPOINT=${endpoint}`]),
+    ];
 
     expect(() =>
       buildDockerGpuCloneRunOptions(inspect, {

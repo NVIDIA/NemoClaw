@@ -60,12 +60,6 @@ describe("resolveDockerGpuSandboxCreatePlan", () => {
       expected: "compatibility-only",
     },
     {
-      label: "Docker Desktop WSL ignores opt-out",
-      dockerDesktopWsl: true,
-      control: "0",
-      expected: "compatibility-only",
-    },
-    {
       label: "Jetson default",
       hostGpuPlatform: "jetson",
       expected: "compatibility-only",
@@ -99,9 +93,24 @@ describe("resolveDockerGpuSandboxCreatePlan", () => {
     );
 
     expect(result.gpuRoutePlan).toBe(testCase.expected);
-    if (testCase.dockerDesktopWsl && testCase.control === "0") {
-      expect(log).toHaveBeenCalledWith(expect.stringContaining("ignored on Docker Desktop WSL"));
-    }
+  });
+
+  it("ignores opt-out on Docker Desktop WSL", () => {
+    const log = vi.fn();
+
+    const result = resolveDockerGpuSandboxCreatePlan(
+      { sandboxGpuEnabled: true },
+      {
+        dockerDriverGateway: true,
+        dockerDesktopWsl: true,
+        env: { NEMOCLAW_DOCKER_GPU_PATCH: "0" },
+        platform: "linux",
+        log,
+      },
+    );
+
+    expect(result.gpuRoutePlan).toBe("compatibility-only");
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("ignored on Docker Desktop WSL"));
   });
 
   it("forwards the legacy nonzero warning through the create-plan boundary", () => {
