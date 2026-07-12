@@ -123,7 +123,6 @@ Start from a version-matched source checkout and append one final browser layer 
 
     The pinned Playwright package installs its matching Chromium and FFmpeg revisions under `PLAYWRIGHT_BROWSERS_PATH`.
     The `libnss3-tools` package supplies `certutil`, which the script below uses to trust the OpenShell proxy CA without disabling certificate validation.
-    Chromium documents this per-user NSS database in [Linux certificate management](https://chromium.googlesource.com/chromium/src/+/master/docs/linux/cert_management.md).
   </Step>
 
   <Step title="Onboard from the custom Dockerfile">
@@ -199,7 +198,10 @@ FIELD_VALUES = ["First field value", "Second field value"]
 SUBMIT_TEXT = "Submit"
 SUCCESS_TEXT = "Thank you"
 VIDEO_DIR: str | None = None
-FIELD_SELECTOR = 'input[type="text"], textarea'
+FIELD_SELECTOR = (
+    'input[type="text"]:not([readonly]):not([disabled]), '
+    "textarea:not([readonly]):not([disabled])"
+)
 
 
 def trust_openshell_proxy_ca() -> None:
@@ -211,7 +213,12 @@ def trust_openshell_proxy_ca() -> None:
             "before running the script"
         )
 
-    nss_dir = Path.home() / ".local" / "share" / "pki" / "nssdb"
+    legacy_nss_dir = Path.home() / ".pki" / "nssdb"
+    nss_dir = (
+        legacy_nss_dir
+        if legacy_nss_dir.is_dir()
+        else Path.home() / ".local" / "share" / "pki" / "nssdb"
+    )
     nss_dir.mkdir(parents=True, exist_ok=True)
     database = f"sql:{nss_dir}"
     if not (nss_dir / "cert9.db").exists():
@@ -256,8 +263,9 @@ def fill_form(
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
-        context = browser.new_context(record_video_dir=video_dir)
+        context = None
         try:
+            context = browser.new_context(record_video_dir=video_dir)
             page = context.new_page()
             page.goto(url, wait_until="domcontentloaded")
 
@@ -267,8 +275,15 @@ def fill_form(
                     """
                     selector => {
                       const fields = [...document.querySelectorAll(selector)]
-                        .filter(field => field.getClientRects().length > 0);
-                      return fields.length > 0 && fields.every(field => !field.disabled);
+                        .filter(field => {
+                          const style = window.getComputedStyle(field);
+                          return style.display !== "none"
+                            && style.visibility !== "hidden"
+                            && field.getClientRects().length > 0
+                            && !field.disabled
+                            && !field.readOnly;
+                        });
+                      return fields.length > 0;
                     }
                     """,
                     arg=FIELD_SELECTOR,
@@ -276,7 +291,7 @@ def fill_form(
                 )
             except PlaywrightTimeoutError as error:
                 raise RuntimeError(
-                    "No visible enabled fields appeared; check the page selectors "
+                    "No visible editable fields appeared; check the page selectors "
                     "and denied dependency hosts"
                 ) from error
 
@@ -299,7 +314,8 @@ def fill_form(
             return page.title()
         finally:
             try:
-                context.close()
+                if context is not None:
+                    context.close()
             finally:
                 browser.close()
 
