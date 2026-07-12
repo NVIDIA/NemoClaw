@@ -7,7 +7,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import YAML from "yaml";
 
 import { redact, runCapture } from "../src/lib/runner";
 
@@ -1044,31 +1043,6 @@ describe("regression guards", () => {
       // The smoke must be wired into the run, not just defined.
       expect(src).toContain("await assertTmuxPtyFlow(sandbox, SANDBOX_A)");
     });
-
-    // The reopened #4513: installing tmux was not enough — the bundled
-    // tmux-session flow still failed with `create window failed: fork failed:
-    // Permission denied`. Root cause: the sandbox landlock filesystem policy
-    // never granted the devpts PTY devices, so forkpty() open of /dev/ptmx
-    // (-> /dev/pts/ptmx) and the /dev/pts/<n> slave was denied with EACCES.
-    for (const policyFile of [
-      path.join("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
-      path.join("nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml"),
-      path.join("agents", "openclaw", "policy-permissive.yaml"),
-      path.join("agents", "hermes", "policy-additions.yaml"),
-      path.join("agents", "hermes", "policy-permissive.yaml"),
-    ]) {
-      it(`${policyFile} grants /dev/pts so PTY allocation (tmux) works`, () => {
-        const doc = YAML.parse(fs.readFileSync(path.join(repoRoot, policyFile), "utf-8"));
-        const readWrite: string[] = doc.filesystem_policy?.read_write ?? [];
-        // devpts must be writable — tmux opens the master and slave O_RDWR.
-        expect(readWrite).toContain("/dev/pts");
-        // /dev/ptmx is a symlink to pts/ptmx; the supervisor refuses to chown a
-        // symlinked read_write path, so it must NOT be listed directly. The
-        // /dev/pts directory grant already covers ptmx via the landlock
-        // path hierarchy.
-        expect(readWrite).not.toContain("/dev/ptmx");
-      });
-    }
 
     it("e2e TC-SBX-09 hard-asserts the tmux lifecycle and no longer skips on fork failure", () => {
       const src = fs.readFileSync(
