@@ -26,6 +26,10 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import {
+  requireDockerAvailable,
+  requireXattrAclCapability,
+} from "./state-dir-guard-xattr-acl-helpers.ts";
 
 const CONFIG_DIR = "/sandbox/.openclaw";
 const WORKSPACE_ROOT = `${CONFIG_DIR}/workspace`;
@@ -239,14 +243,12 @@ test("state-dir-guard xattr/ACL: shields up/down preserve content and clamp effe
   });
 
   const dockerInfo = await docker(host, ["info"], "prereq-docker-info", 30_000);
-  if (dockerInfo.exitCode !== 0) {
-    if (process.env.GITHUB_ACTIONS === "true") {
-      throw new Error(
-        `Docker is required for state-dir-guard xattr/ACL live E2E: ${resultText(dockerInfo)}`,
-      );
-    }
-    skip("Docker is required for state-dir-guard xattr/ACL live E2E");
-  }
+  requireDockerAvailable(
+    dockerInfo,
+    () => resultText(dockerInfo),
+    "state-dir-guard xattr/ACL live E2E",
+    skip,
+  );
 
   const fake = await startFakeOpenAiCompatibleServer({});
   cleanup.add("close state-dir-guard xattr/ACL fake inference endpoint", async () => {
@@ -289,15 +291,7 @@ test("state-dir-guard xattr/ACL: shields up/down preserve content and clamp effe
   expect(capabilityProbe.exitCode, resultText(capabilityProbe)).toBe(0);
   const capability: CapabilityProbeResult = JSON.parse(capabilityProbe.stdout.trim());
   await artifacts.writeJson("phase-2-xattr-acl-capability-result.json", capability);
-  if (!capability.xattr || !capability.acl) {
-    const note = `filesystem backing ${CONFIG_DIR} lacks required capability: ${JSON.stringify(capability)}`;
-    if (process.env.GITHUB_ACTIONS === "true") {
-      throw new Error(
-        `xattr/ACL support is required in CI for state-dir-guard xattr/ACL live E2E: ${note}`,
-      );
-    }
-    skip(note);
-  }
+  requireXattrAclCapability(capability, skip);
 
   const mkCredentials = await docker(
     host,
