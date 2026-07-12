@@ -212,11 +212,13 @@ describe("sanitizeConfigFile", () => {
 });
 
 describe("isSensitiveFile", () => {
-  it("detects auth-profiles.json", () => {
+  it("detects credential-bearing auth state basenames", () => {
     expect(isSensitiveFile("auth-profiles.json")).toBe(true);
     expect(isSensitiveFile("Auth-Profiles.json")).toBe(true);
     expect(isSensitiveFile("auth.json")).toBe(true);
     expect(isSensitiveFile("AUTH.JSON")).toBe(true);
+    expect(isSensitiveFile("chatgpt-auth.json")).toBe(true);
+    expect(isSensitiveFile("CHATGPT-AUTH.JSON")).toBe(true);
   });
 
   it("does not flag normal files", () => {

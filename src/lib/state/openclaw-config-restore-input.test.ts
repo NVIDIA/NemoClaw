@@ -6,41 +6,11 @@ import { describe, expect, it } from "vitest";
 import {
   buildOpenClawConfigRestoreInput,
   buildOpenClawConfigRestoreInputFromSandbox,
-  shouldMergeOpenClawConfigStateFile,
 } from "./openclaw-config-restore-input";
 
 function bufferJson(value: unknown): Buffer {
   return Buffer.from(JSON.stringify(value));
 }
-
-describe("shouldMergeOpenClawConfigStateFile", () => {
-  it("documents the OpenClaw manifest/config-path boundary for selective restore", () => {
-    expect(
-      shouldMergeOpenClawConfigStateFile("openclaw", "/sandbox/.openclaw", {
-        path: "openclaw.json",
-        strategy: "copy",
-      }),
-    ).toBe(true);
-    expect(
-      shouldMergeOpenClawConfigStateFile("custom", "/sandbox/.openclaw", {
-        path: "openclaw.json",
-        strategy: "copy",
-      }),
-    ).toBe(true);
-    expect(
-      shouldMergeOpenClawConfigStateFile("openclaw", "/sandbox/.openclaw", {
-        path: "other.json",
-        strategy: "copy",
-      }),
-    ).toBe(false);
-    expect(
-      shouldMergeOpenClawConfigStateFile("openclaw", "/sandbox/.openclaw", {
-        path: "openclaw.json",
-        strategy: "sqlite_backup",
-      }),
-    ).toBe(false);
-  });
-});
 
 describe("buildOpenClawConfigRestoreInput", () => {
   it("fails closed when the current rebuilt OpenClaw config is missing", () => {

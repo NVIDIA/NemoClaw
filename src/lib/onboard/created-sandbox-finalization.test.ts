@@ -8,7 +8,6 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { managedDcodeConfigRestorePolicy } from "../state/dcode-config-restore-input";
 import * as sandboxState from "../state/sandbox";
 import { finalizeCreatedSandbox } from "./created-sandbox-finalization";
 import { getDcodeSelectionDrift } from "./dcode-selection-drift";
@@ -109,61 +108,38 @@ function makeRestoreFixture(): {
   executable(
     python,
     `#!${hostPython}
-import json, sys, types
+import json
+import subprocess
+import sys
+import types
 
-class TOMLDecodeError(ValueError):
-    pass
+NODE_TOML_WRITER = r"""
+const fs = require("node:fs");
+const { stringify } = require("smol-toml");
+const value = JSON.parse(fs.readFileSync(0, "utf8"));
+process.stdout.write(stringify(value));
+"""
 
-def parse_scalar(value):
-    if value == "true": return True
-    if value == "false": return False
-    try: return json.loads(value)
-    except (TypeError, ValueError) as error: raise TOMLDecodeError("malformed") from error
-
-def loads(text):
-    document = {}
-    table = document
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"): continue
-        if line.startswith("[") and line.endswith("]"):
-            table = document
-            for name in line[1:-1].split("."):
-                table = table.setdefault(name, {})
-            continue
-        if "=" not in line: raise TOMLDecodeError("malformed")
-        key, value = line.split("=", 1)
-        table[key.strip()] = parse_scalar(value.strip())
-    return document
-
-def scalar(value):
-    if isinstance(value, bool): return "true" if value else "false"
-    if isinstance(value, str): return json.dumps(value)
-    if isinstance(value, list): return "[" + ", ".join(scalar(item) for item in value) + "]"
-    if isinstance(value, (int, float)): return str(value)
-    raise TypeError("unsupported test TOML value")
-
-def dumps(document):
-    lines = []
-    def emit(prefix, table):
-        if prefix: lines.append("[" + ".".join(prefix) + "]")
-        for key, value in table.items():
-            if not isinstance(value, dict): lines.append(key + " = " + scalar(value))
-        if prefix: lines.append("")
-        for key, value in table.items():
-            if isinstance(value, dict): emit([*prefix, key], value)
-    emit([], document)
-    return "\\n".join(lines).rstrip() + "\\n"
+def dumps(value):
+    completed = subprocess.run(
+        ["node", "-e", NODE_TOML_WRITER],
+        input=json.dumps(value, allow_nan=False),
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+    return completed.stdout
 
 tomli_w = types.ModuleType("tomli_w")
 tomli_w.dumps = dumps
-tomllib = types.ModuleType("tomllib")
-tomllib.loads = loads
-tomllib.TOMLDecodeError = TOMLDecodeError
-sys.modules["tomllib"] = tomllib
 sys.modules["tomli_w"] = tomli_w
-script = sys.argv[3]
-sys.argv = [sys.argv[0], *sys.argv[4:]]
+
+try:
+    script_index = sys.argv.index("-c", 1) + 1
+except ValueError:
+    script_index = 1
+script = sys.argv[script_index]
+sys.argv = [sys.argv[0], *sys.argv[script_index + 1:]]
 exec(script, {"__name__": "__main__"})
 `,
   );
@@ -230,7 +206,7 @@ describe("created DCode sandbox finalization", () => {
           }),
           restoreRecreatedSandboxState: (name, backup, options) => {
             order.push("restore");
-            expect(options.stateFileRestorePolicy).toBe(managedDcodeConfigRestorePolicy);
+            expect(options.allowCustomImageWholeStateFileRestore).toBeUndefined();
             return sandboxState.restoreRecreatedSandboxState(name, backup, options);
           },
           getDcodeSelectionDrift: (name, provider, model, api) => {
@@ -357,43 +333,45 @@ describe("created DCode sandbox finalization", () => {
   });
 
   it("keeps custom-image restores outside the managed config merge (#6311)", () => {
-    const restoreRecreatedSandboxState = vi.fn(() => ({
-      success: true,
-      restoredDirs: [],
-      failedDirs: [],
-      restoredFiles: ["config.toml"],
-      failedFiles: [],
-    }));
-
-    finalizeCreatedSandbox(
-      {
-        sandboxName: "custom-dcode",
-        restoreBackupPath: "/tmp/custom-backup",
-        preUpgradeBackup: false,
-        targetAgentType: "langchain-deepagents-code",
-        validateManagedDcode: false,
-        provider: "custom-provider",
-        model: "custom-model",
-        preferredInferenceApi: null,
-      },
-      {
-        discoverFreshOpenClawImagePluginInstalls: vi.fn(),
-        restoreRecreatedSandboxState,
-        getDcodeSelectionDrift: vi.fn(),
-        register: vi.fn(),
-        note: vi.fn(),
-        error: vi.fn(),
-        exitProcess: (code): never => {
-          throw new Error(`exit ${code}`);
+    const fixture = makeRestoreFixture();
+    const registeredConfigs: string[] = [];
+    try {
+      finalizeCreatedSandbox(
+        {
+          sandboxName: "custom-dcode",
+          restoreBackupPath: fixture.backupPath,
+          preUpgradeBackup: false,
+          targetAgentType: "langchain-deepagents-code",
+          customImage: true,
+          validateManagedDcode: false,
+          provider: "custom-provider",
+          model: "custom-model",
+          preferredInferenceApi: null,
         },
-      },
-    );
+        {
+          discoverFreshOpenClawImagePluginInstalls: vi.fn(),
+          restoreRecreatedSandboxState: (name, backup, options) => {
+            expect(options.allowCustomImageWholeStateFileRestore).toBe(true);
+            return sandboxState.restoreRecreatedSandboxState(name, backup, options);
+          },
+          getDcodeSelectionDrift: vi.fn(),
+          register: () => registeredConfigs.push(fs.readFileSync(fixture.currentPath, "utf8")),
+          note: vi.fn(),
+          error: vi.fn(),
+          exitProcess: (code): never => {
+            throw new Error(`exit ${code}`);
+          },
+        },
+      );
 
-    expect(restoreRecreatedSandboxState).toHaveBeenCalledWith(
-      "custom-dcode",
-      "/tmp/custom-backup",
-      { targetAgentType: "langchain-deepagents-code" },
-    );
+      expect(registeredConfigs).toHaveLength(1);
+      expect(registeredConfigs[0]).toContain('default = "openai:old-model"');
+      expect(registeredConfigs[0]).toContain("[agents]");
+      expect(registeredConfigs[0]).toContain('theme = "dark"');
+      expect(registeredConfigs[0]).not.toContain("new-model");
+    } finally {
+      process.env.PATH = fixture.oldPath;
+    }
   });
 });
 

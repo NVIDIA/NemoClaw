@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { managedDcodeConfigRestorePolicy } from "../state/dcode-config-restore-input";
 import type {
   OpenClawImagePluginInstall,
   OpenClawManagedExtensionDiscoveryResult,
@@ -18,6 +17,7 @@ export type CreatedSandboxFinalizationOptions = {
   restoreBackupPath: string | null;
   preUpgradeBackup: boolean;
   targetAgentType: string;
+  customImage?: boolean;
   discoverOpenClawImagePluginInstalls?: boolean;
   validateManagedDcode: boolean;
   provider: string;
@@ -79,11 +79,9 @@ export function finalizeCreatedSandbox(
       options.restoreBackupPath,
       {
         targetAgentType: options.targetAgentType,
+        ...(options.customImage ? { allowCustomImageWholeStateFileRestore: true } : {}),
         ...(freshOpenClawImagePluginInstalls !== undefined
           ? { freshOpenClawImagePluginInstalls }
-          : {}),
-        ...(options.validateManagedDcode
-          ? { stateFileRestorePolicy: managedDcodeConfigRestorePolicy }
           : {}),
       },
     );
