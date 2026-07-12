@@ -47,8 +47,12 @@ export type CompositeAction = {
   };
 };
 
+export function readRepoText(path: string): string {
+  return readFileSync(join(REPO_ROOT, path), "utf-8");
+}
+
 export function readYaml<T>(path: string): T {
-  return YAML.parse(readFileSync(join(REPO_ROOT, path), "utf-8")) as T;
+  return YAML.parse(readRepoText(path)) as T;
 }
 
 export function readWorkflow(): Record<string, unknown> {

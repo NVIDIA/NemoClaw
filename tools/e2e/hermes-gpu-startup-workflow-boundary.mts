@@ -10,33 +10,16 @@ import YAML from "yaml";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
-const DEFAULT_FIXTURE_PATH = join(
-  REPO_ROOT,
-  "tools",
-  "e2e",
-  "hermes-gpu-docker-runtime-fixture.sh",
-);
+const FIXTURE = join(REPO_ROOT, "tools", "e2e", "hermes-gpu-docker-runtime-fixture.sh");
 const JOB_NAME = "hermes-gpu-startup";
-const CHECKOUT_ACTION = "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10";
-const PR_CHECKOUT_REF = "${{ inputs.checkout_sha || github.sha }}";
-const TRUSTED_CHECKOUT_STEP_NAME = "Checkout trusted Hermes GPU runtime fixture";
-const TRUSTED_INSTALL_STEP_NAME = "Install trusted Hermes GPU runtime fixture";
-const TRUSTED_CLEANUP_STEP_NAME = "Remove trusted Hermes GPU runtime fixture";
-const REASSERT_NODE_STEP_NAME = "Reassert trusted Node runtime";
-const SETUP_NODE_ACTION = "actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e";
-const TRUSTED_CHECKOUT_PATH =
-  ".trusted-hermes-gpu-fixture-${{ github.run_id }}-${{ github.run_attempt }}";
-const TRUSTED_FIXTURE_SOURCE = "tools/e2e/hermes-gpu-docker-runtime-fixture.sh";
-const TRUSTED_FIXTURE_SHA256 = "1e811077fc2c5e0468e971c8f3508dbd3f6856a882e58c448a50e10101a3e1a2";
-const TRUSTED_FIXTURE_PATH =
+const CHECKOUT = "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10";
+const SOURCE = "tools/e2e/hermes-gpu-docker-runtime-fixture.sh";
+const SHA = "1e811077fc2c5e0468e971c8f3508dbd3f6856a882e58c448a50e10101a3e1a2";
+const F_PATH =
   "/usr/local/libexec/nemoclaw/hermes-gpu-docker-runtime-fixture.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.${E2E_HERMES_GPU_STARTUP_SCENARIO}";
-const FALLBACK_STEP_IF = "${{ matrix.scenario == 'fallback' }}";
-const TRUSTED_BASH_SHELL = "/bin/bash --noprofile --norc -e -o pipefail {0}";
+const FALLBACK = "${{ matrix.scenario == 'fallback' }}";
+const BASH = "/bin/bash --noprofile --norc -e -o pipefail {0}";
 const RUN_STEP_NAME = "Run Hermes GPU startup live Vitest test";
-const RECOVERY_STEP_NAME = "Recover Docker daemon after Hermes GPU fallback fixture";
-const LEGACY_PREPARE_STEP_NAME = "Prepare no-GPU native fallback fixture";
-const LEGACY_RESTORE_STEP_NAME = "Restore Docker default runtime after fallback fixture";
-const UPLOAD_STEP_NAME = "Upload Hermes GPU startup artifacts";
 const DOCKER_AUTH_STEP_NAME = "Authenticate to Docker Hub";
 const HOSTED_PROVIDER_ENV_NAMES = [
   "COMPATIBLE_API_KEY",
@@ -68,30 +51,32 @@ function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-function normalizedShell(value: unknown): string {
-  return stringValue(value)
-    .replace(/\\\r?\n/gu, " ")
-    .replace(/\s+/gu, " ")
-    .trim();
+// biome-ignore format: Compact declarative shell-proof vocabulary.
+const TOKENS = { "@bash": '/bin/bash "$trusted_fixture" "$@"', "@bin": "/usr/bin", "@daemon": '"$daemon_json"', "@docker": "/etc/docker/daemon.json", "@env": "/usr/bin/sudo -n /usr/bin/env -i", "@fixture": '"$trusted_fixture"', "@gpu": "hermes-gpu-fallback-docker-runtime", "@install": "/usr/bin/sudo /usr/bin/install", "@root": '"$trusted_state_root"', "@run": "run_trusted_fixture", "@sha": '"$TRUSTED_FIXTURE_SHA256"', "@source": '"$trusted_source"', "@state": '"$state_dir"', "@sudo": "/usr/bin/sudo", "@workflow": '"$TRUSTED_WORKFLOW_SHA"' } as const;
+
+function proof(spec: string): string[] {
+  return spec
+    .trim()
+    .split("\n")
+    .map((line) => line.trim().replace(/@\w+/gu, (token) => TOKENS[token as keyof typeof TOKENS]));
 }
 
-function containsAll(value: unknown, fragments: readonly string[]): boolean {
-  const script = normalizedShell(value);
-  return fragments.every((fragment) => script.includes(fragment));
-}
-
-function containsInOrder(value: unknown, fragments: readonly string[]): boolean {
-  const script = normalizedShell(value);
+function hasProof(value: unknown, spec: string, ordered = false, raw = false): boolean {
+  const script = raw
+    ? stringValue(value)
+    : stringValue(value)
+        .replace(/\\\r?\n/gu, " ")
+        .replace(/\s+/gu, " ")
+        .trim();
   let offset = 0;
-  return fragments.every((fragment) => {
+  return proof(spec).every((fragment) => {
     const index = script.indexOf(fragment, offset);
-    if (index < 0) return false;
-    offset = index + fragment.length;
-    return true;
+    if (ordered && index >= 0) offset = index + fragment.length;
+    return index >= 0;
   });
 }
 
-function hasTrustedStepEnv(step: WorkflowStep | undefined): boolean {
+function trustedEnv(step: WorkflowStep | undefined): boolean {
   const env = asRecord(step?.env);
   return (
     env.BASH_ENV === "/dev/null" &&
@@ -102,7 +87,7 @@ function hasTrustedStepEnv(step: WorkflowStep | undefined): boolean {
 
 export function validateHermesGpuStartupWorkflowBoundary(
   workflowPath = DEFAULT_WORKFLOW_PATH,
-  fixturePath = DEFAULT_FIXTURE_PATH,
+  fixtureFile = FIXTURE,
 ): string[] {
   const workflow = asRecord(YAML.parse(readFileSync(workflowPath, "utf8")));
   const job = asRecord(asRecord(workflow.jobs)[JOB_NAME]);
@@ -118,26 +103,20 @@ export function validateHermesGpuStartupWorkflowBoundary(
     errors.push(`${JOB_NAME} job must remain explicit-only behind generate-matrix`);
   }
   if (job["timeout-minutes"] !== 90) {
-    errors.push(`${JOB_NAME} job must keep the 90 minute timeout`);
+    errors.push(`${JOB_NAME} requires a 90 minute timeout`);
   }
   const strategy = asRecord(job.strategy);
   const matrix = asRecord(strategy.matrix);
-  if (strategy["fail-fast"] !== false) {
-    errors.push(`${JOB_NAME} strategy must keep fail-fast disabled`);
-  }
-  if (strategy["max-parallel"] !== 1) {
-    errors.push(`${JOB_NAME} strategy must serialize GPU scenarios`);
-  }
   if (
+    strategy["fail-fast"] !== false ||
+    strategy["max-parallel"] !== 1 ||
     !Array.isArray(matrix.scenario) ||
     matrix.scenario.length !== 3 ||
     matrix.scenario[0] !== "native" ||
     matrix.scenario[1] !== "fallback" ||
     matrix.scenario[2] !== "compatibility-only"
   ) {
-    errors.push(
-      `${JOB_NAME} matrix must run exactly the native, fallback, and compatibility-only scenarios`,
-    );
+    errors.push(`${JOB_NAME} must serialize GPU scenarios`);
   }
 
   const jobEnv = asRecord(job.env);
@@ -158,14 +137,10 @@ export function validateHermesGpuStartupWorkflowBoundary(
     }
   }
   if (Object.hasOwn(jobEnv, "E2E_DEFAULT_ENABLED")) {
-    errors.push(
-      `${JOB_NAME} job must not set E2E_DEFAULT_ENABLED; the trusted inventory owns its explicit-only classification`,
-    );
+    errors.push(`${JOB_NAME} no E2E_DEFAULT_ENABLED`);
   }
   if (Object.hasOwn(jobEnv, "NEMOCLAW_DOCKER_GPU_PATCH")) {
-    errors.push(
-      `${JOB_NAME} job must leave NEMOCLAW_DOCKER_GPU_PATCH unset so the scenario harness owns route selection`,
-    );
+    errors.push(`${JOB_NAME} no NEMOCLAW_DOCKER_GPU_PATCH`);
   }
   for (const name of HOSTED_PROVIDER_ENV_NAMES) {
     if (Object.hasOwn(jobEnv, name)) {
@@ -193,65 +168,61 @@ export function validateHermesGpuStartupWorkflowBoundary(
     }
   }
 
-  const prCheckoutIndex = steps.findIndex(
-    (step) => step.uses === CHECKOUT_ACTION && asRecord(step.with).ref === PR_CHECKOUT_REF,
+  const prI = steps.findIndex(
+    (step) =>
+      step.uses === CHECKOUT &&
+      asRecord(step.with).ref === "${{ inputs.checkout_sha || github.sha }}",
   );
-  const trustedCheckoutIndex = steps.findIndex((step) => step.name === TRUSTED_CHECKOUT_STEP_NAME);
-  const trustedCheckout = steps[trustedCheckoutIndex];
-  const trustedInstallIndex = steps.findIndex((step) => step.name === TRUSTED_INSTALL_STEP_NAME);
-  const trustedInstall = steps[trustedInstallIndex];
-  const checkoutWith = asRecord(trustedCheckout?.with);
-  const installEnv = asRecord(trustedInstall?.env);
+  const ci = steps.findIndex((step) => step.name === "Checkout trusted Hermes GPU runtime fixture");
+  const checkout = steps[ci];
+  const ii = steps.findIndex((step) => step.name === "Install trusted Hermes GPU runtime fixture");
+  const install = steps[ii];
+  const co = asRecord(checkout?.with);
+  const ie = asRecord(install?.env);
+  const spec = `trusted_checkout="$GITHUB_WORKSPACE/.trusted-hermes-gpu-fixture-\${GITHUB_RUN_ID}-\${GITHUB_RUN_ATTEMPT}"
+trusted_source="$trusted_checkout/${SOURCE}"
+trusted_fixture="${F_PATH}"
+[[ @sha =~ ^[a-f0-9]{64}$ ]]
+[[ @workflow =~ ^[a-f0-9]{40}$ ]]
+[[ "$TRUSTED_DISPATCH_SHA" = @workflow ]]
+@bin/git -C "$trusted_checkout" rev-parse HEAD
+[ -f @source ] && [ ! -L @source ]
+@install -d -o root -g root -m 0755 /usr/local/libexec/nemoclaw
+@install -o root -g root -m 0500 @source @fixture
+@sudo @bin/stat -c '%a %u %g' @fixture)" = "500 0 0"
+printf '%s %s\\n' @sha @fixture | @sudo @bin/sha256sum -c -
+@sudo @bin/cmp -s @source @fixture
+trusted_state_root=/var/lib/nemoclaw-e2e
+@install -d -o root -g root -m 0700 @root
+@sudo @bin/find @root
+-type d -name '@gpu.*' -print0
+@run restore "$stale_state_dir" @docker
+@env
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+@bash
+if ! @run restore`;
   if (
-    prCheckoutIndex < 0 ||
-    trustedCheckoutIndex !== prCheckoutIndex + 1 ||
-    trustedInstallIndex !== trustedCheckoutIndex + 1 ||
-    trustedCheckout?.if !== FALLBACK_STEP_IF ||
-    trustedCheckout?.uses !== CHECKOUT_ACTION ||
-    checkoutWith.repository !== "NVIDIA/NemoClaw" ||
-    checkoutWith.ref !== "${{ github.workflow_sha }}" ||
-    checkoutWith.path !== TRUSTED_CHECKOUT_PATH ||
-    checkoutWith["sparse-checkout"] !== TRUSTED_FIXTURE_SOURCE ||
-    checkoutWith["sparse-checkout-cone-mode"] !== false ||
-    checkoutWith["persist-credentials"] !== false ||
-    trustedInstall?.if !== FALLBACK_STEP_IF ||
-    trustedInstall?.shell !== TRUSTED_BASH_SHELL ||
-    !hasTrustedStepEnv(trustedInstall) ||
-    installEnv.TRUSTED_DISPATCH_SHA !== "${{ github.sha }}" ||
-    installEnv.TRUSTED_FIXTURE_SHA256 !== TRUSTED_FIXTURE_SHA256 ||
-    installEnv.TRUSTED_WORKFLOW_SHA !== "${{ github.workflow_sha }}" ||
-    !containsAll(trustedInstall?.run, [
-      'trusted_checkout="$GITHUB_WORKSPACE/.trusted-hermes-gpu-fixture-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"',
-      `trusted_source="$trusted_checkout/${TRUSTED_FIXTURE_SOURCE}"`,
-      `trusted_fixture="${TRUSTED_FIXTURE_PATH}"`,
-      '[[ "$TRUSTED_FIXTURE_SHA256" =~ ^[a-f0-9]{64}$ ]]',
-      '[[ "$TRUSTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ ]]',
-      '[[ "$TRUSTED_DISPATCH_SHA" = "$TRUSTED_WORKFLOW_SHA" ]]',
-      '/usr/bin/git -C "$trusted_checkout" rev-parse HEAD',
-      '[ -f "$trusted_source" ] && [ ! -L "$trusted_source" ]',
-      "/usr/bin/sudo /usr/bin/install -d -o root -g root -m 0755 /usr/local/libexec/nemoclaw",
-      '/usr/bin/sudo /usr/bin/install -o root -g root -m 0500 "$trusted_source" "$trusted_fixture"',
-      `/usr/bin/sudo /usr/bin/stat -c '%a %u %g' "$trusted_fixture")" = "500 0 0"`,
-      `printf '%s %s\\n' "$TRUSTED_FIXTURE_SHA256" "$trusted_fixture" | /usr/bin/sudo /usr/bin/sha256sum -c -`,
-      '/usr/bin/sudo /usr/bin/cmp -s "$trusted_source" "$trusted_fixture"',
-      "trusted_state_root=/var/lib/nemoclaw-e2e",
-      '/usr/bin/sudo /usr/bin/install -d -o root -g root -m 0700 "$trusted_state_root"',
-      '/usr/bin/sudo /usr/bin/find "$trusted_state_root"',
-      "-type d -name 'hermes-gpu-fallback-docker-runtime.*' -print0",
-      'run_trusted_fixture restore "$stale_state_dir" /etc/docker/daemon.json',
-      "/usr/bin/sudo -n /usr/bin/env -i",
-      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-      '/bin/bash "$trusted_fixture" "$@"',
-      "if ! run_trusted_fixture restore",
-    ]) ||
-    !containsInOrder(trustedInstall?.run, [
-      '/usr/bin/sudo /usr/bin/install -o root -g root -m 0500 "$trusted_source" "$trusted_fixture"',
-      `/usr/bin/sudo /usr/bin/stat -c '%a %u %g' "$trusted_fixture")" = "500 0 0"`,
-      `printf '%s %s\\n' "$TRUSTED_FIXTURE_SHA256" "$trusted_fixture" | /usr/bin/sudo /usr/bin/sha256sum -c -`,
-      '/usr/bin/sudo /usr/bin/cmp -s "$trusted_source" "$trusted_fixture"',
-    ])
+    prI < 0 ||
+    ci !== prI + 1 ||
+    ii !== ci + 1 ||
+    checkout?.if !== FALLBACK ||
+    checkout?.uses !== CHECKOUT ||
+    co.repository !== "NVIDIA/NemoClaw" ||
+    co.ref !== "${{ github.workflow_sha }}" ||
+    co.path !== ".trusted-hermes-gpu-fixture-${{ github.run_id }}-${{ github.run_attempt }}" ||
+    co["sparse-checkout"] !== SOURCE ||
+    co["sparse-checkout-cone-mode"] !== false ||
+    co["persist-credentials"] !== false ||
+    install?.if !== FALLBACK ||
+    install?.shell !== BASH ||
+    !trustedEnv(install) ||
+    ie.TRUSTED_DISPATCH_SHA !== "${{ github.sha }}" ||
+    ie.TRUSTED_FIXTURE_SHA256 !== SHA ||
+    ie.TRUSTED_WORKFLOW_SHA !== "${{ github.workflow_sha }}" ||
+    !hasProof(install?.run, spec) ||
+    !hasProof(install?.run, proof(spec).slice(9, 13).join("\n"), true)
   ) {
-    errors.push(`${JOB_NAME} trusted fixture setup must use immutable root-owned workflow code`);
+    errors.push(`${JOB_NAME} root-owned fixture boundary failed`);
   }
 
   const runStep = steps.find((step) => step.name === RUN_STEP_NAME);
@@ -259,191 +230,174 @@ export function validateHermesGpuStartupWorkflowBoundary(
     errors.push(`${JOB_NAME} job missing step: ${RUN_STEP_NAME}`);
     return errors;
   }
-  const runScript = stringValue(runStep.run);
-  const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
-  const reassertNodeIndex = steps.findIndex((step) => step.name === REASSERT_NODE_STEP_NAME);
-  const reassertNode = steps[reassertNodeIndex];
+  const run = stringValue(runStep.run);
+  const pi = steps.findIndex((step) => step.name === "Prepare E2E workspace");
+  const ni = steps.findIndex((step) => step.name === "Reassert trusted Node runtime");
+  const node = steps[ni];
   if (
-    runStep.shell !== TRUSTED_BASH_SHELL ||
-    !hasTrustedStepEnv(runStep) ||
-    prepareIndex < 0 ||
-    reassertNodeIndex !== prepareIndex + 1 ||
-    reassertNodeIndex + 1 !== steps.indexOf(runStep) ||
-    reassertNode?.uses !== SETUP_NODE_ACTION ||
-    asRecord(reassertNode?.with)["node-version"] !== "22" ||
-    !hasTrustedStepEnv(reassertNode) ||
-    asRecord(reassertNode?.env).NODE_OPTIONS !== "" ||
-    runScript.includes(TRUSTED_FIXTURE_SOURCE) ||
-    !containsAll(runStep.run, [
-      `trusted_fixture="${TRUSTED_FIXTURE_PATH}"`,
-      "/usr/bin/sudo -n /usr/bin/env -i",
-      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-      '/bin/bash "$trusted_fixture" "$@"',
-      'run_trusted_fixture capture "$state_dir" "$daemon_json"',
-      'run_trusted_fixture select-runc "$state_dir" "$daemon_json"',
-      'run_trusted_fixture restore "$state_dir" "$daemon_json"',
-      "trusted_state_root=/var/lib/nemoclaw-e2e",
-      '/usr/bin/sudo /usr/bin/install -d -o root -g root -m 0700 "$trusted_state_root"',
-      'state_dir="$(/usr/bin/sudo /usr/bin/mktemp -d "$trusted_state_root/hermes-gpu-fallback-docker-runtime.',
-      '/usr/bin/sudo /usr/bin/chown root:root "$state_dir"',
-      '/usr/bin/sudo /usr/bin/chmod 0700 "$state_dir"',
-    ])
-  ) {
-    errors.push(`${JOB_NAME} live test must use trusted runtime, fixture, and root-owned state`);
-  }
-  if (
+    runStep.shell !== BASH ||
+    !trustedEnv(runStep) ||
+    pi < 0 ||
+    ni !== pi + 1 ||
+    ni + 1 !== steps.indexOf(runStep) ||
+    node?.uses !== "actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e" ||
+    asRecord(node?.with)["node-version"] !== "22" ||
+    !trustedEnv(node) ||
+    asRecord(node?.env).NODE_OPTIONS !== "" ||
+    run.includes(SOURCE) ||
+    !hasProof(
+      runStep.run,
+      `trusted_fixture="${F_PATH}"
+@env
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+@bash
+@run capture @state @daemon
+@run select-runc @state @daemon
+@run restore @state @daemon
+trusted_state_root=/var/lib/nemoclaw-e2e
+@install -d -o root -g root -m 0700 @root
+state_dir="$(@sudo @bin/mktemp -d "$trusted_state_root/@gpu.
+@sudo @bin/chown root:root @state
+@sudo @bin/chmod 0700 @state`,
+    ) ||
     steps.some(
-      (step) => step.name === LEGACY_PREPARE_STEP_NAME || step.name === LEGACY_RESTORE_STEP_NAME,
+      (step) =>
+        step.name === "Prepare no-GPU native fallback fixture" ||
+        step.name === "Restore Docker default runtime after fallback fixture",
+    ) ||
+    !hasProof(
+      run,
+      `umask 077
+mktemp -d
+chmod 0700 @state
+\${GITHUB_RUN_ID}.\${GITHUB_RUN_ATTEMPT}.fallback.XXXXXX
+restore_docker_default_runtime()
+trap restore_docker_default_runtime EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+@run capture
+@run select-runc
+@run restore
+SOURCE_OF_TRUTH_REVIEW
+invalidState:
+sourceBoundary:
+whyNotSourceFix:
+regressionTest:
+removalCondition:`,
+      false,
+      true,
+    ) ||
+    /\b(?:install\s+-m|chmod)\s+0?644\b/u.test(run) ||
+    !run.includes("npx vitest run --project e2e-live") ||
+    !run.includes("test/e2e/live/hermes-gpu-startup.test.ts")
+  ) {
+    errors.push(`${JOB_NAME} trusted runtime boundary failed`);
+  }
+
+  const ri = steps.findIndex(
+    (step) => step.name === "Recover Docker daemon after Hermes GPU fallback fixture",
+  );
+  const recovery = steps[ri];
+  const rr = stringValue(recovery?.run);
+  if (
+    recovery?.if !== "always()" ||
+    recovery?.shell !== BASH ||
+    !trustedEnv(recovery) ||
+    ri <= steps.indexOf(runStep) ||
+    rr.includes(SOURCE) ||
+    rr.includes("done < <(") ||
+    !hasProof(
+      recovery?.run,
+      `trusted_fixture="${F_PATH}"
+trusted_state_root=/var/lib/nemoclaw-e2e
+@sudo @bin/find @root
+\${GITHUB_RUN_ID}.\${GITHUB_RUN_ATTEMPT}.fallback.
+@env
+@bash
+@run restore @state @docker
+recovery_failed=1`,
+    ) ||
+    /\b(?:install\s+-m|chmod)\s+0?644\b/u.test(rr)
+  ) {
+    errors.push(`${JOB_NAME} trusted recovery boundary failed`);
+  }
+
+  const ki = steps.findIndex((step) => step.name === "Remove trusted Hermes GPU runtime fixture");
+  const cleanup = steps[ki];
+  if (
+    ki !== ri + 1 ||
+    cleanup?.if !== "${{ always() && matrix.scenario == 'fallback' }}" ||
+    cleanup?.shell !== BASH ||
+    !trustedEnv(cleanup) ||
+    !hasProof(
+      cleanup?.run,
+      `trusted_fixture="${F_PATH}"
+@sudo @bin/rm -f -- @fixture`,
     )
   ) {
-    errors.push(`${JOB_NAME} fallback Docker mutation, Vitest, and restore must share one step`);
-  }
-  const cleanupBoundaryFragments = [
-    "umask 077",
-    "mktemp -d",
-    'chmod 0700 "$state_dir"',
-    "${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.fallback.XXXXXX",
-    "restore_docker_default_runtime()",
-    "trap restore_docker_default_runtime EXIT",
-    "trap 'exit 130' INT",
-    "trap 'exit 143' TERM",
-    "run_trusted_fixture capture",
-    "run_trusted_fixture select-runc",
-    "run_trusted_fixture restore",
-  ];
-  if (!cleanupBoundaryFragments.every((fragment) => runScript.includes(fragment))) {
-    errors.push(`${JOB_NAME} fallback Docker mutation must remain under same-step cleanup traps`);
-  }
-  const sourceBoundaryMarkers = [
-    "SOURCE_OF_TRUTH_REVIEW",
-    "invalidState:",
-    "sourceBoundary:",
-    "whyNotSourceFix:",
-    "regressionTest:",
-    "removalCondition:",
-  ];
-  if (!sourceBoundaryMarkers.every((marker) => runScript.includes(marker))) {
-    errors.push(`${JOB_NAME} fallback Docker fixture must retain its source-boundary rationale`);
-  }
-  if (/\b(?:install\s+-m|chmod)\s+0?644\b/u.test(runScript)) {
-    errors.push(`${JOB_NAME} fallback Docker fixture must reject permissive 0644 file modes`);
-  }
-  if (!runScript.includes("npx vitest run --project e2e-live")) {
-    errors.push(`${JOB_NAME} step must run the e2e-live Vitest project`);
-  }
-  if (!runScript.includes("test/e2e/live/hermes-gpu-startup.test.ts")) {
-    errors.push(`${JOB_NAME} step must run the dedicated Hermes GPU startup test`);
+    errors.push(`${JOB_NAME} cleanup requires an always step`);
   }
 
-  const recoveryStepIndex = steps.findIndex((step) => step.name === RECOVERY_STEP_NAME);
-  const recoveryStep = steps[recoveryStepIndex];
-  const recoveryScript = stringValue(recoveryStep?.run);
-  if (
-    recoveryStep?.if !== "always()" ||
-    recoveryStep?.shell !== TRUSTED_BASH_SHELL ||
-    !hasTrustedStepEnv(recoveryStep) ||
-    recoveryStepIndex <= steps.indexOf(runStep) ||
-    recoveryScript.includes(TRUSTED_FIXTURE_SOURCE) ||
-    recoveryScript.includes("done < <(") ||
-    !containsAll(recoveryStep?.run, [
-      `trusted_fixture="${TRUSTED_FIXTURE_PATH}"`,
-      "trusted_state_root=/var/lib/nemoclaw-e2e",
-      '/usr/bin/sudo /usr/bin/find "$trusted_state_root"',
-      "${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.fallback.",
-      "/usr/bin/sudo -n /usr/bin/env -i",
-      '/bin/bash "$trusted_fixture" "$@"',
-      'run_trusted_fixture restore "$state_dir" /etc/docker/daemon.json',
-      "recovery_failed=1",
-    ])
-  ) {
-    errors.push(`${JOB_NAME} independent trusted recovery must always propagate failures`);
-  }
-  if (/\b(?:install\s+-m|chmod)\s+0?644\b/u.test(recoveryScript)) {
-    errors.push(`${JOB_NAME} fallback Docker fixture must reject permissive 0644 file modes`);
-  }
-
-  const trustedCleanupIndex = steps.findIndex((step) => step.name === TRUSTED_CLEANUP_STEP_NAME);
-  const trustedCleanup = steps[trustedCleanupIndex];
-  if (
-    trustedCleanupIndex !== recoveryStepIndex + 1 ||
-    trustedCleanup?.if !== "${{ always() && matrix.scenario == 'fallback' }}" ||
-    trustedCleanup?.shell !== TRUSTED_BASH_SHELL ||
-    !hasTrustedStepEnv(trustedCleanup) ||
-    !containsAll(trustedCleanup?.run, [
-      `trusted_fixture="${TRUSTED_FIXTURE_PATH}"`,
-      '/usr/bin/sudo /usr/bin/rm -f -- "$trusted_fixture"',
-    ])
-  ) {
-    errors.push(
-      `${JOB_NAME} installed trusted fixture must be removed in an always step immediately after recovery`,
-    );
-  }
-
-  let fixtureScript = "";
+  let fixture = "";
   try {
-    fixtureScript = readFileSync(fixturePath, "utf8");
+    fixture = readFileSync(fixtureFile, "utf8");
   } catch {
-    errors.push(`${JOB_NAME} Docker runtime fixture helper is missing`);
+    errors.push(`${JOB_NAME} fixture missing`);
   }
-  if (fixtureScript) {
-    if (createHash("sha256").update(fixtureScript).digest("hex") !== TRUSTED_FIXTURE_SHA256) {
-      errors.push(`${JOB_NAME} Docker runtime fixture must match its trusted SHA-256`);
+  if (fixture) {
+    if (createHash("sha256").update(fixture).digest("hex") !== SHA) {
+      errors.push(`${JOB_NAME} fixture must match its trusted SHA-256`);
     }
-    if (/\b(?:install\s+-m|chmod)\s+0?644\b/u.test(fixtureScript)) {
-      errors.push(`${JOB_NAME} fallback Docker fixture must reject permissive 0644 file modes`);
+    if (/\b(?:install\s+-m|chmod)\s+0?644\b/u.test(fixture)) {
+      errors.push(`${JOB_NAME} fixture must reject permissive 0644 modes`);
     }
     if (
-      !containsAll(fixtureScript, [
-        "expected_state_root=/var/lib/nemoclaw-e2e",
-        "expected_daemon_json=/etc/docker/daemon.json",
-        "validate_daemon_path",
-        "hermes-gpu-fallback-docker-runtime\\.[0-9]+\\.[0-9]+\\.fallback",
-      ])
+      !hasProof(
+        fixture,
+        `expected_state_root=/var/lib/nemoclaw-e2e
+expected_daemon_json=@docker
+validate_daemon_path
+@gpu\\.[0-9]+\\.[0-9]+\\.fallback`,
+      )
     ) {
-      errors.push(`${JOB_NAME} Docker runtime fixture must pin privileged state and daemon paths`);
+      errors.push(`${JOB_NAME} fixture must pin privileged state and daemon paths`);
     }
-    const fixtureFragments = [
-      "umask 077",
-      'install -m 0600 /dev/null "$state_dir/daemon.json.original"',
-      "/usr/bin/jq",
-      "sudo stat -c '%a %u %g' \"$daemon_json\"",
-      "daemon.json.metadata",
-      'sudo install -m "$original_mode"',
-      'sudo chown "$original_uid:$original_gid" "$daemon_json"',
-      'sudo chmod "$original_mode" "$daemon_json"',
-      'sudo cmp -s "$state_dir/daemon.json.original" "$daemon_json"',
-      "restored_mode $restored_uid $restored_gid",
-      '"$restored_runtime" != "$original_runtime"',
-      'rm -rf -- "$state_dir"',
-    ];
-    if (!fixtureFragments.every((fragment) => fixtureScript.includes(fragment))) {
-      errors.push(
-        `${JOB_NAME} Docker runtime fixture must preserve and verify content, mode, UID, GID, and runtime`,
-      );
+    if (
+      !hasProof(
+        fixture,
+        `umask 077
+install -m 0600 /dev/null "$state_dir/daemon.json.original"
+@bin/jq
+sudo stat -c '%a %u %g' @daemon
+daemon.json.metadata
+sudo install -m "$original_mode"
+sudo chown "$original_uid:$original_gid" @daemon
+sudo chmod "$original_mode" @daemon
+sudo cmp -s "$state_dir/daemon.json.original" @daemon
+restored_mode $restored_uid $restored_gid
+"$restored_runtime" != "$original_runtime"
+rm -rf -- @state`,
+        false,
+        true,
+      )
+    ) {
+      errors.push(`${JOB_NAME} fixture must preserve content, mode, UID, GID, and runtime`);
     }
-    const cleanupMatch = /^\s{2}rm -rf -- "\$state_dir" \|\| restore_failed=1$/mu.exec(
-      fixtureScript,
-    );
-    const cleanupIndex = cleanupMatch?.index ?? -1;
-    const failureIndex = fixtureScript.indexOf('if [ "$restore_failed" -ne 0 ]', cleanupIndex);
-    if (cleanupIndex < 0 || failureIndex < cleanupIndex) {
-      errors.push(
-        `${JOB_NAME} Docker runtime fixture must remove private state before reporting restore failure`,
-      );
+    const cleanup =
+      /^\s{2}rm -rf -- "\$state_dir" \|\| restore_failed=1$/mu.exec(fixture)?.index ?? -1;
+    if (cleanup < 0 || fixture.indexOf('if [ "$restore_failed" -ne 0 ]', cleanup) < cleanup) {
+      errors.push(`${JOB_NAME} fixture must clean private state before restore failure`);
     }
   }
 
-  const uploadStep = steps.find((step) => step.name === UPLOAD_STEP_NAME);
-  if (!uploadStep) {
-    errors.push(`${JOB_NAME} job missing step: ${UPLOAD_STEP_NAME}`);
-  } else {
-    const uploadWith = asRecord(uploadStep.with);
-    if (uploadWith.name !== "e2e-hermes-gpu-startup-${{ matrix.scenario }}") {
-      errors.push(`${JOB_NAME} upload must use a scenario-specific artifact name`);
-    }
-    if (uploadWith.path !== "e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}/") {
-      errors.push(`${JOB_NAME} upload must use the scenario-specific artifact path`);
-    }
+  const upload = asRecord(
+    steps.find((step) => step.name === "Upload Hermes GPU startup artifacts")?.with,
+  );
+  if (
+    upload.name !== "e2e-hermes-gpu-startup-${{ matrix.scenario }}" ||
+    upload.path !== "e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}/"
+  ) {
+    errors.push(`${JOB_NAME} upload needs a scenario artifact path`);
   }
 
   return errors;
