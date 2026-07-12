@@ -269,7 +269,20 @@ describe("effective built-in policy contracts", () => {
     );
 
     const graph = requireEndpoint(outlook, "graph.microsoft.com");
-    expect(methods(graph)).toContain("PATCH");
+    expect((outlook.endpoints ?? []).map((endpoint) => endpoint.host).sort()).toEqual([
+      "graph.microsoft.com",
+      "login.microsoftonline.com",
+      "outlook.office.com",
+      "outlook.office365.com",
+    ]);
+    expect(methods(graph)).toEqual(["GET", "PATCH", "POST"]);
+    for (const host of [
+      "login.microsoftonline.com",
+      "outlook.office365.com",
+      "outlook.office.com",
+    ]) {
+      expect(methods(requireEndpoint(outlook, host))).toEqual(["GET", "POST"]);
+    }
 
     expect((pricing.endpoints ?? []).map((endpoint) => endpoint.host).sort()).toEqual([
       "openrouter.ai",
@@ -324,7 +337,7 @@ describe("effective built-in policy contracts", () => {
     ]);
 
     expect(JSON.stringify(observability)).not.toMatch(
-      /authorization|cookie|headers?|langsmith|secret|token/i,
+      /authorization|cookie|credential|headers?|langsmith|secret|token/i,
     );
   });
 
