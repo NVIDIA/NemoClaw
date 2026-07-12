@@ -10,7 +10,7 @@ const guide = readFileSync(
 );
 
 describe("Playwright browser agent guide", () => {
-  it("keeps browser commands behind the credential-scrubbing exec boundary", () => {
+  it("keeps browser commands behind the credential-scrubbing exec boundary (#4218)", () => {
     const commandBlock = guide.match(/```bash\nnemoclaw playwright-agent upload[\s\S]*?\n```/)?.[0];
 
     expect(commandBlock).toContain(
