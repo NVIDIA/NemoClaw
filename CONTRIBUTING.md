@@ -265,6 +265,10 @@ assignments, so reset mock implementations and restore raw mutations in the test
 Live E2E projects do not enable this automatic cleanup because their stateful targets require
 explicit, validated teardown.
 
+Plugin tests also require each test to execute at least one Vitest `expect` assertion. This check
+is scoped to the plugin project; root projects may continue using Node `assert` where that is the
+existing contract.
+
 ### Test Titles as Behavioral Documentation
 
 Write `describe` and `it` titles so the Vitest tree reads as behavioral documentation. Start test
@@ -299,6 +303,10 @@ If you still have `core.hooksPath` set from an old Husky setup, Git will ignore 
 
 `npm run check` is the whole-repository pre-commit and full CLI/plugin coverage baseline for broad changes to hooks, formatters, generated checks, or shared validation behavior.
 It is not part of routine PR preparation for a focused change.
+Full coverage enforces the aggregate ratchets in `ci/coverage-threshold-*.json` and per-file floors
+for security-sensitive SSRF, credential filtering and redaction, policy mutation, and state-lock
+modules. CLI coverage shards defer the per-file checks until their reports are merged. Pull requests
+also upload CLI and plugin Cobertura reports for advisory changed-file coverage feedback.
 
 For doc-only changes, you do not need to run the full test suite by default.
 Commit and push normally so the hooks run, then run the docs build:

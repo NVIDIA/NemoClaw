@@ -1142,6 +1142,43 @@ npx tsx scripts/checks/e2e-mock-parity.ts --base "$BASE_SHA" --head HEAD
     expect(uploadStep.with?.["retention-days"]).toBe(14);
   });
 
+  it("uploads same-repository CLI and plugin Cobertura reports (#6692)", () => {
+    const sameRepositoryGuard =
+      "${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}";
+    const uploadAction = "actions/upload-code-coverage@abb5995db9e0199b0e2bb9dbd136fce4cb1ec4d3";
+    const reports = [
+      {
+        action: sharedActions.cliCoverageMerge,
+        coverageStep: "Merge CLI coverage",
+        uploadStep: "Upload CLI coverage report",
+        file: "coverage/cli/cobertura-coverage.xml",
+        label: "code-coverage/cli",
+      },
+      {
+        action: sharedActions.pluginCoverage,
+        coverageStep: "Run plugin coverage",
+        uploadStep: "Upload plugin coverage report",
+        file: "coverage/plugin/cobertura-coverage.xml",
+        label: "code-coverage/plugin",
+      },
+    ] as const;
+
+    for (const report of reports) {
+      expect(requiredStep(report.action, report.coverageStep).run).toContain(
+        "--coverage.reporter=cobertura",
+      );
+
+      const uploadStep = requiredStep(report.action, report.uploadStep);
+      expect(uploadStep.if).toBe(sameRepositoryGuard);
+      expect(uploadStep.uses).toBe(uploadAction);
+      expect(uploadStep.with).toEqual({
+        file: report.file,
+        language: "TypeScript",
+        label: report.label,
+      });
+    }
+  });
+
   it("runs CLI coverage in shards and merges coverage before ratcheting", () => {
     expect(sharedActions.cliCoverageShard.inputs?.["shard-count"]?.default).toBe(cliShardCount);
     expect(sharedActions.cliCoverageMerge.inputs?.["shard-count"]?.default).toBe(cliShardCount);
