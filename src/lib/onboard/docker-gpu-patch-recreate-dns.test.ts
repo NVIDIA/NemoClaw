@@ -3,41 +3,10 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import type { DockerContainerInspect } from "./docker-gpu-patch";
+import { createDockerGpuDnsInspectFixture as inspectFixture } from "./__test-helpers__/docker-gpu-patch-fixtures";
 import { buildDockerGpuCloneRunArgs } from "./docker-gpu-patch-clone";
 import { buildDockerGpuMode } from "./docker-gpu-patch-mode";
 import { recreateOpenShellDockerSandboxWithGpu } from "./docker-gpu-patch-recreate";
-
-function inspectFixture(): DockerContainerInspect {
-  return {
-    Id: "old-container-id",
-    Name: "/openshell-alpha",
-    Config: {
-      Image: "openshell/sandbox:abc",
-      Env: ["OPENSHELL_SANDBOX_COMMAND=sleep infinity"],
-      Labels: {
-        "openshell.ai/managed-by": "openshell",
-        "openshell.ai/sandbox-name": "alpha",
-      },
-      Entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
-      Cmd: [],
-    },
-    HostConfig: {
-      NetworkMode: "openshell-docker",
-      RestartPolicy: { Name: "unless-stopped" },
-      ExtraHosts: ["host.openshell.internal:172.17.0.1"],
-    },
-    NetworkSettings: {
-      Networks: {
-        "openshell-docker": {
-          IPAddress: "172.18.0.2",
-          Gateway: "172.18.0.1",
-          Aliases: ["openshell-alpha"],
-        },
-      },
-    },
-  };
-}
 
 function recreateDeps(dns: string | null) {
   const dockerResponses: Record<string, string> = {

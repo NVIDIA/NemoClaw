@@ -21,22 +21,47 @@ const SAFE_CLEANUP: NativeGpuFallbackCleanupResult = {
   containerIds: [],
 };
 
+type CleanupDeps = Parameters<typeof cleanupNativeGpuAttemptForFallback>[1];
+type CleanupOptions = Parameters<typeof cleanupNativeGpuAttemptForFallback>[2];
+type CommandResult = ReturnType<CleanupDeps["runOpenshell"]>;
+type ContainerResult = ReturnType<NonNullable<CleanupDeps["queryContainers"]>>;
+
+const ABSENT = { ok: true as const, ids: [] };
+
+function sequence<T>(input: T | T[]) {
+  const values = Array.isArray(input) ? [...input] : [input];
+  const last = values.at(-1) as T;
+  return () => values.shift() ?? last;
+}
+
+function scenario({
+  list,
+  containers = ABSENT,
+  deletion = { status: 0 },
+  options,
+}: {
+  list: CommandResult | CommandResult[];
+  containers?: ContainerResult | ContainerResult[];
+  deletion?: CommandResult;
+  options?: CleanupOptions;
+}) {
+  const nextList = sequence(list);
+  const nextContainers = sequence(containers);
+  const runOpenshell = vi.fn((args: string[]) => (args[1] === "delete" ? deletion : nextList()));
+  const queryContainers = vi.fn(nextContainers);
+  const sleep = vi.fn();
+  const result = cleanupNativeGpuAttemptForFallback(
+    "alpha",
+    { runOpenshell, queryContainers, sleep },
+    options,
+  );
+  return { queryContainers, result, runOpenshell, sleep };
+}
+
 describe("cleanupNativeGpuAttemptForFallback", () => {
-  function openshellWithList(
-    listResult: { status: number; stdout?: string; stderr?: string },
-    deleteResult: { status: number; stdout?: string; stderr?: string } = { status: 0 },
-  ) {
-    return vi.fn((args: string[]) => (args[1] === "delete" ? deleteResult : listResult));
-  }
-
   it("uses the documented fail-closed cleanup limits by default", () => {
-    const runOpenshell = openshellWithList({ status: 0, stdout: "alpha Ready" });
-    const sleep = vi.fn();
-
-    const result = cleanupNativeGpuAttemptForFallback("alpha", {
-      runOpenshell,
-      queryContainers: () => ({ ok: true, ids: [] }),
-      sleep,
+    const { result, runOpenshell, sleep } = scenario({
+      list: { status: 0, stdout: "alpha Ready" },
     });
 
     expect(result.safe).toBe(false);
@@ -51,14 +76,10 @@ describe("cleanupNativeGpuAttemptForFallback", () => {
   });
 
   it("requires two stable sandbox and labeled-container absence checks", () => {
-    const runOpenshell = openshellWithList({ status: 0, stdout: "" });
-    const queryContainers = vi.fn(() => ({ ok: true as const, ids: [] }));
-
-    const result = cleanupNativeGpuAttemptForFallback(
-      "alpha",
-      { runOpenshell, queryContainers, sleep: vi.fn() },
-      { maxAttempts: 3, stableAbsenceChecks: 2 },
-    );
+    const { result, runOpenshell, queryContainers } = scenario({
+      list: { status: 0, stdout: "" },
+      options: { maxAttempts: 3, stableAbsenceChecks: 2 },
+    });
 
     expect(result).toEqual(SAFE_CLEANUP);
     expect(runOpenshell).toHaveBeenNthCalledWith(
@@ -71,26 +92,16 @@ describe("cleanupNativeGpuAttemptForFallback", () => {
   });
 
   it("waits through propagated presence before proving two stable absence checks", () => {
-    const runOpenshell = vi
-      .fn()
-      .mockReturnValueOnce({ status: 0 })
-      .mockReturnValueOnce({ status: 0, stdout: "alpha Ready" })
-      .mockReturnValueOnce({ status: 0, stdout: "alpha Ready" })
-      .mockReturnValueOnce({ status: 0, stdout: "" })
-      .mockReturnValueOnce({ status: 0, stdout: "" });
-    const queryContainers = vi
-      .fn()
-      .mockReturnValueOnce({ ok: true as const, ids: ["container-a"] })
-      .mockReturnValueOnce({ ok: true as const, ids: [] })
-      .mockReturnValueOnce({ ok: true as const, ids: [] })
-      .mockReturnValueOnce({ ok: true as const, ids: [] });
-    const sleep = vi.fn();
-
-    const result = cleanupNativeGpuAttemptForFallback(
-      "alpha",
-      { runOpenshell, queryContainers, sleep },
-      { maxAttempts: 5, stableAbsenceChecks: 2 },
-    );
+    const { result, runOpenshell, queryContainers, sleep } = scenario({
+      list: [
+        { status: 0, stdout: "alpha Ready" },
+        { status: 0, stdout: "alpha Ready" },
+        { status: 0, stdout: "" },
+        { status: 0, stdout: "" },
+      ],
+      containers: [{ ok: true, ids: ["container-a"] }, ABSENT, ABSENT, ABSENT],
+      options: { maxAttempts: 5, stableAbsenceChecks: 2 },
+    });
 
     expect(result).toEqual(SAFE_CLEANUP);
     expect(runOpenshell).toHaveBeenCalledTimes(5);
@@ -100,17 +111,11 @@ describe("cleanupNativeGpuAttemptForFallback", () => {
   });
 
   it("permits fallback after a nonzero delete only when two checks prove complete absence", () => {
-    const result = cleanupNativeGpuAttemptForFallback(
-      "alpha",
-      {
-        runOpenshell: openshellWithList(
-          { status: 0, stdout: "" },
-          { status: 1, stderr: "delete denied" },
-        ),
-        queryContainers: () => ({ ok: true, ids: [] }),
-      },
-      { maxAttempts: 2, stableAbsenceChecks: 2 },
-    );
+    const { result } = scenario({
+      list: { status: 0, stdout: "" },
+      deletion: { status: 1, stderr: "delete denied" },
+      options: { maxAttempts: 2, stableAbsenceChecks: 2 },
+    });
 
     expect(result.safe).toBe(true);
     expect(result.deleteStatus).toBe(1);
@@ -118,20 +123,14 @@ describe("cleanupNativeGpuAttemptForFallback", () => {
   });
 
   it("permits fallback after a transient gateway list failure recovers to stable absence", () => {
-    const runOpenshell = vi
-      .fn()
-      .mockReturnValueOnce({ status: 0 })
-      .mockReturnValueOnce({ status: 1, stderr: "gateway unavailable" })
-      .mockReturnValueOnce({ status: 0, stdout: "" })
-      .mockReturnValueOnce({ status: 0, stdout: "" });
-    const queryContainers = vi.fn(() => ({ ok: true as const, ids: [] }));
-    const sleep = vi.fn();
-
-    const result = cleanupNativeGpuAttemptForFallback(
-      "alpha",
-      { runOpenshell, queryContainers, sleep },
-      { maxAttempts: 3, stableAbsenceChecks: 2 },
-    );
+    const { result, runOpenshell, queryContainers, sleep } = scenario({
+      list: [
+        { status: 1, stderr: "gateway unavailable" },
+        { status: 0, stdout: "" },
+        { status: 0, stdout: "" },
+      ],
+      options: { maxAttempts: 3, stableAbsenceChecks: 2 },
+    });
 
     expect(result).toEqual(SAFE_CLEANUP);
     expect(runOpenshell).toHaveBeenCalledTimes(4);
@@ -139,30 +138,9 @@ describe("cleanupNativeGpuAttemptForFallback", () => {
     expect(sleep).toHaveBeenCalledTimes(2);
   });
 
-  it("refuses fallback when the OpenShell sandbox query fails", () => {
-    const result = cleanupNativeGpuAttemptForFallback(
-      "alpha",
-      {
-        runOpenshell: openshellWithList({ status: 1, stderr: "gateway unavailable" }),
-        queryContainers: () => ({ ok: true, ids: [] }),
-      },
-      { maxAttempts: 2 },
-    );
-
-    expect(result.safe).toBe(false);
-    expect(result.sandboxPresent).toBeNull();
-    expect(result.reason).toContain("gateway unavailable");
-  });
-
   it("exhausts the fixed poll bound when gateway absence cannot be proven", () => {
-    const runOpenshell = openshellWithList({ status: 1, stderr: "gateway unavailable" });
-    const queryContainers = vi.fn(() => ({ ok: true as const, ids: [] }));
-    const sleep = vi.fn();
-
-    const result = cleanupNativeGpuAttemptForFallback("alpha", {
-      runOpenshell,
-      queryContainers,
-      sleep,
+    const { result, runOpenshell, queryContainers, sleep } = scenario({
+      list: { status: 1, stderr: "gateway unavailable" },
     });
 
     expect(result).toMatchObject({
@@ -178,52 +156,42 @@ describe("cleanupNativeGpuAttemptForFallback", () => {
     expect(sleep).toHaveBeenCalledTimes(MAX_CLEANUP_ATTEMPTS - 1);
   });
 
-  it("refuses fallback when the labeled-container query fails", () => {
-    const result = cleanupNativeGpuAttemptForFallback(
-      "alpha",
+  it.each([
+    [
+      "refuses fallback when the OpenShell sandbox query fails",
+      { list: { status: 1, stderr: "gateway unavailable" } },
+      { sandboxPresent: null },
+      "gateway unavailable",
+    ],
+    [
+      "refuses fallback when the labeled-container query fails",
       {
-        runOpenshell: openshellWithList({ status: 0, stdout: "" }),
-        queryContainers: () => ({ ok: false, ids: [], error: "docker daemon unavailable" }),
+        list: { status: 0, stdout: "" },
+        containers: { ok: false as const, ids: [] as [], error: "docker daemon unavailable" },
       },
-      { maxAttempts: 2 },
-    );
-
-    expect(result.safe).toBe(false);
-    expect(result.containerIds).toBeNull();
-    expect(result.reason).toContain("docker daemon unavailable");
-  });
-
-  it("refuses fallback while any labeled container remains", () => {
-    const result = cleanupNativeGpuAttemptForFallback(
-      "alpha",
+      { containerIds: null },
+      "docker daemon unavailable",
+    ],
+    [
+      "refuses fallback while any labeled container remains",
       {
-        runOpenshell: openshellWithList(
-          { status: 0, stdout: "" },
-          { status: 1, stderr: "sandbox was never created" },
-        ),
-        queryContainers: () => ({ ok: true, ids: ["container-a", "container-b"] }),
+        list: { status: 0, stdout: "" },
+        deletion: { status: 1, stderr: "sandbox was never created" },
+        containers: { ok: true as const, ids: ["container-a", "container-b"] as string[] },
       },
-      { maxAttempts: 2 },
-    );
+      { deleteStatus: 1, containerIds: ["container-a", "container-b"] },
+      "container-a, container-b",
+    ],
+    [
+      "treats an exact sandbox row with no parseable status as present",
+      { list: { status: 0, stdout: "alpha" } },
+      { sandboxPresent: true },
+      "still present",
+    ],
+  ] as const)("%s (fail-closed cleanup)", (_title, input, expected, reason) => {
+    const { result } = scenario({ ...input, options: { maxAttempts: 2 } });
 
-    expect(result.safe).toBe(false);
-    expect(result.deleteStatus).toBe(1);
-    expect(result.containerIds).toEqual(["container-a", "container-b"]);
-    expect(result.reason).toContain("container-a, container-b");
-  });
-
-  it("treats an exact sandbox row with no parseable status as present", () => {
-    const result = cleanupNativeGpuAttemptForFallback(
-      "alpha",
-      {
-        runOpenshell: openshellWithList({ status: 0, stdout: "alpha" }),
-        queryContainers: () => ({ ok: true, ids: [] }),
-      },
-      { maxAttempts: 2 },
-    );
-
-    expect(result.safe).toBe(false);
-    expect(result.sandboxPresent).toBe(true);
-    expect(result.reason).toContain("still present");
+    expect(result).toMatchObject({ safe: false, ...expected });
+    expect(result.reason).toContain(reason);
   });
 });

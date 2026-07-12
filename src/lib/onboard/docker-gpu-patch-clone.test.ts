@@ -2,60 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import { createDockerGpuInspectFixture as inspectFixture } from "./__test-helpers__/docker-gpu-patch-fixtures";
 import {
   buildDockerGpuCloneRunArgs,
   buildDockerGpuCloneRunOptions,
   buildDockerGpuMode,
-  type DockerContainerInspect,
   getDockerGpuPatchNetworkMode,
 } from "./docker-gpu-patch";
-
-function inspectFixture(): DockerContainerInspect {
-  return {
-    Id: "old-container-id",
-    Name: "/openshell-alpha",
-    Config: {
-      Image: "openshell/sandbox:abc",
-      Env: [
-        "A=1",
-        "OPENSHELL_ENDPOINT=http://host.openshell.internal:8080/",
-        "OPENSHELL_TEST=1",
-        "OPENSHELL_SANDBOX_COMMAND=sleep infinity",
-        "NVIDIA_VISIBLE_DEVICES=void",
-      ],
-      Labels: {
-        "openshell.ai/managed-by": "openshell",
-        "openshell.ai/sandbox-name": "alpha",
-        "openshell.ai/sandbox-id": "sandbox-id",
-      },
-      Entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
-      Cmd: [],
-      User: "0",
-      WorkingDir: "/workspace",
-      Hostname: "alpha-host",
-      Tty: true,
-    },
-    HostConfig: {
-      Binds: ["/host:/container:rw"],
-      NetworkMode: "openshell-docker",
-      RestartPolicy: { Name: "unless-stopped" },
-      CapAdd: ["SYS_ADMIN", "NET_ADMIN"],
-      SecurityOpt: ["apparmor=unconfined"],
-      ExtraHosts: ["host.openshell.internal:172.17.0.1"],
-      Memory: 8 * 1024 * 1024 * 1024,
-      NanoCpus: 2_500_000_000,
-    },
-    NetworkSettings: {
-      Networks: {
-        "openshell-docker": {
-          IPAddress: "172.18.0.2",
-          Gateway: "172.18.0.1",
-          Aliases: ["openshell-alpha"],
-        },
-      },
-    },
-  };
-}
 
 describe("Docker GPU clone envelope", () => {
   it("builds clone args that preserve OpenShell labels and runtime settings", () => {

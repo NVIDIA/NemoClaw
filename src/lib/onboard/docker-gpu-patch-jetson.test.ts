@@ -2,31 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { createDockerGpuJetsonInspectFixture as inspectFixture } from "./__test-helpers__/docker-gpu-patch-fixtures";
 import { detectTegraDeviceGroupGids } from "./docker-gpu-jetson-groups";
 import {
   buildDockerGpuCloneRunArgs,
   buildDockerGpuMode,
-  type DockerContainerInspect,
   recreateOpenShellDockerSandboxWithGpu,
 } from "./docker-gpu-patch";
-
-function inspectFixture(): DockerContainerInspect {
-  return {
-    Id: "old-container-id",
-    Name: "/openshell-alpha",
-    Config: {
-      Image: "openshell/sandbox:abc",
-      Env: ["OPENSHELL_ENDPOINT=http://host.openshell.internal:8080/"],
-      Labels: {
-        "openshell.ai/managed-by": "openshell",
-        "openshell.ai/sandbox-name": "alpha",
-      },
-      Entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
-      Cmd: [],
-    },
-    HostConfig: { NetworkMode: "openshell-docker" },
-  };
-}
 
 function dockerCaptureFixture() {
   const responses: Record<string, string> = {

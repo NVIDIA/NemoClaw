@@ -7,39 +7,11 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { createDockerGpuDiagnosticsInspectFixture as inspectFixture } from "./__test-helpers__/docker-gpu-patch-fixtures";
 import {
   collectDockerGpuPatchDiagnostics,
-  type DockerContainerInspect,
   formatDockerInspectNetworkSummary,
 } from "./docker-gpu-patch";
-
-function inspectFixture(): DockerContainerInspect {
-  return {
-    Id: "old-container-id",
-    Name: "/openshell-alpha",
-    Config: {
-      Image: "openshell/sandbox:abc",
-      Env: ["A=1", "OPENSHELL_ENDPOINT=http://host.openshell.internal:8080/", "OPENSHELL_TEST=1"],
-      Labels: {
-        "openshell.ai/managed-by": "openshell",
-        "openshell.ai/sandbox-name": "alpha",
-      },
-    },
-    HostConfig: {
-      NetworkMode: "openshell-docker",
-      ExtraHosts: ["host.openshell.internal:172.17.0.1"],
-    },
-    NetworkSettings: {
-      Networks: {
-        "openshell-docker": {
-          IPAddress: "172.18.0.2",
-          Gateway: "172.18.0.1",
-          Aliases: ["openshell-alpha"],
-        },
-      },
-    },
-  };
-}
 
 describe("Docker GPU patch diagnostics", () => {
   it("formats sanitized network diagnostics without dumping provider secrets", () => {

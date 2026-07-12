@@ -18,65 +18,82 @@ function sandboxCapture(getOutput: string, listOutput: string) {
   return vi.fn((args: readonly string[]) => responses[args.slice(0, 2).join(":")] ?? "");
 }
 
+const GPU_MODE = buildDockerGpuMode("gpus");
+type PatchSnapshot = Parameters<typeof classifyDockerGpuPatchFailure>[0];
+const RUNNING = { Status: "running", Running: true, ExitCode: 0 };
+
+function captureSnapshot(
+  getOutput: string,
+  listOutput: string,
+  patchedContainerState?: Record<string, unknown>,
+) {
+  return captureDockerGpuPatchSandboxSnapshot(
+    "alpha",
+    { patchedContainerId: patchedContainerState ? "new-container-id" : null },
+    {
+      runCaptureOpenshell: sandboxCapture(getOutput, listOutput),
+      ...(patchedContainerState
+        ? { dockerCapture: vi.fn(() => JSON.stringify(patchedContainerState)) }
+        : {}),
+    },
+  );
+}
+
+function classify(
+  snapshot: PatchSnapshot,
+  proofError?: Error,
+  mode: Parameters<typeof classifyDockerGpuPatchFailure>[1] = GPU_MODE,
+) {
+  return classifyDockerGpuPatchFailure(snapshot, mode, proofError ? { proofError } : {});
+}
+
+function failureSnapshot(
+  sandboxPhase: string,
+  patchedContainerState: PatchSnapshot["patchedContainerState"] = null,
+  sandboxListLine: string | null = `alpha   ${sandboxPhase}   30s ago`,
+): PatchSnapshot {
+  return { sandboxPhase, sandboxListLine, patchedContainerState };
+}
+
 describe("Docker GPU patch diagnostics", () => {
   it("detects terminal failure phases in `openshell sandbox list` output", () => {
-    const errorList = "my-sandbox   Error   2s ago";
-    expect(getSandboxFailurePhase(errorList, "my-sandbox")).toBe("Error");
-    expect(getSandboxFailurePhase("my-sandbox   CrashLoopBackOff   3s ago", "my-sandbox")).toBe(
-      "CrashLoopBackOff",
-    );
-    expect(getSandboxFailurePhase("my-sandbox   Failed   3s ago", "my-sandbox")).toBe("Failed");
-    expect(getSandboxFailurePhase("my-sandbox   Ready   3s ago", "my-sandbox")).toBeNull();
-    expect(getSandboxFailurePhase("other   Error   3s ago", "my-sandbox")).toBeNull();
-    expect(getSandboxFailurePhase("", "my-sandbox")).toBeNull();
+    const phase = (output: string) => getSandboxFailurePhase(output, "my-sandbox");
+    expect(phase("my-sandbox   Error   2s ago")).toBe("Error");
+    expect(phase("my-sandbox   CrashLoopBackOff   3s ago")).toBe("CrashLoopBackOff");
+    expect(phase("my-sandbox   Failed   3s ago")).toBe("Failed");
+    expect(phase("my-sandbox   Ready   3s ago")).toBeNull();
+    expect(phase("other   Error   3s ago")).toBeNull();
+    expect(phase("")).toBeNull();
   });
 
-  it("prefers `sandbox list` phase over `sandbox get` when both are present (stale get)", () => {
-    const snapshot = captureDockerGpuPatchSandboxSnapshot(
-      "alpha",
-      { patchedContainerId: null },
-      {
-        runCaptureOpenshell: sandboxCapture(
-          "Name: alpha\nPhase: Provisioning\n",
-          "alpha   Error   2s ago\n",
-        ),
-      },
-    );
+  it.each([
+    [
+      "prefers `sandbox list` phase over `sandbox get` when both are present (stale get)",
+      "Name: alpha\nPhase: Provisioning\n",
+      "alpha   Error   2s ago\n",
+      "Error",
+      "Error",
+    ],
+    [
+      "uses the list-derived phase whenever the sandbox row is present",
+      "Name: alpha\nPhase: Error\nReason: ContainerCannotRun\n",
+      "alpha   Ready   1m ago\n",
+      "Ready",
+      "Ready",
+    ],
+    [
+      "keeps the get-derived phase when the sandbox row is absent from list output",
+      "Name: alpha\nPhase: Terminated\n",
+      "other-box   Ready   2s ago\n",
+      "Terminated",
+      null,
+    ],
+  ])("%s (phase precedence)", (_title, getOutput, listOutput, expectedPhase, expectedListPhase) => {
+    const snapshot = captureSnapshot(getOutput, listOutput);
 
-    expect(snapshot.sandboxPhase).toBe("Error");
-    expect(snapshot.sandboxListLine).toContain("Error");
-  });
-
-  it("uses the list-derived phase whenever the sandbox row is present", () => {
-    const snapshot = captureDockerGpuPatchSandboxSnapshot(
-      "alpha",
-      { patchedContainerId: null },
-      {
-        runCaptureOpenshell: sandboxCapture(
-          "Name: alpha\nPhase: Error\nReason: ContainerCannotRun\n",
-          "alpha   Ready   1m ago\n",
-        ),
-      },
-    );
-
-    expect(snapshot.sandboxPhase).toBe("Ready");
-    expect(snapshot.sandboxListLine).toContain("Ready");
-  });
-
-  it("keeps the get-derived phase when the sandbox row is absent from list output", () => {
-    const snapshot = captureDockerGpuPatchSandboxSnapshot(
-      "alpha",
-      { patchedContainerId: null },
-      {
-        runCaptureOpenshell: sandboxCapture(
-          "Name: alpha\nPhase: Terminated\n",
-          "other-box   Ready   2s ago\n",
-        ),
-      },
-    );
-
-    expect(snapshot.sandboxPhase).toBe("Terminated");
-    expect(snapshot.sandboxListLine).toBeNull();
+    expect(snapshot.sandboxPhase).toBe(expectedPhase);
+    if (expectedListPhase) expect(snapshot.sandboxListLine).toContain(expectedListPhase);
+    else expect(snapshot.sandboxListLine).toBeNull();
   });
 
   it("captures sandbox phase and patched container State via the snapshot helper", () => {
@@ -89,16 +106,10 @@ describe("Docker GPU patch diagnostics", () => {
       StartedAt: "2026-05-12T00:00:00Z",
       FinishedAt: "2026-05-12T00:00:01Z",
     };
-    const snapshot = captureDockerGpuPatchSandboxSnapshot(
-      "alpha",
-      { patchedContainerId: "new-container-id" },
-      {
-        runCaptureOpenshell: sandboxCapture(
-          "Name: alpha\nPhase: Error\nReason: ContainerExit\n",
-          "alpha   Error   1m ago\n",
-        ),
-        dockerCapture: vi.fn(() => JSON.stringify(state)),
-      },
+    const snapshot = captureSnapshot(
+      "Name: alpha\nPhase: Error\nReason: ContainerExit\n",
+      "alpha   Error   1m ago\n",
+      state,
     );
 
     expect(snapshot.sandboxPhase).toBe("Error");
@@ -108,17 +119,16 @@ describe("Docker GPU patch diagnostics", () => {
   });
 
   it("classifies a dead patched container as patched_container_failed with the failed mode", () => {
-    const result = classifyDockerGpuPatchFailure(
-      {
-        sandboxPhase: "Error",
-        sandboxListLine: "alpha   Error   1m ago",
-        patchedContainerState: {
+    const result = classify(
+      failureSnapshot(
+        "Error",
+        {
           Status: "exited",
           ExitCode: 125,
           Error: 'could not select device driver "nvidia" with capabilities: [[gpu]]',
         },
-      },
-      buildDockerGpuMode("gpus"),
+        "alpha   Error   1m ago",
+      ),
     );
 
     expect(result.kind).toBe("patched_container_failed");
@@ -132,38 +142,23 @@ describe("Docker GPU patch diagnostics", () => {
   });
 
   it("classifies an Error-phase sandbox with unknown container state as sandbox_error_phase", () => {
-    const result = classifyDockerGpuPatchFailure(
-      { sandboxPhase: "Error", sandboxListLine: null, patchedContainerState: null },
-      buildDockerGpuMode("gpus"),
-    );
+    const result = classify(failureSnapshot("Error", null, null));
 
     expect(result.kind).toBe("sandbox_error_phase");
     expect(result.headline).toContain("OpenShell sandbox entered Error phase");
   });
 
   it("classifies a live container but timed-out supervisor as supervisor_unreachable", () => {
-    const result = classifyDockerGpuPatchFailure(
-      {
-        sandboxPhase: "Provisioning",
-        sandboxListLine: "alpha   Provisioning   30s ago",
-        patchedContainerState: { Status: "running", Running: true, ExitCode: 0 },
-      },
-      buildDockerGpuMode("gpus"),
-    );
+    const result = classify(failureSnapshot("Provisioning", RUNNING));
 
     expect(result.kind).toBe("supervisor_unreachable");
     expect(result.headline).toContain("Provisioning");
   });
 
   it("prefers supervisor_unreachable over proof_failure when the sandbox is non-live but non-terminal", () => {
-    const result = classifyDockerGpuPatchFailure(
-      {
-        sandboxPhase: "Provisioning",
-        sandboxListLine: "alpha   Provisioning   30s ago",
-        patchedContainerState: null,
-      },
-      buildDockerGpuMode("gpus"),
-      { proofError: new Error("openshell sandbox exec refused: sandbox not ready") },
+    const result = classify(
+      failureSnapshot("Provisioning"),
+      new Error("openshell sandbox exec refused: sandbox not ready"),
     );
 
     expect(result.kind).toBe("supervisor_unreachable");
@@ -172,12 +167,9 @@ describe("Docker GPU patch diagnostics", () => {
   });
 
   it("does not blame the supervisor when the patch failed before a container existed", () => {
-    const result = classifyDockerGpuPatchFailure(
-      {
-        sandboxPhase: "Provisioning",
-        sandboxListLine: "alpha   Provisioning   3s ago",
-        patchedContainerState: null,
-      },
+    const result = classify(
+      failureSnapshot("Provisioning", null, "alpha   Provisioning   3s ago"),
+      undefined,
       null,
     );
 
@@ -186,14 +178,9 @@ describe("Docker GPU patch diagnostics", () => {
   });
 
   it("treats proof failures inside a Ready sandbox as proof_failure, not patched_container_failed", () => {
-    const result = classifyDockerGpuPatchFailure(
-      {
-        sandboxPhase: "Ready",
-        sandboxListLine: "alpha   Ready   30s ago",
-        patchedContainerState: { Status: "running", Running: true, ExitCode: 0 },
-      },
-      buildDockerGpuMode("gpus"),
-      { proofError: new Error("nvidia-smi exited with status 9") },
+    const result = classify(
+      failureSnapshot("Ready", RUNNING),
+      new Error("nvidia-smi exited with status 9"),
     );
 
     expect(result.kind).toBe("proof_failure");
