@@ -237,6 +237,7 @@ async function retryHostedInference<T>(
   );
 }
 
+// source-shape-contract: security -- Live execution proves the shipped Hermes manifest remains healthy and credential-safe
 test("hermes-e2e: install.sh onboards Hermes and proves health plus live inference", {
   timeout: LIVE_TIMEOUT_MS,
 }, async ({ artifacts, cleanup, host, provider, sandbox, secrets }) => {

@@ -2151,19 +2151,6 @@ exit 99`,
     expect(result.stdout.trim()).toBe("v0.2.0");
   });
 
-  it("clone_nemoclaw_ref uses fetch checkout so fully-qualified refs work", () => {
-    const payload = fs.readFileSync(INSTALLER_PAYLOAD, "utf-8");
-    const bootstrap = fs.readFileSync(CURL_PIPE_INSTALLER, "utf-8");
-    for (const src of [payload, bootstrap]) {
-      const fn = src.match(/clone_nemoclaw_ref\(\) \{([\s\S]*?)^}/m);
-      expect(fn).toBeTruthy();
-      expect(fn![1]).toContain('git init --quiet "$dest"');
-      expect(fn![1]).toContain('git -C "$dest" fetch --quiet --depth 1 origin "$ref"');
-      expect(fn![1]).toContain("checkout --quiet --detach FETCH_HEAD");
-      expect(fn![1]).not.toContain("clone --quiet --depth 1 --branch");
-    }
-  });
-
   it("source-checkout path does NOT call resolve_release_tag / git clone", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-source-notag-"));
     const fakeBin = path.join(tmp, "bin");

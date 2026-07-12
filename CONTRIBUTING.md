@@ -226,6 +226,29 @@ npx vitest run --project e2e-support
 This project is fast and does not run live targets. Live E2E remains opt-in through
 `npm run test:live-e2e` or the applicable GitHub Actions workflow.
 
+### Test Declarative Behavior
+
+Do not read a shipped YAML, JSON, manifest, workflow, or E2E runtime file only to assert its keys,
+lists, or literal text. Schema tests should use small synthetic fixtures. Behavior tests should pass
+the configuration through its consumer or validator and mutate important inputs to prove both the
+accepted and rejected outcomes.
+
+A direct read may remain only when it protects a security or compatibility trust boundary that
+cannot be observed at a more stable boundary. Put this annotation immediately above that one test
+and give the concrete reason:
+
+```ts
+// source-shape-contract: security -- Cross-field digest equality protects the shipped trust anchor
+it("keeps both immutable image digests aligned", () => {
+  // ...
+});
+```
+
+`npm run source-shape:check` rejects unsupported categories, short or misplaced reasons, and any
+exception whose file, test title, and category are not in the exact reviewed allowlist. It also
+rejects unused allowlist entries, so one exception cannot silently replace another. Its output and
+metrics list every accepted exception so these contracts remain visible during review.
+
 ### Focused Vitest Feedback
 
 Use `npm run test:changed` for the staged, unstaged, and untracked changes in the current checkout,

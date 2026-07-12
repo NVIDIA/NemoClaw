@@ -203,6 +203,10 @@ export type DockerContainerInspect = {
     GroupAdd?: string[] | null;
     Dns?: string[] | null;
     DnsSearch?: string[] | null;
+    DeviceRequests?: Array<{
+      Driver?: string;
+      DeviceIDs?: string[] | null;
+    }> | null;
     ShmSize?: number;
     ReadonlyPaths?: string[] | null;
     MaskedPaths?: string[] | null;

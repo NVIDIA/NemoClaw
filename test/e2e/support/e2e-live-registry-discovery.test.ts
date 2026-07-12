@@ -4,128 +4,106 @@
 import { describe, expect, it } from "vitest";
 
 import { buildLiveTargetRunPlan } from "../live/run-plan.ts";
+import { target } from "../registry/builder.ts";
 import { listTargets } from "../registry/registry.ts";
 import { liveTargetSupport } from "../registry/runtime-support.ts";
+import type { TargetDefinition, TargetEnvironment } from "../registry/types.ts";
+
+const SUPPORTED_ENVIRONMENT: TargetEnvironment = {
+  platform: "ubuntu-local",
+  install: "repo-current",
+  runtime: "docker-running",
+  onboarding: "cloud-openclaw",
+};
+
+function syntheticTarget(environment: TargetEnvironment = SUPPORTED_ENVIRONMENT): TargetDefinition {
+  return target("synthetic-target")
+    .manifest("synthetic/manifest.yaml")
+    .environment(environment)
+    .expectedState("synthetic-ready")
+    .suites(["synthetic-smoke", "synthetic-security"])
+    .build();
+}
 
 describe("live target registry discovery support", () => {
-  it("classifies every typed registry target", () => {
+  // source-shape-contract: compatibility -- Every shipped target must classify as runnable or expose a concrete skip reason
+  it("classifies every shipped target as supported or with a concrete reason", () => {
     const targets = listTargets();
 
     expect(targets.length).toBeGreaterThan(0);
-    for (const target of targets) {
-      const support = liveTargetSupport(target);
-      expect(support.supported || support.reasons.length > 0).toBe(true);
+    for (const registered of targets) {
+      const support = liveTargetSupport(registered);
+      expect(support.supported || support.reasons.length > 0, registered.id).toBe(true);
     }
   });
 
-  it("wires the canonical Ubuntu cloud OpenClaw path through phase fixtures", () => {
-    const target = listTargets().find((entry) => entry.id === "ubuntu-repo-cloud-openclaw");
+  it("accepts a fully wired synthetic target and forwards its pending suites", () => {
+    const registered = syntheticTarget();
 
-    expect(target).toBeTruthy();
-    expect(liveTargetSupport(target!).supported).toBe(true);
-    expect(liveTargetSupport(target!).pendingRuntimeSuites).toEqual([
-      "smoke",
-      "inference",
-      "credentials",
+    expect(liveTargetSupport(registered)).toEqual({
+      supported: true,
+      reasons: [],
+      pendingRuntimeSuites: registered.suiteIds,
+    });
+  });
+
+  it.each([
+    ["platform", { ...SUPPORTED_ENVIRONMENT, platform: "synthetic-platform" }],
+    ["install", { ...SUPPORTED_ENVIRONMENT, install: "synthetic-install" }],
+    ["runtime", { ...SUPPORTED_ENVIRONMENT, runtime: "synthetic-runtime" }],
+    ["onboarding", { ...SUPPORTED_ENVIRONMENT, onboarding: "synthetic-onboarding" }],
+    ["lifecycle", { ...SUPPORTED_ENVIRONMENT, lifecycle: "synthetic-lifecycle" }],
+  ] as const)("rejects an unwired %s with a diagnostic", (dimension, environment) => {
+    const support = liveTargetSupport(syntheticTarget(environment));
+
+    expect(support.supported).toBe(false);
+    expect(support.reasons).toEqual([
+      `${dimension} 'synthetic-${dimension}' is not wired for live fixtures`,
     ]);
   });
 
-  it("builds the live run-plan artifact shape from registry metadata", () => {
-    const target = listTargets().find((entry) => entry.id === "ubuntu-repo-cloud-openclaw");
+  it("rejects missing environment and expected-state inputs independently", () => {
+    const missingEnvironment = target("synthetic-no-environment")
+      .expectedState("synthetic-ready")
+      .build();
+    const missingExpectedState = target("synthetic-no-state")
+      .environment(SUPPORTED_ENVIRONMENT)
+      .build();
 
-    expect(target).toBeTruthy();
-    expect(buildLiveTargetRunPlan(target!)).toEqual({
-      targetId: "ubuntu-repo-cloud-openclaw",
-      manifestPath: "test/e2e/manifests/openclaw-nvidia.yaml",
-      expectedStateId: "cloud-openclaw-ready",
-      suiteIds: ["smoke", "inference", "credentials"],
+    expect(liveTargetSupport(missingEnvironment)).toMatchObject({
+      supported: false,
+      reasons: ["missing environment"],
+    });
+    expect(liveTargetSupport(missingExpectedState)).toMatchObject({
+      supported: false,
+      reasons: ["missing expectedStateId"],
+    });
+  });
+
+  it("compiles a run plan from synthetic target behavior", () => {
+    const registered = syntheticTarget();
+
+    expect(buildLiveTargetRunPlan(registered)).toEqual({
+      targetId: registered.id,
+      manifestPath: registered.manifestPath,
+      expectedStateId: registered.expectedStateId,
+      suiteIds: registered.suiteIds,
       phases: ["environment", "onboarding", "state-validation"],
     });
   });
 
-  it("includes the lifecycle phase in live run-plan artifacts when a target mutates state", () => {
-    const target = listTargets().find(
-      (entry) => entry.id === "ubuntu-repo-docker-post-reboot-recovery",
-    );
+  it("inserts lifecycle execution only when the synthetic target requests it", () => {
+    const registered = syntheticTarget({
+      ...SUPPORTED_ENVIRONMENT,
+      lifecycle: "post-reboot-recovery",
+    });
 
-    expect(target).toBeTruthy();
-    expect(buildLiveTargetRunPlan(target!).phases).toEqual([
+    expect(liveTargetSupport(registered).supported).toBe(true);
+    expect(buildLiveTargetRunPlan(registered).phases).toEqual([
       "environment",
       "onboarding",
       "lifecycle",
       "state-validation",
     ]);
-  });
-
-  it("keeps unsupported onboarding profiles skipped with a concrete reason", () => {
-    const target = listTargets().find((entry) => entry.id === "ubuntu-repo-cloud-hermes");
-
-    expect(target).toBeTruthy();
-    expect(liveTargetSupport(target!)).toMatchObject({
-      supported: false,
-      reasons: ["onboarding 'cloud-hermes' is not wired for live fixtures"],
-    });
-  });
-
-  it("keeps no-Docker negatives skipped until runtime prep is matrix-owned", () => {
-    const target = listTargets().find(
-      (entry) => entry.id === "ubuntu-no-docker-preflight-negative",
-    );
-
-    expect(target).toBeTruthy();
-    expect(liveTargetSupport(target!)).toMatchObject({
-      supported: false,
-      reasons: ["runtime 'docker-missing' is not wired for live fixtures"],
-    });
-  });
-
-  it("keeps unwhitelisted lifecycle profiles skipped with the lifecycle reason", () => {
-    const target = listTargets().find((entry) => entry.id === "ubuntu-rebuild-openclaw");
-
-    expect(target).toBeTruthy();
-    expect(liveTargetSupport(target!)).toMatchObject({
-      supported: false,
-      reasons: ["lifecycle 'rebuild-current-version' is not wired for live fixtures"],
-    });
-  });
-
-  it("accepts the whitelisted post-reboot-recovery lifecycle target", () => {
-    const target = listTargets().find(
-      (entry) => entry.id === "ubuntu-repo-docker-post-reboot-recovery",
-    );
-
-    expect(target).toBeTruthy();
-    expect(target!.environment?.lifecycle).toBe("post-reboot-recovery");
-    expect(liveTargetSupport(target!)).toMatchObject({
-      supported: true,
-      reasons: [],
-    });
-  });
-
-  it("wires the policy custom missing presets negative target", () => {
-    const target = listTargets().find(
-      (entry) => entry.id === "ubuntu-policy-custom-missing-presets-negative",
-    );
-
-    expect(target).toBeTruthy();
-    expect(target!.expectedFailure?.errorClass).toBe("policy-presets-required");
-    expect(liveTargetSupport(target!)).toMatchObject({ supported: true, reasons: [] });
-  });
-
-  it("wires the canonical DCode target through invalid-credential rebuild lifecycle", () => {
-    const target = listTargets().find(
-      (entry) => entry.id === "ubuntu-repo-cloud-langchain-deepagents-code",
-    );
-
-    expect(target).toBeTruthy();
-    expect(target!.environment?.lifecycle).toBe("dcode-rebuild-invalid-credential");
-    expect(liveTargetSupport(target!)).toMatchObject({ supported: true, reasons: [] });
-    expect(buildLiveTargetRunPlan(target!).phases).toEqual([
-      "environment",
-      "onboarding",
-      "lifecycle",
-      "state-validation",
-    ]);
-    expect(target!.requiredSecrets).toContain("NVIDIA_INFERENCE_API_KEY");
   });
 });

@@ -41,6 +41,7 @@ const TEST_FILE_PATTERN = /\.(?:test|spec)\.(?:[cm]?[jt]sx?)$/;
 const SKIP_DIRECTORIES = new Set([".git", "node_modules"]);
 const INSTALLER_INTEGRATION_TESTS = new Set([
   "test/install-build-dependency-preflight.test.ts",
+  "test/install-clone-ref.test.ts",
   "test/install-express-prompt.test.ts",
   "test/install-openshell-version-check.test.ts",
   "test/install-preflight-docker-bootstrap.test.ts",

@@ -39,6 +39,7 @@ describe("agent base image provisioning", () => {
     });
   });
 
+  // source-shape-contract: security -- Tracked immutable Hermes base digest must feed the production image resolver
   it("accepts only the tracked published Hermes base digest", () => {
     const dockerfilePath = path.resolve(import.meta.dirname, "../../../agents/hermes/Dockerfile");
     const dockerfile = fs.readFileSync(dockerfilePath, "utf8");

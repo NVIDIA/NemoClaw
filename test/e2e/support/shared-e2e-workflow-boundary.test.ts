@@ -12,10 +12,7 @@ import {
   discoverCredentialFreeTests,
   stripCredentialFreeTestDeclarations,
 } from "../../../tools/e2e/credential-free-tests.mts";
-import {
-  evaluateE2eWorkflowDispatchSelectors,
-  validateE2eWorkflowBoundary,
-} from "../../../tools/e2e/workflow-boundary.mts";
+import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 
 type Workflow = {
@@ -60,21 +57,6 @@ describe("shared E2E workflow boundary", () => {
         .map(({ file }) => file)
         .sort(),
     ).toEqual(declaredFiles);
-  });
-
-  it("keeps discovered tests default-enabled and selectively dispatchable", () => {
-    expect(validateE2eWorkflowBoundary()).toEqual([]);
-
-    for (const { id } of discoverCredentialFreeTests()) {
-      for (const selector of [{ targets: id }, { jobs: id }]) {
-        expect(evaluateE2eWorkflowDispatchSelectors(selector)).toMatchObject({
-          valid: true,
-          liveTargetsRun: false,
-          selectedFreeStandingJobs: [id],
-        });
-      }
-      expect(evaluateE2eWorkflowDispatchSelectors({}).selectedFreeStandingJobs).toContain(id);
-    }
   });
 
   it("ratchets shared setup, tagged test execution, and aggregation", () => {

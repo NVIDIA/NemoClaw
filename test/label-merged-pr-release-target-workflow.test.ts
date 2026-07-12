@@ -169,12 +169,12 @@ async function runScript(harness: ReturnType<typeof createHarness>): Promise<voi
 }
 
 describe("merged PR release target workflow", () => {
+  // source-shape-contract: security -- Pull-request-target labeling must never execute or checkout untrusted contributor code
   it("keeps fork-safe labeling inside the trusted metadata boundary", () => {
     expect(workflow.on?.pull_request_target).toEqual({
       branches: ["main"],
       types: ["closed"],
     });
-    expect(workflow.on?.schedule).toEqual([{ cron: "17 */6 * * *" }]);
     expect(workflow.on).toHaveProperty("workflow_dispatch");
     expect(workflow.permissions).toEqual({
       contents: "read",
@@ -184,7 +184,6 @@ describe("merged PR release target workflow", () => {
     expect(job.if).toBe(
       "${{ github.event_name != 'pull_request_target' || github.event.pull_request.merged == true }}",
     );
-    expect(job["timeout-minutes"]).toBe(10);
     expect(actionStep?.uses).toMatch(/^actions\/github-script@[0-9a-f]{40}$/u);
     expect(job.steps).toHaveLength(1);
     expect(job.steps?.some((step) => step.uses?.startsWith("actions/checkout@"))).toBe(false);
@@ -218,7 +217,6 @@ describe("merged PR release target workflow", () => {
     Object.assign(harness.context.payload, { pull_request: pullRequest });
 
     await expect(runScript(harness)).rejects.toThrow(error);
-
     expect(harness.listTags).not.toHaveBeenCalled();
     expect(harness.addLabels).not.toHaveBeenCalled();
   });
@@ -557,7 +555,6 @@ describe("merged PR release target workflow", () => {
     await expect(runScript(harness)).rejects.toThrow(
       "Newest release tag kept changing during reconciliation",
     );
-
     expect(harness.listTags).toHaveBeenCalledTimes(4);
     expect(harness.warning).toHaveBeenCalledTimes(2);
     expect(harness.getBranch).not.toHaveBeenCalled();

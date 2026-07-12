@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import YAML from "yaml";
 
 import {
   listBuiltInMessagingChannelManifests,
@@ -43,37 +42,7 @@ function createPolicyWithFixtures(
   });
 }
 
-function policyKeys(content: string | null): string[] {
-  expect(content).toBeTruthy();
-  const parsed = YAML.parse(content ?? "");
-  return Object.keys(parsed?.network_policies ?? {});
-}
-
 describe("messaging channel policy presets", () => {
-  it("loads OpenClaw and Hermes channel-specific Telegram policy keys", () => {
-    expect(policyKeys(loadMessagingChannelPolicyPreset("telegram", { agent: "openclaw" }))).toEqual(
-      ["telegram_bot"],
-    );
-    expect(policyKeys(loadMessagingChannelPolicyPreset("telegram", { agent: "hermes" }))).toEqual([
-      "telegram",
-    ]);
-  });
-
-  it("lists operator-facing preset names from channel-owned policy files", () => {
-    const presets = listMessagingChannelPolicyPresets();
-    expect(presets.map((preset) => preset.name).sort()).toEqual([
-      "discord",
-      "slack",
-      "teams",
-      "telegram",
-      "wechat",
-      "whatsapp",
-    ]);
-    expect(presets.find((preset) => preset.name === "slack")?.file).toBe(
-      "src/lib/messaging/channels/slack/policy/openclaw.yaml",
-    );
-  });
-
   it("does not fall back to OpenClaw policies for unsupported agents", () => {
     expect(
       loadMessagingChannelPolicyPreset("telegram", { agent: "langchain-deepagents-code" }),

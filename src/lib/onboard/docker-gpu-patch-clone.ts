@@ -143,6 +143,18 @@ export function buildDockerGpuCloneRunArgs(
 
   const args: string[] = ["--name", dockerContainerName(inspect), ...mode.args];
   const gpuAugment = mode.kind !== "startup-command";
+
+  // Startup-command recreation must retain OpenShell's native CDI attachment.
+  if (!gpuAugment) {
+    const cdiDeviceIds = new Set(
+      (host.DeviceRequests ?? [])
+        .filter((request) => request.Driver === "cdi")
+        .flatMap((request) => stringArray(request.DeviceIDs))
+        .map((deviceId) => deviceId.trim())
+        .filter(Boolean),
+    );
+    for (const deviceId of cdiDeviceIds) args.push("--device", deviceId);
+  }
   pushStringFlag(args, "--hostname", config.Hostname);
   pushStringFlag(args, "--user", config.User);
   pushStringFlag(args, "--workdir", config.WorkingDir);

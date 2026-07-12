@@ -134,6 +134,7 @@ fi
     expect(validatePrReviewAdvisorWorkflowBoundary()).toEqual([]);
   });
 
+  // source-shape-contract: security -- Exactly one advisor lane may perform write-capable PR comment publication
   it("requires one advisor lane to publish the PR comment", () => {
     const source = fs.readFileSync(
       path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"),

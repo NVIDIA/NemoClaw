@@ -691,6 +691,7 @@ describe("Vitest project membership boundary", () => {
       ["test/vitest-coverage-thresholds.test.ts", "integration"],
       ["test/example.test.js", "integration"],
       ["test/install-build-dependency-preflight.test.ts", "installer-integration"],
+      ["test/install-clone-ref.test.ts", "installer-integration"],
       ["test/install-express-prompt.test.ts", "installer-integration"],
       ["test/install-openshell-version-check.test.ts", "installer-integration"],
       ["test/install-preflight-docker-bootstrap.test.ts", "installer-integration"],
