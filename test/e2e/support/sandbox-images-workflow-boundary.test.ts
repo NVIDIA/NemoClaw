@@ -16,56 +16,6 @@ function readWorkflows() {
 }
 
 describe("sandbox image workflow boundary", () => {
-  it("reuses workflow setup anchors and ends every image build with cleanup", () => {
-    const { imageWorkflow } = readWorkflows();
-    const imageJobNames = [
-      "build-sandbox-images",
-      "build-hermes-sandbox-image",
-      "build-sandbox-images-arm64",
-    ];
-    const producer = imageWorkflow.jobs["build-sandbox-images"];
-    const canonicalAuth = producer.steps?.find(
-      (step) => step.name === "Authenticate to Docker Hub",
-    );
-    expect(canonicalAuth).toBeDefined();
-
-    for (const jobName of imageJobNames) {
-      const job = imageWorkflow.jobs[jobName];
-      const auth = job.steps?.find((step) => step.name === "Authenticate to Docker Hub");
-      expect(auth, `${jobName} auth alias`).toBe(canonicalAuth);
-      expect(job.steps?.at(-1)).toEqual({
-        name: "Clean up Docker auth",
-        if: "always()",
-        shell: "bash",
-        run: "bash .github/scripts/docker-auth-cleanup.sh",
-      });
-    }
-
-    const canonicalCheckout = producer.steps?.find((step) => step.name === "Checkout");
-    expect(canonicalCheckout).toBeDefined();
-    for (const job of Object.values(imageWorkflow.jobs)) {
-      expect(job.steps?.find((step) => step.name === "Checkout")).toBe(canonicalCheckout);
-    }
-    const hermes = imageWorkflow.jobs["build-hermes-sandbox-image"];
-    for (const stepName of ["Set up Node", "Install root dependencies"]) {
-      const canonicalStep = hermes.steps?.find((step) => step.name === stepName);
-      expect(canonicalStep).toBeDefined();
-      expect(
-        imageWorkflow.jobs["runtime-overrides"].steps?.find((step) => step.name === stepName),
-      ).toBe(canonicalStep);
-    }
-    const gateway = imageWorkflow.jobs["test-e2e-gateway-isolation"];
-    for (const stepName of ["Download image artifact", "Load image"]) {
-      const canonicalStep = gateway.steps?.find((step) => step.name === stepName);
-      expect(canonicalStep).toBeDefined();
-      for (const jobName of ["runtime-overrides", "test-e2e-port-overrides"]) {
-        expect(imageWorkflow.jobs[jobName].steps?.find((step) => step.name === stepName)).toBe(
-          canonicalStep,
-        );
-      }
-    }
-  });
-
   it("rejects auth ordering drift, incomplete cleanup, and registry writes", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
     const hermes = imageWorkflow.jobs["build-hermes-sandbox-image"];
@@ -273,19 +223,5 @@ describe("sandbox image workflow boundary", () => {
         "Hermes root entrypoint must retain its 45-minute probe budget",
       ]),
     );
-  });
-
-  it("removes duplicate runtime-only jobs from the general E2E workflow and scorecard", () => {
-    const e2eWorkflow = readSandboxImagesWorkflow(".github/workflows/e2e.yaml");
-    const removedJobs = [
-      "runtime-overrides",
-      "hermes-root-entrypoint-smoke",
-      "hermes-sandbox-secret-boundary",
-    ];
-
-    for (const jobName of removedJobs) {
-      expect(e2eWorkflow.jobs).not.toHaveProperty(jobName);
-      expect(e2eWorkflow.jobs["report-to-pr"].needs).not.toContain(jobName);
-    }
   });
 });

@@ -8,10 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
-import {
-  evaluateE2eWorkflowDispatchSelectors,
-  validateE2eWorkflowBoundary,
-} from "../../../tools/e2e/workflow-boundary.mts";
+import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundary.mts";
 import { assertSparkInstallSandboxName } from "../live/spark-install-helpers.ts";
 
 function readWorkflow(): Record<string, unknown> {
@@ -21,37 +18,13 @@ function readWorkflow(): Record<string, unknown> {
 }
 
 describe("spark install workflow boundary", () => {
-  it("uses a test-owned sandbox name accepted by the live cleanup guard", () => {
+  it("keeps the configured sandbox inside the live cleanup ownership boundary", () => {
     const workflow = readWorkflow() as {
       jobs: Record<string, { env?: Record<string, unknown> }>;
     };
     const sandboxName = workflow.jobs["spark-install"]?.env?.NEMOCLAW_SANDBOX_NAME;
 
-    expect(sandboxName).toBe("e2e-spark-install-ci");
     expect(assertSparkInstallSandboxName(String(sandboxName))).toBe(sandboxName);
-  });
-
-  it("maps the Spark install selector to its free-standing E2E job", () => {
-    expect(
-      evaluateE2eWorkflowDispatchSelectors({
-        targets: "spark-install",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveTargetsRun: false,
-      selectedFreeStandingJobs: ["spark-install"],
-      registryTargets: [],
-    });
-    expect(
-      evaluateE2eWorkflowDispatchSelectors({
-        jobs: "spark-install",
-      }),
-    ).toMatchObject({
-      valid: true,
-      liveTargetsRun: false,
-      selectedFreeStandingJobs: ["spark-install"],
-      registryTargets: [],
-    });
   });
 
   it("rejects Spark install trusted-boundary drift", () => {

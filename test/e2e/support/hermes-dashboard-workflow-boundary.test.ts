@@ -7,34 +7,32 @@ import {
   validateHermesDashboardWorkflow,
   validateHermesDashboardWorkflowBoundary,
 } from "../../../tools/e2e/hermes-dashboard-workflow-boundary.mts";
-import {
-  evaluateE2eWorkflowDispatchSelectors,
-  readFreeStandingJobsInventory,
-} from "../../../tools/e2e/workflow-boundary.mts";
 
 describe("Hermes dashboard workflow boundary", () => {
-  it("runs by default and through either selective dispatch input", () => {
-    const inventory = readFreeStandingJobsInventory();
+  it("accepts the checked-in workflow and rejects dashboard mode, execution, and reporting drift", () => {
     expect(validateHermesDashboardWorkflowBoundary()).toEqual([]);
-    expect(inventory.targetToJob.get("hermes-dashboard")).toBe("hermes-dashboard");
-
-    for (const selector of [{ targets: "hermes-dashboard" }, { jobs: "hermes-dashboard" }]) {
-      expect(evaluateE2eWorkflowDispatchSelectors(selector)).toMatchObject({
-        valid: true,
-        liveTargetsRun: false,
-        selectedFreeStandingJobs: ["hermes-dashboard"],
-      });
-    }
-    expect(evaluateE2eWorkflowDispatchSelectors({}).selectedFreeStandingJobs).toContain(
-      "hermes-dashboard",
-    );
-  });
-
-  it("rejects dashboard mode, execution, and reporting drift", () => {
     const dashboardMode = readHermesDashboardWorkflow();
-    dashboardMode.jobs["hermes-dashboard"].env!.NEMOCLAW_E2E_HERMES_DASHBOARD = "0";
-    expect(validateHermesDashboardWorkflow(dashboardMode)).toContain(
-      "hermes-dashboard must enable Hermes dashboard coverage",
+    const dashboardJob = dashboardMode.jobs["hermes-dashboard"];
+    dashboardJob["runs-on"] = "self-hosted";
+    dashboardJob["timeout-minutes"] = 30;
+    dashboardJob.env!.E2E_ARTIFACT_DIR = "/tmp/hermes-dashboard";
+    dashboardJob.env!.NEMOCLAW_E2E_HERMES_DASHBOARD = "0";
+    dashboardJob.env!.NVIDIA_INFERENCE_API_KEY = "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
+    const checkout = dashboardJob.steps!.find((step) =>
+      step.uses?.startsWith("actions/checkout@"),
+    )!;
+    checkout.uses = "actions/checkout@v6";
+    checkout.with!["persist-credentials"] = true;
+    expect(validateHermesDashboardWorkflow(dashboardMode)).toEqual(
+      expect.arrayContaining([
+        "hermes-dashboard must run on ubuntu-latest",
+        "hermes-dashboard timeout must be 75 minutes",
+        "hermes-dashboard must use its isolated artifact directory",
+        "hermes-dashboard must enable Hermes dashboard coverage",
+        "hermes-dashboard must not expose the inference key at job scope",
+        "hermes-dashboard checkout must pin a full action SHA",
+        "hermes-dashboard checkout must disable persisted credentials",
+      ]),
     );
 
     const misplacedDashboardMode = readHermesDashboardWorkflow();

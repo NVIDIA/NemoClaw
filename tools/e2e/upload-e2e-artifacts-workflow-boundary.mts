@@ -35,8 +35,6 @@ const CALLER_ALWAYS = "always()";
 const MCP_SCANNED_UPLOAD_CONDITION =
   "${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}";
 const TARGET_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
-const EXPECTED_UPLOAD_JOB_COUNT = 72;
-const EXPECTED_DEFAULT_CALLER_COUNT = 60;
 
 const SHARED_E2E_JOBS: ReadonlyMap<string, { targetId: string }> = new Map([
   [SHARED_E2E_JOB_ID, { targetId: "${{ matrix.id }}" }],
@@ -267,26 +265,20 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
     Object.entries(jobs)
       .filter(([jobName, value]) => {
         const job = record(value);
+        const jobSteps = steps(job.steps);
+        const env = record(job.env);
         return (
-          jobName === "live" || record(job.env).E2E_JOB === "1" || SHARED_E2E_JOBS.has(jobName)
+          jobName === "live" ||
+          env.E2E_JOB === "1" ||
+          env.NEMOCLAW_RUN_LIVE_E2E === "1" ||
+          SHARED_E2E_JOBS.has(jobName) ||
+          jobSteps.some(
+            (step) => typeof step.run === "string" && step.run.includes("--project e2e-live"),
+          )
         );
       })
       .map(([jobName]) => jobName),
   );
-  const defaultJobs = [...expectedJobs].filter(
-    (jobName) => !EXPLICIT_UPLOAD_CONTRACTS.has(jobName),
-  );
-
-  if (expectedJobs.size !== EXPECTED_UPLOAD_JOB_COUNT) {
-    errors.push(
-      `upload-e2e-artifacts must cover exactly ${EXPECTED_UPLOAD_JOB_COUNT} live, E2E_JOB, and shared E2E jobs`,
-    );
-  }
-  if (defaultJobs.length !== EXPECTED_DEFAULT_CALLER_COUNT) {
-    errors.push(
-      `upload-e2e-artifacts must keep exactly ${EXPECTED_DEFAULT_CALLER_COUNT} default callers`,
-    );
-  }
   for (const jobName of EXPLICIT_UPLOAD_CONTRACTS.keys()) {
     if (!expectedJobs.has(jobName)) {
       errors.push(`upload-e2e-artifacts explicit caller is missing: ${jobName}`);

@@ -78,16 +78,29 @@ describe("e2e workflow boundary", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
   });
 
-  it("keeps credential-backed provider smokes out of the PR-safe inference-routing job", () => {
+  it("rejects credential-backed provider smokes in the PR-safe inference-routing job", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-inference-routing-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
     const workflow = readWorkflow() as {
       jobs: Record<string, { steps?: Array<{ name?: string; run?: string }> }>;
     };
     const run = workflow.jobs["inference-routing"]?.steps?.find(
       (step) => step.name === "Run inference routing live test",
-    )?.run;
+    );
+    expect(run).toBeDefined();
+    run!.run = "npx vitest run --project e2e-live inference-routing-provider-smoke.test.ts";
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
-    expect(run).toContain("test/e2e/live/inference-routing.test.ts");
-    expect(run).not.toContain("inference-routing-provider-smoke.test.ts");
+    try {
+      expect(validateE2eWorkflowBoundary(workflowPath)).toEqual(
+        expect.arrayContaining([
+          "step 'Run inference routing live test' run script must include test/e2e/live/inference-routing.test.ts",
+          "step 'Run inference routing live test' run script must not include inference-routing-provider-smoke.test.ts",
+        ]),
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("starts hosted OpenClaw proofs in the first wave after matrix generation", () => {
@@ -107,7 +120,6 @@ describe("e2e workflow boundary", () => {
     };
 
     for (const [jobName, dependencies] of Object.entries(serializedDependencies)) {
-      expect(workflow.jobs[jobName]?.needs).toBe("generate-matrix");
       workflow.jobs[jobName]!.needs = dependencies;
     }
     fs.writeFileSync(workflowPath, YAML.stringify(workflow));
@@ -252,6 +264,17 @@ jobs:
       {
         body: `
 jobs:
+  resource-heavy:
+    env:
+      E2E_JOB: "1"
+      E2E_DEFAULT_ENABLED: "yes"
+      E2E_TARGET_ID: resource-heavy
+`,
+        error: 'resource-heavy job E2E_DEFAULT_ENABLED must be "0" when set',
+      },
+      {
+        body: `
+jobs:
   first:
     env:
       E2E_JOB: "1"
@@ -293,6 +316,10 @@ jobs:
       expect(nonHermesTargets).not.toHaveLength(0);
       expect(inventory.allowedJobs).toContain(hermesSelector);
       expect(inventory.targetToJob.get(hermesSelector)).toBe(hermesSelector);
+
+      expect(evaluateE2eWorkflowDispatchSelectors({}).selectedFreeStandingJobs).toEqual(
+        inventory.allowedJobs.filter((job) => !inventory.explicitOnlyJobs.includes(job)).sort(),
+      );
 
       expect(
         generateMatrixForDispatch({ JOBS: nonHermesJobs.join(","), TARGETS: "" }),
@@ -701,6 +728,49 @@ jobs:
           "ad-hoc-derived step 'actions/checkout@v4' action must be pinned to a full commit SHA",
           "step 'Run ad hoc' run script must not interpolate dispatch inputs directly",
           "ad-hoc-derived step 'Run ad hoc' run script must not interpolate secrets directly",
+        ]),
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects explicit rlimit workflow trust-boundary drift", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rlimit-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        Record<string, unknown> & {
+          env: Record<string, unknown>;
+          steps: Array<Record<string, unknown>>;
+        }
+      >;
+    };
+    const job = workflow.jobs["sandbox-rlimits-connect"];
+    job["runs-on"] = "self-hosted";
+    job["timeout-minutes"] = 30;
+    job.env.E2E_DEFAULT_ENABLED = "1";
+    job.env.E2E_ARTIFACT_DIR = "/tmp/rlimits";
+    job.env.NEMOCLAW_CLI_BIN = "/usr/bin/nemoclaw";
+    job.env.NEMOCLAW_E2E_CONNECT_RLIMITS = "0";
+    const run = job.steps.find((step) => step.name === "Run sandbox rlimit connect live test")!;
+    run.env = {};
+    run.run = "npx vitest run --project e2e-live test/e2e/live/other.test.ts";
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      expect(validateE2eWorkflowBoundary(workflowPath)).toEqual(
+        expect.arrayContaining([
+          'sandbox-rlimits-connect job E2E_DEFAULT_ENABLED must be "0" when set',
+          "sandbox-rlimits-connect job must run on ubuntu-latest",
+          "sandbox-rlimits-connect job must retain its 60 minute connect budget",
+          "sandbox-rlimits-connect job must remain explicit-only",
+          "sandbox-rlimits-connect job must opt in with NEMOCLAW_E2E_CONNECT_RLIMITS=1",
+          "sandbox-rlimits-connect job must use the repo CLI launcher",
+          "sandbox-rlimits-connect job must write artifacts under e2e-artifacts/live/sandbox-rlimits-connect",
+          "sandbox-rlimits-connect job must run sandbox-rlimits-connect.test.ts",
+          "sandbox-rlimits-connect step must receive NVIDIA_API_KEY from secrets",
         ]),
       );
     } finally {
