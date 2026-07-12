@@ -12,7 +12,7 @@ import {
   buildPublishedRouteIndex,
   resolvePageLinksByText,
 } from "../scripts/check-docs-published-routes.ts";
-import { resolveAgentNameAlias } from "../src/lib/agent/defs";
+import { loadAgent, resolveAgentNameAlias } from "../src/lib/agent/defs";
 
 const SCRIPT_PATH = path.join(import.meta.dirname, "..", "scripts", "generate-platform-docs.py");
 
@@ -334,7 +334,7 @@ print(block)
   // credential-boundary invariants. Each test reads the actual matrix and
   // docs at the PR head, not a fixture, so a future edit that breaks the
   // invariant fails this suite before the change ships.
-  it("every `--agent <id>` example across matrix, docs, and generated skills resolves to a manifest whose name field agrees", () => {
+  it("every documented `--agent <id>` selector resolves through production agent selection", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const matrix = JSON.parse(
       readFileSync(path.join(repoRoot, "ci", "platform-matrix.json"), "utf-8"),
@@ -356,25 +356,13 @@ print(block)
       for (const match of body.matchAll(onboardExample)) agentIds.add(match[1]);
     }
     expect(agentIds.size).toBeGreaterThan(0);
-    const agentsRoot = path.join(repoRoot, "agents");
-    const availableAgents = ["openclaw", "hermes", "langchain-deepagents-code"];
     for (const id of agentIds) {
-      const canonicalId = resolveAgentNameAlias(id, availableAgents) ?? id;
-      const manifest = path.join(agentsRoot, canonicalId, "manifest.yaml");
+      const canonicalId = resolveAgentNameAlias(id);
       expect(
-        existsSync(manifest),
-        `\`--agent ${id}\` advertised somewhere in matrix/docs/skills but neither aliases nor agents/${id}/manifest.yaml resolve it`,
-      ).toBe(true);
-      const manifestBody = readFileSync(manifest, "utf-8");
-      const nameMatch = manifestBody.match(/^name:\s*([a-z0-9-]+)\s*$/m);
-      expect(
-        nameMatch?.[1],
-        `agents/${canonicalId}/manifest.yaml lacks a name field`,
-      ).toBeDefined();
-      expect(
-        nameMatch?.[1],
-        `agents/${canonicalId}/manifest.yaml declares name ${nameMatch?.[1]}, breaking the loader contract for documented \`--agent ${id}\``,
-      ).toBe(canonicalId);
+        canonicalId,
+        `documented \`--agent ${id}\` must resolve through the production agent loader`,
+      ).not.toBeNull();
+      expect(loadAgent(canonicalId ?? id).name).toBe(canonicalId);
     }
   });
 
