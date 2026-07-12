@@ -275,10 +275,7 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
     timeoutMs: 240_000,
   });
   expect(trustedRecovery.exitCode, resultText(trustedRecovery)).toBe(0);
-  expect(resultText(trustedRecovery)).toContain(
-    "Recreating the sandbox container with its managed startup command",
-  );
-  expect(resultText(trustedRecovery)).toContain("gateway restarted inside sandbox");
+  expect(resultText(trustedRecovery)).toContain("Probe complete: recovered OpenClaw gateway");
 
   const recoveredContainerId = await findSandboxContainer(host, "legacy-restart-container-after");
   expect(recoveredContainerId).not.toBe(originalContainerId);

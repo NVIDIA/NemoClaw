@@ -211,4 +211,127 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     expect(finalize).toHaveBeenCalledOnce();
     expect(finalize).toHaveBeenCalledWith(true);
   });
+
+  it("retains a healthy replacement but does not start a forward when OpenShell stays unready", () => {
+    mockOpenClawSandbox("unready-box");
+    setImmediateRecoveryPolling();
+    const finalize = vi.fn(() => ({ backupRemoved: true, rolledBack: false }));
+    const relaunchManagedSupervisorSessionImpl = vi.fn(() => ({
+      containerId: "replacement-container-id",
+      finalize,
+    }));
+    const requestGatewaySupervisorAction = vi.fn(() => ({
+      status: 1,
+      stdout: "",
+      stderr: "SUPERVISOR_NOT_RUNNING",
+    }));
+    const requestPinnedGatewaySupervisorAction = vi.fn(() => ({
+      status: 0,
+      stdout: "GATEWAY_PID=4242\n",
+      stderr: "",
+    }));
+    const waitForRecreatedSandboxOpenShellReadyImpl = vi.fn(() => false);
+    const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell");
+
+    const result = checkAndRecoverSandboxProcesses("unready-box", {
+      quiet: true,
+      isSandboxGatewayRunningImpl: () => false,
+      requestGatewaySupervisorAction,
+      requestPinnedGatewaySupervisorAction,
+      relaunchManagedSupervisorSessionImpl,
+      waitForRecreatedSandboxOpenShellReadyImpl,
+    });
+
+    expect(result).toMatchObject({
+      checked: true,
+      wasRunning: false,
+      recovered: true,
+      forwardRecovered: false,
+      forwardRecoveryFailed: true,
+      forwardRecoveryFailureDetail: expect.stringContaining("did not become ready in OpenShell"),
+    });
+    expect(finalize).toHaveBeenCalledOnce();
+    expect(finalize).toHaveBeenCalledWith(true);
+    expect(waitForRecreatedSandboxOpenShellReadyImpl).toHaveBeenCalledWith(
+      "unready-box",
+      expect.objectContaining({ beforeProbe: expect.any(Function), timeoutSeconds: 30 }),
+    );
+    expect(runOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("rejects a healthy forward when the replacement identity changes after readiness", () => {
+    mockOpenClawSandbox("drifted-box");
+    vi.mocked(agentRuntime.getSessionAgent).mockReturnValue({
+      name: "openclaw",
+      displayName: "OpenClaw",
+      forwardPort: 18789,
+      forward_ports: [19000],
+      healthProbe: { url: "http://127.0.0.1:18789/health", port: 18789, timeout_seconds: 30 },
+    } as never);
+    setImmediateRecoveryPolling();
+    const finalize = vi.fn(() => ({ backupRemoved: true, rolledBack: false }));
+    const relaunchManagedSupervisorSessionImpl = vi.fn(() => ({
+      containerId: "replacement-container-id",
+      finalize,
+    }));
+    const requestGatewaySupervisorAction = vi.fn(() => ({
+      status: 1,
+      stdout: "",
+      stderr: "SUPERVISOR_NOT_RUNNING",
+    }));
+    const acceptedProbe = {
+      status: 0,
+      stdout: "GATEWAY_PID=4242\n",
+      stderr: "",
+    };
+    const requestPinnedGatewaySupervisorAction = vi
+      .fn()
+      .mockReturnValueOnce(acceptedProbe)
+      .mockReturnValueOnce(acceptedProbe)
+      .mockImplementationOnce(() => {
+        throw new Error("replacement identity changed");
+      })
+      .mockReturnValue(acceptedProbe);
+    const waitForRecreatedSandboxOpenShellReadyImpl = vi.fn(
+      (_name, options) => options.beforeProbe?.(1000) === true,
+    );
+    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
+      status: 0,
+      output: "SANDBOX  BIND  PORT  PID  STATUS\ndrifted-box  127.0.0.1  18789  12345  running",
+    });
+    const runOpenshell = vi
+      .spyOn(openshellRuntime, "runOpenshell")
+      .mockReturnValue({ status: 0 } as never);
+
+    const result = checkAndRecoverSandboxProcesses("drifted-box", {
+      quiet: true,
+      isSandboxGatewayRunningImpl: () => false,
+      requestGatewaySupervisorAction,
+      requestPinnedGatewaySupervisorAction,
+      relaunchManagedSupervisorSessionImpl,
+      waitForRecreatedSandboxOpenShellReadyImpl,
+    });
+
+    expect(result).toMatchObject({
+      checked: true,
+      wasRunning: false,
+      recovered: true,
+      forwardRecovered: false,
+      forwardRecoveryFailed: true,
+    });
+    expect(requestPinnedGatewaySupervisorAction).toHaveBeenCalledTimes(3);
+    expect(requestPinnedGatewaySupervisorAction).toHaveBeenLastCalledWith(
+      "drifted-box",
+      "probe",
+      15000,
+      "replacement-container-id",
+    );
+    expect(finalize).toHaveBeenCalledWith(true);
+    expect(runOpenshell).toHaveBeenCalledOnce();
+    expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "18789", "drifted-box"], {
+      ignoreError: true,
+      stdio: "ignore",
+    });
+  });
 });

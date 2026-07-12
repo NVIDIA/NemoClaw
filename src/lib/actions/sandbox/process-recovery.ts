@@ -4,7 +4,9 @@
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { dockerSpawnSync } from "../../adapters/docker";
+import { stripAnsi } from "../../adapters/openshell/client";
 import {
+  captureOpenshell,
   captureOpenshellForStatus,
   captureSandboxSshConfig,
   getOpenshellBinary,
@@ -574,6 +576,80 @@ function readNonNegativeNumberEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
+const OPENSHELL_SANDBOX_NOT_READY = `Error: code: 'The system is not in a state required for the operation's execution', message: "sandbox is not ready"`;
+
+function normalizeOpenshellStructuredError(value: string): string {
+  return stripAnsi(value).replace(/[×│]/gu, " ").replace(/\s+/gu, " ").trim();
+}
+
+function isExactlyRetryableOpenshellSandboxNotReady(
+  result: ReturnType<typeof captureOpenshell>,
+): boolean {
+  return (
+    result.status === 1 &&
+    !result.error &&
+    String(result.stdout ?? "").trim() === "" &&
+    normalizeOpenshellStructuredError(String(result.stderr ?? "")) === OPENSHELL_SANDBOX_NOT_READY
+  );
+}
+
+/**
+ * Wait until OpenShell has re-registered a directly recreated sandbox as
+ * ready. This probe deliberately has no direct-Docker or SSH fallback: it is
+ * proving control-plane readiness, not authorizing the already completed
+ * replacement-container recovery.
+ */
+export function waitForRecreatedSandboxOpenShellReady(
+  sandboxName: string,
+  options: {
+    captureOpenshellImpl?: typeof captureOpenshell;
+    beforeProbe?: (timeoutMs: number) => boolean;
+    intervalSeconds?: number;
+    nowImpl?: () => number;
+    sleepImpl?: (seconds: number) => void;
+    timeoutSeconds?: number;
+  } = {},
+): boolean {
+  const capture = options.captureOpenshellImpl ?? captureOpenshell;
+  const now = options.nowImpl ?? Date.now;
+  const sleep = options.sleepImpl ?? sleepSeconds;
+  const timeoutSeconds = readNonNegativeNumberEnv(
+    "NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS",
+    options.timeoutSeconds ?? 30,
+  );
+  const intervalSeconds = readNonNegativeNumberEnv(
+    "NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS",
+    options.intervalSeconds ?? 3,
+  );
+  const deadlineMs = now() + timeoutSeconds * 1000;
+  const maxAttempts =
+    intervalSeconds > 0
+      ? Math.max(1, Math.floor(timeoutSeconds / intervalSeconds) + 1)
+      : Math.max(1, Math.floor(timeoutSeconds) + 1);
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const preGuardRemainingMs = deadlineMs - now();
+    if (attempt > 1 && preGuardRemainingMs <= 0) return false;
+    const guardBudgetMs = Math.max(1, Math.min(OPENSHELL_PROBE_TIMEOUT_MS, preGuardRemainingMs));
+    if (options.beforeProbe?.(guardBudgetMs) === false) return false;
+    const remainingMs = deadlineMs - now();
+    if (attempt > 1 && remainingMs <= 0) return false;
+    const result = capture(["sandbox", "exec", "--name", sandboxName, "--", "true"], {
+      ignoreError: true,
+      includeStderr: true,
+      includeStreams: true,
+      timeout: Math.max(1, Math.min(OPENSHELL_PROBE_TIMEOUT_MS, remainingMs)),
+    });
+    if (result.status === 0 && !result.error) return true;
+    if (!isExactlyRetryableOpenshellSandboxNotReady(result)) return false;
+    if (attempt === maxAttempts) return false;
+    const postProbeRemainingMs = deadlineMs - now();
+    if (postProbeRemainingMs <= 0) return false;
+    sleep(Math.min(intervalSeconds * 1000, postProbeRemainingMs) / 1000);
+  }
+  return false;
+}
+
 function gatewayRecoveryTimeoutSeconds(
   agent: ReturnType<typeof agentRuntime.getSessionAgent>,
 ): number {
@@ -751,12 +827,14 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     requestPinnedGatewaySupervisorAction = executeGatewaySupervisorActionPinned,
     relaunchManagedSupervisorSessionImpl = relaunchManagedSupervisorSession,
     isSandboxGatewayRunningImpl = isSandboxGatewayRunning,
+    waitForRecreatedSandboxOpenShellReadyImpl = waitForRecreatedSandboxOpenShellReady,
   }: {
     quiet?: boolean;
     requestGatewaySupervisorAction?: typeof executeGatewaySupervisorAction;
     requestPinnedGatewaySupervisorAction?: RequestPinnedGatewaySupervisorAction;
     relaunchManagedSupervisorSessionImpl?: typeof relaunchManagedSupervisorSession;
     isSandboxGatewayRunningImpl?: typeof isSandboxGatewayRunning;
+    waitForRecreatedSandboxOpenShellReadyImpl?: typeof waitForRecreatedSandboxOpenShellReady;
   } = {},
 ) {
   const recoveryAgent = agentRuntime.getSessionAgent(sandboxName);
@@ -934,6 +1012,23 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       ? (name: string, action: "restart" | "recover" | "probe", timeout = 210000) =>
           requestPinnedGatewaySupervisorAction(name, action, timeout, relaunch.containerId)
       : requestGatewaySupervisorAction;
+    let relaunchedIdentityRejected = false;
+    const confirmRelaunchedManagedHealth = relaunch
+      ? (timeout = OPENSHELL_PROBE_TIMEOUT_MS) => {
+          let confirmed = false;
+          try {
+            confirmed =
+              confirmRecoveredSandboxGatewayManaged(sandboxName, {
+                requestGatewaySupervisorActionImpl: (name, action) =>
+                  requestManagedProbe(name, action, timeout),
+              }) === true;
+          } catch {
+            confirmed = false;
+          }
+          relaunchedIdentityRejected ||= !confirmed;
+          return confirmed;
+        }
+      : null;
     // Wait for gateway to bind its HTTP port before declaring success. The
     // recovered process can be alive before the OpenAI-compatible API is ready.
     let gatewayReady = false;
@@ -999,9 +1094,40 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         }
       }
     }
+    if (
+      relaunch &&
+      !waitForRecreatedSandboxOpenShellReadyImpl(sandboxName, {
+        beforeProbe: (timeoutMs) => confirmRelaunchedManagedHealth?.(timeoutMs) === true,
+        timeoutSeconds: gatewayRecoveryTimeoutSeconds(recoveryAgent),
+      })
+    ) {
+      return {
+        checked: true,
+        wasRunning: false,
+        recovered: true,
+        forwardRecovered: false,
+        forwardRecoveryFailed: true,
+        forwardRecoveryFailureDetail:
+          "the recreated sandbox did not become ready in OpenShell, so the primary dashboard/API host forward was not started",
+      };
+    }
     const mcpRefusal = processRecoveryMcpReconciliationRefusal(sandboxName, false);
     if (mcpRefusal) return mcpRefusal;
-    const forwardRecovered = ensureSandboxPortForward(sandboxName);
+    const forwardRecovered = ensureSandboxPortForward(sandboxName, {
+      afterSuccess: confirmRelaunchedManagedHealth ?? undefined,
+      beforeStart: confirmRelaunchedManagedHealth ?? undefined,
+    });
+    if (!forwardRecovered && relaunchedIdentityRejected) {
+      return {
+        checked: true,
+        wasRunning: false,
+        recovered: true,
+        forwardRecovered: false,
+        forwardRecoveryFailed: true,
+        forwardRecoveryFailureDetail:
+          "the primary dashboard/API host forward could not be re-established",
+      };
+    }
     const dashboardForwardRecovered = ensureHermesDashboardPortForwardIfEnabled(sandboxName);
     const messagingForwardRecovered = recoverMessagingHostForward(sandboxName, { quiet });
     const declaredForwardsRecovered = recoverDeclaredAgentForwardPorts(sandboxName, recoveryPort, {
@@ -1069,6 +1195,7 @@ export function checkAndRecoverSandboxProcesses(
     requestPinnedGatewaySupervisorAction?: RequestPinnedGatewaySupervisorAction;
     relaunchManagedSupervisorSessionImpl?: typeof relaunchManagedSupervisorSession;
     isSandboxGatewayRunningImpl?: typeof isSandboxGatewayRunning;
+    waitForRecreatedSandboxOpenShellReadyImpl?: typeof waitForRecreatedSandboxOpenShellReady;
   } = {},
 ) {
   return withTimerBoundShieldsMutationLock(sandboxName, "gateway process recovery", () =>
