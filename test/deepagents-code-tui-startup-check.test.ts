@@ -102,7 +102,7 @@ proc exp_pid {} {
   return 4242
 }
 proc exec {args} {
-  if {[lindex $args 0] ne "kill" || [lindex $args 1] ne "-TERM" || [lindex $args 2] ne "4242"} {
+  if {[lindex $args 0] ne "kill" || [lindex $args 1] ne "-TERM" || [lindex $args 2] ne "--" || [lindex $args 3] ne "-4242"} {
     error "unexpected fake exec: $args"
   }
   set ::fake_closed 1

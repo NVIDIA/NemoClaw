@@ -330,7 +330,10 @@ append_marker $markers "$ready_match"
 append_marker $markers "NEMOCLAW_TUI_READY"
 puts "\nNEMOCLAW_TUI_READY"
 if {$termination_mode eq "disconnect"} {
-  exec kill -TERM $relay_pid
+  # Expect makes the spawned relay a process-group leader. Terminate that whole
+  # group so OpenSSH's OpenShell ProxyCommand cannot outlive ssh and keep the
+  # gRPC relay open after the terminal disappears.
+  exec kill -TERM -- -$relay_pid
   set timeout 20
   expect {
     eof {}
