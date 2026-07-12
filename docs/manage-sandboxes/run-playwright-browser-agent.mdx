@@ -215,8 +215,7 @@ def trust_openshell_proxy_ca() -> None:
     ca_bundle = os.environ.get("SSL_CERT_FILE")
     if not ca_bundle or not Path(ca_bundle).is_file():
         raise RuntimeError(
-            "SSL_CERT_FILE is unavailable; source /tmp/nemoclaw-proxy-env.sh "
-            "before running the script"
+            "SSL_CERT_FILE is unavailable; run the script through nemoclaw exec"
         )
 
     legacy_nss_dir = Path.home() / ".pki" / "nssdb"
@@ -383,17 +382,15 @@ if __name__ == "__main__":
 ```
 
 Upload and run the script through the supported NemoClaw commands.
-In v0.0.80, sandbox startup creates `/tmp/nemoclaw-proxy-env.sh` as root-owned, read-only runtime state, and managed shell hooks source it.
-It exports NemoClaw's `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` settings and, when a corporate CA is merged, the updated CA-bundle variables; OpenShell supplies `SSL_CERT_FILE` for its L7 proxy.
-Source the file explicitly so this non-interactive command uses the same managed proxy and trust environment.
+In v0.0.80, sandbox startup stores proxy, trust, and gateway state in a root-owned, read-only runtime file.
+The `nemoclaw exec` wrapper loads that state without shell profiles, keeps the managed proxy and CA variables, removes `OPENCLAW_GATEWAY_TOKEN`, and then launches the requested command.
+Run Python directly through that wrapper; do not source `/tmp/nemoclaw-proxy-env.sh` from an ordinary command because doing so would restore the gateway credential.
 
 ```bash
 nemoclaw playwright-agent upload \
   ./fill_form_example.py /sandbox/fill_form_example.py
-nemoclaw playwright-agent exec -- bash -lc \
-  'test -r /tmp/nemoclaw-proxy-env.sh \
-    && . /tmp/nemoclaw-proxy-env.sh \
-    && python3 /sandbox/fill_form_example.py'
+nemoclaw playwright-agent exec -- \
+  python3 /sandbox/fill_form_example.py
 ```
 
 For production automation, prefer role, label, or test-ID locators that match the target site's stable user-facing contract.
@@ -424,7 +421,7 @@ Protect or delete them according to your data-handling requirements.
 |---|---|---|
 | Proxy `403` or `policy_denied` | A page dependency or browser binary does not match the policy | Add the exact host and required method, and keep `/usr/local/lib/ms-playwright/**` in `binaries` |
 | `ssrf_denied` during a browser download | A runtime download or redirect reached a blocked destination | Keep the browser install in the Dockerfile and rebuild the image |
-| `net::ERR_CERT_AUTHORITY_INVALID` | Chromium did not receive the OpenShell proxy CA | Source `/tmp/nemoclaw-proxy-env.sh` and confirm `SSL_CERT_FILE` points to a readable file |
+| `net::ERR_CERT_AUTHORITY_INVALID` | Chromium did not receive the OpenShell proxy CA | Run through `nemoclaw exec` and confirm `SSL_CERT_FILE` points to a readable file |
 | No visible enabled fields | The selector is wrong or a required script host is denied | Inspect the page and OpenShell policy denials, then update the selector or policy |
 | Field count mismatch | The configured values do not match the visible target fields | Use site-specific locators or update `FIELD_VALUES` |
 | Success wait times out | The submit failed or `SUCCESS_TEXT` is not unique to the completed state | Inspect the response and use a reliable success locator or URL contract |
