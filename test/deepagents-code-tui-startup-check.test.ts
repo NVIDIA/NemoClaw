@@ -74,7 +74,11 @@ const itWithTclsh = it.runIf(tclshAvailable);
 
 function runTuiExpectStateMachine(
   events: TuiExpectEvent[],
-  options: { closeAfterFirstCtrlC?: boolean; expectNamePrompt?: boolean } = {},
+  options: {
+    closeAfterFirstCtrlC?: boolean;
+    expectNamePrompt?: boolean;
+    terminationMode?: "ctrl-c" | "disconnect";
+  } = {},
 ) {
   const captureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-tui-expect-"));
   const capture = path.join(captureDir, "raw.log");
@@ -85,6 +89,7 @@ function runTuiExpectStateMachine(
 
   const prelude = String.raw`
 rename after real_after
+rename close real_close
 rename exit real_exit
 set ::fake_events [list ${events.map((event) => tclEventLiterals[event]).join(" ")}]
 set ::fake_sent {}
@@ -93,6 +98,13 @@ set ::fake_closed 0
 proc log_file {args} {}
 proc spawn {args} {}
 proc after {args} {}
+proc close {args} {
+  if {[llength $args] == 0} {
+    set ::fake_closed 1
+    return
+  }
+  real_close {*}$args
+}
 proc send {args} {
   binary scan [lindex $args end] H* key_hex
   if {$::fake_closed} {
@@ -177,6 +189,7 @@ proc exit {{code 0}} {
       NEMOCLAW_TUI_CLOSE_AFTER_FIRST_CTRL_C: options.closeAfterFirstCtrlC ? "1" : "0",
       NEMOCLAW_TUI_COMPOSER_PATTERN: "(dcode[^\\r\\n]*v0\\.1\\.34)",
       NEMOCLAW_TUI_EXPECT_NAME_PROMPT: options.expectNamePrompt === false ? "0" : "1",
+      NEMOCLAW_TUI_TERMINATION_MODE: options.terminationMode ?? "ctrl-c",
       NEMOCLAW_TUI_MARKERS: markers,
       NEMOCLAW_TUI_FIRST_RUN_PATTERN: "(choose a recommended model)",
       NEMOCLAW_TUI_NAME_PROMPT_PATTERN:
@@ -386,6 +399,19 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     expect(markerText).toContain("NEMOCLAW_TUI_EXIT_CAPTURED:0");
   });
 
+  itWithTclsh("disconnects the PTY relay without sending Ctrl-C (#6720)", () => {
+    const { markerText, result, traceText } = runTuiExpectStateMachine(["composer", "ready"], {
+      expectNamePrompt: false,
+      terminationMode: "disconnect",
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(traceText).toBe("2f,61,67,65,6e,74,73,0d");
+    expect(markerText).toContain("NEMOCLAW_TUI_READY");
+    expect(markerText).toContain("NEMOCLAW_TUI_DISCONNECTED");
+    expect(markerText).not.toContain("NEMOCLAW_TUI_EXIT_CAPTURED");
+  });
+
   it("does not treat generic TUI exit status 1 as a clean Ctrl-C exit", () => {
     const assertExit = (exitCode: string) =>
       runTuiStartupCheckHelper(
@@ -418,13 +444,15 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       "10-deepagents-code-tui-startup.repeat.sanitized.log",
     );
     const processCounts = path.join(captureDir, "process-counts.txt");
-    fs.writeFileSync(processCounts, "0\n1\n0\n1\n0\n");
+    fs.writeFileSync(processCounts, "0\n1\n0\n1\n0\n1\n0\n");
 
     try {
       const result = runTuiStartupCheckHelperResult(
         [
           "sandbox_exec() { printf 'NEMOCLAW_DCODE_PROBE:deepagents\\nNEMOCLAW_DCODE_ONBOARDING:complete\\n'; }",
           "ensure_expect_available() { return 0; }",
+          'run_headless_session() { printf "PONG\\n"; }',
+          "sandbox_is_ready() { return 0; }",
           "dcode_process_count() {",
           '  value="$(sed -n "1p" "$COUNT_FILE")"',
           '  sed "1d" "$COUNT_FILE" >"$COUNT_FILE.next"',
@@ -433,7 +461,12 @@ describe("Deep Agents Code TUI startup check helpers", () => {
           "}",
           "sleep() { :; }",
           "run_tui_expect() {",
-          '  printf "Select Agent\\nNEMOCLAW_TUI_READY\\nNEMOCLAW_TUI_EXIT_CAPTURED:130\\n" >>"$2"',
+          '  printf "Select Agent\\nNEMOCLAW_TUI_READY\\n" >>"$2"',
+          '  if [ "$4" = disconnect ]; then',
+          '    printf "NEMOCLAW_TUI_DISCONNECTED\\n" >>"$2"',
+          "  else",
+          '    printf "NEMOCLAW_TUI_EXIT_CAPTURED:130\\n" >>"$2"',
+          "  fi",
           "  return 0",
           "}",
           "main",
@@ -444,6 +477,11 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       const sanitizedText = fs.readFileSync(sanitizedCapture, "utf8");
       const repeatedSanitizedText = fs.readFileSync(repeatedSanitizedCapture, "utf8");
       expect(result.status).toBe(0);
+      expect(result.stdout).toContain("headless dcode request returned PONG");
+      expect(result.stdout).toContain(
+        "headless completion returned the DCode/LangGraph process count to baseline",
+      );
+      expect(result.stdout).toContain("sandbox remained Ready after headless completion");
       expect(result.stdout).toContain(
         "session 1: finite expect harness reached startup and observed exit",
       );
@@ -452,8 +490,9 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       );
       expect(result.stdout).toContain("dcode TUI exited cleanly after Ctrl-C (exit 130)");
       expect(sanitizedText).toContain("NEMOCLAW_TUI_READY");
-      expect(sanitizedText).toContain("NEMOCLAW_TUI_EXIT_CAPTURED:130");
+      expect(sanitizedText).toContain("NEMOCLAW_TUI_DISCONNECTED");
       expect(repeatedSanitizedText).toContain("NEMOCLAW_TUI_READY");
+      expect(repeatedSanitizedText).toContain("NEMOCLAW_TUI_EXIT_CAPTURED:130");
       expect(result.stdout).toContain(
         "session 2: DCode/LangGraph process count returned to baseline",
       );
@@ -471,6 +510,8 @@ describe("Deep Agents Code TUI startup check helpers", () => {
         [
           "sandbox_exec() { printf 'NEMOCLAW_DCODE_PROBE:deepagents\\nNEMOCLAW_DCODE_ONBOARDING:complete\\n'; }",
           "ensure_expect_available() { return 0; }",
+          'run_headless_session() { printf "PONG\\n"; }',
+          "sandbox_is_ready() { return 0; }",
           "dcode_process_count() { printf 'NEMOCLAW_DCODE_PROCESS_COUNT:0\\n'; }",
           "wait_for_dcode_process_baseline() { return 0; }",
           "run_tui_expect() {",
