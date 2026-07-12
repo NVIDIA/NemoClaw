@@ -484,6 +484,54 @@ describe("PR E2E controller", () => {
     }
   });
 
+  it("rejects a pull request that does not match the triggering workflow run", async () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-pr-identity-"));
+    const outputPath = path.join(workDir, "github-output");
+    fs.writeFileSync(outputPath, "", { mode: 0o600 });
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    vi.stubEnv("GITHUB_OUTPUT", outputPath);
+    const requests: RecordedGitHubRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs") && method === "POST",
+            () => githubResponse({ id: 17 }),
+          ),
+          githubFetchRoute(
+            ({ url }) => url.includes("/pulls?state=open&head="),
+            () => githubResponse([pullRequestListItem()]),
+          ),
+          githubFetchRoute(
+            ({ url }) => url.endsWith("/pulls/42"),
+            () => githubResponse(pullRequest()),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
+            () => githubResponse({}),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    try {
+      await expect(startPrGate(startCommand(workDir, "43"))).rejects.toThrow(
+        /PR identity does not match the triggering workflow run/u,
+      );
+      expect(requests.some((request) => request.url.includes("/files?"))).toBe(false);
+      expect(requests.some((request) => request.url.endsWith("/dispatches"))).toBe(false);
+      const finalUpdate = requests.find(
+        (request) => request.url.endsWith("/check-runs/17") && request.method === "PATCH",
+      );
+      expect(finalUpdate?.body).toMatchObject({ status: "completed", conclusion: "failure" });
+      expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
   it("links the pull request and failed CI jobs when prerequisite CI blocks E2E", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-ci-failure-"));
     const outputPath = path.join(workDir, "github-output");
