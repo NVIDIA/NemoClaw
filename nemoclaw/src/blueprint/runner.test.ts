@@ -4,6 +4,11 @@
 import type fs from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
+import {
+  blueprintWithPolicyAdditions,
+  minimalBlueprint,
+  routedBlueprint,
+} from "./runner-test-fixtures.js";
 
 // ── In-memory filesystem ────────────────────────────────────────
 
@@ -114,78 +119,8 @@ function capturedJsonOutput<T = unknown>(): T {
   return JSON.parse(json) as T;
 }
 
-function minimalBlueprint(overrides?: Record<string, unknown>): Record<string, unknown> {
-  return {
-    version: "1.0",
-    components: {
-      inference: {
-        profiles: {
-          default: {
-            provider_type: "openai",
-            provider_name: "my-provider",
-            endpoint: "https://api.example.com/v1",
-            model: "gpt-4",
-            credential_env: "MY_API_KEY",
-          },
-        },
-      },
-      sandbox: {
-        image: "openclaw",
-        name: "test-sandbox",
-        forward_ports: [18789],
-      },
-      policy: { additions: {} },
-    },
-    ...overrides,
-  };
-}
-
-function routedBlueprint(): Record<string, unknown> {
-  return {
-    version: "1.0",
-    components: {
-      inference: {
-        profiles: {
-          routed: {
-            provider_type: "openai",
-            provider_name: "nvidia-router",
-            endpoint: "http://localhost:4000/v1",
-            model: "routed",
-            credential_env: "NVIDIA_INFERENCE_API_KEY",
-            credential_default: "router-local",
-            timeout_secs: 180,
-          },
-        },
-      },
-      sandbox: {
-        image: "openclaw",
-        name: "test-sandbox",
-        forward_ports: [18789],
-      },
-      router: {
-        enabled: true,
-        port: 4000,
-        pool_config_path: "router/pool-config.yaml",
-      },
-      policy: { additions: {} },
-    },
-  };
-}
-
 function seedBlueprintFile(bp?: Record<string, unknown>): void {
   addFile("blueprint.yaml", YAML.stringify(bp ?? minimalBlueprint()));
-}
-
-function blueprintWithPolicyAdditions(additions: Record<string, unknown>): Record<string, unknown> {
-  const bp = minimalBlueprint();
-  const components = bp.components as Record<string, unknown>;
-  return {
-    ...bp,
-    components: {
-      ...components,
-      policy: { additions },
-    },
-  };
 }
 
 function mockCurrentPolicy(stdout: string): void {
@@ -641,27 +576,39 @@ describe("runner", () => {
     const hasPlanJson = (): boolean => [...store.keys()].some((k) => k.endsWith("plan.json"));
 
     it("rejects without persisting a plan when provider create fails (#6703)", async () => {
+      const credential = "provider-secret-value";
+      process.env.MY_API_KEY = credential;
       mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
         if (args[0] === "provider" && args[1] === "create") {
-          return { exitCode: 1, stdout: "", stderr: "provider setup failed" };
+          return {
+            exitCode: 1,
+            stdout: "",
+            stderr: `provider setup failed\nOPENAI_API_KEY=${credential}\nAuthorization: Bearer opaque-bearer`,
+          };
         }
         return { exitCode: 0, stdout: "", stderr: "" };
       });
 
-      await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
-        /Failed to create inference provider 'my-provider'.*provider setup failed/i,
-      );
-
-      // A failed required mutation must not leave a successful persisted plan or
-      // emit ready/completion output.
-      expect(hasPlanJson()).toBe(false);
-      expect(stdoutText()).not.toContain("Apply complete");
-      expect(stdoutText()).not.toContain("PROGRESS:100");
-      // The inference route must not be attempted after provider creation fails.
-      const inferenceSetCalls = mockExeca.mock.calls.filter(
-        (c) => Array.isArray(c[1]) && c[1][0] === "inference" && c[1][1] === "set",
-      );
-      expect(inferenceSetCalls).toEqual([]);
+      try {
+        const error = await actionApply("default", minimalBlueprint()).then(
+          () => new Error("expected provider creation to fail"),
+          (cause: unknown) => cause,
+        );
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toMatch(
+          /Failed to create inference provider 'my-provider'.*provider setup failed/i,
+        );
+        expect((error as Error).message).toContain("OPENAI_API_KEY=<REDACTED>");
+        expect((error as Error).message).toContain("Authorization: Bearer <REDACTED>");
+        expect((error as Error).message).not.toContain(credential);
+        expect((error as Error).message).not.toContain("opaque-bearer");
+        expect(hasPlanJson()).toBe(false);
+        expect(stdoutText()).not.toContain("Apply complete");
+        expect(stdoutText()).not.toContain("PROGRESS:70");
+        expect(stdoutText()).not.toContain("PROGRESS:100");
+      } finally {
+        delete process.env.MY_API_KEY;
+      }
     });
 
     it("reuses an already-existing provider instead of failing (#6703)", async () => {

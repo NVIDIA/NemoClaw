@@ -78,13 +78,23 @@ function isAction(value: string | undefined): value is Action {
   return value === "plan" || value === "apply" || value === "status" || value === "rollback";
 }
 
-// Bound OpenShell command stderr before surfacing it in an apply error so a
-// verbose or attacker-influenced failure stream stays a compact, single-line
-// diagnostic. Credentials are passed to these commands via the subprocess env
-// (never argv), so the stream itself does not carry the secret. (#6703)
+// Redact credential-shaped output before bounding OpenShell stderr to a compact,
+// single-line diagnostic. (#6703)
 const MAX_COMMAND_ERROR_CHARS = 500;
-function boundedCommandError(stderr: string): string {
-  const collapsed = stderr.replace(/\s+/g, " ").trim();
+const SENSITIVE_ERROR_ASSIGNMENT =
+  /(\b[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)[A-Z0-9_]*\s*)[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
+
+function boundedCommandError(stderr: string, secretValues: readonly string[] = []): string {
+  let redacted = stderr;
+  for (const secret of [...new Set(secretValues)]
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length)) {
+    redacted = redacted.split(secret).join("<REDACTED>");
+  }
+  redacted = redacted
+    .replace(SENSITIVE_ERROR_ASSIGNMENT, "$1=<REDACTED>")
+    .replace(/\b(Bearer)\s+\S+/gi, "$1 <REDACTED>");
+  const collapsed = redacted.replace(/\s+/g, " ").trim();
   if (collapsed.length === 0) return "no error output";
   return collapsed.length > MAX_COMMAND_ERROR_CHARS
     ? `${collapsed.slice(0, MAX_COMMAND_ERROR_CHARS)}…`
@@ -772,14 +782,14 @@ export async function actionApply(
   // report a ready sandbox that cannot perform inference. Mirror the
   // sandbox-create contract above — tolerate an already-existing provider as a
   // reuse (keeps re-apply idempotent) and fail on any other non-zero result.
-  // The credential is passed via env (never argv), so stderr cannot echo it;
-  // still bound the surfaced detail. (#6703)
+  // The credential is passed via env (never argv); redact it from stderr before
+  // surfacing bounded diagnostic context. (#6703)
   if (providerResult.exitCode !== 0) {
     if (providerResult.stderr.includes("already exists")) {
       log(`Provider '${providerName}' already exists, reusing.`);
     } else {
       throw new Error(
-        `Failed to create inference provider '${providerName}': ${boundedCommandError(providerResult.stderr)}`,
+        `Failed to create inference provider '${providerName}': ${boundedCommandError(providerResult.stderr, [credential])}`,
       );
     }
   }
