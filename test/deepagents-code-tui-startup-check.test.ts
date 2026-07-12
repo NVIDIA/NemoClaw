@@ -89,7 +89,6 @@ function runTuiExpectStateMachine(
 
   const prelude = String.raw`
 rename after real_after
-rename exec real_exec
 rename exit real_exit
 set ::fake_events [list ${events.map((event) => tclEventLiterals[event]).join(" ")}]
 set ::fake_sent {}
@@ -98,21 +97,15 @@ set ::fake_closed 0
 proc log_file {args} {}
 proc spawn {args} {}
 proc after {args} {}
-proc exp_pid {} {
-  return 4242
-}
-proc exec {args} {
-  if {[lindex $args 0] ne "kill" || [lindex $args 1] ne "-TERM" || [lindex $args 2] ne "--" || [lindex $args 3] ne "-4242"} {
-    error "unexpected fake exec: $args"
-  }
-  set ::fake_closed 1
-}
 proc send {args} {
   binary scan [lindex $args end] H* key_hex
   if {$::fake_closed} {
     error "fake spawn id is closed"
   }
   lappend ::fake_sent $key_hex
+  if {$key_hex eq "0d7e2e"} {
+    set ::fake_closed 1
+  }
   if {$key_hex eq "03" && $::env(NEMOCLAW_TUI_CLOSE_AFTER_FIRST_CTRL_C) eq "1"} {
     set ::fake_closed 1
   }
@@ -411,7 +404,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     );
 
     expect(result.status, result.stderr).toBe(0);
-    expect(traceText).toBe("2f,61,67,65,6e,74,73,0d");
+    expect(traceText).toBe("2f,61,67,65,6e,74,73,0d,0d7e2e");
     expect(markerText).toContain("NEMOCLAW_TUI_READY");
     expect(markerText).toContain("NEMOCLAW_TUI_DISCONNECTED");
     expect(markerText).not.toContain("NEMOCLAW_TUI_EXIT_CAPTURED");

@@ -225,7 +225,6 @@ proc submit_agents {markers} {
 
 set cmd [list openshell sandbox exec --name $sandbox --tty -- sh -lc {export TERM=xterm-256color; cd /sandbox; dcode; status=$?; printf "\nNEMOCLAW_TUI_EXIT:%s\n" "$status"}]
 spawn {*}$cmd
-set relay_pid [exp_pid]
 
 # DCode's own onboarding predicate is sampled immediately before launch. This
 # avoids guessing from a short negative observation while imports/first paint
@@ -330,10 +329,10 @@ append_marker $markers "$ready_match"
 append_marker $markers "NEMOCLAW_TUI_READY"
 puts "\nNEMOCLAW_TUI_READY"
 if {$termination_mode eq "disconnect"} {
-  # Expect makes the spawned relay a process-group leader. Terminate that whole
-  # group so OpenSSH's OpenShell ProxyCommand cannot outlive ssh and keep the
-  # gRPC relay open after the terminal disappears.
-  exec kill -TERM -- -$relay_pid
+  # OpenSSH recognizes ~. at the start of a line as an immediate connection
+  # close. This tears down its OpenShell ProxyCommand relay without delivering
+  # Ctrl-C or another terminal-generated signal to DCode.
+  send -- "\r~."
   set timeout 20
   expect {
     eof {}
