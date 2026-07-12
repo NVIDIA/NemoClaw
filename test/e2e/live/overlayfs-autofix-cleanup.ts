@@ -22,7 +22,7 @@ interface OverlayfsAutofixCleanupOptions {
   sandboxName: string;
 }
 
-async function cleanupOverlayArtifacts({
+async function removeOverlayGatewayContainer({
   cleanupEnv,
   gatewayContainer,
   host,
@@ -42,7 +42,13 @@ async function cleanupOverlayArtifacts({
     /No such container/i,
     "remove overlayfs gateway container",
   );
+}
 
+async function removeOverlayPatchedImages({
+  cleanupEnv,
+  host,
+  redactionValues,
+}: Pick<OverlayfsAutofixCleanupOptions, "cleanupEnv" | "host" | "redactionValues">): Promise<void> {
   const imageList = await host.command(
     "docker",
     ["image", "ls", "--format", "{{.Repository}}:{{.Tag}}"],
@@ -67,7 +73,6 @@ async function cleanupOverlayArtifacts({
     });
     assertExitZero(removeImages, "remove overlayfs patched images");
   }
-  fs.rmSync(path.join(os.homedir(), ".nemoclaw", "onboard.lock"), { force: true });
 }
 
 export function trackOverlayfsAutofixCleanup(options: OverlayfsAutofixCleanupOptions): void {
@@ -75,8 +80,14 @@ export function trackOverlayfsAutofixCleanup(options: OverlayfsAutofixCleanupOpt
 
   const { cleanup, cleanupEnv, gatewayContainer, host, redactionValues, sandbox, sandboxName } =
     options;
-  cleanup.trackDisposable("remove overlayfs gateway artifacts", () =>
-    cleanupOverlayArtifacts({ cleanupEnv, gatewayContainer, host, redactionValues }),
+  cleanup.trackDisposable("remove overlayfs onboard lock", () => {
+    fs.rmSync(path.join(os.homedir(), ".nemoclaw", "onboard.lock"), { force: true });
+  });
+  cleanup.trackDisposable("remove overlayfs patched images", () =>
+    removeOverlayPatchedImages({ cleanupEnv, host, redactionValues }),
+  );
+  cleanup.trackDisposable("remove overlayfs gateway container", () =>
+    removeOverlayGatewayContainer({ cleanupEnv, gatewayContainer, host, redactionValues }),
   );
   cleanup.trackGateway(host, "nemoclaw", {
     artifactName: "cleanup-overlayfs-openshell-gateway",

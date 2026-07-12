@@ -3,13 +3,17 @@
 
 import fs from "node:fs";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { trackOverlayfsAutofixCleanup } from "../live/overlayfs-autofix-cleanup.ts";
 import { negativeOverlayOutcome } from "../live/overlayfs-autofix-outcome.ts";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function shellProbeResult(overrides: Partial<ShellProbeResult>): ShellProbeResult {
   return {
@@ -133,5 +137,48 @@ describe("overlayfs autofix cleanup resources", () => {
     expect(remove).toHaveBeenCalledWith(expect.stringContaining(".nemoclaw/onboard.lock"), {
       force: true,
     });
+  });
+
+  it("continues image and lock cleanup after gateway container removal fails (#6352)", async () => {
+    const calls: string[] = [];
+    const { command, host, sandbox } = cleanupClients(calls);
+    command.mockReset();
+    command
+      .mockImplementationOnce(async () => {
+        calls.push("remove gateway container");
+        return shellProbeResult({ exitCode: 1, stderr: "permission denied" });
+      })
+      .mockImplementationOnce(async () => {
+        calls.push("list patched images");
+        return shellProbeResult({ exitCode: 0, stdout: "" });
+      });
+    const cleanup = new CleanupRegistry();
+    const remove = vi.spyOn(fs, "rmSync").mockImplementation(() => {});
+    trackOverlayfsAutofixCleanup({
+      cleanup,
+      cleanupEnv: {},
+      gatewayContainer: "nemoclaw-gateway",
+      host,
+      preserveSandbox: false,
+      redactionValues: [],
+      sandbox,
+      sandboxName: "e2e-overlayfs-autofix",
+    });
+
+    const result = await cleanup.runAll();
+    expect(result.failures).toEqual([
+      {
+        message: "remove overlayfs gateway container failed: permission denied",
+        name: "remove overlayfs gateway container",
+      },
+    ]);
+    expect(calls).toEqual([
+      "destroy NemoClaw sandbox",
+      "delete OpenShell sandbox",
+      "remove gateway registration",
+      "remove gateway container",
+      "list patched images",
+    ]);
+    expect(remove).toHaveBeenCalledOnce();
   });
 });
