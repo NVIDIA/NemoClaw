@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type fs from "node:fs";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 // ── In-memory filesystem ────────────────────────────────────────
@@ -636,6 +636,64 @@ describe("runner", () => {
         ["sandbox", "create", "--from", "openclaw", "--name", "test-sandbox", "--forward", "18789"],
         expect.objectContaining({ reject: false }),
       );
+    });
+
+    const hasPlanJson = (): boolean => [...store.keys()].some((k) => k.endsWith("plan.json"));
+
+    it("rejects without persisting a plan when provider create fails (#6703)", async () => {
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
+        if (args[0] === "provider" && args[1] === "create") {
+          return { exitCode: 1, stdout: "", stderr: "provider setup failed" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+
+      await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
+        /Failed to create inference provider 'my-provider'.*provider setup failed/i,
+      );
+
+      // A failed required mutation must not leave a successful persisted plan or
+      // emit ready/completion output.
+      expect(hasPlanJson()).toBe(false);
+      expect(stdoutText()).not.toContain("Apply complete");
+      expect(stdoutText()).not.toContain("PROGRESS:100");
+      // The inference route must not be attempted after provider creation fails.
+      const inferenceSetCalls = mockExeca.mock.calls.filter(
+        (c) => Array.isArray(c[1]) && c[1][0] === "inference" && c[1][1] === "set",
+      );
+      expect(inferenceSetCalls).toEqual([]);
+    });
+
+    it("reuses an already-existing provider instead of failing (#6703)", async () => {
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
+        if (args[0] === "provider" && args[1] === "create") {
+          return { exitCode: 1, stdout: "", stderr: "provider 'my-provider' already exists" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+
+      // Matches the sandbox-create contract: already-existing is a reuse, so the
+      // apply proceeds and completes.
+      await actionApply("default", minimalBlueprint());
+      expect(hasPlanJson()).toBe(true);
+      expect(stdoutText()).toContain("Apply complete");
+    });
+
+    it("rejects without persisting a plan when inference set fails (#6703)", async () => {
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
+        if (args[0] === "inference" && args[1] === "set") {
+          return { exitCode: 1, stdout: "", stderr: "inference route rejected" };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+
+      await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
+        /Failed to set inference route .*model 'gpt-4'.*inference route rejected/i,
+      );
+
+      expect(hasPlanJson()).toBe(false);
+      expect(stdoutText()).not.toContain("Apply complete");
+      expect(stdoutText()).not.toContain("PROGRESS:100");
     });
 
     it("applies blueprint policy additions by merging into the base policy", async () => {

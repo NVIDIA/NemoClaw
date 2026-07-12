@@ -24,8 +24,8 @@ import { DASHBOARD_PORT } from "../lib/ports.js";
 import { buildSubprocessEnv } from "../lib/subprocess-env.js";
 import { isPlainObject, type UnknownRecord } from "../shared/object-record.js";
 import * as importedOpenShellPolicyBoundary from "../shared/openshell-policy-boundary.cjs";
-import { actionSnapshots } from "./snapshot-command.js";
 import type { SnapshotCommandOptions } from "./snapshot-command.js";
+import { actionSnapshots } from "./snapshot-command.js";
 import { safeEndpointUrlForDownstream, validateEndpointUrl } from "./ssrf.js";
 
 // The compiled plugin exposes named CommonJS exports. Source-mode tsx maps the
@@ -76,6 +76,19 @@ const ENDPOINT_TLS_MODES = new Set(["terminate", "passthrough", "skip"]);
 
 function isAction(value: string | undefined): value is Action {
   return value === "plan" || value === "apply" || value === "status" || value === "rollback";
+}
+
+// Bound OpenShell command stderr before surfacing it in an apply error so a
+// verbose or attacker-influenced failure stream stays a compact, single-line
+// diagnostic. Credentials are passed to these commands via the subprocess env
+// (never argv), so the stream itself does not carry the secret. (#6703)
+const MAX_COMMAND_ERROR_CHARS = 500;
+function boundedCommandError(stderr: string): string {
+  const collapsed = stderr.replace(/\s+/g, " ").trim();
+  if (collapsed.length === 0) return "no error output";
+  return collapsed.length > MAX_COMMAND_ERROR_CHARS
+    ? `${collapsed.slice(0, MAX_COMMAND_ERROR_CHARS)}…`
+    : collapsed;
 }
 
 function isOptionalString(value: unknown): value is string | undefined {
@@ -749,12 +762,27 @@ export async function actionApply(
     providerArgs.push("--config", `OPENAI_BASE_URL=${endpoint}`);
   }
 
-  await execa(providerArgs[0], providerArgs.slice(1), {
+  const providerResult = await execa(providerArgs[0], providerArgs.slice(1), {
     reject: false,
     stdout: "pipe",
     stderr: "pipe",
     env: buildSubprocessEnv(credEnv),
   });
+  // A required mutation: a silently-ignored failure would persist plan.json and
+  // report a ready sandbox that cannot perform inference. Mirror the
+  // sandbox-create contract above — tolerate an already-existing provider as a
+  // reuse (keeps re-apply idempotent) and fail on any other non-zero result.
+  // The credential is passed via env (never argv), so stderr cannot echo it;
+  // still bound the surfaced detail. (#6703)
+  if (providerResult.exitCode !== 0) {
+    if (providerResult.stderr.includes("already exists")) {
+      log(`Provider '${providerName}' already exists, reusing.`);
+    } else {
+      throw new Error(
+        `Failed to create inference provider '${providerName}': ${boundedCommandError(providerResult.stderr)}`,
+      );
+    }
+  }
 
   progress(70, "Setting inference route");
   const inferenceArgs = [
@@ -769,7 +797,14 @@ export async function actionApply(
   if (inferenceCfg.timeout_secs !== undefined) {
     inferenceArgs.push("--timeout", String(inferenceCfg.timeout_secs));
   }
-  await runCmd(inferenceArgs, { reject: false });
+  const inferenceResult = await runCmd(inferenceArgs, { reject: false });
+  // Another required mutation: without a routed provider the sandbox cannot
+  // perform inference, so a non-zero result must abort the apply. (#6703)
+  if (inferenceResult.exitCode !== 0) {
+    throw new Error(
+      `Failed to set inference route (provider '${providerName}', model '${model}'): ${boundedCommandError(inferenceResult.stderr)}`,
+    );
+  }
 
   if (Object.keys(policyAdditions).length > 0) {
     progress(78, "Applying policy additions");
