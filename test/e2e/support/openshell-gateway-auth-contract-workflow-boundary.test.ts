@@ -62,7 +62,7 @@ describe("OpenShell gateway auth contract workflow boundary", () => {
         "openshell-gateway-auth-contract must set DOCKER_GRPC_PROBE_IMAGE=node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d",
         "openshell-gateway-auth-contract must set E2E_ARTIFACT_DIR=${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-auth-contract",
         "openshell-gateway-auth-contract must set E2E_DEFAULT_ENABLED=0",
-        "openshell-gateway-auth-contract must set NEMOCLAW_OPENSHELL_PIN_VERSION=0.0.72",
+        "openshell-gateway-auth-contract must set NEMOCLAW_OPENSHELL_PIN_VERSION to an exact version",
         "openshell-gateway-auth-contract must not expose NVIDIA_API_KEY at job scope",
         "openshell-gateway-auth-contract action 'actions/checkout@v6' must pin a full SHA",
         "openshell-gateway-auth-contract checkout must disable persisted credentials",
