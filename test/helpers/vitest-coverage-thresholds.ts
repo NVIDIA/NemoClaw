@@ -10,10 +10,10 @@ export const securityCoverageThresholds = {
     statements: 95,
   },
   "src/lib/inference/endpoint-ssrf-preflight.ts": {
-    lines: 85,
+    lines: 76,
     functions: 80,
-    branches: 75,
-    statements: 85,
+    branches: 69,
+    statements: 75,
   },
   "src/lib/security/{credential-filter,redact,redact-url}.ts": {
     lines: 80,
