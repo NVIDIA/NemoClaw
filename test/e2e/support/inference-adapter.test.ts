@@ -91,7 +91,7 @@ describe("E2E inference adapter", () => {
       NEMOCLAW_PROVIDER: "custom",
       NEMOCLAW_MODEL: "nvidia/nvidia/nemotron-3-ultra",
       NEMOCLAW_COMPAT_MODEL: "nvidia/nvidia/nemotron-3-ultra",
-      COMPATIBLE_API_KEY: "fake-compatible-key",
+      COMPATIBLE_API_KEY: expect.stringMatching(/^mock-[0-9a-f]{64}$/),
     });
     expect(env.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
     expect(env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE).toBeUndefined();

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { randomBytes } from "node:crypto";
+
 import type { ArtifactSink } from "./artifacts.ts";
 import { buildAvailabilityProbeEnv } from "./availability-env.ts";
 import { type ProviderClient, trustedProviderEndpoint } from "./clients/provider.ts";
@@ -18,6 +20,24 @@ import {
   requireHostedInferenceConfig,
 } from "./hosted-inference.ts";
 
+/**
+ * Gives E2E suites one inference contract across three execution modes.
+ * `mock` exposes an authenticated local compatible endpoint and stages only
+ * `COMPATIBLE_API_KEY`; `internal-nvidia` stages the internal NVIDIA endpoint
+ * as compatible inference and rejects endpoint overrides outside its static
+ * allowlist; `public-nvidia` uses the public NVIDIA provider and stages only
+ * `NVIDIA_INFERENCE_API_KEY`. Every mode registers its credential for artifact
+ * redaction and removes credentials owned by the other modes.
+ *
+ * Tests normally consume the `inference` fixture from `e2e-test.ts`, pass
+ * `inference.env()` to install/onboard commands, use its model and provider
+ * fields in assertions, and rely on fixture cleanup. When migrating
+ * `launchable-smoke`, `issue-4434-tui-unreachable-inference`,
+ * `model-router-provider-routed-inference`, or `agent-turn-latency`, replace
+ * bespoke inference env/probes with that lifecycle, preserve the suite-specific
+ * sandbox assertions, scope `inference_mode` to the consuming workflow job,
+ * and add the suite's fast-test mapping to `test/e2e/mock-parity.json`.
+ */
 export type E2EInferenceMode = "mock" | "internal-nvidia" | "public-nvidia";
 
 export interface E2EInferenceAdapter {
@@ -46,7 +66,6 @@ export interface E2EInferenceAdapterOptions {
 }
 
 const DEFAULT_MOCK_MODEL = "nvidia/nvidia/nemotron-3-ultra";
-const DEFAULT_MOCK_API_KEY = "fake-compatible-key";
 const DEFAULT_PUBLIC_NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
 const DEFAULT_PUBLIC_NVIDIA_MODEL = "nvidia/nemotron-3-super-120b-a12b";
 const DIRECT_CHAT_TIMEOUT_MS = 120_000;
@@ -294,11 +313,13 @@ export async function createE2EInferenceAdapter(
   const mode = normalizeMode(env);
   if (mode === "mock") {
     const model = env.NEMOCLAW_MODEL || env.NEMOCLAW_COMPAT_MODEL || DEFAULT_MOCK_MODEL;
-    const apiKey = env.COMPATIBLE_API_KEY || DEFAULT_MOCK_API_KEY;
+    const apiKey = env.COMPATIBLE_API_KEY || `mock-${randomBytes(32).toString("hex")}`;
     const fake = await startFakeOpenAiCompatibleServer({
       apiKey,
       chatContent: "PONG",
-      // The Docker sandbox reaches this host listener through SANDBOX_HOST_ALIAS.
+      // A Docker network namespace cannot reach host loopback through the host
+      // alias, so listen on the bridge-facing interfaces. The workflow uses an
+      // ephemeral ubuntu-latest VM, an OS-assigned port, and a per-run credential.
       host: "0.0.0.0",
       model,
       publicHost: SANDBOX_HOST_ALIAS,
