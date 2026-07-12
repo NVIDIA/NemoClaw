@@ -15,6 +15,12 @@ import { captureSandboxListWithGatewayPreflightOrExit } from "../openshell-sandb
 import { parseReadySandboxNames } from "../runtime-recovery";
 import * as registry from "../state/registry";
 import * as sandboxState from "../state/sandbox";
+import {
+  backupStartedSandboxState,
+  returnSandboxContainerToStopped,
+  type StartedForBackup,
+  startStoppedSandboxContainerForBackup,
+} from "./sandbox/stopped-sandbox-backup";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =
@@ -54,16 +60,27 @@ export async function backupAll(): Promise<void> {
   let unreachableRunning = 0;
   let notRunningSkipped = 0;
   for (const sb of sandboxes) {
+    // A registered docker-driver sandbox whose container is merely stopped is
+    // backupable: start it for the duration of the backup and return it to
+    // its stopped state after (#6500). Anything else that is not Ready keeps
+    // the existing skip (and, under installer-strict mode, the #6114 gate).
+    let startedForBackup: StartedForBackup | null = null;
     if (!readyNames.has(sb.name)) {
-      console.log(`  ${D}${notRunningBackupSkipMessage(sb.name)}${R}`);
-      skipped++;
-      notRunningSkipped++;
-      continue;
+      startedForBackup = startStoppedSandboxContainerForBackup(sb.name);
+      if (!startedForBackup) {
+        console.log(`  ${D}${notRunningBackupSkipMessage(sb.name)}${R}`);
+        skipped++;
+        notRunningSkipped++;
+        continue;
+      }
+      console.log(`  Starting stopped sandbox '${sb.name}' to back it up...`);
     }
     console.log(`  Backing up '${sb.name}'...`);
     let result: sandboxState.BackupResult;
     try {
-      result = sandboxState.backupSandboxState(sb.name);
+      result = startedForBackup
+        ? await backupStartedSandboxState(sb.name)
+        : sandboxState.backupSandboxState(sb.name);
     } catch (err: unknown) {
       // Source-of-truth review (#5734 / #5819):
       //
@@ -103,6 +120,16 @@ export async function backupAll(): Promise<void> {
       console.log(`  ${YW}⚠${R} Skipped '${sb.name}' (orphan manifest): ${msg}`);
       skipped++;
       continue;
+    } finally {
+      if (startedForBackup) {
+        if (returnSandboxContainerToStopped(startedForBackup.containerName)) {
+          console.log(`  ${D}Returned '${sb.name}' to its stopped state.${R}`);
+        } else {
+          console.log(
+            `  ${YW}⚠${R} Could not return '${sb.name}' to its stopped state after backup; its container was left running.`,
+          );
+        }
+      }
     }
     if (result.success) {
       console.log(
