@@ -59,6 +59,7 @@ const COMMON_SECRET_ENV_NAMES = [
   "GITHUB_TOKEN",
 ];
 const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set(["hermes-e2e"]);
+const ADAPTER_MANAGED_INFERENCE_JOBS = new Set(["hermes-e2e"]);
 const PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS = new Set([
   "device-auth-health",
   "model-router-provider-routed-inference",
@@ -579,7 +580,12 @@ function validateHostedCompatibleInferenceFlag(
   jobName: string,
   jobEnv: WorkflowRecord,
 ): void {
-  if (PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS.has(jobName)) return;
+  if (
+    PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS.has(jobName) ||
+    ADAPTER_MANAGED_INFERENCE_JOBS.has(jobName)
+  ) {
+    return;
+  }
   if (jobEnv.NEMOCLAW_E2E_USE_HOSTED_INFERENCE !== "1") {
     errors.push(`${jobName} job must enable hosted-compatible inference mode`);
   }

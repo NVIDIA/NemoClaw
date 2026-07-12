@@ -11,6 +11,8 @@ import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundar
 
 describe("Hermes E2E workflow boundary", () => {
   it("rejects hosted Hermes model and hermetic GPU-startup boundary drift", () => {
+    expect(validateE2eWorkflowBoundary()).toEqual([]);
+
     const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8"));
     workflow.jobs["hermes-e2e"].env.NEMOCLAW_MODEL = "minimaxai/minimax-m2.7";
     workflow.jobs["hermes-e2e"].env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE = "1";
