@@ -45,9 +45,12 @@ unset _NEMOCLAW_SANDBOX_RLIMITS
 # entrypoint's environment, so an opted-in direct dcode exec can lose tracing.
 # Source boundary: start.sh materializes only the credential-free enable bit;
 # this launcher recovers it only from a regular, non-symlink marker.
-# Source-fix constraint: NemoClaw cannot make OpenShell preserve entrypoint env.
+# Source-fix constraint: NemoClaw cannot make OpenShell preserve entrypoint env,
+# and policy-only reloads clear /tmp without re-running the entrypoint. Keep the
+# reconstructable bit in the sandbox workspace so those reloads retain it.
 # Regression: the proxy-launcher tests cover exact values and unsafe file types.
-# Removal condition: OpenShell propagates the bit to every exec/login process.
+# Removal condition: OpenShell propagates the bit to every exec/login process
+# and preserves it across policy reloads or re-runs the entrypoint afterward.
 # The marker is convenience state, not an authorization boundary; the
 # host-selected network policy controls whether local OTLP egress exists.
 unset NEMOCLAW_OBSERVABILITY

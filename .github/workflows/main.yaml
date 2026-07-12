@@ -59,7 +59,7 @@ jobs:
 
   real-openclaw-dist-harness:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 20
     env:
       # This required proof reads reviewed npm metadata/tarballs. Keep npm's
       # transient-registry retry policy explicit at the hard merge boundary.
@@ -85,6 +85,11 @@ jobs:
         env:
           NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS: "1"
         run: npx vitest run --project integration test/openclaw-real-patched-dist-harness.test.ts --silent=false --reporter=default
+
+      - name: Audit managed OpenClaw security finding suppressions
+        env:
+          NEMOCLAW_REAL_OPENCLAW_AUDIT_HARNESS: "1"
+        run: npx vitest run --project integration test/openclaw-security-audit-suppressions-real.test.ts --silent=false --reporter=default
 
   cli-test-shards:
     runs-on: ubuntu-latest

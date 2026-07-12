@@ -46,6 +46,8 @@ readonly DEEPAGENTS_AUTH_FILE="/sandbox/.deepagents/.state/auth.json"
 readonly DEEPAGENTS_CODEX_AUTH_FILE="/sandbox/.deepagents/.state/chatgpt-auth.json"
 readonly MANAGED_DCODE_AUTO_APPROVAL_FILE="/usr/local/share/nemoclaw/dcode-auto-approval"
 readonly MANAGED_DCODE_AUTO_APPROVAL_OWNER_UID=0
+# Shared bound for canonical credential prefixes and OpenShell env identifiers.
+readonly CREDENTIAL_NAME_PREFIX_MAX_LENGTH=128
 
 managed_auto_approval_file_metadata() {
   local file="$1"
@@ -155,8 +157,8 @@ has_context_secret_shape() {
   upper="$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
   # Keep horizontal separator whitespace bounded to mirror the canonical
   # lookbehind and avoid an attacker-controlled scan over arbitrarily long runs.
-  [[ "$upper" =~ (^|[^A-Z0-9])([A-Z0-9]{1,128}_(KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)|(X[-_])?API[-_]KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)[\'\"]?([[:blank:]]{0,32}[=:][[:blank:]]{0,32}|[[:blank:]]{1,32})[\'\"]?[^[:space:]\'\"]{10,} ]] \
-    || [[ "$1" =~ (^|[^A-Za-z0-9])([A-Za-z0-9]{1,128}(Token|Secret|Credential)|[A-Za-z0-9]{0,128}([Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{1,128}(Password|Passwd|Pass))[\'\"]?([[:blank:]]{0,32}[=:][[:blank:]]{0,32}|[[:blank:]]{1,32})[\'\"]?[^[:space:]\'\"]{10,} ]] \
+  [[ "$upper" =~ (^|[^A-Z0-9])([A-Z0-9]{1,${CREDENTIAL_NAME_PREFIX_MAX_LENGTH}}_(KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)|(X[-_])?API[-_]KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)[\'\"]?([[:blank:]]{0,32}[=:][[:blank:]]{0,32}|[[:blank:]]{1,32})[\'\"]?[^[:space:]\'\"]{10,} ]] \
+    || [[ "$1" =~ (^|[^A-Za-z0-9])([A-Za-z0-9]{1,${CREDENTIAL_NAME_PREFIX_MAX_LENGTH}}(Token|Secret|Credential)|[A-Za-z0-9]{0,${CREDENTIAL_NAME_PREFIX_MAX_LENGTH}}([Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{1,${CREDENTIAL_NAME_PREFIX_MAX_LENGTH}}(Password|Passwd|Pass))[\'\"]?([[:blank:]]{0,32}[=:][[:blank:]]{0,32}|[[:blank:]]{1,32})[\'\"]?[^[:space:]\'\"]{10,} ]] \
     || [[ "$1" =~ (^|[^A-Za-z0-9])KEY[\'\"]?([[:blank:]]{0,32}[=:][[:blank:]]{0,32}|[[:blank:]]{1,32})[\'\"]?[^[:space:]\'\"]{10,} ]]
 }
 
@@ -443,7 +445,7 @@ is_openshell_env_placeholder_for_name() {
   [ "$name" != "OPENSHELL_TLS_KEY" ] || return 1
 
   # Keep this identifier contract aligned with OpenShell provider env keys.
-  if [ -z "$name" ] || [ "${#name}" -gt 128 ]; then
+  if [ -z "$name" ] || [ "${#name}" -gt "$CREDENTIAL_NAME_PREFIX_MAX_LENGTH" ]; then
     return 1
   fi
   case "$name" in

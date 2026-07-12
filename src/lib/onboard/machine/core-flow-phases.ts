@@ -3,6 +3,10 @@
 
 import type { WebSearchConfig } from "../../inference/web-search";
 import type { DcodeAutoApprovalMode } from "../dcode-auto-approval";
+import type {
+  createProviderRecoveryReceiptLedger,
+  ProviderRecoveryReceipt,
+} from "../rebuild-route-handoff";
 import {
   mergeProviderModelSelectedContext,
   mergeSandboxCreatedContext,
@@ -33,6 +37,8 @@ export interface CoreOnboardFlowPhaseOptions<
   forceProviderSelection: boolean;
   forceInferenceSetup?: boolean;
   authoritativeResumeConfig?: boolean;
+  providerRecoveryReceipt?: ProviderRecoveryReceipt | null;
+  providerRecoveryReceiptLedger?: ReturnType<typeof createProviderRecoveryReceiptLedger>;
   env: NodeJS.ProcessEnv;
   constants: ProviderInferenceStateOptions<Context["gpu"], Context["agent"], Host>["constants"];
   providerDeps: ProviderInferenceStateOptions<Context["gpu"], Context["agent"], Host>["deps"];
@@ -75,6 +81,8 @@ export function createCoreOnboardFlowPhases<
       forceProviderSelection: options.forceProviderSelection,
       forceInferenceSetup: options.forceInferenceSetup,
       authoritativeResumeConfig: options.authoritativeResumeConfig,
+      providerRecoveryReceipt: options.providerRecoveryReceipt,
+      providerRecoveryReceiptLedger: options.providerRecoveryReceiptLedger,
       initial: {
         model: context.model,
         provider: context.provider,

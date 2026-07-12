@@ -39,10 +39,6 @@ import { shellQuote } from "../runner.js";
 import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
 import { isSensitiveFile, sanitizeConfigFile } from "../security/credential-filter.js";
 import {
-  buildOpenClawConfigRestoreInputFromSandbox,
-  shouldMergeOpenClawConfigStateFile,
-} from "./openclaw-config-restore-input.js";
-import {
   buildRestoreCleanupCommand,
   buildRestoreTarArgs,
   isAllowedStateSymlink,
@@ -57,7 +53,7 @@ import {
 import type { CustomPolicyEntry } from "./registry.js";
 import * as registry from "./registry.js";
 import { isSshTransportFailure } from "./ssh-transport.js";
-import type { StateFileRestorePolicy } from "./state-file-restore-policy.js";
+import { restoreStateFile } from "./state-file-restore.js";
 import { runTarListing } from "./tar-listing.js";
 
 const HOME_DIR = path.resolve(process.env.HOME || os.homedir());
@@ -167,19 +163,19 @@ export interface RestoreResult {
   error?: string;
 }
 
-export interface RestoreOptions {
-  /** Optional file-specific restore capability authorized by the caller. */
-  stateFileRestorePolicy?: StateFileRestorePolicy;
-}
-
-export interface RecreatedSandboxRestoreOptions extends RestoreOptions {
+export interface RecreatedSandboxRestoreOptions {
   /** Agent in the newly created target image, not the backup manifest agent. */
   targetAgentType: string;
+  /** Explicit capability for custom images whose config must be restored wholesale. */
+  allowCustomImageWholeStateFileRestore?: true;
   /** Pre-captured baseline avoids a second remote read during onboarding finalization. */
   freshOpenClawImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
 }
 
-interface InternalRestoreOptions extends RestoreOptions {
+interface InternalRestoreOptions {
+  targetAgentType: string;
+  allowCustomImageWholeStateFileRestore?: true;
+  discoverFreshOpenClawImagePluginInstalls?: true;
   freshOpenClawImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
 }
 
@@ -720,14 +716,21 @@ function normalizeStateFileSpec(spec: AgentStateFile | StateFileSpec): StateFile
   return { path: normalized, strategy: spec.strategy };
 }
 
+function normalizeStateFileSpecsPreservingDuplicates(
+  specs: readonly (AgentStateFile | StateFileSpec)[],
+): StateFileSpec[] {
+  return specs.flatMap((spec) => {
+    const normalized = normalizeStateFileSpec(spec);
+    return normalized ? [normalized] : [];
+  });
+}
+
 function normalizeStateFileSpecs(
   specs: readonly (AgentStateFile | StateFileSpec)[],
 ): StateFileSpec[] {
   const normalized: StateFileSpec[] = [];
   const seen = new Set<string>();
-  for (const spec of specs) {
-    const next = normalizeStateFileSpec(spec);
-    if (!next) continue;
+  for (const next of normalizeStateFileSpecsPreservingDuplicates(specs)) {
     const key = `${next.strategy}:${next.path}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -754,24 +757,6 @@ const SQLITE_BACKUP_PY = [
   "finally:",
   "    dst_conn.close()",
   "    src_conn.close()",
-].join("\n");
-
-const SQLITE_RESTORE_PY = [
-  "import os, sqlite3, sys",
-  "src, dst = sys.argv[1], sys.argv[2]",
-  "os.makedirs(os.path.dirname(dst), exist_ok=True)",
-  "src_conn = sqlite3.connect('file:' + src + '?mode=ro', uri=True, timeout=30)",
-  "dst_conn = sqlite3.connect(dst, timeout=30)",
-  "try:",
-  "    dst_conn.execute('PRAGMA busy_timeout=30000')",
-  "    src_conn.backup(dst_conn)",
-  "    ok = dst_conn.execute('PRAGMA quick_check').fetchone()[0]",
-  "    if ok != 'ok':",
-  "        raise SystemExit('sqlite quick_check failed: ' + str(ok))",
-  "finally:",
-  "    dst_conn.close()",
-  "    src_conn.close()",
-  "os.chmod(dst, 0o660)",
 ].join("\n");
 
 function buildStateFileBackupCommand(dir: string, spec: StateFileSpec): string {
@@ -848,151 +833,6 @@ function backupStateFile(
   return { outcome: "backed_up", unreachable: false };
 }
 
-export function buildStateFileRestoreCommand(
-  dir: string,
-  spec: StateFileSpec,
-  refreshOpenClawConfigHash = false,
-): string {
-  const remotePath = stateFileRemotePath(dir, spec.path);
-  const quotedRemotePath = shellQuote(remotePath);
-  if (spec.strategy === "sqlite_backup") {
-    return [
-      `dst=${quotedRemotePath}`,
-      'parent="$(dirname "$dst")"',
-      '[ ! -L "$parent" ] || { echo "refusing symlinked state parent: $parent" >&2; exit 10; }',
-      '[ ! -L "$dst" ] || { echo "refusing symlinked sqlite target: $dst" >&2; exit 11; }',
-      'mkdir -p "$parent"',
-      'tmp="$(mktemp /tmp/nemoclaw-sqlite-restore.XXXXXX)"',
-      "trap 'rm -f \"$tmp\"' EXIT",
-      'cat > "$tmp"',
-      'chmod 600 "$tmp"',
-      `umask 0007; python3 -c ${shellQuote(SQLITE_RESTORE_PY)} "$tmp" "$dst"`,
-    ].join("; ");
-  }
-
-  const steps = [
-    `dst=${quotedRemotePath}`,
-    'parent="$(dirname "$dst")"',
-    '[ ! -L "$parent" ] || { echo "refusing symlinked state parent: $parent" >&2; exit 10; }',
-    '[ ! -L "$dst" ] || { echo "refusing symlinked state target: $dst" >&2; exit 11; }',
-    'mkdir -p "$parent"',
-    'tmp="$(mktemp "${parent}/.nemoclaw-restore.XXXXXX")"',
-    'trap \'rm -f "$tmp" "${anchor_tmp:-}"\' EXIT',
-    'cat > "$tmp"',
-    'chmod 640 "$tmp"',
-  ];
-
-  if (refreshOpenClawConfigHash) {
-    // OpenClaw guards openclaw.json with a `.last-good` recovery anchor: on its
-    // config-integrity check it archives any live config that differs from
-    // `.last-good` as `openclaw.json.clobbered.*` and reverts to `.last-good`.
-    // The rebuild restore writes the merged user config directly, so without
-    // refreshing the anchor OpenClaw reverts the restored config back to the
-    // freshly generated baseline captured at first boot (issue #5202). Refresh
-    // the anchor from the staged temp BEFORE swapping the live file so the
-    // integrity watcher never observes a config that disagrees with it. Stage
-    // through a temp + atomic rename and fail closed (before the live swap) so
-    // a partial/failed anchor write never leaves a stale recovery target that
-    // would let OpenClaw revert the restored config.
-    steps.push(
-      'last_good="${dst}.last-good"',
-      '[ ! -L "$last_good" ] || { echo "refusing symlinked last-good target: $last_good" >&2; exit 13; }',
-      'anchor_tmp="$(mktemp "${parent}/.nemoclaw-lastgood.XXXXXX")" || { echo "failed to stage last-good anchor" >&2; exit 14; }',
-      'cat "$tmp" > "$anchor_tmp" || { echo "failed to write last-good anchor" >&2; exit 14; }',
-      'chmod 660 "$anchor_tmp" 2>/dev/null || true',
-      'mv -f "$anchor_tmp" "$last_good" || { echo "failed to install last-good anchor" >&2; exit 14; }',
-    );
-  }
-
-  steps.push('mv -f "$tmp" "$dst"');
-
-  if (refreshOpenClawConfigHash) {
-    steps.push(
-      'hash_file="${parent}/.config-hash"',
-      '[ ! -L "$hash_file" ] || { echo "refusing symlinked config hash target: $hash_file" >&2; exit 12; }',
-      '(cd "$parent" && sha256sum "$(basename "$dst")" > .config-hash)',
-      'chmod 660 "$hash_file" 2>/dev/null || true',
-    );
-  }
-
-  return steps.join("; ");
-}
-
-function buildStateFileRestoreInput(
-  configFile: string,
-  sandboxName: string,
-  dir: string,
-  spec: StateFileSpec,
-  backupContents: Buffer,
-  mergeOpenClawConfig: boolean,
-  freshImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
-  previousImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
-): Buffer | null {
-  if (!mergeOpenClawConfig) return backupContents;
-
-  const result = buildOpenClawConfigRestoreInputFromSandbox({
-    backupContents,
-    dir,
-    freshImagePluginInstalls,
-    log: _log,
-    previousImagePluginInstalls,
-    specPath: spec.path,
-    sshArgs: sshArgs(configFile, sandboxName),
-  });
-  if (result.ok) return result.input;
-  _log(`FAILED: ${result.error}`);
-  return null;
-}
-
-function restoreStateFile(
-  configFile: string,
-  sandboxName: string,
-  agentType: string | null | undefined,
-  dir: string,
-  spec: StateFileSpec,
-  backupPath: string,
-  mergeOpenClawConfig = false,
-  stateFileRestorePolicy?: StateFileRestorePolicy,
-  freshImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
-  previousImagePluginInstalls?: readonly OpenClawImagePluginInstall[],
-): boolean {
-  const localPath = path.join(backupPath, spec.path);
-  if (!existsSync(localPath)) return true;
-
-  const backupContents = readFileSync(localPath);
-  const plan = stateFileRestorePolicy?.(agentType, dir, spec, backupContents);
-  const command = plan?.command ?? buildStateFileRestoreCommand(dir, spec, mergeOpenClawConfig);
-  _log(`Restoring state file ${spec.path} (${spec.strategy})`);
-  const input =
-    plan?.input ??
-    buildStateFileRestoreInput(
-      configFile,
-      sandboxName,
-      dir,
-      spec,
-      backupContents,
-      mergeOpenClawConfig,
-      freshImagePluginInstalls,
-      previousImagePluginInstalls,
-    );
-  if (input === null) return false;
-
-  const result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), command], {
-    input,
-    stdio: ["pipe", "pipe", "pipe"],
-    timeout: 120000,
-  });
-
-  if (result.status === 0 && !result.error && !result.signal) return true;
-
-  const detail =
-    (result.stderr?.toString() || "").trim() ||
-    result.error?.message ||
-    (result.signal ? `signal ${result.signal}` : `exit ${String(result.status)}`);
-  _log(`FAILED: state file restore ${spec.path}: ${detail.substring(0, 200)}`);
-  return false;
-}
-
 // ── Backup ─────────────────────────────────────────────────────────
 
 /**
@@ -1000,6 +840,7 @@ function restoreStateFile(
  * Uses the agent manifest to determine which directories contain state.
  */
 
+export { buildStateFileRestoreCommand } from "./state-file-restore.js";
 // isSshTransportFailure lives in ./ssh-transport now. Re-exported here for
 // backwards compatibility with callers that used to import it from this
 // module. Prefer importing directly from ./ssh-transport in new code.
@@ -1430,12 +1271,22 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
 /**
  * Restore state directories into a sandbox from a prior backup.
  */
-export function restoreSandboxState(
-  sandboxName: string,
-  backupPath: string,
-  options: RestoreOptions = {},
-): RestoreResult {
-  return restoreSandboxStateInternal(sandboxName, backupPath, options);
+export function restoreSandboxState(sandboxName: string, backupPath: string): RestoreResult {
+  const target = registry.getSandbox(sandboxName);
+  if (!target) {
+    return {
+      success: false,
+      restoredDirs: [],
+      failedDirs: ["manifest"],
+      restoredFiles: [],
+      failedFiles: [],
+      error: `Could not resolve target sandbox '${sandboxName}' for state restore`,
+    };
+  }
+  return restoreSandboxStateInternal(sandboxName, backupPath, {
+    targetAgentType: String(target.agent || "openclaw"),
+    ...(target.fromDockerfile ? { allowCustomImageWholeStateFileRestore: true } : {}),
+  });
 }
 
 export function restoreRecreatedSandboxState(
@@ -1443,27 +1294,16 @@ export function restoreRecreatedSandboxState(
   backupPath: string,
   options: RecreatedSandboxRestoreOptions,
 ): RestoreResult {
-  let freshOpenClawImagePluginInstalls: readonly OpenClawImagePluginInstall[] | undefined;
-  if (options.targetAgentType === "openclaw") {
-    const targetDir = loadAgent(options.targetAgentType).configPaths.dir;
-    const discovery = options.freshOpenClawImagePluginInstalls
-      ? parseOpenClawImagePluginInstalls(options.freshOpenClawImagePluginInstalls, targetDir)
-      : discoverFreshOpenClawImagePluginInstalls(sandboxName, { getSshConfig, sshArgs }, targetDir);
-    if (!discovery.ok) {
-      return {
-        success: false,
-        restoredDirs: [],
-        failedDirs: ["extensions"],
-        restoredFiles: [],
-        failedFiles: [],
-        error: discovery.error,
-      };
-    }
-    freshOpenClawImagePluginInstalls = discovery.pluginInstalls;
-  }
   return restoreSandboxStateInternal(sandboxName, backupPath, {
-    freshOpenClawImagePluginInstalls,
-    stateFileRestorePolicy: options.stateFileRestorePolicy,
+    targetAgentType: options.targetAgentType,
+    ...(options.allowCustomImageWholeStateFileRestore
+      ? { allowCustomImageWholeStateFileRestore: true }
+      : {}),
+    ...(options.targetAgentType === "openclaw" &&
+    options.freshOpenClawImagePluginInstalls === undefined
+      ? { discoverFreshOpenClawImagePluginInstalls: true }
+      : {}),
+    freshOpenClawImagePluginInstalls: options.freshOpenClawImagePluginInstalls,
   });
 }
 
@@ -1510,7 +1350,7 @@ function restoreSandboxStateInternal(
   // backward compatibility.
   const restorableStateDirs = manifest.backedUpDirs ?? manifest.stateDirs;
   const localDirs = existingBackupDirs(backupPath, restorableStateDirs);
-  const stateFiles = normalizeStateFileSpecs(manifest.stateFiles ?? []);
+  const stateFiles = normalizeStateFileSpecsPreservingDuplicates(manifest.stateFiles ?? []);
   const localFiles = stateFiles.filter((f) => existsSync(path.join(backupPath, f.path)));
   _log(
     `Local backup dirs: [${localDirs.join(",")}] (${localDirs.length}/${manifest.stateDirs.length})`,
@@ -1518,6 +1358,96 @@ function restoreSandboxStateInternal(
   _log(
     `Local backup files: [${localFiles.map((f) => f.path).join(",")}] (${localFiles.length}/${stateFiles.length})`,
   );
+
+  const failRestoreContract = (error: string): RestoreResult => {
+    _log(`FAILED: ${error}`);
+    return {
+      success: false,
+      restoredDirs,
+      failedDirs: [...localDirs],
+      restoredFiles,
+      failedFiles: localFiles.map((file) => file.path),
+      error,
+    };
+  };
+  if (options.targetAgentType !== manifest.agentType) {
+    return failRestoreContract(
+      `Backup agent '${manifest.agentType}' does not match target agent '${options.targetAgentType}'`,
+    );
+  }
+  let targetAgent: ReturnType<typeof loadAgent>;
+  try {
+    targetAgent = loadAgent(options.targetAgentType);
+  } catch {
+    return failRestoreContract(
+      `Could not load target agent manifest '${options.targetAgentType}' for state restore`,
+    );
+  }
+  const normalizedBackupDir = dir.replace(/\/+$/, "");
+  const normalizedTargetDir = targetAgent.configPaths.dir.replace(/\/+$/, "");
+  if (normalizedBackupDir !== normalizedTargetDir) {
+    return failRestoreContract(
+      `Backup state directory '${normalizedBackupDir}' does not match target directory '${normalizedTargetDir}'`,
+    );
+  }
+  const targetStateFiles = new Map<string, AgentStateFile>();
+  for (const targetFile of targetAgent.stateFiles) {
+    const normalized = normalizeStateFilePath(targetFile.path);
+    if (!normalized || targetStateFiles.has(normalized)) {
+      return failRestoreContract(
+        `Target agent manifest '${options.targetAgentType}' has an invalid or duplicate state file declaration`,
+      );
+    }
+    targetStateFiles.set(normalized, targetFile);
+  }
+  const seenBackupPaths = new Set<string>();
+  for (const backupFile of stateFiles) {
+    if (seenBackupPaths.has(backupFile.path)) {
+      return failRestoreContract(`Backup manifest repeats state file '${backupFile.path}'`);
+    }
+    seenBackupPaths.add(backupFile.path);
+    const targetFile = targetStateFiles.get(backupFile.path);
+    if (!targetFile) {
+      return failRestoreContract(
+        `Backup state file '${backupFile.path}' is not declared by target agent '${options.targetAgentType}'`,
+      );
+    }
+    if (targetFile.strategy !== backupFile.strategy) {
+      return failRestoreContract(
+        `Backup state file '${backupFile.path}' strategy '${backupFile.strategy}' does not match target strategy '${targetFile.strategy}'`,
+      );
+    }
+  }
+
+  let freshOpenClawImagePluginInstalls: readonly OpenClawImagePluginInstall[] | undefined;
+  if (options.freshOpenClawImagePluginInstalls !== undefined) {
+    const parsed = parseOpenClawImagePluginInstalls(
+      options.freshOpenClawImagePluginInstalls,
+      targetAgent.configPaths.dir,
+    );
+    if (!parsed.ok) {
+      return {
+        ...failRestoreContract(parsed.error),
+        failedDirs: ["extensions"],
+        failedFiles: [],
+      };
+    }
+    freshOpenClawImagePluginInstalls = parsed.pluginInstalls;
+  } else if (options.discoverFreshOpenClawImagePluginInstalls === true) {
+    const discovery = discoverFreshOpenClawImagePluginInstalls(
+      sandboxName,
+      { getSshConfig, sshArgs },
+      targetAgent.configPaths.dir,
+    );
+    if (!discovery.ok) {
+      return {
+        ...failRestoreContract(discovery.error),
+        failedDirs: ["extensions"],
+        failedFiles: [],
+      };
+    }
+    freshOpenClawImagePluginInstalls = discovery.pluginInstalls;
+  }
 
   if (localDirs.length === 0 && localFiles.length === 0) {
     _log("No dirs or files to restore");
@@ -1539,7 +1469,6 @@ function restoreSandboxStateInternal(
 
   const tempSshConfig = createTempSshConfig(sshConfig, "nemoclaw-state-");
   const configFile = tempSshConfig.file;
-  const freshOpenClawImagePluginInstalls = options.freshOpenClawImagePluginInstalls;
   const previousOpenClawImagePluginInstalls =
     freshOpenClawImagePluginInstalls !== undefined
       ? manifest.openclawImagePluginInstalls
@@ -1704,16 +1633,17 @@ function restoreSandboxStateInternal(
     }
 
     for (const spec of localFiles) {
+      const targetStateFile = targetStateFiles.get(spec.path);
+      if (!targetStateFile) throw new Error(`Validated target state file missing: ${spec.path}`);
       if (
         restoreStateFile(
-          configFile,
-          sandboxName,
-          manifest.agentType,
+          sshArgs(configFile, sandboxName),
           dir,
           spec,
           backupPath,
-          shouldMergeOpenClawConfigStateFile(manifest.agentType, dir, spec),
-          options.stateFileRestorePolicy,
+          targetStateFile.restore,
+          options.allowCustomImageWholeStateFileRestore === true,
+          _log,
           configFreshOpenClawImagePluginInstalls,
           previousOpenClawImagePluginInstalls,
         )
@@ -1777,7 +1707,9 @@ function readManifest(backupPath: string): RebuildManifest | null {
     return {
       ...manifest,
       dir,
-      stateFiles: normalizeStateFileSpecs(manifest.stateFiles ?? []),
+      // Preserve repeated normalized paths from this untrusted payload so the
+      // restore contract can reject them instead of silently de-duplicating.
+      stateFiles: normalizeStateFileSpecsPreservingDuplicates(manifest.stateFiles ?? []),
       blueprintDigest: manifest.blueprintDigest ?? null,
     };
   } catch {

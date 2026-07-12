@@ -2773,28 +2773,28 @@ async function createSandboxWithBaseImageResolution(
   const envMessagingState = MessagingHostStateApplier.readPlanStateFromEnv();
   const plannedMessagingState =
     envMessagingState?.plan.sandboxName === sandboxName ? envMessagingState : undefined;
-  sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig({
-    configuredMessagingChannels:
-      getChannelsFromPlan(plannedMessagingState?.plan) ?? activeMessagingChannels,
-  });
-  const buildId = await preparedDcodeRebuild.resolveSandboxBuildId({
-    preparedBuildContext,
-    agent,
-    fromDockerfile,
-    stagedDockerfile,
-    model,
-    chatUiUrl,
-    provider,
-    endpointUrl: createIntent?.endpointUrl ?? null,
-    preferredInferenceApi,
-    webSearchConfig,
-    toolDisclosure: effectiveToolDisclosure,
-    ...(isManagedDcodeAgent ? { dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode } : {}),
-    hermesToolGateways,
-    sandboxGpuConfig: effectiveSandboxGpuConfig,
-    ...baseImageResolutionFlow.getBaseImageResolutionPatchOptions(baseImageResolutionContext),
-    gatewayPort: GATEWAY_PORT,
-  });
+  const configuredMessagingChannels =
+    getChannelsFromPlan(plannedMessagingState?.plan) ?? activeMessagingChannels;
+  sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig({ configuredMessagingChannels });
+  const { buildId, dashboardRemoteBindPrepared } =
+    await preparedDcodeRebuild.resolveSandboxBuildPatch({
+      preparedBuildContext,
+      agent,
+      fromDockerfile,
+      stagedDockerfile,
+      model,
+      chatUiUrl,
+      provider,
+      endpointUrl: createIntent?.endpointUrl ?? null,
+      preferredInferenceApi,
+      webSearchConfig,
+      toolDisclosure: effectiveToolDisclosure,
+      ...(isManagedDcodeAgent ? { dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode } : {}),
+      hermesToolGateways,
+      sandboxGpuConfig: effectiveSandboxGpuConfig,
+      ...baseImageResolutionFlow.getBaseImageResolutionPatchOptions(baseImageResolutionContext),
+      gatewayPort: GATEWAY_PORT,
+    });
   const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
   const { createResult, prebuild, effectiveDashboardPort, dockerGpuCreatePatch } =
     await runSandboxCreateStep(
@@ -2951,7 +2951,6 @@ async function createSandboxWithBaseImageResolution(
   // openshell tags images with seconds; buildId is ms. Parse actual tag from output. Fixes #2672.
   const resolvedImageTag =
     prebuild.imageRef ?? resolveSandboxImageTagFromCreateOutput(createResult.output, buildId);
-
   const sandboxRuntimeFields = getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
   finalizeCreatedSandbox(
     {
@@ -2959,6 +2958,7 @@ async function createSandboxWithBaseImageResolution(
       restoreBackupPath,
       preUpgradeBackup: pendingStateRestoreBackupPath !== null,
       targetAgentType: agent?.name ?? "openclaw",
+      customImage: Boolean(fromDockerfile),
       discoverOpenClawImagePluginInstalls: customOpenClawImage,
       validateManagedDcode: isManagedDcodeAgent,
       provider,
@@ -2996,7 +2996,7 @@ async function createSandboxWithBaseImageResolution(
           ...(isManagedDcodeAgent ? { dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode } : {}),
           policyTier: resolvedCreatePolicyTier,
           // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-          ...sandboxRegistration.creationFidelity(webSearchConfig, fromDockerfile, normalizeHermesAuthMethod(hermesAuthMethod)),
+          ...sandboxRegistration.creationFidelity(webSearchConfig, fromDockerfile, normalizeHermesAuthMethod(hermesAuthMethod), dashboardRemoteBindPrepared),
           plannedMessagingState,
           preservedMcpState,
           hermesToolGateways,

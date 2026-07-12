@@ -41,8 +41,9 @@ function writeNpmStub(fakeBin: string, installSnippet: string = "exit 0") {
 set -euo pipefail
 if [ "$1" = "--version" ]; then echo "10.9.2"; exit 0; fi
 if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then echo "$NPM_PREFIX"; exit 0; fi
-if [ "$1" = "install" ] || [ "$1" = "link" ] || [ "$1" = "uninstall" ] || [ "$1" = "pack" ] || [ "$1" = "run" ]; then
+if [ "$1" = "ci" ] || [ "$1" = "install" ] || [ "$1" = "link" ] || [ "$1" = "uninstall" ] || [ "$1" = "pack" ] || [ "$1" = "run" ]; then
   ${installSnippet}
+  if [ "$1" = "ci" ]; then exit 0; fi
 fi
 echo "unexpected npm invocation: $*" >&2; exit 98`,
   );
@@ -242,7 +243,7 @@ fi
 if [ "$1" = "pack" ]; then
   exit 1
 fi
-if [ "$1" = "install" ] && [[ "$*" == *"--ignore-scripts"* ]]; then
+if { [ "$1" = "ci" ] || [ "$1" = "install" ]; } && [[ "$*" == *"--ignore-scripts"* ]]; then
   exit 0
 fi
 if [ "$1" = "run" ]; then
@@ -346,7 +347,7 @@ fi
 if [ "$1" = "pack" ]; then
   exit 1
 fi
-if [ "$1" = "install" ] && [[ "$*" == *"--ignore-scripts"* ]]; then
+if { [ "$1" = "ci" ] || [ "$1" = "install" ]; } && [[ "$*" == *"--ignore-scripts"* ]]; then
   exit 0
 fi
 if [ "$1" = "run" ]; then
@@ -505,8 +506,7 @@ exit 98
     expect(output.trim()).toBe("nemoclaw-installer");
     expect(output).not.toMatch(/0\.1\.0/);
   });
-
-  it("uses npm install + npm link for a source checkout (no -g)", { timeout: 20000 }, () => {
+  it("preserves the sandbox payload lockfile with npm ci (#3798)", { timeout: 20000 }, () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-source-"));
     const fakeBin = path.join(tmp, "bin");
     const prefix = path.join(tmp, "prefix");
@@ -550,7 +550,7 @@ if [ "$1" = "pack" ]; then
   tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
   exit 0
 fi
-if [ "$1" = "install" ]; then exit 0; fi
+if [ "$1" = "install" ]; then printf '{"rewritten":true}\n' > package-lock.json; exit 0; fi
 if [ "$1" = "run" ] && { [ "$2" = "build" ] || [ "$2" = "build:cli" ] || [ "$2" = "--if-present" ]; }; then exit 0; fi
 if [ "$1" = "link" ]; then
   cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
@@ -564,8 +564,6 @@ EOS
 fi`,
     );
 
-    // Write a package.json that triggers the source-checkout path.
-    // Must use spaces after colons to match the grep in install.sh.
     fs.writeFileSync(
       path.join(tmp, "package.json"),
       JSON.stringify({ name: "nemoclaw", version: "0.1.0" }, null, 2),
@@ -575,6 +573,8 @@ fi`,
       path.join(tmp, "nemoclaw", "package.json"),
       JSON.stringify({ name: "nemoclaw-plugin", version: "0.1.0" }, null, 2),
     );
+    const payloadLockPath = path.join(tmp, "nemoclaw", "package-lock.json");
+    fs.writeFileSync(payloadLockPath, "payload lock sentinel\n");
     fs.mkdirSync(path.join(tmp, "nemoclaw-blueprint", "router", "llm-router"), {
       recursive: true,
     });
@@ -593,6 +593,7 @@ fi`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
         NEMOCLAW_DEFER_OPENSHELL_INSTALL: "1",
+        NEMOCLAW_REPO_ROOT: tmp,
         NPM_PREFIX: prefix,
         NPM_LOG_PATH: npmLog,
         PYTHON_LOG_PATH: pythonLog,
@@ -602,12 +603,11 @@ fi`,
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const log = fs.readFileSync(npmLog, "utf-8");
-    // install (no -g) and link must both have been called
-    expect(log).toMatch(/^install(?!\s+-g)/m);
+    expect(log.match(/^install --ignore-scripts$/gm)).toHaveLength(1);
+    expect(log.match(/^ci --ignore-scripts$/gm)).toHaveLength(1);
+    expect(fs.readFileSync(payloadLockPath)).toEqual(Buffer.from("payload lock sentinel\n"));
     expect(log).toMatch(/^link/m);
-    // the GitHub URL must NOT appear — this is a local install
     expect(log).not.toMatch(new RegExp(GITHUB_INSTALL_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-    // Model Router must not run provider-specific dependency setup from the generic installer.
     expect(fs.existsSync(pythonLog)).toBe(false);
     const gitCalls = fs.existsSync(gitLog) ? fs.readFileSync(gitLog, "utf-8") : "";
     expect(gitCalls).not.toMatch(/submodule/);
@@ -1711,7 +1711,7 @@ exit 0
   echo "ENOTFOUND simulated network error" >&2
   exit 1
 fi
-if [ "$1" = "install" ] || [ "$1" = "run" ] || [ "$1" = "link" ]; then
+if [ "$1" = "ci" ] || [ "$1" = "install" ] || [ "$1" = "run" ] || [ "$1" = "link" ]; then
   echo "ENOTFOUND simulated network error" >&2
   exit 1
 fi`,
@@ -1802,7 +1802,7 @@ fi
 if [ "$1" = "pack" ]; then
   exit 1
 fi
-if [ "$1" = "install" ] && [[ "$*" == *"--ignore-scripts"* ]]; then
+if { [ "$1" = "ci" ] || [ "$1" = "install" ]; } && [[ "$*" == *"--ignore-scripts"* ]]; then
   exit 0
 fi
 if [ "$1" = "run" ]; then
@@ -1934,7 +1934,7 @@ fi
 if [ "$1" = "pack" ]; then
   exit 1
 fi
-if [ "$1" = "install" ] && [[ "$*" == *"--ignore-scripts"* ]]; then
+if { [ "$1" = "ci" ] || [ "$1" = "install" ]; } && [[ "$*" == *"--ignore-scripts"* ]]; then
   exit 0
 fi
 if [ "$1" = "run" ]; then
@@ -3218,7 +3218,7 @@ set -euo pipefail
 if [ "$1" = "--version" ]; then echo "10.9.2"; exit 0; fi
 if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "prefix" ]; then echo "$NPM_PREFIX"; exit 0; fi
 if [ "$1" = "pack" ]; then exit 1; fi
-if [ "$1" = "install" ] && [[ "$*" == *"--ignore-scripts"* ]]; then exit 0; fi
+if { [ "$1" = "ci" ] || [ "$1" = "install" ]; } && [[ "$*" == *"--ignore-scripts"* ]]; then exit 0; fi
 if [ "$1" = "run" ]; then exit 0; fi
 if [ "$1" = "uninstall" ]; then exit 0; fi
 if [ "$1" = "link" ]; then

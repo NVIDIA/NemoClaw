@@ -39,6 +39,7 @@ const MAX_PLAN_BYTES = 1024 * 1024;
 const MAX_CONTROLLER_ERROR_CHARS = 512;
 const MAX_PR_FILES = 3000;
 const MAX_ACTIVE_RUN_PAGES_PER_STATUS = 10;
+const MAX_REPORTED_CI_JOBS = 10;
 const ACTIVE_WORKFLOW_RUN_STATUSES = [
   "requested",
   "waiting",
@@ -66,6 +67,9 @@ export type ControllerCommand =
       headBranch: string;
       workflowSha: string;
       ciConclusion: string;
+      ciRunId: number;
+      ciRunAttempt: number;
+      prNumber?: number;
     } & ControllerPaths)
   | ({
       mode: "finish";
@@ -104,6 +108,13 @@ type WorkflowRun = {
 };
 
 type WorkflowRunsResponse = { workflow_runs: WorkflowRun[] };
+type WorkflowJob = {
+  id: number;
+  name: string;
+  conclusion: string | null;
+  steps: Array<{ name: string; conclusion: string | null }>;
+};
+type WorkflowJobsPage = { totalCount: number; jobs: WorkflowJob[] };
 type CheckRun = { id: number };
 type GitReference = { ref: string; object: { type: string; sha: string } };
 
@@ -137,6 +148,8 @@ export type PrGateVerdict = {
   title: string;
   summary: string;
 };
+
+export class PrerequisiteCiError extends Error {}
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -232,6 +245,12 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
       headBranch: requiredArgument(args.headBranch, "head-branch"),
       workflowSha: requiredArgument(args.workflowSha, "workflow-sha"),
       ciConclusion: requiredArgument(args.ciConclusion, "ci-conclusion"),
+      ciRunId: parsePositiveId(requiredArgument(args.ciRunId, "ci-run-id"), "--ci-run-id"),
+      ciRunAttempt: parsePositiveId(
+        requiredArgument(args.ciRunAttempt, "ci-run-attempt"),
+        "--ci-run-attempt",
+      ),
+      prNumber: args.pr ? parsePositiveId(args.pr, "--pr") : undefined,
       ...privateControllerPaths(requiredArgument(args.workDir, "work-dir")),
     };
   }
@@ -677,6 +696,176 @@ export async function resolvePullRequest(options: {
   return detail;
 }
 
+function validateWorkflowJob(value: unknown): WorkflowJob {
+  if (
+    !isObjectRecord(value) ||
+    !Number.isSafeInteger(value.id) ||
+    (value.id as number) < 1 ||
+    typeof value.name !== "string" ||
+    value.name.length === 0 ||
+    (value.conclusion !== null && typeof value.conclusion !== "string") ||
+    (value.steps !== undefined && !Array.isArray(value.steps))
+  ) {
+    throw new Error("GitHub returned an invalid workflow job");
+  }
+  const steps = (value.steps ?? []).map((step) => {
+    if (
+      !isObjectRecord(step) ||
+      typeof step.name !== "string" ||
+      step.name.length === 0 ||
+      (step.conclusion !== null && typeof step.conclusion !== "string")
+    ) {
+      throw new Error("GitHub returned an invalid workflow job step");
+    }
+    return { name: step.name, conclusion: step.conclusion };
+  });
+  return {
+    id: value.id as number,
+    name: value.name,
+    conclusion: value.conclusion,
+    steps,
+  };
+}
+
+function validateWorkflowJobsPage(value: unknown): WorkflowJobsPage {
+  if (
+    !isObjectRecord(value) ||
+    !Number.isSafeInteger(value.total_count) ||
+    (value.total_count as number) < 0 ||
+    !Array.isArray(value.jobs)
+  ) {
+    throw new Error("GitHub returned an invalid workflow job listing");
+  }
+  return {
+    totalCount: value.total_count as number,
+    jobs: value.jobs.map(validateWorkflowJob),
+  };
+}
+
+async function listNonPassingCiJobs(
+  repository: string,
+  token: string,
+  ciRunId: number,
+  ciRunAttempt: number,
+): Promise<{ jobs: WorkflowJob[]; complete: boolean }> {
+  const response = validateWorkflowJobsPage(
+    await githubApi<unknown>(
+      `repos/${repository}/actions/runs/${ciRunId}/attempts/${ciRunAttempt}/jobs?per_page=100`,
+      token,
+      { userAgent: USER_AGENT },
+    ),
+  );
+  if (response.jobs.length > response.totalCount) {
+    throw new Error("GitHub returned an invalid workflow job count");
+  }
+  return {
+    jobs: response.jobs.filter(
+      (job) => !["success", "skipped", "neutral"].includes(job.conclusion ?? ""),
+    ),
+    complete: response.jobs.length === response.totalCount,
+  };
+}
+
+function normalizedCiMetadata(value: string, fallback: string): string {
+  const normalized = value
+    .replace(/[\u0000-\u001f\u007f]+/gu, " ")
+    .replace(/\s{2,}/gu, " ")
+    .trim();
+  if (!normalized) return fallback;
+  return normalized.length > 160 ? `${normalized.slice(0, 157)}...` : normalized;
+}
+
+function markdownLinkText(value: string): string {
+  return normalizedCiMetadata(value, "unnamed job")
+    .replace(/&/gu, "&amp;")
+    .replace(/</gu, "&lt;")
+    .replace(/>/gu, "&gt;")
+    .replace(/\\/gu, "\\\\")
+    .replace(/\[/gu, "\\[")
+    .replace(/\]/gu, "\\]");
+}
+
+function markdownCode(value: string, fallback: string): string {
+  return `\`${normalizedCiMetadata(value, fallback).replace(/`/gu, "'")}\``;
+}
+
+function ciFailureReport(options: {
+  repository: string;
+  prNumber?: number;
+  ciRunId: number;
+  ciRunAttempt: number;
+  ciConclusion: string;
+  jobs: readonly WorkflowJob[];
+  jobDetailsAvailable: boolean;
+  jobDetailsComplete: boolean;
+}): { summary: string; errorMessage: string; ciRunUrl: string } {
+  const prUrl = options.prNumber
+    ? `https://github.com/${options.repository}/pull/${options.prNumber}`
+    : undefined;
+  const ciRunUrl = `https://github.com/${options.repository}/actions/runs/${options.ciRunId}/attempts/${options.ciRunAttempt}`;
+  const conclusion = normalizedCiMetadata(options.ciConclusion, "without a result");
+  const reportedJobs = options.jobs.slice(0, MAX_REPORTED_CI_JOBS);
+  const ciLink = `[CI / Pull Request attempt ${options.ciRunAttempt}](${ciRunUrl})`;
+  const summary = options.prNumber
+    ? [
+        `[PR #${options.prNumber}](${prUrl}) did not pass ${ciLink} (${markdownCode(conclusion, "without a result")}), so no E2E run was dispatched.`,
+      ]
+    : [
+        `${ciLink} concluded ${markdownCode(conclusion, "without a result")}, so no E2E run was dispatched. The triggering PR was not present in the workflow event.`,
+      ];
+  if (reportedJobs.length > 0) {
+    summary.push("", "Jobs that did not pass:");
+    for (const job of reportedJobs) {
+      const jobUrl = `https://github.com/${options.repository}/actions/runs/${options.ciRunId}/job/${job.id}`;
+      const failedSteps = job.steps.filter((step) => step.conclusion === "failure");
+      const detail =
+        failedSteps.length > 0
+          ? `${failedSteps.length === 1 ? "failed step" : "failed steps"}: ${failedSteps
+              .slice(0, 3)
+              .map((step) => markdownCode(step.name, "unnamed step"))
+              .join(", ")}${failedSteps.length > 3 ? ` and ${failedSteps.length - 3} more` : ""}`
+          : `concluded ${markdownCode(job.conclusion ?? "without a result", "without a result")}`;
+      summary.push(`- [${markdownLinkText(job.name)}](${jobUrl}) — ${detail}.`);
+    }
+    if (options.jobs.length > reportedJobs.length) {
+      summary.push(
+        `- ${options.jobs.length - reportedJobs.length} more; open the CI run for details.`,
+      );
+    }
+    if (!options.jobDetailsComplete) {
+      summary.push("- The job listing was truncated; open the CI run for the full result.");
+    }
+  } else if (options.jobDetailsAvailable) {
+    summary.push(
+      "",
+      options.jobDetailsComplete
+        ? "GitHub reported no non-passing job. Open the CI run for details."
+        : "The job listing was truncated before a non-passing job was found. Open the CI run for details.",
+    );
+  } else {
+    summary.push("", "Job details could not be loaded. Open the CI run for details.");
+  }
+
+  const conciseJobs = reportedJobs.slice(0, 3).map((job) => {
+    const failedSteps = job.steps
+      .filter((step) => step.conclusion === "failure")
+      .slice(0, 2)
+      .map((step) => normalizedCiMetadata(step.name, "unnamed step"));
+    const detail =
+      failedSteps.length > 0 ? failedSteps.join(", ") : (job.conclusion ?? "no result");
+    return `${normalizedCiMetadata(job.name, "unnamed job")} (${detail})`;
+  });
+  const jobMessage =
+    conciseJobs.length > 0 ? conciseJobs.join("; ") : "no non-passing job details were available";
+  const truncationMessage =
+    options.jobDetailsAvailable && !options.jobDetailsComplete ? "; job listing truncated" : "";
+  return {
+    summary: summary.join("\n"),
+    errorMessage: `${options.prNumber ? `PR #${options.prNumber}: ${prUrl}` : "Triggering PR unavailable"}; CI run attempt ${options.ciRunAttempt}: ${ciRunUrl}; CI / Pull Request concluded ${conclusion}; jobs that did not pass: ${jobMessage}${truncationMessage}`,
+    ciRunUrl,
+  };
+}
+
 export async function pullChangedFiles(
   repository: string,
   pull: PullRequest,
@@ -937,15 +1126,49 @@ export async function startPrGate(
   let childRunId: number | undefined;
   try {
     if (command.ciConclusion !== "success") {
-      await completeCheck({ repository, checkRunId }, token, {
-        conclusion: "failure",
-        title: "PR CI did not pass",
-        summary: `CI / Pull Request concluded ${command.ciConclusion || "without a result"}; no run was dispatched.`,
+      let jobs: WorkflowJob[] = [];
+      let jobDetailsAvailable = true;
+      let jobDetailsComplete: boolean;
+      try {
+        const details = await listNonPassingCiJobs(
+          repository,
+          token,
+          command.ciRunId,
+          command.ciRunAttempt,
+        );
+        jobs = details.jobs;
+        jobDetailsComplete = details.complete;
+      } catch (error) {
+        jobDetailsAvailable = false;
+        jobDetailsComplete = false;
+        console.warn(`Could not load CI job details: ${controllerErrorMessage(error)}`);
+      }
+      const report = ciFailureReport({
+        repository,
+        prNumber: command.prNumber,
+        ciRunId: command.ciRunId,
+        ciRunAttempt: command.ciRunAttempt,
+        ciConclusion: command.ciConclusion,
+        jobs,
+        jobDetailsAvailable,
+        jobDetailsComplete,
       });
+      await completeCheck(
+        { repository, checkRunId },
+        token,
+        {
+          conclusion: "failure",
+          title: command.prNumber
+            ? `PR #${command.prNumber} CI did not pass`
+            : "PR CI did not pass",
+          summary: report.summary,
+        },
+        report.ciRunUrl,
+      );
       appendOutput("dispatched", "false");
       appendOutput("finalized", "true");
       finalized = true;
-      throw new Error(`CI / Pull Request concluded ${command.ciConclusion || "without a result"}`);
+      throw new PrerequisiteCiError(report.errorMessage);
     }
 
     const pull = await resolvePullRequest({
@@ -955,8 +1178,12 @@ export async function startPrGate(
       headRepository: command.headRepository,
       headBranch: command.headBranch,
     });
-    if (command.headRepository !== repository || pull.head.repo?.full_name !== repository) {
-      throw new Error("PR branch must be in the base repository");
+    if (
+      command.headRepository !== repository ||
+      pull.head.repo?.full_name !== repository ||
+      (command.prNumber !== undefined && pull.number !== command.prNumber)
+    ) {
+      throw new Error("PR identity does not match the triggering workflow run");
     }
 
     const changedFiles = await pullChangedFiles(repository, pull, token);
@@ -1248,12 +1475,16 @@ export async function cancelPrGate(prNumber: number): Promise<number> {
   return active.size;
 }
 
+export function controllerErrorAnnotationTitle(error: unknown): string {
+  return error instanceof PrerequisiteCiError ? "PR CI did not pass" : "Controller failed";
+}
+
 function reportControllerError(error: unknown): void {
   const message = controllerErrorMessage(error);
   console.error(message);
   if (process.env.GITHUB_ACTIONS === "true") {
     const escaped = message.replace(/%/gu, "%25").replace(/\r/gu, "%0D").replace(/\n/gu, "%0A");
-    console.error(`::error title=Controller failed::${escaped}`);
+    console.error(`::error title=${controllerErrorAnnotationTitle(error)}::${escaped}`);
   }
 }
 

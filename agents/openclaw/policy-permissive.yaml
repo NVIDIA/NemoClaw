@@ -74,6 +74,9 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
+        # TODO(#4104): Remove if ClawHub stops encoding scope separators or
+        # OpenShell can preserve this route without an endpoint-level opt-in.
+        allow_encoded_slash: true
         access: full
     binaries:
       - { path: "/**" }

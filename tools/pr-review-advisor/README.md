@@ -34,7 +34,7 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 4. Uses the trusted runner's ripgrep when present, otherwise installs an exact pinned package on a pinned Ubuntu runner, then installs a pinned Pi SDK package with lifecycle scripts disabled.
 5. Builds the same deterministic regression risk plan used by E2E Advisor and injects it into the scope/risk, security/trust, and tests/regressions contexts.
 6. Runs `tools/pr-review-advisor/analyze.mts` from the trusted checkout.
-7. Runs the same advisor conversation in parallel for the primary GPT-5.5 lane and an artifact-only Nemotron Ultra evaluation lane.
+7. Runs the same advisor conversation in parallel for the primary GPT-5.6 Terra lane and an artifact-only Nemotron Ultra evaluation lane.
 8. Opens one Pi session per model variant and reviews the PR in 13 bounded turns: six small analysis/commit pairs for scope/risk, correctness/state, security/trust, tests/regressions, CI/operations, and reconciliation, followed by final JSON synthesis. Each analysis turn exposes only that stage's deterministic context as real read-only tools and emits a concise visible receipt.
 9. Gives each commit turn one job: apply exactly one successful atomic ledger commit for the preceding analysis. The model-facing commit is one flat object with homogeneous additions, updates, resolutions, and supersessions arrays plus an explicit no-change reason; legacy nested operation unions and stringified arrays are rejected. Additions require a structured observed-versus-expected basis, a concrete file and line, and eligibility for the active stage. Positives, advisor/provider state, prior-review process state, open-PR overlap, merge coordination, and live CI/E2E status stay in prose receipts rather than becoming findings. The ledger mutation tool is the turn's only active tool, and the runner rejects prose, other tool calls, or activity after the successful commit. Rejected attempts do not mutate the ledger and may be corrected before one success. If a commit turn ends with no successful call and every attempt settled without mutating state, the runner permits one tool-only retry and then fails closed. Ledger findings receive stable `F-...` IDs, and conclusion changes require a reason plus new evidence; final synthesis can only read the ledger.
 10. Treats open ledger records as the canonical finding set. Final synthesis cannot silently add, drop, merge, reword, or reclassify those findings. Unresolved source-of-truth review entries must reference their covering open ledger ID structurally rather than relying on prose matching.
@@ -94,7 +94,7 @@ Configure this repository secret for review analysis:
 - `PR_REVIEW_ADVISOR_API_KEY`
 
 The analyzer uses the OpenAI-compatible `https://inference-api.nvidia.com/v1` service.
-The primary lane uses `openai/openai/gpt-5.5`; the parallel Nemotron lane sets
+The primary lane uses `azure/openai/gpt-5.6-terra`; the parallel Nemotron lane sets
 `PR_REVIEW_ADVISOR_MODEL=nvidia/nvidia/nemotron-3-ultra` and reuses the same analyzer,
 prompts, schema, safety boundary, and credential secret.
 

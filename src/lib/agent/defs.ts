@@ -60,6 +60,13 @@ export type {
   AgentStateFile,
   AgentStateFileStrategy,
   AgentVersionScheme,
+  StateFileFreshHeader,
+  StateFileKeyAllowlistRestoreOwnership,
+  StateFileOpenClawRestoreOwnership,
+  StateFileRestoreMerge,
+  StateFileRestoreOwnership,
+  StateFileUserKey,
+  StateFileUserKeyType,
 } from "./definition-types";
 export type { AgentRuntime, AgentRuntimeKind } from "./runtime-manifest";
 export { getAgentRuntimeKind, isTerminalAgent } from "./runtime-manifest";

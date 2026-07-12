@@ -16,6 +16,7 @@ import type {
   ManifestValue,
   StringMap,
 } from "./definition-types";
+import { readStateFileRestore } from "./state-file-restore-reader";
 
 const yaml: { load(input: string): unknown } = require("js-yaml");
 
@@ -63,6 +64,27 @@ export function readStringArray(record: ManifestRecord, key: string): string[] |
 }
 
 const CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/;
+const STATE_FILE_FIELDS = new Set(["path", "strategy", "restore"]);
+
+function assertStateFilePath(value: string, field: string): void {
+  if (value.length === 0) {
+    throw new Error(`Agent manifest field '${field}' must not be empty`);
+  }
+  if (CONTROL_CHAR_RE.test(value)) {
+    throw new Error(`Agent manifest field '${field}' must not contain control characters`);
+  }
+  if (value.startsWith("/")) {
+    throw new Error(`Agent manifest field '${field}' must be a relative path, not absolute`);
+  }
+  if (value.includes("\\")) {
+    throw new Error(`Agent manifest field '${field}' must use canonical forward slashes`);
+  }
+  if (value.split("/").some((segment) => segment === "" || segment === "." || segment === "..")) {
+    throw new Error(
+      `Agent manifest field '${field}' must be a canonical relative path without empty, '.', or '..' components`,
+    );
+  }
+}
 
 export function readUserManagedFiles(record: ManifestRecord): string[] | undefined {
   const value = record.user_managed_files;
@@ -110,25 +132,35 @@ export function readStateFiles(record: ManifestRecord): AgentStateFile[] | undef
   }
 
   return value.map((entry, index) => {
+    const field = `state_files[${String(index)}]`;
     if (typeof entry === "string") {
+      assertStateFilePath(entry, field);
       return { path: entry, strategy: "copy" };
     }
     if (!isManifestRecord(entry)) {
-      throw new Error(
-        `Agent manifest field 'state_files[${String(index)}]' must be a string or object`,
-      );
+      throw new Error(`Agent manifest field '${field}' must be a string or object`);
+    }
+    for (const key of Object.keys(entry)) {
+      if (!STATE_FILE_FIELDS.has(key)) {
+        throw new Error(`Agent manifest field '${field}.${key}' is not allowed`);
+      }
     }
     const statePath = readString(entry, "path");
     if (!statePath) {
-      throw new Error(`Agent manifest field 'state_files[${String(index)}].path' is required`);
+      throw new Error(`Agent manifest field '${field}.path' is required`);
+    }
+    assertStateFilePath(statePath, `${field}.path`);
+    if (entry.strategy !== undefined && typeof entry.strategy !== "string") {
+      throw new Error(`Agent manifest field '${field}.strategy' must be copy or sqlite_backup`);
     }
     const rawStrategy = readString(entry, "strategy") ?? "copy";
     if (rawStrategy !== "copy" && rawStrategy !== "sqlite_backup") {
-      throw new Error(
-        `Agent manifest field 'state_files[${String(index)}].strategy' must be copy or sqlite_backup`,
-      );
+      throw new Error(`Agent manifest field '${field}.strategy' must be copy or sqlite_backup`);
     }
-    return { path: statePath, strategy: rawStrategy };
+    const restore = readStateFileRestore(entry, index, rawStrategy);
+    return restore
+      ? { path: statePath, strategy: rawStrategy, restore }
+      : { path: statePath, strategy: rawStrategy };
   });
 }
 

@@ -52,6 +52,9 @@ const ONBOARD_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS
 const DENIED_REASON_HOST = "nemoclaw-prr-repro-long-hostname-for-truncation-test.example.invalid";
 const DENIED_REASON_ENDPOINT = `${DENIED_REASON_HOST}:443`;
 const DENIED_REASON_URL = `https://${DENIED_REASON_HOST}/some/long/path`;
+const ENCODED_SLASH_DENIED_ENDPOINT = "openclaw.ai:443";
+const ENCODED_SLASH_DENIED_REASON =
+  "request-target contains an encoded '/' (%2F) which is not allowed on this endpoint";
 type NemoEnv = NodeJS.ProcessEnv;
 
 function text(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
@@ -179,13 +182,94 @@ async function curlStatus(
   return text(result).trim();
 }
 
-async function waitForDeniedReasonLog(host: HostCliClient) {
+async function expectScopedClawHubPluginLifecycle(sandbox: SandboxClient): Promise<void> {
+  const install = await sandboxBash(
+    sandbox,
+    "HOME=/sandbox openclaw plugins install 'clawhub:@openclaw/sherpa-onnx-tts@2026.6.8' 2>&1",
+    {
+      artifactName: "tc-net-restricted-clawhub-scoped-plugin-install",
+      timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
+    },
+  );
+  expect(install.exitCode, text(install)).toBe(0);
+
+  const list = await sandboxBash(sandbox, "HOME=/sandbox openclaw plugins list --verbose 2>&1", {
+    artifactName: "tc-net-restricted-clawhub-scoped-plugin-list",
+    timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
+  });
+  expect(list.exitCode, text(list)).toBe(0);
+  expect(text(list), "the installed scoped ClawHub plugin must be enabled").toMatch(
+    /Sherpa ONNX TTS[^\r\n]*enabled/i,
+  );
+
+  const inspect = await sandboxBash(
+    sandbox,
+    "HOME=/sandbox openclaw plugins inspect sherpa-onnx-tts --runtime 2>&1",
+    {
+      artifactName: "tc-net-restricted-clawhub-scoped-plugin-runtime-inspect",
+      timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
+    },
+  );
+  expect(inspect.exitCode, text(inspect)).toBe(0);
+  expect(text(inspect), "the installed scoped ClawHub plugin runtime must load").toMatch(
+    /Status:\s*loaded/i,
+  );
+}
+
+async function expectEncodedSlashConfinedToClawHub(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+): Promise<void> {
+  const encodedPath = "/@nemoclaw%2Fencoded-slash-boundary-probe";
+  const clawhubStatus = await fetchStatus(
+    sandbox,
+    `https://clawhub.ai${encodedPath}`,
+    "tc-net-permissive-clawhub-encoded-slash",
+  );
+  expect(clawhubStatus, `ClawHub encoded slash probe must reach the upstream service`).toMatch(
+    /STATUS_[1-5][0-9][0-9]/,
+  );
+  expect(clawhubStatus, `ClawHub encoded slash probe must not be denied by policy`).not.toMatch(
+    /STATUS_403/,
+  );
+
+  const nonClawhubStatus = await fetchStatus(
+    sandbox,
+    `https://openclaw.ai${encodedPath}`,
+    "tc-net-permissive-non-clawhub-encoded-slash",
+  );
+  expect(nonClawhubStatus, `encoded slashes must fail closed outside ClawHub`).toMatch(
+    /^(?:STATUS_403|ERROR_UND_ERR_SOCKET)/,
+  );
+  const denial = await waitForDeniedReasonLog(host, {
+    endpoint: ENCODED_SLASH_DENIED_ENDPOINT,
+    reasonIncludes: ENCODED_SLASH_DENIED_REASON,
+    artifactPrefix: "tc-net-permissive-non-clawhub-encoded-slash-logs-tail-50",
+  });
+  expect(denial.line).toContain("NET:OPEN");
+  expect(denial.line).toContain("DENIED");
+  expect(denial.line).toContain(ENCODED_SLASH_DENIED_ENDPOINT);
+  expect(denial.line).toContain("[policy:openclaw_api engine:l7]");
+  expect(denial.reason).toContain(ENCODED_SLASH_DENIED_REASON);
+}
+
+async function waitForDeniedReasonLog(
+  host: HostCliClient,
+  options: {
+    endpoint?: string;
+    reasonIncludes?: string;
+    artifactPrefix?: string;
+  } = {},
+) {
+  const endpoint = options.endpoint ?? DENIED_REASON_ENDPOINT;
+  const artifactPrefix = options.artifactPrefix ?? "tc-net-4760-logs-tail-50";
   return pollDeniedReasonLog({
     attempts: process.env.GITHUB_ACTIONS === "true" ? 12 : 8,
-    endpoint: DENIED_REASON_ENDPOINT,
+    endpoint,
+    reasonIncludes: options.reasonIncludes,
     readLogs: async (attempt) => {
       const logs = await runNemoclaw(host, [SANDBOX_NAME, "logs", "--tail", "50"], {
-        artifactName: `tc-net-4760-logs-tail-50-attempt-${attempt}`,
+        artifactName: `${artifactPrefix}-attempt-${attempt}`,
         timeoutMs: 60_000,
       });
       expect(logs.exitCode, text(logs)).toBe(0);
@@ -435,6 +519,7 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
       "inference.local exemption with direct-provider denial",
       "SSRF private-address rejection",
       "OpenClaw web_fetch host-gateway policy allow/deny",
+      "scoped ClawHub plugins install and load under restricted policy while encoded paths remain ClawHub-only under permissive policy",
       "permissive policy mode",
     ],
   });
@@ -575,6 +660,7 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
   expect(denyDefault, `example.com should be blocked under restricted policy`).toMatch(
     /STATUS_403|ERROR_/,
   );
+  await expectScopedClawHubPluginLifecycle(sandbox);
 
   const longHostnameDenial = await sandboxBash(sandbox, `curl -m 5 -sS ${DENIED_REASON_URL}`, {
     artifactName: "tc-net-4760-denied-long-hostname",
@@ -943,6 +1029,7 @@ nemoclaw-start node /tmp/nemoclaw-web-fetch-e2e.mjs 'http://host.openshell.inter
     artifactName: "tc-net-06-npm-ping-permissive",
   });
   expect(text(npmPing)).toContain("NPM_OK");
+  await expectEncodedSlashConfinedToClawHub(host, sandbox);
 
   await artifacts.target.complete({
     id: "network-policy",
@@ -959,6 +1046,8 @@ nemoclaw-start node /tmp/nemoclaw-web-fetch-e2e.mjs 'http://host.openshell.inter
       inferenceExemption: true,
       ssrfValidation: true,
       hostGatewayWebFetch: true,
+      scopedClawHubPluginLifecycle: true,
+      encodedSlashClawHubOnly: true,
       permissiveMode: true,
     },
   });

@@ -118,6 +118,8 @@ If the forward stopped, or the installer reported that no active forward was fou
 openshell forward start --background <dashboard-port> my-gpt-claw
 ```
 
+On WSL, use `0.0.0.0:<dashboard-port>` as the forward target so the Windows host can continue to reach the dashboard.
+
 To list active forwards across all sandboxes, run the following command.
 
 ```bash

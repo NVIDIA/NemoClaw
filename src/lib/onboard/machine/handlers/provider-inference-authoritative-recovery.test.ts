@@ -5,7 +5,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createSession } from "../../../state/onboard-session";
 import { handleProviderInferenceState } from "./provider-inference";
-import { baseOptions, baseSelection, createDeps } from "./provider-inference.test-support";
+import {
+  activatedRecoveryReceipt,
+  baseOptions,
+  baseSelection,
+  createDeps,
+} from "./provider-inference.test-support";
 
 describe("authoritative provider inference recovery", () => {
   it("stays enabled across messaging revalidation", async () => {
@@ -35,10 +40,17 @@ describe("authoritative provider inference recovery", () => {
       isInferenceRouteReady: vi.fn(() => true),
     });
 
+    const { receipt, ledger } = activatedRecoveryReceipt({
+      sandboxName: "my-assistant",
+      sessionId: session.sessionId,
+    });
+
     const result = await handleProviderInferenceState({
       ...baseOptions(deps, session),
       resume: true,
       authoritativeResumeConfig: true,
+      providerRecoveryReceipt: receipt,
+      providerRecoveryReceiptLedger: ledger,
       sandboxName: "my-assistant",
       selectedMessagingChannels: ["telegram"],
     });

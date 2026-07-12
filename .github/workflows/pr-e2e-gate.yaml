@@ -85,10 +85,13 @@ jobs:
         name: Start evaluation
         env:
           CI_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          CI_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          CI_RUN_ID: ${{ github.event.workflow_run.id }}
           GITHUB_TOKEN: ${{ github.token }}
           HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
           HEAD_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
           WORKFLOW_SHA: ${{ github.workflow_sha }}
           WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
         run: >-
@@ -99,6 +102,9 @@ jobs:
           --head-branch "$HEAD_BRANCH"
           --workflow-sha "$WORKFLOW_SHA"
           --ci-conclusion "$CI_CONCLUSION"
+          --ci-run-attempt "$CI_RUN_ATTEMPT"
+          --ci-run-id "$CI_RUN_ID"
+          --pr "$PR_NUMBER"
           --work-dir "$WORK_DIR"
 
       - name: Upload risk plan

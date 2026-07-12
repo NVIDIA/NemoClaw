@@ -151,7 +151,8 @@ Use these details when your first-run path needs more control.
   </Accordion>
 
   <Accordion title="Open the dashboard from a remote host">
-    The dashboard binds to `127.0.0.1` on the host running NemoClaw.
+    Outside WSL, the dashboard forward binds to `127.0.0.1` on the host running NemoClaw.
+    On WSL, it binds on all interfaces so the Windows host can reach it, while the ready summary still prints a loopback dashboard URL.
     When you connect over SSH, forward the dashboard port from your workstation, substituting the port from the ready summary.
 
     ```bash
@@ -200,7 +201,8 @@ Use these details when your first-run path needs more control.
     If it cannot find the binary or blocking host preflight checks fail, it prints diagnostics and a `To finish setup, run:` block with the explicit `nemoclaw onboard` command.
 
     <Note>
-    Onboarding builds the sandbox image with `NEMOCLAW_DISABLE_DEVICE_AUTH=1` so the dashboard is usable during setup.
+    Onboarding builds the sandbox image with a managed `NEMOCLAW_DISABLE_DEVICE_AUTH=1` compatibility setting so the dashboard is usable during setup.
+    NemoClaw records that this value came from onboarding rather than reporting it as an operator-selected opt-out.
     This build-time setting is baked into the image and setting it after onboarding does not affect an existing sandbox.
     </Note>
   </Accordion>

@@ -13,6 +13,11 @@ import type {
   CurrentGatewayRouteDiscoveryPreflight,
 } from "../../../inference/gateway-route-compatibility";
 import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
+import {
+  createProviderRecoveryReceiptLedger,
+  mintProviderRecoveryReceipt,
+  type ProviderRecoveryReceipt,
+} from "../../rebuild-route-handoff";
 import type { ProviderInferenceStateOptions, ProviderSelectionResult } from "./provider-inference";
 
 export type Gpu = { type: string } | null;
@@ -30,6 +35,48 @@ export const baseSelection: ProviderSelectionResult = {
   compatibleEndpointReasoning: null,
   nimContainer: null,
 };
+
+/** Mint and activate a provider-recovery receipt bound to one session, as the rebuild assembly would. */
+export function activatedRecoveryReceipt(input: {
+  sandboxName: string;
+  sessionId: string;
+  gatewayName?: string;
+  provider?: string;
+  model?: string;
+  endpointUrl?: string | null;
+  preferredInferenceApi?: string | null;
+  nowMs?: number;
+  ledger?: ReturnType<typeof createProviderRecoveryReceiptLedger>;
+}): {
+  receipt: ProviderRecoveryReceipt;
+  ledger: ReturnType<typeof createProviderRecoveryReceiptLedger>;
+} {
+  const gatewayName = input.gatewayName ?? "nemoclaw";
+  const provider = input.provider ?? "compatible-endpoint";
+  const model = input.model ?? "mock/channels-rebuild";
+  const nowMs = input.nowMs ?? 0;
+  const target = {
+    sandboxName: input.sandboxName,
+    gatewayName,
+    provider,
+    model,
+    route: {
+      provider,
+      model,
+      endpointUrl: input.endpointUrl ?? "https://compatible.example.test/v1",
+      preferredInferenceApi: input.preferredInferenceApi ?? "openai-completions",
+      source: "registry" as const,
+    },
+  };
+  const ledger = input.ledger ?? createProviderRecoveryReceiptLedger();
+  const minted = mintProviderRecoveryReceipt(target, {
+    nonce: `nonce-${input.sandboxName}-${input.sessionId}`,
+    expiresAtMs: Number.MAX_SAFE_INTEGER,
+  });
+  const receipt = ledger.activate(minted, { target, sessionId: input.sessionId, nowMs });
+  if (!receipt) throw new Error("test recovery receipt failed to activate");
+  return { receipt, ledger };
+}
 
 export function createDeps(
   overrides: Partial<ProviderInferenceStateOptions<Gpu, Agent, Host>["deps"]> = {},
