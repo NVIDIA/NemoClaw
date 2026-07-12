@@ -388,7 +388,7 @@ describe("effective built-in policy contracts", () => {
         expect((policy.endpoints ?? []).some((endpoint) => endpoint.host === host)).toBe(false);
       }
       const browserHosts = (policy.endpoints ?? []).filter((endpoint) =>
-        endpoint.host?.includes("browser-use.com"),
+        endpoint.host?.endsWith(".browser-use.com"),
       );
       expect(browserHosts.length > 0).toBe(presetName === "nous-browser");
     }
