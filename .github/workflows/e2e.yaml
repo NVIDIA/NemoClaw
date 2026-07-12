@@ -481,6 +481,7 @@ jobs:
         run: |
           set -euo pipefail
           npx vitest run --project "${TEST_PROJECT}" "${TEST_FILE}" \
+            --tags-filter=e2e/credential-free \
             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload test artifacts

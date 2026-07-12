@@ -5,7 +5,11 @@ import { readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
-import { discoverCredentialFreeTests, SHARED_E2E_JOB_ID } from "./credential-free-tests.mts";
+import {
+  CREDENTIAL_FREE_TEST_TAG,
+  discoverCredentialFreeTests,
+  SHARED_E2E_JOB_ID,
+} from "./credential-free-tests.mts";
 import { validateHermesDashboardWorkflowBoundary } from "./hermes-dashboard-workflow-boundary.mts";
 import { validateHermesGpuStartupWorkflowBoundary } from "./hermes-gpu-startup-workflow-boundary.mts";
 import { validateInferenceSwitchWorkflowBoundary } from "./inference-switch-workflow-boundary.mts";
@@ -746,6 +750,7 @@ function validateSharedE2eJob(errors: string[], jobs: WorkflowRecord): void {
     runVitest,
     'npx vitest run --project "${TEST_PROJECT}" "${TEST_FILE}"',
   );
+  requireRunContains(errors, runVitest, `--tags-filter=${CREDENTIAL_FREE_TEST_TAG}`);
   requireRunContains(errors, runVitest, "--reporter=test/e2e/risk-signal-reporter.ts");
 }
 
