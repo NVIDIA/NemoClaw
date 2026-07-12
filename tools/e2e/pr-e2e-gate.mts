@@ -1128,7 +1128,7 @@ export async function startPrGate(
     if (command.ciConclusion !== "success") {
       let jobs: WorkflowJob[] = [];
       let jobDetailsAvailable = true;
-      let jobDetailsComplete = true;
+      let jobDetailsComplete: boolean;
       try {
         const details = await listNonPassingCiJobs(
           repository,
