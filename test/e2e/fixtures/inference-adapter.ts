@@ -38,7 +38,12 @@ import {
  * sandbox assertions, scope `inference_mode` to the consuming workflow job,
  * and add the suite's fast-test mapping to `test/e2e/mock-parity.json`.
  */
-export type E2EInferenceMode = "mock" | "internal-nvidia" | "public-nvidia";
+export const E2E_INFERENCE_MODE_VALUES = [
+  "mock",
+  "internal-nvidia",
+  "public-nvidia",
+] as const;
+export type E2EInferenceMode = (typeof E2E_INFERENCE_MODE_VALUES)[number];
 
 export interface E2EInferenceAdapter {
   readonly mode: E2EInferenceMode;
@@ -108,11 +113,58 @@ function chatPayload(model: string, prompt: string, maxTokens = 256): string {
   });
 }
 
+interface ProviderRequestOptions {
+  readonly allowedHosts: readonly string[];
+  readonly apiKey: string;
+  readonly artifactName: string;
+  readonly body?: string;
+  readonly curlMaxTimeSeconds: number;
+  readonly endpointUrl: string;
+  readonly path: string;
+  readonly redactionValues: string[];
+  readonly timeoutMs: number;
+}
+
+async function requestViaProvider(
+  providerClient: Pick<ProviderClient, "requestJson">,
+  options: ProviderRequestOptions,
+): Promise<unknown> {
+  const headers = [`Authorization: Bearer ${options.apiKey}`];
+  if (options.body) headers.unshift("Content-Type: application/json");
+  const response = await providerClient.requestJson(
+    trustedProviderEndpoint(joinEndpoint(options.endpointUrl, options.path), {
+      allowedHosts: options.allowedHosts,
+    }),
+    {
+      artifactName: options.artifactName,
+      body: options.body,
+      curlMaxTimeSeconds: options.curlMaxTimeSeconds,
+      headers,
+      env: buildAvailabilityProbeEnv(),
+      redactionValues: options.redactionValues,
+      timeoutMs: options.timeoutMs,
+    },
+  );
+  return response.json;
+}
+
 async function responseJsonOrThrow(response: Response, label: string): Promise<unknown> {
   if (!response.ok) {
     throw new Error(`${label} failed with HTTP ${response.status} ${response.statusText}`.trim());
   }
   return (await response.json()) as unknown;
+}
+
+interface OpenAiCompatibleInferenceAdapterOptions {
+  readonly mode: "mock" | "internal-nvidia";
+  readonly model: string;
+  readonly endpointUrl: string;
+  readonly requestEndpointUrl: string;
+  readonly apiKey: string;
+  readonly preferredApi: string;
+  readonly providerClient?: Pick<ProviderClient, "requestJson">;
+  readonly artifacts: ArtifactSink;
+  readonly fake?: FakeOpenAiCompatibleServer;
 }
 
 class OpenAiCompatibleInferenceAdapter implements E2EInferenceAdapter {
@@ -121,20 +173,29 @@ class OpenAiCompatibleInferenceAdapter implements E2EInferenceAdapter {
   readonly expectedRouteProvider = HOSTED_INFERENCE_PROVIDER_NAME;
   readonly contractLabel: string;
 
-  constructor(
-    readonly mode: "mock" | "internal-nvidia",
-    readonly model: string,
-    readonly endpointUrl: string,
-    private readonly requestEndpointUrl: string,
-    private readonly apiKey: string,
-    private readonly preferredApi: string,
-    private readonly providerClient: Pick<ProviderClient, "requestJson"> | undefined,
-    private readonly artifacts: ArtifactSink,
-    private readonly fake: FakeOpenAiCompatibleServer | undefined,
-  ) {
-    this.artifacts.addRedactionValues([apiKey]);
+  readonly mode: "mock" | "internal-nvidia";
+  readonly model: string;
+  readonly endpointUrl: string;
+  private readonly requestEndpointUrl: string;
+  private readonly apiKey: string;
+  private readonly preferredApi: string;
+  private readonly providerClient: Pick<ProviderClient, "requestJson"> | undefined;
+  private readonly artifacts: ArtifactSink;
+  private readonly fake: FakeOpenAiCompatibleServer | undefined;
+
+  constructor(options: OpenAiCompatibleInferenceAdapterOptions) {
+    this.mode = options.mode;
+    this.model = options.model;
+    this.endpointUrl = options.endpointUrl;
+    this.requestEndpointUrl = options.requestEndpointUrl;
+    this.apiKey = options.apiKey;
+    this.preferredApi = options.preferredApi;
+    this.providerClient = options.providerClient;
+    this.artifacts = options.artifacts;
+    this.fake = options.fake;
+    this.artifacts.addRedactionValues([options.apiKey]);
     this.contractLabel =
-      mode === "mock"
+      options.mode === "mock"
         ? "fake OpenAI-compatible endpoint is staged as the compatible endpoint credential"
         : "NVIDIA_INFERENCE_API_KEY is staged as the compatible endpoint credential";
   }
@@ -162,20 +223,16 @@ class OpenAiCompatibleInferenceAdapter implements E2EInferenceAdapter {
 
   async probeModels(artifactName: string): Promise<unknown> {
     if (this.providerClient) {
-      const response = await this.providerClient.requestJson(
-        trustedProviderEndpoint(joinEndpoint(this.requestEndpointUrl, "models"), {
-          allowedHosts: INTERNAL_NVIDIA_ALLOWED_HOSTS,
-        }),
-        {
-          artifactName,
-          curlMaxTimeSeconds: 15,
-          headers: [`Authorization: Bearer ${this.apiKey}`],
-          env: buildAvailabilityProbeEnv(),
-          redactionValues: this.redactionValues(),
-          timeoutMs: MODEL_PROBE_TIMEOUT_MS,
-        },
-      );
-      return response.json;
+      return requestViaProvider(this.providerClient, {
+        allowedHosts: INTERNAL_NVIDIA_ALLOWED_HOSTS,
+        apiKey: this.apiKey,
+        artifactName,
+        curlMaxTimeSeconds: 15,
+        endpointUrl: this.requestEndpointUrl,
+        path: "models",
+        redactionValues: this.redactionValues(),
+        timeoutMs: MODEL_PROBE_TIMEOUT_MS,
+      });
     }
     const response = await fetch(joinEndpoint(this.requestEndpointUrl, "models"), {
       signal: AbortSignal.timeout(MODEL_PROBE_TIMEOUT_MS),
@@ -191,21 +248,17 @@ class OpenAiCompatibleInferenceAdapter implements E2EInferenceAdapter {
   ): Promise<unknown> {
     const body = chatPayload(this.model, prompt, options.maxTokens);
     if (this.providerClient) {
-      const response = await this.providerClient.requestJson(
-        trustedProviderEndpoint(joinEndpoint(this.requestEndpointUrl, "chat/completions"), {
-          allowedHosts: INTERNAL_NVIDIA_ALLOWED_HOSTS,
-        }),
-        {
-          artifactName: options.artifactName ?? "direct-compatible-chat",
-          body,
-          curlMaxTimeSeconds: 90,
-          headers: ["Content-Type: application/json", `Authorization: Bearer ${this.apiKey}`],
-          env: buildAvailabilityProbeEnv(),
-          redactionValues: this.redactionValues(),
-          timeoutMs: DIRECT_CHAT_TIMEOUT_MS,
-        },
-      );
-      return response.json;
+      return requestViaProvider(this.providerClient, {
+        allowedHosts: INTERNAL_NVIDIA_ALLOWED_HOSTS,
+        apiKey: this.apiKey,
+        artifactName: options.artifactName ?? "direct-compatible-chat",
+        body,
+        curlMaxTimeSeconds: 90,
+        endpointUrl: this.requestEndpointUrl,
+        path: "chat/completions",
+        redactionValues: this.redactionValues(),
+        timeoutMs: DIRECT_CHAT_TIMEOUT_MS,
+      });
     }
     const response = await fetch(joinEndpoint(this.requestEndpointUrl, "chat/completions"), {
       body,
@@ -266,41 +319,33 @@ class PublicNvidiaInferenceAdapter implements E2EInferenceAdapter {
   }
 
   async probeModels(artifactName: string): Promise<unknown> {
-    const response = await this.providerClient.requestJson(
-      trustedProviderEndpoint(joinEndpoint(this.endpointUrl, "models"), {
-        allowedHosts: PUBLIC_NVIDIA_ALLOWED_HOSTS,
-      }),
-      {
-        artifactName,
-        curlMaxTimeSeconds: 15,
-        headers: [`Authorization: Bearer ${this.apiKey}`],
-        env: buildAvailabilityProbeEnv(),
-        redactionValues: this.redactionValues(),
-        timeoutMs: MODEL_PROBE_TIMEOUT_MS,
-      },
-    );
-    return response.json;
+    return requestViaProvider(this.providerClient, {
+      allowedHosts: PUBLIC_NVIDIA_ALLOWED_HOSTS,
+      apiKey: this.apiKey,
+      artifactName,
+      curlMaxTimeSeconds: 15,
+      endpointUrl: this.endpointUrl,
+      path: "models",
+      redactionValues: this.redactionValues(),
+      timeoutMs: MODEL_PROBE_TIMEOUT_MS,
+    });
   }
 
   async directChat(
     prompt: string,
     options: { artifactName?: string; maxTokens?: number } = {},
   ): Promise<unknown> {
-    const response = await this.providerClient.requestJson(
-      trustedProviderEndpoint(joinEndpoint(this.endpointUrl, "chat/completions"), {
-        allowedHosts: PUBLIC_NVIDIA_ALLOWED_HOSTS,
-      }),
-      {
-        artifactName: options.artifactName ?? "direct-nvidia-chat",
-        body: chatPayload(this.model, prompt, options.maxTokens),
-        curlMaxTimeSeconds: 90,
-        headers: ["Content-Type: application/json", `Authorization: Bearer ${this.apiKey}`],
-        env: buildAvailabilityProbeEnv(),
-        redactionValues: this.redactionValues(),
-        timeoutMs: DIRECT_CHAT_TIMEOUT_MS,
-      },
-    );
-    return response.json;
+    return requestViaProvider(this.providerClient, {
+      allowedHosts: PUBLIC_NVIDIA_ALLOWED_HOSTS,
+      apiKey: this.apiKey,
+      artifactName: options.artifactName ?? "direct-nvidia-chat",
+      body: chatPayload(this.model, prompt, options.maxTokens),
+      curlMaxTimeSeconds: 90,
+      endpointUrl: this.endpointUrl,
+      path: "chat/completions",
+      redactionValues: this.redactionValues(),
+      timeoutMs: DIRECT_CHAT_TIMEOUT_MS,
+    });
   }
 
   async close(): Promise<void> {}
@@ -334,17 +379,16 @@ export async function createE2EInferenceAdapter(
         expectedRouteProvider: HOSTED_INFERENCE_PROVIDER_NAME,
         publicHost: SANDBOX_HOST_ALIAS,
       });
-      return new OpenAiCompatibleInferenceAdapter(
+      return new OpenAiCompatibleInferenceAdapter({
         mode,
         model,
-        fake.baseUrl,
-        endpointForHost(fake.baseUrl),
+        endpointUrl: fake.baseUrl,
+        requestEndpointUrl: endpointForHost(fake.baseUrl),
         apiKey,
-        "openai-completions",
-        undefined,
-        options.artifacts,
+        preferredApi: "openai-completions",
+        artifacts: options.artifacts,
         fake,
-      );
+      });
     } catch (error) {
       await fake.close();
       throw error;
@@ -353,27 +397,20 @@ export async function createE2EInferenceAdapter(
   if (mode === "internal-nvidia") {
     const hosted = requireHostedInferenceConfig(options.secrets, env);
     trustedProviderEndpoint(hosted.endpointUrl, { allowedHosts: INTERNAL_NVIDIA_ALLOWED_HOSTS });
-    return new OpenAiCompatibleInferenceAdapter(
+    return new OpenAiCompatibleInferenceAdapter({
       mode,
-      hosted.model,
-      hosted.endpointUrl,
-      hosted.endpointUrl,
-      hosted.apiKey,
-      hosted.env.NEMOCLAW_PREFERRED_API || "openai-completions",
-      options.provider,
-      options.artifacts,
-      undefined,
-    );
+      model: hosted.model,
+      endpointUrl: hosted.endpointUrl,
+      requestEndpointUrl: hosted.endpointUrl,
+      apiKey: hosted.apiKey,
+      preferredApi: hosted.env.NEMOCLAW_PREFERRED_API || "openai-completions",
+      providerClient: options.provider,
+      artifacts: options.artifacts,
+    });
   }
   const apiKey = requirePublicNvidiaInferenceKey(options.secrets.required(HOSTED_INFERENCE_SECRET));
   const model = env.NEMOCLAW_MODEL || DEFAULT_PUBLIC_NVIDIA_MODEL;
   return new PublicNvidiaInferenceAdapter(model, apiKey, options.provider);
 }
-
-export const E2E_INFERENCE_MODE_VALUES: readonly E2EInferenceMode[] = [
-  "mock",
-  "internal-nvidia",
-  "public-nvidia",
-];
 
 export { DEFAULT_HOSTED_INFERENCE_MODEL as DEFAULT_INTERNAL_NVIDIA_MODEL };
