@@ -1134,6 +1134,14 @@ describe("Deep Agents Code durable state files", () => {
         recursive: true,
       });
       fs.writeFileSync(path.join(deepAgentsDir, ".state", "thread.json"), "{}\n");
+      fs.writeFileSync(
+        path.join(deepAgentsDir, ".state", "auth.json"),
+        '{"access_token":"should-not-copy"}\n',
+      );
+      fs.writeFileSync(
+        path.join(deepAgentsDir, ".state", "chatgpt-auth.json"),
+        '{"access_token":"should-not-copy","refresh_token":"should-not-copy"}\n',
+      );
       fs.writeFileSync(path.join(deepAgentsDir, "skills", "README.md"), "skill\n");
       // skill-creator writes user skills under ~/.deepagents/agent/skills (#5753)
       fs.writeFileSync(
@@ -1222,6 +1230,12 @@ process.exit(0);
       expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".state", "thread.json"))).toBe(
         true,
       );
+      expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".state", "auth.json"))).toBe(
+        false,
+      );
+      expect(
+        fs.existsSync(path.join(backup.manifest!.backupPath, ".state", "chatgpt-auth.json")),
+      ).toBe(false);
       expect(fs.existsSync(path.join(backup.manifest!.backupPath, "skills", "README.md"))).toBe(
         true,
       );

@@ -82,7 +82,11 @@ const CREDENTIAL_PLACEHOLDER = "[STRIPPED_BY_MIGRATION]";
  * File basenames that contain sensitive auth material and should be
  * excluded from backups entirely.
  */
-export const CREDENTIAL_SENSITIVE_BASENAMES = new Set(["auth-profiles.json", "auth.json"]);
+export const CREDENTIAL_SENSITIVE_BASENAMES = new Set([
+  "auth-profiles.json",
+  "auth.json",
+  "chatgpt-auth.json",
+]);
 
 /**
  * Dependency lockfiles may contain package metadata that resembles credentials
