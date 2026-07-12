@@ -306,7 +306,7 @@ repos:
         entry: npm run source-shape:check
         language: system
         pass_filenames: false
-        files: ^(test/|scripts/find-source-shape-tests\.ts$|ci/source-shape-test-budget\.json$)
+        files: ^(.+\.(test|spec)\.(js|ts|mjs|mts|cjs|cts)|scripts/find-source-shape-tests\.ts|ci/source-shape-test-budget\.json)$
         priority: 20
 
       - id: test-file-size-budget

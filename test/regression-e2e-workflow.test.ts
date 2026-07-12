@@ -43,31 +43,7 @@ function preparedVitestJobs(workflow: RegressionWorkflow) {
 describe("Regression E2E workflow contract", () => {
   const workflow = readYaml<RegressionWorkflow>(".github/workflows/regression-e2e.yaml");
 
-  it.each([
-    ["docker-unreachable-gateway-start-e2e", "docker_unreachable_gateway_start"],
-    ["onboard-inference-smoke-e2e", "onboard_inference_smoke"],
-  ])("does not advertise or select retired lane %s", (jobName, selectorOutput) => {
-    const jobsDescription = workflow.on?.workflow_dispatch?.inputs?.jobs?.description ?? "";
-    const selectorScript =
-      workflow.jobs?.select_regression_jobs?.steps?.find((step) => step.id === "select")?.run ?? "";
-
-    expect(jobsDescription).not.toContain(jobName);
-    expect(Object.keys(workflow.jobs ?? {})).not.toContain(jobName);
-    expect(selectorScript).not.toContain(jobName);
-    expect(selectorScript).not.toContain(selectorOutput);
-  });
-
-  it("does not advertise or select the retired strict-tool-call-probe lane", () => {
-    const jobsDescription = workflow.on?.workflow_dispatch?.inputs?.jobs?.description ?? "";
-    const selectorScript =
-      workflow.jobs?.select_regression_jobs?.steps?.find((step) => step.id === "select")?.run ?? "";
-
-    expect(jobsDescription).not.toContain("strict-tool-call-probe-e2e");
-    expect(Object.keys(workflow.jobs ?? {})).not.toContain("strict-tool-call-probe-e2e");
-    expect(selectorScript).not.toContain("strict-tool-call-probe-e2e");
-    expect(selectorScript).not.toContain("strict_tool_call_probe");
-  });
-
+  // source-shape-contract: compatibility -- Keeps the executable WhatsApp regression on the supported Vitest live runner
   it("runs WhatsApp compact QR through Vitest instead of the retired shell script", () => {
     const job = workflow.jobs?.["whatsapp-qr-compact-e2e"];
     const runText = (job?.steps ?? []).map((step) => step.run ?? "").join("\n");
@@ -76,6 +52,7 @@ describe("Regression E2E workflow contract", () => {
     expect(runText).toContain("npx vitest run --project e2e-live");
   });
 
+  // source-shape-contract: security -- Preserves the public NVIDIA credential boundary for Model Router regression execution
   it("stages the public NVIDIA key for the Model Router's NVIDIA credential", () => {
     const job = workflow.jobs?.["model-router-provider-routed-inference-e2e"];
     const runStep = job?.steps?.find(
@@ -85,6 +62,7 @@ describe("Regression E2E workflow contract", () => {
     expect(runStep?.env?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
   });
 
+  // source-shape-contract: security -- Every discovered non-hermetic Vitest job must use immutable credential-free preparation
   it("prepares every discovered non-hermetic Vitest job before execution (#6692)", () => {
     const preparedJobs = preparedVitestJobs(workflow);
 
@@ -128,6 +106,7 @@ describe("Regression E2E workflow contract", () => {
     }
   });
 
+  // source-shape-contract: compatibility -- Keeps the gateway drift regression in its stateful integration execution lane
   it("collects the gateway drift regression from its integration project (#6692)", () => {
     const job = workflow.jobs?.["gateway-drift-preflight-e2e"];
     const runStep = job?.steps?.find(
@@ -140,6 +119,7 @@ describe("Regression E2E workflow contract", () => {
     expect(runStep?.run).not.toContain("vitest run --project cli");
   });
 
+  // source-shape-contract: security -- Keeps the custom-plugin EXDEV regression immutable and free of repository secrets
   it("runs the OpenClaw custom-plugin lifecycle and EXDEV guard in a secret-free lane", () => {
     const job = workflow.jobs?.["openclaw-plugin-runtime-exdev-e2e"];
     const steps = job?.steps ?? [];

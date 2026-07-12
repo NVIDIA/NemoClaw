@@ -669,6 +669,7 @@ describe("regression guards", () => {
   });
 
   describe("credential exposure guards (#429)", () => {
+    // source-shape-contract: security -- Executable walkthrough commands must never materialize the NVIDIA inference credential in child arguments
     it("walkthrough.sh does not embed NVIDIA_INFERENCE_API_KEY in tmux or sandbox commands", () => {
       const fs = require("fs");
       const src = fs.readFileSync(

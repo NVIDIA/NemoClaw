@@ -303,6 +303,7 @@ describe("E2E recommendation advisor prompt", () => {
     }
   });
 
+  // source-shape-contract: security -- Symlink removal must precede every credential-bearing advisor step
   it("strips untrusted symlinks before secret-bearing advisor steps", () => {
     const steps = readAdvisorWorkflow().jobs?.advise?.steps ?? [];
     const removeSymlinksIndex = steps.findIndex(

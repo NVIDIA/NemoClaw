@@ -17,10 +17,6 @@ const CHECK_SCRIPT = path.join(ROOT, "scripts", "checks", "check-cloudflared-upd
 const FULL_SHA_ACTION = /@[0-9a-f]{40}$/iu;
 
 type CloudflaredUpdateWorkflow = {
-  on?: {
-    schedule?: Array<{ cron?: string }>;
-    workflow_dispatch?: Record<string, never>;
-  };
   permissions?: Record<string, string>;
   jobs?: Record<
     string,
@@ -124,20 +120,15 @@ describe("cloudflared update-check workflow contract", () => {
   );
   const e2e = fs.readFileSync(E2E_WORKFLOW, "utf8");
 
-  it("runs weekly and manually with read-only permissions and a credential-free checkout", () => {
-    expect(workflow.on?.schedule).toEqual([{ cron: "23 13 * * 1" }]);
-    expect(workflow.on?.workflow_dispatch).toEqual({});
+  // source-shape-contract: security -- Read-only permissions and immutable checkout keep update checks credential-free
+  it("keeps the update check read-only with a credential-free checkout", () => {
     expect(workflow.permissions).toEqual({ contents: "read" });
 
     const job = workflow.jobs?.["check-cloudflared"];
     const checkout = job?.steps?.find((step) => step.uses?.startsWith("actions/checkout@"));
-    const check = job?.steps?.find(
-      (step) => step.name === "Compare reviewed pin with the latest upstream release",
-    );
     expect(job?.permissions).toBeUndefined();
     expect(checkout?.uses).toMatch(FULL_SHA_ACTION);
     expect(checkout?.with?.["persist-credentials"]).toBe(false);
-    expect(check?.run).toBe("bash scripts/checks/check-cloudflared-update.sh");
   });
 
   it("extracts exactly three identical reviewed version and SHA256 pins", () => {

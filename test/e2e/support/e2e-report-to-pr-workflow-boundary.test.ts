@@ -212,7 +212,9 @@ it("rejects report-to-pr PR number validation drift", () => {
   const reportStep = workflow.jobs["report-to-pr"].steps.find(
     (step) => step.name === "Post E2E target results to PR",
   );
-  expect(reportStep?.with?.script).toEqual(expect.any(String));
+  if (typeof reportStep?.with?.script !== "string") {
+    throw new Error("missing report-to-pr script");
+  }
   reportStep!.with!.script = String(reportStep!.with!.script)
     .replace(/\/\^\[1-9\]\[0-9\]\*\$\/\.test\(prNumberInput\)/, "prNumberInput.length > 0")
     .replace("Number(prNumberInput)", "Number.parseInt(prNumberInput, 10)")

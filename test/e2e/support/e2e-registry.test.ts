@@ -42,6 +42,7 @@ describe("deterministic target registry", () => {
     );
   });
 
+  // source-shape-contract: compatibility -- The target CLI must reject unknown selectors with actionable registered choices
   it("should return actionable unknown target error", () => {
     const result = runTargetCli(["--emit-live-matrix", "--targets", "does-not-exist"]);
     const output = `${result.stdout}${result.stderr}`;
@@ -54,6 +55,7 @@ describe("deterministic target registry", () => {
     }
   });
 
+  // source-shape-contract: compatibility -- The target CLI must preserve requested ordering for multiple live selectors
   it("CLI should emit multiple selected live matrix entries", () => {
     const selectedIds = listTargets()
       .slice(0, 2)

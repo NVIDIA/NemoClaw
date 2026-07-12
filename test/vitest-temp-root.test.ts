@@ -202,6 +202,7 @@ describe("Vitest temp root", () => {
     }
   });
 
+  // source-shape-contract: compatibility -- Root and standalone runners must install the shared temporary-root cleanup boundary
   it("wires cleanup into root and standalone plugin test runs", () => {
     expect(rootVitestConfig.test?.globalSetup).toBe(ROOT_SETUP);
     expect(pluginVitestConfig.test?.globalSetup).toBe(

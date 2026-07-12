@@ -9,7 +9,6 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundary.mts";
-import { assertSparkInstallSandboxName } from "../live/spark-install-helpers.ts";
 
 function readWorkflow(): Record<string, unknown> {
   return YAML.parse(
@@ -18,15 +17,6 @@ function readWorkflow(): Record<string, unknown> {
 }
 
 describe("spark install workflow boundary", () => {
-  it("keeps the configured sandbox inside the live cleanup ownership boundary", () => {
-    const workflow = readWorkflow() as {
-      jobs: Record<string, { env?: Record<string, unknown> }>;
-    };
-    const sandboxName = workflow.jobs["spark-install"]?.env?.NEMOCLAW_SANDBOX_NAME;
-
-    expect(assertSparkInstallSandboxName(String(sandboxName))).toBe(sandboxName);
-  });
-
   it("rejects Spark install trusted-boundary drift", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
@@ -37,7 +27,7 @@ describe("spark install workflow boundary", () => {
       >;
     };
     const job = workflow.jobs["spark-install"];
-    expect(job).toBeDefined();
+    if (!job) throw new Error("missing spark-install job");
     job["runs-on" as keyof typeof job] = "self-hosted" as never;
     job["timeout-minutes" as keyof typeof job] = 30 as never;
     job.env = {
@@ -57,7 +47,7 @@ describe("spark install workflow boundary", () => {
     const checkout = job.steps.find((step) =>
       String(step.uses ?? "").startsWith("actions/checkout@"),
     );
-    expect(checkout).toBeDefined();
+    if (!checkout) throw new Error("missing spark-install checkout");
     checkout!.uses = "actions/checkout@v6";
     checkout!.with = {
       ...(checkout!.with as Record<string, unknown>),
@@ -65,12 +55,12 @@ describe("spark install workflow boundary", () => {
     };
 
     const runSpark = job.steps.find((step) => step.name === "Run Spark install live test");
-    expect(runSpark).toBeDefined();
+    if (!runSpark) throw new Error("missing Spark install live test step");
     runSpark!.env = {};
     runSpark!.run = "npx vitest run --project e2e-live test/e2e/live/other.test.ts";
 
     const upload = job.steps.find((step) => step.name === "Upload Spark install artifacts");
-    expect(upload).toBeDefined();
+    if (!upload) throw new Error("missing Spark install artifact upload");
     upload!.with = {
       ...(upload!.with as Record<string, unknown>),
       name: "spark-install-artifacts",

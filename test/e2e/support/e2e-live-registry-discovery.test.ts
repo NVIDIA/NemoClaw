@@ -26,6 +26,7 @@ function syntheticTarget(environment: TargetEnvironment = SUPPORTED_ENVIRONMENT)
 }
 
 describe("live target registry discovery support", () => {
+  // source-shape-contract: compatibility -- Every shipped target must classify as runnable or expose a concrete skip reason
   it("classifies every shipped target as supported or with a concrete reason", () => {
     const targets = listTargets();
 

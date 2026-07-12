@@ -29,6 +29,7 @@ function syntheticTarget(platform: string): TargetDefinition {
  * tests and Vitest would exit non-zero with no structured skip reason.
  */
 describe("live registry-targets skip-name contract", () => {
+  // source-shape-contract: compatibility -- Live test registration names must remain addressable by stable target identifiers
   it("registers every target under a name equal to its id", () => {
     const targets = listTargets();
     expect(targets.length).toBeGreaterThan(0);
@@ -37,6 +38,7 @@ describe("live registry-targets skip-name contract", () => {
     }
   });
 
+  // source-shape-contract: compatibility -- Workflow target filters must select every registered live test by exact identifier
   it('matches the workflow\'s exact `-t "^${TARGET_ID}$"` regex for every target', () => {
     for (const target of listTargets()) {
       const name = liveTargetTestName(target);

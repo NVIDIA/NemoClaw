@@ -38,6 +38,7 @@ function listedTypeScriptFiles(configPath: string): string[] {
 }
 
 describe("plugin Vitest project contract", () => {
+  // source-shape-contract: compatibility -- Root and standalone plugin runners must consume one canonical project contract
   it("defines one canonical plugin project for root and standalone runs", () => {
     const sourceTransform = pluginVitestProjectOptions.oxc;
     const policyAliases = pluginVitestProjectOptions.test.alias as PolicyAlias[];
@@ -72,6 +73,7 @@ describe("plugin Vitest project contract", () => {
     });
   });
 
+  // source-shape-contract: compatibility -- Assertion enforcement must remain scoped to the expect-based plugin project
   it("pilots assertion presence only in expect-based plugin tests (#6692)", () => {
     const rootTest = rootVitestConfig.test as {
       expect?: { requireAssertions?: boolean };
