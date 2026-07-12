@@ -104,6 +104,7 @@ check_openshell_release_assets() {
   parser_errors="${workspace}/pin-parser-errors.txt"
   if ! pin_records=$(node --experimental-strip-types \
     "${CHECKER_ROOT}/checks/extract-installer-pins.mts" \
+    --blueprint "${REPO_ROOT}/nemoclaw-blueprint/blueprint.yaml" \
     --installer "$installer" \
     --brev-installer "$brev_installer" \
     --format tsv 2>"$parser_errors"); then

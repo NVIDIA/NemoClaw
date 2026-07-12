@@ -60,6 +60,8 @@ type FixtureMode =
   | "duplicate-brev-pin"
   | "failure"
   | "incomplete-trusted-allowlist"
+  | "installer-max-version-drift"
+  | "installer-pin-selector-drift"
   | "mismatched-table-versions"
   | "missing-brev-pin"
   | "multiple-installer-versions"
@@ -72,6 +74,8 @@ type FixtureMode =
   | "partial-manifest-missing"
   | "pr-checker-bypass"
   | "pr-parser-bypass"
+  | "brev-stable-version-drift"
+  | "runtime-consumers-newer-than-tables"
   | "symlink-installer-input"
   | "symlink-scripts-parent";
 type PinFormatting =
@@ -99,8 +103,22 @@ const BREV_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> =
       .replace(ASSET_DIGESTS.get(ASSETS[1] ?? "") ?? "missing", OFFICIAL_UNEXPECTED_BREV_DIGEST),
   "pr-checker-bypass": corruptFirstBrevPin,
   "pr-parser-bypass": corruptFirstBrevPin,
+  "brev-stable-version-drift": (source) =>
+    source.replace(
+      'stable | auto) OPENSHELL_VERSION="v0.0.72" ;;',
+      'stable | auto) OPENSHELL_VERSION="v0.0.82" ;;',
+    ),
+  "runtime-consumers-newer-than-tables": (source) =>
+    source.replace(
+      'stable | auto) OPENSHELL_VERSION="v0.0.72" ;;',
+      'stable | auto) OPENSHELL_VERSION="v0.0.82" ;;',
+    ),
 };
 const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> = {
+  "installer-max-version-drift": (source) =>
+    source.replace('MAX_VERSION="0.0.72"', 'MAX_VERSION="0.0.82"'),
+  "installer-pin-selector-drift": (source) =>
+    source.replace('PIN_VERSION="$MAX_VERSION"', 'PIN_VERSION="0.0.72"'),
   "multiple-installer-versions": (source) =>
     source.replace(`v0.0.72:${ASSETS[0]}`, `v0.0.73:${ASSETS[0]}`),
   "official-but-unexpected-installer-asset": (source) =>
@@ -112,13 +130,20 @@ const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => strin
       ),
   "partial-asset-missing": (source) =>
     source.replace(ASSETS.at(-1) ?? "missing", UNPUBLISHED_ASSET),
+  "runtime-consumers-newer-than-tables": (source) =>
+    source.replace('MAX_VERSION="0.0.72"', 'MAX_VERSION="0.0.82"'),
 };
 type InputMutationContext = {
+  blueprint: string;
   brevInstaller: string;
   fixtureRoot: string;
   installer: string;
 };
 const INPUT_MUTATIONS: Partial<Record<FixtureMode, (context: InputMutationContext) => void>> = {
+  "runtime-consumers-newer-than-tables": ({ blueprint }) => {
+    const source = fs.readFileSync(blueprint, "utf8");
+    fs.writeFileSync(blueprint, source.replace('"0.0.72"', '"0.0.82"'));
+  },
   "non-regular-brev-input": ({ brevInstaller }) => {
     fs.rmSync(brevInstaller);
     fs.mkdirSync(brevInstaller);
@@ -243,6 +268,7 @@ function createFixture(
   tempDirs.push(fixtureRoot);
   fs.mkdirSync(checksDir, { recursive: true });
   fs.mkdirSync(binDir, { recursive: true });
+  fs.mkdirSync(path.join(fixtureRoot, "nemoclaw-blueprint"), { recursive: true });
   const checker = fs.readFileSync(
     path.join(REPO_ROOT, "scripts", "check-installer-hash.sh"),
     "utf8",
@@ -254,17 +280,26 @@ function createFixture(
   );
 
   fs.writeFileSync(
+    path.join(fixtureRoot, "nemoclaw-blueprint", "blueprint.yaml"),
+    `max_openshell_version: "${openshellVersion}"\n`,
+  );
+  fs.writeFileSync(
     path.join(scriptsDir, "install-openshell.sh"),
-    renderPinFunction("openshell_pinned_sha256", ASSETS, openshellVersion, formatting),
+    `MAX_VERSION="${openshellVersion}"\nPIN_VERSION="$MAX_VERSION"\n${renderPinFunction(
+      "openshell_pinned_sha256",
+      ASSETS,
+      openshellVersion,
+      formatting,
+    )}`,
   );
   fs.writeFileSync(
     path.join(scriptsDir, "brev-launchable-ci-cpu.sh"),
-    renderPinFunction(
+    `case "$NEMOCLAW_REF" in\n  stable | auto) OPENSHELL_VERSION="v${openshellVersion}" ;;\nesac\n${renderPinFunction(
       "openshell_cli_pinned_sha256",
       ASSETS.slice(0, 2),
       openshellVersion,
       formatting,
-    ),
+    )}`,
   );
   fs.writeFileSync(
     path.join(binDir, "curl"),
@@ -370,6 +405,7 @@ function runFixture(
     );
   }
   const installer = path.join(fixtureRoot, "scripts", "install-openshell.sh");
+  const blueprint = path.join(fixtureRoot, "nemoclaw-blueprint", "blueprint.yaml");
   const installerSource = fs.readFileSync(installer, "utf8");
   const mutateInstaller = INSTALLER_MUTATIONS[mode] ?? ((source: string) => source);
   fs.writeFileSync(installer, mutateInstaller(installerSource));
@@ -384,7 +420,7 @@ function runFixture(
       ? 'process.stdout.write("PR_PARSER_EXECUTED\\n");\n'
       : fs.readFileSync(targetParser, "utf8"),
   );
-  INPUT_MUTATIONS[mode]?.({ brevInstaller, fixtureRoot, installer });
+  INPUT_MUTATIONS[mode]?.({ blueprint, brevInstaller, fixtureRoot, installer });
   return spawnSync("bash", [checker], {
     cwd: fixtureRoot,
     encoding: "utf8",
@@ -443,6 +479,37 @@ describe("installer hash verification", () => {
       "OpenShell v0.0.72 does not have exactly three trusted release-manifest digests",
     );
     expect(result.stdout).not.toContain("Checking OpenShell v0.0.72 release assets");
+    expect(result.stdout).not.toContain("All installer hashes are current");
+  });
+
+  it("rejects newer runtime consumers when both trusted pin tables stay on an older release", () => {
+    const result = runFixture("runtime-consumers-newer-than-tables", undefined, true);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
+    expect(result.stdout).toContain(
+      "installer pin-table release 0.0.72 must match blueprint max_openshell_version 0.0.82",
+    );
+    expect(result.stdout).not.toContain("Checking OpenShell v0.0.72 release assets");
+    expect(result.stdout).not.toContain("All installer hashes are current");
+  });
+
+  it.each([
+    [
+      "installer-max-version-drift",
+      "installer pin-table release 0.0.72 must match installer MAX_VERSION 0.0.82",
+    ],
+    [
+      "brev-stable-version-drift",
+      "installer pin-table release 0.0.72 must match Brev stable OpenShell default 0.0.82",
+    ],
+    ["installer-pin-selector-drift", 'installer PIN_VERSION must be exactly "$MAX_VERSION"'],
+  ] as const)("rejects %s", (mode, diagnostic) => {
+    const result = runFixture(mode, undefined, true);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
+    expect(result.stdout).toContain(diagnostic);
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 

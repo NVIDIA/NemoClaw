@@ -23,6 +23,7 @@ type ExtractOptions = {
 };
 
 type CliOptions = {
+  blueprint: string;
   brevInstaller: string;
   format: "json" | "tsv";
   installer: string;
@@ -144,6 +145,67 @@ function assertExactAssetSet(
         `missing=[${missing.join(", ")}], unexpected=[${unexpected.join(", ")}]`,
     );
   }
+}
+
+// invalidState: the blueprint and stable runtime selectors request a newer
+// OpenShell release while both embedded hash tables still name an older,
+// independently valid release, so separate dependency and hash checks pass but
+// installation cannot find a hash for the selected version.
+// sourceBoundary: this base-trusted parser reads the PR blueprint and installer
+// sources only as inert, bounded files and binds every stable selector to the
+// single release extracted from the static hash tables.
+// whyNotSourceFix: OpenShell can attest its release but cannot keep NemoClaw's
+// blueprint, installer selector, Brev selector, and embedded tables coherent.
+// regressionTest: test/installer-hash-check.test.ts moves all runtime consumers
+// to 0.0.82 while leaving both valid pin tables at 0.0.72 and requires failure.
+// removalCondition: remove these comparisons only when one base-trusted,
+// machine-readable pin manifest directly drives every runtime consumer.
+function extractSingleVersion(
+  source: string,
+  pattern: RegExp,
+  label: string,
+  captureIndex = 1,
+): string {
+  const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
+  const matches = [...source.matchAll(new RegExp(pattern.source, flags))];
+  const version = matches[0]?.[captureIndex];
+  if (matches.length !== 1 || !version) {
+    fail(`${label} must contain exactly one literal X.Y.Z version`);
+  }
+  return version;
+}
+
+function extractBlueprintMaxVersion(source: string): string {
+  return extractSingleVersion(
+    source,
+    /^max_openshell_version:\s*(["'])([0-9]+\.[0-9]+\.[0-9]+)\1\s*$/gm,
+    "blueprint max_openshell_version",
+    2,
+  );
+}
+
+function extractInstallerRuntimeVersion(source: string): string {
+  const maxVersion = extractSingleVersion(
+    source,
+    /^MAX_VERSION="([0-9]+\.[0-9]+\.[0-9]+)"\s*$/gm,
+    "installer MAX_VERSION",
+  );
+  const pinVersionAssignments = [...source.matchAll(/^PIN_VERSION=(.*)\s*$/gm)];
+  if (
+    pinVersionAssignments.length !== 1 ||
+    pinVersionAssignments[0]?.[1]?.trim() !== '"$MAX_VERSION"'
+  ) {
+    fail('installer PIN_VERSION must be exactly "$MAX_VERSION"');
+  }
+  return maxVersion;
+}
+
+function extractBrevStableRuntimeVersion(source: string): string {
+  return extractSingleVersion(
+    source,
+    /^\s*stable\s*\|\s*auto\)\s*OPENSHELL_VERSION="v([0-9]+\.[0-9]+\.[0-9]+)"\s*;;\s*$/gm,
+    "Brev stable OpenShell default",
+  );
 }
 
 function isOperatorStart(character: string): boolean {
@@ -459,7 +521,7 @@ function parseCliOptions(argv: string[]): CliOptions {
     const value = argv[index + 1] ?? "";
     if (!option.startsWith("--") || !value) {
       fail(
-        "usage: extract-installer-pins.mts --installer PATH --brev-installer PATH [--format json|tsv]",
+        "usage: extract-installer-pins.mts --blueprint PATH --installer PATH --brev-installer PATH [--format json|tsv]",
       );
     }
     if (values.has(option)) {
@@ -467,35 +529,37 @@ function parseCliOptions(argv: string[]): CliOptions {
     }
     values.set(option, value);
   }
+  const blueprint = values.get("--blueprint") ?? "";
   const installer = values.get("--installer") ?? "";
   const brevInstaller = values.get("--brev-installer") ?? "";
   const format = values.get("--format") ?? "json";
-  const allowedOptions = new Set(["--brev-installer", "--format", "--installer"]);
+  const allowedOptions = new Set(["--blueprint", "--brev-installer", "--format", "--installer"]);
   const unknownOptions = [...values.keys()].filter((option) => !allowedOptions.has(option));
   if (
     unknownOptions.length > 0 ||
+    !blueprint ||
     !installer ||
     !brevInstaller ||
     (format !== "json" && format !== "tsv")
   ) {
     fail(`invalid CLI options${unknownOptions.length > 0 ? `: ${unknownOptions.join(", ")}` : ""}`);
   }
-  return { brevInstaller, format, installer };
+  return { blueprint, brevInstaller, format, installer };
 }
 
 function runCli(): void {
   const options = parseCliOptions(process.argv.slice(2));
-  const installerPins = extractInstallerPins(readInstallerInput(options.installer, "installer"), {
+  const blueprintSource = readInstallerInput(options.blueprint, "blueprint");
+  const installerSource = readInstallerInput(options.installer, "installer");
+  const brevInstallerSource = readInstallerInput(options.brevInstaller, "Brev launchable");
+  const installerPins = extractInstallerPins(installerSource, {
     functionName: "openshell_pinned_sha256",
     sourceLabel: "installer",
   });
-  const brevPins = extractInstallerPins(
-    readInstallerInput(options.brevInstaller, "Brev launchable"),
-    {
-      functionName: "openshell_cli_pinned_sha256",
-      sourceLabel: "Brev launchable",
-    },
-  );
+  const brevPins = extractInstallerPins(brevInstallerSource, {
+    functionName: "openshell_cli_pinned_sha256",
+    sourceLabel: "Brev launchable",
+  });
   assertExactAssetSet(installerPins, EXPECTED_INSTALLER_ASSETS, "installer pin table");
   assertExactAssetSet(brevPins, EXPECTED_BREV_ASSETS, "Brev pin table");
   const pins = [...installerPins, ...brevPins];
@@ -504,6 +568,16 @@ function runCli(): void {
     fail(
       `installer and Brev launchable pin tables must use the same release version, found ${releaseVersions.join(", ")}`,
     );
+  }
+  const releaseVersion = releaseVersions[0] ?? fail("installer pin tables contain no release");
+  for (const [label, runtimeVersion] of [
+    ["blueprint max_openshell_version", extractBlueprintMaxVersion(blueprintSource)],
+    ["installer MAX_VERSION", extractInstallerRuntimeVersion(installerSource)],
+    ["Brev stable OpenShell default", extractBrevStableRuntimeVersion(brevInstallerSource)],
+  ] as const) {
+    if (runtimeVersion !== releaseVersion) {
+      fail(`installer pin-table release ${releaseVersion} must match ${label} ${runtimeVersion}`);
+    }
   }
   if (options.format === "json") {
     process.stdout.write(`${JSON.stringify(pins)}\n`);
