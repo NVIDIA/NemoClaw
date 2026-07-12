@@ -7,12 +7,19 @@ import {
   assertEndpointResolvesPublic,
   buildResolvePinArgs,
   type EndpointDnsLookupFn,
+  isOpenShellManagedHost,
 } from "./endpoint-ssrf-preflight";
 
 const resolverTo = (address: string): EndpointDnsLookupFn =>
   vi.fn(async () => [{ address, family: address.includes(":") ? 6 : 4 }]);
 
 describe("assertEndpointResolvesPublic (#6293)", () => {
+  it("normalizes only exact OpenShell-managed aliases", () => {
+    expect(isOpenShellManagedHost("INFERENCE.LOCAL.")).toBe(true);
+    expect(isOpenShellManagedHost("[host.openshell.internal]")).toBe(true);
+    expect(isOpenShellManagedHost("inference.local.attacker.example")).toBe(false);
+  });
+
   it("allows a public hostname that resolves to a public address without ever needing a private check", async () => {
     const lookup = resolverTo("93.184.216.34");
     const result = await assertEndpointResolvesPublic("https://vllm.example/v1", lookup);
@@ -78,10 +85,28 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
     expect(result.reason).toContain("cannot resolve");
   });
 
+  it("fails closed when the resolver throws a non-Error value (#6293)", async () => {
+    const lookup: EndpointDnsLookupFn = vi.fn(async () => {
+      throw "EAI_AGAIN";
+    });
+    const result = await assertEndpointResolvesPublic("https://unresolvable.example/v1", lookup);
+    expect(result).toEqual({
+      ok: false,
+      reason: 'cannot resolve endpoint host "unresolvable.example": EAI_AGAIN',
+    });
+  });
+
   it("fails closed when the resolver returns no addresses (#6293)", async () => {
     const lookup: EndpointDnsLookupFn = vi.fn(async () => []);
     const result = await assertEndpointResolvesPublic("https://empty.example/v1", lookup);
     expect(result.ok).toBe(false);
+  });
+
+  it("fails closed when the resolver violates its address-array contract (#6293)", async () => {
+    const lookup = vi.fn(async () => null) as unknown as EndpointDnsLookupFn;
+    const result = await assertEndpointResolvesPublic("https://empty.example/v1", lookup);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("did not resolve to any address");
   });
 
   it("refuses a malformed endpoint URL (#6293)", async () => {
@@ -102,5 +127,21 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
     // still forces credentialed host probes to bypass ambient proxies.
     expect(result.addresses).toEqual([]);
     expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it("omits curl pinning without validated addresses or a valid target URL (#6293)", () => {
+    expect(buildResolvePinArgs("https://vllm.example/v1", undefined)).toEqual([]);
+    expect(buildResolvePinArgs("https://vllm.example/v1", ["", ""])).toEqual([]);
+    expect(buildResolvePinArgs("not a url", ["93.184.216.34"])).toEqual([]);
+  });
+
+  it("deduplicates validated addresses and respects HTTP and explicit ports (#6293)", () => {
+    expect(
+      buildResolvePinArgs("http://vllm.example/v1", ["93.184.216.34", "93.184.216.34"]),
+    ).toEqual(["--resolve", "vllm.example:80:93.184.216.34"]);
+    expect(buildResolvePinArgs("https://vllm.example:8443/v1", ["93.184.216.34"])).toEqual([
+      "--resolve",
+      "vllm.example:8443:93.184.216.34",
+    ]);
   });
 });
