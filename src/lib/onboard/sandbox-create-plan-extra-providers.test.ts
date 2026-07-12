@@ -33,17 +33,14 @@ function buildPlan(
     extraProviders,
     hermesToolGateways: [],
     sandboxGpuConfig,
-    dockerDriverGateway: true,
+    gpuRoutePlan: "none",
+    sandboxGpuLogMessage: null,
     appendResourceFlags: vi.fn(),
     runProviderPreDeleteCleanup: vi.fn(),
     upsertMessagingProviders: vi.fn(() => []),
     getMessagingChannelForEnvKey: () => null,
     getHermesToolGatewayProviderName: vi.fn(),
     deps: {
-      resolveDockerGpuSandboxCreatePlan: vi.fn(() => ({
-        useDockerGpuPatch: false,
-        logMessage: null,
-      })),
       prepareInitialSandboxCreatePolicy: vi.fn(() => ({
         policyPath: "/tmp/policy.yaml",
         appliedPresets: [],

@@ -98,6 +98,13 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
+    "hermes-gpu-startup",
+    {
+      name: "e2e-hermes-gpu-startup-${{ matrix.scenario }}",
+      path: "e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}/",
+    },
+  ],
+  [
     "hermes-slack",
     {
       name: "e2e-hermes-slack",

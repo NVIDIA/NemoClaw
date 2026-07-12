@@ -86,7 +86,7 @@ describe("Docker startup-command sandbox creation", () => {
     };
     const recreatePatch = vi.fn();
     const patch = createDockerGpuSandboxCreatePatch({
-      enabled: false,
+      route: "native",
       persistStartupCommand: true,
       sandboxName: "alpha",
       openshellSandboxCommand: ["env", "nemoclaw-start"],
@@ -113,7 +113,7 @@ describe("Docker startup-command sandbox creation", () => {
     const finalizeBackup = vi.fn(() => ({ backupRemoved: false, rolledBack: true }));
     const onPatchFailureExit = vi.fn();
     const patch = createDockerGpuSandboxCreatePatch({
-      enabled: false,
+      route: "native",
       persistStartupCommand: true,
       sandboxName: "alpha",
       openshellSandboxCommand: ["env", "nemoclaw-start"],
@@ -148,7 +148,7 @@ describe("Docker startup-command sandbox creation", () => {
     const deps = makeDeps();
     const onPatchFailureExit = vi.fn();
     const patch = createDockerGpuSandboxCreatePatch({
-      enabled: false,
+      route: "native",
       persistStartupCommand: true,
       sandboxName: "alpha",
       openshellSandboxCommand: ["env", "nemoclaw-start"],

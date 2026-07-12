@@ -10,6 +10,8 @@ import {
 import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
 import { isLinuxDockerDriverGatewayEnabled } from "../../onboard/docker-driver-platform";
 import { enforceDockerGpuPatchPreserveNetwork } from "../../onboard/docker-gpu-local-inference";
+import { initialDockerGpuRoute, resolveDockerGpuRoutePlan } from "../../onboard/docker-gpu-route";
+import { isDockerDesktopWslRuntime } from "../../onboard/docker-gpu-sandbox-create";
 import { resolveSandboxGpuConfig } from "../../onboard/sandbox-gpu-mode";
 import { agentSupportsWebSearchProvider } from "../../onboard/web-search-support";
 import { redact } from "../../security/redact";
@@ -130,8 +132,16 @@ export async function preflightRebuildTargetRuntime(
     return { ok: false };
   }
   try {
+    const dockerDriverGateway = isLinuxDockerDriverGatewayEnabled();
+    const selectedRoute = initialDockerGpuRoute(
+      resolveDockerGpuRoutePlan(sandboxGpuConfig, {
+        dockerDriverGateway,
+        dockerDesktopWsl: isDockerDesktopWslRuntime(),
+      }),
+    );
     await enforceDockerGpuPatchPreserveNetwork(target.resumeConfig.provider, sandboxGpuConfig, {
-      dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
+      dockerDriverGateway,
+      selectedRoute,
       gatewayPort: recreateOptions.targetGatewayPort,
       log,
     });
