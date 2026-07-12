@@ -17,6 +17,10 @@ const CHECK_SCRIPT = path.join(ROOT, "scripts", "checks", "check-cloudflared-upd
 const FULL_SHA_ACTION = /@[0-9a-f]{40}$/iu;
 
 type CloudflaredUpdateWorkflow = {
+  on?: {
+    schedule?: Array<{ cron?: string }>;
+    workflow_dispatch?: unknown;
+  };
   permissions?: Record<string, string>;
   jobs?: Record<
     string,
@@ -127,8 +131,15 @@ describe("cloudflared update-check workflow contract", () => {
     workflow.jobs?.["check-cloudflared"]?.steps?.find((step) => typeof step.run === "string")
       ?.run ?? "";
 
-  // source-shape-contract: security -- Read-only permissions and immutable checkout keep update checks credential-free
-  it("keeps the update check read-only with a credential-free checkout", () => {
+  // source-shape-contract: security -- Automatic and on-demand checks must preserve the credential-free dependency monitoring boundary
+  it("keeps automatic and on-demand update checks reachable and credential-free", () => {
+    expect({
+      automatic:
+        workflow.on?.schedule?.some(
+          (entry) => typeof entry.cron === "string" && entry.cron.trim() !== "",
+        ) ?? false,
+      onDemand: Object.hasOwn(workflow.on ?? {}, "workflow_dispatch"),
+    }).toEqual({ automatic: true, onDemand: true });
     expect(workflow.permissions).toEqual({ contents: "read" });
 
     const job = workflow.jobs?.["check-cloudflared"];

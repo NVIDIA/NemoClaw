@@ -63,7 +63,7 @@
     },
     {
       "file": "test/cloudflared-update-check-workflow.test.ts",
-      "test": "keeps the update check read-only with a credential-free checkout",
+      "test": "keeps automatic and on-demand update checks reachable and credential-free",
       "category": "security"
     },
     {
