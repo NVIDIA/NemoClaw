@@ -72,15 +72,17 @@ npx tsx test/e2e/registry/run.ts --emit-live-matrix --targets ubuntu-repo-cloud-
 npx vitest run --project e2e-support --silent=false --reporter=default
 
 # Opt-in live E2E targets
-npm run build:cli
-NEMOCLAW_RUN_LIVE_E2E=1 npx vitest run --project e2e-live --silent=false --reporter=default
+npm run test:live-e2e -- --silent=false --reporter=default
 ```
 
-Live E2E projects do not retry an entire failed test. These tests mutate host,
-Docker, gateway, and sandbox state, so re-entering one on the same runner can
-replace the original failure with stale-lock, storage-exhaustion, or ownership
-noise. A target may retry a transient operation only inside its own cleanup
-boundary. Retry a full target by starting a fresh workflow run and runner.
+The aggregate live command rebuilds the CLI before Vitest starts and runs live
+test files serially.
+Live E2E projects do not retry an entire failed test.
+These tests mutate host, Docker, gateway, and sandbox state, so re-entering one
+on the same runner can replace the original failure with stale-lock,
+storage-exhaustion, or ownership noise. A target may retry a transient operation
+only inside its own cleanup boundary.
+Retry a full target by starting a fresh workflow run and runner.
 
 The retired `--emit-matrix` and `--plan-only` paths must not be reintroduced.
 

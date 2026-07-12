@@ -3,6 +3,10 @@
 
 import { describe, expect, it } from "vitest";
 
+import {
+  PREPARE_E2E_ACTION,
+  PREPARE_E2E_STEP,
+} from "../tools/e2e/prepare-e2e-workflow-boundary.mts";
 import { readYaml, type WorkflowStep } from "./helpers/e2e-workflow-contract";
 
 type RegressionWorkflow = {
@@ -26,6 +30,16 @@ type RegressionWorkflow = {
 };
 
 const FULL_SHA_ACTION = /@[0-9a-f]{40}$/i;
+const PREPARED_VITEST_JOBS = [
+  ["gateway-health-honest-e2e", "Run gateway health-honesty E2E test", undefined],
+  ["openshell-version-pin-e2e", "Run OpenShell version-pin E2E test", { "build-cli": "false" }],
+  ["gateway-drift-preflight-e2e", "Run gateway drift preflight E2E test", undefined],
+  [
+    "model-router-provider-routed-inference-e2e",
+    "Run Model Router provider-routed inference E2E test",
+    undefined,
+  ],
+] as const;
 
 describe("Regression E2E workflow contract", () => {
   const workflow = readYaml<RegressionWorkflow>(".github/workflows/regression-e2e.yaml");
@@ -70,6 +84,43 @@ describe("Regression E2E workflow contract", () => {
     );
     expect(runStep?.env?.NVIDIA_API_KEY).toBe("${{ secrets.NVIDIA_API_KEY }}");
     expect(runStep?.env?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+  });
+
+  it.each(
+    PREPARED_VITEST_JOBS,
+  )("prepares %s before invoking Vitest (#6692)", (jobName, runStepName, prepareInputs) => {
+    const job = workflow.jobs?.[jobName];
+    const steps = job?.steps ?? [];
+    const checkoutIndex = steps.findIndex((step) => step.uses?.startsWith("actions/checkout@"));
+    const prepareIndex = steps.findIndex((step) => step.name === PREPARE_E2E_STEP);
+    const runIndex = steps.findIndex((step) => step.name === runStepName);
+    const checkout = steps[checkoutIndex];
+    const prepare = steps[prepareIndex];
+
+    expect(job?.permissions).toEqual({ contents: "read" });
+    expect(checkout?.uses).toMatch(FULL_SHA_ACTION);
+    expect(checkout?.with?.["persist-credentials"]).toBe(false);
+    expect(prepare?.uses).toBe(PREPARE_E2E_ACTION);
+    expect(prepare?.with).toEqual(prepareInputs);
+    expect(prepare?.env).toBeUndefined();
+    expect(prepareIndex).toBeGreaterThan(checkoutIndex);
+    expect(runIndex).toBeGreaterThan(prepareIndex);
+    expect(steps.filter((step) => step.uses === PREPARE_E2E_ACTION)).toHaveLength(1);
+    expect(steps.map((step) => step.name)).not.toContain("Setup Node");
+    expect(steps.map((step) => step.name)).not.toContain("Install root dependencies");
+    expect(steps.map((step) => step.name)).not.toContain("Build CLI");
+  });
+
+  it("collects the gateway drift regression from its integration project (#6692)", () => {
+    const job = workflow.jobs?.["gateway-drift-preflight-e2e"];
+    const runStep = job?.steps?.find(
+      (step) => step.name === "Run gateway drift preflight E2E test",
+    );
+
+    expect(runStep?.run).toContain(
+      "vitest run --project integration test/gateway-drift-preflight.test.ts",
+    );
+    expect(runStep?.run).not.toContain("vitest run --project cli");
   });
 
   it("runs the OpenClaw custom-plugin lifecycle and EXDEV guard in a secret-free lane", () => {
