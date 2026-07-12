@@ -50,6 +50,7 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -252,23 +253,25 @@ describe("onboard dashboard-port exhaustion exits non-zero (#5974)", () => {
     binDir = path.join(home, "bin");
     fs.mkdirSync(binDir, { recursive: true });
 
-    // Fake openshell: report a supported version and embed the capability
-    // markers the installer greps for with `strings`, so onboard's preflight
-    // neither attempts a network reinstall nor fails the credential-rewrite
-    // capability gate before it reaches the dashboard-port check.
-    fs.writeFileSync(
-      path.join(binDir, "openshell"),
-      [
-        "#!/usr/bin/env bash",
-        "# openshell capabilities: request-body-credential-rewrite websocket-credential-rewrite",
-        'case "$1" in',
-        '  --version) echo "openshell 0.0.44"; exit 0;;',
-        "esac",
-        "echo '' >&2",
-        "exit 1",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
+    // Fake one coherent OpenShell release: onboard probes the CLI with `-V`,
+    // validates the sibling gateway/sandbox versions with `--version`, and
+    // scans the component set for all required capability markers. Keeping
+    // those contracts current prevents this fixture from reaching the network
+    // installer before it reaches the dashboard-port check.
+    for (const component of ["openshell", "openshell-gateway", "openshell-sandbox"]) {
+      fs.writeFileSync(
+        path.join(binDir, component),
+        [
+          "#!/usr/bin/env bash",
+          "# openshell capabilities: request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods",
+          'case "${1:-}" in',
+          '  -V|--version) printf "%s 0.0.72\\n" "${0##*/}"; exit 0;;',
+          "esac",
+          "exit 1",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+    }
     fs.writeFileSync(
       path.join(binDir, "docker"),
       [
@@ -303,7 +306,17 @@ describe("onboard dashboard-port exhaustion exits non-zero (#5974)", () => {
     fs.rmSync(home, { recursive: true, force: true });
   });
 
-  it("prints the canonical message and exits non-zero", testTimeoutOptions(60_000), () => {
+  it("prints the canonical message and exits non-zero", testTimeoutOptions(60_000), async () => {
+    // Ask the OS for an unused port instead of probing the host-global default
+    // 8080, which may legitimately belong to another local test or service.
+    const listener = createServer();
+    await new Promise<void>((resolve, reject) => {
+      listener.once("error", reject);
+      listener.listen(0, "127.0.0.1", resolve);
+    });
+    const gatewayPort = (listener.address() as { port: number }).port;
+    await new Promise<void>((resolve) => listener.close(() => resolve()));
+
     const result = spawnSync(
       process.execPath,
       [CLI, "onboard", "--name", "port-test", "--no-gpu", "--non-interactive"],
@@ -317,6 +330,11 @@ describe("onboard dashboard-port exhaustion exits non-zero (#5974)", () => {
           NEMOCLAW_TEST_NO_SLEEP: "1",
           NEMOCLAW_STATUS_PROBE_TIMEOUT_MS: "2000",
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+          NEMOCLAW_GATEWAY_PORT: String(gatewayPort),
+          NEMOCLAW_OPENSHELL_BIN: path.join(binDir, "openshell"),
+          NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+          NEMOCLAW_OPENSHELL_GATEWAY_BIN: path.join(binDir, "openshell-gateway"),
+          NEMOCLAW_OPENSHELL_SANDBOX_BIN: path.join(binDir, "openshell-sandbox"),
         },
       },
     );
@@ -326,6 +344,7 @@ describe("onboard dashboard-port exhaustion exits non-zero (#5974)", () => {
     expect(combined).toContain(
       `All dashboard ports in range ${PORT_RANGE_START}-${PORT_RANGE_END} are occupied`,
     );
+    expect(combined).not.toMatch(/\b(?:installing|reinstalling|upgrading)\b/i);
     expect(result.status).toBeGreaterThan(0);
   });
 });

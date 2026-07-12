@@ -97,7 +97,7 @@ When writing tests:
 - Root-level tests (`test/`) use ESM imports
 - Plugin tests use TypeScript and are co-located with their source files
 - Import CLI source from ordinary tests. Put genuine compiled-artifact assertions under `test/package-contract/`.
-- Keep project globs disjoint; `npm run test:projects:check` derives membership from Vitest and rejects overlap.
+- Keep project globs disjoint and exhaustive; `npm run test:projects:check` compares filesystem candidates with Vitest and rejects missing, overlapping, or unexpected membership.
 - Deterministic projects clear mock calls, restore `vi.spyOn`, and undo `vi.stubEnv` and `vi.stubGlobal` before each test. Create those spies and stubs in `beforeEach` or the test body unless a documented import-time stub must run before module evaluation. Restore direct environment or global mutations yourself, and reset mock implementations explicitly when needed. Live E2E and automatic `mockReset` are intentionally excluded.
 - Use `npm run test:changed` or `npm run test:watch` for focused CLI, plugin, and E2E-support feedback. Add only concrete opaque-input mappings to `test/helpers/vitest-watch-triggers.ts` when the import graph cannot see a YAML, Python, shell, generated, or workflow dependency.
 - Use `npm run test:shuffle -- --sequence.seed=<seed>` to replay a printed test-order seed. Use `npm run test:diagnose:leaks` for async-resource or shutdown-hang diagnostics; both commands keep coverage disabled, and leak diagnostics can accompany exit code 0 when assertions pass.
