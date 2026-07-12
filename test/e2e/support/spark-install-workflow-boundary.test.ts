@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundary.mts";
+import { requireFixture } from "./require-fixture";
 
 function readWorkflow(): Record<string, unknown> {
   return YAML.parse(
@@ -27,7 +28,7 @@ describe("spark install workflow boundary", () => {
       >;
     };
     const job = workflow.jobs["spark-install"];
-    if (!job) throw new Error("missing spark-install job");
+    requireFixture(job, "missing spark-install job");
     job["runs-on" as keyof typeof job] = "self-hosted" as never;
     job["timeout-minutes" as keyof typeof job] = 30 as never;
     job.env = {
@@ -47,7 +48,7 @@ describe("spark install workflow boundary", () => {
     const checkout = job.steps.find((step) =>
       String(step.uses ?? "").startsWith("actions/checkout@"),
     );
-    if (!checkout) throw new Error("missing spark-install checkout");
+    requireFixture(checkout, "missing spark-install checkout");
     checkout!.uses = "actions/checkout@v6";
     checkout!.with = {
       ...(checkout!.with as Record<string, unknown>),
@@ -55,12 +56,12 @@ describe("spark install workflow boundary", () => {
     };
 
     const runSpark = job.steps.find((step) => step.name === "Run Spark install live test");
-    if (!runSpark) throw new Error("missing Spark install live test step");
+    requireFixture(runSpark, "missing Spark install live test step");
     runSpark!.env = {};
     runSpark!.run = "npx vitest run --project e2e-live test/e2e/live/other.test.ts";
 
     const upload = job.steps.find((step) => step.name === "Upload Spark install artifacts");
-    if (!upload) throw new Error("missing Spark install artifact upload");
+    requireFixture(upload, "missing Spark install artifact upload");
     upload!.with = {
       ...(upload!.with as Record<string, unknown>),
       name: "spark-install-artifacts",

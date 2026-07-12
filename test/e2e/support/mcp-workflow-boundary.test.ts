@@ -9,10 +9,7 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import { validateMcpOpenShellWorkflowBoundary } from "../../../tools/e2e/mcp-workflow-boundary.mts";
-
-function requireFixture(condition: unknown, message: string): asserts condition {
-  if (!condition) throw new Error(message);
-}
+import { requireFixture } from "./require-fixture";
 
 describe("MCP workflow artifact boundary", () => {
   it("rejects upload action or path drift from the reviewed shared boundary", () => {
