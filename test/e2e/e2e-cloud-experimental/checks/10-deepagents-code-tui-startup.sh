@@ -225,6 +225,7 @@ proc submit_agents {markers} {
 
 set cmd [list openshell sandbox exec --name $sandbox --tty -- sh -lc {export TERM=xterm-256color; cd /sandbox; dcode; status=$?; printf "\nNEMOCLAW_TUI_EXIT:%s\n" "$status"}]
 spawn {*}$cmd
+set relay_pid [exp_pid]
 
 # DCode's own onboarding predicate is sampled immediately before launch. This
 # avoids guessing from a short negative observation while imports/first paint
@@ -329,9 +330,19 @@ append_marker $markers "$ready_match"
 append_marker $markers "NEMOCLAW_TUI_READY"
 puts "\nNEMOCLAW_TUI_READY"
 if {$termination_mode eq "disconnect"} {
+  exec kill -TERM $relay_pid
+  set timeout 20
+  expect {
+    eof {}
+    timeout {
+      append_marker $markers "NEMOCLAW_TUI_DISCONNECT_TIMEOUT"
+      puts "\nNEMOCLAW_TUI_DISCONNECT_TIMEOUT"
+      exit 26
+    }
+  }
   append_marker $markers "NEMOCLAW_TUI_DISCONNECTED"
   puts "\nNEMOCLAW_TUI_DISCONNECTED"
-  close
+  catch {wait}
   exit 0
 }
 # Close the Select Agent modal before exercising the idle-app quit path.
