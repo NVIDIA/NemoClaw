@@ -58,6 +58,23 @@ export class HostCliClient {
     );
   }
 
+  async isCommandAvailable(command: string, options: ShellProbeRunOptions = {}): Promise<boolean> {
+    const result = await this.command(
+      "bash",
+      ["-lc", 'command -v "$1" >/dev/null 2>&1', "command-availability-probe", command],
+      {
+        artifactName: `command-available-${artifactLabel(command)}`,
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+        ...options,
+      },
+    );
+    if (result.exitCode === 0) return true;
+    if (result.exitCode === 1) return false;
+    assertExitZero(result, `probe command availability for ${command}`);
+    return false;
+  }
+
   nemoclaw(args: string[] = [], options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
     return this.command(this.cliPath, args, {
       artifactName: `nemoclaw-${artifactLabel(args.join("-") || "default")}`,
