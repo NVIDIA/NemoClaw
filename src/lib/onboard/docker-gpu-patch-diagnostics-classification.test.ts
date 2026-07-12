@@ -72,14 +72,14 @@ describe("Docker GPU patch diagnostics", () => {
       "Name: alpha\nPhase: Provisioning\n",
       "alpha   Error   2s ago\n",
       "Error",
-      "Error",
+      "alpha   Error   2s ago",
     ],
     [
       "uses the list-derived phase whenever the sandbox row is present",
       "Name: alpha\nPhase: Error\nReason: ContainerCannotRun\n",
       "alpha   Ready   1m ago\n",
       "Ready",
-      "Ready",
+      "alpha   Ready   1m ago",
     ],
     [
       "keeps the get-derived phase when the sandbox row is absent from list output",
@@ -88,12 +88,11 @@ describe("Docker GPU patch diagnostics", () => {
       "Terminated",
       null,
     ],
-  ])("%s (phase precedence)", (_title, getOutput, listOutput, expectedPhase, expectedListPhase) => {
+  ])("%s (phase precedence)", (_title, getOutput, listOutput, expectedPhase, expectedListLine) => {
     const snapshot = captureSnapshot(getOutput, listOutput);
 
     expect(snapshot.sandboxPhase).toBe(expectedPhase);
-    if (expectedListPhase) expect(snapshot.sandboxListLine).toContain(expectedListPhase);
-    else expect(snapshot.sandboxListLine).toBeNull();
+    expect(snapshot.sandboxListLine).toBe(expectedListLine);
   });
 
   it("captures sandbox phase and patched container State via the snapshot helper", () => {
