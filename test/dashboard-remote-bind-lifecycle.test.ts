@@ -593,7 +593,7 @@ describe("remote dashboard bind production lifecycle", () => {
     );
     expect(runOpenshell).toHaveBeenCalledWith(
       ["forward", "start", "--background", "0.0.0.0:18789", "beta"],
-      { ignoreError: true },
+      { ignoreError: true, stdio: "ignore" },
     );
   });
 
@@ -620,7 +620,7 @@ describe("remote dashboard bind production lifecycle", () => {
     expect(ensureSandboxPortForward("beta")).toBe(false);
     expect(runOpenshell).toHaveBeenCalledWith(
       ["forward", "start", "--background", "0.0.0.0:18789", "beta"],
-      { ignoreError: true },
+      { ignoreError: true, stdio: "ignore" },
     );
   });
 
@@ -712,7 +712,7 @@ describe("remote dashboard bind production lifecycle", () => {
     );
     expect(runOpenshell).toHaveBeenCalledWith(
       ["forward", "start", "--background", "18789", "beta"],
-      { ignoreError: true },
+      { ignoreError: true, stdio: "ignore" },
     );
   });
 
@@ -746,7 +746,7 @@ describe("remote dashboard bind production lifecycle", () => {
     expect(ensureSandboxPortForward("beta")).toBe(true);
     expect(runOpenshell).toHaveBeenCalledWith(
       ["forward", "start", "--background", "0.0.0.0:18789", "beta"],
-      { ignoreError: true },
+      { ignoreError: true, stdio: "ignore" },
     );
   });
 
@@ -783,7 +783,7 @@ describe("remote dashboard bind production lifecycle", () => {
     expect(ensureSandboxPortForward("beta")).toBe(true);
     expect(runOpenshell).toHaveBeenCalledWith(
       ["forward", "start", "--background", "18789", "beta"],
-      { ignoreError: true },
+      { ignoreError: true, stdio: "ignore" },
     );
   });
 });

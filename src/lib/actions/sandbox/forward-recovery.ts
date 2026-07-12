@@ -230,6 +230,11 @@ export function ensureSandboxPortForwardForPort(
     ["forward", "start", "--background", forwardTarget, sandboxName],
     {
       ignoreError: true,
+      // OpenShell 0.0.72 leaves the background SSH forward attached to the
+      // caller's inherited descriptors. Detach them so a scripted `recover`
+      // can finish after the foreground OpenShell command exits. Keep this
+      // until every supported OpenShell release redirects those descriptors.
+      stdio: "ignore",
     },
   );
   if (startResult.status !== 0) return false;

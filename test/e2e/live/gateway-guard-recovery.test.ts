@@ -42,6 +42,7 @@
  * #2701 guard-chain assertion.
  */
 
+import { Buffer } from "node:buffer";
 import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
@@ -81,6 +82,29 @@ if (matches.length !== 1) {
 }
 process.stdout.write(matches[0].slice(prefix.length) + "\n");
 `;
+
+const SUPERVISOR_TOPOLOGY_SCRIPT = String.raw`from pathlib import Path
+rows=[]
+for entry in Path("/proc").iterdir():
+    if not entry.name.isdigit() or entry.name == "1":
+        continue
+    try:
+        stat=(entry / "stat").read_text().rsplit(")", 1)[1].split()
+        cmd=(entry / "cmdline").read_bytes().rstrip(b"\0").split(b"\0")
+        status=(entry / "status").read_text()
+    except (FileNotFoundError, PermissionError, ProcessLookupError):
+        continue
+    if int(stat[1]) != 1 or not cmd:
+        continue
+    if cmd[0].rsplit(b"/", 1)[-1] == b"nemoclaw-start" or (len(cmd) > 1 and cmd[0].rsplit(b"/", 1)[-1] == b"bash" and cmd[1].rsplit(b"/", 1)[-1] == b"nemoclaw-start"):
+        rows.append((entry.name, status))
+assert len(rows) == 1, rows
+assert "Uid:\t1000\t1000\t1000\t1000" in rows[0][1], rows[0][1]
+print("MANAGED_SUPERVISOR=" + rows[0][0] + ":PPID1")`;
+
+const SUPERVISOR_TOPOLOGY_COMMAND = `import base64;exec(base64.b64decode("${Buffer.from(
+  SUPERVISOR_TOPOLOGY_SCRIPT,
+).toString("base64")}"))`;
 
 async function findSandboxContainer(host: HostCliClient, artifactName: string): Promise<string> {
   const result = await host.command(
@@ -274,6 +298,7 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
     redactionValues: [credentialCanary],
     timeoutMs: 240_000,
   });
+  expect(trustedRecovery.timedOut, resultText(trustedRecovery)).toBe(false);
   expect(trustedRecovery.exitCode, resultText(trustedRecovery)).toBe(0);
   expect(resultText(trustedRecovery)).toContain("Probe complete: recovered OpenClaw gateway");
 
@@ -288,30 +313,10 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
   expect(recoveredStartupCommand).not.toContain("CUSTOM_PROVIDER_CREDENTIAL");
   expect(recoveredStartupCommand).not.toContain(credentialCanary);
 
+  expect(SUPERVISOR_TOPOLOGY_COMMAND).not.toMatch(/[\r\n]/);
   const topology = await sandbox.exec(
     instance.sandboxName,
-    [
-      "python3",
-      "-c",
-      String.raw`from pathlib import Path
-rows=[]
-for entry in Path("/proc").iterdir():
-    if not entry.name.isdigit() or entry.name == "1":
-        continue
-    try:
-        stat=(entry / "stat").read_text().rsplit(")", 1)[1].split()
-        cmd=(entry / "cmdline").read_bytes().rstrip(b"\0").split(b"\0")
-        status=(entry / "status").read_text()
-    except (FileNotFoundError, PermissionError, ProcessLookupError):
-        continue
-    if int(stat[1]) != 1 or not cmd:
-        continue
-    if cmd[0].rsplit(b"/", 1)[-1] == b"nemoclaw-start" or (len(cmd) > 1 and cmd[0].rsplit(b"/", 1)[-1] == b"bash" and cmd[1].rsplit(b"/", 1)[-1] == b"nemoclaw-start"):
-        rows.append((entry.name, status))
-assert len(rows) == 1, rows
-assert "Uid:\t1000\t1000\t1000\t1000" in rows[0][1], rows[0][1]
-print("MANAGED_SUPERVISOR=" + rows[0][0] + ":PPID1")`,
-    ],
+    ["python3", "-c", SUPERVISOR_TOPOLOGY_COMMAND],
     {
       artifactName: "legacy-restart-managed-supervisor-topology",
       env: buildAvailabilityProbeEnv(),

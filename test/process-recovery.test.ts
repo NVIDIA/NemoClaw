@@ -225,7 +225,7 @@ beta  127.0.0.1  18789  12345  running`;
     });
     expect(runOpenshell).toHaveBeenCalledWith(
       ["forward", "start", "--background", "0.0.0.0:18789", "beta"],
-      { ignoreError: true },
+      { ignoreError: true, stdio: "ignore" },
     );
   });
 
@@ -263,7 +263,7 @@ beta  127.0.0.1  18789  12345  running`;
     expect(events).toEqual(["stale-listener", "stale-listener", "released", "start"]);
     expect(runOpenshell).toHaveBeenCalledWith(
       ["forward", "start", "--background", "8642", "beta"],
-      { ignoreError: true },
+      { ignoreError: true, stdio: "ignore" },
     );
   });
 
@@ -346,7 +346,7 @@ beta  127.0.0.1  3978  12346  running`;
     });
     expect(runOpenshell).toHaveBeenCalledWith(
       ["forward", "start", "--background", "3978", "beta"],
-      { ignoreError: true },
+      { ignoreError: true, stdio: "ignore" },
     );
   });
 
@@ -400,7 +400,7 @@ beta  127.0.0.1  18789  12345  running`;
     });
     expect(runOpenshell).toHaveBeenCalledWith(
       ["forward", "start", "--background", "3978", "beta"],
-      { ignoreError: true },
+      { ignoreError: true, stdio: "ignore" },
     );
   });
 
@@ -1211,7 +1211,7 @@ hermes-box  127.0.0.1  8642  12346  running`;
     expect(requestGatewaySupervisorAction).toHaveBeenCalledWith("hermes-box", "recover");
     expect(runOpenshell).toHaveBeenCalledWith(
       ["forward", "start", "--background", "18789", "hermes-box"],
-      { ignoreError: true },
+      { ignoreError: true, stdio: "ignore" },
     );
   });
 
