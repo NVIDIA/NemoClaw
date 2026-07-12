@@ -67,10 +67,11 @@ describe("macOS E2E workflow boundary", () => {
     expect(jobNamed("macos-docker-final-destroy").if).toContain("github.ref == 'refs/heads/main'");
   });
 
-  // source-shape-contract: compatibility -- Real Docker cleanup requires the reviewed Intel runner and pinned engine setup
+  // source-shape-contract: compatibility -- Real Docker cleanup must invoke its gated live lane on the reviewed Intel runner and engine
   it("runs final-destroy against a pinned Docker setup on trusted Intel macOS", () => {
     const job = readMacosWorkflow().jobs?.["macos-docker-final-destroy"];
     const docker = job?.steps?.find((step) => step.name === "Set up pinned Docker Engine");
+    const live = job?.steps?.find((step) => step.name === "Run macOS Docker final-destroy E2E");
 
     expect(job?.["runs-on"]).toBe("macos-15-intel");
     expect(job?.permissions).toEqual({ contents: "read" });
@@ -78,9 +79,13 @@ describe("macOS E2E workflow boundary", () => {
       "docker/setup-docker-action@6d7cfa65f60a9dda7b46e5513fa982536f3c9877",
     );
     expect(docker?.with?.version).toBe("v27.4.0");
+    expect(live?.run).toContain("npx vitest run --project e2e-live");
+    expect(live?.run).toContain("test/e2e/live/sandbox-operations.test.ts");
+    expect(live?.env?.NEMOCLAW_RUN_LIVE_E2E).toBe("1");
+    expect(live?.env?.NEMOCLAW_NON_INTERACTIVE).toBe("1");
   });
 
-  // source-shape-contract: security -- Artifact publishers must use the reviewed immutable action implementation
+  // source-shape-contract: security -- Failure-only macOS artifact publishers must retain diagnostic paths and immutable actions
   it("pins live macOS artifact publishers to an immutable action", () => {
     const workflow = readMacosWorkflow();
     const upload = workflow.jobs?.["macos-e2e"]?.steps?.find(
@@ -92,6 +97,10 @@ describe("macOS E2E workflow boundary", () => {
 
     for (const step of [upload, dockerUpload]) {
       expect(step?.uses).toBe("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a");
+      expect(String(step?.with?.path)).toContain("/tmp/nemoclaw-e2e-*.log");
+      expect(String(step?.with?.path)).toContain("${{ github.workspace }}/e2e-artifacts/live");
     }
+    expect(upload?.if).toBe("failure() && github.event_name == 'pull_request'");
+    expect(dockerUpload?.if).toBe("failure()");
   });
 });
