@@ -25,6 +25,14 @@ import {
 } from "./docker-gpu-patch";
 
 describe("Docker GPU patch diagnostics", () => {
+  it.each(["", "relative-home"])("rejects non-absolute diagnostic home %j", (home) => {
+    const dockerCapture = vi.fn();
+    expect(
+      collectDockerGpuPatchDiagnostics("alpha", {}, { dockerCapture, homedir: () => home }),
+    ).toBeNull();
+    expect(dockerCapture).not.toHaveBeenCalled();
+  });
+
   it("preserves the default Docker capture when callers omit dockerCapture from deps", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-gpu-default-"));
     try {

@@ -1741,6 +1741,8 @@ jobs:
           BASH_ENV: /dev/null
           E2E_HERMES_GPU_STARTUP_SCENARIO: ${{ matrix.scenario }}
           ENV: /dev/null
+          TRUSTED_DISPATCH_SHA: ${{ github.sha }}
+          TRUSTED_FIXTURE_SHA256: 1e811077fc2c5e0468e971c8f3508dbd3f6856a882e58c448a50e10101a3e1a2
           TRUSTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
           set -euo pipefail
@@ -1757,6 +1759,10 @@ jobs:
 
           [[ "$TRUSTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ ]] \
             || { echo "Trusted workflow SHA must be an immutable commit" >&2; exit 1; }
+          [[ "$TRUSTED_DISPATCH_SHA" = "$TRUSTED_WORKFLOW_SHA" ]] \
+            || { echo "Trusted fixture must match the dispatched main workflow" >&2; exit 1; }
+          [[ "$TRUSTED_FIXTURE_SHA256" =~ ^[a-f0-9]{64}$ ]] \
+            || { echo "Trusted fixture SHA-256 must be pinned" >&2; exit 1; }
           [ "$(/usr/bin/git -C "$trusted_checkout" rev-parse HEAD)" = "$TRUSTED_WORKFLOW_SHA" ] \
             || { echo "Trusted fixture checkout does not match the workflow SHA" >&2; exit 1; }
           [ -f "$trusted_source" ] && [ ! -L "$trusted_source" ] \
@@ -1767,6 +1773,8 @@ jobs:
             "$trusted_source" "$trusted_fixture"
           [ "$(/usr/bin/sudo /usr/bin/stat -c '%a %u %g' "$trusted_fixture")" = "500 0 0" ] \
             || { echo "Trusted Docker fixture ownership or mode is invalid" >&2; exit 1; }
+          printf '%s  %s\n' "$TRUSTED_FIXTURE_SHA256" "$trusted_fixture" \
+            | /usr/bin/sudo /usr/bin/sha256sum -c -
           /usr/bin/sudo /usr/bin/cmp -s "$trusted_source" "$trusted_fixture" \
             || { echo "Installed Docker fixture does not match trusted workflow code" >&2; exit 1; }
           /usr/bin/sudo /usr/bin/install -d -o root -g root -m 0700 "$trusted_state_root"
@@ -1830,6 +1838,7 @@ jobs:
             /usr/bin/sudo /usr/bin/chown root:root "$state_dir"
             /usr/bin/sudo /usr/bin/chmod 0700 "$state_dir"
 
+            # SOURCE_OF_TRUTH_REVIEW (Hermes GPU fallback fixture; #6110):
             # invalidState: a cancelled fallback test leaves the runner-global Docker default
             # runtime changed, contaminating later OpenShell jobs on this self-hosted runner.
             # sourceBoundary: daemon mutation uses only immutable root-owned workflow_sha

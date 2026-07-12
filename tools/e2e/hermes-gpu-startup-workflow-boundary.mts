@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,6 +27,7 @@ const SETUP_NODE_ACTION = "actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8da
 const TRUSTED_CHECKOUT_PATH =
   ".trusted-hermes-gpu-fixture-${{ github.run_id }}-${{ github.run_attempt }}";
 const TRUSTED_FIXTURE_SOURCE = "tools/e2e/hermes-gpu-docker-runtime-fixture.sh";
+const TRUSTED_FIXTURE_SHA256 = "1e811077fc2c5e0468e971c8f3508dbd3f6856a882e58c448a50e10101a3e1a2";
 const TRUSTED_FIXTURE_PATH =
   "/usr/local/libexec/nemoclaw/hermes-gpu-docker-runtime-fixture.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.${E2E_HERMES_GPU_STARTUP_SCENARIO}";
 const FALLBACK_STEP_IF = "${{ matrix.scenario == 'fallback' }}";
@@ -76,6 +78,17 @@ function normalizedShell(value: unknown): string {
 function containsAll(value: unknown, fragments: readonly string[]): boolean {
   const script = normalizedShell(value);
   return fragments.every((fragment) => script.includes(fragment));
+}
+
+function containsInOrder(value: unknown, fragments: readonly string[]): boolean {
+  const script = normalizedShell(value);
+  let offset = 0;
+  return fragments.every((fragment) => {
+    const index = script.indexOf(fragment, offset);
+    if (index < 0) return false;
+    offset = index + fragment.length;
+    return true;
+  });
 }
 
 function hasTrustedStepEnv(step: WorkflowStep | undefined): boolean {
@@ -204,17 +217,22 @@ export function validateHermesGpuStartupWorkflowBoundary(
     trustedInstall?.if !== FALLBACK_STEP_IF ||
     trustedInstall?.shell !== TRUSTED_BASH_SHELL ||
     !hasTrustedStepEnv(trustedInstall) ||
+    installEnv.TRUSTED_DISPATCH_SHA !== "${{ github.sha }}" ||
+    installEnv.TRUSTED_FIXTURE_SHA256 !== TRUSTED_FIXTURE_SHA256 ||
     installEnv.TRUSTED_WORKFLOW_SHA !== "${{ github.workflow_sha }}" ||
     !containsAll(trustedInstall?.run, [
       'trusted_checkout="$GITHUB_WORKSPACE/.trusted-hermes-gpu-fixture-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"',
       `trusted_source="$trusted_checkout/${TRUSTED_FIXTURE_SOURCE}"`,
       `trusted_fixture="${TRUSTED_FIXTURE_PATH}"`,
+      '[[ "$TRUSTED_FIXTURE_SHA256" =~ ^[a-f0-9]{64}$ ]]',
       '[[ "$TRUSTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ ]]',
+      '[[ "$TRUSTED_DISPATCH_SHA" = "$TRUSTED_WORKFLOW_SHA" ]]',
       '/usr/bin/git -C "$trusted_checkout" rev-parse HEAD',
       '[ -f "$trusted_source" ] && [ ! -L "$trusted_source" ]',
       "/usr/bin/sudo /usr/bin/install -d -o root -g root -m 0755 /usr/local/libexec/nemoclaw",
       '/usr/bin/sudo /usr/bin/install -o root -g root -m 0500 "$trusted_source" "$trusted_fixture"',
       `/usr/bin/sudo /usr/bin/stat -c '%a %u %g' "$trusted_fixture")" = "500 0 0"`,
+      `printf '%s %s\\n' "$TRUSTED_FIXTURE_SHA256" "$trusted_fixture" | /usr/bin/sudo /usr/bin/sha256sum -c -`,
       '/usr/bin/sudo /usr/bin/cmp -s "$trusted_source" "$trusted_fixture"',
       "trusted_state_root=/var/lib/nemoclaw-e2e",
       '/usr/bin/sudo /usr/bin/install -d -o root -g root -m 0700 "$trusted_state_root"',
@@ -225,6 +243,12 @@ export function validateHermesGpuStartupWorkflowBoundary(
       "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
       '/bin/bash "$trusted_fixture" "$@"',
       "if ! run_trusted_fixture restore",
+    ]) ||
+    !containsInOrder(trustedInstall?.run, [
+      '/usr/bin/sudo /usr/bin/install -o root -g root -m 0500 "$trusted_source" "$trusted_fixture"',
+      `/usr/bin/sudo /usr/bin/stat -c '%a %u %g' "$trusted_fixture")" = "500 0 0"`,
+      `printf '%s %s\\n' "$TRUSTED_FIXTURE_SHA256" "$trusted_fixture" | /usr/bin/sudo /usr/bin/sha256sum -c -`,
+      '/usr/bin/sudo /usr/bin/cmp -s "$trusted_source" "$trusted_fixture"',
     ])
   ) {
     errors.push(`${JOB_NAME} trusted fixture setup must use immutable root-owned workflow code`);
@@ -291,6 +315,7 @@ export function validateHermesGpuStartupWorkflowBoundary(
     errors.push(`${JOB_NAME} fallback Docker mutation must remain under same-step cleanup traps`);
   }
   const sourceBoundaryMarkers = [
+    "SOURCE_OF_TRUTH_REVIEW",
     "invalidState:",
     "sourceBoundary:",
     "whyNotSourceFix:",
@@ -361,6 +386,9 @@ export function validateHermesGpuStartupWorkflowBoundary(
     errors.push(`${JOB_NAME} Docker runtime fixture helper is missing`);
   }
   if (fixtureScript) {
+    if (createHash("sha256").update(fixtureScript).digest("hex") !== TRUSTED_FIXTURE_SHA256) {
+      errors.push(`${JOB_NAME} Docker runtime fixture must match its trusted SHA-256`);
+    }
     if (/\b(?:install\s+-m|chmod)\s+0?644\b/u.test(fixtureScript)) {
       errors.push(`${JOB_NAME} fallback Docker fixture must reject permissive 0644 file modes`);
     }

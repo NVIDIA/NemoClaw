@@ -46,7 +46,17 @@ function warnForLegacyNonzeroControl(control: string, log: (message: string) => 
   );
 }
 
-/** Resolve the internal Docker-driver GPU strategy without exposing a new user contract. */
+/**
+ * SOURCE_OF_TRUTH_REVIEW (explicit ordinary-Linux GPU fallback; #6110):
+ * invalidState: explicit fallback sees native rejection or trusted proof of no GPU attachment.
+ * sourceBoundary: OpenShell `--gpu` plus structured Docker/NVIDIA evidence and proven cleanup.
+ * whyNotSourceFix: supported stacks cannot upgrade atomically; WSL/Jetson still need compatibility.
+ * regressionTest: sandbox-gpu-create-failure-classification.test.ts and
+ * sandbox-gpu-fallback-orchestration.test.ts prove authorization, cleanup, and one retry.
+ * removalCondition: native injection works on every supported host and compatibility is retired.
+ *
+ * Resolves the internal Docker-driver GPU strategy without exposing a new user contract.
+ */
 export function resolveDockerGpuRoutePlan(
   config: DockerGpuRouteConfig,
   options: DockerGpuRouteOptions,

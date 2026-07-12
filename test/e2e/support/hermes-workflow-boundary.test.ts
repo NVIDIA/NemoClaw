@@ -159,17 +159,13 @@ describe("Hermes E2E workflow boundary", () => {
     const workflowPath = path.join(tmp, "workflow.yaml");
     try {
       fs.writeFileSync(workflowPath, YAML.stringify(workflow));
-      expect(validateE2eWorkflowBoundary(workflowPath)).toEqual(
+      const errors = validateE2eWorkflowBoundary(workflowPath);
+      expect(errors).toHaveLength(33);
+      expect(errors).toEqual(
         expect.arrayContaining([
           "hermes-e2e job must use the shared hosted-compatible model default",
           "hermes-gpu-startup job must run on the native RTX PRO 6000 GPU runner",
           "hermes-gpu-startup job must remain explicit-only behind generate-matrix",
-          "hermes-gpu-startup strategy must keep fail-fast disabled",
-          "hermes-gpu-startup strategy must serialize GPU scenarios",
-          "hermes-gpu-startup matrix must run exactly the native, fallback, and compatibility-only scenarios",
-          "hermes-gpu-startup job must set E2E_ARTIFACT_DIR=${{ github.workspace }}/e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}",
-          "hermes-gpu-startup job must set E2E_HERMES_GPU_STARTUP_SCENARIO=${{ matrix.scenario }}",
-          "hermes-gpu-startup job must not set E2E_DEFAULT_ENABLED; the trusted inventory owns its explicit-only classification",
           "hermes-gpu-startup job must leave NEMOCLAW_DOCKER_GPU_PATCH unset so the scenario harness owns route selection",
           "hermes-gpu-startup job env must not expose NEMOCLAW_E2E_USE_HOSTED_INFERENCE",
           "hermes-gpu-startup job env must not consume repository secrets",
@@ -178,17 +174,10 @@ describe("Hermes E2E workflow boundary", () => {
           "hermes-gpu-startup step 'Run Hermes GPU startup live Vitest test' must not expose NVIDIA_API_KEY",
           "hermes-gpu-startup step 'Run Hermes GPU startup live Vitest test' must not expose NVIDIA_INFERENCE_API_KEY",
           "hermes-gpu-startup step 'Run Hermes GPU startup live Vitest test' must not consume repository secrets",
-          "hermes-gpu-startup fallback Docker mutation, Vitest, and restore must share one step",
-          "hermes-gpu-startup fallback Docker mutation must remain under same-step cleanup traps",
-          "hermes-gpu-startup fallback Docker fixture must retain its source-boundary rationale",
-          "hermes-gpu-startup independent trusted recovery must always propagate failures",
-          "hermes-gpu-startup fallback Docker fixture must reject permissive 0644 file modes",
           "hermes-gpu-startup step must run the dedicated Hermes GPU startup test",
           "hermes-gpu-startup step 'Run Hermes GPU startup live Vitest test' must not run the hosted Hermes E2E test",
           "hermes-gpu-startup step 'Unexpected hosted test' must not run the hosted Hermes E2E test",
           "hermes-gpu-startup step 'Unexpected hosted test' must not consume repository secrets",
-          "hermes-gpu-startup upload must use a scenario-specific artifact name",
-          "hermes-gpu-startup upload must use the scenario-specific artifact path",
         ]),
       );
     } finally {
@@ -218,6 +207,7 @@ describe("Hermes E2E workflow boundary", () => {
 
       expect(validateHermesGpuStartupWorkflowBoundary(WORKFLOW_PATH, fixturePath)).toEqual(
         expect.arrayContaining([
+          "hermes-gpu-startup Docker runtime fixture must match its trusted SHA-256",
           "hermes-gpu-startup fallback Docker fixture must reject permissive 0644 file modes",
           "hermes-gpu-startup Docker runtime fixture must pin privileged state and daemon paths",
           "hermes-gpu-startup Docker runtime fixture must remove private state before reporting restore failure",
@@ -260,7 +250,15 @@ describe("Hermes E2E workflow boundary", () => {
     const step = (name: string) =>
       gpuJob.steps.find((candidate: { name?: string }) => candidate.name === name);
     step("Checkout trusted Hermes GPU runtime fixture").with.ref = "${{ inputs.checkout_sha }}";
-    step("Install trusted Hermes GPU runtime fixture").run = "sudo install -m 0555 pr.sh /tmp";
+    const trustedInstall = step("Install trusted Hermes GPU runtime fixture");
+    const shaCheck = `printf '%s  %s\\n' "$TRUSTED_FIXTURE_SHA256" "$trusted_fixture" \\
+  | /usr/bin/sudo /usr/bin/sha256sum -c -
+`;
+    trustedInstall.env.TRUSTED_FIXTURE_SHA256 = "0".repeat(64);
+    trustedInstall.run = trustedInstall.run
+      .replace(shaCheck, "")
+      .replace("set -euo pipefail\n", `set -euo pipefail\n${shaCheck}`)
+      .replace("-m 0500", "-m 0555");
     step("Run Hermes GPU startup live Vitest test").run =
       "bash tools/e2e/hermes-gpu-docker-runtime-fixture.sh";
     step("Recover Docker daemon after Hermes GPU fallback fixture").run =

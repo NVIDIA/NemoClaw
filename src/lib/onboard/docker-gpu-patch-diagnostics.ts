@@ -140,11 +140,13 @@ export function collectDockerGpuPatchDiagnostics(
   } = {},
   deps: DockerGpuPatchDeps = {},
 ): DockerGpuPatchDiagnostics | null {
+  const home = (deps.homedir ?? os.homedir)();
+  if (!path.isAbsolute(home)) return null;
   const capture = deps.dockerCapture ?? dockerCapture;
   const logs = deps.dockerLogs ?? dockerLogs;
   const now = (deps.now ?? (() => new Date()))();
   const dir = path.join(
-    (deps.homedir ?? os.homedir)(),
+    home,
     ".nemoclaw",
     "onboard-failures",
     `${timestampForPath(now)}-${sanitizePathPart(sandboxName)}-docker-gpu-patch`,
