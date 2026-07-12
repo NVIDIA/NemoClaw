@@ -11,21 +11,22 @@ import { type AgentBranding, getAgentBranding } from "../../cli/branding";
 import { isStdinTty, readLineFromStdin } from "../../core/stdin";
 import { sleepMs } from "../../core/wait";
 import {
-  defaultUninstallPaths,
-  NEMOCLAW_OLLAMA_MODELS,
-  NEMOCLAW_PROVIDERS,
-  type UninstallPaths,
-} from "../../domain/uninstall/paths";
-import {
   gatewayDestroySkipMessage,
   OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE,
   preservedRegistryUnrecoverableWarnings,
   providerDeleteSkipMessage,
 } from "../../domain/uninstall/messaging";
+import {
+  defaultUninstallPaths,
+  NEMOCLAW_OLLAMA_MODELS,
+  NEMOCLAW_PROVIDERS,
+  type UninstallPaths,
+} from "../../domain/uninstall/paths";
 import { buildUninstallPlan, type UninstallPlan } from "../../domain/uninstall/plan";
 import { stopHostGatewayProcesses } from "../../onboard/host-gateway-process";
 import { isModelRouterCommandLineForPort } from "../../onboard/model-router-process";
 import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
+import { GATEWAYS_SUBDIR } from "../../state/state-root";
 import { stopOpenRouterRuntimeAdapter } from "./openrouter-runtime-adapter-cleanup";
 import { classifyShimPath, type FileSystemDeps } from "./plan";
 
@@ -289,23 +290,38 @@ function printBye(runtime: UninstallRuntime): void {
   runtime.log(branding.uninstallGoodbye);
 }
 
-function userDataDispositionLine(options: UninstallRunOptions, runtime: UninstallRuntime): string {
-  if (options.destroyUserData) {
-    return "  · ~/.nemoclaw (removes rebuild-backups/, backups/, sandboxes.json: --destroy-user-data set)";
-  }
-  if (runtime.env.NEMOCLAW_UNINSTALL_DESTROY_USER_DATA === "1") {
-    return "  · ~/.nemoclaw (removes rebuild-backups/, backups/, sandboxes.json: NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1)";
-  }
-  return "  · ~/.nemoclaw (preserves rebuild-backups/, backups/, sandboxes.json by default)";
+function stateDirDisplay(paths: UninstallPaths): string {
+  const sharedRoot = path.dirname(paths.managedSwapMarkerPath);
+  const home = path.dirname(sharedRoot);
+  return `~/${path.relative(home, paths.nemoclawStateDir)}`;
 }
 
-function confirm(options: UninstallRunOptions, runtime: UninstallRuntime): boolean {
+function userDataDispositionLine(
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+  paths: UninstallPaths,
+): string {
+  const dir = stateDirDisplay(paths);
+  if (options.destroyUserData) {
+    return `  · ${dir} (removes rebuild-backups/, backups/, sandboxes.json: --destroy-user-data set)`;
+  }
+  if (runtime.env.NEMOCLAW_UNINSTALL_DESTROY_USER_DATA === "1") {
+    return `  · ${dir} (removes rebuild-backups/, backups/, sandboxes.json: NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1)`;
+  }
+  return `  · ${dir} (preserves rebuild-backups/, backups/, sandboxes.json by default)`;
+}
+
+function confirm(
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+  paths: UninstallPaths,
+): boolean {
   const branding = runtimeBranding(runtime);
   if (options.assumeYes) return true;
   runtime.log("What will be removed:");
   runtime.log(`  · All OpenShell sandboxes, gateway, and ${branding.display} providers`);
   runtime.log("  · Related Docker containers, images, and volumes");
-  runtime.log(userDataDispositionLine(options, runtime));
+  runtime.log(userDataDispositionLine(options, runtime, paths));
   runtime.log("  · ~/.config/openshell  ~/.config/nemoclaw");
   runtime.log(`  · Global ${branding.display} CLI (npm package: nemoclaw)`);
   runtime.log(
@@ -793,6 +809,18 @@ function removeOllamaModels(options: UninstallRunOptions, runtime: UninstallRunt
   }
 }
 
+function otherGatewayEnvironmentsRemain(paths: UninstallPaths, runtime: UninstallRuntime): boolean {
+  const sharedRoot = path.dirname(paths.managedSwapMarkerPath);
+  if (paths.nemoclawStateDir !== sharedRoot) return true;
+  const gatewaysDir = path.join(sharedRoot, "gateways");
+  if (!runtime.existsSync(gatewaysDir)) return false;
+  try {
+    return fs.readdirSync(gatewaysDir).length > 0;
+  } catch {
+    return false;
+  }
+}
+
 function removeManagedSwap(paths: UninstallPaths, runtime: UninstallRuntime): void {
   if (!runtime.existsSync("/swapfile")) {
     runtime.log("No /swapfile found; skipping swap cleanup.");
@@ -801,6 +829,12 @@ function removeManagedSwap(paths: UninstallPaths, runtime: UninstallRuntime): vo
   if (!runtime.existsSync(paths.managedSwapMarkerPath)) {
     runtime.warn(
       `No ${runtimeBranding(runtime).display}-managed swap marker found, skipping swap cleanup.`,
+    );
+    return;
+  }
+  if (otherGatewayEnvironmentsRemain(paths, runtime)) {
+    runtime.log(
+      "Other NemoClaw gateway-port environments remain; keeping the host-shared /swapfile.",
     );
     return;
   }
@@ -943,7 +977,14 @@ function executePlan(
       else
         for (const target of paths.openshellInstallPaths)
           removeFileWithOptionalSudo(target, runtime);
-      if (!removePathExcept(paths.nemoclawStateDir, preserveUnderStateDir, runtime)) ok = false;
+      if (
+        !removePathExcept(
+          paths.nemoclawStateDir,
+          [...preserveUnderStateDir, GATEWAYS_SUBDIR],
+          runtime,
+        )
+      )
+        ok = false;
       removePath(paths.gatewayLocalStateDir, runtime);
       removePath(paths.openshellConfigDir, runtime);
       removePath(paths.nemoclawConfigDir, runtime);
@@ -980,7 +1021,7 @@ export function runUninstallPlan(
   const runtime = buildRuntime(deps);
   const { paths, plan } = buildRunPlan(options, { ...deps, env: runtime.env });
   printBanner(runtime);
-  if (!confirm(options, runtime)) return { exitCode: 0, plan };
+  if (!confirm(options, runtime, paths)) return { exitCode: 0, plan };
   const preserveUnderStateDir = resolvePreserveSet(paths, options, runtime);
   const { ok } = executePlan(plan, paths, options, runtime, preserveUnderStateDir);
   if (ok) {

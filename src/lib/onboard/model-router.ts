@@ -15,6 +15,7 @@ import { ROOT, run, runCapture } from "../runner";
 import { hashCredential } from "../security/credential-hash";
 import type { Session } from "../state/onboard-session";
 import * as onboardSession from "../state/onboard-session";
+import { nemoclawStateRoot } from "../state/state-root";
 import { buildSubprocessEnv } from "../subprocess-env";
 import { hydrateCredentialEnv } from "./credential-env";
 import {
@@ -40,7 +41,7 @@ export {
 const ROUTER_HEALTH_RETRIES = 15;
 const ROUTER_HEALTH_INTERVAL_MS = 2000;
 const MODEL_ROUTER_RELATIVE_DIR = path.join("nemoclaw-blueprint", "router", "llm-router");
-const MODEL_ROUTER_VENV_DIR = path.join(os.homedir(), ".nemoclaw", "model-router-venv");
+const MODEL_ROUTER_VENV_DIR = path.join(nemoclawStateRoot(os.homedir()), "model-router-venv");
 export const DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV = "NVIDIA_INFERENCE_API_KEY";
 
 export type BlueprintRouterConfig = {
@@ -224,7 +225,7 @@ export async function startModelRouter(
     blueprintDir,
     routerCfg.pool_config_path || "router/pool-config.yaml",
   );
-  const stateDir = path.join(deps.homeDir, ".nemoclaw", "state");
+  const stateDir = path.join(nemoclawStateRoot(deps.homeDir), "state");
   const litellmConfigPath = path.join(stateDir, "litellm-proxy.yaml");
 
   deps.mkdirSync(stateDir);

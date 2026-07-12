@@ -17,6 +17,7 @@ import { isErrnoException } from "../core/errno";
 import { createPromptActivityCleanup } from "../core/prompt-activity";
 import { listMessagingCredentialMetadata } from "../messaging/channels";
 import { rejectSymlinksOnPath } from "../state/config-io";
+import { nemoclawStateRoot } from "../state/state-root";
 
 const UNSAFE_HOME_PATHS = new Set(["/tmp", "/var/tmp", "/dev/shm", "/"]);
 
@@ -127,10 +128,10 @@ export function getCredsDir(): string {
   const home = resolveHomeDir();
   if (_cachedHome !== home) {
     _cachedHome = home;
-    _credsDir = path.join(home, ".nemoclaw");
+    _credsDir = nemoclawStateRoot(home);
     _legacyCredsFile = null;
   }
-  return _credsDir || path.join(home, ".nemoclaw");
+  return _credsDir || nemoclawStateRoot(home);
 }
 
 /**

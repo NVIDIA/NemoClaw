@@ -15,6 +15,7 @@ import {
   dockerStart,
   dockerStop,
 } from "../adapters/docker";
+import { nemoclawStateRoot } from "../state/state-root";
 import { createDockerGpuDiagnosticRedactor } from "./docker-gpu-diagnostic-redaction";
 import {
   reconcileSupervisorReconnect,
@@ -1814,8 +1815,7 @@ export function collectDockerGpuPatchDiagnostics(
   const d = depsWithDefaults(deps);
   const now = d.now();
   const dir = path.join(
-    d.homedir(),
-    ".nemoclaw",
+    nemoclawStateRoot(d.homedir()),
     "onboard-failures",
     `${timestampForPath(now)}-${sanitizePathPart(sandboxName)}-docker-gpu-patch`,
   );

@@ -18,6 +18,7 @@ import { OLLAMA_PORT, OLLAMA_PROXY_PORT, VLLM_PORT } from "../core/ports";
 import { sleepSeconds } from "../core/wait";
 import { containerCanReachHostLoopback, isWsl } from "../platform";
 import { type CaptureResult, runCapture, runCaptureEx, shellQuote } from "../runner";
+import { nemoclawStateRoot } from "../state/state-root";
 import { buildSubprocessEnv } from "../subprocess-env";
 import { detectNvidiaPlatform } from "./nim";
 import {
@@ -244,7 +245,7 @@ export interface LocalProviderHealthProbeOptions {
 }
 
 function defaultLoadOllamaProxyToken(): string | null {
-  const tokenPath = nodePath.join(os.homedir(), ".nemoclaw", "ollama-proxy-token");
+  const tokenPath = nodePath.join(nemoclawStateRoot(os.homedir()), "ollama-proxy-token");
   try {
     if (fs.existsSync(tokenPath)) {
       const token = fs.readFileSync(tokenPath, "utf-8").trim();

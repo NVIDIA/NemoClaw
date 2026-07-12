@@ -5,6 +5,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { nemoclawStateRoot } from "../state/state-root";
+
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 const MAX_RELEVANT_LOG_LINES = 120;
@@ -153,8 +155,7 @@ export function collectSandboxCreateFailureDiagnostics(
   const homeDir = options.homeDir ?? os.homedir();
   const now = options.now ?? new Date();
   const dir = path.join(
-    homeDir,
-    ".nemoclaw",
+    nemoclawStateRoot(homeDir),
     "onboard-failures",
     `${timestampForPath(now)}-${sanitizePathPart(sandboxName)}`,
   );

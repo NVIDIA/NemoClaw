@@ -308,6 +308,7 @@ NemoClaw keeps non-secret operator-facing state on the host rather than inside t
 | Path | Purpose |
 |---|---|
 | `~/.nemoclaw/sandboxes.json` | Registered sandbox metadata, including the default sandbox selection. |
+| `~/.nemoclaw/gateways/<port>/` | Segregated host state root (its own registry, credentials, and snapshots) for a non-default `NEMOCLAW_GATEWAY_PORT`. The default gateway port uses the top-level `~/.nemoclaw/` location, so existing single-gateway hosts are unchanged. |
 <AgentOnly variant="openclaw">
 | `~/.openclaw/openclaw.json` | Host OpenClaw configuration that NemoClaw snapshots or restores during migration flows. |
 </AgentOnly>

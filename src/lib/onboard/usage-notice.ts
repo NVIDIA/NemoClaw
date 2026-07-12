@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import noticeConfig from "../../../bin/lib/usage-notice.json";
+import { nemoclawStateRoot } from "../state/state-root";
 
 export const NOTICE_ACCEPT_FLAG_NAME = "yes-i-accept-third-party-software";
 export const NOTICE_ACCEPT_FLAG = `--${NOTICE_ACCEPT_FLAG_NAME}`;
@@ -52,7 +53,7 @@ function parseJson<T>(text: string): T {
 }
 
 export function getUsageNoticeStateFile(): string {
-  return path.join(process.env.HOME || os.homedir(), ".nemoclaw", "usage-notice.json");
+  return path.join(nemoclawStateRoot(process.env.HOME || os.homedir()), "usage-notice.json");
 }
 
 export function loadUsageNoticeConfig(): NoticeConfig {

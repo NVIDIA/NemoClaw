@@ -3,6 +3,8 @@
 
 import path from "node:path";
 
+import { nemoclawStateRoot } from "../../state/state-root";
+
 export const DEFAULT_GATEWAY_NAME = "nemoclaw";
 export const NEMOCLAW_PROVIDERS = [
   "nvidia-nim",
@@ -68,7 +70,7 @@ export function defaultUninstallPaths(options: UninstallPathOptions): UninstallP
       binName,
       path: path.join(options.home, ".local", "bin", binName),
     })),
-    nemoclawStateDir: path.join(options.home, ".nemoclaw"),
+    nemoclawStateDir: nemoclawStateRoot(options.home),
     gatewayLocalStateDir: path.join(options.home, ".local", "state", "nemoclaw"),
     openshellConfigDir: path.join(options.home, ".config", "openshell"),
     openshellInstallPaths: openshellInstallPathsForBinDirs(["/usr/local/bin", xdgBinHome]),
