@@ -104,6 +104,7 @@ Start from a version-matched source checkout and append one final browser layer 
     FROM nemoclaw-runtime AS playwright-runtime
 
     ARG NEMOCLAW_TOOL_DISCLOSURE=progressive
+    ARG LIBNSS3_TOOLS_VERSION=2:3.110-1+deb13u3
     ARG PLAYWRIGHT_VERSION=1.61.0
     ENV NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE} \
         PLAYWRIGHT_BROWSERS_PATH=/usr/local/lib/ms-playwright
@@ -113,7 +114,8 @@ Start from a version-matched source checkout and append one final browser layer 
           "playwright==${PLAYWRIGHT_VERSION}" \
         && python3 -m playwright install --with-deps chromium \
         && apt-get update \
-        && apt-get install -y --no-install-recommends libnss3-tools \
+        && apt-get install -y --no-install-recommends \
+          "libnss3-tools=${LIBNSS3_TOOLS_VERSION}" \
         && rm -rf /var/lib/apt/lists/* \
         && chmod -R a+rX "${PLAYWRIGHT_BROWSERS_PATH}"
 
@@ -122,7 +124,8 @@ Start from a version-matched source checkout and append one final browser layer 
     ```
 
     The pinned Playwright package installs its matching Chromium and FFmpeg revisions under `PLAYWRIGHT_BROWSERS_PATH`.
-    The `libnss3-tools` package supplies `certutil`, which the script below uses to trust the OpenShell proxy CA without disabling certificate validation.
+    The version-matched `libnss3-tools` package supplies `certutil`, which the script below uses to trust the OpenShell proxy CA without disabling certificate validation.
+    Update its pin when changing to a release whose base image uses a different Debian package set.
   </Step>
 
   <Step title="Onboard from the custom Dockerfile">
