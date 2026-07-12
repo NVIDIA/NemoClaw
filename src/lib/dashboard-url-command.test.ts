@@ -76,6 +76,7 @@ describe("dashboard-url command helpers", () => {
       {
         fetchToken: () => "secret-token",
         getSandbox: () => ({ agent: null, dashboardPort: 18789 }),
+        env: {},
         log: sinks.log,
         error: sinks.error,
       },

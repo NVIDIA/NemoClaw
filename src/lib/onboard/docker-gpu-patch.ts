@@ -12,6 +12,7 @@ import {
   dockerRm,
   dockerRun,
   dockerRunDetached,
+  dockerStart,
   dockerStop,
 } from "../adapters/docker";
 import { createDockerGpuDiagnosticRedactor } from "./docker-gpu-diagnostic-redaction";
@@ -27,6 +28,7 @@ import {
   getDockerGpuSupervisorReconnectTimeoutSecs,
   waitForOpenShellSupervisorReconnect,
 } from "./docker-gpu-supervisor-reconnect";
+import { openshellSandboxCommandEnvValue } from "./docker-startup-command-env";
 
 export type { DockerGpuSupervisorReconnectDeps };
 export {
@@ -57,6 +59,7 @@ type DockerRunResult = {
   status?: number | null;
   stdout?: string | Buffer | null;
   stderr?: string | Buffer | null;
+  error?: Error | null;
 };
 
 type DockerRunOptions = Record<string, unknown>;
@@ -104,7 +107,7 @@ export type DockerGpuPatchDeps = {
   errorPhaseDebouncePolls?: number;
 };
 
-export type DockerGpuPatchModeKind = "gpus" | "nvidia-runtime" | "cdi";
+export type DockerGpuPatchModeKind = "gpus" | "nvidia-runtime" | "cdi" | "startup-command";
 export type DockerGpuPatchBackend = "generic" | "jetson";
 
 export type DockerGpuPatchMode = {
@@ -146,6 +149,7 @@ export type DockerGpuPatchResult = {
 };
 
 export type DockerGpuCloneRunOptions = {
+  image?: string | null;
   networkMode?: string | null;
   openshellEndpoint?: string | null;
   sandboxFallbackDns?: string | null;
@@ -215,6 +219,7 @@ export type DockerGpuPatchFailureClassification = {
 
 export type DockerContainerInspect = {
   Id?: string;
+  Image?: string;
   Name?: string;
   Config?: {
     Image?: string;
@@ -278,6 +283,7 @@ function depsWithDefaults(
     | "dockerRunDetached"
     | "dockerRename"
     | "dockerRm"
+    | "dockerStart"
     | "dockerStop"
     | "dockerLogs"
     | "sleep"
@@ -294,6 +300,7 @@ function depsWithDefaults(
     dockerRunDetached,
     dockerRename,
     dockerRm,
+    dockerStart,
     dockerStop,
     dockerLogs,
     sleep: (seconds: number) => {
@@ -365,11 +372,13 @@ export function detectTegraDeviceGroupGids(
 
 function resultText(result: DockerRunResult | null | undefined): string {
   if (!result) return "";
-  return `${String(result.stderr || "")} ${String(result.stdout || "")}`.trim();
+  return `${String(result.stderr || "")} ${String(result.stdout || "")} ${String(
+    result.error?.message || "",
+  )}`.trim();
 }
 
 function isZeroStatus(result: DockerRunResult | null | undefined): boolean {
-  return Number(result?.status ?? 0) === 0;
+  return result?.status === 0;
 }
 
 function sanitizePathPart(value: string): string {
@@ -408,19 +417,6 @@ function envValue(env: string[] | null | undefined, key: string): string | null 
 function replaceEnvValue(entry: string, key: string, value: string | null | undefined): string {
   if (!value || envKey(entry) !== key) return entry;
   return `${key}=${value}`;
-}
-
-function openshellSandboxCommandEnvValue(
-  command: readonly string[] | null | undefined,
-): string | null {
-  const parts = (command || []).map((part) => String(part));
-  if (parts.length === 0) return null;
-  if (parts.some((part) => part.length === 0 || /[\s\u0085]/u.test(part))) {
-    throw new Error(
-      "OpenShell sandbox startup command tokens cannot be empty or contain whitespace.",
-    );
-  }
-  return parts.join(" ");
 }
 
 function dockerGpuHostEndpointFromOpenShellEndpoint(endpoint: string): string | null {
@@ -473,6 +469,14 @@ export function buildDockerGpuMode(
   device?: string | null,
   options: { backend?: DockerGpuPatchBackend } = {},
 ): DockerGpuPatchMode {
+  if (kind === "startup-command") {
+    return {
+      kind,
+      label: "persistent sandbox startup command",
+      device: "",
+      args: [],
+    };
+  }
   const dockerDevice = normalizeGpuDeviceForDocker(device);
   if (kind === "gpus") {
     const gpuValue = dockerDevice === "all" ? "all" : `device=${dockerDevice}`;
@@ -666,10 +670,11 @@ export function buildDockerGpuCloneRunArgs(
 ): string[] {
   const config = inspect.Config || {};
   const host = inspect.HostConfig || {};
-  const image = String(config.Image || "").trim();
+  const image = String(options.image || config.Image || "").trim();
   if (!image) throw new Error("Docker inspect output did not include Config.Image.");
 
   const args: string[] = ["--name", dockerContainerName(inspect), ...mode.args];
+  const gpuAugment = mode.kind !== "startup-command";
 
   pushStringFlag(args, "--hostname", config.Hostname);
   pushStringFlag(args, "--user", config.User);
@@ -681,7 +686,9 @@ export function buildDockerGpuCloneRunArgs(
     options.openshellSandboxCommand,
   );
   let sawOpenShellSandboxCommandEnv = false;
-  for (const env of stringArray(config.Env).filter((entry) => !GPU_ENV_KEYS.has(envKey(entry)))) {
+  for (const env of stringArray(config.Env).filter(
+    (entry) => !gpuAugment || !GPU_ENV_KEYS.has(envKey(entry)),
+  )) {
     const key = envKey(env);
     if (key === OPENSHELL_SANDBOX_COMMAND_ENV && openshellSandboxCommandEnv) {
       sawOpenShellSandboxCommandEnv = true;
@@ -724,7 +731,7 @@ export function buildDockerGpuCloneRunArgs(
   // GPU-capable container self-sufficient for the operations the GPU proof
   // checks, regardless of what the non-GPU baseline happened to set (#3511).
   const capAdd = new Set(stringArray(host.CapAdd));
-  capAdd.add("SYS_PTRACE");
+  if (gpuAugment) capAdd.add("SYS_PTRACE");
   for (const cap of capAdd) args.push("--cap-add", cap);
   for (const cap of stringArray(host.CapDrop)) args.push("--cap-drop", cap);
   const securityOpt = new Set(stringArray(host.SecurityOpt));
@@ -733,7 +740,7 @@ export function buildDockerGpuCloneRunArgs(
   // entries, and a baseline that explicitly chose `apparmor=docker-default`
   // (or similar) should be respected — we are scoped to the GPU recreate
   // path, not to overriding deliberate operator choices.
-  if (![...securityOpt].some((entry) => entry.startsWith("apparmor"))) {
+  if (gpuAugment && ![...securityOpt].some((entry) => entry.startsWith("apparmor"))) {
     securityOpt.add("apparmor=unconfined");
   }
   for (const opt of securityOpt) args.push("--security-opt", opt);
@@ -819,6 +826,7 @@ export function findOpenShellDockerSandboxContainerIds(
     [
       "ps",
       "-a",
+      "--no-trunc",
       "--filter",
       `label=${OPENSHELL_MANAGED_BY_LABEL}=${OPENSHELL_MANAGED_BY_VALUE}`,
       "--filter",
@@ -1048,15 +1056,17 @@ export function getDockerGpuPatchFailureContext(
   return null;
 }
 
-export function recreateOpenShellDockerSandboxWithGpu(
+export function recreateOpenShellDockerSandboxContainer(
   options: {
     sandboxName: string;
     gpuDevice?: string | null;
     timeoutSecs?: number;
     waitForSupervisor?: boolean;
     openshellSandboxCommand?: readonly string[] | null;
+    expectedOldContainerId?: string | null;
     backend?: DockerGpuPatchBackend;
     dockerDesktopWsl?: boolean;
+    modeOverride?: DockerGpuPatchMode;
   },
   deps: DockerGpuPatchDeps = {},
 ): DockerGpuPatchResult {
@@ -1073,21 +1083,49 @@ export function recreateOpenShellDockerSandboxWithGpu(
         `Could not find OpenShell Docker container for sandbox '${options.sandboxName}'.`,
       );
     }
+    if (
+      options.expectedOldContainerId != null &&
+      (containerIds.length !== 1 || oldContainerId !== options.expectedOldContainerId)
+    ) {
+      throw new Error(
+        `OpenShell Docker container identity changed for sandbox '${options.sandboxName}'; ` +
+          "refusing startup-command recreation because the observed container differs from the pinned identity.",
+      );
+    }
+    if (options.openshellSandboxCommand != null) {
+      // Validate the persisted command before image selection so malformed
+      // tokens remain the first fail-closed result and no container mutation
+      // can begin regardless of inspect metadata quality.
+      openshellSandboxCommandEnvValue(options.openshellSandboxCommand);
+    }
     context.oldContainerId = oldContainerId;
 
     const inspect = inspectDockerContainer(oldContainerId, deps);
-    const image = String(inspect.Config?.Image || "").trim();
-    if (!image) throw new Error("OpenShell sandbox container inspect did not include an image.");
+    const configuredImage = String(inspect.Config?.Image || "").trim();
+    if (!configuredImage) {
+      throw new Error("OpenShell sandbox container inspect did not include an image.");
+    }
+    const immutableImage = String(inspect.Image || "").trim();
+    const requiresImmutableImage = options.openshellSandboxCommand != null;
+    if (requiresImmutableImage && !/^sha256:[0-9a-f]{64}$/i.test(immutableImage)) {
+      throw new Error(
+        "OpenShell sandbox container inspect did not include a valid immutable image ID; " +
+          "refusing startup-command recreation from a mutable image tag.",
+      );
+    }
+    const image = requiresImmutableImage ? immutableImage : configuredImage;
 
-    const selection = selectDockerGpuPatchMode(
-      {
-        image,
-        device: options.gpuDevice,
-        backend: options.backend,
-        dockerDesktopWsl: options.dockerDesktopWsl,
-      },
-      deps,
-    );
+    const selection = options.modeOverride
+      ? { mode: options.modeOverride, attempts: [] }
+      : selectDockerGpuPatchMode(
+          {
+            image,
+            device: options.gpuDevice,
+            backend: options.backend,
+            dockerDesktopWsl: options.dockerDesktopWsl,
+          },
+          deps,
+        );
     context.modeAttempts = selection.attempts;
     context.selectedMode = selection.mode;
     if (!selection.mode) {
@@ -1103,6 +1141,7 @@ export function recreateOpenShellDockerSandboxWithGpu(
     context.backupContainerName = backupContainerName;
 
     const cloneOptions = buildDockerGpuCloneRunOptions(inspect);
+    cloneOptions.image = image;
     cloneOptions.openshellSandboxCommand = options.openshellSandboxCommand ?? null;
     const sandboxFallbackDns = d.detectSandboxFallbackDns();
     if (sandboxFallbackDns) cloneOptions.sandboxFallbackDns = sandboxFallbackDns;
@@ -1111,7 +1150,7 @@ export function recreateOpenShellDockerSandboxWithGpu(
     // CUDA fails with `NvRmMemInitNvmap ... Permission denied` and `cuInit(0)`
     // returns 999 even though the devices are mounted (#4231). Grant the
     // sandbox user the owning group(s) so CUDA can initialize.
-    if (options.backend === "jetson") {
+    if (selection.mode.kind !== "startup-command" && options.backend === "jetson") {
       const tegraGroupGids = d.detectTegraDeviceGroupGids();
       if (tegraGroupGids.length > 0) {
         cloneOptions.extraGroupGids = tegraGroupGids;
@@ -1131,19 +1170,48 @@ export function recreateOpenShellDockerSandboxWithGpu(
     // renaming the user's working sandbox.
     const cloneArgs = buildDockerGpuCloneRunArgs(inspect, selection.mode, cloneOptions);
 
-    d.dockerStop(oldContainerId, {
+    const containerMutationOptions = {
       ignoreError: true,
       suppressOutput: true,
       timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
-    });
-    const renameResult = d.dockerRename(oldContainerId, backupContainerName, {
-      ignoreError: true,
-      suppressOutput: true,
-      timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
-    });
-    if (!isZeroStatus(renameResult)) {
+    };
+    const stopResult = d.dockerStop(oldContainerId, containerMutationOptions);
+    if (!isZeroStatus(stopResult)) {
+      context.rolledBack = isZeroStatus(d.dockerStart(oldContainerId, containerMutationOptions));
       throw new Error(
-        `Could not move original sandbox container aside: ${resultText(renameResult)}`,
+        `Could not stop original sandbox container: ${resultText(stopResult)}; ${
+          context.rolledBack
+            ? "original sandbox container confirmed running"
+            : "restart failed; original sandbox container may be stopped"
+        }`,
+      );
+    }
+    const renameResult = d.dockerRename(
+      oldContainerId,
+      backupContainerName,
+      containerMutationOptions,
+    );
+    if (!isZeroStatus(renameResult)) {
+      // A timed-out rename can still have reached the daemon. Normalize both
+      // possible outcomes toward the original name, then prove by container ID
+      // that the original is named correctly and running before calling the
+      // recovery successful.
+      d.dockerRename(backupContainerName, originalName, containerMutationOptions);
+      const restarted = isZeroStatus(d.dockerStart(oldContainerId, containerMutationOptions));
+      let originalNameRestored = false;
+      try {
+        originalNameRestored =
+          dockerContainerName(inspectDockerContainer(oldContainerId, deps)) === originalName;
+      } catch {
+        originalNameRestored = false;
+      }
+      context.rolledBack = restarted && originalNameRestored;
+      throw new Error(
+        `Could not move original sandbox container aside: ${resultText(renameResult)}; ${
+          context.rolledBack
+            ? "original sandbox container restored"
+            : "restore failed; original sandbox container state is uncertain"
+        }`,
       );
     }
 
@@ -1163,8 +1231,12 @@ export function recreateOpenShellDockerSandboxWithGpu(
         { newContainerId: originalName, backupContainerName, originalName },
         deps,
       );
+      const containerDescription =
+        selection.mode.kind === "startup-command"
+          ? "recreated sandbox container"
+          : "GPU-enabled sandbox container";
       throw new Error(
-        `Could not start GPU-enabled sandbox container: ${resultText(runResult)}; ${
+        `Could not start ${containerDescription}: ${resultText(runResult)}; ${
           context.rolledBack
             ? "pre-patch sandbox restored"
             : "rollback failed; pre-patch sandbox was NOT restored"
@@ -1182,7 +1254,25 @@ export function recreateOpenShellDockerSandboxWithGpu(
         deps,
       );
     if (!newContainerId) {
-      throw new Error("GPU-enabled sandbox container started, but Docker did not report its ID.");
+      context.rolledBack = rollbackDockerGpuPatchOnRecreateFailure(
+        // Docker accepted `run --name originalName`, but neither stdout nor
+        // labeled discovery identified the replacement. Use the deterministic
+        // requested name to remove any partial replacement before restoring
+        // the pinned backup.
+        { newContainerId: originalName, backupContainerName, originalName },
+        deps,
+      );
+      const containerDescription =
+        selection.mode.kind === "startup-command"
+          ? "Recreated sandbox container"
+          : "GPU-enabled sandbox container";
+      throw new Error(
+        `${containerDescription} started, but Docker did not report its ID; ${
+          context.rolledBack
+            ? "pre-patch sandbox restored"
+            : "rollback failed; pre-patch sandbox was NOT restored"
+        }`,
+      );
     }
     context.newContainerId = newContainerId;
 
@@ -1223,6 +1313,11 @@ export function recreateOpenShellDockerSandboxWithGpu(
     throw decoratePatchError(err, context);
   }
 }
+
+export const recreateOpenShellDockerSandboxWithGpu: (
+  options: Omit<Parameters<typeof recreateOpenShellDockerSandboxContainer>[0], "modeOverride">,
+  deps?: DockerGpuPatchDeps,
+) => DockerGpuPatchResult = recreateOpenShellDockerSandboxContainer;
 
 export function dockerGpuPatchCleanupCommands(sandboxName: string): string[] {
   return [`openshell sandbox delete ${JSON.stringify(sandboxName)}`];
@@ -1319,10 +1414,14 @@ export function printDockerGpuPatchFailureAndExit(
     { error, context, selectedMode, snapshot, classification },
     inspectDeps,
   );
+  const errorMessage =
+    error instanceof Error && error.message
+      ? createDockerGpuDiagnosticRedactor().redactText(error.message)
+      : "";
   console.error("");
   console.error("  Docker GPU patch failed.");
-  if (error instanceof Error && error.message) {
-    console.error(`  ${error.message}`);
+  if (errorMessage) {
+    console.error(`  ${errorMessage}`);
   }
   printDockerGpuPatchClassificationLines(classification);
   if (diagnostics) {

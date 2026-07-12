@@ -12,6 +12,10 @@ import {
   type DockerDriverGatewayPortListenerOptions,
   type DockerDriverGatewayPortListenerScan,
 } from "./docker-driver-gateway-port-listener";
+import {
+  getDockerDriverGatewayTargetIdentityDrift,
+  readDockerDriverGatewayProcessIdentity,
+} from "./docker-driver-gateway-process-identity";
 import * as dockerDriverGatewayRuntimeMarker from "./docker-driver-gateway-runtime-marker";
 import * as gatewayBinding from "./gateway-binding";
 import {
@@ -337,6 +341,13 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     gatewayBin?: string | null,
     platform: NodeJS.Platform = process.platform,
   ): DockerDriverGatewayRuntimeDrift | null {
+    const identityDrift = getDockerDriverGatewayTargetIdentityDrift({
+      gatewayBin,
+      gatewayPort: currentGatewayPort(),
+      identity: readDockerDriverGatewayProcessIdentity(pid, captureProcessArgs),
+      normalizeGatewayExecutablePath,
+    });
+    if (identityDrift) return identityDrift;
     if (platform === "darwin" && desiredEnv.OPENSHELL_DRIVERS === "docker") {
       const markerDrift =
         dockerDriverGatewayRuntimeMarker.getDockerDriverGatewayRuntimeMarkerDriftForStateDir(
@@ -382,18 +393,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     gatewayBin?: string | null,
     opts: { requireDockerDriverEnv?: boolean } = {},
   ): boolean {
-    const procCmdlinePath = `/proc/${pid}/cmdline`;
-    let identity = "";
-    try {
-      if (fs.existsSync(procCmdlinePath)) {
-        identity = fs.readFileSync(procCmdlinePath, "utf-8").replace(/\0/g, " ").trim();
-      }
-    } catch {
-      identity = "";
-    }
-    if (!identity) {
-      identity = captureProcessArgs(pid);
-    }
+    const identity = readDockerDriverGatewayProcessIdentity(pid, captureProcessArgs);
     if (!identity) return false;
     const matchesGatewayBinary = processIdentityMatchesGatewayBinary(identity, gatewayBin);
     if (!matchesGatewayBinary) return false;

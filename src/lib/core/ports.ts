@@ -32,6 +32,11 @@ export interface GatewayPortValidationOptions {
   ollamaPort: number;
   ollamaProxyPort: number;
   bedrockRuntimeAdapterPort: number;
+  openrouterRuntimeAdapterPort: number;
+}
+
+export interface RuntimeAdapterPortValidationOptions extends GatewayPortValidationOptions {
+  gatewayPort: number;
 }
 
 /**
@@ -61,11 +66,73 @@ export const BEDROCK_RUNTIME_ADAPTER_PORT = parsePort(
   "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT",
   11436,
 );
+/** OpenRouter header-injection adapter port (default 11437, override via NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT). */
+export const OPENROUTER_RUNTIME_ADAPTER_PORT = parsePort(
+  "NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT",
+  11437,
+);
 
 export function validateGatewayPort(
   envVar: string,
   port: number,
   options: GatewayPortValidationOptions,
+): void {
+  if (port >= options.dashboardRangeStart && port <= options.dashboardRangeEnd) {
+    throw new Error(
+      `Invalid port: ${envVar}="${port}" — must not overlap the ${options.dashboardRangeStart}-${options.dashboardRangeEnd} dashboard port range`,
+    );
+  }
+
+  const reservedDefaults = [
+    { label: "vLLM / NIM inference", port: 8000 },
+    { label: "Ollama inference", port: 11434 },
+    { label: "Ollama auth proxy", port: 11435 },
+    { label: "Bedrock Runtime adapter", port: 11436 },
+    { label: "OpenRouter Runtime adapter", port: 11437 },
+  ];
+  const reservedDefault = reservedDefaults.find((entry) => entry.port === port);
+  if (reservedDefault) {
+    throw new Error(
+      `Invalid port: ${envVar}="${port}" — must not overlap the ${reservedDefault.label} default port (${reservedDefault.port})`,
+    );
+  }
+
+  const conflicts = [
+    { envVar: "NEMOCLAW_DASHBOARD_PORT", port: options.dashboardPort },
+    { envVar: "NEMOCLAW_VLLM_PORT", port: options.vllmPort },
+    { envVar: "NEMOCLAW_OLLAMA_PORT", port: options.ollamaPort },
+    { envVar: "NEMOCLAW_OLLAMA_PROXY_PORT", port: options.ollamaProxyPort },
+    {
+      envVar: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT",
+      port: options.bedrockRuntimeAdapterPort,
+    },
+    {
+      envVar: "NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT",
+      port: options.openrouterRuntimeAdapterPort,
+    },
+  ];
+  const conflict = conflicts.find((entry) => entry.port === port);
+  if (conflict) {
+    throw new Error(
+      `Invalid port: ${envVar}="${port}" — conflicts with ${conflict.envVar} (${conflict.port})`,
+    );
+  }
+}
+
+export function parseGatewayPort(
+  envVar: string,
+  fallback: number,
+  options: GatewayPortValidationOptions,
+): number {
+  const port = parsePort(envVar, fallback);
+  validateGatewayPort(envVar, port, options);
+  return port;
+}
+
+export function validateOpenRouterRuntimeAdapterPort(
+  envVar: string,
+  port: number,
+  options: RuntimeAdapterPortValidationOptions,
 ): void {
   if (port >= options.dashboardRangeStart && port <= options.dashboardRangeEnd) {
     throw new Error(
@@ -87,6 +154,7 @@ export function validateGatewayPort(
   }
 
   const conflicts = [
+    { envVar: "NEMOCLAW_GATEWAY_PORT", port: options.gatewayPort },
     { envVar: "NEMOCLAW_DASHBOARD_PORT", port: options.dashboardPort },
     { envVar: "NEMOCLAW_VLLM_PORT", port: options.vllmPort },
     { envVar: "NEMOCLAW_OLLAMA_PORT", port: options.ollamaPort },
@@ -104,16 +172,6 @@ export function validateGatewayPort(
   }
 }
 
-export function parseGatewayPort(
-  envVar: string,
-  fallback: number,
-  options: GatewayPortValidationOptions,
-): number {
-  const port = parsePort(envVar, fallback);
-  validateGatewayPort(envVar, port, options);
-  return port;
-}
-
 /** Default OpenShell gateway port when NEMOCLAW_GATEWAY_PORT is unset. */
 export const DEFAULT_GATEWAY_PORT = 8080;
 /** OpenShell gateway port (default 8080, override via NEMOCLAW_GATEWAY_PORT). */
@@ -125,4 +183,5 @@ export const GATEWAY_PORT = parseGatewayPort("NEMOCLAW_GATEWAY_PORT", DEFAULT_GA
   ollamaPort: OLLAMA_PORT,
   ollamaProxyPort: OLLAMA_PROXY_PORT,
   bedrockRuntimeAdapterPort: BEDROCK_RUNTIME_ADAPTER_PORT,
+  openrouterRuntimeAdapterPort: OPENROUTER_RUNTIME_ADAPTER_PORT,
 });

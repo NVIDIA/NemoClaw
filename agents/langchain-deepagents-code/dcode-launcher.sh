@@ -14,6 +14,8 @@ unset _nemoclaw_auto_approval_env
 readonly MANAGED_DCODE_WRAPPER="/usr/local/lib/nemoclaw/dcode-wrapper.sh"
 readonly MANAGED_EXEC_LAUNCHER="/usr/local/lib/nemoclaw/dcode-managed-exec"
 readonly MANAGED_OBSERVABILITY_MARKER="/sandbox/.deepagents/.nemoclaw-observability-enabled"
+readonly MANAGED_FETCH_CA_BUNDLE_FILE="/etc/openshell-tls/ca-bundle.pem"
+readonly MANAGED_SESSION_SUPERVISOR="/usr/local/lib/nemoclaw/dcode-session-supervisor.py"
 export HOME=/sandbox
 export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 
@@ -43,9 +45,12 @@ unset _NEMOCLAW_SANDBOX_RLIMITS
 # entrypoint's environment, so an opted-in direct dcode exec can lose tracing.
 # Source boundary: start.sh materializes only the credential-free enable bit;
 # this launcher recovers it only from a regular, non-symlink marker.
-# Source-fix constraint: NemoClaw cannot make OpenShell preserve entrypoint env.
+# Source-fix constraint: NemoClaw cannot make OpenShell preserve entrypoint env,
+# and policy-only reloads clear /tmp without re-running the entrypoint. Keep the
+# reconstructable bit in the sandbox workspace so those reloads retain it.
 # Regression: the proxy-launcher tests cover exact values and unsafe file types.
-# Removal condition: OpenShell propagates the bit to every exec/login process.
+# Removal condition: OpenShell propagates the bit to every exec/login process
+# and preserves it across policy reloads or re-runs the entrypoint afterward.
 # The marker is convenience state, not an authorization boundary; the
 # host-selected network policy controls whether local OTLP egress exists.
 unset NEMOCLAW_OBSERVABILITY
@@ -97,10 +102,50 @@ read_managed_proxy_value() {
   printf '%s' "$value"
 }
 
+managed_fetch_ca_bundle_metadata() {
+  local file="$1"
+  local metadata
+  if metadata="$(stat -c '%u:%a:%s' "$file" 2>/dev/null)"; then
+    printf '%s' "$metadata"
+  else
+    stat -f '%u:%Lp:%z' "$file" 2>/dev/null
+  fi
+}
+
+validate_managed_fetch_ca_bundle() {
+  local file="$MANAGED_FETCH_CA_BUNDLE_FILE"
+  local metadata owner mode size extra
+  if [ -L "$file" ]; then
+    printf '%s\n' 'Missing or unsafe managed fetch CA bundle file.' >&2
+    return 1
+  fi
+  [ -e "$file" ] || return 0
+  if [ ! -f "$file" ] || [ ! -r "$file" ]; then
+    printf '%s\n' 'Missing or unsafe managed fetch CA bundle file.' >&2
+    return 1
+  fi
+  metadata="$(managed_fetch_ca_bundle_metadata "$file")" || {
+    printf '%s\n' 'Cannot inspect managed fetch CA bundle file.' >&2
+    return 1
+  }
+  IFS=: read -r owner mode size extra <<<"$metadata"
+  if [ -n "${extra:-}" ] \
+    || [[ ! "$owner" =~ ^[0-9]+$ ]] \
+    || [[ ! "$mode" =~ ^[0-7]{3,4}$ ]] \
+    || [[ ! "$size" =~ ^[0-9]+$ ]] \
+    || [ "$owner" != "$MANAGED_PROXY_OWNER_UID" ] \
+    || [ "$size" -le 0 ] \
+    || (((8#$mode & 0022) != 0)); then
+    printf '%s\n' 'Unsafe ownership or mode on managed fetch CA bundle file.' >&2
+    return 1
+  fi
+}
+
 # Onboard validates the build args and the Dockerfile stores them in root-owned
 # files. Runtime env is untrusted and cannot override those image-baked values.
 PROXY_HOST="$(read_managed_proxy_value "$MANAGED_PROXY_HOST_FILE" "host")"
 PROXY_PORT="$(read_managed_proxy_value "$MANAGED_PROXY_PORT_FILE" "port")"
+validate_managed_fetch_ca_bundle
 unset NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT
 # Generic proxy fallbacks are outside the managed dcode contract and may carry
 # host credentials even after the scheme-specific proxy values are normalized.
@@ -159,4 +204,23 @@ if [ "$0" = "$MANAGED_EXEC_LAUNCHER" ]; then
   exec "$@"
 fi
 
-exec "$MANAGED_DCODE_WRAPPER" "$@"
+# Read-only managed identity commands never start DCode or LangGraph children.
+# Keep onboard's live-route validation on the established wrapper path while
+# supervising every command that can create a terminal-agent process tree.
+case "${1:-}" in
+  status | whoami | identity | --version | -v | -V) exec "$MANAGED_DCODE_WRAPPER" "$@" ;;
+esac
+
+# DCode's one-shot mode owns and cleans up its server lifecycle before exiting.
+# Keep that established automation path outside the interactive-session
+# supervisor; this also preserves the wrapper's exact parser diagnostics.
+_nemoclaw_dcode_args=("$@")
+for ((_nemoclaw_arg_index = 0; _nemoclaw_arg_index < ${#_nemoclaw_dcode_args[@]}; _nemoclaw_arg_index++)); do
+  _nemoclaw_arg="${_nemoclaw_dcode_args[_nemoclaw_arg_index]}"
+  case "$_nemoclaw_arg" in
+    -n | -n?* | --non-interactive | --non-interactive=*) exec "$MANAGED_DCODE_WRAPPER" "$@" ;;
+  esac
+done
+unset _nemoclaw_dcode_args _nemoclaw_arg_index _nemoclaw_arg
+
+exec /opt/venv/bin/python3 -I "$MANAGED_SESSION_SUPERVISOR" "$MANAGED_DCODE_WRAPPER" "$@"

@@ -50,6 +50,10 @@ Package-specific guides:
 | Run all tests for broad changes | `npm test` |
 | Render behavior-oriented test tree | `npm run test:spec` |
 | Run fast source tests | `npm run test:fast` |
+| Run tests affected by current changes | `npm run test:changed` |
+| Watch focused source tests | `npm run test:watch` |
+| Shuffle focused tests without coverage | `npm run test:shuffle` |
+| Diagnose async leaks or shutdown hangs | `npm run test:diagnose:leaks` |
 | Run integration tests | `npm run test:integration` |
 | Run package contracts | `npm run test:package` |
 | Run E2E support tests | `npx vitest run --project e2e-support` |
@@ -58,6 +62,7 @@ Package-specific guides:
 | Run repo-wide pre-commit and coverage checks | `npm run check` |
 | Reproduce `pre-commit`, `commit-msg`, and `pre-push` checks for the current diff | `npm run check:diff` |
 | Type-check CLI | `npm run typecheck:cli` |
+| Type-check plugin and plugin tests | `npm --prefix nemoclaw run typecheck` |
 | Auto-format | `npm run format` |
 | Build docs | `npm run docs` |
 | Serve docs locally | `npm run docs:live` |
@@ -93,6 +98,9 @@ When writing tests:
 - Plugin tests use TypeScript and are co-located with their source files
 - Import CLI source from ordinary tests. Put genuine compiled-artifact assertions under `test/package-contract/`.
 - Keep project globs disjoint; `npm run test:projects:check` derives membership from Vitest and rejects overlap.
+- Deterministic projects clear mock calls, restore `vi.spyOn`, and undo `vi.stubEnv` and `vi.stubGlobal` before each test. Create those spies and stubs in `beforeEach` or the test body unless a documented import-time stub must run before module evaluation. Restore direct environment or global mutations yourself, and reset mock implementations explicitly when needed. Live E2E and automatic `mockReset` are intentionally excluded.
+- Use `npm run test:changed` or `npm run test:watch` for focused CLI, plugin, and E2E-support feedback. Add only concrete opaque-input mappings to `test/helpers/vitest-watch-triggers.ts` when the import graph cannot see a YAML, Python, shell, generated, or workflow dependency.
+- Use `npm run test:shuffle -- --sequence.seed=<seed>` to replay a printed test-order seed. Use `npm run test:diagnose:leaks` for async-resource or shutdown-hang diagnostics; both commands keep coverage disabled, and leak diagnostics can accompany exit code 0 when assertions pass.
 - Write behavior-oriented titles, put local issue references in a final `(#1234)` suffix, and use `npm run test:spec` for the hierarchical specification view.
 - Mock external dependencies; don't call real NVIDIA APIs in unit tests
 - E2E tests run on ephemeral Brev cloud instances
@@ -143,7 +151,8 @@ For shell scripts use `#` comments. For Markdown use HTML comments.
 
 - Plugin code in `nemoclaw/src/` is linted and formatted by the root Biome config
 - CLI type-checking via `tsconfig.cli.json`
-- Plugin type-checking via `nemoclaw/tsconfig.json`
+- Plugin production and test type-checking via `npm --prefix nemoclaw run typecheck`, using
+  `nemoclaw/tsconfig.json` and `nemoclaw/tsconfig.test.json`
 
 ### Shell Scripts
 
@@ -153,7 +162,7 @@ For shell scripts use `#` comments. For Markdown use HTML comments.
 
 ### No External Project Links
 
-Do not add links to third-party code repositories, community collections, or unofficial resources. Links to official tool documentation (Node.js, Python, uv) are acceptable.
+Do not add links to third-party code repositories, community collections, or unofficial resources. Links to official tool documentation (Node.js and Python) are acceptable.
 
 ## Git Hooks (prek)
 
@@ -170,11 +179,21 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 ### Before Making Changes
 
 1. Read `CONTRIBUTING.md` for the full contributor guide
-2. Apply its engineering posture to every coding task: surface material assumptions and outcome-changing ambiguity, make the smallest issue-scoped change, prove observable success criteria, and for QA-escaped defects address both the product root cause and the detection gap
+2. Before coding, state what success looks like. Ask only when a choice changes behavior, security, data safety, or a supported contract. Then make the smallest change that works. For a QA-escaped defect, also add the test or diagnostic that should have caught it.
 3. For a first-time checkout, use `.agents/skills/nemoclaw-contributor-onboard/SKILL.md` or run `npm run dev:setup`
 4. Run `npm run dev:doctor` to verify the contributor environment without changing it
 5. Use `./scripts/dev-setup.sh --expose-cli` only with explicit approval for host-visible CLI exposure
 6. Run the tests targeted to the behavior you change once per relevant change set; rerun them after later edits or hook autofixes that can affect that behavior
+
+### Plain Language and Direct Design
+
+- Use existing repository vocabulary and name what a thing does.
+- Remove modifiers that do not distinguish a real current case.
+- Use one name for one concept across issues, code, workflows, checks, logs, tests, and docs.
+- Do not turn one case into a system of categories or a new abstraction.
+- Do not add configuration, fallback, migration, compatibility, or extension layers without a current requirement. Name the current consumer and the test that protects the contract.
+- Report conclusions and evidence, not an analysis transcript.
+- Stop exploring once the smallest safe solution is clear.
 
 ### Git and GitHub Access Failures
 

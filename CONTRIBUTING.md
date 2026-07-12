@@ -18,7 +18,7 @@ We welcome many types of contributions:
 | **Bug reports** | Confirmed bugs with reproduction steps — see [Before You Open an Issue](#before-you-open-an-issue) |
 | **Documentation fixes** | Typos, clarifications, and missing information in `docs/` |
 | **Tests** | New or improved test coverage in `test/` or `nemoclaw/test/` |
-| **Feature proposals** | Design-first proposals opened as issues before any implementation |
+| **Feature proposals** | Proposals that state the problem and desired behavior before implementation |
 | **Integrations** | Support for new inference backends, providers, or tools |
 | **Examples** | Worked usage examples added under `docs/` |
 
@@ -32,23 +32,41 @@ Before starting larger work:
 
 - Search open issues and pull requests to avoid duplicates.
 - Start a [GitHub Discussion](https://github.com/NVIDIA/NemoClaw/discussions) before writing code for significant changes.
-- Open an issue after the proposal has enough scope and design detail for maintainer review.
+- Open an issue after the problem, desired behavior, and current constraints are clear enough for maintainer review.
 - For questions, open a [GitHub Discussion](https://github.com/NVIDIA/NemoClaw/discussions) or comment on a related issue.
 
 Before editing, translate the request or issue into observable success criteria and define the intended change boundary.
-State assumptions only when they materially affect behavior, security, compatibility, or a public contract.
+State assumptions only when they materially affect behavior, security, data safety, or a supported contract.
 If reasonable interpretations would produce meaningfully different outcomes, record the alternatives and tradeoffs and get alignment before implementation; use established local patterns for routine, reversible details.
 
 Prefer the existing architecture and the smallest direct change that satisfies those criteria.
 Do not introduce speculative features, configuration, extension points, or abstractions for possible future cases.
 Add complexity only when the current requirement demonstrates that the simpler design is insufficient.
 
+## Plain Language and Direct Design
+
+Use the shortest familiar term that accurately names the behavior. Prefer words already used by
+users, the CLI, and nearby code. Every modifier must distinguish a real case in the current system;
+if you cannot answer "as opposed to what?", remove it. Use one name for one concept across issues,
+code, workflows, checks, logs, tests, and documentation.
+
+Names shape designs. Do not create states, types, modules, configuration, adapters, aliases,
+compatibility paths, or extension points merely to support a label or a possible future use. Add a
+layer only when a current requirement, supported contract, repeated current behavior, or demonstrated
+trust boundary makes the direct solution insufficient. When a current consumer requires a
+compatibility path, name that consumer and protect the contract with a test.
+
+Explain decisions and evidence, not the path taken to reach them. State the problem, the observable
+outcome, the smallest change, and how it was verified. Explore alternatives only when they would
+change behavior, security, data safety, or a supported contract. Once the smallest safe change is
+clear and testable, stop exploring and implement it.
+
 ## Before You Open an Issue
 
 Open an issue when you encounter one of the following situations.
 
 - A real bug that you confirmed and could not fix.
-- A feature proposal with a design — not a "please build this" request.
+- A feature proposal with a clear problem and desired behavior — not a "please build this" request.
 - Security vulnerabilities must follow [SECURITY.md](SECURITY.md) — **not** GitHub issues.
 
 Use [GitHub Discussions](https://github.com/NVIDIA/NemoClaw/discussions) for questions, design exploration, and larger feature proposals before implementation.
@@ -71,7 +89,6 @@ Install the following before you begin.
 - Node.js 22.16+ and npm 10+
 - Python 3.11+ (for documentation tooling)
 - Docker (running)
-- [uv](https://docs.astral.sh/uv/) (for Python dependency management — install with `curl -LsSf https://astral.sh/uv/install.sh | sh`, or `brew install uv` on macOS)
 - [hadolint](https://github.com/hadolint/hadolint) (Dockerfile linter — `brew install hadolint` on macOS)
 
 ## Getting Started
@@ -82,7 +99,7 @@ From the repository root, prepare the checkout with one command:
 ./scripts/dev-setup.sh
 ```
 
-The setup command installs repository-local dependencies, synchronizes the root Python environment, builds and type-checks the CLI and plugin, and installs prek hooks.
+The setup command installs repository-local dependencies, verifies the available Python interpreter, builds and type-checks the CLI and plugin, and installs prek hooks.
 It is safe to rerun and does not install host packages, change accounts or global Git configuration, accept licenses, manage credentials, or create a runtime sandbox.
 Use `./scripts/dev-setup.sh --repair` to explicitly rerun the same repository-local repairs.
 
@@ -129,11 +146,10 @@ Use these commands when troubleshooting an individual setup step:
 ```bash
 npm install --include=dev --ignore-scripts
 npm --prefix nemoclaw install --include=dev --ignore-scripts
-uv sync --python /path/to/python3.11-or-newer --no-python-downloads
 npm run build:cli
 npm --prefix nemoclaw run build
 npm run typecheck:cli
-./nemoclaw/node_modules/.bin/tsc --noEmit -p nemoclaw/tsconfig.json
+npm --prefix nemoclaw run typecheck
 ./node_modules/.bin/prek install
 ```
 
@@ -145,6 +161,7 @@ The TypeScript plugin lives in `nemoclaw/` and compiles with `tsc`:
 cd nemoclaw
 npm run build        # one-time compile
 npm run dev          # watch mode
+npm run typecheck    # type-check production and test sources without emitting
 ```
 
 The CLI (`bin/`, `scripts/`) is type-checked separately:
@@ -180,9 +197,14 @@ These are the primary npm scripts for day-to-day development:
 | `npm run check:diff` | Reproduce `pre-commit`, `commit-msg`, and `pre-push` checks for the diff from `origin/main` |
 | `npm run format` | Auto-format Biome-supported source files |
 | `npm run typecheck:cli` | Type-check the root TypeScript project using `tsconfig.cli.json` |
+| `npm --prefix nemoclaw run typecheck` | Type-check plugin production and test sources without emitting files |
 | `npm test` | Build package artifacts and run every non-live Vitest project for broad changes |
 | `npm run test:spec` | Run every non-live test with hierarchical behavior-oriented output |
 | `npm run test:fast` | Clean `dist/` and run source CLI, plugin, and E2E-support tests |
+| `npm run test:changed` | Run tests affected by staged, unstaged, or untracked changes in the CLI, plugin, and E2E-support projects |
+| `npm run test:watch` | Watch the CLI, plugin, and E2E-support projects and rerun affected tests |
+| `npm run test:shuffle` | Shuffle test order in the focused source projects without collecting coverage |
+| `npm run test:diagnose:leaks` | Report async-resource leaks and diagnose a Vitest process that hangs during shutdown |
 | `npm run test:integration` | Clean-build the CLI and run root integration and installer tests |
 | `npm run test:package` | Clean-build CLI/plugin artifacts and run compiled-package contracts |
 | `npm run test:live-e2e` | Opt into live E2E scenarios (mutates real external state) |
@@ -203,6 +225,45 @@ npx vitest run --project e2e-support
 
 This project is fast and does not run live targets. Live E2E remains opt-in through
 `npm run test:live-e2e` or the applicable GitHub Actions workflow.
+
+### Focused Vitest Feedback
+
+Use `npm run test:changed` for the staged, unstaged, and untracked changes in the current checkout,
+or keep `npm run test:watch` running while editing. Both commands select only the source-backed
+`cli`, `plugin`, and `e2e-support` projects. Watch mode also maps the repository's current opaque
+YAML, Python, shell, generated, and workflow inputs to the concrete contract tests that read or
+execute them outside Vitest's import graph. Add a narrow mapping in
+`test/helpers/vitest-watch-triggers.ts` when a new opaque input needs the same treatment.
+
+Use `npm run test:shuffle` to expose order dependencies in those focused projects. The command
+shuffles tests within files and leaves coverage disabled. Vitest prints the chosen seed at the
+start of the run. Replay that order by appending the printed value:
+
+```bash
+npm run test:shuffle -- --sequence.seed=6692
+```
+
+Use `npm run test:diagnose:leaks` when a test file leaves an async resource active or Vitest hangs
+during shutdown. It enables Vitest's async-leak detector and hanging-process reporter while
+keeping coverage disabled. This is a diagnostic command: inspect its leak output even when all
+assertions pass, because reported async leaks do not independently change a successful test exit
+code.
+
+Vitest chooses the environment-appropriate reporter for ordinary local runs. In CI, console logs
+from passing tests stay hidden while logs attached to failures are replayed; GitHub Actions still
+receives test annotations.
+
+### Test State Isolation
+
+The `cli`, `integration`, `installer-integration`, `package-contract`, `plugin`, and `e2e-support`
+projects clear mock call history, restore `vi.spyOn` descriptors, and undo `vi.stubEnv` and
+`vi.stubGlobal` before each test.
+Create those spies and stubs in `beforeEach` or the test body. A documented import-time stub may
+remain at module scope when the imported module must capture it during evaluation.
+These projects do not enable `mockReset`, and Vitest does not track direct `process.env` or global
+assignments, so reset mock implementations and restore raw mutations in the test that owns them.
+Live E2E projects do not enable this automatic cleanup because their stateful targets require
+explicit, validated teardown.
 
 ### Test Titles as Behavioral Documentation
 
@@ -263,11 +324,11 @@ The repository is organized as follows.
 | Path | Purpose |
 |------|---------|
 | `nemoclaw/` | TypeScript plugin (Commander CLI, OpenClaw extension) |
-| `nemoclaw-blueprint/` | Python blueprint for sandbox orchestration |
+| `nemoclaw-blueprint/` | Blueprint definition and network policies |
 | `bin/` | CLI entry point (`nemoclaw.js`) |
 | `scripts/` | Install helpers and automation scripts |
 | `test/` | Root-level integration tests |
-| `docs/` | User-facing documentation (Fern MDX plus legacy MyST source during migration) |
+| `docs/` | User-facing Fern MDX documentation |
 | `fern/` | Fern site configuration, theme, and assets |
 
 ## Language Policy
@@ -350,7 +411,7 @@ If force-push is not allowed after an unverified commit is published, open a fre
 
 Do not add links to third-party code repositories, community collections, or unofficial resources in documentation, README files, or code. This includes "awesome lists," community template repositories, wrapper projects, and similar community-maintained resources — regardless of popularity or utility.
 
-Links to official documentation for tools we depend on (e.g., Node.js, Python, uv) and industry standards (e.g., Conventional Commits) are acceptable.
+Links to official documentation for tools we depend on (e.g., Node.js and Python) and industry standards (e.g., Conventional Commits) are acceptable.
 
 **Why:** External repositories are outside our control. They can change ownership, inject malicious content, or misrepresent an endorsement by NVIDIA. Keeping references within our own repo avoids these risks entirely.
 

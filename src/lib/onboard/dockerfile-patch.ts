@@ -20,10 +20,16 @@ import {
   type ToolDisclosure,
 } from "../tool-disclosure";
 import {
+  CORPORATE_CA_EXPLICIT_ENV,
+  encodeCorporateCaArg,
+  resolveCorporateCa,
+} from "./corporate-ca";
+import {
   DCODE_AUTO_APPROVAL_BUILD_ARG,
   type DcodeAutoApprovalMode,
   isDcodeAutoApprovalMode,
 } from "./dcode-auto-approval";
+import * as remoteDashboardBindContract from "./dockerfile-remote-dashboard-bind-contract";
 import {
   dockerfileInstructions,
   readDockerfilePatchSnapshot,
@@ -51,14 +57,41 @@ function encodeSanitizedDockerJsonArg(value: unknown): string {
   return sanitizeDockerArg(encodeDockerJsonArg(value));
 }
 
+function normalizeOptionalEndpointUrlArg(value: string | null | undefined, name: string): string {
+  if (value === null || value === undefined || value.trim() === "") return "";
+  if (/[\p{Cc}\p{Cf}]/u.test(value)) {
+    throw new Error(`${name} must not contain control characters.`);
+  }
+  const text = value.trim();
+  let url: URL;
+  try {
+    url = new URL(text);
+  } catch {
+    throw new Error(`${name} must be a valid URL.`);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(`${name} must use HTTP or HTTPS.`);
+  }
+  if (url.username || url.password) {
+    throw new Error(`${name} must not include credentials.`);
+  }
+  if (url.search || url.hash) {
+    throw new Error(`${name} must not include query strings or fragments.`);
+  }
+  return url.href;
+}
+
 export type DockerfileBuildIdPolicy = "preserve" | "rewrite";
 
 export interface PatchStagedDockerfileOptions {
   buildIdPolicy?: DockerfileBuildIdPolicy;
   toolDisclosure?: ToolDisclosure;
   requireToolDisclosureContract?: boolean;
+  trustedManagedDockerfile?: boolean;
   baseImageResolutionMetadata?: SandboxBaseImageResolutionMetadata | null;
   dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
+  upstreamEndpointUrl?: string | null;
+  wslDashboardExposure?: boolean;
 }
 
 export function patchDcodeAutoApprovalDockerArg(
@@ -88,6 +121,10 @@ export function isValidProxyPort(value: string): boolean {
   return port >= 1 && port <= 65535;
 }
 
+export type PatchedDockerfileMetadata = { dashboardRemoteBindPrepared: boolean };
+
+export { hasPreparedRemoteDashboardBind } from "./dockerfile-remote-dashboard-bind-contract";
+
 export function patchStagedDockerfile(
   dockerfilePath: string,
   model: string,
@@ -101,7 +138,7 @@ export function patchStagedDockerfile(
   inferenceBaseUrlOverride: string | null = null,
   hermesToolGateways: string[] = [],
   options: PatchStagedDockerfileOptions = {},
-): void {
+): PatchedDockerfileMetadata {
   const sanitizedModel = sanitizeDockerArg(model);
   const sandboxInference = getSandboxInferenceConfig(
     sanitizedModel,
@@ -166,6 +203,14 @@ export function patchStagedDockerfile(
     /^ARG NEMOCLAW_UPSTREAM_PROVIDER=.*$/m,
     `ARG NEMOCLAW_UPSTREAM_PROVIDER=${sanitizeDockerArg(upstreamProvider)}`,
   );
+  const upstreamEndpointUrl = normalizeOptionalEndpointUrlArg(
+    options.upstreamEndpointUrl,
+    "NEMOCLAW_UPSTREAM_ENDPOINT_URL",
+  );
+  dockerfile = dockerfile.replace(
+    /^ARG NEMOCLAW_UPSTREAM_ENDPOINT_URL=.*$/m,
+    `ARG NEMOCLAW_UPSTREAM_ENDPOINT_URL=${upstreamEndpointUrl}`,
+  );
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_PRIMARY_MODEL_REF=.*$/m,
     `ARG NEMOCLAW_PRIMARY_MODEL_REF=${sanitizeDockerArg(primaryModelRef)}`,
@@ -174,6 +219,28 @@ export function patchStagedDockerfile(
     /^ARG CHAT_UI_URL=.*$/m,
     `ARG CHAT_UI_URL=${sanitizeDockerArg(chatUiUrl)}`,
   );
+  if (options.wslDashboardExposure !== undefined) {
+    const wslDashboardExposureArg = /^ARG NEMOCLAW_WSL_DASHBOARD_EXPOSURE=.*$/m;
+    const hasWslDashboardExposureArg = wslDashboardExposureArg.test(dockerfile);
+    if (options.wslDashboardExposure && !hasWslDashboardExposureArg) {
+      throw new Error(
+        "Dockerfile is missing ARG NEMOCLAW_WSL_DASHBOARD_EXPOSURE; cannot record WSL dashboard exposure.",
+      );
+    }
+    if (hasWslDashboardExposureArg) {
+      dockerfile = dockerfile.replace(
+        wslDashboardExposureArg,
+        `ARG NEMOCLAW_WSL_DASHBOARD_EXPOSURE=${options.wslDashboardExposure ? "1" : "0"}`,
+      );
+    }
+  }
+  const remoteDashboardBind = remoteDashboardBindContract.patchRequestedRemoteDashboardBindContract(
+    dockerfile,
+    process.env.NEMOCLAW_DASHBOARD_BIND,
+    options.trustedManagedDockerfile === true,
+  );
+  dockerfile = remoteDashboardBind.dockerfile;
+  const { dashboardRemoteBindPrepared } = remoteDashboardBind;
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_INFERENCE_BASE_URL=.*$/m,
     `ARG NEMOCLAW_INFERENCE_BASE_URL=${sanitizeDockerArg(inferenceBaseUrl)}`,
@@ -302,12 +369,8 @@ export function patchStagedDockerfile(
       dockerfile = dockerfile.replace(argPattern, `ARG ${envKey}=${sanitizeDockerArg(rawValue)}`);
     }
   }
-  // Onboard flow expects immediate dashboard access without device pairing,
-  // so disable device auth for images built during onboard (see #1217).
-  dockerfile = dockerfile.replace(
-    /^ARG NEMOCLAW_DISABLE_DEVICE_AUTH=.*$/m,
-    `ARG NEMOCLAW_DISABLE_DEVICE_AUTH=${sanitizeDockerArg("1")}`,
-  );
+  // Keep the managed pairing opt-out distinct from an operator's choice.
+  dockerfile = remoteDashboardBindContract.patchManagedDeviceAuthOptOutContract(dockerfile);
   const messagingPlan = MessagingSetupApplier.readPlanFromEnv();
   if (messagingPlan) {
     const hydratedMessagingPlan = hydrateDerivedSandboxMessagingPlanFields(
@@ -357,5 +420,34 @@ export function patchStagedDockerfile(
       `ARG NEMOCLAW_EXTRA_AGENTS_JSON_B64=${encoded}`,
     );
   }
+  // Corporate proxy CA import (#6210). When the host exposes an operator
+  // corporate CA bundle — via env var or an installed host trust-store anchor —
+  // bake its base64 so the entrypoint can append it to the OpenShell trust
+  // bundle at runtime (never replacing it). The replace is a silent no-op on
+  // custom/legacy Dockerfiles that predate this ARG.
+  const corporateCa = resolveCorporateCa(process.env);
+  if (corporateCa) {
+    const corporateCaArgPattern = /^ARG NEMOCLAW_CORPORATE_CA_B64=.*$/m;
+    if (corporateCaArgPattern.test(dockerfile)) {
+      dockerfile = dockerfile.replace(
+        corporateCaArgPattern,
+        `ARG NEMOCLAW_CORPORATE_CA_B64=${sanitizeDockerArg(encodeCorporateCaArg(corporateCa.pem))}`,
+      );
+      // Surface which host source is being baked so a fallback import (from a
+      // conventional CA env var rather than the explicit opt-in) is never
+      // silent. The CA is a public certificate, so logging its source is safe.
+      console.error(
+        `[nemoclaw] baking corporate proxy CA from ${corporateCa.sourceEnv} (${corporateCa.sourcePath}) into the sandbox image trust (#6210)`,
+      );
+    } else if (corporateCa.sourceEnv === CORPORATE_CA_EXPLICIT_ENV) {
+      // Explicit opt-in must not silently no-op on a managed Dockerfile.
+      throw new Error(
+        "Dockerfile is missing ARG NEMOCLAW_CORPORATE_CA_B64; cannot bake the corporate CA from NEMOCLAW_CORPORATE_CA_BUNDLE.",
+      );
+    }
+    // Fallback source + a custom Dockerfile without the ARG: leave a no-op.
+  }
+
   replaceDockerfilePatchSnapshot(dockerfilePath, patchSnapshot, dockerfile);
+  return { dashboardRemoteBindPrepared };
 }

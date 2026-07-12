@@ -3,9 +3,9 @@
 
 import { spawn } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+
+import { describe, expect, test as it } from "../helpers/owned-test-resources";
 
 import {
   createCloudflaredServiceDir,
@@ -89,8 +89,8 @@ function parseJsonPrefix<T>(output: string): T {
 }
 
 describe("CLI dispatch", () => {
-  it("gateway-token help uses native oclif usage", testTimeoutOptions(15_000), () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-token-help-"));
+  it("gateway-token help uses native oclif usage", testTimeoutOptions(15_000), ({ resources }) => {
+    const { home } = resources.home("nemoclaw-cli-token-help-");
     writeSandboxRegistry(home);
 
     const r = runWithEnv("alpha gateway-token --help", { HOME: home });
@@ -103,36 +103,40 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("Hermes' API_SERVER_KEY");
   });
 
-  it("doctor fails a present sandbox that is not Ready", testTimeoutOptions(15_000), () => {
-    const setup = createDoctorTestSetup("nemoclaw-cli-doctor-not-ready-", [
-      'case "$*" in',
-      '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
-      '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
-      '  "sandbox list") printf "NAME STATUS\\nalpha Creating\\n"; exit 0 ;;',
-      '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
-      "esac",
-    ]);
+  it(
+    "doctor fails a present sandbox that is not Ready",
+    testTimeoutOptions(15_000),
+    ({ resources }) => {
+      const setup = createDoctorTestSetup(resources, "nemoclaw-cli-doctor-not-ready-", [
+        'case "$*" in',
+        '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
+        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+        '  "sandbox list") printf "NAME STATUS\\nalpha Creating\\n"; exit 0 ;;',
+        '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
+        "esac",
+      ]);
 
-    const r = setup.runDoctor();
+      const r = setup.runDoctor();
 
-    expect(r.code).toBe(1);
-    const report = JSON.parse(r.out) as {
-      checks: Array<{ label: string; status: string; detail: string }>;
-    };
-    const liveSandbox = report.checks.find((check) => check.label === "Live sandbox");
-    expect(liveSandbox).toEqual(
-      expect.objectContaining({
-        status: "fail",
-        detail: expect.stringContaining("Creating"),
-      }),
-    );
-  });
+      expect(r.code).toBe(1);
+      const report = JSON.parse(r.out) as {
+        checks: Array<{ label: string; status: string; detail: string }>;
+      };
+      const liveSandbox = report.checks.find((check) => check.label === "Live sandbox");
+      expect(liveSandbox).toEqual(
+        expect.objectContaining({
+          status: "fail",
+          detail: expect.stringContaining("Creating"),
+        }),
+      );
+    },
+  );
 
   it(
     "doctor does not inspect the legacy k3s gateway container in Docker-driver mode",
     testTimeoutOptions(15_000),
-    () => {
-      const setup = createDoctorTestSetup("nemoclaw-cli-doctor-docker-driver-", [
+    ({ resources }) => {
+      const setup = createDoctorTestSetup(resources, "nemoclaw-cli-doctor-docker-driver-", [
         'case "$*" in',
         '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
         '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
@@ -195,8 +199,8 @@ describe("CLI dispatch", () => {
     },
   );
 
-  it("doctor checks the sandbox persisted non-default gateway", () => {
-    const setup = createDoctorTestSetup("nemoclaw-cli-doctor-named-gateway-", [
+  it("doctor checks the sandbox persisted non-default gateway", ({ resources }) => {
+    const setup = createDoctorTestSetup(resources, "nemoclaw-cli-doctor-named-gateway-", [
       'case "$*" in',
       '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw-8090\\n  Status: Connected\\n"; exit 0 ;;',
       '  "gateway info -g nemoclaw-8090") printf "Gateway: nemoclaw-8090\\n"; exit 0 ;;',
@@ -232,8 +236,8 @@ describe("CLI dispatch", () => {
   it(
     "doctor still inspects the legacy k3s gateway container for the kubernetes driver",
     testTimeoutOptions(15_000),
-    () => {
-      const setup = createDoctorTestSetup("nemoclaw-cli-doctor-k8s-driver-", [
+    ({ resources }) => {
+      const setup = createDoctorTestSetup(resources, "nemoclaw-cli-doctor-k8s-driver-", [
         'case "$*" in',
         '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
         '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
@@ -262,8 +266,8 @@ describe("CLI dispatch", () => {
   it(
     "doctor accepts a local openshell-gateway process when legacy inspect fails",
     testTimeoutOptions(15_000),
-    () => {
-      const setup = createDoctorTestSetup("nemoclaw-cli-doctor-local-gateway-", [
+    ({ resources }) => {
+      const setup = createDoctorTestSetup(resources, "nemoclaw-cli-doctor-local-gateway-", [
         'case "$*" in',
         '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
         '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
@@ -299,7 +303,9 @@ describe("CLI dispatch", () => {
       expect(report.status).toBe("ok");
 
       const calls = fs.readFileSync(hostCalls, "utf8");
-      expect(calls).toContain("pgrep:-f ^(/[^ ]*/)?openshell-gateway( |$)");
+      expect(calls).toContain(
+        "pgrep:-f ^(/[^ ]*/)?openshell-gateway(\\[nemoclaw=nemoclaw(-[0-9]+)?;port=[0-9]+\\]| |$)",
+      );
       expect(calls).not.toContain("pgrep:-af openshell-gateway");
       expect(calls).not.toContain("docker:port");
     },
@@ -308,16 +314,20 @@ describe("CLI dispatch", () => {
   it(
     "doctor treats local gateway process evidence as informational until OpenShell verifies the named gateway",
     testTimeoutOptions(15_000),
-    () => {
-      const setup = createDoctorTestSetup("nemoclaw-cli-doctor-unverified-local-gateway-", [
-        'case "$*" in',
-        '  "status") printf "Server Status\\n\\n  Gateway: other\\n  Status: Connected\\n"; exit 0 ;;',
-        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
-        '  "gateway select nemoclaw") exit 1 ;;',
-        '  "gateway start --name nemoclaw --port 8080") exit 1 ;;',
-        '  "sandbox list") echo "should not query sandbox list" >> "$marker_file"; exit 0 ;;',
-        "esac",
-      ]);
+    ({ resources }) => {
+      const setup = createDoctorTestSetup(
+        resources,
+        "nemoclaw-cli-doctor-unverified-local-gateway-",
+        [
+          'case "$*" in',
+          '  "status") printf "Server Status\\n\\n  Gateway: other\\n  Status: Connected\\n"; exit 0 ;;',
+          '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+          '  "gateway select nemoclaw") exit 1 ;;',
+          '  "gateway start --name nemoclaw --port 8080") exit 1 ;;',
+          '  "sandbox list") echo "should not query sandbox list" >> "$marker_file"; exit 0 ;;',
+          "esac",
+        ],
+      );
       writeSandboxRegistry(setup.home, "alpha", { openshellDriver: "kubernetes" });
       const hostCalls = path.join(setup.home, "host-calls");
       writeDockerInspectFailureStub(setup, hostCalls);
@@ -346,15 +356,19 @@ describe("CLI dispatch", () => {
   it(
     "doctor reports unavailable local gateway probe tools while trusting a verified named gateway",
     testTimeoutOptions(15_000),
-    () => {
-      const setup = createDoctorTestSetup("nemoclaw-cli-doctor-missing-local-probe-tools-", [
-        'case "$*" in',
-        '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
-        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
-        '  "sandbox list") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
-        '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
-        "esac",
-      ]);
+    ({ resources }) => {
+      const setup = createDoctorTestSetup(
+        resources,
+        "nemoclaw-cli-doctor-missing-local-probe-tools-",
+        [
+          'case "$*" in',
+          '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
+          '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+          '  "sandbox list") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
+          '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
+          "esac",
+        ],
+      );
       writeSandboxRegistry(setup.home, "alpha", { openshellDriver: "kubernetes" });
       const hostCalls = path.join(setup.home, "host-calls");
       writeDockerInspectFailureStub(setup, hostCalls);
@@ -387,8 +401,8 @@ describe("CLI dispatch", () => {
   it(
     "doctor reports fresh shields state as not configured instead of down",
     testTimeoutOptions(30_000),
-    () => {
-      const setup = createDoctorTestSetup("nemoclaw-cli-doctor-shields-default-", [
+    ({ resources }) => {
+      const setup = createDoctorTestSetup(resources, "nemoclaw-cli-doctor-shields-default-", [
         'case "$*" in',
         '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
         '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
@@ -416,8 +430,8 @@ describe("CLI dispatch", () => {
   it(
     "doctor does not query sandbox state from a different active gateway",
     testTimeoutOptions(15_000),
-    () => {
-      const setup = createDoctorTestSetup("nemoclaw-cli-doctor-wrong-gateway-", [
+    ({ resources }) => {
+      const setup = createDoctorTestSetup(resources, "nemoclaw-cli-doctor-wrong-gateway-", [
         'case "$*" in',
         '  "status") printf "Server Status\\n\\n  Gateway: other\\n  Status: Connected\\n"; exit 0 ;;',
         '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
@@ -436,29 +450,35 @@ describe("CLI dispatch", () => {
     },
   );
 
-  it("doctor treats a live non-cloudflared PID as stale", testTimeoutOptions(15_000), () => {
-    const { sandboxName, serviceDir } = createCloudflaredServiceDir("doctorpid-");
-    const setup = createDoctorTestSetup(
-      "nemoclaw-cli-doctor-wrong-cloudflared-pid-",
-      [
-        'case "$*" in',
-        '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
-        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
-        `  "sandbox list") printf "NAME STATUS\\n${sandboxName} Ready\\n"; exit 0 ;;`,
-        '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
-        "esac",
-      ],
-      sandboxName,
-    );
-    const sleeper = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], {
-      stdio: "ignore",
-    });
-    const sleeperPid = sleeper.pid;
-    if (typeof sleeperPid !== "number") {
-      throw new Error("expected spawned helper process to have a PID");
-    }
+  it(
+    "doctor treats a live non-cloudflared PID as stale",
+    testTimeoutOptions(15_000),
+    ({ resources }) => {
+      const { sandboxName, serviceDir } = createCloudflaredServiceDir("doctorpid-");
+      resources.ownDirectory(serviceDir);
+      const setup = createDoctorTestSetup(
+        resources,
+        "nemoclaw-cli-doctor-wrong-cloudflared-pid-",
+        [
+          'case "$*" in',
+          '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
+          '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+          `  "sandbox list") printf "NAME STATUS\\n${sandboxName} Ready\\n"; exit 0 ;;`,
+          '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
+          "esac",
+        ],
+        sandboxName,
+      );
+      const sleeper = resources.ownChild(
+        spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], {
+          stdio: "ignore",
+        }),
+      );
+      const sleeperPid = sleeper.pid;
+      if (typeof sleeperPid !== "number") {
+        throw new Error("expected spawned helper process to have a PID");
+      }
 
-    try {
       fs.writeFileSync(path.join(serviceDir, "cloudflared.pid"), String(sleeperPid));
       const r = setup.runDoctor(`${sandboxName} doctor --json`);
 
@@ -472,15 +492,14 @@ describe("CLI dispatch", () => {
           detail: `stale PID ${sleeperPid}`,
         }),
       );
-    } finally {
-      sleeper.kill();
-      fs.rmSync(serviceDir, { recursive: true, force: true });
-    }
-  });
+    },
+  );
 
-  it("doctor accepts a live cloudflared PID", testTimeoutOptions(35_000), () => {
+  it("doctor accepts a live cloudflared PID", testTimeoutOptions(35_000), ({ resources }) => {
     const { sandboxName, serviceDir } = createCloudflaredServiceDir("doctorcloudflared-");
+    resources.ownDirectory(serviceDir);
     const setup = createDoctorTestSetup(
+      resources,
       "nemoclaw-cli-doctor-cloudflared-pid-",
       [
         'case "$*" in',
@@ -492,35 +511,31 @@ describe("CLI dispatch", () => {
       ],
       sandboxName,
     );
-    const shimDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cloudflared-shim-"));
+    const shimDir = resources.temporaryDirectory("nemoclaw-cloudflared-shim-");
     const cloudflaredBin = path.join(shimDir, "cloudflared");
     fs.symlinkSync(process.execPath, cloudflaredBin);
-    const sleeper = spawn(cloudflaredBin, ["-e", "setTimeout(() => {}, 30000)"], {
-      stdio: "ignore",
-    });
+    const sleeper = resources.ownChild(
+      spawn(cloudflaredBin, ["-e", "setTimeout(() => {}, 30000)"], {
+        stdio: "ignore",
+      }),
+    );
     const sleeperPid = sleeper.pid;
     if (typeof sleeperPid !== "number") {
       throw new Error("expected spawned helper process to have a PID");
     }
 
-    try {
-      fs.writeFileSync(path.join(serviceDir, "cloudflared.pid"), String(sleeperPid));
-      const r = setup.runDoctor(`${sandboxName} doctor --json`);
+    fs.writeFileSync(path.join(serviceDir, "cloudflared.pid"), String(sleeperPid));
+    const r = setup.runDoctor(`${sandboxName} doctor --json`);
 
-      const report = JSON.parse(r.out) as {
-        checks: Array<{ label: string; status: string; detail: string }>;
-      };
-      const cloudflared = report.checks.find((check) => check.label === "cloudflared");
-      expect(cloudflared).toEqual(
-        expect.objectContaining({
-          status: "ok",
-          detail: `running (PID ${sleeperPid})`,
-        }),
-      );
-    } finally {
-      sleeper.kill();
-      fs.rmSync(serviceDir, { recursive: true, force: true });
-      fs.rmSync(shimDir, { recursive: true, force: true });
-    }
+    const report = JSON.parse(r.out) as {
+      checks: Array<{ label: string; status: string; detail: string }>;
+    };
+    const cloudflared = report.checks.find((check) => check.label === "cloudflared");
+    expect(cloudflared).toEqual(
+      expect.objectContaining({
+        status: "ok",
+        detail: `running (PID ${sleeperPid})`,
+      }),
+    );
   });
 });

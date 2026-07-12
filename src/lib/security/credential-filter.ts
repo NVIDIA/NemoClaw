@@ -23,6 +23,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
+import { isObjectRecord } from "../core/json-types";
 import { hasPassCredentialSegment, SECRET_PATTERNS } from "./secret-patterns";
 
 function parseJson<T>(text: string): T {
@@ -81,7 +82,11 @@ const CREDENTIAL_PLACEHOLDER = "[STRIPPED_BY_MIGRATION]";
  * File basenames that contain sensitive auth material and should be
  * excluded from backups entirely.
  */
-export const CREDENTIAL_SENSITIVE_BASENAMES = new Set(["auth-profiles.json", "auth.json"]);
+export const CREDENTIAL_SENSITIVE_BASENAMES = new Set([
+  "auth-profiles.json",
+  "auth.json",
+  "chatgpt-auth.json",
+]);
 
 /**
  * Dependency lockfiles may contain package metadata that resembles credentials
@@ -239,7 +244,7 @@ export function isSafeCredentialPlaceholder(value: ConfigValue): boolean {
  * Narrow an unknown value to a JSON-like configuration object.
  */
 export function isConfigObject(value: ConfigValue | object): value is ConfigObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return isObjectRecord(value);
 }
 
 /**
@@ -285,7 +290,6 @@ export function stripCredentials(obj: ConfigValue): ConfigValue {
     // by CLI-flag context: `["--api-key", "<opaque>"]` or `"--api-key=<opaque>"`.
     return obj.map((value, index) => scrubArrayElement(value, obj[index - 1]));
   }
-  if (!isConfigObject(obj)) return obj;
 
   const result: ConfigObject = {};
   for (const [key, value] of Object.entries(obj)) {

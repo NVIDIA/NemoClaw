@@ -40,6 +40,7 @@
 
 # ── Tests ──
 /test/                              @NVIDIA/nemoclaw-engineer
+/test/e2e/mock-parity.json          @NVIDIA/nemoclaw-maintainer @NVIDIA/nemoclaw-engineer
 
 # ── CI / GitHub config ──
 /.github/                           @NVIDIA/nemoclaw-maintainer

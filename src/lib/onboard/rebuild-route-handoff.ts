@@ -77,3 +77,158 @@ export function validateRebuildProviderReconfigureHandoff(
   }
   return true;
 }
+
+/** Exact rebuild identity a provider-recovery receipt is bound to at preflight. */
+export type ProviderRecoveryReceiptTarget = Readonly<{
+  sandboxName: string;
+  gatewayName: string;
+  provider: string;
+  model: string;
+  route: RegistryInferenceRoute;
+}>;
+
+/**
+ * One-shot authority to recover a recorded provider for an authoritative locked
+ * rebuild. Minted after preflight validates the target, activated against the
+ * live onboard session at provider selection, then rechecked inside the sandbox
+ * and gateway mutation locks. `sessionId` is null until activation binds it.
+ */
+export type ProviderRecoveryReceipt = Readonly<{
+  sandboxName: string;
+  gatewayName: string;
+  provider: string;
+  model: string;
+  route: RegistryInferenceRoute;
+  nonce: string;
+  expiresAtMs: number;
+  sessionId: string | null;
+}>;
+
+function freezeRoute(route: RegistryInferenceRoute): RegistryInferenceRoute {
+  if (route.source !== "registry") {
+    throw new TypeError("Provider recovery receipt requires a registry-derived route");
+  }
+  return Object.freeze({
+    provider: route.provider,
+    model: route.model,
+    endpointUrl: route.endpointUrl,
+    preferredInferenceApi: route.preferredInferenceApi,
+    source: "registry",
+  });
+}
+
+function routesMatch(left: RegistryInferenceRoute, right: RegistryInferenceRoute): boolean {
+  return (
+    left.provider === right.provider &&
+    left.model === right.model &&
+    left.endpointUrl === right.endpointUrl &&
+    left.preferredInferenceApi === right.preferredInferenceApi
+  );
+}
+
+function receiptMatchesTarget(
+  receipt: ProviderRecoveryReceipt,
+  target: ProviderRecoveryReceiptTarget,
+): boolean {
+  return (
+    receipt.sandboxName === target.sandboxName &&
+    receipt.gatewayName === target.gatewayName &&
+    receipt.provider === target.provider &&
+    receipt.model === target.model &&
+    routesMatch(receipt.route, target.route)
+  );
+}
+
+/** Mint a target-bound, time-boxed recovery receipt after preflight validation. */
+export function mintProviderRecoveryReceipt(
+  target: ProviderRecoveryReceiptTarget,
+  minting: { nonce: string; expiresAtMs: number },
+): ProviderRecoveryReceipt {
+  if (
+    !target.sandboxName.trim() ||
+    !target.gatewayName.trim() ||
+    !target.provider.trim() ||
+    !target.model.trim() ||
+    !minting.nonce.trim() ||
+    !Number.isFinite(minting.expiresAtMs)
+  ) {
+    throw new TypeError("Provider recovery receipt is incomplete");
+  }
+  return Object.freeze({
+    sandboxName: target.sandboxName,
+    gatewayName: target.gatewayName,
+    provider: target.provider,
+    model: target.model,
+    route: freezeRoute(target.route),
+    nonce: minting.nonce,
+    expiresAtMs: minting.expiresAtMs,
+    sessionId: null,
+  });
+}
+
+function receiptIsWellFormed(
+  receipt: ProviderRecoveryReceipt | null | undefined,
+): receipt is ProviderRecoveryReceipt {
+  return Boolean(
+    receipt &&
+      typeof receipt.sandboxName === "string" &&
+      receipt.sandboxName &&
+      typeof receipt.gatewayName === "string" &&
+      receipt.gatewayName &&
+      typeof receipt.provider === "string" &&
+      receipt.provider &&
+      typeof receipt.model === "string" &&
+      receipt.model &&
+      typeof receipt.nonce === "string" &&
+      receipt.nonce &&
+      Number.isFinite(receipt.expiresAtMs) &&
+      receipt.route?.source === "registry",
+  );
+}
+
+/**
+ * Single-use ledger binding each minted receipt to exactly one onboard session
+ * at provider selection, then answering in-lock rechecks for that binding. The
+ * ledger is what makes recovery authorization one-shot: a second activation of
+ * the same nonce is a replay and is refused.
+ */
+export function createProviderRecoveryReceiptLedger(): {
+  activate(
+    receipt: ProviderRecoveryReceipt | null | undefined,
+    context: { target: ProviderRecoveryReceiptTarget; sessionId: string; nowMs: number },
+  ): ProviderRecoveryReceipt | null;
+  validateInLock(
+    receipt: ProviderRecoveryReceipt | null | undefined,
+    check: {
+      sandboxName: string;
+      gatewayName: string;
+      sessionId: string | null | undefined;
+      nowMs: number;
+      reservationOwned: boolean;
+    },
+  ): boolean;
+} {
+  const activatedSessionByNonce = new Map<string, string>();
+  return {
+    activate(receipt, context) {
+      if (!receiptIsWellFormed(receipt)) return null;
+      if (!context.sessionId) return null;
+      if (context.nowMs > receipt.expiresAtMs) return null;
+      if (!receiptMatchesTarget(receipt, context.target)) return null;
+      if (activatedSessionByNonce.has(receipt.nonce)) return null;
+      activatedSessionByNonce.set(receipt.nonce, context.sessionId);
+      return Object.freeze({ ...receipt, sessionId: context.sessionId });
+    },
+    validateInLock(receipt, check) {
+      if (!receiptIsWellFormed(receipt)) return false;
+      if (!check.reservationOwned) return false;
+      if (!check.sessionId || receipt.sessionId !== check.sessionId) return false;
+      if (activatedSessionByNonce.get(receipt.nonce) !== check.sessionId) return false;
+      if (check.nowMs > receipt.expiresAtMs) return false;
+      if (receipt.sandboxName !== check.sandboxName || receipt.gatewayName !== check.gatewayName) {
+        return false;
+      }
+      return true;
+    },
+  };
+}

@@ -37,6 +37,7 @@ describe("destroySandbox flow", () => {
       ? delete process.env.OPENSHELL_GATEWAY
       : (process.env.OPENSHELL_GATEWAY = originalGatewayEnv);
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     resetDestroyModuleCache();
   });
 
@@ -52,6 +53,30 @@ describe("destroySandbox flow", () => {
     ).resolves.toBeUndefined();
 
     expectSuccessfulLiveDestroy(harness, exitSpy);
+  });
+
+  it.each([
+    ["--yes", "darwin", { yes: true }, "", true],
+    ["NEMOCLAW_NON_INTERACTIVE=1", "darwin", {}, "1", true],
+    [
+      "an explicit preservation override",
+      "darwin",
+      { yes: true, cleanupGateway: false },
+      "",
+      false,
+    ],
+    ["NEMOCLAW_NON_INTERACTIVE=1", "linux", {}, "1", false],
+  ] as const)("applies the final-gateway default for %s on %s (#4662)", async (_scenario, platform, options, nonInteractive, cleanupExpected) => {
+    vi.spyOn(process, "platform", "get").mockReturnValue(platform);
+    vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", nonInteractive);
+    const harness = createDestroyHarness();
+
+    await expect(harness.destroySandbox("alpha", options)).resolves.toBeUndefined();
+
+    expect(harness.promptSpy).not.toHaveBeenCalled();
+    expect(harness.cleanupGatewaySpy.mock.calls).toEqual(
+      cleanupExpected ? [["nemoclaw-19080", harness.runOpenshellSpy]] : [],
+    );
   });
 
   it("stops before local cleanup when OpenShell fails to delete the live sandbox", async () => {

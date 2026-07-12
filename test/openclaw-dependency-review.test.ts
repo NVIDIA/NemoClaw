@@ -387,13 +387,13 @@ optional_plugin_block="$(sed -n '/# Install non-messaging OpenClaw plugins that 
 check_contains "$optional_plugin_block" 'npm view "$plugin_spec" dist.integrity' "optional plugin registry integrity"
 check_contains "$optional_plugin_block" 'npm view "$plugin_spec" dist.tarball' "optional plugin registry tarball"
 check_contains "$optional_plugin_block" 'npm pack "$expected_tarball" --pack-destination "$NEMOCLAW_OPENCLAW_PLUGIN_PACK_DIR" --json' "optional plugin pack"
-check_contains "$optional_plugin_block" 'openclaw plugins install "$plugin_archive" --pin' "optional plugin archive install"
+check_contains "$optional_plugin_block" 'openclaw plugins install "npm-pack:\${plugin_archive}"' "optional plugin npm-pack install"
 check_contains "$optional_plugin_block" 'reported unsafe archive filename' "optional plugin unsafe filename guard"
 check_contains "$optional_plugin_block" 'NEMOCLAW_OPENCLAW_PLUGIN_PACK_DIR="$(mktemp -d)"' "optional plugin fresh pack directory"
 check_contains "$optional_plugin_block" 'rm -rf "$NEMOCLAW_OPENCLAW_PLUGIN_PACK_DIR"' "optional plugin cleanup"
 
 	grep -Fq 'spawnSync("npm", ["pack", packageSpec, "--pack-destination", rootDir, "--json"]' "$messaging_build_applier"
-	grep -Fq '["openclaw", "plugins", "install", packed.archivePath, ...(install.pin ? ["--pin"] : [])]' "$messaging_build_applier"
+	grep -Fq '["openclaw", "plugins", "install", \`npm-pack:\${packed.archivePath}\`]' "$messaging_build_applier"
 	grep -Fq 'OPENCLAW_MESSAGING_PLUGIN_ARCHIVE_PROVENANCE_POLICY.registryIntegrityField' "$messaging_build_applier"
 	grep -Fq 'downloaded tarball integrity mismatch' "$messaging_build_applier"
 	grep -Fq 'mkdtempSync(join(tmpdir(), "nemoclaw-openclaw-plugin-pack-"))' "$messaging_build_applier"
@@ -581,7 +581,7 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
 
     expect(pr.permissions).toEqual({ contents: "read" });
     expect(prJob).toBeUndefined();
-    expect(mainJob?.["timeout-minutes"]).toBe(12);
+    expect(mainJob?.["timeout-minutes"]).toBe(20);
     expect(requiredStep(mainJob, "Audit the real patched OpenClaw distribution").env).toMatchObject(
       {
         NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS: "1",
@@ -590,6 +590,12 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
     expect(requiredStep(mainJob, "Audit the real patched OpenClaw distribution").run).toContain(
       "test/openclaw-real-patched-dist-harness.test.ts",
     );
+    expect(
+      requiredStep(mainJob, "Audit managed OpenClaw security finding suppressions").env,
+    ).toEqual({ NEMOCLAW_REAL_OPENCLAW_AUDIT_HARNESS: "1" });
+    expect(
+      requiredStep(mainJob, "Audit managed OpenClaw security finding suppressions").run,
+    ).toContain("test/openclaw-security-audit-suppressions-real.test.ts");
     expect(requiredStep(mainJob, "Install test dependencies").run).toBe("npm ci --ignore-scripts");
     expect(mainJob.env).toMatchObject({
       npm_config_fetch_retries: "3",

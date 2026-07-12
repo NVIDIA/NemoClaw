@@ -16,9 +16,9 @@ homepage: "https://github.com/NousResearch/hermes-agent"
 install_method: curl  # curl install.sh | bash
 binary_path: /usr/local/bin/hermes
 version_command: "hermes --version"
-expected_version: "0.17.0"
-# Hermes reports semver from `hermes --version` (e.g. `0.17.0`) even though its
-# GitHub release cadence is calendar-based (`v2026.6.19`). Declaring the
+expected_version: "0.18.0"
+# Hermes reports semver from `hermes --version` (e.g. `0.18.0`) even though its
+# GitHub release cadence is calendar-based (`v2026.7.1`). Declaring the
 # scheme keeps the staleness check off the shape heuristic when a manifest
 # could otherwise straddle both schemes (#6049).
 version_scheme: semver
@@ -71,6 +71,10 @@ state_dirs:
   - profiles
   - cache
   - pairing
+  # Hermes' Web dashboard uses a separate profile home for its config,
+  # memories, and user identity. Preserve it so rebuilds do not reset the
+  # dashboard profile independently of the main Hermes runtime.
+  - dashboard-home
   # Hermes' WhatsApp bridge stores QR-paired session credentials under
   # ~/.hermes/platforms/whatsapp/session. Preserve the parent so rebuilds
   # keep the in-sandbox pairing state without re-scanning.

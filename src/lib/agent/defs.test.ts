@@ -55,7 +55,9 @@ describe("agent definitions", () => {
     expect(openclaw.webAuth).toEqual({ method: "none", env: null });
     // #5027: openclaw.json must be declared as a durable state file so
     // backup-all/rebuild preserve core settings (model/provider, MCP, agents).
-    expect(openclaw.stateFiles).toEqual([{ path: "openclaw.json", strategy: "copy" }]);
+    expect(openclaw.stateFiles).toEqual([
+      { path: "openclaw.json", strategy: "copy", restore: { merge: "openclaw-config" } },
+    ]);
     expect(openclaw.userManagedFiles).toEqual([".env", ".mcp.json"]);
     expect(openclaw.legacyPaths?.startScript).toContain("scripts/nemoclaw-start.sh");
   });
@@ -86,6 +88,7 @@ describe("agent definitions", () => {
       auth: "session",
     });
     expect(hermes.dashboardUi).toBeNull();
+    expect(hermes.stateDirs).toContain("dashboard-home");
     // Hermes' OpenAI-compatible API uses a bearer token read from API_SERVER_KEY.
     expect(hermes.webAuth).toEqual({ method: "bearer_token", env: "API_SERVER_KEY" });
     expect(hermes.userManagedFiles).toEqual([".hermes/.env"]);
@@ -132,7 +135,12 @@ describe("agent definitions", () => {
       adapter: "deepagents-config",
     });
     expect(deepAgentsCode.stateDirs).toEqual([".state", "skills", "agent/skills"]);
-    expect(deepAgentsCode.stateFiles).toEqual([{ path: "config.toml", strategy: "copy" }]);
+    expect(
+      deepAgentsCode.stateFiles.map(({ path: statePath, strategy }) => ({
+        path: statePath,
+        strategy,
+      })),
+    ).toEqual([{ path: "config.toml", strategy: "copy" }]);
     expect(deepAgentsCode.stateFiles.map((entry) => entry.path)).not.toContain(".env");
     expect(deepAgentsCode.userManagedFiles).toEqual([".deepagents/.env", ".deepagents/.mcp.json"]);
   });

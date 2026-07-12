@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import {
+  DCODE_MANAGED_EXEC_LAUNCHER,
+  DCODE_MANAGED_EXEC_MISSING_DETAIL,
+} from "./connect-inference-route-probe";
 import { probeSandboxInferenceGatewayHealth } from "./inference-route-health";
 
 describe("sandbox inference route health", () => {
@@ -75,6 +79,13 @@ describe("sandbox inference route health", () => {
         "exec",
         "--name",
         "deep-code",
+        "--no-tty",
+        "--env",
+        "HOME=/usr/local/lib/nemoclaw",
+        "--env",
+        "BASH_ENV=",
+        "--env",
+        "ENV=",
         "--",
         "/usr/local/lib/nemoclaw/dcode-managed-exec",
         "/bin/sh",
@@ -83,5 +94,19 @@ describe("sandbox inference route health", () => {
       ],
       expect.objectContaining({ ignoreError: true }),
     );
+  });
+
+  it("reports missing DCode helper as a failed compatibility boundary (#6192)", async () => {
+    const result = await probeSandboxInferenceGatewayHealth("deep-code", {
+      captureOpenshellImpl: makeCapture(`exec: ${DCODE_MANAGED_EXEC_LAUNCHER}: not found`, 127),
+      getSessionAgentImpl: () => ({ name: "langchain-deepagents-code" }) as never,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      httpStatus: 0,
+      endpoint: "https://inference.local/v1/models",
+      detail: DCODE_MANAGED_EXEC_MISSING_DETAIL,
+    });
   });
 });

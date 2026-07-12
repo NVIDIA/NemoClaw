@@ -17,6 +17,7 @@ export type GatewayRestartCommandResult = {
 export type GatewayRestartFailureLayer =
   | "unsupported agent"
   | "privileged control unavailable"
+  | "supervisor not running"
   | "secret-boundary refusal"
   | "unsafe config path"
   | "config hash mismatch"
@@ -127,6 +128,12 @@ export function classifyGatewayRestartFailure(result: GatewayRestartCommandResul
 
   const output = gatewayRestartOutput(result);
   const detail = sanitizeGatewayRestartFailureDetail(output.trim());
+  if (output.includes("SUPERVISOR_NOT_RUNNING")) {
+    return {
+      layer: "supervisor not running",
+      detail: detail || "the in-sandbox gateway supervisor is not running",
+    };
+  }
   if (
     output.includes(MARKERS.ROOT_EXEC_UNAVAILABLE) ||
     output.includes("PRIVILEGED_CONTROL_UNAVAILABLE") ||

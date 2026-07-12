@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 
 import { describe, expect, it } from "vitest";
 
@@ -16,18 +16,19 @@ type StagingOutcome = {
   stagedFileContent: string | null;
 };
 
+type EntryGuardOptions = {
+  bashSourceOverride?: string; // simulate disk-file invocation
+  envOverrides?: Record<string, string>;
+  curlSucceeds?: boolean;
+  curlOutputContent?: string;
+};
+
 // Inlines the entry-guard staging block from install.sh into a bash
 // subshell, replacing `exec bash "$_staged" "$@"` with a capture step so
 // the test sees the intended argv without actually launching a new
 // installer process. Keep the inlined block in sync with
 // scripts/install.sh:2486-2505.
-function runEntryGuard(opts: {
-  bashSourceOverride?: string; // simulate disk-file invocation
-  envOverrides?: Record<string, string>;
-  curlSucceeds?: boolean;
-  curlOutputContent?: string;
-}): StagingOutcome {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-stage-"));
+function runEntryGuardInFixture(tmp: string, opts: EntryGuardOptions): StagingOutcome {
   const execLog = path.join(tmp, "exec-intent.txt");
   const fallthrough = path.join(tmp, "fallthrough.flag");
 
@@ -126,6 +127,29 @@ function runEntryGuard(opts: {
   };
 }
 
+function ownedStagedFileOrPlaceholder(execLog: string, tmp: string): string {
+  const placeholder = path.join(tmp, "no-owned-staged-file");
+  const recordedPath = fs.existsSync(execLog)
+    ? fs.readFileSync(execLog, "utf-8").split("\n")[0]
+    : placeholder;
+  return /^\/tmp\/nemoclaw-installer-[A-Za-z0-9]+$/.test(recordedPath) ? recordedPath : placeholder;
+}
+
+function runEntryGuard(opts: EntryGuardOptions): StagingOutcome {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-stage-"));
+  const execLog = path.join(tmp, "exec-intent.txt");
+
+  try {
+    return runEntryGuardInFixture(tmp, opts);
+  } finally {
+    try {
+      fs.rmSync(ownedStagedFileOrPlaceholder(execLog, tmp), { force: true });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+}
+
 describe("install.sh entry-guard staging for curl|bash stdin self-stage (#4414)", () => {
   it("stages to /tmp and would exec bash on the staged file when invoked via curl|bash", () => {
     // Pipe-mode invocation: BASH_SOURCE[0] empty. Without staging,
@@ -136,6 +160,7 @@ describe("install.sh entry-guard staging for curl|bash stdin self-stage (#4414)"
     expect(outcome.execIntent.length).toBeGreaterThan(0);
     const stagedPath = outcome.execIntent[0];
     expect(stagedPath).toMatch(/^\/tmp\/nemoclaw-installer-[A-Za-z0-9]+$/);
+    expect(fs.existsSync(stagedPath)).toBe(false);
 
     // Original installer args are preserved across the would-be exec
     expect(outcome.execIntent).toContain("--non-interactive");

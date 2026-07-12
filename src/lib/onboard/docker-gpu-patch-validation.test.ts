@@ -17,6 +17,7 @@ import {
 function inspectFixture(): DockerContainerInspect {
   return {
     Id: "old-container-id",
+    Image: `sha256:${"c".repeat(64)}`,
     Name: "/openshell-alpha",
     Config: {
       Image: "openshell/sandbox:abc",
@@ -41,6 +42,15 @@ function inspectFixture(): DockerContainerInspect {
 }
 
 describe("Docker GPU startup command validation (#6110)", () => {
+  it("keeps startup-command recreation free of GPU arguments", () => {
+    expect(buildDockerGpuMode("startup-command", "nvidia.com/gpu=all")).toEqual({
+      kind: "startup-command",
+      label: "persistent sandbox startup command",
+      device: "",
+      args: [],
+    });
+  });
+
   it.each([
     ["Docker --gpus", buildDockerGpuMode("gpus")],
     ["native CDI", buildDockerGpuMode("cdi")],
@@ -58,6 +68,7 @@ describe("Docker GPU startup command validation (#6110)", () => {
       "CHAT_UI_URL=http://127.0.0.1:8642",
       "NEMOCLAW_DASHBOARD_PORT=8642",
       "HTTP_PROXY=http://proxy.example:8080",
+      "HTTPS_PROXY=https://user:p%40ss@[::1]:8443",
       ...extraPlaceholderEnv,
       "nemoclaw-start",
     ];
@@ -127,6 +138,49 @@ describe("Docker GPU startup command validation (#6110)", () => {
         },
       ),
     ).toThrow("OpenShell sandbox startup command tokens cannot be empty or contain whitespace");
+    expect(dockerStop).not.toHaveBeenCalled();
+    expect(dockerRename).not.toHaveBeenCalled();
+    expect(dockerRunDetached).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ";",
+    "&&",
+    "$(id)",
+    "`id`",
+    "value>file",
+    'value"quoted',
+  ])("rejects shell metacharacters in %s before touching the original container", (invalidToken) => {
+    const dockerStop = vi.fn(() => ({ status: 0 }));
+    const dockerRename = vi.fn(() => ({ status: 0 }));
+    const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
+
+    expect(() =>
+      recreateOpenShellDockerSandboxWithGpu(
+        {
+          sandboxName: "alpha",
+          timeoutSecs: 1,
+          openshellSandboxCommand: ["env", invalidToken, "nemoclaw-start"],
+        },
+        {
+          dockerCapture: vi.fn((args: readonly string[]) =>
+            args[0] === "ps"
+              ? "old-container-id\n"
+              : args[0] === "inspect"
+                ? JSON.stringify([inspectFixture()])
+                : "",
+          ),
+          detectSandboxFallbackDns: vi.fn(() => null),
+          dockerRun: vi.fn(() => ({ status: 0, stdout: "probe-id\n" })),
+          dockerRunDetached,
+          dockerRename,
+          dockerRm: vi.fn(() => ({ status: 0 })),
+          dockerStop,
+          readDir: vi.fn(() => null),
+          readFile: vi.fn(() => null),
+        },
+      ),
+    ).toThrow("OpenShell sandbox startup command tokens contain unsupported shell metacharacters");
     expect(dockerStop).not.toHaveBeenCalled();
     expect(dockerRename).not.toHaveBeenCalled();
     expect(dockerRunDetached).not.toHaveBeenCalled();

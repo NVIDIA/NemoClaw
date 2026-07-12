@@ -28,11 +28,11 @@ ENV DEBIAN_FRONTEND=noninteractive
 # pyproject.toml, HERMES_TARBALL_SHA256 the GitHub tarball checksum, and
 # HERMES_NPM_INTEGRITY the `npm view hermes-agent@<semver> dist.integrity`
 # sha512 used as a registry cross-check at build time.
-# Calver tag v2026.6.19 = Hermes Agent v0.17.0.
-ARG HERMES_VERSION=v2026.6.19
-ARG HERMES_SEMVER=0.17.0
-ARG HERMES_TARBALL_SHA256=69b805ec0a7a7be880068ba8a3b17479d7ba29f0cac0a2e9c6692c02f346ba91
-ARG HERMES_NPM_INTEGRITY=sha512-PzSJiYqmwpTudmakYs2oCJ57OW3VwEJYf8buTuKvuRvcYEUf/KOTu2dD6pLf2XYgDKErpvcDaoSAJ1nGCyvzAA==
+# Calver tag v2026.7.1 = Hermes Agent v0.18.0.
+ARG HERMES_VERSION=v2026.7.1
+ARG HERMES_SEMVER=0.18.0
+ARG HERMES_TARBALL_SHA256=ec8a380629cc2f3f2102dd92cad50c4ded706fe59c0e359a05681166a0ae2991
+ARG HERMES_NPM_INTEGRITY=sha512-fS+8MsE69shNPmFnKDrE1a+KUDEEXgbyN/QM7J+2nh294gTjh2wCknk2tfMsD03GhSxl7YwyDmp6e5HLYzw8yA==
 ARG HERMES_UV_EXTRAS="anthropic messaging web pty mcp"
 ARG UV_VERSION=0.11.8
 
@@ -44,7 +44,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3=3.13.5-1 \
         python3-pip=25.1.1+dfsg-1 \
         python3-venv=3.13.5-1 \
-        curl=8.14.1-2+deb13u3 \
+        curl=8.14.1-2+deb13u4 \
         git=1:2.47.3-0+deb13u1 \
         gnupg=2.4.7-21+deb13u1 \
         ca-certificates=20250419 \

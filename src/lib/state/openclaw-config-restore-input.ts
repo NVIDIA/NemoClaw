@@ -13,39 +13,6 @@ import {
   type OpenClawImagePluginInstall,
 } from "./openclaw-plugin-restore.js";
 
-export interface OpenClawConfigStateFileSpec {
-  path: string;
-  strategy: string;
-}
-
-/**
- * OpenClaw openclaw.json restore source-of-truth boundary.
- *
- * The OpenClaw agent manifest currently declares openclaw.json as a durable
- * state file, but it cannot yet express key-level ownership. Until that schema
- * exists, this module is the localized restore policy for reconciling the
- * sanitized backup with the freshly rebuilt runtime config.
- *
- * Invalid state: replacing fresh runtime-owned config when the current file is
- * missing, unreadable, or invalid JSON. In those cases restore must fail the
- * file explicitly instead of falling back to a wholesale sanitized backup write.
- *
- * Source-fix constraint: remove or shrink this policy when OpenClaw or the
- * agent manifest can declare key-level ownership/migration rules for
- * openclaw.json directly.
- */
-export function shouldMergeOpenClawConfigStateFile(
-  agentType: string | null | undefined,
-  dir: string,
-  spec: OpenClawConfigStateFileSpec,
-): boolean {
-  return (
-    spec.strategy === "copy" &&
-    spec.path === "openclaw.json" &&
-    (agentType === "openclaw" || dir.replace(/\/+$/, "").endsWith("/.openclaw"))
-  );
-}
-
 export type OpenClawConfigRestoreInputResult =
   | { ok: true; input: Buffer }
   | { ok: false; error: string };

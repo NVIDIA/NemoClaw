@@ -16,7 +16,9 @@
 //   NEMOCLAW_TOOL_DISCLOSURE,
 //   NEMOCLAW_AGENT_TIMEOUT, NEMOCLAW_AGENT_HEARTBEAT_EVERY,
 //   NEMOCLAW_INFERENCE_COMPAT_B64,
+//   NEMOCLAW_DASHBOARD_BIND, NEMOCLAW_WSL_DASHBOARD_EXPOSURE,
 //   NEMOCLAW_DISABLE_DEVICE_AUTH,
+//   NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE,
 //   NEMOCLAW_EXTRA_AGENTS_JSON_B64,
 //   NEMOCLAW_PROXY_HOST, NEMOCLAW_PROXY_PORT,
 //   NEMOCLAW_OPENCLAW_MANAGED_PROXY, NEMOCLAW_WEB_SEARCH_ENABLED,
@@ -48,6 +50,21 @@ const MODEL_SETUP_EFFECT_KEYS: Record<string, Set<string>> = {
 const DEFAULT_DASHBOARD_PORT = 18789;
 const MIN_DASHBOARD_PORT = 1024;
 const MAX_DASHBOARD_PORT = 65535;
+const REMOTE_DASHBOARD_BIND_VALUES = new Set(["0.0.0.0"]);
+const DEVICE_AUTH_OPT_OUT_SOURCES = new Set(["operator", "managed-onboard"]);
+const BOOLEAN_BUILD_FLAG_VALUES = new Set(["0", "1"]);
+
+function readOptionalEnumEnv(env: Env, name: string, allowedValues: ReadonlySet<string>): string {
+  const value = env[name] ?? "";
+  if (value !== "" && !allowedValues.has(value)) {
+    throw new Error(`${name} must be empty or one of: ${[...allowedValues].join(", ")}`);
+  }
+  return value;
+}
+
+function readBooleanBuildFlag(env: Env, name: string): boolean {
+  return readOptionalEnumEnv(env, name, BOOLEAN_BUILD_FLAG_VALUES) === "1";
+}
 
 // Local Ollama small-context compaction policy (NemoClaw #5468).
 //
@@ -359,7 +376,13 @@ function validateManifestPayload(payload: unknown, manifestPath: string): JsonOb
   if (Object.keys(match).length === 0) {
     throw new Error(`${manifestPath}: field 'match' must be a non-empty object`);
   }
-  const allowedMatchKeys = new Set(["modelIds", "providerKey", "inferenceApi", "baseUrl"]);
+  const allowedMatchKeys = new Set([
+    "modelIds",
+    "modelIdPrefixes",
+    "providerKey",
+    "inferenceApi",
+    "baseUrl",
+  ]);
   const unknownMatchKeys = Object.keys(match)
     .filter((key) => !allowedMatchKeys.has(key))
     .sort();
@@ -375,6 +398,28 @@ function validateManifestPayload(payload: unknown, manifestPath: string): JsonOb
       !modelIds.every((modelId) => typeof modelId === "string" && modelId.trim()))
   ) {
     throw new Error(`${manifestPath}: match.modelIds must be a non-empty string array`);
+  }
+  const modelIdPrefixes = match.modelIdPrefixes;
+  if (
+    modelIdPrefixes !== undefined &&
+    (!Array.isArray(modelIdPrefixes) ||
+      modelIdPrefixes.length === 0 ||
+      !modelIdPrefixes.every((prefix) => typeof prefix === "string" && prefix.trim()))
+  ) {
+    throw new Error(`${manifestPath}: match.modelIdPrefixes must be a non-empty string array`);
+  }
+  if (
+    Array.isArray(modelIdPrefixes) &&
+    modelIdPrefixes.some((prefix) => String(prefix).includes("/"))
+  ) {
+    throw new Error(
+      `${manifestPath}: match.modelIdPrefixes must contain bare model ids without namespaces`,
+    );
+  }
+  if (modelIds !== undefined && modelIdPrefixes !== undefined) {
+    throw new Error(
+      `${manifestPath}: match.modelIds and match.modelIdPrefixes are mutually exclusive`,
+    );
   }
   for (const key of ["providerKey", "inferenceApi", "baseUrl"]) {
     const value = match[key];
@@ -489,13 +534,31 @@ function validateSelectedAgentEffects(
 
 function modelSetupMatches(payload: JsonObject, context: JsonObject): boolean {
   const match = payload.match;
+  const normalizedModel = String(context.model).trim().toLowerCase();
   const modelIds = match.modelIds;
   if (
     Array.isArray(modelIds) &&
     modelIds.length > 0 &&
-    !new Set(modelIds.map((modelId) => String(modelId).trim().toLowerCase())).has(
-      String(context.model).trim().toLowerCase(),
-    )
+    !new Set(modelIds.map((modelId) => String(modelId).trim().toLowerCase())).has(normalizedModel)
+  ) {
+    return false;
+  }
+
+  const modelIdPrefixes = match.modelIdPrefixes;
+  const bareModel = normalizedModel.includes("/")
+    ? normalizedModel.slice(normalizedModel.lastIndexOf("/") + 1)
+    : normalizedModel;
+  if (
+    Array.isArray(modelIdPrefixes) &&
+    modelIdPrefixes.length > 0 &&
+    !modelIdPrefixes.some((value) => {
+      const prefix = String(value).trim().toLowerCase();
+      return (
+        bareModel === prefix ||
+        bareModel.startsWith(`${prefix}.`) ||
+        bareModel.startsWith(`${prefix}-`)
+      );
+    })
   ) {
     return false;
   }
@@ -1190,8 +1253,48 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const origins = unique([loopbackOrigin, chatOrigin, portlessOrigin].filter(Boolean) as string[]);
 
   const isRemote = !isLoopback(parsed.hostname || "");
-  const disableDeviceAuth = env.NEMOCLAW_DISABLE_DEVICE_AUTH === "1" || isRemote;
+  const dashboardBind = readOptionalEnumEnv(
+    env,
+    "NEMOCLAW_DASHBOARD_BIND",
+    REMOTE_DASHBOARD_BIND_VALUES,
+  );
+  const remoteBindOptIn = dashboardBind === "0.0.0.0";
+  const wslDashboardExposure = readBooleanBuildFlag(env, "NEMOCLAW_WSL_DASHBOARD_EXPOSURE");
+  const hasRemoteDashboardExposure = isRemote || remoteBindOptIn || wslDashboardExposure;
+  const deviceAuthOptOut = env.NEMOCLAW_DISABLE_DEVICE_AUTH === "1";
+  const deviceAuthOptOutSource = readOptionalEnumEnv(
+    env,
+    "NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE",
+    DEVICE_AUTH_OPT_OUT_SOURCES,
+  );
+  const managedDeviceAuthOptOut = deviceAuthOptOut && deviceAuthOptOutSource === "managed-onboard";
+  const disableDeviceAuth = deviceAuthOptOut || hasRemoteDashboardExposure;
   const allowInsecure = parsed.scheme === "http";
+  const securityAuditSuppressions: JsonObject[] = [];
+  if (allowInsecure && !hasRemoteDashboardExposure) {
+    const reason =
+      "NemoClaw derives this setting from a loopback HTTP CHAT_UI_URL; use HTTPS for non-loopback dashboards.";
+    securityAuditSuppressions.push(
+      { checkId: "gateway.control_ui.insecure_auth", reason },
+      {
+        checkId: "config.insecure_or_dangerous_flags",
+        detailIncludes: "gateway.controlUi.allowInsecureAuth=true",
+        reason,
+      },
+    );
+  }
+  if (managedDeviceAuthOptOut && !hasRemoteDashboardExposure) {
+    const reason =
+      "NemoClaw onboarding disables device authentication for immediate dashboard access (managed compatibility behavior; see #1217).";
+    securityAuditSuppressions.push(
+      { checkId: "gateway.control_ui.device_auth_disabled", reason },
+      {
+        checkId: "config.insecure_or_dangerous_flags",
+        detailIncludes: "gateway.controlUi.dangerouslyDisableDeviceAuth=true",
+        reason,
+      },
+    );
+  }
 
   const providerModels: JsonObject[] = [
     {
@@ -1311,6 +1414,9 @@ export function buildConfig(env: Env = process.env): JsonObject {
     channels: { defaults: {} },
     tools: openclawTools,
     update: { checkOnStart: false },
+    ...(securityAuditSuppressions.length > 0
+      ? { security: { audit: { suppressions: securityAuditSuppressions } } }
+      : {}),
     plugins,
     gateway: {
       mode: "local",
@@ -1319,6 +1425,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
         allowInsecureAuth: allowInsecure,
         dangerouslyDisableDeviceAuth: disableDeviceAuth,
         allowedOrigins: origins,
+        ...(remoteBindOptIn && !isRemote ? { dangerouslyAllowHostHeaderOriginFallback: true } : {}),
       },
       trustedProxies: ["127.0.0.1", "::1"],
       auth: { token: "" },

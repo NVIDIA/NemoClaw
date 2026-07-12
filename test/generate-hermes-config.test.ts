@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 import { generateHermesConfig } from "../agents/hermes/config/generate.ts";
+import { discoverModelSpecificSetups } from "../agents/hermes/config/model-specific-setup.ts";
 import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../src/lib/hermes-proxy-api-key";
 import {
   applyCompatibleEndpointContextWindow,
@@ -382,7 +383,8 @@ describe("agents/hermes/generate-config.ts", () => {
   it("generates API server config without messaging platform token blocks", () => {
     const { config, envFile } = runConfigScript();
 
-    expect(config._config_version).toBe(30);
+    expect(config._config_version).toBe(32);
+    expect(config.agent?.verify_on_stop).toBe(false);
     expect(config.display).toMatchObject({
       compact: false,
       tool_progress: "all",
@@ -926,7 +928,10 @@ describe("agents/hermes/generate-config.ts", () => {
 
     expect(config.telegram).toEqual({ require_mention: true });
     expect(config.platforms.telegram).toEqual({ enabled: true });
-    expect(config.platforms.slack).toEqual({ enabled: true });
+    expect(config.platforms.slack).toEqual({
+      enabled: true,
+      extra: { rich_blocks: true },
+    });
     expectRemotePlatformToolsets(config.platform_toolsets.telegram);
     expectRemotePlatformToolsets(config.platform_toolsets.slack);
     expect(envFile).toContain("TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN\n");
@@ -953,7 +958,10 @@ describe("agents/hermes/generate-config.ts", () => {
       NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["slack"]),
     });
 
-    expect(config.platforms.slack).toEqual({ enabled: true });
+    expect(config.platforms.slack).toEqual({
+      enabled: true,
+      extra: { rich_blocks: true },
+    });
     expect(config.platforms.api_server.enabled).toBe(true);
   });
 
@@ -1094,6 +1102,38 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.model.default).toBe("fixture/hermes-model");
     expect(config.hermesCompat).toBeUndefined();
     expect(JSON.stringify(config)).not.toContain("future");
+  });
+
+  it("matches bounded bare model-family prefixes for Hermes manifests", () => {
+    const blueprintDir = path.join(tmpDir, "fixture-blueprint");
+    const registryDir = writeRegistryManifest(blueprintDir, "hermes/family.json", {
+      id: "fixture-hermes-family",
+      agent: "hermes",
+      description: "Fixture Hermes model family",
+      match: { modelIdPrefixes: ["gpt-5", "o3"] },
+      effects: { hermesCompat: {} },
+    });
+    const env = buildHermesTestEnv({ NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR: registryDir });
+
+    for (const [model, expectedMatches] of [
+      ["gpt-5.4-turbo", 1],
+      ["azure/gpt-5.4", 1],
+      ["openai/o3-mini", 1],
+      ["gpt-50", 0],
+      ["o30", 0],
+    ] as const) {
+      const matches = discoverModelSpecificSetups(
+        "hermes",
+        {
+          model,
+          providerKey: "custom",
+          inferenceApi: "openai-completions",
+          baseUrl: "https://inference.local/v1",
+        },
+        { env, scriptDir: SCRIPT_DIR },
+      );
+      expect(matches, model).toHaveLength(expectedMatches);
+    }
   });
 
   it("discovers the bundled registry from the script path when cwd differs", () => {

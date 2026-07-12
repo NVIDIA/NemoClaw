@@ -9,12 +9,35 @@ import { describe, expect, it } from "vitest";
 
 import {
   findCompiledInternalViolations,
+  findFastProjectTransitiveViolations,
+  isFastProjectTestPath,
   isScannedTestPath,
 } from "../scripts/checks/no-test-dist-imports";
 import { findProjectOverlaps, parseProjectListing } from "../scripts/checks/vitest-project-overlap";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const SOURCE_RUNTIME = path.join(REPO_ROOT, "test", "helpers", "onboard-script-mocks.cjs");
+
+function withImportGraphFixture<T>(
+  files: Readonly<Record<string, string>>,
+  inspect: (root: string) => T,
+): T {
+  const root = fs.mkdtempSync(path.join(REPO_ROOT, "test", ".compiled-import-graph-"));
+  try {
+    for (const [file, source] of Object.entries(files)) {
+      const absolutePath = path.join(root, file);
+      fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+      fs.writeFileSync(absolutePath, source);
+    }
+    return inspect(root);
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+}
+
+function fixtureRepoPath(root: string, file: string): string {
+  return path.relative(REPO_ROOT, path.join(root, file)).split(path.sep).join("/");
+}
 
 describe("compiled-test import boundary", () => {
   it("detects every supported compiled-internal reference shape", () => {
@@ -418,6 +441,206 @@ describe("compiled-test import boundary", () => {
     expect(isScannedTestPath("test/package-contract/example.test.ts")).toBe(false);
     expect(isScannedTestPath("test/e2e/example.test.ts")).toBe(false);
     expect(isScannedTestPath("test/dist-sourcemaps.test.ts")).toBe(false);
+  });
+});
+
+describe("fast-project transitive import boundary", () => {
+  it("uses exactly the test:fast Vitest project paths as graph roots (#6692)", () => {
+    expect(
+      [
+        "src/lib/example.test.ts",
+        "src/lib/coverage/example.test.ts",
+        "src/lib/dist/example.test.ts",
+        "src/lib/.claude/example.test.ts",
+        "src/.claude/example.test.ts",
+        "nemoclaw/src/blueprint/example.test.ts",
+        "nemoclaw/src/.claude/example.test.ts",
+        "test/e2e/support/example.test.ts",
+        "test/example.test.ts",
+        "test/e2e/live/example.test.ts",
+        "test/package-contract/example.test.ts",
+      ].map(isFastProjectTestPath),
+    ).toEqual([true, true, true, false, false, true, true, true, false, false, false]);
+  });
+
+  it("reports a shortest chain through static import, export, dynamic import, and require edges (#6692)", () => {
+    withImportGraphFixture(
+      {
+        "dynamic.ts": 'void import("./required.js");\n',
+        "entry.test.ts": 'import "./exporter.js";\n',
+        "exporter.ts": 'export * from "./dynamic.js";\n',
+        "helper.ts": 'import "../../dist/lib/onboard.js";\n',
+        "required.ts": 'const loaded = require("./helper.js");\nexport { loaded };\n',
+      },
+      (root) => {
+        expect(findFastProjectTransitiveViolations([path.join(root, "entry.test.ts")])).toEqual([
+          {
+            chain: [
+              fixtureRepoPath(root, "entry.test.ts"),
+              fixtureRepoPath(root, "exporter.ts"),
+              fixtureRepoPath(root, "dynamic.ts"),
+              fixtureRepoPath(root, "required.ts"),
+              fixtureRepoPath(root, "helper.ts"),
+            ],
+            detail: 'imports compiled CLI internals from "../../dist/lib/onboard.js"',
+            file: fixtureRepoPath(root, "helper.ts"),
+            line: 1,
+          },
+        ]);
+      },
+    );
+  });
+
+  it("terminates cyclic createRequire graphs with one deterministic violation (#6692)", () => {
+    withImportGraphFixture(
+      {
+        "a.ts": 'import "./b.js";\n',
+        "b.ts": [
+          'import { createRequire } from "node:module";',
+          "const load = createRequire(import.meta.url);",
+          'load("./c.js");',
+        ].join("\n"),
+        "c.ts": ['import "./a.js";', 'import "../../dist/commands/cycle.js";'].join("\n"),
+        "entry.test.ts": 'import "./a.js";\n',
+      },
+      (root) => {
+        expect(findFastProjectTransitiveViolations([path.join(root, "entry.test.ts")])).toEqual([
+          {
+            chain: [
+              fixtureRepoPath(root, "entry.test.ts"),
+              fixtureRepoPath(root, "a.ts"),
+              fixtureRepoPath(root, "b.ts"),
+              fixtureRepoPath(root, "c.ts"),
+            ],
+            detail: 'imports compiled CLI internals from "../../dist/commands/cycle.js"',
+            file: fixtureRepoPath(root, "c.ts"),
+            line: 2,
+          },
+        ]);
+      },
+    );
+  });
+
+  it("reports the shortest route when a longer import chain is discovered first (#6692)", () => {
+    withImportGraphFixture(
+      {
+        "entry.test.ts": ['import "./long-a.js";', 'import "./short.js";'].join("\n"),
+        "long-a.ts": 'import "./long-b.js";\n',
+        "long-b.ts": 'import "./target.js";\n',
+        "short.ts": 'import "./target.js";\n',
+        "target.ts": 'import "../../dist/lib/compiled.js";\n',
+      },
+      (root) => {
+        expect(findFastProjectTransitiveViolations([path.join(root, "entry.test.ts")])).toEqual([
+          {
+            chain: [
+              fixtureRepoPath(root, "entry.test.ts"),
+              fixtureRepoPath(root, "short.ts"),
+              fixtureRepoPath(root, "target.ts"),
+            ],
+            detail: 'imports compiled CLI internals from "../../dist/lib/compiled.js"',
+            file: fixtureRepoPath(root, "target.ts"),
+            line: 1,
+          },
+        ]);
+      },
+    );
+  });
+
+  it("rejects an alias whose resolved target is a compiled CLI module (#6692)", () => {
+    withImportGraphFixture(
+      {
+        "entry.test.ts": 'import "./source-alias.js";\n',
+      },
+      (root) => {
+        const distRoot = path.join(REPO_ROOT, "dist");
+        const compiledRoot = path.join(distRoot, "lib");
+        const parentsToRemove = [compiledRoot, distRoot].filter((dir) => !fs.existsSync(dir));
+        fs.mkdirSync(compiledRoot, { recursive: true });
+        const compiledFixtureRoot = fs.mkdtempSync(
+          path.join(compiledRoot, ".compiled-import-alias-"),
+        );
+        const compiledTarget = path.join(compiledFixtureRoot, "compiled.ts");
+
+        try {
+          fs.writeFileSync(compiledTarget, "export const compiled = true;\n");
+          fs.symlinkSync(compiledTarget, path.join(root, "source-alias.ts"));
+          const compiledRepoPath = path
+            .relative(REPO_ROOT, compiledTarget)
+            .split(path.sep)
+            .join("/");
+          expect(findFastProjectTransitiveViolations([path.join(root, "entry.test.ts")])).toEqual([
+            {
+              chain: [fixtureRepoPath(root, "entry.test.ts")],
+              detail: `imports compiled CLI internals from "./source-alias.js" (resolves to ${compiledRepoPath})`,
+              file: fixtureRepoPath(root, "entry.test.ts"),
+              line: 1,
+            },
+          ]);
+        } finally {
+          fs.rmSync(compiledFixtureRoot, { force: true, recursive: true });
+          for (const parent of parentsToRemove) {
+            try {
+              fs.rmdirSync(parent);
+            } catch {
+              // Another test or build may now own the generated parent.
+            }
+          }
+        }
+      },
+    );
+  });
+
+  it("reports compiled loads inside generated scripts reached through fast helpers (#6692)", () => {
+    withImportGraphFixture(
+      {
+        "entry.test.ts": 'import "./helper.js";\n',
+        "helper.ts": 'export const script = String.raw`require("../../dist/lib/embedded.js");`;\n',
+      },
+      (root) => {
+        expect(findFastProjectTransitiveViolations([path.join(root, "entry.test.ts")])).toEqual([
+          {
+            chain: [fixtureRepoPath(root, "entry.test.ts"), fixtureRepoPath(root, "helper.ts")],
+            detail: 'imports compiled CLI internals from "../../dist/lib/embedded.js"',
+            file: fixtureRepoPath(root, "helper.ts"),
+            line: 1,
+          },
+        ]);
+      },
+    );
+  });
+
+  it("ignores external packages whose own layout contains dist/lib (#6692)", () => {
+    withImportGraphFixture(
+      {
+        "entry.test.ts": 'import type { External } from "boundary-external";\n',
+        "node_modules/boundary-external/dist/lib/index.d.ts": "export type External = string;\n",
+        "node_modules/boundary-external/package.json": JSON.stringify({
+          name: "boundary-external",
+          types: "dist/lib/index.d.ts",
+          version: "1.0.0",
+        }),
+      },
+      (root) => {
+        expect(findFastProjectTransitiveViolations([path.join(root, "entry.test.ts")])).toEqual([]);
+      },
+    );
+  });
+
+  it("ignores unreachable compiled imports and ordinary runtime dist paths (#6692)", () => {
+    withImportGraphFixture(
+      {
+        "entry.test.ts": 'import "./safe.js";\n',
+        "orphan.ts": 'import "../../dist/lib/orphan.js";\n',
+        "safe.ts": [
+          'import path from "node:path";',
+          'export const runtimePath = path.join(root, "dist", "lib", "runtime.js");',
+        ].join("\n"),
+      },
+      (root) => {
+        expect(findFastProjectTransitiveViolations([path.join(root, "entry.test.ts")])).toEqual([]);
+      },
+    );
   });
 });
 

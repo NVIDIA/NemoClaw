@@ -22,6 +22,11 @@ import {
 } from "./docker-gpu-patch";
 import { finalizeDockerGpuPatchBackup } from "./docker-gpu-patch-finalize";
 import { captureDockerGpuPreRollbackDiagnostics } from "./docker-gpu-pre-rollback-diagnostics";
+import {
+  createDockerSandboxRecreator,
+  type RecreateGpuPatchFn,
+  type RecreateStartupPatchFn,
+} from "./docker-startup-command-sandbox-create";
 import { detectWslDockerDesktopStatus } from "./wsl-docker-desktop-gpu";
 
 let cachedDockerDesktopWslRuntime: boolean | null = null;
@@ -42,7 +47,6 @@ type DockerGpuSandboxCreateDeps = Pick<
   "runOpenshell" | "runCaptureOpenshell" | "sleep" | "dockerCapture"
 >;
 
-type RecreatePatchFn = typeof recreateOpenShellDockerSandboxWithGpu;
 type WaitSupervisorFn = typeof waitForOpenShellSupervisorReconnect;
 type FindContainerIdsFn = typeof findOpenShellDockerSandboxContainerIds;
 type FinalizeBackupFn = typeof finalizeDockerGpuPatchBackup;
@@ -58,6 +62,7 @@ type PatchFailureExitFn = (
 
 type DockerGpuSandboxCreatePatchOptions = {
   enabled: boolean;
+  persistStartupCommand?: boolean;
   sandboxName: string;
   gpuDevice?: string | null;
   openshellSandboxCommand?: readonly string[] | null;
@@ -78,7 +83,8 @@ type DockerGpuSandboxCreatePatchOptions = {
    */
   overrides?: {
     findContainerIds?: FindContainerIdsFn;
-    recreatePatch?: RecreatePatchFn;
+    recreatePatch?: RecreateGpuPatchFn;
+    recreateStartupPatch?: RecreateStartupPatchFn;
     waitForSupervisor?: WaitSupervisorFn;
     finalizeBackup?: FinalizeBackupFn;
     capturePreRollbackDiagnostics?: CapturePreRollbackDiagnosticsFn;
@@ -132,6 +138,7 @@ export function createDockerGpuSandboxCreatePatch(
   const findContainerIds =
     options.overrides?.findContainerIds ?? findOpenShellDockerSandboxContainerIds;
   const recreatePatch = options.overrides?.recreatePatch ?? recreateOpenShellDockerSandboxWithGpu;
+  const recreateStartupPatch = options.overrides?.recreateStartupPatch;
   const waitForSupervisor =
     options.overrides?.waitForSupervisor ?? waitForOpenShellSupervisorReconnect;
   const finalizeBackup = options.overrides?.finalizeBackup ?? finalizeDockerGpuPatchBackup;
@@ -148,22 +155,31 @@ export function createDockerGpuSandboxCreatePatch(
     backend: options.backend,
     dockerDesktopWsl: options.dockerDesktopWsl ?? isDockerDesktopWslRuntime(),
   };
+  const patchEnabled = options.enabled || options.persistStartupCommand === true;
+  const patchTarget = options.enabled ? "NVIDIA GPU access" : "restart-safe startup";
+  const recreateSelectedPatch = createDockerSandboxRecreator({
+    gpuEnabled: options.enabled,
+    gpuOptions: applyOptions,
+    startupCommand: options.openshellSandboxCommand,
+    recreateGpu: recreatePatch,
+    recreateStartup: recreateStartupPatch,
+  });
 
   return {
     maybeApplyDuringCreate() {
-      if (!options.enabled || result || patchError) return;
+      if (!patchEnabled || result || patchError) return;
       const containerIds = findContainerIds(options.sandboxName);
       if (containerIds.length === 0) return;
       console.log(
-        "  OpenShell Docker container detected; recreating it with NVIDIA GPU access before readiness wait...",
+        `  OpenShell Docker container detected; recreating it with ${patchTarget} before readiness wait...`,
       );
       try {
-        result = recreatePatch(
-          { ...applyOptions, waitForSupervisor: false },
-          { runCaptureOpenshell: options.deps.runCaptureOpenshell, sleep: options.deps.sleep },
-        );
+        result = recreateSelectedPatch(false, {
+          runCaptureOpenshell: options.deps.runCaptureOpenshell,
+          sleep: options.deps.sleep,
+        });
         needsSupervisorWait = true;
-        console.log(`  ✓ Docker GPU mode selected: ${result.mode.label}`);
+        console.log(`  ✓ Docker container mode selected: ${result.mode.label}`);
       } catch (error) {
         patchError = error;
       }
@@ -171,7 +187,9 @@ export function createDockerGpuSandboxCreatePatch(
 
     createFailureMessage() {
       if (!patchError) return null;
-      return "Docker GPU patch failed while OpenShell sandbox create was still waiting.";
+      return options.enabled
+        ? "Docker GPU patch failed while OpenShell sandbox create was still waiting."
+        : "Docker startup-command patch failed while OpenShell sandbox create was still waiting.";
     },
 
     exitOnPatchError() {
@@ -183,12 +201,12 @@ export function createDockerGpuSandboxCreatePatch(
     },
 
     ensureApplied() {
-      if (!options.enabled || result) return;
-      console.log("  Recreating OpenShell Docker sandbox container with NVIDIA GPU access...");
+      if (!patchEnabled || result) return;
+      console.log(`  Recreating OpenShell Docker sandbox container with ${patchTarget}...`);
       try {
-        result = recreatePatch({ ...applyOptions, waitForSupervisor: false }, options.deps);
+        result = recreateSelectedPatch(false, options.deps);
         needsSupervisorWait = true;
-        console.log(`  ✓ Docker GPU mode selected: ${result.mode.label}`);
+        console.log(`  ✓ Docker container mode selected: ${result.mode.label}`);
       } catch (error) {
         onPatchFailureExit(options.sandboxName, error, {
           runCaptureOpenshell: options.deps.runCaptureOpenshell,
@@ -203,7 +221,7 @@ export function createDockerGpuSandboxCreatePatch(
         options.timeoutSecs,
       );
       console.log(
-        `  Waiting for OpenShell supervisor to reconnect to the GPU-enabled container (up to ${supervisorReconnectTimeoutSecs}s)...`,
+        `  Waiting for OpenShell supervisor to reconnect to the recreated container (up to ${supervisorReconnectTimeoutSecs}s)...`,
       );
       const supervisorReady = waitForSupervisor(
         options.sandboxName,
@@ -233,11 +251,11 @@ export function createDockerGpuSandboxCreatePatch(
       if (supervisorReady) return;
       const failureMessage = (() => {
         if (!finalizeOutcome) {
-          return "OpenShell supervisor did not reconnect to the GPU-enabled container.";
+          return "OpenShell supervisor did not reconnect to the recreated container.";
         }
         return finalizeOutcome.rolledBack
-          ? "OpenShell supervisor did not reconnect to the GPU-enabled container; pre-patch sandbox restored."
-          : "OpenShell supervisor did not reconnect to the GPU-enabled container and rollback failed; pre-patch sandbox was NOT restored.";
+          ? "OpenShell supervisor did not reconnect to the recreated container; pre-patch sandbox restored."
+          : "OpenShell supervisor did not reconnect to the recreated container and rollback failed; pre-patch sandbox was NOT restored.";
       })();
       onPatchFailureExit(options.sandboxName, new Error(failureMessage), {
         runCaptureOpenshell: options.deps.runCaptureOpenshell,

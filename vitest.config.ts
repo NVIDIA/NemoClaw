@@ -4,18 +4,22 @@
 import { availableParallelism } from "node:os";
 import path from "node:path";
 
-import { defineConfig } from "vitest/config";
+import { defineConfig, defineProject } from "vitest/config";
 
+import pluginVitestProjectOptions from "./nemoclaw/vitest.project";
 import {
   shouldRunBranchValidationE2E,
   shouldRunLiveE2E,
 } from "./test/e2e/fixtures/live-project-gate.ts";
+import { CliCoverageSequencer } from "./test/helpers/cli-coverage-sequencer";
 import { resolveIntegrationProjectScheduling } from "./test/helpers/integration-project-scheduling";
 import { sourceLoaderNodeOptions } from "./test/helpers/source-loader-options";
 import { testTimeout } from "./test/helpers/timeouts";
+import { resolveVitestFeedback } from "./test/helpers/vitest-feedback";
+import { vitestStateIsolation } from "./test/helpers/vitest-state-isolation";
+import { vitestWatchTriggerPatterns } from "./test/helpers/vitest-watch-triggers";
 
-const isGithubActions = process.env.GITHUB_ACTIONS === "true";
-const isCi = isGithubActions || process.env.CI === "true" || process.env.CI === "1";
+const { isCi, silent } = resolveVitestFeedback();
 const LIVE_E2E_PROJECT_TIMEOUT_MS = 30 * 60 * 1000;
 const runLiveE2E = shouldRunLiveE2E();
 const runBranchValidationE2E = shouldRunBranchValidationE2E();
@@ -34,6 +38,9 @@ const typedSourceTransform = {
   },
 };
 const sourceNodeOptions = sourceLoaderNodeOptions(process.env.NODE_OPTIONS);
+const controlledNonLiveEnv = {
+  NEMOCLAW_DISABLE_GATEWAY_DRIFT_PREFLIGHT: "1",
+};
 // Pin the file-creation umask of every non-live test worker to exactly 0o022 —
 // the conventional CI baseline — so Hermes/OpenClaw guard fixtures are created
 // with deterministic modes regardless of the developer's ambient umask (e.g. a
@@ -42,6 +49,7 @@ const sourceNodeOptions = sourceLoaderNodeOptions(process.env.NODE_OPTIONS);
 // intentionally excluded below and keep their own stricter umask handling. See
 // test/helpers/normalize-fixture-umask.ts (#6448).
 const fixtureUmaskSetup = "test/helpers/normalize-fixture-umask.ts";
+const pluginVitestProject = defineProject(pluginVitestProjectOptions);
 const integrationProjectScheduling = resolveIntegrationProjectScheduling({
   isCi,
   npmLifecycleEvent: process.env.npm_lifecycle_event,
@@ -51,20 +59,28 @@ const integrationProjectScheduling = resolveIntegrationProjectScheduling({
 
 export default defineConfig({
   test: {
-    env: {
-      NEMOCLAW_DISABLE_GATEWAY_DRIFT_PREFLIGHT: "1",
-    },
-    // CI logs are easiest to scan when test chatter stays quiet and failures
-    // surface as GitHub annotations at the relevant file and line.
-    reporters: isGithubActions ? ["github-actions"] : ["default"],
-    silent: isCi,
+    globalSetup: "test/helpers/vitest-temp-root.ts",
+    tags: [
+      {
+        name: "e2e/credential-free",
+        description: "Runs without external credentials in the shared E2E job",
+      },
+    ],
+    // Let Vitest select its environment-aware local reporter and add GitHub
+    // annotations in Actions. CI suppresses passed-test logs while replaying
+    // the console output attached to failures.
+    silent,
     hideSkippedTests: isCi,
+    watchTriggerPatterns: vitestWatchTriggerPatterns,
+    sequence: { sequencer: CliCoverageSequencer },
     projects: [
       {
         ...typedSourceTransform,
         test: {
+          ...vitestStateIsolation,
           name: "cli",
           alias: canonicalOpenShellPolicyAlias,
+          env: controlledNonLiveEnv,
           testTimeout: testTimeout(),
           setupFiles: [fixtureUmaskSetup, "test/helpers/onboard-script-mocks.cjs"],
           include: ["src/**/*.test.ts"],
@@ -74,6 +90,7 @@ export default defineConfig({
       {
         ...typedSourceTransform,
         test: {
+          ...vitestStateIsolation,
           name: "integration",
           alias: canonicalOpenShellPolicyAlias,
           // Source-backed process fixtures can exceed the unit-test budget
@@ -85,7 +102,14 @@ export default defineConfig({
           // 7 GiB CI runner. The canonical local full suite instead runs this
           // project as a bounded four-worker phase after the other projects.
           ...integrationProjectScheduling,
-          env: { NODE_OPTIONS: sourceNodeOptions },
+          env: {
+            ...controlledNonLiveEnv,
+            NODE_OPTIONS: sourceNodeOptions,
+            // Integration fixtures exercise onboarding against controlled fake
+            // Docker state. Keep a base-image Dockerfile change in the PR from
+            // redirecting those fixtures into the real local-build guard.
+            NEMOCLAW_SANDBOX_BASE_IMAGE_REF: "ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
+          },
           include: ["test/**/*.test.{js,ts}"],
           exclude: [
             "**/node_modules/**",
@@ -105,8 +129,10 @@ export default defineConfig({
       {
         ...typedSourceTransform,
         test: {
+          ...vitestStateIsolation,
           name: "installer-integration",
           alias: canonicalOpenShellPolicyAlias,
+          env: controlledNonLiveEnv,
           setupFiles: [fixtureUmaskSetup],
           include: [
             "test/install-express-prompt.test.ts",
@@ -122,28 +148,24 @@ export default defineConfig({
       {
         ...typedSourceTransform,
         test: {
+          ...vitestStateIsolation,
           name: "package-contract",
           alias: canonicalOpenShellPolicyAlias,
+          env: controlledNonLiveEnv,
           setupFiles: [fixtureUmaskSetup],
           include: ["test/package-contract/**/*.test.ts"],
         },
       },
+      pluginVitestProject,
       {
         ...typedSourceTransform,
         test: {
-          name: "plugin",
-          alias: canonicalOpenShellPolicyAlias,
-          setupFiles: [fixtureUmaskSetup],
-          include: ["nemoclaw/src/**/*.test.ts"],
-        },
-      },
-      {
-        ...typedSourceTransform,
-        test: {
+          ...vitestStateIsolation,
           // Fast tests for the E2E fixture/support layer. Vitest remains the
           // only harness; this project does not define a separate runner.
           name: "e2e-support",
           alias: canonicalOpenShellPolicyAlias,
+          env: controlledNonLiveEnv,
           testTimeout: testTimeout(),
           setupFiles: [fixtureUmaskSetup, "test/helpers/onboard-script-mocks.cjs"],
           include: ["test/e2e/support/**/*.test.ts"],
@@ -170,6 +192,7 @@ export default defineConfig({
           // whole-test retry reuses that state and can hide the first failure
           // behind stale locks or exhausted storage. Transient operations must
           // retry inside the target after proving their cleanup boundary.
+          fileParallelism: false,
           retry: 0,
           include: runLiveE2E ? ["test/e2e/live/**/*.test.ts"] : [],
           // Live E2E tests are opt-in because they install, onboard, and
@@ -192,11 +215,10 @@ export default defineConfig({
           // runs the selected test suites. Only run when explicitly enabled:
           //   NEMOCLAW_RUN_BRANCH_VALIDATION_E2E=1 npx vitest run --project e2e-branch-validation
           //
-          // Override the project-root `silent: isCi` setting — diagnostic
-          // output from createBrevInstance / waitForSsh / waitForLaunchableReady
-          // is essential for debugging Brev provisioning timing and the
-          // overall suite runs in a single `describe` block, so there's no
-          // test chatter to suppress anyway.
+          // The reusable workflow passes `--silent=false --reporter=default`:
+          // diagnostic output from createBrevInstance / waitForSsh /
+          // waitForLaunchableReady is essential for debugging provisioning
+          // timing, and the suite has no routine test chatter to suppress.
           // Gate on a workflow-owned sentinel or Brev auth env. Historically
           // this used BREV_API_TOKEN (short-lived refresh token); newer
           // workflows authenticate with BREV_API_KEY + BREV_ORG_ID before

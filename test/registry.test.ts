@@ -852,6 +852,62 @@ describe("registry", () => {
     expect(data.sandboxes.messaging.messagingChannelConfig).toBeUndefined();
   });
 
+  it("drops legacy providerCredentialHashes when rewriting messaging rows (#3631)", () => {
+    const basePlan = makeMessagingPlan("messaging", ["telegram"]);
+    const binding = {
+      channelId: "telegram",
+      credentialId: "telegramBotToken",
+      sourceInput: "botToken",
+      providerName: "messaging-telegram-bridge",
+      providerEnvKey: "TELEGRAM_BOT_TOKEN",
+      placeholder: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+      credentialAvailable: true,
+      credentialHash: "new-hash",
+    };
+    fs.mkdirSync(path.dirname(regFile), { recursive: true });
+    fs.writeFileSync(
+      regFile,
+      `${JSON.stringify(
+        {
+          sandboxes: {
+            messaging: {
+              name: "messaging",
+              messaging: {
+                schemaVersion: 1,
+                plan: {
+                  ...basePlan,
+                  credentialBindings: [binding],
+                },
+              },
+              providerCredentialHashes: [
+                {
+                  channel: "telegram",
+                  credentialHashes: { TELEGRAM_BOT_TOKEN: "old-hash" },
+                },
+              ],
+            },
+          },
+          defaultSandbox: "messaging",
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    registry.updateSandbox("messaging", { model: "new-model" });
+
+    const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    expect(data.sandboxes.messaging.providerCredentialHashes).toBeUndefined();
+    expect(data.sandboxes.messaging.messaging.plan.credentialBindings).toEqual([
+      {
+        channelId: "telegram",
+        providerEnvKey: "TELEGRAM_BOT_TOKEN",
+        credentialAvailable: true,
+        credentialHash: "new-hash",
+      },
+    ]);
+  });
+
   it("imageTag defaults to null when not provided", () => {
     registry.registerSandbox({ name: "no-tag" });
     const sb = registry.getSandbox("no-tag");

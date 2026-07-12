@@ -115,6 +115,7 @@ export function createDeps(
     promptName: vi.fn(async () => "my-assistant"),
     selectResourceProfile: vi.fn(async () => null as ResourceProfile | null),
     stopStale: vi.fn(),
+    reconcileRegisteredExtraProviders: vi.fn(() => [] as string[]),
     createSandbox: vi.fn(async () => "my-assistant"),
     updateSandbox: vi.fn(),
     complete: vi.fn(async (_stepName: string, updates: SessionUpdates) => {
@@ -185,6 +186,7 @@ export function createDeps(
       selectResourceProfileForSandbox: calls.selectResourceProfile,
       stopStaleDashboardListenersForSandbox: calls.stopStale,
       listRegistrySandboxes: () => ({ sandboxes: [{ name: "old" }] }),
+      reconcileRegisteredExtraProviders: calls.reconcileRegisteredExtraProviders,
       createSandbox: calls.createSandbox,
       updateSandboxRegistry: calls.updateSandbox,
       getSandboxAgentRegistryFields: () => ({ agent: null }),
@@ -226,6 +228,7 @@ export function baseOptions(
     resume: false,
     fresh: false,
     resumeAgentChanged: false,
+    recreateSandbox: () => false,
     gatewayName: "nemoclaw",
     session,
     sandboxName: null,

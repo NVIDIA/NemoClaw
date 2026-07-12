@@ -6,13 +6,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   nodeOptionsWithoutSourceLoader,
   SOURCE_REQUIRE_HOOK,
   sourceLoaderNodeOptions,
 } from "../helpers/source-loader-options";
+import { testTimeoutOptions } from "../helpers/timeouts";
 import { runWithEnv } from "./helpers";
 
 const tempDirs = new Set<string>();
@@ -149,6 +150,89 @@ describe("source-loader Node options", () => {
 
     expect(result.code).toBe(0);
     expect(JSON.parse(fs.readFileSync(marker, "utf8"))).toEqual({ hasTypeScriptHook: true });
+  });
+
+  it("removes the implicit CLI HOME after a synchronous invocation", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-owned-home-"));
+    tempDirs.add(directory);
+    const marker = path.join(directory, "home.txt");
+    const preload = path.join(directory, "record-home.cjs");
+    fs.writeFileSync(
+      preload,
+      `require("node:fs").writeFileSync(${JSON.stringify(marker)}, process.env.HOME ?? "");`,
+    );
+
+    const result = runWithEnv("--version", {
+      NODE_OPTIONS: `${sourceLoaderNodeOptions(undefined)} --require=${preload}`,
+    });
+    const implicitHome = fs.readFileSync(marker, "utf8");
+
+    expect(result.code).toBe(0);
+    expect(path.isAbsolute(implicitHome)).toBe(true);
+    expect(fs.existsSync(implicitHome)).toBe(false);
+  });
+
+  it("removes the implicit CLI HOME after a failed invocation", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-failed-home-"));
+    tempDirs.add(directory);
+    const marker = path.join(directory, "home.txt");
+    const preload = path.join(directory, "record-home.cjs");
+    fs.writeFileSync(
+      preload,
+      `require("node:fs").writeFileSync(${JSON.stringify(marker)}, process.env.HOME ?? "");`,
+    );
+
+    const result = runWithEnv("not-a-command", {
+      NODE_OPTIONS: `${sourceLoaderNodeOptions(undefined)} --require=${preload}`,
+    });
+    const implicitHome = fs.readFileSync(marker, "utf8");
+
+    expect(result.code).not.toBe(0);
+    expect(fs.existsSync(implicitHome)).toBe(false);
+  });
+
+  it(
+    "removes the implicit CLI HOME after a timed-out invocation",
+    testTimeoutOptions(10_000),
+    () => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-timeout-home-"));
+      tempDirs.add(directory);
+      const marker = path.join(directory, "home.txt");
+      const preload = path.join(directory, "record-home-and-wait.cjs");
+      fs.writeFileSync(
+        preload,
+        [
+          `require("node:fs").writeFileSync(${JSON.stringify(marker)}, process.env.HOME ?? "");`,
+          "setInterval(() => {}, 1000);",
+        ].join("\n"),
+      );
+
+      const result = runWithEnv(
+        "--version",
+        { NODE_OPTIONS: `${sourceLoaderNodeOptions(undefined)} --require=${preload}` },
+        2_000,
+      );
+      const implicitHome = fs.readFileSync(marker, "utf8");
+
+      expect(result.code).not.toBe(0);
+      expect(result.out).toContain("ETIMEDOUT");
+      expect(fs.existsSync(implicitHome)).toBe(false);
+    },
+  );
+
+  it("uses an explicit CLI HOME without allocating a hidden one", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-explicit-home-"));
+    tempDirs.add(directory);
+    const mkdtemp = vi.spyOn(fs, "mkdtempSync");
+    try {
+      const result = runWithEnv("--version", { HOME: directory });
+
+      expect(result.code).toBe(0);
+      expect(mkdtemp).not.toHaveBeenCalled();
+      expect(fs.existsSync(directory)).toBe(true);
+    } finally {
+      mkdtemp.mockRestore();
+    }
   });
 
   it("quotes preload paths that contain spaces for Node (#6245)", () => {

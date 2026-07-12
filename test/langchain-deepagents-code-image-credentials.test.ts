@@ -174,6 +174,7 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
   });
 
   it("rejects mismatched, malformed, wrapped, and raw credential placeholders", () => {
+    const oversizedName = "A".repeat(129);
     const invalidCases = [
       { name: "MODEL_NAME", value: "openshell:resolve:env:OTHER_NAME" },
       { name: "MODEL_NAME", value: "openshell:resolve:env:v12_OTHER_NAME" },
@@ -185,6 +186,7 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
       { name: "MODEL-NAME", value: "openshell:resolve:env:MODEL-NAME" },
       { name: "OPENSHELL_TLS_KEY", value: "openshell:resolve:env:OPENSHELL_TLS_KEY" },
       { name: "OPENSHELL_TLS_KEY", value: "openshell:resolve:env:v12_OPENSHELL_TLS_KEY" },
+      { name: oversizedName, value: `openshell:resolve:env:${oversizedName}` },
       { name: "GITHUB_MCP_TOKEN", value: "opaqueRawCredentialValue12345" },
     ];
 
@@ -647,6 +649,21 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
     expect(result.stderr).toContain("OPENAI_API_KEY");
     expect(result.stderr).not.toContain(opaque);
     expect(fs.existsSync(ranMarker)).toBe(false);
+  });
+
+  it.each([
+    [128, false],
+    [129, true],
+  ])("enforces the canonical runtime context-prefix boundary (%i)", (prefixLength, allowed) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-context-limit-"));
+    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
+    const value = `${"A".repeat(prefixLength)}Secret=opaqueCredentialPayloadZ1234567890`;
+    const result = runWrapper(wrapperPath, ["-n", "hi"], { CONTEXT_SAMPLE: value });
+
+    expect(result.status === 0, result.stderr).toBe(allowed);
+    expect(fs.existsSync(ranMarker)).toBe(allowed);
+    expect(result.stderr.includes("CONTEXT_SAMPLE")).toBe(!allowed);
+    expect(result.stderr).not.toContain(value);
   });
 
   it("rejects credential-name-context env-file entries with opaque payloads", () => {

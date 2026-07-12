@@ -248,6 +248,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     }
     for (const s of [
       "managed-dcode-runtime.py",
+      "dcode-session-supervisor.py",
       "nemoclaw_observability.py",
       "patch-managed-deepagents-code.py",
       "validate-nemotron-ultra-profile.py",
@@ -258,6 +259,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "install -m 0755 /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/bin/dcode.real",
       "install -m 0755 /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/bin/deepagents-code",
       "install -o root -g root -m 0755 /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/lib/nemoclaw/dcode-managed-exec",
+      "COPY agents/langchain-deepagents-code/dcode-session-supervisor.py /usr/local/lib/nemoclaw/dcode-session-supervisor.py",
+      `test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/dcode-session-supervisor.py)" = "0:0:755"`,
       "test -f /usr/local/lib/nemoclaw/dcode-managed-exec",
       "test ! -L /usr/local/lib/nemoclaw/dcode-managed-exec",
       `test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/dcode-managed-exec)" = "0:0:755"`,
@@ -305,7 +308,15 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(dockerfile).toContain("ARG NEMOCLAW_TOOL_DISCLOSURE=progressive");
     expect(dockerfile).toContain("NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE}");
     expect(dockerfile).toContain("progressive|direct)");
-    expect(launcher).toContain('exec "$MANAGED_DCODE_WRAPPER" "$@"');
+    expect(launcher).toContain(
+      'exec /opt/venv/bin/python3 -I "$MANAGED_SESSION_SUPERVISOR" "$MANAGED_DCODE_WRAPPER" "$@"',
+    );
+    expect(launcher).toContain(
+      'readonly MANAGED_SESSION_SUPERVISOR="/usr/local/lib/nemoclaw/dcode-session-supervisor.py"',
+    );
+    expect(launcher).toContain(
+      'status | whoami | identity | --version | -v | -V) exec "$MANAGED_DCODE_WRAPPER" "$@"',
+    );
     expect(launcher).toContain("harden_resource_limits");
     expect(launcher).toContain("refusing to launch dcode unhardened");
     expect(policy).not.toContain("/usr/local/bin/dcode.real");
@@ -373,6 +384,15 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(startScript).toContain(`printf '%s\\n' 'export PATH="${DCODE_CANONICAL_PATH}"'`);
     expect(wrapper).toContain(`export PATH="${DCODE_CANONICAL_PATH}"`);
     expect(pathContractFiles).not.toContain('PATH="/usr/local/bin:${PATH}"');
+  });
+
+  it("preseeds managed first-run state and a usable ripgrep binary (#6678)", () => {
+    const baseDockerfile = readAgentFile("Dockerfile.base");
+
+    expect(baseDockerfile).toContain("ripgrep=14.1.1-1+b4");
+    expect(baseDockerfile).toContain(
+      "printf '1\\n' > /sandbox/.deepagents/.state/onboarding_complete",
+    );
   });
 
   it("keeps optional service egress out of the default policy and requires Landlock", () => {
@@ -571,7 +591,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "redact_secrets_in_file",
       "trap cleanup_sensitive_captures EXIT",
       "cleanup_sensitive_captures",
-      "${PREFIX}.sanitized.log",
+      "${PREFIX}${suffix}.sanitized.log",
+      "for session_index in 1 2",
+      'wait_for_dcode_process_baseline "$baseline_process_count"',
       "secret-shaped value found in sanitized TUI capture",
       "nvapi-",
       "sk-",
@@ -821,13 +843,13 @@ describe("LangChain Deep Agents Code image contracts", () => {
     const review = readAgentFile("dependency-review.md");
 
     expect(review).toContain("requirements.lock");
-    expect(review).toContain("d8b01f36a0f325f38d18b4dc2cfdf452125987571a86ca58d9c93e08b7b06a14");
-    expect(review).toContain("Audit date: 2026-07-07");
+    expect(review).toContain("7889fd275175ceadde843480587a3ed5b3dc517537222e60fa6fdfe4d5b21332");
+    expect(review).toContain("Audit date: 2026-07-09");
     expect(review).toContain(
       "uv tool run --python 3.13 pip-audit -r agents/langchain-deepagents-code/requirements.lock --progress-spinner off --disable-pip",
     );
     expect(review).toContain("No known vulnerabilities found");
-    expect(review).toContain("1cee6afafcbe545f5d095c94cb0ad81ff2a1512f84ad9d128a69a9b3d72b3def");
+    expect(review).toContain("8fe85c62293c74147848732dc56c33e8ab60133fa41c071da4328ac60f2bf44f");
     expect(review).toContain("7ba7b77bd6f889cc861eddbe3e38fc1f4433a85b7bc2a9b516e19a19a37a7686");
     expect(review).toContain("Adapter dependency audit result: `No known vulnerabilities found`");
     expect(review).toContain("Deep Agents Code `0.1.34` pins `deepagents==0.7.0a6`");

@@ -232,6 +232,10 @@ _HERMES_RUNTIME_CONFIG_GUARD="/usr/local/lib/nemoclaw/hermes-runtime-config-guar
 if [ ! -f "$_HERMES_RUNTIME_CONFIG_GUARD" ]; then
   _HERMES_RUNTIME_CONFIG_GUARD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/runtime-config-guard.py"
 fi
+_HERMES_TIRITH_MARKER_FINALIZER="/usr/local/lib/nemoclaw/finalize-tirith-marker.py"
+if [ ! -f "$_HERMES_TIRITH_MARKER_FINALIZER" ]; then
+  _HERMES_TIRITH_MARKER_FINALIZER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/finalize-tirith-marker.py"
+fi
 _HERMES_GUARD_TIMEOUT=(timeout --signal=TERM --kill-after=5s 12m)
 _HERMES_BOUNDARY_TIMEOUT=(timeout --signal=TERM --kill-after=2s 15s)
 HERMES_RESTART_SEAL_STATE="/run/nemoclaw/hermes-restart-seal.json"
@@ -418,26 +422,60 @@ ensure_gateway_log_stream() {
   fi
 }
 
+TIRITH_RETRY_MARKER_CLEARED=0
+
 retry_tirith_marker_if_needed() {
   local marker="${HERMES_DIR}/.tirith-install-failed"
-  local reason
+  local rc
 
-  [ -e "$marker" ] || return 0
-  if [ -L "$marker" ] || [ ! -f "$marker" ]; then
+  if "$_HERMES_PYTHON" -I "$_HERMES_TIRITH_MARKER_FINALIZER" "$marker"; then
+    echo "[tirith-bootstrap] download_failed marker present; letting Hermes runtime fallback retry Tirith" >&2
+    TIRITH_RETRY_MARKER_CLEARED=1
+    return 0
+  else
+    rc=$?
+  fi
+  if [ "$rc" -eq 10 ]; then
+    if [ -e "$marker" ]; then
+      echo "[tirith-bootstrap] WARNING: Tirith install marker reason is not retryable; Hermes gateway startup will continue" >&2
+    fi
+    return 0
+  fi
+  if [ "$rc" -eq 11 ]; then
     echo "[tirith-bootstrap] WARNING: unsafe Tirith install marker at ${marker}; not reading it" >&2
     return 0
   fi
+  echo "[tirith-bootstrap] WARNING: could not safely inspect or remove retryable Tirith marker; Hermes gateway startup will continue" >&2
+}
 
-  reason="$(head -n 1 "$marker" 2>/dev/null | tr -d '\r\n' || true)"
-  if [ "$reason" != "download_failed" ]; then
-    echo "[tirith-bootstrap] WARNING: Tirith install marker reason '${reason:-unknown}' is not retryable; Hermes gateway startup will continue" >&2
+prepare_tirith_marker_retry() {
+  TIRITH_RETRY_MARKER_CLEARED=0
+  retry_tirith_marker_if_needed
+}
+
+# sourceBoundary: Hermes runtime fallback recreates download_failed when its background Tirith fetch fails.
+# whyNotSourceFix: Hermes is an upstream image dependency; this entrypoint owns restart recovery only.
+# regressionTest: test/hermes-tirith-retry-finalization.test.ts covers cleanup and unsafe-marker preservation.
+# removalCondition: Remove when Hermes no longer recreates the marker after a handled startup retry.
+finalize_tirith_marker_retry() {
+  local marker="${HERMES_DIR}/.tirith-install-failed"
+  local rc
+
+  [ "$TIRITH_RETRY_MARKER_CLEARED" -eq 1 ] || return 0
+  if "$_HERMES_PYTHON" -I "$_HERMES_TIRITH_MARKER_FINALIZER" "$marker"; then
+    echo "[tirith-bootstrap] Tirith retry completed with download_failed; clearing the handled retry marker" >&2
+    return 0
+  else
+    rc=$?
+  fi
+  if [ "$rc" -eq 10 ]; then
     return 0
   fi
-
-  echo "[tirith-bootstrap] download_failed marker present; letting Hermes runtime fallback retry Tirith" >&2
-  if ! rm -f "$marker" 2>/dev/null; then
-    echo "[tirith-bootstrap] WARNING: could not remove retryable Tirith marker; Hermes gateway startup will continue" >&2
+  if [ "$rc" -eq 11 ]; then
+    echo "[tirith-bootstrap] WARNING: unsafe Tirith install marker recreated during retry; not reading it" >&2
+    return 0
   fi
+  echo "[tirith-bootstrap] WARNING: could not safely inspect or clear handled Tirith retry marker; Hermes gateway startup will continue" >&2
 }
 
 cmdline_is_hermes_gateway() {
@@ -1428,6 +1466,96 @@ export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 
+# Corporate proxy CA merge (NemoClaw#6210).
+# OpenShell injects SSL_CERT_FILE for its own L7 proxy CA at runtime. When a
+# separate corporate MITM proxy sits in front of the host and re-signs external
+# TLS with a different root, that root is absent from the OpenShell bundle, so
+# external endpoints (e.g. api.telegram.org) fail verification even when policy
+# allows the connection. If onboard baked an operator-supplied corporate CA
+# into the image, append it to the OpenShell bundle — never replace it (the
+# #1828 OpenShell CA behavior stays intact) — and repoint SSL_CERT_FILE at the
+# merged bundle before the CURL/REQUESTS/GIT derivation below picks it up.
+_NEMOCLAW_CORPORATE_CA_FILE="/usr/local/share/nemoclaw/corporate-ca.pem"
+# Concise, secret-free warning when a baked corporate CA fails to merge at
+# runtime. Names the failed step + target path only (never certificate bytes)
+# so an operator can distinguish "no CA was baked" from "runtime merge failed".
+_nemoclaw_ca_merge_warn() {
+  echo "[nemoclaw] WARNING: corporate proxy CA merge failed at ${1}; keeping OpenShell-only trust — external TLS through the corporate proxy may fail (#6210)" >&2
+}
+merge_corporate_proxy_ca() {
+  [ -s "$_NEMOCLAW_CORPORATE_CA_FILE" ] || return 0
+  _base_bundle=""
+  if [ -n "${SSL_CERT_FILE:-}" ] && [ -f "${SSL_CERT_FILE}" ]; then
+    _base_bundle="$SSL_CERT_FILE"
+  elif [ -f /etc/ssl/certs/ca-certificates.crt ]; then
+    _base_bundle="/etc/ssl/certs/ca-certificates.crt"
+  fi
+  _merged="/tmp/nemoclaw-ca-bundle.pem"
+  # Trust-anchor path safety (#6210): in the normal container start this
+  # entrypoint runs as root (the step-down prefix wraps only the later agent
+  # commands, not this top-level merge), so the merged bundle is written
+  # root-owned 0444 — the non-root sandbox user that the agent later runs as
+  # inherits SSL_CERT_FILE but cannot rewrite it. The predictable /tmp path is
+  # still handled safely: it is built in a fresh mktemp sibling and atomically
+  # renamed into place; a pre-planted symlink at the target is dropped first
+  # (below); and rename(2) replaces the target link/file rather than writing
+  # through it, so a pre-planted symlink or file cannot redirect the write. On a
+  # non-root start the whole entrypoint (and the agent) is the same sandbox user,
+  # so there is no privilege boundary to cross.
+  # Build the bundle in a private temp file next to the target, verifying every
+  # write, then atomically rename into place. If any step fails we bail without
+  # exporting anything, leaving the OpenShell-only trust intact rather than
+  # pointing tools at a partial/empty bundle.
+  _tmp="$(mktemp "${_merged}.XXXXXX" 2>/dev/null)" || {
+    _nemoclaw_ca_merge_warn "create temp bundle (${_merged})"
+    return 0
+  }
+  if [ -n "$_base_bundle" ]; then
+    cat "$_base_bundle" >>"$_tmp" 2>/dev/null || {
+      rm -f "$_tmp"
+      _nemoclaw_ca_merge_warn "append OpenShell bundle"
+      return 0
+    }
+    printf '\n' >>"$_tmp" 2>/dev/null || {
+      rm -f "$_tmp"
+      _nemoclaw_ca_merge_warn "append OpenShell bundle"
+      return 0
+    }
+  fi
+  cat "$_NEMOCLAW_CORPORATE_CA_FILE" >>"$_tmp" 2>/dev/null || {
+    rm -f "$_tmp"
+    _nemoclaw_ca_merge_warn "append corporate CA"
+    return 0
+  }
+  chmod 0444 "$_tmp" 2>/dev/null || {
+    rm -f "$_tmp"
+    _nemoclaw_ca_merge_warn "set merged bundle permissions (${_merged})"
+    return 0
+  }
+  # Defense-in-depth for the predictable /tmp path (#6210): if a co-tenant
+  # pre-planted a symlink at the target, drop it first so we rename into a fresh
+  # regular file we own rather than through an attacker-controlled link.
+  if [ -L "$_merged" ]; then
+    rm -f "$_merged" 2>/dev/null || true
+  fi
+  mv -f "$_tmp" "$_merged" 2>/dev/null || {
+    rm -f "$_tmp"
+    _nemoclaw_ca_merge_warn "install merged bundle (${_merged})"
+    return 0
+  }
+  # Export all CA env vars explicitly (not via the ${VAR:-…} defaulting below,
+  # which would keep an OpenShell-preset CURL/REQUESTS/GIT value pointing at the
+  # OpenShell-only bundle instead of the merged one).
+  export SSL_CERT_FILE="$_merged"
+  export CURL_CA_BUNDLE="$_merged"
+  export REQUESTS_CA_BUNDLE="$_merged"
+  export GIT_SSL_CAINFO="$_merged"
+  export NODE_EXTRA_CA_CERTS="$_merged"
+  export _NEMOCLAW_CORPORATE_CA_MERGED=1
+  echo "[nemoclaw] merged corporate proxy CA into sandbox trust bundle (#6210)" >&2
+}
+merge_corporate_proxy_ca
+
 # OpenShell injects SSL_CERT_FILE/CURL_CA_BUNDLE for its L7 proxy CA. Persist
 # them into connect-session shells so Python Slack probes and Hermes tools trust
 # the same proxy CA that the entrypoint received at startup.
@@ -1469,7 +1597,7 @@ if [ -f /opt/hermes/ui-tui/dist/entry.js ]; then
   export HERMES_TUI_DIR="/opt/hermes/ui-tui"
 fi
 TUIENVEOF
-    for _ca_env_name in SSL_CERT_FILE CURL_CA_BUNDLE REQUESTS_CA_BUNDLE GIT_SSL_CAINFO; do
+    for _ca_env_name in SSL_CERT_FILE CURL_CA_BUNDLE REQUESTS_CA_BUNDLE GIT_SSL_CAINFO NODE_EXTRA_CA_CERTS; do
       _ca_env_value="${!_ca_env_name:-}"
       if [ -n "$_ca_env_value" ]; then
         printf 'export %s=%q\n' "$_ca_env_name" "$_ca_env_value"
@@ -2549,7 +2677,19 @@ prepare_hermes_nonroot_runtime() {
   refresh_hermes_runtime_config_hashes compat || return 1
   inspect_hermes_mcp_integrity "${HERMES_DIR}/.config-hash" || return 1
   configure_messaging_channels || return 1
-  retry_tirith_marker_if_needed || return 1
+  prepare_tirith_marker_retry || return 1
+}
+
+prepare_hermes_root_runtime() {
+  verify_hermes_config_integrity || return 1
+  ensure_hermes_config_root_mode || return 1
+  ensure_hermes_runtime_api_server_key both || return 1
+  apply_shields_up_runtime_env || return 1
+  validate_hermes_env_secret_boundary || return 1
+  validate_hermes_runtime_env_secret_boundary || return 1
+  refresh_hermes_provider_placeholders both || return 1
+  configure_messaging_channels || return 1
+  prepare_tirith_marker_retry || return 1
 }
 
 launch_hermes_gateway_current_user() {
@@ -2730,6 +2870,7 @@ recover_hermes_gateway_current_user() {
             || ! hermes_gateway_healthy "$GATEWAY_PID"; then
             break
           fi
+          finalize_tirith_marker_retry
           if ! commit_hermes_mcp_applied_if_pending; then
             echo "[SECURITY] HERMES_MCP_APPLIED_COMMIT_FAILED: stopping the uncommitted Hermes gateway" >&2
             hermes_stop_tracked_role gateway "$GATEWAY_PID" current "$INTERNAL_PORT" || return 1
@@ -2816,6 +2957,7 @@ bootstrap_hermes_gateway_current_user() {
 
   if wait_for_hermes_gateway_internal "$GATEWAY_PID" \
     && ensure_hermes_supervised_auxiliaries; then
+    finalize_tirith_marker_retry
     if ! commit_hermes_mcp_applied_if_pending; then
       echo "[SECURITY] HERMES_MCP_APPLIED_COMMIT_FAILED: stopping the uncommitted Hermes gateway" >&2
       hermes_stop_tracked_role gateway "$GATEWAY_PID" current "$INTERNAL_PORT" || return 1
@@ -2907,15 +3049,7 @@ fi
 # ── Root path (full privilege separation via setpriv) ──────────
 
 export HERMES_HOME="${HERMES_DIR}"
-verify_hermes_config_integrity
-ensure_hermes_config_root_mode
-ensure_hermes_runtime_api_server_key both
-apply_shields_up_runtime_env
-validate_hermes_env_secret_boundary
-validate_hermes_runtime_env_secret_boundary
-refresh_hermes_provider_placeholders both
-configure_messaging_channels
-retry_tirith_marker_if_needed
+prepare_hermes_root_runtime
 
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
   exec "${STEP_DOWN_PREFIX_SANDBOX[@]}" "${NEMOCLAW_CMD[@]}"
@@ -2951,6 +3085,7 @@ launch_hermes_gateway
 start_gateway_log_stream
 wait_for_hermes_gateway_internal "$GATEWAY_PID"
 ensure_hermes_supervised_auxiliaries
+finalize_tirith_marker_retry
 if ! commit_hermes_mcp_applied_if_pending; then
   echo "[SECURITY] HERMES_MCP_APPLIED_COMMIT_FAILED: stopping the uncommitted Hermes gateway" >&2
   stop_hermes_gateway_fail_closed

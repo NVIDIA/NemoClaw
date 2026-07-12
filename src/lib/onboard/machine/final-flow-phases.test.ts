@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { context, createPhases } from "../../../../test/helpers/onboard-final-flow-phases";
 import { createSession } from "../../state/onboard-session";
+import { pushIfTransition } from "../__test-helpers__/machine-recorders";
 import { runFinalOnboardFlowSlice } from "./final-flow-phases";
 
 describe("final onboard flow phases", () => {
@@ -75,6 +76,9 @@ describe("final onboard flow phases", () => {
         } else {
           recorded.push(result.next);
         }
+      },
+      recordInvalidatedStateResult: async (result) => {
+        pushIfTransition(recorded, result);
       },
       afterPoliciesResultApplied: () => {
         order.push("disarm");

@@ -1,15 +1,32 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
 
-export type Violation = { file: string; line: number; detail: string };
+export type Violation = {
+  chain?: string[];
+  detail: string;
+  file: string;
+  line: number;
+};
+
+type StaticModuleReference = {
+  file: string;
+  line: number;
+  specifier: string;
+};
+
+type SourceAnalysis = {
+  moduleLoadViolations: Violation[];
+  references: StaticModuleReference[];
+  violations: Violation[];
+};
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const SKIP_DIRS = new Set([".git", "coverage", "dist", "node_modules"]);
+const SKIP_DIRS = new Set([".git", "node_modules"]);
 // These tests intentionally construct fake dist/lib trees; they do not load
 // repository build output. The self-audit below prevents this list growing or
 // retaining an exemption after the fixture no longer needs one.
@@ -37,18 +54,27 @@ export function isScannedTestPath(relativePath: string): boolean {
   return relativePath.startsWith("test/") && /\.[cm]?[jt]sx?$/.test(relativePath);
 }
 
+export function isFastProjectTestPath(relativePath: string): boolean {
+  const normalized = relativePath.replaceAll("\\", "/");
+  if (normalized.startsWith("src/") && normalized.split("/").includes(".claude")) return false;
+  return /^(?:src|nemoclaw\/src|test\/e2e\/support)\/.+\.test\.ts$/.test(normalized);
+}
+
 function isScannedTestFile(absolutePath: string): boolean {
   return isScannedTestPath(repoPath(absolutePath));
 }
 
-function* walk(directory: string): Generator<string> {
+function* walk(
+  directory: string,
+  acceptsFile: (absolutePath: string) => boolean = isScannedTestFile,
+): Generator<string> {
   if (!existsSync(directory)) return;
   for (const entry of readdirSync(directory)) {
     if (SKIP_DIRS.has(entry)) continue;
     const absolutePath = path.join(directory, entry);
     const stats = statSync(absolutePath);
-    if (stats.isDirectory()) yield* walk(absolutePath);
-    else if (stats.isFile() && isScannedTestFile(absolutePath)) yield absolutePath;
+    if (stats.isDirectory()) yield* walk(absolutePath, acceptsFile);
+    else if (stats.isFile() && acceptsFile(absolutePath)) yield absolutePath;
   }
 }
 
@@ -275,7 +301,7 @@ function templateSource(node: ts.TemplateLiteral, scope: LexicalScope): string {
   );
 }
 
-export function findCompiledInternalViolations(file: string, source: string): Violation[] {
+function analyzeSource(file: string, source: string): SourceAnalysis {
   const sourceFile = ts.createSourceFile(
     file,
     source,
@@ -284,8 +310,16 @@ export function findCompiledInternalViolations(file: string, source: string): Vi
     file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   );
   const violations: Violation[] = [];
+  const moduleLoadViolations: Violation[] = [];
+  const references: StaticModuleReference[] = [];
 
-  function scan(scannedFile: ts.SourceFile, lineOffset = 0, scanTemplates = true): void {
+  function scan(
+    scannedFile: ts.SourceFile,
+    lineOffset = 0,
+    scanTemplates = true,
+    recordReferences = true,
+    recordModuleLoads = true,
+  ): void {
     function createScope(parent: LexicalScope | null, kind: ScopeKind): LexicalScope {
       return { bindings: new Map(), kind, parent };
     }
@@ -585,14 +619,28 @@ export function findCompiledInternalViolations(file: string, source: string): Vi
       });
     }
 
-    function add(node: ts.Node, detail: string): void {
+    function createViolation(node: ts.Node, detail: string): Violation {
       const position = scannedFile.getLineAndCharacterOfPosition(node.getStart(scannedFile));
-      violations.push({ file, line: position.line + lineOffset + 1, detail });
+      return { file, line: position.line + lineOffset + 1, detail };
+    }
+
+    function add(node: ts.Node, detail: string): void {
+      violations.push(createViolation(node, detail));
+    }
+
+    function addModuleLoad(node: ts.Node, detail: string): void {
+      if (recordModuleLoads) moduleLoadViolations.push(createViolation(node, detail));
     }
 
     function checkSpecifier(node: ts.Node, specifier: string): void {
+      if (recordReferences) {
+        const position = scannedFile.getLineAndCharacterOfPosition(node.getStart(scannedFile));
+        references.push({ file, line: position.line + lineOffset + 1, specifier });
+      }
       if (isCompiledInternalSpecifier(specifier)) {
-        add(node, `imports compiled CLI internals from ${JSON.stringify(specifier)}`);
+        const detail = `imports compiled CLI internals from ${JSON.stringify(specifier)}`;
+        add(node, detail);
+        addModuleLoad(node, detail);
       }
     }
 
@@ -626,8 +674,24 @@ export function findCompiledInternalViolations(file: string, source: string): Vi
           node.expression.name.text === "resolve";
         const firstArgument = node.arguments[0];
         const specifier = staticString(firstArgument, scope);
-        if ((isRequire || isDynamicImport || isRequireResolve) && firstArgument && specifier) {
+        const isModuleLoad = isRequire || isDynamicImport || isRequireResolve;
+        if (isModuleLoad && firstArgument && specifier) {
           checkSpecifier(firstArgument, specifier);
+        }
+
+        const unwrappedArgument = firstArgument && unwrapExpression(firstArgument);
+        if (
+          isModuleLoad &&
+          !specifier &&
+          unwrappedArgument &&
+          ts.isCallExpression(unwrappedArgument)
+        ) {
+          const moduleTarget = compiledPathBuilderTarget(unwrappedArgument, scope);
+          if (moduleTarget === "dist/nemoclaw.js") {
+            addModuleLoad(firstArgument, "loads compiled CLI internals from dist/nemoclaw.js");
+          } else if (moduleTarget) {
+            addModuleLoad(firstArgument, `loads compiled CLI internals from ${moduleTarget}`);
+          }
         }
 
         const pathTarget = compiledPathBuilderTarget(node, scope);
@@ -651,7 +715,10 @@ export function findCompiledInternalViolations(file: string, source: string): Vi
         const templateLine = scannedFile.getLineAndCharacterOfPosition(
           node.template.getStart(scannedFile),
         ).line;
-        scan(embeddedSource, lineOffset + templateLine, false);
+        // Generated script references resolve in the spawned program's runtime
+        // context, not relative to this source module. Still record forbidden
+        // compiled loads from the embedded program itself.
+        scan(embeddedSource, lineOffset + templateLine, false, false, true);
       }
       ts.forEachChild(node, (child) => {
         let childScope = scope;
@@ -679,12 +746,198 @@ export function findCompiledInternalViolations(file: string, source: string): Vi
   }
 
   scan(sourceFile);
-  return violations.filter(
-    (violation, index, all) =>
-      all.findIndex(
-        (candidate) => candidate.file === violation.file && candidate.line === violation.line,
-      ) === index,
+  return {
+    moduleLoadViolations: moduleLoadViolations.filter(
+      (violation, index, all) =>
+        all.findIndex(
+          (candidate) => candidate.file === violation.file && candidate.line === violation.line,
+        ) === index,
+    ),
+    references: references.filter(
+      (reference, index, all) =>
+        all.findIndex(
+          (candidate) =>
+            candidate.file === reference.file &&
+            candidate.line === reference.line &&
+            candidate.specifier === reference.specifier,
+        ) === index,
+    ),
+    violations: violations.filter(
+      (violation, index, all) =>
+        all.findIndex(
+          (candidate) => candidate.file === violation.file && candidate.line === violation.line,
+        ) === index,
+    ),
+  };
+}
+
+export function findCompiledInternalViolations(file: string, source: string): Violation[] {
+  return analyzeSource(file, source).violations;
+}
+
+type ModuleResolutionContext = {
+  cache: ts.ModuleResolutionCache;
+  options: ts.CompilerOptions;
+};
+
+type GraphVisit = {
+  absolutePath: string;
+  chain: string[];
+};
+
+let moduleResolutionContext: ModuleResolutionContext | undefined;
+
+function loadModuleResolutionContext(): ModuleResolutionContext {
+  if (moduleResolutionContext) return moduleResolutionContext;
+
+  const configPath = path.join(REPO_ROOT, "tsconfig.cli.json");
+  const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
+  if (configFile.error) {
+    throw new Error(ts.flattenDiagnosticMessageText(configFile.error.messageText, "\n"));
+  }
+  const parsed = ts.parseJsonConfigFileContent(
+    configFile.config,
+    ts.sys,
+    REPO_ROOT,
+    {},
+    configPath,
   );
+  if (parsed.errors.length > 0) {
+    throw new Error(
+      parsed.errors
+        .map((error) => ts.flattenDiagnosticMessageText(error.messageText, "\n"))
+        .join("\n"),
+    );
+  }
+
+  const canonicalFileName = ts.sys.useCaseSensitiveFileNames
+    ? (fileName: string) => fileName
+    : (fileName: string) => fileName.toLowerCase();
+  moduleResolutionContext = {
+    cache: ts.createModuleResolutionCache(REPO_ROOT, canonicalFileName, parsed.options),
+    options: parsed.options,
+  };
+  return moduleResolutionContext;
+}
+
+function isRepoSourceModule(absolutePath: string): boolean {
+  const relativePath = repoPath(absolutePath);
+  const segments = relativePath.split("/");
+  return (
+    relativePath !== ".." &&
+    !relativePath.startsWith("../") &&
+    !path.isAbsolute(relativePath) &&
+    !segments.includes("dist") &&
+    !segments.includes("node_modules") &&
+    /\.[cm]?[jt]sx?$/.test(relativePath)
+  );
+}
+
+type ResolvedRepoModule = {
+  absolutePath: string;
+  compiledTarget?: string;
+};
+
+function resolvedCompiledInternalTarget(absolutePath: string): string | undefined {
+  const candidates = [absolutePath];
+  try {
+    candidates.push(realpathSync(absolutePath));
+  } catch {
+    // TypeScript resolved the path, but leave an unavailable target to the
+    // ordinary source-module filter below.
+  }
+  return candidates
+    .map(repoPath)
+    .find(
+      (relativePath) =>
+        /^dist\/(?:lib|commands)(?:\/|$)/.test(relativePath) ||
+        /^dist\/nemoclaw(?:\.js)?$/.test(relativePath),
+    );
+}
+
+function resolveRepoModule(importer: string, specifier: string): ResolvedRepoModule | undefined {
+  const context = loadModuleResolutionContext();
+  const resolved = ts.resolveModuleName(specifier, importer, context.options, ts.sys, context.cache)
+    .resolvedModule?.resolvedFileName;
+  if (!resolved) return undefined;
+  const absolutePath = path.resolve(resolved);
+  const compiledTarget = resolvedCompiledInternalTarget(absolutePath);
+  if (compiledTarget) return { absolutePath, compiledTarget };
+  return isRepoSourceModule(absolutePath) ? { absolutePath } : undefined;
+}
+
+function collectFastProjectEntries(): string[] {
+  const acceptsFile = (absolutePath: string) => isFastProjectTestPath(repoPath(absolutePath));
+  return [
+    ...walk(path.join(REPO_ROOT, "src"), acceptsFile),
+    ...walk(path.join(REPO_ROOT, "nemoclaw", "src"), acceptsFile),
+    ...walk(path.join(REPO_ROOT, "test", "e2e", "support"), acceptsFile),
+  ].sort();
+}
+
+export function findFastProjectTransitiveViolations(
+  entryFiles: readonly string[] = collectFastProjectEntries(),
+): Violation[] {
+  const roots = [...new Set(entryFiles.map((entry) => path.resolve(entry)))].sort();
+  const queue: GraphVisit[] = roots.map((absolutePath) => ({
+    absolutePath,
+    chain: [repoPath(absolutePath)],
+  }));
+  const visited = new Set(roots);
+  const violations: Violation[] = [];
+
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const current = queue[cursor];
+    if (!current) continue;
+    const analysis = analyzeSource(
+      repoPath(current.absolutePath),
+      readFileSync(current.absolutePath, "utf8"),
+    );
+    violations.push(
+      ...analysis.moduleLoadViolations.map((violation) => ({
+        ...violation,
+        chain: current.chain,
+      })),
+    );
+
+    const references = [...analysis.references].sort(
+      (left, right) => left.line - right.line || left.specifier.localeCompare(right.specifier),
+    );
+    for (const reference of references) {
+      if (isCompiledInternalSpecifier(reference.specifier)) continue;
+      const resolved = resolveRepoModule(current.absolutePath, reference.specifier);
+      if (!resolved) continue;
+      if (resolved.compiledTarget) {
+        violations.push({
+          chain: current.chain,
+          detail: `imports compiled CLI internals from ${JSON.stringify(reference.specifier)} (resolves to ${resolved.compiledTarget})`,
+          file: reference.file,
+          line: reference.line,
+        });
+        continue;
+      }
+      if (visited.has(resolved.absolutePath)) continue;
+      visited.add(resolved.absolutePath);
+      queue.push({
+        absolutePath: resolved.absolutePath,
+        chain: [...current.chain, repoPath(resolved.absolutePath)],
+      });
+    }
+  }
+
+  return violations
+    .filter(
+      (violation, index, all) =>
+        all.findIndex(
+          (candidate) => candidate.file === violation.file && candidate.line === violation.line,
+        ) === index,
+    )
+    .sort(
+      (left, right) =>
+        left.file.localeCompare(right.file) ||
+        left.line - right.line ||
+        (left.chain ?? []).join("\0").localeCompare((right.chain ?? []).join("\0")),
+    );
 }
 
 function findViolations(absolutePath: string): Violation[] {
@@ -703,10 +956,16 @@ function main(): void {
     process.exit(1);
   }
 
-  const violations = [
+  const directViolations = [
     ...walk(path.join(REPO_ROOT, "src")),
     ...walk(path.join(REPO_ROOT, "test")),
   ].flatMap(findViolations);
+  const violations = [...findFastProjectTransitiveViolations(), ...directViolations].filter(
+    (violation, index, all) =>
+      all.findIndex(
+        (candidate) => candidate.file === violation.file && candidate.line === violation.line,
+      ) === index,
+  );
 
   if (violations.length > 0) {
     console.error(
@@ -714,6 +973,7 @@ function main(): void {
     );
     for (const violation of violations) {
       console.error(`  ${violation.file}:${violation.line} ${violation.detail}`);
+      if (violation.chain) console.error(`    reachable via ${violation.chain.join(" -> ")}`);
     }
     console.error(
       "Import src/ instead, or move a genuine compiled-package contract under test/package-contract/.",

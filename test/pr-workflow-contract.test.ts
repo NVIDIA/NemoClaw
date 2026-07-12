@@ -83,7 +83,7 @@ const trustedActionDirs = [
   ".github/actions/ci-installer-integration",
 ] as const;
 
-const cliShardMatrix = [1, 2, 3, 4, 5] as const;
+const cliShardMatrix = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 const cliShardCount = String(cliShardMatrix.length);
 
 function stepRuns(jobOrAction: WorkflowJob | CompositeAction): string[] {
@@ -580,6 +580,35 @@ describe("pull request and main workflow contracts", () => {
     }
   });
 
+  it("runs repository checks for every operational dependency-pin authority and consumer", () => {
+    const hooks = prekConfig.repos.flatMap((repo) => repo.hooks ?? []);
+    const repositoryChecks = hooks.find((candidate) => candidate.id === "repository-checks");
+    const files = new RegExp(repositoryChecks?.files ?? "(?!)", "u");
+
+    for (const path of [
+      ".pre-commit-config.yaml",
+      "Dockerfile",
+      "Dockerfile.base",
+      "agents/openclaw/manifest.yaml",
+      "agents/hermes/Dockerfile",
+      "agents/hermes/Dockerfile.base",
+      "agents/hermes/manifest.yaml",
+      "agents/hermes/mcp-config-transaction.py",
+      "nemoclaw-blueprint/blueprint.yaml",
+      "nemoclaw/package.json",
+      "scripts/brev-launchable-ci-cpu.sh",
+      "scripts/check-installer-hash.sh",
+      "scripts/install-openshell.sh",
+      "scripts/update-hermes-agent.sh",
+      "src/lib/actions/sandbox/mcp-bridge-validation.ts",
+      "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.72.json",
+    ]) {
+      expect(files.test(path), path).toBe(true);
+    }
+    expect(files.test("dependency-pins.yaml")).toBe(false);
+    expect(files.test("docs/reference/commands.mdx")).toBe(false);
+  });
+
   it("scopes pre-push typechecks to project and transitive inputs", () => {
     const hooks = prekConfig.repos.flatMap((repo) => repo.hooks ?? []);
     const pluginTypecheck = hooks.find((candidate) => candidate.id === "tsc-plugin");
@@ -589,6 +618,7 @@ describe("pull request and main workflow contracts", () => {
     const files = new RegExp(cliTypecheck?.files ?? "(?!)", "u");
     const jsFiles = new RegExp(jsTypecheck?.files ?? "(?!)", "u");
 
+    expect(pluginTypecheck?.entry).toBe("npm --prefix nemoclaw run typecheck");
     expect(cliTypecheck?.entry).toBe("npm run typecheck:cli -- --incremental");
     expect(cliTypecheck?.always_run).toBeUndefined();
     for (const include of cliTypeScriptConfig.include) {
@@ -637,7 +667,7 @@ describe("pull request and main workflow contracts", () => {
     for (const path of ["bin/nemoclaw.js", "jsconfig.json", "package.json", "package-lock.json"]) {
       expect(jsFiles.test(path), path).toBe(true);
     }
-    expect(jsFiles.test("docs/_ext/nemoclaw.js")).toBe(false);
+    expect(jsFiles.test("docs/_components/nemoclaw.js")).toBe(false);
   });
 
   it("executes repo-wide coverage and diff-scoped automatic hook commands", () => {
@@ -906,6 +936,10 @@ describe("pull request and main workflow contracts", () => {
     const installerRuns = stepRuns(sharedActions.installerIntegration).join("\n");
 
     expect(staticRuns).toContain("npm install --ignore-scripts");
+    expect(staticRuns).toContain("npm --prefix nemoclaw ci --ignore-scripts --dry-run");
+    expect(
+      requiredStepIndex(sharedActions.staticChecks, "Validate sandbox payload lockfile"),
+    ).toBeLessThan(requiredStepIndex(sharedActions.staticChecks, "Install dependencies"));
     expect(staticRuns).toContain("npm run validate:configs");
     expect(staticRuns).toContain("npm run typecheck:scorecard");
     expect(staticPrekRun).toContain("npx prek run --all-files --stage pre-commit");
@@ -933,7 +967,7 @@ describe("pull request and main workflow contracts", () => {
     expect(buildRuns).toContain("npm run build:cli");
     expect(buildRuns).toContain("npx vitest run --project package-contract");
     expect(buildRuns).toContain("npm run typecheck:cli");
-    expect(buildRuns).toContain("cd nemoclaw && npx tsc --noEmit --incremental");
+    expect(buildRuns).toContain("npm --prefix nemoclaw run typecheck");
     expect(buildRuns).toContain("npx tsc -p jsconfig.json");
     expect(buildRuns).toContain("bash scripts/check-version-tag-sync.sh");
 
@@ -1009,11 +1043,18 @@ describe("pull request and main workflow contracts", () => {
     expect(vitestConfig).toContain('name: "e2e-support"');
     expect(stepRuns(prWorkflow.jobs["e2e-support"])).toEqual([
       "npm ci --ignore-scripts",
+      "npx tsx scripts/checks/e2e-mock-parity.ts --base HEAD^1 --head HEAD^2",
       "npm run build:cli",
       "npx vitest run --project e2e-support",
     ]);
     expect(stepRuns(mainWorkflow.jobs["e2e-support"])).toEqual([
       "npm ci --ignore-scripts",
+      `if [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+  echo "Skipping changed live E2E parity: main has no prior commit."
+  exit 0
+fi
+npx tsx scripts/checks/e2e-mock-parity.ts --base "$BASE_SHA" --head HEAD
+`,
       "npm run build:cli",
       "npx vitest run --project e2e-support",
     ]);
@@ -1186,7 +1227,7 @@ describe("pull request and main workflow contracts", () => {
   });
 
   it("selects an available shard to publish the compiled CLI artifact", () => {
-    for (const shardCount of [1, 2, 3, 5]) {
+    for (const shardCount of [1, 2, 3, cliShardMatrix.length]) {
       const expectedProducer = Math.min(4, shardCount);
       const producers = Array.from({ length: shardCount }, (_, index) => index + 1).filter(
         (shard) => uploadsCompiledCliArtifact(sharedActions.cliCoverageShard, shard, shardCount),

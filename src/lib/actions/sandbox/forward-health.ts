@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 
 export type SandboxForwardListEntry = {
   sandboxName: string;
+  bind?: string;
   port: string;
   status: string;
 };
@@ -22,10 +23,17 @@ export function classifySandboxForwardHealth(
   entries: SandboxForwardListEntry[],
   sandboxName: string,
   port: string,
+  expectedBind?: string,
 ): Exclude<SandboxForwardHealth, null> {
   const liveEntries = liveEntriesForPort(entries, port);
   if (liveEntries.some((entry) => entry.sandboxName !== sandboxName)) return "occupied";
-  return liveEntries.some((entry) => entry.sandboxName === sandboxName);
+  return liveEntries.some(
+    (entry) =>
+      entry.sandboxName === sandboxName &&
+      (expectedBind === undefined ||
+        entry.bind === expectedBind ||
+        (expectedBind === "0.0.0.0" && ["::", "[::]", "*"].includes(entry.bind ?? ""))),
+  );
 }
 
 /**
@@ -42,8 +50,9 @@ export function classifyForwardHealthWithReachability(
   sandboxName: string,
   port: string,
   isReachable: () => boolean,
+  expectedBind?: string,
 ): Exclude<SandboxForwardHealth, null> {
-  const ownership = classifySandboxForwardHealth(entries, sandboxName, port);
+  const ownership = classifySandboxForwardHealth(entries, sandboxName, port, expectedBind);
   if (ownership !== true) return ownership;
   return isReachable();
 }

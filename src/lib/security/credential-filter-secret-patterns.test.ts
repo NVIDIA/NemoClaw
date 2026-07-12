@@ -3,6 +3,11 @@
 
 import { describe, expect, it } from "vitest";
 
+import {
+  makeEmptyClaimsJwtFixture,
+  makeJwtFixture,
+} from "../../../test/helpers/security-token-fixtures";
+
 import { isCredentialField, stripCredentials, valueLooksLikeSecret } from "./credential-filter.js";
 
 describe("isCredentialField", () => {
@@ -120,6 +125,8 @@ describe("valueLooksLikeSecret", () => {
     expect(valueLooksLikeSecret("ghp_0123456789abcdef")).toBe(true);
     expect(valueLooksLikeSecret("sk-proj-0123456789abcdefghij")).toBe(true);
     expect(valueLooksLikeSecret("xoxb-123456789-abcdefghij")).toBe(true);
+    expect(valueLooksLikeSecret(makeJwtFixture())).toBe(true);
+    expect(valueLooksLikeSecret(makeEmptyClaimsJwtFixture())).toBe(true);
     expect(valueLooksLikeSecret("Bearer abcdef0123456789")).toBe(true);
   });
 

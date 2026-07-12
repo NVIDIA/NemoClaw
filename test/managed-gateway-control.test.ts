@@ -169,6 +169,98 @@ with tempfile.TemporaryDirectory() as root:
         finally:
             control._namespace_inode = real_namespace_inode
 
+        remove_process(proc_root, 41)
+        remove_process(proc_root, 40)
+        try:
+            control._discover_supervisor(reader)
+            missing_supervisor = "accepted"
+        except control.ControlError as error:
+            missing_supervisor = error.code
+        real_supervisor_candidates = control._supervisor_candidates
+        supervisor_candidate_calls = []
+        def supervisor_appears_between_scans(reader, pid1, sandbox_uid):
+            matches, inconclusive = real_supervisor_candidates(reader, pid1, sandbox_uid)
+            supervisor_candidate_calls.append(len(matches))
+            if len(supervisor_candidate_calls) == 1:
+                write_process(
+                    proc_root,
+                    namespace_path,
+                    40,
+                    222,
+                    1,
+                    1000,
+                    b"bash\0/usr/local/bin/nemoclaw-start\0",
+                    b"PATH=/usr/bin\0NEMOCLAW_DASHBOARD_PORT=18789\0",
+                )
+            return matches, inconclusive
+        control._supervisor_candidates = supervisor_appears_between_scans
+        try:
+            control._discover_supervisor(reader)
+            appearing_supervisor = "accepted"
+        except control.ControlError as error:
+            appearing_supervisor = error.code
+        finally:
+            control._supervisor_candidates = real_supervisor_candidates
+        remove_process(proc_root, 40)
+        write_process(
+            proc_root,
+            namespace_path,
+            46,
+            666,
+            1,
+            1000,
+            b"unreadable-process\0",
+        )
+        real_capture = reader.capture
+        def capture_with_permission_denial(pid):
+            if pid == 46:
+                raise PermissionError("denied")
+            return real_capture(pid)
+        reader.capture = capture_with_permission_denial
+        try:
+            control._discover_supervisor(reader)
+            unreadable_process = "accepted"
+        except control.ControlError as error:
+            unreadable_process = error.code
+        finally:
+            reader.capture = real_capture
+        remove_process(proc_root, 46)
+        write_process(
+            proc_root,
+            namespace_path,
+            40,
+            222,
+            1,
+            1000,
+            b"bash\0/usr/local/bin/nemoclaw-start\0",
+            b"PATH=/usr/bin\0NEMOCLAW_DASHBOARD_PORT=18789\0",
+        )
+        write_process(
+            proc_root,
+            namespace_path,
+            41,
+            333,
+            40,
+            1000,
+            b"/usr/local/bin/hermes.real\0gateway\0run\0",
+            listener_inode="77777",
+        )
+        write_process(
+            proc_root,
+            namespace_path,
+            45,
+            555,
+            1,
+            1000,
+            b"/usr/local/bin/nemoclaw-start\0",
+        )
+        try:
+            control._discover_supervisor(reader)
+            duplicate_supervisor = "accepted"
+        except control.ControlError as error:
+            duplicate_supervisor = error.code
+        remove_process(proc_root, 45)
+
         preflight_steps = []
         real_validator = control._run_fixed_validator
         real_runtime_validator = control._validate_runtime_environment
@@ -598,6 +690,10 @@ with tempfile.TemporaryDirectory() as root:
         "namespace_denied": namespace_denied,
         "preflight": preflight_steps,
         "runtime_validation": runtime_validation,
+        "missing_supervisor": missing_supervisor,
+        "appearing_supervisor": appearing_supervisor,
+        "unreadable_process": unreadable_process,
+        "duplicate_supervisor": duplicate_supervisor,
         "duplicate": duplicate,
         "signals": sent,
         "reused": reused,
@@ -665,6 +761,10 @@ describe("managed gateway root control", () => {
         { hash: "checked" },
       ],
       runtime_validation: "in-process",
+      missing_supervisor: "SUPERVISOR_NOT_RUNNING",
+      appearing_supervisor: "SUPERVISOR_UNAVAILABLE",
+      unreadable_process: "SUPERVISOR_UNAVAILABLE",
+      duplicate_supervisor: "SUPERVISOR_UNAVAILABLE",
       duplicate: "SUPERVISOR_UNAVAILABLE",
       signals: [15, 9],
       reused: "SUPERVISOR_UNAVAILABLE",

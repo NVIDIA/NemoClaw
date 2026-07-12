@@ -55,6 +55,10 @@
         "access": { "type": "string", "enum": ["full"] },
         "json_rpc": { "$ref": "#/$defs/jsonRpcOptions" },
         "mcp": { "$ref": "#/$defs/mcpOptions" },
+        "allow_encoded_slash": {
+          "type": "boolean",
+          "description": "Opt in only when an upstream service requires percent-encoded slash route segments; strict canonicalization remains the default."
+        },
         "websocket_credential_rewrite": { "type": "boolean" },
         "request_body_credential_rewrite": { "type": "boolean" },
         "allowed_ips": {

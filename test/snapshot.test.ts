@@ -273,6 +273,7 @@ describe("listBackups computes virtual versions", () => {
       stateDirs: ["workspace"],
       backedUpDirs: ["workspace"],
     });
+    writeAgentRegistry("test-sandbox", "openclaw");
     fs.writeFileSync(path.join(String(manifest.backupPath), "workspace"), "not a directory");
 
     const restore = sandboxState.restoreSandboxState("test-sandbox", String(manifest.backupPath));
@@ -522,7 +523,7 @@ process.exit(0);
     }
   });
 
-  it("excludes tar-failed directories from the restorable manifest", () => {
+  it("classifies tar-failed directories and excludes them from the restorable manifest", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-partial-tar-"));
     const oldPath = process.env.PATH;
     const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -570,6 +571,7 @@ if (cmd.includes("tar -cf -")) {
   });
   if (r.stdout) fs.writeSync(1, r.stdout);
   process.stderr.write("tar: agents/main/sessions/sessions.json: Cannot open: Permission denied\\n");
+  process.stderr.write("tar: workspace/marker.txt: Cannot read: Input/output error\\n");
   process.stderr.write("tar: Exiting with failure status due to previous errors\\n");
   process.exit(2);
 }
@@ -590,14 +592,18 @@ process.exit(0);
 
       const backup = sandboxState.backupSandboxState("alpha");
       expect(backup.success).toBe(false);
-      expect(backup.failedDirs).toEqual(["agents"]);
-      expect(backup.backedUpDirs).toEqual(["workspace", "extensions"]);
-      expect(backup.manifest?.backedUpDirs).toEqual(["workspace", "extensions"]);
+      expect(backup.failedDirs).toEqual(["agents", "workspace"]);
+      expect(backup.failedDirReasons).toEqual({
+        agents: "permission denied",
+        workspace: "tar read error",
+      });
+      expect(backup.backedUpDirs).toEqual(["extensions"]);
+      expect(backup.manifest?.backedUpDirs).toEqual(["extensions"]);
       expect(fs.existsSync(path.join(backup.manifest!.backupPath, "agents"))).toBe(true);
 
       const restore = sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
       expect(restore.success).toBe(true);
-      expect(restore.restoredDirs).toEqual(["workspace", "extensions"]);
+      expect(restore.restoredDirs).toEqual(["extensions"]);
 
       const loggedCommands = fs
         .readFileSync(sshLog, "utf-8")
@@ -605,7 +611,7 @@ process.exit(0);
         .split("\n")
         .map((line) => JSON.parse(line).cmd as string);
       const cleanupCommand = loggedCommands.find((cmd) => cmd.includes("rm -rf"));
-      expect(cleanupCommand).toContain("/sandbox/.openclaw/workspace");
+      expect(cleanupCommand).not.toContain("/sandbox/.openclaw/workspace");
       expect(cleanupCommand).not.toContain("rm -rf -- /sandbox/.openclaw/extensions");
       expect(cleanupCommand).toContain("/sandbox/.openclaw/extensions");
       expect(cleanupCommand).toContain("! -name 'nemoclaw'");
@@ -960,6 +966,10 @@ process.exit(0);
       expect(backup.success).toBe(false);
       expect(backup.backedUpDirs).toEqual(["extensions"]);
       expect(backup.failedDirs).toEqual(["agents", "workspace"]);
+      expect(backup.failedDirReasons).toEqual({
+        agents: "permission denied",
+        workspace: "absent after extraction",
+      });
       expect(backup.manifest?.backedUpDirs).toEqual(["extensions"]);
       expect(fs.existsSync(path.join(backup.manifest!.backupPath, "workspace"))).toBe(false);
     } finally {
@@ -1124,6 +1134,14 @@ describe("Deep Agents Code durable state files", () => {
         recursive: true,
       });
       fs.writeFileSync(path.join(deepAgentsDir, ".state", "thread.json"), "{}\n");
+      fs.writeFileSync(
+        path.join(deepAgentsDir, ".state", "auth.json"),
+        '{"access_token":"should-not-copy"}\n',
+      );
+      fs.writeFileSync(
+        path.join(deepAgentsDir, ".state", "chatgpt-auth.json"),
+        '{"access_token":"should-not-copy","refresh_token":"should-not-copy"}\n',
+      );
       fs.writeFileSync(path.join(deepAgentsDir, "skills", "README.md"), "skill\n");
       // skill-creator writes user skills under ~/.deepagents/agent/skills (#5753)
       fs.writeFileSync(
@@ -1212,6 +1230,12 @@ process.exit(0);
       expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".state", "thread.json"))).toBe(
         true,
       );
+      expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".state", "auth.json"))).toBe(
+        false,
+      );
+      expect(
+        fs.existsSync(path.join(backup.manifest!.backupPath, ".state", "chatgpt-auth.json")),
+      ).toBe(false);
       expect(fs.existsSync(path.join(backup.manifest!.backupPath, "skills", "README.md"))).toBe(
         true,
       );

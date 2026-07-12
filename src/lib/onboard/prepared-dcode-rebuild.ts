@@ -245,15 +245,23 @@ type ResolveSandboxBuildIdInput = Omit<
   preparedBuildContext: PreparedSandboxBuildContext | null;
 };
 
-export async function resolveSandboxBuildId(
+export type ResolvedSandboxBuildPatch = {
+  buildId: string;
+  dashboardRemoteBindPrepared: boolean;
+};
+
+export async function resolveSandboxBuildPatch(
   input: ResolveSandboxBuildIdInput,
   deps: PreparedDcodeRebuildDeps = {},
-): Promise<string> {
+): Promise<ResolvedSandboxBuildPatch> {
   const { preparedBuildContext, ...patchInput } = input;
   assertPreparedDcodeTarget(preparedBuildContext, patchInput.agent, patchInput.fromDockerfile);
   if (preparedBuildContext) {
     verifyPreparedBuildContextForUse(preparedBuildContext);
-    return preparedBuildContext.buildId;
+    return {
+      buildId: preparedBuildContext.buildId,
+      dashboardRemoteBindPrepared: preparedBuildContext.dashboardRemoteBindPrepared === true,
+    };
   }
 
   const result: SandboxDockerfilePatchResult = await (
@@ -263,5 +271,16 @@ export async function resolveSandboxBuildId(
     sandboxBaseImage: OPENCLAW_SANDBOX_BASE_IMAGE,
     sandboxBaseTag: SANDBOX_BASE_TAG,
   });
+  return {
+    buildId: result.buildId,
+    dashboardRemoteBindPrepared: result.dashboardRemoteBindPrepared,
+  };
+}
+
+export async function resolveSandboxBuildId(
+  input: ResolveSandboxBuildIdInput,
+  deps: PreparedDcodeRebuildDeps = {},
+): Promise<string> {
+  const result = await resolveSandboxBuildPatch(input, deps);
   return result.buildId;
 }

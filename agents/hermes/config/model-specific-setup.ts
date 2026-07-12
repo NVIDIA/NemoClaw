@@ -3,6 +3,7 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { isObjectRecord } from "./object-record.ts";
 
 const KNOWN_MODEL_SETUP_AGENTS = new Set(["openclaw", "hermes"]);
 
@@ -19,6 +20,7 @@ export type ModelSetupManifest = {
   description: string;
   match: {
     modelIds?: string[];
+    modelIdPrefixes?: string[];
     providerKey?: string;
     inferenceApi?: string;
     baseUrl?: string;
@@ -100,7 +102,7 @@ function listJsonFiles(root: string): string[] {
 }
 
 function validateManifestPayload(payload: unknown, manifestPath: string): ModelSetupManifest {
-  if (!isRecord(payload)) {
+  if (!isObjectRecord(payload)) {
     throw new Error(`${manifestPath}: manifest must be a JSON object`);
   }
   if (!isNonEmptyString(payload.id)) {
@@ -115,11 +117,11 @@ function validateManifestPayload(payload: unknown, manifestPath: string): ModelS
   if (!isNonEmptyString(payload.description)) {
     throw new Error(`${manifestPath}: field 'description' must be a non-empty string`);
   }
-  if (!isRecord(payload.match)) {
+  if (!isObjectRecord(payload.match)) {
     throw new Error(`${manifestPath}: field 'match' must be an object`);
   }
   validateMatch(payload.match, manifestPath);
-  if (!isRecord(payload.effects) || Object.keys(payload.effects).length === 0) {
+  if (!isObjectRecord(payload.effects) || Object.keys(payload.effects).length === 0) {
     throw new Error(`${manifestPath}: field 'effects' must be a non-empty object`);
   }
   return payload as ModelSetupManifest;
@@ -130,7 +132,13 @@ function validateMatch(match: Record<string, unknown>, manifestPath: string): vo
     throw new Error(`${manifestPath}: field 'match' must be a non-empty object`);
   }
 
-  const allowedKeys = new Set(["modelIds", "providerKey", "inferenceApi", "baseUrl"]);
+  const allowedKeys = new Set([
+    "modelIds",
+    "modelIdPrefixes",
+    "providerKey",
+    "inferenceApi",
+    "baseUrl",
+  ]);
   const unknownKeys = Object.keys(match).filter((key) => !allowedKeys.has(key));
   if (unknownKeys.length > 0) {
     throw new Error(`${manifestPath}: unknown match keys: ${unknownKeys.join(", ")}`);
@@ -143,6 +151,27 @@ function validateMatch(match: Record<string, unknown>, manifestPath: string): vo
       !match.modelIds.every(isNonEmptyString))
   ) {
     throw new Error(`${manifestPath}: match.modelIds must be a non-empty string array`);
+  }
+  if (
+    match.modelIdPrefixes !== undefined &&
+    (!Array.isArray(match.modelIdPrefixes) ||
+      match.modelIdPrefixes.length === 0 ||
+      !match.modelIdPrefixes.every(isNonEmptyString))
+  ) {
+    throw new Error(`${manifestPath}: match.modelIdPrefixes must be a non-empty string array`);
+  }
+  if (
+    Array.isArray(match.modelIdPrefixes) &&
+    match.modelIdPrefixes.some((prefix) => String(prefix).includes("/"))
+  ) {
+    throw new Error(
+      `${manifestPath}: match.modelIdPrefixes must contain bare model ids without namespaces`,
+    );
+  }
+  if (match.modelIds !== undefined && match.modelIdPrefixes !== undefined) {
+    throw new Error(
+      `${manifestPath}: match.modelIds and match.modelIdPrefixes are mutually exclusive`,
+    );
   }
   for (const key of ["providerKey", "inferenceApi", "baseUrl"]) {
     const value = match[key];
@@ -167,7 +196,7 @@ function validateSelectedAgentEffects(payload: ModelSetupManifest, manifestPath:
 
   if (payload.agent === "hermes") {
     const compat = payload.effects.hermesCompat;
-    if (compat !== undefined && !isRecord(compat)) {
+    if (compat !== undefined && !isObjectRecord(compat)) {
       throw new Error(`${manifestPath}: effects.hermesCompat must be an object`);
     }
   }
@@ -175,11 +204,26 @@ function validateSelectedAgentEffects(payload: ModelSetupManifest, manifestPath:
 
 function modelSetupMatches(payload: ModelSetupManifest, context: ModelSetupContext): boolean {
   const match = payload.match;
+  const normalizedModel = context.model.trim().toLowerCase();
   if (
     match.modelIds &&
-    !new Set(match.modelIds.map((modelId) => modelId.trim().toLowerCase())).has(
-      context.model.trim().toLowerCase(),
-    )
+    !new Set(match.modelIds.map((modelId) => modelId.trim().toLowerCase())).has(normalizedModel)
+  ) {
+    return false;
+  }
+  const bareModel = normalizedModel.includes("/")
+    ? normalizedModel.slice(normalizedModel.lastIndexOf("/") + 1)
+    : normalizedModel;
+  if (
+    match.modelIdPrefixes &&
+    !match.modelIdPrefixes.some((value) => {
+      const prefix = value.trim().toLowerCase();
+      return (
+        bareModel === prefix ||
+        bareModel.startsWith(`${prefix}.`) ||
+        bareModel.startsWith(`${prefix}-`)
+      );
+    })
   ) {
     return false;
   }
@@ -193,10 +237,6 @@ function modelSetupMatches(payload: ModelSetupManifest, context: ModelSetupConte
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isNonEmptyString(value: unknown): value is string {

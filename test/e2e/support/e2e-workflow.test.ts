@@ -78,6 +78,18 @@ describe("e2e workflow boundary", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
   });
 
+  it("keeps credential-backed provider smokes out of the PR-safe inference-routing job", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { steps?: Array<{ name?: string; run?: string }> }>;
+    };
+    const run = workflow.jobs["inference-routing"]?.steps?.find(
+      (step) => step.name === "Run inference routing live test",
+    )?.run;
+
+    expect(run).toContain("test/e2e/live/inference-routing.test.ts");
+    expect(run).not.toContain("inference-routing-provider-smoke.test.ts");
+  });
+
   it("starts hosted OpenClaw proofs in the first wave after matrix generation", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
@@ -643,7 +655,9 @@ describe("e2e workflow boundary", () => {
     },
   );
 
-  it("derives the free-standing inventory from workflow job metadata", { timeout: 60_000 }, () => {
+  it("derives test selectors from code and workflow jobs from workflow metadata", {
+    timeout: 60_000,
+  }, () => {
     const inventory = readFreeStandingJobsInventory();
     expect(validateFreeStandingWorkflowInventory()).toEqual([]);
     expect(inventory.allowedJobs).toContain("openshell-version-pin");
@@ -654,7 +668,7 @@ describe("e2e workflow boundary", () => {
     expect(inventory.targetToJob.get("openshell-gateway-auth-contract")).toBe(
       "openshell-gateway-auth-contract",
     );
-    expect(inventory.targetToJob.get("openshell-version-pin")).toBe("openshell-version-pin");
+    expect(inventory.targetToJob.get("openshell-version-pin")).toBe("shared-e2e");
     expect(inventory.targetToJob.get("upgrade-stale-sandbox")).toBe("upgrade-stale-sandbox");
     expect(inventory.targetToJob.get("credential-migration")).toBe("credential-migration");
     expect(inventory.targetToJob.get("launchable-smoke")).toBe("launchable-smoke");
@@ -663,7 +677,7 @@ describe("e2e workflow boundary", () => {
       "openclaw-plugin-runtime-exdev",
     );
     expect(
-      inventory.allowedJobs.every((job) =>
+      inventory.workflowJobs.every((job) =>
         Object.keys((readWorkflow().jobs as Record<string, unknown>) ?? {}).includes(job),
       ),
     ).toBe(true);
@@ -724,19 +738,7 @@ jobs:
       try {
         fs.writeFileSync(workflowPath, body);
         expect(validateFreeStandingWorkflowInventory(workflowPath)).toContain(error);
-        const result = spawnSync(
-          "npx",
-          ["tsx", "tools/e2e/workflow-inventory.mts", "--shell", "--workflow", workflowPath],
-          {
-            cwd: process.cwd(),
-            encoding: "utf-8",
-            timeout: 30_000,
-            killSignal: "SIGKILL",
-          },
-        );
-        expect(result.signal).toBeNull();
-        expect(result.status).not.toBe(0);
-        expect(result.stderr).toContain(`::error::${error}`);
+        expect(() => readFreeStandingJobsInventory(workflowPath)).toThrow(error);
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
       }
@@ -788,11 +790,11 @@ jobs:
           registryTargets: [],
         });
       }
-      for (const [target, job] of inventory.targetToJob) {
+      for (const target of inventory.targetToJob.keys()) {
         expect(evaluateE2eWorkflowDispatchSelectors({ targets: target })).toMatchObject({
           valid: true,
           liveTargetsRun: false,
-          selectedFreeStandingJobs: [job],
+          selectedFreeStandingJobs: [target],
           registryTargets: [],
         });
       }
@@ -1020,7 +1022,7 @@ jobs:
           "artifact upload path must include e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json",
           "live must not invoke actions/upload-artifact directly",
           "live must use upload-e2e-artifacts exactly once",
-          "openshell-version-pin job must use the shared jobs selector condition",
+          "workflow missing shared E2E job",
           "network-policy job env must not include NVIDIA_INFERENCE_API_KEY",
           "network-policy step 'Install OpenShell' env must not include GITHUB_TOKEN",
           "double-onboard job env must not include DOCKERHUB_TOKEN",
@@ -1033,7 +1035,7 @@ jobs:
           "report-to-pr job must wait for live",
           "report-to-pr step must pass jobs through JOBS env",
           "step 'Post E2E target results to PR' run script must check selector validation before echoing selectors",
-          "step 'Post E2E target results to PR' run script must omit rejected job selectors",
+          "step 'Post E2E target results to PR' run script must omit rejected test ID selectors",
           "step 'Post E2E target results to PR' run script must filter reported entries for selective dispatches",
           "step 'Post E2E target results to PR' run script must report missing requested jobs",
           "step 'Post E2E target results to PR' run script must count cancelled jobs",
@@ -1086,11 +1088,17 @@ jobs:
     snapshotJob["timeout-minutes"] = 30;
     snapshotJob.env.DOCKER_CONFIG = "${{ github.workspace }}/.docker-config-shared";
     snapshotJob.env.NVIDIA_INFERENCE_API_KEY = "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
+    snapshotJob.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE = "1";
     for (const step of snapshotJob.steps) {
       if (typeof step.uses === "string" && step.uses.startsWith("actions/checkout@")) {
         step.with = { ...(step.with as Record<string, unknown>), "persist-credentials": true };
       }
       if (step.name === "Run snapshot commands live test") {
+        step.env = {
+          ...((step.env as Record<string, unknown> | undefined) ?? {}),
+          NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+          NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
+        };
         step.run = String(step.run).replace(
           "test/e2e/live/snapshot-commands.test.ts",
           "test/e2e/live/registry-targets.test.ts",
@@ -1111,8 +1119,11 @@ jobs:
         expect.arrayContaining([
           "snapshot-commands job must keep a 40 minute timeout",
           "snapshot-commands job must not set DOCKER_CONFIG at job level",
+          "snapshot-commands job must not enable hosted inference",
           "snapshot-commands checkout step must set persist-credentials=false",
           "snapshot-commands job env must not include NVIDIA_INFERENCE_API_KEY",
+          "snapshot-commands step 'Run snapshot commands live test' env must not include NEMOCLAW_E2E_USE_HOSTED_INFERENCE",
+          "snapshot-commands step 'Run snapshot commands live test' env must not include NVIDIA_API_KEY",
           "snapshot-commands upload-e2e-artifacts invocation must not override its contract",
           "snapshot-commands upload-e2e-artifacts must use the action defaults",
           "step 'Run snapshot commands live test' run script must include test/e2e/live/snapshot-commands.test.ts",
@@ -1384,7 +1395,7 @@ jobs:
     fs.writeFileSync(
       workflowPath,
       workflow.replace(
-        'echo "::error::Invalid jobs input; use comma-separated job ids" >&2',
+        'echo "::error::Invalid ${selector_name,,} input; use comma-separated ids" >&2',
         'echo "::error::Invalid jobs input: ${JOBS}" >&2',
       ),
     );
@@ -1393,7 +1404,7 @@ jobs:
       const errors = validateE2eWorkflowBoundary(workflowPath);
       expect(errors).toEqual(
         expect.arrayContaining([
-          "step 'Generate E2E target matrix' run script must include Invalid jobs input; use comma-separated job ids",
+          "step 'Generate E2E target matrix' run script must include Invalid ${selector_name,,} input; use comma-separated ids",
           "step 'Generate E2E target matrix' run script must not include Invalid jobs input: ${JOBS}",
         ]),
       );

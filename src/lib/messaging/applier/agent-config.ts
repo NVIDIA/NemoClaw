@@ -5,6 +5,7 @@ import { posix as path } from "node:path";
 
 import YAML from "yaml";
 
+import { isObjectRecord } from "../../core/json-types";
 import { redact } from "../../security/redact";
 import type { MessagingHookOutputMap } from "../hooks";
 import type {
@@ -224,7 +225,7 @@ function parseStructuredConfig(
 ): Record<string, MessagingSerializableValue> {
   if (!existing || existing.trim().length === 0) return {};
   const parsed = format === "yaml" ? YAML.parse(existing) : (JSON.parse(existing) as unknown);
-  if (!isObject(parsed)) {
+  if (!isObjectRecord(parsed)) {
     throw new Error(`Messaging agent config target ${target} must contain an object.`);
   }
   return parsed as Record<string, MessagingSerializableValue>;
@@ -271,8 +272,8 @@ function preserveCredentialPlaceholders(
       ),
     );
   }
-  if (isObject(desired)) {
-    const existingObject = isObject(existing) ? existing : {};
+  if (isObjectRecord(desired)) {
+    const existingObject = isObjectRecord(existing) ? existing : {};
     return Object.fromEntries(
       Object.entries(desired).map(([key, value]) => [
         key,
@@ -286,7 +287,7 @@ function preserveCredentialPlaceholders(
 function getJsonPath(root: Record<string, MessagingSerializableValue>, pathValue: string): unknown {
   let cursor: unknown = root;
   for (const segment of pathValue.split(".").filter(Boolean)) {
-    if (!isObject(cursor)) return undefined;
+    if (!isObjectRecord(cursor)) return undefined;
     cursor = cursor[segment];
   }
   return cursor;
@@ -305,7 +306,7 @@ function setJsonPath(
   for (const segment of segments.slice(0, -1)) {
     assertSafeObjectKey(segment, "Messaging render path");
     const next = cursor[segment];
-    if (!isObject(next)) {
+    if (!isObjectRecord(next)) {
       const created: Record<string, MessagingSerializableValue> = {};
       cursor[segment] = created;
       cursor = created;
@@ -316,7 +317,7 @@ function setJsonPath(
   const finalSegment = segments[segments.length - 1] as string;
   assertSafeObjectKey(finalSegment, "Messaging render path");
   const existing = cursor[finalSegment];
-  if (isObject(existing) && isObject(value)) {
+  if (isObjectRecord(existing) && isObjectRecord(value)) {
     mergeObjects(
       existing as Record<string, MessagingSerializableValue>,
       value as Record<string, MessagingSerializableValue>,
@@ -398,7 +399,7 @@ function readHookBuildFile(value: MessagingSerializableValue): {
   readonly content?: MessagingSerializableValue;
   readonly merge?: MessagingSerializableValue;
 } {
-  if (!isObject(value) || typeof value.path !== "string" || value.path.trim().length === 0) {
+  if (!isObjectRecord(value) || typeof value.path !== "string" || value.path.trim().length === 0) {
     throw new Error("Messaging build-file hook output must include a non-empty path.");
   }
   const file = value as Record<string, MessagingSerializableValue | undefined>;
@@ -426,7 +427,7 @@ function applyStructuredMerge(
   patch: MessagingSerializableValue,
   target: string,
 ): string {
-  if (!isObject(patch)) {
+  if (!isObjectRecord(patch)) {
     throw new Error(`Messaging build-file merge for ${target} must be an object.`);
   }
   const format = target.endsWith(".yaml") || target.endsWith(".yml") ? "yaml" : "json";
@@ -444,7 +445,7 @@ function mergeObjects(
       throw new Error(`Messaging build-file merge rejected unsafe object key '${key}'.`);
     }
     const existing = target[key];
-    if (isObject(existing) && isObject(value)) {
+    if (isObjectRecord(existing) && isObjectRecord(value)) {
       mergeObjects(
         existing as Record<string, MessagingSerializableValue>,
         value as Record<string, MessagingSerializableValue>,
@@ -463,7 +464,7 @@ function validateSafeMergeValue(value: MessagingSerializableValue): void {
     }
     return;
   }
-  if (!isObject(value)) return;
+  if (!isObjectRecord(value)) return;
   for (const [key, entry] of Object.entries(value)) {
     if (key === "__proto__" || key === "prototype" || key === "constructor") {
       throw new Error(`Messaging build-file merge rejected unsafe object key '${key}'.`);
@@ -655,10 +656,6 @@ function assertSafeObjectKey(key: string, context: string): void {
   if (key === "__proto__" || key === "prototype" || key === "constructor") {
     throw new Error(`${context} rejected unsafe object key '${key}'.`);
   }
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function uniqueStrings(values: readonly string[]): string[] {

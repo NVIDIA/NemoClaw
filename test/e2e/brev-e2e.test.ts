@@ -892,6 +892,8 @@ function pollForSandboxReady(elapsed: () => string): void {
   // redirected descriptors lets the SSH session exit cleanly while retaining
   // least-privilege Docker socket ownership.
   console.log(`[${elapsed()}] Starting nemoclaw onboard in background...`);
+  const remoteBindEnv =
+    TEST_SUITE === "dashboard-remote-bind" ? "NEMOCLAW_DASHBOARD_BIND=0.0.0.0 " : "";
   // Launch onboard in background. The SSH command may exit with code 255
   // (SSH error) because background processes keep file descriptors open.
   // That's fine — we just need the process to start; we'll poll for
@@ -901,7 +903,7 @@ function pollForSandboxReady(elapsed: () => string): void {
       [
         `source ~/.nvm/nvm.sh 2>/dev/null || true`,
         `cd ${remoteDir}`,
-        `sg docker -c ${shellQuote("nohup nemoclaw onboard --non-interactive </dev/null >/tmp/nemoclaw-onboard.log 2>&1 &")}`,
+        `sg docker -c ${shellQuote(`${remoteBindEnv}nohup nemoclaw onboard --non-interactive </dev/null >/tmp/nemoclaw-onboard.log 2>&1 &`)}`,
         `sleep 2`,
         `echo "onboard launched"`,
       ].join(" && "),
@@ -986,6 +988,43 @@ function pollForSandboxReady(elapsed: () => string): void {
   }
 }
 
+function readProductDashboardRemoteBindPrepared(): boolean {
+  const script = [
+    `const fs = require("fs");`,
+    `const os = require("os");`,
+    `const path = require("path");`,
+    `const file = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");`,
+    `const data = JSON.parse(fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "{}");`,
+    `process.stdout.write(String(data?.sandboxes?.["e2e-test"]?.dashboardRemoteBindPrepared === true));`,
+  ].join("");
+  return ssh(`node -e ${shellQuote(script)}`, { timeout: 10_000 }).trim() === "true";
+}
+
+const DASHBOARD_REMOTE_BIND_PROOF_WAIT_MS = 180_000;
+const DASHBOARD_REMOTE_BIND_PROOF_POLL_MS = 5_000;
+
+function waitForProductDashboardRemoteBindPrepared(elapsed: () => string): true {
+  console.log(`[${elapsed()}] Waiting for product-written dashboard remote-bind registry proof...`);
+  const deadline = Date.now() + DASHBOARD_REMOTE_BIND_PROOF_WAIT_MS;
+  let prepared = readProductDashboardRemoteBindPrepared();
+  while (!prepared && Date.now() < deadline) {
+    execSync(`sleep ${DASHBOARD_REMOTE_BIND_PROOF_POLL_MS / 1000}`);
+    prepared = readProductDashboardRemoteBindPrepared();
+  }
+
+  const failLog = prepared
+    ? ""
+    : ssh("tail -120 /tmp/nemoclaw-onboard.log 2>/dev/null || echo 'no log'", {
+        timeout: 10_000,
+      });
+  expect(
+    prepared,
+    "dashboard-remote-bind E2E did not observe product-written remote bind proof before " +
+      `manual registry handoff.\n${failLog}`,
+  ).toBe(true);
+  return true;
+}
+
 /**
  * Kill the hung onboard process tree and write the sandbox registry manually.
  *
@@ -997,6 +1036,12 @@ function pollForSandboxReady(elapsed: () => string): void {
  */
 function writeManualRegistry(elapsed: () => string): void {
   console.log(`[${elapsed()}] Sandbox ready — killing hung onboard and writing registry...`);
+  const dashboardRemoteBindPrepared =
+    TEST_SUITE === "dashboard-remote-bind" && waitForProductDashboardRemoteBindPrepared(elapsed);
+  expect(
+    dashboardRemoteBindPrepared || TEST_SUITE !== "dashboard-remote-bind",
+    "dashboard-remote-bind E2E must preserve the product-written remote bind proof",
+  ).toBe(true);
   // Kill hung onboard processes. pkill may kill the SSH connection itself
   // if the pattern matches too broadly, so wrap in try/catch.
   try {
@@ -1023,6 +1068,7 @@ function writeManualRegistry(elapsed: () => string): void {
           provider: null,
           gpuEnabled: false,
           policies: ["pypi", "npm"],
+          ...(dashboardRemoteBindPrepared ? { dashboardRemoteBindPrepared: true } : {}),
         },
       },
     },
@@ -1263,7 +1309,7 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
   );
 
   it.runIf(TEST_SUITE === "dashboard-remote-bind")(
-    "dashboard forward binds to all interfaces for remote browser origins",
+    "clean-host remote bind reaches Ready with active audit findings and wildcard forwarding",
     () => {
       const output = runRemoteCommand(
         [
@@ -1276,7 +1322,7 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
         ].join(" "),
         300_000,
       );
-      expect(output).toContain("dashboard forward binds all interfaces");
+      expect(output).toContain("clean-host remote bind keeps audit risks active");
       expect(output).not.toMatch(/FAIL|Failed/i);
     },
     300_000,

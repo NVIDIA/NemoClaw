@@ -11,23 +11,23 @@ export type DeniedReasonLogProof = {
 export function deniedReasonLogProof(
   output: string,
   endpoint: string,
+  reasonIncludes?: string,
 ): DeniedReasonLogProof | null {
-  const line = output
-    .split(/\r?\n/u)
-    .find(
-      (candidate) =>
-        candidate.includes("NET:OPEN") &&
-        candidate.includes("DENIED") &&
-        candidate.includes(endpoint),
-    );
-  if (!line) return null;
-  const reason = line.match(/\[reason:([^\]]*)\]/u)?.[1] ?? "";
-  return { line, reason };
+  for (const line of output.split(/\r?\n/u)) {
+    if (!line.includes("NET:OPEN") || !line.includes("DENIED") || !line.includes(endpoint)) {
+      continue;
+    }
+    const reason = line.match(/\[reason:([^\]]*)\]/u)?.[1] ?? "";
+    if (reasonIncludes && !reason.includes(reasonIncludes)) continue;
+    return { line, reason };
+  }
+  return null;
 }
 
 export async function pollDeniedReasonLog(options: {
   attempts: number;
   endpoint: string;
+  reasonIncludes?: string;
   readLogs: (attempt: number) => Promise<string>;
   settle: () => Promise<void>;
 }): Promise<DeniedReasonLogProof> {
@@ -40,15 +40,18 @@ export async function pollDeniedReasonLog(options: {
       sleep: async () => options.settle(),
       probe: async (attempt) => {
         latestLogs = await options.readLogs(attempt);
-        return deniedReasonLogProof(latestLogs, options.endpoint);
+        return deniedReasonLogProof(latestLogs, options.endpoint, options.reasonIncludes);
       },
       accept: (proof) => proof !== null,
     });
     return result.value as DeniedReasonLogProof;
   } catch (error) {
     if (!(error instanceof PollingError)) throw error;
+    const reasonRequirement = options.reasonIncludes
+      ? ` with reason containing ${JSON.stringify(options.reasonIncludes)}`
+      : "";
     throw new Error(
-      `denied egress audit event for ${options.endpoint} did not settle into nemoclaw logs --tail 50:\n${latestLogs}`,
+      `denied egress audit event for ${options.endpoint}${reasonRequirement} did not settle into nemoclaw logs --tail 50:\n${latestLogs}`,
     );
   }
 }

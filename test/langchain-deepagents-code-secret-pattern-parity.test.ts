@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -28,6 +29,7 @@ const observabilityPath = path.join(
   "langchain-deepagents-code",
   "nemoclaw_observability.py",
 );
+const wrapperPath = path.join(repoRoot, "agents", "langchain-deepagents-code", "dcode-wrapper.sh");
 
 const canonicalPatterns: Record<CanonicalSecretPatternGroup, readonly RegExp[]> = {
   token: TOKEN_PREFIX_PATTERNS,
@@ -83,6 +85,22 @@ describe("Deep Agents Code secret-pattern parity", () => {
         "-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\\s\\S]*?-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----::g",
       ],
     });
+  });
+
+  it("binds every Bash credential-name quantifier to the canonical prefix limit (#6195)", () => {
+    const canonicalPrefixLimits = CONTEXT_PATTERNS.slice(1, 3).flatMap((pattern) =>
+      [...pattern.source.matchAll(/\[A-Za-z0-9\]\{[01],(\d+)\}/g)].map((match) => Number(match[1])),
+    );
+    const wrapperSource = fs.readFileSync(wrapperPath, "utf8");
+    const constant = wrapperSource.match(/^readonly CREDENTIAL_NAME_PREFIX_MAX_LENGTH=(\d+)$/m);
+
+    expect(constant).not.toBeNull();
+    const wrapperPrefixLimit = Number(constant?.[1]);
+    expect(new Set(canonicalPrefixLimits)).toEqual(new Set([wrapperPrefixLimit]));
+    expect(wrapperSource.match(/\{[01],\$\{CREDENTIAL_NAME_PREFIX_MAX_LENGTH\}\}/g)).toHaveLength(
+      canonicalPrefixLimits.length,
+    );
+    expect(wrapperSource).not.toMatch(/\{[01],128\}/);
   });
 
   it("matches every shared positive vector with its designated canonical regex (#6195)", () => {

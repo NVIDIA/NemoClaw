@@ -10,7 +10,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { isRecord, type UnknownRecord } from "../core/json-types";
+import { isObjectRecord, type UnknownRecord } from "../core/json-types";
 import { buildPolicySetCommand } from "../policy";
 import { run } from "../runner";
 import { resolveAgentConfig } from "../sandbox/config";
@@ -111,7 +111,7 @@ function readStateFile(stateFile: string): UnknownRecord {
       return {};
     }
     const parsed = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
-    return isRecord(parsed) ? parsed : {};
+    return isObjectRecord(parsed) ? parsed : {};
   } catch {
     return {};
   }
@@ -156,7 +156,7 @@ function readTimerMarker(markerPath: string): UnknownRecord | null {
       return null;
     }
     const parsed = JSON.parse(fs.readFileSync(markerPath, "utf-8"));
-    return isRecord(parsed) ? parsed : null;
+    return isObjectRecord(parsed) ? parsed : null;
   } catch {
     return null;
   }

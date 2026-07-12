@@ -56,7 +56,7 @@ type ResolvedRollbackDeps = {
 };
 
 function isZeroStatus(result: DockerRunResult | null | undefined): boolean {
-  return Number(result?.status ?? 0) === 0;
+  return result?.status === 0;
 }
 
 function resolveRollbackDeps(deps: DockerGpuPatchDeps): ResolvedRollbackDeps {

@@ -19,7 +19,7 @@ import {
 const store = new Map<string, string>();
 
 vi.mock("node:fs", async (importOriginal) => {
-  const original = await importOriginal();
+  const original = await importOriginal<typeof import("node:fs")>();
   return {
     ...original,
     existsSync: (p: string) => store.has(p),
@@ -88,10 +88,10 @@ describe("onboard/config", () => {
 
     it("handles non-URL endpoint strings gracefully", () => {
       const config = makeConfig({
-        endpointType: "local",
+        endpointType: "custom",
         endpointUrl: "not-a-url",
       });
-      expect(describeOnboardEndpoint(config)).toBe("local (not-a-url)");
+      expect(describeOnboardEndpoint(config)).toBe("custom (not-a-url)");
     });
   });
 

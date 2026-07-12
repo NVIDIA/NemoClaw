@@ -97,7 +97,11 @@ jobs:
             openclaw_build_arg="OPENCLAW_VERSION=${OPENCLAW_VERSION_INPUT}"
             build_args+=(--build-arg "$openclaw_build_arg")
           fi
-          scripts/check-production-build-args.sh "${build_args[@]}"
+          if [ "${#build_args[@]}" -gt 0 ]; then
+            scripts/check-production-build-args.sh "${build_args[@]}"
+          else
+            scripts/check-production-build-args.sh
+          fi
           if [ -n "${OPENCLAW_VERSION_INPUT}" ]; then
             if [[ "$OPENCLAW_VERSION_INPUT" == *$'\r'* || "$OPENCLAW_VERSION_INPUT" == *$'\n'* ]]; then
               echo "ERROR: OpenClaw version must not contain CR or LF characters." >&2

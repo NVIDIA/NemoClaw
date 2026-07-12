@@ -5,7 +5,11 @@ import { findDashboardForwardOwner } from "./dashboard-port";
 import { resolveGatewayName } from "./gateway-binding";
 import type { PortProbeResult } from "./preflight";
 import { assertDashboardPortNotReserved } from "./preflight-ports";
-import { validateRebuildProviderReconfigureHandoff } from "./rebuild-route-handoff";
+import {
+  createProviderRecoveryReceiptLedger,
+  type ProviderRecoveryReceipt,
+  validateRebuildProviderReconfigureHandoff,
+} from "./rebuild-route-handoff";
 import type { OnboardOptions } from "./types";
 
 export type AuthoritativeOnboardGatewayBinding = { name: string; port: number };
@@ -110,11 +114,63 @@ function validateRebuildHandoff(
 /** Derive the provider-phase authority from one validated rebuild handoff. */
 export function rebuildProviderFlowOptions(
   opts: OnboardOptions,
-  target: Parameters<typeof validateRebuildHandoff>[1],
-): { authoritativeResumeConfig: boolean; forceInferenceSetup: boolean } {
+  target: Parameters<typeof validateRebuildHandoff>[1] & {
+    session?: { sessionId: string } | null;
+    preferredInferenceApi?: string | null;
+  },
+): {
+  authoritativeResumeConfig: boolean;
+  forceInferenceSetup: boolean;
+  providerRecoveryReceipt: ProviderRecoveryReceipt | null;
+  providerRecoveryReceiptLedger: ReturnType<typeof createProviderRecoveryReceiptLedger>;
+} {
+  const authoritativeResumeConfig = opts.authoritativeResumeConfig === true;
+  const providerRecoveryReceiptLedger = createProviderRecoveryReceiptLedger();
+  let providerRecoveryReceipt: ProviderRecoveryReceipt | null = null;
+  if (authoritativeResumeConfig) {
+    const gateway = resolveAuthoritativeOnboardGatewayBinding(opts);
+    if (
+      opts.resume !== true ||
+      opts.recreateSandbox !== true ||
+      opts.onboardLockAlreadyHeld !== true ||
+      !gateway ||
+      !target.sandboxName ||
+      !target.provider ||
+      !target.model
+    ) {
+      throw new Error(
+        "Authoritative provider recovery requires a preflighted locked rebuild resume.",
+      );
+    }
+    const sessionId = target.session?.sessionId ?? null;
+    if (opts.providerRecoveryReceipt && sessionId) {
+      providerRecoveryReceipt = providerRecoveryReceiptLedger.activate(
+        opts.providerRecoveryReceipt,
+        {
+          target: {
+            sandboxName: target.sandboxName,
+            gatewayName: gateway.name,
+            provider: target.provider,
+            model: target.model,
+            route: {
+              provider: target.provider,
+              model: target.model,
+              endpointUrl: target.endpointUrl ?? null,
+              preferredInferenceApi: target.preferredInferenceApi ?? "",
+              source: "registry",
+            },
+          },
+          sessionId,
+          nowMs: Date.now(),
+        },
+      );
+    }
+  }
   return {
-    authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
+    authoritativeResumeConfig,
     forceInferenceSetup: validateRebuildHandoff(opts, target),
+    providerRecoveryReceipt,
+    providerRecoveryReceiptLedger,
   };
 }
 

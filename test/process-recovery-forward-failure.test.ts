@@ -179,7 +179,7 @@ beta  127.0.0.1  18789  12345  dead`,
     expect(teamsForwardStarted).toBe(true);
     expect(runOpenshell).toHaveBeenCalledWith(
       ["forward", "start", "--background", "3978", "beta"],
-      { ignoreError: true },
+      { ignoreError: true, stdio: "ignore" },
     );
   });
 });

@@ -75,23 +75,25 @@ jobs:
           npx vitest run --project integration
           test/tunnel-gateway-port-release-runtime.test.ts
           test/onboard-gateway-prelaunch-cutover.test.ts
+          test/onboard-gateway-legacy-identity-upgrade-runtime.test.ts
 
       - name: Detect Docker availability
         id: docker
         run: |
+          set -euo pipefail
           if docker info >/dev/null 2>&1; then
             echo "docker_ok=true" >> "$GITHUB_OUTPUT"
             echo "Docker is available"
             docker version
-          else
-            echo "docker_ok=false" >> "$GITHUB_OUTPUT"
-            echo "Docker is not available on this runner"
+            exit 0
           fi
+          echo "docker_ok=false" >> "$GITHUB_OUTPUT"
+          echo "Docker is unavailable on the Apple Silicon runner."
 
       - name: Run macOS full E2E
-        if: steps.docker.outputs.docker_ok == 'true'
+        if: steps.docker.outputs.docker_ok == 'true' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           GITHUB_TOKEN: ${{ github.token }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
@@ -100,17 +102,95 @@ jobs:
         run: |
           NEMOCLAW_RUN_LIVE_E2E=1 npx vitest run --project e2e-live test/e2e/live/full-e2e.test.ts --silent=false --reporter=default
 
-      - name: Explain skipped full E2E
-        if: steps.docker.outputs.docker_ok != 'true'
+      - name: Explain skipped macOS live E2E
+        if: steps.docker.outputs.docker_ok != 'true' || github.ref != 'refs/heads/main' || github.event_name == 'pull_request'
         run: |
-          echo 'Skipping macOS full E2E because Docker is unavailable on this runner.'
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo 'Skipping secret-bearing macOS live E2E on pull_request; use trusted workflow_dispatch/push evidence for live validation.'
+          elif [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            echo 'Skipping secret-bearing macOS live E2E outside the trusted main branch.'
+          elif [ "${{ steps.docker.outputs.docker_ok }}" != "true" ]; then
+            echo 'Skipping macOS live E2E because Docker is unavailable on this runner.'
+          fi
           echo 'The workflow still validated the NemoClaw build on macOS (Apple Silicon).'
 
       - name: Upload logs on failure
-        if: failure()
+        if: failure() && github.event_name == 'pull_request'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: macos-e2e-logs
           path: |
             /tmp/nemoclaw-e2e-*.log
+            ${{ github.workspace }}/e2e-artifacts/live
+          if-no-files-found: ignore
+
+  # docker/setup-docker-action supports Intel macOS, while the primary Apple
+  # Silicon job validates the same gateway lifecycle regressions without Docker.
+  # Keep the secret-bearing real Docker proof on reviewed main-branch code only.
+  macos-docker-final-destroy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    permissions:
+      contents: read
+    runs-on: macos-15-intel
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Set up pinned Docker Engine
+        uses: docker/setup-docker-action@6d7cfa65f60a9dda7b46e5513fa982536f3c9877 # v5.3.0
+        with:
+          version: v27.4.0
+        env:
+          LIMA_START_ARGS: --cpus 4 --memory 8
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI TypeScript modules
+        run: npm run build:cli
+
+      - name: Install and build plugin
+        run: |
+          set -euo pipefail
+          cd nemoclaw
+          npm ci --ignore-scripts
+          npm run build
+
+      - name: Install OpenShell CLI
+        run: bash scripts/install-openshell.sh
+
+      - name: Run macOS Docker final-destroy E2E
+        env:
+          E2E_TARGET_ID: "sandbox-operations"
+          E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/macos-sandbox-operations
+          NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+          NEMOCLAW_RUN_LIVE_E2E: "1"
+          NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_POLICY_TIER: "open"
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          OPENSHELL_GATEWAY: "nemoclaw"
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          npx vitest run --project e2e-live \
+            test/e2e/live/sandbox-operations.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload macOS Docker logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-docker-final-destroy-logs
+          path: |
+            /tmp/nemoclaw-e2e-*.log
+            ${{ github.workspace }}/e2e-artifacts/live
           if-no-files-found: ignore

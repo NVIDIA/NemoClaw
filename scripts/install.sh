@@ -1537,7 +1537,7 @@ install_nemoclaw() {
     fi
     spin "Installing ${_CLI_DISPLAY} dependencies" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm install --ignore-scripts"
     spin "Building ${_CLI_DISPLAY} CLI modules" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm run --if-present build:cli"
-    spin "Building ${_CLI_DISPLAY} plugin" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\"/nemoclaw && npm install --ignore-scripts && npm run build"
+    spin "Building ${_CLI_DISPLAY} plugin" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\"/nemoclaw && npm ci --ignore-scripts && npm run build"
     spin "Linking ${_CLI_DISPLAY} CLI" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm link"
 
     # Bootstrap OpenShell when the source checkout is being used as a fresh
@@ -1580,7 +1580,7 @@ install_nemoclaw() {
     fi
     spin "Installing ${_CLI_DISPLAY} dependencies" bash -c "cd \"$nemoclaw_src\" && npm install --ignore-scripts"
     spin "Building ${_CLI_DISPLAY} CLI modules" bash -c "cd \"$nemoclaw_src\" && npm run --if-present build:cli"
-    spin "Building ${_CLI_DISPLAY} plugin" bash -c "cd \"$nemoclaw_src\"/nemoclaw && npm install --ignore-scripts && npm run build"
+    spin "Building ${_CLI_DISPLAY} plugin" bash -c "cd \"$nemoclaw_src\"/nemoclaw && npm ci --ignore-scripts && npm run build"
     spin "Linking ${_CLI_DISPLAY} CLI" bash -c "cd \"$nemoclaw_src\" && npm link"
 
     # Install/upgrade the OpenShell CLI on the GitHub-clone path (curl|bash).
@@ -1707,7 +1707,7 @@ inspect_sandbox_registry_for_upgrade() {
   node - "$reg_file" "$field" <<'NODE'
 const fs = require("node:fs");
 
-function isRecord(value) {
+function isObjectRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
@@ -1717,10 +1717,10 @@ try {
 } catch {
   process.exit(1);
 }
-if (!isRecord(registry) || !isRecord(registry.sandboxes)) process.exit(1);
+if (!isObjectRecord(registry) || !isObjectRecord(registry.sandboxes)) process.exit(1);
 
 const entries = Object.entries(registry.sandboxes);
-if (entries.some(([name, entry]) => !name || !isRecord(entry) || entry.name !== name)) {
+if (entries.some(([name, entry]) => !name.trim() || !isObjectRecord(entry) || entry.name !== name)) {
   process.exit(1);
 }
 
@@ -2037,7 +2037,7 @@ preinstall_backup_and_retire_legacy_gateway() {
     if legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
       error "Pre-upgrade backup failed. Aborting before retiring the legacy OpenShell gateway."
     fi
-    error "Pre-upgrade backup failed. Resolve every reported sandbox backup failure and rerun the installer."
+    error "Pre-upgrade backup stopped the installer. Resolve every reported sandbox backup failure or skipped sandbox using the CLI output above, then rerun the installer."
   fi
   export NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1
 
