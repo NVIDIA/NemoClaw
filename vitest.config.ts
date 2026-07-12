@@ -15,9 +15,12 @@ import { CliCoverageSequencer } from "./test/helpers/cli-coverage-sequencer";
 import { resolveIntegrationProjectScheduling } from "./test/helpers/integration-project-scheduling";
 import { sourceLoaderNodeOptions } from "./test/helpers/source-loader-options";
 import { testTimeout } from "./test/helpers/timeouts";
+import { resolveVitestCoverageThresholds } from "./test/helpers/vitest-coverage-thresholds";
+import { resolveVitestFeedback } from "./test/helpers/vitest-feedback";
+import { vitestStateIsolation } from "./test/helpers/vitest-state-isolation";
+import { vitestWatchTriggerPatterns } from "./test/helpers/vitest-watch-triggers";
 
-const isGithubActions = process.env.GITHUB_ACTIONS === "true";
-const isCi = isGithubActions || process.env.CI === "true" || process.env.CI === "1";
+const { isCi, silent } = resolveVitestFeedback();
 const LIVE_E2E_PROJECT_TIMEOUT_MS = 30 * 60 * 1000;
 const runLiveE2E = shouldRunLiveE2E();
 const runBranchValidationE2E = shouldRunBranchValidationE2E();
@@ -64,16 +67,18 @@ export default defineConfig({
         description: "Runs without external credentials in the shared E2E job",
       },
     ],
-    // CI logs are easiest to scan when test chatter stays quiet and failures
-    // surface as GitHub annotations at the relevant file and line.
-    reporters: isGithubActions ? ["github-actions"] : ["default"],
-    silent: isCi,
+    // Let Vitest select its environment-aware local reporter and add GitHub
+    // annotations in Actions. CI suppresses passed-test logs while replaying
+    // the console output attached to failures.
+    silent,
     hideSkippedTests: isCi,
+    watchTriggerPatterns: vitestWatchTriggerPatterns,
     sequence: { sequencer: CliCoverageSequencer },
     projects: [
       {
         ...typedSourceTransform,
         test: {
+          ...vitestStateIsolation,
           name: "cli",
           alias: canonicalOpenShellPolicyAlias,
           env: controlledNonLiveEnv,
@@ -86,6 +91,7 @@ export default defineConfig({
       {
         ...typedSourceTransform,
         test: {
+          ...vitestStateIsolation,
           name: "integration",
           alias: canonicalOpenShellPolicyAlias,
           // Source-backed process fixtures can exceed the unit-test budget
@@ -124,6 +130,7 @@ export default defineConfig({
       {
         ...typedSourceTransform,
         test: {
+          ...vitestStateIsolation,
           name: "installer-integration",
           alias: canonicalOpenShellPolicyAlias,
           env: controlledNonLiveEnv,
@@ -142,6 +149,7 @@ export default defineConfig({
       {
         ...typedSourceTransform,
         test: {
+          ...vitestStateIsolation,
           name: "package-contract",
           alias: canonicalOpenShellPolicyAlias,
           env: controlledNonLiveEnv,
@@ -153,6 +161,7 @@ export default defineConfig({
       {
         ...typedSourceTransform,
         test: {
+          ...vitestStateIsolation,
           // Fast tests for the E2E fixture/support layer. Vitest remains the
           // only harness; this project does not define a separate runner.
           name: "e2e-support",
@@ -207,11 +216,10 @@ export default defineConfig({
           // runs the selected test suites. Only run when explicitly enabled:
           //   NEMOCLAW_RUN_BRANCH_VALIDATION_E2E=1 npx vitest run --project e2e-branch-validation
           //
-          // Override the project-root `silent: isCi` setting — diagnostic
-          // output from createBrevInstance / waitForSsh / waitForLaunchableReady
-          // is essential for debugging Brev provisioning timing and the
-          // overall suite runs in a single `describe` block, so there's no
-          // test chatter to suppress anyway.
+          // The reusable workflow passes `--silent=false --reporter=default`:
+          // diagnostic output from createBrevInstance / waitForSsh /
+          // waitForLaunchableReady is essential for debugging provisioning
+          // timing, and the suite has no routine test chatter to suppress.
           // Gate on a workflow-owned sentinel or Brev auth env. Historically
           // this used BREV_API_TOKEN (short-lived refresh token); newer
           // workflows authenticate with BREV_API_KEY + BREV_ORG_ID before
@@ -224,6 +232,7 @@ export default defineConfig({
       include: ["src/**/*.ts", "bin/**/*.js", "nemoclaw/src/**/*.ts", "nemoclaw/src/**/*.cts"],
       exclude: ["**/*.test.ts", "dist/**"],
       reporter: ["text-summary", "json-summary"],
+      thresholds: resolveVitestCoverageThresholds(process.argv.slice(2)),
     },
   },
 });

@@ -50,6 +50,10 @@ Package-specific guides:
 | Run all tests for broad changes | `npm test` |
 | Render behavior-oriented test tree | `npm run test:spec` |
 | Run fast source tests | `npm run test:fast` |
+| Run tests affected by current changes | `npm run test:changed` |
+| Watch focused source tests | `npm run test:watch` |
+| Shuffle focused tests without coverage | `npm run test:shuffle` |
+| Diagnose async leaks or shutdown hangs | `npm run test:diagnose:leaks` |
 | Run integration tests | `npm run test:integration` |
 | Run package contracts | `npm run test:package` |
 | Run E2E support tests | `npx vitest run --project e2e-support` |
@@ -94,6 +98,9 @@ When writing tests:
 - Plugin tests use TypeScript and are co-located with their source files
 - Import CLI source from ordinary tests. Put genuine compiled-artifact assertions under `test/package-contract/`.
 - Keep project globs disjoint; `npm run test:projects:check` derives membership from Vitest and rejects overlap.
+- Deterministic projects clear mock calls, restore `vi.spyOn`, and undo `vi.stubEnv` and `vi.stubGlobal` before each test. Create those spies and stubs in `beforeEach` or the test body unless a documented import-time stub must run before module evaluation. Restore direct environment or global mutations yourself, and reset mock implementations explicitly when needed. Live E2E and automatic `mockReset` are intentionally excluded.
+- Use `npm run test:changed` or `npm run test:watch` for focused CLI, plugin, and E2E-support feedback. Add only concrete opaque-input mappings to `test/helpers/vitest-watch-triggers.ts` when the import graph cannot see a YAML, Python, shell, generated, or workflow dependency.
+- Use `npm run test:shuffle -- --sequence.seed=<seed>` to replay a printed test-order seed. Use `npm run test:diagnose:leaks` for async-resource or shutdown-hang diagnostics; both commands keep coverage disabled, and leak diagnostics can accompany exit code 0 when assertions pass.
 - Write behavior-oriented titles, put local issue references in a final `(#1234)` suffix, and use `npm run test:spec` for the hierarchical specification view.
 - Mock external dependencies; don't call real NVIDIA APIs in unit tests
 - E2E tests run on ephemeral Brev cloud instances

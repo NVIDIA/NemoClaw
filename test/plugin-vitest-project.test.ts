@@ -72,6 +72,22 @@ describe("plugin Vitest project contract", () => {
     });
   });
 
+  it("pilots assertion presence only in expect-based plugin tests (#6692)", () => {
+    const rootTest = rootVitestConfig.test as {
+      expect?: { requireAssertions?: boolean };
+      projects?: Array<{ test?: { expect?: { requireAssertions?: boolean }; name?: string } }>;
+    };
+
+    expect(pluginVitestProjectOptions.test.expect).toEqual({ requireAssertions: true });
+    expect(rootTest.expect?.requireAssertions).not.toBe(true);
+    const nonPluginProjects = (rootTest.projects ?? []).filter(
+      (project) => project.test?.name !== "plugin",
+    );
+    for (const project of nonPluginProjects) {
+      expect(project.test?.expect?.requireAssertions, project.test?.name).not.toBe(true);
+    }
+  });
+
   it("keeps standalone plugin dependencies on the root Vitest toolchain", () => {
     for (const packageName of ["vitest", "vite"] as const) {
       expect(installedVersion(pluginRequire, packageName), packageName).toBe(

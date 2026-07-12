@@ -931,8 +931,11 @@ $$nemoclaw <name> status
 
 When `recover` repairs a stopped built-in gateway, NemoClaw automatically retries only when stdout is empty and stderr is exactly one `SUPERVISOR_BUSY` or `SUPERVISOR_UNAVAILABLE` line, with at most three controller attempts.
 It does not retry other status or output combinations.
+`SUPERVISOR_NOT_RUNNING` is a separate result that requires two zero-supervisor scans with a stable PID 1 and does not enter that retry loop.
+On a supported local Docker-driver sandbox with the legacy keepalive startup, it can authorize a container-identity-pinned recreation that commits only after managed health and settle checks pass.
+To bypass that trusted recreation while troubleshooting, run `NEMOCLAW_DISABLE_SUPERVISOR_RELAUNCH=1 $$nemoclaw <name> recover`; NemoClaw leaves the container unchanged and returns rebuild or re-onboard guidance.
 If that bounded retry is exhausted, or if `gateway restart` reports `SUPERVISOR_BUSY`, wait for the active request to finish and retry the command.
-If the error mentions `SUPERVISOR_REBUILD_REQUIRED`, `SUPERVISOR_UNAVAILABLE`, a missing `nemoclaw-gateway-control` helper, or a missing managed controller, the sandbox image may predate the current lifecycle contract.
+If the error mentions `SUPERVISOR_NOT_RUNNING` and trusted recreation could not proceed, `SUPERVISOR_REBUILD_REQUIRED`, `SUPERVISOR_UNAVAILABLE`, a missing `nemoclaw-gateway-control` helper, or a missing managed controller, the sandbox image may predate the current lifecycle contract.
 The managed controller also refuses an ambiguous or changing process tree instead of guessing which same-UID process is the gateway.
 Rebuild the image before retrying:
 

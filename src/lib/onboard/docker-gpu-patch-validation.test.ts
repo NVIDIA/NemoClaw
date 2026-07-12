@@ -17,6 +17,7 @@ import {
 function inspectFixture(): DockerContainerInspect {
   return {
     Id: "old-container-id",
+    Image: `sha256:${"c".repeat(64)}`,
     Name: "/openshell-alpha",
     Config: {
       Image: "openshell/sandbox:abc",

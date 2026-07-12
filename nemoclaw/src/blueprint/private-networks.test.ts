@@ -13,8 +13,6 @@ let existsCalls: string[] = [];
 let statCalls: string[] = [];
 let nowMs = 1_000;
 
-vi.spyOn(Date, "now").mockImplementation(() => nowMs);
-
 vi.mock("node:fs", async (importOriginal) => {
   const original = await importOriginal<typeof fs>();
   return {
@@ -82,6 +80,7 @@ function advanceStatInterval(): void {
 
 describe("private-networks loader", () => {
   beforeEach(() => {
+    vi.spyOn(Date, "now").mockImplementation(() => nowMs);
     store.clear();
     mtimes.clear();
     sizes.clear();

@@ -11,10 +11,16 @@
 // cannot be required as a handler. Instead we spawn it as a real child process
 // (unmodified production code) on an ephemeral port, point it at a tiny
 // in-process stub HTTP backend, and drive real requests through it. No network
-// beyond loopback; both servers and the child are torn down in afterEach.
+// beyond loopback; every server and child process has an awaited cleanup owner.
 
-import type { ChildProcess } from "node:child_process";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { type ChildProcess, spawn } from "node:child_process";
+import { EventEmitter, once } from "node:events";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+import net from "node:net";
+import { afterEach, beforeEach, describe, expect, vi } from "vitest";
+
+import { test as it } from "./helpers/owned-test-resources";
 
 import {
   freePort,
@@ -22,6 +28,7 @@ import {
   startBackend,
   startProxy,
   terminate,
+  waitForProxyReadiness,
 } from "./ollama-auth-proxy-handler-helpers.ts";
 
 const TOKEN = "unit-test-secret-token";
@@ -110,5 +117,89 @@ describe("ollama-auth-proxy request handler", () => {
     expect(res.status).toBe(502);
     expect(res.body).toMatch(/Ollama backend error/);
     expect(proxy?.exitCode).toBeNull();
+  });
+});
+
+describe("ollama-auth-proxy process ownership", () => {
+  it("reaps the proxy before reporting a readiness failure", async ({
+    onTestFinished,
+    resources,
+  }) => {
+    const readinessRejector = resources.ownServer(net.createServer((socket) => socket.destroy()));
+    await new Promise<void>((resolve, reject) => {
+      readinessRejector.once("error", reject);
+      readinessRejector.listen(0, "127.0.0.1", resolve);
+    });
+    const readinessPort = (readinessRejector.address() as AddressInfo).port;
+    const proxyPort = await freePort();
+    let spawned: ChildProcess | undefined;
+    onTestFinished(() => terminate(spawned));
+
+    await expect(
+      startProxy(proxyPort, 1, TOKEN, {
+        onSpawn: (child) => {
+          spawned = child;
+        },
+        readinessPort,
+        readinessTimeoutMs: 100,
+      }),
+    ).rejects.toThrow("proxy did not start in time");
+
+    expect(spawned).toBeDefined();
+    expect(spawned?.signalCode).toBe("SIGTERM");
+    expect(spawned?.stdout?.destroyed).toBe(true);
+  });
+
+  it("destroys a stalled readiness request and removes child listeners", async ({
+    onTestFinished,
+  }) => {
+    const child = new EventEmitter() as unknown as ChildProcess;
+    const destroy = vi.fn();
+    const end = vi.fn();
+    const request = Object.assign(new EventEmitter(), {
+      destroy,
+      end,
+    }) as unknown as http.ClientRequest;
+    const requestSpy = vi.spyOn(http, "request").mockReturnValue(request);
+    onTestFinished(() => requestSpy.mockRestore());
+
+    await expect(waitForProxyReadiness(child, 1, { readinessTimeoutMs: 10 })).rejects.toThrow(
+      "proxy did not start in time",
+    );
+
+    expect(end).toHaveBeenCalledOnce();
+    expect(destroy).toHaveBeenCalledOnce();
+    expect(child.listenerCount("error")).toBe(0);
+    expect(child.listenerCount("exit")).toBe(0);
+  });
+
+  it("rejects a child spawn error and removes readiness listeners", async () => {
+    const child = new EventEmitter() as unknown as ChildProcess;
+    const spawnError = Object.assign(new Error("spawn EACCES"), { code: "EACCES" });
+    const readiness = waitForProxyReadiness(child, 1, { readinessTimeoutMs: 1_000 });
+
+    child.emit("error", spawnError);
+
+    await expect(readiness).rejects.toBe(spawnError);
+    expect(child.listenerCount("error")).toBe(0);
+    expect(child.listenerCount("exit")).toBe(0);
+  });
+
+  it("escalates a SIGTERM-ignoring child and awaits close", async ({ onTestFinished }) => {
+    const child = spawn(
+      process.execPath,
+      [
+        "-e",
+        "process.on('SIGTERM', () => {}); process.stdout.write('ready'); setInterval(() => {}, 1000);",
+      ],
+      { stdio: ["ignore", "pipe", "ignore"] },
+    );
+    onTestFinished(() => terminate(child));
+    await once(child.stdout!, "data");
+
+    await terminate(child);
+
+    expect(child.signalCode).toBe("SIGKILL");
+    expect(child.stdout?.destroyed).toBe(true);
   });
 });

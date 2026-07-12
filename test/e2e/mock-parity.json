@@ -19,6 +19,17 @@
       "fast": ["test/e2e/support/onboard-performance.test.ts"]
     },
     {
+      "live": "test/e2e/live/gateway-guard-recovery.test.ts",
+      "fast": [
+        "src/lib/actions/sandbox/supervisor-relaunch.test.ts",
+        "src/lib/onboard/docker-startup-command-patch.test.ts",
+        "src/lib/sandbox/privileged-exec.test.ts",
+        "test/managed-gateway-control.test.ts",
+        "test/nemoclaw-start-guard-recovery.test.ts",
+        "test/process-recovery-supervisor-relaunch.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/network-policy.test.ts",
       "fast": ["test/validate-blueprint.test.ts"]
     },

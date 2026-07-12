@@ -232,6 +232,10 @@ If the gateway is already healthy, `recover` exits after the probe and does not 
 For built-in OpenClaw sandboxes, recovery sends an authenticated request through registry-scoped privileged direct-container control.
 The request reaches either the root PID 1 supervisor in a direct root-entrypoint container or the installed root controller in an OpenShell-managed container.
 It does not fall back to ordinary `openshell sandbox exec` or a manual relaunch inside the sandbox.
+For a local Docker-driver sandbox whose container still uses the legacy keepalive startup, `recover` can transactionally recreate the registered container with a credential-free managed startup command.
+NemoClaw keeps the previous container available until the managed controller proves the supervisor topology, gateway health, and settle check, and attempts to restore it if that proof fails.
+The recreation preserves mounted sandbox state, but a committed swap does not retain changes stored only in the previous container's writable layer.
+If the gateway still does not recover, for example when the sandbox needs credentials that only re-onboarding can restore, recreate the runtime with `$$nemoclaw <name> rebuild --yes`, or destroy and re-onboard the sandbox.
 Refer to [`$$nemoclaw <name> recover`](../reference/commands#$$nemoclaw-name-recover) for details.
 
 Use `gateway restart` when you intentionally need a supported OpenClaw gateway to reload runtime configuration or plugins.
@@ -257,6 +261,10 @@ If the gateway is already healthy, `recover` exits after the probe and does not 
 For built-in Hermes sandboxes, recovery sends an authenticated request through registry-scoped privileged direct-container control.
 The request reaches either the root PID 1 supervisor in a direct root-entrypoint container or the installed root controller in an OpenShell-managed container.
 It does not fall back to ordinary `openshell sandbox exec` or a manual relaunch inside the sandbox.
+For a local Docker-driver sandbox whose container still uses the legacy keepalive startup, `recover` can transactionally recreate the registered container with a credential-free managed startup command.
+NemoClaw keeps the previous container available until the managed controller proves the supervisor topology, gateway health, and settle check, and attempts to restore it if that proof fails.
+The recreation preserves mounted sandbox state, but a committed swap does not retain changes stored only in the previous container's writable layer.
+If the gateway still does not recover, for example when the sandbox needs credentials that only re-onboarding can restore, recreate the runtime with `$$nemoclaw <name> rebuild --yes`, or destroy and re-onboard the sandbox.
 Refer to [`$$nemoclaw <name> recover`](../reference/commands#$$nemoclaw-name-recover) for details.
 
 Use `gateway restart` when you intentionally need a supported Hermes gateway to reload runtime configuration or plugins.

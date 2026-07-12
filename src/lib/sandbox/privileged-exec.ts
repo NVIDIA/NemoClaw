@@ -206,6 +206,7 @@ function privilegedSandboxExecArgv(
   cmd: string[],
   stdin = false,
   sanitizeEnvironment = false,
+  expectedContainerId?: string,
 ): string[] {
   const entry = readSandboxEntry(sandboxName);
   if (!entry) throw missingRegistryEntryError(sandboxName);
@@ -219,6 +220,12 @@ function privilegedSandboxExecArgv(
   // clearly if no matching sandbox container is running.
   const container = findDirectSandboxContainer(sandboxName);
   if (container) {
+    if (expectedContainerId !== undefined && container !== expectedContainerId) {
+      throw new Error(
+        `OpenShell container identity changed for sandbox '${sandboxName}'; ` +
+          "refusing privileged execution against a different container.",
+      );
+    }
     const sanitizedEnvArgs = sanitizeEnvironment
       ? SANITIZED_PRIVILEGED_ENV.flatMap((value) => ["--env", value])
       : [];

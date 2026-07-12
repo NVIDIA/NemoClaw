@@ -32,6 +32,11 @@ type SandboxPortDeps = {
   getSessionAgent?: (sandboxName?: string) => SandboxPortAgent;
 };
 
+type SandboxForwardRecoveryOptions = {
+  afterSuccess?: () => boolean;
+  beforeStart?: () => boolean;
+};
+
 function isValidPort(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65535;
 }
@@ -62,7 +67,10 @@ export function resolveSandboxDashboardPort(
  * Returns true when `forward start` succeeded and a follow-up probe
  * confirms the new entry is running, false otherwise.
  */
-export function ensureSandboxPortForward(sandboxName: string): boolean {
+export function ensureSandboxPortForward(
+  sandboxName: string,
+  options: SandboxForwardRecoveryOptions = {},
+): boolean {
   const port = resolveSandboxDashboardPort(sandboxName);
   const remoteBindRequested = isRemoteDashboardBindRequested(process.env.NEMOCLAW_DASHBOARD_BIND);
   const allInterfaceBindRequired = remoteBindRequested || isWsl();
@@ -79,9 +87,11 @@ export function ensureSandboxPortForward(sandboxName: string): boolean {
     forwardTarget: allInterfaceBindRequired ? `0.0.0.0:${port}` : String(port),
     forceRestart: remoteBindRequested,
     expectedBind: allInterfaceBindRequired ? "0.0.0.0" : "127.0.0.1",
-    beforeStart: remoteBindRequested
-      ? () => registry.getSandbox(sandboxName)?.dashboardRemoteBindPrepared === true
-      : undefined,
+    afterSuccess: options.afterSuccess,
+    beforeStart: () =>
+      (!remoteBindRequested ||
+        registry.getSandbox(sandboxName)?.dashboardRemoteBindPrepared === true) &&
+      (options.beforeStart?.() ?? true),
   });
 }
 
@@ -133,6 +143,7 @@ export function ensureSandboxPortForwardForPort(
   sandboxName: string,
   port: number,
   options: {
+    afterSuccess?: () => boolean;
     forwardTarget?: string;
     forceRestart?: boolean;
     expectedBind?: string;
@@ -140,13 +151,28 @@ export function ensureSandboxPortForwardForPort(
   } = {},
 ): boolean {
   const {
+    afterSuccess = () => true,
     forwardTarget = String(port),
     forceRestart = false,
     expectedBind,
     beforeStart = () => true,
   } = options;
+  const acceptSuccessfulForward = () => {
+    let accepted = false;
+    try {
+      accepted = afterSuccess();
+    } catch {
+      accepted = false;
+    }
+    if (accepted) return true;
+    runOpenshell(["forward", "stop", String(port), sandboxName], {
+      ignoreError: true,
+      stdio: "ignore",
+    });
+    return false;
+  };
   let forwardHealth = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
-  if (forwardHealth === true && !forceRestart) return true;
+  if (forwardHealth === true && !forceRestart) return acceptSuccessfulForward();
   if (forwardHealth === "occupied") return false;
   const configuredWaitMs = Number(process.env.NEMOCLAW_FORWARD_RECOVERY_WAIT_MS ?? "3000");
   const waitMs = Number.isFinite(configuredWaitMs) ? Math.max(0, configuredWaitMs) : 3000;
@@ -195,7 +221,7 @@ export function ensureSandboxPortForwardForPort(
         backoffFactor: 1.5,
       },
     );
-    if (stopState.health === true && !forceRestart) return true;
+    if (stopState.health === true && !forceRestart) return acceptSuccessfulForward();
     if (stopState.health === "occupied" || !stopSettled || !stopState.portReleased) return false;
   }
 
@@ -204,6 +230,11 @@ export function ensureSandboxPortForwardForPort(
     ["forward", "start", "--background", forwardTarget, sandboxName],
     {
       ignoreError: true,
+      // OpenShell 0.0.72 leaves the background SSH forward attached to the
+      // caller's inherited descriptors. Detach them so a scripted `recover`
+      // can finish after the foreground OpenShell command exits. Keep this
+      // until every supported OpenShell release redirects those descriptors.
+      stdio: "ignore",
     },
   );
   if (startResult.status !== 0) return false;
@@ -213,7 +244,7 @@ export function ensureSandboxPortForwardForPort(
   // of accepting an arbitrary reachable listener or failing on the first
   // metadata refresh.
   let health = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
-  if (health === true) return true;
+  if (health === true) return acceptSuccessfulForward();
   if (health === "occupied") return false;
   if (waitMs === 0) return false;
 
@@ -234,7 +265,7 @@ export function ensureSandboxPortForwardForPort(
       backoffFactor: 1.5,
     },
   );
-  return settled && !occupied;
+  return settled && !occupied && acceptSuccessfulForward();
 }
 
 export function ensureHermesDashboardPortForwardIfEnabled(sandboxName: string): boolean | null {

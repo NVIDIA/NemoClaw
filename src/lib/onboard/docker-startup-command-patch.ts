@@ -16,6 +16,7 @@ export function recreateOpenShellDockerSandboxWithStartupCommand(
     timeoutSecs?: number;
     waitForSupervisor?: boolean;
     openshellSandboxCommand: readonly string[];
+    expectedOldContainerId?: string | null;
   },
   deps: DockerGpuPatchDeps = {},
 ): DockerGpuPatchResult {
