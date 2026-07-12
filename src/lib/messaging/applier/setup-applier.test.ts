@@ -807,13 +807,14 @@ describe("MessagingSetupApplier", () => {
   it("passes concrete policy keys for agent-aware preset application", async () => {
     const plan = await buildOnboardPlan(
       {
+        TELEGRAM_BOT_TOKEN: "123456:telegram-token",
         DISCORD_BOT_TOKEN: "test-discord-token",
         WECHAT_BOT_TOKEN: "test-wechat-token",
         WECHAT_ACCOUNT_ID: "wechat-account",
         SLACK_BOT_TOKEN: "xoxb-slack-token",
         SLACK_APP_TOKEN: "xapp-slack-token",
       },
-      ["discord", "wechat", "slack"],
+      ["telegram", "discord", "wechat", "slack"],
       "hermes",
     );
     const policyCalls: string[][] = [];
@@ -827,15 +828,15 @@ describe("MessagingSetupApplier", () => {
       },
     });
 
-    expect(policyCalls).toEqual([["demo", "discord", "wechat", "slack"]]);
+    expect(policyCalls).toEqual([["demo", "telegram", "discord", "wechat", "slack"]]);
     expect(applyContext).toEqual({
       agent: "hermes",
       entries: plan.networkPolicy.entries,
-      policyKeys: ["discord", "wechat_bridge", "slack"],
+      policyKeys: ["telegram", "discord", "wechat_bridge", "slack"],
     });
     expect(result).toEqual({
-      appliedPresets: ["discord", "wechat", "slack"],
-      appliedPolicyKeys: ["discord", "wechat_bridge", "slack"],
+      appliedPresets: ["telegram", "discord", "wechat", "slack"],
+      appliedPolicyKeys: ["telegram", "discord", "wechat_bridge", "slack"],
     });
   });
 });
