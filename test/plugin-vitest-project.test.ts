@@ -80,10 +80,11 @@ describe("plugin Vitest project contract", () => {
 
     expect(pluginVitestProjectOptions.test.expect).toEqual({ requireAssertions: true });
     expect(rootTest.expect?.requireAssertions).not.toBe(true);
-    for (const project of rootTest.projects ?? []) {
-      if (project.test?.name !== "plugin") {
-        expect(project.test?.expect?.requireAssertions, project.test?.name).not.toBe(true);
-      }
+    const nonPluginProjects = (rootTest.projects ?? []).filter(
+      (project) => project.test?.name !== "plugin",
+    );
+    for (const project of nonPluginProjects) {
+      expect(project.test?.expect?.requireAssertions, project.test?.name).not.toBe(true);
     }
   });
 
