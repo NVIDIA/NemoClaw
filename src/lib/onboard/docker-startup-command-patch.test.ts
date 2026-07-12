@@ -266,7 +266,11 @@ describe("Docker startup-command patch", () => {
   it("uses the full labeled replacement ID when detached run output is empty", () => {
     const oldContainerId = "a".repeat(64);
     const newContainerId = "b".repeat(64);
-    let psCalls = 0;
+    const dockerCapture = vi
+      .fn()
+      .mockReturnValueOnce(`${oldContainerId}\n`)
+      .mockReturnValueOnce(JSON.stringify([{ ...inspectFixture(), Id: oldContainerId }]))
+      .mockReturnValueOnce(`${oldContainerId}\n${newContainerId}\n`);
 
     const result = recreateOpenShellDockerSandboxWithStartupCommand(
       {
@@ -277,16 +281,7 @@ describe("Docker startup-command patch", () => {
         openshellSandboxCommand: ["env", "nemoclaw-start"],
       },
       {
-        dockerCapture: vi.fn((args: readonly string[]) => {
-          if (args[0] === "ps") {
-            psCalls += 1;
-            return psCalls === 1 ? `${oldContainerId}\n` : `${oldContainerId}\n${newContainerId}\n`;
-          }
-          if (args[0] === "inspect") {
-            return JSON.stringify([{ ...inspectFixture(), Id: oldContainerId }]);
-          }
-          return "";
-        }),
+        dockerCapture,
         dockerRunDetached: vi.fn(() => ({ status: 0, stdout: "" })),
         dockerRename: vi.fn(() => ({ status: 0 })),
         dockerStop: vi.fn(() => ({ status: 0 })),

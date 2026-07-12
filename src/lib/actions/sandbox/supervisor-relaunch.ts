@@ -19,6 +19,15 @@ import { redact, redactFull } from "../../security/redact";
 import * as registry from "../../state/registry";
 import { resolveSandboxDashboardPort } from "./forward-recovery";
 
+/**
+ * Compatibility boundary for OpenShell 0.0.71's Docker driver: legacy
+ * sandboxes persist `OPENSHELL_SANDBOX_COMMAND=sleep infinity` while
+ * `scripts/nemoclaw-start.sh` owns the managed workload as a sibling process.
+ * Only that inspected value authorizes this migration. Regression coverage is
+ * named in `supervisor-relaunch.test.ts` and `gateway-guard-recovery.test.ts`.
+ * Remove this path after supported upgrades rebuild every legacy keepalive
+ * container with `nemoclaw-start` as its persisted startup command.
+ */
 const LEGACY_OPENSHELL_KEEPALIVE = "sleep infinity";
 const DOCKER_INSPECT_TIMEOUT_MS = 15000;
 
