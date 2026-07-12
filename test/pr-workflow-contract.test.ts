@@ -553,6 +553,25 @@ describe("pull request and main workflow contracts", () => {
     expect(files.test("docs/reference/commands.mdx")).toBe(false);
   });
 
+  // source-shape-contract: compatibility -- Pre-commit routing must apply the declarative guard to every supported test location
+  it("runs the source-shape guard for root and co-located tests", () => {
+    const hooks = prekConfig.repos.flatMap((repo) => repo.hooks ?? []);
+    const sourceShape = hooks.find((candidate) => candidate.id === "source-shape-test-budget");
+    const files = new RegExp(sourceShape?.files ?? "(?!)", "u");
+
+    expect(sourceShape?.entry).toBe("npm run source-shape:check");
+    for (const path of [
+      "test/example.test.ts",
+      "src/lib/example.spec.ts",
+      "nemoclaw/src/example.test.ts",
+      "scripts/find-source-shape-tests.ts",
+      "ci/source-shape-test-budget.json",
+    ]) {
+      expect(files.test(path), path).toBe(true);
+    }
+    expect(files.test("src/lib/example.ts")).toBe(false);
+  });
+
   // source-shape-contract: compatibility -- Changed-file routing must typecheck each project and its transitive configuration inputs
   it("scopes pre-push typechecks to project and transitive inputs", () => {
     const hooks = prekConfig.repos.flatMap((repo) => repo.hooks ?? []);

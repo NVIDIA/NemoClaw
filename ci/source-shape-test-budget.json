@@ -353,6 +353,11 @@
     },
     {
       "file": "test/pr-workflow-contract.test.ts",
+      "test": "runs the source-shape guard for root and co-located tests",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/pr-workflow-contract.test.ts",
       "test": "scopes pre-push typechecks to project and transitive inputs",
       "category": "compatibility"
     },
