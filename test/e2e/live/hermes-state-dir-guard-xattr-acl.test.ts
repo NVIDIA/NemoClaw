@@ -42,7 +42,7 @@ const ACL_EXTRA_UID = 65534;
 
 const TEST_TIMEOUT_MS = 30 * 60_000;
 const INSTALL_TIMEOUT_MS = 25 * 60_000;
-const COMMAND_TIMEOUT_MS = 60_000;
+const COMMAND_TIMEOUT_MS = 120_000;
 
 validateSandboxName(SANDBOX_NAME);
 
@@ -152,6 +152,8 @@ interface FixtureReport {
   inode: number;
   uid: number;
   gid: number;
+  ownerName: string | null;
+  groupName: string | null;
   mode: string;
   sha256: string;
   marker: string | null;
@@ -320,6 +322,10 @@ test("hermes-state-dir-guard xattr/ACL: shields up/down preserve content and cla
   expect(workspaceLocked.marker).toBe(`${marker}-workspace`);
   expect(workspaceLocked.inode).not.toBe(workspaceSeed.inode);
   expect(workspaceLocked.uid).toBe(0);
+  // High-risk lock's expected owner is root:sandbox (see _expected_ids in
+  // state-dir-guard.py: policy != "confidentiality" -> root_uid, sandbox_gid).
+  expect(workspaceLocked.ownerName).toBe("root");
+  expect(workspaceLocked.groupName).toBe("sandbox");
   // The guard's high-risk lock mode is `old_mode & ~0o022`. The seed helper
   // keeps the ACL's owner/mask/other perms execute-bit-free, so the kernel's
   // ACL-resync leaves old_mode at 0o666 and this clamps to 0o644.
@@ -339,6 +345,10 @@ test("hermes-state-dir-guard xattr/ACL: shields up/down preserve content and cla
   expect(credentialsLocked.inode).not.toBe(credentialsSeed.inode);
   expect(credentialsLocked.uid).toBe(0);
   expect(credentialsLocked.gid).toBe(0);
+  // Confidentiality lock's expected owner is root:root (see _expected_ids:
+  // policy == "confidentiality" -> root_uid, root_gid).
+  expect(credentialsLocked.ownerName).toBe("root");
+  expect(credentialsLocked.groupName).toBe("root");
   // Confidentiality lock mode is `old_mode & 0o700`; old_mode is 0o666, so
   // the result is 0o600.
   expect(modeToNumber(credentialsLocked.mode)).toBe(0o600);
@@ -366,6 +376,10 @@ test("hermes-state-dir-guard xattr/ACL: shields up/down preserve content and cla
   // in place (fchown/fchmod on the already-open fd) rather than doing a
   // fresh-inode copy-replace, so the inode from the locked state persists.
   expect(workspaceUnlocked.inode).toBe(workspaceLocked.inode);
+  // Unlock's expected owner is always sandbox:sandbox regardless of policy
+  // (see _expected_ids: action == "unlock" -> sandbox_uid, sandbox_gid).
+  expect(workspaceUnlocked.ownerName).toBe("sandbox");
+  expect(workspaceUnlocked.groupName).toBe("sandbox");
   // Unlock mode is `(old_mode & 0o700) | 0o060 | (0o010 if old_mode & 0o111)`;
   // old_mode is the 0o644 locked mode above, which carries no execute bits,
   // so the result is 0o660.
@@ -388,6 +402,10 @@ test("hermes-state-dir-guard xattr/ACL: shields up/down preserve content and cla
   // Unlock is an in-place fchown/fchmod (see comment above), so the inode
   // from the locked state persists.
   expect(credentialsUnlocked.inode).toBe(credentialsLocked.inode);
+  // Unlock's expected owner is always sandbox:sandbox regardless of policy
+  // (see _expected_ids: action == "unlock" -> sandbox_uid, sandbox_gid).
+  expect(credentialsUnlocked.ownerName).toBe("sandbox");
+  expect(credentialsUnlocked.groupName).toBe("sandbox");
   // Unlock mode is `(old_mode & 0o700) | 0o060 | (0o010 if old_mode & 0o111)`;
   // old_mode is the 0o600 locked mode above, which carries no execute bits,
   // so the result is 0o660, same as the workspace fixture.
@@ -396,6 +414,13 @@ test("hermes-state-dir-guard xattr/ACL: shields up/down preserve content and cla
     credentialsUnlocked.effectivePermForExtraUid,
     "unlock must not restore the ACL entry's full raw permission",
   ).toBe(0o6);
+  const credentialsUnlockedAclUser = findAclUserEntry(
+    credentialsUnlocked.aclEntries,
+    ACL_EXTRA_UID,
+  );
+  expect(credentialsUnlockedAclUser?.perm, "raw ACL entry must survive the copy verbatim").toBe(
+    0o7,
+  );
 
   await artifacts.target.complete({
     id: "hermes-state-dir-guard-xattr-acl",
@@ -405,7 +430,8 @@ test("hermes-state-dir-guard xattr/ACL: shields up/down preserve content and cla
       workspaceLockClampsAcl: true,
       credentialsLockClampsAcl: true,
       unlockCapsRatherThanRestoresAcl: true,
-      freshInodePerTransition: true,
+      lockReplacesWithFreshInode: true,
+      unlockPreservesLockedInode: true,
     },
   });
 });

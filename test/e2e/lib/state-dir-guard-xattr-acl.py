@@ -31,9 +31,11 @@ Subcommands:
 from __future__ import annotations
 
 import argparse
+import grp
 import hashlib
 import json
 import os
+import pwd
 import struct
 import sys
 
@@ -112,6 +114,36 @@ def _sha256_file(path: str) -> str:
     return digest.hexdigest()
 
 
+def _sha256_fd(fd: int) -> str:
+    """Hash the file already open at ``fd`` instead of reopening by path.
+
+    Reopening by path between the initial stat and the hash would reintroduce
+    the symlink-swap window this helper's O_NOFOLLOW open is meant to close.
+    """
+    os.lseek(fd, 0, os.SEEK_SET)
+    digest = hashlib.sha256()
+    while True:
+        chunk = os.read(fd, 1024 * 1024)
+        if not chunk:
+            break
+        digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _owner_name(uid: int) -> "str | None":
+    try:
+        return pwd.getpwuid(uid).pw_name
+    except KeyError:
+        return None
+
+
+def _group_name(gid: int) -> "str | None":
+    try:
+        return grp.getgrgid(gid).gr_name
+    except KeyError:
+        return None
+
+
 def cmd_capability_probe(args: argparse.Namespace) -> int:
     probe_path = os.path.join(args.dir, ".nemoclaw-e2e-xattr-acl-probe")
     result = {"xattr": False, "acl": False}
@@ -185,17 +217,22 @@ def cmd_seed(args: argparse.Namespace) -> int:
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
-    st = os.stat(args.path, follow_symlinks=False)
-    report = {
-        "path": args.path,
-        "inode": st.st_ino,
-        "uid": st.st_uid,
-        "gid": st.st_gid,
-        "mode": oct(st.st_mode & 0o7777),
-        "sha256": _sha256_file(args.path),
-    }
-    fd = os.open(args.path, os.O_RDONLY)
+    # O_NOFOLLOW makes the open (and everything read from its fd below) fail
+    # loudly if args.path is a symlink, instead of silently following one
+    # swapped in between a path-based stat and a path-based reopen.
+    fd = os.open(args.path, os.O_RDONLY | os.O_NOFOLLOW)
     try:
+        st = os.fstat(fd)
+        report = {
+            "path": args.path,
+            "inode": st.st_ino,
+            "uid": st.st_uid,
+            "gid": st.st_gid,
+            "ownerName": _owner_name(st.st_uid),
+            "groupName": _group_name(st.st_gid),
+            "mode": oct(st.st_mode & 0o7777),
+            "sha256": _sha256_fd(fd),
+        }
         try:
             report["marker"] = os.getxattr(fd, MARKER_XATTR_NAME).decode("ascii")
         except OSError as exc:
