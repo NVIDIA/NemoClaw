@@ -30,6 +30,10 @@
       ]
     },
     {
+      "live": "test/e2e/live/hermes-e2e.test.ts",
+      "fast": ["test/e2e/support/inference-adapter.test.ts"]
+    },
+    {
       "live": "test/e2e/live/network-policy.test.ts",
       "fast": ["test/validate-blueprint.test.ts"]
     },
