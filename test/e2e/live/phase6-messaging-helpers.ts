@@ -4,6 +4,10 @@
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import {
+  cleanupWhenCommandAvailable,
+  cleanupWhenOpenShellAvailable,
+} from "../fixtures/cleanup-resources.ts";
+import {
   assertExitZero as expectExitZero,
   resultText,
   shellQuote,
@@ -89,7 +93,7 @@ export async function precleanSandbox(
     }),
   );
   await runSecondaryCleanup(() =>
-    host.command("openshell", ["sandbox", "delete", sandboxName], {
+    host.command(host.openshellCommandPath, ["sandbox", "delete", sandboxName], {
       artifactName: `${prefix}-openshell-sandbox-delete`,
       env,
       redactionValues: redactions,
@@ -131,6 +135,69 @@ export function trackSandboxCleanup(
     redactionValues: redactions,
     timeoutMs: 15 * 60_000,
   });
+}
+
+export function trackPreinstallSandboxCleanup(
+  cleanup: CleanupRegistry,
+  host: HostCliClient,
+  sandbox: SandboxClient,
+  sandboxName: string,
+  env: NodeJS.ProcessEnv,
+  redactions: string[],
+  prefix: string,
+): void {
+  const openshellOptions = {
+    artifactName: `${prefix}-openshell-sandbox-delete`,
+    env,
+    redactionValues: redactions,
+    timeoutMs: 120_000,
+  };
+  cleanup.trackDisposable(`delete OpenShell sandbox ${sandboxName}`, () =>
+    cleanupWhenOpenShellAvailable(
+      host,
+      {
+        artifactName: `${prefix}-probe-openshell-sandbox-delete`,
+        env,
+        redactionValues: redactions,
+        timeoutMs: 30_000,
+      },
+      () => sandbox.cleanupSandbox(sandboxName, openshellOptions),
+    ),
+  );
+  const nemoclawOptions = {
+    artifactName: `${prefix}-nemoclaw-destroy`,
+    env,
+    redactionValues: redactions,
+    timeoutMs: 15 * 60_000,
+  };
+  cleanup.trackSandbox(
+    {
+      cleanupSandbox: (name: string) =>
+        cleanupWhenCommandAvailable(
+          host,
+          host.commandPath,
+          {
+            artifactName: `${prefix}-probe-nemoclaw-destroy`,
+            env,
+            redactionValues: redactions,
+            timeoutMs: 30_000,
+          },
+          () =>
+            cleanupWhenOpenShellAvailable(
+              host,
+              {
+                artifactName: `${prefix}-probe-openshell-nemoclaw-destroy`,
+                env,
+                redactionValues: redactions,
+                timeoutMs: 30_000,
+              },
+              () => host.cleanupSandbox(name, nemoclawOptions),
+            ),
+        ),
+    },
+    sandboxName,
+    nemoclawOptions,
+  );
 }
 
 export async function installSandbox(
@@ -177,7 +244,7 @@ export async function expectSandboxReady(
   redactions: string[],
   artifactName: string,
 ): Promise<void> {
-  const list = await host.command("openshell", ["sandbox", "list"], {
+  const list = await host.command(host.openshellCommandPath, ["sandbox", "list"], {
     artifactName,
     env,
     redactionValues: redactions,

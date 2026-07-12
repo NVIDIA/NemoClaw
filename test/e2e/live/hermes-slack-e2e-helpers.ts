@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { setTimeout as sleep } from "node:timers/promises";
+import { cleanupWhenOpenShellAvailable } from "../fixtures/cleanup-resources.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { type E2ETargetFixtures, expect } from "../fixtures/e2e-test.ts";
@@ -18,7 +19,7 @@ import {
   sandboxEncodedSh,
   sandboxSh,
   shellQuote,
-  trackSandboxCleanup,
+  trackPreinstallSandboxCleanup,
 } from "./phase6-messaging-helpers.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hermes-slack";
@@ -78,7 +79,7 @@ async function precleanHermesSlack(options: {
     }),
   );
   await bestEffortLifecycleCleanup(() =>
-    options.host.command("openshell", ["sandbox", "delete", SANDBOX_NAME], {
+    options.host.command(options.host.openshellCommandPath, ["sandbox", "delete", SANDBOX_NAME], {
       artifactName: `${options.artifactPrefix}-openshell-sandbox-delete`,
       env,
       redactionValues,
@@ -87,7 +88,7 @@ async function precleanHermesSlack(options: {
   );
   for (const provider of [`${SANDBOX_NAME}-slack-bridge`, `${SANDBOX_NAME}-slack-app`]) {
     await bestEffortLifecycleCleanup(() =>
-      options.host.command("openshell", ["provider", "delete", provider], {
+      options.host.command(options.host.openshellCommandPath, ["provider", "delete", provider], {
         artifactName: `${options.artifactPrefix}-openshell-provider-delete-${provider}`,
         env,
         redactionValues,
@@ -96,12 +97,16 @@ async function precleanHermesSlack(options: {
     );
   }
   await bestEffortLifecycleCleanup(() =>
-    options.host.command("openshell", ["gateway", "destroy", "-g", "nemoclaw"], {
-      artifactName: `${options.artifactPrefix}-openshell-gateway-destroy`,
-      env,
-      redactionValues,
-      timeoutMs: 120_000,
-    }),
+    options.host.command(
+      options.host.openshellCommandPath,
+      ["gateway", "destroy", "-g", "nemoclaw"],
+      {
+        artifactName: `${options.artifactPrefix}-openshell-gateway-destroy`,
+        env,
+        redactionValues,
+        timeoutMs: 120_000,
+      },
+    ),
   );
 }
 
@@ -110,12 +115,16 @@ async function cleanupHermesSlackProvider(options: {
   apiKey?: string;
   provider: string;
 }): Promise<void> {
-  const result = await options.host.command("openshell", ["provider", "delete", options.provider], {
-    artifactName: `cleanup-hermes-slack-openshell-provider-delete-${options.provider}`,
-    env: hermesSlackEnv(options.apiKey),
-    redactionValues: redactions(options.apiKey),
-    timeoutMs: 60_000,
-  });
+  const result = await options.host.command(
+    options.host.openshellCommandPath,
+    ["provider", "delete", options.provider],
+    {
+      artifactName: `cleanup-hermes-slack-openshell-provider-delete-${options.provider}`,
+      env: hermesSlackEnv(options.apiKey),
+      redactionValues: redactions(options.apiKey),
+      timeoutMs: 60_000,
+    },
+  );
   if (
     result.exitCode === 0 ||
     /\bNotFound\b|provider[^\n]*(?:not found|does not exist)|no such provider/i.test(
@@ -138,7 +147,7 @@ async function hostSlackTokenStdin(options: {
     "set -euo pipefail",
     "ssh_config=$(mktemp)",
     "trap 'rm -f \"$ssh_config\"' EXIT",
-    `openshell sandbox ssh-config ${shellQuote(SANDBOX_NAME)} >"$ssh_config"`,
+    `${shellQuote(options.host.openshellCommandPath)} sandbox ssh-config ${shellQuote(SANDBOX_NAME)} >"$ssh_config"`,
     [
       'printf "%s\\n%s\\n" "$SLACK_BOT_TOKEN" "$SLACK_APP_TOKEN"',
       "|",
@@ -168,7 +177,7 @@ async function expectProvider(options: {
   artifactName: string;
 }): Promise<void> {
   const result = await options.host.command(
-    "openshell",
+    options.host.openshellCommandPath,
     ["provider", "get", options.providerName],
     {
       artifactName: options.artifactName,
@@ -212,7 +221,7 @@ async function providerExists(options: {
   artifactName: string;
 }): Promise<boolean> {
   const result = await options.host.command(
-    "openshell",
+    options.host.openshellCommandPath,
     ["provider", "get", options.providerName],
     {
       artifactName: options.artifactName,
@@ -240,18 +249,44 @@ export async function runHermesSlackE2E({
   const env = hermesSlackEnv(apiKey);
   const redactionValues = redactions(apiKey);
 
-  cleanup.trackGateway(host, "nemoclaw", {
+  const gatewayCleanupOptions = {
     artifactName: "cleanup-hermes-slack-openshell-gateway-destroy",
     env,
     redactionValues,
     timeoutMs: 120_000,
-  });
+  };
+  cleanup.trackGateway(
+    {
+      cleanupGatewayRegistration: (name: string) =>
+        cleanupWhenOpenShellAvailable(
+          host,
+          {
+            artifactName: "cleanup-hermes-slack-probe-openshell-gateway",
+            env,
+            redactionValues,
+            timeoutMs: 30_000,
+          },
+          () => host.cleanupGatewayRegistration(name, gatewayCleanupOptions),
+        ),
+    },
+    "nemoclaw",
+    gatewayCleanupOptions,
+  );
   for (const provider of [`${SANDBOX_NAME}-slack-app`, `${SANDBOX_NAME}-slack-bridge`]) {
     cleanup.trackDisposable(`delete OpenShell provider ${provider}`, () =>
-      cleanupHermesSlackProvider({ host, apiKey, provider }),
+      cleanupWhenOpenShellAvailable(
+        host,
+        {
+          artifactName: `cleanup-hermes-slack-probe-openshell-provider-${provider}`,
+          env,
+          redactionValues,
+          timeoutMs: 30_000,
+        },
+        () => cleanupHermesSlackProvider({ host, apiKey, provider }),
+      ),
     );
   }
-  trackSandboxCleanup(
+  trackPreinstallSandboxCleanup(
     cleanup,
     host,
     sandbox,
@@ -292,7 +327,12 @@ export async function runHermesSlackE2E({
 
   const cliProbe = await host.command(
     "bash",
-    ["-lc", "command -v nemoclaw && command -v openshell && openshell --version"],
+    [
+      "-lc",
+      'command -v nemoclaw && command -v "$1" && "$1" --version',
+      "cli-probe-hermes-slack",
+      host.openshellCommandPath,
+    ],
     {
       artifactName: "phase-1-cli-probe-hermes-slack",
       env,
@@ -536,12 +576,16 @@ else:
   expectExitZero(processScan, "raw Slack token process scan");
   if (processScan.stdout.trim() !== "EMPTY") expect(processScan.stdout.trim()).toBe("OK");
 
-  const policy = await host.command("openshell", ["policy", "get", "--full", SANDBOX_NAME], {
-    artifactName: "phase-5-policy-get",
-    env,
-    redactionValues,
-    timeoutMs: 60_000,
-  });
+  const policy = await host.command(
+    host.openshellCommandPath,
+    ["policy", "get", "--full", SANDBOX_NAME],
+    {
+      artifactName: "phase-5-policy-get",
+      env,
+      redactionValues,
+      timeoutMs: 60_000,
+    },
+  );
   expectExitZero(policy, "openshell policy get --full");
   const policyText = resultText(policy);
   const slackBlockMatch = policyText.match(/^  slack:[\s\S]*?(?=^  [A-Za-z0-9_-]+:|$(?![\s\S]))/m);
@@ -683,7 +727,7 @@ PY`,
     });
     expectExitZero(destroy, "nemoclaw destroy Hermes Slack sandbox");
     await bestEffortLifecycleCleanup(() =>
-      host.command("openshell", ["gateway", "destroy", "-g", "nemoclaw"], {
+      host.command(host.openshellCommandPath, ["gateway", "destroy", "-g", "nemoclaw"], {
         artifactName: "phase-7-openshell-gateway-destroy",
         env,
         redactionValues,

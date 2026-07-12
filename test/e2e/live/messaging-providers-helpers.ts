@@ -616,16 +616,19 @@ export async function startFakeDockerApi(
   );
 
   cleanup(`remove ${container}`, async () => {
-    const remove = await runHost(host, "docker", ["rm", "-f", container], {
-      artifactName: `cleanup-${container}`,
-      env: options.env,
-      redactionValues: options.redactionValues,
-      timeoutMs: 60_000,
-    });
-    if (remove.exitCode !== 0 && !/No such container:/iu.test(resultText(remove))) {
-      expectExitZero(remove, `remove fake ${options.kind} API container ${container}`);
+    try {
+      const remove = await runHost(host, "docker", ["rm", "-f", container], {
+        artifactName: `cleanup-${container}`,
+        env: options.env,
+        redactionValues: options.redactionValues,
+        timeoutMs: 60_000,
+      });
+      if (remove.exitCode !== 0 && !/No such container:/iu.test(resultText(remove))) {
+        expectExitZero(remove, `remove fake ${options.kind} API container ${container}`);
+      }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
     }
-    fs.rmSync(dir, { recursive: true, force: true });
   });
 
   const start = await runHost(host, "docker", dockerArgs, {

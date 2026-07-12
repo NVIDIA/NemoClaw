@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { cleanupWhenCommandAvailable } from "../fixtures/cleanup-resources.ts";
+import {
+  cleanupWhenCommandAvailable,
+  cleanupWhenOpenShellAvailable,
+} from "../fixtures/cleanup-resources.ts";
 import { assertExitZero, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
@@ -178,8 +181,11 @@ test("hermes-shields-config: fresh non-root Hermes sandbox completes two shields
     requireAuth: true,
   });
   cleanupRegistry.trackDisposable("close Hermes shields fake inference endpoint", async () => {
-    await artifacts.writeJson("fake-openai-compatible-requests.json", fake.requests());
-    await fake.close();
+    try {
+      await artifacts.writeJson("fake-openai-compatible-requests.json", fake.requests());
+    } finally {
+      await fake.close();
+    }
   });
   const gatewayCleanupOptions = {
     artifactName: "cleanup-destroy-gateway",
@@ -190,9 +196,8 @@ test("hermes-shields-config: fresh non-root Hermes sandbox completes two shields
   cleanupRegistry.trackGateway(
     {
       cleanupGatewayRegistration: (name: string) =>
-        cleanupWhenCommandAvailable(
+        cleanupWhenOpenShellAvailable(
           host,
-          "openshell",
           {
             artifactName: "cleanup-probe-openshell-gateway",
             env: gatewayCleanupOptions.env,

@@ -390,7 +390,11 @@ bash ${quotedInstallerArgs} >${shellQuote(logFile)} 2>&1`,
 }
 
 async function preCleanUpgradeGateway(host: HostCliClient, artifactName: string): Promise<void> {
-  await bash(host, upgradeGatewayCleanupScript(PID_FILE), { artifactName, timeoutMs: 120_000 });
+  const result = await bash(host, upgradeGatewayCleanupScript(PID_FILE), {
+    artifactName,
+    timeoutMs: 120_000,
+  });
+  expectExitZero(result, "pre-clean OpenShell gateway upgrade state");
 }
 
 async function installOldNemoclawAndClaw(

@@ -6,6 +6,7 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
+import { cleanupWhenOpenShellAvailable } from "../fixtures/cleanup-resources.ts";
 import type { HostCliClient, SandboxClient } from "../fixtures/clients/index.ts";
 import { sandboxAccessEnv, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -23,7 +24,7 @@ import {
   sandboxNode,
   sandboxSh,
   shellQuote,
-  trackSandboxCleanup,
+  trackPreinstallSandboxCleanup,
 } from "./phase6-messaging-helpers.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hermes-discord";
@@ -86,7 +87,7 @@ async function precleanHermesDiscord(
     }),
   );
   await bestEffortLifecycleCleanup(() =>
-    host.command("openshell", ["sandbox", "delete", sandboxName], {
+    host.command(host.openshellCommandPath, ["sandbox", "delete", sandboxName], {
       artifactName: `${prefix}-openshell-sandbox-delete`,
       env,
       redactionValues,
@@ -94,7 +95,7 @@ async function precleanHermesDiscord(
     }),
   );
   await bestEffortLifecycleCleanup(() =>
-    host.command("openshell", ["gateway", "destroy", "-g", "nemoclaw"], {
+    host.command(host.openshellCommandPath, ["gateway", "destroy", "-g", "nemoclaw"], {
       artifactName: `${prefix}-openshell-gateway-destroy`,
       env,
       redactionValues,
@@ -131,7 +132,7 @@ async function applyHermesFakeDiscordPolicy(options: {
   redactions: string[];
 }): Promise<void> {
   const result = await options.host.command(
-    "openshell",
+    options.host.openshellCommandPath,
     [
       "policy",
       "update",
@@ -372,13 +373,30 @@ test("hermes-discord: Hermes Discord schema, credential isolation, native gatewa
     discordRequireMention: DISCORD_REQUIRE_MENTION,
   });
 
-  cleanup.trackGateway(host, "nemoclaw", {
+  const gatewayCleanupOptions = {
     artifactName: "cleanup-hermes-discord-openshell-gateway-destroy",
     env,
     redactionValues,
     timeoutMs: 120_000,
-  });
-  trackSandboxCleanup(
+  };
+  cleanup.trackGateway(
+    {
+      cleanupGatewayRegistration: (name: string) =>
+        cleanupWhenOpenShellAvailable(
+          host,
+          {
+            artifactName: "cleanup-hermes-discord-probe-openshell-gateway",
+            env,
+            redactionValues,
+            timeoutMs: 30_000,
+          },
+          () => host.cleanupGatewayRegistration(name, gatewayCleanupOptions),
+        ),
+    },
+    "nemoclaw",
+    gatewayCleanupOptions,
+  );
+  trackPreinstallSandboxCleanup(
     cleanup,
     host,
     sandbox,
@@ -408,7 +426,12 @@ test("hermes-discord: Hermes Discord schema, credential isolation, native gatewa
 
   const cliProbe = await host.command(
     "bash",
-    ["-lc", "command -v nemoclaw && openshell --version"],
+    [
+      "-lc",
+      'command -v nemoclaw && command -v "$1" && "$1" --version',
+      "cli-probe-hermes-discord",
+      host.openshellCommandPath,
+    ],
     {
       artifactName: "phase-1-cli-probe",
       env,
@@ -429,7 +452,7 @@ test("hermes-discord: Hermes Discord schema, credential isolation, native gatewa
   expect(resultText(list)).toContain(SANDBOX_NAME);
 
   const provider = await host.command(
-    "openshell",
+    host.openshellCommandPath,
     ["provider", "get", `${SANDBOX_NAME}-discord-bridge`],
     {
       artifactName: "phase-2-discord-provider-get",
@@ -736,7 +759,7 @@ done`,
     });
     expectExitZero(destroy, "destroy Hermes Discord sandbox");
     await bestEffortLifecycleCleanup(() =>
-      host.command("openshell", ["gateway", "destroy", "-g", "nemoclaw"], {
+      host.command(host.openshellCommandPath, ["gateway", "destroy", "-g", "nemoclaw"], {
         artifactName: "phase-9-openshell-gateway-destroy",
         env,
         redactionValues,

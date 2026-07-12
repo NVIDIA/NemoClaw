@@ -47,6 +47,14 @@ export async function cleanupWhenCommandAvailable(
   await cleanup();
 }
 
+export async function cleanupWhenOpenShellAvailable(
+  host: Pick<HostCliClient, "isCommandAvailable" | "openshellCommandPath">,
+  probeOptions: ShellProbeRunOptions,
+  cleanup: CleanupRun,
+): Promise<void> {
+  await cleanupWhenCommandAvailable(host, host.openshellCommandPath, probeOptions, cleanup);
+}
+
 export function registerSandboxCleanupUnlessKept(keepSandbox: boolean, register: () => void): void {
   if (keepSandbox) return;
   register();

@@ -298,7 +298,13 @@ test("concurrent gateway ports: onboards two sandboxes on isolated gateways and 
   ).toBe(true);
 
   await prerequisiteOrSkip(host, skip, "docker", ["info"], "prereq-docker-info");
-  await prerequisiteOrSkip(host, skip, "bash", ["-lc", "command -v openshell"], "prereq-openshell");
+  await prerequisiteOrSkip(
+    host,
+    skip,
+    "bash",
+    ["-lc", 'command -v "$1"', "prereq-openshell", host.openshellCommandPath],
+    "prereq-openshell",
+  );
   await prerequisiteOrSkip(
     host,
     skip,

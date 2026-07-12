@@ -6,7 +6,10 @@ import os from "node:os";
 import path from "node:path";
 import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { cleanupWhenCommandAvailable } from "../fixtures/cleanup-resources.ts";
+import {
+  cleanupWhenCommandAvailable,
+  cleanupWhenOpenShellAvailable,
+} from "../fixtures/cleanup-resources.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
@@ -220,9 +223,8 @@ exit "$status"`,
   cleanupRegistry.trackGateway(
     {
       cleanupGatewayRegistration: (name: string) =>
-        cleanupWhenCommandAvailable(
+        cleanupWhenOpenShellAvailable(
           host,
-          "openshell",
           {
             artifactName: "cleanup-probe-openshell-gateway",
             env: gatewayCleanupOptions.env,
@@ -240,9 +242,8 @@ exit "$status"`,
     timeoutMs: 60_000,
   };
   cleanupRegistry.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
-    cleanupWhenCommandAvailable(
+    cleanupWhenOpenShellAvailable(
       host,
-      process.env.OPENSHELL_BIN ?? "openshell",
       {
         artifactName: "cleanup-probe-openshell-sandbox",
         env: openshellSandboxCleanupOptions.env,

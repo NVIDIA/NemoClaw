@@ -273,7 +273,10 @@ describe("E2E fixture clients", () => {
     runner.enqueue({ exitCode: 2, stderr: "unrecognized subcommand 'remove'" });
     runner.enqueue({ exitCode: 0 });
     runner.enqueue({ exitCode: 0 });
-    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+    const host = new HostCliClient(runner, {
+      cliPath: "nemoclaw",
+      openshellPath: "/opt/openshell/bin/openshell",
+    });
     const options = {
       artifactName: "resource-cleanup",
       env: { OPENSHELL_GATEWAY: "nemoclaw-18080" },
@@ -292,17 +295,17 @@ describe("E2E fixture clients", () => {
         options,
       },
       {
-        command: "openshell",
+        command: "/opt/openshell/bin/openshell",
         args: ["gateway", "remove", "nemoclaw-18080"],
         options: { ...options, artifactName: "resource-cleanup-remove" },
       },
       {
-        command: "openshell",
+        command: "/opt/openshell/bin/openshell",
         args: ["gateway", "destroy", "-g", "nemoclaw-18080"],
         options: { ...options, artifactName: "resource-cleanup-legacy-destroy" },
       },
       {
-        command: "openshell",
+        command: "/opt/openshell/bin/openshell",
         args: ["forward", "stop", "18789"],
         options,
       },

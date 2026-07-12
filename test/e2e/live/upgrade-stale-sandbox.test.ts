@@ -58,6 +58,7 @@ test("upgrade-sandboxes detects and rebuilds stale OpenClaw sandboxes (#1904)", 
   assertDockerAvailable(dockerInfo, skip);
 
   registerStateRestore(cleanup);
+  cleanup.trackDisposable("remove stale OpenClaw test image", () => cleanupOldImage(host));
   cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
     sandbox.cleanupSandbox(SANDBOX_NAME, {
       artifactName: "cleanup-openshell-delete-upgrade-stale",
@@ -70,7 +71,6 @@ test("upgrade-sandboxes detects and rebuilds stale OpenClaw sandboxes (#1904)", 
     env: commandEnv(),
     timeoutMs: 120_000,
   });
-  cleanup.trackDisposable("remove stale OpenClaw test image", () => cleanupOldImage(host));
   await precleanStaleSandbox(host, sandbox);
 
   const install = await installCurrentNemoclaw(host, hosted);

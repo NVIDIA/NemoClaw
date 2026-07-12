@@ -5,7 +5,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { testTimeoutOptions } from "../../helpers/timeouts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { cleanupWhenCommandAvailable } from "../fixtures/cleanup-resources.ts";
+import {
+  cleanupWhenCommandAvailable,
+  cleanupWhenOpenShellAvailable,
+} from "../fixtures/cleanup-resources.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -330,9 +333,8 @@ test(
     cleanup.trackGateway(
       {
         cleanupGatewayRegistration: (name: string) =>
-          cleanupWhenCommandAvailable(
+          cleanupWhenOpenShellAvailable(
             host,
-            "openshell",
             {
               artifactName: "cleanup-probe-openshell-gateway-token-rotation",
               env: gatewayCleanupOptions.env,
@@ -352,9 +354,8 @@ test(
       timeoutMs: 60_000,
     };
     cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
-      cleanupWhenCommandAvailable(
+      cleanupWhenOpenShellAvailable(
         host,
-        process.env.OPENSHELL_BIN ?? "openshell",
         {
           artifactName: "cleanup-probe-openshell-sandbox-token-rotation",
           env: openshellSandboxCleanupOptions.env,

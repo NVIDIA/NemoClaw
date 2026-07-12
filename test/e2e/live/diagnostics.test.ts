@@ -156,12 +156,14 @@ test("diagnostics CLI creates sanitized archives and validates sandbox/credentia
   cleanup.trackGateway(host, "nemoclaw", {
     artifactName: "cleanup-openshell-gateway-destroy-diagnostics",
     env: cleanupEnv,
+    redactionValues: [apiKey],
     timeoutMs: 120_000,
   });
   cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
     sandbox.cleanupSandbox(SANDBOX_NAME, {
       artifactName: "cleanup-openshell-sandbox-delete-diagnostics",
       env: cleanupEnv,
+      redactionValues: [apiKey],
       timeoutMs: 60_000,
     }),
   );

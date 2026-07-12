@@ -13,7 +13,10 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { cleanupWhenCommandAvailable } from "../fixtures/cleanup-resources.ts";
+import {
+  cleanupWhenCommandAvailable,
+  cleanupWhenOpenShellAvailable,
+} from "../fixtures/cleanup-resources.ts";
 import { assertExitZero, resultText, sandboxAccessEnv } from "../fixtures/clients/index.ts";
 import { trustedProviderEndpoint } from "../fixtures/clients/provider.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -170,9 +173,8 @@ test(
     cleanup.trackGateway(
       {
         cleanupGatewayRegistration: (name: string) =>
-          cleanupWhenCommandAvailable(
+          cleanupWhenOpenShellAvailable(
             host,
-            "openshell",
             {
               artifactName: "cleanup-probe-openshell-gateway-sandbox-survival",
               env: gatewayCleanupOptions.env,

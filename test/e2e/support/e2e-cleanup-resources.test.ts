@@ -14,6 +14,7 @@ import {
   cleanupExistingPath,
   cleanupUnlessVerified,
   cleanupWhenCommandAvailable,
+  cleanupWhenOpenShellAvailable,
   registerSandboxCleanupUnlessKept,
   terminateProcessIfRunning,
 } from "../fixtures/cleanup-resources.ts";
@@ -216,6 +217,35 @@ describe("cleanup resources", () => {
 
     expect(isCommandAvailable).toHaveBeenCalledTimes(2);
     expect(isCommandAvailable).toHaveBeenNthCalledWith(1, "openshell", probeOptions);
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the configured OpenShell command and preserves strict cleanup failures (#6352)", async () => {
+    const isCommandAvailable = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const host = {
+      isCommandAvailable,
+      openshellCommandPath: "/opt/openshell/bin/openshell",
+    };
+    const cleanup = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error("permission denied"));
+    const probeOptions = { artifactName: "cleanup-openshell-probe", timeoutMs: 1_000 };
+
+    await cleanupWhenOpenShellAvailable(host, probeOptions, cleanup);
+    await expect(cleanupWhenOpenShellAvailable(host, probeOptions, cleanup)).rejects.toThrow(
+      "permission denied",
+    );
+
+    expect(isCommandAvailable).toHaveBeenNthCalledWith(
+      1,
+      "/opt/openshell/bin/openshell",
+      probeOptions,
+    );
+    expect(isCommandAvailable).toHaveBeenNthCalledWith(
+      2,
+      "/opt/openshell/bin/openshell",
+      probeOptions,
+    );
     expect(cleanup).toHaveBeenCalledTimes(1);
   });
 

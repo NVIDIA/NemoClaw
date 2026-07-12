@@ -4,7 +4,10 @@
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { cleanupWhenCommandAvailable } from "../fixtures/cleanup-resources.ts";
+import {
+  cleanupWhenCommandAvailable,
+  cleanupWhenOpenShellAvailable,
+} from "../fixtures/cleanup-resources.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
@@ -125,9 +128,8 @@ exit "$status"`,
   cleanup.trackGateway(
     {
       cleanupGatewayRegistration: (name: string) =>
-        cleanupWhenCommandAvailable(
+        cleanupWhenOpenShellAvailable(
           host,
-          "openshell",
           {
             artifactName: "cleanup-probe-jetson-openshell-gateway",
             env: gatewayCleanupOptions.env,
@@ -145,9 +147,8 @@ exit "$status"`,
     timeoutMs: 120_000,
   };
   cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
-    cleanupWhenCommandAvailable(
+    cleanupWhenOpenShellAvailable(
       host,
-      process.env.OPENSHELL_BIN ?? "openshell",
       {
         artifactName: "cleanup-probe-jetson-openshell-sandbox",
         env: openshellSandboxCleanupOptions.env,

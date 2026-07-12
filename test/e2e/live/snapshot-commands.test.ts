@@ -59,13 +59,11 @@ async function precleanSnapshotSandbox(
   sandbox: SandboxClient,
   label: string,
 ): Promise<void> {
-  await bestEffortPreclean(() =>
-    host.command("nemoclaw", [SANDBOX_NAME, "destroy", "--yes"], {
-      artifactName: `${label}-nemoclaw-destroy`,
-      env: commandEnv(),
-      timeoutMs: 120_000,
-    }),
-  );
+  await host.bestEffortCleanupSandbox(SANDBOX_NAME, {
+    artifactName: `${label}-nemoclaw-destroy`,
+    env: commandEnv(),
+    timeoutMs: 120_000,
+  });
   await bestEffortPreclean(() =>
     sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
       artifactName: `${label}-openshell-sandbox-delete`,
