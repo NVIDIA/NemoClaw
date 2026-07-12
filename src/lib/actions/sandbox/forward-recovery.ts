@@ -10,6 +10,8 @@ import { getActiveMessagingHostForward } from "../../messaging/host-forward";
 import type { SandboxMessagingHostForwardPlan } from "../../messaging/manifest";
 import { hydrateDerivedSandboxMessagingPlanFields } from "../../messaging/persistence";
 import { parseSandboxMessagingPlan } from "../../messaging/plan-validation";
+import { isRemoteDashboardBindRequested } from "../../onboard/dockerfile-remote-dashboard-bind-contract";
+import { isWsl } from "../../platform";
 import * as registry from "../../state/registry";
 import { parseForwardList } from "../../state/sandbox-session";
 import {
@@ -61,7 +63,26 @@ export function resolveSandboxDashboardPort(
  * confirms the new entry is running, false otherwise.
  */
 export function ensureSandboxPortForward(sandboxName: string): boolean {
-  return ensureSandboxPortForwardForPort(sandboxName, resolveSandboxDashboardPort(sandboxName));
+  const port = resolveSandboxDashboardPort(sandboxName);
+  const remoteBindRequested = isRemoteDashboardBindRequested(process.env.NEMOCLAW_DASHBOARD_BIND);
+  const allInterfaceBindRequired = remoteBindRequested || isWsl();
+  if (
+    remoteBindRequested &&
+    registry.getSandbox(sandboxName)?.dashboardRemoteBindPrepared !== true
+  ) {
+    console.error(
+      `  Refusing remote dashboard bind for '${sandboxName}': its generated configuration was not prepared for remote exposure. Re-run onboarding with NEMOCLAW_DASHBOARD_BIND=0.0.0.0 and --recreate-sandbox before reconnecting.`,
+    );
+    return false;
+  }
+  return ensureSandboxPortForwardForPort(sandboxName, port, {
+    forwardTarget: allInterfaceBindRequired ? `0.0.0.0:${port}` : String(port),
+    forceRestart: remoteBindRequested,
+    expectedBind: allInterfaceBindRequired ? "0.0.0.0" : "127.0.0.1",
+    beforeStart: remoteBindRequested
+      ? () => registry.getSandbox(sandboxName)?.dashboardRemoteBindPrepared === true
+      : undefined,
+  });
 }
 
 /**
@@ -79,12 +100,19 @@ export function ensureSandboxPortForward(sandboxName: string): boolean {
  * cannot prove that OpenShell assigned this sandbox the requested host port.
  */
 export function isSandboxForwardHealthy(sandboxName: string): SandboxForwardHealth {
-  return isSandboxPortForwardHealthy(sandboxName, resolveSandboxDashboardPort(sandboxName));
+  const allInterfaceBindRequired =
+    isRemoteDashboardBindRequested(process.env.NEMOCLAW_DASHBOARD_BIND) || isWsl();
+  return isSandboxPortForwardHealthy(
+    sandboxName,
+    resolveSandboxDashboardPort(sandboxName),
+    allInterfaceBindRequired ? "0.0.0.0" : "127.0.0.1",
+  );
 }
 
 export function isSandboxPortForwardHealthy(
   sandboxName: string,
   port: number,
+  expectedBind?: string,
 ): SandboxForwardHealth {
   const result = captureOpenshell(["forward", "list"], {
     ignoreError: true,
@@ -92,14 +120,33 @@ export function isSandboxPortForwardHealthy(
   });
   if (!result || isCommandTimeout(result) || result.status !== 0) return null;
   const entries = parseForwardList(result.output) as SandboxForwardListEntry[];
-  return classifyForwardHealthWithReachability(entries, sandboxName, String(port), () =>
-    isLocalForwardReachable(port),
+  return classifyForwardHealthWithReachability(
+    entries,
+    sandboxName,
+    String(port),
+    () => isLocalForwardReachable(port),
+    expectedBind,
   );
 }
 
-export function ensureSandboxPortForwardForPort(sandboxName: string, port: number): boolean {
-  let forwardHealth = isSandboxPortForwardHealthy(sandboxName, port);
-  if (forwardHealth === true) return true;
+export function ensureSandboxPortForwardForPort(
+  sandboxName: string,
+  port: number,
+  options: {
+    forwardTarget?: string;
+    forceRestart?: boolean;
+    expectedBind?: string;
+    beforeStart?: () => boolean;
+  } = {},
+): boolean {
+  const {
+    forwardTarget = String(port),
+    forceRestart = false,
+    expectedBind,
+    beforeStart = () => true,
+  } = options;
+  let forwardHealth = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
+  if (forwardHealth === true && !forceRestart) return true;
   if (forwardHealth === "occupied") return false;
   const configuredWaitMs = Number(process.env.NEMOCLAW_FORWARD_RECOVERY_WAIT_MS ?? "3000");
   const waitMs = Number.isFinite(configuredWaitMs) ? Math.max(0, configuredWaitMs) : 3000;
@@ -133,10 +180,12 @@ export function ensureSandboxPortForwardForPort(sandboxName: string, port: numbe
     };
     const stopSettled = waitUntil(
       () => {
-        stopState.health = isSandboxPortForwardHealthy(sandboxName, port);
+        stopState.health = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
         stopState.portReleased = !isLocalForwardReachable(port);
         return (
-          stopState.health === true || stopState.health === "occupied" || stopState.portReleased
+          (!forceRestart && stopState.health === true) ||
+          stopState.health === "occupied" ||
+          stopState.portReleased
         );
       },
       {
@@ -146,12 +195,13 @@ export function ensureSandboxPortForwardForPort(sandboxName: string, port: numbe
         backoffFactor: 1.5,
       },
     );
-    if (stopState.health === true) return true;
+    if (stopState.health === true && !forceRestart) return true;
     if (stopState.health === "occupied" || !stopSettled || !stopState.portReleased) return false;
   }
 
+  if (!beforeStart()) return false;
   const startResult = runOpenshell(
-    ["forward", "start", "--background", String(port), sandboxName],
+    ["forward", "start", "--background", forwardTarget, sandboxName],
     {
       ignoreError: true,
     },
@@ -162,7 +212,7 @@ export function ensureSandboxPortForwardForPort(sandboxName: string, port: numbe
   // entry becomes visible. Poll for the exact live sandbox+port owner instead
   // of accepting an arbitrary reachable listener or failing on the first
   // metadata refresh.
-  let health = isSandboxPortForwardHealthy(sandboxName, port);
+  let health = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
   if (health === true) return true;
   if (health === "occupied") return false;
   if (waitMs === 0) return false;
@@ -170,7 +220,7 @@ export function ensureSandboxPortForwardForPort(sandboxName: string, port: numbe
   let occupied = false;
   const settled = waitUntil(
     () => {
-      health = isSandboxPortForwardHealthy(sandboxName, port);
+      health = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
       if (health === "occupied") {
         occupied = true;
         return true;

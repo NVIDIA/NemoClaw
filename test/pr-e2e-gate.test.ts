@@ -13,10 +13,12 @@ import {
   assertCorrelatedWorkflowRun,
   cancelPrGate,
   classifyPrGateEvidence,
+  controllerErrorAnnotationTitle,
   dispatchPrGate,
   expectedSignalShards,
   findSignalFiles,
   finishPrGate,
+  PrerequisiteCiError,
   type PrGateState,
   type PullRequest,
   parseControllerCommand,
@@ -37,6 +39,8 @@ import {
 const HEAD_SHA = "a".repeat(40);
 const BASE_SHA = "b".repeat(40);
 const WORKFLOW_SHA = "d".repeat(40);
+const CI_RUN_ID = 99;
+const CI_RUN_ATTEMPT = 3;
 const CORRELATION_ID = "12345678-1234-4123-8123-123456789abc";
 const BROAD_FILES = [
   "src/lib/onboard.ts",
@@ -120,7 +124,7 @@ function state(): PrGateState {
   };
 }
 
-function startCommand(workDir: string) {
+function startCommand(workDir: string, prNumber = "42") {
   const command = parseControllerCommand([
     "--mode",
     "start",
@@ -134,6 +138,12 @@ function startCommand(workDir: string) {
     WORKFLOW_SHA,
     "--ci-conclusion",
     "success",
+    "--ci-run-attempt",
+    String(CI_RUN_ATTEMPT),
+    "--ci-run-id",
+    String(CI_RUN_ID),
+    "--pr",
+    prNumber,
     "--work-dir",
     workDir,
   ]);
@@ -199,11 +209,20 @@ describe("PR E2E controller", () => {
           WORKFLOW_SHA,
           "--ci-conclusion",
           "success",
+          "--ci-run-attempt",
+          String(CI_RUN_ATTEMPT),
+          "--ci-run-id",
+          String(CI_RUN_ID),
+          "--pr",
+          "42",
           "--work-dir",
           workDir,
         ]),
       ).toMatchObject({
         mode: "start",
+        ciRunAttempt: CI_RUN_ATTEMPT,
+        ciRunId: CI_RUN_ID,
+        prNumber: 42,
         planPath: path.join(workDir, "risk-plan.json"),
         statePath: path.join(workDir, "controller-state.json"),
         evidencePath: path.join(workDir, "evidence"),
@@ -218,6 +237,7 @@ describe("PR E2E controller", () => {
       expect(() =>
         parseControllerCommand(["--mode", "cancel", "--pr", "9007199254740992"]),
       ).toThrow(/safe integer range/u);
+      expect(startCommand(workDir, "").prNumber).toBeUndefined();
 
       fs.chmodSync(workDir, 0o755);
       expect(() => parseControllerCommand(["--mode", "finish", "--work-dir", workDir])).toThrow(
@@ -227,6 +247,15 @@ describe("PR E2E controller", () => {
       fs.chmodSync(workDir, 0o700);
       fs.rmSync(workDir, { recursive: true, force: true });
     }
+  });
+
+  it("distinguishes prerequisite CI failures from controller failures in annotations", () => {
+    expect(controllerErrorAnnotationTitle(new PrerequisiteCiError("CI failed"))).toBe(
+      "PR CI did not pass",
+    );
+    expect(controllerErrorAnnotationTitle(new Error("controller failed"))).toBe(
+      "Controller failed",
+    );
   });
 
   it("validates the risk plan and bounded state", () => {
@@ -450,6 +479,244 @@ describe("PR E2E controller", () => {
         startPrGate({ ...startCommand(workDir), headRepository: "contributor/NemoClaw" }),
       ).rejects.toThrow(/PR branch must be in the base repository/u);
       expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a pull request that does not match the triggering workflow run", async () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-pr-identity-"));
+    const outputPath = path.join(workDir, "github-output");
+    fs.writeFileSync(outputPath, "", { mode: 0o600 });
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    vi.stubEnv("GITHUB_OUTPUT", outputPath);
+    const requests: RecordedGitHubRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs") && method === "POST",
+            () => githubResponse({ id: 17 }),
+          ),
+          githubFetchRoute(
+            ({ url }) => url.includes("/pulls?state=open&head="),
+            () => githubResponse([pullRequestListItem()]),
+          ),
+          githubFetchRoute(
+            ({ url }) => url.endsWith("/pulls/42"),
+            () => githubResponse(pullRequest()),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
+            () => githubResponse({}),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    try {
+      await expect(startPrGate(startCommand(workDir, "43"))).rejects.toThrow(
+        /PR identity does not match the triggering workflow run/u,
+      );
+      expect(requests.some((request) => request.url.includes("/files?"))).toBe(false);
+      expect(requests.some((request) => request.url.endsWith("/dispatches"))).toBe(false);
+      const finalUpdate = requests.find(
+        (request) => request.url.endsWith("/check-runs/17") && request.method === "PATCH",
+      );
+      expect(finalUpdate?.body).toMatchObject({ status: "completed", conclusion: "failure" });
+      expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("links the pull request and failed CI jobs when prerequisite CI blocks E2E", async () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-ci-failure-"));
+    const outputPath = path.join(workDir, "github-output");
+    fs.writeFileSync(outputPath, "", { mode: 0o600 });
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    vi.stubEnv("GITHUB_OUTPUT", outputPath);
+    const requests: RecordedGitHubRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs") && method === "POST",
+            () => githubResponse({ id: 17 }),
+          ),
+          githubFetchRoute(
+            ({ url }) =>
+              url.includes(`/actions/runs/${CI_RUN_ID}/attempts/${CI_RUN_ATTEMPT}/jobs?`),
+            () =>
+              githubResponse({
+                total_count: 101,
+                jobs: [
+                  {
+                    id: 101,
+                    name: "cli-test-shards (6)",
+                    conclusion: "failure",
+                    steps: [{ name: "Run CLI coverage shard", conclusion: "failure" }],
+                  },
+                  {
+                    id: 102,
+                    name: "cli-tests",
+                    conclusion: "failure",
+                    steps: [{ name: "Verify CLI shards completed", conclusion: "failure" }],
+                  },
+                  {
+                    id: 103,
+                    name: "static-checks",
+                    conclusion: "success",
+                    steps: [{ name: "Run checks", conclusion: "success" }],
+                  },
+                  {
+                    id: 104,
+                    name: "unsafe]\n::error::<tag>&",
+                    conclusion: "failure",
+                    steps: [{ name: "bad` step\n::warning::", conclusion: "failure" }],
+                  },
+                  ...Array.from({ length: 96 }, (_, index) => ({
+                    id: 200 + index,
+                    name: `passing-job-${index}`,
+                    conclusion: "success",
+                    steps: [],
+                  })),
+                ],
+              }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
+            () => githubResponse({}),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    try {
+      let rejection: unknown;
+      try {
+        await startPrGate({ ...startCommand(workDir), ciConclusion: "failure" });
+      } catch (error) {
+        rejection = error;
+      }
+      expect(rejection).toBeInstanceOf(PrerequisiteCiError);
+      const rejectionMessage = (rejection as Error).message;
+      expect(rejectionMessage).toContain("PR #42: https://github.com/NVIDIA/NemoClaw/pull/42");
+      expect(rejectionMessage).toContain(
+        `CI run attempt ${CI_RUN_ATTEMPT}: https://github.com/NVIDIA/NemoClaw/actions/runs/${CI_RUN_ID}/attempts/${CI_RUN_ATTEMPT}`,
+      );
+      expect(rejectionMessage).toContain("cli-test-shards (6) (Run CLI coverage shard)");
+      expect(rejectionMessage).toContain("job listing truncated");
+
+      expect(requests.some((request) => request.url.endsWith("/dispatches"))).toBe(false);
+      expect(requests.some((request) => request.url.includes("/pulls"))).toBe(false);
+      const finalUpdate = requests.find(
+        (request) => request.url.endsWith("/check-runs/17") && request.method === "PATCH",
+      );
+      expect(finalUpdate?.body).toMatchObject({
+        status: "completed",
+        conclusion: "failure",
+        details_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${CI_RUN_ID}/attempts/${CI_RUN_ATTEMPT}`,
+        output: {
+          title: "PR #42 CI did not pass",
+        },
+      });
+      const summary = (finalUpdate?.body as { output?: { summary?: string } } | undefined)?.output
+        ?.summary;
+      expect(summary).toContain("[PR #42](https://github.com/NVIDIA/NemoClaw/pull/42)");
+      expect(summary).toContain(
+        `[CI / Pull Request attempt ${CI_RUN_ATTEMPT}](https://github.com/NVIDIA/NemoClaw/actions/runs/${CI_RUN_ID}/attempts/${CI_RUN_ATTEMPT})`,
+      );
+      expect(summary).toContain(
+        `[cli-test-shards (6)](https://github.com/NVIDIA/NemoClaw/actions/runs/${CI_RUN_ID}/job/101)`,
+      );
+      expect(summary).toContain("failed step: `Run CLI coverage shard`");
+      expect(summary).toContain(
+        `[cli-tests](https://github.com/NVIDIA/NemoClaw/actions/runs/${CI_RUN_ID}/job/102)`,
+      );
+      expect(summary).toContain(
+        `[unsafe\\] ::error::&lt;tag&gt;&amp;](https://github.com/NVIDIA/NemoClaw/actions/runs/${CI_RUN_ID}/job/104)`,
+      );
+      expect(summary).toContain("failed step: `bad' step ::warning::`");
+      expect(summary).not.toContain("\n::error::");
+      expect(summary).not.toContain("\n::warning::");
+      expect(summary).not.toContain("static-checks");
+      expect(summary).toContain("The job listing was truncated");
+      const outputs = fs.readFileSync(outputPath, "utf8");
+      expect(outputs).toContain("dispatched=false");
+      expect(outputs).toContain("finalized=true");
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves the known CI failure when job details cannot be loaded", async () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-ci-fallback-"));
+    const outputPath = path.join(workDir, "github-output");
+    fs.writeFileSync(outputPath, "", { mode: 0o600 });
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    vi.stubEnv("GITHUB_OUTPUT", outputPath);
+    const requests: RecordedGitHubRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs") && method === "POST",
+            () => githubResponse({ id: 17 }),
+          ),
+          githubFetchRoute(
+            ({ url }) =>
+              url.includes(`/actions/runs/${CI_RUN_ID}/attempts/${CI_RUN_ATTEMPT}/jobs?`),
+            () => githubResponse({ message: "temporary failure" }, 503),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
+            () => githubResponse({}),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    try {
+      await expect(
+        startPrGate({
+          ...startCommand(workDir),
+          ciConclusion: "failure",
+          prNumber: undefined,
+        }),
+      ).rejects.toThrow(
+        new RegExp(
+          `CI run attempt ${CI_RUN_ATTEMPT}: https://github\\.com/NVIDIA/NemoClaw/actions/runs/${CI_RUN_ID}/attempts/${CI_RUN_ATTEMPT}`,
+          "u",
+        ),
+      );
+
+      expect(requests.some((request) => request.url.includes("/pulls"))).toBe(false);
+      const finalUpdate = requests.find(
+        (request) => request.url.endsWith("/check-runs/17") && request.method === "PATCH",
+      );
+      expect(finalUpdate?.body).toMatchObject({
+        status: "completed",
+        conclusion: "failure",
+        details_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${CI_RUN_ID}/attempts/${CI_RUN_ATTEMPT}`,
+        output: {
+          title: "PR CI did not pass",
+          summary: expect.stringContaining("Job details could not be loaded"),
+        },
+      });
+      const summary = (finalUpdate?.body as { output?: { summary?: string } } | undefined)?.output
+        ?.summary;
+      expect(summary).toContain("The triggering PR was not present in the workflow event");
+      expect(summary).not.toContain("/pull/");
+      const outputs = fs.readFileSync(outputPath, "utf8");
+      expect(outputs).toContain("dispatched=false");
+      expect(outputs).toContain("finalized=true");
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }

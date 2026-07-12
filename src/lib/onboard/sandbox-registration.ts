@@ -55,6 +55,7 @@ export interface CreatedSandboxRegistryEntryInput {
   hermesToolGateways: string[];
   hermesDashboardState: HermesDashboardOnboardState;
   dashboardPort: number;
+  dashboardRemoteBindPrepared?: boolean;
   gatewayName: string;
   gatewayPort: number;
 }
@@ -67,15 +68,21 @@ export function creationFidelity(
   webSearchConfig: WebSearchConfig | null,
   fromDockerfile: string | null,
   hermesAuthMethod: "oauth" | "api_key" | null,
+  dashboardRemoteBindPrepared?: boolean,
 ): Pick<
   SandboxEntry,
-  "webSearchEnabled" | "webSearchProvider" | "fromDockerfile" | "hermesAuthMethod"
+  | "webSearchEnabled"
+  | "webSearchProvider"
+  | "fromDockerfile"
+  | "hermesAuthMethod"
+  | "dashboardRemoteBindPrepared"
 > {
   return {
     webSearchEnabled: webSearchConfig?.fetchEnabled === true,
     webSearchProvider: webSearchConfig ? webSearchProviderForConfig(webSearchConfig) : null,
     fromDockerfile,
     hermesAuthMethod,
+    dashboardRemoteBindPrepared: dashboardRemoteBindPrepared === true,
   };
 }
 
@@ -143,6 +150,7 @@ export function buildCreatedSandboxRegistryEntry(
       input.hermesToolGateways.length > 0 ? [...input.hermesToolGateways] : undefined,
     ...getHermesDashboardRegistryFields(input.hermesDashboardState),
     dashboardPort: input.dashboardPort,
+    dashboardRemoteBindPrepared: input.dashboardRemoteBindPrepared === true,
     gatewayName: input.gatewayName,
     gatewayPort: input.gatewayPort,
   };

@@ -103,8 +103,11 @@ npx tsx test/e2e/registry/run.ts --emit-live-matrix --targets ubuntu-repo-cloud-
 npx vitest run --project e2e-support --silent=false --reporter=default
 
 # Opt-in live E2E targets
-npm run build:cli
-NEMOCLAW_RUN_LIVE_E2E=1 npx vitest run --project e2e-live --silent=false --reporter=default
+npm run test:live-e2e -- --silent=false --reporter=default
 ```
+
+The aggregate live command rebuilds the CLI before Vitest starts and runs live
+test files serially. Whole-test retries stay disabled because live targets
+mutate shared host, Docker, gateway, and sandbox state.
 
 The old `--emit-matrix` and `--plan-only` interfaces are retired.

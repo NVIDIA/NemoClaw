@@ -178,6 +178,57 @@ beta  127.0.0.1  18789  12345  running`;
     ).toBe(false);
   });
 
+  it("restarts a loopback forward when remote dashboard bind is requested (#6024)", () => {
+    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
+    const agentRuntime = requireSource("../src/lib/agent/runtime.js");
+    const registry = requireSource("../src/lib/state/registry.js");
+    const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
+    const childProcess = requireSource("node:child_process");
+    let forwardStarted = false;
+
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
+    vi.spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 0,
+      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n",
+      stderr: "",
+    } as never);
+    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null);
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "beta",
+      agent: "openclaw",
+      dashboardPort: 18789,
+      dashboardRemoteBindPrepared: true,
+    });
+    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation(() => ({
+      status: 0,
+      output:
+        "SANDBOX  BIND  PORT  PID  STATUS\n" +
+        `beta  ${forwardStarted ? "0.0.0.0" : "127.0.0.1"}  18789  12345  running`,
+    }));
+    const runOpenshell = vi
+      .spyOn(openshellRuntime, "runOpenshell")
+      .mockImplementation((rawArgs: unknown) => {
+        const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
+        forwardStarted ||= args[0] === "forward" && args[1] === "start";
+        return { status: 0 } as never;
+      });
+
+    expect(
+      withFakeOpenshellBinary(() => checkAndRecoverSandboxProcesses("beta", { quiet: true })),
+    ).toEqual({
+      checked: true,
+      wasRunning: true,
+      recovered: false,
+      forwardRecovered: true,
+    });
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["forward", "start", "--background", "0.0.0.0:18789", "beta"],
+      { ignoreError: true },
+    );
+  });
+
   it("waits for a stopped forward listener to release before starting its replacement", () => {
     const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
     const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");

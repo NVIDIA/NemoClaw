@@ -121,7 +121,7 @@ exec "$@"
   }
 }
 
-function runStartStep(headBranch: string) {
+function runStartStep(headBranch: string, prNumber = "42") {
   const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
   const start = step(workflow.jobs.coordinate, "Start evaluation");
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-start-step-"));
@@ -140,12 +140,15 @@ function runStartStep(headBranch: string) {
       env: {
         ...process.env,
         CI_CONCLUSION: "success",
+        CI_RUN_ATTEMPT: "3",
+        CI_RUN_ID: "99",
         FAKE_NODE_ARGUMENTS: argumentsPath,
         GITHUB_TOKEN: "token",
         HEAD_BRANCH: headBranch,
         HEAD_REPOSITORY: "NVIDIA/NemoClaw",
         HEAD_SHA: "a".repeat(40),
         PATH: `${binDir}:${process.env.PATH ?? ""}`,
+        PR_NUMBER: prNumber,
         WORKFLOW_SHA: "d".repeat(40),
         WORK_DIR: tempDir,
       },
@@ -311,6 +314,14 @@ describe("PR E2E gate workflow", () => {
     expect(execution.arguments[branchFlag + 1]).toBe(headBranch);
   });
 
+  it("passes an empty pull request association to the controller fallback", () => {
+    const execution = runStartStep("feature/pr-e2e-gate", "");
+    const prFlag = execution.arguments.indexOf("--pr");
+
+    expect(execution.result.status).toBe(0);
+    expect(execution.arguments[prFlag + 1]).toBe("");
+  });
+
   it("coordinates the check around one E2E run", () => {
     const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
     const job = workflow.jobs.coordinate;
@@ -337,13 +348,19 @@ describe("PR E2E gate workflow", () => {
     expect(start.run).toContain('--head-branch "$HEAD_BRANCH"');
     expect(start.run).toContain('--workflow-sha "$WORKFLOW_SHA"');
     expect(start.run).toContain('--ci-conclusion "$CI_CONCLUSION"');
+    expect(start.run).toContain('--ci-run-attempt "$CI_RUN_ATTEMPT"');
+    expect(start.run).toContain('--ci-run-id "$CI_RUN_ID"');
+    expect(start.run).toContain('--pr "$PR_NUMBER"');
     expect(start.run).toContain('--work-dir "$WORK_DIR"');
     expect(start.run).not.toContain("${{ github.event.");
     expect(start.env).toMatchObject({
       CI_CONCLUSION: "${{ github.event.workflow_run.conclusion }}",
+      CI_RUN_ATTEMPT: "${{ github.event.workflow_run.run_attempt }}",
+      CI_RUN_ID: "${{ github.event.workflow_run.id }}",
       HEAD_BRANCH: "${{ github.event.workflow_run.head_branch }}",
       HEAD_REPOSITORY: "${{ github.event.workflow_run.head_repository.full_name }}",
       HEAD_SHA: "${{ github.event.workflow_run.head_sha }}",
+      PR_NUMBER: "${{ github.event.workflow_run.pull_requests[0].number }}",
       WORKFLOW_SHA: "${{ github.workflow_sha }}",
       WORK_DIR: "${{ steps.workspace.outputs.work_dir }}",
     });

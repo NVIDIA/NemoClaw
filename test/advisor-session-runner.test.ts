@@ -282,7 +282,7 @@ afterEach(() => {
 
 describe("advisor session runner", () => {
   it("uses one bounded provider-aware retry layer for transient failures", () => {
-    expect(advisorRetrySettings("openai/openai/gpt-5.5")).toEqual({
+    expect(advisorRetrySettings("azure/openai/gpt-5.6-terra")).toEqual({
       enabled: true,
       maxRetries: 4,
       baseDelayMs: 6_000,

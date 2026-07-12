@@ -643,10 +643,10 @@ Device authentication requires each connecting device to go through a pairing fl
 
 | Aspect | Detail |
 |---|---|
-| Default | Enabled. The gateway requires device pairing for all connections. |
-| What you can change | Set `NEMOCLAW_DISABLE_DEVICE_AUTH=1` as a Docker build argument to disable device authentication. This is a build-time setting baked into `openclaw.json` and verified by hash at startup. |
+| Default | The base Dockerfile enables device authentication for loopback dashboards. Standard onboarding currently applies a managed compatibility opt-out for immediate dashboard access. NemoClaw also disables device authentication for non-loopback `CHAT_UI_URL` values. |
+| What you can change | Outside managed onboarding, set `NEMOCLAW_DISABLE_DEVICE_AUTH=1` only as a deliberate build-time opt-out. The setting and its managed-vs-operator provenance are baked into `openclaw.json` audit metadata and the config is verified by hash at startup. |
 | Risk if relaxed | Disabling device auth allows any device on the network to connect to the gateway without proving identity. This is dangerous when combined with LAN-bind changes or cloudflared tunnels in remote deployments, resulting in an unauthenticated, publicly reachable dashboard. |
-| Recommendation | Keep device auth enabled (the default). Only disable it for headless or development environments where no untrusted devices can reach the gateway. |
+| Recommendation | Prefer loopback access or SSH port forwarding so device authentication stays enabled. If a browser-only remote dashboard requires the compatibility setting, use HTTPS and restrict who can reach the dashboard. |
 
 ### Gateway Bind Address
 
@@ -655,7 +655,7 @@ NemoClaw binds the OpenShell gateway to loopback by default.
 | Aspect | Detail |
 |---|---|
 | Default | `NEMOCLAW_GATEWAY_BIND_ADDRESS=127.0.0.1`. |
-| What you can change | Keep Docker-driver gateways on loopback. Set `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` for remote dashboard/API access. |
+| What you can change | Keep Docker-driver gateways on loopback. Set `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` during onboarding and on later `connect` calls for remote dashboard/API access. Recreate a local-only sandbox before changing it to a remote bind. |
 | Risk if relaxed | Other hosts on the network may be able to reach the OpenShell gateway; Docker-driver gateways on OpenShell 0.0.72 reject wildcard gateway binds while gateway JWT auth is active. |
 | Recommendation | Keep the gateway loopback default and expose only the dashboard forward when remote access is needed. |
 
@@ -682,6 +682,29 @@ The `allowInsecureAuth` setting controls whether the gateway permits non-HTTPS a
 | What you can change | This is derived automatically from `CHAT_UI_URL`. Set `CHAT_UI_URL` to an `https://` URL to enforce secure auth. |
 | Risk if relaxed | Allowing insecure auth over HTTPS defeats the purpose of TLS, because authentication tokens transit in cleartext. |
 | Recommendation | Use `https://` for any deployment accessible beyond `localhost`. The default local URL (`http://127.0.0.1:18789`) correctly allows insecure auth for local development. |
+
+OpenClaw's security audit keeps NemoClaw-managed loopback `allowInsecureAuth` findings and provenance-known loopback device-auth opt-out findings visible as accepted findings instead of counting them as unexplained active findings.
+Device-auth findings record whether the opt-out came from NemoClaw's managed onboarding compatibility behavior or an operator-provided `NEMOCLAW_DISABLE_DEVICE_AUTH=1`; an opt-out with missing provenance remains active.
+For audit reporting, NemoClaw treats a non-loopback `CHAT_UI_URL`, an onboard-time `NEMOCLAW_DASHBOARD_BIND=0.0.0.0`, or WSL's default all-interface dashboard forward as remote dashboard exposure.
+For an explicit `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` bind, use the same setting on later `connect` calls.
+If the sandbox was created without that explicit setting, NemoClaw refuses the remote forward until you recreate it with `NEMOCLAW_DASHBOARD_BIND=0.0.0.0 $$nemoclaw onboard --recreate-sandbox`; this keeps the generated audit state aligned with the host exposure state.
+On WSL, the ready summary still uses a loopback URL, but the generated audit configuration leaves the device-auth and insecure-auth findings active.
+For an explicit remote bind with a loopback `CHAT_UI_URL`, NemoClaw disables device auth and enables OpenClaw's Host-header origin fallback because the browser's remote origin is not known at image-build time. Both settings expand access and must remain explicit; use HTTPS or an SSH local forward when possible.
+In that state, NemoClaw does not add the loopback-only audit suppressions, so the resulting device-auth, insecure-auth, and Host-header fallback findings remain active.
+The generated configuration uses exact audit check IDs and flag details, records why each setting is present, and leaves the original severity and remediation under `suppressedFindings` in JSON output.
+The audit also reports that suppressions are active so you can review the accepted risk.
+These suppressions change audit reporting only.
+They do not make either flag safe, weaken enforcement, or suppress unrelated findings.
+
+Review the accepted findings and their recorded reasons:
+
+```bash
+openclaw security audit --json | jq '.suppressedFindings'
+```
+
+Remove the underlying risky condition when dashboard compatibility no longer requires it.
+Remove these suppressions only after the pinned OpenClaw audit contract test proves that OpenClaw natively classifies intentional loopback development HTTP without them, or after NemoClaw onboarding defaults `CHAT_UI_URL` to `https://localhost` with a generated local certificate.
+Regression contracts: `test/generate-openclaw-config-security-audit.test.ts` locks generated suppression scope, `test/openclaw-security-audit-suppressions-real.test.ts` locks the pinned OpenClaw check IDs and details, and `test/e2e/live/dashboard-remote-bind.test.ts` proves a clean-host remote bind leaves all three risky findings active. The preceding removal condition applies to all three contracts.
 
 ### Auto-Pair Client Allowlist
 

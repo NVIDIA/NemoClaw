@@ -19,11 +19,19 @@
       "fast": ["test/e2e/support/onboard-performance.test.ts"]
     },
     {
+      "live": "test/e2e/live/network-policy.test.ts",
+      "fast": ["test/validate-blueprint.test.ts"]
+    },
+    {
       "live": "test/e2e/live/openclaw-tui-chat-correlation.test.ts",
       "fast": [
         "test/e2e/support/openclaw-tui-ref-fidelity.test.ts",
         "test/e2e/support/openclaw-tui-run-classification.test.ts"
       ]
+    },
+    {
+      "live": "test/e2e/live/dashboard-remote-bind.test.ts",
+      "liveOnlyReason": "Requires a real OpenShell dashboard forward on a remote Brev host to prove all-interface bind behavior after background connect."
     },
     {
       "live": "test/e2e/live/sandbox-operations.test.ts",

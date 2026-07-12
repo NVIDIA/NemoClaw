@@ -170,7 +170,7 @@ describe("PR review advisor", () => {
     };
 
     expect(DEFAULT_ADVISOR_PROVIDER).toBe("openai");
-    expect(DEFAULT_ADVISOR_MODEL).toBe("openai/openai/gpt-5.5");
+    expect(DEFAULT_ADVISOR_MODEL).toBe("azure/openai/gpt-5.6-terra");
     expect(NEMOTRON_ULTRA_ADVISOR_MODEL).toBe("nvidia/nvidia/nemotron-3-ultra");
     expect(config.apiKey).toBe("PR_REVIEW_ADVISOR_API_KEY");
     expect(config.baseUrl).toBe(ADVISOR_OPENAI_COMPATIBLE_BASE_URL);
