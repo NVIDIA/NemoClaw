@@ -72,3 +72,13 @@ export function blueprintWithPolicyAdditions(
     },
   };
 }
+
+export function resultForCommandFailure(
+  args: readonly string[],
+  command: readonly [string, string],
+  stderr: string,
+): { exitCode: number; stdout: string; stderr: string } {
+  return args[0] === command[0] && args[1] === command[1]
+    ? { exitCode: 1, stdout: "", stderr }
+    : { exitCode: 0, stdout: "", stderr: "" };
+}

@@ -7,6 +7,7 @@ import YAML from "yaml";
 import {
   blueprintWithPolicyAdditions,
   minimalBlueprint,
+  resultForCommandFailure,
   routedBlueprint,
 } from "./runner-test-fixtures.js";
 
@@ -578,16 +579,13 @@ describe("runner", () => {
     it("rejects without persisting a plan when provider create fails (#6703)", async () => {
       const credential = "provider-secret-value";
       process.env.MY_API_KEY = credential;
-      mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
-        if (args[0] === "provider" && args[1] === "create") {
-          return {
-            exitCode: 1,
-            stdout: "",
-            stderr: `provider setup failed\nOPENAI_API_KEY=${credential}\nAuthorization: Bearer opaque-bearer`,
-          };
-        }
-        return { exitCode: 0, stdout: "", stderr: "" };
-      });
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+        resultForCommandFailure(
+          args,
+          ["provider", "create"],
+          `provider setup failed\nOPENAI_API_KEY=${credential}\nAuthorization: Bearer opaque-bearer`,
+        ),
+      );
 
       try {
         const error = await actionApply("default", minimalBlueprint()).then(
@@ -612,12 +610,13 @@ describe("runner", () => {
     });
 
     it("reuses an already-existing provider instead of failing (#6703)", async () => {
-      mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
-        if (args[0] === "provider" && args[1] === "create") {
-          return { exitCode: 1, stdout: "", stderr: "provider 'my-provider' already exists" };
-        }
-        return { exitCode: 0, stdout: "", stderr: "" };
-      });
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+        resultForCommandFailure(
+          args,
+          ["provider", "create"],
+          "provider 'my-provider' already exists",
+        ),
+      );
 
       // Matches the sandbox-create contract: already-existing is a reuse, so the
       // apply proceeds and completes.
@@ -627,12 +626,9 @@ describe("runner", () => {
     });
 
     it("rejects without persisting a plan when inference set fails (#6703)", async () => {
-      mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
-        if (args[0] === "inference" && args[1] === "set") {
-          return { exitCode: 1, stdout: "", stderr: "inference route rejected" };
-        }
-        return { exitCode: 0, stdout: "", stderr: "" };
-      });
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+        resultForCommandFailure(args, ["inference", "set"], "inference route rejected"),
+      );
 
       await expect(actionApply("default", minimalBlueprint())).rejects.toThrow(
         /Failed to set inference route .*model 'gpt-4'.*inference route rejected/i,
