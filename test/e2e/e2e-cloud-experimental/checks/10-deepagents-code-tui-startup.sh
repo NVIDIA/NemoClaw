@@ -62,6 +62,15 @@ sandbox_is_ready() {
     | awk -v name="$SANDBOX_NAME" '$1 == name && /Ready/ { found = 1 } END { exit(found ? 0 : 1) }'
 }
 
+wait_for_sandbox_ready() {
+  local deadline=$((SECONDS + PROCESS_CLEANUP_TIMEOUT))
+  while :; do
+    sandbox_is_ready && return 0
+    [ "$SECONDS" -ge "$deadline" ] && return 1
+    sleep 1
+  done
+}
+
 is_positive_integer() {
   [[ "$1" =~ ^[1-9][0-9]*$ ]]
 }
@@ -473,7 +482,7 @@ main() {
   else
     fail_test "headless completion left the DCode/LangGraph process count above baseline after ${PROCESS_CLEANUP_TIMEOUT}s"
   fi
-  if sandbox_is_ready; then
+  if wait_for_sandbox_ready; then
     pass "sandbox remained Ready after headless completion"
   else
     fail_test "sandbox was not Ready after headless completion"
