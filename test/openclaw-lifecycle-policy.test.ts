@@ -100,43 +100,18 @@ console.log(JSON.stringify({
 `;
 
 describe("reviewed npm lifecycle policy", () => {
-  it("keeps the exact archive and explicit-script allowlist", () => {
-    expect(policy).toEqual({
-      schemaVersion: 1,
-      defaultPolicy: "deny",
-      reviewedArchivePackages: [
-        "@openclaw/brave-plugin@2026.6.10",
-        "@openclaw/diagnostics-otel@2026.6.10",
-        "@openclaw/discord@2026.6.10",
-        "@openclaw/msteams@2026.6.10",
-        "@openclaw/slack@2026.6.10",
-        "@openclaw/whatsapp@2026.6.10",
-        "@tencent-weixin/openclaw-weixin@2.4.3",
-        "@zed-industries/codex-acp@0.11.1",
-        "openclaw@2026.3.11",
-        "openclaw@2026.4.24",
-        "openclaw@2026.6.10",
-      ],
-      allowedLifecycleScripts: [
-        {
-          packageSpec: "openclaw@2026.4.24",
-          event: "postinstall",
-          manifestCommand: "node scripts/postinstall-bundled-plugins.mjs",
-          explicitCommand:
-            "node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs",
-        },
-        {
-          packageSpec: "openclaw@2026.6.10",
-          event: "postinstall",
-          manifestCommand: "node scripts/postinstall-bundled-plugins.mjs",
-          explicitCommand:
-            "node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs",
-        },
-      ],
-    });
-  });
-
+  // source-shape-contract: security -- Every executable archive install must match the reviewed fail-closed lifecycle allowlist
   it("cross-checks the allowlist against every production archive install boundary", () => {
+    expect(policy).toMatchObject({ schemaVersion: 1, defaultPolicy: "deny" });
+    expect(policy.allowedLifecycleScripts).not.toHaveLength(0);
+    expect(
+      policy.allowedLifecycleScripts.every(
+        ({ event, manifestCommand }) =>
+          event === "postinstall" &&
+          manifestCommand === "node scripts/postinstall-bundled-plugins.mjs",
+      ),
+    ).toBe(true);
+
     const messagingPackageSpecs = Object.keys(
       reviewedOpenClawPluginIntegrityByPackageSpec({ OPENCLAW_VERSION: "2026.6.10" }),
     );

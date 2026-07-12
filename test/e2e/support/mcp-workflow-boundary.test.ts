@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import { validateMcpOpenShellWorkflowBoundary } from "../../../tools/e2e/mcp-workflow-boundary.mts";
+import { requireFixture } from "./require-fixture";
 
 describe("MCP workflow artifact boundary", () => {
   it("rejects upload action or path drift from the reviewed shared boundary", () => {
@@ -25,7 +25,7 @@ describe("MCP workflow artifact boundary", () => {
       const upload = workflow.jobs["mcp-bridge"].steps.find(
         (step) => step.name === "Upload MCP server artifacts",
       );
-      assert(upload?.with, "MCP artifact upload fixture is missing");
+      requireFixture(upload?.with, "MCP artifact upload fixture is missing");
       upload.uses = "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@main";
       upload.with.path = "e2e-artifacts/live/unscanned/";
       fs.writeFileSync(workflowPath, YAML.stringify(workflow));
@@ -60,7 +60,7 @@ describe("MCP workflow artifact boundary", () => {
       const cloudflared = workflow.jobs["mcp-bridge-dev"].steps.find(
         (step) => step.name === "Install and verify cloudflared prerequisite",
       );
-      assert(cloudflared?.env, "MCP cloudflared installer fixture is missing");
+      requireFixture(cloudflared?.env, "MCP cloudflared installer fixture is missing");
       cloudflared.env.CLOUDFLARED_DEB_SHA256 = "mutable";
       cloudflared.run = "sudo apt-get install -y cloudflared";
       fs.writeFileSync(workflowPath, YAML.stringify(workflow));

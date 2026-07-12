@@ -97,7 +97,8 @@ describe("e2e workflow boundary", () => {
     expect(result.stderr).toContain("::error::Invalid inference_mode: internal-nvida");
   });
 
-  it("keeps credential-backed provider smokes out of the PR-safe inference-routing job", () => {
+  // source-shape-contract: security -- Mutates the shipped workflow to prove PR-safe routing rejects credential-backed smokes
+  it("rejects credential-backed provider smokes in the PR-safe inference-routing job", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-inference-routing-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
     const workflow = readWorkflow() as {
@@ -155,6 +156,7 @@ describe("e2e workflow boundary", () => {
     }
   });
 
+  // source-shape-contract: security -- Mutates the shipped workflow to prove artifact uploads reject unmanaged temporary paths
   it("rejects free-standing E2E artifact uploads from raw temp paths", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
@@ -232,6 +234,7 @@ describe("e2e workflow boundary", () => {
     },
   );
 
+  // source-shape-contract: compatibility -- Cross-checks generated selectors against the executable workflow job registry
   it("derives test selectors from code and workflow jobs from workflow metadata", {
     timeout: 60_000,
   }, () => {
@@ -797,6 +800,7 @@ jobs:
     }
   });
 
+  // source-shape-contract: security -- Mutates the shipped workflow to prove channel lifecycle secrets and artifacts fail closed
   it("rejects channels stop/start workflow-boundary drift for secret and artifact handling", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
@@ -910,6 +914,7 @@ jobs:
     }
   });
 
+  // source-shape-contract: security -- Mutates the shipped workflow to reject duplicate unguarded Docker credential exposure
   it("rejects duplicate unguarded Docker Hub auth in messaging-compatible-endpoint", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
@@ -945,6 +950,7 @@ jobs:
     }
   });
 
+  // source-shape-contract: security -- Mutates the shipped diagnostics job to reject secret and Docker auth leakage
   it("rejects diagnostics workflow-boundary drift for secret and Docker auth handling", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");

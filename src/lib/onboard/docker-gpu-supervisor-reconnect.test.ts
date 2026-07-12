@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   getDockerGpuSupervisorReconnectErrorDebouncePolls,
+  getDockerGpuSupervisorReconnectTimeoutSecs,
   waitForOpenShellSupervisorReconnect,
 } from "./docker-gpu-supervisor-reconnect";
 
@@ -16,6 +17,36 @@ import {
 // GPU sandbox whose container is running and whose supervisor has already
 // logged `LIFECYCLE:INSTALL OpenShell Sandbox Supervisor success`.
 describe("docker-gpu-supervisor-reconnect Error-phase debounce", () => {
+  it("uses a Docker-GPU-specific supervisor reconnect wait with an override", () => {
+    expect(getDockerGpuSupervisorReconnectTimeoutSecs(180, {})).toBe(900);
+    expect(getDockerGpuSupervisorReconnectTimeoutSecs(600, {})).toBe(900);
+    expect(getDockerGpuSupervisorReconnectTimeoutSecs(1200, {})).toBe(1200);
+    expect(
+      getDockerGpuSupervisorReconnectTimeoutSecs(180, {
+        NEMOCLAW_DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT: "30",
+      }),
+    ).toBe(30);
+  });
+
+  it("short-circuits the supervisor-reconnect wait when the sandbox enters Error phase", () => {
+    const runOpenshell = vi.fn(() => ({ status: 1, stderr: "sandbox not ready" }));
+    const listOutputs = ["alpha   Provisioning   1s ago", "alpha   Error          3s ago"];
+    let index = 0;
+    const runCaptureOpenshell = vi.fn(() => listOutputs[Math.min(index++, listOutputs.length - 1)]);
+    const sleep = vi.fn();
+
+    const ok = waitForOpenShellSupervisorReconnect("alpha", 600, {
+      runOpenshell,
+      runCaptureOpenshell,
+      sleep,
+      errorPhaseDebouncePolls: 1,
+    });
+
+    expect(ok).toBe(false);
+    expect(runOpenshell).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
   it("absorbs a transient Error phase shorter than the debounce window", () => {
     const execOutputs = [
       { status: 1, stderr: "sandbox not ready" },
@@ -65,6 +96,21 @@ describe("docker-gpu-supervisor-reconnect Error-phase debounce", () => {
     // Sleeps happen only between polls 1->2 and 2->3, so two sleeps total.
     expect(runOpenshell).toHaveBeenCalledTimes(3);
     expect(sleep).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not accept a supervisor exec with no exit status", () => {
+    const runOpenshell = vi.fn(() => ({ status: null, stderr: "timed out" }));
+    const runCaptureOpenshell = vi.fn(() => "alpha   Error   1s ago");
+
+    const ok = waitForOpenShellSupervisorReconnect("alpha", 600, {
+      runOpenshell,
+      runCaptureOpenshell,
+      sleep: vi.fn(),
+      errorPhaseDebouncePolls: 1,
+    });
+
+    expect(ok).toBe(false);
+    expect(runOpenshell).toHaveBeenCalledOnce();
   });
 
   it("resets the consecutive-Error counter when the phase recovers", () => {

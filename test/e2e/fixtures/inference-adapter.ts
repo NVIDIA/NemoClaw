@@ -38,11 +38,7 @@ import {
  * sandbox assertions, scope `inference_mode` to the consuming workflow job,
  * and add the suite's fast-test mapping to `test/e2e/mock-parity.json`.
  */
-export const E2E_INFERENCE_MODE_VALUES = [
-  "mock",
-  "internal-nvidia",
-  "public-nvidia",
-] as const;
+export const E2E_INFERENCE_MODE_VALUES = ["mock", "internal-nvidia", "public-nvidia"] as const;
 export type E2EInferenceMode = (typeof E2E_INFERENCE_MODE_VALUES)[number];
 
 export interface E2EInferenceAdapter {

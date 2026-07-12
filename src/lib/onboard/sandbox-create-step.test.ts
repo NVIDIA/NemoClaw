@@ -112,7 +112,7 @@ describe("runSandboxCreateStep", () => {
     // GPU patch is created with the startup command from the launch result + backend/device.
     expect(deps.createDockerGpuPatch).toHaveBeenCalledWith(
       expect.objectContaining({
-        enabled: true,
+        route: "compatibility",
         openshellSandboxCommand: ["run", "alpha"],
         gpuDevice: "nvidia.com/gpu=all",
         backend: "jetson",
@@ -156,7 +156,7 @@ describe("runSandboxCreateStep", () => {
 
     expect(deps.createDockerGpuPatch).toHaveBeenCalledWith(
       expect.objectContaining({
-        enabled: false,
+        route: "native",
         persistStartupCommand: true,
         openshellSandboxCommand: ["env", "CHAT_UI_URL=http://127.0.0.1:8642", "nemoclaw-start"],
       }),

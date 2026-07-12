@@ -33,10 +33,13 @@ describe("Docker GPU create diagnostics fail-safety (#6110)", () => {
       sleep: vi.fn(),
       dockerCapture: vi.fn(() => ""),
     };
-    const finalizeBackup = vi.fn(() => ({ backupRemoved: false, rolledBack: true }));
+    const finalizeBackup = vi.fn(() => ({
+      backupRemoved: false,
+      rolledBack: true,
+    }));
     const onPatchFailureExit = vi.fn();
     const patch = createDockerGpuSandboxCreatePatch({
-      enabled: true,
+      route: "compatibility",
       sandboxName: "alpha",
       timeoutSecs: 60,
       deps,
@@ -75,10 +78,13 @@ describe("Docker GPU create diagnostics fail-safety (#6110)", () => {
     const recreatePatch = vi.fn(() => RESULT);
     const waitForSupervisor = vi.fn(() => false);
     const capturePreRollbackDiagnostics = vi.fn(() => null);
-    const finalizeBackup = vi.fn(() => ({ backupRemoved: false, rolledBack: true }));
+    const finalizeBackup = vi.fn(() => ({
+      backupRemoved: false,
+      rolledBack: true,
+    }));
     const onPatchFailureExit = vi.fn();
     const patch = createDockerGpuSandboxCreatePatch({
-      enabled: true,
+      route: "compatibility",
       sandboxName: "alpha",
       timeoutSecs: 60,
       deps,

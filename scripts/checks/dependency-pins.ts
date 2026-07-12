@@ -268,6 +268,7 @@ function verifyOpenShellPins(
   sources: {
     brevLaunchable: string;
     credentialBoundary: Record<string, unknown>;
+    e2eWorkflow: Record<string, unknown>;
     hermesDockerfile: string;
     hermesMcpConfigTransaction: string;
     installer: string;
@@ -364,6 +365,17 @@ function verifyOpenShellPins(
     ),
     pins.maxVersion,
     "Brev launchable stable OpenShell default",
+    failures,
+  );
+  compare(
+    extractMappingString(
+      sources.e2eWorkflow,
+      ["jobs", "openshell-gateway-auth-contract", "env", "NEMOCLAW_OPENSHELL_PIN_VERSION"],
+      ".github/workflows/e2e.yaml gateway auth OpenShell version",
+      failures,
+    ),
+    pins.maxVersion,
+    ".github/workflows/e2e.yaml gateway auth OpenShell version",
     failures,
   );
   compare(
@@ -507,6 +519,7 @@ export function verifyDependencyPins(rootDir: string = REPO_ROOT): string[] {
   const brevLaunchable = readText(rootDir, "scripts/brev-launchable-ci-cpu.sh", failures);
   const installer = readText(rootDir, "scripts/install-openshell.sh", failures);
   const installerHashCheck = readText(rootDir, "scripts/check-installer-hash.sh", failures);
+  const e2eWorkflowSource = readText(rootDir, ".github/workflows/e2e.yaml", failures);
   const openclawManifestSource = readText(rootDir, "agents/openclaw/manifest.yaml", failures);
   const hermesManifestSource = readText(rootDir, "agents/hermes/manifest.yaml", failures);
   const dockerfile = readText(rootDir, "Dockerfile", failures);
@@ -560,14 +573,22 @@ export function verifyDependencyPins(rootDir: string = REPO_ROOT): string[] {
     "JSON",
     failures,
   );
+  const e2eWorkflow = parseMapping(
+    e2eWorkflowSource,
+    ".github/workflows/e2e.yaml",
+    "YAML",
+    failures,
+  );
   const packageJson = parseMapping(packageJsonSource, "nemoclaw/package.json", "JSON", failures);
-  if (!openclawManifest || !hermesManifest || !credentialBoundary || !packageJson) return failures;
+  if (!openclawManifest || !hermesManifest || !credentialBoundary || !e2eWorkflow || !packageJson)
+    return failures;
 
   verifyOpenShellPins(
     pins.openshell,
     {
       brevLaunchable,
       credentialBoundary,
+      e2eWorkflow,
       hermesDockerfile,
       hermesMcpConfigTransaction,
       installer,

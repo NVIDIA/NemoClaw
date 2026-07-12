@@ -306,6 +306,7 @@ describe("sandbox policy-denial logs breadcrumb (#5978)", () => {
     expect(stdout).not.toContain("logs --tail 50");
   });
 
+  // source-shape-contract: compatibility -- Executing the emitted shell hook twice protects login profile and bashrc coexistence
   it("prints only once when the file is sourced twice in one login shell", () => {
     // A login shell sources both the system profile and bashrc hooks, each of
     // which sources this file and runs its trailing auto-invocation — the

@@ -22,7 +22,8 @@ interface IntegrityFixture {
 }
 
 const roots: string[] = [];
-const MCP_STATE_RECORD = `# nemoclaw-hermes-mcp-state-v1 intended=${"1".repeat(64)} applied=${"2".repeat(64)}`;
+const MCP_STATE_DIGEST = "1".repeat(64);
+const MCP_STATE_RECORD = `# nemoclaw-hermes-mcp-state-v1 intended=${MCP_STATE_DIGEST} applied=${MCP_STATE_DIGEST}`;
 
 afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
@@ -216,6 +217,21 @@ describe("Hermes managed startup integrity proof", () => {
     expect(proof.stderr).toContain(
       "Hermes compatibility hash does not match the current environment",
     );
+  });
+
+  it("rejects pending MCP state in the strict anchor (#6110)", () => {
+    const fixture = createFixture();
+    fs.chmodSync(fixture.strictHashPath, 0o644);
+    const current = fs.readFileSync(fixture.strictHashPath, "utf-8");
+    fs.writeFileSync(
+      fixture.strictHashPath,
+      current.replace(/applied=[0-9a-f]{64}/u, `applied=${"b".repeat(64)}`),
+    );
+    fs.chmodSync(fixture.strictHashPath, 0o444);
+
+    const proof = runProof(fixture);
+    expect(proof.status).not.toBe(0);
+    expect(proof.stderr).toContain("Hermes strict hash contains pending MCP state");
   });
 
   it("rejects a noncanonical API key assignment even when it belongs to the strict base", () => {

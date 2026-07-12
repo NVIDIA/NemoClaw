@@ -454,6 +454,7 @@ describe("fetch-guard patch regression guard", () => {
     ).toContain("rm -rf /usr/local/lib/node_modules/mcporter /usr/local/bin/mcporter");
   });
 
+  // source-shape-contract: security -- Cross-file OpenClaw pins bind reviewed classifiers to verified package integrity
   it("requires classifier review and integrity evidence when the OpenClaw build pin changes", () => {
     const reviewMessage =
       "Update fetch-guard classifier expectations before changing the OpenClaw build version.";

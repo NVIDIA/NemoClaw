@@ -3,6 +3,14 @@
   "version": 1,
   "entries": [
     {
+      "live": "test/e2e/live/hermes-gpu-startup.test.ts",
+      "fast": [
+        "test/e2e/support/hermes-gpu-startup-fallback.test.ts",
+        "test/e2e/support/hermes-gpu-startup-integrity.test.ts",
+        "test/e2e/support/hermes-workflow-boundary.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/inference-routing.test.ts",
       "fast": [
         "src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.test.ts",

@@ -51,6 +51,7 @@ describe("E2E fixture dependency review", () => {
     }
   });
 
+  // source-shape-contract: security -- Exact fixture pins and reviewed lock integrity constrain untrusted dependency code
   it("keeps installed fixture dependencies on exact versions", () => {
     const weatherFixture = path.join(FIXTURES_ROOT, "plugins", "weather");
     const manifest = JSON.parse(

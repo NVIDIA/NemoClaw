@@ -296,4 +296,8 @@ describe("extractBuiltImageRef", () => {
     expect(extractBuiltImageRef("nothing relevant here")).toBeNull();
     expect(extractBuiltImageRef("")).toBeNull();
   });
+
+  it("does not treat an immutable Docker image ID as a registry tag", () => {
+    expect(extractBuiltImageRef(`Built image sha256:${"a".repeat(64)}`)).toBeNull();
+  });
 });

@@ -16,6 +16,7 @@ import { listTargets } from "../registry/registry.ts";
 import type { ExpectedState, StateProbeId } from "../registry/types.ts";
 
 describe("typed expected-state registry behavior", () => {
+  // source-shape-contract: compatibility -- Registry indexing keeps every shipped expected-state selector resolvable
   it("indexes every registered state by its unique id", () => {
     const states = listExpectedStates();
     const ids = states.map((state) => state.id);
@@ -28,6 +29,7 @@ describe("typed expected-state registry behavior", () => {
     }
   });
 
+  // source-shape-contract: compatibility -- Unknown expected-state selectors must retain actionable failure diagnostics
   it("rejects an unknown state with an actionable inventory", () => {
     const unknown = "synthetic-unknown-state";
 
@@ -117,6 +119,7 @@ describe("expected-state probe compilation", () => {
 });
 
 describe("target expected-state references", () => {
+  // source-shape-contract: compatibility -- Every shipped target must resolve its expected-state runtime contract
   it("resolves every state id consumed by the typed target registry", () => {
     const referenced = listTargets()
       .map((target) => target.expectedStateId)
@@ -128,6 +131,7 @@ describe("target expected-state references", () => {
     }
   });
 
+  // source-shape-contract: security -- Fail-closed targets must compile probes that forbid gateway and sandbox side effects
   it("compiles fail-closed absence probes for targets that forbid runtime side effects", () => {
     const failClosedTargets = listTargets().filter((target) => {
       const forbidden = target.expectedFailure?.forbiddenSideEffects ?? [];
@@ -143,6 +147,7 @@ describe("target expected-state references", () => {
     }
   });
 
+  // source-shape-contract: security -- Every preflight failure must compile absence probes before privileged runtime creation
   it("compiles absence probes for every preflight failure contract", () => {
     const preflightFailures = listTargets().filter(
       (target) => target.expectedFailure?.phase === "preflight",
@@ -157,6 +162,7 @@ describe("target expected-state references", () => {
     }
   });
 
+  // source-shape-contract: security -- Policy-selection failures must stop before gateway or sandbox side effects
   it("keeps policy-selection failures limited to the installed CLI", () => {
     const policySelectionFailures = listTargets().filter(
       (target) => target.expectedFailure?.errorClass === "policy-presets-required",
@@ -170,6 +176,7 @@ describe("target expected-state references", () => {
     }
   });
 
+  // source-shape-contract: compatibility -- Terminal agent targets must not require an unsupported host gateway probe
   it("omits host gateway probes for targets whose loaded agent runtime is terminal", () => {
     const targetAgents = listTargets()
       .filter((target) => target.manifestPath !== undefined)
@@ -193,6 +200,7 @@ describe("target expected-state references", () => {
     }
   });
 
+  // source-shape-contract: security -- Post-reboot targets must retain host registry and container preservation probes
   it("compiles host-preservation probes for every post-reboot recovery target", () => {
     const recoveryTargets = listTargets().filter(
       (target) => target.environment?.lifecycle === "post-reboot-recovery",
