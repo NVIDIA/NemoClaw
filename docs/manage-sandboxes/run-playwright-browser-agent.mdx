@@ -186,8 +186,11 @@ It uses the browser revision installed by the pinned Playwright package and expl
 Replace the URL, field values, submit control name, and unique success text for your target page.
 
 ```python
+import hashlib
 import os
+import re
 import subprocess
+import tempfile
 from pathlib import Path
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -199,13 +202,13 @@ SUBMIT_TEXT = "Submit"
 SUCCESS_TEXT = "Thank you"
 VIDEO_DIR: str | None = None
 FIELD_SELECTOR = (
-    'input[type="text"]:not([readonly]):not([disabled]), '
-    "textarea:not([readonly]):not([disabled])"
+    'input[type="text"]:not([readonly]):not(:disabled), '
+    "textarea:not([readonly]):not(:disabled)"
 )
 
 
 def trust_openshell_proxy_ca() -> None:
-    """Import the OpenShell proxy CA into Chromium's per-user NSS database."""
+    """Import the sandbox CA bundle into Chromium's per-user NSS database."""
     ca_bundle = os.environ.get("SSL_CERT_FILE")
     if not ca_bundle or not Path(ca_bundle).is_file():
         raise RuntimeError(
@@ -227,28 +230,72 @@ def trust_openshell_proxy_ca() -> None:
             check=True,
         )
 
-    nickname = "OpenShell egress proxy CA"
-    subprocess.run(
-        ["certutil", "-d", database, "-D", "-n", nickname],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
+    certificates = re.findall(
+        r"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----",
+        Path(ca_bundle).read_text(encoding="ascii"),
+        flags=re.DOTALL,
     )
-    subprocess.run(
-        [
-            "certutil",
-            "-d",
-            database,
-            "-A",
-            "-t",
-            "C,,",
-            "-n",
-            nickname,
-            "-i",
-            ca_bundle,
-        ],
-        check=True,
+    if not certificates:
+        raise RuntimeError("SSL_CERT_FILE does not contain a PEM certificate")
+
+    nickname_prefix = "NemoClaw browser CA "
+    nickname_manifest = nss_dir / ".nemoclaw-browser-ca-nicknames"
+    if nickname_manifest.is_symlink():
+        raise RuntimeError("Refusing to use a symlinked CA nickname manifest")
+    previous_nicknames = (
+        nickname_manifest.read_text(encoding="utf-8").splitlines()
+        if nickname_manifest.is_file()
+        else []
     )
+    for nickname in previous_nicknames:
+        if nickname.startswith(nickname_prefix):
+            subprocess.run(
+                ["certutil", "-d", database, "-D", "-n", nickname],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+
+    nicknames = []
+    with tempfile.TemporaryDirectory(prefix="nemoclaw-browser-ca-") as temp_dir:
+        for index, certificate in enumerate(certificates, start=1):
+            digest = hashlib.sha256(certificate.encode("ascii")).hexdigest()[:16]
+            nickname = f"{nickname_prefix}{index}-{digest}"
+            certificate_path = Path(temp_dir) / f"certificate-{index}.pem"
+            certificate_path.write_text(f"{certificate}\n", encoding="ascii")
+            subprocess.run(
+                ["certutil", "-d", database, "-D", "-n", nickname],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            subprocess.run(
+                [
+                    "certutil",
+                    "-d",
+                    database,
+                    "-A",
+                    "-t",
+                    "C,,",
+                    "-n",
+                    nickname,
+                    "-i",
+                    str(certificate_path),
+                ],
+                check=True,
+            )
+            nicknames.append(nickname)
+
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        dir=nss_dir,
+        prefix=".nemoclaw-browser-ca-",
+        delete=False,
+    ) as manifest_file:
+        manifest_file.write("\n".join(nicknames) + "\n")
+        manifest_temp = Path(manifest_file.name)
+    manifest_temp.replace(nickname_manifest)
 
 
 def fill_form(
@@ -274,16 +321,16 @@ def fill_form(
                 page.wait_for_function(
                     """
                     selector => {
-                      const fields = [...document.querySelectorAll(selector)]
-                        .filter(field => {
+                      const fields = [...document.querySelectorAll(selector)].filter(field => {
                           const style = window.getComputedStyle(field);
                           return style.display !== "none"
                             && style.visibility !== "hidden"
-                            && field.getClientRects().length > 0
-                            && !field.disabled
-                            && !field.readOnly;
+                            && field.getClientRects().length > 0;
                         });
-                      return fields.length > 0;
+                      return fields.length > 0 && fields.every(field =>
+                        field.closest('[aria-disabled="true" i]') === null
+                        && field.getAttribute("aria-readonly")?.toLowerCase() !== "true"
+                      );
                     }
                     """,
                     arg=FIELD_SELECTOR,
