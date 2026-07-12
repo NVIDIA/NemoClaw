@@ -394,6 +394,21 @@ describe("runner", () => {
       expect(() => loadBlueprint()).toThrow(/valid nested component shapes/);
     });
 
+    it("rejects a non-boolean router enabled flag (#6692)", () => {
+      addFile(
+        "blueprint.yaml",
+        YAML.stringify({
+          version: "2.0",
+          components: {
+            router: {
+              enabled: "yes",
+            },
+          },
+        }),
+      );
+      expect(() => loadBlueprint()).toThrow(/valid nested component shapes/);
+    });
+
     it("rejects non-plain policy additions values", () => {
       addFile(
         "blueprint.yaml",
