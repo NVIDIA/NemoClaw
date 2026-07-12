@@ -383,6 +383,7 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
     const listener = net.createServer();
     await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
     const port = (listener.address() as { port: number }).port;
+    fs.rmSync(path.join(home, ".nemoclaw", "sandboxes.json"), { force: true });
     seedRegistry(nemoclawStateRoot(home, port));
 
     try {
