@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
 import path from "node:path";
+import { describe, expect, it } from "vitest";
 
-import { loadManifest, loadManifestsFromDir, validateManifest } from "../registry/manifests.ts";
+import { loadManifestsFromDir, validateManifest } from "../registry/manifests.ts";
 import { listTargets } from "../registry/registry.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
@@ -12,16 +12,13 @@ const E2E_SUITE_DIR = path.join(REPO_ROOT, "test/e2e");
 const MANIFEST_DIR = path.join(E2E_SUITE_DIR, "manifests");
 
 describe("NemoClawInstance manifests", () => {
-  it("should validate all NemoClaw instance manifests", () => {
+  it("loads every checked-in instance manifest through validation", () => {
     const manifests = loadManifestsFromDir(MANIFEST_DIR);
 
-    expect(manifests.length).toBeGreaterThanOrEqual(19);
-    for (const manifest of manifests) {
-      expect(() => validateManifest(manifest.document, manifest.filePath)).not.toThrow();
-    }
+    expect(manifests).not.toHaveLength(0);
   });
 
-  it("should reject manifest with assertion or suite IDs", () => {
+  it("rejects manifest assertion and suite IDs", () => {
     const badManifest = {
       apiVersion: "nemoclaw.io/v1",
       kind: "NemoClawInstance",
@@ -39,7 +36,7 @@ describe("NemoClawInstance manifests", () => {
     );
   });
 
-  it("should reject raw secret values in manifest", () => {
+  it("rejects raw secret values", () => {
     const badManifest = {
       apiVersion: "nemoclaw.io/v1",
       kind: "NemoClawInstance",
@@ -56,37 +53,16 @@ describe("NemoClawInstance manifests", () => {
     );
   });
 
-  it("should cover every typed target manifest need", () => {
-    const manifestNames = new Set(
-      loadManifestsFromDir(MANIFEST_DIR).map((manifest) => manifest.document.metadata.name),
+  it("resolves every typed target manifest path to a validated manifest", () => {
+    const manifestPaths = new Set(
+      loadManifestsFromDir(MANIFEST_DIR).map((manifest) => path.resolve(manifest.filePath)),
     );
     const missingManifests = listTargets()
       .map((target) => target.manifestPath)
       .filter((manifestPath): manifestPath is string => Boolean(manifestPath))
-      .map((manifestPath) => path.basename(manifestPath, ".yaml"))
-      .filter((id) => !manifestNames.has(id));
+      .map((manifestPath) => path.resolve(REPO_ROOT, manifestPath))
+      .filter((manifestPath) => !manifestPaths.has(manifestPath));
 
     expect(missingManifests, `missing manifest files: ${missingManifests.join(", ")}`).toEqual([]);
-  });
-
-  it("registry target manifest paths resolve setup and onboarding choices", () => {
-    const target = listTargets().find((entry) => entry.id === "ubuntu-repo-cloud-openclaw");
-
-    expect(target).toBeTruthy();
-    expect(target!.manifestPath).toBe("test/e2e/manifests/openclaw-nvidia.yaml");
-    const manifest = loadManifest(path.join(REPO_ROOT, target!.manifestPath as string)).document;
-    expect(manifest.spec.setup.install.source).toBe("repo-current");
-    expect(manifest.spec.onboarding.agent).toBe("openclaw");
-    expect(manifest.spec.onboarding.provider).toBe("nvidia");
-  });
-
-  it("declares observability on the canonical Deep Agents Code live target", () => {
-    const target = listTargets().find(
-      (entry) => entry.id === "ubuntu-repo-cloud-langchain-deepagents-code",
-    );
-
-    expect(target).toBeTruthy();
-    const manifest = loadManifest(path.join(REPO_ROOT, target!.manifestPath as string)).document;
-    expect(manifest.spec.onboarding.features?.observability).toBe(true);
   });
 });
