@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { cleanupWhenCommandAvailable } from "../fixtures/cleanup-resources.ts";
 import { assertExitZero, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
@@ -188,19 +189,18 @@ test("hermes-shields-config: fresh non-root Hermes sandbox completes two shields
   };
   cleanupRegistry.trackGateway(
     {
-      cleanupGatewayRegistration: async (name: string) => {
-        if (
-          !(await host.isCommandAvailable("openshell", {
+      cleanupGatewayRegistration: (name: string) =>
+        cleanupWhenCommandAvailable(
+          host,
+          "openshell",
+          {
             artifactName: "cleanup-probe-openshell-gateway",
             env: gatewayCleanupOptions.env,
             redactionValues: gatewayCleanupOptions.redactionValues,
             timeoutMs: 30_000,
-          }))
-        ) {
-          return;
-        }
-        await host.cleanupGatewayRegistration(name, gatewayCleanupOptions);
-      },
+          },
+          () => host.cleanupGatewayRegistration(name, gatewayCleanupOptions),
+        ),
     },
     GATEWAY_NAME,
     gatewayCleanupOptions,
@@ -213,19 +213,18 @@ test("hermes-shields-config: fresh non-root Hermes sandbox completes two shields
   };
   cleanupRegistry.trackSandbox(
     {
-      cleanupSandbox: async (name: string) => {
-        if (
-          !(await host.isCommandAvailable(host.commandPath, {
+      cleanupSandbox: (name: string) =>
+        cleanupWhenCommandAvailable(
+          host,
+          host.commandPath,
+          {
             artifactName: "cleanup-probe-nemoclaw-sandbox",
             env: sandboxCleanupOptions.env,
             redactionValues: sandboxCleanupOptions.redactionValues,
             timeoutMs: 30_000,
-          }))
-        ) {
-          return;
-        }
-        await host.cleanupSandbox(name, sandboxCleanupOptions);
-      },
+          },
+          () => host.cleanupSandbox(name, sandboxCleanupOptions),
+        ),
     },
     SANDBOX_NAME,
     sandboxCleanupOptions,

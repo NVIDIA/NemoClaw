@@ -12,6 +12,11 @@ import path from "node:path";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
+  cleanupAcquiredResource,
+  cleanupExistingPath,
+  terminateProcessIfRunning,
+} from "../fixtures/cleanup-resources.ts";
+import {
   assertExitZero as expectExitZero,
   resultText,
   shellQuote,
@@ -566,11 +571,7 @@ function stopBedrockAdapter(home: string): void {
     if (fs.existsSync(pidFile)) {
       const pid = Number(fs.readFileSync(pidFile, "utf8").trim());
       if (Number.isInteger(pid) && pid > 0 && isBedrockAdapterProcess(pid)) {
-        try {
-          process.kill(pid, "SIGTERM");
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-        }
+        terminateProcessIfRunning(pid);
       }
     }
   } finally {
@@ -1333,14 +1334,14 @@ test("bedrock runtime compatible Anthropic endpoint routes through managed infer
   cleanup.trackDisposable(`destroy Bedrock Runtime sandbox ${SANDBOX_NAME}`, () =>
     cleanupNemoClawSandbox(host, home),
   );
-  cleanup.trackDisposable("restore /etc/hosts after Bedrock Runtime mapping", async () => {
-    if (fs.existsSync(hostsBackup)) {
-      await restoreHostsFile(host, hostsBackup, hostsBackupDir, home);
-    }
-  });
-  cleanup.trackDisposable("remove Bedrock Runtime canonical TLS port redirect", async () => {
-    if (tlsRedirectInstalled) await removeBedrockTlsRedirect(host, home);
-  });
+  cleanup.trackDisposable("restore /etc/hosts after Bedrock Runtime mapping", () =>
+    cleanupExistingPath(hostsBackup, () =>
+      restoreHostsFile(host, hostsBackup, hostsBackupDir, home),
+    ),
+  );
+  cleanup.trackDisposable("remove Bedrock Runtime canonical TLS port redirect", () =>
+    cleanupAcquiredResource(tlsRedirectInstalled, () => removeBedrockTlsRedirect(host, home)),
+  );
   cleanup.trackDisposable("stop Bedrock Runtime adapter", () => stopBedrockAdapter(home));
   cleanup.trackDisposable("stop fake Bedrock Runtime endpoint", async () => {
     if (mock) await mock.close();

@@ -11,6 +11,7 @@ import { shellQuote } from "../../../src/lib/core/shell-quote.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
+import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   type SandboxClient,
@@ -261,10 +262,16 @@ async function registerSandboxCleanup(
       env: commandEnv(),
       timeoutMs: 120_000,
     });
-    summary.nemoclawDestroy = cleanupAttempt(destroy);
-    if (destroy.exitCode !== 0 && !summary.nemoclawDestroy.missingSandboxTolerated) {
-      const error = new Error(`cleanup destroy sandbox ${sandboxName}: ${text(destroy)}`);
-      summary.errors.push(error.message);
+    const attempt = cleanupAttempt(destroy);
+    summary.nemoclawDestroy = attempt;
+    try {
+      assertCleanupSucceededOrAbsent(
+        destroy,
+        attempt.missingSandboxTolerated,
+        `cleanup destroy sandbox ${sandboxName}`,
+      );
+    } catch (error) {
+      summary.errors.push(error instanceof Error ? error.message : String(error));
       throw error;
     }
   });

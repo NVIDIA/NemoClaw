@@ -13,6 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { cleanupWhenCommandAvailable } from "../fixtures/cleanup-resources.ts";
 import { assertExitZero, resultText, sandboxAccessEnv } from "../fixtures/clients/index.ts";
 import { trustedProviderEndpoint } from "../fixtures/clients/provider.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -168,19 +169,18 @@ test(
     };
     cleanup.trackGateway(
       {
-        cleanupGatewayRegistration: async (name: string) => {
-          if (
-            !(await host.isCommandAvailable("openshell", {
+        cleanupGatewayRegistration: (name: string) =>
+          cleanupWhenCommandAvailable(
+            host,
+            "openshell",
+            {
               artifactName: "cleanup-probe-openshell-gateway-sandbox-survival",
               env: gatewayCleanupOptions.env,
               redactionValues: gatewayCleanupOptions.redactionValues,
               timeoutMs: 30_000,
-            }))
-          ) {
-            return;
-          }
-          await host.cleanupGatewayRegistration(name, gatewayCleanupOptions);
-        },
+            },
+            () => host.cleanupGatewayRegistration(name, gatewayCleanupOptions),
+          ),
       },
       "nemoclaw",
       gatewayCleanupOptions,
@@ -191,19 +191,18 @@ test(
     };
     cleanup.trackSandbox(
       {
-        cleanupSandbox: async (name: string) => {
-          if (
-            !(await host.isCommandAvailable(host.commandPath, {
+        cleanupSandbox: (name: string) =>
+          cleanupWhenCommandAvailable(
+            host,
+            host.commandPath,
+            {
               artifactName: "cleanup-probe-nemoclaw-sandbox-survival",
               env: buildAvailabilityProbeEnv(),
               redactionValues: sandboxCleanupOptions.redactionValues,
               timeoutMs: 30_000,
-            }))
-          ) {
-            return;
-          }
-          await host.cleanupSandbox(name, sandboxCleanupOptions);
-        },
+            },
+            () => host.cleanupSandbox(name, sandboxCleanupOptions),
+          ),
       },
       SANDBOX_NAME,
       sandboxCleanupOptions,

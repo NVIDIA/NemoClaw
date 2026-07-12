@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
@@ -310,14 +311,11 @@ test("onboard-resume: interrupted onboard then --resume can recreate with cached
         timeoutMs: 60_000,
       },
     );
-    const output = resultText(remove);
-    if (
-      remove.exitCode === 0 ||
-      /\bNotFound\b|provider[^\n]*(?:not found|does not exist)|no such provider/i.test(output)
-    ) {
-      return;
-    }
-    throw new Error(`cleanup provider ${LIVE_EXTRA_PROVIDER} failed: ${output}`);
+    assertCleanupSucceededOrAbsent(
+      remove,
+      /\bNotFound\b|provider[^\n]*(?:not found|does not exist)|no such provider/i,
+      `cleanup provider ${LIVE_EXTRA_PROVIDER}`,
+    );
   });
   cleanup.trackForward(host, 18789, {
     artifactName: "cleanup-openshell-forward-stop",

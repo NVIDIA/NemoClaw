@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
@@ -189,14 +190,11 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
         timeoutMs: 60_000,
       },
     );
-    const output = resultText(remove);
-    if (
-      remove.exitCode === 0 ||
-      /\bNotFound\b|provider[^\n]*(?:not found|does not exist)|no such provider/i.test(output)
-    ) {
-      return;
-    }
-    throw new Error(`cleanup provider ${LIVE_EXTRA_PROVIDER} failed: ${output}`);
+    assertCleanupSucceededOrAbsent(
+      remove,
+      /\bNotFound\b|provider[^\n]*(?:not found|does not exist)|no such provider/i,
+      `cleanup provider ${LIVE_EXTRA_PROVIDER}`,
+    );
   });
   cleanupRegistry.trackForward(host, 18789, {
     artifactName: "cleanup-forward-stop-18789",

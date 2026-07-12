@@ -16,6 +16,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { terminateProcessIfRunning } from "../fixtures/cleanup-resources.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
@@ -30,15 +31,6 @@ function writeExecutable(file: string, content: string): void {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   fs.writeFileSync(file, content, { encoding: "utf8", mode: 0o755 });
   fs.chmodSync(file, 0o755);
-}
-
-function terminateGatewayProcess(pid: number): void {
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
-    throw error;
-  }
 }
 
 test("onboard surfaces crashed Docker-driver gateway instead of reporting healthy (#3111)", async ({
@@ -102,7 +94,7 @@ test("onboard surfaces crashed Docker-driver gateway instead of reporting health
       ? Number.parseInt(fs.readFileSync(gatewayPidFile, "utf8"), 10)
       : Number.NaN;
     if (Number.isInteger(pid) && pid > 0) {
-      terminateGatewayProcess(pid);
+      terminateProcessIfRunning(pid);
     }
     fs.rmSync(gatewayPidFile, { force: true });
     fs.rmSync(path.join(stateDir, "runtime-marker.json"), { force: true });

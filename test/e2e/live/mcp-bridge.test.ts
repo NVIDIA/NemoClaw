@@ -15,6 +15,7 @@ import { parseOpenShellPolicy } from "../../../src/lib/policy/merge";
 import type { McpBridgeEntry } from "../../../src/lib/state/registry";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
+import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { assertExitZero as expectExitZero, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
@@ -96,8 +97,11 @@ async function cleanupMcpBridge(
     env: buildAvailabilityProbeEnv(),
     timeoutMs: MCP_MUTATION_TIMEOUT_MS[adapter],
   });
-  if (result.exitCode === 0 || MCP_BRIDGE_ALREADY_ABSENT.test(resultText(result))) return;
-  expectExitZero(result, `cleanup MCP bridge ${server} on sandbox ${sandboxName}`);
+  assertCleanupSucceededOrAbsent(
+    result,
+    MCP_BRIDGE_ALREADY_ABSENT,
+    `cleanup MCP bridge ${server} on sandbox ${sandboxName}`,
+  );
 }
 
 async function onboardAgent(

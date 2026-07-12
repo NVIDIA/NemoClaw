@@ -7,7 +7,9 @@
       "fast": [
         "test/e2e/support/hermes-gpu-startup-fallback.test.ts",
         "test/e2e/support/hermes-gpu-startup-integrity.test.ts",
-        "test/e2e/support/hermes-workflow-boundary.test.ts"
+        "test/e2e/support/hermes-workflow-boundary.test.ts",
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
       ]
     },
     {
@@ -24,7 +26,11 @@
     },
     {
       "live": "test/e2e/live/full-e2e.test.ts",
-      "fast": ["test/e2e/support/onboard-performance.test.ts"]
+      "fast": [
+        "test/e2e/support/onboard-performance.test.ts",
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
     },
     {
       "live": "test/e2e/live/gateway-guard-recovery.test.ts",
@@ -39,7 +45,11 @@
     },
     {
       "live": "test/e2e/live/network-policy.test.ts",
-      "fast": ["test/validate-blueprint.test.ts"]
+      "fast": [
+        "test/validate-blueprint.test.ts",
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
     },
     {
       "live": "test/e2e/live/openshell-gateway-auth-source-contract.test.ts",
@@ -70,7 +80,9 @@
         "src/lib/onboard/extra-provider-reconciliation.test.ts",
         "src/lib/onboard/machine/handlers/sandbox-resume.test.ts",
         "src/lib/onboard/sandbox-create-plan-extra-providers.test.ts",
-        "test/onboard-extra-provider-reconciliation.test.ts"
+        "test/onboard-extra-provider-reconciliation.test.ts",
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
       ]
     },
     {
@@ -82,7 +94,9 @@
         "src/lib/onboard/machine/handlers/sandbox-recreate-resume.test.ts",
         "src/lib/onboard/machine/handlers/sandbox-resume.test.ts",
         "src/lib/onboard/sandbox-create-plan-extra-providers.test.ts",
-        "test/onboard-extra-provider-reconciliation.test.ts"
+        "test/onboard-extra-provider-reconciliation.test.ts",
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
       ]
     },
     {
@@ -90,14 +104,362 @@
       "fast": [
         "test/cli/dispatch-basics.test.ts",
         "test/e2e/support/e2e-workflow.test.ts",
-        "test/sandbox-rlimit-hooks.test.ts"
+        "test/sandbox-rlimit-hooks.test.ts",
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
       ]
     },
     {
       "live": "test/e2e/live/snapshot-commands.test.ts",
       "fast": [
         "test/e2e/support/e2e-workflow.test.ts",
-        "test/e2e/support/snapshot-commands-helpers.test.ts"
+        "test/e2e/support/snapshot-commands-helpers.test.ts",
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/agent-turn-latency.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/brave-search.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/channels-add-remove.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/cloud-inference.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/cloud-onboard.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/common-egress-agent.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/concurrent-gateway-ports.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/credential-migration.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/credential-sanitization.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/cron-preflight-inference-local.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/device-auth-health.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/diagnostics.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/double-onboard.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/gateway-health-honest.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/gpu-double-onboard.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/gpu-e2e.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/hermes-discord.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/hermes-e2e.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/hermes-inference-switch.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/hermes-shields-config.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/issue-2478-crash-loop-recovery.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/issue-4462-scope-upgrade-approval.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/jetson-nvmap-gpu.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/kimi-inference-compat.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/mcp-bridge.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/messaging-compatible-endpoint.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/messaging-providers.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/model-router-provider-routed-inference.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/ollama-auth-proxy.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/openclaw-discord-pairing.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/openclaw-inference-switch.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/openclaw-plugin-runtime-exdev.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/openclaw-skill-cli.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/openclaw-slack-pairing.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/openshell-gateway-upgrade.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/overlayfs-autofix.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/overlayfs-autofix-outcome.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/rebuild-hermes.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/rebuild-openclaw.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/sandbox-rebuild.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/sandbox-survival.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/sessions-agents-cli.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/shields-config.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/skill-agent.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/spark-install.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/state-backup-restore.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/telegram-injection.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/token-rotation.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/upgrade-stale-sandbox.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-cleanup-resources.test.ts",
+        "test/e2e/support/e2e-clients.test.ts"
       ]
     }
   ]

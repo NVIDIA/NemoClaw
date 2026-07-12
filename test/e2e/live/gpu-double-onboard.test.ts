@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { cleanupWhenCommandAvailable } from "../fixtures/cleanup-resources.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
@@ -218,18 +219,17 @@ exit "$status"`,
   };
   cleanupRegistry.trackGateway(
     {
-      cleanupGatewayRegistration: async (name: string) => {
-        if (
-          !(await host.isCommandAvailable("openshell", {
+      cleanupGatewayRegistration: (name: string) =>
+        cleanupWhenCommandAvailable(
+          host,
+          "openshell",
+          {
             artifactName: "cleanup-probe-openshell-gateway",
             env: gatewayCleanupOptions.env,
             timeoutMs: 30_000,
-          }))
-        ) {
-          return;
-        }
-        await host.cleanupGatewayRegistration(name, gatewayCleanupOptions);
-      },
+          },
+          () => host.cleanupGatewayRegistration(name, gatewayCleanupOptions),
+        ),
     },
     "nemoclaw",
     gatewayCleanupOptions,
@@ -239,18 +239,18 @@ exit "$status"`,
     env: env(),
     timeoutMs: 60_000,
   };
-  cleanupRegistry.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, async () => {
-    if (
-      !(await host.isCommandAvailable(process.env.OPENSHELL_BIN ?? "openshell", {
+  cleanupRegistry.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+    cleanupWhenCommandAvailable(
+      host,
+      process.env.OPENSHELL_BIN ?? "openshell",
+      {
         artifactName: "cleanup-probe-openshell-sandbox",
         env: openshellSandboxCleanupOptions.env,
         timeoutMs: 30_000,
-      }))
-    ) {
-      return;
-    }
-    await sandbox.cleanupSandbox(SANDBOX_NAME, openshellSandboxCleanupOptions);
-  });
+      },
+      () => sandbox.cleanupSandbox(SANDBOX_NAME, openshellSandboxCleanupOptions),
+    ),
+  );
   const nemoclawSandboxCleanupOptions = {
     artifactName: "cleanup-nemoclaw-destroy",
     env: env(),
@@ -258,18 +258,17 @@ exit "$status"`,
   };
   cleanupRegistry.trackSandbox(
     {
-      cleanupSandbox: async (name: string) => {
-        if (
-          !(await host.isCommandAvailable(host.commandPath, {
+      cleanupSandbox: (name: string) =>
+        cleanupWhenCommandAvailable(
+          host,
+          host.commandPath,
+          {
             artifactName: "cleanup-probe-nemoclaw-sandbox",
             env: nemoclawSandboxCleanupOptions.env,
             timeoutMs: 30_000,
-          }))
-        ) {
-          return;
-        }
-        await host.cleanupSandbox(name, nemoclawSandboxCleanupOptions);
-      },
+          },
+          () => host.cleanupSandbox(name, nemoclawSandboxCleanupOptions),
+        ),
     },
     SANDBOX_NAME,
     nemoclawSandboxCleanupOptions,

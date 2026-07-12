@@ -11,6 +11,7 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import type { ShellProbeResult, ShellProbeRunOptions } from "../fixtures/shell-probe.ts";
+import { trackOverlayfsAutofixCleanup } from "./overlayfs-autofix-cleanup.ts";
 import { negativeOverlayOutcome } from "./overlayfs-autofix-outcome.ts";
 
 // Keep this direct: the contract mutates the host Docker daemon into
@@ -98,51 +99,6 @@ rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
       timeoutMs: 5 * 60_000,
     },
   );
-}
-
-async function cleanupOverlayArtifacts(host: HostCliClient, apiKey: string): Promise<void> {
-  const env = overlayEnv(apiKey, { GATEWAY_CONTAINER });
-  const removeContainer = await host.command("docker", ["rm", "-f", GATEWAY_CONTAINER], {
-    artifactName: "cleanup-overlayfs-gateway-container",
-    env,
-    redactionValues: [apiKey],
-    timeoutMs: 5 * 60_000,
-  });
-  if (removeContainer.exitCode !== 0 && !/No such container/i.test(text(removeContainer))) {
-    expect(
-      removeContainer.exitCode,
-      `failed to remove overlayfs gateway container: ${text(removeContainer)}`,
-    ).toBe(0);
-  }
-
-  const imageList = await host.command(
-    "docker",
-    ["image", "ls", "--format", "{{.Repository}}:{{.Tag}}"],
-    {
-      artifactName: "cleanup-overlayfs-patched-image-list",
-      env,
-      redactionValues: [apiKey],
-      timeoutMs: 5 * 60_000,
-    },
-  );
-  expect(imageList.exitCode, `failed to list overlayfs patched images: ${text(imageList)}`).toBe(0);
-  const patchedImages = imageList.stdout
-    .split(/\r?\n/)
-    .map((image) => image.trim())
-    .filter((image) => image.startsWith("nemoclaw-cluster:"));
-  if (patchedImages.length > 0) {
-    const removeImages = await host.command("docker", ["rmi", "-f", ...patchedImages], {
-      artifactName: "cleanup-overlayfs-patched-images",
-      env,
-      redactionValues: [apiKey],
-      timeoutMs: 5 * 60_000,
-    });
-    expect(
-      removeImages.exitCode,
-      `failed to remove overlayfs patched images: ${text(removeImages)}`,
-    ).toBe(0);
-  }
-  fs.rmSync(path.join(os.homedir(), ".nemoclaw", "onboard.lock"), { force: true });
 }
 
 async function dockerInfoJson(
@@ -276,32 +232,16 @@ test.skipIf(overlayfsAutofixNotInRuntimePath())(
       expect(await waitForDocker(host), "Docker must come back after daemon restore").toBe(true);
       fs.rmSync(stateDir, { recursive: true, force: true });
     });
-    if (process.env.NEMOCLAW_E2E_KEEP_SANDBOX !== "1") {
-      const cleanupEnv = overlayEnv(apiKey, { GATEWAY_CONTAINER });
-      cleanup.trackDisposable("remove overlayfs gateway artifacts", () =>
-        cleanupOverlayArtifacts(host, apiKey),
-      );
-      cleanup.trackGateway(host, "nemoclaw", {
-        artifactName: "cleanup-overlayfs-openshell-gateway",
-        env: cleanupEnv,
-        redactionValues,
-        timeoutMs: 5 * 60_000,
-      });
-      cleanup.trackDisposable(`delete overlayfs OpenShell sandbox ${SANDBOX_NAME}`, () =>
-        sandbox.cleanupSandbox(SANDBOX_NAME, {
-          artifactName: "cleanup-overlayfs-openshell-sandbox-delete",
-          env: cleanupEnv,
-          redactionValues,
-          timeoutMs: 5 * 60_000,
-        }),
-      );
-      cleanup.trackSandbox(host, SANDBOX_NAME, {
-        artifactName: "cleanup-overlayfs-sandbox",
-        env: cleanupEnv,
-        redactionValues,
-        timeoutMs: 5 * 60_000,
-      });
-    }
+    trackOverlayfsAutofixCleanup({
+      cleanup,
+      cleanupEnv: overlayEnv(apiKey, { GATEWAY_CONTAINER }),
+      gatewayContainer: GATEWAY_CONTAINER,
+      host,
+      preserveSandbox: process.env.NEMOCLAW_E2E_KEEP_SANDBOX === "1",
+      redactionValues,
+      sandbox,
+      sandboxName: SANDBOX_NAME,
+    });
 
     const backup = await bash(
       host,

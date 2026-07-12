@@ -1,9 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { describe, expect, it, vi } from "vitest";
 
 import { type CleanupHost, CleanupRegistry } from "../fixtures/cleanup.ts";
+import {
+  assertCleanupSucceededOrAbsent,
+  cleanupAcquiredResource,
+  cleanupExistingPath,
+  cleanupUnlessVerified,
+  cleanupWhenCommandAvailable,
+  registerSandboxCleanupUnlessKept,
+  terminateProcessIfRunning,
+} from "../fixtures/cleanup-resources.ts";
 
 describe("cleanup resources", () => {
   it("tears down acquired resources in reverse order", async () => {
@@ -138,5 +151,95 @@ describe("cleanup resources", () => {
       passed: ["later [REDACTED] cleanup"],
       failures: [{ name: "failing [REDACTED] cleanup", message: "[REDACTED] failure" }],
     });
+  });
+
+  it("accepts successful or explicitly absent cleanup results and rejects other failures (#6352)", () => {
+    expect(() =>
+      assertCleanupSucceededOrAbsent(
+        { exitCode: 0, stderr: "", stdout: "removed" },
+        false,
+        "remove resource",
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertCleanupSucceededOrAbsent(
+        { exitCode: 1, stderr: "resource not found", stdout: "" },
+        /not found/i,
+        "remove resource",
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertCleanupSucceededOrAbsent(
+        { exitCode: 1, stderr: "already absent", stdout: "" },
+        true,
+        "remove resource",
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertCleanupSucceededOrAbsent(
+        { exitCode: 1, stderr: "permission denied", stdout: "" },
+        /not found/i,
+        "remove resource",
+      ),
+    ).toThrow("remove resource failed: permission denied");
+  });
+
+  it("runs acquired and existing-path cleanup only after acquisition (#6352)", async () => {
+    const cleanup = vi.fn(async () => {});
+    await cleanupAcquiredResource(false, cleanup);
+    await cleanupAcquiredResource(true, cleanup);
+
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cleanup-resource-"));
+    const marker = path.join(directory, "acquired");
+    fs.writeFileSync(marker, "acquired", "utf8");
+    await cleanupExistingPath(marker, () => fs.rmSync(marker));
+    await cleanupExistingPath(marker, cleanup);
+    fs.rmSync(directory, { recursive: true, force: true });
+
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not repeat cleanup after explicit teardown has been verified (#6352)", async () => {
+    const cleanup = vi.fn(async () => {});
+    await cleanupUnlessVerified(true, cleanup);
+    await cleanupUnlessVerified(false, cleanup);
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs command-owned cleanup only when the managing command is available (#6352)", async () => {
+    const isCommandAvailable = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const cleanup = vi.fn(async () => {});
+    const probeOptions = { artifactName: "cleanup-command-probe", timeoutMs: 1_000 };
+
+    await cleanupWhenCommandAvailable({ isCommandAvailable }, "openshell", probeOptions, cleanup);
+    await cleanupWhenCommandAvailable({ isCommandAvailable }, "openshell", probeOptions, cleanup);
+
+    expect(isCommandAvailable).toHaveBeenCalledTimes(2);
+    expect(isCommandAvailable).toHaveBeenNthCalledWith(1, "openshell", probeOptions);
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not register destructive sandbox cleanup when retention is requested (#6352)", () => {
+    const register = vi.fn();
+    registerSandboxCleanupUnlessKept(true, register);
+    registerSandboxCleanupUnlessKept(false, register);
+    expect(register).toHaveBeenCalledTimes(1);
+  });
+
+  it("tolerates only an already-exited process during termination (#6352)", () => {
+    const kill = vi.spyOn(process, "kill");
+    kill.mockImplementationOnce(() => {
+      throw Object.assign(new Error("already exited"), { code: "ESRCH" });
+    });
+    expect(() => terminateProcessIfRunning(1234)).not.toThrow();
+
+    kill.mockImplementationOnce(() => {
+      throw Object.assign(new Error("not permitted"), { code: "EPERM" });
+    });
+    expect(() => terminateProcessIfRunning(1234)).toThrow("not permitted");
+
+    kill.mockImplementationOnce(() => true);
+    terminateProcessIfRunning(1234, "SIGKILL");
+    expect(kill).toHaveBeenLastCalledWith(1234, "SIGKILL");
   });
 });

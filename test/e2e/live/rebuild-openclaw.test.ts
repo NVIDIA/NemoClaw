@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { assertExitZero as expectExitZero, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
@@ -144,15 +145,11 @@ async function cleanupRebuiltNemoClawSandbox(host: HostCliClient, apiKey: string
     redactionValues: [apiKey],
     timeoutMs: 2 * 60_000,
   });
-  if (
-    result.exitCode === 0 ||
-    /Sandbox '.+' does not exist|Run 'nemoclaw onboard' to create one|sandbox .* not found|no such sandbox/iu.test(
-      resultText(result),
-    )
-  ) {
-    return;
-  }
-  expectExitZero(result, `cleanup rebuilt sandbox ${SANDBOX_NAME}`);
+  assertCleanupSucceededOrAbsent(
+    result,
+    /Sandbox '.+' does not exist|Run 'nemoclaw onboard' to create one|sandbox .* not found|no such sandbox/iu,
+    `cleanup rebuilt sandbox ${SANDBOX_NAME}`,
+  );
 }
 
 async function cleanupOldOpenClawBaseImage(host: HostCliClient): Promise<void> {
@@ -161,9 +158,11 @@ async function cleanupOldOpenClawBaseImage(host: HostCliClient): Promise<void> {
     env: dockerContextEnv(),
     timeoutMs: OPENSHELL_TIMEOUT_MS,
   });
-  if (result.exitCode === 0 || /No such image|image .* not found/iu.test(resultText(result)))
-    return;
-  expectExitZero(result, `cleanup old OpenClaw base image ${OLD_BASE_TAG}`);
+  assertCleanupSucceededOrAbsent(
+    result,
+    /No such image|image .* not found/iu,
+    `cleanup old OpenClaw base image ${OLD_BASE_TAG}`,
+  );
 }
 
 function pythonExecArgs(script: string): string[] {

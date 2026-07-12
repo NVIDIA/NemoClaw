@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { cleanupUnlessVerified } from "../fixtures/cleanup-resources.ts";
 import {
   type HostCliClient,
   outputContainsSandbox,
@@ -235,6 +236,7 @@ async function preCleanHermes(
       timeoutMs: 60_000,
     }),
   );
+  await expectSandboxAbsent(host, label);
   await cleanupOwnedGatewayRuntime(host, label);
   await cleanupGatewayRegistrationBeforeTest(host, label);
   await expectGatewayPortAvailable(host, label);
@@ -327,28 +329,41 @@ test(`hermes-gpu-startup: ${GPU_STARTUP_SCENARIO} OpenShell GPU route reaches st
   });
   let cleanTeardownVerified = false;
   const cleanupEnv = commandEnv();
+  const cleanupHost: Pick<HostCliClient, "cleanupGatewayRegistration" | "cleanupSandbox"> = {
+    cleanupGatewayRegistration: (name, options) =>
+      cleanupUnlessVerified(cleanTeardownVerified, () =>
+        host.cleanupGatewayRegistration(name, options),
+      ),
+    cleanupSandbox: (name, options) =>
+      cleanupUnlessVerified(cleanTeardownVerified, () => host.cleanupSandbox(name, options)),
+  };
+  // Phase 5 runs this ordered teardown explicitly so the target can record a
+  // clean-teardown proof. Once that succeeds, fixture teardown must not retry
+  // resource operations after their OpenShell gateway has been removed.
   cleanup.trackDisposable("verify Hermes GPU gateway port is available", () =>
-    expectGatewayPortAvailable(host, "cleanup"),
+    cleanupUnlessVerified(cleanTeardownVerified, () => expectGatewayPortAvailable(host, "cleanup")),
   );
-  cleanup.trackGateway(host, "nemoclaw", {
+  cleanup.trackGateway(cleanupHost, "nemoclaw", {
     artifactName: "cleanup-openshell-gateway",
     env: cleanupEnv,
     timeoutMs: 60_000,
   });
   cleanup.trackDisposable("clean up owned Hermes GPU gateway runtime", () =>
-    cleanupOwnedGatewayRuntime(host, "cleanup"),
+    cleanupUnlessVerified(cleanTeardownVerified, () => cleanupOwnedGatewayRuntime(host, "cleanup")),
   );
   cleanup.trackDisposable("verify Hermes GPU sandbox is absent", () =>
-    expectSandboxAbsent(host, "cleanup"),
+    cleanupUnlessVerified(cleanTeardownVerified, () => expectSandboxAbsent(host, "cleanup")),
   );
   cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
-    sandbox.cleanupSandbox(SANDBOX_NAME, {
-      artifactName: "cleanup-openshell-sandbox-delete",
-      env: cleanupEnv,
-      timeoutMs: 60_000,
-    }),
+    cleanupUnlessVerified(cleanTeardownVerified, () =>
+      sandbox.cleanupSandbox(SANDBOX_NAME, {
+        artifactName: "cleanup-openshell-sandbox-delete",
+        env: cleanupEnv,
+        timeoutMs: 60_000,
+      }),
+    ),
   );
-  cleanup.trackSandbox(host, SANDBOX_NAME, {
+  cleanup.trackSandbox(cleanupHost, SANDBOX_NAME, {
     artifactName: "cleanup-nemoclaw-destroy",
     env: cleanupEnv,
     timeoutMs: 120_000,

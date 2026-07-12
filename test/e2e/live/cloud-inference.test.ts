@@ -14,7 +14,8 @@ import os from "node:os";
 import path from "node:path";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { assertExitZero, resultText } from "../fixtures/clients/command.ts";
+import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
+import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -119,15 +120,13 @@ async function cleanupCloudInferenceNemoClawSandbox(
     env: testEnv(home),
     timeoutMs: 120_000,
   });
-  if (
-    result.exitCode === 0 ||
+  assertCleanupSucceededOrAbsent(
+    result,
     /Sandbox '.+' does not exist|Run 'nemoclaw onboard' to create one|sandbox .* not found|no such sandbox/iu.test(
       resultText(result),
-    )
-  ) {
-    return;
-  }
-  assertExitZero(result, `cleanup cloud inference sandbox ${SANDBOX_NAME}`);
+    ),
+    `cleanup cloud inference sandbox ${SANDBOX_NAME}`,
+  );
 }
 
 function openAiChatContent(raw: string): string {

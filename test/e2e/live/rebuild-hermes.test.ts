@@ -8,6 +8,7 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { assertExitZero as expectExitZero } from "../fixtures/clients/command.ts";
 import { type HostCliClient, resultText } from "../fixtures/clients/index.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
@@ -196,15 +197,11 @@ async function cleanupHermesNemoClawSandbox(
     redactionValues: hermesCleanupRedactions(apiKey),
     timeoutMs: 3 * 60_000,
   });
-  if (
-    result.exitCode === 0 ||
-    /Sandbox '.+' does not exist|Run 'nemoclaw onboard' to create one|sandbox .* not found|no such sandbox/iu.test(
-      resultText(result),
-    )
-  ) {
-    return;
-  }
-  expectExitZero(result, `cleanup Hermes rebuild sandbox ${SANDBOX_NAME}`);
+  assertCleanupSucceededOrAbsent(
+    result,
+    /Sandbox '.+' does not exist|Run 'nemoclaw onboard' to create one|sandbox .* not found|no such sandbox/iu,
+    `cleanup Hermes rebuild sandbox ${SANDBOX_NAME}`,
+  );
 }
 
 async function cleanupHermesDiscordProvider(
@@ -218,15 +215,11 @@ async function cleanupHermesDiscordProvider(
     redactionValues: hermesCleanupRedactions(apiKey),
     timeoutMs: 3 * 60_000,
   });
-  if (
-    result.exitCode === 0 ||
-    /\bNotFound\b|provider[^\n]*(?:not found|does not exist)|No provider|No active gateway|No gateway metadata/iu.test(
-      resultText(result),
-    )
-  ) {
-    return;
-  }
-  expectExitZero(result, `cleanup Hermes Discord provider ${provider}`);
+  assertCleanupSucceededOrAbsent(
+    result,
+    /\bNotFound\b|provider[^\n]*(?:not found|does not exist)|No provider|No active gateway|No gateway metadata/iu,
+    `cleanup Hermes Discord provider ${provider}`,
+  );
 }
 
 async function cleanupOldHermesBaseImage(
@@ -239,9 +232,11 @@ async function cleanupOldHermesBaseImage(
     redactionValues: hermesCleanupRedactions(apiKey),
     timeoutMs: 3 * 60_000,
   });
-  if (result.exitCode === 0 || /No such image|image .* not found/iu.test(resultText(result)))
-    return;
-  expectExitZero(result, `cleanup old Hermes base image ${OLD_BASE_TAG}`);
+  assertCleanupSucceededOrAbsent(
+    result,
+    /No such image|image .* not found/iu,
+    `cleanup old Hermes base image ${OLD_BASE_TAG}`,
+  );
 }
 
 function oldHermesDockerfile(): string {

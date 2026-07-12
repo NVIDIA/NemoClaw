@@ -14,6 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { registerSandboxCleanupUnlessKept } from "../fixtures/cleanup-resources.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
@@ -332,7 +333,7 @@ test("sessions/agents host CLI routes to OpenClaw and preserves JSON envelopes",
 
   const hosted = requireHostedInferenceConfig(secrets);
   await ensureOpenshellAvailable(host);
-  if (process.env.NEMOCLAW_E2E_KEEP_SANDBOX !== "1") {
+  registerSandboxCleanupUnlessKept(process.env.NEMOCLAW_E2E_KEEP_SANDBOX === "1", () => {
     cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
       sandbox.cleanupSandbox(SANDBOX_NAME, {
         artifactName: "cleanup-openshell-sandbox-delete-sessions-agents-cli",
@@ -346,7 +347,7 @@ test("sessions/agents host CLI routes to OpenClaw and preserves JSON envelopes",
       redactionValues: [hosted.apiKey],
       timeoutMs: 5 * 60_000,
     });
-  }
+  });
   await precleanSandbox(host, hosted);
   fs.rmSync(path.join(process.env.HOME ?? "", ".nemoclaw", "onboard.lock"), { force: true });
 
