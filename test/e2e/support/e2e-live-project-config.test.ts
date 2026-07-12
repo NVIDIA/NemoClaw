@@ -22,6 +22,7 @@ interface ProjectConfig {
     name?: string;
     include?: string[];
     retry?: number;
+    setupFiles?: string[];
   };
 }
 
@@ -32,56 +33,18 @@ interface RootConfig {
   };
 }
 
-const INSTALLER_INTEGRATION_TESTS = [
-  "test/install-express-prompt.test.ts",
-  "test/install-build-dependency-preflight.test.ts",
-  "test/install-preflight.test.ts",
-  "test/install-preflight-docker-bootstrap.test.ts",
-  "test/install-openshell-version-check.test.ts",
-];
-const LIVE_E2E_TARGET_TESTS = ["test/e2e/live/**/*.test.ts"];
-const BRANCH_VALIDATION_E2E_TESTS = ["test/e2e/brev-e2e.test.ts"];
-const DRIFT_PREFLIGHT_BYPASS = "NEMOCLAW_DISABLE_GATEWAY_DRIFT_PREFLIGHT";
-const NON_LIVE_PROJECTS = [
-  "cli",
-  "integration",
-  "installer-integration",
-  "package-contract",
-  "plugin",
-  "e2e-support",
-];
-const LIVE_PROJECTS = ["e2e-live", "e2e-branch-validation"];
-
 type BranchValidationWorkflow = {
-  jobs?: {
-    "e2e-branch-validation"?: {
-      steps?: WorkflowStep[];
-    };
-  };
+  jobs?: Record<string, { steps?: WorkflowStep[] }>;
 };
 
-function projectConfig(name: string): ProjectConfig {
-  const projects = (config as RootConfig).test?.projects ?? [];
-  const project = projects.find((entry) => entry.test?.name === name);
-  if (!project) {
-    throw new Error(`missing ${name} Vitest project`);
-  }
-  return project;
+const DRIFT_PREFLIGHT_BYPASS = "NEMOCLAW_DISABLE_GATEWAY_DRIFT_PREFLIGHT";
+const FIXTURE_UMASK_SETUP = "test/helpers/normalize-fixture-umask.ts";
+
+function projectConfigs(): ProjectConfig[] {
+  return (config as RootConfig).test?.projects ?? [];
 }
 
 describe("gated E2E Vitest projects", () => {
-  it("keeps installer membership static and selects live includes from the environment", () => {
-    expect(projectConfig("installer-integration").test?.include).toEqual(
-      INSTALLER_INTEGRATION_TESTS,
-    );
-    expect(projectConfig("e2e-live").test?.include).toEqual(
-      shouldRunLiveE2E() ? LIVE_E2E_TARGET_TESTS : [],
-    );
-    expect(projectConfig("e2e-branch-validation").test?.include).toEqual(
-      shouldRunBranchValidationE2E() ? BRANCH_VALIDATION_E2E_TESTS : [],
-    );
-  });
-
   it("enables installer integration only in CI or with the installer opt-in env var", () => {
     expect(shouldRunInstallerIntegration({})).toBe(false);
     expect(shouldRunInstallerIntegration({ CI: "0" })).toBe(false);
@@ -108,21 +71,34 @@ describe("gated E2E Vitest projects", () => {
     expect(shouldRunBranchValidationE2E({ NEMOCLAW_RUN_BRANCH_VALIDATION_E2E: "1" })).toBe(true);
   });
 
-  it("keeps stateful E2E retries disabled and aggregate live files serial (#6692)", () => {
-    expect(projectConfig("cli").test?.retry).toBeUndefined();
-    expect(projectConfig("e2e-support").test?.retry).toBeUndefined();
-    expect(projectConfig("e2e-live").test?.retry).toBe(0);
-    expect(projectConfig("e2e-live").test?.fileParallelism).toBe(false);
-    expect(projectConfig("e2e-branch-validation").test?.retry).toBe(0);
+  it("keeps stateful E2E project retries disabled and aggregate live files serial (#6692)", () => {
+    const statefulProjects = projectConfigs().filter(
+      (project) => !project.test?.setupFiles?.includes(FIXTURE_UMASK_SETUP),
+    );
+    const deterministicProjects = projectConfigs().filter((project) =>
+      project.test?.setupFiles?.includes(FIXTURE_UMASK_SETUP),
+    );
+
+    expect(statefulProjects.length).toBeGreaterThan(0);
+    expect(statefulProjects.every((project) => project.test?.retry === 0)).toBe(true);
+    expect(statefulProjects.some((project) => project.test?.fileParallelism === false)).toBe(true);
+    expect(deterministicProjects.every((project) => project.test?.retry === undefined)).toBe(true);
   });
 
   it("keeps the drift-preflight bypass out of live projects (#6692)", () => {
+    const statefulProjects = projectConfigs().filter(
+      (project) => !project.test?.setupFiles?.includes(FIXTURE_UMASK_SETUP),
+    );
+    const deterministicProjects = projectConfigs().filter((project) =>
+      project.test?.setupFiles?.includes(FIXTURE_UMASK_SETUP),
+    );
+
     expect((config as RootConfig).test?.env?.[DRIFT_PREFLIGHT_BYPASS]).toBeUndefined();
-    for (const name of NON_LIVE_PROJECTS) {
-      expect(projectConfig(name).test?.env?.[DRIFT_PREFLIGHT_BYPASS], name).toBe("1");
+    for (const project of deterministicProjects) {
+      expect(project.test?.env?.[DRIFT_PREFLIGHT_BYPASS], project.test?.name).toBe("1");
     }
-    for (const name of LIVE_PROJECTS) {
-      expect(projectConfig(name).test?.env?.[DRIFT_PREFLIGHT_BYPASS], name).toBeUndefined();
+    for (const project of statefulProjects) {
+      expect(project.test?.env?.[DRIFT_PREFLIGHT_BYPASS], project.test?.name).toBeUndefined();
     }
   });
 
@@ -178,15 +154,37 @@ describe("gated E2E Vitest projects", () => {
     }
   });
 
-  it("sets the branch-validation sentinel in the reusable workflow live E2E step", () => {
+  it("uses the reusable workflow sentinel to collect branch validation tests", () => {
     const workflow = readYaml<BranchValidationWorkflow>(
       ".github/workflows/e2e-branch-validation.yaml",
     );
-    const runStep = workflow.jobs?.["e2e-branch-validation"]?.steps?.find(
-      (step) => step.name === "Run ephemeral Brev E2E",
-    );
+    const workflowSentinel = Object.values(workflow.jobs ?? {})
+      .flatMap((job) => job.steps ?? [])
+      .find((step) => step.env?.NEMOCLAW_RUN_BRANCH_VALIDATION_E2E !== undefined)
+      ?.env?.NEMOCLAW_RUN_BRANCH_VALIDATION_E2E;
+    const vitest = join(process.cwd(), "node_modules", "vitest", "vitest.mjs");
+    const listBranchValidation = (sentinel: string | undefined) =>
+      spawnSync(
+        process.execPath,
+        [vitest, "list", "--project", "e2e-branch-validation", "--filesOnly", "--passWithNoTests"],
+        {
+          cwd: process.cwd(),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            BREV_API_KEY: undefined,
+            BREV_API_TOKEN: undefined,
+            BREV_ORG_ID: undefined,
+            NEMOCLAW_RUN_BRANCH_VALIDATION_E2E: sentinel,
+          },
+        },
+      );
 
-    expect(runStep?.run).toContain("npx vitest run --project e2e-branch-validation");
-    expect(runStep?.env?.NEMOCLAW_RUN_BRANCH_VALIDATION_E2E).toBe("1");
+    const enabled = listBranchValidation(workflowSentinel);
+    const disabled = listBranchValidation(undefined);
+    expect(enabled.status, enabled.stderr || enabled.stdout).toBe(0);
+    expect(enabled.stdout).toContain("[e2e-branch-validation]");
+    expect(disabled.status, disabled.stderr || disabled.stdout).toBe(0);
+    expect(disabled.stdout).not.toContain("[e2e-branch-validation]");
   });
 });

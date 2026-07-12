@@ -73,6 +73,19 @@ function requireStepOrder(
   }
 }
 
+function requireAdjacentSteps(
+  errors: string[],
+  steps: WorkflowStep[],
+  beforeName: string,
+  afterName: string,
+): void {
+  const before = steps.findIndex((step) => step.name === beforeName);
+  const after = steps.findIndex((step) => step.name === afterName);
+  if (before < 0 || after !== before + 1) {
+    errors.push(`${JOB_NAME} step '${beforeName}' must immediately precede '${afterName}'`);
+  }
+}
+
 export function validateOpenClawPluginRuntimeExdevWorkflow(
   workflow: OpenClawPluginRuntimeExdevWorkflow,
 ): string[] {
@@ -182,6 +195,18 @@ export function validateOpenClawPluginRuntimeExdevWorkflow(
   );
   requireStepOrder(errors, steps, "Prepare E2E workspace", runName);
   requireStepOrder(errors, steps, runName, "Upload OpenClaw plugin runtime-deps EXDEV artifacts");
+  requireAdjacentSteps(
+    errors,
+    steps,
+    "Authenticate to Docker Hub",
+    "Pre-pull release-matched Docker Hub builder image",
+  );
+  requireAdjacentSteps(
+    errors,
+    steps,
+    "Pre-pull release-matched Docker Hub builder image",
+    "Remove Docker auth before release-pinned fixture",
+  );
 
   return errors;
 }

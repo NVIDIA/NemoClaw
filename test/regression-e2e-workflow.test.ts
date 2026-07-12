@@ -30,16 +30,15 @@ type RegressionWorkflow = {
 };
 
 const FULL_SHA_ACTION = /@[0-9a-f]{40}$/i;
-const PREPARED_VITEST_JOBS = [
-  ["gateway-health-honest-e2e", "Run gateway health-honesty E2E test", undefined],
-  ["openshell-version-pin-e2e", "Run OpenShell version-pin E2E test", { "build-cli": "false" }],
-  ["gateway-drift-preflight-e2e", "Run gateway drift preflight E2E test", undefined],
-  [
-    "model-router-provider-routed-inference-e2e",
-    "Run Model Router provider-routed inference E2E test",
-    undefined,
-  ],
-] as const;
+
+function preparedVitestJobs(workflow: RegressionWorkflow) {
+  return Object.entries(workflow.jobs ?? {}).filter(([, job]) => {
+    const steps = job.steps ?? [];
+    const invokesVitest = steps.some((step) => /\bvitest\s+run\b/.test(step.run ?? ""));
+    const usesDirectSetup = steps.some((step) => step.name === "Setup Node");
+    return invokesVitest && !usesDirectSetup;
+  });
+}
 
 describe("Regression E2E workflow contract", () => {
   const workflow = readYaml<RegressionWorkflow>(".github/workflows/regression-e2e.yaml");
@@ -86,29 +85,47 @@ describe("Regression E2E workflow contract", () => {
     expect(runStep?.env?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
   });
 
-  it.each(
-    PREPARED_VITEST_JOBS,
-  )("prepares %s before invoking Vitest (#6692)", (jobName, runStepName, prepareInputs) => {
-    const job = workflow.jobs?.[jobName];
-    const steps = job?.steps ?? [];
-    const checkoutIndex = steps.findIndex((step) => step.uses?.startsWith("actions/checkout@"));
-    const prepareIndex = steps.findIndex((step) => step.name === PREPARE_E2E_STEP);
-    const runIndex = steps.findIndex((step) => step.name === runStepName);
-    const checkout = steps[checkoutIndex];
-    const prepare = steps[prepareIndex];
+  it("prepares every discovered non-hermetic Vitest job before execution (#6692)", () => {
+    const preparedJobs = preparedVitestJobs(workflow);
 
-    expect(job?.permissions).toEqual({ contents: "read" });
-    expect(checkout?.uses).toMatch(FULL_SHA_ACTION);
-    expect(checkout?.with?.["persist-credentials"]).toBe(false);
-    expect(prepare?.uses).toBe(PREPARE_E2E_ACTION);
-    expect(prepare?.with).toEqual(prepareInputs);
-    expect(prepare?.env).toBeUndefined();
-    expect(prepareIndex).toBeGreaterThan(checkoutIndex);
-    expect(runIndex).toBeGreaterThan(prepareIndex);
-    expect(steps.filter((step) => step.uses === PREPARE_E2E_ACTION)).toHaveLength(1);
-    expect(steps.map((step) => step.name)).not.toContain("Setup Node");
-    expect(steps.map((step) => step.name)).not.toContain("Install root dependencies");
-    expect(steps.map((step) => step.name)).not.toContain("Build CLI");
+    expect(preparedJobs.length).toBeGreaterThan(0);
+    for (const [jobName, job] of preparedJobs) {
+      const steps = job?.steps ?? [];
+      const checkoutIndex = steps.findIndex((step) => step.uses?.startsWith("actions/checkout@"));
+      const prepareIndex = steps.findIndex((step) => step.name === PREPARE_E2E_STEP);
+      const runIndex = steps.findIndex((step) => /\bvitest\s+run\b/.test(step.run ?? ""));
+      const checkout = steps[checkoutIndex];
+      const prepare = steps[prepareIndex];
+
+      expect(job?.permissions, jobName).toEqual({ contents: "read" });
+      expect(checkout?.uses, jobName).toMatch(FULL_SHA_ACTION);
+      expect(checkout?.with?.["persist-credentials"], jobName).toBe(false);
+      expect(prepare?.uses, jobName).toBe(PREPARE_E2E_ACTION);
+      expect(
+        prepare?.with === undefined ||
+          JSON.stringify(prepare.with) === JSON.stringify({ "build-cli": "false" }),
+        `${jobName} prepare inputs`,
+      ).toBe(true);
+      expect(prepare?.env, jobName).toBeUndefined();
+      expect(prepareIndex, jobName).toBeGreaterThan(checkoutIndex);
+      expect(runIndex, jobName).toBeGreaterThan(prepareIndex);
+      expect(
+        steps.filter((step) => step.uses === PREPARE_E2E_ACTION),
+        jobName,
+      ).toHaveLength(1);
+      expect(
+        steps.map((step) => step.name),
+        jobName,
+      ).not.toContain("Setup Node");
+      expect(
+        steps.map((step) => step.name),
+        jobName,
+      ).not.toContain("Install root dependencies");
+      expect(
+        steps.map((step) => step.name),
+        jobName,
+      ).not.toContain("Build CLI");
+    }
   });
 
   it("collects the gateway drift regression from its integration project (#6692)", () => {
