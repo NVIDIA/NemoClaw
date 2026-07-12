@@ -24,6 +24,8 @@ import { DASHBOARD_PORT } from "../lib/ports.js";
 import { buildSubprocessEnv } from "../lib/subprocess-env.js";
 import { isPlainObject, type UnknownRecord } from "../shared/object-record.js";
 import * as importedOpenShellPolicyBoundary from "../shared/openshell-policy-boundary.cjs";
+import { actionSnapshots } from "./snapshot-command.js";
+import type { SnapshotCommandOptions } from "./snapshot-command.js";
 import { safeEndpointUrlForDownstream, validateEndpointUrl } from "./ssrf.js";
 
 // The compiled plugin exposes named CommonJS exports. Source-mode tsx maps the
@@ -914,7 +916,10 @@ export async function actionRollback(rid: string): Promise<void> {
 
 // ── CLI ─────────────────────────────────────────────────────────
 
-export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
+export async function main(
+  argv: string[] = process.argv.slice(2),
+  options: { snapshotCommand?: SnapshotCommandOptions } = {},
+): Promise<void> {
   const rawAction = argv.at(0);
   const action = isAction(rawAction) ? rawAction : undefined;
   let profile = "default";
@@ -929,8 +934,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   }
 
   if (!action) {
+    if (rawAction === "snapshots") {
+      actionSnapshots(argv.slice(1), options.snapshotCommand);
+      return;
+    }
     throw new Error(
-      `Unknown action '${rawAction ?? "(missing)"}'. Use: plan, apply, status, rollback`,
+      `Unknown action '${rawAction ?? "(missing)"}'. Use: plan, apply, status, rollback, snapshots`,
     );
   }
 

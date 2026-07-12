@@ -148,14 +148,16 @@ jobs:
       needs.select_regression_jobs.outputs.gateway == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          persist-credentials: false
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run gateway health-honesty E2E test
         env:
@@ -187,9 +189,18 @@ jobs:
       needs.select_regression_jobs.outputs.openshell_version_pin == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        with:
+          build-cli: "false"
 
       - name: Run OpenShell version-pin E2E test
         env:
@@ -218,20 +229,22 @@ jobs:
       needs.select_regression_jobs.outputs.gateway_drift_preflight == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          persist-credentials: false
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run gateway drift preflight E2E test
         env:
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-        run: npx vitest run --project cli test/gateway-drift-preflight.test.ts --silent=false --reporter=default
+        run: npx vitest run --project integration test/gateway-drift-preflight.test.ts --silent=false --reporter=default
 
   # ── Model Router provider-routed inference E2E ─────────────────
   # Coverage guard for #3255. Model Router onboard must generate a routed
@@ -244,9 +257,16 @@ jobs:
       needs.select_regression_jobs.outputs.model_router_provider_routed_inference == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run Model Router provider-routed inference E2E test
         env:

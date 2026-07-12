@@ -11,14 +11,12 @@
  *   - Rollback: restore host config from snapshot
  */
 
-import type { Dirent } from "node:fs";
 import {
   cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
   readdirSync,
-  readFileSync,
   readlinkSync,
   renameSync,
   rmSync,
@@ -290,59 +288,10 @@ export function rollbackFromSnapshot(snapshotDir: string): boolean {
   }
 }
 
-// Named BlueprintSnapshotManifest to avoid collision with migration-state.ts SnapshotManifest
-export interface BlueprintSnapshotManifest {
-  timestamp: string;
-  source: string;
-  file_count: number;
-  contents: string[];
-  path: string;
-}
-
-type SnapshotManifestJson = {
-  timestamp?: string;
-  source?: string;
-  file_count?: number;
-  contents?: Array<string | null>;
-};
-
-function isSnapshotManifestJson(value: object | null): value is SnapshotManifestJson {
-  return value !== null && !Array.isArray(value);
-}
-
-function readStringArray(value: SnapshotManifestJson["contents"]): string[] {
-  return Array.isArray(value)
-    ? value.filter((entry): entry is string => typeof entry === "string")
-    : [];
-}
-
-export function listSnapshots(): BlueprintSnapshotManifest[] {
-  let entries: Dirent[];
-  try {
-    entries = readdirSync(SNAPSHOTS_DIR, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-
-  const snapshots: BlueprintSnapshotManifest[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const snapDir = join(SNAPSHOTS_DIR, entry.name);
-    try {
-      const parsed: unknown = JSON.parse(readFileSync(join(snapDir, "snapshot.json"), "utf-8"));
-      const raw = typeof parsed === "object" && parsed !== null ? parsed : null;
-      if (!isSnapshotManifestJson(raw) || typeof raw.timestamp !== "string") continue;
-      snapshots.push({
-        timestamp: raw.timestamp,
-        source: typeof raw.source === "string" ? raw.source : "",
-        file_count: typeof raw.file_count === "number" ? raw.file_count : 0,
-        contents: readStringArray(raw.contents),
-        path: snapDir,
-      });
-    } catch {
-      // Skip snapshots with missing or unreadable manifests
-    }
-  }
-
-  return snapshots.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-}
+export {
+  deleteSnapshot,
+  isSnapshotPathInsideSnapshotsDir,
+  listSnapshots,
+  pruneSnapshots,
+} from "./snapshot-management.js";
+export type { BlueprintSnapshotManifest } from "./snapshot-management.js";

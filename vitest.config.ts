@@ -35,6 +35,9 @@ const typedSourceTransform = {
   },
 };
 const sourceNodeOptions = sourceLoaderNodeOptions(process.env.NODE_OPTIONS);
+const controlledNonLiveEnv = {
+  NEMOCLAW_DISABLE_GATEWAY_DRIFT_PREFLIGHT: "1",
+};
 // Pin the file-creation umask of every non-live test worker to exactly 0o022 —
 // the conventional CI baseline — so Hermes/OpenClaw guard fixtures are created
 // with deterministic modes regardless of the developer's ambient umask (e.g. a
@@ -59,9 +62,6 @@ export default defineConfig({
         description: "Runs without external credentials in the shared E2E job",
       },
     ],
-    env: {
-      NEMOCLAW_DISABLE_GATEWAY_DRIFT_PREFLIGHT: "1",
-    },
     // CI logs are easiest to scan when test chatter stays quiet and failures
     // surface as GitHub annotations at the relevant file and line.
     reporters: isGithubActions ? ["github-actions"] : ["default"],
@@ -74,6 +74,7 @@ export default defineConfig({
         test: {
           name: "cli",
           alias: canonicalOpenShellPolicyAlias,
+          env: controlledNonLiveEnv,
           testTimeout: testTimeout(),
           setupFiles: [fixtureUmaskSetup, "test/helpers/onboard-script-mocks.cjs"],
           include: ["src/**/*.test.ts"],
@@ -95,6 +96,7 @@ export default defineConfig({
           // project as a bounded four-worker phase after the other projects.
           ...integrationProjectScheduling,
           env: {
+            ...controlledNonLiveEnv,
             NODE_OPTIONS: sourceNodeOptions,
             // Integration fixtures exercise onboarding against controlled fake
             // Docker state. Keep a base-image Dockerfile change in the PR from
@@ -122,6 +124,7 @@ export default defineConfig({
         test: {
           name: "installer-integration",
           alias: canonicalOpenShellPolicyAlias,
+          env: controlledNonLiveEnv,
           setupFiles: [fixtureUmaskSetup],
           include: [
             "test/install-express-prompt.test.ts",
@@ -139,6 +142,7 @@ export default defineConfig({
         test: {
           name: "package-contract",
           alias: canonicalOpenShellPolicyAlias,
+          env: controlledNonLiveEnv,
           setupFiles: [fixtureUmaskSetup],
           include: ["test/package-contract/**/*.test.ts"],
         },
@@ -148,6 +152,7 @@ export default defineConfig({
         test: {
           name: "plugin",
           alias: canonicalOpenShellPolicyAlias,
+          env: controlledNonLiveEnv,
           setupFiles: [fixtureUmaskSetup],
           include: ["nemoclaw/src/**/*.test.ts"],
         },
@@ -159,6 +164,7 @@ export default defineConfig({
           // only harness; this project does not define a separate runner.
           name: "e2e-support",
           alias: canonicalOpenShellPolicyAlias,
+          env: controlledNonLiveEnv,
           testTimeout: testTimeout(),
           setupFiles: [fixtureUmaskSetup, "test/helpers/onboard-script-mocks.cjs"],
           include: ["test/e2e/support/**/*.test.ts"],
@@ -185,6 +191,7 @@ export default defineConfig({
           // whole-test retry reuses that state and can hide the first failure
           // behind stale locks or exhausted storage. Transient operations must
           // retry inside the target after proving their cleanup boundary.
+          fileParallelism: false,
           retry: 0,
           include: runLiveE2E ? ["test/e2e/live/**/*.test.ts"] : [],
           // Live E2E tests are opt-in because they install, onboard, and
