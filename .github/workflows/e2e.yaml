@@ -1742,7 +1742,7 @@ jobs:
           E2E_HERMES_GPU_STARTUP_SCENARIO: ${{ matrix.scenario }}
           ENV: /dev/null
           TRUSTED_DISPATCH_SHA: ${{ github.sha }}
-          TRUSTED_FIXTURE_SHA256: 1e811077fc2c5e0468e971c8f3508dbd3f6856a882e58c448a50e10101a3e1a2
+          TRUSTED_FIXTURE_SHA256: e273c4baa7fe89546d64517cf56eafec30aeda7b355971263605ab1327fade02
           TRUSTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
           set -euo pipefail

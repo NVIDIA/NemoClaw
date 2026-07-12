@@ -42,6 +42,7 @@ describe("executeSandboxGpuCreatePlan", () => {
     const captureNativeFailure = vi.fn();
     const cleanupNativeFailure = vi.fn(async () => SAFE_CLEANUP);
     const prepareCompatibilityAttempt = vi.fn();
+    const activateCompatibilityAttempt = vi.fn();
     const traceEvent = vi.fn();
 
     await expect(
@@ -50,6 +51,7 @@ describe("executeSandboxGpuCreatePlan", () => {
         captureNativeFailure,
         cleanupNativeFailure,
         prepareCompatibilityAttempt,
+        activateCompatibilityAttempt,
         traceEvent,
       }),
     ).resolves.toEqual({ ok: true, route: "native", value: "native-ready" });
@@ -59,6 +61,7 @@ describe("executeSandboxGpuCreatePlan", () => {
     expect(captureNativeFailure).not.toHaveBeenCalled();
     expect(cleanupNativeFailure).not.toHaveBeenCalled();
     expect(prepareCompatibilityAttempt).not.toHaveBeenCalled();
+    expect(activateCompatibilityAttempt).not.toHaveBeenCalled();
     expect(traceEvent).toHaveBeenCalledWith("gpu_native_success", { route: "native" });
   });
 
@@ -88,6 +91,9 @@ describe("executeSandboxGpuCreatePlan", () => {
       prepareCompatibilityAttempt: async () => {
         order.push("prepare-compatibility");
       },
+      activateCompatibilityAttempt: async () => {
+        order.push("activate-compatibility");
+      },
       traceEvent,
     });
 
@@ -102,6 +108,7 @@ describe("executeSandboxGpuCreatePlan", () => {
       "diagnostics",
       "prepare-compatibility",
       "cleanup",
+      "activate-compatibility",
       "trace:gpu_compatibility_fallback",
       "attempt:compatibility",
     ]);
@@ -134,6 +141,7 @@ describe("executeSandboxGpuCreatePlan", () => {
             },
           );
         },
+        activateCompatibilityAttempt: vi.fn(),
         cleanupNativeFailure: async () => SAFE_CLEANUP,
       }),
     ).resolves.toEqual({
@@ -147,6 +155,7 @@ describe("executeSandboxGpuCreatePlan", () => {
   it("refuses fallback when native cleanup cannot be proven safe", async () => {
     const runAttempt = vi.fn(async () => nativeFailure("readiness"));
     const prepareCompatibilityAttempt = vi.fn();
+    const activateCompatibilityAttempt = vi.fn();
     const traceEvent = vi.fn();
 
     const result = await executeSandboxGpuCreatePlan("native-with-fallback", {
@@ -159,6 +168,7 @@ describe("executeSandboxGpuCreatePlan", () => {
         containerIds: ["deadbeef"],
       }),
       prepareCompatibilityAttempt,
+      activateCompatibilityAttempt,
       traceEvent,
     });
 
@@ -169,22 +179,26 @@ describe("executeSandboxGpuCreatePlan", () => {
     });
     expect(runAttempt).toHaveBeenCalledTimes(1);
     expect(prepareCompatibilityAttempt).toHaveBeenCalledOnce();
+    expect(activateCompatibilityAttempt).not.toHaveBeenCalled();
     expect(traceEvent).not.toHaveBeenCalledWith("gpu_compatibility_fallback", expect.anything());
   });
 
   it("keeps the failed native sandbox when compatibility retry preparation fails", async () => {
     const cleanupNativeFailure = vi.fn(async () => SAFE_CLEANUP);
+    const activateCompatibilityAttempt = vi.fn();
     const result = await executeSandboxGpuCreatePlan("native-with-fallback", {
       runAttempt: vi.fn(async () => nativeFailure("readiness")),
       prepareCompatibilityAttempt: vi.fn(() => {
         throw new Error("no reusable image");
       }),
+      activateCompatibilityAttempt,
       cleanupNativeFailure,
     });
 
     expect(result.ok).toBe(false);
     expect(result).toMatchObject({ ok: false, preparationRefused: "no reusable image" });
     expect(cleanupNativeFailure).not.toHaveBeenCalled();
+    expect(activateCompatibilityAttempt).not.toHaveBeenCalled();
   });
 
   it("returns a compatibility failure without attempting a third route", async () => {
@@ -203,6 +217,7 @@ describe("executeSandboxGpuCreatePlan", () => {
       runAttempt,
       cleanupNativeFailure: async () => SAFE_CLEANUP,
       prepareCompatibilityAttempt: vi.fn(),
+      activateCompatibilityAttempt: vi.fn(),
     });
 
     expect(result).toBe(compatibilityFailure);
@@ -223,6 +238,7 @@ describe("executeSandboxGpuCreatePlan", () => {
         runAttempt,
         cleanupNativeFailure,
         prepareCompatibilityAttempt: vi.fn(),
+        activateCompatibilityAttempt: vi.fn(),
       }),
     ).resolves.toBe(ineligibleFailure);
     expect(runAttempt).toHaveBeenCalledTimes(1);
@@ -239,6 +255,7 @@ describe("executeSandboxGpuCreatePlan", () => {
         runAttempt,
         cleanupNativeFailure,
         prepareCompatibilityAttempt: vi.fn(),
+        activateCompatibilityAttempt: vi.fn(),
       }),
     ).resolves.toBe(failure);
     expect(runAttempt).toHaveBeenCalledTimes(1);
@@ -271,6 +288,7 @@ describe("executeSandboxGpuCreatePlan", () => {
         }),
         cleanupNativeFailure,
         prepareCompatibilityAttempt: vi.fn(),
+        activateCompatibilityAttempt: vi.fn(),
       });
 
     const first = runPlan(firstRoutes, async () => {

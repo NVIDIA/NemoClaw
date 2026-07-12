@@ -48,6 +48,7 @@ import {
   GPU_IMAGE_ID as IMAGE_ID,
   resetGpuFlowMocks,
   setupGpuFlowMocks,
+  VERIFIED_GPU_PROOF as VERIFIED_PROOF,
 } from "./__test-helpers__/sandbox-gpu-create-flow";
 import {
   runSandboxGpuCreateFlow,
@@ -143,18 +144,24 @@ describe("runSandboxGpuCreateFlow cleanup and provenance", () => {
 
   it("fully redacts command diagnostics when cleanup cannot be proven safe", async () => {
     failNativeCreate();
+    const input = createInput();
+    input.provider = "ollama-local";
+    input.sandboxGpuConfig.sandboxGpuProof = VERIFIED_PROOF;
     const deps = createDeps();
     vi.mocked(deps.runOpenshell).mockImplementation((args) =>
       args[1] === "delete"
         ? { status: 0 }
         : { status: 1, stderr: "NVIDIA_API_KEY=super-secret-cleanup-value" },
     );
-    await expectFlowExit(createInput(), deps);
+    await expectFlowExit(input, deps);
 
     const diagnostic = vi.mocked(console.error).mock.calls.flat().join("\n");
     expect(diagnostic).toContain("Cleanup could not be proven safe");
     expect(diagnostic).toContain("NVIDIA_API_KEY=<REDACTED>");
     expect(diagnostic).not.toContain("super-secret-cleanup-value");
+    expect(deps.openshellArgv).toHaveBeenCalledOnce();
+    expect(mocks.enforceDockerGpuPatchPreserveNetwork).not.toHaveBeenCalled();
+    expect(input.sandboxGpuConfig.sandboxGpuProof).toBe(VERIFIED_PROOF);
   });
 
   it("refuses nvidia-smi fallback when exact native container provenance is unavailable (#6110)", async () => {

@@ -47,6 +47,7 @@ import {
   GPU_IMAGE_ID as IMAGE_ID,
   resetGpuFlowMocks,
   setupGpuFlowMocks,
+  VERIFIED_GPU_PROOF as VERIFIED_PROOF,
 } from "./__test-helpers__/sandbox-gpu-create-flow";
 import { runSandboxGpuCreateFlow } from "./sandbox-gpu-create-flow";
 
@@ -164,9 +165,11 @@ describe("runSandboxGpuCreateFlow fallback ordering", () => {
     input.sandboxEnv = {
       NEMOCLAW_DOCKER_GPU_PATCH_NETWORK: "host",
     };
+    input.sandboxGpuConfig.sandboxGpuProof = VERIFIED_PROOF;
     failNativeCreate();
+    const deps = createDeps();
 
-    await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
       route: "compatibility",
     });
 
@@ -180,6 +183,14 @@ describe("runSandboxGpuCreateFlow fallback ordering", () => {
         gatewayPort: 8080,
       }),
     );
+    const cleanupComplete =
+      mocks.queryOpenShellDockerSandboxContainers.mock.invocationCallOrder.at(-1) ??
+      Number.POSITIVE_INFINITY;
+    const networkPrepared = mocks.enforceDockerGpuPatchPreserveNetwork.mock.invocationCallOrder[0];
+    const compatibilityCreate = mocks.streamSandboxCreate.mock.invocationCallOrder[1];
+    expect(cleanupComplete).toBeLessThan(networkPrepared);
+    expect(networkPrepared).toBeLessThan(compatibilityCreate);
+    expect(input.sandboxGpuConfig.sandboxGpuProof).toBeNull();
   });
 
   it("validates the full compatibility command before deleting native state (#6110)", async () => {
@@ -203,7 +214,7 @@ describe("runSandboxGpuCreateFlow fallback ordering", () => {
     expect(errorOutput()).toContain("compatibility command render rejected");
   });
 
-  it("keeps native state when compatibility network preflight fails (#6110)", async () => {
+  it("runs compatibility network preflight only after native cleanup succeeds (#6110)", async () => {
     const input = createInput();
     input.provider = "ollama-local";
     failNativeCreate();
@@ -213,7 +224,11 @@ describe("runSandboxGpuCreateFlow fallback ordering", () => {
     const deps = createDeps();
     await expectFlowExit(input, deps);
     expect(deps.openshellArgv).toHaveBeenCalledOnce();
-    expectNativeStateKept(deps);
+    expect(deps.runOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledOnce();
     expect(errorOutput()).toContain("compatibility bridge is unreachable");
   });
 });

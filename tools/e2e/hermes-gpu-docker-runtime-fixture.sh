@@ -2,6 +2,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# SOURCE_OF_TRUTH_REVIEW
+# invalidState: a failed or cancelled fallback leaves privileged Docker daemon state modified.
+# sourceBoundary: one root-owned 0500 entrypoint serves the live step and independent always recovery.
+# whyNotSourceFix: inline PR shell cannot retain immutable provenance across step failure or cancellation.
+# regressionTest: hermes-workflow-boundary.test.ts pins digest, modes, paths, metadata, and cleanup.
+# removalCondition: remove this scenario-only helper when the test no longer mutates the host daemon.
+
 set -euo pipefail
 
 command_name="${1:-}"

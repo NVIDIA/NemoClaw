@@ -87,8 +87,8 @@ export interface SandboxGpuCreateFlowResult {
  * The ordered boundary spans this orchestrator, the per-route executor in
  * `sandbox-gpu-create-run-attempt.ts`, and the retry and cleanup proof in
  * `sandbox-gpu-create-attempt.ts`. The executor owns attempt evidence, this
- * module prepares the compatibility retry, and the retry helper enforces the
- * one-transition cleanup gate. Every stage must succeed in that order.
+ * module renders the retry before cleanup, activates its network boundary only
+ * after cleanup is proven safe, and the retry helper enforces that ordering.
  *
  * Create a sandbox through the selected GPU route, with one fail-closed
  * compatibility retry when the native-first plan permits it.
@@ -153,6 +153,8 @@ export async function runSandboxGpuCreateFlow(
         if (attemptRunner.state.compatibilityArgv.length === 0) {
           throw new Error("Compatibility sandbox create executable is missing.");
         }
+      },
+      activateCompatibilityAttempt: async () => {
         await dockerGpuLocalInference.enforceDockerGpuPatchPreserveNetwork(
           input.provider,
           input.sandboxGpuConfig,

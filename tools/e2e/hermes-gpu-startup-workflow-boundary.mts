@@ -22,7 +22,7 @@ const FIXTURE = join(REPO_ROOT, "tools", "e2e", "hermes-gpu-docker-runtime-fixtu
 const JOB_NAME = "hermes-gpu-startup";
 const CHECKOUT = "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10";
 const SOURCE = "tools/e2e/hermes-gpu-docker-runtime-fixture.sh";
-const SHA = "1e811077fc2c5e0468e971c8f3508dbd3f6856a882e58c448a50e10101a3e1a2";
+const SHA = "e273c4baa7fe89546d64517cf56eafec30aeda7b355971263605ab1327fade02";
 const F_PATH =
   "/usr/local/libexec/nemoclaw/hermes-gpu-docker-runtime-fixture.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.${E2E_HERMES_GPU_STARTUP_SCENARIO}";
 const FALLBACK = "${{ matrix.scenario == 'fallback' }}";

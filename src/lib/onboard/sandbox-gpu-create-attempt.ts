@@ -240,7 +240,10 @@ export type SandboxGpuCreatePlanDeps<T> = {
   runAttempt(route: SelectedDockerGpuRoute): Promise<SandboxGpuCreateAttemptResult<T>>;
   captureNativeFailure?(failure: SandboxGpuCreateAttemptFailure): void;
   cleanupNativeFailure(): NativeGpuFallbackCleanupResult | Promise<NativeGpuFallbackCleanupResult>;
+  /** Validate and render the retry without mutating host or process state. */
   prepareCompatibilityAttempt(failure: SandboxGpuCreateAttemptFailure): void | Promise<void>;
+  /** Apply compatibility side effects only after native cleanup is proven safe. */
+  activateCompatibilityAttempt(failure: SandboxGpuCreateAttemptFailure): void | Promise<void>;
   traceEvent?(name: string, attributes?: Record<string, unknown>): void;
 };
 
@@ -283,6 +286,14 @@ export async function executeSandboxGpuCreatePlan<T>(
     return {
       ...first,
       cleanupRefused: cleanup.reason ?? "native GPU cleanup could not be proven safe",
+    };
+  }
+  try {
+    await deps.activateCompatibilityAttempt(first);
+  } catch (error) {
+    return {
+      ...first,
+      preparationRefused: error instanceof Error ? error.message : String(error),
     };
   }
   deps.traceEvent?.("gpu_compatibility_fallback", {
