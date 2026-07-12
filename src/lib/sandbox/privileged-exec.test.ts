@@ -196,6 +196,27 @@ describe("privileged sandbox exec routing", () => {
     );
   });
 
+  it("refuses privileged execution when the pinned container identity changed", () => {
+    withPrivilegedExecMocks(
+      {
+        getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+        listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+        dockerCapture: () => "current-container-id\topenshell-alpha\n",
+      },
+      ({ privilegedSandboxExecArgv }) => {
+        expect(() =>
+          privilegedSandboxExecArgv(
+            "alpha",
+            ["/trusted/control"],
+            false,
+            true,
+            "previous-container-id",
+          ),
+        ).toThrow(/container identity changed.*refusing privileged execution/i);
+      },
+    );
+  });
+
   it("fails before docker discovery when the sandbox registry entry is unavailable", () => {
     let dockerPsCalls = 0;
     withPrivilegedExecMocks(

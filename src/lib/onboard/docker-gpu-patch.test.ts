@@ -31,6 +31,7 @@ import {
 function inspectFixture(): DockerContainerInspect {
   return {
     Id: "old-container-id",
+    Image: `sha256:${"c".repeat(64)}`,
     Name: "/openshell-alpha",
     Config: {
       Image: "openshell/sandbox:abc",
@@ -638,11 +639,11 @@ describe("docker-gpu-patch", () => {
       expect.arrayContaining([
         "--env",
         "OPENSHELL_SANDBOX_COMMAND=env CHAT_UI_URL=http://127.0.0.1:8642 nemoclaw-start",
-        "openshell/sandbox:abc",
+        `sha256:${"c".repeat(64)}`,
       ]),
     );
-    expect(cloneArgs.slice(cloneArgs.indexOf("openshell/sandbox:abc"))).toEqual([
-      "openshell/sandbox:abc",
+    expect(cloneArgs.slice(cloneArgs.indexOf(`sha256:${"c".repeat(64)}`))).toEqual([
+      `sha256:${"c".repeat(64)}`,
     ]);
     expect(dockerRunDetached).toHaveBeenCalledWith(
       cloneArgs,

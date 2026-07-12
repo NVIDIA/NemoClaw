@@ -51,7 +51,10 @@ import {
   buildSandboxExecMarkedCommand,
   extractSandboxExecCommandStdout,
 } from "./sandbox-exec-output";
-import { relaunchManagedSupervisorSession } from "./supervisor-relaunch";
+import {
+  type ManagedSupervisorRelaunch,
+  relaunchManagedSupervisorSession,
+} from "./supervisor-relaunch";
 
 export type { SandboxForwardHealth, SandboxForwardListEntry } from "./forward-health";
 export {
@@ -237,10 +240,11 @@ export function executeSandboxExecCommand(
   return executeLocalDockerSandboxCommand(sandboxName, markedCommand, effectiveTimeout);
 }
 
-export function executeGatewaySupervisorAction(
+function executeGatewaySupervisorActionPinned(
   sandboxName: string,
   action: "restart" | "recover" | "probe",
-  timeout = 210000,
+  timeout: number,
+  expectedContainerId?: string,
 ): SandboxCommandResult | null {
   const nonce = randomBytes(32).toString("hex");
   let argv: string[];
@@ -250,6 +254,7 @@ export function executeGatewaySupervisorAction(
       ["/usr/local/bin/nemoclaw-gateway-control", action, nonce],
       false,
       true,
+      expectedContainerId,
     );
   } catch (error) {
     const detail = error instanceof Error ? error.message : "privileged container unavailable";
@@ -278,6 +283,16 @@ export function executeGatewaySupervisorAction(
     stderr = ["SUPERVISOR_REBUILD_REQUIRED", stderr].filter(Boolean).join("\n");
   }
   return { status, stdout, stderr };
+}
+
+type RequestPinnedGatewaySupervisorAction = typeof executeGatewaySupervisorActionPinned;
+
+export function executeGatewaySupervisorAction(
+  sandboxName: string,
+  action: "restart" | "recover" | "probe",
+  timeout = 210000,
+): SandboxCommandResult | null {
+  return executeGatewaySupervisorActionPinned(sandboxName, action, timeout);
 }
 
 async function executeSandboxExecCommandForStatus(
@@ -355,6 +370,15 @@ function isExactlyRetryableManagedRecoveryFailure(result: SandboxCommandResult |
   return lines.length === 1 && ["SUPERVISOR_UNAVAILABLE", "SUPERVISOR_BUSY"].includes(lines[0]);
 }
 
+function isExactlyMissingManagedSupervisor(result: SandboxCommandResult | null): boolean {
+  if (result === null || result.status !== 1 || result.stdout.trim() !== "") return false;
+  const lines = result.stderr
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines.length === 1 && lines[0] === "SUPERVISOR_NOT_RUNNING";
+}
+
 export function confirmRecoveredSandboxGatewayManaged(
   sandboxName: string,
   options: {
@@ -394,22 +418,31 @@ export async function isSandboxGatewayRunningForStatus(
 }
 
 /**
- * Restart the gateway process inside the sandbox after a pod restart.
- * Cleans stale lock/temp files, sources proxy config, and launches the gateway
- * in the background. Returns true on success.
+ * Recover a gateway through the registered agent's managed control boundary.
+ * Legacy custom agents retain their SSH-owned compatibility path. Built-in
+ * agents may return a transactional supervisor relaunch that the caller must
+ * commit or roll back after the managed health gate.
  */
+type SandboxProcessRecovery =
+  | { kind: "managed" | "custom" }
+  | { kind: "relaunched"; relaunch: ManagedSupervisorRelaunch };
+
 function recoverSandboxProcesses(
   sandboxName: string,
   {
     quiet = false,
     requestGatewaySupervisorAction = executeGatewaySupervisorAction,
+    requestPinnedGatewaySupervisorAction = executeGatewaySupervisorActionPinned,
+    relaunchManagedSupervisorSessionImpl = relaunchManagedSupervisorSession,
     onFailureLayer,
   }: {
     quiet?: boolean;
     requestGatewaySupervisorAction?: typeof executeGatewaySupervisorAction;
+    requestPinnedGatewaySupervisorAction?: RequestPinnedGatewaySupervisorAction;
+    relaunchManagedSupervisorSessionImpl?: typeof relaunchManagedSupervisorSession;
     onFailureLayer?: (layer: GatewayRestartFailureLayer) => void;
   } = {},
-): "managed" | "custom" | "relaunched" | null {
+): SandboxProcessRecovery | null {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const dashboardPort = resolveSandboxDashboardPort(sandboxName);
   let persistedAgent: string | null;
@@ -423,9 +456,9 @@ function recoverSandboxProcesses(
     quiet || printGatewayRestartFailure(sandboxName, "unsupported agent", detail);
     return null;
   }
-  const recoveredSsh = (result: SandboxCommandResult | null) =>
-    !!(result && result.status === 0 && hasGatewayRecoveryMarker(result));
-  const recoverManagedGateway = (): "managed" | "relaunched" | null => {
+  const recoveredSsh = (result: SandboxCommandResult | null): SandboxProcessRecovery | null =>
+    result && result.status === 0 && hasGatewayRecoveryMarker(result) ? { kind: "custom" } : null;
+  const recoverManagedGateway = (): SandboxProcessRecovery | null => {
     const maxAttempts = 3;
     const retryIntervalSeconds = readNonNegativeNumberEnv(
       "NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS",
@@ -434,7 +467,7 @@ function recoverSandboxProcesses(
     let execResult: SandboxCommandResult | null = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       execResult = requestGatewaySupervisorAction(sandboxName, "recover");
-      if (hasGatewayRecoveryMarker(execResult)) return "managed";
+      if (hasGatewayRecoveryMarker(execResult)) return { kind: "managed" };
 
       // PID 1 may replace the gateway between the host's stopped observation
       // and the controller's process-tree capture. Retry only exact transient
@@ -446,9 +479,18 @@ function recoverSandboxProcesses(
     onFailureLayer?.(failure.layer);
     if (
       failure.layer === "supervisor not running" &&
-      relaunchManagedSupervisorSession(sandboxName, { quiet })
+      isExactlyMissingManagedSupervisor(execResult)
     ) {
-      return "relaunched";
+      const relaunch = relaunchManagedSupervisorSessionImpl(sandboxName, {
+        quiet,
+        deps: {
+          confirmMissingSupervisor: (containerId) =>
+            isExactlyMissingManagedSupervisor(
+              requestPinnedGatewaySupervisorAction(sandboxName, "probe", 210000, containerId),
+            ),
+        },
+      });
+      if (relaunch) return { kind: "relaunched", relaunch };
     }
     if (!quiet) printGatewayRestartFailure(sandboxName, failure.layer, failure.detail);
     return null;
@@ -483,7 +525,7 @@ function recoverSandboxProcesses(
     // Non-Hermes custom manifests do not yet declare a supported host-side
     // runtime user. Recover them over SSH so the launch inherits the sandbox
     // login user instead of creating root-owned agent state under /sandbox.
-    return recoveredSsh(executeSandboxCommand(sandboxName, agentScript)) ? "custom" : null;
+    return recoveredSsh(executeSandboxCommand(sandboxName, agentScript));
   }
 
   return null;
@@ -550,8 +592,8 @@ function printHostManagedGatewayRecoveryHints(
 ): void {
   const quotedSandboxName = shellQuote(sandboxName);
   if (failureLayer === "supervisor not running") {
-    console.error("  The in-sandbox supervisor is not running, so the managed gateway restart");
-    console.error("  cannot relaunch it (a container restart stops the supervisor).");
+    console.error("  The in-sandbox supervisor is not running, and trusted container recovery");
+    console.error("  could not restore a managed supervisor and healthy gateway.");
     console.error("  Recreate the sandbox runtime to restore it:");
     console.error(`    nemoclaw ${quotedSandboxName} rebuild --yes`);
     console.error("  If rebuild is blocked, destroy and re-onboard the sandbox to restore it.");
@@ -601,6 +643,7 @@ export function waitForRecoveredSandboxGateway(
     sleepImpl?: (seconds: number) => void;
     quiet?: boolean;
     timeoutSeconds?: number;
+    requireManagedProbe?: boolean;
   } = {},
 ): boolean {
   const probe = options.probeImpl ?? isSandboxGatewayRunning;
@@ -629,6 +672,7 @@ export function waitForRecoveredSandboxGateway(
   const probeDuringRecoveryWait = () => {
     const managedResult = managedProbe?.(sandboxName) ?? null;
     if (managedResult !== null) return managedResult;
+    if (options.requireManagedProbe) return false;
     return probe(sandboxName);
   };
 
@@ -704,9 +748,15 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
   {
     quiet = false,
     requestGatewaySupervisorAction = executeGatewaySupervisorAction,
+    requestPinnedGatewaySupervisorAction = executeGatewaySupervisorActionPinned,
+    relaunchManagedSupervisorSessionImpl = relaunchManagedSupervisorSession,
+    isSandboxGatewayRunningImpl = isSandboxGatewayRunning,
   }: {
     quiet?: boolean;
     requestGatewaySupervisorAction?: typeof executeGatewaySupervisorAction;
+    requestPinnedGatewaySupervisorAction?: RequestPinnedGatewaySupervisorAction;
+    relaunchManagedSupervisorSessionImpl?: typeof relaunchManagedSupervisorSession;
+    isSandboxGatewayRunningImpl?: typeof isSandboxGatewayRunning;
   } = {},
 ) {
   const recoveryAgent = agentRuntime.getSessionAgent(sandboxName);
@@ -720,7 +770,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       runtime: "terminal" as const,
     };
   }
-  const running = isSandboxGatewayRunning(sandboxName);
+  const running = isSandboxGatewayRunningImpl(sandboxName);
   if (running === null) {
     return { checked: false, wasRunning: null, recovered: false, forwardRecovered: false };
   }
@@ -869,31 +919,62 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
   }
 
   let managedRecoveryFailureLayer: GatewayRestartFailureLayer | null = null;
-  const recoveryKind = recoverSandboxProcesses(sandboxName, {
+  const recovery = recoverSandboxProcesses(sandboxName, {
     quiet,
     requestGatewaySupervisorAction,
+    requestPinnedGatewaySupervisorAction,
+    relaunchManagedSupervisorSessionImpl,
     onFailureLayer: (layer) => {
       managedRecoveryFailureLayer = layer;
     },
   });
-  if (recoveryKind !== null) {
+  if (recovery !== null) {
+    const relaunch = recovery.kind === "relaunched" ? recovery.relaunch : null;
+    const requestManagedProbe = relaunch
+      ? (name: string, action: "restart" | "recover" | "probe", timeout = 210000) =>
+          requestPinnedGatewaySupervisorAction(name, action, timeout, relaunch.containerId)
+      : requestGatewaySupervisorAction;
     // Wait for gateway to bind its HTTP port before declaring success. The
     // recovered process can be alive before the OpenAI-compatible API is ready.
-    if (
-      !waitForRecoveredSandboxGateway(sandboxName, {
+    let gatewayReady = false;
+    try {
+      gatewayReady = waitForRecoveredSandboxGateway(sandboxName, {
         quiet,
-        initialManagedHealthPassed: recoveryKind === "managed",
+        initialManagedHealthPassed: recovery.kind === "managed",
+        requireManagedProbe: recovery.kind === "relaunched",
         timeoutSeconds: gatewayRecoveryTimeoutSeconds(recoveryAgent),
         managedProbeImpl: (name) =>
           confirmRecoveredSandboxGatewayManaged(name, {
-            requestGatewaySupervisorActionImpl: requestGatewaySupervisorAction,
+            requestGatewaySupervisorActionImpl: requestManagedProbe,
           }),
-      })
-    ) {
+      });
+    } catch (error) {
+      try {
+        relaunch?.finalize(false);
+      } catch {
+        // Preserve the original recovery error; the failure path below will
+        // direct the operator to inspect/rebuild the sandbox.
+      }
+      throw error;
+    }
+    if (!gatewayReady) {
+      let rolledBack = true;
+      if (relaunch) {
+        try {
+          rolledBack = relaunch.finalize(false).rolledBack;
+        } catch {
+          rolledBack = false;
+        }
+      }
       if (!quiet) {
         console.error("  Gateway process started but is not responding.");
         printGatewayWedgeDiagnostics(sandboxName, executeSandboxExecCommand);
         console.error("  Check /tmp/gateway.log inside the sandbox for details.");
+        if (!rolledBack) {
+          console.error(
+            "  Automatic rollback of the previous sandbox container failed; inspect Docker state before retrying.",
+          );
+        }
         printHostManagedGatewayRecoveryHints(
           sandboxName,
           recoveryAgent,
@@ -901,6 +982,22 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         );
       }
       return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
+    }
+    if (relaunch) {
+      try {
+        const completion = relaunch.finalize(true);
+        if (!completion.backupRemoved && !quiet) {
+          console.error(
+            "  Warning: the recovered sandbox is healthy, but its previous container backup could not be removed.",
+          );
+        }
+      } catch {
+        if (!quiet) {
+          console.error(
+            "  Warning: the recovered sandbox is healthy, but container transaction cleanup could not be confirmed.",
+          );
+        }
+      }
     }
     const mcpRefusal = processRecoveryMcpReconciliationRefusal(sandboxName, false);
     if (mcpRefusal) return mcpRefusal;
@@ -969,6 +1066,9 @@ export function checkAndRecoverSandboxProcesses(
   options: {
     quiet?: boolean;
     requestGatewaySupervisorAction?: typeof executeGatewaySupervisorAction;
+    requestPinnedGatewaySupervisorAction?: RequestPinnedGatewaySupervisorAction;
+    relaunchManagedSupervisorSessionImpl?: typeof relaunchManagedSupervisorSession;
+    isSandboxGatewayRunningImpl?: typeof isSandboxGatewayRunning;
   } = {},
 ) {
   return withTimerBoundShieldsMutationLock(sandboxName, "gateway process recovery", () =>
