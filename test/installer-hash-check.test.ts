@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -47,11 +48,15 @@ const ASSETS = [...ASSET_DIGESTS.keys()];
 const UNPUBLISHED_ASSET = "openshell-sandbox-aarch64-unknown-linux-gnu-unpublished.tar.gz";
 const SYMLINK_INPUT_MARKER = "LEAK565";
 type FixtureMode =
+  | "allowlisted-alternate-version"
   | "brev-mismatch"
   | "complete"
   | "duplicate-brev-pin"
   | "failure"
+  | "incomplete-trusted-allowlist"
+  | "mismatched-table-versions"
   | "missing-brev-pin"
+  | "multiple-installer-versions"
   | "non-regular-brev-input"
   | "oversized-installer-input"
   | "partial"
@@ -79,10 +84,13 @@ const BREV_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> =
   },
   "missing-brev-pin": (source) =>
     source.replace(ASSET_DIGESTS.get(ASSETS[1]) ?? "missing", "missing"),
+  "mismatched-table-versions": (source) => source.replaceAll("v0.0.72:", "v0.0.73:"),
   "pr-checker-bypass": corruptFirstBrevPin,
   "pr-parser-bypass": corruptFirstBrevPin,
 };
 const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> = {
+  "multiple-installer-versions": (source) =>
+    source.replace(`v0.0.72:${ASSETS[0]}`, `v0.0.73:${ASSETS[0]}`),
   "partial-asset-missing": (source) =>
     source.replace(ASSETS.at(-1) ?? "missing", UNPUBLISHED_ASSET),
 };
@@ -216,12 +224,10 @@ function createFixture(
   tempDirs.push(fixtureRoot);
   fs.mkdirSync(checksDir, { recursive: true });
   fs.mkdirSync(binDir, { recursive: true });
-  const checker = fs
-    .readFileSync(path.join(REPO_ROOT, "scripts", "check-installer-hash.sh"), "utf8")
-    .replace(
-      'OPENSHELL_RELEASE_VERSION="0.0.72"',
-      `OPENSHELL_RELEASE_VERSION="${openshellVersion}"`,
-    );
+  const checker = fs.readFileSync(
+    path.join(REPO_ROOT, "scripts", "check-installer-hash.sh"),
+    "utf8",
+  );
   fs.writeFileSync(path.join(scriptsDir, "check-installer-hash.sh"), checker);
   fs.copyFileSync(
     path.join(REPO_ROOT, "scripts", "checks", "extract-installer-pins.mts"),
@@ -318,6 +324,32 @@ function runFixture(
       : fs.readFileSync(targetChecker, "utf8"),
   );
   const checker = trustedChecker ? trustedCheckerPath : targetChecker;
+  if (mode === "allowlisted-alternate-version") {
+    const alternateEntries = [...CHECKSUM_MANIFESTS.entries()]
+      .map(
+        ([manifest, contents]) =>
+          `  "9.9.9|${manifest}|${createHash("sha256").update(contents).digest("hex")}"`,
+      )
+      .join("\n");
+    const checkerSource = fs.readFileSync(checker, "utf8");
+    fs.writeFileSync(
+      checker,
+      checkerSource.replace(
+        "readonly -a OPENSHELL_RELEASE_MANIFEST_ALLOWLIST=(\n",
+        `readonly -a OPENSHELL_RELEASE_MANIFEST_ALLOWLIST=(\n${alternateEntries}\n`,
+      ),
+    );
+  }
+  if (mode === "incomplete-trusted-allowlist") {
+    const checkerSource = fs.readFileSync(checker, "utf8");
+    fs.writeFileSync(
+      checker,
+      checkerSource.replace(
+        /^\s*"0\.0\.72\|openshell-sandbox-checksums-sha256\.txt\|[a-f0-9]{64}"\s*$/m,
+        "",
+      ),
+    );
+  }
   const installer = path.join(fixtureRoot, "scripts", "install-openshell.sh");
   const installerSource = fs.readFileSync(installer, "utf8");
   const mutateInstaller = INSTALLER_MUTATIONS[mode] ?? ((source: string) => source);
@@ -357,12 +389,61 @@ describe("installer hash verification", () => {
     expect(result.stdout).toContain("All installer hashes are current");
   });
 
-  it("uses the single release-version constant for release URLs and pin selection", () => {
-    const result = runFixture("complete", "9.9.9");
+  it("derives the release version from matching static installer pin tables", () => {
+    const result = runFixture("complete", undefined, true);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Checking OpenShell v0.0.72 release assets");
+    expect(result.stdout).toContain("All installer hashes are current");
+  });
+
+  it("selects a second complete trusted release from the allowlist", () => {
+    const result = runFixture("allowlisted-alternate-version", "9.9.9", true);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("Checking OpenShell v9.9.9 release assets");
     expect(result.stdout).toContain("All installer hashes are current");
+  });
+
+  it("fails closed when the derived release is not allowlisted", () => {
+    const result = runFixture("complete", "9.9.9", true);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain(
+      "OpenShell v9.9.9 is not in the trusted release-manifest allowlist",
+    );
+    expect(result.stdout).not.toContain("Checking OpenShell v9.9.9 release assets");
+    expect(result.stdout).not.toContain("All installer hashes are current");
+  });
+
+  it("fails closed when an allowlisted release lacks all three manifest digests", () => {
+    const result = runFixture("incomplete-trusted-allowlist", undefined, true);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain(
+      "OpenShell v0.0.72 does not have exactly three trusted release-manifest digests",
+    );
+    expect(result.stdout).not.toContain("Checking OpenShell v0.0.72 release assets");
+    expect(result.stdout).not.toContain("All installer hashes are current");
+  });
+
+  it.each([
+    [
+      "multiple-installer-versions",
+      "openshell_pinned_sha256 must contain exactly one release version, found 0.0.72, 0.0.73",
+    ],
+    [
+      "mismatched-table-versions",
+      "installer and Brev launchable pin tables must use the same release version, found 0.0.72, 0.0.73",
+    ],
+  ] as const)("fails closed for %s", (mode, diagnostic) => {
+    const result = runFixture(mode, undefined, true);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
+    expect(result.stdout).toContain(diagnostic);
+    expect(result.stdout).not.toContain("Checking OpenShell v0.0.72 release assets");
+    expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
   it.each([
@@ -394,7 +475,6 @@ describe("installer hash verification", () => {
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
-    expect(result.stdout).toContain("expected 2 pinned Brev OpenShell v0.0.72 CLI assets");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 

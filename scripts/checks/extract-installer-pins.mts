@@ -12,13 +12,13 @@ type Token = {
 
 export type InstallerPin = {
   asset: string;
+  releaseVersion: string;
   sha256: string;
   source: string;
 };
 
 type ExtractOptions = {
   functionName: string;
-  releaseVersion: string;
   sourceLabel: string;
 };
 
@@ -26,7 +26,6 @@ type CliOptions = {
   brevInstaller: string;
   format: "json" | "tsv";
   installer: string;
-  releaseVersion: string;
 };
 
 const FUNCTION_LOCAL_PATTERN = /^local release_tag\s*=\s*\$1 asset\s*=\s*\$2$/u;
@@ -314,7 +313,12 @@ function staticPinFromArm(pattern: string, commandTokens: Token[]): InstallerPin
   if (!SHA256_PATTERN.test(sha256)) {
     fail(`case arm ${pattern} does not contain one literal lowercase SHA-256 digest`);
   }
-  return { asset: match[2] ?? "", sha256, source: "" };
+  return {
+    asset: match[2] ?? "",
+    releaseVersion: match[1] ?? "",
+    sha256,
+    source: "",
+  };
 }
 
 // invalidState: trusted CI accepts a pin table whose shell formatting hides,
@@ -373,7 +377,7 @@ export function extractInstallerPins(source: string, options: ExtractOptions): I
     const pin = staticPinFromArm(pattern.value, body.slice(commandStart, cursor));
     if (pattern.value === "*") {
       fallbackCount += 1;
-    } else if (pin && pattern.value.startsWith(`v${options.releaseVersion}:`)) {
+    } else if (pin) {
       pins.push({ ...pin, source: options.sourceLabel });
     }
     cursor = skipSeparators(body, cursor + 1);
@@ -386,6 +390,16 @@ export function extractInstallerPins(source: string, options: ExtractOptions): I
     fail(`${options.functionName} must contain exactly one fail-closed fallback arm`);
   }
 
+  if (pins.length === 0) {
+    fail(`${options.functionName} contains no versioned pins`);
+  }
+  const releaseVersions = [...new Set(pins.map((pin) => pin.releaseVersion))].sort();
+  if (releaseVersions.length !== 1) {
+    fail(
+      `${options.functionName} must contain exactly one release version, found ${releaseVersions.join(", ")}`,
+    );
+  }
+
   const duplicateAssets = pins
     .map((pin) => pin.asset)
     .filter((asset, index, assets) => assets.indexOf(asset) !== index);
@@ -393,9 +407,6 @@ export function extractInstallerPins(source: string, options: ExtractOptions): I
     fail(
       `${options.functionName} contains duplicate assets: ${[...new Set(duplicateAssets)].join(", ")}`,
     );
-  }
-  if (pins.length === 0) {
-    fail(`${options.functionName} contains no v${options.releaseVersion} pins`);
   }
   return pins;
 }
@@ -407,7 +418,7 @@ function parseCliOptions(argv: string[]): CliOptions {
     const value = argv[index + 1] ?? "";
     if (!option.startsWith("--") || !value) {
       fail(
-        "usage: extract-installer-pins.mts --release-version VERSION --installer PATH --brev-installer PATH [--format json|tsv]",
+        "usage: extract-installer-pins.mts --installer PATH --brev-installer PATH [--format json|tsv]",
       );
     }
     if (values.has(option)) {
@@ -415,48 +426,51 @@ function parseCliOptions(argv: string[]): CliOptions {
     }
     values.set(option, value);
   }
-  const releaseVersion = values.get("--release-version") ?? "";
   const installer = values.get("--installer") ?? "";
   const brevInstaller = values.get("--brev-installer") ?? "";
   const format = values.get("--format") ?? "json";
-  const allowedOptions = new Set([
-    "--brev-installer",
-    "--format",
-    "--installer",
-    "--release-version",
-  ]);
+  const allowedOptions = new Set(["--brev-installer", "--format", "--installer"]);
   const unknownOptions = [...values.keys()].filter((option) => !allowedOptions.has(option));
   if (
     unknownOptions.length > 0 ||
-    !/^[0-9]+\.[0-9]+\.[0-9]+$/u.test(releaseVersion) ||
     !installer ||
     !brevInstaller ||
     (format !== "json" && format !== "tsv")
   ) {
     fail(`invalid CLI options${unknownOptions.length > 0 ? `: ${unknownOptions.join(", ")}` : ""}`);
   }
-  return { brevInstaller, format, installer, releaseVersion };
+  return { brevInstaller, format, installer };
 }
 
 function runCli(): void {
   const options = parseCliOptions(process.argv.slice(2));
-  const pins = [
-    ...extractInstallerPins(readInstallerInput(options.installer, "installer"), {
-      functionName: "openshell_pinned_sha256",
-      releaseVersion: options.releaseVersion,
-      sourceLabel: "installer",
-    }),
-    ...extractInstallerPins(readInstallerInput(options.brevInstaller, "Brev launchable"), {
+  const installerPins = extractInstallerPins(readInstallerInput(options.installer, "installer"), {
+    functionName: "openshell_pinned_sha256",
+    sourceLabel: "installer",
+  });
+  const brevPins = extractInstallerPins(
+    readInstallerInput(options.brevInstaller, "Brev launchable"),
+    {
       functionName: "openshell_cli_pinned_sha256",
-      releaseVersion: options.releaseVersion,
       sourceLabel: "Brev launchable",
-    }),
-  ];
+    },
+  );
+  const pins = [...installerPins, ...brevPins];
+  const releaseVersions = [...new Set(pins.map((pin) => pin.releaseVersion))].sort();
+  if (releaseVersions.length !== 1) {
+    fail(
+      `installer and Brev launchable pin tables must use the same release version, found ${releaseVersions.join(", ")}`,
+    );
+  }
   if (options.format === "json") {
     process.stdout.write(`${JSON.stringify(pins)}\n`);
     return;
   }
-  process.stdout.write(pins.map((pin) => `${pin.source}\t${pin.asset}\t${pin.sha256}`).join("\n"));
+  process.stdout.write(
+    pins
+      .map((pin) => `${pin.releaseVersion}\t${pin.source}\t${pin.asset}\t${pin.sha256}`)
+      .join("\n"),
+  );
   process.stdout.write("\n");
 }
 
