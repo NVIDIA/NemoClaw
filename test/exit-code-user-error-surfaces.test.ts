@@ -344,7 +344,7 @@ describe("onboard dashboard-port exhaustion exits non-zero (#5974)", () => {
     expect(combined).toContain(
       `All dashboard ports in range ${PORT_RANGE_START}-${PORT_RANGE_END} are occupied`,
     );
-    expect(combined).not.toMatch(/Installing OpenShell|Reinstalling|Upgrading/);
+    expect(combined).not.toMatch(/\b(?:installing|reinstalling|upgrading)\b/i);
     expect(result.status).toBeGreaterThan(0);
   });
 });
