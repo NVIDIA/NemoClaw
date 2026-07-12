@@ -81,7 +81,7 @@
       "live": "test/e2e/live/sandbox-rlimits-connect.test.ts",
       "fast": [
         "test/cli/dispatch-basics.test.ts",
-        "test/e2e/support/rlimit-connect-workflow-boundary.test.ts",
+        "test/e2e/support/e2e-workflow.test.ts",
         "test/sandbox-rlimit-hooks.test.ts"
       ]
     },
