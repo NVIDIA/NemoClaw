@@ -144,7 +144,7 @@ Start from a version-matched source checkout and append one final browser layer 
 ## Apply the Browser Policy
 
 Save the following custom preset as `egress-policy.yaml`.
-Replace `example.com` with the target host and add a separate endpoint for each page dependency.
+Replace `example.com` with the target host, replace `/your-form` with the exact write path, and add a separate endpoint for each page dependency.
 
 ```yaml
 preset:
@@ -163,7 +163,7 @@ network_policies:
           - allow: { method: GET, path: "/**" }
           - allow: { method: HEAD, path: "/**" }
           - allow: { method: OPTIONS, path: "/**" }
-          - allow: { method: POST, path: "/**" }
+          - allow: { method: POST, path: "/your-form" }
     binaries:
       - { path: /usr/local/lib/ms-playwright/** }
 ```
