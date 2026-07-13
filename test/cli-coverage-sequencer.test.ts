@@ -49,14 +49,17 @@ function representativeCliCoverageEntries(): WeightedShardEntry<string>[] {
     const projectName = file.startsWith("src/") ? "cli" : "integration";
     return { key: `${projectName}:${file}`, weightMs, value: file };
   });
-  const projectSizes = { cli: 808, integration: 500 } as const;
+  const projectSizes = { cli: 832, integration: 512 } as const;
   const ordinary = (Object.keys(projectSizes) as (keyof typeof projectSizes)[]).flatMap(
     (projectName) => {
       const measuredCount = measured.filter((entry) =>
         entry.key.startsWith(`${projectName}:`),
       ).length;
       return Array.from({ length: projectSizes[projectName] - measuredCount }, (_, index) => {
-        const file = `roster/regular-${index}.test.ts`;
+        const file =
+          projectName === "cli"
+            ? `src/lib/fixture-${index}.test.ts`
+            : `test/fixture-${index}.test.ts`;
         return {
           key: `${projectName}:${file}`,
           weightMs: cliTestTimingHints.defaultDurationMs,
@@ -133,7 +136,7 @@ describe("stable CLI coverage sharding", () => {
     const weights = shards.map((shard) => shard.totalWeightMs);
     const averageWeight = weights.reduce((total, weight) => total + weight, 0) / weights.length;
 
-    expect(Math.max(...weights)).toBeLessThanOrEqual(averageWeight * 1.06);
+    expect(Math.max(...weights)).toBeLessThanOrEqual(averageWeight * 1.05);
   });
 
   it("uses stable sharding only for CLI coverage projects", () => {
