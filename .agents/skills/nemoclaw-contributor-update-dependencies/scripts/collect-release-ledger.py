@@ -12,7 +12,6 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass
-from functools import total_ordering
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +29,6 @@ class LedgerError(RuntimeError):
     """Raised when the requested release range cannot be proven."""
 
 
-@total_ordering
 @dataclass(frozen=True)
 class Version:
     """A SemVer identity with ordering suitable for release-ledger endpoints."""
@@ -39,6 +37,7 @@ class Version:
     minor: int
     patch: int
     prerelease: str | None = None
+    build: str | None = None
 
     @classmethod
     def parse(cls, value: str) -> Version | None:
@@ -47,15 +46,28 @@ class Version:
         match = SEMVER_RE.fullmatch(value)
         if not match:
             return None
+        prerelease = match.group("prerelease")
+        build = match.group("build")
+        if prerelease is not None:
+            identifiers = prerelease.split(".")
+            if any(
+                not identifier
+                or (identifier.isdigit() and len(identifier) > 1 and identifier.startswith("0"))
+                for identifier in identifiers
+            ):
+                return None
+        if build is not None and any(not identifier for identifier in build.split(".")):
+            return None
         return cls(
             int(match.group("major")),
             int(match.group("minor")),
             int(match.group("patch")),
-            match.group("prerelease"),
+            prerelease,
+            build,
         )
 
     def __lt__(self, other: object) -> bool:
-        """Compare versions using SemVer core and prerelease precedence rules."""
+        """Compare SemVer precedence while deliberately ignoring build metadata."""
 
         if not isinstance(other, Version):
             return NotImplemented
@@ -68,6 +80,15 @@ class Version:
         if other.prerelease is None:
             return True
         return self._prerelease_is_less(self.prerelease, other.prerelease)
+
+    def compare_precedence(self, other: Version) -> int:
+        """Return the SemVer precedence comparison, excluding build metadata."""
+
+        if self < other:
+            return -1
+        if other < self:
+            return 1
+        return 0
 
     @staticmethod
     def _prerelease_is_less(left: str, right: str) -> bool:
@@ -91,7 +112,9 @@ class Version:
         """Render the normalized version without a tag's optional leading ``v``."""
 
         base = f"{self.major}.{self.minor}.{self.patch}"
-        return f"{base}-{self.prerelease}" if self.prerelease else base
+        if self.prerelease:
+            base = f"{base}-{self.prerelease}"
+        return f"{base}+{self.build}" if self.build else base
 
 
 def git(repo: Path, *args: str, allow_failure: bool = False) -> str:
@@ -116,6 +139,20 @@ def resolve_commit(repo: Path, ref: str) -> str:
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise LedgerError(f"{ref!r} did not resolve to a full commit SHA")
     return sha
+
+
+def explicitly_referenced_tag(repo: Path, ref: str, sha: str) -> str | None:
+    """Return the tag named directly by ``ref`` when it resolves to ``sha``."""
+
+    tag = ref.removeprefix("refs/tags/")
+    tag_sha = git(
+        repo,
+        "rev-parse",
+        "--verify",
+        f"refs/tags/{tag}^{{commit}}",
+        allow_failure=True,
+    )
+    return tag if tag_sha == sha else None
 
 
 def is_ancestor(repo: Path, older: str, newer: str) -> bool:
@@ -239,6 +276,16 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
 
     start_sha = resolve_commit(repo, args.from_ref)
     target_sha = resolve_commit(repo, args.to_ref)
+    for option, ref, sha in (
+        ("--from", args.from_ref, start_sha),
+        ("--to", args.to_ref, target_sha),
+    ):
+        explicit_tag = explicitly_referenced_tag(repo, ref, sha)
+        if explicit_tag is not None and Version.parse(explicit_tag) is None:
+            raise LedgerError(
+                f"{option} explicitly references tag {explicit_tag!r}, which is not a valid "
+                "semantic-version tag"
+            )
     if not is_ancestor(repo, start_sha, target_sha):
         raise LedgerError(f"{args.from_ref!r} is not an ancestor of {args.to_ref!r}")
 
@@ -259,10 +306,11 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
         version = Version.parse(tag)
         if version is None:
             continue
-        if version <= start_version:
-            continue
         tag_sha = resolve_commit(repo, f"refs/tags/{tag}")
         explicitly_targeted = tag == explicit_target_tag and tag_sha == target_sha
+        precedence = version.compare_precedence(start_version)
+        if precedence < 0 or (precedence == 0 and not explicitly_targeted):
+            continue
         if version.prerelease and not args.include_prereleases and not explicitly_targeted:
             continue
         if not is_ancestor(repo, start_sha, tag_sha):

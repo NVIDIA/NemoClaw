@@ -205,6 +205,61 @@ describe("dependency release ledger collector", () => {
     expect(ledger.ranges[0]?.to.ref).toBe("v1.0.1-rc.1");
   });
 
+  it("preserves SemVer build metadata as part of the exact release identity", () => {
+    const { repo, targetSha } = createTaggedRepository();
+    git(repo, "tag", "v1.0.3+build.7", targetSha);
+    const result = runCollector(repo, "v1.0.0", "refs/tags/v1.0.3+build.7");
+
+    expect(result.status, result.stderr).toBe(0);
+    const ledger = JSON.parse(result.stdout) as Ledger;
+    expect(ledger.releaseEndpoints.at(-1)).toMatchObject({
+      ref: "v1.0.3+build.7",
+      sha: targetSha,
+      version: "1.0.3+build.7",
+    });
+  });
+
+  it("ignores malformed SemVer tags and rejects them as explicit endpoints", () => {
+    const { repo } = createTaggedRepository();
+    const invalidTags = ["v1.0.3-01", "v1.0.3-rc.01"];
+    for (const tag of invalidTags) {
+      git(repo, "tag", tag);
+    }
+
+    const ordinary = runCollector(repo, "v1.0.0", "HEAD");
+    expect(ordinary.status, ordinary.stderr).toBe(0);
+    expect(
+      (JSON.parse(ordinary.stdout) as Ledger).releaseEndpoints.map(({ ref }) => ref),
+    ).not.toEqual(expect.arrayContaining(invalidTags));
+
+    for (const tag of invalidTags) {
+      const explicit = runCollector(repo, "v1.0.0", `refs/tags/${tag}`);
+      expect(explicit.status).toBe(1);
+      expect(explicit.stderr).toContain("semantic-version tag");
+    }
+  });
+
+  it("rejects empty prerelease and build identifiers before Git collection", () => {
+    const probe = spawnSync(
+      "python3",
+      [
+        "-c",
+        [
+          "import json, runpy, sys",
+          "version = runpy.run_path(sys.argv[1], run_name='ledger_module')['Version']",
+          "print(json.dumps([version.parse(value) is None for value in sys.argv[2:]]))",
+        ].join("; "),
+        collector,
+        "v1.0.3-rc..1",
+        "v1.0.3+build..7",
+      ],
+      { encoding: "utf8" },
+    );
+
+    expect(probe.status, probe.stderr).toBe(0);
+    expect(JSON.parse(probe.stdout) as boolean[]).toEqual([true, true]);
+  });
+
   it("fails closed for missing refs, reversed ancestry, and existing output", () => {
     const { repo, targetSha } = createTaggedRepository();
     const missing = runCollector(repo, "v1.0.0", "missing-ref");
