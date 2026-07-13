@@ -122,15 +122,13 @@ function runArtifactValidation(
   const artifactDir = path.join(tmp, "artifacts");
   const binDir = path.join(tmp, "bin");
   const resultPath = path.join(artifactDir, "pr-review-advisor-final-result.json");
+  const resultFixturePath = path.join(tmp, "result-fixture.json");
   fs.mkdirSync(artifactDir);
   fs.mkdirSync(binDir);
-  if (options.symlinkResult) {
-    const outside = path.join(tmp, "outside.json");
-    fs.writeFileSync(outside, `${JSON.stringify(result)}\n`);
-    fs.symlinkSync(outside, resultPath);
-  } else {
-    fs.writeFileSync(resultPath, `${JSON.stringify(result)}\n`);
-  }
+  fs.writeFileSync(resultFixturePath, `${JSON.stringify(result)}\n`);
+  options.symlinkResult
+    ? fs.symlinkSync(resultFixturePath, resultPath)
+    : fs.copyFileSync(resultFixturePath, resultPath);
   fs.writeFileSync(
     path.join(artifactDir, "pr-review-advisor-summary.md"),
     options.summary ?? "# PR Review Advisor\n",
