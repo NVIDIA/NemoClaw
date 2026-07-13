@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { upsertStickyComment } from "../tools/advisors/github.mts";
 import { runReadOnlyAdvisor } from "../tools/advisors/session.mts";
@@ -37,6 +38,37 @@ describe("PR review advisor security boundaries", () => {
           logProgress: () => undefined,
         }),
       ).rejects.toThrow(/Could not configure advisor model/);
+      expect(process.env[credentialEnv]).toBeUndefined();
+    } finally {
+      fs.rmSync(configDir, { recursive: true, force: true });
+    }
+  });
+
+  it("removes the model credential when in-memory setup fails", async () => {
+    const credentialEnv = "PR_REVIEW_ADVISOR_SETUP_FAILURE_API_KEY";
+    vi.stubEnv(credentialEnv, "test-secret");
+    const configDir = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-config-"));
+    vi.spyOn(ModelRegistry.prototype, "registerProvider").mockImplementation(() => {
+      throw new Error("setup failed");
+    });
+
+    try {
+      await expect(
+        runReadOnlyAdvisor({
+          cwd: ROOT,
+          promptTurns: [],
+          systemPrompt: "test",
+          configDir,
+          htmlExportPath: path.join(configDir, "session.html"),
+          timeoutMs: 1000,
+          heartbeatMs: 1000,
+          maxCaptureBytes: 1024,
+          modelId: "missing-model",
+          credentialEnv,
+          logPrefix: "test",
+          logProgress: () => undefined,
+        }),
+      ).rejects.toThrow("setup failed");
       expect(process.env[credentialEnv]).toBeUndefined();
     } finally {
       fs.rmSync(configDir, { recursive: true, force: true });
