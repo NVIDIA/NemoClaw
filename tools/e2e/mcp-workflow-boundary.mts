@@ -19,7 +19,6 @@ const DEV_EXACT_MAIN_FULL_LIFECYCLE_NAME = "Require exact-main full lifecycle";
 const DEV_EXACT_MAIN_SOURCE_SHA = "bb72d0123c748ed7e209880f7bab593e10aae221";
 const DEV_EXACT_MAIN_RUN_ID = "29215426930";
 const DEV_EXACT_MAIN_CLI_VERSION = "0.0.82-dev.11+gbb72d012";
-const MCP_AGENT_MATRIX_FILTER = "-t '^(mcp-bridge|mcp-bridge-hermes|mcp-bridge-deepagents)$'";
 const MCP_AGENT_MATRIX_PROOF_TOOL = "tools/e2e/assert-mcp-agent-matrix-artifacts.mts";
 const DEV_CREDENTIAL_WINDOW_ID = "openshell-credential-generation-window";
 const DEV_CREDENTIAL_WINDOW_FILE = `test/e2e/live/${DEV_CREDENTIAL_WINDOW_ID}.test.ts`;
@@ -27,6 +26,17 @@ const DEV_EXACT_MAIN_MATRIX_FILTER =
   `-t '^(mcp-bridge|mcp-bridge-hermes|mcp-bridge-deepagents|${DEV_CREDENTIAL_WINDOW_ID})$'`;
 const DEV_EXACT_MAIN_SUPERVISOR_INDEX =
   "fc441051102b1a16ffcabf59878fa464d3c548f29bfbfa6e4acb232ab67198b7";
+const STABLE_RELEASE_SOURCE_SHA = "94cdd697c55aedb571f177ec13cfa54a8e213919";
+const STABLE_RELEASE_SUPERVISOR_INDEX =
+  "790485a36adc43ff4562b92de5387cebfb05b5c1e27b62738779b37f01939365";
+const STABLE_RELEASE_PROVENANCE_TOKENS = [
+  'releaseTag: "v0.0.82"',
+  STABLE_RELEASE_SOURCE_SHA,
+  "9375f54f809f8b4301f1da562d64d509851be5889ef3a1bcf50c64e1280399e9",
+  "31adba5b7608db538ab4f72808f0dddcfa97ede8e357a7674a454427b31886bc",
+  "145246049bd73c60452ac3c2b4b1801663196c8e2f80575af820289c78c1cf09",
+  "mcp-bridge-deepagents/openshell-exact-main-provenance.json",
+] as const;
 const DEV_EXACT_MAIN_REQUIRED_STAGE_TOKENS = [
   DEV_EXACT_MAIN_CLI_VERSION,
   "0.0.82-dev.11+gbb72d0123",
@@ -170,6 +180,18 @@ function validateJobIdentity(
       env.NEMOCLAW_OPENSHELL_CHANNEL,
       "stable",
       "mcp-bridge must pin the stable OpenShell channel",
+    );
+    requireEqual(
+      errors,
+      env.NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF,
+      "1",
+      "mcp-bridge must enable the stable release live contract proof",
+    );
+    requireEqual(
+      errors,
+      env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
+      `ghcr.io/nvidia/openshell/supervisor@sha256:${STABLE_RELEASE_SUPERVISOR_INDEX}`,
+      "mcp-bridge must pin the reviewed stable supervisor index",
     );
     if (Object.hasOwn(env, "E2E_DEFAULT_ENABLED")) {
       errors.push("mcp-bridge must remain default-enabled");
@@ -460,6 +482,12 @@ function validateJobExecution(
       "1",
       "mcp-bridge must force the selected stable OpenShell install",
     );
+    const installRun = asString(install.run);
+    for (const token of STABLE_RELEASE_PROVENANCE_TOKENS) {
+      if (!installRun.includes(token)) {
+        errors.push(`mcp-bridge stable release provenance is missing reviewed identity: ${token}`);
+      }
+    }
   }
   requireContains(
     errors,
@@ -539,27 +567,22 @@ function validateJobExecution(
   for (const required of ["--project e2e-live", "test/e2e/live/mcp-bridge.test.ts"]) {
     requireContains(errors, run.run, required, `${jobName} must run the unified MCP live test`);
   }
-  const expectedMatrixFilter =
-    jobName === "mcp-bridge-dev" ? DEV_EXACT_MAIN_MATRIX_FILTER : MCP_AGENT_MATRIX_FILTER;
+  const expectedMatrixFilter = DEV_EXACT_MAIN_MATRIX_FILTER;
   requireContains(errors, run.run, expectedMatrixFilter, `${jobName} must select its exact matrix`);
-  if (jobName === "mcp-bridge-dev") {
-    requireContains(
-      errors,
-      run.run,
-      DEV_CREDENTIAL_WINDOW_FILE,
-      "mcp-bridge-dev exact-main proof must run the credential generation-window lifecycle",
-    );
-    requireContains(
-      errors,
-      run.run,
-      "--no-file-parallelism",
-      "mcp-bridge-dev must serialize stateful exact-main lifecycle files",
-    );
-  }
-  const matrixProofCommand = [
-    `npx tsx ${MCP_AGENT_MATRIX_PROOF_TOOL} "$E2E_ARTIFACT_DIR"`,
-    ...(jobName === "mcp-bridge-dev" ? [DEV_CREDENTIAL_WINDOW_ID] : []),
-  ].join(" ");
+  requireContains(
+    errors,
+    run.run,
+    DEV_CREDENTIAL_WINDOW_FILE,
+    `${jobName} must run the credential generation-window lifecycle`,
+  );
+  requireContains(
+    errors,
+    run.run,
+    "--no-file-parallelism",
+    `${jobName} must serialize the stateful release lifecycle files`,
+  );
+  const matrixProofCommand =
+    `npx tsx ${MCP_AGENT_MATRIX_PROOF_TOOL} "$E2E_ARTIFACT_DIR" ${DEV_CREDENTIAL_WINDOW_ID}`;
   requireContains(
     errors,
     run.run,

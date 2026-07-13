@@ -100,6 +100,8 @@ describe("OpenShell 0.0.82 migration review", () => {
       "sha256:790485a36adc43ff4562b92de5387cebfb05b5c1e27b62738779b37f01939365",
     );
     expect(review).toContain("SLSA-bound release archives");
+    expect(review).toContain("9375f54f809f8b4301f1da562d64d509851be5889ef3a1bcf50c64e1280399e9");
+    expect(review).toContain("31adba5b7608db538ab4f72808f0dddcfa97ede8e357a7674a454427b31886bc");
   });
 
   it("records exact development identities without treating them as a stable release", () => {
@@ -176,14 +178,14 @@ describe("OpenShell 0.0.82 migration review", () => {
     expect(review).toContain("cache identity omits resolved `sandbox_uid`");
   });
 
-  it("binds selected-driver and tmpfs claims to the candidate-main runtime only", () => {
-    expect(review).toContain("Exact-main selected-driver and mount proof boundary");
+  it("binds selected-driver and tmpfs claims to the stable release runtime", () => {
+    expect(review).toContain("Stable release selected-driver and mount proof boundary");
     expect(review).toContain("actual mode-0600");
     expect(review).toMatch(/no unselected\s+driver table/u);
     expect(review).toContain("must not appear in `HostConfig.Binds`");
     expect(review).toMatch(/fresh tmpfs\s+mount/u);
     expect(review).toContain("existing stable gateway-upgrade test");
-    expect(review).toContain("cannot be cited as candidate-main evidence");
+    expect(review).toContain("cannot be cited as fresh-release identity evidence");
     expect(review).toContain("enforcing-SELinux host");
 
     const helper = fs.readFileSync(

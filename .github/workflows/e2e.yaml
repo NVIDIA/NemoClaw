@@ -574,9 +574,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    # Three destructive agent scenarios each have a 45-minute Vitest budget,
-    # plus pinned OpenShell installation and cold image setup.
-    timeout-minutes: 240
+    # Three destructive agent scenarios plus the credential-generation window
+    # run serially against one stable release installation.
+    timeout-minutes: 300
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "mcp-bridge"
@@ -584,7 +584,9 @@ jobs:
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_MCP_BRIDGE_AGENT_MATRIX: "1"
       NEMOCLAW_OPENSHELL_CHANNEL: stable
+      NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:790485a36adc43ff4562b92de5387cebfb05b5c1e27b62738779b37f01939365
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -628,6 +630,18 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/install-openshell.sh
+          mkdir -p "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents"
+          jq -n '{
+            schemaVersion: 1,
+            sourceRepository: "NVIDIA/OpenShell",
+            releaseTag: "v0.0.82",
+            sourceSha: "94cdd697c55aedb571f177ec13cfa54a8e213919",
+            artifacts: {
+              cli: {binarySha256: "9375f54f809f8b4301f1da562d64d509851be5889ef3a1bcf50c64e1280399e9"},
+              gateway: {binarySha256: "31adba5b7608db538ab4f72808f0dddcfa97ede8e357a7674a454427b31886bc"},
+              standaloneSandbox: {binarySha256: "145246049bd73c60452ac3c2b4b1801663196c8e2f80575af820289c78c1cf09"}
+            }
+          }' > "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents/openshell-exact-main-provenance.json"
 
       - name: Run MCP OpenShell provider live test
         run: |
@@ -645,9 +659,11 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-live \
             test/e2e/live/mcp-bridge.test.ts \
-            -t '^(mcp-bridge|mcp-bridge-hermes|mcp-bridge-deepagents)$' \
+            test/e2e/live/openshell-credential-generation-window.test.ts \
+            -t '^(mcp-bridge|mcp-bridge-hermes|mcp-bridge-deepagents|openshell-credential-generation-window)$' \
+            --no-file-parallelism \
             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
-          npx tsx tools/e2e/assert-mcp-agent-matrix-artifacts.mts "$E2E_ARTIFACT_DIR"
+          npx tsx tools/e2e/assert-mcp-agent-matrix-artifacts.mts "$E2E_ARTIFACT_DIR" openshell-credential-generation-window
 
       - id: mcp_artifact_secret_scan
         name: Scan MCP artifacts for fixture credentials
@@ -914,7 +930,7 @@ jobs:
             8ec9b88c49f001d070ada7bb5a98fb6f96498fc446b0f2f614056247d7300b85
 
           chmod 600 "$staging_root/openshell" "$staging_root/openshell-gateway" "$staging_root/openshell-sandbox"
-          mkdir -p "$E2E_ARTIFACT_DIR"
+          mkdir -p "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents"
           jq -n \
             --arg sourceSha "$OPENSHELL_SOURCE_SHA" \
             --arg runId "$OPENSHELL_RUN_ID" \
@@ -970,7 +986,7 @@ jobs:
                 gateway: {id: 8266452366, name: "gateway-binary-linux-amd64", zipMember: "openshell-gateway-x86_64-unknown-linux-gnu.tar.gz", archiveMember: "openshell-gateway", zipSha256: "39504758f07a8bac0a52d958ec56e380ac59824bde8db72a815a9b82c6bbcfd6", archiveSha256: "5e3728564b1f965cb5d320bab4f37d388303723f42a64c308227dbc1ef382043", binarySha256: "39e75f7a2a96c220e3f2d645067f0623d922385ade07edb2037a27cc07ea81d1"},
                 standaloneSandbox: {id: 8266435047, name: "supervisor-binary-linux-amd64", zipMember: "openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz", archiveMember: "openshell-sandbox", zipSha256: "7b2e47adbbfc644806b465a4f4c3c7bfaba7117e1f19ec9f151b37695b418bf4", archiveSha256: "6f7040e89ec249df7f3b36ddff609a87f096fcdf62cd5c28e86757f175e40a7a", binarySha256: "58e5d99261d2b8ea06664d020995830fd3f153ea692f36622b92f9b827ea60c8"}
               }
-            }' > "$E2E_ARTIFACT_DIR/openshell-exact-main-provenance.json"
+            }' > "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents/openshell-exact-main-provenance.json"
           unset GH_TOKEN
 
       - name: Revoke Docker auth before unverified dev tooling

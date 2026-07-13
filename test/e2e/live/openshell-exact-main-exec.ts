@@ -249,8 +249,9 @@ export async function assertExactMainOpenShellContracts(
   host: HostCliClient,
   sandboxName: string,
 ): Promise<void> {
-  // The stable lane intentionally retains the old behavior. The exact-main
-  // workflow sets this gate and requires this proof before accepting the run.
+  // The stable release lane sets this gate and requires this proof before
+  // accepting the pinned OpenShell release. The historical environment name is
+  // retained so the proof helpers and their artifacts stay backward compatible.
   if (process.env.NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF !== "1") return;
 
   await assertExactMainChildProcessContracts(host, sandboxName);
