@@ -273,6 +273,7 @@ export const REMOTE_PROVIDER_NAMES = [
   "nvidia-nim",
   "openai-api",
   "openrouter-api",
+  "minimax-api",
   "anthropic-prod",
   "compatible-anthropic-endpoint",
   "gemini-api",

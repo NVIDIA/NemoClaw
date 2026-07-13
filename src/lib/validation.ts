@@ -314,6 +314,7 @@ export function shouldSkipResponsesProbe(provider: string): boolean {
     provider === "nvidia-prod" ||
     provider === "nvidia-nim" ||
     provider === "gemini-api" ||
+    provider === "minimax-api" ||
     provider === "openrouter-api"
   );
 }

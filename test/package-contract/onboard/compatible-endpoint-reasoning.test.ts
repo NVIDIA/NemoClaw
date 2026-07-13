@@ -52,7 +52,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["4", "https://proxy.example.com/v1", "reasoning-model"];
+const answers = ["5", "https://proxy.example.com/v1", "reasoning-model"];
 const messages = [];
 
 credentials.prompt = async (message) => {

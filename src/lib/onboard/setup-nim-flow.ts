@@ -165,6 +165,7 @@ export interface SetupNimFlowDeps {
     preferredInferenceApi: string | null,
   ): string | null;
   clearCompatibleEndpointReasoning(): null;
+  applyKnownModelContextWindow(provider: string, model: string | null): number | null;
   maybePromptForInferenceInputCapability(model: string | null): Promise<void>;
 }
 
@@ -618,6 +619,7 @@ export function createSetupNim(
       deps,
     );
     const selectedModel = isBackToSelection(model) ? null : model;
+    deps.applyKnownModelContextWindow(provider, selectedModel);
     await deps.maybePromptForInferenceInputCapability(selectedModel);
     return {
       model: selectedModel,

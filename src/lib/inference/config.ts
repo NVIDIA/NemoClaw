@@ -8,6 +8,7 @@
 
 import { isSafeModelId, shouldSkipResponsesProbe } from "../validation";
 import { DEFAULT_OLLAMA_MODEL } from "./local";
+import { MINIMAX_CREDENTIAL_ENV, MINIMAX_DEFAULT_MODEL, MINIMAX_PROVIDER_NAME } from "./minimax";
 import { OPENROUTER_CREDENTIAL_ENV, OPENROUTER_PROVIDER_NAME } from "./openrouter";
 
 export const INFERENCE_ROUTE_URL = "https://inference.local/v1";
@@ -159,6 +160,13 @@ export function getProviderSelectionConfig(
         credentialEnv: "OPENAI_API_KEY",
         providerLabel: "OpenAI",
       };
+    case MINIMAX_PROVIDER_NAME:
+      return {
+        ...base,
+        model: model || MINIMAX_DEFAULT_MODEL,
+        credentialEnv: MINIMAX_CREDENTIAL_ENV,
+        providerLabel: "MiniMax",
+      };
     case OPENROUTER_PROVIDER_NAME:
       return {
         ...base,
@@ -267,6 +275,7 @@ export function getSandboxInferenceConfig(
       inferenceApi = "anthropic-messages";
       break;
     case "gemini-api":
+    case MINIMAX_PROVIDER_NAME:
     case OPENROUTER_PROVIDER_NAME:
     case "hermes-provider":
       providerKey = MANAGED_PROVIDER_ID;

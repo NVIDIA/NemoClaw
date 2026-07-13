@@ -204,6 +204,23 @@ describe("model prompt helpers", () => {
     expect(result).toBe("gpt-5.4-mini");
   });
 
+  it("offers both curated MiniMax models and defaults to MiniMax-M3", async () => {
+    const writeLine = vi.fn();
+    const defaultModel = await promptRemoteModel("MiniMax", "minimax", "MiniMax-M3", null, {
+      promptFn: promptSequence([""]),
+      writeLine,
+    });
+    const secondModel = await promptRemoteModel("MiniMax", "minimax", "MiniMax-M3", null, {
+      promptFn: promptSequence(["2"]),
+      writeLine,
+    });
+
+    expect(defaultModel).toBe("MiniMax-M3");
+    expect(secondModel).toBe("MiniMax-M2.7");
+    expect(writeLine).toHaveBeenCalledWith("    1) MiniMax-M3");
+    expect(writeLine).toHaveBeenCalledWith("    2) MiniMax-M2.7");
+  });
+
   it("treats non-numeric curated selections as manual-entry fallback", async () => {
     const result = await promptRemoteModel("OpenAI", "openai", "gpt-5.4-mini", null, {
       promptFn: promptSequence(["abc", "custom-model"]),

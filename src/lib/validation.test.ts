@@ -436,6 +436,10 @@ describe("shouldSkipResponsesProbe", () => {
     expect(shouldSkipResponsesProbe("openrouter-api")).toBe(true);
   });
 
+  it("skips the Responses probe for minimax-api", () => {
+    expect(shouldSkipResponsesProbe("minimax-api")).toBe(true);
+  });
+
   it("does not skip the Responses probe for other providers", () => {
     expect(shouldSkipResponsesProbe("openai-api")).toBe(false);
     expect(shouldSkipResponsesProbe("anthropic-prod")).toBe(false);

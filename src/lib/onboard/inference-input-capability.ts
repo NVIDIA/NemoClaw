@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isMiniMaxImageInputModel } from "../inference/minimax";
+
 type InferenceInputCapabilityDeps = {
   env?: NodeJS.ProcessEnv;
   isNonInteractive: () => boolean;
@@ -21,7 +23,7 @@ export function isValidInferenceInputsOverride(value: string | undefined): boole
 }
 
 export function shouldPromptForInferenceInputCapability(model: string | null | undefined): boolean {
-  return !!model && MULTIMODAL_MODEL_HINT_PATTERN.test(model);
+  return !!model && (isMiniMaxImageInputModel(model) || MULTIMODAL_MODEL_HINT_PATTERN.test(model));
 }
 
 export async function maybePromptForInferenceInputCapability(

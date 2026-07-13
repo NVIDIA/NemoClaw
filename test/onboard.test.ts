@@ -477,6 +477,8 @@ startGateway(null).catch(() => {});
       true,
     );
     expect(shouldPromptForInferenceInputCapability("qwen2.5-vl-72b")).toBe(true);
+    expect(shouldPromptForInferenceInputCapability("MiniMax-M3")).toBe(true);
+    expect(shouldPromptForInferenceInputCapability("MiniMax-M2.7")).toBe(false);
     expect(shouldPromptForInferenceInputCapability("moonshotai/kimi-k2.6")).toBe(false);
     expect(shouldPromptForInferenceInputCapability(null)).toBe(false);
   });

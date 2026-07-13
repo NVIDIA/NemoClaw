@@ -12,7 +12,11 @@ vi.mock("./local", () => ({
 }));
 vi.mock("./vllm-runtime-context", () => ({ resolveVllmContextWindowFromModels: vi.fn() }));
 
-import { type ContextWindowDeps, resolveContextWindowForModel } from "./context-window";
+import {
+  applyKnownModelContextWindow,
+  type ContextWindowDeps,
+  resolveContextWindowForModel,
+} from "./context-window";
 
 function makeDeps(over: Partial<ContextWindowDeps> = {}): ContextWindowDeps {
   return {
@@ -64,5 +68,25 @@ describe("resolveContextWindowForModel", () => {
     ).toBe(131072);
     expect(deps.warmOllamaModel).not.toHaveBeenCalled();
     expect(deps.probeOllamaContextWindow).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["MiniMax-M3", 1_000_000],
+    ["MiniMax-M2.7", 204_800],
+  ])("returns the registered MiniMax context window for %s", (model, expected) => {
+    const deps = makeDeps();
+
+    expect(resolveContextWindowForModel("minimax-api", model, deps)).toBe(expected);
+    expect(deps.defaultCloudContextWindow).not.toHaveBeenCalled();
+  });
+
+  it("stages a known context window for onboarding without replacing an explicit override", () => {
+    const automatic: NodeJS.ProcessEnv = {};
+    const explicit: NodeJS.ProcessEnv = { NEMOCLAW_CONTEXT_WINDOW: "32768" };
+
+    expect(applyKnownModelContextWindow("minimax-api", "MiniMax-M3", automatic)).toBe(1_000_000);
+    expect(automatic.NEMOCLAW_CONTEXT_WINDOW).toBe("1000000");
+    expect(applyKnownModelContextWindow("minimax-api", "MiniMax-M3", explicit)).toBeNull();
+    expect(explicit.NEMOCLAW_CONTEXT_WINDOW).toBe("32768");
   });
 });

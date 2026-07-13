@@ -4,6 +4,7 @@
 import { BACK_TO_SELECTION, type BackToSelection } from "../navigation";
 import { isSafeModelId } from "../validation";
 import { CLOUD_MODEL_OPTIONS, HERMES_PROVIDER_MODEL_OPTIONS } from "./config";
+import { MINIMAX_MODEL_OPTIONS } from "./minimax";
 import { validateNvidiaEndpointModel } from "./provider-models";
 
 export { promptVllmModel, type VllmModelPromptOptions } from "./vllm-prompt";
@@ -17,6 +18,7 @@ export type ModelPromptResult = string | BackToSelection;
 
 export const REMOTE_MODEL_OPTIONS: Record<string, string[]> = {
   openai: ["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.4-pro-2026-03-05"],
+  minimax: [...MINIMAX_MODEL_OPTIONS],
   anthropic: ["claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-6"],
   gemini: [
     "gemini-3.1-pro-preview",

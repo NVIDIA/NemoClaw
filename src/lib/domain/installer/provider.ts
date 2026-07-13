@@ -5,6 +5,7 @@ export const INSTALLER_PROVIDER_VALUES = [
   "build",
   "openrouter",
   "openai",
+  "minimax",
   "anthropic",
   "anthropicCompatible",
   "gemini",

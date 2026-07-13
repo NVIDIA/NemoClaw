@@ -14,6 +14,7 @@ const {
   NON_INTERACTIVE_PROVIDER_KEYS,
   REMOTE_PROVIDER_CONFIG,
   buildProviderArgs,
+  getEffectiveProviderName,
   getRequestedModelHint,
   getRequestedProviderHint,
   isProviderKeyCredentialCandidate,
@@ -32,6 +33,8 @@ const {
       providerName: string;
       providerType: string;
       credentialEnv: string;
+      endpointUrl?: string;
+      defaultModel?: string;
     }
   >;
   buildProviderArgs: (
@@ -41,6 +44,7 @@ const {
     credentialEnv: string,
     baseUrl: string | null,
   ) => string[];
+  getEffectiveProviderName: (providerKey: string | null) => string | null;
   getRequestedModelHint: (
     nonInteractive: boolean,
     allowHostedInferenceStaging?: boolean,
@@ -134,6 +138,29 @@ describe("onboard provider helpers", () => {
         "https://openrouter.ai/api/v1",
       ),
     ).toContain("OPENAI_BASE_URL=https://openrouter.ai/api/v1");
+  });
+
+  it("registers MiniMax as a first-class OpenAI-compatible provider", () => {
+    const provider = REMOTE_PROVIDER_CONFIG.minimax;
+
+    expect(provider).toMatchObject({
+      providerName: "minimax-api",
+      providerType: "openai",
+      credentialEnv: "MINIMAX_API_KEY",
+      endpointUrl: "https://api.minimax.io/v1",
+      defaultModel: "MiniMax-M3",
+    });
+    expect(NON_INTERACTIVE_PROVIDER_KEYS.has("minimax")).toBe(true);
+    expect(
+      buildProviderArgs(
+        "create",
+        provider.providerName,
+        provider.providerType,
+        provider.credentialEnv,
+        provider.endpointUrl ?? null,
+      ),
+    ).toContain("OPENAI_BASE_URL=https://api.minimax.io/v1");
+    expect(getEffectiveProviderName("minimax")).toBe("minimax-api");
   });
 
   it("keeps the discovery profile Anthropic before agent-specific surface selection (#6289)", () => {

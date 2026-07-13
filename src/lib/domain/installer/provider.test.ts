@@ -36,11 +36,11 @@ describe("installer provider helpers", () => {
 
   it("keeps help text values aligned with install.sh usage", () => {
     expect(installerProviderHelpValues()).toBe(
-      "build, openrouter, openai, anthropic, anthropicCompatible, gemini, ollama, custom, nim-local, vllm, routed",
+      "build, openrouter, openai, minimax, anthropic, anthropicCompatible, gemini, ollama, custom, nim-local, vllm, routed",
     );
     expect(installerProviderUsageLines()).toEqual([
-      "build | openrouter | openai | anthropic",
-      "anthropicCompatible | gemini | ollama | custom | nim-local | vllm | routed",
+      "build | openrouter | openai | minimax",
+      "anthropic | anthropicCompatible | gemini | ollama | custom | nim-local | vllm | routed",
       "aliases: anthropiccompatible -> anthropicCompatible, cloud -> build, nim -> nim-local, open-router -> openrouter, openrouterai -> openrouter",
     ]);
   });

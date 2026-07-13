@@ -29,6 +29,12 @@ const REMOTE_PROVIDER_CONFIG: SetupNimFlowDeps["remoteProviderConfig"] = {
     endpointUrl: "https://openrouter.ai/api/v1",
     credentialEnv: "OPENROUTER_API_KEY",
   },
+  minimax: {
+    label: "MiniMax",
+    providerName: "minimax-api",
+    endpointUrl: "https://api.minimax.io/v1",
+    credentialEnv: "MINIMAX_API_KEY",
+  },
   custom: {
     label: "Other OpenAI-compatible endpoint",
     providerName: "compatible-endpoint",
@@ -133,6 +139,7 @@ function makeDeps(overrides: Partial<SetupNimFlowDeps> = {}): SetupNimFlowDeps {
     resolveAgentInferenceApi: (_agentName, _provider, preferredInferenceApi) =>
       preferredInferenceApi,
     clearCompatibleEndpointReasoning: () => null,
+    applyKnownModelContextWindow: vi.fn(() => null),
     maybePromptForInferenceInputCapability: vi.fn(async () => {}),
   };
   return { ...defaults, ...overrides };
@@ -243,6 +250,7 @@ describe("createSetupNim", () => {
     const log = vi.fn();
     const prompt = vi.fn(async () => "");
     const maybePromptForInferenceInputCapability = vi.fn(async () => {});
+    const applyKnownModelContextWindow = vi.fn(() => null);
     const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
       async ({ selected }, state) => {
         expect(selected.key).toBe("build");
@@ -260,6 +268,7 @@ describe("createSetupNim", () => {
         log,
         prompt,
         maybePromptForInferenceInputCapability,
+        applyKnownModelContextWindow,
         detectInferenceProviderHostState: () =>
           makeHostState({
             hasOllama: true,
@@ -279,6 +288,10 @@ describe("createSetupNim", () => {
     expect(handleRemoteProviderSelection).toHaveBeenCalledOnce();
     expect(handleRemoteProviderSelection.mock.calls[0]?.[0].gatewayName).toBe("nemoclaw-9090");
     expect(maybePromptForInferenceInputCapability).toHaveBeenCalledWith(
+      "nvidia/nemotron-3-super-120b-a12b",
+    );
+    expect(applyKnownModelContextWindow).toHaveBeenCalledWith(
+      "nvidia-prod",
       "nvidia/nemotron-3-super-120b-a12b",
     );
     const { inferenceCapabilityCache, ...resultWithoutCache } = result;

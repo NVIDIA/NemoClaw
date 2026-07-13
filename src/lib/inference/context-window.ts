@@ -17,6 +17,7 @@ import {
   type RunCaptureFn,
   resolveOllamaRuntimeContextWindow,
 } from "./local";
+import { getMiniMaxContextWindow, MINIMAX_PROVIDER_NAME } from "./minimax";
 import { resolveVllmContextWindowFromModels } from "./vllm-runtime-context";
 
 export interface ContextWindowDeps {
@@ -28,6 +29,22 @@ export interface ContextWindowDeps {
   probeVllmContextWindow: (model: string) => number | null;
   /** Fallback window for providers without a per-model runtime signal (cloud). */
   defaultCloudContextWindow: () => number;
+}
+
+export function resolveKnownModelContextWindow(provider: string, model: string): number | null {
+  return provider === MINIMAX_PROVIDER_NAME ? getMiniMaxContextWindow(model) : null;
+}
+
+export function applyKnownModelContextWindow(
+  provider: string,
+  model: string | null,
+  env: NodeJS.ProcessEnv = process.env,
+): number | null {
+  if (!model || env.NEMOCLAW_CONTEXT_WINDOW?.trim()) return null;
+  const contextWindow = resolveKnownModelContextWindow(provider, model);
+  if (contextWindow === null) return null;
+  env.NEMOCLAW_CONTEXT_WINDOW = String(contextWindow);
+  return contextWindow;
 }
 
 const defaultContextWindowDeps: ContextWindowDeps = {
@@ -75,6 +92,8 @@ export function resolveContextWindowForModel(
   model: string,
   deps: ContextWindowDeps = defaultContextWindowDeps,
 ): number | null {
+  const knownContextWindow = resolveKnownModelContextWindow(provider, model);
+  if (knownContextWindow !== null) return knownContextWindow;
   if (provider === "ollama-local") {
     deps.warmOllamaModel(model);
     return deps.probeOllamaContextWindow(model);

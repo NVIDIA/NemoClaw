@@ -210,6 +210,16 @@ describe("inference selection config", () => {
       provider: "openrouter-api",
       providerLabel: "OpenRouter",
     });
+    expect(getProviderSelectionConfig("minimax-api", "MiniMax-M2.7")).toEqual({
+      endpointType: "custom",
+      endpointUrl: INFERENCE_ROUTE_URL,
+      ncpPartner: null,
+      model: "MiniMax-M2.7",
+      profile: DEFAULT_ROUTE_PROFILE,
+      credentialEnv: "MINIMAX_API_KEY",
+      provider: "minimax-api",
+      providerLabel: "MiniMax",
+    });
     expect(getProviderSelectionConfig("anthropic-prod", "claude-sonnet-4-6")).toEqual(
       expect.objectContaining({ model: "claude-sonnet-4-6", providerLabel: "Anthropic" }),
     );
@@ -264,6 +274,7 @@ describe("inference selection config", () => {
       "nvidia-nim",
       "openai-api",
       "openrouter-api",
+      "minimax-api",
       "anthropic-prod",
       "compatible-anthropic-endpoint",
       "gemini-api",
@@ -299,6 +310,7 @@ describe("inference selection config", () => {
   it("falls back to provider defaults when model is omitted", () => {
     expect(getProviderSelectionConfig("openai-api")?.model).toBe("gpt-5.4");
     expect(getProviderSelectionConfig("openrouter-api")?.model).toBe(DEFAULT_CLOUD_MODEL);
+    expect(getProviderSelectionConfig("minimax-api")?.model).toBe("MiniMax-M3");
     expect(getProviderSelectionConfig("anthropic-prod")?.model).toBe("claude-sonnet-4-6");
     expect(getProviderSelectionConfig("gemini-api")?.model).toBe("gemini-2.5-flash");
     expect(getProviderSelectionConfig("compatible-endpoint")?.model).toBe("custom-model");
@@ -392,6 +404,18 @@ describe("getSandboxInferenceConfig", () => {
     expect(getSandboxInferenceConfig("moonshotai/kimi-k2.6", "openrouter-api")).toEqual({
       providerKey: MANAGED_PROVIDER_ID,
       primaryModelRef: `${MANAGED_PROVIDER_ID}/moonshotai/kimi-k2.6`,
+      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceApi: "openai-completions",
+      inferenceCompat: {
+        supportsStore: false,
+      },
+    });
+  });
+
+  it("maps MiniMax to managed Chat Completions with store disabled", () => {
+    expect(getSandboxInferenceConfig("MiniMax-M3", "minimax-api", "openai-responses")).toEqual({
+      providerKey: MANAGED_PROVIDER_ID,
+      primaryModelRef: `${MANAGED_PROVIDER_ID}/MiniMax-M3`,
       inferenceBaseUrl: INFERENCE_ROUTE_URL,
       inferenceApi: "openai-completions",
       inferenceCompat: {

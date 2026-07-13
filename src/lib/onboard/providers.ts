@@ -14,6 +14,7 @@ const {
   getSandboxInferenceConfig,
 } = require("../inference/config");
 const openrouter = require("../inference/openrouter");
+const minimax = require("../inference/minimax");
 const { isSafeModelId } = require("../validation");
 const { compactText } = require("../core/url-utils");
 const { readGatewayProviderMetadata } = require("./gateway-provider-metadata");
@@ -50,6 +51,7 @@ const NON_INTERACTIVE_PROVIDER_KEYS = new Set([
   "build",
   "openrouter",
   "openai",
+  minimax.MINIMAX_PROVIDER_KEY,
   "anthropic",
   "anthropicCompatible",
   "gemini",
@@ -65,7 +67,7 @@ const NON_INTERACTIVE_PROVIDER_KEYS = new Set([
   "start-windows-ollama",
 ]);
 const NON_INTERACTIVE_PROVIDER_VALID_VALUES =
-  "Valid values: build, openrouter, openai, anthropic, anthropicCompatible, gemini, hermes-provider, ollama, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama";
+  "Valid values: build, openrouter, openai, minimax, anthropic, anthropicCompatible, gemini, hermes-provider, ollama, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama";
 const PROVIDER_KEY_ROUTE_VALUES = new Set(
   [
     "inference",
@@ -106,6 +108,17 @@ const REMOTE_PROVIDER_CONFIG = {
     helpUrl: "https://platform.openai.com/api-keys",
     modelMode: "curated",
     defaultModel: "gpt-5.4",
+    skipVerify: true,
+  },
+  minimax: {
+    label: "MiniMax",
+    providerName: minimax.MINIMAX_PROVIDER_NAME,
+    providerType: "openai",
+    credentialEnv: minimax.MINIMAX_CREDENTIAL_ENV,
+    endpointUrl: minimax.MINIMAX_ENDPOINT_URL,
+    helpUrl: minimax.MINIMAX_HELP_URL,
+    modelMode: "curated",
+    defaultModel: minimax.MINIMAX_DEFAULT_MODEL,
     skipVerify: true,
   },
   anthropic: {
