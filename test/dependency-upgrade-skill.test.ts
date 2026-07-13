@@ -104,6 +104,30 @@ describe("dependency upgrade skill policy", () => {
     expect(skill).toContain("scripts/collect-release-ledger.py");
     expect(guide).toContain("`nemoclaw-contributor-update-dependencies`");
   });
+
+  it("requires resolved supply-chain, cache-key, and observed-target evidence", () => {
+    const skill = fs.readFileSync(path.join(skillRoot, "SKILL.md"), "utf8");
+    const contractAudit = fs.readFileSync(
+      path.join(skillRoot, "references", "contract-audit.md"),
+      "utf8",
+    );
+
+    expect(skill).toContain("Diff resolved dependency graphs, not only top-level manifests");
+    expect(skill).toContain("lockfile checksum");
+    expect(skill).toContain("Missing notice, SBOM, advisory, or provenance coverage");
+    expect(skill).toContain("complete resolved lockfile closure with every shipped notice");
+    expect(skill).toContain("UID/GID, user and group names");
+    expect(skill).toContain("does not protect same-version configuration changes");
+    expect(skill).toContain("machine-readable expected-versus-observed manifest");
+    expect(skill).toContain("reject missing, duplicate, skipped, or stale results");
+    expect(skill).toContain("Extracting one binary narrows the");
+    expect(skill).toContain("does not erase unaudited content in the distributed artifact");
+    expect(skill).toContain("mutable bases, unpinned package resolution");
+    expect(skill).toContain("build provenance as unresolved reproducibility inputs");
+    expect(contractAudit).toContain("| Persisted state and caches |");
+    expect(contractAudit).toContain("| Dependency graph |");
+    expect(contractAudit).toContain("| Build and image content |");
+  });
 });
 
 describe("dependency release ledger collector", () => {

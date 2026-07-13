@@ -28,8 +28,11 @@ Dependency-upgrade progress:
 - [ ] Resolve exact current and target identities, ancestry, and release status
 - [ ] Enumerate every adjacent release/tag range in the upgrade gap
 - [ ] Read release notes, changelog, commits, source diffs, and upstream tests per range
+- [ ] Diff resolved direct and transitive dependencies, licenses, notices, and SBOM coverage
 - [ ] Map changed upstream contracts to direct and indirect NemoClaw consumers
+- [ ] Separate build, distributed, extracted, installed, and executed artifact surfaces
 - [ ] Inventory downstream workarounds and verify each removal condition
+- [ ] Audit persisted-state and cache keys against every behavior-changing input
 - [ ] Record every concern with evidence, failure mode, and disposition
 - [ ] Implement migrations in dependency-release order
 - [ ] Add concern-specific tests and runtime proofs
@@ -89,6 +92,15 @@ Classify every change using the risk surfaces in
 [references/contract-audit.md](references/contract-audit.md). Read source for plausible
 consumer-facing changes even when the commit title says `refactor`, `test`, `chore`, or `fix`.
 
+Diff resolved dependency graphs, not only top-level manifests. For every added, removed, or
+changed direct or transitive package, record its exact version, source, lockfile checksum, enabled
+features, direct caller, and affected trust boundary. Inspect license and notice obligations, SBOM
+coverage, vulnerability or advisory status, build scripts, native code, and unsafe code. Treat a
+transitive package that implements a security control as security-critical even when the upstream
+diff is small. Missing notice, SBOM, advisory, or provenance coverage is an explicit concern, not
+evidence of no impact. Compare the complete resolved lockfile closure with every shipped notice and
+SBOM; checking only declared or top-level dependencies is insufficient.
+
 ## 3. Trace changed contracts into NemoClaw
 
 Search for more than the dependency name and old version. Derive search keys from upstream
@@ -110,6 +122,14 @@ dependency.
 Do not mark a change irrelevant because a literal search returned no result. An exclusion needs
 both upstream source evidence describing the boundary and downstream evidence showing NemoClaw
 does not enter or depend on it.
+
+Find every prepared root, snapshot, generated configuration, and cache that can preserve dependency
+behavior across runs. Enumerate all inputs that can change the materialized result, including the
+dependency identity, image or rootfs digest, driver, platform, architecture, runtime, numeric
+UID/GID, user and group names, feature flags, policy, and relevant configuration. Compare that set
+with the cache key and cache-hit validation. Prove invalidation by changing one material input at a
+time while keeping the dependency version fixed, as well as by changing the version. A version-only
+key does not protect same-version configuration changes.
 
 ## 4. Build the concern ledger
 
@@ -180,6 +200,11 @@ execution. For every required case, retain positive evidence that the runner col
 the exact test identifier: an unskipped result plus a case-specific post-success marker or artifact.
 Compare the intended matrix with the observed test IDs and count. A filtered one-case run cannot
 stand in for a three-case matrix even when the workflow configuration says the matrix is enabled.
+Prefer a machine-readable expected-versus-observed manifest bound to the exact commit, workflow run,
+and attempt. Require one unique result per expected target, validate its exact ID and passed status,
+and reject missing, duplicate, skipped, or stale results. Produce the target-specific marker only
+after that target's assertions and required teardown succeed. A shared job artifact, configured
+matrix value, log message, or directory name is not target execution evidence.
 
 ## 7. Audit release identity separately
 
@@ -196,6 +221,12 @@ After semantic migration work is complete, verify the final release and consumed
 - OCI image attestations bound to the source and producer workflow. If none exist, record the
   provenance gap, inspect every consumed child manifest and config/source label, and verify how
   the downstream runtime extracts or executes image contents;
+- immutable base-image identities, package-repository snapshots, and exact package versions or
+  checksums for every build stage. Record mutable bases, unpinned package resolution, and disabled
+  build provenance as unresolved reproducibility inputs;
+- separate inventories for what the producer builds, publishes, and distributes and what NemoClaw
+  downloads, stores, verifies, extracts, installs, and executes. Extracting one binary narrows the
+  runtime attack surface but does not erase unaudited content in the distributed artifact;
 - coherence of every downstream selector and fallback with the trusted hash tables.
 
 Repeat source comparisons and the concern ledger against the final tag. Candidate-main evidence

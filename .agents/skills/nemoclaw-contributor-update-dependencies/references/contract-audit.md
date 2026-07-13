@@ -14,10 +14,12 @@ Use this reference to find migration risk that version searches and existing tes
 | API and protocol | protobuf, JSON, REST, headers, enums, pagination | clients, status probes, mocks, recorded fixtures | unknown field discarded; state misclassified |
 | Security and identity | auth, credentials, secret rewriting, certificates, policy | provider mutation, redaction, child env, network policy | credential bypass, stale identity reuse, false green status |
 | Lifecycle | create, start, restart, update, rebuild, destroy, cleanup | onboarding, rollback, retries, locks, crash recovery | orphan resources, double mutation, incomplete teardown |
+| Persisted state and caches | materialization inputs, cache keys, snapshots, schema versions, invalidation | prepared roots, generated config, UID/GID, driver, platform, policy, recovery | same-version config change reuses stale identity or rootfs |
 | Network | DNS, TLS, CONNECT, proxying, SSRF, timeouts | policy generation, probes, tunnels, error classification | fail-open route, re-resolution, misleading transport error |
-| Runtime topology | processes, sidecars, drivers, images, sockets, ports | gateway launch, supervisor config, PID identity, cleanup | wrong binary/image runs while version check passes |
+| Runtime topology | processes, sidecars, drivers, images, sockets, ports | build, publish, download, store, extract, install, execute, cleanup | narrow extraction is mistaken for a narrow distributed image |
 | Packaging | asset names, archive layout, hashes, libc, architectures | installers, Brev, workflows, sibling-binary discovery | correct version with missing binary or unsupported host |
-| Dependency content | base images, lockfiles, build stages, SBOM, licenses, vulnerabilities | accepted images, extraction paths, security scans, allowlists | trusted digest adds an unaudited OS or executable surface |
+| Dependency graph | resolved versions, sources, checksums, features, build scripts, native or unsafe code | lockfiles, notices, SBOM, advisories, allowlists, direct callers | transitive security implementation is absent from notices or review |
+| Build and image content | base digests, package repositories, package pins, build stages, provenance, full image contents | accepted images, extraction paths, security scans, runtime selectors | mutable base or unpinned package changes behind a trusted product version |
 | Platform support | declared minimums, kernel features, capabilities, runtime versions | supported-host matrix, preflight, fallbacks, affected hardware | upstream CI passes on a newer runtime than the supported user host |
 | Observability | status fields, logs, warnings, health semantics | doctor, status UI, automated recovery, troubleshooting | unhealthy runtime reported ready |
 | Compatibility | deprecations, removals, fallback rules, feature gates | version selection, old fixtures, upgrade/recovery paths | workaround masks new contract or blocks recovery |
@@ -40,6 +42,10 @@ For each upstream change:
    no explicit key.
 6. Compare downstream tests with upstream tests. Identify which new upstream behavior has no
    downstream assertion.
+7. For persisted or cached results, derive the complete behavior-changing input set from the
+   materialization code and compare it with the cache key and cache-hit validation.
+8. For images and archives, trace each content set through build, publication, download, storage,
+   verification, extraction, installation, and execution. Do not collapse these into one surface.
 
 ## Concern schema
 
@@ -82,6 +88,8 @@ Strong evidence directly exercises or defines the contract:
 - exact-tag source and upstream tests;
 - downstream tests that fail on the old assumption;
 - immutable runtime artifacts with exact process/image identities;
+- exact resolved dependency graph entries tied to notices, SBOM, advisory, and provenance review;
+- cache invalidation proofs that vary one material input while holding the dependency version fixed;
 - wire-level behavior for network and credential boundaries;
 - affected-platform proof for platform-specific migrations.
 
