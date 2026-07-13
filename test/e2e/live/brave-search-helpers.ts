@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import {
@@ -35,7 +36,7 @@ export function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   };
 }
 
-export async function bestEffort(run: () => Promise<unknown>): Promise<void> {
+export async function bestEffortPreclean(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
   } catch {
@@ -65,20 +66,30 @@ export async function cleanupBraveState(
   host: HostCliClient,
   sandbox: SandboxClient,
 ): Promise<void> {
-  await bestEffort(() =>
-    host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
-      artifactName: "cleanup-nemoclaw-destroy-brave-search",
-      env: commandEnv(),
-      timeoutMs: 120_000,
-    }),
-  );
-  await bestEffort(() =>
+  await bestEffortPreclean(() => cleanupBraveNemoClawSandbox(host));
+  await bestEffortPreclean(() =>
     sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
       artifactName: "cleanup-openshell-delete-brave-search",
       env: commandEnv(),
       timeoutMs: 60_000,
     }),
   );
+}
+
+export async function cleanupBraveNemoClawSandbox(host: HostCliClient): Promise<void> {
+  const result = await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
+    artifactName: "cleanup-nemoclaw-destroy-brave-search",
+    env: commandEnv(),
+    timeoutMs: 120_000,
+  });
+  const output = resultText(result);
+  expect(
+    result.exitCode === 0 ||
+      /Sandbox '.+' does not exist|Run 'nemoclaw onboard' to create one|sandbox .* not found|no such sandbox/iu.test(
+        output,
+      ),
+    `cleanup Brave sandbox ${SANDBOX_NAME}: ${output}`,
+  ).toBe(true);
 }
 
 function parsePlaceholder(configText: string): string | undefined {
@@ -203,7 +214,7 @@ export async function onboardBrave(
 
 export async function uploadSecretForLeakCheck(
   sandbox: SandboxClient,
-  cleanup: { add(name: string, run: () => Promise<void> | void): void },
+  cleanup: Pick<CleanupRegistry, "trackDisposable">,
   braveKey: string,
   redactionValues: string[],
 ): Promise<string> {
@@ -211,15 +222,18 @@ export async function uploadSecretForLeakCheck(
   const secretFile = path.join(secretDir, "brave-key");
   fs.writeFileSync(secretFile, braveKey, { mode: 0o600 });
   const remoteSecretFile = "/tmp/nemoclaw-brave-key-leak-check";
-  cleanup.add("remove temporary Brave leak-check secret", async () => {
+  cleanup.trackDisposable("remove temporary Brave leak-check secret", async () => {
     fs.rmSync(secretDir, { recursive: true, force: true });
-    await bestEffort(() =>
-      sandbox.execShell(SANDBOX_NAME, trustedSandboxShellScript(`rm -f ${remoteSecretFile}`), {
+    const result = await sandbox.execShell(
+      SANDBOX_NAME,
+      trustedSandboxShellScript(`rm -f ${remoteSecretFile}`),
+      {
         artifactName: "cleanup-brave-leak-secret",
         env: commandEnv(),
         timeoutMs: 30_000,
-      }),
+      },
     );
+    expect(result.exitCode, resultText(result)).toBe(0);
   });
   const uploadSecret = await sandbox.upload(SANDBOX_NAME, secretFile, remoteSecretFile, {
     artifactName: "phase-3-upload-brave-leak-secret",

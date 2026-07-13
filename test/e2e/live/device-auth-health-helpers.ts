@@ -49,7 +49,7 @@ export function commandEnv(inference?: DeviceAuthInferenceFixture): NodeJS.Proce
   return env;
 }
 
-export async function bestEffort(run: () => Promise<unknown>): Promise<void> {
+export async function preCleanBestEffort(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
   } catch {
@@ -93,15 +93,15 @@ export async function cleanupDeviceAuthSandbox(
   host: HostCliClient,
   sandbox: SandboxClient,
 ): Promise<void> {
-  await bestEffort(() =>
+  await preCleanBestEffort(() =>
     host.nemoclaw([SANDBOX_NAME, "destroy", "--yes"], {
       artifactName: "cleanup-nemoclaw-destroy-device-auth-health",
       env: commandEnv(),
       timeoutMs: 120_000,
     }),
   );
-  await bestEffort(() =>
-    sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
+  await preCleanBestEffort(() =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
       artifactName: "cleanup-openshell-delete-device-auth-health",
       env: commandEnv(),
       timeoutMs: 60_000,

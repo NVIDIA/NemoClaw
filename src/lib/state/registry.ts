@@ -592,6 +592,11 @@ export function reserveSandboxInferenceRoute(
   });
 }
 
+/** True only for an inference route reserved before sandbox registration. */
+export function isRouteOnlySandboxReservation(entry: SandboxEntry): boolean {
+  return entry.pendingRouteReservation === true && entry.createdAt === undefined;
+}
+
 export function isPendingReservationForSession(
   entry: SandboxEntry | null,
   sessionId: string | null | undefined,

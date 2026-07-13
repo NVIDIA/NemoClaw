@@ -15,6 +15,7 @@ import {
 export interface HostClientOptions {
   cliPath?: string;
   cwd?: string;
+  openshellPath?: string;
 }
 
 const GATEWAY_ALREADY_ABSENT =
@@ -28,15 +29,21 @@ export class HostCliClient {
   private readonly runner: CommandRunner;
   private readonly cliPath: string;
   private readonly cwd?: string;
+  private readonly openshellPath: string;
 
   constructor(runner: CommandRunner, options: HostClientOptions = {}) {
     this.runner = runner;
     this.cliPath = options.cliPath ?? process.env.NEMOCLAW_CLI_BIN ?? "nemoclaw";
     this.cwd = options.cwd;
+    this.openshellPath = options.openshellPath ?? process.env.OPENSHELL_BIN ?? "openshell";
   }
 
   get commandPath(): string {
     return this.cliPath;
+  }
+
+  get openshellCommandPath(): string {
+    return this.openshellPath;
   }
 
   command(
@@ -56,6 +63,23 @@ export class HostCliClient {
       }),
       merged,
     );
+  }
+
+  async isCommandAvailable(command: string, options: ShellProbeRunOptions = {}): Promise<boolean> {
+    const result = await this.command(
+      "bash",
+      ["-lc", 'command -v "$1" >/dev/null 2>&1', "command-availability-probe", command],
+      {
+        artifactName: `command-available-${artifactLabel(command)}`,
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+        ...options,
+      },
+    );
+    if (result.exitCode === 0) return true;
+    if (result.exitCode === 1) return false;
+    assertExitZero(result, `probe command availability for ${command}`);
+    return false;
   }
 
   nemoclaw(args: string[] = [], options: ShellProbeRunOptions = {}): Promise<ShellProbeResult> {
@@ -134,7 +158,7 @@ export class HostCliClient {
     options: ShellProbeRunOptions = {},
   ): Promise<void> {
     const artifactName = options.artifactName ?? `cleanup-gateway-${artifactLabel(gatewayName)}`;
-    const remove = await this.command("openshell", ["gateway", "remove", gatewayName], {
+    const remove = await this.command(this.openshellPath, ["gateway", "remove", gatewayName], {
       ...options,
       artifactName: `${artifactName}-remove`,
     });
@@ -145,16 +169,20 @@ export class HostCliClient {
 
     // Remove this fallback once the supported OpenShell floor no longer
     // includes builds whose local-registration verb was `gateway destroy`.
-    const destroy = await this.command("openshell", ["gateway", "destroy", "-g", gatewayName], {
-      ...options,
-      artifactName: `${artifactName}-legacy-destroy`,
-    });
+    const destroy = await this.command(
+      this.openshellPath,
+      ["gateway", "destroy", "-g", gatewayName],
+      {
+        ...options,
+        artifactName: `${artifactName}-legacy-destroy`,
+      },
+    );
     if (destroy.exitCode === 0 || GATEWAY_ALREADY_ABSENT.test(resultText(destroy))) return;
     assertExitZero(destroy, `cleanup gateway registration ${gatewayName}`);
   }
 
   async cleanupForward(port: number, options: ShellProbeRunOptions = {}): Promise<void> {
-    const result = await this.command("openshell", ["forward", "stop", String(port)], {
+    const result = await this.command(this.openshellPath, ["forward", "stop", String(port)], {
       ...options,
       artifactName: options.artifactName ?? `cleanup-forward-${port}`,
     });

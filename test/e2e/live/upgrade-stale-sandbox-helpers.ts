@@ -6,8 +6,9 @@ import os from "node:os";
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import { resultText } from "../fixtures/clients/index.ts";
+import { assertExitZero, resultText } from "../fixtures/clients/index.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import {
@@ -64,7 +65,7 @@ export function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   };
 }
 
-export async function bestEffort(run: () => Promise<unknown>): Promise<void> {
+async function bestEffortPreclean(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
   } catch {
@@ -161,29 +162,27 @@ export function assertDockerAvailable(
     })();
 }
 
-export function registerStateRestore(cleanup: {
-  add(name: string, run: () => Promise<void> | void): void;
-}): void {
+export function registerStateRestore(cleanup: Pick<CleanupRegistry, "trackDisposable">): void {
   const registrySnapshot = snapshotFile(REGISTRY_FILE);
   const sessionSnapshot = snapshotFile(SESSION_FILE);
-  cleanup.add(`restore NemoClaw state files for ${SANDBOX_NAME}`, () => {
+  cleanup.trackDisposable(`restore NemoClaw state files for ${SANDBOX_NAME}`, () => {
     restoreFile(REGISTRY_FILE, registrySnapshot);
     restoreFile(SESSION_FILE, sessionSnapshot);
   });
 }
 
-export async function cleanupStaleSandbox(
+export async function precleanStaleSandbox(
   host: HostCliClient,
   sandbox: SandboxClient,
 ): Promise<void> {
-  await bestEffort(() =>
+  await bestEffortPreclean(() =>
     host.nemoclaw([SANDBOX_NAME, "destroy", "--yes"], {
       artifactName: "cleanup-nemoclaw-destroy-upgrade-stale",
       env: commandEnv(),
       timeoutMs: 120_000,
     }),
   );
-  await bestEffort(() =>
+  await bestEffortPreclean(() =>
     sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
       artifactName: "cleanup-openshell-delete-upgrade-stale",
       env: commandEnv(),
@@ -193,13 +192,14 @@ export async function cleanupStaleSandbox(
 }
 
 export async function cleanupOldImage(host: HostCliClient): Promise<void> {
-  await bestEffort(() =>
-    host.command("docker", ["image", "rm", "-f", OLD_BASE_TAG], {
-      artifactName: "cleanup-docker-image-upgrade-stale",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 60_000,
-    }),
-  );
+  const result = await host.command("docker", ["image", "rm", "-f", OLD_BASE_TAG], {
+    artifactName: "cleanup-docker-image-upgrade-stale",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 60_000,
+  });
+  if (result.exitCode === 0 || /No such image|image[^\n]*not found/i.test(resultText(result)))
+    return;
+  assertExitZero(result, `cleanup Docker image ${OLD_BASE_TAG}`);
 }
 
 export async function installCurrentNemoclaw(
@@ -264,11 +264,9 @@ export async function buildOldOpenClawBase(host: HostCliClient): Promise<ShellPr
   }
 }
 
-export function createFixtureDockerfile(cleanup: {
-  add(name: string, run: () => Promise<void> | void): void;
-}): string {
+export function createFixtureDockerfile(cleanup: Pick<CleanupRegistry, "trackDisposable">): string {
   const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-old-openclaw-"));
-  cleanup.add("remove stale sandbox fixture Dockerfile", () =>
+  cleanup.trackDisposable("remove stale sandbox fixture Dockerfile", () =>
     fs.rmSync(fixtureDir, { recursive: true, force: true }),
   );
   const fixtureDockerfile = path.join(fixtureDir, "Dockerfile");

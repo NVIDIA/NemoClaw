@@ -11,6 +11,7 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import type { ShellProbeResult, ShellProbeRunOptions } from "../fixtures/shell-probe.ts";
+import { trackOverlayfsAutofixCleanup } from "./overlayfs-autofix-cleanup.ts";
 import { negativeOverlayOutcome } from "./overlayfs-autofix-outcome.ts";
 
 // Keep this direct: the contract mutates the host Docker daemon into
@@ -67,14 +68,6 @@ async function bash(
   options: ShellProbeRunOptions = {},
 ): Promise<ShellProbeResult> {
   return host.command("bash", ["-lc", script], options);
-}
-
-async function bestEffort(run: () => Promise<unknown>): Promise<void> {
-  try {
-    await run();
-  } catch {
-    // Cleanup stays best-effort so the primary setup/assertion failure is visible.
-  }
 }
 
 async function preCleanup(
@@ -143,7 +136,7 @@ async function waitForDocker(host: HostCliClient): Promise<boolean> {
 
 test.skipIf(overlayfsAutofixNotInRuntimePath())(
   "overlayfs-autofix: patched cluster image handles Docker containerd overlayfs",
-  async ({ artifacts, cleanup, host, secrets, skip }) => {
+  async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
     assertTestOwnedSandboxName();
 
     await artifacts.writeJson("contract.json", {
@@ -239,9 +232,15 @@ test.skipIf(overlayfsAutofixNotInRuntimePath())(
       expect(await waitForDocker(host), "Docker must come back after daemon restore").toBe(true);
       fs.rmSync(stateDir, { recursive: true, force: true });
     });
-    cleanup.add(`destroy overlayfs-autofix sandbox ${SANDBOX_NAME}`, async () => {
-      process.env.NEMOCLAW_E2E_KEEP_SANDBOX !== "1" &&
-        (await bestEffort(() => preCleanup(host, apiKey, "cleanup-overlayfs-sandbox")));
+    trackOverlayfsAutofixCleanup({
+      cleanup,
+      cleanupEnv: overlayEnv(apiKey, { GATEWAY_CONTAINER }),
+      gatewayContainer: GATEWAY_CONTAINER,
+      host,
+      preserveSandbox: process.env.NEMOCLAW_E2E_KEEP_SANDBOX === "1",
+      redactionValues,
+      sandbox,
+      sandboxName: SANDBOX_NAME,
     });
 
     const backup = await bash(

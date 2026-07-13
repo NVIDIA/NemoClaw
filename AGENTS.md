@@ -9,6 +9,13 @@ NVIDIA NemoClaw is an open-source reference stack for running always-on AI agent
 
 Status: Active development. Interfaces may change without notice.
 
+## Product Scope Gate
+
+Technical correctness, passing tests, and green CI do not establish product approval.
+Before implementing or approving a change that creates a supported integration, solution recipe, custom image, third-party stack, or other product surface, confirm that an accepted issue or design decision establishes the scope and that ownership, lifecycle, compatibility, security, and validation expectations are defined.
+If the product decision is missing, do not approve or document the contribution as canonical NemoClaw behavior.
+Stop and request maintainer direction, or route an independent solution through [Community Solutions](docs/resources/community-contributions.mdx).
+
 ## Agent Skills
 
 This repo ships agent skills under `.agents/skills/`.
@@ -141,7 +148,7 @@ For shell scripts use `#` comments. For Markdown use HTML comments.
 
 ### JavaScript
 
-- `bin/` launcher and remaining `scripts/*.js`: **CommonJS** (`require`/`module.exports`), Node.js 22.16+
+- `bin/` launcher and remaining `scripts/*.js`: **CommonJS** (`require`/`module.exports`), Node.js 22.19+
 - `test/`: **ESM** (`import`/`export`)
 - Biome config in `biome.json`
 - Keep function complexity low; existing complexity hotspots are tracked separately
@@ -180,10 +187,11 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 
 1. Read `CONTRIBUTING.md` for the full contributor guide
 2. Before coding, state what success looks like. Ask only when a choice changes behavior, security, data safety, or a supported contract. Then make the smallest change that works. For a QA-escaped defect, also add the test or diagnostic that should have caught it.
-3. For a first-time checkout, use `.agents/skills/nemoclaw-contributor-onboard/SKILL.md` or run `npm run dev:setup`
-4. Run `npm run dev:doctor` to verify the contributor environment without changing it
-5. Use `./scripts/dev-setup.sh --expose-cli` only with explicit approval for host-visible CLI exposure
-6. Run the tests targeted to the behavior you change once per relevant change set; rerun them after later edits or hook autofixes that can affect that behavior
+3. Apply the product scope gate above before implementing or approving a new supported surface
+4. For a first-time checkout, use `.agents/skills/nemoclaw-contributor-onboard/SKILL.md` or run `npm run dev:setup`
+5. Run `npm run dev:doctor` to verify the contributor environment without changing it
+6. Use `./scripts/dev-setup.sh --expose-cli` only with explicit approval for host-visible CLI exposure
+7. Run the tests targeted to the behavior you change once per relevant change set; rerun them after later edits or hook autofixes that can affect that behavior
 
 ### Plain Language and Direct Design
 

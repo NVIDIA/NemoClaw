@@ -36,6 +36,7 @@ import {
   currentGatewayUpgradeInstallerArgs,
   oldGatewayUpgradeInstallerArgs,
   upgradeGatewayCleanupScript,
+  upgradeGatewayStateCleanupScript,
   validateLegacyGatewayUpgradeFixture,
 } from "./openshell-gateway-upgrade-helpers.ts";
 
@@ -388,8 +389,12 @@ bash ${quotedInstallerArgs} >${shellQuote(logFile)} 2>&1`,
   return result;
 }
 
-async function removeUpgradeGateway(host: HostCliClient, artifactName: string): Promise<void> {
-  await bash(host, upgradeGatewayCleanupScript(PID_FILE), { artifactName, timeoutMs: 120_000 });
+async function preCleanUpgradeGateway(host: HostCliClient, artifactName: string): Promise<void> {
+  const result = await bash(host, upgradeGatewayCleanupScript(PID_FILE), {
+    artifactName,
+    timeoutMs: 120_000,
+  });
+  expectExitZero(result, "pre-clean OpenShell gateway upgrade state");
 }
 
 async function installOldNemoclawAndClaw(
@@ -716,7 +721,7 @@ const runLinuxOpenShellGatewayUpgrade = test.skipIf(process.platform !== "linux"
 runLinuxOpenShellGatewayUpgrade(
   "openshell-gateway-upgrade: upgrades old working OpenClaw claw and restores survivor state",
   { timeout: TEST_TIMEOUT_MS },
-  async ({ artifacts, cleanup, host }) => {
+  async ({ artifacts, cleanup, host, sandbox }) => {
     await artifacts.writeJson("live-upgrade-target.json", {
       id: "openshell-gateway-upgrade",
       runner: "vitest",
@@ -738,21 +743,30 @@ runLinuxOpenShellGatewayUpgrade(
       survivorSandbox: SURVIVOR_SANDBOX,
     });
 
-    cleanup.add("remove openshell gateway upgrade gateway", async () => {
-      await removeUpgradeGateway(host, "cleanup-gateway");
+    cleanup.trackDisposable("remove openshell gateway upgrade state", async () => {
+      const result = await bash(host, upgradeGatewayStateCleanupScript(PID_FILE), {
+        artifactName: "cleanup-gateway-state",
+        timeoutMs: 120_000,
+      });
+      expectExitZero(result, "cleanup OpenShell gateway upgrade state");
     });
-    cleanup.add("remove openshell gateway upgrade survivor sandbox", async () => {
-      await bash(
-        host,
-        `command -v openshell >/dev/null 2>&1 && openshell sandbox delete ${shellQuote(SURVIVOR_SANDBOX)} >/dev/null 2>&1 || true`,
-        { artifactName: "cleanup-survivor-sandbox", timeoutMs: 120_000 },
-      );
+    cleanup.trackGateway(host, "nemoclaw", {
+      artifactName: "cleanup-gateway",
+      env: liveEnv(),
+      timeoutMs: 120_000,
     });
+    cleanup.trackDisposable("remove openshell gateway upgrade survivor sandbox", () =>
+      sandbox.cleanupSandbox(SURVIVOR_SANDBOX, {
+        artifactName: "cleanup-survivor-sandbox",
+        env: liveEnv(),
+        timeoutMs: 120_000,
+      }),
+    );
 
     // Vitest retries execute in the same runner process. Tear down any failed
     // legacy gateway before each attempt so partial containerd layers from a
     // transient image-import failure cannot consume the next attempt's disk.
-    await removeUpgradeGateway(host, "pre-cleanup-gateway");
+    await preCleanUpgradeGateway(host, "pre-cleanup-gateway");
 
     const fake = await startFakeOpenAiCompatibleServer({
       apiKey: "dummy",

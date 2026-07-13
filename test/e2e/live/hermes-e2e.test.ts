@@ -201,12 +201,28 @@ function parseGatewayProcess(output: string): { owner: string; pid: string; ppid
   return { owner, pid, ppid };
 }
 
-async function bestEffort(run: () => Promise<unknown>): Promise<void> {
+async function preCleanBestEffort(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
   } catch {
-    // Cleanup is best-effort because the pre-install path may not have
+    // Pre-cleanup is best-effort because the pre-install path may not have
     // nemoclaw/openshell available yet.
+  }
+}
+
+async function captureDiagnosticsBestEffort(run: () => Promise<unknown>): Promise<void> {
+  try {
+    await run();
+  } catch {
+    // Failure diagnostics must not mask the install failure.
+  }
+}
+
+async function postDestroyGatewayBestEffort(run: () => Promise<unknown>): Promise<void> {
+  try {
+    await run();
+  } catch {
+    // The explicit sandbox-destroy assertion remains the primary phase-9 contract.
   }
 }
 
@@ -247,21 +263,21 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
   const redactionValues = inference.redactionValues();
 
   const cleanupHermes = async (label: string) => {
-    await bestEffort(() =>
+    await preCleanBestEffort(() =>
       host.command("nemoclaw", [SANDBOX_NAME, "destroy", "--yes"], {
         artifactName: `${label}-nemoclaw-destroy`,
         env: commandEnv(),
         timeoutMs: 120_000,
       }),
     );
-    await bestEffort(() =>
+    await preCleanBestEffort(() =>
       sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
         artifactName: `${label}-openshell-sandbox-delete`,
         env: commandEnv(),
         timeoutMs: 60_000,
       }),
     );
-    await bestEffort(() =>
+    await preCleanBestEffort(() =>
       sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
         artifactName: `${label}-openshell-gateway-destroy`,
         env: commandEnv(),
@@ -270,8 +286,23 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
     );
   };
 
-  cleanup.add(`destroy Hermes sandbox ${SANDBOX_NAME}`, async () => {
-    await cleanupHermes("cleanup");
+  const cleanupEnv = commandEnv();
+  cleanup.trackGateway(host, "nemoclaw", {
+    artifactName: "cleanup-openshell-gateway-destroy",
+    env: cleanupEnv,
+    timeoutMs: 60_000,
+  });
+  cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "cleanup-openshell-sandbox-delete",
+      env: cleanupEnv,
+      timeoutMs: 60_000,
+    }),
+  );
+  cleanup.trackSandbox(host, SANDBOX_NAME, {
+    artifactName: "cleanup-nemoclaw-destroy",
+    env: cleanupEnv,
+    timeoutMs: 120_000,
   });
 
   // Phase 0: pre-cleanup, after the secret gate so local skipped runs do not
@@ -302,7 +333,7 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
   });
   await (install.exitCode === 0
     ? Promise.resolve()
-    : bestEffort(() =>
+    : captureDiagnosticsBestEffort(() =>
         sandbox.execShell(
           SANDBOX_NAME,
           trustedSandboxShellScript(
@@ -1419,7 +1450,7 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
       timeoutMs: 120_000,
     });
     expect(destroy.exitCode, resultText(destroy)).toBe(0);
-    await bestEffort(() =>
+    await postDestroyGatewayBestEffort(() =>
       sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
         artifactName: "phase-9-openshell-gateway-destroy",
         env: commandEnv(),

@@ -17,12 +17,12 @@ const INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
 const CURL_PIPE_INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
 const GITHUB_INSTALL_URL = "git+https://github.com/NVIDIA/NemoClaw.git";
 
-/** Fake node that reports v22.16.0. */
+/** Fake node that reports v22.19.0. */
 function writeNodeStub(fakeBin: string) {
   writeExecutable(
     path.join(fakeBin, "node"),
     `#!/usr/bin/env bash
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then echo "v22.16.0"; exit 0; fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then echo "v22.19.0"; exit 0; fi
 if [ -n "\${1:-}" ] && [ -f "$1" ]; then
   exec ${JSON.stringify(process.execPath)} "$@"
 fi
@@ -196,7 +196,7 @@ exit 1
       path.join(fakeBin, "node"),
       `#!/usr/bin/env bash
 if [ "$1" = "--version" ]; then
-  echo "v22.16.0"
+  echo "v22.19.0"
   exit 0
 fi
 if [ -n "\${1:-}" ] && [ -f "$1" ]; then
@@ -304,7 +304,7 @@ exit 98
       path.join(fakeBin, "node"),
       `#!/usr/bin/env bash
 if [ "$1" = "--version" ]; then
-  echo "v22.16.0"
+  echo "v22.19.0"
   exit 0
 fi
 if [ "$1" = "-e" ]; then
@@ -778,7 +778,7 @@ exit 0
     expect(fs.existsSync(openshellLog)).toBe(false);
   });
 
-  it("auto-resumes an interrupted onboarding session during install", () => {
+  it("auto-resumes an interrupted onboarding session after Ubuntu 26.04 installer preflight (#3245)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-resume-"));
     const fakeBin = path.join(tmp, "bin");
     const prefix = path.join(tmp, "prefix");
@@ -797,7 +797,7 @@ exit 0
       path.join(fakeBin, "docker"),
       `#!/usr/bin/env bash
 if [ "$1" = "info" ]; then
-  echo '{"ServerVersion":"29.3.1","OperatingSystem":"Ubuntu 24.04","CgroupVersion":"2"}'
+  echo '{"ServerVersion":"29.3.1","OperatingSystem":"Ubuntu 26.04 LTS","CgroupVersion":"2"}'
   exit 0
 fi
 exit 0
@@ -1746,7 +1746,7 @@ fi`,
       path.join(fakeBin, "node"),
       `#!/usr/bin/env bash
 if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then
-  echo "v22.16.0"
+  echo "v22.19.0"
   exit 0
 fi
 if [ -n "\${1:-}" ] && [ -f "$1" ]; then
@@ -1889,7 +1889,7 @@ exit 0
       path.join(fakeBin, "node"),
       `#!/usr/bin/env bash
 if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then
-  echo "v22.16.0"
+  echo "v22.19.0"
   exit 0
 fi
 if [ -n "\${1:-}" ] && [ -f "$1" ]; then
@@ -2357,7 +2357,7 @@ nvm() {
       mkdir -p "$NVM_DIR/versions/node/v22/bin"
       cat > "$NVM_DIR/versions/node/v22/bin/node" <<'NODE'
 #!/usr/bin/env bash
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then echo "v22.16.0"; exit 0; fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then echo "v22.19.0"; exit 0; fi
 exit 0
 NODE
       chmod +x "$NVM_DIR/versions/node/v22/bin/node"
@@ -2386,7 +2386,7 @@ INSTALL
     });
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status).toBe(0);
-    expect(output).toContain("Node.js installed via nvm: v22.16.0");
+    expect(output).toContain("Node.js installed via nvm: v22.19.0");
     expect(output).toContain("Your current shell may still resolve `node` to an older version");
     expect(output).toContain('source "${NVM_DIR:-$HOME/.nvm}/nvm.sh" && nvm use 22');
   });
@@ -2972,7 +2972,7 @@ exit 0`,
     expect(`${result.stdout}${result.stderr}`).toMatch(/npm was not found on PATH/);
   });
 
-  it("succeeds with acceptable Node.js 22.16 and npm 10", () => {
+  it("succeeds with acceptable Node.js 22.19 and npm 10", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-ok-"));
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
@@ -2980,7 +2980,7 @@ exit 0`,
     writeExecutable(
       path.join(fakeBin, "node"),
       `#!/usr/bin/env bash
-if [ "$1" = "--version" ]; then echo "v22.16.0"; exit 0; fi
+if [ "$1" = "--version" ]; then echo "v22.19.0"; exit 0; fi
 exit 0`,
     );
     writeExecutable(
@@ -2996,15 +2996,15 @@ exit 0`,
     expect(`${result.stdout}${result.stderr}`).toMatch(/Runtime OK/);
   });
 
-  it("rejects Node.js 20 which is below the 22.16 minimum", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-node20-"));
+  it("rejects Node.js 22.18 which is below the 22.19 minimum", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-node22-18-"));
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
 
     writeExecutable(
       path.join(fakeBin, "node"),
       `#!/usr/bin/env bash
-if [ "$1" = "--version" ]; then echo "v20.18.0"; exit 0; fi
+if [ "$1" = "--version" ]; then echo "v22.18.0"; exit 0; fi
 exit 0`,
     );
     writeExecutable(
@@ -3019,7 +3019,7 @@ exit 0`,
     expect(result.status).not.toBe(0);
     const output = `${result.stdout}${result.stderr}`;
     expect(output).toMatch(/Unsupported runtime detected/);
-    expect(output).toMatch(/v20\.18\.0/);
+    expect(output).toMatch(/v22\.18\.0/);
   });
 
   it("rejects node that returns a non-numeric version", () => {
@@ -3190,7 +3190,7 @@ describe("curl-pipe installer release-tag resolution", () => {
     writeExecutable(
       path.join(fakeBin, "node"),
       `#!/usr/bin/env bash
-if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then echo "v22.16.0"; exit 0; fi
+if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then echo "v22.19.0"; exit 0; fi
 if [ -n "\${1:-}" ] && [ -f "$1" ]; then
   exec ${JSON.stringify(process.execPath)} "$@"
 fi
@@ -3548,7 +3548,7 @@ describe("installer atomicity (#2671)", () => {
       path.join(fakeBin, "node"),
       `#!/usr/bin/env bash
 echo "node $*" >> ${JSON.stringify(phaseLog)}
-if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then echo "v22.16.0"; exit 0; fi
+if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then echo "v22.19.0"; exit 0; fi
 if [ -n "\${1:-}" ] && [ -f "$1" ]; then exit 0; fi
 exit 0`,
     );
@@ -3609,7 +3609,7 @@ exit 0`,
       path.join(fakeBin, "node"),
       `#!/usr/bin/env bash
 echo "node $*" >> ${JSON.stringify(phaseLog)}
-if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then echo "v22.16.0"; exit 0; fi
+if [ "$1" = "-v" ] || [ "$1" = "--version" ]; then echo "v22.19.0"; exit 0; fi
 if [ -n "\${1:-}" ] && [ -f "$1" ]; then exit 0; fi
 exit 0`,
     );

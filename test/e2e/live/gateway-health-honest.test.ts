@@ -16,6 +16,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { terminateProcessIfRunning } from "../fixtures/cleanup-resources.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
@@ -83,30 +84,17 @@ test("onboard surfaces crashed Docker-driver gateway instead of reporting health
     },
   );
 
-  cleanup.add("remove sabotaged OpenShell gateway metadata", async () => {
-    await host.command(
-      "sh",
-      [
-        "-lc",
-        `command -v openshell >/dev/null 2>&1 && openshell gateway remove ${GATEWAY_NAME} || true`,
-      ],
-      {
-        artifactName: "cleanup-openshell-gateway-remove-gateway-health-honest",
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 30_000,
-      },
-    );
+  cleanup.trackGateway(host, GATEWAY_NAME, {
+    artifactName: "cleanup-openshell-gateway-health-honest",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
   });
-  cleanup.add("remove sabotaged gateway runtime files", () => {
+  cleanup.trackDisposable("remove sabotaged gateway runtime files", () => {
     const pid = fs.existsSync(gatewayPidFile)
       ? Number.parseInt(fs.readFileSync(gatewayPidFile, "utf8"), 10)
       : Number.NaN;
     if (Number.isInteger(pid) && pid > 0) {
-      try {
-        process.kill(pid, "SIGTERM");
-      } catch {
-        // Best-effort: the expected child has already exited.
-      }
+      terminateProcessIfRunning(pid);
     }
     fs.rmSync(gatewayPidFile, { force: true });
     fs.rmSync(path.join(stateDir, "runtime-marker.json"), { force: true });

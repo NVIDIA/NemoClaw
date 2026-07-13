@@ -20,7 +20,7 @@ We welcome many types of contributions:
 | **Tests** | New or improved test coverage in `test/` or `nemoclaw/test/` |
 | **Feature proposals** | Proposals that state the problem and desired behavior before implementation |
 | **Integrations** | Support for new inference backends, providers, or tools |
-| **Examples** | Worked usage examples added under `docs/` |
+| **Examples** | Product-supported examples under `docs/`, or independent solutions routed through [Community Solutions](docs/resources/community-contributions.mdx) |
 
 Security vulnerabilities must follow [SECURITY.md](SECURITY.md) — **not** GitHub issues.
 
@@ -34,6 +34,7 @@ Before starting larger work:
 - Start a [GitHub Discussion](https://github.com/NVIDIA/NemoClaw/discussions) before writing code for significant changes.
 - Open an issue after the problem, desired behavior, and current constraints are clear enough for maintainer review.
 - For questions, open a [GitHub Discussion](https://github.com/NVIDIA/NemoClaw/discussions) or comment on a related issue.
+- Confirm whether an integration, recipe, custom image, or end-to-end solution is an approved NemoClaw product surface or belongs in NemoClaw Community.
 
 Before editing, translate the request or issue into observable success criteria and define the intended change boundary.
 State assumptions only when they materially affect behavior, security, data safety, or a supported contract.
@@ -86,7 +87,7 @@ That section is a planning aid, not a commitment that a specific issue or featur
 
 Install the following before you begin.
 
-- Node.js 22.16+ and npm 10+
+- Node.js 22.19+ and npm 10+
 - Python 3.11+ (for documentation tooling)
 - Docker (running)
 - [hadolint](https://github.com/hadolint/hadolint) (Dockerfile linter — `brew install hadolint` on macOS)
@@ -409,6 +410,15 @@ In the issue or pull-request narrative, record the product root cause, why the e
 Search adjacent code paths for the same failure class within a bounded scope; fix adjacent instances only when they share the root cause and fit the current change, otherwise report them separately.
 Keep the analysis proportionate to the escaped defect and avoid assigning individual blame; ordinary defects do not require a heavyweight RCA.
 
+### Product Scope Approval
+
+Technical correctness and green CI are necessary, but they do not establish product approval.
+A pull request must not define a new supported integration, solution workflow, custom image, third-party stack, or documentation surface without prior maintainer alignment on product scope.
+
+Before opening or approving such a PR, confirm that an accepted issue or design decision defines the intended product behavior, ownership, compatibility and upgrade expectations, security review, lifecycle support, and validation boundary.
+If that decision is missing, stop implementation or review and request maintainer direction.
+Route independent solutions, complete use-case examples, and third-party integrations through [Community Solutions](docs/resources/community-contributions.mdx).
+
 ### DCO Sign-Off
 
 This project requires a [Developer Certificate of Origin (DCO)](https://developercertificate.org/) sign-off declaration in every pull request description.
@@ -443,6 +453,9 @@ If force-push is not allowed after an unverified commit is published, open a fre
 Do not add links to third-party code repositories, community collections, or unofficial resources in documentation, README files, or code. This includes "awesome lists," community template repositories, wrapper projects, and similar community-maintained resources — regardless of popularity or utility.
 
 Links to official documentation for tools we depend on (e.g., Node.js and Python) and industry standards (e.g., Conventional Commits) are acceptable.
+
+The project-owned NVIDIA NemoClaw Community repository is the designated destination for independent solutions.
+Use the canonical [Community Solutions](docs/resources/community-contributions.mdx) page to route contributors there instead of adding direct repository links throughout the docs.
 
 **Why:** External repositories are outside our control. They can change ownership, inject malicious content, or misrepresent an endorsement by NVIDIA. Keeping references within our own repo avoids these risks entirely.
 

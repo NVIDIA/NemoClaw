@@ -33,6 +33,7 @@ import {
 } from "../support/messaging-endpoint-classifiers.ts";
 import {
   cleanupMessagingState,
+  cleanupOwnedGatewayRuntimeStrict,
   commandEnv,
   parseOpenClawAgentText,
   stopGatewayRuntime,
@@ -566,13 +567,36 @@ test("messaging compatible endpoint routes Telegram-enabled OpenClaw through inf
     ],
   });
 
-  cleanup.add(`destroy messaging compatible endpoint state ${SANDBOX_NAME}`, () =>
-    cleanupMessagingState(host, SANDBOX_NAME),
+  const cleanupEnv = commandEnv();
+  cleanup.trackDisposable("clean up messaging-compatible owned gateway runtime", () =>
+    cleanupOwnedGatewayRuntimeStrict(host, "cleanup-owned-gateway-runtime-nemoclaw"),
   );
+  cleanup.trackGateway(host, "nemoclaw", {
+    artifactName: "cleanup-openshell-gateway-runtime-nemoclaw",
+    env: cleanupEnv,
+    timeoutMs: 90_000,
+  });
+  cleanup.trackForward(host, 18789, {
+    artifactName: "cleanup-openshell-forward-stop-18789",
+    env: cleanupEnv,
+    timeoutMs: 30_000,
+  });
+  cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: `cleanup-openshell-sandbox-delete-${SANDBOX_NAME}`,
+      env: cleanupEnv,
+      timeoutMs: 60_000,
+    }),
+  );
+  cleanup.trackSandbox(host, SANDBOX_NAME, {
+    artifactName: `cleanup-nemoclaw-destroy-${SANDBOX_NAME}`,
+    env: cleanupEnv,
+    timeoutMs: 120_000,
+  });
   await cleanupMessagingState(host, SANDBOX_NAME);
 
   const compatibleMock = await startCompatibleMock(MOCK_PORT, COMPAT_MODEL, COMPATIBLE_KEY);
-  cleanup.add("stop compatible endpoint mock", async () => {
+  cleanup.trackDisposable("stop compatible endpoint mock", async () => {
     await artifacts.writeJson("compatible-endpoint-mock-requests.json", compatibleMock.requests);
     await compatibleMock.close();
   });

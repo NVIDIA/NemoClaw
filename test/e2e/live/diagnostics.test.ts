@@ -76,7 +76,7 @@ function testEnv(home: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv
   });
 }
 
-async function bestEffort(run: () => Promise<unknown>): Promise<void> {
+async function preCleanBestEffort(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
   } catch {
@@ -149,35 +149,33 @@ test("diagnostics CLI creates sanitized archives and validates sandbox/credentia
   }
 
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-diagnostics-home-"));
-  cleanup.add(`remove diagnostics state for ${SANDBOX_NAME}`, async () => {
-    const env = testEnv(home);
-    await bestEffort(() =>
-      host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
-        artifactName: "cleanup-nemoclaw-destroy-diagnostics",
-        env,
-        redactionValues: [apiKey],
-        timeoutMs: 120_000,
-      }),
-    );
-    await bestEffort(() =>
-      host.command("openshell", ["sandbox", "delete", SANDBOX_NAME], {
-        artifactName: "cleanup-openshell-sandbox-delete-diagnostics",
-        env,
-        timeoutMs: 60_000,
-      }),
-    );
-    await bestEffort(() =>
-      host.command("openshell", ["gateway", "destroy", "-g", "nemoclaw"], {
-        artifactName: "cleanup-openshell-gateway-destroy-diagnostics",
-        env,
-        timeoutMs: 120_000,
-      }),
-    );
+  const cleanupEnv = testEnv(home);
+  cleanup.trackDisposable("remove diagnostics home", () => {
     fs.rmSync(home, { recursive: true, force: true });
+  });
+  cleanup.trackGateway(host, "nemoclaw", {
+    artifactName: "cleanup-openshell-gateway-destroy-diagnostics",
+    env: cleanupEnv,
+    redactionValues: [apiKey],
+    timeoutMs: 120_000,
+  });
+  cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "cleanup-openshell-sandbox-delete-diagnostics",
+      env: cleanupEnv,
+      redactionValues: [apiKey],
+      timeoutMs: 60_000,
+    }),
+  );
+  cleanup.trackSandbox(host, SANDBOX_NAME, {
+    artifactName: "cleanup-nemoclaw-destroy-diagnostics",
+    env: cleanupEnv,
+    redactionValues: [apiKey],
+    timeoutMs: 120_000,
   });
 
   const env = testEnv(home, hosted.env);
-  await bestEffort(() =>
+  await preCleanBestEffort(() =>
     host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
       artifactName: "pre-cleanup-nemoclaw-destroy-diagnostics",
       env,
@@ -185,8 +183,8 @@ test("diagnostics CLI creates sanitized archives and validates sandbox/credentia
       timeoutMs: 120_000,
     }),
   );
-  await bestEffort(() =>
-    host.command("openshell", ["sandbox", "delete", SANDBOX_NAME], {
+  await preCleanBestEffort(() =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
       artifactName: "pre-cleanup-openshell-sandbox-delete-diagnostics",
       env,
       timeoutMs: 60_000,

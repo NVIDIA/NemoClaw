@@ -4,6 +4,10 @@
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import {
+  cleanupWhenCommandAvailable,
+  cleanupWhenOpenShellAvailable,
+} from "../fixtures/cleanup-resources.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
@@ -97,7 +101,84 @@ fi`,
       "Not a Jetson/Tegra host (/dev/nvmap absent) — reporter workflow requires Jetson hardware; hermetic #4231 coverage remains in src/lib/onboard/docker-gpu-patch.test.ts.",
     );
 
-  cleanup.add("destroy Jetson nvmap sandbox", () => cleanupJetsonSandbox(host));
+  cleanup.trackDisposable("stop Jetson Ollama processes", async () => {
+    const stop = await hostShell(
+      host,
+      String.raw`set +e
+status=0
+for pattern in '[o]llama serve' '[o]llama-auth-proxy'; do
+  pkill -f "$pattern"
+  rc=$?
+  case "$rc" in
+    0|1) ;;
+    *) status="$rc" ;;
+  esac
+done
+exit "$status"`,
+      "cleanup-jetson-ollama-processes",
+      120_000,
+    );
+    expect(stop.exitCode, resultText(stop)).toBe(0);
+  });
+  const gatewayCleanupOptions = {
+    artifactName: "cleanup-jetson-openshell-gateway",
+    env: env(),
+    timeoutMs: 120_000,
+  };
+  cleanup.trackGateway(
+    {
+      cleanupGatewayRegistration: (name: string) =>
+        cleanupWhenOpenShellAvailable(
+          host,
+          {
+            artifactName: "cleanup-probe-jetson-openshell-gateway",
+            env: gatewayCleanupOptions.env,
+            timeoutMs: 30_000,
+          },
+          () => host.cleanupGatewayRegistration(name, gatewayCleanupOptions),
+        ),
+    },
+    "nemoclaw",
+    gatewayCleanupOptions,
+  );
+  const openshellSandboxCleanupOptions = {
+    artifactName: "cleanup-jetson-openshell-sandbox",
+    env: env(),
+    timeoutMs: 120_000,
+  };
+  cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+    cleanupWhenOpenShellAvailable(
+      host,
+      {
+        artifactName: "cleanup-probe-jetson-openshell-sandbox",
+        env: openshellSandboxCleanupOptions.env,
+        timeoutMs: 30_000,
+      },
+      () => sandbox.cleanupSandbox(SANDBOX_NAME, openshellSandboxCleanupOptions),
+    ),
+  );
+  const nemoclawSandboxCleanupOptions = {
+    artifactName: "cleanup-jetson-nemoclaw-sandbox",
+    env: env(),
+    timeoutMs: 120_000,
+  };
+  cleanup.trackSandbox(
+    {
+      cleanupSandbox: (name: string) =>
+        cleanupWhenCommandAvailable(
+          host,
+          host.commandPath,
+          {
+            artifactName: "cleanup-probe-jetson-nemoclaw-sandbox",
+            env: nemoclawSandboxCleanupOptions.env,
+            timeoutMs: 30_000,
+          },
+          () => host.cleanupSandbox(name, nemoclawSandboxCleanupOptions),
+        ),
+    },
+    SANDBOX_NAME,
+    nemoclawSandboxCleanupOptions,
+  );
   await cleanupJetsonSandbox(host);
 
   const hostNvmap = await hostShell(

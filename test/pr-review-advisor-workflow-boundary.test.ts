@@ -112,6 +112,7 @@ fi
           RIPGREP_VERSION: "14.1.0-1",
           RG_TEMPLATE: rgTemplate,
           RUNNER_TEMP: path.join(tmp, "runner"),
+          TYPEBOX_VERSION: "test-typebox-version",
         },
       });
       const calls = fs.readFileSync(callLog, "utf8").trim().split(/\r?\n/u);
@@ -124,6 +125,9 @@ fi
           "rg --version",
           expect.stringMatching(/^npm install .*--ignore-scripts/u),
         ]),
+      );
+      expect(calls.find((call) => call.startsWith("npm install "))).toContain(
+        "typebox@test-typebox-version",
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -271,6 +275,113 @@ fi
       ]);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  // source-shape-contract: security -- Symlink cleanup must stay fail-closed after every workspace selection and before credential-bearing analysis
+  it("rejects deleting or weakening analysis-workspace symlink removal", () => {
+    type Workflow = {
+      jobs: { review: { steps: Array<{ name?: string; run?: string }> } };
+    };
+    const source = YAML.parse(
+      fs.readFileSync(path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"), "utf8"),
+    ) as Workflow;
+    const cases: Array<{
+      expected: string;
+      mutate: (workflow: Workflow) => void;
+    }> = [
+      {
+        expected: "missing workflow step: Remove symlinks from analysis workspace",
+        mutate: (workflow) => {
+          workflow.jobs.review.steps = workflow.jobs.review.steps.filter(
+            (step) => step.name !== "Remove symlinks from analysis workspace",
+          );
+        },
+      },
+      {
+        expected:
+          "Remove symlinks from analysis workspace must use the canonical fail-closed cleanup script",
+        mutate: (workflow) => {
+          const step = workflow.jobs.review.steps.find(
+            (candidate) => candidate.name === "Remove symlinks from analysis workspace",
+          );
+          step!.run = step!.run!.replace("-type l -print0", "-type f -print0");
+        },
+      },
+      {
+        expected:
+          "Remove symlinks from analysis workspace must use the canonical fail-closed cleanup script",
+        mutate: (workflow) => {
+          const step = workflow.jobs.review.steps.find(
+            (candidate) => candidate.name === "Remove symlinks from analysis workspace",
+          );
+          step!.run = step!.run!.replace('rm -- "$link"', 'printf "%s\\n" "$link"');
+        },
+      },
+      {
+        expected:
+          "Remove symlinks from analysis workspace must use the canonical fail-closed cleanup script",
+        mutate: (workflow) => {
+          const step = workflow.jobs.review.steps.find(
+            (candidate) => candidate.name === "Remove symlinks from analysis workspace",
+          );
+          step!.run = step!.run!.replace('rm -- "$link"', 'rm -- "$link" || true');
+        },
+      },
+      {
+        expected:
+          "Remove symlinks from analysis workspace must run after workspace-selection step 'Prepare target PR checkout'",
+        mutate: (workflow) => {
+          const steps = workflow.jobs.review.steps;
+          const cleanupIndex = steps.findIndex(
+            (step) => step.name === "Remove symlinks from analysis workspace",
+          );
+          const cleanup = steps.splice(cleanupIndex, 1)[0]!;
+          const targetIndex = steps.findIndex((step) => step.name === "Prepare target PR checkout");
+          steps.splice(targetIndex, 0, cleanup);
+        },
+      },
+      {
+        expected: "Remove symlinks from analysis workspace must run before Run PR review advisor",
+        mutate: (workflow) => {
+          const steps = workflow.jobs.review.steps;
+          const cleanupIndex = steps.findIndex(
+            (step) => step.name === "Remove symlinks from analysis workspace",
+          );
+          const cleanup = steps.splice(cleanupIndex, 1)[0]!;
+          const analysisIndex = steps.findIndex((step) => step.name === "Run PR review advisor");
+          steps.splice(analysisIndex + 1, 0, cleanup);
+        },
+      },
+      {
+        expected:
+          "Remove symlinks from analysis workspace must run after workspace-selection step 'Set default advisor workdir'",
+        mutate: (workflow) => {
+          const steps = workflow.jobs.review.steps;
+          const workdirIndex = steps.findIndex(
+            (step) => step.name === "Set default advisor workdir",
+          );
+          const setWorkdir = steps.splice(workdirIndex, 1)[0]!;
+          const cleanupIndex = steps.findIndex(
+            (step) => step.name === "Remove symlinks from analysis workspace",
+          );
+          steps.splice(cleanupIndex + 1, 0, setWorkdir);
+        },
+      },
+    ];
+
+    for (const { expected, mutate } of cases) {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-symlinks-"));
+      const workflowPath = path.join(tmp, "workflow.yaml");
+      const workflow = structuredClone(source);
+      mutate(workflow);
+      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+      try {
+        expect(validatePrReviewAdvisorWorkflowBoundary(workflowPath)).toContain(expected);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
     }
   });
 

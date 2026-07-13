@@ -900,7 +900,7 @@ spin() {
 
 command_exists() { command -v "$1" &>/dev/null; }
 
-MIN_NODE_VERSION="22.16.0"
+MIN_NODE_VERSION="22.19.0"
 MIN_NPM_MAJOR=10
 
 # ── Agent branding — adapt user-visible names to the active agent ──
@@ -955,7 +955,7 @@ _LEGACY_MANAGED_RECOVERY_NAMES_JSON="[]"
 _UPGRADE_SANDBOXES_FAILED=false
 
 # Compare two semver strings (major.minor.patch). Returns 0 if $1 >= $2.
-# Rejects prerelease suffixes (e.g. "22.16.0-rc.1") to avoid arithmetic errors.
+# Rejects prerelease suffixes (e.g. "22.19.0-rc.1") to avoid arithmetic errors.
 version_gte() {
   [[ "$1" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || return 1
   [[ "$2" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || return 1
@@ -1723,14 +1723,19 @@ const entries = Object.entries(registry.sandboxes);
 if (entries.some(([name, entry]) => !name.trim() || !isObjectRecord(entry) || entry.name !== name)) {
   process.exit(1);
 }
+// Keep this raw-registry predicate in sync with isRouteOnlySandboxReservation()
+// in src/lib/state/registry.ts.
+const sandboxes = entries.filter(
+  ([, entry]) => !(entry.pendingRouteReservation === true && entry.createdAt === undefined),
+);
 
 if (process.argv[3] === "count") {
-  process.stdout.write(String(entries.length));
+  process.stdout.write(String(sandboxes.length));
   process.exit(0);
 }
 if (process.argv[3] !== "ambiguous-names") process.exit(1);
 
-const ambiguous = entries
+const ambiguous = sandboxes
   .filter(([, entry]) => {
     const version = entry.nemoclawVersion;
     const hasFingerprint = typeof version === "string" && version.trim().length > 0;
@@ -2891,16 +2896,10 @@ main() {
 
   step 3 "Onboarding"
   if [ -n "$_cli_runner" ]; then
-    if [[ -f "${HOME}/.nemoclaw/sandboxes.json" ]] && node -e '
-      const fs = require("fs");
-      try {
-        const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-        const count = Object.keys(data.sandboxes || {}).length;
-        process.exit(count > 0 ? 0 : 1);
-      } catch {
-        process.exit(1);
-      }
-    ' "${HOME}/.nemoclaw/sandboxes.json"; then
+    local _registered_sandbox_count=""
+    if [[ -f "${HOME}/.nemoclaw/sandboxes.json" ]] \
+      && _registered_sandbox_count="$(registered_sandbox_count)" \
+      && [[ "$_registered_sandbox_count" -gt 0 ]]; then
       warn "Existing sandbox sessions detected. Onboarding may disrupt running agents."
       if [[ "${NEMOCLAW_SINGLE_SESSION:-}" == "1" ]]; then
         error "Aborting — NEMOCLAW_SINGLE_SESSION is set. Destroy existing sessions with '${_CLI_BIN} <name> destroy' before reinstalling."

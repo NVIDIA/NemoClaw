@@ -31,6 +31,11 @@ type DependencyPins = Readonly<{
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const OPENCLAW_VERSION_ARG_SUFFIX_RE = /[.-]/g;
 const NUMERIC_VERSION_RE = /^[0-9]+\.[0-9]+\.[0-9]+$/;
+const OPENSHELL_RELEASE_MANIFESTS = [
+  "openshell-checksums-sha256.txt",
+  "openshell-gateway-checksums-sha256.txt",
+  "openshell-sandbox-checksums-sha256.txt",
+] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -263,6 +268,29 @@ function requireVersionReference(
   }
 }
 
+function requireOpenShellReleaseManifestAllowlist(
+  source: string,
+  expectedVersion: string,
+  failures: string[],
+): void {
+  const entries = [
+    ...source.matchAll(/^\s*"([0-9]+\.[0-9]+\.[0-9]+)\|([^|"\s]+)\|([a-f0-9]{64})"\s*$/gm),
+  ]
+    .filter((match) => match[1] === expectedVersion)
+    .map((match) => match[2])
+    .filter((manifest): manifest is string => manifest !== undefined);
+  const complete =
+    entries.length === OPENSHELL_RELEASE_MANIFESTS.length &&
+    OPENSHELL_RELEASE_MANIFESTS.every(
+      (manifest) => entries.filter((entry) => entry === manifest).length === 1,
+    );
+  if (!complete) {
+    failures.push(
+      `OpenShell release-manifest allowlist: expected one complete entry for ${expectedVersion}`,
+    );
+  }
+}
+
 function verifyOpenShellPins(
   pins: OpenShellPins,
   sources: {
@@ -309,17 +337,7 @@ function verifyOpenShellPins(
     "OpenShell installer PIN_VERSION",
     failures,
   );
-  compare(
-    extractSingle(
-      sources.installerHashCheck,
-      /^OPENSHELL_RELEASE_VERSION="([^"]+)"\s*$/gm,
-      "OpenShell installer hash release",
-      failures,
-    ),
-    pins.maxVersion,
-    "OpenShell installer hash release",
-    failures,
-  );
+  requireOpenShellReleaseManifestAllowlist(sources.installerHashCheck, pins.maxVersion, failures);
   compare(
     extractSingle(
       sources.openshellVersion,

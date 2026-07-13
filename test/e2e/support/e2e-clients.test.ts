@@ -97,6 +97,40 @@ describe("E2E fixture clients", () => {
     ]);
   });
 
+  it.each([
+    { exitCode: 0, expected: true, label: "available" },
+    { exitCode: 1, expected: false, label: "missing" },
+  ])("host client reports a command as $label", async ({ exitCode, expected }) => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode });
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+    const options = {
+      artifactName: "cleanup-command-probe",
+      env: { PATH: "/test/bin" },
+      redactionValues: ["cleanup-secret"],
+      timeoutMs: 123_000,
+    };
+
+    await expect(host.isCommandAvailable("openshell", options)).resolves.toBe(expected);
+    expect(runner.calls).toEqual([
+      {
+        command: "bash",
+        args: ["-lc", 'command -v "$1" >/dev/null 2>&1', "command-availability-probe", "openshell"],
+        options,
+      },
+    ]);
+  });
+
+  it("host client surfaces an unexpected command availability failure", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 2, stderr: "shell probe failed" });
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await expect(host.isCommandAvailable("openshell")).rejects.toThrow(
+      "probe command availability for openshell failed: shell probe failed",
+    );
+  });
+
   it("host client validates list/status and cleans up sandbox destroys", async () => {
     const runner = new FakeRunner();
     runner.stdout = "NAME\nassistant\n";
@@ -233,6 +267,51 @@ describe("E2E fixture clients", () => {
     );
   });
 
+  it("host cleanup resources preserve caller probe options and gateway artifact suffixes", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 0 });
+    runner.enqueue({ exitCode: 2, stderr: "unrecognized subcommand 'remove'" });
+    runner.enqueue({ exitCode: 0 });
+    runner.enqueue({ exitCode: 0 });
+    const host = new HostCliClient(runner, {
+      cliPath: "nemoclaw",
+      openshellPath: "/opt/openshell/bin/openshell",
+    });
+    const options = {
+      artifactName: "resource-cleanup",
+      env: { OPENSHELL_GATEWAY: "nemoclaw-18080" },
+      redactionValues: ["cleanup-secret"],
+      timeoutMs: 123_000,
+    };
+
+    await host.cleanupSandbox("assistant", options);
+    await host.cleanupGatewayRegistration("nemoclaw-18080", options);
+    await host.cleanupForward(18789, options);
+
+    expect(runner.calls).toEqual([
+      {
+        command: "nemoclaw",
+        args: ["assistant", "destroy", "--yes"],
+        options,
+      },
+      {
+        command: "/opt/openshell/bin/openshell",
+        args: ["gateway", "remove", "nemoclaw-18080"],
+        options: { ...options, artifactName: "resource-cleanup-remove" },
+      },
+      {
+        command: "/opt/openshell/bin/openshell",
+        args: ["gateway", "destroy", "-g", "nemoclaw-18080"],
+        options: { ...options, artifactName: "resource-cleanup-legacy-destroy" },
+      },
+      {
+        command: "/opt/openshell/bin/openshell",
+        args: ["forward", "stop", "18789"],
+        options,
+      },
+    ]);
+  });
+
   it("host client propagates cwd, env, and timeout options", async () => {
     const runner = new FakeRunner();
     const host = new HostCliClient(runner, {
@@ -339,6 +418,49 @@ describe("E2E fixture clients", () => {
         artifactName: "sandbox-exec-assistant",
       },
     });
+  });
+
+  it("sandbox client removes an OpenShell sandbox with caller cleanup options", async () => {
+    const runner = new FakeRunner();
+    const sandbox = new SandboxClient(runner);
+    const options = {
+      artifactName: "cleanup-partial-sandbox",
+      env: { OPENSHELL_GATEWAY: "nemoclaw-18080" },
+      redactionValues: ["secret-cleanup-value"],
+      timeoutMs: 60_000,
+    };
+
+    await sandbox.cleanupSandbox("assistant", options);
+
+    expect(runner.calls).toEqual([
+      {
+        command: "openshell",
+        args: ["sandbox", "delete", "assistant"],
+        options,
+      },
+    ]);
+  });
+
+  it.each([
+    "NotFound: sandbox assistant",
+    "sandbox assistant not present",
+    "no such sandbox: assistant",
+  ])("sandbox client accepts canonical already-absent cleanup output: %s", async (stderr) => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 1, stderr });
+    const sandbox = new SandboxClient(runner);
+
+    await expect(sandbox.cleanupSandbox("assistant")).resolves.toBeUndefined();
+  });
+
+  it("sandbox client surfaces unexpected cleanup failures", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 1, stderr: "permission denied" });
+    const sandbox = new SandboxClient(runner);
+
+    await expect(sandbox.cleanupSandbox("assistant")).rejects.toThrow(
+      "cleanup OpenShell sandbox assistant failed: permission denied",
+    );
   });
 
   it("sandbox client validates list output using the OpenShell gateway env", async () => {

@@ -129,6 +129,7 @@ export async function setupRemoteProviderInference(
     skipHostInferenceSmoke?: boolean;
     preferredInferenceApi?: string | null;
     pinnedAddresses?: readonly string[];
+    capabilityCache?: import("../inference-capability-cache").OnboardInferenceCapabilityCache;
   },
   deps: RemoteProviderDeps,
 ): Promise<{ done: true; result: SetupInferenceResult } | { done: false }> {
@@ -142,6 +143,7 @@ export async function setupRemoteProviderInference(
     skipHostInferenceSmoke,
     preferredInferenceApi,
     pinnedAddresses,
+    capabilityCache,
   } = args;
   const {
     runOpenshell,
@@ -321,6 +323,7 @@ export async function setupRemoteProviderInference(
       }
     }
     if (!providerResult.ok) {
+      capabilityCache?.invalidate();
       error(`  ${providerResult.message}`);
       if (isNonInteractive()) {
         return exitProcess(providerResult.status || 1);
@@ -355,6 +358,7 @@ export async function setupRemoteProviderInference(
     const message =
       compactText(redact(`${applyResult.stderr || ""} ${applyResult.stdout || ""}`)) ||
       `Failed to configure inference provider '${provider}'.`;
+    capabilityCache?.invalidate();
     error(`  ${message}`);
     if (isNonInteractive()) {
       return exitProcess(applyResult.status || 1);

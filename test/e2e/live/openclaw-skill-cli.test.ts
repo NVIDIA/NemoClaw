@@ -48,7 +48,7 @@ function testEnv(home: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv
   return testHomeEnvironment(home, extra);
 }
 
-async function bestEffort(run: () => Promise<unknown>): Promise<void> {
+async function bestEffortPreclean(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
   } catch {
@@ -57,27 +57,27 @@ async function bestEffort(run: () => Promise<unknown>): Promise<void> {
   }
 }
 
-async function cleanupOpenClawSkillCliState(
+async function precleanOpenClawSkillCliState(
   host: HostCliClient,
   sandbox: SandboxClient,
   home: string,
 ): Promise<void> {
   const env = testEnv(home);
-  await bestEffort(() =>
+  await bestEffortPreclean(() =>
     host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
       artifactName: "cleanup-nemoclaw-destroy-openclaw-skill-cli",
       env,
       timeoutMs: 120_000,
     }),
   );
-  await bestEffort(() =>
+  await bestEffortPreclean(() =>
     sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
       artifactName: "cleanup-openshell-sandbox-delete-openclaw-skill-cli",
       env,
       timeoutMs: 60_000,
     }),
   );
-  await bestEffort(() =>
+  await bestEffortPreclean(() =>
     sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
       artifactName: "cleanup-openshell-gateway-destroy-openclaw-skill-cli",
       env,
@@ -164,11 +164,27 @@ test("openclaw-skill-cli: direct OpenClaw skills install/list/info/check roundtr
 
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-skill-cli-home-"));
   const env = testEnv(home);
-  cleanup.add(`remove openclaw-skill-cli state for ${SANDBOX_NAME}`, async () => {
-    await cleanupOpenClawSkillCliState(host, sandbox, home);
+  cleanup.trackDisposable(`remove openclaw-skill-cli test home for ${SANDBOX_NAME}`, () => {
     fs.rmSync(home, { recursive: true, force: true });
   });
-  await cleanupOpenClawSkillCliState(host, sandbox, home);
+  cleanup.trackGateway(host, "nemoclaw", {
+    artifactName: "cleanup-openshell-gateway-destroy-openclaw-skill-cli",
+    env,
+    timeoutMs: 120_000,
+  });
+  cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "cleanup-openshell-sandbox-delete-openclaw-skill-cli",
+      env,
+      timeoutMs: 60_000,
+    }),
+  );
+  cleanup.trackSandbox(host, SANDBOX_NAME, {
+    artifactName: "cleanup-nemoclaw-destroy-openclaw-skill-cli",
+    env,
+    timeoutMs: 120_000,
+  });
+  await precleanOpenClawSkillCliState(host, sandbox, home);
 
   const install = await host.command(
     "bash",

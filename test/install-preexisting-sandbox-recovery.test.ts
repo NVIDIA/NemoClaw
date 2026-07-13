@@ -13,12 +13,18 @@ const INSTALLER_PAYLOAD = path.join(import.meta.dirname, "..", "scripts", "insta
 function runRecoveryBeforeOnboard(
   preexistingCount: number,
   recoveryExitCode: number,
+  options: { registryJson?: string; singleSession?: boolean } = {},
 ): { status: number | null; calls: string[]; output: string } {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-recovery-order-"));
   const cli = path.join(tmp, "nemoclaw");
   const callLog = path.join(tmp, "calls.log");
   const payloadDir = path.join(tmp, "payload");
   fs.mkdirSync(payloadDir);
+  fs.mkdirSync(path.join(tmp, ".nemoclaw"));
+  fs.writeFileSync(
+    path.join(tmp, ".nemoclaw", "sandboxes.json"),
+    options.registryJson ?? '{"sandboxes":{}}',
+  );
   fs.writeFileSync(path.join(payloadDir, "setup-jetson.sh"), "#!/usr/bin/env bash\nexit 0\n", {
     mode: 0o755,
   });
@@ -67,14 +73,17 @@ exit 0
     print_done() { printf 'PRINT_DONE\n'; }
     main --non-interactive --yes-i-accept-third-party-software
   `;
+  const childEnv = { ...process.env };
+  delete childEnv.NEMOCLAW_SINGLE_SESSION;
   const result = spawnSync("bash", ["-c", snippet], {
     encoding: "utf-8",
     env: {
-      ...process.env,
+      ...childEnv,
       BASH_ENV: "",
       ENV: "",
       HOME: tmp,
       NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE: "1",
+      ...(options.singleSession ? { NEMOCLAW_SINGLE_SESSION: "1" } : {}),
     },
   });
   const calls = fs.existsSync(callLog)
@@ -113,5 +122,16 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
 
     expect(result.status, result.output).toBe(0);
     expect(result.calls).toEqual(["restore=1 confirmed= argv=onboard"]);
+  });
+
+  it("does not treat a route-only reservation as an existing session (#6500)", () => {
+    const result = runRecoveryBeforeOnboard(0, 7, {
+      registryJson: '{"sandboxes":{"tm":{"name":"tm","pendingRouteReservation":true}}}',
+      singleSession: true,
+    });
+
+    expect(result.status, result.output).toBe(0);
+    expect(result.calls).toEqual(["restore=1 confirmed= argv=onboard"]);
+    expect(result.output).not.toContain("Existing sandbox sessions detected");
   });
 });

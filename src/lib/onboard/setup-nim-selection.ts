@@ -4,6 +4,7 @@
 import { applyCompatibleEndpointContextWindow } from "../inference/compatible-endpoint-context";
 import type { GatewayRouteDiscoveryConstraints } from "../inference/gateway-route-compatibility";
 import { getProbeExtraHeaders } from "../inference/onboard-probes";
+import type { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import type { NvidiaFeaturedModelSession } from "./nvidia-featured-model-selection";
 
 export { createNvidiaFeaturedModelSession } from "./nvidia-featured-model-selection";
@@ -25,6 +26,8 @@ export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
   /** Public addresses approved for the selected custom endpoint. */
   endpointPinnedAddresses?: string[];
   reuseGatewayCredentialWithoutLocalKey?: boolean;
+  /** Ephemeral selection-to-smoke validation cache; never written to session state. */
+  inferenceCapabilityCache?: OnboardInferenceCapabilityCache;
   nvidiaFeaturedModels?: NvidiaFeaturedModelSession;
   openRouterFeaturedModels?: NvidiaFeaturedModelSession;
   /** Attempt-wide shared-gateway guard, invoked after identity selection and before probes. */
@@ -110,6 +113,7 @@ type ProbeOptions = {
   skipResponsesProbe?: boolean;
   authMode?: ProbeAuthMode;
   extraHeaders?: readonly string[];
+  capabilityCache?: OnboardInferenceCapabilityCache;
 };
 
 type ValidationResult =
@@ -316,6 +320,7 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
           authMode: deps.getProbeAuthMode(state.provider),
           extraHeaders:
             deps.getProbeExtraHeaders?.(state.provider) ?? getProbeExtraHeaders(state.provider),
+          capabilityCache: state.inferenceCapabilityCache,
         },
       );
       if (validation.ok) {
