@@ -141,6 +141,7 @@ function writeDoctorFixFake(tmpDir: string): string {
 describe("raw `openclaw doctor --fix` mutable-perm restore (#4538)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
+  // source-shape-contract: security -- Executes the shipped restore helper to verify hardened mutable ownership modes
   it("restore helper re-asserts 2770/660 after the tree is tightened to 700/600", () => {
     const { tmpDir, configDir, configFile } = seedTightenedConfigTree();
     const nestedDir = path.join(configDir, "agents", "main");
@@ -209,6 +210,7 @@ describe("raw `openclaw doctor --fix` mutable-perm restore (#4538)", () => {
     }
   });
 
+  // source-shape-contract: security -- Executes the shipped guard to preserve permissions after a failing doctor repair
   it("emitted openclaw() guard restores the contract AND preserves a nonzero exit", () => {
     const { tmpDir, configDir, configFile } = seedTightenedConfigTree();
     // Start from the intact contract so the simulated doctor run is what
@@ -252,6 +254,7 @@ describe("raw `openclaw doctor --fix` mutable-perm restore (#4538)", () => {
     }
   });
 
+  // source-shape-contract: security -- Executes the shipped guard under errexit to prove restoration remains fail safe
   it("emitted openclaw() guard restores the contract even under an inherited `set -e`", () => {
     // Regression for the errexit gap: when the guard is sourced into a shell
     // with errexit on, a nonzero `doctor --fix` must not abort openclaw()

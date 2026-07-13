@@ -8,7 +8,11 @@ import path from "node:path";
 
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { assertExitZero as expectExitZero, shellQuote } from "../fixtures/clients/command.ts";
+import {
+  assertExitZero as expectExitZero,
+  resultText,
+  shellQuote,
+} from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   type SandboxClient,
@@ -299,7 +303,7 @@ export function messagingEnv(): MessagingEnv {
   return { env, tokens, telegramIds, telegramAllowlistKey, slackIds, wechatAccount };
 }
 
-export async function bestEffort(run: () => Promise<unknown>): Promise<void> {
+export async function runSecondaryCleanup(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
   } catch {
@@ -612,15 +616,19 @@ export async function startFakeDockerApi(
   );
 
   cleanup(`remove ${container}`, async () => {
-    await bestEffort(() =>
-      runHost(host, "docker", ["rm", "-f", container], {
+    try {
+      const remove = await runHost(host, "docker", ["rm", "-f", container], {
         artifactName: `cleanup-${container}`,
         env: options.env,
         redactionValues: options.redactionValues,
         timeoutMs: 60_000,
-      }),
-    );
-    fs.rmSync(dir, { recursive: true, force: true });
+      });
+      if (remove.exitCode !== 0 && !/No such container:/iu.test(resultText(remove))) {
+        expectExitZero(remove, `remove fake ${options.kind} API container ${container}`);
+      }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   const start = await runHost(host, "docker", dockerArgs, {

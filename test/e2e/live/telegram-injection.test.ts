@@ -6,20 +6,21 @@ import path from "node:path";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   base64,
-  bestEffort,
+  runSecondaryCleanup as bestEffortDiagnostic,
   CLI,
   COMMAND_TIMEOUT_MS,
-  cleanupSandbox,
   dockerInfo,
   expectExitZero,
   expectSandboxReady,
   installSandboxOrSkipOnRateLimit,
   phase6Env,
+  precleanSandbox,
   REPO_ROOT,
   redactionValues,
   resultText,
   sandboxSh,
   shellQuote,
+  trackSandboxCleanup,
 } from "./phase6-messaging-helpers.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-telegram-injection";
@@ -216,10 +217,16 @@ test("Telegram bridge-style message handling treats shell metacharacters as data
     ],
   });
 
-  cleanup.add(`destroy telegram injection sandbox ${SANDBOX_NAME}`, () =>
-    cleanupSandbox(host, SANDBOX_NAME, env, redactions, "cleanup-telegram-injection"),
+  trackSandboxCleanup(
+    cleanup,
+    host,
+    sandbox,
+    SANDBOX_NAME,
+    env,
+    redactions,
+    "cleanup-telegram-injection",
   );
-  await cleanupSandbox(host, SANDBOX_NAME, env, redactions, "preclean-telegram-injection");
+  await precleanSandbox(host, SANDBOX_NAME, env, redactions, "preclean-telegram-injection");
 
   const docker = await dockerInfo(host, env);
   expect(docker.exitCode, resultText(docker)).toBe(0);
@@ -354,7 +361,7 @@ test("Telegram bridge-style message handling treats shell metacharacters as data
   expect(special.exitCode, resultText(special)).toBe(0);
   expect(resultText(special).trim()).not.toBe("");
 
-  await bestEffort(() =>
+  await bestEffortDiagnostic(() =>
     host.command("node", [CLI, SANDBOX_NAME, "status"], {
       artifactName: "post-assert-status-telegram-injection",
       env,

@@ -50,6 +50,7 @@ describe("Vitest state isolation", () => {
     }
   });
 
+  // source-shape-contract: security -- Live and root runners must not enable unvalidated automatic state cleanup
   it("keeps root and live projects free of unvalidated automatic cleanup", () => {
     const projects = projectTestOptions();
     const rootOptions = rootVitestConfig.test as ProjectTestOptions;
@@ -67,6 +68,7 @@ describe("Vitest state isolation", () => {
     }
   });
 
+  // source-shape-contract: compatibility -- Standalone plugin execution must share deterministic cleanup without mock reset
   it("keeps standalone plugin runs aligned without enabling mockReset", () => {
     expect(pluginVitestProjectOptions.test).toMatchObject(vitestStateIsolation);
     expect(standalonePluginVitestConfig.test).toMatchObject(vitestStateIsolation);

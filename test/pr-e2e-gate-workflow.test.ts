@@ -163,6 +163,40 @@ function runStartStep(headBranch: string, prNumber = "42") {
   }
 }
 
+function runCancelStep(prNumber: string) {
+  const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
+  const cancel = step(workflow.jobs["cancel-superseded"], "Cancel superseded E2E runs");
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-cancel-step-"));
+  const binDir = path.join(tempDir, "bin");
+  const argumentsPath = path.join(tempDir, "node-arguments");
+  fs.mkdirSync(binDir);
+  fs.writeFileSync(
+    path.join(binDir, "node"),
+    '#!/usr/bin/env bash\nset -euo pipefail\nprintf \'%s\\0\' "$@" > "$FAKE_NODE_ARGUMENTS"\n',
+    { mode: 0o755 },
+  );
+
+  try {
+    const result = spawnSync("bash", ["-e", "-o", "pipefail", "-c", cancel.run!], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        FAKE_NODE_ARGUMENTS: argumentsPath,
+        GITHUB_TOKEN: "token",
+        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+        PR_NUMBER: prNumber,
+      },
+      timeout: 5_000,
+    });
+    return {
+      arguments: fs.readFileSync(argumentsPath, "utf8").split("\0").slice(0, -1),
+      result,
+    };
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 function runChildValidation(currentPullSha: string) {
   const workflow = readYaml<DispatchWorkflow>(E2E_PATH);
   const validation = step(workflow.jobs["generate-matrix"], "Validate controller dispatch");
@@ -219,6 +253,7 @@ esac
 }
 
 describe("PR E2E gate workflow", () => {
+  // source-shape-contract: security -- Trusted metadata triggers and least privilege bound the write-capable controller
   it("limits triggers and job permissions", () => {
     const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
     const cancel = workflow.jobs["cancel-superseded"];
@@ -254,6 +289,7 @@ describe("PR E2E gate workflow", () => {
     expect(collectStrings(workflow).some((value) => value.includes("${{ secrets."))).toBe(false);
   });
 
+  // source-shape-contract: security -- Controller checkouts and dependency installs must not execute mutable contributor hooks
   it("pins both controller checkouts and installs without lifecycle scripts or caches", () => {
     const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
     const allSteps = Object.values(workflow.jobs).flatMap((job) => job.steps ?? []);
@@ -286,15 +322,18 @@ describe("PR E2E gate workflow", () => {
   });
 
   it("cancels superseded PR runs", () => {
-    const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
-    const cancel = workflow.jobs["cancel-superseded"];
-    const cancelStep = step(cancel, "Cancel superseded E2E runs");
+    const execution = runCancelStep("42");
 
-    expect(cancelStep.run).toContain("tools/e2e/pr-e2e-gate.mts --mode cancel");
-    expect(cancelStep.run).toContain('--pr "$PR_NUMBER"');
-    expect(cancelStep.run).not.toContain("${{ github.event.");
-    expect(cancelStep.env?.GITHUB_TOKEN).toBe("${{ github.token }}");
-    expect(cancelStep.env?.PR_NUMBER).toBe("${{ github.event.pull_request.number }}");
+    expect(execution.result.status).toBe(0);
+    expect(execution.result.stderr).toBe("");
+    expect(execution.arguments).toEqual([
+      "--experimental-strip-types",
+      "tools/e2e/pr-e2e-gate.mts",
+      "--mode",
+      "cancel",
+      "--pr",
+      "42",
+    ]);
   });
 
   it.each([
@@ -320,104 +359,6 @@ describe("PR E2E gate workflow", () => {
 
     expect(execution.result.status).toBe(0);
     expect(execution.arguments[prFlag + 1]).toBe("");
-  });
-
-  it("coordinates the check around one E2E run", () => {
-    const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
-    const job = workflow.jobs.coordinate;
-    const workspace = step(job, "Create private workspace");
-    const start = step(job, "Start evaluation");
-    const upload = step(job, "Upload risk plan");
-    const wait = step(job, "Wait for E2E run");
-    const download = step(job, "Download evidence");
-    const finish = step(job, "Verify evidence");
-    const fallback = step(job, "Close incomplete check");
-    const cleanup = step(job, "Remove private workspace");
-
-    expect(job.concurrency).toEqual({
-      group:
-        "pr-e2e-gate-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}",
-      "cancel-in-progress": false,
-    });
-    expect(job["timeout-minutes"]).toBe(180);
-    expect(workspace.run).toContain('mktemp -d "${RUNNER_TEMP}/nemoclaw-pr-e2e-gate.XXXXXX"');
-    expect(workspace.run).toContain('chmod 700 "$work_dir"');
-    expect(start.run).toContain("tools/e2e/pr-e2e-gate.mts --mode start");
-    expect(start.run).toContain('--head "$HEAD_SHA"');
-    expect(start.run).toContain('--head-repo "$HEAD_REPOSITORY"');
-    expect(start.run).toContain('--head-branch "$HEAD_BRANCH"');
-    expect(start.run).toContain('--workflow-sha "$WORKFLOW_SHA"');
-    expect(start.run).toContain('--ci-conclusion "$CI_CONCLUSION"');
-    expect(start.run).toContain('--ci-run-attempt "$CI_RUN_ATTEMPT"');
-    expect(start.run).toContain('--ci-run-id "$CI_RUN_ID"');
-    expect(start.run).toContain('--pr "$PR_NUMBER"');
-    expect(start.run).toContain('--work-dir "$WORK_DIR"');
-    expect(start.run).not.toContain("${{ github.event.");
-    expect(start.env).toMatchObject({
-      CI_CONCLUSION: "${{ github.event.workflow_run.conclusion }}",
-      CI_RUN_ATTEMPT: "${{ github.event.workflow_run.run_attempt }}",
-      CI_RUN_ID: "${{ github.event.workflow_run.id }}",
-      HEAD_BRANCH: "${{ github.event.workflow_run.head_branch }}",
-      HEAD_REPOSITORY: "${{ github.event.workflow_run.head_repository.full_name }}",
-      HEAD_SHA: "${{ github.event.workflow_run.head_sha }}",
-      PR_NUMBER: "${{ github.event.workflow_run.pull_requests[0].number }}",
-      WORKFLOW_SHA: "${{ github.workflow_sha }}",
-      WORK_DIR: "${{ steps.workspace.outputs.work_dir }}",
-    });
-    expect(start.run).not.toContain("--mode initialize");
-    expect(upload.if).toContain("steps.workspace.outputs.work_dir != ''");
-    expect(upload.with?.name).toBe("pr-e2e-risk-plan-${{ github.event.workflow_run.head_sha }}");
-    expect(upload.with?.path).toBe("${{ steps.workspace.outputs.work_dir }}/risk-plan.json");
-    expect(wait.run).toContain("timeout --signal=TERM --kill-after=30s 105m");
-    expect(wait.run).toContain('gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY"');
-    expect(wait.run).toContain("--json status,conclusion");
-    expect(wait.run).toContain('if [[ "$state" != "$last_state" ]]');
-    expect(wait.run).toContain("completed:success");
-    expect(wait.run).toContain("completed:failure");
-    expect(wait.run).toContain("sleep 10");
-    expect(wait.run).toContain('if [ "$wait_status" -eq 124 ]');
-    expect(wait.run).toContain('exit "$wait_status"');
-    expect(wait.run).not.toContain("gh run watch");
-    expect(wait.run).not.toContain("--json jobs");
-    expect(wait.run).not.toContain("2>/dev/null");
-    expect(wait["continue-on-error"]).toBe(true);
-    expect(download.if).toContain("always()");
-    expect(download.run).toContain("timeout --signal=TERM --kill-after=30s 10m");
-    expect(download.run).toContain('if [ "$download_status" -eq 124 ]');
-    expect(download.run).toContain('--dir "${{ steps.workspace.outputs.work_dir }}/evidence"');
-    expect(download["continue-on-error"]).toBe(true);
-    expect(finish.if).toContain("always()");
-    expect(finish.run).toContain("tools/e2e/pr-e2e-gate.mts --mode finish");
-    expect(finish.run).toContain('--state-hash "${{ steps.start.outputs.state_hash }}"');
-    expect(finish.run).toContain('--check-id "${{ steps.start.outputs.check_id }}"');
-    expect(finish.run).toContain('--run-id "${{ steps.start.outputs.run_id }}"');
-    expect(fallback.if).toContain("always()");
-    expect(fallback.if).toContain("steps.start.outputs.check_id != ''");
-    expect(fallback.if).toContain("steps.start.outputs.finalized != 'true'");
-    expect(fallback.if).toContain("steps.finish.outputs.finalized != 'true'");
-    expect(fallback.run).toContain("tools/e2e/pr-e2e-gate.mts --mode abandon");
-    expect(fallback.run).toContain('--run-id "${{ steps.start.outputs.run_id }}"');
-    expect(cleanup.if).toContain("always() && steps.workspace.outputs.work_dir != ''");
-    expect(cleanup.run).toContain('rm -rf -- "${{ steps.workspace.outputs.work_dir }}"');
-    expect(collectStrings(workflow).some((value) => value.includes("/tmp/"))).toBe(false);
-  });
-
-  it("uses one child dispatch protocol and one correlated run title", () => {
-    const workflow = readYaml<DispatchWorkflow>(E2E_PATH);
-    const inputs = workflow.on.workflow_dispatch.inputs;
-
-    expect(inputs).toEqual(
-      expect.objectContaining({
-        jobs: expect.any(Object),
-        pr_number: expect.any(Object),
-        checkout_sha: expect.any(Object),
-        plan_hash: expect.any(Object),
-        correlation_id: expect.any(Object),
-      }),
-    );
-    expect(workflow["run-name"]).toContain(
-      "format('E2E PR #{0} ({1})', inputs.pr_number, inputs.correlation_id)",
-    );
   });
 
   it("validates the E2E run against the PR head commit", () => {

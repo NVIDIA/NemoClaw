@@ -1233,7 +1233,26 @@ test("keeps issue 4462 scope-upgrade approval on the gateway path without an adm
     skip(`Docker is required: ${resultText(docker)}`);
   }
 
-  cleanupRegistry.add("remove issue-4462 sandbox", () => cleanup(host, sandbox));
+  cleanupRegistry.trackGateway(host, "nemoclaw", {
+    artifactName: "cleanup-openshell-gateway-destroy",
+    env: env(),
+    redactionValues: [apiKey],
+    timeoutMs: 60_000,
+  });
+  cleanupRegistry.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "cleanup-openshell-sandbox-delete",
+      env: env(),
+      redactionValues: [apiKey],
+      timeoutMs: 60_000,
+    }),
+  );
+  cleanupRegistry.trackSandbox(host, SANDBOX_NAME, {
+    artifactName: "cleanup-nemoclaw-destroy",
+    env: env({ NEMOCLAW_CLEANUP_GATEWAY: "1" }),
+    redactionValues: [apiKey],
+    timeoutMs: 120_000,
+  });
   await cleanup(host, sandbox);
 
   const install = await host.command(

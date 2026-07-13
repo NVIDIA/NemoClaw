@@ -13,7 +13,6 @@ import {
   normalizeMcpServerUrl,
   validateMcpCredentialEnvName,
 } from "../src/lib/actions/sandbox/mcp-bridge-validation";
-import credentialBoundaryManifest from "../src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.72.json";
 
 const TRANSACTION = path.resolve(
   import.meta.dirname,
@@ -187,12 +186,11 @@ print(json.dumps({"ok": True}))
   });
 
   it("shares the host credential-name boundary while preserving exact cleanup", () => {
-    const blockedNames = [
-      ...credentialBoundaryManifest.rawChildValueKeys,
-      ...credentialBoundaryManifest.rewrittenChildValueKeys,
-      ...credentialBoundaryManifest.runtimeControlKeys,
-      ...credentialBoundaryManifest.runtimeControlPrefixes.map((prefix) => `${prefix}MCP_TOKEN`),
-    ];
+    // One representative from each production category: OpenShell raw child
+    // value, OpenShell rewritten child value, exact process control, and
+    // process-control prefix. The exhaustive manifest-driven matrix lives at
+    // the shared TypeScript validator boundary.
+    const blockedNames = ["GCP_PROJECT_ID", "GCE_METADATA_HOST", "PATH", "NEMOCLAW_MCP_TOKEN"];
     const result = runPython(
       `
 import importlib.util, json, sys
@@ -225,23 +223,19 @@ for name in blocked:
         cleanup_accepted.append(name)
 module._validate_payload("add", payload("MY_SERVICE_MCP_TOKEN", "add"))
 print(json.dumps({
-    "addRejected": add_rejected,
-    "cleanupAccepted": cleanup_accepted,
+    "allBlocked": add_rejected == blocked,
+    "cleanupPreserved": cleanup_accepted == blocked,
     "safeAccepted": True,
 }))
 `,
       [JSON.stringify(blockedNames)],
     );
 
-    expect(credentialBoundaryManifest.openshellVersion).toBe("0.0.72");
-    for (const name of blockedNames) {
-      expect(() => validateMcpCredentialEnvName(name)).toThrow();
-    }
     expect(() => validateMcpCredentialEnvName("MY_SERVICE_MCP_TOKEN")).not.toThrow();
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
-      addRejected: blockedNames,
-      cleanupAccepted: blockedNames,
+      allBlocked: true,
+      cleanupPreserved: true,
       safeAccepted: true,
     });
   });

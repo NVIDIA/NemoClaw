@@ -900,7 +900,7 @@ spin() {
 
 command_exists() { command -v "$1" &>/dev/null; }
 
-MIN_NODE_VERSION="22.16.0"
+MIN_NODE_VERSION="22.19.0"
 MIN_NPM_MAJOR=10
 
 # ── Agent branding — adapt user-visible names to the active agent ──
@@ -955,7 +955,7 @@ _LEGACY_MANAGED_RECOVERY_NAMES_JSON="[]"
 _UPGRADE_SANDBOXES_FAILED=false
 
 # Compare two semver strings (major.minor.patch). Returns 0 if $1 >= $2.
-# Rejects prerelease suffixes (e.g. "22.16.0-rc.1") to avoid arithmetic errors.
+# Rejects prerelease suffixes (e.g. "22.19.0-rc.1") to avoid arithmetic errors.
 version_gte() {
   [[ "$1" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || return 1
   [[ "$2" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || return 1

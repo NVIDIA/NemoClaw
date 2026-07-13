@@ -6,21 +6,21 @@ import {
   dockerLogs as defaultDockerLogs,
 } from "../adapters/docker";
 import { discoverDockerGpuDiagnosticSensitiveValues } from "./docker-gpu-diagnostic-redaction";
-import type {
-  DockerContainerInspect,
-  DockerGpuPatchDeps,
-  DockerGpuPatchDiagnostics,
-  DockerGpuPatchFailureContext,
-  DockerGpuPatchResult,
-} from "./docker-gpu-patch";
 import {
   captureDockerGpuPatchSandboxSnapshot,
   classifyDockerGpuPatchFailure,
   collectDockerGpuPatchDiagnostics,
   findOpenShellDockerSandboxContainerIds,
 } from "./docker-gpu-patch";
+import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
+import type {
+  DockerContainerInspect,
+  DockerGpuPatchDeps,
+  DockerGpuPatchDiagnostics,
+  DockerGpuPatchFailureContext,
+  DockerGpuPatchResult,
+} from "./docker-gpu-patch-types";
 
-const DOCKER_GPU_PATCH_TIMEOUT_MS = 30_000;
 const PRE_ROLLBACK_DIAGNOSTICS_TOTAL_BUDGET_MS = 10_000;
 const PRE_ROLLBACK_DIAGNOSTICS_CALL_TIMEOUT_MS = 2_000;
 
@@ -29,8 +29,21 @@ type PreRollbackDiagnosticsDeps = Pick<
   "runCaptureOpenshell" | "dockerCapture" | "dockerLogs" | "homedir" | "now"
 >;
 
-// This wrapper owns only the pre-rollback time budget. The shared collector
-// is the sole redaction and artifact-publication boundary for every caller.
+/**
+ * SOURCE_OF_TRUTH_REVIEW
+ * invalidState: Docker created a replacement but OpenShell did not reconnect; rollback would
+ *   erase its transient process, network, state, and log evidence.
+ * sourceBoundary: Docker/OpenShell own that ephemeral state; this wrapper snapshots it
+ *   immediately before rollback, and the shared collector remains the sole redaction and
+ *   artifact-publication boundary for every caller.
+ * whyNotSourceFix: this layer cannot reconnect the external supervisor or retain the failed
+ *   replacement without delaying restoration, so capture is best effort and strictly bounded.
+ * regressionTest: docker-gpu-pre-rollback-diagnostics.test.ts covers the allowlisted bundle,
+ *   redaction, and budget; docker-gpu-sandbox-create-diagnostics.test.ts proves capture precedes
+ *   rollback and capture failure cannot block rollback.
+ * removalCondition: remove only when the replacement path emits equivalent bounded, redacted
+ *   evidence before rollback, or no longer replaces a container.
+ */
 function boundedDiagnosticsDeps(deps: PreRollbackDiagnosticsDeps): PreRollbackDiagnosticsDeps {
   const capture = deps.dockerCapture ?? defaultDockerCapture;
   const logs = deps.dockerLogs ?? defaultDockerLogs;

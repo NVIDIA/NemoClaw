@@ -46,7 +46,7 @@ function commandEnv(inference?: SnapshotInferenceFixture): NodeJS.ProcessEnv {
   return buildSnapshotCommandEnv(SANDBOX_NAME, inference);
 }
 
-async function bestEffort(run: () => Promise<unknown>): Promise<void> {
+async function bestEffortPreclean(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
   } catch {
@@ -54,26 +54,24 @@ async function bestEffort(run: () => Promise<unknown>): Promise<void> {
   }
 }
 
-async function cleanupSnapshotSandbox(
+async function precleanSnapshotSandbox(
   host: HostCliClient,
   sandbox: SandboxClient,
   label: string,
 ): Promise<void> {
-  await bestEffort(() =>
-    host.command("nemoclaw", [SANDBOX_NAME, "destroy", "--yes"], {
-      artifactName: `${label}-nemoclaw-destroy`,
-      env: commandEnv(),
-      timeoutMs: 120_000,
-    }),
-  );
-  await bestEffort(() =>
+  await host.bestEffortCleanupSandbox(SANDBOX_NAME, {
+    artifactName: `${label}-nemoclaw-destroy`,
+    env: commandEnv(),
+    timeoutMs: 120_000,
+  });
+  await bestEffortPreclean(() =>
     sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
       artifactName: `${label}-openshell-sandbox-delete`,
       env: commandEnv(),
       timeoutMs: 60_000,
     }),
   );
-  await bestEffort(() =>
+  await bestEffortPreclean(() =>
     sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
       artifactName: `${label}-openshell-gateway-destroy`,
       env: commandEnv(),
@@ -144,7 +142,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     requireAuth: true,
     requireAuthModels: true,
   });
-  cleanup.add("close snapshot commands compatible inference fixture", async () => {
+  cleanup.trackDisposable("close snapshot commands compatible inference fixture", async () => {
     await artifacts.writeJson("compatible-inference-requests.json", inference.requests());
     await inference.close();
   });
@@ -154,11 +152,25 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     model: INFERENCE_MODEL,
   };
 
-  cleanup.add(`destroy snapshot sandbox ${SANDBOX_NAME}`, () =>
-    cleanupSnapshotSandbox(host, sandbox, "cleanup"),
+  cleanup.trackGateway(host, "nemoclaw", {
+    artifactName: "cleanup-openshell-gateway-destroy",
+    env: commandEnv(),
+    timeoutMs: 60_000,
+  });
+  cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "cleanup-openshell-sandbox-delete",
+      env: commandEnv(),
+      timeoutMs: 60_000,
+    }),
   );
+  cleanup.trackSandbox(host, SANDBOX_NAME, {
+    artifactName: "cleanup-nemoclaw-destroy",
+    env: commandEnv(),
+    timeoutMs: 120_000,
+  });
 
-  await cleanupSnapshotSandbox(host, sandbox, "pre-cleanup");
+  await precleanSnapshotSandbox(host, sandbox, "pre-cleanup");
   fs.rmSync(BACKUP_DIR, { recursive: true, force: true });
 
   const install = await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {

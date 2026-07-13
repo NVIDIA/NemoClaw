@@ -16,6 +16,7 @@ type RootTestOptions = {
 };
 
 describe("Vitest security coverage thresholds", () => {
+  // source-shape-contract: security -- Exact per-file floors are executable security regression gates for merged coverage
   it("enforces the exact per-file security floors for full and merged coverage (#6692)", () => {
     expect(resolveVitestCoverageThresholds([])).toEqual({
       perFile: true,

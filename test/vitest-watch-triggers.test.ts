@@ -33,9 +33,7 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/openclaw-slack-workflow-boundary.test.ts",
   "test/e2e/support/openshell-gateway-auth-contract-workflow-boundary.test.ts",
   "test/e2e/support/openshell-gateway-upgrade-workflow-boundary.test.ts",
-  "test/e2e/support/overlayfs-autofix-workflow-boundary.test.ts",
   "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
-  "test/e2e/support/rlimit-connect-workflow-boundary.test.ts",
   "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
   "test/e2e/support/sandbox-operations-workflow-boundary.test.ts",
   "test/e2e/support/security-posture-workflow-boundary.test.ts",
@@ -64,6 +62,7 @@ function triggeredBy(relativePath: string): string[] {
 }
 
 describe("Vitest opaque-input watch triggers", () => {
+  // source-shape-contract: compatibility -- Root watch mode must install the canonical opaque-input trigger resolver
   it("registers the focused mappings at the root configuration boundary (#6692)", () => {
     expect(rootVitestConfig.test?.watchTriggerPatterns).toBe(vitestWatchTriggerPatterns);
   });

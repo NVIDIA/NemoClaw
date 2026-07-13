@@ -14,6 +14,7 @@ import {
   assertOpenClawConfig,
   CLI,
   chatContent,
+  cleanupTurnSandbox,
   cleanupTurnSandboxes,
   EXPECTED_ROUTE_PROVIDER,
   env,
@@ -45,7 +46,36 @@ test("OpenClaw and Hermes complete real hosted inference turns within the latenc
     hermesSandbox: HERMES_SANDBOX,
   });
 
-  cleanup.add("destroy turn latency sandboxes", () => cleanupTurnSandboxes(host, sandbox));
+  cleanup.trackGateway(host, "nemoclaw", {
+    artifactName: "cleanup-gateway-destroy-turn-latency",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 60_000,
+  });
+  cleanup.trackForward(host, 8642, {
+    artifactName: "cleanup-forward-stop-hermes-api",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
+  });
+  cleanup.trackDisposable("delete Hermes OpenShell sandbox", () =>
+    sandbox.cleanupSandbox(HERMES_SANDBOX, {
+      artifactName: "cleanup-hermes-delete",
+      env: env(HERMES_SANDBOX, "hermes"),
+      timeoutMs: 60_000,
+    }),
+  );
+  cleanup.trackDisposable("destroy Hermes sandbox", () =>
+    cleanupTurnSandbox(host, HERMES_SANDBOX, "hermes"),
+  );
+  cleanup.trackDisposable("delete OpenClaw OpenShell sandbox", () =>
+    sandbox.cleanupSandbox(OPENCLAW_SANDBOX, {
+      artifactName: "cleanup-openclaw-delete",
+      env: env(OPENCLAW_SANDBOX, "openclaw"),
+      timeoutMs: 60_000,
+    }),
+  );
+  cleanup.trackDisposable("destroy OpenClaw sandbox", () =>
+    cleanupTurnSandbox(host, OPENCLAW_SANDBOX, "openclaw"),
+  );
 
   const docker = await host.command("docker", ["info"], {
     artifactName: "docker-info",

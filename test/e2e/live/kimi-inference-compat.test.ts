@@ -36,7 +36,19 @@ test("Kimi-compatible endpoint config enables plugin wiring and managed inferenc
       : undefined;
   const fake = await startKimiUpstream(mode);
   maybeRegisterKimiMockCleanup(cleanup, fake);
-  cleanup.add("destroy Kimi sandbox", () => cleanupKimi(host, sandbox));
+  const cleanupEnv = env();
+  cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "cleanup-delete-kimi",
+      env: cleanupEnv,
+      timeoutMs: 60_000,
+    }),
+  );
+  cleanup.trackSandbox(host, SANDBOX_NAME, {
+    artifactName: "cleanup-destroy-kimi",
+    env: cleanupEnv,
+    timeoutMs: 120_000,
+  });
 
   await artifacts.target.declare({
     id: "kimi-inference-compat",

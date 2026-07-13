@@ -19,12 +19,6 @@ const CLEANUP_STEP_NAME = "Clean up Docker auth";
 const CLEANUP_HELPER_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const CLEANUP_HELPER_PATH = path.join(REPO_ROOT, ".github", "scripts", "docker-auth-cleanup.sh");
-const EXPECTED_CLEANUP_STEP = {
-  name: CLEANUP_STEP_NAME,
-  if: "always()",
-  shell: "bash",
-  run: CLEANUP_HELPER_RUN,
-};
 
 type WorkflowStep = Record<string, unknown> & {
   env?: Record<string, unknown>;
@@ -82,59 +76,6 @@ function writeExecutable(filePath: string, source: string): void {
 }
 
 describe("shared Docker Hub authentication workflow boundary", () => {
-  it("reuses one auth alias and one explicit audited cleanup step across every image job (#6430)", () => {
-    const workflow = loadWorkflow();
-    const requiredJobs = imageJobNames(workflow);
-    const canonicalAuth = namedStep(workflow.jobs.live, AUTH_STEP_NAME);
-    const cleanupSteps: WorkflowStep[] = [];
-
-    expect(requiredJobs.length).toBeGreaterThan(50);
-    expect(requiredJobs).toEqual(
-      expect.arrayContaining([
-        "live",
-        "diagnostics",
-        "messaging-compatible-endpoint",
-        "openshell-gateway-auth-contract",
-      ]),
-    );
-    expect(canonicalAuth).toBeDefined();
-
-    for (const jobName of requiredJobs) {
-      const job = workflow.jobs[jobName];
-      expect(job, jobName).toBeDefined();
-      expect(
-        job.steps?.filter((step) => step.name === AUTH_STEP_NAME),
-        `${jobName} auth steps`,
-      ).toHaveLength(1);
-      expect(
-        job.steps?.filter((step) => step.name === CLEANUP_STEP_NAME),
-        `${jobName} cleanup steps`,
-      ).toHaveLength(1);
-      expect(namedStep(job, AUTH_STEP_NAME), `${jobName} auth alias`).toBe(canonicalAuth);
-      const cleanup = namedStep(job, CLEANUP_STEP_NAME);
-      expect(cleanup, `${jobName} cleanup mapping`).toEqual(EXPECTED_CLEANUP_STEP);
-      cleanupSteps.push(cleanup!);
-
-      const checkoutIndex =
-        job.steps?.findIndex((step) => String(step.uses ?? "").startsWith("actions/checkout@")) ??
-        -1;
-      const authIndex = job.steps?.findIndex((step) => step.name === AUTH_STEP_NAME) ?? -1;
-      const cleanupIndex = job.steps?.findIndex((step) => step.name === CLEANUP_STEP_NAME) ?? -1;
-      const expectedAuthIndex =
-        jobName === "jetson-nvmap-gpu" ? checkoutIndex + 2 : checkoutIndex + 1;
-      expect(authIndex, `${jobName} auth order`).toBe(expectedAuthIndex);
-      expect(cleanupIndex, `${jobName} cleanup order`).toBe((job.steps?.length ?? 0) - 1);
-    }
-    expect(new Set(cleanupSteps).size, "cleanup steps must not consume the YAML alias budget").toBe(
-      requiredJobs.length,
-    );
-
-    for (const jobName of NO_IMAGE_E2E_JOBS) {
-      expect(namedStep(workflow.jobs[jobName], AUTH_STEP_NAME), jobName).toBeUndefined();
-      expect(namedStep(workflow.jobs[jobName], CLEANUP_STEP_NAME), jobName).toBeUndefined();
-    }
-  });
-
   it("rejects missing auth and cleanup coverage for every classified image job", () => {
     const workflow = loadWorkflow();
     const requiredJobs = imageJobNames(workflow);
@@ -153,6 +94,37 @@ describe("shared Docker Hub authentication workflow boundary", () => {
           `${jobName} image-consuming job must have exactly one Docker Hub cleanup step`,
         ]),
       ),
+    );
+  });
+
+  it("rejects alias, ordering, and no-image exemption drift", () => {
+    const errors = validateMutation((workflow) => {
+      const canonicalAuth = namedStep(workflow.jobs.live, AUTH_STEP_NAME)!;
+      const diagnosticsSteps = workflow.jobs.diagnostics.steps!;
+      const diagnosticsAuthIndex = diagnosticsSteps.indexOf(
+        namedStep(workflow.jobs.diagnostics, AUTH_STEP_NAME)!,
+      );
+      diagnosticsSteps[diagnosticsAuthIndex] = {
+        ...canonicalAuth,
+        env: { ...canonicalAuth.env },
+      };
+
+      const messagingSteps = workflow.jobs["messaging-compatible-endpoint"].steps!;
+      const messagingAuthIndex = messagingSteps.indexOf(
+        namedStep(workflow.jobs["messaging-compatible-endpoint"], AUTH_STEP_NAME)!,
+      );
+      const [messagingAuth] = messagingSteps.splice(messagingAuthIndex, 1);
+      messagingSteps.splice(messagingSteps.length - 1, 0, messagingAuth);
+
+      workflow.jobs["shared-e2e"].steps!.push({ ...canonicalAuth });
+    });
+
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        "diagnostics Docker Hub auth must reuse the canonical workflow alias",
+        "messaging-compatible-endpoint Docker Hub auth must run immediately after checkout",
+        "shared-e2e no-image job must not receive Docker Hub authentication",
+      ]),
     );
   });
 

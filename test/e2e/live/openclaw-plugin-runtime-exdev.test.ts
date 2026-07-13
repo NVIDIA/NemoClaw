@@ -94,6 +94,7 @@ const STOCK_OPENCLAW_POLICY_PATHS = [
   path.join(REPO_ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml"),
 ] as const;
 validateSandboxName(SANDBOX_NAME);
+process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
 const EXDEV_PATTERNS = [
   /EXDEV: cross-device link not permitted/i,
@@ -936,22 +937,17 @@ test("a custom OpenClaw plugin survives restart, recreation, and rebuild without
     "bin/nemoclaw.js missing — run npm run build:cli before this live target",
   ).toBe(true);
 
-  cleanup.add(`destroy sandbox ${SANDBOX_NAME}`, async () => {
-    const cleanupEnv = liveEnv();
-    await ignoreCleanupError(() =>
-      host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
-        artifactName: "cleanup-nemoclaw-destroy-openclaw-plugin-exdev",
-        env: cleanupEnv,
-        timeoutMs: 120_000,
-      }),
-    );
-    await ignoreCleanupError(() =>
-      sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
-        artifactName: "cleanup-openshell-delete-openclaw-plugin-exdev",
-        env: cleanupEnv,
-        timeoutMs: 60_000,
-      }),
-    );
+  cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "cleanup-openshell-delete-openclaw-plugin-exdev",
+      env: liveEnv(),
+      timeoutMs: 60_000,
+    }),
+  );
+  cleanup.trackSandbox(host, SANDBOX_NAME, {
+    artifactName: "cleanup-nemoclaw-destroy-openclaw-plugin-exdev",
+    env: liveEnv(),
+    timeoutMs: 120_000,
   });
 
   await ignoreCleanupError(() =>

@@ -56,7 +56,7 @@ function assertTestOwnedSandboxName(): void {
   }
 }
 
-async function bestEffort(run: () => Promise<unknown>): Promise<void> {
+async function bestEffortPreclean(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
   } catch {
@@ -121,24 +121,29 @@ test(
       "rebuild-backups",
       SANDBOX_NAME,
     );
-    cleanup.add(`restore NemoClaw state files for ${SANDBOX_NAME}`, () => {
+    cleanup.trackDisposable(`restore NemoClaw state files for ${SANDBOX_NAME}`, () => {
       restoreRegistryAndSession(stateSnapshot);
       fs.rmSync(backupRoot, { recursive: true, force: true });
     });
-    cleanup.add(`destroy sandbox ${SANDBOX_NAME}`, async () => {
-      if (process.env.NEMOCLAW_E2E_KEEP_SANDBOX === "1") return;
-      await bestEffort(() => onboard.destroySandbox(SANDBOX_NAME, "cleanup-nemoclaw-destroy"));
-      await bestEffort(() =>
-        sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
+    if (process.env.NEMOCLAW_E2E_KEEP_SANDBOX !== "1") {
+      cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+        sandbox.cleanupSandbox(SANDBOX_NAME, {
           artifactName: "cleanup-openshell-sandbox-delete",
           env: buildAvailabilityProbeEnv(),
           timeoutMs: 60_000,
         }),
       );
-    });
+      cleanup.trackSandbox(host, SANDBOX_NAME, {
+        artifactName: "cleanup-nemoclaw-destroy",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 15 * 60_000,
+      });
+    }
 
-    await bestEffort(() => onboard.destroySandbox(SANDBOX_NAME, "pre-cleanup-nemoclaw-destroy"));
-    await bestEffort(() =>
+    await bestEffortPreclean(() =>
+      onboard.destroySandbox(SANDBOX_NAME, "pre-cleanup-nemoclaw-destroy"),
+    );
+    await bestEffortPreclean(() =>
       sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
         artifactName: "pre-cleanup-openshell-sandbox-delete",
         env: buildAvailabilityProbeEnv(),

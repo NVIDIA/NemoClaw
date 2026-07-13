@@ -4,11 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { DockerGpuPatchFailureContext, DockerGpuPatchResult } from "./docker-gpu-patch";
-import {
-  createDockerGpuSandboxCreatePatch,
-  resolveDockerGpuSandboxCreatePlan,
-} from "./docker-gpu-sandbox-create";
-import { buildSandboxGpuCreateArgs } from "./sandbox-gpu-create";
+import { createDockerGpuSandboxCreatePatch } from "./docker-gpu-sandbox-create";
 
 function deferredCreateResult(): DockerGpuPatchResult {
   return {
@@ -51,13 +47,16 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     const result = deferredCreateResult();
     const recreatePatch = vi.fn(() => result);
     const waitForSupervisor = vi.fn(() => true);
-    const finalizeBackup = vi.fn(() => ({ backupRemoved: true, rolledBack: false }));
+    const finalizeBackup = vi.fn(() => ({
+      backupRemoved: true,
+      rolledBack: false,
+    }));
     const capturePreRollbackDiagnostics = vi.fn(() => null);
     const onPatchFailureExit = vi.fn();
     const findContainerIds = vi.fn(() => ["existing-container"]);
 
     const patch = createDockerGpuSandboxCreatePatch({
-      enabled: true,
+      route: "compatibility",
       sandboxName: "alpha",
       timeoutSecs: 60,
       deps,
@@ -74,7 +73,9 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     patch.maybeApplyDuringCreate();
     expect(recreatePatch).toHaveBeenCalledWith(
       expect.objectContaining({ waitForSupervisor: false }),
-      expect.objectContaining({ runCaptureOpenshell: deps.runCaptureOpenshell }),
+      expect.objectContaining({
+        runCaptureOpenshell: deps.runCaptureOpenshell,
+      }),
     );
     // Critical invariant: the patch helper must NOT remove the backup during
     // create (recreatePatch was called with waitForSupervisor: false; the
@@ -89,18 +90,61 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     expect(onPatchFailureExit).not.toHaveBeenCalled();
   });
 
+  it("refuses compatibility success when the backup container cannot be removed", () => {
+    const deps = makeDeps();
+    const result = deferredCreateResult();
+    const onPatchFailureExit = vi.fn();
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "compatibility",
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps,
+      overrides: {
+        findContainerIds: vi.fn(() => ["existing-container"]),
+        recreatePatch: vi.fn(() => result),
+        waitForSupervisor: vi.fn(() => true),
+        finalizeBackup: vi.fn(() => ({
+          backupRemoved: false,
+          rolledBack: false,
+        })),
+        onPatchFailureExit,
+      },
+    });
+
+    patch.maybeApplyDuringCreate();
+    patch.waitForSupervisorReconnectIfNeeded();
+
+    expect(onPatchFailureExit).toHaveBeenCalledOnce();
+    expect(onPatchFailureExit.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({
+        message: expect.stringContaining("backup container"),
+      }),
+    );
+    expect(onPatchFailureExit.mock.calls[0]?.[2]).toEqual(
+      expect.objectContaining({
+        additionalSummaryLines: ["selected_gpu_route=compatibility"],
+        context: expect.objectContaining({
+          backupContainerName: result.backupContainerName,
+        }),
+      }),
+    );
+  });
+
   it("rolls back to the backup container and surfaces rolledBack=true diagnostics when supervisorReady=false", () => {
     const deps = makeDeps();
     const result = deferredCreateResult();
     const recreatePatch = vi.fn(() => result);
     const waitForSupervisor = vi.fn(() => false);
     const capturePreRollbackDiagnostics = vi.fn(() => null);
-    const finalizeBackup = vi.fn(() => ({ backupRemoved: false, rolledBack: true }));
+    const finalizeBackup = vi.fn(() => ({
+      backupRemoved: false,
+      rolledBack: true,
+    }));
     const onPatchFailureExit = vi.fn();
     const findContainerIds = vi.fn(() => ["existing-container"]);
 
     const patch = createDockerGpuSandboxCreatePatch({
-      enabled: true,
+      route: "compatibility",
       sandboxName: "alpha",
       timeoutSecs: 60,
       deps,
@@ -137,13 +181,16 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     const result = deferredCreateResult();
     const recreatePatch = vi.fn(() => result);
     const waitForSupervisor = vi.fn(() => false);
-    const finalizeBackup = vi.fn(() => ({ backupRemoved: false, rolledBack: false }));
+    const finalizeBackup = vi.fn(() => ({
+      backupRemoved: false,
+      rolledBack: false,
+    }));
     const capturePreRollbackDiagnostics = vi.fn(() => null);
     const onPatchFailureExit = vi.fn();
     const findContainerIds = vi.fn(() => ["existing-container"]);
 
     const patch = createDockerGpuSandboxCreatePatch({
-      enabled: true,
+      route: "compatibility",
       sandboxName: "alpha",
       timeoutSecs: 60,
       deps,
@@ -176,7 +223,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     const findContainerIds = vi.fn(() => []);
 
     const patch = createDockerGpuSandboxCreatePatch({
-      enabled: true,
+      route: "compatibility",
       sandboxName: "alpha",
       timeoutSecs: 60,
       deps,
@@ -209,7 +256,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     const findContainerIds = vi.fn(() => ["existing-container"]);
 
     const patch = createDockerGpuSandboxCreatePatch({
-      enabled: true,
+      route: "compatibility",
       sandboxName: "alpha",
       timeoutSecs: 60,
       deps,
@@ -231,112 +278,27 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     expect(waitForSupervisor).not.toHaveBeenCalled();
     expect(finalizeBackup).not.toHaveBeenCalled();
   });
-});
 
-describe("resolveDockerGpuSandboxCreatePlan Docker Desktop WSL handling", () => {
-  it("keeps useDockerGpuPatch=true on Docker Desktop WSL even when NEMOCLAW_DOCKER_GPU_PATCH=0", () => {
-    const originalEnv = process.env.NEMOCLAW_DOCKER_GPU_PATCH;
-    process.env.NEMOCLAW_DOCKER_GPU_PATCH = "0";
-    try {
-      const plan = resolveDockerGpuSandboxCreatePlan(
-        { sandboxGpuEnabled: true },
-        {
-          dockerDriverGateway: true,
-          detectDockerDesktopWsl: () => true,
-        },
-      );
-      expect(plan.useDockerGpuPatch).toBe(true);
-    } finally {
-      if (originalEnv === undefined) delete process.env.NEMOCLAW_DOCKER_GPU_PATCH;
-      else process.env.NEMOCLAW_DOCKER_GPU_PATCH = originalEnv;
-    }
-  });
+  it("hard-stops a structured failed GPU proof on the compatibility route", () => {
+    const deps = makeDeps();
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "compatibility",
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps,
+      overrides: {
+        findContainerIds: vi.fn(() => []),
+      },
+    });
 
-  it("honors NEMOCLAW_DOCKER_GPU_PATCH=0 when not on Docker Desktop WSL", () => {
-    const originalEnv = process.env.NEMOCLAW_DOCKER_GPU_PATCH;
-    process.env.NEMOCLAW_DOCKER_GPU_PATCH = "0";
-    try {
-      const plan = resolveDockerGpuSandboxCreatePlan(
-        { sandboxGpuEnabled: true },
-        {
-          dockerDriverGateway: true,
-          detectDockerDesktopWsl: () => false,
-        },
-      );
-      expect(plan.useDockerGpuPatch).toBe(false);
-    } finally {
-      if (originalEnv === undefined) delete process.env.NEMOCLAW_DOCKER_GPU_PATCH;
-      else process.env.NEMOCLAW_DOCKER_GPU_PATCH = originalEnv;
-    }
-  });
-
-  it("uses native OpenShell GPU by default and preserves the explicit legacy force", () => {
-    vi.stubEnv("NEMOCLAW_DOCKER_GPU_PATCH", "");
-    try {
-      expect(
-        resolveDockerGpuSandboxCreatePlan(
-          { sandboxGpuEnabled: true },
-          {
-            dockerDriverGateway: true,
-            detectDockerDesktopWsl: () => false,
-            platform: "linux",
-          },
-        ).useDockerGpuPatch,
-      ).toBe(false);
-
-      vi.stubEnv("NEMOCLAW_DOCKER_GPU_PATCH", "1");
-      expect(
-        resolveDockerGpuSandboxCreatePlan(
-          { sandboxGpuEnabled: true },
-          {
-            dockerDriverGateway: true,
-            detectDockerDesktopWsl: () => false,
-            platform: "linux",
-          },
-        ).useDockerGpuPatch,
-      ).toBe(true);
-    } finally {
-      vi.unstubAllEnvs();
-    }
-  });
-
-  it("suppresses the openshell sandbox create --gpu flag on Docker Desktop WSL when the opt-out is ignored", () => {
-    const originalEnv = process.env.NEMOCLAW_DOCKER_GPU_PATCH;
-    process.env.NEMOCLAW_DOCKER_GPU_PATCH = "0";
-    try {
-      const sandboxGpuConfig = { sandboxGpuEnabled: true };
-      const plan = resolveDockerGpuSandboxCreatePlan(sandboxGpuConfig, {
-        dockerDriverGateway: true,
-        detectDockerDesktopWsl: () => true,
-      });
-      expect(plan.useDockerGpuPatch).toBe(true);
-      const createArgs = buildSandboxGpuCreateArgs(sandboxGpuConfig, {
-        suppressGpuFlag: plan.useDockerGpuPatch,
-      });
-      expect(createArgs).toEqual([]);
-    } finally {
-      if (originalEnv === undefined) delete process.env.NEMOCLAW_DOCKER_GPU_PATCH;
-      else process.env.NEMOCLAW_DOCKER_GPU_PATCH = originalEnv;
-    }
-  });
-
-  it("emits --gpu when the patch is disabled outside Docker Desktop WSL", () => {
-    const originalEnv = process.env.NEMOCLAW_DOCKER_GPU_PATCH;
-    process.env.NEMOCLAW_DOCKER_GPU_PATCH = "0";
-    try {
-      const sandboxGpuConfig = { sandboxGpuEnabled: true };
-      const plan = resolveDockerGpuSandboxCreatePlan(sandboxGpuConfig, {
-        dockerDriverGateway: true,
-        detectDockerDesktopWsl: () => false,
-      });
-      expect(plan.useDockerGpuPatch).toBe(false);
-      const createArgs = buildSandboxGpuCreateArgs(sandboxGpuConfig, {
-        suppressGpuFlag: plan.useDockerGpuPatch,
-      });
-      expect(createArgs).toEqual(["--gpu"]);
-    } finally {
-      if (originalEnv === undefined) delete process.env.NEMOCLAW_DOCKER_GPU_PATCH;
-      else process.env.NEMOCLAW_DOCKER_GPU_PATCH = originalEnv;
-    }
+    expect(() =>
+      patch.verifyGpuOrExit(() => ({
+        status: "failed",
+        cudaVerified: false,
+        label: "nvidia-smi when available",
+        detail: "No devices were found",
+        at: "2026-07-07T00:00:00.000Z",
+      })),
+    ).toThrow("Sandbox GPU proof returned failed status: nvidia-smi when available");
   });
 });

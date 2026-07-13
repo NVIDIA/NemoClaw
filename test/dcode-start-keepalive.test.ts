@@ -98,6 +98,7 @@ afterEach(() => {
 });
 
 describe("Deep Agents Code sandbox entrypoint keep-alive (#5717)", () => {
+  // source-shape-contract: compatibility -- Executes the shipped entrypoint to protect no-command sandbox liveness
   it("stays alive as a long-running process when invoked with no command", () => {
     // The terminal-runtime sandbox runs this entrypoint with no args as its
     // sole foreground process. It must NOT exit on its own — a self-exiting
@@ -125,6 +126,7 @@ describe("Deep Agents Code sandbox entrypoint keep-alive (#5717)", () => {
     expect(fs.readFileSync(rlimitMarker, "utf8")).toBe("hardened\nverified\n");
   });
 
+  // source-shape-contract: compatibility -- Executes the shipped entrypoint to protect explicit command delegation
   it("execs an explicitly supplied command instead of idling", () => {
     const { scriptPath, rlimitMarker } = makeStartFixture();
     const result = spawnSync(scriptPath, ["printf", "RAN_CMD"], {
@@ -137,6 +139,7 @@ describe("Deep Agents Code sandbox entrypoint keep-alive (#5717)", () => {
     expect(fs.readFileSync(rlimitMarker, "utf8")).toBe("hardened\nverified\n");
   });
 
+  // source-shape-contract: security -- Executes the shipped entrypoint to prove missing rlimit enforcement fails closed
   it("refuses to launch when the required rlimit helper is missing (#6545)", () => {
     const { scriptPath, rlimitMarker } = makeStartFixture({
       installRlimitHelper: () => undefined,
@@ -155,6 +158,7 @@ describe("Deep Agents Code sandbox entrypoint keep-alive (#5717)", () => {
     expect(fs.existsSync(rlimitMarker)).toBe(false);
   });
 
+  // source-shape-contract: security -- Executes the shipped entrypoint to prove ineffective rlimits fail closed
   it("refuses to launch when effective rlimits fail verification (#6545)", () => {
     const { scriptPath, rlimitMarker } = makeStartFixture({
       installRlimitHelper: installFailingVerificationRlimitHelper,

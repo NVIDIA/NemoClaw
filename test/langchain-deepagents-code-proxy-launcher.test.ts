@@ -178,17 +178,14 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     expect(launcher.indexOf(directIdentity)).toBeLessThan(launcher.indexOf(supervisedSession));
   });
 
-  it("keeps one-shot non-interactive sessions outside the interactive supervisor", () => {
+  it("routes one-shot non-interactive sessions through the session supervisor (#6720)", () => {
     const launcher = readAgentFile("dcode-launcher.sh");
-    const nonInteractiveBypass =
-      '-n | -n?* | --non-interactive | --non-interactive=*) exec "$MANAGED_DCODE_WRAPPER" "$@" ;;';
     const supervisedSession =
       'exec /opt/venv/bin/python3 -I "$MANAGED_SESSION_SUPERVISOR" "$MANAGED_DCODE_WRAPPER" "$@"';
 
-    expect(launcher).toContain(nonInteractiveBypass);
-    expect(launcher.indexOf(nonInteractiveBypass)).toBeLessThan(
-      launcher.indexOf(supervisedSession),
-    );
+    expect(launcher).not.toMatch(/-n\s*\|[^\n]*exec "\$MANAGED_DCODE_WRAPPER"/u);
+    expect(launcher).not.toMatch(/--non-interactive[^\n]*exec "\$MANAGED_DCODE_WRAPPER"/u);
+    expect(launcher).toContain(supervisedSession);
   });
 
   it("preserves the empty-prompt failure through the installed launcher chain (#6440)", () => {

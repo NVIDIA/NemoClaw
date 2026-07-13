@@ -16,6 +16,7 @@ const dependabot = readYaml<{ updates?: DependabotUpdate[] }>(".github/dependabo
 const codeqlActionPrefix = "github/codeql-action/";
 
 describe("Code scanning workflow dependency updates", () => {
+  // source-shape-contract: security -- One immutable CodeQL revision prevents partial scanner action upgrades
   it("keeps every CodeQL action on one immutable revision", () => {
     const codeqlActions = Object.values(workflow.jobs ?? {})
       .flatMap((job) => job.steps ?? [])
@@ -34,6 +35,7 @@ describe("Code scanning workflow dependency updates", () => {
     expect(new Set(revisions).size).toBe(1);
   });
 
+  // source-shape-contract: security -- Grouped CodeQL updates preserve the reviewed single-revision scanner boundary
   it("groups CodeQL action updates so Dependabot keeps the shared revision synchronized", () => {
     const githubActionsUpdate = dependabot.updates?.find(
       (update) => update["package-ecosystem"] === "github-actions" && update.directory === "/",

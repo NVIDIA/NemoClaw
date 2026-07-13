@@ -326,14 +326,14 @@ repair_repository() {
     return 1
   fi
 
-  setup_requirement node "Install Node.js 22.16 or newer, then rerun this command." || setup_failed=1
+  setup_requirement node "Install Node.js 22.19 or newer, then rerun this command." || setup_failed=1
   setup_requirement npm "Install npm 10 or newer, then rerun this command." || setup_failed=1
   setup_requirement git "Install Git, then rerun this command." || setup_failed=1
   if ((setup_failed > 0)); then
     return 1
   fi
-  setup_minimum_version "Node.js" node "22.16.0" \
-    "Install Node.js 22.16 or newer, then rerun this command." || setup_failed=1
+  setup_minimum_version "Node.js" node "22.19.0" \
+    "Install Node.js 22.19 or newer, then rerun this command." || setup_failed=1
   setup_minimum_version "npm" npm "10.0.0" \
     "Install npm 10 or newer, then rerun this command." || setup_failed=1
   if ! find_local_python >/dev/null; then
@@ -565,7 +565,7 @@ run_doctor() {
     fail "NemoClaw source checkout not found" "Run this command from a NemoClaw repository checkout."
   fi
 
-  check_minimum_version "Node.js" node "22.16.0" "Install Node.js 22.16 or newer."
+  check_minimum_version "Node.js" node "22.19.0" "Install Node.js 22.19 or newer."
   check_minimum_version "npm" npm "10.0.0" "Install npm 10 or newer."
   if local_python="$(find_local_python)"; then
     check_minimum_version "Python" "${local_python}" "3.11.0" "Install Python 3.11 or newer."
