@@ -204,8 +204,10 @@ the SLSA-bound release archives.
 ### Candidate development artifact evidence
 
 The successful `bb72d012` Release Dev run provides bounded compatibility inputs,
-not release approval. The exact retained Linux amd64 artifacts inspected on July
-12, 2026 are:
+not release approval. NemoClaw does not download or execute these expiring
+artifacts as `0.0.82` release proof; the stable tag and its published artifacts
+are the sole production authority. The exact retained Linux amd64 artifacts
+inspected on July 12, 2026 are historical ancestry evidence:
 
 | Role | Actions artifact | Actions ZIP SHA-256 | Inner archive SHA-256 | Extracted binary SHA-256 |
 |---|---|---|---|---|

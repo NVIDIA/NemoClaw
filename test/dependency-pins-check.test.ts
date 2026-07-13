@@ -24,9 +24,6 @@ const OPENSHELL_RELEASE_MANIFESTS = [
   "openshell-gateway-checksums-sha256.txt",
   "openshell-sandbox-checksums-sha256.txt",
 ] as const;
-const EXACT_MAIN_MANIFEST = "openshell-child-visible-credentials.bb72d0123c.json";
-const EXACT_MAIN_SHA = "bb72d0123c748ed7e209880f7bab593e10aae221";
-const EXACT_MAIN_VERSION = "0.0.82-dev.11+gbb72d012";
 
 type FixtureOverrides = Partial<Record<string, string>>;
 
@@ -49,12 +46,8 @@ function writeFixture(root: string, overrides: FixtureOverrides = {}): void {
     `https://registry.npmjs.org/openclaw/-/openclaw-${openclawVersion}.tgz`;
   const openclawArg = `OPENCLAW_${openclawVersion.replace(/[.-]/g, "_")}`;
   const hermesSemver = overrides.hermesSemver ?? HERMES_SEMVER;
-  const exactMainProof = overrides.exactMainProof === "1";
   const credentialManifestName = `openshell-child-visible-credentials.v${openshellMax}.json`;
   const credentialVersion = overrides.credentialVersion ?? openshellMax;
-  const exactMainManifestName = overrides.exactMainManifestName ?? EXACT_MAIN_MANIFEST;
-  const exactMainVersion = overrides.exactMainVersion ?? EXACT_MAIN_VERSION;
-  const exactMainSourceSha = overrides.exactMainSourceSha ?? EXACT_MAIN_SHA;
   const installerHashVersions = [
     overrides.installerHashExtraVersion,
     overrides.installerHashVersion ?? openshellMax,
@@ -92,18 +85,6 @@ jobs:
   openshell-gateway-auth-contract:
     env:
       NEMOCLAW_OPENSHELL_PIN_VERSION: "${overrides.workflowPinVersion ?? openshellMax}"
-${
-  exactMainProof
-    ? `  mcp-bridge-dev:
-    env:
-      NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
-    steps:
-      - name: Stage exact OpenShell main artifacts
-        env:
-          OPENSHELL_SOURCE_SHA: ${exactMainSourceSha}
-        run: echo ${exactMainSourceSha}`
-    : ""
-}
 `,
     [`src/lib/actions/sandbox/${credentialManifestName}`]: JSON.stringify({
       openshellCommit: "f".repeat(40),
@@ -174,14 +155,6 @@ ARG HERMES_SEMVER=${hermesSemver}
     "agents/hermes/manifest.yaml": `
 expected_version: "${overrides.hermesManifestVersion ?? hermesSemver}"
 `,
-    ...(exactMainProof
-      ? {
-          [`src/lib/actions/sandbox/${exactMainManifestName}`]: JSON.stringify({
-            openshellCommit: exactMainSourceSha,
-            openshellVersion: exactMainVersion,
-          }),
-        }
-      : {}),
   };
 
   for (const [relativePath, contents] of Object.entries(files)) {
@@ -210,20 +183,6 @@ describe("dependency pin drift check", () => {
     withFixture("nemoclaw-dependency-pins-match-", {}, (root) => {
       expect(verifyDependencyPins(root)).toEqual([]);
     });
-  });
-
-  it("keeps an optional exact-main proof from selecting production credential authority", () => {
-    withFixture("nemoclaw-dependency-pins-exact-main-", { exactMainProof: "1" }, (root) =>
-      expect(verifyDependencyPins(root)).toEqual([]),
-    );
-  });
-
-  it("ignores optional exact-main identity drift in the production pin graph", () => {
-    withFixture(
-      "nemoclaw-dependency-pins-exact-main-drift-",
-      { exactMainProof: "1", exactMainSourceSha: "a".repeat(40) },
-      (root) => expect(verifyDependencyPins(root)).toEqual([]),
-    );
   });
 
   it("accepts a coordinated authority and consumer change (#5242)", () => {
