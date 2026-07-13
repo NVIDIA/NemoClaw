@@ -12,6 +12,7 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass
+from functools import cmp_to_key
 from pathlib import Path
 from typing import Any
 
@@ -66,29 +67,22 @@ class Version:
             build,
         )
 
-    def __lt__(self, other: object) -> bool:
-        """Compare SemVer precedence while deliberately ignoring build metadata."""
-
-        if not isinstance(other, Version):
-            return NotImplemented
-        core = (self.major, self.minor, self.patch)
-        other_core = (other.major, other.minor, other.patch)
-        if core != other_core:
-            return core < other_core
-        if self.prerelease is None:
-            return False
-        if other.prerelease is None:
-            return True
-        return self._prerelease_is_less(self.prerelease, other.prerelease)
-
     def compare_precedence(self, other: Version) -> int:
         """Return the SemVer precedence comparison, excluding build metadata."""
 
-        if self < other:
+        core = (self.major, self.minor, self.patch)
+        other_core = (other.major, other.minor, other.patch)
+        if core != other_core:
+            return -1 if core < other_core else 1
+        if self.prerelease is None:
+            return 0 if other.prerelease is None else 1
+        if other.prerelease is None:
             return -1
-        if other < self:
-            return 1
-        return 0
+        if self.prerelease == other.prerelease:
+            return 0
+        if self._prerelease_is_less(self.prerelease, other.prerelease):
+            return -1
+        return 1
 
     @staticmethod
     def _prerelease_is_less(left: str, right: str) -> bool:
@@ -115,6 +109,17 @@ class Version:
         if self.prerelease:
             base = f"{base}-{self.prerelease}"
         return f"{base}+{self.build}" if self.build else base
+
+
+def compare_tagged_versions(
+    left: tuple[Version, str], right: tuple[Version, str]
+) -> int:
+    """Order tagged versions by SemVer precedence and then exact tag identity."""
+
+    precedence = left[0].compare_precedence(right[0])
+    if precedence != 0:
+        return precedence
+    return (left[1] > right[1]) - (left[1] < right[1])
 
 
 def git(repo: Path, *args: str, allow_failure: bool = False) -> str:
@@ -189,7 +194,8 @@ def version_and_tag_for_start(repo: Path, ref: str, sha: str) -> tuple[Version, 
             "--from must be a semantic-version tag or resolve to a commit carrying one"
         )
     stable = [(version, tag) for version, tag in versions if version.prerelease is None]
-    return max(stable or versions, key=lambda item: (item[0], item[1]))
+    ordered = sorted(stable or versions, key=cmp_to_key(compare_tagged_versions))
+    return ordered[-1]
 
 
 def tag_kind(repo: Path, tag: str) -> str:
@@ -300,25 +306,45 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
         }
     ]
 
-    candidates: list[tuple[Version, str]] = []
+    candidates: list[tuple[Version, str, str]] = []
     explicit_target_tag = args.to_ref.removeprefix("refs/tags/")
     for tag in git(repo, "tag", "--merged", target_sha).splitlines():
         version = Version.parse(tag)
         if version is None:
             continue
         tag_sha = resolve_commit(repo, f"refs/tags/{tag}")
+        if not is_ancestor(repo, start_sha, tag_sha) or tag_sha == start_sha:
+            continue
         explicitly_targeted = tag == explicit_target_tag and tag_sha == target_sha
         precedence = version.compare_precedence(start_version)
-        if precedence < 0 or (precedence == 0 and not explicitly_targeted):
-            continue
+        if precedence < 0:
+            raise LedgerError(
+                "semantic-version precedence regresses along commit ancestry: "
+                f"{tag!r} follows {start_tag!r}"
+            )
         if version.prerelease and not args.include_prereleases and not explicitly_targeted:
             continue
-        if not is_ancestor(repo, start_sha, tag_sha):
-            continue
-        candidates.append((version, tag))
+        candidates.append((version, tag, tag_sha))
 
-    candidates.sort(key=lambda item: (item[0], item[1]))
-    endpoints.extend(endpoint_for_tag(repo, tag, version) for version, tag in candidates)
+    def compare_candidates(
+        left: tuple[Version, str, str], right: tuple[Version, str, str]
+    ) -> int:
+        precedence = left[0].compare_precedence(right[0])
+        if precedence != 0:
+            return precedence
+        if left[2] == right[2]:
+            return (left[1] > right[1]) - (left[1] < right[1])
+        if is_ancestor(repo, left[2], right[2]):
+            return -1
+        if is_ancestor(repo, right[2], left[2]):
+            return 1
+        raise LedgerError(
+            "equal-precedence semantic-version tags are incomparable by commit ancestry: "
+            f"{left[1]!r} and {right[1]!r}"
+        )
+
+    candidates.sort(key=cmp_to_key(compare_candidates))
+    endpoints.extend(endpoint_for_tag(repo, tag, version) for version, tag, _sha in candidates)
 
     if all(endpoint["sha"] != target_sha for endpoint in endpoints):
         endpoints.append(

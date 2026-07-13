@@ -219,6 +219,22 @@ describe("dependency release ledger collector", () => {
     });
   });
 
+  it("orders equal-precedence build identities by proven commit ancestry", () => {
+    const { repo, targetSha: earlierSha } = createTaggedRepository();
+    git(repo, "tag", "v1.0.3+z", earlierSha);
+    const laterSha = commit(repo, "candidate.txt", "later build\n", "rebuild release");
+    git(repo, "tag", "v1.0.3+a", laterSha);
+
+    const result = runCollector(repo, "v1.0.0", "refs/tags/v1.0.3+a");
+    expect(result.status, result.stderr).toBe(0);
+    const ledger = JSON.parse(result.stdout) as Ledger;
+    expect(ledger.releaseEndpoints.slice(-2).map(({ ref, sha }) => ({ ref, sha }))).toEqual([
+      { ref: "v1.0.3+z", sha: earlierSha },
+      { ref: "v1.0.3+a", sha: laterSha },
+    ]);
+    expect(ledger.ranges.at(-1)?.commitCount).toBe(1);
+  });
+
   it("ignores malformed SemVer tags and rejects them as explicit endpoints", () => {
     const { repo } = createTaggedRepository();
     const invalidTags = ["v1.0.3-01", "v1.0.3-rc.01"];
