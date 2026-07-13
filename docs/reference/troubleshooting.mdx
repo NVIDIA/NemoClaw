@@ -359,7 +359,7 @@ OpenShell currently exposes one inference route per gateway.
 NemoClaw records each sandbox's intended provider and model, but the gateway can expose only one of those routes at a time.
 Onboarding with a different valid route warns immediately before changing the live route.
 The warning names every affected registered sandbox and its recorded provider and model.
-The affected sandboxes use that route until another onboarding run or `$$nemoclaw <name> connect` re-points the provider and model.
+The affected sandboxes use that route until another onboarding run or `$$nemoclaw <name> connect` warns and re-points the provider and model.
 When another sandbox uses the same provider name, its custom endpoint, API family, and credential environment-variable name must match before onboarding or `connect` can re-point the route.
 Onboarding exits before provider or route mutation when that provider-global identity differs.
 `connect` refuses the same conflict because its provider/model-only route change cannot safely reconstruct that metadata.
