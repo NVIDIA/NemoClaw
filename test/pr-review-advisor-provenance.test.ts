@@ -7,6 +7,7 @@ import { collectTrustedPreviousAdvisorReview } from "../tools/pr-review-advisor/
 
 const WORKFLOW_SHA = "feedface".repeat(5);
 const BASE_SHA = "deadbeef".repeat(5);
+const UPDATED_BASE_SHA = "cafebabe".repeat(5);
 const HEAD_SHA = "abc1234";
 
 function mockRun(overrides: Record<string, unknown> = {}): void {
@@ -54,7 +55,7 @@ describe("PR review advisor target-event provenance", () => {
       "NVIDIA/NemoClaw",
       "token",
       [comment({ suffix: "trusted target review" })],
-      { prNumber: 42 },
+      { prNumber: 42, currentBaseSha: BASE_SHA },
     );
 
     expect(previous).toMatchObject({
@@ -63,16 +64,42 @@ describe("PR review advisor target-event provenance", () => {
     });
   });
 
+  it("rejects a prior target review after the live PR base changes", async () => {
+    mockRun();
+
+    const previous = await collectTrustedPreviousAdvisorReview(
+      "NVIDIA/NemoClaw",
+      "token",
+      [comment({ suffix: "stale target review" })],
+      { prNumber: 42, currentBaseSha: UPDATED_BASE_SHA },
+    );
+
+    expect(previous).toBeNull();
+  });
+
+  it("rejects target-event provenance without the live PR base", async () => {
+    mockRun();
+
+    const previous = await collectTrustedPreviousAdvisorReview(
+      "NVIDIA/NemoClaw",
+      "token",
+      [comment({ suffix: "unbound target review" })],
+      { prNumber: 42 },
+    );
+
+    expect(previous).toBeNull();
+  });
+
   it("rejects metadata when the run association binds a different base", async () => {
     mockRun({
-      pull_requests: [{ number: 42, head: { sha: HEAD_SHA }, base: { sha: "cafebabe".repeat(5) } }],
+      pull_requests: [{ number: 42, head: { sha: HEAD_SHA }, base: { sha: UPDATED_BASE_SHA } }],
     });
 
     const previous = await collectTrustedPreviousAdvisorReview(
       "NVIDIA/NemoClaw",
       "token",
       [comment({ suffix: "wrong base" })],
-      { prNumber: 42 },
+      { prNumber: 42, currentBaseSha: BASE_SHA },
     );
 
     expect(previous).toBeNull();
@@ -86,7 +113,7 @@ describe("PR review advisor target-event provenance", () => {
       "NVIDIA/NemoClaw",
       "token",
       [comment({ suffix: "ambiguous target review" })],
-      { prNumber: 42 },
+      { prNumber: 42, currentBaseSha: BASE_SHA },
     );
 
     expect(previous).toBeNull();

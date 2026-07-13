@@ -172,7 +172,7 @@ function validPrimaryResult(): Record<string, unknown> {
     headSha: HEAD_SHA,
     summary: { recommendation: "merge_as_is" },
     findings: [],
-    e2e: { coverage: { required: [] }, targets: { required: [] } },
+    e2e: { coverage: { requiredTests: [] }, targets: { required: [] } },
   };
 }
 
@@ -465,6 +465,53 @@ fi
       );
       expect(fs.readFileSync(callLog, "utf8")).toContain("--ignore-scripts");
       expect(fs.readFileSync(callLog, "utf8")).toContain("typebox@test-typebox-version");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("emits a schema-valid result when trusted advisor code is unavailable", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-bootstrap-"));
+    const artifactDir = path.join(tmp, "artifacts", "pr-review-advisor");
+    try {
+      const completed = spawnSync(
+        "/bin/bash",
+        ["-c", workflowStepScript("review", "Run PR review advisor")],
+        {
+          cwd: ROOT,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            ADVISOR_DIR: path.join(tmp, "trusted-advisor-without-implementation"),
+            ADVISOR_WORKDIR: ROOT,
+            BASE_REF: "origin/main",
+            GITHUB_WORKSPACE: tmp,
+            HEAD_REF: "HEAD",
+            PR_REVIEW_ADVISOR_ARTIFACT_DIR: "pr-review-advisor",
+            PR_REVIEW_ADVISOR_COMMENT_TITLE: "PR Review Advisor",
+          },
+        },
+      );
+      const schemaValidation = spawnSync(
+        process.execPath,
+        [
+          "-e",
+          `const fs = require("node:fs");
+const Ajv2020 = require("ajv/dist/2020").default;
+const schema = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+const result = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+const validate = new Ajv2020({ strict: false }).compile(schema);
+const valid = validate(result);
+valid || console.error(JSON.stringify(validate.errors));
+process.exitCode = valid ? 0 : 1;`,
+          path.join(ROOT, "tools/pr-review-advisor/schema.json"),
+          path.join(artifactDir, "pr-review-advisor-final-result.json"),
+        ],
+        { cwd: ROOT, encoding: "utf8" },
+      );
+
+      expect(completed.status, completed.stderr).toBe(0);
+      expect(schemaValidation.status, schemaValidation.stderr).toBe(0);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

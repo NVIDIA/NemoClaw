@@ -286,6 +286,41 @@ describe("PR review advisor", () => {
     expect(comment).not.toContain("rm -rf");
   });
 
+  it("renders the reasons for required E2E coverage", () => {
+    const result = normalizeReviewResult(
+      validResult({
+        e2e: {
+          coverage: {
+            classifiedDomains: [],
+            requiredTests: [
+              {
+                id: "advisor-workflow",
+                reason: "The combined advisor path needs end-to-end regression coverage.",
+              },
+            ],
+            optionalTests: [],
+            newE2eRecommendations: [],
+            noE2eReason: null,
+            confidence: "high",
+          },
+          targets: {
+            relevantChangedFiles: [],
+            required: [],
+            optional: [],
+            noTargetE2eReason: "No live dispatch is required.",
+            confidence: "high",
+          },
+        },
+      }),
+      metadata({ changedFiles: [] }),
+    );
+
+    const comment = buildComment({ summary: renderSummary(result), result });
+    expect(comment).toContain(
+      "- <code>advisor-workflow</code> — The combined advisor path needs end-to-end regression coverage.",
+    );
+  });
+
   it("sanitizes malformed enum values and preserves deterministic fallback gates", () => {
     const result = normalizeReviewResult(
       {

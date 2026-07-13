@@ -56,9 +56,10 @@ also fatal. A finding mismatch after same-session synthesis validation is fatal 
 visibly incomplete, but their final-result artifact preserves any open canonical findings committed
 before the failure so later runs and reviewers do not lose substantive review history.
 
-The workflow is advisory and must not be configured as an E2E required status check. Its combined
-comment includes deterministic-plan-backed E2E guidance but does not dispatch or report pass/fail
-for E2E jobs. Model availability must not become the authority for whether a pull request can merge.
+The workflow is advisory and must not be configured as an E2E-required status check. Its combined
+comment includes deterministic-plan-backed E2E guidance and the reasons for required coverage, but
+does not dispatch or report pass/fail for E2E jobs. Model availability must not become the authority
+for whether a pull request can merge.
 For PRs from this repository, the PR E2E controller separately rebuilds the plan from GitHub's
 changed-file list and dispatches every selected job after `CI / Pull Request` completes. `E2E / PR
 Gate` does not consume advisor output.
@@ -82,7 +83,7 @@ Authors and coding agents should follow the shared [PR CI and Automated Review F
 - The analysis job is limited to `NVIDIA/NemoClaw`, has read-only GitHub permissions, and is the only job that receives the model secret.
 - The separate publisher has pull-request write permission, but receives neither the model secret nor the untrusted PR worktree. It accepts only the bounded primary artifact from the same workflow run and rechecks the live PR head and base before commenting.
 - The workflow posts advisory comments only; it does not approve, request changes, merge, push, label, or dispatch E2E.
-- Previous-review follow-up treats GitHub issue comments as mutable and replayable. A target-event comment is accepted only when hidden metadata binds its comment ID, PR number, head SHA, base SHA, trusted workflow SHA and path, run attempt, event, and update window to the corresponding `PR Review / Advisor` run. Legacy `pull_request` comments retain their narrower migration contract. This accepts the residual same-run boundary: another trusted repository workflow would need to post a marker-bearing `github-actions[bot]` comment during the same run window while knowing the run metadata. Fully preventing that requires a durable GitHub comment-to-workflow ownership signal that the REST API does not expose.
+- Previous-review follow-up treats GitHub issue comments as mutable and replayable. A target-event comment is accepted only when hidden metadata binds its comment ID, PR number, head SHA, base SHA, trusted workflow SHA and path, run attempt, event, and update window to the corresponding `PR Review / Advisor` run, and the recorded base SHA still matches the PR's current live base. Legacy `pull_request` comments retain their narrower migration contract. This accepts the residual same-run boundary: another trusted repository workflow would need to post a marker-bearing `github-actions[bot]` comment during the same run window while knowing the run metadata. Fully preventing that requires a durable GitHub comment-to-workflow ownership signal that the REST API does not expose.
 - During rollout, non-default advisor lanes may see an older trusted `main` checkout that has the workflow matrix but not the matching model support. The workflow treats that as trusted-main rollout skew and writes low-confidence skip artifacts in the lane-specific artifact directory. Do not run PR-controlled advisor code to bypass this gate; remove the gate only after the trusted `main` implementation always supports the parallel advisor lane.
 - The checked-in risk plan is deterministic and additive. PR Review Advisor reviews every listed
   invariant and required job for missing evidence. The trusted E2E normalizer restores any listed

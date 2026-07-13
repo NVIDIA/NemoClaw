@@ -9,6 +9,7 @@ import { parseArgs, readIfExists, readJsonIfExists } from "../advisors/io.mts";
 
 const MARKER = "<!-- nemoclaw-pr-review-advisor -->";
 const COMMENT_TITLE = "PR Review Advisor";
+const E2E_RENDER_LIMIT = 20;
 
 type ReviewAdvisorResult = {
   headSha?: string;
@@ -286,9 +287,17 @@ function renderE2eDetails(result?: ReviewAdvisorResult): string {
     `**Required coverage:** ${renderE2eIds(requiredCoverage) || "_None_"}`,
     `**Required dispatches:** ${renderE2eIds(requiredTargets) || "_None_"}`,
   );
+  if (requiredCoverage.length > 0) {
+    lines.push("");
+    for (const item of requiredCoverage.slice(0, E2E_RENDER_LIMIT)) {
+      const id = escapeLocationHtml(item.id || "E2E test");
+      const reason = item.reason ? ` — ${escapeCommentText(item.reason)}` : "";
+      lines.push(`- <code>${id}</code>${reason}`);
+    }
+  }
   if (requiredTargets.length > 0) {
     lines.push("");
-    for (const item of requiredTargets.slice(0, 20)) {
+    for (const item of requiredTargets.slice(0, E2E_RENDER_LIMIT)) {
       const id = escapeLocationHtml(item.id || "E2E target");
       const reason = item.reason ? ` — ${escapeCommentText(item.reason)}` : "";
       lines.push(`- <code>${id}</code>${reason}`);
@@ -305,17 +314,17 @@ function renderE2eDetails(result?: ReviewAdvisorResult): string {
       `<summary>${compactCount(optionalCoverage.length, "optional coverage item")} · ${compactCount(optionalTargets.length, "optional dispatch")} · ${compactCount(newRecommendations.length, "new-test recommendation")}</summary>`,
       "",
     );
-    for (const item of optionalCoverage.slice(0, 20)) {
+    for (const item of optionalCoverage.slice(0, E2E_RENDER_LIMIT)) {
       lines.push(
         `- Optional coverage <code>${escapeLocationHtml(item.id || "unnamed")}</code>${item.reason ? ` — ${escapeCommentText(item.reason)}` : ""}`,
       );
     }
-    for (const item of optionalTargets.slice(0, 20)) {
+    for (const item of optionalTargets.slice(0, E2E_RENDER_LIMIT)) {
       lines.push(
         `- Optional dispatch <code>${escapeLocationHtml(item.id || "unnamed")}</code>${item.reason ? ` — ${escapeCommentText(item.reason)}` : ""}`,
       );
     }
-    for (const item of newRecommendations.slice(0, 20)) {
+    for (const item of newRecommendations.slice(0, E2E_RENDER_LIMIT)) {
       const name = item.suggestedTest || item.domain || "E2E test";
       lines.push(
         `- New test: ${escapeCommentText(name)}${item.reason ? ` — ${escapeCommentText(item.reason)}` : ""}`,
@@ -339,7 +348,7 @@ function renderE2eDetails(result?: ReviewAdvisorResult): string {
 
 function renderE2eIds(items: Array<{ id?: string }>): string {
   return items
-    .slice(0, 20)
+    .slice(0, E2E_RENDER_LIMIT)
     .map((item) => `<code>${escapeLocationHtml(item.id || "unnamed")}</code>`)
     .join(", ");
 }

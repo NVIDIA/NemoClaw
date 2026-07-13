@@ -1275,6 +1275,7 @@ async function collectGitHubContext(): Promise<GitHubReviewContext | null> {
           workflowName: ADVISOR_WORKFLOW_NAME,
           workflowPath: ADVISOR_WORKFLOW_PATH,
           prNumber,
+          currentBaseSha: stringOrUndefined(getPath<unknown>(pullRequest, ["base", "sha"])),
         })
       : null;
     const prTitle = stringOrUndefined(getPath<unknown>(pullRequest, ["title"])) || "";
@@ -1445,6 +1446,7 @@ export type AdvisorReviewProvenanceOptions = {
   workflowName?: string;
   workflowPath?: string;
   prNumber?: number;
+  currentBaseSha?: string;
 };
 
 export async function collectTrustedPreviousAdvisorReview(
@@ -1463,7 +1465,8 @@ export async function collectTrustedPreviousAdvisorReview(
   // path, attempt, event contract, and time window. Legacy pull_request runs
   // bind run.head_sha directly to the analyzed head. pull_request_target runs
   // instead bind the trusted workflow SHA and require one run.pull_requests
-  // association whose PR number and head SHA match the current PR context.
+  // association whose PR number, head SHA, and base SHA match the current PR
+  // context.
   // This intentionally accepts the residual same-run boundary: another
   // repository workflow would need to post a marker-bearing github-actions[bot]
   // comment during the same PR Review / Advisor run window while knowing the
@@ -1483,6 +1486,7 @@ export async function collectTrustedPreviousAdvisorReview(
         workflowName,
         workflowPath,
         prNumber: options.prNumber,
+        currentBaseSha: options.currentBaseSha,
       })
     ) {
       trustedCommentIds.add(candidate.metadata.commentId);
@@ -1607,6 +1611,7 @@ async function isTrustedAdvisorRun(
     workflowName: string;
     workflowPath: string;
     prNumber?: number;
+    currentBaseSha?: string;
   },
 ): Promise<boolean> {
   try {
@@ -1636,11 +1641,18 @@ async function isTrustedAdvisorRun(
       return headSha === candidate.metadata.headSha && !hasTargetEventMetadata(candidate.metadata);
     }
     if (event !== "pull_request_target") return false;
-    if (!hasCompleteTargetEventMetadata(candidate.metadata) || !options.prNumber) return false;
+    if (
+      !hasCompleteTargetEventMetadata(candidate.metadata) ||
+      !options.prNumber ||
+      !options.currentBaseSha
+    ) {
+      return false;
+    }
     if (
       candidate.metadata.event !== event ||
       candidate.metadata.prNumber !== String(options.prNumber) ||
       candidate.metadata.workflowSha !== headSha ||
+      candidate.metadata.baseSha !== options.currentBaseSha ||
       normalizeWorkflowPath(candidate.metadata.workflowPath) !== options.workflowPath
     ) {
       return false;
