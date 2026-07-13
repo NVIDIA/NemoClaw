@@ -528,6 +528,32 @@ describe("handleProviderInferenceState", () => {
     expect(result.sandboxName).toBe("tm");
   });
 
+  it("does not reserve a route when resume skips inference after sandbox completion (#6562)", async () => {
+    const session = createSession({
+      sandboxName: "completed-sandbox",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-test",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      preferredInferenceApi: "openai-responses",
+    });
+    session.steps.provider_selection.status = "complete";
+    session.steps.sandbox.status = "complete";
+    const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
+
+    const result = await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "completed-sandbox",
+    });
+
+    expect(calls.promptName).not.toHaveBeenCalled();
+    expect(calls.setupNim).not.toHaveBeenCalled();
+    expect(calls.setupInference).not.toHaveBeenCalled();
+    expect(calls.reserveRoute).not.toHaveBeenCalled();
+    expect(result.sandboxName).toBe("completed-sandbox");
+  });
+
   it("reserves the prompted sandbox route after redoing provider selection on resume (#6562)", async () => {
     const session = createSession();
     const completedSelection = createSession({ sessionId: "resume-selection-session" });
