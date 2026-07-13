@@ -113,7 +113,7 @@ describe("OpenShell 0.0.82 migration review", () => {
   });
 
   it("tracks every material migration concern and refuses false-green evidence", () => {
-    for (let number = 1; number <= 15; number += 1) {
+    for (let number = 1; number <= 17; number += 1) {
       const id = `OS82-${String(number).padStart(2, "0")}`;
       expect(review.split(`| \`${id}\` |`), `${id} concern row`).toHaveLength(2);
     }
@@ -161,6 +161,13 @@ describe("OpenShell 0.0.82 migration review", () => {
     );
     expect(mcpBridge).toContain("assertExactMainPolicyNftAndIdentityContracts({");
     expect(mcpBridge).toContain("assertExactMainMcpLogPrivacy({");
+    expect(review).toContain("capctl 0.2.4");
+    expect(review).toContain("4a6e71767585f51c2a33fed6d67147ec0343725fc3c03bf4b89fe67fede56aa5");
+    expect(review).toContain("THIRD-PARTY-NOTICES");
+    expect(review).toContain("Alpine `3.22.5`");
+    expect(review).toContain("29 installed APK records");
+    expect(review).toContain("executes only the extracted binary");
+    expect(review).toContain("cache identity omits resolved `sandbox_uid`");
   });
 
   it("keeps the stable pin and physical Spark proof blocked until final evidence exists", () => {

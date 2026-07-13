@@ -77,6 +77,40 @@ Release publication is a separate gate from source ancestry:
   moving prerelease is useful for compatibility work, but is not a stable
   selector or final provenance record.
 
+### Rust dependency and notice delta
+
+The aggregate `Cargo.lock` comparison is 48 additions and 25 removals. Its only
+new third-party package identities are `capctl 0.2.4`, checksum
+`4a6e71767585f51c2a33fed6d67147ec0343725fc3c03bf4b89fe67fede56aa5`,
+and its `bitflags 1.3.2` dependency, checksum
+`bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a`.
+The exact production path is `bitflags 1.3.2 -> capctl 0.2.4 ->
+openshell-supervisor-process -> openshell-sandbox`. `afc06dd2` uses
+`capctl::caps::bounding::{clear, probe, clear_unknown}` for the new capability
+bounding-set behavior, so this is security-boundary code rather than an
+incidental build dependency.
+
+The retained crates.io `capctl` source identifies upstream Git commit
+`6b89ddb3e79493a5e34bb681c00053d6122968bd`, is MIT-licensed, and has no build
+script. Its implementation contains unsafe FFI around Linux `prctl`, `capget`,
+`capset`, and extended-attribute operations. `bitflags 1.3.2` identifies upstream
+Git commit `ed185cfb1c447c1b4bd6ac021c9ec3bb02c9e2f2` and is dual
+MIT/Apache-2.0. A read-only RustSec advisory-database search on July 12, 2026
+found no advisory entry naming `capctl`; that absence is inventory evidence, not
+proof that the unsafe boundary is vulnerability-free.
+
+OpenShell's `THIRD-PARTY-NOTICES` object is byte-identical at `v0.0.72` and
+`bb72d012` (`41eda0e0a83429e874544b507977c3a56f5a489f`). It does not name
+`capctl` and still records only `bitflags 2.10.0`, while the candidate lock has
+`bitflags 1.3.2` and `2.11.1`. OpenShell has source-directory CycloneDX tooling,
+but its license check is advisory and the candidate release job neither
+generates nor publishes that SBOM. The release job attests VM-driver archives,
+not the consumed CLI, gateway, standalone sandbox archives, or supervisor OCI
+image. Final approval therefore requires a lock-to-binary dependency inventory,
+current notices/licenses, advisory results, and provenance for the stable
+artifacts; the unchanged notice cannot be treated as evidence that the Rust
+dependency graph stayed constant.
+
 ## Artifact baseline and provenance gap
 
 The currently shipped `0.0.72` supervisor index
@@ -133,6 +167,54 @@ The development supervisor image resolves to immutable index
 | Linux amd64 | `sha256:4a54b434decd007d2a966edb5db751adb3ca4cf8ab8ac0b248901f8efe614b71` | `sha256:5432194fa43840c333bc7b166bf6e7c0e15247e9dc195cb9a38c1a85b7415f44` | `sha256:d1baeaebaddef6291e0a94b697f28c3c319ac2ec1a83843026e89553cc7cd27e` | `8e89067afca2d1c02a25fb19906dd27fd8d524ee4eb3b2b36b1210338dae9235` |
 | Linux arm64 | `sha256:fab8d5c551991648a19bf7876d2edf19fdcf4e95139ce5f75d638354c0820d51` | `sha256:66a1d121d6386e19297d05a950ba7409c5752f337bacfbc156c7c76513e40136` | `sha256:818c727cb5cbcdb78918a274ca6b9aa85be6a95fdb604e49f523cf2c87f2eba4` | `8ec9b88c49f001d070ada7bb5a98fb6f96498fc446b0f2f614056247d7300b85` |
 
+Read-only package-database inspection of both development child manifests found
+Alpine `3.22.5` and the same 29 installed APK records:
+
+```text
+alpine-baselayout-3.7.0-r0       alpine-baselayout-data-3.7.0-r0
+alpine-keys-2.5-r0               alpine-release-3.22.5-r0
+apk-tools-2.14.10-r0             busybox-1.37.0-r20
+busybox-binsh-1.37.0-r20         ca-certificates-bundle-20260611-r0
+gmp-6.3.0-r3                     iptables-1.8.11-r1
+iptables-legacy-1.8.11-r1        jansson-2.14.1-r0
+libapk2-2.14.10-r0               libcrypto3-3.5.7-r0
+libip4tc-1.8.11-r1               libip6tc-1.8.11-r1
+libmnl-1.0.5-r2                  libncursesw-6.5_p20250503-r0
+libnftnl-1.2.9-r0                libssl3-3.5.7-r0
+libxtables-1.8.11-r1             musl-1.2.5-r12
+musl-utils-1.2.5-r12             ncurses-terminfo-base-6.5_p20250503-r0
+nftables-1.1.3-r0                readline-8.2.13-r1
+scanelf-1.3.8-r1                 ssl_client-1.37.0-r20
+zlib-1.3.2-r0
+```
+
+The installed package metadata spans MIT, Apache-2.0, GPL-2.0-only,
+GPL-2.0-or-later, GPL-3.0-or-later, LGPL-2.1-or-later,
+LGPL-3.0-or-later, MPL-2.0, BSD-2-Clause, X11, and Zlib expressions. The image
+contains no path whose name matches `LICENSE`, `COPYING`, or `NOTICE`. On amd64,
+the filesystem inventory has 152 mode-executable regular files, including 115
+xtables modules, plus 391 symbolic links and 304 BusyBox applets. Those counts
+include executable-mode shared objects; they deliberately describe the whole
+distributed filesystem rather than only the three explicitly installed package
+names.
+
+The source Dockerfile uses mutable `alpine:3.22` and resolves unversioned
+`nftables`, `iptables`, and `iptables-legacy` packages at build time. The build
+wrapper passes `--provenance=false`. The development digest freezes the result
+inspected above, but the Dockerfile alone cannot reproduce that result or bind
+the resolved base/package identities to source.
+
+This expanded image is not all executable runtime surface for NemoClaw's Docker
+driver. OpenShell pulls the image, creates a non-running extractor container,
+downloads only `/openshell-sandbox`, caches that binary by image content ID, and
+bind-mounts it into the actual sandbox image. The Alpine packages are therefore
+downloaded supply-chain and local-daemon storage surface, but are not executed in
+the standard NemoClaw Docker topology. OpenShell's Kubernetes sidecar and Podman
+image-volume paths can execute or expose the Alpine filesystem; those drivers
+remain outside the current NemoClaw integration. Both boundaries must be stated:
+the Docker extraction behavior narrows runtime exposure, but it does not make an
+unreproducible, unattributed distributed layer disappear.
+
 Those image binaries byte-match build artifacts `8266448422` (amd64) and
 `8266451406` (arm64), respectively. The match binds registry content to retained
 Actions output, but not cryptographically to source: GitHub returned no
@@ -153,6 +235,9 @@ Commits: `afc06dd2`, `a5161d0b`, `a2268060`, `f27ff150`, `474d2d4a`.
   the bounding set is nonempty; it succeeds without that capability only when the
   runtime already supplied an empty bounding set. This directly intersects
   NemoClaw's Docker Desktop, WSL, Colossus, cloud, and DGX capability workarounds.
+  The implementation also adds the `capctl 0.2.4 -> bitflags 1.3.2` dependency
+  chain audited above; runtime behavior and dependency provenance are separate
+  gates.
 - `a5161d0b` moves selected-driver configuration acquisition into a normalized
   server path. NemoClaw renders an authenticated Docker TOML containing the
   selected driver, TLS, mTLS, JWT, supervisor image, and supervisor binary; the
@@ -199,9 +284,19 @@ Commits: `43bb0302`, `5f9bf9ce`, `6461677c`.
 - `43bb0302` changes Docker and Podman bind mounts to support SELinux relabeling,
   explicit source checks, and Docker's legacy bind representation. Production
   NemoClaw supplies no driver mounts; the EXDEV fixture remains the direct test.
-- Numeric UID/GID policy identities are additive. NemoClaw continues to run the
-  named `sandbox` identity and must not silently change that identity during this
-  bump.
+- `6461677c` adds numeric UID/GID policy identities and configurable Kubernetes
+  and VM identities. NemoClaw's supported gateway configuration selects only the
+  Docker driver; that driver does not inject the new UID/GID environment or
+  consume the VM fields, so the downstream Docker process remains the named
+  `sandbox` identity. This is a Docker-only exclusion, not a claim that the
+  upstream change is merely additive on every driver.
+- The VM default remains its legacy hardcoded UID/GID `10001`, and prepared-image
+  cache identities include the rootfs layout, OpenShell version, and source-image
+  identity. Upgrading from `0.0.72` therefore misses the old cache. Within one
+  OpenShell version, however, the cache identity omits resolved `sandbox_uid` and
+  `sandbox_gid`; changing those settings can reuse a rootfs whose passwd/group
+  entries were baked for the old identity. Any future NemoClaw VM-driver support
+  must include those values in the key or purge and rebuild the cache.
 - The rootless-Podman host E2E change does not alter NemoClaw's Docker runtime.
 
 ### v0.0.76 to v0.0.77
@@ -279,8 +374,12 @@ Commits: `5f38b7c4`, `ccdac9ce`, `caaa5165`, `8c0ecac8`, `233d207e`,
 - `8eacb477` changes the combined Docker supervisor even though its title names
   Kubernetes. The supervisor image changes from `scratch` plus one mode-0550
   binary to Alpine 3.22 with `nftables`, `iptables`, `iptables-legacy`, and a
-  mode-0555 binary. This adds an OS package, SBOM, vulnerability, license, and
+  mode-0555 binary. The exact development result is Alpine 3.22.5 with 29 APK
+  records, 152 mode-executable regular files, 391 symlinks, and no embedded
+  license/notice path. This adds an OS package, SBOM, vulnerability, license, and
   executable surface that must be reviewed and bound to the final OCI digest.
+  NemoClaw's Docker driver extracts only the binary, but still downloads the
+  expanded, non-reproducibly resolved image.
 - The same commit changes generic Docker namespace nft installation from an
   atomic batch to sequential commands. Required failures can occur after the
   policy-accept chain and accept rules exist but before all IPv4/IPv6 TCP/UDP
@@ -366,7 +465,7 @@ final stable-source review must retain the upstream
 | `OS82-05` | High | Versioned credential placeholders and the eight-generation window change long-running MCP behavior. | Regenerate the exact-version child-visible manifest; reject reserved `v<digits>_` names; test more than eight rotations, removed keys, detach, restart/rebuild, fresh exec revision, expiry, and literal-placeholder scans. | Exact-main generation-window proof implemented and workflow-mandatory; live execution, final manifest, and stable-source rerun remain open. |
 | `OS82-06` | High | Initial policy acknowledgement and ordered retry can make the active gateway status lag enforcement. | Test initial LOADED/FAILED, hot update, retry outage/recovery, restart, exact version/hash re-read, and ordered drain. | Candidate exact-main proof now covers hot-update LOADED identity plus restart initial acknowledgement and exact version/hash recovery. Initial FAILED and isolated report outage/ordered drain remain an open runtime gate. |
 | `OS82-07` | High | Sequential nft setup can leave an incomplete policy-accept ruleset after a required command fails; Docker setup treats the error as nonfatal. | Inject each required failure; inspect IPv4/IPv6 TCP/UDP rules and direct-bypass negatives on Linux x86 and Spark arm64; verify restart and teardown. | Candidate exact-main proof now inspects the live policy-accept chain and all four required rejects before/after restart, and probes controlled IPv4 TCP/UDP listeners. Required-command fault injection, routed IPv6 behavior, Spark arm64, and physical teardown remain an open security gate. |
-| `OS82-08` | High | The supervisor image gains Alpine and three networking packages and changes binary mode. | Review SBOM, vulnerabilities, licenses, executables, modes, multiarch manifests, source labels, and OCI provenance; preserve an explicit digest. | Development image content audited; missing attestation and final stable image remain open. |
+| `OS82-08` | High | The supervisor image moves from one scratch binary to a 29-package Alpine filesystem resolved from a mutable base and unpinned APK names. NemoClaw's Docker path downloads it but executes only the extracted binary. | Retain exact per-arch package/version/license and file inventories; scan vulnerabilities; verify modes, multiarch manifests, base/package identities, source labels, OCI provenance, and extraction-only behavior; preserve an explicit digest. | Development identities and content are enumerated. Vulnerability results, license attribution, reproducible base/package inputs, attestation, and the final stable image remain open. |
 | `OS82-09` | Medium-high | Normalized selected-driver config can change the effective Docker gateway even when the TOML text is unchanged. | Parse the final rendered TOML with the final binary; prove loopback/bridge listeners, JWT/mTLS, restart, persisted state, and legacy gateway upgrade. | Open runtime gate. |
 | `OS82-10` | Medium-high | Supervisor TLS identity variables are no longer child environment. Stale tests/comments can normalize a credential leak. | Assert absence from entrypoint, exec, and connect children and update the source-of-truth rationale. | Hermes and Deep Agents now reject all three variables; the candidate exact-main entrypoint, exec, and connect probes require their absence, with exact-head execution pending. |
 | `OS82-11` | Medium-high | Live `/proc/<pid>/exe` identity changes replacement-time policy behavior. | Prove old process survives replacement and a new altered process at the same path is denied. | Candidate exact-main proof runs both processes against the real proxy and requires old=200 before/after replacement, distinct live/path hashes, and new=403; exact-head runtime result pending. |
@@ -374,6 +473,8 @@ final stable-source review must retain the upstream
 | `OS82-13` | Low | Mount parsing/SELinux changes could affect the test-only tmpfs path. | Rerun the EXDEV tmpfs fixture and retain production no-mount evidence. | Open targeted test. |
 | `OS82-14` | Low | Sanitized MCP tool names are newly present in logs. | Record the additive observability/privacy behavior; ensure no downstream parser assumes the old shape. | Candidate exact-main check requires the real `fake_echo` tool name and rejects argument/result canaries or an `arguments` field in JSON-RPC policy logs; exact-head runtime result pending. |
 | `OS82-15` | High | The installer-hash workflow executes its checker and parser from the PR base SHA. One PR cannot safely teach that trusted base about a new release and consume the release; using the head checker would let reviewed code define its own trust rules. | First land archive safety, normalized full-script template validation, and multi-release trust while selectors remain `0.0.72`; prove the old base rejects a new release and the new base permits only structured release-data changes; then submit the `0.0.82` pin. | NemoClaw-only prerequisite implementation in progress. |
+| `OS82-16` | High | Capability clearing now depends on `capctl 0.2.4` and `bitflags 1.3.2`, but upstream notices are unchanged and the consumed binaries have no published SBOM or attestation covering this dependency graph. | Bind crate checksums and source identities to the stable lock and binaries; review the unsafe syscall boundary and advisories; update notices/licenses; retain a generated SBOM and provenance for every consumed binary. | Candidate crate source, checksums, licenses, unsafe boundary, and current RustSec absence are recorded. Stable lock-to-binary SBOM, notices, and provenance remain open. |
+| `OS82-17` | Medium | The VM driver bakes configurable UID/GID into prepared rootfs state, but its same-version cache key omits both values and can reuse stale passwd/group entries after configuration drift. | Keep NemoClaw's selected driver Docker-only. Before any VM path is supported, key prepared images by UID/GID or purge them and prove identity/ownership after change and restart. | Source-reviewed exclusion for the current Docker topology; VM configuration-churn compatibility is unproven. |
 
 An unresolved critical or high concern blocks the version selector change. A green
 aggregate test suite does not override an open ledger row.
@@ -447,7 +548,9 @@ restart/rebuild, and cleanup without a conditional skip or expected failure.
    this entire adjacent-source audit for every commit between `bb72d012` and that
    tag.
 3. The tag has a successful release publication. Every consumed archive and OCI
-   child manifest is bound to that producer run and source identity.
+   child manifest is bound to that producer run and source identity. Stable
+   binary and image SBOMs, notices, licenses, advisory results, and provenance
+   account for the exact Rust and APK graphs above.
 4. Blueprint bounds, installer tables, Brev defaults, workflow pins, feature-gate
    hashes, supervisor digest, credential manifest, tests, and active docs select
    one coherent version.
