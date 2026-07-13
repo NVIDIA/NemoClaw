@@ -20,6 +20,11 @@ export function printDockerNotReachableError(): void {
   console.error(failLine("Docker is not reachable. Please fix Docker and try again."));
 }
 
+/** A required onboarding port is already occupied. */
+export function printPortUnavailableError(port: number): void {
+  console.error(failLine(`Port ${port} is not available.`));
+}
+
 /** Podman under the Linux Docker-driver path is unsupported. */
 export function printUnsupportedRuntimeError(): void {
   console.error(failLine(`${cliDisplayName()} onboarding now uses OpenShell's Docker driver.`));

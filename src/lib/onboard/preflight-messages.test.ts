@@ -7,6 +7,7 @@ import {
   printDockerNotReachableError,
   printLowMemoryWarning,
   printMessagingProviderMissing,
+  printPortUnavailableError,
   printSwapCreationFailed,
   printUnderProvisionedRuntimeWarning,
   printUnsupportedRuntimeError,
@@ -62,6 +63,14 @@ describe("onboard preflight severity messages (#6004)", () => {
         "  ⚠ Low memory detected (4000 MB RAM + 0 MB swap = 4000 MB total)",
       );
       expect([...lines(err), ...lines(warn)].join("\n")).not.toContain("\x1b[");
+    });
+  });
+
+  it("renders port conflicts as failures without ANSI on plain stderr (#6752)", () => {
+    withStderrColorDepth(1, () => {
+      const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      printPortUnavailableError(8080);
+      expect(lines(err)).toEqual(["  ✗ Port 8080 is not available."]);
     });
   });
 

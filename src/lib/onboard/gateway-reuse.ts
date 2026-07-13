@@ -3,6 +3,8 @@
 
 import { getGatewayReuseState, shouldSelectNamedGatewayForReuse } from "../state/gateway";
 
+const GATEWAY_INSPECTION_TIMEOUT_MS = 5_000;
+
 export type GatewayReuseSnapshot = {
   gatewayStatus: string;
   gwInfo: string;
@@ -28,11 +30,18 @@ export function createGatewayReuseHelpers(deps: GatewayReuseDeps): GatewayReuseH
 
   function getGatewayReuseSnapshot(): GatewayReuseSnapshot {
     const gatewayName = currentGatewayName();
-    const gatewayStatus = deps.runCaptureOpenshell(["status"], { ignoreError: true });
+    const gatewayStatus = deps.runCaptureOpenshell(["status"], {
+      ignoreError: true,
+      timeout: GATEWAY_INSPECTION_TIMEOUT_MS,
+    });
     const gwInfo = deps.runCaptureOpenshell(["gateway", "info", "-g", gatewayName], {
       ignoreError: true,
+      timeout: GATEWAY_INSPECTION_TIMEOUT_MS,
     });
-    const activeGatewayInfo = deps.runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
+    const activeGatewayInfo = deps.runCaptureOpenshell(["gateway", "info"], {
+      ignoreError: true,
+      timeout: GATEWAY_INSPECTION_TIMEOUT_MS,
+    });
     return {
       gatewayStatus,
       gwInfo,

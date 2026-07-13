@@ -596,6 +596,7 @@ import { createPolicySelectionPromptHelpers } from "./onboard/policy-selection-p
 import {
   printLowMemoryWarning,
   printMessagingProviderMissing,
+  printPortUnavailableError,
   printSwapCreationFailed,
 } from "./onboard/preflight-messages";
 import { shouldSkipPreRecreateBackup } from "./onboard/sandbox-backup-on-recreate";
@@ -1649,7 +1650,7 @@ async function preflight(
         else if (outcome.kind !== "not-openshell") continue;
       }
       console.error("");
-      console.error(`  !! Port ${port} is not available.`);
+      printPortUnavailableError(port);
       console.error(`     ${label} needs this port.`);
       console.error("");
       if (portCheck.process && portCheck.process !== "unknown") {
