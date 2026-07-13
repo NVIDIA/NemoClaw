@@ -629,7 +629,9 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-live \
             test/e2e/live/mcp-bridge.test.ts \
+            -t '^(mcp-bridge|mcp-bridge-hermes|mcp-bridge-deepagents)$' \
             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/assert-mcp-agent-matrix-artifacts.mts "$E2E_ARTIFACT_DIR"
 
       - id: mcp_artifact_secret_scan
         name: Scan MCP artifacts for fixture credentials
@@ -1000,8 +1002,9 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-live \
             test/e2e/live/mcp-bridge.test.ts \
-            -t '^mcp-bridge-deepagents$' \
+            -t '^(mcp-bridge|mcp-bridge-hermes|mcp-bridge-deepagents)$' \
             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/assert-mcp-agent-matrix-artifacts.mts "$E2E_ARTIFACT_DIR"
 
       - id: mcp_artifact_secret_scan
         name: Scan MCP artifacts for fixture credentials

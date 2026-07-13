@@ -12,6 +12,36 @@ import { validateMcpOpenShellWorkflowBoundary } from "../../../tools/e2e/mcp-wor
 import { requireFixture } from "./require-fixture";
 
 describe("MCP workflow artifact boundary", () => {
+  it("rejects a false-green dev proof that runs only one MCP agent", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+    const workflowPath = path.join(directory, "e2e.yaml");
+    try {
+      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+        jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+      };
+      const lifecycle = workflow.jobs["mcp-bridge-dev"].steps.find(
+        (step) => step.name === "Run MCP OpenShell provider live test",
+      );
+      requireFixture(lifecycle?.run, "MCP dev lifecycle fixture is missing");
+      lifecycle.run = [
+        "npx vitest run --project e2e-live",
+        "test/e2e/live/mcp-bridge.test.ts",
+        "-t '^mcp-bridge-deepagents$'",
+        "",
+      ].join("\n");
+      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toEqual(
+        expect.arrayContaining([
+          "mcp-bridge-dev must select the exact OpenClaw, Hermes, and Deep Agents lifecycle matrix",
+          "mcp-bridge-dev must record proof that every MCP agent lifecycle produced artifacts",
+        ]),
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("rejects upload action or path drift from the reviewed shared boundary", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
     const workflowPath = path.join(directory, "e2e.yaml");

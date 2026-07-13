@@ -19,6 +19,8 @@ const DEV_EXACT_MAIN_FULL_LIFECYCLE_NAME = "Require exact-main full lifecycle";
 const DEV_EXACT_MAIN_SOURCE_SHA = "bb72d0123c748ed7e209880f7bab593e10aae221";
 const DEV_EXACT_MAIN_RUN_ID = "29215426930";
 const DEV_EXACT_MAIN_CLI_VERSION = "0.0.82-dev.11+gbb72d012";
+const MCP_AGENT_MATRIX_FILTER = "-t '^(mcp-bridge|mcp-bridge-hermes|mcp-bridge-deepagents)$'";
+const MCP_AGENT_MATRIX_PROOF_TOOL = "tools/e2e/assert-mcp-agent-matrix-artifacts.mts";
 const DEV_EXACT_MAIN_SUPERVISOR_INDEX =
   "fc441051102b1a16ffcabf59878fa464d3c548f29bfbfa6e4acb232ab67198b7";
 const DEV_EXACT_MAIN_REQUIRED_STAGE_TOKENS = [
@@ -533,14 +535,18 @@ function validateJobExecution(
   for (const required of ["--project e2e-live", "test/e2e/live/mcp-bridge.test.ts"]) {
     requireContains(errors, run.run, required, `${jobName} must run the unified MCP live test`);
   }
-  if (jobName === "mcp-bridge-dev") {
-    requireContains(
-      errors,
-      run.run,
-      "-t '^mcp-bridge-deepagents$'",
-      "mcp-bridge-dev exact-main proof must run the reviewed Deep Agents lifecycle",
-    );
-  }
+  requireContains(
+    errors,
+    run.run,
+    MCP_AGENT_MATRIX_FILTER,
+    `${jobName} must select the exact OpenClaw, Hermes, and Deep Agents lifecycle matrix`,
+  );
+  requireContains(
+    errors,
+    run.run,
+    `npx tsx ${MCP_AGENT_MATRIX_PROOF_TOOL} "$E2E_ARTIFACT_DIR"`,
+    `${jobName} must record proof that every MCP agent lifecycle produced artifacts`,
+  );
   requireEqual(
     errors,
     scan.id,
