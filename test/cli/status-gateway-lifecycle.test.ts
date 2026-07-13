@@ -65,7 +65,7 @@ describe("CLI status gateway lifecycle process contracts", () => {
     testTimeout(20_000),
   );
 
-  it("prints healthy inference only after the sandbox and gateway are verified", () => {
+  it("prints the recorded route and healthy inference after verification (#6315)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-status-healthy-"));
     const localBin = path.join(home, "bin");
     const markerFile = path.join(home, "openshell-calls");
@@ -134,8 +134,11 @@ describe("CLI status gateway lifecycle process contracts", () => {
 
     expect(result.code).toBe(0);
     expect(result.out).toContain("Sandbox: alpha");
-    expect(result.out).toContain("Model:    live-model");
+    expect(result.out).toContain("Model:    configured-model");
     expect(result.out).toContain("Provider: nvidia-prod");
+    expect(result.out).toContain(
+      "gateway inference route (nvidia-prod/live-model) differs from the recorded route for this sandbox (nvidia-prod/configured-model)",
+    );
     expect(result.out).toContain("Inference:");
     expect(result.out).toContain("healthy");
     expect(result.out).not.toContain("not verified");
