@@ -45,9 +45,10 @@ describe("sandbox inference route reservation", () => {
         ],
       });
       const reservation = registry.getSandbox("alpha");
-      if (!reservation) throw new Error("Expected route reservation");
-      expect(reservation.createdAt).toBeUndefined();
-      expect(registry.isRouteOnlySandboxReservation(reservation)).toBe(true);
+      expect(reservation).not.toBeNull();
+      const reservedEntry = reservation as NonNullable<typeof reservation>;
+      expect(reservedEntry.createdAt).toBeUndefined();
+      expect(registry.isRouteOnlySandboxReservation(reservedEntry)).toBe(true);
       expect(registry.getDefault()).toBeNull();
       expect(registry.setDefault("alpha")).toBe(false);
     } finally {
@@ -79,16 +80,17 @@ describe("sandbox inference route reservation", () => {
       });
 
       const retargeted = registry.getSandbox("alpha");
-      if (!retargeted) throw new Error("Expected retargeted sandbox");
-      expect(retargeted).toMatchObject({
+      expect(retargeted).not.toBeNull();
+      const retargetedEntry = retargeted as NonNullable<typeof retargeted>;
+      expect(retargetedEntry).toMatchObject({
         gatewayName: "nemoclaw-9090",
         provider: "anthropic-prod",
         model: "model-b",
         pendingRouteReservation: true,
       });
-      expect(retargeted.createdAt).toEqual(expect.any(String));
-      expect(retargeted.gatewayPort).toBeUndefined();
-      expect(registry.isRouteOnlySandboxReservation(retargeted)).toBe(false);
+      expect(retargetedEntry.createdAt).toEqual(expect.any(String));
+      expect(retargetedEntry.gatewayPort).toBeUndefined();
+      expect(registry.isRouteOnlySandboxReservation(retargetedEntry)).toBe(false);
     } finally {
       await fs.rm(home, { recursive: true, force: true });
     }

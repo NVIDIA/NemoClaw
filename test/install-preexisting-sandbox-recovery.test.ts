@@ -20,10 +20,11 @@ function runRecoveryBeforeOnboard(
   const callLog = path.join(tmp, "calls.log");
   const payloadDir = path.join(tmp, "payload");
   fs.mkdirSync(payloadDir);
-  if (options.registryJson) {
-    fs.mkdirSync(path.join(tmp, ".nemoclaw"));
-    fs.writeFileSync(path.join(tmp, ".nemoclaw", "sandboxes.json"), options.registryJson);
-  }
+  fs.mkdirSync(path.join(tmp, ".nemoclaw"));
+  fs.writeFileSync(
+    path.join(tmp, ".nemoclaw", "sandboxes.json"),
+    options.registryJson ?? '{"sandboxes":{}}',
+  );
   fs.writeFileSync(path.join(payloadDir, "setup-jetson.sh"), "#!/usr/bin/env bash\nexit 0\n", {
     mode: 0o755,
   });
