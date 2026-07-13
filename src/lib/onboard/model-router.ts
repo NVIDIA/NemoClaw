@@ -14,6 +14,7 @@ import {
 } from "../credentials/store";
 import { ROOT, run, runCapture } from "../runner";
 import { hashCredential } from "../security/credential-hash";
+import { rejectSymlinksOnPath } from "../state/config-io";
 import type { Session } from "../state/onboard-session";
 import * as onboardSession from "../state/onboard-session";
 import { nemoclawStateRoot } from "../state/state-root";
@@ -232,7 +233,9 @@ export async function startModelRouter(
   const stateDir = path.join(nemoclawStateRoot(deps.homeDir, GATEWAY_PORT), "state");
   const litellmConfigPath = path.join(stateDir, "litellm-proxy.yaml");
 
+  rejectSymlinksOnPath(stateDir);
   deps.mkdirSync(stateDir);
+  rejectSymlinksOnPath(stateDir);
 
   const proxyConfigResult = deps.runProxyConfig(
     routerCommand,
