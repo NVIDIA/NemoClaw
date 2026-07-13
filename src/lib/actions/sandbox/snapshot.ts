@@ -15,6 +15,12 @@ import { prompt as askPrompt } from "../../credentials/store";
 import { formatFailedBackupItems } from "../../domain/backup-failure";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import {
+  HERMES_DASHBOARD_ENABLE_ENV,
+  HERMES_DASHBOARD_INTERNAL_PORT_ENV,
+  HERMES_DASHBOARD_PORT_ENV,
+  HERMES_DASHBOARD_TUI_ENV,
+} from "../../hermes-dashboard";
+import {
   checkGatewayRouteCompatibility,
   formatGatewayRouteConflict,
 } from "../../inference/gateway-route-compatibility";
@@ -24,8 +30,11 @@ import { listMessagingProviderSuffixes } from "../../messaging/channels";
 import {
   findAvailableDashboardPort,
   getRegistryOccupiedDashboardPorts,
+  withDashboardPortReservationLock,
 } from "../../onboard/dashboard-port";
+import { isValidForwardPort } from "../../onboard/dashboard-runtime";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import { resolveHermesDashboardOnboardState } from "../../onboard/hermes-dashboard";
 import {
   isDcodeAgent,
   OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
@@ -45,13 +54,13 @@ import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { getSandboxEntryInference } from "../../state/registry-entry-view";
 import * as sandboxState from "../../state/sandbox";
-import { cleanupShieldsDestroyArtifacts, removeSandboxRegistryEntry } from "./destroy";
 import {
   DCODE_AGENT_NAME,
   DCODE_BUSY_PROBE_SCRIPT,
   DCODE_PROBE_STATE,
   parseDcodeProbeState,
 } from "./dcode-activity-probe";
+import { cleanupShieldsDestroyArtifacts, removeSandboxRegistryEntry } from "./destroy";
 import {
   buildSandboxExecMarkedCommand,
   createSandboxExecMarker,
@@ -193,23 +202,74 @@ function resolveSrcPodImage(
 // exhaustion aborts before, not after, the mutation.
 function allocateCloneDashboardPort(
   dstName: string,
-  srcEntry: { dashboardPort?: number | null },
+  srcEntry: {
+    name?: string;
+    dashboardPort?: number | null;
+    hermesDashboardEnabled?: boolean;
+    hermesDashboardInternalPort?: number | null;
+  },
 ): number | null {
   const srcPort = srcEntry.dashboardPort;
   if (typeof srcPort !== "number" || !Number.isInteger(srcPort) || srcPort <= 0) return null;
   const forwards = captureOpenshell(["forward", "list"], { ignoreError: true });
-  try {
-    return findAvailableDashboardPort(
-      dstName,
-      srcPort,
-      forwards.output || "",
-      undefined,
-      getRegistryOccupiedDashboardPorts(dstName),
+  const occupied = getRegistryOccupiedDashboardPorts(dstName);
+  const hermesInternalPort = srcEntry.hermesDashboardInternalPort;
+  if (srcEntry.hermesDashboardEnabled === true && isValidForwardPort(hermesInternalPort)) {
+    occupied.set(
+      String(hermesInternalPort),
+      `${srcEntry.name ?? "source"} (Hermes dashboard internal)`,
     );
+  }
+  try {
+    return findAvailableDashboardPort(dstName, srcPort, forwards.output || "", undefined, occupied);
   } catch (err) {
     console.error(`  ${err instanceof Error ? err.message : String(err)}`);
     snapshotExit(1);
   }
+}
+
+function resolveCloneDashboardEnvArgs(
+  srcEntry: SandboxEntry | { name: string },
+  dstDashboardPort: number | null,
+): string[] {
+  const envArgs: string[] = [];
+  if (dstDashboardPort !== null) {
+    envArgs.push(`CHAT_UI_URL=http://127.0.0.1:${dstDashboardPort}`);
+    envArgs.push(`NEMOCLAW_DASHBOARD_PORT=${dstDashboardPort}`);
+  }
+
+  const source = srcEntry as SandboxEntry;
+  if (source.agent !== "hermes") return envArgs;
+  if (source.hermesDashboardEnabled !== true) {
+    envArgs.push(`${HERMES_DASHBOARD_ENABLE_ENV}=0`);
+    return envArgs;
+  }
+  if (dstDashboardPort === null) {
+    console.error("  Cannot clone enabled Hermes dashboard settings without a dashboard port.");
+    snapshotExit(1);
+  }
+  const hermesEnv: NodeJS.ProcessEnv = {
+    [HERMES_DASHBOARD_ENABLE_ENV]: "1",
+    [HERMES_DASHBOARD_PORT_ENV]: String(dstDashboardPort),
+    [HERMES_DASHBOARD_INTERNAL_PORT_ENV]: String(source.hermesDashboardInternalPort),
+    [HERMES_DASHBOARD_TUI_ENV]: source.hermesDashboardTui === true ? "1" : "0",
+  };
+  try {
+    resolveHermesDashboardOnboardState({
+      agentName: source.agent,
+      effectivePort: dstDashboardPort,
+      env: hermesEnv,
+    });
+  } catch (error) {
+    console.error(
+      `  Cannot clone Hermes dashboard settings: ${error instanceof Error ? error.message : String(error)}.`,
+    );
+    snapshotExit(1);
+  }
+  for (const [name, value] of Object.entries(hermesEnv)) {
+    envArgs.push(`${name}=${value}`);
+  }
+  return envArgs;
 }
 
 // Used by `snapshot restore --to <dst>` when dst does not exist yet: reuses
@@ -221,6 +281,7 @@ async function autoCreateSandboxFromSource(
   srcEntry: SandboxEntry | { name: string },
   fromImage: string,
   dstDashboardPort: number | null,
+  dashboardEnvArgs: readonly string[],
 ): Promise<void> {
   const basePolicy = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
   const openshellBin = getOpenshellBinary();
@@ -229,6 +290,7 @@ async function autoCreateSandboxFromSource(
   const startupCommand = [
     "env",
     `NEMOCLAW_OBSERVABILITY=${sourceObservabilityEnabled ? "1" : "0"}`,
+    ...dashboardEnvArgs,
     "nemoclaw-start",
   ];
   const createEnv = { ...process.env };
@@ -305,6 +367,13 @@ async function autoCreateSandboxFromSource(
     // `Sandbox GPU: enabled (CUDA verified)` based on another sandbox's run (#4231).
     sandboxGpuProof: null,
     dashboardPort: dstDashboardPort,
+    // The shared image keeps Hermes' image-baked internal listener port, but
+    // the public WebUI port is a per-sandbox host resource and must follow the
+    // clone's newly allocated dashboard port so rebuild validation converges.
+    hermesDashboardPort:
+      (srcEntry as SandboxEntry).hermesDashboardEnabled === true
+        ? dstDashboardPort
+        : (srcEntry as SandboxEntry).hermesDashboardPort,
   });
 
   console.log(`  ${G}\u2713${R} Sandbox '${dstName}' created`);
@@ -909,7 +978,7 @@ async function runSnapshotRestoreUnlocked(
       }
     }
     const sourceGatewayName = resolveSandboxGatewayName(srcEntry);
-    await withGatewayRouteMutationLock(sourceGatewayName, async () => {
+    const createAndRegisterClone = async (): Promise<void> => {
       if (!targetExists && registry.getSandbox(targetSandbox)) {
         console.error(
           `  Destination sandbox '${targetSandbox}' was registered while this restore was waiting. Retry with --force only after reviewing that sandbox.`,
@@ -958,6 +1027,7 @@ async function runSnapshotRestoreUnlocked(
       // removes the existing `--force` destination — matching the pre-delete
       // validation the image and gateway-route checks above already do (#3756).
       const dstDashboardPort = allocateCloneDashboardPort(targetSandbox, lockedSourceEntry);
+      const dashboardEnvArgs = resolveCloneDashboardEnvArgs(lockedSourceEntry, dstDashboardPort);
       if (targetExists) {
         if (targetEntry) {
           verifyRestoreDestinationOnOwnGateway(targetSandbox);
@@ -974,8 +1044,15 @@ async function runSnapshotRestoreUnlocked(
         lockedSourceEntry,
         lockedFromImage,
         dstDashboardPort,
+        dashboardEnvArgs,
       );
-    });
+    };
+    // Lock order matches onboard: sandbox (outer caller), host dashboard,
+    // gateway route. The host-wide lease stays held from port selection until
+    // the clone is durably registered, including across different gateways.
+    await withDashboardPortReservationLock(() =>
+      withGatewayRouteMutationLock(sourceGatewayName, createAndRegisterClone),
+    );
   }
   withTimerBoundShieldsMutationLock(targetSandbox, "restore sandbox snapshot", () => {
     // Serialize filesystem restore, mutable-permission repair, and policy
