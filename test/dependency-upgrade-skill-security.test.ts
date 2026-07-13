@@ -535,30 +535,23 @@ if (args.includes("log")) {
     const { repo } = createRepository();
     const outputDirectory = temporaryDirectory("dependency-ledger-output-");
     const output = path.join(outputDirectory, "ledger.json");
-    const result = spawnSync(
-      "/bin/sh",
-      [
-        "-c",
-        'umask 000; exec "$@"',
-        "ledger-test",
-        python3,
-        collector,
-        "--repo",
-        repo,
-        "--from",
-        "v1.0.0",
-        "--to",
-        "HEAD",
-        "--git-executable",
-        gitExecutable,
-        "--output",
-        output,
-      ],
-      { encoding: "utf8" },
-    );
+    const priorUmask = process.umask(0o000);
+    let result: SpawnSyncReturns<string>;
+    try {
+      result = runCollector(repo, process.env, ["--output", output]);
+    } finally {
+      process.umask(priorUmask);
+    }
 
     expect(result.status, result.stderr).toBe(0);
-    expect(fs.statSync(output).mode & 0o777).toBe(0o600);
-    expect(JSON.parse(fs.readFileSync(output, "utf8"))).toMatchObject({ schemaVersion: 5 });
+    const descriptor = fs.openSync(output, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    try {
+      expect(fs.fstatSync(descriptor).mode & 0o777).toBe(0o600);
+      expect(JSON.parse(fs.readFileSync(descriptor, { encoding: "utf8" }))).toMatchObject({
+        schemaVersion: 5,
+      });
+    } finally {
+      fs.closeSync(descriptor);
+    }
   });
 });

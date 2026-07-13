@@ -239,6 +239,7 @@ def terminate_process_group(process: subprocess.Popen[bytes]) -> None:
         try:
             process.kill()
         except ProcessLookupError:
+            # The process exited between the group kill and the fallback kill.
             pass
     try:
         process.wait(timeout=5)
@@ -280,6 +281,7 @@ def run_bounded_command(
         try:
             process.stdin.write(input_bytes)
         except BrokenPipeError:
+            # Early command exit is handled by its return code after output drains.
             pass
         finally:
             process.stdin.close()
