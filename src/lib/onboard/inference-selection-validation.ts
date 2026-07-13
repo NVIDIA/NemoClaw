@@ -109,6 +109,26 @@ export interface InferenceSelectionValidationHelpers {
   ): Promise<EndpointValidationResult>;
 }
 
+function probeReportsMissingOpenAiSurface(probe?: { failures?: unknown[] }): boolean {
+  const failures = probe?.failures;
+  if (!Array.isArray(failures)) return false;
+  return failures.some(
+    (failure) =>
+      typeof failure === "object" &&
+      failure !== null &&
+      (failure as { httpStatus?: unknown }).httpStatus === 404,
+  );
+}
+
+function printOpenAiSurfaceGuidance(): void {
+  console.error(
+    "  This agent needs an endpoint that serves the OpenAI Chat Completions API (/v1/chat/completions).",
+  );
+  console.error("  The selected Anthropic-compatible endpoint does not serve it.");
+  console.error("  Use an OpenAI-compatible endpoint, or switch to an Anthropic-native agent:");
+  console.error("  `nemoclaw onboard --agent openclaw` or `nemohermes onboard`.");
+}
+
 export function createInferenceSelectionValidationHelpers(
   deps: InferenceSelectionValidationDeps,
 ): InferenceSelectionValidationHelpers {
@@ -376,6 +396,9 @@ export function createInferenceSelectionValidationHelpers(
       return { ok: true, api: intendedApi, pinnedAddresses };
     }
     printValidationFailure(label, probe);
+    if (intendedApi === "openai-completions" && probeReportsMissingOpenAiSurface(probe)) {
+      printOpenAiSurfaceGuidance();
+    }
     if (deps.isNonInteractive()) {
       exitNonInteractiveValidationFailure();
     }
