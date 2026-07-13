@@ -181,14 +181,16 @@ function resolveSrcPodImage(
   }
 }
 
-// Auto-create a sandbox that clones the image of an existing one.
-// Dashboard ports are per-sandbox host resources: the host forward for src's
-// port is owned by src, so a clone that inherits the port gets a dashboard URL
-// that points at src's dashboard and a rebuild preflight that rejects the
-// clone forever (#6746). Allocate dst's own port instead, from the same
-// per-gateway forward list + cross-gateway registry occupancy view as
-// onboard's `ensureDashboardForward`. Sources without a dashboard port
-// (non-dashboard-managed agents) leave the clone's field unset.
+// Allocate the clone's own dashboard port. Dashboard ports are per-sandbox
+// host resources: the host forward for src's port is owned by src, so a clone
+// that inherits the port gets a dashboard URL that points at src's dashboard
+// and a rebuild preflight that rejects the clone forever (#6746). Allocate
+// dst's own port instead, from the same per-gateway forward list +
+// cross-gateway registry occupancy view as onboard's `ensureDashboardForward`.
+// Sources without a dashboard port (non-dashboard-managed agents) return null
+// so the clone's field stays unset. Callers must invoke this before any
+// destructive step (e.g. deleting a `--force` destination) so port-range
+// exhaustion aborts before, not after, the mutation.
 function allocateCloneDashboardPort(
   dstName: string,
   srcEntry: { dashboardPort?: number | null },
@@ -218,13 +220,8 @@ async function autoCreateSandboxFromSource(
   dstName: string,
   srcEntry: SandboxEntry | { name: string },
   fromImage: string,
+  dstDashboardPort: number | null,
 ): Promise<void> {
-  // Allocate before creating the sandbox so dashboard-port-range exhaustion
-  // aborts cleanly instead of leaving a created-but-unregistered sandbox.
-  const dstDashboardPort = allocateCloneDashboardPort(
-    dstName,
-    srcEntry as { dashboardPort?: number | null },
-  );
   const basePolicy = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
   const openshellBin = getOpenshellBinary();
   const sourceObservabilityEnabled =
@@ -956,6 +953,11 @@ async function runSnapshotRestoreUnlocked(
         console.error(`  Error: ${formatGatewayRouteConflict(compatibility)}`);
         snapshotExit(1);
       }
+      // Allocate the clone's dashboard port before any destructive action, so
+      // dashboard-port-range exhaustion aborts before `deleteSandboxForRestore`
+      // removes the existing `--force` destination — matching the pre-delete
+      // validation the image and gateway-route checks above already do (#3756).
+      const dstDashboardPort = allocateCloneDashboardPort(targetSandbox, lockedSourceEntry);
       if (targetExists) {
         if (targetEntry) {
           verifyRestoreDestinationOnOwnGateway(targetSandbox);
@@ -971,6 +973,7 @@ async function runSnapshotRestoreUnlocked(
         targetSandbox,
         lockedSourceEntry,
         lockedFromImage,
+        dstDashboardPort,
       );
     });
   }

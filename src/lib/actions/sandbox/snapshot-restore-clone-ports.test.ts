@@ -61,6 +61,41 @@ describe("runSandboxSnapshot restore: clone dashboard port identity", () => {
     );
   });
 
+  it("aborts before deleting a --force destination when no dashboard port is free (#6746)", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    dashboardPortMocks.findAvailableDashboardPort.mockImplementation(() => {
+      throw new Error("All dashboard ports in range 18789-18799 are occupied:");
+    });
+    f.getSandboxMock.mockImplementation((name) => ({
+      name: name ?? "alpha",
+      agent: "openclaw",
+      imageTag: `nemoclaw-${name}:test`,
+      openshellDriver: "docker",
+      provider: "nvidia-nim",
+      model: "nvidia/model-a",
+      dashboardPort: 18790,
+    }));
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(
+      runSandboxSnapshot("alpha", { kind: "restore", to: "beta", force: true, yes: true }),
+    ).rejects.toMatchObject({ exitCode: 1 });
+
+    expect(dashboardPortMocks.findAvailableDashboardPort).toHaveBeenCalled();
+    expect(consoleError.mock.calls.flat().join("\n")).toContain("are occupied");
+    expect(f.lifecycleMock.events).not.toContain("delete");
+    expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
+    expect(f.registerSandboxMock).not.toHaveBeenCalled();
+  });
+
   it("registers a clone of a source without a dashboard port with the field unset (#6746)", async () => {
     let registeredClone: f.SandboxRecord | null = null;
     f.registerSandboxMock.mockImplementation(
