@@ -20,6 +20,7 @@ import {
   DASHBOARD_PORT_RANGE_END,
   DASHBOARD_PORT_RANGE_START,
 } from "../core/ports";
+import { type McpLifecycleLockOptions, withMcpLifecycleLock } from "../state/mcp-lifecycle-lock";
 
 // runner.ts is still CommonJS — use require so module shape matches.
 const { runCapture } = require("../runner");
@@ -31,6 +32,25 @@ type SandboxRegistryEntry = {
 };
 
 export type ListSandboxesFn = () => { sandboxes: SandboxRegistryEntry[] };
+
+const DASHBOARD_PORT_RESERVATION_LOCK = "dashboard-port-reservation:host";
+
+/**
+ * Serialize host-wide dashboard-port selection through durable ownership.
+ *
+ * OpenShell forward listings are gateway-scoped while dashboard ports and the
+ * NemoClaw registry are host-scoped. Holding one cross-process lease across
+ * allocation and registration prevents onboard or snapshot restores on
+ * different gateways from selecting the same currently-free port.
+ * Callers that also need lifecycle locks must use the shared order:
+ * sandbox mutation → this host reservation → gateway route mutation.
+ */
+export function withDashboardPortReservationLock<T>(
+  operation: () => Promise<T> | T,
+  options: McpLifecycleLockOptions = {},
+): Promise<T> {
+  return withMcpLifecycleLock(DASHBOARD_PORT_RESERVATION_LOCK, operation, options);
+}
 
 // Match the broader pattern used by onboard.ts (covers CSI, OSC, and Fe escapes)
 // so colorised `openshell forward list` output parses correctly.

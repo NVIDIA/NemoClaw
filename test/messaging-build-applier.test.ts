@@ -797,6 +797,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       const tracePath = path.join(tmp, "openclaw.trace");
       const fakeOpenclaw = path.join(tmp, "openclaw");
       const fakeNpm = path.join(tmp, "npm");
+      const fakeNode = path.join(tmp, "node");
       fs.writeFileSync(
         fakeOpenclaw,
         [
@@ -826,6 +827,16 @@ describe("messaging-build-applier.mts: agent-install", () => {
         ].join("\n"),
         { mode: 0o755 },
       );
+      fs.writeFileSync(
+        fakeNode,
+        [
+          "#!/bin/sh",
+          'printf \'verify|%s|%s\\n\' "$3" "$4" >> "$OPENCLAW_TRACE"',
+          "exit 0",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
 
       try {
         const planEnv = await withLegacyMessagingPlanEnvDirect(
@@ -837,6 +848,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
             OPENCLAW_WHATSAPP_2026_6_10_INTEGRITY,
             OPENCLAW_MSTEAMS_2026_6_10_INTEGRITY,
             TENCENT_WEIXIN_2_4_3_INTEGRITY,
+            NEMOCLAW_WECHAT_NPM_INSTALL_CACHE: tmp,
             OPENCLAW_VERSION: "2026.6.10",
             NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64([
               "telegram",
@@ -888,6 +900,9 @@ describe("messaging-build-applier.mts: agent-install", () => {
           expect(trace).toContain("plugins|install|npm-pack:");
           expect(trace).toContain(`${archiveName}||||`);
         }
+        expect(trace).toContain(
+          "verify|/usr/local/lib/nemoclaw/wechat-runtime/package-lock.json|/sandbox/.openclaw/npm/projects",
+        );
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
       }

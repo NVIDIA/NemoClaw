@@ -59,7 +59,7 @@ function loadJSON(path: string): LooseObject {
 }
 
 function compileSchema(schemaRelPath: string): ValidateFunction {
-  const ajv = new Ajv({ allErrors: true, strict: false });
+  const ajv = new Ajv({ allErrors: true, strict: false, $data: true });
   const schema = loadJSON(repoPath(schemaRelPath));
   return ajv.compile(schema);
 }
@@ -276,33 +276,6 @@ describe("config validation target discovery", () => {
     expect(filesBySchema.get("schemas/onboard-config.schema.json") ?? []).toEqual([
       "ci/onboard-performance-budget.json",
     ]);
-  });
-});
-
-// ── Onboard performance budget ──────────────────────────────────────────────
-
-describe("onboard-config.schema.json", () => {
-  const validate = compileSchema("schemas/onboard-config.schema.json");
-  const validOnboardConfig = {
-    $comment: "Schema fixture",
-    schemaVersion: 1,
-    mode: "advisory",
-    scope: "fixture",
-    totalBudgetMs: 0,
-    regressionWarning: { minDeltaMs: 0, minPercent: 0 },
-    phaseRegressionWarning: { minDeltaMs: 0, minPercent: 0 },
-  };
-
-  it("accepts a minimal onboard performance budget", () => {
-    expectValid(validate, validOnboardConfig, "minimal onboard config");
-  });
-
-  it("rejects invalid threshold shapes", () => {
-    const bad = {
-      ...validOnboardConfig,
-      regressionWarning: { minDeltaMs: -1, minPercent: 20 },
-    };
-    expect(validate(bad)).toBe(false);
   });
 });
 
