@@ -30,13 +30,15 @@ function git(repo: string, ...args: string[]): string {
 }
 
 function commit(repo: string, subject: string, contents?: string): string {
-  if (contents === undefined) {
-    git(repo, "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", subject);
-  } else {
-    fs.writeFileSync(path.join(repo, "contract.txt"), contents);
-    git(repo, "add", "contract.txt");
-    git(repo, "-c", "commit.gpgsign=false", "commit", "-m", subject);
-  }
+  const prepareCommit =
+    contents === undefined
+      ? () => git(repo, "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", subject)
+      : () => {
+          fs.writeFileSync(path.join(repo, "contract.txt"), contents);
+          git(repo, "add", "contract.txt");
+          git(repo, "-c", "commit.gpgsign=false", "commit", "-m", subject);
+        };
+  prepareCommit();
   return git(repo, "rev-parse", "HEAD");
 }
 

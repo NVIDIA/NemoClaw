@@ -228,16 +228,16 @@ function fakeGitHubEnvironment(
       })),
     ],
   };
-  for (const [tag, identity] of Object.entries(remoteTags)) {
-    if (identity.objectType === "tag") {
-      responses[`repos/${fullName}/git/tags/${identity.objectSha}`] = {
-        json: {
-          object: { sha: identity.commitSha, type: "commit" },
-          sha: identity.objectSha,
-          tag,
-        },
-      };
-    }
+  for (const [tag, identity] of Object.entries(remoteTags).filter(
+    ([, entry]) => entry.objectType === "tag",
+  )) {
+    responses[`repos/${fullName}/git/tags/${identity.objectSha}`] = {
+      json: {
+        object: { sha: identity.commitSha, type: "commit" },
+        sha: identity.objectSha,
+        tag,
+      },
+    };
   }
   responses[`repos/${fullName}/git/ref/heads/main`] = {
     json: {
@@ -816,8 +816,7 @@ describe("dependency release ledger collector", () => {
     const { repo, targetSha } = createTaggedRepository();
     const evidence = readGitEvidence(repo, targetSha);
     const inventoryEndpoint = "repos/Acme/Dependency/git/matching-refs/tags/?per_page=100";
-    const annotatedObject = evidence.tags["v1.0.0"];
-    if (!annotatedObject) throw new Error("test fixture omitted v1.0.0");
+    const annotatedObject = evidence.tags["v1.0.0"]!;
     const validEntry = {
       object: { sha: annotatedObject.objectSha, type: annotatedObject.objectType },
       ref: "refs/tags/v1.0.0",
