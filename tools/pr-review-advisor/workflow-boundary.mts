@@ -9,6 +9,8 @@ import YAML from "yaml";
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "pr-review-advisor.yaml");
 const TRUSTED_WORKFLOW_REF = "${{ github.workflow_sha }}";
+const CANONICAL_ADVISOR_NPM_INSTALL =
+  'npm install --prefix "$PI_SDK_DIR" --ignore-scripts --no-save --package-lock=false --before=2026-07-11T00:00:00.000Z "@earendil-works/pi-coding-agent@${PI_SDK_VERSION}" "typebox@${TYPEBOX_VERSION}" "yaml@${YAML_VERSION}" "vitest@${VITEST_VERSION}"';
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
@@ -76,6 +78,19 @@ function requireRunContains(
   if (step && !stringValue(step.run).includes(expected)) {
     errors.push(`step '${step.name ?? "<unnamed>"}' run script must include ${expected}`);
   }
+}
+
+function requireRunLine(
+  errors: string[],
+  step: WorkflowStep | undefined,
+  expected: string,
+  message: string,
+): void {
+  if (!step) return;
+  const lines = stringValue(step.run)
+    .split(/\r?\n/u)
+    .map((line) => line.trim());
+  if (!lines.includes(expected)) errors.push(message);
 }
 
 function requireRunOrder(
@@ -369,6 +384,12 @@ done < <(find "$ADVISOR_WORKDIR" -type l -print0)`;
   requireRunContains(errors, install, '"typebox@${TYPEBOX_VERSION}"');
   requireRunContains(errors, install, '"yaml@${YAML_VERSION}"');
   requireRunContains(errors, install, '"vitest@${VITEST_VERSION}"');
+  requireRunLine(
+    errors,
+    install,
+    CANONICAL_ADVISOR_NPM_INSTALL,
+    "step 'Install Pi SDK' must use the canonical pinned npm install command",
+  );
   requireRunContains(errors, install, '"$ADVISOR_DIR/node_modules"');
 
   const analyze = requireStep(errors, steps, "Run PR review advisor");

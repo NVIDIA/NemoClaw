@@ -659,8 +659,22 @@ process.exitCode = valid ? 0 : 1;`,
         "review job env.VITEST_VERSION must be 4.1.9",
         "review job env.YAML_VERSION must be 2.8.3",
         "step 'Install Pi SDK' run script must include \"vitest@${VITEST_VERSION}\"",
+        "step 'Install Pi SDK' must use the canonical pinned npm install command",
         "review job env.PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW must be false",
       ]),
+    );
+  });
+
+  it("rejects decoy Vitest text outside the pinned install command", () => {
+    const errors = validateMutation((source) =>
+      source.replace(
+        ' "yaml@${YAML_VERSION}" "vitest@${VITEST_VERSION}"',
+        " \"yaml@${YAML_VERSION}\"\n          printf '%s\\n' '\"vitest@${VITEST_VERSION}\"' >/dev/null",
+      ),
+    );
+
+    expect(errors).toContain(
+      "step 'Install Pi SDK' must use the canonical pinned npm install command",
     );
   });
 
