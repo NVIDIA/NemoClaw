@@ -116,7 +116,7 @@ Use these details when your first-run path needs more control.
 
     Web search and messaging are optional build-time choices.
     Add them when you need them, then rerun onboarding and accept sandbox recreation when you change those choices later.
-    Refer to [Messaging Channels](../manage-sandboxes/messaging-channels) and [Network Policies](../network-policy/approve-network-requests) before enabling them.
+    Refer to [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) and [Network Policies](../network-policy/approve-network-requests) before enabling them.
   </Accordion>
 
   <Accordion title="Use Docker and supported platforms">
@@ -243,7 +243,7 @@ Use these details when your first-run path needs more control.
     <Tip>
     Export the API key before you launch the installer when you do not want the wizard to ask for it.
     For example, run `export NVIDIA_INFERENCE_API_KEY=<your-key>` before the installer.
-    Refer to [Reset a Stored Credential](../manage-sandboxes/lifecycle#reset-a-stored-credential) if you need to clear and re-enter a key.
+    Refer to [Remove and Re-register a Provider Credential](../security/credential-rotation#remove-and-re-register-a-provider-credential) if you need to clear and re-enter a key.
     </Tip>
 
     | Option | Use when | Credential variable |
@@ -311,7 +311,7 @@ Use these details when your first-run path needs more control.
     When you select a channel, NemoClaw validates the token format before it bakes the channel configuration into the sandbox.
     For example, Slack bot tokens must start with `xoxb-`.
     WeChat and WhatsApp are experimental.
-    Refer to [Messaging Channels](../manage-sandboxes/messaging-channels) before enabling them.
+    Refer to [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) before enabling them.
 
     After the sandbox image builds and OpenClaw starts, NemoClaw asks which network policy tier to apply.
     Web search and messaging selections happen first so the sandbox image and policy suggestions stay aligned.
@@ -399,7 +399,9 @@ Run `nemoclaw onboard`, then use [Troubleshooting](../reference/troubleshooting)
 - [NemoClaw Overview](../about/overview) explains what NemoClaw is and what it supports.
 - [Architecture Overview](../about/how-it-works) explains how NemoClaw works.
 - [Ecosystem](../about/ecosystem) explains how OpenClaw, OpenShell, and NemoClaw relate and when to use NemoClaw instead of OpenShell.
-- [Manage NemoClaw sandboxes](../manage-sandboxes/lifecycle) covers port forwards, rebuilds, upgrades, and removal.
+- [Run Sandboxes](../manage-sandboxes/operate-sandboxes/run-sandboxes) covers port forwards and routine lifecycle control.
+- [Recover and Rebuild Sandboxes](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) covers runtime repair and state-preserving recreation.
+- [Update Sandboxes](../manage-sandboxes/operate-sandboxes/update-sandboxes) and [Uninstall NemoClaw](../manage-sandboxes/operate-sandboxes/uninstall-nemoclaw) cover host lifecycle changes.
 - [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) explains how to choose or change a model and provider.
 - [Network Policies](../network-policy/approve-network-requests) explains how to manage egress approvals.
 - [AI Agent Docs](../resources/agent-skills) lets your AI coding assistant fetch NemoClaw Markdown docs.

@@ -98,6 +98,21 @@ title: "Example"
     expect(rendered).not.toContain("NemoHermes installed.");
   });
 
+  it("rejects nested AgentOnly blocks before they leak into generated variants", () => {
+    const nested = `---
+title: "Example"
+---
+<AgentOnly variant="openclaw,hermes">
+Shared gateway content.
+<AgentOnly variant="openclaw">
+OpenClaw content.
+</AgentOnly>
+</AgentOnly>
+`;
+
+    expect(() => renderAgentVariantPage(nested, "openclaw")).toThrow("nested AgentOnly block");
+  });
+
   it("rewrites relative imports but preserves Fern route links for generated build output", () => {
     const rendered = renderAgentVariantPage(
       `${source}\nSee [Commands](../reference/commands#$$nemoclaw-list).\nSee [Backup](backup-restore).\n![Diagram](images/diagram.png)\n`,

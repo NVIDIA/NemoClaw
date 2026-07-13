@@ -143,7 +143,7 @@ export type RedirectViolation = {
 };
 
 /**
- * Validate static inference redirect destinations against the published route map.
+ * Validate static inference and Manage Sandboxes redirect destinations against the published route map.
  * Variant placeholders are expanded independently so one unsupported agent route
  * cannot hide behind a redirect that works for the other variants.
  */
@@ -156,7 +156,14 @@ export function findBrokenPublishedRedirects(
   };
   const violations: RedirectViolation[] = [];
   for (const redirect of config.redirects ?? []) {
-    if (!redirect.source.includes("/inference") && !redirect.destination.includes("/inference")) {
+    const guardedRedirect = ["/inference", "/manage-sandboxes"].some(
+      (segment) => redirect.source.includes(segment) || redirect.destination.includes(segment),
+    );
+    if (
+      !guardedRedirect ||
+      redirect.source.includes(":path") ||
+      redirect.destination.includes(":path")
+    ) {
       continue;
     }
     const hasVariant =
@@ -297,6 +304,20 @@ export function findBrokenPublishedInferenceRoutes(
   );
 }
 
+/**
+ * Validate only Manage Sandboxes links on a shared page whose other historical
+ * links are outside this checker's scope.
+ */
+export function findBrokenPublishedManageSandboxRoutes(
+  sourcePath: string,
+  index: PublishedRouteIndex,
+  docsDir: string = docsRoot,
+): RouteViolation[] {
+  return findBrokenPublishedRoutes(sourcePath, index, docsDir).filter((violation) =>
+    /\/manage-sandboxes(?:\/|$)/.test(violation.resolved),
+  );
+}
+
 function renderBodyForPublishedRoute(
   source: string,
   sourcePath: string,
@@ -352,8 +373,8 @@ export function resolvePageLinksByText(
 }
 
 // Pages that have repeatedly regressed on source-path-vs-published-route drift
-// (NemoClaw#5445, #6290, #5465, #5460, #6601). Guard every inference page because
-// its nested navigation intentionally differs from the flat source directory.
+// (NemoClaw#5445, #6290, #5465, #5460, #6601). Guard every inference and Manage
+// Sandboxes page because their nested navigation differs from source directories.
 const GUARDED_SOURCE_PAGES = [
   "reference/commands.mdx",
   "reference/network-policies.mdx",
@@ -366,6 +387,13 @@ const GUARDED_SOURCE_PAGES = [
     .filter((name) => name.endsWith(".mdx"))
     .sort()
     .map((name) => `inference/${name}`),
+  ...readdirSync(path.join(docsRoot, "manage-sandboxes"))
+    .filter((name) => name.endsWith(".mdx"))
+    .sort()
+    .map((name) => `manage-sandboxes/${name}`),
+  "deployment/install-openclaw-plugins.mdx",
+  "deployment/sandbox-hardening.mdx",
+  "deployment/set-up-mcp-bridge.mdx",
 ];
 
 function main(): void {
@@ -373,6 +401,7 @@ function main(): void {
   const violations = [
     ...GUARDED_SOURCE_PAGES.flatMap((source) => findBrokenPublishedRoutes(source, index)),
     ...findBrokenPublishedInferenceRoutes("about/release-notes.mdx", index),
+    ...findBrokenPublishedManageSandboxRoutes("about/release-notes.mdx", index),
   ];
   const redirectViolations = findBrokenPublishedRedirects(index);
   if (violations.length > 0 || redirectViolations.length > 0) {
@@ -399,7 +428,7 @@ function main(): void {
     process.exit(1);
   }
   console.log(
-    `check-docs-published-routes: OK — ${GUARDED_SOURCE_PAGES.length} guarded page(s) plus release-note inference links, all checked links resolve to published routes`,
+    `check-docs-published-routes: OK — ${GUARDED_SOURCE_PAGES.length} guarded page(s) plus release-note inference and Manage Sandboxes links, all checked links resolve to published routes`,
   );
 }
 
