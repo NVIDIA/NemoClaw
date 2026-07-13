@@ -193,6 +193,36 @@ error() {
 }
 ok() { printf "  ${C_GREEN}✓${C_RESET}  %s\n" "$*"; }
 
+resolve_nemoclaw_gateway_port() {
+  local port="${NEMOCLAW_GATEWAY_PORT:-8080}"
+  port="${port#"${port%%[![:space:]]*}"}"
+  port="${port%"${port##*[![:space:]]}"}"
+  if [[ ! "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1024 ] || [ "$port" -gt 65535 ]; then
+    error "NEMOCLAW_GATEWAY_PORT must be an integer between 1024 and 65535."
+  fi
+  printf "%s" "$port"
+}
+
+nemoclaw_state_dir() {
+  local port
+  port="$(resolve_nemoclaw_gateway_port)"
+  if [ "$port" -eq 8080 ]; then
+    printf "%s/.nemoclaw" "$HOME"
+  else
+    printf "%s/.nemoclaw/gateways/%s" "$HOME" "$port"
+  fi
+}
+
+nemoclaw_gateway_name() {
+  local port
+  port="$(resolve_nemoclaw_gateway_port)"
+  if [ "$port" -eq 8080 ]; then
+    printf "nemoclaw"
+  else
+    printf "nemoclaw-%s" "$port"
+  fi
+}
+
 # Common TTY-required error message for the third-party software notice.
 # Used by both show_usage_notice() and preflight_usage_notice_prompt() so
 # the recovery hint stays in sync (#3058).
@@ -243,13 +273,15 @@ verify_downloaded_script() {
 }
 
 resolve_default_sandbox_name() {
-  local registry_file="${HOME}/.nemoclaw/sandboxes.json"
+  local state_dir registry_file
+  state_dir="$(nemoclaw_state_dir)"
+  registry_file="${state_dir}/sandboxes.json"
   local sandbox_name=""
 
   # Prefer the sandbox name from the current onboard session — it reflects
   # the sandbox just created, whereas sandboxes.json may hold a stale default
   # from a previous gateway that no longer exists (#1839).
-  local session_file="${HOME}/.nemoclaw/onboard-session.json"
+  local session_file="${state_dir}/onboard-session.json"
   if [[ -f "$session_file" ]] && command_exists node; then
     sandbox_name="$(
       node -e '
@@ -302,7 +334,8 @@ resolve_default_sandbox_name() {
 }
 
 resolve_onboarded_agent() {
-  local session_file="${HOME}/.nemoclaw/onboard-session.json"
+  local session_file
+  session_file="$(nemoclaw_state_dir)/onboard-session.json"
   if [[ -f "$session_file" ]] && command_exists node; then
     node -e '
       const fs = require("fs");
@@ -335,7 +368,7 @@ restore_onboard_forward_after_post_checks() {
     return 0
   fi
 
-  state_dir="${HOME}/.nemoclaw/state"
+  state_dir="$(nemoclaw_state_dir)/state"
   mkdir -p "$state_dir" 2>/dev/null || true
   pid_file="${state_dir}/${agent_name}-${sandbox_name}-${port}.forward.pid"
   if [[ -f "$pid_file" ]]; then
@@ -725,7 +758,7 @@ json_string_field() {
 }
 
 usage_notice_state_file() {
-  printf "%s/.nemoclaw/usage-notice.json" "${HOME}"
+  printf "%s/usage-notice.json" "$(nemoclaw_state_dir)"
 }
 
 usage_notice_accepted_shell() {
@@ -1703,8 +1736,9 @@ verify_nemoclaw() {
 }
 
 inspect_sandbox_registry_for_upgrade() {
-  local reg_file="$1" field="$2"
-  node - "$reg_file" "$field" <<'NODE'
+  local reg_file="$1" field="$2" scope="${3:-legacy}" gateway_port
+  gateway_port="$(resolve_nemoclaw_gateway_port)"
+  node - "$reg_file" "$field" "$gateway_port" "$scope" <<'NODE'
 const fs = require("node:fs");
 
 function isObjectRecord(value) {
@@ -1719,10 +1753,44 @@ try {
 }
 if (!isObjectRecord(registry) || !isObjectRecord(registry.sandboxes)) process.exit(1);
 
-const entries = Object.entries(registry.sandboxes);
-if (entries.some(([name, entry]) => !name.trim() || !isObjectRecord(entry) || entry.name !== name)) {
+const allEntries = Object.entries(registry.sandboxes);
+if (allEntries.some(([name, entry]) => !name.trim() || !isObjectRecord(entry) || entry.name !== name)) {
   process.exit(1);
 }
+
+const selectedPort = Number(process.argv[4]);
+const canonicalName = (port) => port === 8080 ? "nemoclaw" : `nemoclaw-${port}`;
+const portFromName = (name) => {
+  if (name === "nemoclaw") return 8080;
+  const match = /^nemoclaw-([0-9]+)$/.exec(name);
+  if (!match) return null;
+  const port = Number(match[1]);
+  return Number.isInteger(port) && port >= 1 && port <= 65535 && canonicalName(port) === name
+    ? port
+    : null;
+};
+const entryPort = (entry) => {
+  const hasPort = entry.gatewayPort !== undefined && entry.gatewayPort !== null;
+  const hasName = entry.gatewayName !== undefined && entry.gatewayName !== null;
+  if (hasPort && (!Number.isInteger(entry.gatewayPort) || entry.gatewayPort < 1 || entry.gatewayPort > 65535)) {
+    throw new Error("invalid gatewayPort");
+  }
+  if (hasName && typeof entry.gatewayName !== "string") throw new Error("invalid gatewayName");
+  const namedPort = hasName ? portFromName(entry.gatewayName) : null;
+  if (hasName && namedPort === null) throw new Error("invalid gatewayName");
+  if (hasPort && hasName && canonicalName(entry.gatewayPort) !== entry.gatewayName) {
+    throw new Error("conflicting gateway identity");
+  }
+  return hasPort ? entry.gatewayPort : namedPort ?? 8080;
+};
+
+let entries;
+try {
+  entries = allEntries.filter(([, entry]) => entryPort(entry) === selectedPort);
+} catch {
+  process.exit(1);
+}
+if (process.argv[5] === "selected" && entries.length !== allEntries.length) process.exit(1);
 
 if (process.argv[3] === "count") {
   process.stdout.write(String(entries.length));
@@ -1745,12 +1813,19 @@ NODE
 }
 
 registered_sandbox_count() {
-  local reg_file="${HOME}/.nemoclaw/sandboxes.json"
+  local reg_file scope="selected"
+  reg_file="$(nemoclaw_state_dir)/sandboxes.json"
+  if [ "$(resolve_nemoclaw_gateway_port)" -eq 8080 ]; then scope="legacy"; fi
+  if [ ! -f "$reg_file" ] && [ "$(resolve_nemoclaw_gateway_port)" -ne 8080 ]; then
+    # Pre-segregation releases stored every gateway's rows in the shared file.
+    reg_file="${HOME}/.nemoclaw/sandboxes.json"
+    scope="legacy"
+  fi
   if [ ! -f "$reg_file" ]; then
     printf "0"
     return
   fi
-  inspect_sandbox_registry_for_upgrade "$reg_file" count
+  inspect_sandbox_registry_for_upgrade "$reg_file" count "$scope"
 }
 
 resolve_existing_cli_runner() {
@@ -1834,7 +1909,12 @@ installer_non_interactive() {
 
 legacy_ambiguous_sandbox_names_json() {
   local reg_file="$1"
-  inspect_sandbox_registry_for_upgrade "$reg_file" ambiguous-names
+  local scope="legacy"
+  if [ "$(resolve_nemoclaw_gateway_port)" -ne 8080 ] \
+    && [ "$reg_file" = "$(nemoclaw_state_dir)/sandboxes.json" ]; then
+    scope="selected"
+  fi
+  inspect_sandbox_registry_for_upgrade "$reg_file" ambiguous-names "$scope"
 }
 
 normalize_legacy_managed_confirmation_json() {
@@ -2001,8 +2081,13 @@ EOF
 }
 
 preinstall_backup_and_retire_legacy_gateway() {
-  local reg_file="${HOME}/.nemoclaw/sandboxes.json"
+  local reg_file gateway_name
+  reg_file="$(nemoclaw_state_dir)/sandboxes.json"
+  if [ ! -f "$reg_file" ] && [ "$(resolve_nemoclaw_gateway_port)" -ne 8080 ]; then
+    reg_file="${HOME}/.nemoclaw/sandboxes.json"
+  fi
   [ -f "$reg_file" ] || return 0
+  gateway_name="$(nemoclaw_gateway_name)"
 
   local sandbox_count
   if ! sandbox_count="$(registered_sandbox_count)"; then
@@ -2046,9 +2131,14 @@ preinstall_backup_and_retire_legacy_gateway() {
   # Retire the old gateway while the old CLI can still do it, after backup.
   if [[ -n "$old_openshell_version" ]] && ! version_gte "$old_openshell_version" "0.0.37"; then
     info "Retiring OpenShell ${old_openshell_version} gateway before installing current OpenShell…"
-    openshell gateway destroy -g nemoclaw >/dev/null 2>&1 \
-      || openshell gateway destroy >/dev/null 2>&1 \
-      || warn "Could not destroy the legacy OpenShell gateway before upgrade; onboarding will clean up stale runtime state."
+    if [ "$gateway_name" = "nemoclaw" ]; then
+      openshell gateway destroy -g "$gateway_name" >/dev/null 2>&1 \
+        || openshell gateway destroy >/dev/null 2>&1 \
+        || warn "Could not destroy the legacy OpenShell gateway before upgrade; onboarding will clean up stale runtime state."
+    else
+      openshell gateway destroy -g "$gateway_name" >/dev/null 2>&1 \
+        || warn "Could not destroy legacy gateway ${gateway_name} before upgrade; onboarding will clean up only that gateway's stale runtime state."
+    fi
   fi
 }
 
@@ -2334,7 +2424,8 @@ run_onboard() {
   show_usage_notice
   info "Running ${_CLI_BIN} onboard…"
   local -a onboard_cmd=(onboard)
-  local session_file="${HOME}/.nemoclaw/onboard-session.json"
+  local session_file
+  session_file="$(nemoclaw_state_dir)/onboard-session.json"
   # --fresh takes precedence over any session state. We forward --fresh to
   # the active CLI's onboard command so it clears the existing session file before
   # creating a new one — the install.sh classifier is bypassed entirely.
@@ -2891,7 +2982,9 @@ main() {
 
   step 3 "Onboarding"
   if [ -n "$_cli_runner" ]; then
-    if [[ -f "${HOME}/.nemoclaw/sandboxes.json" ]] && node -e '
+    local selected_registry=""
+    selected_registry="$(nemoclaw_state_dir)/sandboxes.json"
+    if [[ -f "$selected_registry" ]] && node -e '
       const fs = require("fs");
       try {
         const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
@@ -2900,7 +2993,7 @@ main() {
       } catch {
         process.exit(1);
       }
-    ' "${HOME}/.nemoclaw/sandboxes.json"; then
+    ' "$selected_registry"; then
       warn "Existing sandbox sessions detected. Onboarding may disrupt running agents."
       if [[ "${NEMOCLAW_SINGLE_SESSION:-}" == "1" ]]; then
         error "Aborting — NEMOCLAW_SINGLE_SESSION is set. Destroy existing sessions with '${_CLI_BIN} <name> destroy' before reinstalling."

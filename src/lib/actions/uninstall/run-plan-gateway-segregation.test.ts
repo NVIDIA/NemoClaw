@@ -25,13 +25,19 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const stateDir = path.join(tmpHome, ".nemoclaw");
       const otherEnv = path.join(stateDir, "gateways", "8091");
       fs.mkdirSync(otherEnv, { recursive: true });
-      fs.writeFileSync(path.join(otherEnv, "sandboxes.json"), "[]");
-      fs.writeFileSync(path.join(stateDir, "sandboxes.json"), "[]");
+      fs.writeFileSync(
+        path.join(otherEnv, "sandboxes.json"),
+        JSON.stringify({ defaultSandbox: null, sandboxes: {} }),
+      );
+      fs.writeFileSync(
+        path.join(stateDir, "sandboxes.json"),
+        JSON.stringify({ defaultSandbox: null, sandboxes: {} }),
+      );
       const logs: string[] = [];
       const result = runUninstallPlan(
         { assumeYes: true, deleteModels: false, keepOpenShell: true },
         {
-          commandExists: () => false,
+          commandExists: (command) => command === "openshell",
           env: {
             HOME: tmpHome,
             NEMOCLAW_NON_INTERACTIVE: "",
@@ -102,7 +108,10 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const selectedEnv = path.join(stateDir, "gateways", String(port));
       fs.mkdirSync(selectedEnv, { recursive: true });
       fs.mkdirSync(path.join(stateDir, "backups"));
-      fs.writeFileSync(path.join(stateDir, "sandboxes.json"), "[]");
+      fs.writeFileSync(
+        path.join(stateDir, "sandboxes.json"),
+        JSON.stringify({ defaultSandbox: null, sandboxes: {} }),
+      );
       fs.writeFileSync(path.join(stateDir, "managed_swap"), "/swapfile");
       const defaultSession = path.join(stateDir, "onboard-session.json");
       fs.writeFileSync(defaultSession, "{}");
@@ -190,6 +199,234 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(fs.existsSync(path.join(stateDir, "managed_swap"))).toBe(true);
       expect(fs.existsSync(selectedEnv)).toBe(false);
       expect(fs.existsSync(siblingEnv)).toBe(true);
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("treats a populated default registry as a sibling even without a default session", async () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-default-registry-"));
+    const port = 9123;
+    try {
+      vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(port));
+      vi.resetModules();
+      const { runUninstallPlan: runPortUninstall } = await import("./run-plan");
+      const shared = path.join(tmpHome, ".nemoclaw");
+      const selected = path.join(shared, "gateways", String(port));
+      fs.mkdirSync(selected, { recursive: true });
+      fs.writeFileSync(
+        path.join(shared, "sandboxes.json"),
+        JSON.stringify({
+          defaultSandbox: "default-box",
+          sandboxes: {
+            "default-box": {
+              name: "default-box",
+              gatewayName: "nemoclaw",
+              gatewayPort: 8080,
+            },
+          },
+        }),
+      );
+      fs.writeFileSync(path.join(shared, "managed_swap"), "/swapfile");
+      const runCalls: string[][] = [];
+
+      const result = runPortUninstall(
+        {
+          assumeYes: true,
+          deleteModels: false,
+          destroyUserData: true,
+          gatewayName: `nemoclaw-${String(port)}`,
+          keepOpenShell: true,
+        },
+        {
+          commandExists: (command) => command === "openshell",
+          env: { HOME: tmpHome, NEMOCLAW_GATEWAY_PORT: String(port) } as NodeJS.ProcessEnv,
+          existsSync: (target) =>
+            target === "/swapfile" || (target.startsWith(tmpHome) && fs.existsSync(target)),
+          isTty: true,
+          log: vi.fn(),
+          run: (_command, args) => {
+            runCalls.push(args);
+            return ok();
+          },
+          runDocker: () => ok(""),
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(runCalls).not.toContainEqual(["swapoff", "/swapfile"]);
+      expect(fs.existsSync(path.join(shared, "managed_swap"))).toBe(true);
+      expect(fs.existsSync(path.join(shared, "sandboxes.json"))).toBe(true);
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("uninstalls only the selected gateway while preserving host-shared and default resources", async () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-selected-only-"));
+    const port = 9123;
+    try {
+      vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(port));
+      vi.resetModules();
+      const { runUninstallPlan: runPortUninstall } = await import("./run-plan");
+      const shared = path.join(tmpHome, ".nemoclaw");
+      const selected = path.join(shared, "gateways", String(port));
+      const openshellConfig = path.join(tmpHome, ".config", "openshell");
+      const nemoclawConfig = path.join(tmpHome, ".config", "nemoclaw");
+      fs.mkdirSync(selected, { recursive: true });
+      fs.mkdirSync(openshellConfig, { recursive: true });
+      fs.mkdirSync(nemoclawConfig, { recursive: true });
+      fs.writeFileSync(path.join(openshellConfig, "keep"), "default");
+      fs.writeFileSync(path.join(nemoclawConfig, "keep"), "default");
+      fs.writeFileSync(
+        path.join(shared, "sandboxes.json"),
+        JSON.stringify({
+          defaultSandbox: "default-box",
+          sandboxes: {
+            "default-box": {
+              name: "default-box",
+              gatewayName: "nemoclaw",
+              gatewayPort: 8080,
+            },
+          },
+        }),
+      );
+      fs.writeFileSync(
+        path.join(selected, "sandboxes.json"),
+        JSON.stringify({
+          defaultSandbox: "port-box",
+          sandboxes: {
+            "port-box": {
+              name: "port-box",
+              gatewayName: `nemoclaw-${String(port)}`,
+              gatewayPort: port,
+            },
+          },
+        }),
+      );
+
+      const runCalls: Array<{ command: string; args: string[] }> = [];
+      const dockerCalls: string[][] = [];
+      const dockerOutputByCommand: Record<string, string> = {
+        images: "shared-image nemoclaw:latest",
+        ps: [
+          "default-id image openshell-cluster-nemoclaw",
+          `selected-id image openshell-cluster-nemoclaw-${String(port)}`,
+        ].join("\n"),
+      };
+      const result = runPortUninstall(
+        {
+          assumeYes: true,
+          deleteModels: true,
+          destroyUserData: true,
+          gatewayName: `nemoclaw-${String(port)}`,
+          keepOpenShell: false,
+        },
+        {
+          commandExists: (command) => ["docker", "npm", "ollama", "openshell"].includes(command),
+          env: { HOME: tmpHome, NEMOCLAW_GATEWAY_PORT: String(port) } as NodeJS.ProcessEnv,
+          existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
+          isTty: false,
+          log: vi.fn(),
+          run: (command, args) => {
+            runCalls.push({ command, args });
+            return ok();
+          },
+          runDocker: (args) => {
+            dockerCalls.push(args);
+            return ok(dockerOutputByCommand[args[0]] ?? "");
+          },
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      const openshellCalls = runCalls
+        .filter(({ command }) => command === "openshell")
+        .map(({ args }) => args);
+      expect(openshellCalls).toContainEqual(["gateway", "select", `nemoclaw-${String(port)}`]);
+      expect(openshellCalls).toContainEqual(["sandbox", "delete", "port-box"]);
+      expect(openshellCalls).toContainEqual([
+        "gateway",
+        "destroy",
+        "-g",
+        `nemoclaw-${String(port)}`,
+      ]);
+      expect(openshellCalls).not.toContainEqual(["sandbox", "delete", "--all"]);
+      expect(openshellCalls.some((args) => args[0] === "provider")).toBe(false);
+      expect(runCalls.some(({ command }) => command === "npm" || command === "ollama")).toBe(false);
+      expect(dockerCalls).toContainEqual(["rm", "-f", "selected-id"]);
+      expect(dockerCalls).not.toContainEqual(["rm", "-f", "default-id"]);
+      expect(dockerCalls.some((args) => args[0] === "rmi")).toBe(false);
+      expect(fs.existsSync(selected)).toBe(false);
+      expect(fs.existsSync(path.join(shared, "sandboxes.json"))).toBe(true);
+      expect(fs.existsSync(path.join(openshellConfig, "keep"))).toBe(true);
+      expect(fs.existsSync(path.join(nemoclawConfig, "keep"))).toBe(true);
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves selected state when the owning gateway cannot be selected", async () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-select-fail-"));
+    const port = 9123;
+    try {
+      vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(port));
+      vi.resetModules();
+      const { runUninstallPlan: runPortUninstall } = await import("./run-plan");
+      const shared = path.join(tmpHome, ".nemoclaw");
+      const selected = path.join(shared, "gateways", String(port));
+      fs.mkdirSync(selected, { recursive: true });
+      fs.writeFileSync(
+        path.join(shared, "sandboxes.json"),
+        JSON.stringify({
+          defaultSandbox: "default-box",
+          sandboxes: { "default-box": { name: "default-box" } },
+        }),
+      );
+      fs.writeFileSync(
+        path.join(selected, "sandboxes.json"),
+        JSON.stringify({
+          defaultSandbox: "port-box",
+          sandboxes: {
+            "port-box": {
+              name: "port-box",
+              gatewayName: `nemoclaw-${String(port)}`,
+              gatewayPort: port,
+            },
+          },
+        }),
+      );
+      const calls: string[][] = [];
+
+      const result = runPortUninstall(
+        {
+          assumeYes: true,
+          deleteModels: false,
+          destroyUserData: true,
+          gatewayName: `nemoclaw-${String(port)}`,
+          keepOpenShell: false,
+        },
+        {
+          commandExists: (command) => command === "openshell",
+          env: { HOME: tmpHome, NEMOCLAW_GATEWAY_PORT: String(port) } as NodeJS.ProcessEnv,
+          error: vi.fn(),
+          existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
+          isTty: false,
+          log: vi.fn(),
+          run: (_command, args) => {
+            calls.push(args);
+            return args[0] === "gateway" && args[1] === "select"
+              ? { status: 1, stdout: "", stderr: "unreachable" }
+              : ok();
+          },
+          runDocker: () => ok(""),
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(calls).toEqual([["gateway", "select", `nemoclaw-${String(port)}`]]);
+      expect(fs.existsSync(path.join(selected, "sandboxes.json"))).toBe(true);
+      expect(fs.existsSync(path.join(shared, "sandboxes.json"))).toBe(true);
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }

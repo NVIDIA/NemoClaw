@@ -21,6 +21,7 @@ const {
   sandboxActionTokens,
 } = require("./command-registry");
 
+import { migrateLegacyPortState } from "../state/legacy-port-migration";
 import {
   type NormalizedArgv,
   type NormalizedGlobalArgv,
@@ -456,6 +457,31 @@ function printUnknownSandboxOrCommand(cmd: string): never {
 
 /** Normalize public argv and route it to oclif or sandbox-first command handlers. */
 export async function dispatchCli(argv: string[] = process.argv.slice(2)): Promise<void> {
+  const stateFreeInvocation =
+    argv.length === 0 ||
+    argv.includes("--help") ||
+    argv.includes("-h") ||
+    argv.includes("--version") ||
+    argv[0] === "version" ||
+    argv[0] === "help" ||
+    argv[0] === "completion";
+  if (!stateFreeInvocation) {
+    try {
+      const migration = migrateLegacyPortState();
+      if (migration.migratedSandboxNames.length > 0 || migration.migratedSession) {
+        console.error(
+          `  Migrated legacy state for gateway port ${process.env.NEMOCLAW_GATEWAY_PORT}: ` +
+            `${String(migration.migratedSandboxNames.length)} sandbox(s).`,
+        );
+      }
+      for (const warning of migration.warnings) console.error(`  Warning: ${warning}`);
+    } catch (error) {
+      console.error(`  ${error instanceof Error ? error.message : String(error)}`);
+      process.exitCode = 1;
+      return;
+    }
+  }
+
   if (argv[0] && NATIVE_OCLIF_NAMESPACES.has(argv[0])) {
     await runNativeOclifArgv(argv);
     return;

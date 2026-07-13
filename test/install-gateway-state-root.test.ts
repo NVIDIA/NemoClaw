@@ -1,0 +1,158 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { describe, expect, it } from "vitest";
+
+const INSTALLER = path.join(import.meta.dirname, "..", "scripts", "install.sh");
+const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
+
+function writeJson(filePath: string, value: unknown): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(value));
+}
+
+function readJson(filePath: string): Record<string, unknown> {
+  return JSON.parse(fs.readFileSync(filePath, "utf8")) as Record<string, unknown>;
+}
+
+function runInstallerFunctions(
+  home: string,
+  body: string,
+): { output: string; status: number | null } {
+  const result = spawnSync("bash", ["-c", `source "${INSTALLER}" >/dev/null\n${body}`], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      BASH_ENV: "",
+      ENV: "",
+      HOME: home,
+      NEMOCLAW_GATEWAY_PORT: "9123",
+    },
+  });
+  return { output: `${result.stdout}${result.stderr}`, status: result.status };
+}
+
+describe("install.sh gateway-scoped recovery state", () => {
+  it("filters a pre-segregation shared registry to the selected gateway before backup", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-legacy-port-"));
+    try {
+      const registry = path.join(home, ".nemoclaw", "sandboxes.json");
+      writeJson(registry, {
+        defaultSandbox: "default-box",
+        sandboxes: {
+          "default-box": {
+            name: "default-box",
+            gatewayName: "nemoclaw",
+            gatewayPort: 8080,
+            nemoclawVersion: "v1",
+          },
+          "port-box": {
+            name: "port-box",
+            gatewayName: "nemoclaw-9123",
+            gatewayPort: 9123,
+          },
+        },
+      });
+
+      const result = runInstallerFunctions(
+        home,
+        `printf 'state=%s\n' "$(nemoclaw_state_dir)"
+printf 'count=%s\n' "$(registered_sandbox_count)"
+printf 'ambiguous=%s\n' "$(legacy_ambiguous_sandbox_names_json '${registry}')"`,
+      );
+
+      expect(result.status, result.output).toBe(0);
+      expect(result.output).toContain(`state=${home}/.nemoclaw/gateways/9123`);
+      expect(result.output).toContain("count=1");
+      expect(result.output).toContain('ambiguous=["port-box"]');
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("uses only the selected port's session and registry for post-install recovery", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-selected-port-"));
+    try {
+      const shared = path.join(home, ".nemoclaw");
+      const selected = path.join(shared, "gateways", "9123");
+      writeJson(path.join(shared, "onboard-session.json"), {
+        sandboxName: "wrong-default",
+        agent: "openclaw",
+      });
+      writeJson(path.join(selected, "onboard-session.json"), {
+        sandboxName: "port-box",
+        agent: "hermes",
+      });
+      writeJson(path.join(selected, "sandboxes.json"), {
+        defaultSandbox: "port-box",
+        sandboxes: {
+          "port-box": {
+            name: "port-box",
+            gatewayName: "nemoclaw-9123",
+            gatewayPort: 9123,
+          },
+        },
+      });
+
+      const result = runInstallerFunctions(
+        home,
+        `printf 'sandbox=%s\n' "$(resolve_default_sandbox_name)"
+printf 'agent=%s\n' "$(resolve_onboarded_agent)"`,
+      );
+
+      expect(result.status, result.output).toBe(0);
+      expect(result.output).toContain("sandbox=port-box");
+      expect(result.output).toContain("agent=hermes");
+      expect(result.output).not.toContain("wrong-default");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("runs the one-time partition before a normal selected-port CLI command", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-legacy-port-"));
+    try {
+      const shared = path.join(home, ".nemoclaw");
+      const selected = path.join(shared, "gateways", "9123");
+      writeJson(path.join(shared, "sandboxes.json"), {
+        defaultSandbox: "port-box",
+        sandboxes: {
+          "port-box": {
+            name: "port-box",
+            gatewayName: "nemoclaw-9123",
+            gatewayPort: 9123,
+          },
+        },
+      });
+      writeJson(path.join(shared, "onboard-session.json"), {
+        sandboxName: "port-box",
+        status: "complete",
+        metadata: { gatewayName: "nemoclaw-9123" },
+      });
+
+      const result = spawnSync(process.execPath, [CLI, "credentials", "list"], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          HOME: home,
+          NEMOCLAW_GATEWAY_PORT: "9123",
+        },
+      });
+
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(result.stderr).toContain("Migrated legacy state for gateway port 9123");
+      const selectedRegistry = readJson(path.join(selected, "sandboxes.json"));
+      const sharedRegistry = readJson(path.join(shared, "sandboxes.json"));
+      expect(Object.keys(selectedRegistry.sandboxes as object)).toEqual(["port-box"]);
+      expect(Object.keys(sharedRegistry.sandboxes as object)).toEqual([]);
+      expect(fs.existsSync(path.join(selected, "onboard-session.json"))).toBe(true);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+});

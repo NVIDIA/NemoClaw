@@ -981,7 +981,13 @@ describe("uninstall run plan", () => {
       );
       fs.mkdirSync(path.join(stateDir, "backups", "20260320-120000"), { recursive: true });
       fs.writeFileSync(path.join(stateDir, "backups", "20260320-120000", "USER.md"), "hello");
-      fs.writeFileSync(path.join(stateDir, "sandboxes.json"), "[]");
+      fs.writeFileSync(
+        path.join(stateDir, "sandboxes.json"),
+        JSON.stringify({
+          defaultSandbox: "sb1",
+          sandboxes: { sb1: { name: "sb1", gatewayName: "nemoclaw", gatewayPort: 8080 } },
+        }),
+      );
       fs.writeFileSync(path.join(stateDir, "ollama-auth-proxy.pid"), "1234");
       fs.writeFileSync(path.join(stateDir, "openrouter-runtime-adapter.pid"), "1235");
       fs.writeFileSync(path.join(stateDir, "openrouter-runtime-adapter.json"), "{}");
@@ -1294,7 +1300,7 @@ describe("uninstall run plan", () => {
       }
     });
 
-    it("exits non-zero and warns when lstat on ~/.nemoclaw fails with a non-ENOENT error", () => {
+    it("fails closed before cleanup when ~/.nemoclaw cannot be inspected", () => {
       const { tmpHome, stateDir } = setupStateDir();
       const realLstat = fs.lstatSync;
       const lstatSpy = vi.spyOn(fs, "lstatSync").mockImplementation((p: fs.PathLike) => {
@@ -1317,12 +1323,7 @@ describe("uninstall run plan", () => {
         );
 
         expect(result.exitCode).toBe(1);
-        expect(warnings.some((line) => line.startsWith(`Failed to inspect ${stateDir}: `))).toBe(
-          true,
-        );
-        expect(warnings).toContain(
-          "Uninstall completed with errors. Some state may remain on disk; see warnings above.",
-        );
+        expect(warnings.some((line) => line.includes("permission denied"))).toBe(true);
         expect(logs).not.toContain("Claws retracted. Until next time.");
         expect(
           fs.existsSync(path.join(stateDir, "rebuild-backups", "sb1", "20260101", "manifest.json")),
