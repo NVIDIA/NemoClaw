@@ -21,6 +21,10 @@ const DEV_EXACT_MAIN_RUN_ID = "29215426930";
 const DEV_EXACT_MAIN_CLI_VERSION = "0.0.82-dev.11+gbb72d012";
 const MCP_AGENT_MATRIX_FILTER = "-t '^(mcp-bridge|mcp-bridge-hermes|mcp-bridge-deepagents)$'";
 const MCP_AGENT_MATRIX_PROOF_TOOL = "tools/e2e/assert-mcp-agent-matrix-artifacts.mts";
+const DEV_CREDENTIAL_WINDOW_ID = "openshell-credential-generation-window";
+const DEV_CREDENTIAL_WINDOW_FILE = `test/e2e/live/${DEV_CREDENTIAL_WINDOW_ID}.test.ts`;
+const DEV_EXACT_MAIN_MATRIX_FILTER =
+  `-t '^(mcp-bridge|mcp-bridge-hermes|mcp-bridge-deepagents|${DEV_CREDENTIAL_WINDOW_ID})$'`;
 const DEV_EXACT_MAIN_SUPERVISOR_INDEX =
   "fc441051102b1a16ffcabf59878fa464d3c548f29bfbfa6e4acb232ab67198b7";
 const DEV_EXACT_MAIN_REQUIRED_STAGE_TOKENS = [
@@ -535,16 +539,31 @@ function validateJobExecution(
   for (const required of ["--project e2e-live", "test/e2e/live/mcp-bridge.test.ts"]) {
     requireContains(errors, run.run, required, `${jobName} must run the unified MCP live test`);
   }
-  requireContains(
-    errors,
-    run.run,
-    MCP_AGENT_MATRIX_FILTER,
-    `${jobName} must select the exact OpenClaw, Hermes, and Deep Agents lifecycle matrix`,
-  );
-  requireContains(
-    errors,
-    run.run,
+  const expectedMatrixFilter =
+    jobName === "mcp-bridge-dev" ? DEV_EXACT_MAIN_MATRIX_FILTER : MCP_AGENT_MATRIX_FILTER;
+  requireContains(errors, run.run, expectedMatrixFilter, `${jobName} must select its exact matrix`);
+  if (jobName === "mcp-bridge-dev") {
+    requireContains(
+      errors,
+      run.run,
+      DEV_CREDENTIAL_WINDOW_FILE,
+      "mcp-bridge-dev exact-main proof must run the credential generation-window lifecycle",
+    );
+    requireContains(
+      errors,
+      run.run,
+      "--no-file-parallelism",
+      "mcp-bridge-dev must serialize stateful exact-main lifecycle files",
+    );
+  }
+  const matrixProofCommand = [
     `npx tsx ${MCP_AGENT_MATRIX_PROOF_TOOL} "$E2E_ARTIFACT_DIR"`,
+    ...(jobName === "mcp-bridge-dev" ? [DEV_CREDENTIAL_WINDOW_ID] : []),
+  ].join(" ");
+  requireContains(
+    errors,
+    run.run,
+    matrixProofCommand,
     `${jobName} must record proof that every MCP agent lifecycle produced artifacts`,
   );
   requireEqual(

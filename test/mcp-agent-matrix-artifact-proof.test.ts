@@ -38,6 +38,7 @@ describe("MCP agent matrix artifact proof", () => {
     const output = writeMcpAgentMatrixProof(root);
 
     expect(JSON.parse(fs.readFileSync(output, "utf8"))).toEqual({
+      requiredTargetResultIds: [],
       requiredTestIds: REQUIRED_MCP_AGENT_TEST_IDS,
       schemaVersion: 1,
       status: "all-required-tests-passed",
@@ -62,5 +63,27 @@ describe("MCP agent matrix artifact proof", () => {
     fs.rmSync(scenario);
     fs.symlinkSync(path.join(root, "mcp-bridge", "scenario.json"), scenario);
     expect(() => assertMcpAgentMatrixArtifacts(root)).toThrow(/must be a regular file/u);
+  });
+
+  it("requires an explicit passed result for additional stateful targets", () => {
+    const root = fixture();
+    const targetId = "openshell-credential-generation-window";
+    const targetDirectory = path.join(root, targetId);
+    fs.mkdirSync(targetDirectory);
+    fs.writeFileSync(
+      path.join(targetDirectory, "target-result.json"),
+      `${JSON.stringify({ id: targetId, status: "passed" })}\n`,
+    );
+
+    expect(assertMcpAgentMatrixArtifacts(root, [targetId]).requiredTargetResultIds).toEqual([
+      targetId,
+    ]);
+    fs.writeFileSync(
+      path.join(targetDirectory, "target-result.json"),
+      `${JSON.stringify({ id: targetId, status: "skipped" })}\n`,
+    );
+    expect(() => assertMcpAgentMatrixArtifacts(root, [targetId])).toThrow(
+      /does not prove a passed lifecycle/u,
+    );
   });
 });

@@ -560,7 +560,7 @@ jobs:
       contents: read
     # Three destructive agent scenarios each have a 45-minute Vitest budget,
     # plus pinned OpenShell installation and cold image setup.
-    timeout-minutes: 180
+    timeout-minutes: 240
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "mcp-bridge"
@@ -1002,9 +1002,11 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-live \
             test/e2e/live/mcp-bridge.test.ts \
-            -t '^(mcp-bridge|mcp-bridge-hermes|mcp-bridge-deepagents)$' \
+            test/e2e/live/openshell-credential-generation-window.test.ts \
+            -t '^(mcp-bridge|mcp-bridge-hermes|mcp-bridge-deepagents|openshell-credential-generation-window)$' \
+            --no-file-parallelism \
             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
-          npx tsx tools/e2e/assert-mcp-agent-matrix-artifacts.mts "$E2E_ARTIFACT_DIR"
+          npx tsx tools/e2e/assert-mcp-agent-matrix-artifacts.mts "$E2E_ARTIFACT_DIR" openshell-credential-generation-window
 
       - id: mcp_artifact_secret_scan
         name: Scan MCP artifacts for fixture credentials

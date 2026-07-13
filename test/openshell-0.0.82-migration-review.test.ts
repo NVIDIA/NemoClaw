@@ -124,6 +124,10 @@ describe("OpenShell 0.0.82 migration review", () => {
     expect(review).toContain(
       "using the head checker would let reviewed code define its own trust rules",
     );
+    expect(review).toMatch(/sequence of nine\s+distinct rotation updates/u);
+    expect(review).toContain("expired_retained_generation_does_not_resolve");
+    expect(review).toContain("--credential-expires-at");
+    expect(review).toMatch(/removes that key while\s+the provider remains attached/u);
   });
 
   it("keeps exact-main runtime proofs separate from upstream-only fault injection", () => {

@@ -336,6 +336,25 @@ because OpenShell still has a 32 KiB per-argument ceiling. The Hermes validator
 wrapper remains the owned secret-boundary exception. None of those retained uses
 exists merely to avoid a newline in an OpenShell command argument.
 
+The exact-main MCP lane now has a separate credential-generation-window target
+instead of adding repeated mutations to each 45-minute agent case. It holds one
+OpenClaw child open on its original revision, performs a sequence of nine
+distinct rotation updates (one more than OpenShell's eight retained generations),
+proves that the evicted placeholder resolves only through the current key,
+removes that key while the provider remains attached and proves the old
+placeholder fails closed, then separately detaches the provider and proves both
+fresh-child absence and old-child fail-closed behavior. A second retained child
+proves its revision works before the provider's `--credential-expires-at`
+deadline and is denied after that deadline while a newer current revision remains
+usable. The target then reattaches through `mcp restart`, rebuilds without the
+host MCP secret, and removes the bridge. Every request is identified independently
+of its credential, and the upstream ledger is required to contain no literal
+resolve placeholder.
+The workflow runs this bounded target only against the exact reviewed development
+artifacts and scans its artifacts for the whole generated-secret prefix. The
+final stable-source review must retain the upstream
+`expired_retained_generation_does_not_resolve` unit and rerun this live contract.
+
 ## Downstream concern ledger
 
 | ID | Severity | Downstream consumer and failure mode | Required disposition | Current state |
@@ -343,13 +362,13 @@ exists merely to avoid a newline in an OpenShell command argument.
 | `OS82-01` | Critical | All stable selectors, archives, checksums, binaries, and the supervisor image could identify different builds. | Pin one published tag; verify producer run, signatures/attestations, release hashes, extracted binaries, component versions, OCI index and child manifests; reject archive traversal, links, devices, duplicates, or unexpected members. | Blocked: no stable `v0.0.82` release. |
 | `OS82-02` | Critical | `mcp status` can be honest while the affected Spark still cannot initialize resolver/CA state or perform a credential-bearing request. | Physical Docker 27 DGX Spark: register credential, require status success, load tools, complete a real MCP tool call, and prove the literal placeholder never reaches upstream. | Blocked on assigned hardware proof. |
 | `OS82-03` | High | `src/lib/actions/sandbox/exec.ts`, command dispatch, docs, and internal wrappers encode the old newline rejection. | Remove the obsolete public rejection and newline-only wrappers; prove byte-exact LF, CR, CRLF, quotes, and heredoc argv; retain NUL plus multiline workdir/environment rejection. | Source and internal-wrapper migration complete; candidate runtime proof open. |
-| `OS82-04` | High | OpenShell child launch now clears the complete capability bounding set. Hosts without `CAP_SETPCAP` may fail if their runtime does not pre-clear it. | Prove entrypoint, exec, and connect launch with `CapBnd=0` on Linux Docker, DGX Spark arm64, macOS Docker Desktop/Colima, WSL, and Colossus; update NemoClaw's #3280 caveat only from runtime evidence. | Open runtime gate. |
-| `OS82-05` | High | Versioned credential placeholders and the eight-generation window change long-running MCP behavior. | Regenerate the exact-version child-visible manifest; reject reserved `v<digits>_` names; test more than eight rotations, removed keys, detach, restart/rebuild, fresh exec revision, expiry, and literal-placeholder scans. | Open migration and runtime gate. |
+| `OS82-04` | High | OpenShell child launch now clears the complete capability bounding set. Hosts without `CAP_SETPCAP` may fail if their runtime does not pre-clear it. | Prove entrypoint, exec, and connect launch with `CapBnd=0` on Linux Docker, DGX Spark arm64, macOS Docker Desktop/Colima, WSL, and Colossus; update NemoClaw's #3280 caveat only from runtime evidence. | Candidate exact-main proof now inspects the actual entrypoint, exec, and forced-TTY connect children for full `CapBnd=0`; exact-head Linux execution and every other platform remain open. |
+| `OS82-05` | High | Versioned credential placeholders and the eight-generation window change long-running MCP behavior. | Regenerate the exact-version child-visible manifest; reject reserved `v<digits>_` names; test more than eight rotations, removed keys, detach, restart/rebuild, fresh exec revision, expiry, and literal-placeholder scans. | Exact-main generation-window proof implemented and workflow-mandatory; live execution, final manifest, and stable-source rerun remain open. |
 | `OS82-06` | High | Initial policy acknowledgement and ordered retry can make the active gateway status lag enforcement. | Test initial LOADED/FAILED, hot update, retry outage/recovery, restart, exact version/hash re-read, and ordered drain. | Candidate exact-main proof now covers hot-update LOADED identity plus restart initial acknowledgement and exact version/hash recovery. Initial FAILED and isolated report outage/ordered drain remain an open runtime gate. |
 | `OS82-07` | High | Sequential nft setup can leave an incomplete policy-accept ruleset after a required command fails; Docker setup treats the error as nonfatal. | Inject each required failure; inspect IPv4/IPv6 TCP/UDP rules and direct-bypass negatives on Linux x86 and Spark arm64; verify restart and teardown. | Candidate exact-main proof now inspects the live policy-accept chain and all four required rejects before/after restart, and probes controlled IPv4 TCP/UDP listeners. Required-command fault injection, routed IPv6 behavior, Spark arm64, and physical teardown remain an open security gate. |
 | `OS82-08` | High | The supervisor image gains Alpine and three networking packages and changes binary mode. | Review SBOM, vulnerabilities, licenses, executables, modes, multiarch manifests, source labels, and OCI provenance; preserve an explicit digest. | Development image content audited; missing attestation and final stable image remain open. |
 | `OS82-09` | Medium-high | Normalized selected-driver config can change the effective Docker gateway even when the TOML text is unchanged. | Parse the final rendered TOML with the final binary; prove loopback/bridge listeners, JWT/mTLS, restart, persisted state, and legacy gateway upgrade. | Open runtime gate. |
-| `OS82-10` | Medium-high | Supervisor TLS identity variables are no longer child environment. Stale tests/comments can normalize a credential leak. | Assert absence from entrypoint, exec, and connect children and update the source-of-truth rationale. | Hermes and Deep Agents now reject all three variables; candidate entrypoint/exec/connect runtime proof remains open. |
+| `OS82-10` | Medium-high | Supervisor TLS identity variables are no longer child environment. Stale tests/comments can normalize a credential leak. | Assert absence from entrypoint, exec, and connect children and update the source-of-truth rationale. | Hermes and Deep Agents now reject all three variables; the candidate exact-main entrypoint, exec, and connect probes require their absence, with exact-head execution pending. |
 | `OS82-11` | Medium-high | Live `/proc/<pid>/exe` identity changes replacement-time policy behavior. | Prove old process survives replacement and a new altered process at the same path is denied. | Candidate exact-main proof runs both processes against the real proxy and requires old=200 before/after replacement, distinct live/path hashes, and new=403; exact-head runtime result pending. |
 | `OS82-12` | Medium | OpenShell declares Docker 28.0+ while #6379 is on Docker 27 and NemoClaw marks DGX Spark tested. | Either validate and document a precise downstream exception from physical proof or raise the supported floor and preflight it. | Open product/platform decision. |
 | `OS82-13` | Low | Mount parsing/SELinux changes could affect the test-only tmpfs path. | Rerun the EXDEV tmpfs fixture and retain production no-mount evidence. | Open targeted test. |

@@ -33,7 +33,9 @@ describe("MCP workflow artifact boundary", () => {
 
       expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toEqual(
         expect.arrayContaining([
-          "mcp-bridge-dev must select the exact OpenClaw, Hermes, and Deep Agents lifecycle matrix",
+          "mcp-bridge-dev must select its exact matrix",
+          "mcp-bridge-dev exact-main proof must run the credential generation-window lifecycle",
+          "mcp-bridge-dev must serialize stateful exact-main lifecycle files",
           "mcp-bridge-dev must record proof that every MCP agent lifecycle produced artifacts",
         ]),
       );
@@ -49,7 +51,13 @@ describe("MCP workflow artifact boundary", () => {
       const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
         jobs: Record<
           string,
-          { steps: Array<{ name?: string; uses?: string; with?: Record<string, unknown> }> }
+          {
+            steps: Array<{
+              name?: string;
+              uses?: string;
+              with?: Record<string, unknown>;
+            }>;
+          }
         >;
       };
       const upload = workflow.jobs["mcp-bridge"].steps.find(
@@ -213,7 +221,11 @@ describe("MCP workflow artifact boundary", () => {
           string,
           {
             env: Record<string, string>;
-            steps: Array<{ env?: Record<string, string>; name?: string; run?: string }>;
+            steps: Array<{
+              env?: Record<string, string>;
+              name?: string;
+              run?: string;
+            }>;
           }
         >;
       };
@@ -263,6 +275,39 @@ describe("MCP workflow artifact boundary", () => {
         expect.arrayContaining([
           "mcp-bridge-dev exact-main staging must validate immutable artifact structure and provenance",
           "mcp-bridge-dev must fail unless the exact-main proof runs full-lifecycle",
+        ]),
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects omission of the credential generation-window proof", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+    const workflowPath = path.join(directory, "e2e.yaml");
+    try {
+      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+        jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+      };
+      const run = workflow.jobs["mcp-bridge-dev"].steps.find(
+        (step) => step.name === "Run MCP OpenShell provider live test",
+      );
+      requireFixture(run?.run, "MCP exact-main execution fixture is missing");
+      run.run = [
+        "npx vitest run --project e2e-live",
+        "test/e2e/live/mcp-bridge.test.ts",
+        "-t '^(mcp-bridge|mcp-bridge-hermes|mcp-bridge-deepagents)$'",
+        "--no-file-parallelism",
+        'npx tsx tools/e2e/assert-mcp-agent-matrix-artifacts.mts "$E2E_ARTIFACT_DIR"',
+        "",
+      ].join("\n");
+      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toEqual(
+        expect.arrayContaining([
+          "mcp-bridge-dev exact-main proof must run the credential generation-window lifecycle",
+          "mcp-bridge-dev must select its exact matrix",
+          "mcp-bridge-dev must record proof that every MCP agent lifecycle produced artifacts",
         ]),
       );
     } finally {
