@@ -16,7 +16,9 @@ const HEAD_SHA = "b".repeat(40);
 const BASE_SHA = "a".repeat(40);
 
 type Workflow = {
-  jobs?: Record<string, { steps?: Array<{ name?: string; run?: string }> }>;
+  on?: { pull_request_target?: { types?: string[] } };
+  concurrency?: { group?: string; "cancel-in-progress"?: boolean };
+  jobs?: Record<string, { if?: string; steps?: Array<{ name?: string; run?: string }> }>;
 };
 
 function workflowSource(): string {
@@ -229,6 +231,7 @@ describe("PR review advisor workflow boundary", () => {
   // source-shape-contract: security -- Exactly one advisor lane may write PR comments and neither privilege domain may gain other GitHub capabilities
   it("requires one advisor lane to publish the PR comment", () => {
     const source = fs.readFileSync(WORKFLOW_PATH, "utf8");
+    const workflow = YAML.parse(source) as Workflow;
     const noPrimary = validateMutation((workflow) =>
       workflow.replace("publish_comment: true", "publish_comment: false"),
     );
@@ -249,6 +252,15 @@ describe("PR review advisor workflow boundary", () => {
     );
 
     expect(source).toContain("publish_comment: true");
+    expect(workflow.on?.pull_request_target?.types).toContain("edited");
+    expect(workflow.concurrency?.group).toContain(
+      "github.event_name != 'pull_request_target' || github.event.action != 'edited' || github.event.changes.base != null",
+    );
+    expect(workflow.concurrency?.["cancel-in-progress"]).toBe(true);
+    for (const jobName of ["review", "publish"]) {
+      expect(workflow.jobs?.[jobName]?.if, jobName).toContain("github.event.action != 'edited'");
+      expect(workflow.jobs?.[jobName]?.if, jobName).toContain("github.event.changes.base != null");
+    }
     expect(noPrimary).toContain("advisor matrix must identify exactly one primary artifact lane");
     expect(twoPrimaries).toContain(
       "advisor matrix must identify exactly one primary artifact lane",
