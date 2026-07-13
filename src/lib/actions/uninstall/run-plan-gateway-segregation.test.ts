@@ -510,12 +510,8 @@ describe("uninstall gateway-port segregation (#3053)", () => {
         .map(({ args }) => args);
       expect(openshellCalls).toContainEqual(["gateway", "select", `nemoclaw-${String(port)}`]);
       expect(openshellCalls).toContainEqual(["sandbox", "delete", "port-box"]);
-      expect(openshellCalls).toContainEqual([
-        "gateway",
-        "destroy",
-        "-g",
-        `nemoclaw-${String(port)}`,
-      ]);
+      expect(openshellCalls).toContainEqual(["gateway", "remove", `nemoclaw-${String(port)}`]);
+      expect(openshellCalls.some((args) => args[1] === "destroy")).toBe(false);
       expect(openshellCalls).not.toContainEqual(["sandbox", "delete", "--all"]);
       expect(openshellCalls.some((args) => args[0] === "provider")).toBe(false);
       expect(runCalls.some(({ command }) => command === "npm" || command === "ollama")).toBe(false);

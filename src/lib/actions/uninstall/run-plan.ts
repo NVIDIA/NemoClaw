@@ -433,6 +433,48 @@ function runOptional(
   return false;
 }
 
+const GATEWAY_ALREADY_ABSENT =
+  /gateway[^\n]*(?:does not exist|not found)|No (?:active )?gateway|No gateway metadata found/i;
+const GATEWAY_REMOVE_UNSUPPORTED =
+  /unrecognized subcommand ['"]remove['"]|unknown command ['"]remove['"]/i;
+
+function removeGatewayRegistration(runtime: UninstallRuntime, gatewayLabel: string): boolean {
+  const removeResult = runtime.run("openshell", ["gateway", "remove", gatewayLabel], {
+    env: runtime.env,
+  });
+  if (removeResult.status === 0) {
+    runtime.log(`Removed gateway registration '${gatewayLabel}'`);
+    return true;
+  }
+
+  const removeOutput = `${removeResult.stdout}\n${removeResult.stderr}`;
+  if (GATEWAY_ALREADY_ABSENT.test(removeOutput)) {
+    runtime.warn(gatewayDestroySkipMessage(gatewayLabel));
+    return true;
+  }
+  if (!GATEWAY_REMOVE_UNSUPPORTED.test(removeOutput)) {
+    runtime.warn(gatewayDestroySkipMessage(gatewayLabel));
+    return false;
+  }
+
+  // OpenShell builds before 0.0.44 exposed `gateway destroy` instead of the
+  // current `gateway remove` command. Only fall back when the modern verb is
+  // explicitly unsupported so a real removal failure is not hidden.
+  const destroyResult = runtime.run("openshell", ["gateway", "destroy", "-g", gatewayLabel], {
+    env: runtime.env,
+  });
+  if (destroyResult.status === 0) {
+    runtime.log(`Destroyed legacy gateway '${gatewayLabel}'`);
+    return true;
+  }
+  if (GATEWAY_ALREADY_ABSENT.test(`${destroyResult.stdout}\n${destroyResult.stderr}`)) {
+    runtime.warn(gatewayDestroySkipMessage(gatewayLabel));
+    return true;
+  }
+  runtime.warn(gatewayDestroySkipMessage(gatewayLabel));
+  return false;
+}
+
 function stopHelperServices(paths: UninstallPaths, runtime: UninstallRuntime): void {
   const startServices = path.join(paths.repoRoot, "scripts", "start-services.sh");
   if (runtime.existsSync(startServices))
@@ -855,13 +897,7 @@ function removeOpenShellResources(
         ) && removedSelectedResources;
     }
     removedSelectedResources =
-      runOptional(
-        runtime,
-        `Destroyed gateway '${gatewayLabel}'`,
-        "openshell",
-        ["gateway", "destroy", "-g", gatewayLabel],
-        { onSkip: gatewayDestroySkipMessage(gatewayLabel) },
-      ) && removedSelectedResources;
+      removeGatewayRegistration(runtime, gatewayLabel) && removedSelectedResources;
     if (!removedSelectedResources) {
       runtime.warn("Selected gateway cleanup was incomplete; preserving its state for retry.");
       return false;
@@ -889,13 +925,7 @@ function removeOpenShellResources(
       { onSkip: providerDeleteSkipMessage(provider) },
     );
   }
-  runOptional(
-    runtime,
-    `Destroyed gateway '${gatewayLabel}'`,
-    "openshell",
-    ["gateway", "destroy", "-g", gatewayLabel],
-    { onSkip: gatewayDestroySkipMessage(gatewayLabel) },
-  );
+  removeGatewayRegistration(runtime, gatewayLabel);
   return true;
 }
 

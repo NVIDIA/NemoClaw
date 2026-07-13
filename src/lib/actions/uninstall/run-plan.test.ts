@@ -935,11 +935,7 @@ describe("uninstall run plan", () => {
     expect(logs).not.toContain("Swap file removed");
   });
 
-  it("uses the 'already removed' wording instead of 'Destroyed ... skipped' for gateway destroy no-ops, sub-bug 4 (#3456)", () => {
-    // When `openshell gateway destroy -g nemoclaw` returns non-zero (gateway
-    // already gone), the previous code printed `Destroyed gateway 'nemoclaw'
-    // skipped` — self-contradictory. The fix routes this branch to an onSkip
-    // message that describes the actual state.
+  it("uses the 'already removed' wording for gateway remove no-ops, sub-bug 4 (#3456)", () => {
     const warnings: string[] = [];
     const logs: string[] = [];
     const result = runUninstallPlan(
@@ -953,8 +949,8 @@ describe("uninstall run plan", () => {
         log: (line) => logs.push(line),
         rmSync: vi.fn(),
         run: (command, args) => {
-          if (command === "openshell" && args[0] === "gateway" && args[1] === "destroy") {
-            return notFound();
+          if (command === "openshell" && args[0] === "gateway" && args[1] === "remove") {
+            return { status: 1, stdout: "", stderr: "gateway not found" };
           }
           if (args[0] === "-c") return ok("/fake/bin/tool\n");
           return ok();
@@ -968,6 +964,63 @@ describe("uninstall run plan", () => {
     expect(`${warnings.join("\n")}\n${logs.join("\n")}`).not.toContain(
       "Destroyed gateway 'nemoclaw' skipped",
     );
+  });
+
+  it("falls back to legacy gateway destroy only when gateway remove is unsupported", () => {
+    const calls: string[][] = [];
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: (command) => command !== "docker" && command !== "pgrep",
+        env: { HOME: "/home/test", TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        isTty: false,
+        rmSync: vi.fn(),
+        run: (command, args) => {
+          if (command === "openshell") calls.push(args);
+          if (command === "openshell" && args[0] === "gateway" && args[1] === "remove") {
+            return { status: 2, stdout: "", stderr: "unrecognized subcommand 'remove'" };
+          }
+          if (args[0] === "-c") return ok("/fake/bin/tool\n");
+          return ok();
+        },
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(calls).toContainEqual(["gateway", "remove", "nemoclaw"]);
+    expect(calls).toContainEqual(["gateway", "destroy", "-g", "nemoclaw"]);
+  });
+
+  it("does not hide a current gateway remove failure behind the legacy verb", () => {
+    const calls: string[][] = [];
+    const warnings: string[] = [];
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: (command) => command !== "docker" && command !== "pgrep",
+        env: { HOME: "/home/test", TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        isTty: false,
+        rmSync: vi.fn(),
+        run: (command, args) => {
+          if (command === "openshell") calls.push(args);
+          if (command === "openshell" && args[0] === "gateway" && args[1] === "remove") {
+            return { status: 1, stdout: "", stderr: "permission denied" };
+          }
+          if (args[0] === "-c") return ok("/fake/bin/tool\n");
+          return ok();
+        },
+        runDocker: () => ok(""),
+        error: (line) => warnings.push(line),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(calls).toContainEqual(["gateway", "remove", "nemoclaw"]);
+    expect(calls.some((args) => args[1] === "destroy")).toBe(false);
+    expect(warnings.join("\n")).toContain("Gateway 'nemoclaw' already removed or unreachable");
   });
 
   describe("user-data preservation under ~/.nemoclaw/", () => {
