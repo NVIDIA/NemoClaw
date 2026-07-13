@@ -12,6 +12,7 @@ import {
 } from "./compatible-endpoint-gateway-route";
 
 describe("compatible endpoint gateway routing", () => {
+  // source-shape-contract: compatibility -- Bundled loopback routing must match the shipped host-gateway policy ports
   it("matches the bundled local-inference host-gateway ports (#5744)", () => {
     const policyPath = path.resolve(
       import.meta.dirname,

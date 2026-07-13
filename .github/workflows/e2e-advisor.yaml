@@ -67,7 +67,7 @@ jobs:
       # Pin the Pi SDK to a known-good version. Updates should go through
       # the normal dependency-review path (e.g. Dependabot) so a compromised
       # upstream release cannot execute automatically in this secret-bearing job.
-      PI_SDK_VERSION: "0.74.0"
+      PI_SDK_VERSION: "0.80.6"
       # Keep the advisor timeout shorter than the GitHub job timeout so the
       # analyzer can write failure artifacts, summaries, and PR comments.
       E2E_ADVISOR_TIMEOUT_MS: "900000"
@@ -177,7 +177,7 @@ jobs:
       - name: Install Pi SDK
         run: |
           PI_SDK_DIR="$RUNNER_TEMP/pi-sdk"
-          npm install --prefix "$PI_SDK_DIR" --ignore-scripts --no-save --package-lock=false --before=2026-05-14T00:00:00.000Z "@earendil-works/pi-coding-agent@${PI_SDK_VERSION}"
+          npm install --prefix "$PI_SDK_DIR" --ignore-scripts --no-save --package-lock=false --before=2026-07-11T00:00:00.000Z "@earendil-works/pi-coding-agent@${PI_SDK_VERSION}"
           rm -rf "$ADVISOR_DIR/node_modules"
           ln -s "$PI_SDK_DIR/node_modules" "$ADVISOR_DIR/node_modules"
 

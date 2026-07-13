@@ -10,7 +10,11 @@ import {
   assertExitZero,
   type CommandRunner,
   outputContainsSandbox,
+  resultText,
 } from "./command.ts";
+
+const SANDBOX_ALREADY_ABSENT =
+  /\bNotFound\b|\bNot Found\b|sandbox[^\n]*(?:not found|not present|does not exist)|no such sandbox/i;
 
 /**
  * Default env for openshell-targeted spawns. ShellProbe filters env via
@@ -97,6 +101,16 @@ export class SandboxClient {
       artifactName: `sandbox-status-${name}`,
       ...options,
     });
+  }
+
+  async cleanupSandbox(name: string, options: ShellProbeRunOptions = {}): Promise<void> {
+    validateSandboxName(name);
+    const result = await this.openshell(["sandbox", "delete", name], {
+      artifactName: `cleanup-openshell-sandbox-${name}`,
+      ...options,
+    });
+    if (result.exitCode === 0 || SANDBOX_ALREADY_ABSENT.test(resultText(result))) return;
+    assertExitZero(result, `cleanup OpenShell sandbox ${name}`);
   }
 
   exec(

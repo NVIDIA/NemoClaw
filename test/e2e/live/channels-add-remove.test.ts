@@ -93,7 +93,7 @@ function redactionValues(apiKey: string): string[] {
   return [apiKey, TELEGRAM_TOKEN].filter((value) => value.length > 0);
 }
 
-async function bestEffort(run: () => Promise<unknown>): Promise<void> {
+async function bestEffortPreclean(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
   } catch {
@@ -408,33 +408,36 @@ test(
       ],
     });
 
-    cleanup.add(`destroy ${SANDBOX_NAME} after channels add/remove live test`, async () => {
-      await bestEffort(() => onboard.destroySandbox(SANDBOX_NAME, "cleanup-nemoclaw-destroy"));
-      await bestEffort(() =>
-        sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
-          artifactName: "cleanup-openshell-sandbox-delete",
-          env: sandboxAccessEnv(),
-          timeoutMs: COMMAND_TIMEOUT_MS,
-        }),
-      );
-      await bestEffort(() =>
-        host.command("openshell", ["gateway", "destroy", "-g", "nemoclaw"], {
-          artifactName: "cleanup-openshell-gateway-destroy",
-          env: baseEnv(),
-          timeoutMs: COMMAND_TIMEOUT_MS,
-        }),
-      );
+    cleanup.trackGateway(host, "nemoclaw", {
+      artifactName: "cleanup-openshell-gateway-destroy",
+      env: baseEnv(),
+      timeoutMs: COMMAND_TIMEOUT_MS,
     });
+    cleanup.trackDisposable(`delete ${SANDBOX_NAME} OpenShell sandbox`, () =>
+      sandbox.cleanupSandbox(SANDBOX_NAME, {
+        artifactName: "cleanup-openshell-sandbox-delete",
+        env: sandboxAccessEnv(),
+        timeoutMs: COMMAND_TIMEOUT_MS,
+      }),
+    );
+    cleanup.trackDisposable(
+      `destroy ${SANDBOX_NAME} after channels add/remove live test`,
+      async () => {
+        await onboard.destroySandbox(SANDBOX_NAME, "cleanup-nemoclaw-destroy");
+      },
+    );
 
-    await bestEffort(() => onboard.destroySandbox(SANDBOX_NAME, "pre-cleanup-nemoclaw-destroy"));
-    await bestEffort(() =>
+    await bestEffortPreclean(() =>
+      onboard.destroySandbox(SANDBOX_NAME, "pre-cleanup-nemoclaw-destroy"),
+    );
+    await bestEffortPreclean(() =>
       sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
         artifactName: "pre-cleanup-openshell-sandbox-delete",
         env: sandboxAccessEnv(),
         timeoutMs: COMMAND_TIMEOUT_MS,
       }),
     );
-    await bestEffort(() =>
+    await bestEffortPreclean(() =>
       host.command("openshell", ["gateway", "destroy", "-g", "nemoclaw"], {
         artifactName: "pre-cleanup-openshell-gateway-destroy",
         env: baseEnv(),

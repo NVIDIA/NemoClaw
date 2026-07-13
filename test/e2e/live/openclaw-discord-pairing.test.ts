@@ -26,6 +26,7 @@ import {
   resultText,
   sandboxSh,
   shellQuote,
+  trackSandboxCleanup,
 } from "./phase6-messaging-helpers.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-openclaw-discord-pairing";
@@ -53,8 +54,20 @@ test("OpenClaw Discord pairing request is shared with connect-shell approval", {
     dmChannel: DISCORD_DM_CHANNEL,
   });
 
-  cleanup.add(`destroy Discord pairing sandbox ${SANDBOX_NAME}`, () =>
-    cleanupPairingSandbox(host, SANDBOX_NAME, env, redactions, "cleanup-discord-pairing"),
+  cleanup.trackGateway(host, "nemoclaw", {
+    artifactName: "cleanup-discord-pairing-openshell-gateway-destroy",
+    env,
+    redactionValues: redactions,
+    timeoutMs: 120_000,
+  });
+  trackSandboxCleanup(
+    cleanup,
+    host,
+    sandbox,
+    SANDBOX_NAME,
+    env,
+    redactions,
+    "cleanup-discord-pairing",
   );
   await cleanupPairingSandbox(host, SANDBOX_NAME, env, redactions, "preclean-discord-pairing");
 

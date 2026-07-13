@@ -53,6 +53,7 @@ describe("NemoClawInstance manifests", () => {
     );
   });
 
+  // source-shape-contract: compatibility -- Every shipped target path must load through the validated E2E manifest consumer
   it("resolves every typed target manifest path to a validated manifest", () => {
     const manifestPaths = new Set(
       loadManifestsFromDir(MANIFEST_DIR).map((manifest) => path.resolve(manifest.filePath)),

@@ -83,6 +83,7 @@ describe("live E2E target matrix", () => {
     expect(() => resolveRunnerForTarget(broken)).toThrow(/no default for platform/);
   });
 
+  // source-shape-contract: compatibility -- Default live matrix output must cover every fixture-supported registered target once
   it("builds the default live matrix from every fixture-supported target", () => {
     const targets = listTargets();
     const supportedTargets = targets.filter((entry) => liveTargetSupport(entry).supported);

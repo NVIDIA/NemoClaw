@@ -14,6 +14,7 @@ import os from "node:os";
 import path from "node:path";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
@@ -85,7 +86,7 @@ function testEnv(home: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv
   return testHomeEnvironment(home, extra, { ...process.env, OPENSHELL_GATEWAY: "nemoclaw" });
 }
 
-async function bestEffort(run: () => Promise<unknown>): Promise<void> {
+async function bestEffortPreclean(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
   } catch {
@@ -100,19 +101,31 @@ async function cleanupCloudInferenceState(
   home: string,
 ): Promise<void> {
   const env = testEnv(home);
-  await bestEffort(() =>
-    host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
-      artifactName: "cleanup-nemoclaw-destroy-cloud-inference",
-      env,
-      timeoutMs: 120_000,
-    }),
-  );
-  await bestEffort(() =>
+  await bestEffortPreclean(() => cleanupCloudInferenceNemoClawSandbox(host, home));
+  await bestEffortPreclean(() =>
     sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
       artifactName: "cleanup-openshell-sandbox-delete-cloud-inference",
       env,
       timeoutMs: 60_000,
     }),
+  );
+}
+
+async function cleanupCloudInferenceNemoClawSandbox(
+  host: HostCliClient,
+  home: string,
+): Promise<void> {
+  const result = await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
+    artifactName: "cleanup-nemoclaw-destroy-cloud-inference",
+    env: testEnv(home),
+    timeoutMs: 120_000,
+  });
+  assertCleanupSucceededOrAbsent(
+    result,
+    /Sandbox '.+' does not exist|Run 'nemoclaw onboard' to create one|sandbox .* not found|no such sandbox/iu.test(
+      resultText(result),
+    ),
+    `cleanup cloud inference sandbox ${SANDBOX_NAME}`,
   );
 }
 
@@ -262,10 +275,19 @@ test(
     }
 
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cloud-inference-home-"));
-    cleanup.add(`remove cloud inference state for ${SANDBOX_NAME}`, async () => {
-      await cleanupCloudInferenceState(host, sandbox, home);
-      fs.rmSync(home, { recursive: true, force: true });
-    });
+    cleanup.trackDisposable(`remove cloud inference test home ${home}`, () =>
+      fs.rmSync(home, { recursive: true, force: true }),
+    );
+    cleanup.trackDisposable(`delete cloud inference OpenShell sandbox ${SANDBOX_NAME}`, () =>
+      sandbox.cleanupSandbox(SANDBOX_NAME, {
+        artifactName: "cleanup-openshell-sandbox-delete-cloud-inference",
+        env: testEnv(home),
+        timeoutMs: 60_000,
+      }),
+    );
+    cleanup.trackDisposable(`destroy cloud inference sandbox ${SANDBOX_NAME}`, () =>
+      cleanupCloudInferenceNemoClawSandbox(host, home),
+    );
     await cleanupCloudInferenceState(host, sandbox, home);
 
     const install = await host.command(

@@ -9,17 +9,18 @@ import { expect } from "../fixtures/e2e-test.ts";
 import { assertChannelsStopStartSandboxName } from "./channels-stop-start-safety.ts";
 import {
   type AgentKind,
-  bestEffort,
+  runSecondaryCleanup as bestEffortPreclean,
   CLI,
-  cleanupSandbox,
   dockerInfo,
   expectExitZero,
   expectSandboxReady,
   installSandboxOrSkipOnRateLimit,
   phase6Env,
+  precleanSandbox,
   resultText,
   sandboxSh,
   shellQuote,
+  trackSandboxCleanup,
 } from "./phase6-messaging-helpers.ts";
 import { parsePolicyPresetState } from "./policy-list-state.ts";
 
@@ -334,13 +335,13 @@ async function precleanProviders(
   }
 }
 
-async function destroyNemoclawGateway(
+async function precleanNemoclawGateway(
   host: import("../fixtures/clients/host.ts").HostCliClient,
   env: NodeJS.ProcessEnv,
   redactions: string[],
   artifactName: string,
 ): Promise<void> {
-  await bestEffort(() =>
+  await bestEffortPreclean(() =>
     host.command("openshell", ["gateway", "destroy", "-g", "nemoclaw"], {
       artifactName,
       env,
@@ -438,29 +439,29 @@ export async function runChannelsStopStartTarget({
     channels: CHANNELS,
   });
 
-  cleanup.add(`destroy channels stop/start sandbox ${SANDBOX_NAME}`, async () => {
-    await cleanupSandbox(
-      host,
-      SANDBOX_NAME,
-      env,
-      redactions,
-      `cleanup-channels-stop-start-${AGENT}`,
-    );
-    await destroyNemoclawGateway(
-      host,
-      env,
-      redactions,
-      `cleanup-openshell-gateway-destroy-${AGENT}`,
-    );
+  cleanup.trackGateway(host, "nemoclaw", {
+    artifactName: `cleanup-openshell-gateway-destroy-${AGENT}`,
+    env,
+    redactionValues: redactions,
+    timeoutMs: 60_000,
   });
-  await cleanupSandbox(
+  trackSandboxCleanup(
+    cleanup,
+    host,
+    sandbox,
+    SANDBOX_NAME,
+    env,
+    redactions,
+    `cleanup-channels-stop-start-${AGENT}`,
+  );
+  await precleanSandbox(
     host,
     SANDBOX_NAME,
     env,
     redactions,
     `preclean-channels-stop-start-${AGENT}`,
   );
-  await destroyNemoclawGateway(
+  await precleanNemoclawGateway(
     host,
     env,
     redactions,

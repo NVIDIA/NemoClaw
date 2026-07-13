@@ -5,10 +5,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   assertMcpCredentialBoundaryRuntimeVersion,
-  MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION,
   McpCredentialBoundaryRuntimeVersionError,
 } from "./mcp-bridge-validation";
-import childVisibleCredentialManifest from "./openshell-child-visible-credentials.v0.0.72.json";
 
 function matchingOpenshellRuntime() {
   return {
@@ -56,9 +54,6 @@ describe("MCP credential-boundary runtime validation", () => {
       detail: "version mismatch",
       reason: "version-mismatch",
     });
-    expect(MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION).toBe(
-      childVisibleCredentialManifest.openshellVersion,
-    );
   });
 
   it("fails closed when the runtime binary is missing (#6426)", () => {

@@ -77,12 +77,10 @@ runConnectRlimitTest(
     });
     expect(docker.exitCode, resultText(docker)).toBe(0);
 
-    cleanup.add("remove rlimit acceptance sandbox", () =>
-      host.bestEffortCleanupSandbox(SANDBOX_NAME, {
-        env: buildAvailabilityProbeEnv(),
-        timeoutMs: 15 * 60_000,
-      }),
-    );
+    cleanup.trackSandbox(host, SANDBOX_NAME, {
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 15 * 60_000,
+    });
     await host.bestEffortCleanupSandbox(SANDBOX_NAME, {
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 15 * 60_000,

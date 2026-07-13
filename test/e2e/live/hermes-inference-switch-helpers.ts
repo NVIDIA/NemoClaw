@@ -133,7 +133,7 @@ export function env(apiKey?: string, extra: NodeJS.ProcessEnv = {}): NodeJS.Proc
   return { ...out, ...extra };
 }
 
-export async function bestEffort(run: () => Promise<unknown>): Promise<void> {
+export async function preCleanBestEffort(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
   } catch {}
@@ -225,14 +225,14 @@ export async function cleanupHermesSwitch(
   host: HostCliClient,
   sandbox: SandboxClient,
 ): Promise<void> {
-  await bestEffort(() =>
+  await preCleanBestEffort(() =>
     host.command("node", [CLI, SANDBOX_NAME, "destroy", "--yes", "--cleanup-gateway"], {
       artifactName: "cleanup-nemoclaw-destroy",
       env: env(),
       timeoutMs: 120_000,
     }),
   );
-  await bestEffort(() =>
+  await preCleanBestEffort(() =>
     sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
       artifactName: "cleanup-openshell-delete",
       env: env(),

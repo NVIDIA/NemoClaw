@@ -9,6 +9,7 @@ import credentialBoundaryManifest from "../src/lib/actions/sandbox/openshell-chi
 import { validateMcpOpenShellWorkflowBoundary } from "../tools/e2e/mcp-workflow-boundary.mts";
 
 describe("MCP OpenShell workflow boundary", () => {
+  // source-shape-contract: compatibility -- Setup guidance must advertise the pinned runtime compatibility boundary
   it("keeps the setup docs aligned with the stable default", () => {
     const setupDocs = fs.readFileSync("docs/deployment/set-up-mcp-bridge.mdx", "utf8");
 

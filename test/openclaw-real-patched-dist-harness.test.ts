@@ -234,7 +234,8 @@ describe("OpenClaw real patched-dist materialization guard", () => {
         };
       };
 
-      expect(() => {
+      let failure: unknown;
+      try {
         materializeReviewedTarball(
           "https://registry.npmjs.org/openclaw/-/openclaw-drifted.tgz",
           tmp,
@@ -242,7 +243,12 @@ describe("OpenClaw real patched-dist materialization guard", () => {
           fakePack,
         );
         installStarted = true;
-      }).toThrow(/OpenClaw tarball SRI/);
+      } catch (caught) {
+        failure = caught;
+      }
+
+      expect(failure).toBeInstanceOf(Error);
+      expect((failure as Error).message).toMatch(/OpenClaw tarball SRI/);
       expect(installStarted).toBe(false);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -259,7 +265,8 @@ describe("OpenClaw real patched-dist materialization guard", () => {
         stderr: "",
       });
 
-      expect(() => {
+      let failure: unknown;
+      try {
         materializeReviewedTarball(
           "https://registry.npmjs.org/openclaw/-/openclaw-unsafe.tgz",
           tmp,
@@ -267,7 +274,12 @@ describe("OpenClaw real patched-dist materialization guard", () => {
           fakePack,
         );
         installStarted = true;
-      }).toThrow(/unsafe archive filename/);
+      } catch (caught) {
+        failure = caught;
+      }
+
+      expect(failure).toBeInstanceOf(Error);
+      expect((failure as Error).message).toMatch(/unsafe archive filename/);
       expect(installStarted).toBe(false);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

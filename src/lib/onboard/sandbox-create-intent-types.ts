@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { DockerGpuRoutePlan } from "./docker-gpu-route";
 import type { MessagingTokenDef } from "./messaging-prep";
 import type { MessagingChannel } from "./messaging-state";
 import type { SandboxGpuCreateConfig } from "./sandbox-gpu-create";
@@ -21,7 +22,6 @@ export type SandboxCreatePolicyRequest = {
   readonly activeMessagingChannels: readonly string[];
   readonly options: {
     readonly directGpu: boolean;
-    readonly dockerGpuPatch: boolean;
     readonly additionalPresets: readonly string[];
     readonly agentName?: string | null;
     readonly policyTier: string | null;
@@ -47,7 +47,7 @@ export type SandboxCreateIntent = {
   readonly hermesToolGateways: readonly string[];
   readonly policy: SandboxCreatePolicyRequest;
   readonly gpuCreateArgs: readonly string[];
-  readonly useDockerGpuPatch: boolean;
+  readonly gpuRoutePlan: DockerGpuRoutePlan;
   readonly sandboxGpuLogMessage: string | null;
   readonly disabledChannelNames: readonly string[];
 };
@@ -66,7 +66,7 @@ export type ResolveSandboxCreateIntentInput = {
   hermesToolGateways: readonly string[];
   sandboxGpuConfig: SandboxGpuCreateConfig;
   gpuCreateArgs: readonly string[];
-  useDockerGpuPatch: boolean;
+  gpuRoutePlan: DockerGpuRoutePlan;
   sandboxGpuLogMessage: string | null;
   agentName?: string | null;
   policyTier: string | null;

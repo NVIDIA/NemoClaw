@@ -116,7 +116,7 @@ fi
     fakeBin,
     "node",
     `if [ "\${1:-}" = "--version" ]; then
-  echo "v22.16.0"
+  echo "v22.19.0"
 elif [ "\${1:-}" = "${repo}/bin/nemoclaw.js" ] && [ "\${2:-}" = "onboard" ]; then
   echo "runtime onboard"
 else
@@ -302,13 +302,13 @@ describe("contributor environment doctor", () => {
 
   it("rejects unsupported tool versions with a precise remediation", () => {
     const fixture = createFixture();
-    writeTool(fixture.fakeBin, "node", 'echo "v20.15.0"');
+    writeTool(fixture.fakeBin, "node", 'echo "v22.18.0"');
 
     const result = runDoctor(fixture);
 
     expect(result.status).toBe(1);
-    expect(result.output).toContain("Node.js 20.15.0 is below 22.16.0");
-    expect(result.output).toContain("Next: Install Node.js 22.16 or newer.");
+    expect(result.output).toContain("Node.js 22.18.0 is below 22.19.0");
+    expect(result.output).toContain("Next: Install Node.js 22.19 or newer.");
   }, 30_000);
 
   it("requires Python 3.11 or newer", () => {
@@ -626,12 +626,12 @@ describe("contributor repository setup", () => {
 
   it("rejects unsupported Node.js before repository changes", () => {
     const fixture = createFixture();
-    writeTool(fixture.fakeBin, "node", 'echo "v20.15.0"');
+    writeTool(fixture.fakeBin, "node", 'echo "v22.18.0"');
 
     const result = runSetup(fixture);
 
     expect(result.status).toBe(1);
-    expect(result.output).toContain("Node.js 20.15.0 is below 22.16.0");
+    expect(result.output).toContain("Node.js 22.18.0 is below 22.19.0");
     expect(readCommandLog(fixture)).not.toContain("npm install");
   });
 

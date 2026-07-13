@@ -85,6 +85,7 @@ describe("gated E2E Vitest projects", () => {
     expect(deterministicProjects.every((project) => project.test?.retry === undefined)).toBe(true);
   });
 
+  // source-shape-contract: security -- Live projects must not inherit the deterministic drift-preflight bypass
   it("keeps the drift-preflight bypass out of live projects (#6692)", () => {
     const statefulProjects = projectConfigs().filter(
       (project) => !project.test?.setupFiles?.includes(FIXTURE_UMASK_SETUP),

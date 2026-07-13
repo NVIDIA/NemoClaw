@@ -104,7 +104,7 @@ export function env(
   };
 }
 
-export async function bestEffort(run: () => Promise<unknown>): Promise<void> {
+export async function preCleanBestEffort(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
   } catch {}
@@ -373,15 +373,15 @@ function streamTextChunks(id: string, content: string): unknown[] {
 }
 
 export async function cleanupKimi(host: HostCliClient, sandbox: SandboxClient): Promise<void> {
-  await bestEffort(() =>
+  await preCleanBestEffort(() =>
     host.command("node", [CLI, SANDBOX_NAME, "destroy", "--yes"], {
       artifactName: "cleanup-destroy-kimi",
       env: env(),
       timeoutMs: 120_000,
     }),
   );
-  await bestEffort(() =>
-    sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
+  await preCleanBestEffort(() =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
       artifactName: "cleanup-delete-kimi",
       env: env(),
       timeoutMs: 60_000,

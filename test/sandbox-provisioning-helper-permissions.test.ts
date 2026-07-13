@@ -78,7 +78,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       const command = dockerRunCommandBetween(
         dockerfile,
         "# Copy built plugin and blueprint",
-        "# Install runtime dependencies only",
+        "# The builder-stage verify-openshell-policy-boundary-dependencies.mts check",
       )
         .replaceAll("/opt/nemoclaw-blueprint", "__BLUEPRINT__")
         .replaceAll("/opt/nemoclaw", nemoclawRoot)

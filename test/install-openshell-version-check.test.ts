@@ -422,11 +422,23 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
     );
   });
 
-  it("downloads the macOS arm64 gateway asset during reinstall", () => {
+  it.each([
+    { archiveShape: "safe", status: 0, unsafe: false },
+    { archiveShape: "absolute", status: 1, unsafe: true },
+    { archiveShape: "traversal", status: 1, unsafe: true },
+    { archiveShape: "duplicate", status: 1, unsafe: true },
+    { archiveShape: "extra", status: 1, unsafe: true },
+    { archiveShape: "symlink", status: 1, unsafe: true },
+    { archiveShape: "hardlink", status: 1, unsafe: true },
+    { archiveShape: "device", status: 1, unsafe: true },
+    { archiveShape: "late-traversal", status: 1, unsafe: true },
+  ] as const)("$archiveShape macOS arm64 archives are checked before extraction", (expected) => {
+    const { archiveShape } = expected;
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-macos-assets-"));
     try {
       const fakeBin = path.join(tmp, "bin");
       const downloadLog = path.join(tmp, "downloads.log");
+      const tarLog = path.join(tmp, "tar.log");
       fs.mkdirSync(fakeBin);
 
       writeExecutable(
@@ -484,6 +496,35 @@ exit 0`,
       writeExecutable(
         path.join(fakeBin, "tar"),
         `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> ${JSON.stringify(tarLog)}
+case "$*" in
+*openshell-gateway*) name="openshell-gateway" ;;
+*) name="openshell" ;;
+esac
+case "\${1:-}" in
+-tzf)
+  case ${JSON.stringify(archiveShape)} in
+    absolute) printf '/tmp/%s\\n' "$name" ;;
+    traversal) printf '../%s\\n' "$name" ;;
+    duplicate) printf '%s\\n%s\\n' "$name" "$name" ;;
+    extra) printf '%s\\nunexpected\\n' "$name" ;;
+    late-traversal)
+      if [ "$name" = "openshell-gateway" ]; then printf '../%s\\n' "$name"; else printf '%s\\n' "$name"; fi
+      ;;
+    *) printf '%s\\n' "$name" ;;
+  esac
+  exit 0
+  ;;
+-tvzf)
+  case ${JSON.stringify(archiveShape)} in
+    symlink) printf 'lrwxrwxrwx 0/0 0 2026-01-01 00:00 %s -> target\\n' "$name" ;;
+    hardlink) printf 'hrwxr-xr-x 0/0 0 2026-01-01 00:00 %s link to target\\n' "$name" ;;
+    device) printf 'crw-rw-rw- 0/0 1,3 2026-01-01 00:00 %s\\n' "$name" ;;
+    *) printf '%s\\n' "-rwxr-xr-x 0/0 1 2026-01-01 00:00 $name" ;;
+  esac
+  exit 0
+  ;;
+esac
 outdir=""
 prev=""
 for arg in "$@"; do
@@ -494,10 +535,6 @@ for arg in "$@"; do
   prev="$arg"
 done
 [ -n "$outdir" ] || exit 1
-case "$*" in
-*openshell-gateway*) name="openshell-gateway" ;;
-*) name="openshell" ;;
-esac
 printf '#!/usr/bin/env bash\nexit 0\n' > "$outdir/$name"
 chmod 755 "$outdir/$name"
 exit 0`,
@@ -508,7 +545,7 @@ exit 0`,
 dest="\${@: -1}"
 mkdir -p "$(dirname "$dest")"
   cat > "$dest" <<'EOF'
-  #!/usr/bin/env bash
+#!/usr/bin/env bash
 if [ "\${1:-}" = "--version" ]; then echo "openshell ${REQUIRED_OPENSHELL_VERSION}"; exit 0; fi
 # ${OPENSHELL_FEATURE_MARKERS}
 exit 0
@@ -528,7 +565,15 @@ exit 0`,
         encoding: "utf8",
       });
 
-      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(expected.status);
+      expect(result.stderr.includes("Unsafe OpenShell archive")).toBe(expected.unsafe);
+      const installedVersion = spawnSync(path.join(fakeBin, "openshell"), ["--version"], {
+        encoding: "utf8",
+      }).stdout.trim();
+      expect(installedVersion).toBe(
+        expected.unsafe ? "openshell 0.0.36" : `openshell ${REQUIRED_OPENSHELL_VERSION}`,
+      );
+      expect(/^xzf /m.test(fs.readFileSync(tarLog, "utf8"))).toBe(!expected.unsafe);
       const downloads = fs.readFileSync(downloadLog, "utf-8");
       expect(downloads).toContain("openshell-aarch64-apple-darwin.tar.gz");
       expect(downloads).toContain("openshell-gateway-aarch64-apple-darwin.tar.gz");
@@ -596,17 +641,21 @@ printf '%s\n' 'checksum OK'`,
       writeExecutable(
         path.join(fakeBin, "tar"),
         `#!/usr/bin/env bash
+case "$*" in
+*openshell-gateway*) name="openshell-gateway" ;;
+*openshell-sandbox*) name="openshell-sandbox" ;;
+*) name="openshell" ;;
+esac
+case "\${1:-}" in
+-tzf) printf '%s\\n' "$name"; exit 0 ;;
+-tvzf) printf '%s\\n' "-rwxr-xr-x 0/0 1 2026-01-01 00:00 $name"; exit 0 ;;
+esac
 outdir=""
 prev=""
 for arg in "$@"; do
   if [ "$prev" = "-C" ]; then outdir="$arg"; break; fi
   prev="$arg"
 done
-case "$*" in
-*openshell-gateway*) name="openshell-gateway" ;;
-*openshell-sandbox*) name="openshell-sandbox" ;;
-*) name="openshell" ;;
-esac
 printf '#!/usr/bin/env bash\nexit 0\n' > "$outdir/$name"
 chmod 755 "$outdir/$name"`,
       );
@@ -723,6 +772,15 @@ exit 0`,
       writeExecutable(
         path.join(fakeBin, "tar"),
         `#!/usr/bin/env bash
+case "$*" in
+*openshell-gateway*) name="openshell-gateway" ;;
+*openshell-sandbox*) name="openshell-sandbox" ;;
+*) name="openshell" ;;
+esac
+case "\${1:-}" in
+-tzf) printf '%s\\n' "$name"; exit 0 ;;
+-tvzf) printf '%s\\n' "-rwxr-xr-x 0/0 1 2026-01-01 00:00 $name"; exit 0 ;;
+esac
 outdir=""
 prev=""
 for arg in "$@"; do
@@ -733,11 +791,6 @@ for arg in "$@"; do
   prev="$arg"
 done
 [ -n "$outdir" ] || exit 1
-case "$*" in
-*openshell-gateway*) name="openshell-gateway" ;;
-*openshell-sandbox*) name="openshell-sandbox" ;;
-*) name="openshell" ;;
-esac
 printf '#!/usr/bin/env bash\\nexit 0\\n' > "$outdir/$name"
 chmod 755 "$outdir/$name"
 exit 0`,

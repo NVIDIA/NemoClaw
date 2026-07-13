@@ -2,10 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Verifies pinned installer SHA-256 hashes still match upstream scripts.
-# Checked: OpenShell v0.0.72 installer and Brev release assets.
+# Checked: allowlisted OpenShell installer and Brev release assets.
 # Reports the required network-backed drift check on every PR, every push to
 # main, and weekly. Pull requests execute checker code from their base commit;
 # the immutable bootstrap is used only for the PR that first adds that action.
+# A new release-manifest allowlist entry must therefore land on main in a
+# prerequisite PR before a later PR changes runtime selectors to that release.
 
 name: Security / Installer Hash Check
 
@@ -31,7 +33,7 @@ jobs:
       - name: Set up trusted installer hash parser runtime
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
         with:
-          node-version: 22.16.0
+          node-version: 22.19.0
 
       # The full PR-head checkout below supplies data only. Its checker and pin
       # parser are never executed: later steps run exclusively from either

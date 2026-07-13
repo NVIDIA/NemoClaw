@@ -51,6 +51,7 @@ const SELECTOR_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 const FREE_STANDING_JOB_MARKER = "E2E_JOB";
 const FREE_STANDING_TARGET_MARKER = "E2E_TARGET_ID";
 const FREE_STANDING_DEFAULT_ENABLED_MARKER = "E2E_DEFAULT_ENABLED";
+const EXPLICIT_ONLY_JOBS_WITHOUT_ENV_MARKER = new Set(["hermes-gpu-startup"]);
 const COMMON_SECRET_ENV_NAMES = [
   "NVIDIA_API_KEY",
   "NVIDIA_INFERENCE_API_KEY",
@@ -58,7 +59,7 @@ const COMMON_SECRET_ENV_NAMES = [
   "DOCKERHUB_TOKEN",
   "GITHUB_TOKEN",
 ];
-const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set(["hermes-e2e"]);
+const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set(["hermes-e2e", "hermes-gpu-startup"]);
 const PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS = new Set([
   "device-auth-health",
   "model-router-provider-routed-inference",
@@ -133,6 +134,8 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
       } else {
         explicitOnlyJobs.push(jobId);
       }
+    } else if (EXPLICIT_ONLY_JOBS_WITHOUT_ENV_MARKER.has(jobId)) {
+      explicitOnlyJobs.push(jobId);
     }
     if (!hasTargetMarker) continue;
 
@@ -2088,7 +2091,11 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
     const authIndex = steps.indexOf(auth);
     const cleanupIndex = steps.indexOf(cleanup);
     const expectedAuthIndex =
-      jobName === "jetson-nvmap-gpu" ? checkoutIndex + 2 : checkoutIndex + 1;
+      jobName === "jetson-nvmap-gpu"
+        ? checkoutIndex + 2
+        : jobName === "hermes-gpu-startup"
+          ? checkoutIndex + 3
+          : checkoutIndex + 1;
     if (checkoutIndex < 0 || authIndex !== expectedAuthIndex) {
       errors.push(
         jobName === "jetson-nvmap-gpu"

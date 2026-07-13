@@ -14,7 +14,7 @@ function writeNodeStub(fakeBin: string) {
   writeExecutable(
     path.join(fakeBin, "node"),
     `#!/usr/bin/env bash
-if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then echo "v22.16.0"; exit 0; fi
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then echo "v22.19.0"; exit 0; fi
 if [ -n "\${1:-}" ] && [ -f "$1" ]; then exec ${JSON.stringify(process.execPath)} "$@"; fi
 if [ "$1" = "-e" ]; then exec ${JSON.stringify(process.execPath)} "$@"; fi
 exit 99`,

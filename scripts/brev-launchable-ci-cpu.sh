@@ -28,7 +28,7 @@
 #   bash scripts/brev-launchable-ci-cpu.sh --print-openshell-version  # resolve only
 #
 # Environment overrides:
-#   OPENSHELL_VERSION          — OpenShell CLI release tag (default: v0.0.72)
+#   OPENSHELL_VERSION          — OpenShell CLI release tag (default: stable selector below)
 #   NEMOCLAW_OPENSHELL_CHANNEL — Release channel (stable/dev/auto)
 #   NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL — Required opt-in for the unverified dev channel
 #   NEMOCLAW_REF               — NemoClaw git ref to clone (default: main)
@@ -165,6 +165,18 @@ openshell_checksum_line() {
   awk -v asset="$asset" '$2 == asset { print; found=1; exit } END { if (!found) exit 1 }' "$checksum_file"
 }
 
+validate_openshell_archive() {
+  local archive="$1" expected_member="$2" members verbose
+  members="$(LC_ALL=C tar -tzf "$archive")" \
+    || fail "Unable to list OpenShell archive $(basename "$archive")"
+  [ "$members" = "$expected_member" ] \
+    || fail "Unsafe OpenShell archive $(basename "$archive"): expected exactly one member named $expected_member"
+  verbose="$(LC_ALL=C tar -tvzf "$archive")" \
+    || fail "Unable to inspect OpenShell archive $(basename "$archive")"
+  [[ "$verbose" != *$'\n'* && "${verbose:0:1}" = "-" && "${verbose##* }" = "$expected_member" ]] \
+    || fail "Unsafe OpenShell archive $(basename "$archive"): $expected_member must be one regular file"
+}
+
 verify_openshell_cli_asset() {
   local tmpdir="$1" asset="$2" checksum_file="openshell-checksums-sha256.txt"
   local checksum_line expected_sha release_sha
@@ -201,6 +213,7 @@ install_openshell_cli_release() {
   if [[ "$OPENSHELL_VERSION" != "dev" ]]; then
     verify_openshell_cli_asset "$tmpdir" "$asset"
   fi
+  validate_openshell_archive "$tmpdir/$asset" openshell
   tar xzf "$tmpdir/$asset" -C "$tmpdir"
   sudo install -m 755 "$tmpdir/openshell" /usr/local/bin/openshell
   rm -rf "$tmpdir"

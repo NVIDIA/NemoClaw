@@ -100,6 +100,7 @@ console.log(JSON.stringify({
 `;
 
 describe("reviewed npm lifecycle policy", () => {
+  // source-shape-contract: security -- Every executable archive install must match the reviewed fail-closed lifecycle allowlist
   it("cross-checks the allowlist against every production archive install boundary", () => {
     expect(policy).toMatchObject({ schemaVersion: 1, defaultPolicy: "deny" });
     expect(policy.allowedLifecycleScripts).not.toHaveLength(0);

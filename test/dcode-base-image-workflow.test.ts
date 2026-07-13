@@ -128,6 +128,7 @@ function pinnedAptVersion(dockerfile: string, packageName: string): string {
 }
 
 describe("base-image publication behavior", () => {
+  // source-shape-contract: security -- Publisher mutations must preserve immutable actions and guarded production build arguments
   it("accepts every discovered publisher and rejects supply-chain mutations", () => {
     const publishers = publisherJobs(workflow);
     expect(publishers.length).toBeGreaterThan(0);

@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundary.mts";
+import { requireFixture } from "./require-fixture";
 
 function readWorkflow(): Record<string, unknown> {
   return YAML.parse(
@@ -24,7 +25,7 @@ describe("tunnel lifecycle workflow boundary", () => {
       jobs: Record<string, { env?: Record<string, unknown> }>;
     };
     const job = workflow.jobs["tunnel-lifecycle"];
-    expect(job).toBeDefined();
+    requireFixture(job, "missing tunnel-lifecycle job");
     job.env = { ...job.env };
     delete job.env.NEMOCLAW_CLI_BIN;
     fs.writeFileSync(workflowPath, YAML.stringify(workflow));
@@ -51,7 +52,7 @@ describe("tunnel lifecycle workflow boundary", () => {
       >;
     };
     const job = workflow.jobs["tunnel-lifecycle"];
-    expect(job).toBeDefined();
+    requireFixture(job, "missing tunnel-lifecycle job");
     job["runs-on"] = "self-hosted";
     job["timeout-minutes"] = 30;
     job.env = {
@@ -63,7 +64,7 @@ describe("tunnel lifecycle workflow boundary", () => {
     const checkout = job.steps.find((step) =>
       String(step.uses ?? "").startsWith("actions/checkout@"),
     );
-    expect(checkout).toBeDefined();
+    requireFixture(checkout, "missing tunnel-lifecycle checkout");
     checkout!.uses = "actions/checkout@v6";
     checkout!.with = {
       ...(checkout!.with as Record<string, unknown>),
@@ -73,7 +74,7 @@ describe("tunnel lifecycle workflow boundary", () => {
     const cloudflared = job.steps.find(
       (step) => step.name === "Install and verify cloudflared prerequisite",
     );
-    expect(cloudflared).toBeDefined();
+    requireFixture(cloudflared, "missing cloudflared prerequisite step");
     cloudflared!.env = {
       NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
       NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
@@ -81,11 +82,11 @@ describe("tunnel lifecycle workflow boundary", () => {
     cloudflared!.run = "cloudflared --version";
 
     const runTunnel = job.steps.find((step) => step.name === "Run tunnel lifecycle live test");
-    expect(runTunnel).toBeDefined();
+    requireFixture(runTunnel, "missing tunnel lifecycle live test step");
     runTunnel!.run = `${String(runTunnel!.run ?? "")}\nsudo apt-get install -y cloudflared`;
 
     const upload = job.steps.find((step) => step.name === "Upload tunnel lifecycle artifacts");
-    expect(upload).toBeDefined();
+    requireFixture(upload, "missing tunnel lifecycle artifact upload");
     upload!.with = {
       ...(upload!.with as Record<string, unknown>),
       path: "e2e-artifacts/live/",
@@ -132,11 +133,11 @@ describe("tunnel lifecycle workflow boundary", () => {
       jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
     };
     const job = workflow.jobs["tunnel-lifecycle"];
-    expect(job).toBeDefined();
+    requireFixture(job, "missing tunnel-lifecycle job");
     const cloudflared = job.steps.find(
       (step) => step.name === "Install and verify cloudflared prerequisite",
     );
-    expect(cloudflared).toBeDefined();
+    requireFixture(cloudflared, "missing cloudflared prerequisite step");
     cloudflared!.env = { CLOUDFLARED_VERSION: "2026.6.1" };
     cloudflared!.run = [
       "set -euo pipefail",

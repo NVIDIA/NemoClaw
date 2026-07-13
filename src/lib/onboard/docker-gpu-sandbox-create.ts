@@ -3,44 +3,42 @@
 
 import { getSandboxFailurePhase } from "../state/gateway";
 import type { SandboxGpuProofResult } from "../state/registry";
+import {
+  getDockerGpuSupervisorReconnectTimeoutSecs,
+  printDockerGpuPatchFailureAndExit,
+  printDockerGpuProofFailure,
+  printDockerGpuReadinessFailure,
+  recreateOpenShellDockerSandboxWithGpu,
+  waitForOpenShellSupervisorReconnect,
+} from "./docker-gpu-patch";
+import { finalizeDockerGpuPatchBackup } from "./docker-gpu-patch-finalize";
 import type {
   DockerGpuPatchBackend,
   DockerGpuPatchDeps,
   DockerGpuPatchFailureContext,
   DockerGpuPatchMode,
   DockerGpuPatchResult,
-} from "./docker-gpu-patch";
-import {
-  findOpenShellDockerSandboxContainerIds,
-  getDockerGpuSupervisorReconnectTimeoutSecs,
-  printDockerGpuPatchFailureAndExit,
-  printDockerGpuProofFailure,
-  printDockerGpuReadinessFailure,
-  recreateOpenShellDockerSandboxWithGpu,
-  shouldApplyDockerGpuPatch,
-  waitForOpenShellSupervisorReconnect,
-} from "./docker-gpu-patch";
-import { finalizeDockerGpuPatchBackup } from "./docker-gpu-patch-finalize";
+} from "./docker-gpu-patch-types";
 import { captureDockerGpuPreRollbackDiagnostics } from "./docker-gpu-pre-rollback-diagnostics";
+import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
+import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
+import { isDockerDesktopWslRuntime } from "./docker-gpu-sandbox-create-plan";
 import {
   createDockerSandboxRecreator,
   type RecreateGpuPatchFn,
   type RecreateStartupPatchFn,
 } from "./docker-startup-command-sandbox-create";
-import { detectWslDockerDesktopStatus } from "./wsl-docker-desktop-gpu";
+import { findOpenShellDockerSandboxContainerIds } from "./openshell-docker-sandbox-containers";
 
-let cachedDockerDesktopWslRuntime: boolean | null = null;
-
-export function isDockerDesktopWslRuntime(): boolean {
-  if (cachedDockerDesktopWslRuntime === null) {
-    cachedDockerDesktopWslRuntime = detectWslDockerDesktopStatus({}) === "docker-desktop";
-  }
-  return cachedDockerDesktopWslRuntime;
-}
-
-export function resetIsDockerDesktopWslRuntimeCache(): void {
-  cachedDockerDesktopWslRuntime = null;
-}
+export type {
+  DockerGpuRoutePlan,
+  SelectedDockerGpuRoute,
+} from "./docker-gpu-route";
+export {
+  isDockerDesktopWslRuntime,
+  resetIsDockerDesktopWslRuntimeCache,
+  resolveDockerGpuSandboxCreatePlan,
+} from "./docker-gpu-sandbox-create-plan";
 
 type DockerGpuSandboxCreateDeps = Pick<
   DockerGpuPatchDeps,
@@ -61,7 +59,7 @@ type PatchFailureExitFn = (
 ) => void;
 
 type DockerGpuSandboxCreatePatchOptions = {
-  enabled: boolean;
+  route: SelectedDockerGpuRoute;
   persistStartupCommand?: boolean;
   sandboxName: string;
   gpuDevice?: string | null;
@@ -92,17 +90,6 @@ type DockerGpuSandboxCreatePatchOptions = {
   };
 };
 
-type DockerGpuSandboxConfig = {
-  sandboxGpuEnabled: boolean;
-  sandboxGpuDevice?: string | null;
-  hostGpuPlatform?: string | null;
-};
-
-type DockerGpuSandboxCreatePlan = {
-  useDockerGpuPatch: boolean;
-  logMessage: string | null;
-};
-
 export type DockerGpuSandboxCreatePatch = {
   maybeApplyDuringCreate: () => void;
   createFailureMessage: () => string | null;
@@ -131,6 +118,7 @@ export type DockerGpuSandboxCreatePatch = {
 export function createDockerGpuSandboxCreatePatch(
   options: DockerGpuSandboxCreatePatchOptions,
 ): DockerGpuSandboxCreatePatch {
+  const routeAdapter = adaptDockerGpuRouteForPatch(options.route);
   let result: DockerGpuPatchResult | null = null;
   let patchError: unknown = null;
   let needsSupervisorWait = false;
@@ -155,10 +143,10 @@ export function createDockerGpuSandboxCreatePatch(
     backend: options.backend,
     dockerDesktopWsl: options.dockerDesktopWsl ?? isDockerDesktopWslRuntime(),
   };
-  const patchEnabled = options.enabled || options.persistStartupCommand === true;
-  const patchTarget = options.enabled ? "NVIDIA GPU access" : "restart-safe startup";
+  const patchEnabled = routeAdapter.enabled || options.persistStartupCommand === true;
+  const patchTarget = routeAdapter.enabled ? "NVIDIA GPU access" : "restart-safe startup";
   const recreateSelectedPatch = createDockerSandboxRecreator({
-    gpuEnabled: options.enabled,
+    gpuEnabled: routeAdapter.enabled,
     gpuOptions: applyOptions,
     startupCommand: options.openshellSandboxCommand,
     recreateGpu: recreatePatch,
@@ -187,7 +175,7 @@ export function createDockerGpuSandboxCreatePatch(
 
     createFailureMessage() {
       if (!patchError) return null;
-      return options.enabled
+      return routeAdapter.enabled
         ? "Docker GPU patch failed while OpenShell sandbox create was still waiting."
         : "Docker startup-command patch failed while OpenShell sandbox create was still waiting.";
     },
@@ -197,6 +185,7 @@ export function createDockerGpuSandboxCreatePatch(
       onPatchFailureExit(options.sandboxName, patchError, {
         runCaptureOpenshell: options.deps.runCaptureOpenshell,
         dockerCapture: options.deps.dockerCapture,
+        additionalSummaryLines: routeAdapter.additionalSummaryLines,
       });
     },
 
@@ -211,6 +200,7 @@ export function createDockerGpuSandboxCreatePatch(
         onPatchFailureExit(options.sandboxName, error, {
           runCaptureOpenshell: options.deps.runCaptureOpenshell,
           dockerCapture: options.deps.dockerCapture,
+          additionalSummaryLines: routeAdapter.additionalSummaryLines,
         });
       }
     },
@@ -248,7 +238,30 @@ export function createDockerGpuSandboxCreatePatch(
       const finalizeOutcome = result
         ? finalizeBackup({ result, supervisorReady }, options.deps)
         : null;
-      if (supervisorReady) return;
+      if (supervisorReady) {
+        if (finalizeOutcome && !finalizeOutcome.backupRemoved) {
+          onPatchFailureExit(
+            options.sandboxName,
+            new Error(
+              "OpenShell supervisor reconnected, but the recreated backup container could not be removed.",
+            ),
+            {
+              runCaptureOpenshell: options.deps.runCaptureOpenshell,
+              dockerCapture: options.deps.dockerCapture,
+              additionalSummaryLines: routeAdapter.additionalSummaryLines,
+              context: {
+                sandboxName: options.sandboxName,
+                oldContainerId: result?.oldContainerId,
+                newContainerId: result?.newContainerId,
+                backupContainerName: result?.backupContainerName,
+                selectedMode: result?.mode ?? null,
+                rolledBack: false,
+              },
+            },
+          );
+        }
+        return;
+      }
       const failureMessage = (() => {
         if (!finalizeOutcome) {
           return "OpenShell supervisor did not reconnect to the recreated container.";
@@ -260,6 +273,7 @@ export function createDockerGpuSandboxCreatePatch(
       onPatchFailureExit(options.sandboxName, new Error(failureMessage), {
         runCaptureOpenshell: options.deps.runCaptureOpenshell,
         dockerCapture: options.deps.dockerCapture,
+        additionalSummaryLines: routeAdapter.additionalSummaryLines,
         context: {
           sandboxName: options.sandboxName,
           oldContainerId: result?.oldContainerId,
@@ -276,11 +290,12 @@ export function createDockerGpuSandboxCreatePatch(
     },
 
     printReadinessFailureIfEnabled() {
-      if (!options.enabled) return;
+      if (!routeAdapter.enabled) return;
       printDockerGpuReadinessFailure(options.sandboxName, result?.mode ?? null, {
         runCaptureOpenshell: options.deps.runCaptureOpenshell,
         dockerCapture: options.deps.dockerCapture,
         context: buildFailureContext(options.sandboxName, result),
+        additionalSummaryLines: routeAdapter.additionalSummaryLines,
       });
     },
 
@@ -295,7 +310,7 @@ export function createDockerGpuSandboxCreatePatch(
       // (#4316).
       const sandboxName = options.sandboxName;
       const failureContext = buildFailureContext(sandboxName, result);
-      if (options.enabled && options.deps.runCaptureOpenshell) {
+      if (routeAdapter.enabled && options.deps.runCaptureOpenshell) {
         const list = options.deps.runCaptureOpenshell(["sandbox", "list"], {
           ignoreError: true,
         });
@@ -313,18 +328,26 @@ export function createDockerGpuSandboxCreatePatch(
               runCaptureOpenshell: options.deps.runCaptureOpenshell,
               dockerCapture: options.deps.dockerCapture,
               context: failureContext,
+              additionalSummaryLines: routeAdapter.additionalSummaryLines,
             },
           );
           process.exit(1);
         }
       }
       try {
-        return verifyDirectSandboxGpu(sandboxName);
+        const proof = verifyDirectSandboxGpu(sandboxName);
+        if (proof.status === "failed") {
+          const label = proof.label ? `: ${proof.label}` : "";
+          const detail = proof.detail ? ` (${proof.detail})` : "";
+          throw new Error(`Sandbox GPU proof returned failed status${label}${detail}`);
+        }
+        return proof;
       } catch (error) {
         printDockerGpuProofFailure(sandboxName, error, result?.mode ?? null, {
           runCaptureOpenshell: options.deps.runCaptureOpenshell,
           dockerCapture: options.deps.dockerCapture,
-          context: options.enabled ? failureContext : null,
+          context: routeAdapter.enabled ? failureContext : null,
+          additionalSummaryLines: routeAdapter.additionalSummaryLines,
         });
         throw error;
       }
@@ -346,55 +369,4 @@ function buildFailureContext(
     backupContainerName: result?.backupContainerName ?? null,
     selectedMode: result?.mode ?? null,
   };
-}
-
-export function shouldUseDockerGpuPatchForCreate(
-  config: DockerGpuSandboxConfig,
-  options: {
-    dockerDriverGateway: boolean;
-    dockerDesktopWsl?: boolean;
-    platform?: NodeJS.Platform;
-    log?: (message: string) => void;
-  },
-): boolean {
-  const enabled = shouldApplyDockerGpuPatch(config, {
-    dockerDriverGateway: options.dockerDriverGateway,
-    dockerDesktopWsl: options.dockerDesktopWsl,
-    platform: options.platform,
-    log: options.log,
-  });
-  if (enabled) {
-    options.log?.(
-      config.hostGpuPlatform === "jetson"
-        ? "  Jetson Docker GPU patch active; creating sandbox first, then recreating the Docker container with NVIDIA runtime GPU access."
-        : "  Docker-driver GPU patch active; creating sandbox first, then recreating the Docker container with GPU access.",
-    );
-  }
-  return enabled;
-}
-
-export function resolveDockerGpuSandboxCreatePlan(
-  config: DockerGpuSandboxConfig,
-  options: {
-    dockerDriverGateway: boolean;
-    dockerDesktopWsl?: boolean;
-    detectDockerDesktopWsl?: () => boolean;
-    platform?: NodeJS.Platform;
-  },
-): DockerGpuSandboxCreatePlan {
-  const dockerDesktopWsl =
-    options.dockerDesktopWsl ?? (options.detectDockerDesktopWsl ?? isDockerDesktopWslRuntime)();
-  const useDockerGpuPatch = shouldUseDockerGpuPatchForCreate(config, {
-    dockerDriverGateway: options.dockerDriverGateway,
-    dockerDesktopWsl,
-    platform: options.platform,
-  });
-  const logMessage = config.sandboxGpuEnabled
-    ? useDockerGpuPatch
-      ? config.hostGpuPlatform === "jetson"
-        ? "  Jetson sandbox GPU enabled; using NVIDIA Container Runtime instead of CDI/--gpus."
-        : "  Docker-driver GPU patch active; allowing /proc writes required by Docker GPU initialization."
-      : "  Direct sandbox GPU enabled; allowing OpenShell GPU policy enrichment."
-    : null;
-  return { useDockerGpuPatch, logMessage };
 }
