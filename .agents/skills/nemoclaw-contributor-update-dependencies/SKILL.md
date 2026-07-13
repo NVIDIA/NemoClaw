@@ -196,6 +196,11 @@ For each runtime or stateful migration, cover the applicable happy path, negativ
 state, restart or rotation, persisted-state transition, rollback, and teardown. State explicitly
 when one of these paths is inapplicable and cite the boundary that makes it so.
 
+Treat an automatic rebuild, upgrade, or migration command as an attempted transition, not its own
+postcondition. Re-read the runtime and persisted state in a fresh process after the mutation. Return
+zero only when every in-scope target is current and attested; stopped, skipped, unknown,
+unattestable, or still-stale targets remain failures.
+
 When upstream marks a security, cleanup, or observability operation optional or non-fatal, execute
 that operation on a host known to provide the prerequisite capability. Distinguish a genuinely
 unsupported capability from a malformed command, wrong argument, missing package, or swallowed

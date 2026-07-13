@@ -128,6 +128,8 @@ describe("dependency upgrade skill policy", () => {
     expect(skill).toContain("incomplete resolved dependencies is identity evidence");
     expect(skill).toContain("A CLI version is not the identity of a sibling daemon");
     expect(skill).toContain("same-version content replacement and mixed-component installs");
+    expect(skill).toContain("attempted transition, not its own");
+    expect(skill).toContain("stopped, skipped, unknown");
     expect(skill).toContain(
       "When upstream marks a security, cleanup, or observability operation optional",
     );
