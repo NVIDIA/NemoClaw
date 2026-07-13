@@ -60,6 +60,7 @@ const tempDirs = new Set<string>();
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+  vi.resetModules();
   for (const tmpDir of tempDirs) {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
@@ -376,6 +377,61 @@ describe("onboard Model Router setup", () => {
         }
       },
     );
+  });
+
+  it("writes router state beneath the selected nondefault gateway root", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-port-"));
+    tempDirs.add(tmpDir);
+    const rootDir = path.join(tmpDir, "repo");
+    const homeDir = path.join(tmpDir, "home");
+    const expectedStateDir = path.join(homeDir, ".nemoclaw", "gateways", "9123", "state");
+    const expectedConfig = path.join(expectedStateDir, "litellm-proxy.yaml");
+    const mkdirSync = vi.fn();
+    const proxyConfigArgs: string[][] = [];
+    const proxyArgs: string[][] = [];
+    let healthProbe = 0;
+    vi.stubEnv("HOME", homeDir);
+    vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "9123");
+    vi.resetModules();
+    const freshModelRouter = await import("../src/lib/onboard/model-router");
+
+    const pid = await freshModelRouter.startModelRouter(
+      { port: 45_679, pool_config_path: "router/test-pool.yaml" },
+      {
+        rootDir,
+        homeDir,
+        ensureModelRouterCommand: () => "/test/model-router",
+        mkdirSync,
+        runProxyConfig: (_command, args) => {
+          proxyConfigArgs.push(args);
+          return { status: 0 };
+        },
+        spawnProxy: (_command, args) => {
+          proxyArgs.push(args);
+          return {
+            pid: 12_345,
+            onError: () => undefined,
+            onExit: () => undefined,
+            unref: () => undefined,
+          };
+        },
+        resolveProviderCredential: () => null,
+        buildSubprocessEnv: () => ({}),
+        isRouterHealthy: async () => {
+          healthProbe += 1;
+          return healthProbe > 1;
+        },
+        sleep: async () => undefined,
+        isProcessAlive: () => true,
+        terminateProcess: () => undefined,
+        getProviderKey: () => "",
+      },
+    );
+
+    assert.equal(pid, 12_345);
+    assert.deepEqual(mkdirSync.mock.calls, [[expectedStateDir]]);
+    assert.equal(proxyConfigArgs[0]?.at(-1), expectedConfig);
+    assert.equal(proxyArgs[0]?.[2], expectedConfig);
   });
 
   it("prepares managed Model Router dependencies instead of using PATH when managed command is absent", () => {

@@ -248,7 +248,7 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
     fs.writeFileSync(path.join(binDir, "openshell"), lines.join("\n"), { mode: 0o755 });
   }
 
-  function seedRegistry(stateDir: string): void {
+  function seedRegistry(stateDir: string, model = "test-model"): void {
     fs.mkdirSync(stateDir, { recursive: true });
     fs.writeFileSync(
       path.join(stateDir, "sandboxes.json"),
@@ -256,7 +256,7 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
         sandboxes: {
           "my-assist": {
             name: "my-assist",
-            model: "test-model",
+            model,
             provider: "nvidia-prod",
             gpuEnabled: false,
             policies: [],
@@ -302,6 +302,26 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
     expect(code).toBe(0);
     expect(combined).toContain("my-assist");
   });
+
+  it(
+    "nemoclaw <name> status reads only the registry scoped to a non-default gateway port (#3053)",
+    testTimeoutOptions(30_000),
+    () => {
+      const port = 9123;
+      seedRegistry(path.join(home, ".nemoclaw"), "default-root-model");
+      seedRegistry(nemoclawStateRoot(home, port), "selected-port-model");
+
+      const { code, stdout, stderr } = runCli(["my-assist", "status"], {
+        NEMOCLAW_GATEWAY_PORT: String(port),
+      });
+      const combined = `${stdout}\n${stderr}`;
+
+      expect(code).not.toBe(0);
+      expect(combined).toContain("my-assist");
+      expect(combined).toContain("selected-port-model");
+      expect(combined).not.toContain("default-root-model");
+    },
+  );
 
   it(
     "nemoclaw <name> status never produces silent empty output when openshell is broken",

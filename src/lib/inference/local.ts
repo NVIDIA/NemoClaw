@@ -238,8 +238,8 @@ export interface LocalProviderHealthProbeOptions {
   skipOllamaAuthProxySubprobe?: boolean;
   /**
    * Reads the persisted Ollama auth-proxy bearer token. Injectable for tests.
-   * Default reads from `~/.nemoclaw/ollama-proxy-token` (written by
-   * inference/ollama/proxy.ts during onboard).
+   * Default reads from `ollama-proxy-token` in the selected gateway's host
+   * state root (written by inference/ollama/proxy.ts during onboard).
    */
   loadOllamaProxyTokenImpl?: () => string | null;
 }
