@@ -207,6 +207,43 @@ function movePath(home: string, source: string, destination: string): boolean {
   return true;
 }
 
+function preflightMovePath(home: string, source: string, destination: string): boolean {
+  let sourceStat: fs.Stats;
+  try {
+    sourceStat = fs.lstatSync(source);
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") return false;
+    throw error;
+  }
+  if (sourceStat.isSymbolicLink()) throw migrationError(`${source} is a symbolic link`);
+  assertGatewayStatePathSafe(home, source);
+  assertGatewayStatePathSafe(home, destination);
+  try {
+    fs.lstatSync(destination);
+    throw migrationError(`${destination} already exists; refusing to overwrite it`);
+  } catch (error) {
+    if (!isErrnoException(error) || error.code !== "ENOENT") throw error;
+  }
+  fs.accessSync(path.dirname(source), fs.constants.W_OK);
+  ensureRealDirectory(home, path.dirname(destination));
+  return true;
+}
+
+function preflightSandboxBackups(
+  home: string,
+  sharedRoot: string,
+  selectedRoot: string,
+  sandboxNames: readonly string[],
+): void {
+  for (const sandboxName of sandboxNames) {
+    preflightMovePath(
+      home,
+      path.join(sharedRoot, "rebuild-backups", sandboxName),
+      path.join(selectedRoot, "rebuild-backups", sandboxName),
+    );
+  }
+}
+
 function migrateSandboxBackups(
   home: string,
   sharedRoot: string,
@@ -291,6 +328,25 @@ export function migrateLegacyPortState(
 
     if (selectedNames.length === 0 && !sessionBelongsToSelected) return result;
 
+    const entriesToMove: readonly string[] = wholeLegacyBundleBelongsToSelected
+      ? LEGACY_BUNDLE_ENTRIES
+      : sessionBelongsToSelected
+        ? SESSION_BOUND_ENTRIES
+        : [];
+    if (sessionBelongsToSelected) {
+      const activeLock = path.join(sharedRoot, "onboard.lock");
+      if (fs.existsSync(activeLock)) {
+        throw migrationError(
+          `legacy onboarding lock ${activeLock} is present; finish or stop that run first`,
+        );
+      }
+      preflightMovePath(home, legacySessionFile, path.join(selectedRoot, "onboard-session.json"));
+    }
+    preflightSandboxBackups(home, sharedRoot, selectedRoot, selectedNames);
+    for (const entry of entriesToMove) {
+      preflightMovePath(home, path.join(sharedRoot, entry), path.join(selectedRoot, entry));
+    }
+
     registryLocks.push(acquireDirectoryLock(home, `${selectedRegistryFile}.lock`));
     const existingSelected = readGatewayRegistryFile(home, selectedRegistryFile);
     const selectedRegistry = mergeSelectedRegistry(
@@ -304,12 +360,6 @@ export function migrateLegacyPortState(
     migrateSandboxBackups(home, sharedRoot, selectedRoot, selectedNames);
 
     if (sessionBelongsToSelected) {
-      const activeLock = path.join(sharedRoot, "onboard.lock");
-      if (fs.existsSync(activeLock)) {
-        throw migrationError(
-          `legacy onboarding lock ${activeLock} is present; finish or stop that run first`,
-        );
-      }
       result.migratedSession = movePath(
         home,
         legacySessionFile,
@@ -321,11 +371,6 @@ export function migrateLegacyPortState(
       );
     }
 
-    const entriesToMove: readonly string[] = wholeLegacyBundleBelongsToSelected
-      ? LEGACY_BUNDLE_ENTRIES
-      : sessionBelongsToSelected
-        ? SESSION_BOUND_ENTRIES
-        : [];
     for (const entry of entriesToMove) {
       movePath(home, path.join(sharedRoot, entry), path.join(selectedRoot, entry));
     }

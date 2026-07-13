@@ -200,12 +200,45 @@ resolve_nemoclaw_gateway_port() {
   if [[ ! "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1024 ] || [ "$port" -gt 65535 ]; then
     error "NEMOCLAW_GATEWAY_PORT must be an integer between 1024 and 65535."
   fi
+  if [ "$port" -ge 18789 ] && [ "$port" -le 18799 ]; then
+    error "NEMOCLAW_GATEWAY_PORT must not overlap the 18789-18799 dashboard port range."
+  fi
+  case "$port" in
+    8000 | 11434 | 11435 | 11436 | 11437)
+      error "NEMOCLAW_GATEWAY_PORT must not overlap a reserved inference or runtime-adapter port ($port)."
+      ;;
+  esac
+  local -a configured_names=(
+    NEMOCLAW_DASHBOARD_PORT
+    NEMOCLAW_VLLM_PORT
+    NEMOCLAW_OLLAMA_PORT
+    NEMOCLAW_OLLAMA_PROXY_PORT
+    NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT
+    NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT
+  )
+  local -a configured_ports=(
+    "${NEMOCLAW_DASHBOARD_PORT:-18789}"
+    "${NEMOCLAW_VLLM_PORT:-8000}"
+    "${NEMOCLAW_OLLAMA_PORT:-11434}"
+    "${NEMOCLAW_OLLAMA_PROXY_PORT:-11435}"
+    "${NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT:-11436}"
+    "${NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT:-11437}"
+  )
+  local i configured_port
+  for i in "${!configured_ports[@]}"; do
+    configured_port="${configured_ports[$i]}"
+    configured_port="${configured_port#"${configured_port%%[![:space:]]*}"}"
+    configured_port="${configured_port%"${configured_port##*[![:space:]]}"}"
+    if [[ "$configured_port" =~ ^[0-9]+$ ]] && [ "$port" -eq "$configured_port" ]; then
+      error "NEMOCLAW_GATEWAY_PORT conflicts with ${configured_names[$i]} ($configured_port)."
+    fi
+  done
   printf "%s" "$port"
 }
 
 nemoclaw_state_dir() {
   local port
-  port="$(resolve_nemoclaw_gateway_port)"
+  port="$(resolve_nemoclaw_gateway_port)" || return 1
   if [ "$port" -eq 8080 ]; then
     printf "%s/.nemoclaw" "$HOME"
   else
@@ -213,9 +246,49 @@ nemoclaw_state_dir() {
   fi
 }
 
+assert_nemoclaw_state_path_safe() {
+  local target="$1" root="${HOME}/.nemoclaw" current relative component
+  case "$target" in
+    "$root" | "$root"/*) ;;
+    *) error "Refusing NemoClaw state path outside ${root}: ${target}" ;;
+  esac
+
+  current="$root"
+  if [ -L "$current" ]; then
+    error "Refusing symbolic link in NemoClaw state path: ${current}"
+  fi
+  relative="${target#"$root"}"
+  relative="${relative#/}"
+  while [ -n "$relative" ]; do
+    component="${relative%%/*}"
+    current="${current}/${component}"
+    if [ -L "$current" ]; then
+      error "Refusing symbolic link in NemoClaw state path: ${current}"
+    fi
+    if [ "$relative" = "$component" ]; then break; fi
+    relative="${relative#*/}"
+  done
+}
+
+ensure_nemoclaw_state_dir() {
+  local state_dir root gateways_dir
+  state_dir="$(nemoclaw_state_dir)" || return 1
+  root="${HOME}/.nemoclaw"
+  gateways_dir="${root}/gateways"
+  assert_nemoclaw_state_path_safe "$state_dir"
+  (umask 077 && mkdir -p "$state_dir") || error "Could not create NemoClaw state directory: ${state_dir}"
+  assert_nemoclaw_state_path_safe "$state_dir"
+  chmod 700 "$root" || error "Could not secure NemoClaw state directory: ${root}"
+  if [ "$state_dir" != "$root" ]; then
+    chmod 700 "$gateways_dir" "$state_dir" \
+      || error "Could not secure gateway-scoped NemoClaw state directory: ${state_dir}"
+  fi
+  printf "%s" "$state_dir"
+}
+
 nemoclaw_gateway_name() {
   local port
-  port="$(resolve_nemoclaw_gateway_port)"
+  port="$(resolve_nemoclaw_gateway_port)" || return 1
   if [ "$port" -eq 8080 ]; then
     printf "nemoclaw"
   else
@@ -350,7 +423,7 @@ resolve_onboarded_agent() {
 }
 
 restore_onboard_forward_after_post_checks() {
-  local sandbox_name agent_name agent_display port openshell_bin attempt state_dir pid_file watcher_script watcher_pid
+  local sandbox_name agent_name agent_display port openshell_bin attempt selected_state_dir state_dir pid_file watcher_script watcher_pid
   sandbox_name="$(resolve_default_sandbox_name)"
   agent_name="$(resolve_onboarded_agent)"
   agent_display="$(agent_display_name "$agent_name")"
@@ -368,8 +441,14 @@ restore_onboard_forward_after_post_checks() {
     return 0
   fi
 
-  state_dir="$(nemoclaw_state_dir)/state"
-  mkdir -p "$state_dir" 2>/dev/null || true
+  selected_state_dir="$(ensure_nemoclaw_state_dir)" || return 1
+  state_dir="${selected_state_dir}/state"
+  assert_nemoclaw_state_path_safe "$state_dir"
+  (umask 077 && mkdir -p "$state_dir") \
+    || error "Could not create gateway-scoped runtime state directory: ${state_dir}"
+  assert_nemoclaw_state_path_safe "$state_dir"
+  chmod 700 "$state_dir" \
+    || error "Could not secure gateway-scoped runtime state directory: ${state_dir}"
   pid_file="${state_dir}/${agent_name}-${sandbox_name}-${port}.forward.pid"
   if [[ -f "$pid_file" ]]; then
     local old_pid expected_watcher_script current_uid old_uid old_args
@@ -758,26 +837,43 @@ json_string_field() {
 }
 
 usage_notice_state_file() {
-  printf "%s/usage-notice.json" "$(nemoclaw_state_dir)"
+  local state_dir
+  state_dir="$(nemoclaw_state_dir)" || return 1
+  printf "%s/usage-notice.json" "$state_dir"
 }
 
 usage_notice_accepted_shell() {
   local version="$1" state_file saved_version
-  state_file="$(usage_notice_state_file)"
+  state_file="$(usage_notice_state_file)" || return 1
+  assert_nemoclaw_state_path_safe "$state_file"
   [[ -n "$version" && -f "$state_file" ]] || return 1
   saved_version="$(sed -nE 's/.*"acceptedVersion"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$state_file" | head -n 1)"
   [[ "$saved_version" == "$version" ]]
 }
 
 save_usage_notice_acceptance_shell() {
-  local version="$1" state_file state_dir accepted_at
-  state_file="$(usage_notice_state_file)"
-  state_dir="$(dirname "$state_file")"
+  local version="$1" state_file state_dir accepted_at temp_file
+  state_file="$(usage_notice_state_file)" || return 1
+  state_dir="$(ensure_nemoclaw_state_dir)" || return 1
+  assert_nemoclaw_state_path_safe "$state_file"
   accepted_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date)"
-  mkdir -p "$state_dir"
-  chmod 700 "$state_dir" 2>/dev/null || true
-  printf '{\n  "acceptedVersion": "%s",\n  "acceptedAt": "%s"\n}\n' "$version" "$accepted_at" >"$state_file"
-  chmod 600 "$state_file" 2>/dev/null || true
+  temp_file="$(mktemp "${state_file}.tmp.XXXXXX")" \
+    || error "Could not create temporary usage-notice state under ${state_dir}."
+  chmod 600 "$temp_file" || {
+    rm -f "$temp_file"
+    error "Could not secure temporary usage-notice state under ${state_dir}."
+  }
+  if ! printf '{\n  "acceptedVersion": "%s",\n  "acceptedAt": "%s"\n}\n' \
+    "$version" "$accepted_at" >"$temp_file"; then
+    rm -f "$temp_file"
+    error "Could not write usage-notice state under ${state_dir}."
+  fi
+  assert_nemoclaw_state_path_safe "$state_file"
+  if ! mv -f "$temp_file" "$state_file"; then
+    rm -f "$temp_file"
+    error "Could not publish usage-notice state under ${state_dir}."
+  fi
+  assert_nemoclaw_state_path_safe "$state_file"
 }
 
 print_usage_notice_body_shell() {
@@ -2939,6 +3035,10 @@ main() {
 
   export NEMOCLAW_NON_INTERACTIVE="${NON_INTERACTIVE}"
   export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE}"
+
+  # Validate the gateway port before the banner, notice acceptance, downloads,
+  # or any other installer side effect.
+  resolve_nemoclaw_gateway_port >/dev/null
 
   print_banner
 

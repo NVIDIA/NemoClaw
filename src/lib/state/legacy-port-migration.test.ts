@@ -121,6 +121,32 @@ describe("legacy non-default gateway state migration", () => {
     expect(fs.existsSync(path.join(shared, "gateways", "9123", "sandboxes.json"))).toBe(false);
   });
 
+  it("preflights backup collisions before publishing the selected registry", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const selected = path.join(shared, "gateways", "9123");
+    const legacyRegistry = path.join(shared, "sandboxes.json");
+    const selectedRegistry = path.join(selected, "sandboxes.json");
+    writeJson(legacyRegistry, {
+      defaultSandbox: "port-box",
+      sandboxes: {
+        "port-box": { name: "port-box", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
+      },
+    });
+    writeJson(path.join(shared, "rebuild-backups", "port-box", "old", "manifest.json"), {});
+    writeJson(path.join(selected, "rebuild-backups", "port-box", "existing", "manifest.json"), {});
+    const legacyBefore = fs.readFileSync(legacyRegistry, "utf8");
+
+    expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
+      /already exists; refusing to overwrite/,
+    );
+    expect(fs.existsSync(selectedRegistry)).toBe(false);
+    expect(fs.readFileSync(legacyRegistry, "utf8")).toBe(legacyBefore);
+    expect(
+      fs.existsSync(path.join(shared, "rebuild-backups", "port-box", "old", "manifest.json")),
+    ).toBe(true);
+  });
+
   it("partitions provable rows but leaves credentials whose gateway ownership is ambiguous", () => {
     const home = makeHome();
     const shared = path.join(home, ".nemoclaw");

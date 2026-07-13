@@ -31,7 +31,13 @@ function runInstallerFunctions(
       BASH_ENV: "",
       ENV: "",
       HOME: home,
+      NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT: "",
+      NEMOCLAW_DASHBOARD_PORT: "",
       NEMOCLAW_GATEWAY_PORT: "9123",
+      NEMOCLAW_OLLAMA_PORT: "",
+      NEMOCLAW_OLLAMA_PROXY_PORT: "",
+      NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT: "",
+      NEMOCLAW_VLLM_PORT: "",
     },
   });
   return { output: `${result.stdout}${result.stderr}`, status: result.status };
@@ -109,6 +115,57 @@ printf 'agent=%s\n' "$(resolve_onboarded_agent)"`,
       expect(result.output).toContain("sandbox=port-box");
       expect(result.output).toContain("agent=hermes");
       expect(result.output).not.toContain("wrong-default");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    "11434",
+    "18790",
+  ])("rejects conflicting gateway port %s before writing selected state", (gatewayPort) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-port-conflict-"));
+    try {
+      const result = runInstallerFunctions(
+        home,
+        `NEMOCLAW_GATEWAY_PORT=${gatewayPort}
+save_usage_notice_acceptance_shell "test-version"`,
+      );
+
+      expect(result.status, result.output).not.toBe(0);
+      expect(result.output).toContain("NEMOCLAW_GATEWAY_PORT");
+      expect(fs.existsSync(path.join(home, ".nemoclaw", "gateways", gatewayPort))).toBe(false);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    "gateways",
+    "selected-port",
+  ])("rejects a symlinked %s state ancestor before writing usage acceptance", (symlinkLocation) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-state-symlink-"));
+    try {
+      const root = path.join(home, ".nemoclaw");
+      const controlled = path.join(home, "controlled");
+      fs.mkdirSync(controlled);
+      if (symlinkLocation === "gateways") {
+        fs.mkdirSync(root);
+        fs.symlinkSync(controlled, path.join(root, "gateways"), "dir");
+      } else {
+        fs.mkdirSync(path.join(root, "gateways"), { recursive: true });
+        fs.symlinkSync(controlled, path.join(root, "gateways", "9123"), "dir");
+      }
+
+      const result = runInstallerFunctions(
+        home,
+        'save_usage_notice_acceptance_shell "test-version"',
+      );
+
+      expect(result.status, result.output).not.toBe(0);
+      expect(result.output).toContain("Refusing symbolic link in NemoClaw state path");
+      expect(fs.existsSync(path.join(controlled, "usage-notice.json"))).toBe(false);
+      expect(fs.existsSync(path.join(controlled, "9123", "usage-notice.json"))).toBe(false);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
