@@ -170,7 +170,7 @@ function validPrimaryResult(): Record<string, unknown> {
   return {
     version: 1,
     headSha: HEAD_SHA,
-    summary: { recommendation: "merge_as_is" },
+    summary: { recommendation: "info_only" },
     findings: [],
     e2e: { coverage: { requiredTests: [] }, targets: { required: [] } },
   };
@@ -226,7 +226,7 @@ describe("PR review advisor workflow boundary", () => {
     expect(errors.some((error) => error.includes("full commit SHA"))).toBe(true);
   });
 
-  // source-shape-contract: security -- Exactly one advisor lane may perform write-capable PR comment publication
+  // source-shape-contract: security -- Exactly one advisor lane may write PR comments and neither privilege domain may gain other GitHub capabilities
   it("requires one advisor lane to publish the PR comment", () => {
     const source = fs.readFileSync(WORKFLOW_PATH, "utf8");
     const noPrimary = validateMutation((workflow) =>
@@ -235,12 +235,26 @@ describe("PR review advisor workflow boundary", () => {
     const twoPrimaries = validateMutation((workflow) =>
       workflow.replace("publish_comment: false", "publish_comment: true"),
     );
+    const extraReviewPermission = validateMutation((workflow) =>
+      workflow.replace(
+        "      pull-requests: read\n",
+        "      pull-requests: read\n      id-token: write\n",
+      ),
+    );
+    const extraPublishPermission = validateMutation((workflow) =>
+      workflow.replace(
+        "      pull-requests: write\n",
+        "      pull-requests: write\n      statuses: write\n",
+      ),
+    );
 
     expect(source).toContain("publish_comment: true");
     expect(noPrimary).toContain("advisor matrix must identify exactly one primary artifact lane");
     expect(twoPrimaries).toContain(
       "advisor matrix must identify exactly one primary artifact lane",
     );
+    expect(extraReviewPermission).toContain("review job permissions.id-token is not allowed");
+    expect(extraPublishPermission).toContain("publish job permissions.statuses is not allowed");
   });
 
   it("fetches and verifies the exact event base and head before exposing the worktree", () => {
@@ -417,24 +431,38 @@ describe("PR review advisor workflow boundary", () => {
     }
   });
 
-  it("installs the pinned grep dependency when the runner lacks it", () => {
+  it("installs and verifies the pinned search tools", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-install-"));
     const binDir = path.join(tmp, "bin");
     const callLog = path.join(tmp, "calls.log");
-    const rgTemplate = path.join(tmp, "rg-template");
     fs.mkdirSync(binDir);
     for (const name of ["npm", "rm", "ln"]) writeFakeCommand(binDir, name);
-    fs.writeFileSync(rgTemplate, '#!/bin/bash\nprintf \'rg %s\\n\' "$*" >> "$CALL_LOG"\n', {
-      mode: 0o755,
-    });
+    fs.writeFileSync(
+      path.join(binDir, "dpkg-query"),
+      `#!/bin/bash
+printf 'dpkg-query %s\\n' "$*" >> "$CALL_LOG"
+case "\${!#}" in
+  fd-find) printf '%s' "$FD_FIND_VERSION" ;;
+  ripgrep) printf '%s' "$RIPGREP_VERSION" ;;
+  *) exit 1 ;;
+esac
+`,
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(binDir, "fdfind"),
+      "#!/bin/bash\nprintf 'fdfind %s\\n' \"$*\" >> \"$CALL_LOG\"\nprintf 'fd 9.0.0\\n'\n",
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(binDir, "rg"),
+      "#!/bin/bash\nprintf 'rg %s\\n' \"$*\" >> \"$CALL_LOG\"\nprintf 'ripgrep 14.1.0\\n-SIMD -AVX\\n'\n",
+      { mode: 0o755 },
+    );
     fs.writeFileSync(
       path.join(binDir, "sudo"),
       `#!/bin/bash
 printf 'sudo %s\\n' "$*" >> "$CALL_LOG"
-if [[ "$*" == *"apt-get install"* ]]; then
-  /bin/cp "$RG_TEMPLATE" "$FAKE_BIN/rg"
-  /bin/chmod +x "$FAKE_BIN/rg"
-fi
 `,
       { mode: 0o755 },
     );
@@ -449,11 +477,10 @@ fi
             ...process.env,
             ADVISOR_DIR: path.join(tmp, "advisor"),
             CALL_LOG: callLog,
-            FAKE_BIN: binDir,
+            FD_FIND_VERSION: "9.0.0-1",
             PATH: binDir,
             PI_SDK_VERSION: "test-version",
             RIPGREP_VERSION: "14.1.0-1",
-            RG_TEMPLATE: rgTemplate,
             RUNNER_TEMP: path.join(tmp, "runner"),
             TYPEBOX_VERSION: "test-typebox-version",
           },
@@ -461,8 +488,12 @@ fi
       );
       expect(result.status, result.stderr).toBe(0);
       expect(fs.readFileSync(callLog, "utf8")).toContain(
-        "sudo apt-get install -y --no-install-recommends ripgrep=14.1.0-1",
+        "sudo apt-get install -y --no-install-recommends fd-find=9.0.0-1 ripgrep=14.1.0-1",
       );
+      expect(fs.readFileSync(callLog, "utf8")).toContain("dpkg-query -W -f=${Version} fd-find");
+      expect(fs.readFileSync(callLog, "utf8")).toContain("dpkg-query -W -f=${Version} ripgrep");
+      expect(fs.readFileSync(callLog, "utf8")).toContain("fdfind --version");
+      expect(fs.readFileSync(callLog, "utf8")).toContain("rg --version");
       expect(fs.readFileSync(callLog, "utf8")).toContain("--ignore-scripts");
       expect(fs.readFileSync(callLog, "utf8")).toContain("typebox@test-typebox-version");
     } finally {
@@ -601,6 +632,24 @@ process.exitCode = valid ? 0 : 1;`,
         "advisor matrix field model must be unique: azure/openai/gpt-5.6-terra",
         "advisor matrix field artifact_dir must be unique: pr-review-advisor",
         "advisor matrix field artifact_name must be unique: pr-review-advisor",
+      ]),
+    );
+  });
+
+  it("keeps mutable review history disabled and the find dependency pinned", () => {
+    const errors = validateMutation((source) =>
+      source
+        .replace('      FD_FIND_VERSION: "9.0.0-1"', '      FD_FIND_VERSION: "latest"')
+        .replace(
+          '      PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW: "false"',
+          "      PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW: ${{ matrix.advisor.publish_comment }}",
+        ),
+    );
+
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        "review job env.FD_FIND_VERSION must be 9.0.0-1",
+        "review job env.PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW must be false",
       ]),
     );
   });

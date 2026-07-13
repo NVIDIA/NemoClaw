@@ -591,7 +591,6 @@ describe("pull request and main workflow contracts", () => {
     }
     for (const path of [
       ".agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts",
-      ".agents/skills/nemoclaw-maintainer-day/scripts/pra-gate.ts",
       ".agents/skills/nemoclaw-maintainer-day/scripts/shared.ts",
       "agents/hermes/generate-config.ts",
       "bin/nemoclaw.ts",

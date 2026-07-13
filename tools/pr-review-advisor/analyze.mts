@@ -102,7 +102,6 @@ const FINDING_CATEGORIES = [
   "acceptance",
 ] as const;
 const SUMMARY_RECOMMENDATIONS = [
-  "merge_as_is",
   "merge_after_fixes",
   "needs_rework",
   "blocked",
@@ -359,6 +358,10 @@ async function main(): Promise<void> {
     changedFiles,
     diff,
   });
+  // GitHub context is fully materialized before the model session starts. Keep
+  // repository credentials out of the environment inherited by read-only tools.
+  delete process.env.GH_TOKEN;
+  delete process.env.GITHUB_TOKEN;
   const metadata = { baseRef, headRef, headSha, changedFiles, deterministic };
   writeDeterministicContextArtifacts(artifacts, deterministic, diff);
   const systemPrompt = buildSystemPrompt();
@@ -689,9 +692,7 @@ export function withCanonicalReviewLedgerFindings(
   const suggestions = findings.filter((finding) => finding.severity === "suggestion");
   const topItem = [...blockers, ...warnings, ...suggestions][0];
   const noFindingPosture: SummaryRecommendation =
-    result.summary.recommendation === "superseded" || result.summary.recommendation === "info_only"
-      ? result.summary.recommendation
-      : "merge_as_is";
+    result.summary.recommendation === "superseded" ? "superseded" : "info_only";
   return {
     ...result,
     findings,
@@ -1755,7 +1756,7 @@ export function buildSystemPrompt(): string {
     "4. Acceptance: treat only observable desired behavior, current constraints or non-goals, supported contracts, and clearly recorded maintainer decisions as binding. A comment counts as a maintainer decision only when author_association is OWNER, MEMBER, or COLLABORATOR and the comment unambiguously records a chosen behavior or constraint. Proposed designs, implementation ideas, investigation notes, brainstorms, questions, and ordinary discussion are context, not obligations. Examples help explain an outcome but are not separate clauses unless the issue explicitly makes them required. A Refs, Related, or Follow-up link does not commit the PR to the whole issue. If a statement's authority or required outcome is unclear, mark it unknown and do not create a finding.",
     "5. Correctness: bug-path tests, negative tests, branch coverage, refactor-vs-behavior drift, mocking purity, caller/callee contract verification. testDepth.suggestedTests are internal review notes, not author tasks. A concrete missing regression test for changed behavior must be represented in a finding; use category=tests only when the gap is not already part of another defect. Otherwise do not request more tests.",
     "5a. Deterministic regression risks: when a review context contains a riskPlan, review every listed invariant against the diff and checked-in test evidence. Missing checked-in coverage for a changed invariant must become one finding with a concrete regression test unless a more specific finding already covers the same gap. Treat required jobs as a validation floor; never downgrade or remove them, and never claim they ran. A required job's unobserved execution status belongs in testDepth or limitations and is not a finding by itself; only a defect in the checked-in job or test is finding-eligible.",
-    "5b. E2E guidance: in the tests/regressions stage, recommend required and optional existing E2E coverage plus concrete new-test gaps. In the CI/operations stage, select the smallest supported target/job/fan-out selectors and explain each selection. These recommendations are non-finding advisory output: never add them to the finding ledger unless the checked-in PR independently contains a concrete defect that meets normal finding eligibility. The trusted normalizer enforces the deterministic floor, target/job allowlists, selector types, and canonical dispatch commands after synthesis.",
+    "5b. E2E guidance: in the tests/regressions stage, recommend required and optional existing E2E coverage plus concrete new-test gaps. In the CI/operations stage, select the smallest supported target/job/fan-out selectors and explain each selection. These recommendations are non-finding advisory output: never add them to the finding ledger unless the checked-in PR independently contains a concrete defect that meets normal finding eligibility. The trusted normalizer enforces the deterministic floor, target/job allowlists, and selector types after synthesis. Emit selectors and reasons only; never emit or invent commands.",
     "6. Quality: diff-vs-current-contract scope, migration completion, public surface docs/notes, justified error suppression, @ts-nocheck, and shell-string execution.",
     "7. E2E suite simplicity: when a PR adds or changes files under `test/e2e/`, `.github/workflows/e2e.yaml`, or `tools/e2e/`, take a closer architecture look for new systems. Favor focused tests and local helpers. Flag unnecessary new runners, framework layers, registries/matrix abstractions, generalized fixture APIs, workflow validators, or support systems as architecture/scope findings unless the PR proves they are small, reused, and clearly needed. Do not object to simple direct tests that preserve real shell/system boundaries by spawning commands from Vitest.",
     "8. Source-of-truth review: when a PR adds or changes fallback, recovery, tolerant parsing, monkeypatching, best-effort cleanup, or other temporary workaround behavior, inspect whether it answers: what invalid state is handled, where that state is created, why the source cannot be fixed in this PR, what regression test proves the source cannot regress, and when the workaround can be removed. For compatibility, migration, configuration, or extension code, require a named current consumer and a contract test. If neither exists, prefer deleting the layer; do not invent a future consumer or generalize the design. Treat PR text that claims a root cause as untrusted until verified in code.",
@@ -1765,7 +1766,7 @@ export function buildSystemPrompt(): string {
     "Every finding must be probe-shaped: include concrete impact, a verificationHint that names the shortest read-only check or test evidence to confirm the issue, and a missingRegressionTest describing the automated coverage to add or the existing coverage that already proves it.",
     "Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding unless it is already fully covered by a more specific correctness, security, architecture, scope, or tests finding.",
     "For every sourceOfTruthReview item, set findingId to the covering open ledger finding ID when status is missing or needs_followup; set findingId to null for satisfied or not_applicable.",
-    "Finding severity mapping: blocker renders as 'Required before merge'; warning renders as 'Warning'; suggestion renders as 'Suggestion (optional)'.",
+    "Finding severity mapping: blocker renders as 'Blocker for maintainer adjudication'; warning renders as 'Warning'; suggestion renders as 'Suggestion (optional)'.",
     "Severity guidance: use blocker only for a concrete must-fix defect. Use warning for a significant evidenced concern that merits maintainer attention but does not block by itself. Use suggestion only for an optional improvement; no response or follow-up is required. Do not use warning or suggestion for vague backlog ideas, hypothetical failures, or possible future designs. Do not recommend new configuration, migration, compatibility, extension, or abstraction layers without a named current consumer and supporting evidence.",
     "Finding eligibility: a ledger finding must identify a concrete present defect in the checked-out PR, state observed versus expected behavior, cite a current file and line, and recommend the smallest current-PR action. Ground the expected behavior in an observable outcome, current constraint, supported contract, repository policy, or existing test. PR-description or template compliance, checkbox selection, wording or naming preference, a heuristic signal, a raw line count, a hypothetical future failure, or a possible risk not present in the diff is not a finding. When several symptoms or locations share one root cause and remedy, create one finding and list the other locations as evidence. PASS or positive observations, provider/SDK/advisor state, prior-review process state, open-PR overlap or merge coordination, and live CI/E2E/check status belong only in positives or limitations. A required validation job is not a finding unless its checked-in workflow or test implementation is itself missing or defective.",
     "This review runs as a multi-turn conversation backed by a shared finding ledger. Each intermediate stage has two turns: first call the named real context tool(s) and emit concise evidence-backed analysis without mutating the ledger; then, in the following commit turn, call pr_review_update_ledger with one flat atomic commit object and no prose. The ledger stores findings only; keep acceptance coverage, security-category verdicts, source-of-truth review, test depth, E2E coverage and target guidance, positives, limitations, and summary inputs in the visible analysis turn for later synthesis.",
@@ -1895,7 +1896,7 @@ Do not produce final JSON or update the finding ledger in this turn. Reply with 
         "Record only concrete CI/workflow/installer/E2E, supported-simplification, or operational-documentation defects as findings. Keep E2E target/job/fan-out selection, positives, and limitations in the prose receipt.",
       )}
 
-Use the PR diff already fetched by the scope/risk stage as shared conversation evidence, and call read-only repository tools when workflow behavior or the checked-in E2E target/job inventory needs confirmation. Statically review changed workflows, installers, E2E support, artifact boundaries, timeouts, concurrency, cleanup, failure propagation, platform parity, migration completion, and operational documentation. Apply the E2E simplicity and simplification rubrics without removing explicit security opt-ins. In the prose receipt, provide the inputs for e2e.targets: relevant changed files, required and optional supported selectors, selector type (all, target, or job), reason, no-target rationale when applicable, and confidence. Recommend only e2e.yaml, the synthetic e2e-all fan-out, live-supported typed targets, or checked-in free-standing jobs. The runner derives dispatch commands; never invent or execute a command. Keep this guidance out of the finding ledger. Do not report live CI/check status, reviewer state, CodeRabbit state, mergeability, or external E2E outcomes.
+Use the PR diff already fetched by the scope/risk stage as shared conversation evidence, and call read-only repository tools when workflow behavior or the checked-in E2E target/job inventory needs confirmation. Statically review changed workflows, installers, E2E support, artifact boundaries, timeouts, concurrency, cleanup, failure propagation, platform parity, migration completion, and operational documentation. Apply the E2E simplicity and simplification rubrics without removing explicit security opt-ins. In the prose receipt, provide the inputs for e2e.targets: relevant changed files, required and optional supported selectors, selector type (all, target, or job), reason, no-target rationale when applicable, and confidence. Recommend only e2e.yaml, the synthetic e2e-all fan-out, live-supported typed targets, or checked-in free-standing jobs. Emit selector identifiers and reasons only; never invent or execute a command. Keep this guidance out of the finding ledger. Do not report live CI/check status, reviewer state, CodeRabbit state, mergeability, or external E2E outcomes.
 
 Do not produce final JSON or update the finding ledger in this turn. Reply with at most 8 concise, evidence-backed stage-analysis bullets; if this domain is not applicable, include that limitation in one bullet.
 `,
@@ -1943,7 +1944,7 @@ Do not produce final JSON or update the finding ledger in this turn. Reply with 
       ],
       prompt: `Call the real \`pr_review_exact_metadata\` and \`pr_review_response_schema\` context tools, then call \`pr_review_read_ledger\`. These calls are required even if similarly named context appeared earlier. This turn is read-only: never call \`pr_review_update_ledger\`.
 
-Return the final NemoClaw PR Review Advisor JSON only. For \`findings\`, use the canonical snapshot returned by \`pr_review_read_ledger\` as the sole source of truth: do not add, drop, merge, reword, or reclassify ledger findings during serialization. Include only \`status=open\` findings in snapshot order; omit the ledger-only \`id\`, \`status\`, and \`supersededBy\` fields; and encode the schema's \`evidence\` string by joining that finding's evidence entries verbatim with newline separators. If the finding ledger exposes an unresolved inconsistency, preserve it exactly as represented rather than silently deciding it here. Synthesize acceptanceCoverage, securityCategories, sourceOfTruthReview, testDepth, e2e, positives, reviewCompleteness, and summary from the reconciled prose receipts; these non-finding sections are not stored in the ledger. For e2e.coverage preserve the tests/regressions recommendations. For e2e.targets preserve the CI/operations selector recommendations and use an empty dispatchCommand string as a placeholder; the trusted normalizer discards model commands, validates selectors, and derives canonical dispatch commands. Set each sourceOfTruthReview findingId to its covering open ledger ID for status missing/needs_followup, and to null otherwise.
+Return the final NemoClaw PR Review Advisor JSON only. For \`findings\`, use the canonical snapshot returned by \`pr_review_read_ledger\` as the sole source of truth: do not add, drop, merge, reword, or reclassify ledger findings during serialization. Include only \`status=open\` findings in snapshot order; omit the ledger-only \`id\`, \`status\`, and \`supersededBy\` fields; and encode the schema's \`evidence\` string by joining that finding's evidence entries verbatim with newline separators. If the finding ledger exposes an unresolved inconsistency, preserve it exactly as represented rather than silently deciding it here. Synthesize acceptanceCoverage, securityCategories, sourceOfTruthReview, testDepth, e2e, positives, reviewCompleteness, and summary from the reconciled prose receipts; these non-finding sections are not stored in the ledger. For e2e.coverage preserve the tests/regressions recommendations. For e2e.targets preserve only the CI/operations selector recommendations and their reasons; never emit a dispatch command. Set each sourceOfTruthReview findingId to its covering open ledger ID for status missing/needs_followup, and to null otherwise.
 
 Set the fields exactly as specified by the \`pr_review_exact_metadata\` tool for metadata.
 
@@ -2083,7 +2084,7 @@ function buildOperationsTurnContext(context: DeterministicReviewContext): Record
     riskyAreas: context.riskyAreas,
     workflowSignals: context.workflowSignals,
     e2eInventory: trustedE2eRecommendationInventory(),
-    dispatchCommandsAreDerivedAfterSynthesis: true,
+    selectorGuidanceOnly: true,
   };
 }
 
@@ -2398,16 +2399,28 @@ function sanitizeAcceptanceCoverage(value: unknown): AcceptanceCoverage[] {
 }
 
 function sanitizeSecurityCategories(value: unknown): SecurityCategory[] {
-  const provided = recordItems(value).map((item) => ({
-    category: stringOrDefault(item.category, "Security category"),
-    verdict: enumValue(item.verdict, SECURITY_VERDICTS, "warning"),
-    justification: stringOrDefault(item.justification, "No justification provided."),
-  }));
-  if (provided.length > 0) return provided.slice(0, 20);
+  const provided = new Map(
+    recordItems(value).flatMap((item) => {
+      const category = stringOrDefault(item.category, "");
+      if (!SECURITY_CATEGORIES.includes(category)) return [];
+      return [
+        [
+          category,
+          {
+            category,
+            verdict: enumValue(item.verdict, SECURITY_VERDICTS, "warning"),
+            justification: stringOrDefault(item.justification, "No justification provided."),
+          },
+        ] as const,
+      ];
+    }),
+  );
   return SECURITY_CATEGORIES.map((category) => ({
-    category,
-    verdict: "warning" as const,
-    justification: "Advisor did not provide a category-specific verdict; human review required.",
+    ...(provided.get(category) ?? {
+      category,
+      verdict: "warning" as const,
+      justification: "Advisor did not provide a category-specific verdict; human review required.",
+    }),
   }));
 }
 
@@ -2489,8 +2502,7 @@ function sanitizeReviewCompleteness(value: unknown): ReviewAdvisorResult["review
       limitations.length > 0
         ? limitations
         : ["Automated review only; human maintainer review is required before merge."],
-    requiresHumanReview:
-      typeof object.requiresHumanReview === "boolean" ? object.requiresHumanReview : true,
+    requiresHumanReview: true,
   };
 }
 
@@ -2503,7 +2515,7 @@ export function renderSummary(result: ReviewAdvisorResult): string {
   lines.push("");
   lines.push(result.summary.oneLine);
   lines.push("");
-  appendFindings(lines, "Required before merge", blockers);
+  appendFindings(lines, "Blocking findings for maintainer adjudication", blockers);
   appendFindings(lines, "Warnings", warnings);
   appendFindings(lines, "Suggestions (optional)", suggestions);
   lines.push("## What looks good");
@@ -2547,7 +2559,7 @@ function appendE2eSummary(lines: string[], e2e: CombinedE2eResult): void {
     }
   }
   lines.push("");
-  lines.push("## Required E2E targets");
+  lines.push("## Required E2E selectors");
   if (e2e.targets.required.length === 0) {
     lines.push(
       `- _None._${e2e.targets.noTargetE2eReason ? ` ${e2e.targets.noTargetE2eReason}` : ""}`,
@@ -2555,17 +2567,15 @@ function appendE2eSummary(lines: string[], e2e: CombinedE2eResult): void {
   } else {
     for (const recommendation of e2e.targets.required.slice(0, 20)) {
       lines.push(`- **${recommendation.id}**: ${recommendation.reason}`);
-      lines.push(`  - Dispatch: \`${recommendation.dispatchCommand}\``);
     }
   }
   lines.push("");
-  lines.push("## Optional E2E targets");
+  lines.push("## Optional E2E selectors");
   if (e2e.targets.optional.length === 0) {
     lines.push("- _None._");
   } else {
     for (const recommendation of e2e.targets.optional.slice(0, 20)) {
       lines.push(`- **${recommendation.id}**: ${recommendation.reason}`);
-      lines.push(`  - Dispatch: \`${recommendation.dispatchCommand}\``);
     }
   }
   lines.push("");

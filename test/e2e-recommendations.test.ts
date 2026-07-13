@@ -10,7 +10,6 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
-  canonicalDispatchCommand,
   extractFreeStandingE2eJobs,
   normalizeE2eTargetAdvisorResult,
 } from "../tools/advisors/e2e-recommendations.mts";
@@ -133,7 +132,7 @@ describe("E2E recommendation normalizer", () => {
     expect(normalized.confidence).toBe("medium");
   });
 
-  it("preserves valid recommendations and canonicalizes the dispatch command", () => {
+  it("preserves valid selector-only recommendations", () => {
     const raw = {
       version: 1,
       relevantChangedFiles: ["test/e2e/registry/runtime-support.ts"],
@@ -144,8 +143,6 @@ describe("E2E recommendation normalizer", () => {
           selectorType: "all",
           required: true,
           reason: "shared target runtime changed",
-          // Model returns a non-canonical command; sanitizer must overwrite it.
-          dispatchCommand: "gh workflow run e2e-all.yaml --ref main",
         },
       ],
       optional: [
@@ -156,9 +153,6 @@ describe("E2E recommendation normalizer", () => {
           target: "ubuntu-repo-cloud-openclaw",
           required: false,
           reason: "smoke confirmation on the canonical target",
-          // Old (singular, with non-existent suite_filter input) shape.
-          dispatchCommand:
-            "gh workflow run made-up-e2e.yaml --ref main -f target=ubuntu-repo-cloud-openclaw -f suite_filter=smoke",
         },
       ],
       noTargetE2eReason: null,
@@ -168,20 +162,8 @@ describe("E2E recommendation normalizer", () => {
     const normalized = normalizeE2eTargetAdvisorResult(raw, metadata());
     expect(normalized.required).toHaveLength(1);
     expect(normalized.optional).toHaveLength(1);
-    expect(normalized.required[0]?.dispatchCommand).toBe(
-      canonicalDispatchCommand(E2E_WORKFLOW, "e2e-all"),
-    );
-    expect(normalized.optional[0]?.dispatchCommand).toBe(
-      canonicalDispatchCommand(E2E_WORKFLOW, "ubuntu-repo-cloud-openclaw"),
-    );
-    // Canonical fan-out command must not contain a targets field.
-    expect(normalized.required[0]?.dispatchCommand).not.toContain("--field targets=");
-    // Canonical single-target command must use plural --field targets=<id>
-    // and must never contain the legacy suite_filter input.
-    expect(normalized.optional[0]?.dispatchCommand).toContain(
-      "--field targets=ubuntu-repo-cloud-openclaw",
-    );
-    expect(normalized.optional[0]?.dispatchCommand).not.toContain("suite_filter");
+    expect(normalized.required[0]).not.toHaveProperty("dispatchCommand");
+    expect(normalized.optional[0]).not.toHaveProperty("dispatchCommand");
   });
 
   it("rejects unknown workflows", () => {
@@ -192,7 +174,6 @@ describe("E2E recommendation normalizer", () => {
             id: "ubuntu-repo-cloud-openclaw",
             workflow: "made-up-e2e-targeted.yaml", // hallucinated workflow
             reason: "model invented a workflow",
-            dispatchCommand: "gh workflow run made-up-e2e-targeted.yaml --ref main",
           },
         ],
         optional: [],
@@ -211,20 +192,17 @@ describe("E2E recommendation normalizer", () => {
             id: "ubuntu-repo-cloud-openclaw",
             workflow: "made-up-e2e.yaml",
             reason: "legacy single-target workflow",
-            dispatchCommand: "gh ...",
           },
           {
             id: "e2e-all",
             workflow: "e2e-all.yaml",
             reason: "legacy fan-out workflow",
-            dispatchCommand: "gh ...",
           },
           {
             id: "e2e-all",
             workflow: E2E_WORKFLOW,
             selectorType: "all",
             reason: "valid Vitest fan-out",
-            dispatchCommand: "gh ...",
           },
         ],
         optional: [],
@@ -246,7 +224,6 @@ describe("E2E recommendation normalizer", () => {
             // Model claims this required item is actually optional.
             required: false,
             reason: "in required[] but model marked optional",
-            dispatchCommand: "gh ...",
           },
         ],
         optional: [
@@ -257,7 +234,6 @@ describe("E2E recommendation normalizer", () => {
             // Model claims this optional item is actually required.
             required: true,
             reason: "in optional[] but model marked required",
-            dispatchCommand: "gh ...",
           },
         ],
         confidence: "medium",
@@ -277,21 +253,18 @@ describe("E2E recommendation normalizer", () => {
             workflow: E2E_WORKFLOW,
             selectorType: "target",
             reason: "shell injection attempt",
-            dispatchCommand: "gh ...",
           },
           {
             id: "Ubuntu_Repo_Cloud", // not kebab
             workflow: E2E_WORKFLOW,
             selectorType: "target",
             reason: "non-canonical id",
-            dispatchCommand: "gh ...",
           },
           {
             id: "ubuntu-repo-cloud-openclaw",
             workflow: E2E_WORKFLOW,
             selectorType: "target",
             reason: "valid",
-            dispatchCommand: "gh ...",
           },
         ],
         optional: [],
@@ -310,24 +283,21 @@ describe("E2E recommendation normalizer", () => {
           workflow: E2E_WORKFLOW,
           selectorType: "target",
           reason: "ok",
-          dispatchCommand: "gh ...",
         },
         {
           id: "ubuntu-repo-cloud-openclaw",
           workflow: E2E_WORKFLOW,
           selectorType: "target",
           reason: "dup",
-          dispatchCommand: "gh ...",
         },
         {
           id: "valid-kebab-but-not-in-registry",
           workflow: E2E_WORKFLOW,
           selectorType: "target",
           reason: "unknown target",
-          dispatchCommand: "gh ...",
         },
-        { id: "missing-reason", workflow: E2E_WORKFLOW, dispatchCommand: "gh ..." },
-        { workflow: E2E_WORKFLOW, reason: "no id", dispatchCommand: "gh ..." },
+        { id: "missing-reason", workflow: E2E_WORKFLOW },
+        { workflow: E2E_WORKFLOW, reason: "no id" },
       ],
       optional: [],
       noTargetE2eReason: null,
@@ -345,28 +315,24 @@ describe("E2E recommendation normalizer", () => {
           workflow: E2E_WORKFLOW,
           selectorType: "target",
           reason: "model invented a target",
-          dispatchCommand: "gh ...",
         },
         {
           id: "ubuntu-repo-cloud-hermes",
           workflow: E2E_WORKFLOW,
           selectorType: "target",
           reason: "registry target not wired for live Vitest fixtures",
-          dispatchCommand: "gh ...",
         },
         {
           id: "e2e-all",
           workflow: E2E_WORKFLOW,
           selectorType: "all",
           reason: "shared target runtime changed",
-          dispatchCommand: "gh ...",
         },
         {
           id: "ubuntu-repo-cloud-openclaw",
           workflow: E2E_WORKFLOW,
           selectorType: "target",
           reason: "known target",
-          dispatchCommand: "gh ...",
         },
       ],
       optional: [],
@@ -380,6 +346,26 @@ describe("E2E recommendation normalizer", () => {
     ]);
   });
 
+  it("drops an all selector with a non-fan-out id without throwing", () => {
+    const normalized = normalizeE2eTargetAdvisorResult(
+      {
+        required: [
+          {
+            id: "ubuntu-repo-cloud-openclaw",
+            workflow: E2E_WORKFLOW,
+            selectorType: "all",
+            reason: "malformed selector pair",
+          },
+        ],
+        optional: [],
+        confidence: "medium",
+      },
+      metadata(),
+    );
+
+    expect(normalized.required).toEqual([]);
+  });
+
   it("suppresses fan-out for a new E2E test that is not workflow-wired", () => {
     const normalized = normalizeE2eTargetAdvisorResult(
       {
@@ -389,21 +375,20 @@ describe("E2E recommendation normalizer", () => {
             workflow: E2E_WORKFLOW,
             selectorType: "all",
             reason: "model tried to fan out for an unwired free-standing test",
-            dispatchCommand: "gh ...",
           },
         ],
         optional: [],
         noTargetE2eReason: null,
         confidence: "high",
       },
-      metadata({ changedFiles: ["test/e2e/live/rebuild-openclaw.test.ts"] }),
+      metadata({ changedFiles: ["test/e2e/live/new-unwired-openclaw.test.ts"] }),
       { e2eWorkflowText: "jobs:\n  live-targets:\n    steps: []\n" },
     );
 
     expect(normalized.required).toEqual([]);
     expect(normalized.optional).toEqual([]);
     expect(normalized.noTargetE2eReason).toContain("not wired into `.github/workflows/e2e.yaml`");
-    expect(normalized.noTargetE2eReason).toContain("test/e2e/live/rebuild-openclaw.test.ts");
+    expect(normalized.noTargetE2eReason).toContain("test/e2e/live/new-unwired-openclaw.test.ts");
   });
 
   it.each([
@@ -554,7 +539,7 @@ jobs:
     ]);
   });
 
-  it("prefers a focused free-standing job over fan-out once workflow wiring is present", () => {
+  it("prefers a focused free-standing job over fan-out when trusted workflow wiring exists", () => {
     const normalized = normalizeE2eTargetAdvisorResult(
       {
         required: [
@@ -563,7 +548,6 @@ jobs:
             workflow: E2E_WORKFLOW,
             selectorType: "all",
             reason: "model tried to fan out for a workflow-wired free-standing test",
-            dispatchCommand: "gh ...",
           },
         ],
         optional: [],
@@ -588,8 +572,8 @@ jobs:
       ["job", "cloud-onboard"],
       ["job", "token-rotation"],
     ]);
-    expect(normalized.required.find((item) => item.id === "token-rotation")?.dispatchCommand).toBe(
-      "gh workflow run e2e.yaml --ref <pr-head-ref> --field jobs=token-rotation",
+    expect(normalized.required.find((item) => item.id === "token-rotation")).not.toHaveProperty(
+      "dispatchCommand",
     );
     expect(normalized.noTargetE2eReason).toBeNull();
   });
@@ -603,7 +587,6 @@ jobs:
             workflow: E2E_WORKFLOW,
             selectorType: "job",
             reason: "focused job covers the changed live test",
-            dispatchCommand: "malicious non-canonical command",
           },
         ],
         optional: [],
@@ -625,9 +608,57 @@ jobs:
     expect(normalized.required.map((item) => [item.selectorType, item.id])).toEqual([
       ["job", "token-rotation"],
     ]);
-    expect(normalized.required[0]?.dispatchCommand).toBe(
-      "gh workflow run e2e.yaml --ref <pr-head-ref> --field jobs=token-rotation",
+    expect(normalized.required[0]).not.toHaveProperty("dispatchCommand");
+  });
+
+  it("rejects a free-standing job introduced only by the analyzed workflow", () => {
+    const file = "test/e2e/live/steal-secrets.test.ts";
+    const normalized = normalizeE2eTargetAdvisorResult(
+      {
+        required: [
+          {
+            id: "steal-secrets",
+            workflow: E2E_WORKFLOW,
+            selectorType: "job",
+            reason: "PR-added job",
+          },
+        ],
+        optional: [],
+        confidence: "high",
+      },
+      metadata({ changedFiles: [file] }),
+      {
+        e2eWorkflowText: String.raw`
+jobs:
+  steal-secrets:
+    if: \${{ contains(format(',{0},', inputs.jobs), ',steal-secrets,') }}
+    steps:
+      - run: npx vitest run --project e2e-live test/e2e/live/steal-secrets.test.ts
+`,
+      },
     );
+
+    expect(normalized.required).toEqual([]);
+  });
+
+  it("does not derive a focused job from job-like workflow comments", () => {
+    const file = "test/e2e/live/comment-only.test.ts";
+    const normalized = normalizeE2eTargetAdvisorResult(
+      { required: [], optional: [], confidence: "high" },
+      metadata({ changedFiles: [file] }),
+      {
+        e2eWorkflowText: String.raw`
+jobs:
+  cloud-inference:
+    steps:
+      # inputs.jobs ,cloud-inference,
+      # test/e2e/live/comment-only.test.ts
+      - run: echo harmless
+`,
+      },
+    );
+
+    expect(normalized.required).toEqual([]);
   });
 
   it("removes optional recommendations whose id duplicates a required one", () => {
@@ -639,7 +670,6 @@ jobs:
           selectorType: "target",
           required: true,
           reason: "primary",
-          dispatchCommand: "gh ...",
         },
       ],
       optional: [
@@ -649,7 +679,6 @@ jobs:
           selectorType: "target",
           required: false,
           reason: "duplicate fallback",
-          dispatchCommand: "gh ...",
         },
         {
           id: "ubuntu-repo-docker-post-reboot-recovery",
@@ -657,7 +686,6 @@ jobs:
           selectorType: "target",
           required: false,
           reason: "adjacent",
-          dispatchCommand: "gh ...",
         },
       ],
       noTargetE2eReason: null,

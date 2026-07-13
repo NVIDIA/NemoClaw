@@ -105,15 +105,22 @@ function requireEnv(
   }
 }
 
-function requirePermission(
+function requireExactPermissions(
   errors: string[],
   jobName: string,
   job: WorkflowRecord,
-  permission: string,
-  expected: string,
+  expected: Readonly<Record<string, string>>,
 ): void {
-  if (asRecord(job.permissions)[permission] !== expected) {
-    errors.push(`${jobName} job permissions.${permission} must be ${expected}`);
+  const actual = asRecord(job.permissions);
+  for (const [permission, level] of Object.entries(expected)) {
+    if (actual[permission] !== level) {
+      errors.push(`${jobName} job permissions.${permission} must be ${level}`);
+    }
+  }
+  for (const permission of Object.keys(actual)) {
+    if (!Object.hasOwn(expected, permission)) {
+      errors.push(`${jobName} job permissions.${permission} is not allowed`);
+    }
   }
 }
 
@@ -183,11 +190,17 @@ function checkPrivilegeDomains(
       "workflow-level permissions must be empty so each job declares its privilege domain",
     );
   }
-  for (const permission of ["actions", "checks", "contents", "issues", "pull-requests"]) {
-    requirePermission(errors, "review", reviewJob, permission, "read");
-  }
-  requirePermission(errors, "publish", publishJob, "contents", "read");
-  requirePermission(errors, "publish", publishJob, "pull-requests", "write");
+  requireExactPermissions(errors, "review", reviewJob, {
+    actions: "read",
+    checks: "read",
+    contents: "read",
+    issues: "read",
+    "pull-requests": "read",
+  });
+  requireExactPermissions(errors, "publish", publishJob, {
+    contents: "read",
+    "pull-requests": "write",
+  });
 
   const jobs = asRecord(workflow.jobs);
   for (const [jobName, rawJob] of Object.entries(jobs)) {
@@ -233,6 +246,7 @@ function checkAnalysisJob(errors: string[], reviewJob: WorkflowRecord): void {
     "${{ matrix.advisor.model }}",
   );
   requireEnv(errors, "review job", reviewJob, "PI_SDK_VERSION", "0.80.6");
+  requireEnv(errors, "review job", reviewJob, "FD_FIND_VERSION", "9.0.0-1");
   requireEnv(errors, "review job", reviewJob, "RIPGREP_VERSION", "14.1.0-1");
   requireEnv(errors, "review job", reviewJob, "TYPEBOX_VERSION", "1.1.38");
   requireEnv(
@@ -249,13 +263,7 @@ function checkAnalysisJob(errors: string[], reviewJob: WorkflowRecord): void {
     "PR_REVIEW_ADVISOR_WORKFLOW_NAME",
     "PR Review / Advisor",
   );
-  requireEnv(
-    errors,
-    "review job",
-    reviewJob,
-    "PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW",
-    "${{ matrix.advisor.publish_comment }}",
-  );
+  requireEnv(errors, "review job", reviewJob, "PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW", "false");
 
   const steps = asSteps(reviewJob.steps);
   if (steps.length === 0) errors.push("review job must declare steps");
@@ -333,10 +341,23 @@ done < <(find "$ADVISOR_WORKDIR" -type l -print0)`;
   }
 
   const install = requireStep(errors, steps, "Install Pi SDK");
+  requireRunContains(errors, install, "sudo apt-get install -y --no-install-recommends");
+  requireRunContains(errors, install, '"fd-find=${FD_FIND_VERSION}"');
+  requireRunContains(errors, install, '"ripgrep=${RIPGREP_VERSION}"');
+  requireRunContains(errors, install, "sudo apt-get update -qq");
+  requireRunContains(errors, install, "dpkg-query -W -f='${Version}' fd-find");
+  requireRunContains(errors, install, "dpkg-query -W -f='${Version}' ripgrep");
+  requireRunContains(errors, install, '"$INSTALLED_FD_FIND_VERSION" != "$FD_FIND_VERSION"');
+  requireRunContains(errors, install, '"$INSTALLED_RIPGREP_VERSION" != "$RIPGREP_VERSION"');
+  requireRunContains(errors, install, "command -v fdfind");
+  requireRunContains(errors, install, "command -v rg");
+  requireRunContains(errors, install, 'FD_BINARY_VERSION="$(fdfind --version)"');
+  requireRunContains(errors, install, 'RG_BINARY_VERSION="$(rg --version)"');
+  requireRunContains(errors, install, '"$FD_BINARY_VERSION" != "fd $EXPECTED_FD_BINARY_VERSION"');
   requireRunContains(
     errors,
     install,
-    'sudo apt-get install -y --no-install-recommends "ripgrep=${RIPGREP_VERSION}"',
+    '"$RG_BINARY_VERSION" != "ripgrep $EXPECTED_RG_BINARY_VERSION"',
   );
   requireRunContains(errors, install, "--ignore-scripts");
   requireRunContains(errors, install, '"typebox@${TYPEBOX_VERSION}"');
@@ -381,6 +402,10 @@ done < <(find "$ADVISOR_WORKDIR" -type l -print0)`;
     }
   }
   const analyzeIndex = steps.findIndex((step) => step.name === "Run PR review advisor");
+  const installIndex = steps.findIndex((step) => step.name === "Install Pi SDK");
+  if (installIndex < 0 || analyzeIndex < 0 || installIndex > analyzeIndex) {
+    errors.push("pinned advisor tools must be installed before the model credential is exposed");
+  }
   if (symlinkIndex < 0 || analyzeIndex < 0 || symlinkIndex > analyzeIndex) {
     errors.push(
       "analysis workspace symlinks must be removed before the model credential is exposed",

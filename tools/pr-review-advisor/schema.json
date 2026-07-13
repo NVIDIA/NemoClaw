@@ -36,7 +36,6 @@
       "properties": {
         "recommendation": {
           "enum": [
-            "merge_as_is",
             "merge_after_fixes",
             "needs_rework",
             "blocked",
@@ -224,7 +223,7 @@
           "type": "array",
           "items": { "type": "string" }
         },
-        "requiresHumanReview": { "type": "boolean" }
+        "requiresHumanReview": { "type": "boolean", "const": true }
       },
       "additionalProperties": false
     }
@@ -271,14 +270,7 @@
     },
     "e2eTargetRecommendation": {
       "type": "object",
-      "required": [
-        "id",
-        "workflow",
-        "selectorType",
-        "required",
-        "reason",
-        "dispatchCommand"
-      ],
+      "required": ["id", "workflow", "selectorType", "required", "reason"],
       "properties": {
         "id": { "type": "string" },
         "workflow": { "type": "string", "const": "e2e.yaml" },
@@ -286,8 +278,7 @@
         "target": { "type": "string" },
         "suiteFilter": { "type": "string" },
         "required": { "type": "boolean" },
-        "reason": { "type": "string" },
-        "dispatchCommand": { "type": "string" }
+        "reason": { "type": "string" }
       },
       "additionalProperties": false
     },

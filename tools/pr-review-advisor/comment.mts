@@ -10,6 +10,9 @@ import { parseArgs, readIfExists, readJsonIfExists } from "../advisors/io.mts";
 const MARKER = "<!-- nemoclaw-pr-review-advisor -->";
 const COMMENT_TITLE = "PR Review Advisor";
 const E2E_RENDER_LIMIT = 20;
+const MAX_COMMENT_BYTES = 60 * 1024;
+const COMMENT_TRUNCATION_NOTICE =
+  "\n\n_Comment truncated to fit GitHub's size limit. The workflow artifact contains the complete review._\n";
 
 type ReviewAdvisorResult = {
   headSha?: string;
@@ -59,12 +62,10 @@ type ReviewAdvisorResult = {
       required?: Array<{
         id?: string;
         reason?: string;
-        dispatchCommand?: string;
       }>;
       optional?: Array<{
         id?: string;
         reason?: string;
-        dispatchCommand?: string;
       }>;
       noTargetE2eReason?: string | null;
     };
@@ -253,17 +254,18 @@ export function buildComment({
   const headline = reviewHeadline(result?.summary?.recommendation, blockerCount);
   const heading = validateSingleLineCommentField(title || COMMENT_TITLE, "title");
   const renderedMarker = validateCommentMarker(marker || MARKER);
-  return `${renderedMarker}
-${hiddenMetadata}## ${heading} — ${headline}
+  const prefix = `${renderedMarker}\n${hiddenMetadata}`;
+  const content = `## ${heading} — ${headline}
 
-**Merge posture:** ${posture}
+**Advisor assessment:** ${posture}
 **Primary next action:** ${primaryNextAction(findingRecords)}
-**Findings:** ${compactCount(blockerCount, "required", "required")} · ${compactCount(warningCount, "warning")} · ${compactCount(suggestionCount, "optional suggestion")}
+**Findings:** ${compactCount(blockerCount, "blocker")} · ${compactCount(warningCount, "warning")} · ${compactCount(suggestionCount, "optional suggestion")}
 ${informational}${secondary}${e2eDetails}${findingsDetails}${details}
 
-This is an automated review. Required findings need action before merge. Warnings and optional suggestions do not require a response or follow-up. A human maintainer makes the final merge decision.
+This is an automated, non-authoritative review. Findings are inputs to maintainer adjudication. Warnings and optional suggestions do not require a response or follow-up. A human maintainer makes the final merge decision.
 
 `;
+  return boundedComment(prefix, content);
 }
 
 function renderE2eDetails(result?: ReviewAdvisorResult): string {
@@ -279,13 +281,13 @@ function renderE2eDetails(result?: ReviewAdvisorResult): string {
   const lines = [
     "",
     "### E2E guidance",
-    "_Recommendations only; this advisor does not dispatch E2E or report pass/fail state._",
+    "_Selector recommendations only; E2E / PR Gate independently dispatches trusted jobs and reports their state._",
     "",
   ];
 
   lines.push(
     `**Required coverage:** ${renderE2eIds(requiredCoverage) || "_None_"}`,
-    `**Required dispatches:** ${renderE2eIds(requiredTargets) || "_None_"}`,
+    `**Required selectors:** ${renderE2eIds(requiredTargets) || "_None_"}`,
   );
   if (requiredCoverage.length > 0) {
     lines.push("");
@@ -301,9 +303,6 @@ function renderE2eDetails(result?: ReviewAdvisorResult): string {
       const id = escapeLocationHtml(item.id || "E2E target");
       const reason = item.reason ? ` — ${escapeCommentText(item.reason)}` : "";
       lines.push(`- <code>${id}</code>${reason}`);
-      if (item.dispatchCommand) {
-        lines.push(`  - Run: <code>${escapeLocationHtml(item.dispatchCommand)}</code>`);
-      }
     }
   }
 
@@ -311,7 +310,7 @@ function renderE2eDetails(result?: ReviewAdvisorResult): string {
     lines.push(
       "",
       "<details>",
-      `<summary>${compactCount(optionalCoverage.length, "optional coverage item")} · ${compactCount(optionalTargets.length, "optional dispatch")} · ${compactCount(newRecommendations.length, "new-test recommendation")}</summary>`,
+      `<summary>${compactCount(optionalCoverage.length, "optional coverage item")} · ${compactCount(optionalTargets.length, "optional selector")} · ${compactCount(newRecommendations.length, "new-test recommendation")}</summary>`,
       "",
     );
     for (const item of optionalCoverage.slice(0, E2E_RENDER_LIMIT)) {
@@ -321,7 +320,7 @@ function renderE2eDetails(result?: ReviewAdvisorResult): string {
     }
     for (const item of optionalTargets.slice(0, E2E_RENDER_LIMIT)) {
       lines.push(
-        `- Optional dispatch <code>${escapeLocationHtml(item.id || "unnamed")}</code>${item.reason ? ` — ${escapeCommentText(item.reason)}` : ""}`,
+        `- Optional selector <code>${escapeLocationHtml(item.id || "unnamed")}</code>${item.reason ? ` — ${escapeCommentText(item.reason)}` : ""}`,
       );
     }
     for (const item of newRecommendations.slice(0, E2E_RENDER_LIMIT)) {
@@ -339,7 +338,7 @@ function renderE2eDetails(result?: ReviewAdvisorResult): string {
   if (requiredTargets.length === 0 && targets?.noTargetE2eReason) {
     lines.push(
       "",
-      `**Why no dispatch is required:** ${escapeCommentText(targets.noTargetE2eReason)}`,
+      `**Why no selector is required:** ${escapeCommentText(targets.noTargetE2eReason)}`,
     );
   }
   lines.push("");
@@ -387,23 +386,46 @@ function safeMetadataValue(value: string): string {
     .slice(0, 120);
 }
 
+function boundedComment(prefix: string, content: string): string {
+  const full = `${prefix}${content}`;
+  if (Buffer.byteLength(full, "utf8") <= MAX_COMMENT_BYTES) return full;
+  const contentBytes =
+    MAX_COMMENT_BYTES -
+    Buffer.byteLength(prefix, "utf8") -
+    Buffer.byteLength(COMMENT_TRUNCATION_NOTICE, "utf8");
+  if (contentBytes <= 0) throw new Error("PR review advisor metadata exceeds comment size limit");
+  return `${prefix}${truncateUtf8(content, contentBytes).trimEnd()}${COMMENT_TRUNCATION_NOTICE}`;
+}
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  let low = 0;
+  let high = value.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (Buffer.byteLength(value.slice(0, middle), "utf8") <= maxBytes) low = middle;
+    else high = middle - 1;
+  }
+  if (low > 0 && /[\uD800-\uDBFF]/.test(value[low - 1])) low -= 1;
+  return value.slice(0, low);
+}
+
 function reviewHeadline(recommendation: string | undefined, blockerCount: number): string {
-  if (blockerCount > 0) return "Changes requested";
+  if (blockerCount > 0) return "Blocking findings reported";
   if (recommendation === "superseded") return "Superseded";
   if (recommendation === "info_only") return "Informational";
-  return "No blocking findings";
+  return "No blocking findings reported";
 }
 
 function reviewPosture(recommendation: string | undefined, blockerCount: number): string {
-  if (blockerCount > 0) return "Do not merge until required findings are fixed";
+  if (blockerCount > 0) return "Blocking findings require maintainer adjudication";
   if (recommendation === "superseded") return "Superseded by other work";
   if (recommendation === "info_only") return "Informational / low confidence";
-  return "No blocking advisor findings";
+  return "No blocking advisor findings reported";
 }
 
 function primaryNextAction(records: FindingRecord[]): string {
   if (records.some((record) => record.finding.severity === "blocker")) {
-    return "Fix the required findings below.";
+    return "Review the blocking findings below.";
   }
   if (records.some((record) => record.finding.severity === "warning")) {
     return "Review the warnings below.";
@@ -429,7 +451,7 @@ function renderFindingsDetails(records: FindingRecord[]): string {
   const suggestionFindings = records.filter((record) => record.finding.severity === "suggestion");
   const lines: string[] = [];
   if (blockerFindings.length > 0) {
-    lines.push("", "### Required before merge", "");
+    lines.push("", "### Blocking findings for maintainer adjudication", "");
     for (const record of blockerFindings.slice(0, 20)) lines.push(formatFinding(record), "");
   }
   if (warningFindings.length === 0 && suggestionFindings.length === 0)
@@ -499,14 +521,14 @@ function findingTitle(finding: Finding): string {
 }
 
 function severityLabel(severity?: string): string {
-  if (severity === "blocker") return "Required";
+  if (severity === "blocker") return "Blocker";
   if (severity === "warning") return "Warning";
   if (severity === "suggestion") return "Optional";
   return "Review";
 }
 
 function actionFieldLabel(severity?: string): string {
-  if (severity === "blocker") return "Required action";
+  if (severity === "blocker") return "Recommended action";
   if (severity === "warning") return "Recommendation";
   if (severity === "suggestion") return "Optional change";
   return "Recommendation";

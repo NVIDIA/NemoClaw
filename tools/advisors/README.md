@@ -16,7 +16,7 @@ This directory owns reusable trusted infrastructure, including:
 - GitHub API and sticky-comment helpers;
 - the session-free E2E recommendation normalizer, which restores the
   deterministic risk-plan floor, rejects unsupported target and job IDs, and
-  derives canonical dispatch commands for guidance emitted by the PR advisor.
+  emits selector-only guidance for the PR advisor.
 
 The E2E normalizer does not open an agent session or dispatch tests. The PR E2E
 controller independently rebuilds the deterministic plan and remains the only

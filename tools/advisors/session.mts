@@ -761,6 +761,7 @@ function prepareAdvisorConfig(
   if (credential) {
     authStorage.setRuntimeApiKey(provider, credential);
     modelRegistry.registerProvider(provider, openAiAdvisorProviderConfig(credentialEnv));
+    delete process.env[credentialEnv];
   }
   return { authStorage, modelRegistry };
 }

@@ -239,6 +239,7 @@ describe("maintainer merge-gate contributor compliance", () => {
     expect(output.advisories.contributorApprovalOverlap.details).toContain(
       "not proof of independent approval",
     );
+    expect(output.gates).not.toHaveProperty("prAdvisor");
     expect(output.allPass).toBe(true);
   });
 

@@ -23,7 +23,6 @@ const FREE_STANDING_LIVE_TEST_PATTERN = /^test\/e2e\/live\/[^/]+\.test\.ts$/;
 const FREE_STANDING_LIVE_FILE_PATTERN = /^test\/e2e\/live\/[^/]+\.ts$/;
 const ALLOWED_WORKFLOWS = new Set<string>([E2E_WORKFLOW]);
 const TARGET_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
-const JOB_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 const CONFIDENCES = ["low", "medium", "high"] as const;
 const CLOUD_ONBOARD_E2E_PATTERNS: readonly RegExp[] = [
   /^src\/lib\/onboard(?:\.ts|\/)/,
@@ -80,7 +79,6 @@ export type E2eTargetRecommendation = {
   suiteFilter?: string;
   required: boolean;
   reason: string;
-  dispatchCommand: string;
 };
 
 export type E2eWorkflowJob = {
@@ -137,24 +135,6 @@ export function trustedE2eRecommendationInventory(): TrustedE2eRecommendationInv
       .map((target) => target.id)
       .sort(),
   };
-}
-
-export function canonicalDispatchCommand(
-  workflow: string,
-  id: string,
-  selectorType: E2eSelectorType = id === E2E_ALL_ID ? "all" : "target",
-): string {
-  if (workflow !== E2E_WORKFLOW) throw new Error(`Unknown target workflow: ${workflow}`);
-  if (selectorType === "all") {
-    if (id !== E2E_ALL_ID) throw new Error(`Invalid fan-out selector id: ${id}`);
-    return `gh workflow run ${E2E_WORKFLOW} --ref <pr-head-ref>`;
-  }
-  if (selectorType === "job") {
-    if (!JOB_ID_PATTERN.test(id)) throw new Error(`Invalid E2E job id: ${id}`);
-    return `gh workflow run ${E2E_WORKFLOW} --ref <pr-head-ref> --field jobs=${id}`;
-  }
-  if (!TARGET_ID_PATTERN.test(id)) throw new Error(`Invalid E2E target id: ${id}`);
-  return `gh workflow run ${E2E_WORKFLOW} --ref <pr-head-ref> --field targets=${id}`;
 }
 
 export function normalizeE2eCoverageResult(
@@ -384,10 +364,15 @@ function buildE2eTargetNormalizationContext(
   changedFiles: readonly string[] = [],
   changedFileSources?: Readonly<Record<string, string | null>>,
 ): E2eTargetNormalizationContext {
-  const freeStandingJobs = extractFreeStandingE2eJobs(e2eWorkflowText ?? "");
+  const trustedWorkflowText = readTrustedE2eWorkflowText();
   const trustedCredentialFreeTests = discoverTrustedCredentialFreeTests();
   const allowedJobIds = new Set(
-    extractAllowedE2eJobIds(readTrustedE2eWorkflowText(), trustedCredentialFreeTests),
+    extractAllowedE2eJobIds(trustedWorkflowText, trustedCredentialFreeTests),
+  );
+  // The analyzed workflow is untrusted input. It may explain why a changed test is
+  // unwired, but it must never introduce a selector that CI could later dispatch.
+  const freeStandingJobs = extractFreeStandingE2eJobs(trustedWorkflowText).filter((job) =>
+    allowedJobIds.has(job.id),
   );
   const liveTestToJobs = new Map<string, string[]>();
   const changedCredentialFreeProjects = new Map(
@@ -580,7 +565,6 @@ function deterministicFreeStandingJobRecommendations(
         selectorType: "job",
         required: true,
         reason: `Focused free-standing E2E selector wired for changed test \`${file}\`.`,
-        dispatchCommand: canonicalDispatchCommand(E2E_WORKFLOW, job, "job"),
       });
     }
   }
@@ -599,7 +583,6 @@ function deterministicRiskJobRecommendations(
       selectorType: "job" as const,
       required: true,
       reason: job.reasons.join(" "),
-      dispatchCommand: canonicalDispatchCommand(E2E_WORKFLOW, job.id, "job"),
     }));
 }
 
@@ -650,6 +633,7 @@ function sanitizeTargetRecommendations(
     if (!id || !reason || !workflow || !ALLOWED_WORKFLOWS.has(workflow)) continue;
     const selectorType = normalizeSelectorType(item.selectorType, id, context.allowedJobIds);
     if (!selectorType) continue;
+    if (selectorType === "all" && id !== E2E_ALL_ID) continue;
     if (selectorType === "job" && !context.allowedJobIds.has(id)) continue;
     if (selectorType !== "job" && !TARGET_ID_PATTERN.test(id)) continue;
     const targetDefinition = selectorType === "target" ? getTarget(id) : undefined;
@@ -671,7 +655,6 @@ function sanitizeTargetRecommendations(
         suiteFilter: stringOrUndefined(item.suiteFilter),
         required,
         reason,
-        dispatchCommand: canonicalDispatchCommand(workflow, id, selectorType),
       }) as E2eTargetRecommendation,
     );
   }

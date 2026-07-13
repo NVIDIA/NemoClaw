@@ -5,8 +5,8 @@
 
 The PR Review Advisor is an SDK-powered, NemoClaw-specific pull request reviewer. It runs as a
 trusted GitHub Actions job, inspects PRs as read-only data, and posts a sticky advisory comment with
-required-before-merge findings, non-blocking warnings, and optional suggestions. Detailed artifacts
-retain acceptance coverage, security notes, and other review context.
+model-identified blockers, non-blocking warnings, and optional suggestions. Detailed artifacts retain
+acceptance coverage, security notes, and other review context.
 
 It complements the existing PR surfaces by keeping a NemoClaw maintainer code-review lens focused on the patch itself and by including E2E coverage and target guidance in the same model session:
 
@@ -15,7 +15,6 @@ It complements the existing PR surfaces by keeping a NemoClaw maintainer code-re
   contracts, and explicit maintainer decisions in linked issues. Proposed designs, implementation
   ideas, and ordinary discussion remain context; `Refs #...`, `References #...`, and
   `Follow-up to #...` relations do not make an entire issue binding;
-- previous PR Review Advisor follow-up for code findings, using hidden sticky-comment metadata when available;
 - codebase drift and architecture review grounded in current behavior and contracts;
 - source-of-truth review for fallback, recovery, tolerant parsing, monkeypatching, and other localized workaround behavior;
 - static test-inventory context from changed test files and nearby test names;
@@ -33,7 +32,7 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 1. Runs on `pull_request_target` for internal and fork PRs, plus `workflow_dispatch`.
 2. Checks out advisor implementation code at the immutable trusted `github.workflow_sha` into `advisor/`.
 3. Fetches the event's exact PR base and head SHAs into an isolated analysis workspace without running PR-controlled actions, hooks, submodules, LFS filters, package setup, scripts, or tests.
-4. Uses the trusted runner's ripgrep when present, otherwise installs an exact pinned package on a pinned Ubuntu runner, then installs a pinned Pi SDK package with lifecycle scripts disabled.
+4. Installs and verifies exact pinned `ripgrep` and `fd-find` packages on a pinned Ubuntu runner, then installs a pinned Pi SDK package with lifecycle scripts disabled.
 5. Builds the deterministic regression risk plan and E2E inventory in trusted code and injects them into the review contexts.
 6. Runs `tools/pr-review-advisor/analyze.mts` from the trusted checkout.
 7. Runs the same advisor conversation in parallel for the primary GPT-5.6 Terra lane and an artifact-only Nemotron Ultra evaluation lane.
@@ -44,7 +43,7 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 12. Retries transient provider failures such as HTTP 429 within the same session using one bounded exponential-backoff layer. GPT waits 6s, 12s, 24s, and 48s; Nemotron waits 9s, 18s, 36s, and 72s so parallel lanes do not retry in lockstep. The workflow still publishes the primary comment and lane artifacts after an incomplete analysis. An incomplete primary review fails its outcome step; the artifact-only evaluation lane does not affect the workflow result.
 13. Validates and repairs the draft synthesis in the final turn of the same session. If that turn fails or emits malformed output, the runner preserves a schema-valid canonical draft with an explicit limitation; a post-validation ledger mismatch still fails closed.
 14. Writes artifacts under the model-specific artifact directory, for example `artifacts/pr-review-advisor/` and `artifacts/pr-review-advisor-nemotron-ultra/`.
-15. Uploads each lane's artifacts from the read-only analysis job. A separate publisher job receives no model credential or untrusted worktree, validates the primary artifact and live PR head/base, then posts or updates one combined sticky PR comment marked by `<!-- nemoclaw-pr-review-advisor -->`. The evaluation lane does not publish another review or load the primary lane's previous review.
+15. Uploads each lane's artifacts from the read-only analysis job. A separate publisher job receives no model credential or untrusted worktree, validates the primary artifact and live PR head/base, then posts or updates one combined sticky PR comment marked by `<!-- nemoclaw-pr-review-advisor -->`. The evaluation lane does not publish another review. Previous sticky-comment ingestion is disabled for both lanes.
 
 The ordered stage array in `buildPromptTurns` is the source of truth for stage order, evidence, and
 prompt text. Runtime numbering and prompt artifact names derive from that array, so adding or
@@ -81,9 +80,13 @@ Authors and coding agents should follow the shared [PR CI and Automated Review F
 - Manual target analysis validates the repository token, decimal PR number, and base-ref token before running any `git` command.
 - Generated advisor credential config is written under `/tmp`, not uploaded artifacts.
 - The analysis job is limited to `NVIDIA/NemoClaw`, has read-only GitHub permissions, and is the only job that receives the model secret.
+- The analyzer collects deterministic GitHub context before model work, then removes GitHub tokens from the process environment.
+  After registering the model credential in the in-memory SDK auth store, it also removes that credential from the process environment before model turns begin.
 - The separate publisher has pull-request write permission, but receives neither the model secret nor the untrusted PR worktree. It accepts only the bounded primary artifact from the same workflow run and rechecks the live PR head and base before commenting.
+- Sticky publication updates only a marker-bearing comment owned by `github-actions[bot]`; a user-authored marker cannot claim the update target.
+  The rendered comment preserves its hidden identity metadata while enforcing a 60 KiB UTF-8 limit, and publication errors remain visible in the publisher logs.
 - The workflow posts advisory comments only; it does not approve, request changes, merge, push, label, or dispatch E2E.
-- Previous-review follow-up treats GitHub issue comments as mutable and replayable. A target-event comment is accepted only when hidden metadata binds its comment ID, PR number, head SHA, base SHA, trusted workflow SHA and path, run attempt, event, and update window to the corresponding `PR Review / Advisor` run, and the recorded base SHA still matches the PR's current live base. Legacy `pull_request` comments retain their narrower migration contract. This accepts the residual same-run boundary: another trusted repository workflow would need to post a marker-bearing `github-actions[bot]` comment during the same run window while knowing the run metadata. Fully preventing that requires a durable GitHub comment-to-workflow ownership signal that the REST API does not expose.
+- Previous sticky-comment ingestion is disabled because issue comments are mutable and GitHub does not expose a durable comment-to-workflow ownership binding. Any future follow-up context must come from a verified immutable run artifact rather than comment metadata.
 - During rollout, non-default advisor lanes may see an older trusted `main` checkout that has the workflow matrix but not the matching model support. The workflow treats that as trusted-main rollout skew and writes low-confidence skip artifacts in the lane-specific artifact directory. Do not run PR-controlled advisor code to bypass this gate; remove the gate only after the trusted `main` implementation always supports the parallel advisor lane.
 - The checked-in risk plan is deterministic and additive. PR Review Advisor reviews every listed
   invariant and required job for missing evidence. The trusted E2E normalizer restores any listed
@@ -110,14 +113,13 @@ instead of failing closed without artifacts.
 - `prompts/01-scope-risk-map-analysis.md` through `prompts/14-validate-synthesis-json.md` — six alternating analysis/commit pairs followed by draft and validation synthesis turns in the same session, in execution order.
 - `prompts/*.tool-results/` — bounded deterministic, domain-specific context payloads exposed as real tools after the matching user turn. The untrusted truncated diff appears only in the first turn, and repeated risk-plan projections use capped path samples.
 - `turns/01-scope-risk-map-analysis.txt` through `turns/14-validate-synthesis-json.txt` — assistant output and completed/failed/timed-out status written as each turn settles.
-- `context/drift-context.json` — deterministic drift, overlap, and previous-review context.
+- `context/drift-context.json` — deterministic drift and overlap context.
 - `context/security-context.json` — deterministic security-risk context and the risk plan for the
   PR head commit.
 - `context/validation-context.json` — deterministic acceptance, source-of-truth, static
   test-inventory, simplification-signal, and risk plan for the PR head commit, including the
   regression invariants reviewed for the PR.
 - `context/pr.diff` — truncated PR diff used by the advisor.
-- `context/previous-advisor-review.md` — previous sticky PR Review Advisor comment when one exists and its hidden run/comment metadata validates.
 - `pr-review-advisor-raw-output.txt` — raw multi-turn advisor transcript and diagnostics.
 - `pr-review-advisor-result.json` — normalized advisor result with findings projected from the canonical open ledger records, or execution metadata when analysis is unavailable.
 - `pr-review-advisor-final-result.json` — normalized canonical result used for comments.
@@ -154,9 +156,11 @@ as generic commentary. Every source-of-truth review item includes a `findingId`:
 reference their covering open ledger finding, while satisfied and not-applicable items use `null`.
 Every result also includes nested `e2e.coverage` and `e2e.targets` guidance. The trusted normalizer
 restores deterministic requirements, filters target and job selections against the supported
-inventory, and replaces model-supplied commands with canonical dispatch commands.
+inventory, drops command-shaped model output, and emits selector identifiers and reasons only.
 Findings can also include safe simplification metadata with delete, stdlib,
 native, YAGNI, or shrink tags; those suggestions must keep validation, security, data-loss prevention,
-and required tests intact. Only blockers change the merge posture. Warnings merit maintainer attention
-but do not block by themselves, and suggestions are optional with no required response or follow-up.
-Every result includes limitations and requires human maintainer review.
+and required tests intact. Only blockers set a blocking advisory recommendation; results without
+blockers are info-only unless superseded. That recommendation is review input, never merge
+authorization. Warnings merit maintainer attention but do not block by themselves, and suggestions
+are optional with no required response or follow-up. Every result includes limitations and requires
+human maintainer review.

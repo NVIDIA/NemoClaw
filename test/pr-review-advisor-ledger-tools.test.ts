@@ -689,7 +689,7 @@ describe("PR review ledger tools", () => {
       withCanonicalReviewLedgerFindings(drifted, ledger.snapshot()).findings[0]?.severity,
     ).toBe("warning");
     expect(withCanonicalReviewLedgerFindings(drifted, ledger.snapshot()).summary).toMatchObject({
-      recommendation: "merge_as_is",
+      recommendation: "info_only",
       topItem: "Refusal status is masked",
     });
   });
