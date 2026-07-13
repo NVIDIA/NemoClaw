@@ -366,7 +366,7 @@ function runOptionalOpenClawPluginBlock(
   const command = extractRunBlock(
     DOCKERFILE,
     "# Install non-messaging OpenClaw plugins that need to match the runtime.",
-    'RUN OPENCLAW_VERSION="${OPENCLAW_VERSION}" node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts',
+    "# The reviewed cache stays root-owned and immutable to the sandbox user.",
   );
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-plugin-integrity-"));
   const log = path.join(tmp, "calls.log");
