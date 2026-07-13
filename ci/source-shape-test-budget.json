@@ -102,11 +102,6 @@
       "category": "compatibility"
     },
     {
-      "file": "test/e2e-advisor.test.ts",
-      "test": "strips untrusted symlinks before secret-bearing advisor steps",
-      "category": "security"
-    },
-    {
       "file": "test/e2e-fixture-dependency-review.test.ts",
       "test": "keeps installed fixture dependencies on exact versions",
       "category": "security"
@@ -260,6 +255,11 @@
       "file": "test/macos-e2e-workflow-boundary.test.ts",
       "test": "runs final-destroy against a pinned Docker setup on trusted Intel macOS",
       "category": "compatibility"
+    },
+    {
+      "file": "test/messaging-image-env-contract.test.ts",
+      "test": "%s keeps the full plan in build processes but not final runtime environments (#5896)",
+      "category": "security"
     },
     {
       "file": "test/mcp-openshell-workflow.test.ts",

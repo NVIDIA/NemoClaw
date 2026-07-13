@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { reconcileRegisteredExtraProviders } from "./extra-provider-reconciliation";
+import {
+  applyExtraProviderReconciliation,
+  planRegisteredExtraProviders,
+  reconcileRegisteredExtraProviders,
+} from "./extra-provider-reconciliation";
 import {
   LIMIT,
   missing,
@@ -72,5 +76,23 @@ describe("reconcileRegisteredExtraProviders", () => {
         "indeterminate-provider": missing("some-other-provider"),
       }),
     ).toEqual(["healthy-provider", "indeterminate-provider"]);
+  });
+
+  it("plans stale-provider cleanup without mutation until apply (#6226)", () => {
+    const removeExtraProvider = vi.fn(() => true);
+    const plan = planRegisteredExtraProviders("nemoclaw", {
+      listExtraProviders: () => ["healthy-provider", "stale-provider"],
+      removeExtraProvider,
+      runOpenshell: (args) => (args.at(-1) === "stale-provider" ? missing("stale-provider") : ok()),
+    });
+
+    expect(plan).toEqual({
+      extraProviders: ["healthy-provider"],
+      staleExtraProviders: ["stale-provider"],
+    });
+    expect(removeExtraProvider).not.toHaveBeenCalled();
+
+    applyExtraProviderReconciliation(plan, { removeExtraProvider });
+    expect(removeExtraProvider).toHaveBeenCalledWith("stale-provider");
   });
 });

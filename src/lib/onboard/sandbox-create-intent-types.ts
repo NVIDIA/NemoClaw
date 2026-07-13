@@ -44,18 +44,21 @@ export type SandboxCreateIntent = {
   readonly messagingProviderRequests: readonly SandboxCreateMessagingProviderRequest[];
   readonly reusableMessagingProviders: readonly string[];
   readonly extraProviders: readonly string[];
+  readonly staleExtraProviders: readonly string[];
   readonly hermesToolGateways: readonly string[];
   readonly policy: SandboxCreatePolicyRequest;
   readonly gpuCreateArgs: readonly string[];
+  readonly resourceCreateArgs: readonly string[];
   readonly gpuRoutePlan: DockerGpuRoutePlan;
   readonly sandboxGpuLogMessage: string | null;
   readonly disabledChannelNames: readonly string[];
+  readonly extraPlaceholderKeys: readonly string[];
 };
 
 export type ResolveSandboxCreateIntentInput = {
   basePolicyPath: string;
   sandboxName: string;
-  channels: MessagingChannel[];
+  channels: readonly MessagingChannel[];
   enabledChannels: string[] | null;
   disabledChannelNames: ReadonlySet<string>;
   messagingProviderRequests: readonly SandboxCreateMessagingProviderRequest[];
@@ -63,11 +66,14 @@ export type ResolveSandboxCreateIntentInput = {
   reusableMessagingChannels: readonly string[];
   reusableMessagingProviders: readonly string[];
   extraProviders?: readonly string[];
+  staleExtraProviders?: readonly string[];
   hermesToolGateways: readonly string[];
   sandboxGpuConfig: SandboxGpuCreateConfig;
   gpuCreateArgs: readonly string[];
+  resourceCreateArgs?: readonly string[];
   gpuRoutePlan: DockerGpuRoutePlan;
   sandboxGpuLogMessage: string | null;
+  extraPlaceholderKeys?: readonly string[];
   agentName?: string | null;
   policyTier: string | null;
 };
@@ -76,7 +82,6 @@ export type MaterializeSandboxCreatePlanInput = {
   intent: SandboxCreateIntent;
   buildCtx: string;
   messagingTokenDefs: MessagingTokenDef[];
-  appendResourceFlags(createArgs: string[]): void;
   runProviderPreDeleteCleanup(): void;
   upsertMessagingProviders(
     tokenDefs: MessagingTokenDef[],

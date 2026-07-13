@@ -57,6 +57,18 @@ jobs:
       - name: Run installer integration tests
         uses: ./.github/actions/ci-installer-integration
 
+  reviewed-npm-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Audit reviewed production npm graphs
+        uses: ./.github/actions/ci-reviewed-npm-audit
+
   real-openclaw-dist-harness:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -213,6 +225,7 @@ jobs:
       - static-checks
       - build-typecheck
       - installer-integration
+      - reviewed-npm-audit
       - real-openclaw-dist-harness
       - cli-tests
       - plugin-tests
@@ -227,6 +240,7 @@ jobs:
           STATIC_RESULT: ${{ needs['static-checks'].result }}
           BUILD_TYPECHECK_RESULT: ${{ needs['build-typecheck'].result }}
           INSTALLER_INTEGRATION_RESULT: ${{ needs['installer-integration'].result }}
+          REVIEWED_NPM_AUDIT_RESULT: ${{ needs['reviewed-npm-audit'].result }}
           REAL_OPENCLAW_DIST_HARNESS_RESULT: ${{ needs['real-openclaw-dist-harness'].result }}
           CLI_TESTS_RESULT: ${{ needs['cli-tests'].result }}
           PLUGIN_TESTS_RESULT: ${{ needs['plugin-tests'].result }}
@@ -247,6 +261,7 @@ jobs:
           require_success "static-checks" "$STATIC_RESULT"
           require_success "build-typecheck" "$BUILD_TYPECHECK_RESULT"
           require_success "installer-integration" "$INSTALLER_INTEGRATION_RESULT"
+          require_success "reviewed-npm-audit" "$REVIEWED_NPM_AUDIT_RESULT"
           require_success "real-openclaw-dist-harness" "$REAL_OPENCLAW_DIST_HARNESS_RESULT"
           require_success "cli-tests" "$CLI_TESTS_RESULT"
           require_success "plugin-tests" "$PLUGIN_TESTS_RESULT"

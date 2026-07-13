@@ -180,6 +180,17 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(comparator).toContain("Cross-issue regression sweep (separate skill)");
   });
 
+  it("uses the merge gate's unresolved-issue threshold for ready-now PRs", () => {
+    const day = read(".agents/skills/nemoclaw-maintainer-day/SKILL.md");
+    const mergeGate = read(".agents/skills/nemoclaw-maintainer-day/MERGE-GATE.md");
+    const threshold = "no unresolved correctness or security issue";
+
+    expect(day).toContain(threshold);
+    expect(mergeGate).toContain(threshold);
+    expect(day).not.toContain("no confirmed major CodeRabbit or PR Review Advisor issues");
+    expect(mergeGate).not.toContain("no confirmed major CodeRabbit or PR Review Advisor issues");
+  });
+
   it("uses native bug type and approved Project writes for stale verification", () => {
     const stale = readMarkdownTree(".agents/skills/nemoclaw-maintainer-verify-stale");
 

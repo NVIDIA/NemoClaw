@@ -26,6 +26,7 @@ type TriggeredWorkflow = Omit<Workflow, "jobs"> & {
   on: {
     workflow_run: { workflows: string[]; types: string[] };
     pull_request_target: { types: string[] };
+    workflow_dispatch: { inputs: Record<string, unknown> };
   };
   permissions: Record<string, string>;
   jobs: Record<string, CoordinatorJob>;
@@ -256,8 +257,10 @@ describe("PR E2E gate workflow", () => {
   // source-shape-contract: security -- Trusted metadata triggers and least privilege bound the write-capable controller
   it("limits triggers and job permissions", () => {
     const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
+    const initialize = workflow.jobs.initialize;
     const cancel = workflow.jobs["cancel-superseded"];
     const coordinate = workflow.jobs.coordinate;
+    const resolveException = workflow.jobs["resolve-exception"];
 
     expect(workflow.name).toBe("E2E / PR Gate");
     expect(workflow.on).toEqual({
@@ -266,10 +269,45 @@ describe("PR E2E gate workflow", () => {
         types: ["completed"],
       },
       pull_request_target: {
-        types: ["synchronize", "reopened", "closed"],
+        types: ["opened", "synchronize", "reopened", "ready_for_review", "closed"],
+      },
+      workflow_dispatch: {
+        inputs: {
+          operation: {
+            description: "Exact-head exception type to record.",
+            required: true,
+            default: "resolve-fork",
+            type: "choice",
+            options: ["resolve-fork", "resolve-control-plane"],
+          },
+          pr_number: {
+            description: "Pull request number to resolve.",
+            required: true,
+            type: "string",
+          },
+          expected_head_sha: {
+            description: "Exact 40-character PR head SHA reviewed by the maintainer.",
+            required: true,
+            type: "string",
+          },
+          waiver_reason: {
+            description: "Why credentialed E2E cannot be run safely for this revision.",
+            required: true,
+            type: "string",
+          },
+          evidence_url: {
+            description: "Optional maintainer-supplied NVIDIA/NemoClaw Actions reference.",
+            required: false,
+            default: "",
+            type: "string",
+          },
+        },
       },
     });
     expect(workflow.permissions).toEqual({});
+    expect(initialize.if).toContain("github.event_name == 'pull_request_target'");
+    expect(initialize.if).toContain("github.event.action != 'closed'");
+    expect(initialize.permissions).toEqual({ checks: "write", contents: "read" });
     expect(cancel.if).toContain("github.event_name == 'pull_request_target'");
     expect(cancel.if).toContain(
       "github.event.pull_request.head.repo.full_name == github.repository",
@@ -277,15 +315,34 @@ describe("PR E2E gate workflow", () => {
     expect(cancel.permissions).toEqual({ actions: "write", contents: "read" });
     expect(coordinate.if).toContain("github.event_name == 'workflow_run'");
     expect(coordinate.if).toContain("github.event.workflow_run.event == 'pull_request'");
-    expect(coordinate.if).toContain(
-      "github.event.workflow_run.head_repository.full_name == github.repository",
-    );
+    expect(coordinate.if).not.toContain("head_repository.full_name == github.repository");
     expect(coordinate.permissions).toEqual({
       actions: "write",
       checks: "write",
       contents: "read",
       "pull-requests": "read",
     });
+    expect(resolveException.if).toContain("github.event_name == 'workflow_dispatch'");
+    expect(resolveException.if).toContain("github.ref == 'refs/heads/main'");
+    expect(resolveException.permissions).toEqual({
+      checks: "write",
+      contents: "read",
+      "pull-requests": "read",
+    });
+    expect(collectStrings(initialize).some((value) => value.includes("--mode seed"))).toBe(true);
+    expect(
+      collectStrings(resolveException).some((value) => value.includes('--mode "$OPERATION"')),
+    ).toBe(true);
+    expect(step(initialize, "Reserve exact-head gate").run).toContain('--head "$HEAD_SHA"');
+    const resolution = step(resolveException, "Record E2E exception");
+    expect(resolution.env?.OPERATION).toBe("${{ inputs.operation }}");
+    expect(resolution.env?.WORKFLOW_SHA).toBe("${{ github.workflow_sha }}");
+    expect(resolution.env?.MAINTAINER).toBe("${{ github.triggering_actor }}");
+    expect(resolution.env?.MAINTAINER).not.toBe("${{ github.actor }}");
+    expect(resolution.run).toContain('--head "$EXPECTED_HEAD_SHA"');
+    expect(resolution.run).toContain('--workflow-sha "$WORKFLOW_SHA"');
+    expect(resolution.run).toContain('--reason "$WAIVER_REASON"');
+    expect(resolution.run).toContain('--evidence-url "$EVIDENCE_URL"');
     expect(collectStrings(workflow).some((value) => value.includes("${{ secrets."))).toBe(false);
   });
 
@@ -303,7 +360,7 @@ describe("PR E2E gate workflow", () => {
       (candidate) => candidate.name === "Install controller dependencies",
     );
 
-    expect(checkouts).toHaveLength(2);
+    expect(checkouts).toHaveLength(4);
     expect(
       checkouts.every(
         (checkout) =>
@@ -311,10 +368,10 @@ describe("PR E2E gate workflow", () => {
           checkout.with?.["persist-credentials"] === false,
       ),
     ).toBe(true);
-    expect(nodeSetups).toHaveLength(2);
+    expect(nodeSetups).toHaveLength(4);
     expect(nodeSetups.every((setup) => setup.with?.["node-version"] === "22")).toBe(true);
     expect(nodeSetups.every((setup) => !("cache" in (setup.with ?? {})))).toBe(true);
-    expect(installs).toHaveLength(2);
+    expect(installs).toHaveLength(4);
     expect(installs.every((install) => install.run === "npm ci --ignore-scripts")).toBe(true);
     expect(
       allSteps.some((candidate) => candidate.uses?.startsWith("actions/download-artifact@")),

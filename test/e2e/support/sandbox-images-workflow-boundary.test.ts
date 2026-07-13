@@ -119,6 +119,47 @@ describe("sandbox image workflow boundary", () => {
     }
   });
 
+  it("keeps messaging plan image probes isolated, guarded, local, and verified", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const probe = imageWorkflow.jobs["messaging-plan-image-boundary"];
+    probe["timeout-minutes"] = 60;
+    probe.needs = "build-sandbox-images";
+    probe.steps!.find((step) => step.name === "Set up Node")!.with!["node-version"] = "22";
+    probe.steps!.push({ ...probe.steps!.find((step) => step.name === "Set up Node")! });
+    probe.steps!.push({
+      name: "Publish probe image",
+      uses: "actions/upload-artifact@0000000000000000000000000000000000000000",
+    });
+
+    const openclaw = probe.steps!.find(
+      (step) => step.name === "Build and verify OpenClaw messaging plan boundary",
+    )!;
+    openclaw.run = openclaw.run!.replace(
+      'scripts/check-production-build-args.sh "${build_args[@]}"',
+      'echo "guard bypassed"',
+    );
+
+    const hermes = probe.steps!.find(
+      (step) => step.name === "Build and verify Hermes messaging plan boundary",
+    )!;
+    hermes.run = hermes.run!.replace(
+      "check-messaging-plan-image-boundary.mts verify",
+      "check-messaging-plan-image-boundary.mts bypass",
+    );
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
+      expect.arrayContaining([
+        "messaging plan image boundary must retain its 30-minute budget",
+        "messaging plan image boundary must remain isolated from canonical image jobs",
+        "messaging plan image boundary must set up Node exactly once",
+        "messaging plan image boundary must use Node 22.19.0",
+        'openclaw messaging plan image boundary must include scripts/check-production-build-args.sh "${build_args[@]}"',
+        "hermes messaging plan image boundary must include node --experimental-strip-types scripts/check-messaging-plan-image-boundary.mts verify nemoclaw-hermes-plan-boundary hermes",
+        "messaging plan image boundary must not publish probe image artifacts",
+      ]),
+    );
+  });
+
   it("rejects coupling, rebuilding, or failing to reuse the OpenClaw image artifact", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
     const producer = imageWorkflow.jobs["build-sandbox-images"];

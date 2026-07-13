@@ -22,9 +22,11 @@ const CLEANUP_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
 const HERMES_SECRET_BOUNDARY_STEP_ID = "hermes-secret-boundary";
 const HERMES_ROOT_AFTER_SECRET_CONDITION =
   "${{ !cancelled() && (steps.hermes-secret-boundary.outcome == 'success' || steps.hermes-secret-boundary.outcome == 'failure') }}";
+const MESSAGING_PLAN_IMAGE_BOUNDARY_JOB = "messaging-plan-image-boundary";
 const IMAGE_BUILD_JOBS = [
   "build-sandbox-images",
   "build-hermes-sandbox-image",
+  MESSAGING_PLAN_IMAGE_BOUNDARY_JOB,
   "build-sandbox-images-arm64",
 ] as const;
 const OPENCLAW_IMAGE_CONSUMER_JOBS = [
@@ -365,6 +367,118 @@ function validateGuardedProductionBuildContracts(
 ): void {
   for (const contract of GUARDED_PRODUCTION_BUILD_CONTRACTS) {
     validateGuardedProductionBuild(errors, workflow, contract);
+  }
+}
+
+function normalizedShell(run: string | undefined): string {
+  return (run ?? "")
+    .replace(/\\\r?\n\s*/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function validateMessagingPlanBoundaryBuild(
+  errors: string[],
+  job: SandboxImagesWorkflowJob,
+  options: {
+    readonly agent: "hermes" | "openclaw";
+    readonly baseArgName: "BASE_IMAGE";
+    readonly baseEnvName: "BASE_IMAGE" | "HERMES_BASE_IMAGE";
+    readonly stepName: string;
+    readonly target: string;
+  },
+): void {
+  const step = requireStep(errors, MESSAGING_PLAN_IMAGE_BOUNDARY_JOB, job, options.stepName);
+  const run = normalizedShell(step.run);
+  const expectedEnv = {
+    [options.baseEnvName]: `\${{ env.${options.baseEnvName} }}`,
+  };
+  const requiredFragments = [
+    "set -euo pipefail",
+    `node --experimental-strip-types scripts/check-messaging-plan-image-boundary.mts plan ${options.agent}`,
+    `--build-arg \"${options.baseArgName}=\${${options.baseEnvName}}\"`,
+    '--build-arg "NEMOCLAW_MESSAGING_PLAN_B64=${messaging_plan_b64}"',
+    'scripts/check-production-build-args.sh "${build_args[@]}"',
+    `docker build \"\${build_args[@]}\" -t ${options.target} .`,
+    `node --experimental-strip-types scripts/check-messaging-plan-image-boundary.mts verify ${options.target} ${options.agent}`,
+  ];
+
+  if (step.shell !== "bash" || !isDeepStrictEqual(record(step.env), expectedEnv)) {
+    errors.push(`${options.agent} messaging plan image boundary must use guarded bash env scope`);
+  }
+  for (const fragment of requiredFragments) {
+    if (!run.includes(fragment)) {
+      errors.push(`${options.agent} messaging plan image boundary must include ${fragment}`);
+    }
+  }
+
+  const planIndex = run.indexOf("check-messaging-plan-image-boundary.mts plan");
+  const guardIndex = run.indexOf("check-production-build-args.sh");
+  const buildIndex = run.indexOf(`docker build \"\${build_args[@]}\" -t ${options.target}`);
+  const verifyIndex = run.indexOf("check-messaging-plan-image-boundary.mts verify");
+  if (
+    planIndex < 0 ||
+    guardIndex <= planIndex ||
+    buildIndex <= guardIndex ||
+    verifyIndex <= buildIndex
+  ) {
+    errors.push(`${options.agent} messaging plan image boundary steps are out of order`);
+  }
+}
+
+function validateMessagingPlanImageBoundary(
+  errors: string[],
+  workflow: SandboxImagesWorkflow,
+): void {
+  const job = workflow.jobs[MESSAGING_PLAN_IMAGE_BOUNDARY_JOB] ?? {};
+  if (job["timeout-minutes"] !== 30) {
+    errors.push("messaging plan image boundary must retain its 30-minute budget");
+  }
+  if (job.needs !== undefined) {
+    errors.push("messaging plan image boundary must remain isolated from canonical image jobs");
+  }
+  const nodeSetupSteps = steps(job).filter((step) => step.name === "Set up Node");
+  if (nodeSetupSteps.length !== 1) {
+    errors.push("messaging plan image boundary must set up Node exactly once");
+  }
+  if (record(nodeSetupSteps[0]?.with)["node-version"] !== "22.19.0") {
+    errors.push("messaging plan image boundary must use Node 22.19.0");
+  }
+  for (const [stepName, action] of [
+    ["Resolve sandbox base image", "./.github/actions/resolve-sandbox-base-image"],
+    ["Resolve Hermes base image", "./.github/actions/resolve-hermes-base-image"],
+  ] as const) {
+    if (findStep(job, stepName)?.uses !== action) {
+      errors.push(`messaging plan image boundary must run '${stepName}'`);
+    }
+  }
+
+  validateMessagingPlanBoundaryBuild(errors, job, {
+    agent: "openclaw",
+    baseArgName: "BASE_IMAGE",
+    baseEnvName: "BASE_IMAGE",
+    stepName: "Build and verify OpenClaw messaging plan boundary",
+    target: "nemoclaw-openclaw-plan-boundary",
+  });
+  validateMessagingPlanBoundaryBuild(errors, job, {
+    agent: "hermes",
+    baseArgName: "BASE_IMAGE",
+    baseEnvName: "HERMES_BASE_IMAGE",
+    stepName: "Build and verify Hermes messaging plan boundary",
+    target: "nemoclaw-hermes-plan-boundary",
+  });
+
+  const builds = dockerBuildLines(job);
+  if (
+    !isDeepStrictEqual(builds, [
+      'docker build "${build_args[@]}" -t nemoclaw-openclaw-plan-boundary .',
+      'docker build "${build_args[@]}" -t nemoclaw-hermes-plan-boundary .',
+    ])
+  ) {
+    errors.push("messaging plan image boundary must build exactly two disposable local images");
+  }
+  if (steps(job).some((step) => String(step.uses ?? "").includes("upload-artifact"))) {
+    errors.push("messaging plan image boundary must not publish probe image artifacts");
   }
 }
 
@@ -726,6 +840,7 @@ export function validateSandboxImagesWorkflow(
   }
   validateSecretScopeAndRegistryWrites(errors, workflow);
   validateGuardedProductionBuildContracts(errors, workflow);
+  validateMessagingPlanImageBoundary(errors, workflow);
   validateRuntimeImageReuse(errors, workflow);
   validateHermesImageReuse(errors, workflow);
   validateStateDirGuardMetadataImageReuse(errors, workflow);
