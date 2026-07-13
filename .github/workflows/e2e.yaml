@@ -722,10 +722,28 @@ jobs:
           rm -rf "$staging_root"
           mkdir -m 700 "$staging_root"
 
+          github_api_get() {
+            local api_path="$1" output="$2" accept="${3:-application/vnd.github+json}"
+            printf 'header = "Authorization: Bearer %s"\n' "$GH_TOKEN" |
+              curl --config - \
+                --proto '=https' \
+                --proto-redir '=https' \
+                --fail-with-body \
+                --location \
+                --remove-on-error \
+                --request GET \
+                --silent \
+                --show-error \
+                --header "Accept: ${accept}" \
+                --header "X-GitHub-Api-Version: 2022-11-28" \
+                --output "$output" \
+                "https://api.github.com/${api_path}"
+          }
+
           fetch_artifact() {
             local id="$1" name="$2" zip_sha="$3" output="$4"
             local metadata="$artifact_root/${name}.json"
-            gh api "repos/NVIDIA/OpenShell/actions/artifacts/${id}" > "$metadata"
+            github_api_get "repos/NVIDIA/OpenShell/actions/artifacts/${id}" "$metadata"
             jq -e \
               --arg name "$name" \
               --arg sha "$OPENSHELL_SOURCE_SHA" \
@@ -739,7 +757,10 @@ jobs:
                 .workflow_run.head_branch == "main" and
                 .workflow_run.head_repository_id == 1166129534
               ' "$metadata" >/dev/null
-            gh api "repos/NVIDIA/OpenShell/actions/artifacts/${id}/zip" > "$output"
+            github_api_get \
+              "repos/NVIDIA/OpenShell/actions/artifacts/${id}/zip" \
+              "$output" \
+              "application/octet-stream"
             printf '%s  %s\n' "$zip_sha" "$output" | sha256sum -c -
           }
 
