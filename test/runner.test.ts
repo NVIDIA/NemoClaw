@@ -741,11 +741,35 @@ describe("regression guards", () => {
         strings() { echo "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods"; }
         export -f strings
         tar() {
-          local destination="\${@: -1}"
-          printf '%s\n' '#!/bin/sh' 'echo "openshell 0.0.72"' > "$destination/openshell"
-          printf '%s\n' '#!/bin/sh' 'echo "openshell-gateway 0.0.72"' > "$destination/openshell-gateway"
-          printf '%s\n' '#!/bin/sh' 'echo "openshell-sandbox 0.0.72"' > "$destination/openshell-sandbox"
-          chmod +x "$destination/openshell" "$destination/openshell-gateway" "$destination/openshell-sandbox"
+          local mode="\${1:-}" archive="\${2:-}" expected="" destination=""
+          case "$(basename "$archive")" in
+          openshell-gateway-*) expected="openshell-gateway" ;;
+          openshell-sandbox-*) expected="openshell-sandbox" ;;
+          openshell-*) expected="openshell" ;;
+          *) return 2 ;;
+          esac
+          case "$mode" in
+          -tzf)
+            printf '%s\n' "$expected"
+            ;;
+          -tvzf)
+            printf '%s\n' "-rwxr-xr-x 0/0 0 2026-01-01 00:00 $expected"
+            ;;
+          xzf|-xzf)
+            shift 2
+            while [ "$#" -gt 0 ]; do
+              if [ "$1" = "-C" ]; then
+                shift
+                destination="$1"
+              fi
+              shift || true
+            done
+            [ -n "$destination" ] || return 2
+            printf '%s\n' '#!/bin/sh' 'echo "0.0.72"' > "$destination/$expected"
+            chmod +x "$destination/$expected"
+            ;;
+          *) return 2 ;;
+          esac
         }; export -f tar
         install() { /usr/bin/install "$@"; }; export -f install
         source "${scriptPath}"
@@ -819,11 +843,35 @@ describe("regression guards", () => {
         strings() { echo "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods"; }
         export -f strings
         tar() {
-          local destination="\${@: -1}"
-          printf '%s\n' '#!/bin/sh' 'echo "openshell 0.0.72"' > "$destination/openshell"
-          printf '%s\n' '#!/bin/sh' 'echo "openshell-gateway 0.0.72"' > "$destination/openshell-gateway"
-          printf '%s\n' '#!/bin/sh' 'echo "openshell-sandbox 0.0.72"' > "$destination/openshell-sandbox"
-          chmod +x "$destination/openshell" "$destination/openshell-gateway" "$destination/openshell-sandbox"
+          local mode="\${1:-}" archive="\${2:-}" expected="" destination=""
+          case "$(basename "$archive")" in
+          openshell-gateway-*) expected="openshell-gateway" ;;
+          openshell-sandbox-*) expected="openshell-sandbox" ;;
+          openshell-*) expected="openshell" ;;
+          *) return 2 ;;
+          esac
+          case "$mode" in
+          -tzf)
+            printf '%s\n' "$expected"
+            ;;
+          -tvzf)
+            printf '%s\n' "-rwxr-xr-x 0/0 0 2026-01-01 00:00 $expected"
+            ;;
+          xzf|-xzf)
+            shift 2
+            while [ "$#" -gt 0 ]; do
+              if [ "$1" = "-C" ]; then
+                shift
+                destination="$1"
+              fi
+              shift || true
+            done
+            [ -n "$destination" ] || return 2
+            printf '%s\n' '#!/bin/sh' 'echo "0.0.72"' > "$destination/$expected"
+            chmod +x "$destination/$expected"
+            ;;
+          *) return 2 ;;
+          esac
         }; export -f tar
         install() { /usr/bin/install "$@"; }; export -f install
         source "${scriptPath}"

@@ -7,6 +7,7 @@ import path from "node:path";
 export type SmokeVerifierHarnessCall = [string, ...unknown[]];
 
 type VerifyOnboardSmokeInvocation = {
+  selectedChatCapability?: boolean;
   credentialEnv?: string;
   endpointUrl?: string;
   forceOpenAiLike?: boolean;
@@ -83,17 +84,37 @@ Module._load = function patchedLoad(request, _parent, _isMain) {
   return originalLoad.apply(this, arguments);
 };
 
-const { verifyOnboardInferenceSmoke } = require(process.env.PROBES_MODULE);
+const {
+  getProbeAuthMode,
+  getProbeExtraHeaders,
+  verifyOnboardInferenceSmoke,
+} = require(process.env.PROBES_MODULE);
+const { OnboardInferenceCapabilityCache } = require(process.env.CAPABILITY_CACHE_MODULE);
 const invocations = JSON.parse(process.env.SMOKE_INVOCATIONS || "[]");
 console.log = (...args) => calls.push(["log", args.join(" ")]);
 
 (async () => {
   for (const invocation of invocations) {
-    await verifyOnboardInferenceSmoke({
+    const { selectedChatCapability, ...input } = invocation;
+    const capabilityCache = selectedChatCapability ? new OnboardInferenceCapabilityCache() : undefined;
+    const effectiveInvocation = {
       endpointUrl: "https://api.example.com/v1",
       model: "nous/test-model",
       provider: "hermes-provider",
-      ...invocation,
+      ...input,
+    };
+    if (capabilityCache) {
+      const primed = capabilityCache.rememberCompletedOpenAiChat({
+        endpointUrl: effectiveInvocation.endpointUrl,
+        model: effectiveInvocation.model,
+        authMode: getProbeAuthMode(effectiveInvocation.provider),
+        extraHeaders: getProbeExtraHeaders(effectiveInvocation.provider),
+      });
+      if (!primed) throw new Error("failed to prime selected Chat Completions capability");
+    }
+    await verifyOnboardInferenceSmoke({
+      ...effectiveInvocation,
+      capabilityCache,
     });
   }
   process.stdout.write(JSON.stringify(calls));
@@ -108,6 +129,10 @@ console.log = (...args) => calls.push(["log", args.join(" ")]);
     env: {
       ...process.env,
       PROBES_MODULE: path.join(process.cwd(), "src/lib/inference/onboard-probes.ts"),
+      CAPABILITY_CACHE_MODULE: path.join(
+        process.cwd(),
+        "src/lib/onboard/inference-capability-cache.ts",
+      ),
       SMOKE_INVOCATIONS: JSON.stringify(invocations),
       VITEST: "false",
     },

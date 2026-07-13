@@ -10,22 +10,36 @@
 // Ref: https://github.com/NVIDIA/NemoClaw/issues/1445
 
 import { describe, expect, it } from "vitest";
-
 import {
   DANGEROUS_HOSTS,
-  ROUTER_API_BASE_HOST_ALLOWLIST,
   findDangerousHosts,
   findDangerousRouterApiBases,
   isDangerousHost,
+  ROUTER_API_BASE_HOST_ALLOWLIST,
+  runConfigSemanticChecks,
 } from "../scripts/validate-configs";
+import {
+  DANGEROUS_HOST_CHECK,
+  runSemanticChecks,
+  splitSemanticFindings,
+} from "../src/lib/policy/semantic-validation";
 
 describe("isDangerousHost", () => {
-  it.each(["*", "0.0.0.0", "0.0.0.0/0", "::", "::/0"])("flags %s as dangerous", (host) => {
+  it.each([
+    "*",
+    "0.0.0.0",
+    "0.0.0.0/0",
+    "::",
+    "::/0",
+    "*:443",
+    "0.0.0.0:8080",
+    "0.0.0.0/0:443",
+    "::/0:443",
+    "[::]",
+    "[::]:443",
+    "[::/0]:443",
+  ])("flags %s as dangerous", (host) => {
     expect(isDangerousHost(host)).toBe(true);
-  });
-
-  it("flags bare wildcard with port as dangerous", () => {
-    expect(isDangerousHost("*:443")).toBe(true);
   });
 
   it.each([
@@ -121,6 +135,7 @@ describe("findDangerousHosts", () => {
     expect(findings).toHaveLength(1);
     expect(findings[0].host).toBe("0.0.0.0/0");
     expect(findings[0].path).toBe("/network_policies/egress/endpoints/1/host");
+    expect(findings[0].severity).toBe("error");
   });
 
   it("flags every catch-all across multiple policies", () => {
@@ -177,5 +192,54 @@ describe("findDangerousHosts", () => {
     expect(findings).toHaveLength(1);
     expect(findings[0].host).toBe("*");
     expect(findings[0].path).toBe("/network_policies/slack/endpoints/1/host");
+  });
+});
+
+describe("runConfigSemanticChecks", () => {
+  it("runs the shared policy semantic checks from the config validator", () => {
+    expect(
+      runConfigSemanticChecks({
+        network_policies: { egress: { endpoints: [{ host: "*:443", port: 443 }] } },
+      }),
+    ).toMatchObject([
+      {
+        path: "/network_policies/egress/endpoints/0/host",
+        host: "*:443",
+        severity: "error",
+      },
+    ]);
+  });
+});
+
+describe("runSemanticChecks", () => {
+  it("composes named checks and preserves error and warning findings", () => {
+    const findings = runSemanticChecks({ policy: "value" }, [
+      {
+        name: "first",
+        description: "Reports the first finding.",
+        run: () => [{ path: "/first", message: "first finding", severity: "error" }],
+      },
+      {
+        name: "second",
+        description: "Reports the second finding.",
+        run: () => [{ path: "/second", message: "second finding", severity: "warning" }],
+      },
+    ]);
+    expect(findings).toEqual([
+      { path: "/first", message: "first finding", severity: "error" },
+      { path: "/second", message: "second finding", severity: "warning" },
+    ]);
+    expect(splitSemanticFindings(findings)).toEqual({
+      errors: [{ path: "/first", message: "first finding", severity: "error" }],
+      warnings: [{ path: "/second", message: "second finding", severity: "warning" }],
+    });
+  });
+
+  it("describes the registered dangerous-host check", () => {
+    expect(DANGEROUS_HOST_CHECK).toMatchObject({
+      name: "dangerous-host",
+      description: expect.any(String),
+      run: findDangerousHosts,
+    });
   });
 });

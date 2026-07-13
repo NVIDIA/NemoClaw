@@ -37,4 +37,34 @@ describe("Hermes onboard smoke verification", () => {
       ],
     ]);
   });
+
+  it("does not send a duplicate smoke request for a matching selected Chat Completions capability", async () => {
+    const calls = await runVerifyOnboardSmokeHarness([
+      {
+        credentialEnv: "NOUS_API_KEY",
+        endpointUrl: "https://override.example/v1",
+        model: "override/model",
+        provider: "hermes-provider",
+        selectedChatCapability: true,
+      },
+    ]);
+
+    expect(calls.filter((call) => call[0] === "runCurlProbe")).toHaveLength(0);
+    expect(calls).toContainEqual([
+      "log",
+      "  ✓ Reusing selected Chat Completions validation: hermes-provider / override/model",
+    ]);
+  });
+
+  it("fails when the selected capability cannot be safely cached", async () => {
+    await expect(
+      runVerifyOnboardSmokeHarness([
+        {
+          credentialEnv: "NOUS_API_KEY",
+          endpointUrl: "https://api.example.com/v1?credential-bearing=true",
+          selectedChatCapability: true,
+        },
+      ]),
+    ).rejects.toThrow("failed to prime selected Chat Completions capability");
+  });
 });
