@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,19 +10,35 @@ import YAML from "yaml";
 import { validatePrReviewAdvisorWorkflowBoundary } from "../tools/pr-review-advisor/workflow-boundary.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-const PR_REVIEW_ADVISOR_TARGET_DIR = "/tmp/pr-review-advisor-target";
+const WORKFLOW_PATH = path.join(ROOT, ".github/workflows/pr-review-advisor.yaml");
+const TARGET_DIR = "/tmp/pr-review-advisor-target";
+const HEAD_SHA = "b".repeat(40);
+const BASE_SHA = "a".repeat(40);
 
-function prepareTargetCheckoutScript(): string {
-  return workflowStepScript("Prepare target PR checkout");
+type Workflow = {
+  jobs?: Record<string, { steps?: Array<{ name?: string; run?: string }> }>;
+};
+
+function workflowSource(): string {
+  return fs.readFileSync(WORKFLOW_PATH, "utf8");
 }
 
-function workflowStepScript(name: string): string {
-  const workflow = YAML.parse(
-    fs.readFileSync(path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"), "utf8"),
-  ) as { jobs?: { review?: { steps?: Array<{ name?: string; run?: string }> } } };
-  const step = workflow.jobs?.review?.steps?.find((candidate) => candidate.name === name);
+function workflowStepScript(job: string, name: string): string {
+  const workflow = YAML.parse(workflowSource()) as Workflow;
+  const step = workflow.jobs?.[job]?.steps?.find((candidate) => candidate.name === name);
   expect(step?.run).toEqual(expect.any(String));
   return step!.run!;
+}
+
+function validateMutation(mutate: (source: string) => string): string[] {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-boundary-"));
+  const workflowPath = path.join(tmp, "workflow.yaml");
+  fs.writeFileSync(workflowPath, mutate(workflowSource()));
+  try {
+    return validatePrReviewAdvisorWorkflowBoundary(workflowPath);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 }
 
 function writeFakeCommand(binDir: string, name: string): void {
@@ -33,39 +49,57 @@ function writeFakeCommand(binDir: string, name: string): void {
   );
 }
 
-function runPrepareTargetCheckout(env: {
-  TARGET_REPO: string;
-  TARGET_PR: string;
-  TARGET_BASE: string;
-}) {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-workflow-"));
+function runPrepareWorkspace(
+  env: Partial<{
+    TARGET_REPO: string;
+    TARGET_PR: string;
+    TARGET_BASE: string;
+    PR_BASE_SHA: string;
+    EXPECTED_HEAD_SHA: string;
+    FAKE_BASE_SHA: string;
+    FAKE_HEAD_SHA: string;
+  }>,
+) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-target-"));
   const binDir = path.join(tmp, "bin");
   const gitLog = path.join(tmp, "git.log");
   const githubEnv = path.join(tmp, "github-env");
+  const targetDir = path.join(tmp, "target");
   fs.mkdirSync(binDir);
   fs.writeFileSync(
     path.join(binDir, "git"),
-    '#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >> "$FAKE_GIT_LOG"\n',
+    `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$FAKE_GIT_LOG"
+if [[ "$*" == *"rev-parse refs/remotes/target/base"* ]]; then
+  printf '%s\\n' "$FAKE_BASE_SHA"
+elif [[ "$*" == *"rev-parse HEAD"* ]]; then
+  printf '%s\\n' "$FAKE_HEAD_SHA"
+fi
+`,
     { mode: 0o755 },
   );
-  const targetDir = path.join(tmp, "target");
-  const workflowScript = prepareTargetCheckoutScript();
-  expect(workflowScript).toContain(PR_REVIEW_ADVISOR_TARGET_DIR);
-  const result = spawnSync(
-    "bash",
-    ["-c", workflowScript.replaceAll(PR_REVIEW_ADVISOR_TARGET_DIR, targetDir)],
-    {
-      cwd: ROOT,
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        ...env,
-        FAKE_GIT_LOG: gitLog,
-        GITHUB_ENV: githubEnv,
-        PATH: `${binDir}:${process.env.PATH ?? ""}`,
-      },
-    },
+  const script = workflowStepScript("review", "Prepare isolated analysis workspace").replaceAll(
+    TARGET_DIR,
+    targetDir,
   );
+  const result = spawnSync("/bin/bash", ["-c", script], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      TARGET_REPO: "NVIDIA/NemoClaw",
+      TARGET_PR: "6736",
+      TARGET_BASE: "main",
+      PR_BASE_SHA: BASE_SHA,
+      EXPECTED_HEAD_SHA: HEAD_SHA,
+      FAKE_BASE_SHA: BASE_SHA,
+      FAKE_HEAD_SHA: HEAD_SHA,
+      ...env,
+      FAKE_GIT_LOG: gitLog,
+      GITHUB_ENV: githubEnv,
+      PATH: `${binDir}:${process.env.PATH ?? ""}`,
+    },
+  });
   return {
     ...result,
     cleanup: () => fs.rmSync(tmp, { recursive: true, force: true }),
@@ -75,8 +109,317 @@ function runPrepareTargetCheckout(env: {
   };
 }
 
+function runArtifactValidation(
+  result: unknown,
+  options: {
+    summary?: string;
+    liveHead?: string;
+    liveBase?: string;
+    symlinkResult?: boolean;
+  } = {},
+) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-publish-"));
+  const artifactDir = path.join(tmp, "artifacts");
+  const binDir = path.join(tmp, "bin");
+  const resultPath = path.join(artifactDir, "pr-review-advisor-final-result.json");
+  fs.mkdirSync(artifactDir);
+  fs.mkdirSync(binDir);
+  if (options.symlinkResult) {
+    const outside = path.join(tmp, "outside.json");
+    fs.writeFileSync(outside, `${JSON.stringify(result)}\n`);
+    fs.symlinkSync(outside, resultPath);
+  } else {
+    fs.writeFileSync(resultPath, `${JSON.stringify(result)}\n`);
+  }
+  fs.writeFileSync(
+    path.join(artifactDir, "pr-review-advisor-summary.md"),
+    options.summary ?? "# PR Review Advisor\n",
+  );
+  fs.writeFileSync(
+    path.join(binDir, "gh"),
+    '#!/bin/bash\ncase "$*" in *".base.sha"*) printf \'%s\\n\' "$FAKE_LIVE_BASE" ;; *) printf \'%s\\n\' "$FAKE_LIVE_HEAD" ;; esac\n',
+    { mode: 0o755 },
+  );
+  const completed = spawnSync(
+    "/bin/bash",
+    ["-c", workflowStepScript("publish", "Validate primary advisor artifact")],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        EXPECTED_HEAD_SHA: HEAD_SHA,
+        FAKE_LIVE_BASE: options.liveBase ?? BASE_SHA,
+        FAKE_LIVE_HEAD: options.liveHead ?? HEAD_SHA,
+        GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+        PR_BASE_SHA: BASE_SHA,
+        PR_NUMBER: "6736",
+        PR_REVIEW_ADVISOR_MAX_RESULT_BYTES: "2097152",
+        PR_REVIEW_ADVISOR_MAX_SUMMARY_BYTES: "1048576",
+        PUBLISH_ARTIFACT_DIR: artifactDir,
+        TRUSTED_WORKFLOW_SHA: "c".repeat(40),
+      },
+    },
+  );
+  return {
+    ...completed,
+    cleanup: () => fs.rmSync(tmp, { recursive: true, force: true }),
+  };
+}
+
+function validPrimaryResult(): Record<string, unknown> {
+  return {
+    version: 1,
+    headSha: HEAD_SHA,
+    summary: { recommendation: "merge_as_is" },
+    findings: [],
+    e2e: { coverage: { required: [] }, targets: { required: [] } },
+  };
+}
+
 describe("PR review advisor workflow boundary", () => {
-  it("installs the grep dependency when the trusted runner lacks it", () => {
+  it("keeps the target-event workflow inside the split privilege boundary", () => {
+    expect(validatePrReviewAdvisorWorkflowBoundary()).toEqual([]);
+  });
+
+  it("rejects trigger and trusted-workflow identity regressions", () => {
+    const errors = validateMutation((source) =>
+      source
+        .replace("  pull_request_target:\n", "  pull_request:\n")
+        .replaceAll("ref: ${{ github.workflow_sha }}", "ref: main"),
+    );
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        "workflow must run automatic reviews on pull_request_target",
+        "workflow must not duplicate automatic reviews on pull_request",
+        "step 'Checkout trusted advisor code (workflow revision)' expected with.ref=${{ github.workflow_sha }}",
+        "step 'Checkout trusted comment publisher (workflow revision)' expected with.ref=${{ github.workflow_sha }}",
+      ]),
+    );
+  });
+
+  it("rejects privilege-domain collapse", () => {
+    const errors = validateMutation((source) =>
+      source
+        .replace("      pull-requests: read\n", "      pull-requests: write\n")
+        .replace(
+          "      PR_REVIEW_ADVISOR_WORKFLOW_PATH: .github/workflows/pr-review-advisor.yaml",
+          "      PR_REVIEW_ADVISOR_WORKFLOW_PATH: .github/workflows/pr-review-advisor.yaml\n      PR_REVIEW_ADVISOR_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}\n      ADVISOR_WORKDIR: /tmp/pr-workdir",
+        ),
+    );
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        "review job permissions.pull-requests must be read",
+        "publish must be the only job with pull-requests: write",
+        "publish job must not receive the advisor model credential",
+        "publish job must not receive the untrusted analysis worktree",
+      ]),
+    );
+  });
+
+  it("requires every third-party action to be pinned to an immutable commit", () => {
+    const errors = validateMutation((source) =>
+      source.replace(
+        "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+        "actions/download-artifact@v8",
+      ),
+    );
+    expect(errors.some((error) => error.includes("full commit SHA"))).toBe(true);
+  });
+
+  // source-shape-contract: security -- Exactly one advisor lane may perform write-capable PR comment publication
+  it("requires one advisor lane to publish the PR comment", () => {
+    const source = fs.readFileSync(WORKFLOW_PATH, "utf8");
+    const noPrimary = validateMutation((workflow) =>
+      workflow.replace("publish_comment: true", "publish_comment: false"),
+    );
+    const twoPrimaries = validateMutation((workflow) =>
+      workflow.replace("publish_comment: false", "publish_comment: true"),
+    );
+
+    expect(source).toContain("publish_comment: true");
+    expect(noPrimary).toContain("advisor matrix must identify exactly one primary artifact lane");
+    expect(twoPrimaries).toContain(
+      "advisor matrix must identify exactly one primary artifact lane",
+    );
+  });
+
+  it("fetches and verifies the exact event base and head before exposing the worktree", () => {
+    const result = runPrepareWorkspace({});
+    try {
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.gitCalls).toEqual([
+        `-C ${result.targetDir} init`,
+        `-C ${result.targetDir} config core.hooksPath /dev/null`,
+        `-C ${result.targetDir} config submodule.recurse false`,
+        `-C ${result.targetDir} remote add target https://github.com/NVIDIA/NemoClaw.git`,
+        `-C ${result.targetDir} fetch --no-tags --no-recurse-submodules target ${BASE_SHA}:refs/remotes/target/base`,
+        `-C ${result.targetDir} fetch --no-tags --no-recurse-submodules target refs/pull/6736/head:refs/remotes/target/pr-6736`,
+        `-C ${result.targetDir} rev-parse refs/remotes/target/base`,
+        `-C ${result.targetDir} -c submodule.recurse=false checkout --detach refs/remotes/target/pr-6736`,
+        `-C ${result.targetDir} rev-parse HEAD`,
+      ]);
+      expect(result.githubEnv).toBe(`ADVISOR_WORKDIR=${result.targetDir}\nPR_NUMBER=6736\n`);
+    } finally {
+      result.cleanup();
+    }
+  });
+
+  it("fails closed when the fetched pull ref no longer matches the event head", () => {
+    const result = runPrepareWorkspace({ FAKE_HEAD_SHA: "d".repeat(40) });
+    try {
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain("Fetched pull ref does not match");
+      expect(result.githubEnv).toBe("");
+    } finally {
+      result.cleanup();
+    }
+  });
+
+  it("rejects malformed target inputs before invoking git", () => {
+    const invalid = [
+      { TARGET_REPO: "NVIDIA/NemoClaw --upload-pack=x" },
+      { TARGET_PR: "12:refs/heads/x" },
+      { TARGET_BASE: "../main" },
+      { TARGET_BASE: "-main" },
+      { PR_BASE_SHA: "not-a-sha" },
+      { EXPECTED_HEAD_SHA: "HEAD" },
+    ];
+    for (const environment of invalid) {
+      const result = runPrepareWorkspace(environment);
+      try {
+        expect(result.status).toBe(1);
+        expect(result.gitCalls).toEqual([]);
+      } finally {
+        result.cleanup();
+      }
+    }
+  });
+
+  it("removes worktree symlinks without touching their targets", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-symlinks-"));
+    const workdir = path.join(tmp, "workdir");
+    const outside = path.join(tmp, "outside.txt");
+    fs.mkdirSync(workdir);
+    fs.writeFileSync(outside, "runner state");
+    fs.writeFileSync(path.join(workdir, "regular.txt"), "repository data");
+    fs.symlinkSync(outside, path.join(workdir, "escape"));
+    try {
+      const result = spawnSync(
+        "/bin/bash",
+        ["-c", workflowStepScript("review", "Remove symlinks from analysis workspace")],
+        { encoding: "utf8", env: { ...process.env, ADVISOR_WORKDIR: workdir } },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(path.join(workdir, "escape"))).toBe(false);
+      expect(fs.readFileSync(outside, "utf8")).toBe("runner state");
+      expect(fs.readFileSync(path.join(workdir, "regular.txt"), "utf8")).toBe("repository data");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  // source-shape-contract: security -- Symlink cleanup must remain exact and ordered after every untrusted workspace selection but before model credentials
+  it("rejects deleting or weakening analysis-workspace symlink removal", () => {
+    type MutableWorkflow = {
+      jobs: { review: { steps: Array<{ name?: string; run?: string; shell?: string }> } };
+    };
+    const source = YAML.parse(workflowSource()) as MutableWorkflow;
+    const cases: Array<{
+      expected: string;
+      mutate: (workflow: MutableWorkflow) => void;
+    }> = [
+      {
+        expected: "missing workflow step: Remove symlinks from analysis workspace",
+        mutate: (workflow) => {
+          workflow.jobs.review.steps = workflow.jobs.review.steps.filter(
+            (step) => step.name !== "Remove symlinks from analysis workspace",
+          );
+        },
+      },
+      {
+        expected: "Remove symlinks from analysis workspace must use the bash shell",
+        mutate: (workflow) => {
+          const step = workflow.jobs.review.steps.find(
+            (candidate) => candidate.name === "Remove symlinks from analysis workspace",
+          );
+          step!.shell = "sh";
+        },
+      },
+      {
+        expected:
+          "Remove symlinks from analysis workspace must use the canonical fail-closed cleanup script",
+        mutate: (workflow) => {
+          const step = workflow.jobs.review.steps.find(
+            (candidate) => candidate.name === "Remove symlinks from analysis workspace",
+          );
+          step!.run = step!.run!.replace("-type l -print0", "-type f -print0");
+        },
+      },
+      {
+        expected:
+          "Remove symlinks from analysis workspace must use the canonical fail-closed cleanup script",
+        mutate: (workflow) => {
+          const step = workflow.jobs.review.steps.find(
+            (candidate) => candidate.name === "Remove symlinks from analysis workspace",
+          );
+          step!.run = step!.run!.replace('rm -- "$link"', 'rm -- "$link" || true');
+        },
+      },
+      {
+        expected:
+          "Remove symlinks from analysis workspace must run after workspace-selection step 'Prepare isolated analysis workspace'",
+        mutate: (workflow) => {
+          const steps = workflow.jobs.review.steps;
+          const cleanupIndex = steps.findIndex(
+            (step) => step.name === "Remove symlinks from analysis workspace",
+          );
+          const cleanup = steps.splice(cleanupIndex, 1)[0]!;
+          const prepareIndex = steps.findIndex(
+            (step) => step.name === "Prepare isolated analysis workspace",
+          );
+          steps.splice(prepareIndex, 0, cleanup);
+        },
+      },
+      {
+        expected:
+          "analysis workspace symlinks must be removed before the model credential is exposed",
+        mutate: (workflow) => {
+          const steps = workflow.jobs.review.steps;
+          const cleanupIndex = steps.findIndex(
+            (step) => step.name === "Remove symlinks from analysis workspace",
+          );
+          const cleanup = steps.splice(cleanupIndex, 1)[0]!;
+          const analysisIndex = steps.findIndex((step) => step.name === "Run PR review advisor");
+          steps.splice(analysisIndex + 1, 0, cleanup);
+        },
+      },
+      {
+        expected:
+          "Remove symlinks from analysis workspace must run after workspace-selection step 'Set default advisor workdir'",
+        mutate: (workflow) => {
+          const steps = workflow.jobs.review.steps;
+          const cleanupIndex = steps.findIndex(
+            (step) => step.name === "Remove symlinks from analysis workspace",
+          );
+          const cleanup = steps.splice(cleanupIndex, 1)[0]!;
+          const defaultIndex = steps.findIndex(
+            (step) => step.name === "Set default advisor workdir",
+          );
+          steps.splice(defaultIndex, 0, cleanup);
+        },
+      },
+    ];
+
+    for (const { expected, mutate } of cases) {
+      const workflow = structuredClone(source);
+      mutate(workflow);
+      expect(validateMutation(() => YAML.stringify(workflow))).toContain(expected);
+    }
+  });
+
+  it("installs the pinned grep dependency when the runner lacks it", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-install-"));
     const binDir = path.join(tmp, "bin");
     const callLog = path.join(tmp, "calls.log");
@@ -97,502 +440,128 @@ fi
 `,
       { mode: 0o755 },
     );
-
     try {
-      const result = spawnSync("/bin/bash", ["-c", workflowStepScript("Install Pi SDK")], {
-        cwd: ROOT,
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          ADVISOR_DIR: path.join(tmp, "advisor"),
-          CALL_LOG: callLog,
-          FAKE_BIN: binDir,
-          PATH: binDir,
-          PI_SDK_VERSION: "test-version",
-          RIPGREP_VERSION: "14.1.0-1",
-          RG_TEMPLATE: rgTemplate,
-          RUNNER_TEMP: path.join(tmp, "runner"),
-          TYPEBOX_VERSION: "test-typebox-version",
+      const result = spawnSync(
+        "/bin/bash",
+        ["-c", workflowStepScript("review", "Install Pi SDK")],
+        {
+          cwd: ROOT,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            ADVISOR_DIR: path.join(tmp, "advisor"),
+            CALL_LOG: callLog,
+            FAKE_BIN: binDir,
+            PATH: binDir,
+            PI_SDK_VERSION: "test-version",
+            RIPGREP_VERSION: "14.1.0-1",
+            RG_TEMPLATE: rgTemplate,
+            RUNNER_TEMP: path.join(tmp, "runner"),
+            TYPEBOX_VERSION: "test-typebox-version",
+          },
         },
-      });
-      const calls = fs.readFileSync(callLog, "utf8").trim().split(/\r?\n/u);
-
+      );
       expect(result.status, result.stderr).toBe(0);
-      expect(calls).toEqual(
-        expect.arrayContaining([
-          "sudo apt-get update -qq",
-          "sudo apt-get install -y --no-install-recommends ripgrep=14.1.0-1",
-          "rg --version",
-          expect.stringMatching(/^npm install .*--ignore-scripts/u),
-        ]),
+      expect(fs.readFileSync(callLog, "utf8")).toContain(
+        "sudo apt-get install -y --no-install-recommends ripgrep=14.1.0-1",
       );
-      expect(calls.find((call) => call.startsWith("npm install "))).toContain(
-        "typebox@test-typebox-version",
-      );
+      expect(fs.readFileSync(callLog, "utf8")).toContain("--ignore-scripts");
+      expect(fs.readFileSync(callLog, "utf8")).toContain("typebox@test-typebox-version");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
 
-  it("keeps the workflow inside the trusted-code boundary", () => {
-    expect(validatePrReviewAdvisorWorkflowBoundary()).toEqual([]);
+  it("accepts a bounded same-head primary artifact for publication", () => {
+    const result = runArtifactValidation(validPrimaryResult());
+    try {
+      expect(result.status, result.stderr).toBe(0);
+    } finally {
+      result.cleanup();
+    }
   });
 
-  // source-shape-contract: security -- Exactly one advisor lane may perform write-capable PR comment publication
-  it("requires one advisor lane to publish the PR comment", () => {
-    const source = fs.readFileSync(
-      path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"),
-      "utf8",
-    );
+  it("rejects malformed, wrong-head, stale, and symlinked publication artifacts", () => {
     const cases = [
-      {
-        workflow: source.replace("publish_comment: true", "publish_comment: false"),
-        expected: "advisor matrix must publish exactly one PR comment",
-      },
-      {
-        workflow: source.replace("publish_comment: false", "publish_comment: true"),
-        expected: "advisor matrix must publish exactly one PR comment",
-      },
-      {
-        workflow: source.replace("            publish_comment: false\n", ""),
-        expected: "advisor matrix entry 2 missing boolean publish_comment",
-      },
+      { name: "version", artifact: { ...validPrimaryResult(), version: 2 } },
+      { name: "head", artifact: { ...validPrimaryResult(), headSha: "d".repeat(40) } },
+      { name: "findings", artifact: { ...validPrimaryResult(), findings: null } },
+      { name: "e2e", artifact: { ...validPrimaryResult(), e2e: {} } },
+      { name: "live head", artifact: validPrimaryResult(), liveHead: "e".repeat(40) },
+      { name: "live base", artifact: validPrimaryResult(), liveBase: "e".repeat(40) },
+      { name: "symlink", artifact: validPrimaryResult(), symlinkResult: true },
     ];
-
-    for (const { workflow, expected } of cases) {
-      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-publisher-"));
-      const workflowPath = path.join(tmp, "workflow.yaml");
-      fs.writeFileSync(workflowPath, workflow);
+    for (const { name, artifact, liveHead, liveBase, symlinkResult } of cases) {
+      const result = runArtifactValidation(artifact, { liveHead, liveBase, symlinkResult });
       try {
-        expect(validatePrReviewAdvisorWorkflowBoundary(workflowPath)).toContain(expected);
-      } finally {
-        fs.rmSync(tmp, { recursive: true, force: true });
-      }
-    }
-  });
-
-  it("keeps comment publication gated to the publishing advisor lane", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-publisher-"));
-    const workflowPath = path.join(tmp, "workflow.yaml");
-    const workflow = fs
-      .readFileSync(path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"), "utf8")
-      .replace(" && matrix.advisor.publish_comment }}", " }}");
-    fs.writeFileSync(workflowPath, workflow);
-
-    try {
-      expect(validatePrReviewAdvisorWorkflowBoundary(workflowPath)).toContain(
-        "Post PR review advisor comment must run only for the publishing advisor lane",
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("keeps failures non-blocking only for non-publishing advisor lanes", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-publisher-"));
-    const workflowPath = path.join(tmp, "workflow.yaml");
-    const workflow = fs
-      .readFileSync(path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"), "utf8")
-      .replace(
-        "continue-on-error: ${{ !matrix.advisor.publish_comment }}",
-        "continue-on-error: false",
-      );
-    fs.writeFileSync(workflowPath, workflow);
-
-    try {
-      expect(validatePrReviewAdvisorWorkflowBoundary(workflowPath)).toContain(
-        "review job failures must be non-blocking only for non-publishing advisor lanes",
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("pins previous-review context to the publishing workflow", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-publisher-"));
-    const workflowPath = path.join(tmp, "workflow.yaml");
-    const workflow = fs
-      .readFileSync(path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"), "utf8")
-      .replace(
-        "PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW: ${{ matrix.advisor.publish_comment }}",
-        "PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW: true",
-      )
-      .replace(
-        'PR_REVIEW_ADVISOR_WORKFLOW_NAME: "PR Review / Advisor"',
-        'PR_REVIEW_ADVISOR_WORKFLOW_NAME: "Other Workflow"',
-      );
-    fs.writeFileSync(workflowPath, workflow);
-
-    try {
-      expect(validatePrReviewAdvisorWorkflowBoundary(workflowPath)).toEqual(
-        expect.arrayContaining([
-          "review job env.PR_REVIEW_ADVISOR_WORKFLOW_NAME must be PR Review / Advisor",
-          "review job env.PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW must be ${{ matrix.advisor.publish_comment }}",
-        ]),
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects a workflow that masks an incomplete advisor analysis", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-outcome-"));
-    const workflowPath = path.join(tmp, "workflow.yaml");
-    const workflow = YAML.parse(
-      fs.readFileSync(path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"), "utf8"),
-    ) as { jobs: { review: { steps: Array<{ name?: string }> } } };
-    workflow.jobs.review.steps = workflow.jobs.review.steps.filter(
-      (step) => step.name !== "Verify advisor analysis outcome",
-    );
-    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
-
-    try {
-      expect(validatePrReviewAdvisorWorkflowBoundary(workflowPath)).toEqual([
-        "missing workflow step: Verify advisor analysis outcome",
-      ]);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects an outcome check whose failure is ignored", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-outcome-"));
-    const workflowPath = path.join(tmp, "workflow.yaml");
-    const workflow = YAML.parse(
-      fs.readFileSync(path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"), "utf8"),
-    ) as {
-      jobs: { review: { steps: Array<{ name?: string; "continue-on-error"?: boolean }> } };
-    };
-    const outcome = workflow.jobs.review.steps.find(
-      (step) => step.name === "Verify advisor analysis outcome",
-    );
-    outcome!["continue-on-error"] = true;
-    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
-
-    try {
-      expect(validatePrReviewAdvisorWorkflowBoundary(workflowPath)).toEqual([
-        "Verify advisor analysis outcome must not continue on error",
-      ]);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  // source-shape-contract: security -- Symlink cleanup must stay fail-closed after every workspace selection and before credential-bearing analysis
-  it("rejects deleting or weakening analysis-workspace symlink removal", () => {
-    type Workflow = {
-      jobs: { review: { steps: Array<{ name?: string; run?: string }> } };
-    };
-    const source = YAML.parse(
-      fs.readFileSync(path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"), "utf8"),
-    ) as Workflow;
-    const cases: Array<{
-      expected: string;
-      mutate: (workflow: Workflow) => void;
-    }> = [
-      {
-        expected: "missing workflow step: Remove symlinks from analysis workspace",
-        mutate: (workflow) => {
-          workflow.jobs.review.steps = workflow.jobs.review.steps.filter(
-            (step) => step.name !== "Remove symlinks from analysis workspace",
-          );
-        },
-      },
-      {
-        expected:
-          "Remove symlinks from analysis workspace must use the canonical fail-closed cleanup script",
-        mutate: (workflow) => {
-          const step = workflow.jobs.review.steps.find(
-            (candidate) => candidate.name === "Remove symlinks from analysis workspace",
-          );
-          step!.run = step!.run!.replace("-type l -print0", "-type f -print0");
-        },
-      },
-      {
-        expected:
-          "Remove symlinks from analysis workspace must use the canonical fail-closed cleanup script",
-        mutate: (workflow) => {
-          const step = workflow.jobs.review.steps.find(
-            (candidate) => candidate.name === "Remove symlinks from analysis workspace",
-          );
-          step!.run = step!.run!.replace('rm -- "$link"', 'printf "%s\\n" "$link"');
-        },
-      },
-      {
-        expected:
-          "Remove symlinks from analysis workspace must use the canonical fail-closed cleanup script",
-        mutate: (workflow) => {
-          const step = workflow.jobs.review.steps.find(
-            (candidate) => candidate.name === "Remove symlinks from analysis workspace",
-          );
-          step!.run = step!.run!.replace('rm -- "$link"', 'rm -- "$link" || true');
-        },
-      },
-      {
-        expected:
-          "Remove symlinks from analysis workspace must run after workspace-selection step 'Prepare target PR checkout'",
-        mutate: (workflow) => {
-          const steps = workflow.jobs.review.steps;
-          const cleanupIndex = steps.findIndex(
-            (step) => step.name === "Remove symlinks from analysis workspace",
-          );
-          const cleanup = steps.splice(cleanupIndex, 1)[0]!;
-          const targetIndex = steps.findIndex((step) => step.name === "Prepare target PR checkout");
-          steps.splice(targetIndex, 0, cleanup);
-        },
-      },
-      {
-        expected: "Remove symlinks from analysis workspace must run before Run PR review advisor",
-        mutate: (workflow) => {
-          const steps = workflow.jobs.review.steps;
-          const cleanupIndex = steps.findIndex(
-            (step) => step.name === "Remove symlinks from analysis workspace",
-          );
-          const cleanup = steps.splice(cleanupIndex, 1)[0]!;
-          const analysisIndex = steps.findIndex((step) => step.name === "Run PR review advisor");
-          steps.splice(analysisIndex + 1, 0, cleanup);
-        },
-      },
-      {
-        expected:
-          "Remove symlinks from analysis workspace must run after workspace-selection step 'Set default advisor workdir'",
-        mutate: (workflow) => {
-          const steps = workflow.jobs.review.steps;
-          const workdirIndex = steps.findIndex(
-            (step) => step.name === "Set default advisor workdir",
-          );
-          const setWorkdir = steps.splice(workdirIndex, 1)[0]!;
-          const cleanupIndex = steps.findIndex(
-            (step) => step.name === "Remove symlinks from analysis workspace",
-          );
-          steps.splice(cleanupIndex + 1, 0, setWorkdir);
-        },
-      },
-    ];
-
-    for (const { expected, mutate } of cases) {
-      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-symlinks-"));
-      const workflowPath = path.join(tmp, "workflow.yaml");
-      const workflow = structuredClone(source);
-      mutate(workflow);
-      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
-
-      try {
-        expect(validatePrReviewAdvisorWorkflowBoundary(workflowPath)).toContain(expected);
-      } finally {
-        fs.rmSync(tmp, { recursive: true, force: true });
-      }
-    }
-  });
-
-  it("rejects an unpinned runtime package fallback", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-boundary-"));
-    const workflowPath = path.join(tmp, "workflow.yaml");
-    const workflow = YAML.parse(
-      fs.readFileSync(path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"), "utf8"),
-    ) as { jobs: { review: { steps: Array<{ name?: string; run?: string }> } } };
-    const install = workflow.jobs.review.steps.find((step) => step.name === "Install Pi SDK");
-    install!.run = install!.run!.replace('"ripgrep=${RIPGREP_VERSION}"', "ripgrep");
-    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
-
-    try {
-      expect(validatePrReviewAdvisorWorkflowBoundary(workflowPath)).toEqual([
-        "step 'Install Pi SDK' run script must include sudo apt-get install -y --no-install-recommends \"ripgrep=${RIPGREP_VERSION}\"",
-      ]);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects malformed manual target inputs before invoking git", () => {
-    const invalidCases = [
-      {
-        TARGET_REPO: "NVIDIA/NemoClaw --upload-pack=x",
-        TARGET_PR: "5756",
-        TARGET_BASE: "main",
-      },
-      { TARGET_REPO: "NVIDIA/NemoClaw", TARGET_PR: "12:refs/heads/x", TARGET_BASE: "main" },
-      {
-        TARGET_REPO: "NVIDIA/NemoClaw",
-        TARGET_PR: "5756",
-        TARGET_BASE: "main:refs/heads/x",
-      },
-      { TARGET_REPO: "NVIDIA/NemoClaw", TARGET_PR: "5756", TARGET_BASE: "../main" },
-      { TARGET_REPO: "NVIDIA/NemoClaw", TARGET_PR: "5756", TARGET_BASE: "-main" },
-    ];
-
-    for (const invalid of invalidCases) {
-      const result = runPrepareTargetCheckout(invalid);
-      try {
-        expect(result.status).toBe(1);
-        expect(result.gitCalls).toEqual([]);
+        expect(result.status, `${name}: ${result.stdout}${result.stderr}`).toBe(1);
       } finally {
         result.cleanup();
       }
     }
-
-    const valid = runPrepareTargetCheckout({
-      TARGET_REPO: "NVIDIA/NemoClaw",
-      TARGET_PR: "5756",
-      TARGET_BASE: "main",
-    });
-    try {
-      expect(valid.status).toBe(0);
-      expect(valid.gitCalls).toEqual([
-        `-C ${valid.targetDir} init`,
-        `-C ${valid.targetDir} remote add target https://github.com/NVIDIA/NemoClaw.git`,
-        `-C ${valid.targetDir} fetch --no-tags target main`,
-        `-C ${valid.targetDir} fetch --no-tags target pull/5756/head:refs/remotes/target/pr-5756`,
-        `-C ${valid.targetDir} checkout --detach refs/remotes/target/pr-5756`,
-      ]);
-      expect(valid.githubEnv).toBe(`ADVISOR_WORKDIR=${valid.targetDir}\nPR_NUMBER=5756\n`);
-    } finally {
-      valid.cleanup();
-    }
   });
 
-  it("flags advisor matrix isolation workflow regressions", () => {
-    const tmp = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-workflow-"));
-    const workflowPath = path.join(tmp, "workflow.yaml");
-    const workflow = fs
-      .readFileSync(path.join(ROOT, ".github", "workflows", "pr-review-advisor.yaml"), "utf-8")
-      .replace("artifact_dir: pr-review-advisor-nemotron-ultra", "artifact_dir: pr-review-advisor")
-      .replace(
-        "artifact_name: pr-review-advisor-nemotron-ultra",
-        "artifact_name: pr-review-advisor",
-      )
-      .replace("model: nvidia/nvidia/nemotron-3-ultra", "model: azure/openai/gpt-5.6-terra")
-      .replace('\n              --title "$PR_REVIEW_ADVISOR_COMMENT_TITLE" \\', "");
-    fs.writeFileSync(workflowPath, workflow);
-
-    try {
-      const errors = validatePrReviewAdvisorWorkflowBoundary(workflowPath);
-      expect(errors).toEqual(
-        expect.arrayContaining([
-          "advisor matrix field model must be unique: azure/openai/gpt-5.6-terra",
-          "advisor matrix field artifact_dir must be unique: pr-review-advisor",
-          "advisor matrix field artifact_name must be unique: pr-review-advisor",
-          "step 'Post PR review advisor comment' run script must include --title \"$PR_REVIEW_ADVISOR_COMMENT_TITLE\"",
-        ]),
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("flags trusted-code boundary workflow regressions", () => {
-    const tmp = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-workflow-"));
-    const workflowPath = path.join(tmp, "workflow.yaml");
-    fs.writeFileSync(
-      workflowPath,
-      `
-"on":
-  pull_request_target: {}
-permissions:
-  contents: write
-jobs:
-  review:
-    continue-on-error: true
-    steps:
-      - name: Checkout trusted advisor code (main)
-        uses: actions/checkout@v4
-        with:
-          repository: NVIDIA/NemoClaw
-          ref: main
-          path: advisor
-          persist-credentials: true
-      - name: Checkout PR workspace (read-only data)
-        uses: actions/checkout@0123456789abcdef0123456789abcdef01234567
-        with:
-          ref: refs/pull/\${{ github.event.pull_request.head.sha }}/merge
-          path: pr-workdir
-          persist-credentials: false
-      - name: Run PR review advisor
-        env:
-          PR_REVIEW_ADVISOR_API_KEY: \${{ secrets.PR_REVIEW_ADVISOR_API_KEY || secrets.PI_PR_REVIEW_ADVISOR_API_KEY }}
-          OPENAI_API_KEY: \${{ secrets.OPENAI_API_KEY }}
-        run: |
-          cd "$ADVISOR_WORKDIR"
-          node "$ADVISOR_DIR/tools/pr-review-advisor/analyze.mts" --schema "$ADVISOR_DIR/tools/pr-review-advisor/schema.json"
-`,
+  it("rejects cross-run artifact downloads and missing publication validation", () => {
+    const crossRun = validateMutation((source) =>
+      source.replace(
+        "          name: pr-review-advisor\n          path: publish-artifacts/pr-review-advisor",
+        "          name: pr-review-advisor\n          path: publish-artifacts/pr-review-advisor\n          run-id: ${{ github.event.workflow_run.id }}",
+      ),
     );
+    expect(crossRun).toContain("Download primary advisor artifact must not set with.run-id");
 
-    try {
-      const errors = validatePrReviewAdvisorWorkflowBoundary(workflowPath);
-      expect(errors).toEqual(
-        expect.arrayContaining([
-          "workflow must run on pull_request, not only trusted-target events",
-          "workflow must not run untrusted PR code under pull_request_target",
-          "workflow permissions.contents must be read",
-          "review job failures must be non-blocking only for non-publishing advisor lanes",
-          "PR checkout must use the pull request head SHA as inert analysis data",
-          "Run PR review advisor must receive PR_REVIEW_ADVISOR_API_KEY only from secrets.PR_REVIEW_ADVISOR_API_KEY",
-          "Run PR review advisor must not receive OPENAI_API_KEY",
-          "Run PR review advisor must continue-on-error until summaries, comments, and artifacts are published",
-          "missing workflow step: Verify advisor analysis outcome",
-        ]),
-      );
-      expect(errors.some((error) => error.includes("full commit SHA"))).toBe(true);
-      expect(errors.some((error) => error.includes("persist-credentials=false"))).toBe(true);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
+    const noVersionCheck = validateMutation((source) =>
+      source.replace("if (result.version !== 1)", "if (false)"),
+    );
+    expect(noVersionCheck).toContain(
+      "step 'Validate primary advisor artifact' run script must include result.version !== 1",
+    );
   });
 
-  it("writes low-confidence skip artifacts for unsupported trusted-main rollout skew", () => {
-    const tmp = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-skip-"));
-    const outDir = path.join(tmp, "artifacts", "pr-review-advisor-nemotron-ultra");
-    const reason =
-      "Trusted main checkout does not yet support advisor model nvidia/nvidia/nemotron-3-ultra; this parallel advisor will run after the implementation lands on main.";
+  it("keeps publication best-effort while preserving the primary analysis failure", () => {
+    const errors = validateMutation((source) =>
+      source
+        .replace(
+          "    continue-on-error: ${{ !matrix.advisor.publish_comment }}",
+          "    continue-on-error: true",
+        )
+        .replace(
+          "    continue-on-error: true\n    permissions:\n      contents: read\n      pull-requests: write",
+          "    continue-on-error: false\n    permissions:\n      contents: read\n      pull-requests: write",
+        ),
+    );
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        "review job failures must be non-blocking only for non-publishing advisor lanes",
+        "publish job must be best-effort so it cannot mask the primary analysis outcome",
+      ]),
+    );
+  });
 
-    try {
-      execFileSync(
-        process.execPath,
-        [
-          "--experimental-strip-types",
-          path.join(ROOT, "tools", "pr-review-advisor", "analyze.mts"),
-          "--base",
-          "HEAD",
-          "--head",
-          "HEAD",
-          "--schema",
-          path.join(ROOT, "tools", "pr-review-advisor", "schema.json"),
-          "--out-dir",
-          outDir,
-        ],
-        {
-          cwd: ROOT,
-          env: {
-            ...process.env,
-            PR_REVIEW_ADVISOR_RUN_ANALYSIS: "0",
-            PR_REVIEW_ADVISOR_UNAVAILABLE_REASON: reason,
-            PR_NUMBER: "",
-            GH_TOKEN: "",
-            GITHUB_TOKEN: "",
-          },
-          stdio: "pipe",
-        },
-      );
-
-      const raw = JSON.parse(
-        fs.readFileSync(path.join(outDir, "pr-review-advisor-result.json"), "utf-8"),
-      );
-      const final = JSON.parse(
-        fs.readFileSync(path.join(outDir, "pr-review-advisor-final-result.json"), "utf-8"),
-      );
-      const summary = fs.readFileSync(path.join(outDir, "pr-review-advisor-summary.md"), "utf-8");
-      expect(raw).toMatchObject({ skipped: true, reason });
-      expect(final.summary).toMatchObject({ recommendation: "info_only", confidence: "low" });
-      expect(final.summary.oneLine).toContain(reason);
-      expect(summary).toContain("# PR Review Advisor");
-      expect(summary).toContain(reason);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
+  it("keeps advisor matrix artifacts isolated", () => {
+    const errors = validateMutation((source) =>
+      source
+        .replace(
+          "artifact_dir: pr-review-advisor-nemotron-ultra",
+          "artifact_dir: pr-review-advisor",
+        )
+        .replace(
+          "artifact_name: pr-review-advisor-nemotron-ultra",
+          "artifact_name: pr-review-advisor",
+        )
+        .replace("model: nvidia/nvidia/nemotron-3-ultra", "model: azure/openai/gpt-5.6-terra"),
+    );
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        "advisor matrix field model must be unique: azure/openai/gpt-5.6-terra",
+        "advisor matrix field artifact_dir must be unique: pr-review-advisor",
+        "advisor matrix field artifact_name must be unique: pr-review-advisor",
+      ]),
+    );
   });
 
   it("reports workflow parse failures through boundary errors", () => {
-    const tmp = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-missing-"));
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-missing-"));
     const missingPath = path.join(tmp, "workflow.yaml");
     try {
       expect(validatePrReviewAdvisorWorkflowBoundary(missingPath)).toEqual([

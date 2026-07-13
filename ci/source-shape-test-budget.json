@@ -102,11 +102,6 @@
       "category": "compatibility"
     },
     {
-      "file": "test/e2e-advisor.test.ts",
-      "test": "strips untrusted symlinks before secret-bearing advisor steps",
-      "category": "security"
-    },
-    {
       "file": "test/e2e-fixture-dependency-review.test.ts",
       "test": "keeps installed fixture dependencies on exact versions",
       "category": "security"

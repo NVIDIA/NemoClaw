@@ -21,12 +21,18 @@ export interface PraComment {
 
 export interface PraRun {
   name?: string;
+  path?: string | null;
   head_sha?: string;
   event?: string;
   run_attempt?: number;
   run_started_at?: string;
   created_at?: string;
   updated_at?: string;
+  pull_requests?: Array<{
+    number?: number;
+    head?: { sha?: string | null } | null;
+    base?: { sha?: string | null } | null;
+  }> | null;
 }
 
 export interface PraMeta {
@@ -35,6 +41,11 @@ export interface PraMeta {
   runId: number;
   runAttempt: number;
   commentId: number;
+  event?: string;
+  prNumber?: number;
+  workflowSha?: string;
+  baseSha?: string;
+  workflowPath?: string;
 }
 
 export interface PrAdvisorGateResult {
@@ -54,9 +65,12 @@ export interface PrAdvisorGateResult {
 // "approved" is not a valid advisor recommendation; only "merge_as_is" is.
 export const PRA_PASS_RECOMMENDATIONS = new Set(["merge_as_is"]);
 
+const PRA_WORKFLOW_NAME = "PR Review / Advisor";
+const PRA_WORKFLOW_PATH = ".github/workflows/pr-review-advisor.yaml";
+
 // Full metadata line: all five fields must be present for a trusted comment.
 const PRA_FULL_META_RE =
-  /head_sha:\s*([0-9a-f]+);\s*recommendation:\s*([a-z_]+);\s*run_id:\s*(\d+);\s*run_attempt:\s*(\d+);\s*comment_id:\s*(\d+)/i;
+  /head_sha:\s*([0-9a-f]+);\s*recommendation:\s*([a-z_]+);\s*run_id:\s*(\d+);\s*run_attempt:\s*(\d+);\s*comment_id:\s*(\d+)(?:;\s*event:\s*([a-z_]+);\s*pr_number:\s*(\d+);\s*workflow_sha:\s*([0-9a-f]+);\s*base_sha:\s*([0-9a-f]+);\s*workflow_path:\s*([^\s;>]+))?/i;
 
 const PRA_REQUIRED_RE = /\*\*Open items:\*\*[^|]*?(\d+)\s+required/;
 
@@ -77,6 +91,11 @@ export function parsePraMeta(body: string): PraMeta | null {
     runId: parseInt(m[3], 10),
     runAttempt: parseInt(m[4], 10),
     commentId: parseInt(m[5], 10),
+    event: m[6]?.toLowerCase(),
+    prNumber: m[7] === undefined ? undefined : parseInt(m[7], 10),
+    workflowSha: m[8]?.toLowerCase(),
+    baseSha: m[9]?.toLowerCase(),
+    workflowPath: m[10],
   };
 }
 
@@ -170,22 +189,75 @@ function isTimestampWithin(value: string, start: string, end: string): boolean {
   return t >= s && t <= e;
 }
 
+function normalizeWorkflowPath(value: string): string {
+  return value.split("@", 1)[0];
+}
+
 /**
  * Verify that a GitHub Actions run corresponds to the trusted PR Review / Advisor
- * workflow for this PR head. Mirrors isTrustedAdvisorRun() in
- * tools/pr-review-advisor/analyze.mts.
+ * workflow for this PR head.
+ *
+ * The pull_request branch preserves the original rollout contract: the run
+ * head_sha is the PR head. A pull_request_target run instead executes at a
+ * trusted base ref, so its PR identity and head SHA must come from exactly one
+ * run.pull_requests association. GitHub may return the workflow path with an
+ * @ref suffix; only the path portion identifies the workflow file.
  *
  * Pure function — the caller is responsible for fetching the run data.
  */
-export function validateAdvisorRun(run: PraRun, meta: PraMeta, commentUpdatedAt: string): boolean {
+export function validateAdvisorRun(
+  run: PraRun,
+  meta: PraMeta,
+  commentUpdatedAt: string,
+  prNumber: number,
+  baseSha?: string,
+): boolean {
   const startedAt = run.run_started_at ?? run.created_at;
   const endedAt = run.updated_at;
   if (!startedAt || !endedAt) return false;
+
+  if (
+    run.name !== PRA_WORKFLOW_NAME ||
+    (run.run_attempt ?? -1) !== meta.runAttempt ||
+    !isTimestampWithin(commentUpdatedAt, startedAt, endedAt)
+  ) {
+    return false;
+  }
+
+  if (run.event === "pull_request") {
+    return (
+      (meta.event === undefined || meta.event === "pull_request") &&
+      (run.head_sha ?? "").toLowerCase() === meta.headSha
+    );
+  }
+
+  if (run.event !== "pull_request_target") return false;
+
+  if (typeof run.path !== "string" || normalizeWorkflowPath(run.path) !== PRA_WORKFLOW_PATH) {
+    return false;
+  }
+
+  if (
+    !Number.isInteger(prNumber) ||
+    prNumber <= 0 ||
+    meta.event !== "pull_request_target" ||
+    meta.prNumber !== prNumber ||
+    !meta.workflowSha ||
+    meta.workflowSha !== (run.head_sha ?? "").toLowerCase() ||
+    !meta.baseSha ||
+    meta.baseSha !== (baseSha ?? "").toLowerCase() ||
+    !meta.workflowPath ||
+    normalizeWorkflowPath(meta.workflowPath) !== PRA_WORKFLOW_PATH ||
+    !Array.isArray(run.pull_requests) ||
+    run.pull_requests.length !== 1
+  ) {
+    return false;
+  }
+
+  const association = run.pull_requests[0];
   return (
-    run.name === "PR Review / Advisor" &&
-    run.event === "pull_request" &&
-    (run.head_sha ?? "").toLowerCase() === meta.headSha &&
-    (run.run_attempt ?? -1) === meta.runAttempt &&
-    isTimestampWithin(commentUpdatedAt, startedAt, endedAt)
+    association.number === prNumber &&
+    (association.head?.sha ?? "").toLowerCase() === meta.headSha &&
+    (association.base?.sha ?? "").toLowerCase() === meta.baseSha
   );
 }

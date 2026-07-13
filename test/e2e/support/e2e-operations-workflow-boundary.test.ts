@@ -386,7 +386,7 @@ describe("E2E operations workflow boundary", () => {
     }
   });
 
-  it("rejects raw trace upload ordering and advisor auto-dispatch restoration", () => {
+  it("rejects raw trace upload ordering and unified advisor auto-dispatch", () => {
     const workflow = readE2eOperationsWorkflow();
     const cloudSteps = workflow.jobs["cloud-onboard"].steps!;
     const sanitize = cloudSteps.find(
@@ -399,7 +399,7 @@ describe("E2E operations workflow boundary", () => {
     try {
       writeFileSync(advisorPath, "permissions: write-all\njobs:\n  advisor:\n    steps: []\n");
       expect(validateE2eOperationsWorkflow(workflow, advisorPath)).toContain(
-        "E2E advisor must not hold actions: write",
+        "Unified advisor must not hold actions: write",
       );
 
       writeFileSync(
@@ -409,8 +409,8 @@ describe("E2E operations workflow boundary", () => {
       expect(validateE2eOperationsWorkflow(workflow, advisorPath)).toEqual(
         expect.arrayContaining([
           "cloud-onboard trace sanitizer must retain scripts/e2e/sanitize-trace-timing.py",
-          "E2E advisor must not hold actions: write",
-          "E2E advisor must not auto-dispatch workflows",
+          "Unified advisor must not hold actions: write",
+          "Unified advisor must not auto-dispatch workflows",
         ]),
       );
     } finally {

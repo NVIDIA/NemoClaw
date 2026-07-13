@@ -124,8 +124,8 @@ scorecard, including scorecard Slack reporting.
 Synchronizing, reopening, or closing the PR cancels its active E2E runs. A new
 dispatch also cancels the previous run, while the previous controller remains
 available to close its check as failed.
-The controller does not read PR Review Advisor or E2E Advisor output, so model
-availability and recommendations are not part of merge authority.
+The controller does not read PR Review Advisor output, so model availability
+and recommendations are not part of merge authority.
 
 ## Onboard performance budget
 
@@ -142,12 +142,15 @@ phase names. Cold image pulls, first-time model downloads, provider outages,
 and runner or network incidents can still affect the signal, so maintainers
 should inspect the timing table before acting on a warning.
 
-For PRs, E2E Advisor builds a deterministic risk plan from the PR head commit
-and changed-file set. It recommends required jobs for known regression families
-and still requires `cloud-onboard` when changes affect onboard behavior, trace
-timing, scorecard analysis, budget configuration, or the unified E2E workflow.
-Model advice is additive and cannot downgrade the deterministic floor. The
-scorecard remains the source of truth for advisory warm-system trend evaluation.
+For PRs, the unified PR Review Advisor builds and renders guidance from the
+deterministic risk plan for the PR head commit and changed-file set. It
+recommends required jobs for known regression families and still requires
+`cloud-onboard` when changes affect onboard behavior, trace timing, scorecard
+analysis, budget configuration, or the unified E2E workflow. Model advice is
+additive and cannot downgrade the deterministic floor. The independent PR E2E
+controller rebuilds the plan rather than consuming those recommendations, and
+the scorecard remains the source of truth for advisory warm-system trend
+evaluation.
 
 The `full-e2e` target enforces a separate hard acceptance contract for the
 first fresh onboarding path in that job. It measures from the onboard root span

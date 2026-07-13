@@ -1,28 +1,26 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
 import { describe, expect, it } from "vitest";
 
-import { buildTargetComment } from "../tools/e2e-advisor/target-comment.mts";
 import {
-  buildPrompt,
-  buildSystemPrompt,
-  buildTargetPromptTurn,
   canonicalDispatchCommand,
-  E2E_TARGET_ADVISOR_WORKFLOWS,
-  type E2eTargetAdvisorResult,
   extractFreeStandingE2eJobs,
   normalizeE2eTargetAdvisorResult,
-  renderTargetSummary,
-} from "../tools/e2e-advisor/targets.mts";
+} from "../tools/advisors/e2e-recommendations.mts";
 
-// Tests target observable behavior of the target advisor pipeline:
-//   raw model output -> normalizeE2eTargetAdvisorResult -> render/comment.
-// Schema and prompt text are implementation details; only the contract that
-// downstream consumers (sticky comment, CI loop dispatch) depend on is
-// asserted here.
+// Tests target the session-free recommendation normalizer shared by the
+// unified PR Review Advisor. Model prompt and comment rendering are covered by
+// the PR advisor tests.
 
 const E2E_WORKFLOW = "e2e.yaml";
+const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 
 function metadata(
   overrides: Partial<{ baseRef: string; headRef: string; changedFiles: string[] }> = {},
@@ -35,75 +33,49 @@ function metadata(
   };
 }
 
-describe("E2E target advisor — prompt construction", () => {
-  it("user prompt refers to context tools instead of embedding bulky metadata", () => {
-    const prompt = buildPrompt({
-      baseRef: "origin/main",
-      headRef: "HEAD",
-      changedFiles: ["test/e2e/fixtures/phases/onboarding.ts"],
-      diff: "+ echo ok",
-    });
-    // Caller of normalizeE2eTargetAdvisorResult re-injects metadata; the prompt
-    // now points at turn-scoped context tools instead of embedding bulky context.
-    expect(prompt).toContain("context tools");
-    expect(prompt).not.toContain("origin/main");
-    expect(prompt).not.toContain("test/e2e/fixtures/phases/onboarding.ts");
-    expect(prompt).not.toContain("+ echo ok");
-
-    const turn = buildTargetPromptTurn({
-      baseRef: "origin/main",
-      headRef: "HEAD",
-      changedFiles: ["test/e2e/fixtures/phases/onboarding.ts"],
-      diff: "+ echo ok",
-      schema: { $id: "test-schema", type: "object" },
-    });
-    expect(turn.contextToolResults?.map((result) => result.toolName)).toEqual([
-      "e2e_target_metadata",
-      "e2e_target_changed_files",
-      "e2e_target_risk_plan",
-      "e2e_target_git_diff",
-      "e2e_target_response_schema",
-    ]);
-    expect(turn.contextToolResults?.[0]?.content).toContain("origin/main");
-    expect(turn.contextToolResults?.[1]?.content).toContain(
-      "test/e2e/fixtures/phases/onboarding.ts",
-    );
-    expect(turn.contextToolResults?.[2]?.content).toContain('"version":2');
-    expect(turn.contextToolResults?.[3]?.content).toContain("+ echo ok");
-    expect(turn.contextToolResults?.[4]?.content).toContain("test-schema");
-    for (const result of turn.contextToolResults ?? []) {
-      expect(turn.prompt).toContain(`\`${result.toolName}\``);
+describe("E2E recommendation normalizer", () => {
+  it("loads the trusted inventory without repository development dependencies", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-recommendations-runtime-"));
+    try {
+      for (const file of [
+        "tools/advisors/e2e-recommendations.mts",
+        "tools/advisors/json.mts",
+        "tools/advisors/risk-plan.mts",
+        "tools/e2e/module-tags.mts",
+        ".github/workflows/e2e.yaml",
+        "test/gateway-drift-preflight.test.ts",
+        "test/e2e/live/docs-validation.test.ts",
+        "test/e2e/live/onboard-negative-paths.test.ts",
+        "test/e2e/live/openshell-version-pin.test.ts",
+        "test/e2e/live/ubuntu-repo-cli-smoke.test.ts",
+      ]) {
+        const destination = path.join(tmp, file);
+        fs.mkdirSync(path.dirname(destination), { recursive: true });
+        fs.copyFileSync(path.join(REPO_ROOT, file), destination);
+      }
+      fs.cpSync(path.join(REPO_ROOT, "test/e2e/registry"), path.join(tmp, "test/e2e/registry"), {
+        recursive: true,
+      });
+      const moduleUrl = pathToFileURL(
+        path.join(tmp, "tools/advisors/e2e-recommendations.mts"),
+      ).href;
+      const script = `const module = await import(${JSON.stringify(moduleUrl)}); const inventory = module.trustedE2eRecommendationInventory(); if (!inventory.allowedJobIds.includes("onboard-resume") || !inventory.allowedJobIds.includes("gateway-drift-preflight")) process.exit(2);`;
+      const result = spawnSync(
+        process.execPath,
+        ["--experimental-strip-types", "--input-type=module", "--eval", script],
+        {
+          cwd: tmp,
+          encoding: "utf8",
+          env: { PATH: process.env.PATH ?? "" },
+        },
+      );
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(fs.existsSync(path.join(tmp, "node_modules"))).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
 
-  it("system prompt is non-empty and points JSON schema lookup at a context tool", () => {
-    // The model receives the schema through a turn-scoped context tool; the system
-    // prompt still routes target recommendations to the E2E workflow rather
-    // than the legacy typed-shell dispatch surfaces.
-    const systemPrompt = buildSystemPrompt({ $id: "test-schema", type: "object" });
-    expect(systemPrompt.length).toBeGreaterThan(0);
-    expect(systemPrompt).not.toContain("test-schema");
-    expect(systemPrompt).toContain("e2e_target_response_schema");
-    expect(systemPrompt).toContain(E2E_WORKFLOW);
-    expect(systemPrompt).toContain("trusted advisor checkout");
-    expect(systemPrompt).toContain("recommend the `e2e-all` fan-out");
-    expect(systemPrompt).toContain("single NemoClaw E2E system");
-    expect(systemPrompt).toContain("onboard-resume");
-    expect(systemPrompt).toContain("onboard-repair");
-    expect(systemPrompt).not.toContain("non-target E2E");
-    expect(systemPrompt).not.toContain("e2e-all.yaml");
-    expect(systemPrompt).not.toContain("made-up-e2e.yaml");
-  });
-
-  it("exports the E2E target workflow for both targeted and fan-out recommendations", () => {
-    expect(E2E_TARGET_ADVISOR_WORKFLOWS).toEqual({
-      single: E2E_WORKFLOW,
-      all: E2E_WORKFLOW,
-    });
-  });
-});
-
-describe("E2E target advisor — normalization contract", () => {
   it("enforces deterministic risk-plan jobs when the model recommends none", () => {
     const normalized = normalizeE2eTargetAdvisorResult(
       {
@@ -465,6 +437,39 @@ describe("E2E target advisor — normalization contract", () => {
     expect(normalized.noTargetE2eReason).toBeNull();
   });
 
+  it("does not treat tag-looking template text as a credential-free declaration", () => {
+    const file = "test/e2e/live/string-only.test.ts";
+    const normalized = normalizeE2eTargetAdvisorResult(
+      { required: [], optional: [], confidence: "high" },
+      metadata({ changedFiles: [file] }),
+      {
+        changedFileSources: {
+          [file]: "export const fixture = `before\n// @module-tag e2e/credential-free\nafter`;\n",
+        },
+        e2eWorkflowText: "jobs:\n  shared-e2e:\n    steps: []\n",
+      },
+    );
+
+    expect(normalized.required.map((item) => item.id)).not.toContain("string-only");
+    expect(normalized.noTargetE2eReason).toContain("not wired");
+  });
+
+  it("recognizes a standalone block-comment credential-free declaration", () => {
+    const file = "test/e2e/live/block-comment-proof.test.ts";
+    const normalized = normalizeE2eTargetAdvisorResult(
+      { required: [], optional: [], confidence: "high" },
+      metadata({ changedFiles: [file] }),
+      {
+        changedFileSources: {
+          [file]: "/* @module-tag e2e/credential-free */\n",
+        },
+        e2eWorkflowText: "jobs:\n  shared-e2e:\n    steps: []\n",
+      },
+    );
+
+    expect(normalized.required.map((item) => item.id)).toContain("block-comment-proof");
+  });
+
   it.each([
     ["has its credential-free tag removed", "// tag removed\n"],
     ["is deleted", null],
@@ -689,52 +694,5 @@ jobs:
   it("rejects non-object advisor output", () => {
     expect(() => normalizeE2eTargetAdvisorResult("nope", metadata())).toThrow(/non-object/);
     expect(() => normalizeE2eTargetAdvisorResult([], metadata())).toThrow(/non-object/);
-  });
-});
-
-describe("E2E target advisor — summary and comment rendering", () => {
-  function sampleResult(): E2eTargetAdvisorResult {
-    return {
-      version: 1,
-      baseRef: "origin/main",
-      headRef: "HEAD",
-      changedFiles: [".github/workflows/e2e.yaml"],
-      relevantChangedFiles: [".github/workflows/e2e.yaml"],
-      required: [
-        {
-          id: "e2e-all",
-          workflow: E2E_WORKFLOW,
-          selectorType: "all",
-          required: true,
-          reason: "target workflow changed",
-          dispatchCommand: canonicalDispatchCommand(E2E_WORKFLOW, "e2e-all"),
-        },
-      ],
-      optional: [],
-      noTargetE2eReason: null,
-      confidence: "high",
-    };
-  }
-
-  it("renders a summary that surfaces required targets with their dispatch line", () => {
-    const summary = renderTargetSummary(sampleResult());
-    expect(summary).toContain("# E2E Target Advisor");
-    expect(summary).toContain("Required E2E targets");
-    expect(summary).toContain("e2e-all");
-    expect(summary).toContain(canonicalDispatchCommand(E2E_WORKFLOW, "e2e-all"));
-  });
-
-  it("builds a sticky target comment with the marker and run url", () => {
-    const result = sampleResult();
-    const summary = renderTargetSummary(result);
-    const comment = buildTargetComment({
-      summary,
-      result,
-      runUrl: "https://example.invalid/run",
-    });
-    expect(comment).toContain("<!-- nemoclaw-e2e-target-advisor -->");
-    expect(comment).toContain("## E2E Target Recommendation");
-    expect(comment).toContain("Dispatch required E2E targets");
-    expect(comment).toContain("https://example.invalid/run");
   });
 });

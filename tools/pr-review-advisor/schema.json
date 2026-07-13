@@ -16,6 +16,7 @@
     "acceptanceCoverage",
     "securityCategories",
     "sourceOfTruthReview",
+    "e2e",
     "testDepth",
     "positives",
     "reviewCompleteness"
@@ -130,6 +131,72 @@
         "additionalProperties": false
       }
     },
+    "e2e": {
+      "type": "object",
+      "required": ["coverage", "targets"],
+      "properties": {
+        "coverage": {
+          "type": "object",
+          "required": [
+            "classifiedDomains",
+            "requiredTests",
+            "optionalTests",
+            "newE2eRecommendations",
+            "noE2eReason",
+            "confidence"
+          ],
+          "properties": {
+            "classifiedDomains": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/e2eDomain" }
+            },
+            "requiredTests": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/e2eTest" }
+            },
+            "optionalTests": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/e2eTest" }
+            },
+            "newE2eRecommendations": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/e2eNewRecommendation" }
+            },
+            "noE2eReason": { "type": ["string", "null"] },
+            "confidence": { "enum": ["low", "medium", "high"] }
+          },
+          "additionalProperties": false
+        },
+        "targets": {
+          "type": "object",
+          "required": [
+            "relevantChangedFiles",
+            "required",
+            "optional",
+            "noTargetE2eReason",
+            "confidence"
+          ],
+          "properties": {
+            "relevantChangedFiles": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "required": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/e2eTargetRecommendation" }
+            },
+            "optional": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/e2eTargetRecommendation" }
+            },
+            "noTargetE2eReason": { "type": ["string", "null"] },
+            "confidence": { "enum": ["low", "medium", "high"] }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "testDepth": {
       "type": "object",
       "required": ["verdict", "rationale", "suggestedTests"],
@@ -163,6 +230,67 @@
     }
   },
   "$defs": {
+    "e2eDomain": {
+      "type": "object",
+      "required": ["domain", "reason", "confidence", "matchedFiles"],
+      "properties": {
+        "domain": { "type": "string" },
+        "reason": { "type": "string" },
+        "confidence": { "enum": ["low", "medium", "high"] },
+        "matchedFiles": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "e2eTest": {
+      "type": "object",
+      "required": ["id", "reason"],
+      "properties": {
+        "id": { "type": "string" },
+        "reason": { "type": "string" },
+        "workflow": { "type": "string" },
+        "job": { "type": "string" },
+        "script": { "type": "string" },
+        "cost": { "type": "string" },
+        "runner": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "e2eNewRecommendation": {
+      "type": "object",
+      "required": ["domain", "reason", "suggestedTest", "priority"],
+      "properties": {
+        "domain": { "type": "string" },
+        "reason": { "type": "string" },
+        "suggestedTest": { "type": "string" },
+        "priority": { "enum": ["low", "medium", "high"] }
+      },
+      "additionalProperties": false
+    },
+    "e2eTargetRecommendation": {
+      "type": "object",
+      "required": [
+        "id",
+        "workflow",
+        "selectorType",
+        "required",
+        "reason",
+        "dispatchCommand"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "workflow": { "type": "string", "const": "e2e.yaml" },
+        "selectorType": { "enum": ["all", "target", "job"] },
+        "target": { "type": "string" },
+        "suiteFilter": { "type": "string" },
+        "required": { "type": "boolean" },
+        "reason": { "type": "string" },
+        "dispatchCommand": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
     "finding": {
       "type": "object",
       "required": [

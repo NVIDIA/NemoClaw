@@ -513,7 +513,12 @@ function checkCodeRabbit(
 // Gate 4: PR Review Advisor not blocked
 // ---------------------------------------------------------------------------
 
-function checkPrAdvisor(repo: string, number: number, headSha: string): PrAdvisorGateResult {
+function checkPrAdvisor(
+  repo: string,
+  number: number,
+  headSha: string,
+  baseSha: string,
+): PrAdvisorGateResult {
   // --jq ".[]" emits one JSON object per line (NDJSON) — deterministic across pages
   const raw = run("gh", [
     "api",
@@ -550,7 +555,7 @@ function checkPrAdvisor(repo: string, number: number, headSha: string): PrAdviso
     } catch {
       return { pass: false, details: "Could not parse advisor run response — fail-closed" };
     }
-    if (!validateAdvisorRun(runData, meta, latest.updated_at ?? "")) {
+    if (!validateAdvisorRun(runData, meta, latest.updated_at ?? "", number, baseSha)) {
       return {
         pass: false,
         details: "PR Review Advisor run provenance check failed — fail-closed",
@@ -718,7 +723,7 @@ function main(): void {
     "--repo",
     repo,
     "--json",
-    "number,title,url,body,files,statusCheckRollup,mergeStateStatus,headRefOid,author",
+    "number,title,url,body,files,statusCheckRollup,mergeStateStatus,headRefOid,baseRefOid,author",
   ]) as {
     number: number;
     title: string;
@@ -728,6 +733,7 @@ function main(): void {
     statusCheckRollup: StatusCheck[];
     mergeStateStatus: string;
     headRefOid: string;
+    baseRefOid: string;
     author: PrIdentity | null;
   } | null;
 
@@ -740,7 +746,12 @@ function main(): void {
   const conflicts = checkConflicts(prData.mergeStateStatus);
   const coderabbit = checkCodeRabbit(repo, prNumber);
   const riskyCodeTested = checkRiskyCodeTested(prData.files ?? []);
-  const prAdvisor = checkPrAdvisor(repo, prNumber, prData.headRefOid ?? "");
+  const prAdvisor = checkPrAdvisor(
+    repo,
+    prNumber,
+    prData.headRefOid ?? "",
+    prData.baseRefOid ?? "",
+  );
   const contributorCompliance = checkContributorCompliance(repo, prNumber, prData.body ?? "");
   const contributorApprovalHistory = fetchContributorApprovalHistory(repo, prNumber);
   const contributorApprovalOverlap = checkContributorApprovalOverlap(

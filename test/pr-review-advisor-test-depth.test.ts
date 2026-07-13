@@ -24,6 +24,23 @@ function reviewResult(testDepth: TestDepth): ReviewResult {
     acceptanceCoverage: [],
     securityCategories: [],
     sourceOfTruthReview: [],
+    e2e: {
+      coverage: {
+        classifiedDomains: [],
+        requiredTests: [],
+        optionalTests: [],
+        newE2eRecommendations: [],
+        noE2eReason: "No E2E impact.",
+        confidence: "high",
+      },
+      targets: {
+        relevantChangedFiles: [],
+        required: [],
+        optional: [],
+        noTargetE2eReason: "No E2E target impact.",
+        confidence: "high",
+      },
+    },
     testDepth,
     positives: [],
     reviewCompleteness: {

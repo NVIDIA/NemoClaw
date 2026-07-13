@@ -108,10 +108,10 @@ test/e2e/
 ## CI Entry Points
 
 - `tools/advisors/risk-plan.mts` is the small deterministic selection policy
-  shared by PR Review Advisor, E2E Advisor, and the PR E2E controller. It maps
+  shared by PR Review Advisor and the PR E2E controller. It maps
   changed runtime surfaces to invariant families and
   canonical `e2e.yaml` jobs; it is not a second test runner or migration-status
-  ledger. The advisors use it as recommendation context, while the controller
+  ledger. The advisor uses it as recommendation context, while the controller
   applies it independently without model output.
 
 - `.github/workflows/pr-e2e-gate.yaml` owns `E2E / PR Gate` for PRs from this

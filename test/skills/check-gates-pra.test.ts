@@ -5,26 +5,32 @@ import { describe, expect, it } from "vitest";
 
 import {
   evalPraComment,
-  parsePraCommentNdjson,
-  parsePraMeta,
   PRA_PASS_RECOMMENDATIONS,
-  selectLatestTrustedPraComment,
-  validateAdvisorRun,
   type PraMeta,
   type PraRun,
+  parsePraCommentNdjson,
+  parsePraMeta,
+  selectLatestTrustedPraComment,
+  validateAdvisorRun,
 } from "../../.agents/skills/nemoclaw-maintainer-day/scripts/pra-gate.ts";
 
 const HEAD = "8e012dc98c3c4bd53d64ac4f072d4a9f23729db0";
+const BASE = "a".repeat(40);
 
 function makeBody(
-  overrides: Partial<{ headSha: string; recommendation: string; commentId: number }>,
+  overrides: Partial<{
+    headSha: string;
+    recommendation: string;
+    commentId: number;
+    targetMetadata: string;
+  }>,
 ): string {
   const headSha = overrides.headSha ?? HEAD;
   const recommendation = overrides.recommendation ?? "blocked";
   const commentId = overrides.commentId ?? 42;
   return [
     "<!-- nemoclaw-pr-review-advisor -->",
-    `<!-- head_sha: ${headSha}; recommendation: ${recommendation}; run_id: 1; run_attempt: 1; comment_id: ${commentId} -->`,
+    `<!-- head_sha: ${headSha}; recommendation: ${recommendation}; run_id: 1; run_attempt: 1; comment_id: ${commentId}${overrides.targetMetadata ?? ""} -->`,
     "## PR Review Advisor",
     "**Open items:** 2 required · 1 warning",
   ].join("\n");
@@ -63,6 +69,19 @@ describe("parsePraMeta", () => {
   it("normalises headSha to lowercase", () => {
     const body = makeBody({ headSha: HEAD.toUpperCase() });
     expect(parsePraMeta(body)?.headSha).toBe(HEAD.toLowerCase());
+  });
+
+  it("parses target-event provenance after the legacy five fields", () => {
+    const body = makeBody({
+      targetMetadata: `; event: pull_request_target; pr_number: 6736; workflow_sha: ${"B".repeat(40)}; base_sha: ${BASE}; workflow_path: .github/workflows/pr-review-advisor.yaml@refs/heads/main`,
+    });
+    expect(parsePraMeta(body)).toMatchObject({
+      event: "pull_request_target",
+      prNumber: 6736,
+      workflowSha: "b".repeat(40),
+      baseSha: BASE,
+      workflowPath: ".github/workflows/pr-review-advisor.yaml@refs/heads/main",
+    });
   });
 });
 
@@ -214,6 +233,16 @@ function makeRun(overrides: Partial<PraRun> = {}): PraRun {
   };
 }
 
+function makeTargetRun(overrides: Partial<PraRun> = {}): PraRun {
+  return makeRun({
+    path: ".github/workflows/pr-review-advisor.yaml@refs/heads/main",
+    head_sha: "b".repeat(40),
+    event: "pull_request_target",
+    pull_requests: [{ number: 6736, head: { sha: HEAD }, base: { sha: BASE } }],
+    ...overrides,
+  });
+}
+
 function makeMeta(overrides: Partial<PraMeta> = {}): PraMeta {
   return {
     headSha: HEAD.toLowerCase(),
@@ -225,53 +254,201 @@ function makeMeta(overrides: Partial<PraMeta> = {}): PraMeta {
   };
 }
 
+function makeTargetMeta(overrides: Partial<PraMeta> = {}): PraMeta {
+  return makeMeta({
+    event: "pull_request_target",
+    prNumber: 6736,
+    workflowSha: "b".repeat(40),
+    baseSha: BASE,
+    workflowPath: ".github/workflows/pr-review-advisor.yaml@refs/heads/main",
+    ...overrides,
+  });
+}
+
+function validateTargetRun(
+  run = makeTargetRun(),
+  meta = makeTargetMeta(),
+  prNumber = 6736,
+  baseSha = BASE,
+): boolean {
+  return validateAdvisorRun(run, meta, COMMENT_TIME, prNumber, baseSha);
+}
+
 describe("validateAdvisorRun", () => {
-  it("passes when all fields match and timestamp is within window", () => {
-    expect(validateAdvisorRun(makeRun(), makeMeta(), COMMENT_TIME)).toBe(true);
+  it("preserves pull_request validation when all legacy fields match", () => {
+    expect(validateAdvisorRun(makeRun(), makeMeta(), COMMENT_TIME, 6736)).toBe(true);
   });
 
   it("fails when run name is not PR Review / Advisor", () => {
-    expect(validateAdvisorRun(makeRun({ name: "Other Workflow" }), makeMeta(), COMMENT_TIME)).toBe(
+    expect(
+      validateAdvisorRun(makeRun({ name: "Other Workflow" }), makeMeta(), COMMENT_TIME, 6736),
+    ).toBe(false);
+  });
+
+  it("fails when event is neither pull_request nor pull_request_target", () => {
+    expect(validateAdvisorRun(makeRun({ event: "push" }), makeMeta(), COMMENT_TIME, 6736)).toBe(
       false,
     );
   });
 
-  it("fails when event is not pull_request", () => {
-    expect(validateAdvisorRun(makeRun({ event: "push" }), makeMeta(), COMMENT_TIME)).toBe(false);
-  });
-
-  it("fails when head_sha mismatches", () => {
+  it("preserves pull_request rejection when run head_sha mismatches", () => {
     expect(
-      validateAdvisorRun(makeRun({ head_sha: "b".repeat(40) }), makeMeta(), COMMENT_TIME),
+      validateAdvisorRun(makeRun({ head_sha: "b".repeat(40) }), makeMeta(), COMMENT_TIME, 6736),
     ).toBe(false);
   });
 
   it("fails when run_attempt mismatches", () => {
-    expect(validateAdvisorRun(makeRun({ run_attempt: 2 }), makeMeta(), COMMENT_TIME)).toBe(false);
+    expect(validateAdvisorRun(makeRun({ run_attempt: 2 }), makeMeta(), COMMENT_TIME, 6736)).toBe(
+      false,
+    );
   });
 
   it("fails when comment timestamp is before run start", () => {
-    expect(validateAdvisorRun(makeRun(), makeMeta(), "2025-12-31T23:59:59Z")).toBe(false);
+    expect(validateAdvisorRun(makeRun(), makeMeta(), "2025-12-31T23:59:59Z", 6736)).toBe(false);
   });
 
   it("fails when comment timestamp is after run end", () => {
-    expect(validateAdvisorRun(makeRun(), makeMeta(), "2026-01-01T02:00:00Z")).toBe(false);
+    expect(validateAdvisorRun(makeRun(), makeMeta(), "2026-01-01T02:00:00Z", 6736)).toBe(false);
   });
 
   it("fails when run_started_at and created_at are both absent", () => {
     const run = makeRun({ run_started_at: undefined, created_at: undefined });
-    expect(validateAdvisorRun(run, makeMeta(), COMMENT_TIME)).toBe(false);
+    expect(validateAdvisorRun(run, makeMeta(), COMMENT_TIME, 6736)).toBe(false);
   });
 
   it("falls back to created_at when run_started_at is absent", () => {
     const run = makeRun({ run_started_at: undefined, created_at: RUN_START });
-    expect(validateAdvisorRun(run, makeMeta(), COMMENT_TIME)).toBe(true);
+    expect(validateAdvisorRun(run, makeMeta(), COMMENT_TIME, 6736)).toBe(true);
   });
 
   it("rejects github-actions bot PRA metadata unless the run is PR Review Advisor for the same head and attempt", () => {
     // Simulates a different workflow posting a marker comment with valid comment_id and head_sha
     // but a non-Advisor workflow name — run validation must reject it.
     const spoofedRun = makeRun({ name: "CI / Build", event: "push" });
-    expect(validateAdvisorRun(spoofedRun, makeMeta(), COMMENT_TIME)).toBe(false);
+    expect(validateAdvisorRun(spoofedRun, makeMeta(), COMMENT_TIME, 6736)).toBe(false);
+  });
+
+  it("accepts a pull_request_target run associated with the requested PR and head", () => {
+    expect(validateTargetRun()).toBe(true);
+  });
+
+  it("rejects a target run when the API omits the workflow path", () => {
+    expect(validateTargetRun(makeTargetRun({ path: undefined }))).toBe(false);
+  });
+
+  it("rejects a target run from a different workflow path", () => {
+    expect(
+      validateTargetRun(
+        makeTargetRun({ path: ".github/workflows/other-advisor.yaml@refs/heads/main" }),
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects a target run whose path only has the trusted filename as a prefix", () => {
+    expect(
+      validateTargetRun(
+        makeTargetRun({ path: ".github/workflows/pr-review-advisor.yaml.evil@refs/heads/main" }),
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects a target run when pull_requests is absent", () => {
+    expect(validateTargetRun(makeTargetRun({ pull_requests: undefined }))).toBe(false);
+  });
+
+  it("rejects a target run when no PR association is present", () => {
+    expect(validateTargetRun(makeTargetRun({ pull_requests: [] }))).toBe(false);
+  });
+
+  it("rejects a target run when PR association is ambiguous", () => {
+    expect(
+      validateTargetRun(
+        makeTargetRun({
+          pull_requests: [
+            { number: 6736, head: { sha: HEAD }, base: { sha: BASE } },
+            { number: 6736, head: { sha: HEAD }, base: { sha: BASE } },
+          ],
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects a target run associated with a different PR number", () => {
+    expect(validateTargetRun(makeTargetRun(), makeTargetMeta(), 6737)).toBe(false);
+  });
+
+  it("rejects a target run associated with a different PR head", () => {
+    expect(
+      validateTargetRun(
+        makeTargetRun({
+          pull_requests: [{ number: 6736, head: { sha: "c".repeat(40) }, base: { sha: BASE } }],
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects a target run whose PR association omits the head SHA", () => {
+    expect(
+      validateTargetRun(
+        makeTargetRun({ pull_requests: [{ number: 6736, head: null, base: { sha: BASE } }] }),
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects a target run when the current PR base differs", () => {
+    expect(validateTargetRun(makeTargetRun(), makeTargetMeta(), 6736, "c".repeat(40))).toBe(false);
+  });
+
+  it("rejects a target run when metadata names a different base", () => {
+    expect(validateTargetRun(makeTargetRun(), makeTargetMeta({ baseSha: "c".repeat(40) }))).toBe(
+      false,
+    );
+  });
+
+  it("rejects a target run when its PR association omits the base SHA", () => {
+    expect(
+      validateTargetRun(
+        makeTargetRun({ pull_requests: [{ number: 6736, head: { sha: HEAD }, base: null }] }),
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects a target run when its PR association names a different base", () => {
+    expect(
+      validateTargetRun(
+        makeTargetRun({
+          pull_requests: [{ number: 6736, head: { sha: HEAD }, base: { sha: "c".repeat(40) } }],
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects a target run when target-event metadata is absent", () => {
+    expect(validateTargetRun(makeTargetRun(), makeMeta())).toBe(false);
+  });
+
+  it("rejects a target run when metadata names a different event", () => {
+    expect(validateTargetRun(makeTargetRun(), makeTargetMeta({ event: "pull_request" }))).toBe(
+      false,
+    );
+  });
+
+  it("rejects a target run when metadata names a different PR", () => {
+    expect(validateTargetRun(makeTargetRun(), makeTargetMeta({ prNumber: 6737 }))).toBe(false);
+  });
+
+  it("rejects a target run when metadata workflow SHA differs from the run", () => {
+    expect(
+      validateTargetRun(makeTargetRun(), makeTargetMeta({ workflowSha: "c".repeat(40) })),
+    ).toBe(false);
+  });
+
+  it("rejects a target run when metadata names a different workflow path", () => {
+    expect(
+      validateTargetRun(
+        makeTargetRun(),
+        makeTargetMeta({ workflowPath: ".github/workflows/other-advisor.yaml@refs/heads/main" }),
+      ),
+    ).toBe(false);
   });
 });

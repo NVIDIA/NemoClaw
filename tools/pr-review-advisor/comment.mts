@@ -43,12 +43,42 @@ type ReviewAdvisorResult = {
       safetyBoundary?: string;
     };
   }>;
+  e2e?: {
+    coverage?: {
+      requiredTests?: Array<{ id?: string; reason?: string }>;
+      optionalTests?: Array<{ id?: string; reason?: string }>;
+      newE2eRecommendations?: Array<{
+        domain?: string;
+        reason?: string;
+        suggestedTest?: string;
+      }>;
+      noE2eReason?: string | null;
+    };
+    targets?: {
+      required?: Array<{
+        id?: string;
+        reason?: string;
+        dispatchCommand?: string;
+      }>;
+      optional?: Array<{
+        id?: string;
+        reason?: string;
+        dispatchCommand?: string;
+      }>;
+      noTargetE2eReason?: string | null;
+    };
+  };
 };
 
 type CommentMetadata = {
   runId?: string;
   runAttempt?: string;
   commentId?: string;
+  eventName?: string;
+  prNumber?: string;
+  workflowSha?: string;
+  baseSha?: string;
+  workflowPath?: string;
 };
 
 type Finding = NonNullable<ReviewAdvisorResult["findings"]>[number];
@@ -97,8 +127,13 @@ async function main(): Promise<void> {
     resultExplicit: Boolean(args.result),
   });
   const baseMetadata = {
-    runId: process.env.GITHUB_RUN_ID,
-    runAttempt: process.env.GITHUB_RUN_ATTEMPT,
+    runId: process.env.PR_REVIEW_ADVISOR_RUN_ID || process.env.GITHUB_RUN_ID,
+    runAttempt: process.env.PR_REVIEW_ADVISOR_RUN_ATTEMPT || process.env.GITHUB_RUN_ATTEMPT,
+    eventName: process.env.PR_REVIEW_ADVISOR_EVENT_NAME || process.env.GITHUB_EVENT_NAME,
+    prNumber: pr,
+    workflowSha: process.env.TRUSTED_WORKFLOW_SHA,
+    baseSha: process.env.PR_BASE_SHA,
+    workflowPath: process.env.PR_REVIEW_ADVISOR_WORKFLOW_PATH,
   };
   const body = buildComment({
     summary,
@@ -210,6 +245,7 @@ export function buildComment({
       ? `**Status:** ${escapeCommentText(result.summary.oneLine)}\n`
       : "";
   const findingsDetails = renderFindingsDetails(findingRecords);
+  const e2eDetails = renderE2eDetails(result);
   const details = runUrl ? `\n[Workflow run details](${runUrl})` : "";
   const hiddenMetadata = renderHiddenMetadata(result, metadata);
   const posture = reviewPosture(result?.summary?.recommendation, blockerCount);
@@ -222,11 +258,90 @@ ${hiddenMetadata}## ${heading} — ${headline}
 **Merge posture:** ${posture}
 **Primary next action:** ${primaryNextAction(findingRecords)}
 **Findings:** ${compactCount(blockerCount, "required", "required")} · ${compactCount(warningCount, "warning")} · ${compactCount(suggestionCount, "optional suggestion")}
-${informational}${secondary}${findingsDetails}${details}
+${informational}${secondary}${e2eDetails}${findingsDetails}${details}
 
 This is an automated review. Required findings need action before merge. Warnings and optional suggestions do not require a response or follow-up. A human maintainer makes the final merge decision.
 
 `;
+}
+
+function renderE2eDetails(result?: ReviewAdvisorResult): string {
+  const coverage = result?.e2e?.coverage;
+  const targets = result?.e2e?.targets;
+  if (!coverage && !targets) return "";
+
+  const requiredCoverage = coverage?.requiredTests ?? [];
+  const optionalCoverage = coverage?.optionalTests ?? [];
+  const newRecommendations = coverage?.newE2eRecommendations ?? [];
+  const requiredTargets = targets?.required ?? [];
+  const optionalTargets = targets?.optional ?? [];
+  const lines = [
+    "",
+    "### E2E guidance",
+    "_Recommendations only; this advisor does not dispatch E2E or report pass/fail state._",
+    "",
+  ];
+
+  lines.push(
+    `**Required coverage:** ${renderE2eIds(requiredCoverage) || "_None_"}`,
+    `**Required dispatches:** ${renderE2eIds(requiredTargets) || "_None_"}`,
+  );
+  if (requiredTargets.length > 0) {
+    lines.push("");
+    for (const item of requiredTargets.slice(0, 20)) {
+      const id = escapeLocationHtml(item.id || "E2E target");
+      const reason = item.reason ? ` — ${escapeCommentText(item.reason)}` : "";
+      lines.push(`- <code>${id}</code>${reason}`);
+      if (item.dispatchCommand) {
+        lines.push(`  - Run: <code>${escapeLocationHtml(item.dispatchCommand)}</code>`);
+      }
+    }
+  }
+
+  if (optionalCoverage.length > 0 || optionalTargets.length > 0 || newRecommendations.length > 0) {
+    lines.push(
+      "",
+      "<details>",
+      `<summary>${compactCount(optionalCoverage.length, "optional coverage item")} · ${compactCount(optionalTargets.length, "optional dispatch")} · ${compactCount(newRecommendations.length, "new-test recommendation")}</summary>`,
+      "",
+    );
+    for (const item of optionalCoverage.slice(0, 20)) {
+      lines.push(
+        `- Optional coverage <code>${escapeLocationHtml(item.id || "unnamed")}</code>${item.reason ? ` — ${escapeCommentText(item.reason)}` : ""}`,
+      );
+    }
+    for (const item of optionalTargets.slice(0, 20)) {
+      lines.push(
+        `- Optional dispatch <code>${escapeLocationHtml(item.id || "unnamed")}</code>${item.reason ? ` — ${escapeCommentText(item.reason)}` : ""}`,
+      );
+    }
+    for (const item of newRecommendations.slice(0, 20)) {
+      const name = item.suggestedTest || item.domain || "E2E test";
+      lines.push(
+        `- New test: ${escapeCommentText(name)}${item.reason ? ` — ${escapeCommentText(item.reason)}` : ""}`,
+      );
+    }
+    lines.push("", "</details>");
+  }
+
+  if (requiredCoverage.length === 0 && requiredTargets.length === 0 && coverage?.noE2eReason) {
+    lines.push("", `**Why no E2E is required:** ${escapeCommentText(coverage.noE2eReason)}`);
+  }
+  if (requiredTargets.length === 0 && targets?.noTargetE2eReason) {
+    lines.push(
+      "",
+      `**Why no dispatch is required:** ${escapeCommentText(targets.noTargetE2eReason)}`,
+    );
+  }
+  lines.push("");
+  return `${lines.join("\n")}\n`;
+}
+
+function renderE2eIds(items: Array<{ id?: string }>): string {
+  return items
+    .slice(0, 20)
+    .map((item) => `<code>${escapeLocationHtml(item.id || "unnamed")}</code>`)
+    .join(", ");
 }
 
 function collectFindingRecords(result?: ReviewAdvisorResult): FindingRecord[] {
@@ -245,6 +360,13 @@ function renderHiddenMetadata(result?: ReviewAdvisorResult, metadata?: CommentMe
     metadata?.runId ? `run_id: ${safeMetadataValue(metadata.runId)}` : undefined,
     metadata?.runAttempt ? `run_attempt: ${safeMetadataValue(metadata.runAttempt)}` : undefined,
     metadata?.commentId ? `comment_id: ${safeMetadataValue(metadata.commentId)}` : undefined,
+    metadata?.eventName ? `event: ${safeMetadataValue(metadata.eventName)}` : undefined,
+    metadata?.prNumber ? `pr_number: ${safeMetadataValue(metadata.prNumber)}` : undefined,
+    metadata?.workflowSha ? `workflow_sha: ${safeMetadataValue(metadata.workflowSha)}` : undefined,
+    metadata?.baseSha ? `base_sha: ${safeMetadataValue(metadata.baseSha)}` : undefined,
+    metadata?.workflowPath
+      ? `workflow_path: ${safeMetadataValue(metadata.workflowPath)}`
+      : undefined,
   ].filter((field): field is string => Boolean(field));
   return fields.length > 0 ? `<!-- ${fields.join("; ")} -->\n` : "";
 }
