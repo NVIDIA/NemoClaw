@@ -155,7 +155,7 @@ function parseCurlProbe(result: ShellProbeResult): CurlProbe {
   return { httpCode, body, result };
 }
 
-async function bestEffort(run: () => Promise<unknown>): Promise<void> {
+async function bestEffortRecovery(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
   } catch {
@@ -180,7 +180,7 @@ type TunnelLifecycleFixtures = Pick<
 
 type TunnelLifecycleCleanupHost = Pick<E2ETargetFixtures["host"], "cleanupSandbox" | "nemoclaw">;
 
-type TunnelLifecycleCleanupRegistry = Pick<E2ETargetFixtures["cleanup"], "add">;
+type TunnelLifecycleCleanupRegistry = Pick<E2ETargetFixtures["cleanup"], "add" | "trackSandbox">;
 
 export function registerTunnelLifecycleCleanup(
   cleanup: TunnelLifecycleCleanupRegistry,
@@ -195,13 +195,12 @@ export function registerTunnelLifecycleCleanup(
   // condition: replace this ordering guard once NemoClaw exposes one atomic
   // machine-readable lifecycle cleanup that stops tunnels before destroying the
   // sandbox.
-  cleanup.add(`destroy sandbox ${SANDBOX_NAME}`, async () => {
-    if (process.env.NEMOCLAW_E2E_KEEP_SANDBOX === "1") return;
-    await host.cleanupSandbox(SANDBOX_NAME, {
+  if (process.env.NEMOCLAW_E2E_KEEP_SANDBOX !== "1") {
+    cleanup.trackSandbox(host, SANDBOX_NAME, {
       artifactName: "cleanup-nemoclaw-destroy-tunnel-lifecycle",
       timeoutMs: 15 * 60_000,
     });
-  });
+  }
   cleanup.add("stop cloudflared quick tunnel", async () => {
     const stop = await host.nemoclaw(["tunnel", "stop"], {
       artifactName: "cleanup-tunnel-stop",
@@ -331,7 +330,7 @@ export async function runTunnelLifecycleContract({
   if (start.exitCode !== 0) {
     await artifacts.writeText("cloudflared-log-after-start-failure.txt", cloudflaredLogTail());
     if (isCloudflareTransientText(resultText(start)) || classifyCloudflaredLog() === "cloudflare") {
-      await bestEffort(() =>
+      await bestEffortRecovery(() =>
         host.nemoclaw(["tunnel", "stop"], {
           artifactName: "tunnel-stop-after-cloudflare-start-failure",
           env: commandEnv(),
@@ -364,7 +363,7 @@ export async function runTunnelLifecycleContract({
   if (!tunnelUrl) {
     await artifacts.writeText("cloudflared-log-without-status-url.txt", cloudflaredLogTail());
     const cfClass = classifyCloudflaredLog();
-    await bestEffort(() =>
+    await bestEffortRecovery(() =>
       host.nemoclaw(["tunnel", "stop"], {
         artifactName: "tunnel-stop-after-missing-url",
         env: commandEnv(),

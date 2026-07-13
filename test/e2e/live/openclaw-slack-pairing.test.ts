@@ -24,6 +24,7 @@ import {
   expectSandboxReady,
   installSandboxOrSkipOnRateLimit,
   resultText,
+  trackSandboxCleanup,
 } from "./phase6-messaging-helpers.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-openclaw-slack-pairing";
@@ -91,8 +92,20 @@ test("OpenClaw Slack Socket Mode pairing request is shared with connect-shell ap
     pairingUser: PAIRING_USER.slack,
   });
 
-  cleanup.add(`destroy Slack pairing sandbox ${SANDBOX_NAME}`, () =>
-    cleanupPairingSandbox(host, SANDBOX_NAME, env, redactions, "cleanup-slack-pairing"),
+  cleanup.trackGateway(host, "nemoclaw", {
+    artifactName: "cleanup-slack-pairing-openshell-gateway-destroy",
+    env,
+    redactionValues: redactions,
+    timeoutMs: 120_000,
+  });
+  trackSandboxCleanup(
+    cleanup,
+    host,
+    sandbox,
+    SANDBOX_NAME,
+    env,
+    redactions,
+    "cleanup-slack-pairing",
   );
   await cleanupPairingSandbox(host, SANDBOX_NAME, env, redactions, "preclean-slack-pairing");
 

@@ -238,11 +238,12 @@ cid="$(docker ps -qf "name=openshell-cluster-nemoclaw" 2>/dev/null | head -1)"
 [ -n "$cid" ] && docker stop "$cid" >/dev/null 2>&1 || true
 exit 0
 `;
-  await host.command("bash", ["-lc", script], {
+  const stop = await host.command("bash", ["-lc", script], {
     artifactName,
     env: commandEnv(),
     timeoutMs: 60_000,
   });
+  expect(stop.exitCode, resultText(stop)).toBe(0);
 }
 
 function gatewayAliasEndpoint(): string {
@@ -461,13 +462,43 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
     port: Number(process.env.NEMOCLAW_FAKE_PORT ?? 0),
   });
   await artifacts.writeJson("fake-openai.json", { baseUrl: fake.baseUrl });
-  cleanup.add("close fake OpenAI-compatible endpoint", async () => {
+  cleanup.trackDisposable("close fake OpenAI-compatible endpoint", async () => {
     await artifacts.writeJson("fake-openai-requests.json", fake.requests());
     await fake.close();
   });
-  cleanup.add("remove double-onboard sandboxes and gateways", async () => {
-    await cleanupDoubleOnboardState(host, sandbox);
+  cleanup.trackGateway(host, ALT_GATEWAY_NAME, {
+    artifactName: `cleanup-openshell-gateway-destroy-${ALT_GATEWAY_NAME}`,
+    env: commandEnv(),
+    timeoutMs: 60_000,
   });
+  cleanup.trackGateway(host, "nemoclaw", {
+    artifactName: "cleanup-openshell-gateway-destroy-nemoclaw",
+    env: commandEnv(),
+    timeoutMs: 60_000,
+  });
+  cleanup.trackDisposable("stop double-onboard gateway runtime", () =>
+    stopGatewayRuntime(host, "cleanup-stop-gateway-runtime"),
+  );
+  cleanup.trackForward(host, 18789, {
+    artifactName: "cleanup-openshell-forward-stop-18789",
+    env: commandEnv(),
+    timeoutMs: 30_000,
+  });
+  const cleanupSandboxNames = [INSTALL_SANDBOX_NAME, SANDBOX_A, SANDBOX_B].filter(Boolean);
+  for (const name of [...cleanupSandboxNames].reverse()) {
+    cleanup.trackDisposable(`delete OpenShell sandbox ${name}`, () =>
+      sandbox.cleanupSandbox(name, {
+        artifactName: `cleanup-openshell-sandbox-delete-${name}`,
+        env: commandEnv(),
+        timeoutMs: 60_000,
+      }),
+    );
+    cleanup.trackSandbox(host, name, {
+      artifactName: `cleanup-nemoclaw-destroy-${name}`,
+      env: commandEnv(),
+      timeoutMs: RECOVERY_PROBE_TIMEOUT_MS,
+    });
+  }
 
   await artifacts.target.declare({
     id: "double-onboard",

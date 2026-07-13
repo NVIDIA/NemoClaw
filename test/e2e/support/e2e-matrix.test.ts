@@ -6,8 +6,10 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 import { target } from "../registry/builder.ts";
+import { listTargets } from "../registry/registry.ts";
 import { buildLiveTargetMatrix } from "../registry/run.ts";
 import { resolveRunnerForTarget } from "../registry/runner-routing.ts";
+import { liveTargetSupport } from "../registry/runtime-support.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const RUN_TARGETS = path.join(REPO_ROOT, "test/e2e/registry/run.ts");
@@ -19,6 +21,12 @@ function runEmitLiveMatrix(args: string[] = []) {
     encoding: "utf8",
     timeout: Number(process.env.E2E_SPAWN_TIMEOUT_MS ?? 60_000),
   });
+}
+
+function requireUnsupportedTarget() {
+  const unsupported = listTargets().find((entry) => !liveTargetSupport(entry).supported);
+  expect(unsupported, "expected at least one unsupported live E2E target").toBeDefined();
+  return unsupported!;
 }
 
 describe("live E2E target matrix", () => {
@@ -75,76 +83,39 @@ describe("live E2E target matrix", () => {
     expect(() => resolveRunnerForTarget(broken)).toThrow(/no default for platform/);
   });
 
-  it("builds the default live matrix from fixture-supported targets only", () => {
-    expect(buildLiveTargetMatrix().map((entry) => entry.id)).toEqual([
-      "ubuntu-policy-custom-missing-presets-negative",
-      "ubuntu-repo-cloud-langchain-deepagents-code",
-      "ubuntu-repo-cloud-openclaw",
-      "ubuntu-repo-docker-post-reboot-recovery",
-    ]);
-    expect(buildLiveTargetMatrix()[0]).toMatchObject({
-      id: "ubuntu-policy-custom-missing-presets-negative",
-      runner: "ubuntu-latest",
-      platform: "ubuntu-local",
-      install: "repo-current",
-      runtime: "docker-running",
-      onboarding: "cloud-openclaw-policy-custom-missing-presets",
-      expectedStateId: "onboarding-failure-policy-presets-required",
-      requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
-      supported: true,
-      supportReasons: [],
-      pendingRuntimeSuites: [],
-    });
-    expect(buildLiveTargetMatrix()[1]).toMatchObject({
-      id: "ubuntu-repo-cloud-langchain-deepagents-code",
-      runner: "ubuntu-latest",
-      platform: "ubuntu-local",
-      install: "repo-current",
-      runtime: "docker-running",
-      onboarding: "cloud-langchain-deepagents-code",
-      expectedStateId: "cloud-deepagents-code-ready",
-      requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
-      supported: true,
-      supportReasons: [],
-      pendingRuntimeSuites: ["smoke", "inference", "terminal-agent", "deepagents-code-policy"],
-    });
-    expect(buildLiveTargetMatrix()[2]).toMatchObject({
-      id: "ubuntu-repo-cloud-openclaw",
-      runner: "ubuntu-latest",
-      platform: "ubuntu-local",
-      install: "repo-current",
-      runtime: "docker-running",
-      onboarding: "cloud-openclaw",
-      expectedStateId: "cloud-openclaw-ready",
-      requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
-      supported: true,
-      supportReasons: [],
-      pendingRuntimeSuites: ["smoke", "inference", "credentials"],
-    });
-    // Failing-test-first guard for #4423. Pinned in the matrix to
-    // confirm the lifecycle whitelist + post-reboot-recovery target
-    // are wired together; the actual RED/GREEN behavior is exercised
-    // by the live runner (gates on the fix landing in src/lib/).
-    expect(buildLiveTargetMatrix()[3]).toMatchObject({
-      id: "ubuntu-repo-docker-post-reboot-recovery",
-      runner: "ubuntu-latest",
-      platform: "ubuntu-local",
-      install: "repo-current",
-      runtime: "docker-running",
-      onboarding: "cloud-openclaw",
-      expectedStateId: "post-reboot-recovery-ready",
-      requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
-      supported: true,
-      supportReasons: [],
-    });
+  // source-shape-contract: compatibility -- Default live matrix output must cover every fixture-supported registered target once
+  it("builds the default live matrix from every fixture-supported target", () => {
+    const targets = listTargets();
+    const supportedTargets = targets.filter((entry) => liveTargetSupport(entry).supported);
+    const matrix = buildLiveTargetMatrix();
+
+    expect(matrix).not.toHaveLength(0);
+    expect(matrix.map((entry) => entry.id)).toEqual(supportedTargets.map((entry) => entry.id));
+    expect(new Set(matrix.map((entry) => entry.id)).size).toBe(matrix.length);
+    for (const entry of matrix) {
+      const registered = supportedTargets.find((target) => target.id === entry.id);
+      expect(
+        registered,
+        `matrix entry '${entry.id}' must resolve to a supported target`,
+      ).toBeDefined();
+      expect(entry).toMatchObject({
+        runner: resolveRunnerForTarget(registered!).runner,
+        supported: true,
+        supportReasons: [],
+        pendingRuntimeSuites: registered!.suiteIds ?? [],
+      });
+    }
   });
 
   it("keeps explicitly selected unsupported live targets in the matrix with skip reasons", () => {
-    expect(buildLiveTargetMatrix(["ubuntu-repo-cloud-hermes"])).toEqual([
+    const unsupported = requireUnsupportedTarget();
+    const support = liveTargetSupport(unsupported);
+
+    expect(buildLiveTargetMatrix([unsupported.id])).toEqual([
       expect.objectContaining({
-        id: "ubuntu-repo-cloud-hermes",
+        id: unsupported.id,
         supported: false,
-        supportReasons: ["onboarding 'cloud-hermes' is not wired for live fixtures"],
+        supportReasons: support.reasons,
       }),
     ]);
   });
@@ -155,24 +126,15 @@ describe("live E2E target matrix", () => {
     const lines = result.stdout.trim().split("\n");
     expect(lines.length, "live matrix output must be a single line").toBe(1);
     const parsed = JSON.parse(lines[0]);
-    expect(parsed.map((entry: { id: string }) => entry.id)).toEqual([
-      "ubuntu-policy-custom-missing-presets-negative",
-      "ubuntu-repo-cloud-langchain-deepagents-code",
-      "ubuntu-repo-cloud-openclaw",
-      "ubuntu-repo-docker-post-reboot-recovery",
-    ]);
+    expect(parsed).toEqual(buildLiveTargetMatrix());
   });
 
   it("honors explicit target selections for --emit-live-matrix", () => {
-    const result = runEmitLiveMatrix(["--targets", "ubuntu-repo-cloud-hermes"]);
+    const unsupported = requireUnsupportedTarget();
+    const result = runEmitLiveMatrix(["--targets", unsupported.id]);
     expect(result.status, result.stderr).toBe(0);
     const parsed = JSON.parse(result.stdout.trim());
-    expect(parsed).toEqual([
-      expect.objectContaining({
-        id: "ubuntu-repo-cloud-hermes",
-        supported: false,
-      }),
-    ]);
+    expect(parsed).toEqual(buildLiveTargetMatrix([unsupported.id]));
   });
 
   it("rejects retired typed-shell runner flags", () => {

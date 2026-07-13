@@ -30,6 +30,8 @@ type WorkflowStep = {
 type WorkflowJob = {
   env?: Record<string, unknown>;
   steps?: WorkflowStep[];
+  "runs-on"?: string;
+  "timeout-minutes"?: number;
 };
 
 export type SandboxOperationsWorkflow = {
@@ -72,6 +74,16 @@ export function validateSandboxOperationsWorkflow(workflow: {
   const job = (workflow.jobs[JOB_NAME] ?? {}) as WorkflowJob;
   const jobEnv = job.env ?? {};
   const steps = job.steps ?? [];
+
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push(`${JOB_NAME} must run on ubuntu-latest`);
+  }
+  if (job["timeout-minutes"] !== 60) {
+    errors.push(`${JOB_NAME} must retain its 60 minute recovery budget`);
+  }
+  if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/live/sandbox-operations") {
+    errors.push(`${JOB_NAME} must use its isolated artifact directory`);
+  }
 
   if (Object.hasOwn(jobEnv, "DOCKER_CONFIG")) {
     errors.push(`${JOB_NAME} must not configure Docker auth at job scope`);

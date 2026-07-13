@@ -91,7 +91,24 @@ test("Hermes inference set updates route/config and preserves live runtime", {
     runtimeSwitchApi: RUNTIME_SWITCH_API,
   });
 
-  cleanup.add("destroy Hermes inference switch sandbox", () => cleanupHermesSwitch(host, sandbox));
+  const cleanupEnv = env();
+  cleanup.trackGateway(host, "nemoclaw", {
+    artifactName: "cleanup-openshell-gateway",
+    env: cleanupEnv,
+    timeoutMs: 60_000,
+  });
+  cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "cleanup-openshell-delete",
+      env: cleanupEnv,
+      timeoutMs: 60_000,
+    }),
+  );
+  cleanup.trackSandbox(host, SANDBOX_NAME, {
+    artifactName: "cleanup-nemoclaw-destroy",
+    env: cleanupEnv,
+    timeoutMs: 120_000,
+  });
   await cleanupHermesSwitch(host, sandbox);
 
   const docker = await host.command("docker", ["info"], {
@@ -108,7 +125,7 @@ test("Hermes inference set updates route/config and preserves live runtime", {
         requireAuth: true,
       })
     : undefined;
-  cleanup.add("close Hermes inference switch baseline fixture", async () => {
+  cleanup.trackDisposable("close Hermes inference switch baseline fixture", async () => {
     await artifacts.writeJson(
       "baseline-openai-compatible-requests.json",
       mockBaseline?.requests() ?? [],

@@ -187,9 +187,15 @@ function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow):
 
   for (const [jobName, job] of Object.entries(workflow.jobs)) {
     for (const step of job.steps ?? []) {
+      const trustedHermesFixtureCheckout =
+        jobName === "hermes-gpu-startup" &&
+        step.name === "Checkout trusted Hermes GPU runtime fixture" &&
+        step.with?.repository === "NVIDIA/NemoClaw" &&
+        step.with?.ref === "${{ github.workflow_sha }}";
       if (
         step.uses?.startsWith("actions/checkout@") &&
-        step.with?.ref !== "${{ inputs.checkout_sha || github.sha }}"
+        step.with?.ref !== "${{ inputs.checkout_sha || github.sha }}" &&
+        !trustedHermesFixtureCheckout
       ) {
         errors.push(`${jobName} checkout must use the selected PR commit`);
       }

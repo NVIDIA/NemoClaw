@@ -4,10 +4,10 @@
 #
 # Case: Deep Agents Code interactive TUI startup (#5620).
 #
-# This live check runs twice against a real Deep Agents Code sandbox. It proves
-# the interactive `dcode` TUI starts in a PTY, opens and closes the `/agents`
-# modal, exits after Ctrl-C without leaking DCode/LangGraph processes, and
-# leaves only sanitized, secret-free capture artifacts.
+# This live check runs a headless request and two interactive sessions against a
+# real Deep Agents Code sandbox. It proves completed sessions do not leak
+# DCode/LangGraph processes and leaves only sanitized, secret-free capture
+# artifacts.
 #
 # shellcheck disable=SC2016
 # expect(1) Tcl: $env(...) and {...} are Tcl/sh expansion, not bash expansion.
@@ -17,6 +17,7 @@ set -euo pipefail
 SANDBOX_NAME="${SANDBOX_NAME:-${NEMOCLAW_SANDBOX_NAME:-e2e-cloud-onboard}}"
 PREFIX="10-deepagents-code-tui-startup"
 TUI_TIMEOUT="${DEEPAGENTS_TUI_TIMEOUT:-90}"
+HEADLESS_TIMEOUT="${DEEPAGENTS_HEADLESS_TIMEOUT:-120}"
 PROCESS_CLEANUP_TIMEOUT=20
 # Shell-only live check fallback for remote e2e hosts; Vitest parity coverage in
 # test/deepagents-code-tui-startup-check.test.ts pins this to secret-patterns.ts.
@@ -48,6 +49,26 @@ pass() {
 
 sandbox_exec() {
   openshell sandbox exec --name "$SANDBOX_NAME" -- bash -c "$1" 2>&1
+}
+
+run_headless_session() {
+  openshell sandbox exec --name "$SANDBOX_NAME" -- \
+    dcode -n 'Reply with exactly one word: PONG' \
+    --json --max-turns 1 --timeout "$HEADLESS_TIMEOUT" 2>&1
+}
+
+sandbox_is_ready() {
+  openshell sandbox list 2>&1 \
+    | awk -v name="$SANDBOX_NAME" '$1 == name && /Ready/ { found = 1 } END { exit(found ? 0 : 1) }'
+}
+
+wait_for_sandbox_ready() {
+  local deadline=$((SECONDS + PROCESS_CLEANUP_TIMEOUT))
+  while :; do
+    sandbox_is_ready && return 0
+    [ "$SECONDS" -ge "$deadline" ] && return 1
+    sleep 1
+  done
 }
 
 is_positive_integer() {
@@ -149,9 +170,10 @@ strip_terminal_control_sequences() {
 
 cleanup_sensitive_captures() {
   local artifact
-  for artifact in "${SENSITIVE_CAPTURE_FILES[@]}"; do
+  for artifact in "${SENSITIVE_CAPTURE_FILES[@]:-}"; do
     [ -n "$artifact" ] && rm -f -- "$artifact"
   done
+  return 0
 }
 
 make_capture_dir() {
@@ -384,6 +406,12 @@ main() {
     exit 1
   fi
 
+  if ! is_positive_integer "$HEADLESS_TIMEOUT"; then
+    fail_test "DEEPAGENTS_HEADLESS_TIMEOUT must be a positive integer"
+    printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
+    exit 1
+  fi
+
   if ! command -v perl >/dev/null 2>&1; then
     fail_test "perl is required to sanitize and redact Deep Agents Code TUI captures"
     printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
@@ -437,6 +465,27 @@ main() {
     fail_test "unable to record the baseline DCode/LangGraph process count"
     printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
     exit 1
+  fi
+
+  local headless_output headless_rc
+  set +e
+  headless_output="$(run_headless_session)"
+  headless_rc=$?
+  set -e
+  if [ "$headless_rc" -eq 0 ] && grep -Eiq '(^|[^A-Za-z])PONG([^A-Za-z]|$)' <<<"$headless_output"; then
+    pass "headless dcode request returned PONG"
+  else
+    fail_test "headless dcode request did not return exit-zero PONG"
+  fi
+  if wait_for_dcode_process_baseline "$baseline_process_count"; then
+    pass "headless completion returned the DCode/LangGraph process count to baseline"
+  else
+    fail_test "headless completion left the DCode/LangGraph process count above baseline after ${PROCESS_CLEANUP_TIMEOUT}s"
+  fi
+  if wait_for_sandbox_ready; then
+    pass "sandbox remained Ready after headless completion"
+  else
+    fail_test "sandbox was not Ready after headless completion"
   fi
 
   info "Running two Deep Agents Code TUI sessions in sandbox: $SANDBOX_NAME"

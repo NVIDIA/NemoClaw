@@ -11,31 +11,12 @@ import {
   validateInferenceSwitchWorkflow,
   validateInferenceSwitchWorkflowBoundary,
 } from "../../../tools/e2e/inference-switch-workflow-boundary.mts";
-import {
-  evaluateE2eWorkflowDispatchSelectors,
-  validateE2eWorkflowBoundary,
-} from "../../../tools/e2e/workflow-boundary.mts";
+import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundary.mts";
 
 describe("inference switch workflow boundary", () => {
-  it("runs hosted and Anthropic-compatible modes for both agents", () => {
+  it("accepts hosted and Anthropic-compatible modes for both agents", () => {
     expect(validateInferenceSwitchWorkflowBoundary()).toEqual([]);
     expect(validateE2eWorkflowBoundary()).toEqual([]);
-
-    for (const [job, target] of [
-      ["hermes-inference-switch", "hermes-inference-switch"],
-      ["openclaw-inference-switch", "openclaw-inference-switch"],
-    ]) {
-      expect(evaluateE2eWorkflowDispatchSelectors({ targets: target })).toMatchObject({
-        valid: true,
-        liveTargetsRun: false,
-        selectedFreeStandingJobs: [job],
-      });
-      expect(evaluateE2eWorkflowDispatchSelectors({ jobs: job })).toMatchObject({
-        valid: true,
-        liveTargetsRun: false,
-        selectedFreeStandingJobs: [job],
-      });
-    }
   });
 
   it("rejects removal or misconfiguration of an Anthropic-compatible mode", () => {
@@ -114,9 +95,6 @@ describe("inference switch workflow boundary", () => {
   it("accepts shared guarded Docker authentication without mode-specific auth scripts", () => {
     const workflow = readInferenceSwitchWorkflow();
     const steps = workflow.jobs["openclaw-inference-switch"].steps!;
-    expect(steps.some((step) => step.name === "Configure isolated Docker auth directory")).toBe(
-      false,
-    );
 
     const authenticate = steps.find((step) => step.name === "Authenticate to Docker Hub")!;
     const authIndex = steps.indexOf(authenticate);

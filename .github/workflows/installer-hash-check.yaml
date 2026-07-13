@@ -31,7 +31,7 @@ jobs:
       - name: Set up trusted installer hash parser runtime
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
         with:
-          node-version: 22.16.0
+          node-version: 22.19.0
 
       # The full PR-head checkout below supplies data only. Its checker and pin
       # parser are never executed: later steps run exclusively from either

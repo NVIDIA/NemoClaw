@@ -54,13 +54,8 @@ export function currentGatewayUpgradeInstallerArgs(installer: string): string[] 
   return [installer, ...COMMON_INSTALLER_ARGS];
 }
 
-export function upgradeGatewayCleanupScript(pidFile: string): string {
-  return `if command -v openshell >/dev/null 2>&1; then
-  openshell gateway remove nemoclaw >/dev/null 2>&1 \\
-    || openshell gateway destroy -g nemoclaw >/dev/null 2>&1 \\
-    || openshell gateway destroy >/dev/null 2>&1 \\
-    || true
-fi
+export function upgradeGatewayStateCleanupScript(pidFile: string): string {
+  return `set -e
 volume_prefix=${GATEWAY_VOLUME_PREFIX}
 gateway_volumes="$(docker volume ls -q --filter "name=\${volume_prefix}")"
 while IFS= read -r volume; do
@@ -73,4 +68,14 @@ while IFS= read -r volume; do
   esac
 done <<<"$gateway_volumes"
 rm -f ${shellQuote(pidFile)}`;
+}
+
+export function upgradeGatewayCleanupScript(pidFile: string): string {
+  return `if command -v openshell >/dev/null 2>&1; then
+  openshell gateway remove nemoclaw >/dev/null 2>&1 \\
+    || openshell gateway destroy -g nemoclaw >/dev/null 2>&1 \\
+    || openshell gateway destroy >/dev/null 2>&1 \\
+    || true
+fi
+${upgradeGatewayStateCleanupScript(pidFile)}`;
 }

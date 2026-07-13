@@ -42,15 +42,27 @@ export class CleanupRegistry {
     this.entries.push({ name, run });
   }
 
-  trackSandbox(host: CleanupHost, name: string, options: ShellProbeRunOptions = {}): void {
+  trackSandbox(
+    host: Pick<CleanupHost, "cleanupSandbox">,
+    name: string,
+    options: ShellProbeRunOptions = {},
+  ): void {
     this.add(`destroy sandbox ${name}`, () => host.cleanupSandbox(name, options));
   }
 
-  trackGateway(host: CleanupHost, name: string, options: ShellProbeRunOptions = {}): void {
+  trackGateway(
+    host: Pick<CleanupHost, "cleanupGatewayRegistration">,
+    name: string,
+    options: ShellProbeRunOptions = {},
+  ): void {
     this.add(`remove gateway ${name}`, () => host.cleanupGatewayRegistration(name, options));
   }
 
-  trackForward(host: CleanupHost, port: number, options: ShellProbeRunOptions = {}): void {
+  trackForward(
+    host: Pick<CleanupHost, "cleanupForward">,
+    port: number,
+    options: ShellProbeRunOptions = {},
+  ): void {
     this.add(`stop forward ${port}`, () => host.cleanupForward(port, options));
   }
 

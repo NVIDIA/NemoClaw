@@ -5,6 +5,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import {
+  assertCleanupSucceededOrAbsent,
+  cleanupWhenOpenShellAvailable,
+} from "../fixtures/cleanup-resources.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
@@ -130,7 +134,9 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
   timeout: LIVE_TIMEOUT_MS,
 }, async ({ artifacts, cleanup: cleanupRegistry, host, sandbox, skip }) => {
   const corporateCa = createCorporateCaFixture("requests", "nemoclaw-repair-corporate-ca-");
-  cleanupRegistry.add("remove corporate CA fixture", () => cleanupCorporateCaFixture(corporateCa));
+  cleanupRegistry.trackDisposable("remove corporate CA fixture", () =>
+    cleanupCorporateCaFixture(corporateCa),
+  );
   await artifacts.target.declare({
     id: "onboard-repair",
     sandboxName: SANDBOX_NAME,
@@ -161,8 +167,106 @@ test("onboard repair resumes missing sandbox and rejects conflicting resume inpu
     host: "0.0.0.0",
     publicHost: "host.openshell.internal",
   });
-  cleanupRegistry.add("close fake OpenAI-compatible endpoint", async () => fake.close());
-  cleanupRegistry.add("remove repair sandboxes", () => cleanup(host, sandbox));
+  cleanupRegistry.trackDisposable("close fake OpenAI-compatible endpoint", async () =>
+    fake.close(),
+  );
+  cleanupRegistry.trackDisposable("remove onboard-repair local state", () => {
+    updateExtraProviders((providers) => {
+      providers.delete(STALE_EXTRA_PROVIDER);
+      providers.delete(LIVE_EXTRA_PROVIDER);
+    });
+    fs.rmSync(SESSION_FILE, { force: true });
+  });
+  const cleanupWhenInstalled = (artifactName: string, run: () => Promise<void>): Promise<void> =>
+    cleanupWhenOpenShellAvailable(
+      host,
+      {
+        artifactName,
+        env: env(),
+        redactionValues: [EXTRA_PROVIDER_TOKEN],
+        timeoutMs: 30_000,
+      },
+      run,
+    );
+  const gatewayCleanupOptions = {
+    artifactName: "cleanup-gateway-destroy",
+    env: env(),
+    redactionValues: [EXTRA_PROVIDER_TOKEN],
+    timeoutMs: 60_000,
+  };
+  cleanupRegistry.trackGateway(
+    {
+      cleanupGatewayRegistration: (name: string) =>
+        cleanupWhenInstalled("cleanup-probe-openshell-gateway", () =>
+          host.cleanupGatewayRegistration(name, gatewayCleanupOptions),
+        ),
+    },
+    "nemoclaw",
+    gatewayCleanupOptions,
+  );
+  cleanupRegistry.trackDisposable(`remove provider ${LIVE_EXTRA_PROVIDER}`, () =>
+    cleanupWhenInstalled("cleanup-probe-openshell-provider", async () => {
+      const remove = await sandbox.openshell(
+        ["provider", "delete", "-g", "nemoclaw", LIVE_EXTRA_PROVIDER],
+        {
+          artifactName: "cleanup-live-extra-provider-delete",
+          env: env({ [EXTRA_PROVIDER_TOKEN_ENV]: EXTRA_PROVIDER_TOKEN }),
+          redactionValues: [EXTRA_PROVIDER_TOKEN],
+          timeoutMs: 60_000,
+        },
+      );
+      assertCleanupSucceededOrAbsent(
+        remove,
+        /\bNotFound\b|provider[^\n]*(?:not found|does not exist)|no such provider/i,
+        `cleanup provider ${LIVE_EXTRA_PROVIDER}`,
+      );
+    }),
+  );
+  const forwardCleanupOptions = {
+    artifactName: "cleanup-forward-stop-18789",
+    env: env(),
+    redactionValues: [EXTRA_PROVIDER_TOKEN],
+    timeoutMs: 30_000,
+  };
+  cleanupRegistry.trackForward(
+    {
+      cleanupForward: (port: number) =>
+        cleanupWhenInstalled("cleanup-probe-openshell-forward", () =>
+          host.cleanupForward(port, forwardCleanupOptions),
+        ),
+    },
+    18789,
+    forwardCleanupOptions,
+  );
+  const repairSandboxNames = [SANDBOX_NAME, OTHER_SANDBOX_NAME];
+  for (const name of [...repairSandboxNames].reverse()) {
+    cleanupRegistry.trackDisposable(`delete OpenShell sandbox ${name}`, () =>
+      cleanupWhenInstalled(`cleanup-probe-openshell-sandbox-${name}`, () =>
+        sandbox.cleanupSandbox(name, {
+          artifactName: `cleanup-openshell-delete-${name}`,
+          env: env(),
+          redactionValues: [EXTRA_PROVIDER_TOKEN],
+          timeoutMs: 60_000,
+        }),
+      ),
+    );
+    const sandboxCleanupOptions = {
+      artifactName: `cleanup-destroy-${name}`,
+      env: env(),
+      redactionValues: [EXTRA_PROVIDER_TOKEN],
+      timeoutMs: 20 * 60_000,
+    };
+    cleanupRegistry.trackSandbox(
+      {
+        cleanupSandbox: (sandboxName: string) =>
+          cleanupWhenInstalled(`cleanup-probe-openshell-nemoclaw-${sandboxName}`, () =>
+            host.cleanupSandbox(sandboxName, sandboxCleanupOptions),
+          ),
+      },
+      name,
+      sandboxCleanupOptions,
+    );
+  }
   await cleanup(host, sandbox);
 
   const first = await nemoclaw(

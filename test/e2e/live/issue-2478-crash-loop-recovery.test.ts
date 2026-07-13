@@ -192,7 +192,11 @@ async function onboardWithCompatibleEndpoint(
     result.exitCode,
     `compatible OpenClaw onboard failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
   ).toBe(0);
-  cleanup.add(`destroy NemoClaw sandbox ${sandboxName}`, () => cleanupSandbox(host, sandboxName));
+  cleanup.trackSandbox(host, sandboxName, {
+    artifactName: `cleanup-destroy-${sandboxName}`,
+    env: probeEnv(),
+    timeoutMs: 15 * 60_000,
+  });
 
   return {
     onboarding: "cloud-openclaw",

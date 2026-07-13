@@ -141,7 +141,7 @@ For shell scripts use `#` comments. For Markdown use HTML comments.
 
 ### JavaScript
 
-- `bin/` launcher and remaining `scripts/*.js`: **CommonJS** (`require`/`module.exports`), Node.js 22.16+
+- `bin/` launcher and remaining `scripts/*.js`: **CommonJS** (`require`/`module.exports`), Node.js 22.19+
 - `test/`: **ESM** (`import`/`export`)
 - Biome config in `biome.json`
 - Keep function complexity low; existing complexity hotspots are tracked separately

@@ -17,11 +17,11 @@ import {
   assertDockerAvailable,
   buildOldOpenClawBase,
   cleanupOldImage,
-  cleanupStaleSandbox,
   commandEnv,
   createFixtureDockerfile,
   installCurrentNemoclaw,
   OLD_OPENCLAW_VERSION,
+  precleanStaleSandbox,
   registeredStaleSandboxJson,
   registerStateRestore,
   SANDBOX_NAME,
@@ -58,9 +58,20 @@ test("upgrade-sandboxes detects and rebuilds stale OpenClaw sandboxes (#1904)", 
   assertDockerAvailable(dockerInfo, skip);
 
   registerStateRestore(cleanup);
-  cleanup.add(`destroy stale sandbox ${SANDBOX_NAME}`, () => cleanupStaleSandbox(host, sandbox));
-  cleanup.add("remove stale OpenClaw test image", () => cleanupOldImage(host));
-  await cleanupStaleSandbox(host, sandbox);
+  cleanup.trackDisposable("remove stale OpenClaw test image", () => cleanupOldImage(host));
+  cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "cleanup-openshell-delete-upgrade-stale",
+      env: commandEnv(),
+      timeoutMs: 60_000,
+    }),
+  );
+  cleanup.trackSandbox(host, SANDBOX_NAME, {
+    artifactName: "cleanup-nemoclaw-destroy-upgrade-stale",
+    env: commandEnv(),
+    timeoutMs: 120_000,
+  });
+  await precleanStaleSandbox(host, sandbox);
 
   const install = await installCurrentNemoclaw(host, hosted);
   expect(install.exitCode, resultText(install)).toBe(0);

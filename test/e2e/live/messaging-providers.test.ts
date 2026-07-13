@@ -18,7 +18,6 @@ import {
   accountString,
   applyRestRewritePolicy,
   applyWebSocketRewritePolicy,
-  bestEffort,
   CLI_ENTRYPOINT,
   channelAccount,
   channelEnabled,
@@ -42,6 +41,7 @@ import {
   runDiscordGatewayClient,
   runHost,
   runSandboxShell,
+  runSecondaryCleanup,
   runSlackApiRequest,
   SANDBOX_NAME,
   sandboxOutput,
@@ -53,6 +53,8 @@ import {
 } from "./messaging-providers-helpers.ts";
 import { runInstalledSlackRuntimeProof } from "./messaging-providers-slack-runtime-proof.ts";
 import { runInstalledTelegramRuntimeProof } from "./messaging-providers-telegram-runtime-proof.ts";
+
+process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
 test(
   "messaging providers preserve placeholder, policy, runtime, and send contracts",
@@ -81,29 +83,25 @@ test(
       wechatAccount: state.wechatAccount,
     });
 
-    cleanup.add(`destroy messaging providers sandbox ${SANDBOX_NAME}`, async () => {
-      await bestEffort(() =>
-        runHost(host, "node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
-          artifactName: "cleanup-nemoclaw-destroy-messaging-providers",
-          env: state.env,
-          redactionValues,
-          timeoutMs: 15 * 60_000,
-        }),
-      );
-      await bestEffort(() =>
-        runHost(host, "openshell", ["sandbox", "delete", SANDBOX_NAME], {
-          artifactName: "cleanup-openshell-sandbox-delete-messaging-providers",
-          env: state.env,
-          redactionValues,
-          timeoutMs: 120_000,
-        }),
-      );
+    cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+      sandbox.cleanupSandbox(SANDBOX_NAME, {
+        artifactName: "cleanup-openshell-sandbox-delete-messaging-providers",
+        env: state.env,
+        redactionValues,
+        timeoutMs: 120_000,
+      }),
+    );
+    cleanup.trackSandbox(host, SANDBOX_NAME, {
+      artifactName: "cleanup-nemoclaw-destroy-messaging-providers",
+      env: state.env,
+      redactionValues,
+      timeoutMs: 15 * 60_000,
     });
 
     const restoreSlackPolicy = await premergeSlackPolicyIfNeeded();
     cleanup.add("restore messaging E2E Slack policy pre-merge", restoreSlackPolicy);
 
-    await bestEffort(() =>
+    await runSecondaryCleanup(() =>
       runHost(host, "node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
         artifactName: "preclean-nemoclaw-destroy-messaging-providers",
         env: state.env,
@@ -111,7 +109,7 @@ test(
         timeoutMs: 15 * 60_000,
       }),
     );
-    await bestEffort(() =>
+    await runSecondaryCleanup(() =>
       runHost(host, "openshell", ["sandbox", "delete", SANDBOX_NAME], {
         artifactName: "preclean-openshell-sandbox-delete-messaging-providers",
         env: state.env,
@@ -119,7 +117,7 @@ test(
         timeoutMs: 120_000,
       }),
     );
-    await bestEffort(() =>
+    await runSecondaryCleanup(() =>
       runHost(host, "openshell", ["gateway", "destroy", "-g", "nemoclaw"], {
         artifactName: "preclean-openshell-gateway-destroy-messaging-providers",
         env: state.env,

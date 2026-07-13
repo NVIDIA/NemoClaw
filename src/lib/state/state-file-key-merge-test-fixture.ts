@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parse, stringify } from "smol-toml";
-import type { StateFileKeyAllowlistRestoreOwnership } from "../agent/defs";
+import { loadAgent, type StateFileKeyAllowlistRestoreOwnership } from "../agent/defs";
 import { shellQuote } from "../runner";
 import {
   buildKeyAllowlistMergeRestoreCommand,
@@ -154,20 +154,17 @@ export function stageSwapScript(kind: "hardlink" | "regular" | "symlink"): strin
   );
 }
 
-export const DCODE_OWNERSHIP: StateFileKeyAllowlistRestoreOwnership = {
-  merge: "key-allowlist",
-  userKeys: [
-    { key: "ui.show_scrollbar", type: "boolean" },
-    { key: "ui.show_url_open_toast", type: "boolean" },
-    { key: "threads.relative_time", type: "boolean" },
-    { key: "threads.sort_order", type: "enum", values: ["updated_at", "created_at"] },
-  ],
-  requireFreshTables: ["models", "update"],
-  requireFreshHeaders: [
-    { match: "exact", value: GENERATED_HEADER },
-    { match: "prefix", value: "# NemoClaw provider route: " },
-  ],
-};
+function loadDcodeOwnership(): StateFileKeyAllowlistRestoreOwnership {
+  const ownership = loadAgent("langchain-deepagents-code").stateFiles.find(
+    (stateFile) => stateFile.path === "config.toml",
+  )?.restore;
+  if (ownership?.merge !== "key-allowlist") {
+    throw new Error("Deep Agents config must declare key-allowlist restore ownership");
+  }
+  return ownership;
+}
+
+export const DCODE_OWNERSHIP = loadDcodeOwnership();
 
 export function generatedCurrent(config: unknown, providerHeader = FRESH_PROVIDER_HEADER): string {
   return `${GENERATED_HEADER}\n${providerHeader}\n\n${stringify(config)}`;

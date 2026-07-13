@@ -75,7 +75,10 @@ jobs:
       # Pin the Pi SDK to a known-good version. Updates should go through
       # normal dependency review so a compromised upstream release cannot run
       # automatically in this secret-bearing job.
-      PI_SDK_VERSION: "0.74.0"
+      PI_SDK_VERSION: "0.80.6"
+      # The review ledger imports TypeBox directly. Pi 0.80.6 shrinkwraps its
+      # own copy, so the advisor runtime must install this direct dependency.
+      TYPEBOX_VERSION: "1.1.38"
       # Keep the grep tool deterministic for the pinned Ubuntu runner. A newer
       # package must be reviewed and updated explicitly instead of floating.
       RIPGREP_VERSION: "14.1.0-1"
@@ -158,6 +161,17 @@ jobs:
           echo "ADVISOR_WORKDIR=$TARGET_DIR" >> "$GITHUB_ENV"
           echo "PR_NUMBER=$TARGET_PR" >> "$GITHUB_ENV"
 
+      # The advisor reads repository files while holding its model API key.
+      # Remove worktree symlinks so untrusted PR data cannot redirect a read
+      # to runner files such as /proc/self/environ. Git diff still reads the
+      # committed objects, so symlink additions and changes remain visible.
+      - name: Remove symlinks from analysis workspace
+        shell: bash
+        run: |
+          while IFS= read -r -d '' link; do
+            rm -- "$link"
+          done < <(find "$ADVISOR_WORKDIR" -type l -print0)
+
       - name: Install Pi SDK
         run: |
           if ! command -v rg >/dev/null 2>&1; then
@@ -166,7 +180,7 @@ jobs:
           fi
           rg --version
           PI_SDK_DIR="$RUNNER_TEMP/pi-sdk"
-          npm install --prefix "$PI_SDK_DIR" --ignore-scripts --no-save --package-lock=false --before=2026-05-14T00:00:00.000Z "@earendil-works/pi-coding-agent@${PI_SDK_VERSION}"
+          npm install --prefix "$PI_SDK_DIR" --ignore-scripts --no-save --package-lock=false --before=2026-07-11T00:00:00.000Z "@earendil-works/pi-coding-agent@${PI_SDK_VERSION}" "typebox@${TYPEBOX_VERSION}"
           rm -rf "$ADVISOR_DIR/node_modules"
           ln -s "$PI_SDK_DIR/node_modules" "$ADVISOR_DIR/node_modules"
 

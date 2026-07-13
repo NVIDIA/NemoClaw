@@ -62,6 +62,22 @@ esac
     });
   });
 
+  it("creates the target label when a successful lookup returns no output", () => {
+    const result = runBumpStragglers(`#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  "label list"*) ;;
+  "label create v1.2.4"*) : > "$0.created" ;;
+  "pr list"*) test -f "$0.created"; printf '[]' ;;
+  "issue list"*) printf '[]' ;;
+  *) echo "unexpected gh args: $*" >&2; exit 9 ;;
+esac
+`);
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ from: "v1.2.3", to: "v1.2.4", bumped: [] });
+  });
+
   it("fails visibly when gh label lookup fails", () => {
     const result = runBumpStragglers(`#!/usr/bin/env bash
 set -euo pipefail
@@ -118,6 +134,37 @@ esac
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("Failed to parse gh JSON output");
+    expect(result.stdout).toBe("");
+  });
+
+  it("fails visibly when a successful PR lookup returns no output", () => {
+    const result = runBumpStragglers(`#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  "label list"*) printf '[{"name":"v1.2.4"}]' ;;
+  "pr list"*) ;;
+  *) echo "unexpected gh args: $*" >&2; exit 9 ;;
+esac
+`);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Failed to parse gh JSON output for gh pr list");
+    expect(result.stdout).toBe("");
+  });
+
+  it("fails visibly when a successful issue lookup returns no output", () => {
+    const result = runBumpStragglers(`#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  "label list"*) printf '[{"name":"v1.2.4"}]' ;;
+  "pr list"*) printf '[]' ;;
+  "issue list"*) ;;
+  *) echo "unexpected gh args: $*" >&2; exit 9 ;;
+esac
+`);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Failed to parse gh JSON output for gh issue list");
     expect(result.stdout).toBe("");
   });
 

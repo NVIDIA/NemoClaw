@@ -116,7 +116,28 @@ test("GPU Ollama onboard enables CUDA, auth proxy, and sandbox inference", {
     ],
   });
 
-  cleanup.add("destroy GPU Ollama sandbox", () => cleanupGpu(host, sandbox));
+  const cleanupEnv = env();
+  cleanup.trackDisposable("stop GPU Ollama processes", async () => {
+    const result = await cleanupOllama(host, "cleanup-ollama-processes");
+    expect(result.exitCode, resultText(result)).toBe(0);
+  });
+  cleanup.trackGateway(host, "nemoclaw", {
+    artifactName: "cleanup-gateway-destroy-gpu",
+    env: cleanupEnv,
+    timeoutMs: 60_000,
+  });
+  cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "cleanup-delete-gpu",
+      env: cleanupEnv,
+      timeoutMs: 60_000,
+    }),
+  );
+  cleanup.trackSandbox(host, SANDBOX_NAME, {
+    artifactName: "cleanup-destroy-gpu",
+    env: cleanupEnv,
+    timeoutMs: 120_000,
+  });
   await cleanupGpu(host, sandbox);
 
   const docker = await host.command("docker", ["info"], {

@@ -19,7 +19,7 @@ const FULL_SHA_ACTION = /@[0-9a-f]{40}$/iu;
 type CloudflaredUpdateWorkflow = {
   on?: {
     schedule?: Array<{ cron?: string }>;
-    workflow_dispatch?: Record<string, never>;
+    workflow_dispatch?: unknown;
   };
   permissions?: Record<string, string>;
   jobs?: Record<
@@ -49,7 +49,10 @@ function writePinFixture(file: string, version: string, sha256: string): void {
   );
 }
 
-function runFixtureCheck(options: { pinnedVersion: string; latestVersion: string }) {
+function runFixtureCheck(
+  options: { pinnedVersion: string; latestVersion: string },
+  command?: string,
+) {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cloudflared-update-"));
   const workflowPath = path.join(tempDir, "e2e.yaml");
   const releasePath = path.join(tempDir, "release.json");
@@ -97,7 +100,8 @@ esac
     { mode: 0o755 },
   );
 
-  const result = spawnSync("bash", [CHECK_SCRIPT], {
+  const commandArguments = command ? ["-e", "-o", "pipefail", "-c", command] : [CHECK_SCRIPT];
+  const result = spawnSync("bash", commandArguments, {
     cwd: ROOT,
     encoding: "utf8",
     env: {
@@ -123,21 +127,26 @@ describe("cloudflared update-check workflow contract", () => {
     ".github/workflows/cloudflared-update-check.yaml",
   );
   const e2e = fs.readFileSync(E2E_WORKFLOW, "utf8");
+  const configuredCheckCommand =
+    workflow.jobs?.["check-cloudflared"]?.steps?.find((step) => typeof step.run === "string")
+      ?.run ?? "";
 
-  it("runs weekly and manually with read-only permissions and a credential-free checkout", () => {
-    expect(workflow.on?.schedule).toEqual([{ cron: "23 13 * * 1" }]);
-    expect(workflow.on?.workflow_dispatch).toEqual({});
+  // source-shape-contract: security -- Automatic and on-demand checks must preserve the credential-free dependency monitoring boundary
+  it("keeps automatic and on-demand update checks reachable and credential-free", () => {
+    expect({
+      automatic:
+        workflow.on?.schedule?.some(
+          (entry) => typeof entry.cron === "string" && entry.cron.trim() !== "",
+        ) ?? false,
+      onDemand: Object.hasOwn(workflow.on ?? {}, "workflow_dispatch"),
+    }).toEqual({ automatic: true, onDemand: true });
     expect(workflow.permissions).toEqual({ contents: "read" });
 
     const job = workflow.jobs?.["check-cloudflared"];
     const checkout = job?.steps?.find((step) => step.uses?.startsWith("actions/checkout@"));
-    const check = job?.steps?.find(
-      (step) => step.name === "Compare reviewed pin with the latest upstream release",
-    );
     expect(job?.permissions).toBeUndefined();
     expect(checkout?.uses).toMatch(FULL_SHA_ACTION);
     expect(checkout?.with?.["persist-credentials"]).toBe(false);
-    expect(check?.run).toBe("bash scripts/checks/check-cloudflared-update.sh");
   });
 
   it("extracts exactly three identical reviewed version and SHA256 pins", () => {
@@ -165,7 +174,10 @@ describe("cloudflared update-check workflow contract", () => {
   });
 
   it("passes only when the latest release asset matches the reviewed SHA256", () => {
-    const fixture = runFixtureCheck({ pinnedVersion: "2026.7.1", latestVersion: "2026.7.1" });
+    const fixture = runFixtureCheck(
+      { pinnedVersion: "2026.7.1", latestVersion: "2026.7.1" },
+      configuredCheckCommand,
+    );
     try {
       expect(fixture.result.status, fixture.result.stderr).toBe(0);
       expect(fixture.result.stdout).toContain("cloudflared pin is current");
@@ -177,7 +189,10 @@ describe("cloudflared update-check workflow contract", () => {
   });
 
   it("fails an outdated pin with the latest version, hash, and all update locations", () => {
-    const fixture = runFixtureCheck({ pinnedVersion: "2026.6.1", latestVersion: "2026.7.1" });
+    const fixture = runFixtureCheck(
+      { pinnedVersion: "2026.6.1", latestVersion: "2026.7.1" },
+      configuredCheckCommand,
+    );
     try {
       expect(fixture.result.status).toBe(1);
       expect(fixture.result.stderr).toContain("cloudflared update required");

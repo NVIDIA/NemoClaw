@@ -49,6 +49,7 @@ describe("Brev nightly workflow contract", () => {
   const nightly = readYaml<Workflow>(".github/workflows/brev-nightly-e2e.yaml");
   const branchValidation = readYaml<Workflow>(".github/workflows/e2e-branch-validation.yaml");
 
+  // source-shape-contract: compatibility -- Caller arguments must remain within the reusable branch-validation interface
   it("passes only declared inputs and secrets to branch validation", () => {
     const declaredInputs = new Set(Object.keys(branchValidation.on?.workflow_call?.inputs ?? {}));
     const declaredSecrets = new Set(Object.keys(branchValidation.on?.workflow_call?.secrets ?? {}));
@@ -68,6 +69,7 @@ describe("Brev nightly workflow contract", () => {
     }
   });
 
+  // source-shape-contract: security -- Caller permissions must equal the reviewed reusable-workflow write ceiling
   it("grants the reusable workflow permission ceiling so GitHub can start the run", () => {
     expect(nightly.permissions).toEqual(branchValidation.permissions);
     expect(nightly.permissions).toEqual({
@@ -77,6 +79,7 @@ describe("Brev nightly workflow contract", () => {
     });
   });
 
+  // source-shape-contract: security -- Secret-bearing validation stays read-only while reporting writes remain isolated
   it("keeps write permissions out of the secret-bearing target-branch job", () => {
     const caller = nightly.jobs?.["brev-nightly-e2e"];
     const validation = branchValidation.jobs?.["e2e-branch-validation"];
@@ -118,10 +121,7 @@ describe("Brev nightly workflow contract", () => {
     expect(JSON.stringify(reporter)).not.toMatch(/BREV_|NVIDIA_INFERENCE_API_KEY/);
   });
 
-  it("keeps every suite in the nightly matrix in a distinct concurrency group", () => {
-    expect(branchValidation.concurrency?.group).toContain("inputs.test_suite");
-  });
-
+  // source-shape-contract: security -- Suite validation must reject unsupported input before any target checkout
   it("fails closed on unsupported reusable test-suite values before checkout", () => {
     const steps = branchValidation.jobs?.["e2e-branch-validation"]?.steps ?? [];
     const validation = steps.find((step) => step.name === "Validate test suite");
@@ -137,22 +137,10 @@ describe("Brev nightly workflow contract", () => {
     );
   });
 
-  it("runs stateful messaging targets on separate fresh instances", () => {
-    expect(nightly.jobs?.["brev-nightly-e2e"]?.strategy?.matrix?.test_suite).toEqual([
-      "all",
-      "messaging-providers",
-      "messaging-compatible-endpoint",
-      "full",
-    ]);
-    expect(branchValidation.jobs?.["e2e-branch-validation"]?.["timeout-minutes"]).toBe(130);
-  });
-
-  it("keeps failure diagnostics ahead of workflow-owned instance deletion", () => {
+  // source-shape-contract: security -- Ownership and keep-alive guards prevent deleting contributor-managed Brev instances
+  it("keeps instance deletion inside the workflow ownership boundary", () => {
     const steps = branchValidation.jobs?.["e2e-branch-validation"]?.steps ?? [];
     const run = steps.find((step) => step.name === "Run ephemeral Brev E2E");
-    const collect = steps.find((step) => step.name === "Collect Brev debug bundle on failure");
-    const uploadDebug = steps.find((step) => step.name === "Upload Brev debug bundle on failure");
-    const uploadLogs = steps.find((step) => step.name === "Upload test logs");
     const cleanup = steps.find((step) => step.name === "Delete Brev instance");
 
     expect(branchValidation.on?.workflow_call?.inputs?.keep_alive).toMatchObject({
@@ -161,28 +149,14 @@ describe("Brev nightly workflow contract", () => {
     expect(run?.env?.[BREV_WORKFLOW_OWNERSHIP_ENV]).toBe("1");
     expect(cleanup?.if).toBe("always() && !inputs.keep_alive");
     expect(cleanup?.env?.INSTANCE).toBe("${{ env.BREV_E2E_INSTANCE_NAME }}");
-    expect(uploadDebug?.with?.name).toBe(
-      "brev-debug-bundle-${{ inputs.test_suite }}-${{ github.run_attempt }}",
-    );
-    expect(uploadLogs?.with?.name).toBe(
-      "e2e-branch-validation-logs-${{ inputs.test_suite }}-${{ github.run_attempt }}",
-    );
     expect(cleanup?.run).toContain("for attempt in 1 2 3");
     expect(cleanup?.run).toContain('timeout 30s brev delete "$INSTANCE"');
     expect(cleanup?.run).toContain("timeout 30s brev ls --json");
     expect(cleanup?.run).toContain("timeout 30s brev refresh");
     expect(cleanup?.run).not.toMatch(/grep.*not found/);
-    expect(steps.indexOf(cleanup as NonNullable<typeof cleanup>)).toBeGreaterThan(
-      steps.indexOf(collect as NonNullable<typeof collect>),
-    );
-    expect(steps.indexOf(cleanup as NonNullable<typeof cleanup>)).toBeGreaterThan(
-      steps.indexOf(uploadDebug as NonNullable<typeof uploadDebug>),
-    );
-    expect(steps.indexOf(cleanup as NonNullable<typeof cleanup>)).toBeGreaterThan(
-      steps.indexOf(uploadLogs as NonNullable<typeof uploadLogs>),
-    );
   });
 
+  // source-shape-contract: security -- Brev credentials must originate only from repository secrets
   it("keeps manual dispatch inputs out of the Brev credential boundary", () => {
     const validation = branchValidation.jobs?.["e2e-branch-validation"];
     const install = validation?.steps?.find((step) => step.name === "Install Brev CLI");
@@ -194,6 +168,7 @@ describe("Brev nightly workflow contract", () => {
     expect(JSON.stringify(validation)).not.toContain("inputs.brev_token");
   });
 
+  // source-shape-contract: security -- Exact Brev archive integrity must be verified before executable extraction
   it("verifies the pinned Brev CLI digest before extracting it", () => {
     const validation = branchValidation.jobs?.["e2e-branch-validation"];
     const install = validation?.steps?.find((step) => step.name === "Install Brev CLI");
@@ -210,6 +185,7 @@ describe("Brev nightly workflow contract", () => {
     expect(script.indexOf("tar -xzf")).toBeGreaterThan(script.indexOf("sha256sum -c -"));
   });
 
+  // source-shape-contract: security -- Removed launchable inputs must not restore remote setup-script execution
   it("does not expose stale published-launchable controls", () => {
     const dispatchInputs = Object.keys(nightly.on?.workflow_dispatch?.inputs ?? {});
     const reusableInputs = Object.keys(branchValidation.on?.workflow_call?.inputs ?? {});

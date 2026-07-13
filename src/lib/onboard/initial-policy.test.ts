@@ -267,6 +267,35 @@ network_policies:
     expect(prepared.cleanup?.()).toBe(true);
   });
 
+  it("removes all temporary policies when a later materialization write fails", () => {
+    const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
+    const realWriteFileSync = fs.writeFileSync;
+    const mkdtempSpy = vi.spyOn(fs, "mkdtempSync");
+    let createdDirs: string[] = [];
+    const writeSpy = vi
+      .spyOn(fs, "writeFileSync")
+      .mockImplementationOnce((...args) => realWriteFileSync(...args))
+      .mockImplementationOnce(() => {
+        throw new Error("policy write failed");
+      });
+
+    try {
+      expect(() =>
+        prepareInitialSandboxCreatePolicy(basePolicyPath, [], {
+          directGpu: true,
+          additionalPresets: ["slack"],
+        }),
+      ).toThrow("policy write failed");
+    } finally {
+      createdDirs = mkdtempSpy.mock.results.map(({ value }) => String(value));
+      writeSpy.mockRestore();
+      mkdtempSpy.mockRestore();
+    }
+
+    expect(createdDirs).toHaveLength(2);
+    for (const dir of createdDirs) expect(fs.existsSync(dir)).toBe(false);
+  });
+
   it("merges openclaw-diagnostics-otel-local at create time when OTEL is enabled and the tier is known non-restricted", () => {
     const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
     process.env.NEMOCLAW_OPENCLAW_OTEL = "1";

@@ -48,14 +48,6 @@ function token(): string {
   return randomBytes(24).toString("hex");
 }
 
-async function bestEffort(run: () => Promise<unknown> | unknown): Promise<void> {
-  try {
-    await run();
-  } catch {
-    // Cleanup only.
-  }
-}
-
 async function terminate(child: ChildProcess | undefined): Promise<void> {
   if (!child || child.killed || child.exitCode !== null) return;
   child.kill("SIGTERM");
@@ -186,10 +178,10 @@ test("Ollama auth proxy enforces tokens, proxies inference, persists tokens, and
   const tokenFile = path.join(tokenRoot, ".nemoclaw", "ollama-proxy-token");
   let ollama: ChildProcess | undefined;
   let proxy: ChildProcess | undefined;
-  cleanup.add("stop Ollama auth proxy test processes", async () => {
+  cleanup.trackDisposable("stop Ollama auth proxy test processes", async () => {
     await terminate(proxy);
     await terminate(ollama);
-    await bestEffort(() => rm(tokenRoot, { force: true, recursive: true }));
+    await rm(tokenRoot, { force: true, recursive: true });
   });
 
   const nodeVersion = await host.command("node", ["--version"], {
