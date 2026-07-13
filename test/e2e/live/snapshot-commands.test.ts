@@ -427,6 +427,55 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
   ) as { sandboxName?: unknown; backedUpDirs?: unknown };
   expect(stoppedBackupManifest.sandboxName).toBe(SANDBOX_NAME);
   expect(stoppedBackupManifest.backedUpDirs).toEqual(expect.arrayContaining(["workspace"]));
+
+  const restart = await host.command("docker", ["start", containerId], {
+    artifactName: "phase-10-restart-for-stopped-snapshot-restore",
+    env: commandEnv(),
+    timeoutMs: 60_000,
+  });
+  expect(restart.exitCode, resultText(restart)).toBe(0);
+  const waitForExec = await host.command(
+    "bash",
+    [
+      "-lc",
+      'name="$1"; for _i in $(seq 1 30); do openshell sandbox exec --name "$name" -- true >/dev/null 2>&1 && exit 0; sleep 2; done; openshell sandbox exec --name "$name" -- true',
+      "wait-for-sandbox-exec",
+      SANDBOX_NAME,
+    ],
+    {
+      artifactName: "phase-10-wait-for-restarted-sandbox-exec",
+      env: commandEnv(),
+      timeoutMs: 90_000,
+    },
+  );
+  expect(waitForExec.exitCode, resultText(waitForExec)).toBe(0);
+  const perturbAfterStoppedBackup = await sandbox.exec(
+    SANDBOX_NAME,
+    ["sh", "-lc", `printf '%s' 'BROKEN_AFTER_STOPPED_BACKUP' > ${MARKER_FILE}`],
+    {
+      artifactName: "phase-10-perturb-after-stopped-backup",
+      env: commandEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(perturbAfterStoppedBackup.exitCode, resultText(perturbAfterStoppedBackup)).toBe(0);
+  const restoreStoppedBackup = await host.command(
+    "nemoclaw",
+    [SANDBOX_NAME, "snapshot", "restore", stoppedBackupTimestamp],
+    {
+      artifactName: "phase-10-restore-stopped-backup",
+      env: commandEnv(),
+      timeoutMs: 120_000,
+    },
+  );
+  expect(restoreStoppedBackup.exitCode, resultText(restoreStoppedBackup)).toBe(0);
+  expect(resultText(restoreStoppedBackup)).toContain("Restored");
+  await expectSandboxFileContent(
+    sandbox,
+    MARKER_FILE,
+    markerContent,
+    "phase-10-read-marker-after-stopped-backup-restore",
+  );
   expect(scanSnapshotCredentialLeaks(BACKUP_DIR)).toEqual([]);
   await artifacts.writeJson("phase-10-stopped-backup-proof.json", {
     containerId,
