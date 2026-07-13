@@ -67,6 +67,20 @@ The generated policy grants only the configured destination, path, adapter binar
 
 NemoClaw accepts canonical HTTPS MCP URLs and writes the credential placeholder only into the `Authorization` header.
 
+### DNS Pinning Contract
+
+The MCP integration pins its OpenShell DNS enforcement contract to [`NVIDIA/OpenShell@8cb16de9eae4c44d7d31e1493747d8c10abb5963`](https://github.com/NVIDIA/OpenShell/tree/8cb16de9eae4c44d7d31e1493747d8c10abb5963).
+
+OpenShell uses one socket-address list throughout resolution, validation, and connection:
+
+- [`crates/openshell-supervisor-network/src/proxy.rs:2476-2502`](https://github.com/NVIDIA/OpenShell/blob/8cb16de9eae4c44d7d31e1493747d8c10abb5963/crates/openshell-supervisor-network/src/proxy.rs#L2476-L2502) produces the list.
+- [`crates/openshell-supervisor-network/src/proxy.rs:2527-2567`](https://github.com/NVIDIA/OpenShell/blob/8cb16de9eae4c44d7d31e1493747d8c10abb5963/crates/openshell-supervisor-network/src/proxy.rs#L2527-L2567) validates every address.
+- [`crates/openshell-supervisor-network/src/proxy.rs:2622-2630`](https://github.com/NVIDIA/OpenShell/blob/8cb16de9eae4c44d7d31e1493747d8c10abb5963/crates/openshell-supervisor-network/src/proxy.rs#L2622-L2630) returns the validated list unchanged.
+
+The CONNECT path passes that list directly to [`TcpStream::connect` at `crates/openshell-supervisor-network/src/proxy.rs:822-832`](https://github.com/NVIDIA/OpenShell/blob/8cb16de9eae4c44d7d31e1493747d8c10abb5963/crates/openshell-supervisor-network/src/proxy.rs#L822-L832).
+The explicit HTTP-forward path carries the same list from [`crates/openshell-supervisor-network/src/proxy.rs:3885-3893`](https://github.com/NVIDIA/OpenShell/blob/8cb16de9eae4c44d7d31e1493747d8c10abb5963/crates/openshell-supervisor-network/src/proxy.rs#L3885-L3893) to [`crates/openshell-supervisor-network/src/proxy.rs:4123-4125`](https://github.com/NVIDIA/OpenShell/blob/8cb16de9eae4c44d7d31e1493747d8c10abb5963/crates/openshell-supervisor-network/src/proxy.rs#L4123-L4125).
+There is no second hostname resolution between validation and connection in either path.
+
 ### Stable OpenShell 0.0.72 Limitations
 
 OpenShell v0.0.72 attributes network policy with `/proc/<pid>/exe` and process ancestors, so script-based adapters require Node or Python interpreter grants rather than immutable package-entrypoint identities.
