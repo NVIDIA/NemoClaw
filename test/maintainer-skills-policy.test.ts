@@ -188,6 +188,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(day).toContain(threshold);
     expect(mergeGate).toContain(threshold);
     expect(day).not.toContain("no confirmed major CodeRabbit or PR Review Advisor issues");
+    expect(mergeGate).not.toContain("no confirmed major CodeRabbit or PR Review Advisor issues");
   });
 
   it("uses native bug type and approved Project writes for stale verification", () => {
