@@ -8,7 +8,7 @@ on:
   # advisor secrets available for both internal and fork PRs. The analysis job
   # never executes PR-controlled content and has no write permission.
   pull_request_target:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, edited]
   workflow_dispatch:
     inputs:
       base_ref:
@@ -46,13 +46,13 @@ on:
 permissions: {}
 
 concurrency:
-  group: pr-review-advisor-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.target_repo || github.repository }}-${{ inputs.target_pr || '' }}
+  group: pr-review-advisor-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.target_repo || github.repository }}-${{ inputs.target_pr || '' }}-${{ github.event_name != 'pull_request_target' || github.event.action != 'edited' || github.event.changes.base != null }}
   cancel-in-progress: true
 
 jobs:
   review:
     name: PR review advisor (${{ matrix.advisor.label }})
-    if: ${{ github.repository == 'NVIDIA/NemoClaw' }}
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'pull_request_target' || github.event.action != 'edited' || github.event.changes.base != null) }}
     permissions:
       actions: read
       checks: read
@@ -87,6 +87,8 @@ jobs:
       TYPEBOX_VERSION: "1.1.38"
       # Workflow-boundary modules parse YAML before the advisor session starts.
       YAML_VERSION: "2.8.3"
+      # Credential-free E2E discovery invokes the Vitest file-list command.
+      VITEST_VERSION: "4.1.9"
       FD_FIND_VERSION: "9.0.0-1"
       RIPGREP_VERSION: "14.1.0-1"
       PR_REVIEW_ADVISOR_TIMEOUT_MS: "900000"
@@ -248,7 +250,7 @@ jobs:
           fi
 
           PI_SDK_DIR="$RUNNER_TEMP/pi-sdk"
-          npm install --prefix "$PI_SDK_DIR" --ignore-scripts --no-save --package-lock=false --before=2026-07-11T00:00:00.000Z "@earendil-works/pi-coding-agent@${PI_SDK_VERSION}" "typebox@${TYPEBOX_VERSION}" "yaml@${YAML_VERSION}"
+          npm install --prefix "$PI_SDK_DIR" --ignore-scripts --no-save --package-lock=false --before=2026-07-11T00:00:00.000Z "@earendil-works/pi-coding-agent@${PI_SDK_VERSION}" "typebox@${TYPEBOX_VERSION}" "vitest@${VITEST_VERSION}" "yaml@${YAML_VERSION}"
           rm -rf "$ADVISOR_DIR/node_modules"
           ln -s "$PI_SDK_DIR/node_modules" "$ADVISOR_DIR/node_modules"
 
@@ -369,7 +371,7 @@ jobs:
   publish:
     name: Publish PR review advisor
     needs: review
-    if: ${{ always() && github.event_name == 'pull_request_target' && needs.review.result != 'cancelled' }}
+    if: ${{ always() && github.event_name == 'pull_request_target' && (github.event.action != 'edited' || github.event.changes.base != null) && needs.review.result != 'cancelled' }}
     # Publication is best-effort and must never hide the primary analysis
     # lane's required outcome in the review matrix above.
     continue-on-error: true

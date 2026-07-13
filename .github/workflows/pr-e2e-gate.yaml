@@ -8,11 +8,11 @@ on:
     workflows: ["CI / Pull Request"]
     types: [completed]
   pull_request_target:
-    types: [opened, synchronize, reopened, ready_for_review, closed]
+    types: [opened, synchronize, reopened, ready_for_review, edited, closed]
   workflow_dispatch:
     inputs:
       operation:
-        description: Exact-head exception type to record.
+        description: Exact-diff exception type to record.
         required: true
         default: resolve-fork
         type: choice
@@ -25,6 +25,10 @@ on:
         type: string
       expected_head_sha:
         description: Exact 40-character PR head SHA reviewed by the maintainer.
+        required: true
+        type: string
+      expected_base_sha:
+        description: Exact 40-character PR base SHA reviewed by the maintainer.
         required: true
         type: string
       waiver_reason:
@@ -41,14 +45,15 @@ permissions: {}
 
 jobs:
   initialize:
-    if: ${{ github.event_name == 'pull_request_target' && github.repository == 'NVIDIA/NemoClaw' && github.event.action != 'closed' }}
+    if: ${{ github.event_name == 'pull_request_target' && github.repository == 'NVIDIA/NemoClaw' && github.event.action != 'closed' && (github.event.action != 'edited' || github.event.changes.base != null) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       checks: write
       contents: read
+      pull-requests: read
     concurrency:
-      group: pr-e2e-gate-seed-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+      group: pr-e2e-gate-${{ github.event.pull_request.head.repo.full_name }}-${{ github.event.pull_request.head.ref }}
       cancel-in-progress: false
     steps:
       - name: Checkout controller
@@ -65,8 +70,9 @@ jobs:
       - name: Install controller dependencies
         run: npm ci --ignore-scripts
 
-      - name: Reserve exact-head gate
+      - name: Reserve exact-diff gate
         env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           GITHUB_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -75,9 +81,10 @@ jobs:
           --mode seed
           --pr "$PR_NUMBER"
           --head "$HEAD_SHA"
+          --base "$BASE_SHA"
 
   cancel-superseded:
-    if: ${{ github.event_name == 'pull_request_target' && github.repository == 'NVIDIA/NemoClaw' && github.event.pull_request.head.repo.full_name == github.repository }}
+    if: ${{ github.event_name == 'pull_request_target' && github.repository == 'NVIDIA/NemoClaw' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.action != 'edited' || github.event.changes.base != null) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -108,7 +115,7 @@ jobs:
           --pr "$PR_NUMBER"
 
   coordinate:
-    if: ${{ github.event_name == 'workflow_run' && github.repository == 'NVIDIA/NemoClaw' && github.event.workflow_run.event == 'pull_request' }}
+    if: ${{ github.event_name == 'workflow_run' && github.repository == 'NVIDIA/NemoClaw' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.path == '.github/workflows/pr.yaml' && endsWith(github.event.workflow_run.display_title, ' gate true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     permissions:
@@ -148,6 +155,7 @@ jobs:
         name: Start evaluation
         env:
           CI_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          CI_DISPLAY_TITLE: ${{ github.event.workflow_run.display_title }}
           CI_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
           CI_RUN_ID: ${{ github.event.workflow_run.id }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -165,6 +173,7 @@ jobs:
           --head-branch "$HEAD_BRANCH"
           --workflow-sha "$WORKFLOW_SHA"
           --ci-conclusion "$CI_CONCLUSION"
+          --ci-display-title "$CI_DISPLAY_TITLE"
           --ci-run-attempt "$CI_RUN_ATTEMPT"
           --ci-run-id "$CI_RUN_ID"
           --pr "$PR_NUMBER"
@@ -324,6 +333,7 @@ jobs:
       - name: Record E2E exception
         env:
           EVIDENCE_URL: ${{ inputs.evidence_url }}
+          EXPECTED_BASE_SHA: ${{ inputs.expected_base_sha }}
           EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
           GITHUB_TOKEN: ${{ github.token }}
           MAINTAINER: ${{ github.triggering_actor }}
@@ -336,6 +346,7 @@ jobs:
           --mode "$OPERATION"
           --pr "$PR_NUMBER"
           --head "$EXPECTED_HEAD_SHA"
+          --base "$EXPECTED_BASE_SHA"
           --workflow-sha "$WORKFLOW_SHA"
           --maintainer "$MAINTAINER"
           --reason "$WAIVER_REASON"
