@@ -287,8 +287,9 @@ navigation:
               - page: "AI Agent Docs"
                 path: _build/agent-variants/resources/agent-skills.openclaw.generated.mdx
                 slug: agent-skills
-              - link: "Community Examples"
-                href: https://github.com/NVIDIA/nemoclaw-community
+              - page: "Community Solutions"
+                path: _build/agent-variants/resources/community-contributions.openclaw.generated.mdx
+                slug: community-contributions
               - link: "Discord"
                 href: https://discord.gg/XFpfPv9Uvx
               - link: "Report Vulnerabilities"
@@ -498,8 +499,9 @@ navigation:
               - page: "AI Agent Docs"
                 path: _build/agent-variants/resources/agent-skills.deepagents.generated.mdx
                 slug: agent-skills
-              - link: "Community Examples"
-                href: https://github.com/NVIDIA/nemoclaw-community
+              - page: "Community Solutions"
+                path: _build/agent-variants/resources/community-contributions.deepagents.generated.mdx
+                slug: community-contributions
               - link: "Report Vulnerabilities"
                 href: https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md
               - page: "License"
@@ -756,8 +758,9 @@ navigation:
               - page: "AI Agent Docs"
                 path: _build/agent-variants/resources/agent-skills.hermes.generated.mdx
                 slug: agent-skills
-              - link: "Community Examples"
-                href: https://github.com/NVIDIA/nemoclaw-community
+              - page: "Community Solutions"
+                path: _build/agent-variants/resources/community-contributions.hermes.generated.mdx
+                slug: community-contributions
               - link: "Report Vulnerabilities"
                 href: https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md
               - page: "License"

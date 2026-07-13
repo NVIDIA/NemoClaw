@@ -17,6 +17,17 @@ Update documentation when your change:
 - Fixes a bug that the docs describe incorrectly.
 - Changes an API, protocol, or policy schema.
 
+## Confirm Product Scope Before Writing Docs
+
+Canonical documentation describes behavior that NemoClaw has chosen to support and maintain.
+A documentation PR must not establish a new supported integration, solution workflow, custom image, third-party stack, or product surface by itself.
+
+Technical correctness, successful builds, and working examples are necessary evidence, but they are not product approval.
+Before documenting a new surface, confirm that an accepted issue or design decision defines ownership, compatibility and upgrade expectations, security review, lifecycle support, and validation.
+
+Route independent solutions, complete use-case examples, and third-party integrations through [Community Solutions](resources/community-contributions.mdx).
+If the correct destination is unclear, request maintainer direction before drafting the page.
+
 ## Update Docs with Contributor Skills
 
 If you use an AI coding agent (Cursor, Claude Code, Codex, etc.), the repo includes the `nemoclaw-contributor-update-docs` skill that automates doc work.
@@ -276,6 +287,9 @@ feat(cli): add policy-add command
 
 When reviewing documentation:
 
+- Confirm that the page documents an approved and maintained NemoClaw product surface.
+- Do not approve a new integration or solution solely because its instructions work or its checks pass.
+- Route independent third-party solutions to [Community Solutions](resources/community-contributions.mdx) when no product decision establishes core ownership.
 - Check that the style guide rules above are followed.
 - Watch for LLM-generated patterns (excessive bold, em dashes, filler).
 - Verify code examples are accurate and runnable.

@@ -8,7 +8,7 @@ user_invocable: true
 
 Execute one pass of the maintainer loop, prioritizing version-targeted work.
 
-**Autonomy:** push small fixes and approve when gates pass. Surface contributor/approver overlap reported by the merge gate as an advisory warning; it does not require another reviewer or change merge readiness. Never merge. Stop and ask for merge decisions, architecture decisions, and unclear contributor intent.
+**Autonomy:** push small fixes and approve when gates pass. Surface contributor/approver overlap reported by the merge gate as an advisory warning; it does not require another reviewer or change merge readiness. Never merge. Stop and ask for merge decisions, product scope decisions, architecture decisions, and unclear contributor intent.
 
 ## References
 
@@ -69,6 +69,7 @@ Keep unrelated `.agents/skills/` changes out of ordinary code or docs PRs.
 
 ## Stop and Ask When
 
+- A PR would create a new supported product surface without an accepted product decision
 - Broad refactor or architecture decision needed
 - Contributor intent unclear and diff would change semantics
 - Multiple subsystems must change for CI
