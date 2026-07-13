@@ -423,16 +423,17 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
   });
 
   it.each([
-    "safe",
-    "absolute",
-    "traversal",
-    "duplicate",
-    "extra",
-    "symlink",
-    "hardlink",
-    "device",
-    "late-traversal",
-  ] as const)("%s macOS arm64 archives are checked before extraction", (archiveShape) => {
+    { archiveShape: "safe", status: 0, unsafe: false },
+    { archiveShape: "absolute", status: 1, unsafe: true },
+    { archiveShape: "traversal", status: 1, unsafe: true },
+    { archiveShape: "duplicate", status: 1, unsafe: true },
+    { archiveShape: "extra", status: 1, unsafe: true },
+    { archiveShape: "symlink", status: 1, unsafe: true },
+    { archiveShape: "hardlink", status: 1, unsafe: true },
+    { archiveShape: "device", status: 1, unsafe: true },
+    { archiveShape: "late-traversal", status: 1, unsafe: true },
+  ] as const)("$archiveShape macOS arm64 archives are checked before extraction", (expected) => {
+    const { archiveShape } = expected;
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-macos-assets-"));
     try {
       const fakeBin = path.join(tmp, "bin");
@@ -564,14 +565,12 @@ exit 0`,
         encoding: "utf8",
       });
 
-      if (archiveShape !== "safe") {
-        expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(1);
-        expect(result.stderr).toContain("Unsafe OpenShell archive");
-        expect(fs.existsSync(path.join(tmp, "local-bin", "openshell"))).toBe(false);
-        expect(fs.readFileSync(tarLog, "utf8")).not.toMatch(/^xzf /m);
-        return;
-      }
-      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(expected.status);
+      expect(result.stderr.includes("Unsafe OpenShell archive")).toBe(expected.unsafe);
+      expect(expected.unsafe && fs.existsSync(path.join(tmp, "local-bin", "openshell"))).toBe(
+        false,
+      );
+      expect(expected.unsafe && /^xzf /m.test(fs.readFileSync(tarLog, "utf8"))).toBe(false);
       const downloads = fs.readFileSync(downloadLog, "utf-8");
       expect(downloads).toContain("openshell-aarch64-apple-darwin.tar.gz");
       expect(downloads).toContain("openshell-gateway-aarch64-apple-darwin.tar.gz");

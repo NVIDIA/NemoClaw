@@ -43,7 +43,7 @@ const MAX_INSTALLER_INPUT_BYTES = 1024 * 1024;
 // release; the later pin PR may then change release data without authorizing
 // any operational installer change. A mismatch reports the candidate hash.
 const TRUSTED_INSTALLER_TEMPLATE_SHA256 =
-  "7207ab2751971c8c14b84134e905b94c2fd54f25a2f7dd6c5eb75587c1c2c71e";
+  "7858227dbcb727613ed9fa13a1dd993a04b74d1341fca5087bf38e868588ef5d";
 const TRUSTED_BREV_TEMPLATE_SHA256 =
   "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a";
 const EXPECTED_INSTALLER_ASSETS = [
@@ -210,6 +210,14 @@ function extractInstallerRuntimeVersion(source: string): string {
     fail('installer PIN_VERSION must be exactly "$MAX_VERSION"');
   }
   return maxVersion;
+}
+
+function extractInstallerMinimumVersion(source: string): string {
+  return extractSingleVersion(
+    source,
+    /^MIN_VERSION="([0-9]+\.[0-9]+\.[0-9]+)"\s*$/gm,
+    "installer MIN_VERSION",
+  );
 }
 
 function extractBrevStableRuntimeVersion(source: string): string {
@@ -446,7 +454,7 @@ function selectorVersionEdit(source: string, pattern: RegExp, label: string): So
 function normalizeTrustedInstallerTemplate(
   source: string,
   functionName: string,
-  selectorPattern: RegExp,
+  selectorPatterns: readonly RegExp[],
   label: string,
 ): string {
   const functionRanges = functionDefinitionSourceRanges(source, functionName);
@@ -455,7 +463,9 @@ function normalizeTrustedInstallerTemplate(
   }
   const edits = [
     functionRanges[0] ?? fail(`${label} release-data range is unavailable`),
-    selectorVersionEdit(source, selectorPattern, label),
+    ...selectorPatterns.map((pattern, index) =>
+      selectorVersionEdit(source, pattern, `${label} selector ${index + 1}`),
+    ),
   ].sort((left, right) => right.start - left.start);
   for (let index = 0; index < edits.length - 1; index += 1) {
     const current = edits[index];
@@ -482,14 +492,14 @@ function normalizeTrustedInstallerTemplate(
 function assertTrustedTemplate(
   source: string,
   functionName: string,
-  selectorPattern: RegExp,
+  selectorPatterns: readonly RegExp[],
   expectedSha256: string,
   label: string,
 ): void {
   const normalized = normalizeTrustedInstallerTemplate(
     source,
     functionName,
-    selectorPattern,
+    selectorPatterns,
     label,
   );
   const actualSha256 = createHash("sha256").update(normalized).digest("hex");
@@ -769,19 +779,20 @@ function runCli(): void {
   assertTrustedTemplate(
     installerSource,
     "openshell_pinned_sha256",
-    /^MAX_VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$/gm,
+    [/^MIN_VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$/gm, /^MAX_VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$/gm],
     TRUSTED_INSTALLER_TEMPLATE_SHA256,
     "installer",
   );
   assertTrustedTemplate(
     brevInstallerSource,
     "openshell_cli_pinned_sha256",
-    /^\s*stable\s*\|\s*auto\)\s*OPENSHELL_VERSION="v([0-9]+\.[0-9]+\.[0-9]+)"\s*;;\s*$/gm,
+    [/^\s*stable\s*\|\s*auto\)\s*OPENSHELL_VERSION="v([0-9]+\.[0-9]+\.[0-9]+)"\s*;;\s*$/gm],
     TRUSTED_BREV_TEMPLATE_SHA256,
     "Brev launchable",
   );
   for (const [label, runtimeVersion] of [
     ["blueprint max_openshell_version", extractBlueprintMaxVersion(blueprintSource)],
+    ["installer MIN_VERSION", extractInstallerMinimumVersion(installerSource)],
     ["installer MAX_VERSION", extractInstallerRuntimeVersion(installerSource)],
     ["Brev stable OpenShell default", extractBrevStableRuntimeVersion(brevInstallerSource)],
   ] as const) {
