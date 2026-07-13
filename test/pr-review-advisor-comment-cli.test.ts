@@ -21,6 +21,12 @@ describe("PR review advisor comment CLI", () => {
       "pr-review-advisor",
       "pr-review-advisor-summary.md",
     );
+    const defaultResult = path.join(
+      tmp,
+      "artifacts",
+      "pr-review-advisor",
+      "pr-review-advisor-final-result.json",
+    );
     const laneSummary = path.join(
       tmp,
       "artifacts",
@@ -35,8 +41,21 @@ describe("PR review advisor comment CLI", () => {
     );
     fs.mkdirSync(path.dirname(defaultSummary), { recursive: true });
     fs.writeFileSync(defaultSummary, "# default lane\n");
+    fs.writeFileSync(
+      defaultResult,
+      `${JSON.stringify({ summary: { recommendation: "merge_as_is" } })}\n`,
+    );
 
     try {
+      expect(
+        readCommentArtifacts(defaultSummary, defaultResult, {
+          summaryExplicit: true,
+          resultExplicit: true,
+        }),
+      ).toEqual({
+        summary: "# default lane\n",
+        result: { summary: { recommendation: "merge_as_is" } },
+      });
       expect(
         normalizeCommentOptions({
           marker: "<!-- nemoclaw-pr-review-advisor-nemotron-ultra -->",

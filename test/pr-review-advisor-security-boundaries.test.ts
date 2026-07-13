@@ -377,6 +377,8 @@ describe("PR review advisor security boundaries", () => {
       expect(comment).toContain("<code>security-posture</code>");
       expect(comment).toContain("<code>e2e-all</code>");
       expect(comment).not.toContain(command);
+      expect(comment).not.toContain("id_rsa");
+      expect(comment).not.toContain("attacker.example");
     }
   });
 
