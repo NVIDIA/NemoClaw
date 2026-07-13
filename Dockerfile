@@ -67,6 +67,8 @@ ARG MCPORTER_0_7_3_INTEGRITY=sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImu
 ARG MCPORTER_0_7_3_TARBALL=https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz
 COPY agents/openclaw/mcporter-runtime/package.json /usr/local/lib/nemoclaw/mcporter-runtime/package.json
 COPY agents/openclaw/mcporter-runtime/package-lock.json /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json
+COPY agents/openclaw/wechat-runtime/package.json /usr/local/lib/nemoclaw/wechat-runtime/package.json
+COPY agents/openclaw/wechat-runtime/package-lock.json /usr/local/lib/nemoclaw/wechat-runtime/package-lock.json
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 
 # OpenShell blocks the link-local EC2 Instance Metadata Service. Keep AWS SDK
@@ -146,16 +148,45 @@ RUN test -f /usr/local/bin/node \
     && test -z "$node_unsafe" \
     && json5_unsafe="$(find -L /opt/nemoclaw/node_modules/json5 \( ! -user root -o -perm /022 \) -print -quit)" \
     && test -z "$json5_unsafe"
+# Reviewed-archive invariants (#5896): after npm materializes the exact lock and
+# seeds resolver metadata, the shared helper re-packs every locked archive
+# offline from the final cache and verifies its registry origin, committed SRI,
+# and contained filename before the cache becomes immutable.
+RUN npm ci --prefix /usr/local/lib/nemoclaw/wechat-runtime \
+        --ignore-scripts --omit=dev --legacy-peer-deps \
+        --userconfig /dev/null --registry https://registry.npmjs.org/ \
+        --cache /usr/local/share/nemoclaw/wechat-npm-cache \
+    && npm cache add @tencent-weixin/openclaw-weixin@2.4.3 \
+        --userconfig /dev/null --registry https://registry.npmjs.org/ \
+        --cache /usr/local/share/nemoclaw/wechat-npm-cache \
+    && npm cache add qrcode-terminal@0.12.0 \
+        --userconfig /dev/null --registry https://registry.npmjs.org/ \
+        --cache /usr/local/share/nemoclaw/wechat-npm-cache \
+    && npm cache add zod@4.4.3 \
+        --userconfig /dev/null --registry https://registry.npmjs.org/ \
+        --cache /usr/local/share/nemoclaw/wechat-npm-cache \
+    && NPM_CONFIG_OFFLINE=true \
+        node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts \
+        --lockfile /usr/local/lib/nemoclaw/wechat-runtime/package-lock.json \
+        --cache /usr/local/share/nemoclaw/wechat-npm-cache \
+        --registry-origin https://registry.npmjs.org/ \
+    && rm -rf /usr/local/lib/nemoclaw/wechat-runtime/node_modules \
+    && chown -R root:root /usr/local/lib/nemoclaw/wechat-runtime \
+        /usr/local/share/nemoclaw/wechat-npm-cache \
+    && chmod -R a+rX,go-w /usr/local/lib/nemoclaw/wechat-runtime \
+        /usr/local/share/nemoclaw/wechat-npm-cache
 COPY scripts/patch-openclaw-tool-catalog.js /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js
 COPY scripts/patch-openclaw-chat-send.js /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js
 COPY scripts/patch-openclaw-mcp-npx.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts
 COPY scripts/patch-openclaw-issue-4434-diagnostics.ts /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.ts
 COPY scripts/patch-openclaw-device-self-approval.ts /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.ts
+COPY scripts/verify-wechat-runtime-lock.mts /usr/local/lib/nemoclaw/verify-wechat-runtime-lock.mts
 RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js \
         /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js \
         /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.ts \
-        /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.ts
+        /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.ts \
+        /usr/local/lib/nemoclaw/verify-wechat-runtime-lock.mts
 
 # Pre-install the codex-acp package so the embedded ACPx runtime can
 # call the local binary instead of `npx @zed-industries/codex-acp`.
@@ -1037,8 +1068,27 @@ RUN set -eu; \
     fi; \
     :
 
+# The reviewed cache stays root-owned and immutable to the sandbox user. npm
+# still needs a writable _cacache/tmp while OpenClaw packs the verified archive,
+# so materialize a sandbox-owned throwaway copy for this RUN and remove it before
+# committing the layer. Never point npm directly at the trusted source cache.
 # hadolint ignore=DL3059,DL4006
-RUN OPENCLAW_VERSION="${OPENCLAW_VERSION}" node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase agent-install
+RUN set -eu; \
+    trusted_cache=/usr/local/share/nemoclaw/wechat-npm-cache; \
+    unsafe_cache_entry="$(find -L "$trusted_cache" \( ! -user root -o -perm /022 \) -print -quit)"; \
+    test -z "$unsafe_cache_entry"; \
+    install_cache="$(mktemp -d /tmp/nemoclaw-wechat-npm-cache.XXXXXX)"; \
+    trap 'rm -rf "$install_cache"' EXIT; \
+    cp -R "$trusted_cache"/. "$install_cache"/; \
+    chmod -R u+rwX,go-w "$install_cache"; \
+    NEMOCLAW_WECHAT_NPM_INSTALL_CACHE="$install_cache" \
+        OPENCLAW_VERSION="${OPENCLAW_VERSION}" \
+        node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase agent-install; \
+    rm -rf "$install_cache"; \
+    trap - EXIT; \
+    test ! -e "$install_cache"; \
+    unsafe_cache_entry="$(find -L "$trusted_cache" \( ! -user root -o -perm /022 \) -print -quit)"; \
+    test -z "$unsafe_cache_entry"
 
 # Lock down npm for the next RUN: the local OpenClaw plugin install must
 # resolve from /opt/nemoclaw and the staged plugin-runtime-deps tree without

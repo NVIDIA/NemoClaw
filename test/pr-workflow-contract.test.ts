@@ -1009,6 +1009,7 @@ describe("pull request and main workflow contracts", () => {
       PLUGIN_TESTS_RESULT: "success",
       REVIEWED_NPM_AUDIT_RESULT: "success",
       STATIC_RESULT: "success",
+      WECHAT_RUNTIME_AUDIT_RESULT: "success",
     };
     const successfulMain = {
       BUILD_TYPECHECK_RESULT: "success",
@@ -1020,6 +1021,7 @@ describe("pull request and main workflow contracts", () => {
       REVIEWED_NPM_AUDIT_RESULT: "success",
       REAL_OPENCLAW_DIST_HARNESS_RESULT: "success",
       STATIC_RESULT: "success",
+      WECHAT_RUNTIME_AUDIT_RESULT: "success",
     };
 
     const codeSuccess = runWorkflowShellStep(prGate, successfulCode);
@@ -1039,6 +1041,7 @@ describe("pull request and main workflow contracts", () => {
       PLUGIN_TESTS_RESULT: "skipped",
       REVIEWED_NPM_AUDIT_RESULT: "skipped",
       STATIC_RESULT: "skipped",
+      WECHAT_RUNTIME_AUDIT_RESULT: "skipped",
     });
     const mainSuccess = runWorkflowShellStep(mainGate, successfulMain);
     const mainFailure = runWorkflowShellStep(mainGate, {
