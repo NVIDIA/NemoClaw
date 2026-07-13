@@ -1139,7 +1139,7 @@ For OpenClaw-managed gateways, the command first asks the in-sandbox gateway to 
 Then the container stops; a container stuck in a crash loop is stopped the same way, which also disarms its restart policy.
 The shared host gateway, tunnel services, and any local NIM inference container serve other sandboxes and keep running.
 Stopping an already-stopped sandbox succeeds without changes.
-The command controls the local Docker container directly, so it requires a Docker-driver sandbox on this host; if the Docker daemon itself is unreachable, the command reports the outage instead of guessing at container state.
+The command controls the local container directly, so it is available for local-container drivers (the default Docker driver and the vm driver) and unavailable for remote drivers such as kubernetes; if the Docker daemon itself is unreachable, the command reports the outage instead of guessing at container state.
 
 ### `$$nemoclaw <name> start`
 

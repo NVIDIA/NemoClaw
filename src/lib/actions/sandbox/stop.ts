@@ -157,7 +157,12 @@ export function stopSandbox(
     warn(`  Warning: could not stop in-sandbox channels gracefully: ${detail}`);
   }
 
+  // Attempt every stoppable container even if one fails: a sandbox can have
+  // more than one labeled container (e.g. a gpu-backup sibling), and aborting
+  // on the first failure would leave the rest running — the opposite of what
+  // stop is for. Collect failures and report them together.
   const dockerStop = deps.dockerStop ?? ((name, opts) => loadDockerStop()(name, opts));
+  const failures: string[] = [];
   for (const container of stoppable) {
     log(`  Stopping container '${container.name}'…`);
     const result = dockerStop(container.name, {
@@ -165,11 +170,15 @@ export function stopSandbox(
       timeout: DOCKER_STOP_TIMEOUT_MS,
     });
     if (result.status !== 0) {
-      return {
-        exitCode: 1,
-        message: `  docker stop ${container.name} failed (exit ${result.status ?? "unknown"}).`,
-      };
+      failures.push(`${container.name} (exit ${result.status ?? "unknown"})`);
     }
+  }
+
+  if (failures.length > 0) {
+    return {
+      exitCode: 1,
+      message: `  docker stop failed for: ${failures.join(", ")}.`,
+    };
   }
 
   log(`  Sandbox '${sandboxName}' stopped. Workspace state is preserved.`);

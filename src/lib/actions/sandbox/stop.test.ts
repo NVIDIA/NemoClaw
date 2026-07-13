@@ -235,6 +235,32 @@ describe("stopSandbox", () => {
     expect(result.message).toContain("125");
   });
 
+  it("attempts every container and aggregates failures when one stop fails (#6026)", () => {
+    const h = harness();
+    h.findLabeledSandboxContainers.mockReturnValue([
+      container("openshell-my-sandbox", true),
+      container("openshell-my-sandbox-nemoclaw-gpu-backup-1700000000000", true),
+    ]);
+    // First container fails to stop; the sibling still must be attempted.
+    h.dockerStop.mockReturnValueOnce({ status: 137 }).mockReturnValueOnce({ status: 0 });
+
+    const result = stopSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(1);
+    expect(h.dockerStop).toHaveBeenCalledTimes(2);
+    expect(h.dockerStop).toHaveBeenNthCalledWith(
+      2,
+      "openshell-my-sandbox-nemoclaw-gpu-backup-1700000000000",
+      {
+        ignoreError: true,
+        timeout: 30_000,
+      },
+    );
+    expect(result.message).toContain("openshell-my-sandbox");
+    expect(result.message).toContain("137");
+    expect(result.message).not.toContain("gpu-backup");
+  });
+
   it("never removes containers or touches the registry entry (#6026)", () => {
     const h = harness();
 
