@@ -134,8 +134,8 @@ function startCommand(workDir: string) {
     "--work-dir",
     workDir,
   ]);
-  if (command.mode !== "start") throw new Error("expected start command");
-  return command;
+  expect(command.mode).toBe("start");
+  return command as Extract<ReturnType<typeof parseControllerCommand>, { mode: "start" }>;
 }
 
 describe("PR E2E controller exception safety", () => {
