@@ -246,8 +246,6 @@ const {
 } = require("./inference/ollama/windows");
 const { installVllm } = require("./inference/vllm");
 const inferenceConfig: typeof import("./inference/config") = require("./inference/config");
-const inferenceContextWindow: typeof import("./inference/context-window") =
-  require("./inference/context-window");
 const { DEFAULT_CLOUD_MODEL, getProviderSelectionConfig, parseGatewayInference } = inferenceConfig;
 
 const onboardProviders = require("./onboard/providers");
@@ -3700,7 +3698,6 @@ function getSetupNimDeps(): SetupNimDeps {
     coerceAgentInferenceApi: inferenceConfig.coerceAgentInferenceApi,
     resolveAgentInferenceApi: inferenceConfig.resolveAgentInferenceApi,
     clearCompatibleEndpointReasoning: reasoningMode.clearCompatibleEndpointReasoning,
-    applyKnownModelContextWindow: inferenceContextWindow.applyKnownModelContextWindow,
     maybePromptForInferenceInputCapability: (model) =>
       inferenceInputCapability.maybePromptForInferenceInputCapability(model, {
         isNonInteractive,
