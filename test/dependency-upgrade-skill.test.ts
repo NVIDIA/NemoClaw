@@ -124,6 +124,8 @@ describe("dependency upgrade skill policy", () => {
     expect(skill).toContain("does not erase unaudited content in the distributed artifact");
     expect(skill).toContain("mutable bases, unpinned package resolution");
     expect(skill).toContain("build provenance as unresolved reproducibility inputs");
+    expect(skill).toContain("recursively resolve every CI job container and builder image");
+    expect(skill).toContain("incomplete resolved dependencies is identity evidence");
     expect(skill).toContain("A CLI version is not the identity of a sibling daemon");
     expect(skill).toContain("same-version content replacement and mixed-component installs");
     expect(skill).toContain(

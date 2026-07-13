@@ -241,6 +241,11 @@ After semantic migration work is complete, verify the final release and consumed
 - immutable base-image identities, package-repository snapshots, and exact package versions or
   checksums for every build stage. Record mutable bases, unpinned package resolution, and disabled
   build provenance as unresolved reproducibility inputs;
+- recursively resolve every CI job container and builder image used to produce the consumed
+  artifact. Bind its index and platform manifest digests to the producer logs and validate its own
+  provenance. Audit the builder Dockerfile for package resolution, network-fetched installers,
+  plugins, toolchain locks, and build caches. A provenance statement with an empty builder identity
+  or incomplete resolved dependencies is identity evidence, not complete reproducibility evidence;
 - separate inventories for what the producer builds, publishes, and distributes and what NemoClaw
   downloads, stores, verifies, extracts, installs, and executes. Extracting one binary narrows the
   runtime attack surface but does not erase unaudited content in the distributed artifact;
