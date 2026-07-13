@@ -1723,6 +1723,8 @@ const entries = Object.entries(registry.sandboxes);
 if (entries.some(([name, entry]) => !name.trim() || !isObjectRecord(entry) || entry.name !== name)) {
   process.exit(1);
 }
+// Keep this raw-registry predicate in sync with isRouteOnlySandboxReservation()
+// in src/lib/state/registry.ts.
 const sandboxes = entries.filter(
   ([, entry]) => !(entry.pendingRouteReservation === true && entry.createdAt === undefined),
 );

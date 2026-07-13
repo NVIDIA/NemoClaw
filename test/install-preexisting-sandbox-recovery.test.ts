@@ -73,10 +73,12 @@ exit 0
     print_done() { printf 'PRINT_DONE\n'; }
     main --non-interactive --yes-i-accept-third-party-software
   `;
+  const childEnv = { ...process.env };
+  delete childEnv.NEMOCLAW_SINGLE_SESSION;
   const result = spawnSync("bash", ["-c", snippet], {
     encoding: "utf-8",
     env: {
-      ...process.env,
+      ...childEnv,
       BASH_ENV: "",
       ENV: "",
       HOME: tmp,
