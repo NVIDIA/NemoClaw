@@ -21,13 +21,15 @@ describe("sandbox status inference.local route health (#6192)", () => {
   }) {
     const provider = options.provider ?? "nvidia-prod";
     const reportInferenceProbeError = vi.fn();
+    const sandbox = {
+      name: "alpha",
+      agent: "openclaw",
+      model: "nvidia/nemotron",
+      provider,
+    };
     return {
-      getSandbox: () => ({
-        name: "alpha",
-        agent: "openclaw",
-        model: "nvidia/nemotron",
-        provider,
-      }),
+      getSandbox: () => sandbox,
+      listSandboxes: () => ({ sandboxes: [sandbox], defaultSandbox: "alpha" }),
       reconcile: async () => ({
         state: "present" as const,
         output: "Name: alpha\nPhase: Ready\n",
@@ -150,6 +152,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
     expect(snapshot.routeDrift).toEqual({
       live: { provider: "openai-api", model: "gpt-5.2" },
       recorded: { provider: "nvidia-prod", model: "nvidia/nemotron" },
+      canConnect: true,
     });
     expect(deps.probeProviderHealthImpl).toHaveBeenCalledWith("openai-api", {
       model: "gpt-5.2",

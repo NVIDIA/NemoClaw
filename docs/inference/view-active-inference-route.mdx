@@ -67,7 +67,9 @@ $$nemoclaw <name> status
 
 The status output shows the provider and model recorded for that sandbox.
 When the gateway's live shared route differs, status also prints an explicit warning with both the live and recorded routes.
-The JSON report includes the same live and recorded routes in `routeDrift`.
+The JSON report exposes them separately as `recordedRoute` and `liveRoute` and repeats both under `routeDrift` when they differ.
+The existing schema-version `1` `provider` and `model` fields remain live-first for compatibility with automation written before the explicit route fields existed.
+When `routeDrift.canConnect` is `false`, the recorded provider-global identity conflicts with another registered sandbox and `connect` is not offered as remediation.
 Use the route verification workflow when you need to prove that an inference request succeeds through the sandbox path.
 
 ## Related Topics

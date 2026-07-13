@@ -236,25 +236,34 @@ describe("shared gateway inference route compatibility", () => {
     });
   });
 
-  it("ignores credential environment differences in route identity (#6315)", () => {
-    expect(
-      check(
-        route("compatible-endpoint", "custom/model", {
+  it("fails closed before replacing a shared provider credential identity (#6315)", () => {
+    const result = check(
+      route("compatible-endpoint", "custom/model", {
+        endpointUrl: "https://example.test/v1",
+        preferredInferenceApi: "openai-completions",
+        credentialEnv: "REQUESTED_KEY",
+      }),
+      [
+        sandbox("custom-peer", {
+          provider: "compatible-endpoint",
+          model: "custom/model",
           endpointUrl: "https://example.test/v1",
           preferredInferenceApi: "openai-completions",
-          credentialEnv: "REQUESTED_KEY",
+          credentialEnv: "RECORDED_KEY",
         }),
-        [
-          sandbox("custom-peer", {
-            provider: "compatible-endpoint",
-            model: "custom/model",
-            endpointUrl: "https://example.test/v1",
-            preferredInferenceApi: "openai-completions",
-            credentialEnv: "RECORDED_KEY",
-          }),
-        ],
-      ),
-    ).toEqual({ ok: true });
+      ],
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      conflicts: [{ sandboxName: "custom-peer", reason: "provider-credential" }],
+    });
+    expect(formatGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toContain(
+      "different credential identity",
+    );
+    expect(isAdvisoryGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toBe(
+      false,
+    );
   });
 
   it.each([
@@ -285,7 +294,7 @@ describe("shared gateway inference route compatibility", () => {
 
     expect(result).toMatchObject({ ok: false, conflicts: [{ reason }] });
     expect(isAdvisoryGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toBe(
-      true,
+      false,
     );
     expect(
       isAdvisoryProviderModelRouteConflict(result as Exclude<typeof result, { ok: true }>),

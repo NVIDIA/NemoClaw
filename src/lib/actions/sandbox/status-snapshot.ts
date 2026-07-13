@@ -27,7 +27,10 @@ import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { redact } from "../../security/redact";
 import { parseSandboxPhase } from "../../state/gateway";
 import * as registry from "../../state/registry";
-import { buildGatewayInferenceGetArgs } from "./connect-inference-gateway";
+import {
+  buildGatewayInferenceGetArgs,
+  canSandboxGatewayRouteRealign,
+} from "./connect-inference-gateway";
 import { classifyInferenceRouteFailureLabel } from "./connect-inference-route-probe";
 import { getSandboxDockerRuntime } from "./docker-health";
 import type { SandboxGatewayState } from "./gateway-state";
@@ -138,6 +141,8 @@ export interface SandboxStatusReport {
   agentLoadError?: string;
   model: string;
   provider: string;
+  recordedRoute: RecordedInferenceRoute | null;
+  liveRoute: GatewayInference | null;
   routeDrift: SandboxStatusRouteDrift | null;
   phase: string | null;
   gatewayState: string;
@@ -167,6 +172,7 @@ export interface SandboxStatusReport {
 export interface SandboxStatusRouteDrift {
   live: GatewayInference;
   recorded: RecordedInferenceRoute;
+  canConnect: boolean;
 }
 
 export interface SandboxStatusSnapshot {
@@ -175,6 +181,8 @@ export interface SandboxStatusSnapshot {
   rpcIssue: OpenShellStateRpcIssue | null;
   currentModel: string;
   currentProvider: string;
+  recordedRoute: RecordedInferenceRoute | null;
+  liveRoute: GatewayInference | null;
   routeDrift: SandboxStatusRouteDrift | null;
   inferenceHealth: ProviderHealthStatus | null;
   terminalRuntimeHealth: TerminalRuntimeOomProbeResult | null;
@@ -225,6 +233,7 @@ type ProbeTerminalRuntimeHealth = (sandboxName: string) => TerminalRuntimeOomPro
 
 interface CollectSandboxStatusSnapshotDeps {
   getSandbox?: typeof registry.getSandbox;
+  listSandboxes?: typeof registry.listSandboxes;
   captureOpenshellForStatusImpl?: typeof captureOpenshellForStatus;
   probeProviderHealthImpl?: ProbeProviderHealth;
   probeSandboxInferenceGatewayHealthImpl?: ProbeSandboxInferenceGatewayHealth;
@@ -270,9 +279,10 @@ export async function collectSandboxStatusSnapshot(
     };
   }
   let liveResult: Awaited<ReturnType<typeof captureOpenshellForStatus>> | null = null;
+  let gatewayName: string | null = null;
   if (lookup.state === "present") {
     try {
-      const gatewayName = resolveSandboxGatewayName(sb);
+      gatewayName = resolveSandboxGatewayName(sb);
       liveResult = await (opts.deps?.captureOpenshellForStatusImpl ?? captureOpenshellForStatus)(
         buildGatewayInferenceGetArgs(gatewayName),
       );
@@ -290,6 +300,8 @@ export async function collectSandboxStatusSnapshot(
       rpcIssue,
       currentModel: (sb && sb.model) || "unknown",
       currentProvider: (sb && sb.provider) || "unknown",
+      recordedRoute: sb?.provider && sb.model ? { provider: sb.provider, model: sb.model } : null,
+      liveRoute: null,
       routeDrift: null,
       inferenceHealth: null,
       terminalRuntimeHealth: null,
@@ -297,6 +309,9 @@ export async function collectSandboxStatusSnapshot(
   }
   const live =
     liveResult && !isCommandTimeout(liveResult) ? parseGatewayInference(liveResult.output) : null;
+  const recordedRoute =
+    sb?.provider && sb.model ? { provider: sb.provider, model: sb.model } : null;
+  const liveRoute = live ? { provider: live.provider, model: live.model } : null;
   // Model/provider are sandbox-scoped status fields, so prefer the durable
   // route recorded for this sandbox. The live shared route is shown separately
   // as drift instead of being mislabeled as this sandbox's configuration.
@@ -308,7 +323,20 @@ export async function collectSandboxStatusSnapshot(
       : null;
   const routeDrift =
     routeDriftPlan && routeDriftPlan.kind === "diverged"
-      ? { live: routeDriftPlan.live, recorded: routeDriftPlan.recorded }
+      ? {
+          live: routeDriftPlan.live,
+          recorded: routeDriftPlan.recorded,
+          canConnect: Boolean(
+            sb &&
+              gatewayName &&
+              canSandboxGatewayRouteRealign(
+                sandboxName,
+                sb,
+                gatewayName,
+                (opts.deps?.listSandboxes ?? registry.listSandboxes)().sandboxes,
+              ),
+          ),
+        }
       : null;
   // When the caller has already determined that the local stack is failed
   // (docker daemon down, sandbox container stopped, dashboard port held),
@@ -364,6 +392,8 @@ export async function collectSandboxStatusSnapshot(
     rpcIssue,
     currentModel,
     currentProvider,
+    recordedRoute,
+    liveRoute,
     routeDrift,
     inferenceHealth,
     terminalRuntimeHealth,
@@ -398,6 +428,8 @@ async function buildSandboxStatusReport(
     rpcIssue,
     currentModel,
     currentProvider,
+    recordedRoute,
+    liveRoute,
     routeDrift,
     inferenceHealth,
     terminalRuntimeHealth,
@@ -420,8 +452,13 @@ async function buildSandboxStatusReport(
     agentRuntime: agent.agentRuntime,
     dcodeAutoApprovalMode: resolveSandboxStatusDcodeAutoApprovalMode(sb),
     ...(agent.agentLoadError ? { agentLoadError: agent.agentLoadError } : {}),
-    model: currentModel,
-    provider: currentProvider,
+    // Keep schema v1's established live-first fields for existing consumers.
+    // The explicit route fields separate durable sandbox intent from the one
+    // gateway-global route without changing those legacy meanings.
+    model: liveRoute?.model ?? currentModel,
+    provider: liveRoute?.provider ?? currentProvider,
+    recordedRoute,
+    liveRoute,
     routeDrift,
     phase,
     gatewayState: lookup.state,

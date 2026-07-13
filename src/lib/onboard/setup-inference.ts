@@ -246,6 +246,7 @@ export function createSetupInference(
             provider,
             model,
             endpointUrl,
+            credentialEnv,
             preferredInferenceApi: options.preferredInferenceApi ?? null,
           },
         });

@@ -376,6 +376,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         provider,
         model,
         endpointUrl,
+        credentialEnv,
         preferredInferenceApi,
       });
       const recovery = await deps.ensureResumeProviderReady(gatewayName, provider, credentialEnv);
@@ -541,6 +542,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         provider,
         model,
         endpointUrl,
+        credentialEnv,
         preferredInferenceApi,
       });
     }
@@ -653,6 +655,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             provider: selectedProvider,
             model: selectedModel,
             endpointUrl,
+            credentialEnv,
             preferredInferenceApi,
           });
           try {
@@ -704,6 +707,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             provider: selectedProvider,
             model: selectedModel,
             endpointUrl,
+            credentialEnv,
             preferredInferenceApi,
           });
           return deps.reserveSandboxInferenceRoute(authoritativeReservationName, {

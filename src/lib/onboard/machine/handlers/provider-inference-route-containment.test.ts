@@ -273,6 +273,7 @@ describe("provider route containment", () => {
         provider: "nvidia-router",
         model: "router/model",
         endpointUrl: null,
+        credentialEnv: null,
         preferredInferenceApi: null,
       },
     });
@@ -335,6 +336,7 @@ describe("provider route containment", () => {
         provider: "compatible-endpoint",
         model: "custom/model",
         endpointUrl: "https://example.test/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
         preferredInferenceApi: "openai-completions",
       },
     });

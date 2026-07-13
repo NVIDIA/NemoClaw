@@ -264,6 +264,15 @@ function printInferenceRouteDrift(
   );
   const { liveProvider, liveModel, recordedRoute } = display;
   console.log(`    ${YW}Warning: ${display.warning}${R}`);
+  if (!drift.canConnect) {
+    console.log(
+      `    ${YW}The recorded route cannot be restored with ${CLI_NAME} connect while another registered sandbox uses different provider-global endpoint, API-family, or credential identity.${R}`,
+    );
+    console.log(
+      `    ${YW}Remove or re-onboard the conflicting sandbox before reconnecting '${sandboxName}'.${R}`,
+    );
+    return;
+  }
   console.log(
     `    ${YW}${CLI_NAME} ${shellQuote(sandboxName)} connect realigns the gateway to ${recordedRoute}; to adopt the live route instead:${R}`,
   );

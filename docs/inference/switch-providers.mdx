@@ -101,13 +101,14 @@ A rebuild reuses the recorded endpoint and cannot change it.
 ## Account for Shared Gateways
 
 OpenShell exposes one live inference route per gateway, while NemoClaw records each sandbox's intended provider and model.
-Onboarding a sandbox with a different valid route warns immediately before it re-points the shared route.
+Onboarding a sandbox with a different provider or model warns immediately before it re-points the shared route when any same-name provider endpoint, API family, and credential identity match.
+Onboarding refuses to replace those provider-global fields while another registered sandbox depends on them.
 The warning names every affected registered sandbox and its recorded provider and model.
-Those sandboxes use the new live route until a later onboarding run or, when custom endpoint and API-family identity already match, `$$nemoclaw <name> connect` warns and re-points its provider and model again.
-`connect` refuses a different custom endpoint or API family because its provider/model-only route change cannot safely reconstruct that metadata; re-run onboarding to apply the complete custom route.
+Those sandboxes use the new live route until a later onboarding run or, when endpoint, API-family, and credential identity already match, `$$nemoclaw <name> connect` warns and re-points its provider and model again.
+`connect` refuses a different custom endpoint, API family, or credential identity because its provider/model-only route change cannot safely reconstruct that metadata.
 
 `$$nemoclaw <name> status` continues to show that sandbox's recorded provider and model and prints an explicit warning when the live shared route differs.
-Incomplete custom-route metadata and invalid gateway bindings remain hard errors because NemoClaw cannot identify those routes safely.
+Incomplete custom-route metadata, provider-global identity conflicts, and invalid gateway bindings remain hard errors because NemoClaw cannot identify or restore those routes safely.
 Runtime `inference set` also refuses a change that would leave another registered sandbox with a different recorded route.
 
 Do not run `openshell inference set` directly on a shared NemoClaw gateway because that bypasses registry compatibility checks.

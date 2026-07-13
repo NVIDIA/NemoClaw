@@ -138,6 +138,14 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
       rpcIssue: null,
       currentModel: options.currentModel ?? sandboxEntry.model,
       currentProvider: options.currentProvider ?? "ollama-local",
+      recordedRoute: {
+        provider: sandboxEntry.provider,
+        model: sandboxEntry.model,
+      },
+      liveRoute: {
+        provider: options.currentProvider ?? "ollama-local",
+        model: options.currentModel ?? sandboxEntry.model,
+      },
       routeDrift: options.routeDrift ?? null,
       inferenceHealth:
         options.inferenceHealth === undefined

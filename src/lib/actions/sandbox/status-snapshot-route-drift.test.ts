@@ -26,13 +26,17 @@ function liveGatewayInference(provider: string, model: string, gatewayName = "ne
 }
 
 function snapshotDeps(entry: Partial<SandboxEntry> | null) {
+  const sandbox = entry
+    ? ({ name: "alpha", agent: "openclaw", policies: [], ...entry } as SandboxEntry)
+    : null;
   return {
     suppressInferenceProbe: true,
     deps: {
-      getSandbox: () =>
-        entry
-          ? ({ name: "alpha", agent: "openclaw", policies: [], ...entry } as SandboxEntry)
-          : null,
+      getSandbox: () => sandbox,
+      listSandboxes: () => ({
+        sandboxes: sandbox ? [sandbox] : [],
+        defaultSandbox: sandbox ? sandbox.name : null,
+      }),
       reconcile: async () => ({ state: "present", output: "Phase: Ready" }),
     },
   };
@@ -54,7 +58,10 @@ describe("collectSandboxStatusSnapshot route drift", () => {
     expect(snapshot.routeDrift).toEqual({
       live: { provider: "openai", model: "gpt-5.2" },
       recorded: { provider: "nvidia", model: "nvidia/nemotron" },
+      canConnect: true,
     });
+    expect(snapshot.liveRoute).toEqual({ provider: "openai", model: "gpt-5.2" });
+    expect(snapshot.recordedRoute).toEqual({ provider: "nvidia", model: "nvidia/nemotron" });
     expect(snapshot.currentProvider).toBe("nvidia");
     expect(snapshot.currentModel).toBe("nvidia/nemotron");
   });
@@ -74,6 +81,7 @@ describe("collectSandboxStatusSnapshot route drift", () => {
     expect(snapshot.routeDrift).toEqual({
       live: { provider: "openai", model: "gpt-5.2" },
       recorded: { provider: "nvidia", model: "nvidia/nemotron" },
+      canConnect: true,
     });
     expect(snapshot.currentProvider).toBe("nvidia");
     expect(snapshot.currentModel).toBe("nvidia/nemotron");
@@ -144,5 +152,34 @@ describe("collectSandboxStatusSnapshot route drift", () => {
     expect(snapshot.routeDrift).toBeNull();
     expect(snapshot.currentProvider).toBe("nvidia");
     expect(snapshot.currentModel).toBe("unknown");
+  });
+
+  it("does not advertise connect for a legacy custom-provider identity conflict (#6315)", async () => {
+    liveGatewayInference("compatible-endpoint", "live/model");
+    const target = {
+      provider: "compatible-endpoint",
+      model: "recorded/model",
+      endpointUrl: "https://target.example/v1",
+      credentialEnv: "TARGET_KEY",
+      preferredInferenceApi: "openai-completions",
+    } satisfies Partial<SandboxEntry>;
+    const peer: SandboxEntry = {
+      name: "peer",
+      gatewayName: "nemoclaw",
+      provider: "compatible-endpoint",
+      model: "peer/model",
+      endpointUrl: "https://peer.example/v1",
+      credentialEnv: "PEER_KEY",
+      preferredInferenceApi: "openai-completions",
+    };
+    const options = snapshotDeps(target);
+    options.deps.listSandboxes = () => ({
+      sandboxes: [options.deps.getSandbox() as SandboxEntry, peer],
+      defaultSandbox: "alpha",
+    });
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", options);
+
+    expect(snapshot.routeDrift).toMatchObject({ canConnect: false });
   });
 });

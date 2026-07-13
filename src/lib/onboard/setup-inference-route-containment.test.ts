@@ -175,6 +175,58 @@ describe("onboard shared gateway route containment", () => {
     expect(exitProcess).not.toHaveBeenCalled();
   });
 
+  it("fails before provider mutation when endpoint or credential identity differs (#6315)", async () => {
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const updateSandbox = vi.fn(() => true);
+    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const error = vi.fn();
+    const exitProcess = vi.fn((code: number): never => {
+      throw new Error(`exit ${code}`);
+    });
+    const peer: SandboxEntry = {
+      name: "existing-custom",
+      gatewayName: "nemoclaw",
+      provider: "compatible-endpoint",
+      model: "model-a",
+      endpointUrl: "https://endpoint-a.example/v1",
+      credentialEnv: "KEY_A",
+      preferredInferenceApi: "openai-completions",
+    };
+    const setupInference = createSetupInference({
+      checkGatewayRouteCompatibility: (
+        request: Parameters<SetupInferenceDeps["checkGatewayRouteCompatibility"]>[0],
+      ) => checkGatewayRouteCompatibility({ ...request, sandboxes: [peer] }),
+      withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      getGatewayName: () => "nemoclaw",
+      runOpenshell,
+      updateSandbox,
+      upsertProvider,
+      error,
+      exitProcess,
+    } as unknown as SetupInferenceDeps);
+
+    await expect(
+      setupInference(
+        "new-custom",
+        "model-b",
+        "compatible-endpoint",
+        "https://endpoint-b.example/v1",
+        "KEY_B",
+        null,
+        [],
+        { preferredInferenceApi: "openai-completions" },
+      ),
+    ).rejects.toThrow("exit 1");
+
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("provider-global configuration"));
+    expect(upsertProvider).not.toHaveBeenCalled();
+    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(updateSandbox).not.toHaveBeenCalled();
+  });
+
   it("rechecks recovered-route ownership inside both mutation locks before setup (#6630)", async () => {
     const events: string[] = [];
     const checkGatewayRouteCompatibility = vi.fn(() => ({ ok: true as const }));

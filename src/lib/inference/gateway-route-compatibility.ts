@@ -30,6 +30,7 @@ export type GatewayRouteConflictReason =
   | "provider-model"
   | "custom-endpoint"
   | "custom-api"
+  | "provider-credential"
   | "incomplete-route"
   | "incomplete-custom-route"
   | "invalid-gateway-binding";
@@ -112,6 +113,13 @@ function customRouteConflict(
   if (requestedEndpoint !== recordedEndpoint) return "custom-endpoint";
   if (requestedApi !== recordedApi) return "custom-api";
   return null;
+}
+
+function providerCredentialConflict(
+  requested: GatewayInferenceRoute,
+  recorded: GatewayInferenceRoute,
+): boolean {
+  return nonEmptyString(requested.credentialEnv) !== nonEmptyString(recorded.credentialEnv);
 }
 
 /**
@@ -199,6 +207,7 @@ export function preflightGatewayRouteDiscovery(
     provider,
     model: requestedModel ?? recorded.model,
     endpointUrl: nonEmptyString(request.route.endpointUrl) ?? reference.endpointUrl,
+    credentialEnv: nonEmptyString(request.route.credentialEnv) ?? reference.credentialEnv,
     preferredInferenceApi:
       nonEmptyString(request.route.preferredInferenceApi) ?? reference.preferredInferenceApi,
   };
@@ -272,23 +281,33 @@ export function checkGatewayRouteCompatibility(
       continue;
     }
 
-    // A provider/model-only mutation cannot restore custom provider metadata.
-    // Compare that identity first so a simultaneous model difference cannot
-    // hide an endpoint or API-family conflict from connect-time containment.
-    if (
-      recorded.provider === requested.provider &&
-      CUSTOM_ROUTE_PROVIDERS.has(requested.provider)
-    ) {
-      const reason = customRouteConflict(requested.provider, request.route, sandbox);
-      if (reason) {
+    // A provider/model-only mutation cannot safely replace provider-global
+    // endpoint, API-family, or credential identity. Compare that fingerprint
+    // first so a simultaneous model difference cannot hide a provider mutation.
+    if (recorded.provider === requested.provider) {
+      let providerIdentityConflict = false;
+      if (CUSTOM_ROUTE_PROVIDERS.has(requested.provider)) {
+        const reason = customRouteConflict(requested.provider, request.route, sandbox);
+        if (reason) {
+          conflicts.push({
+            sandboxName: sandbox.name,
+            reason,
+            scope: "registered",
+            recordedRoute: recorded,
+          });
+          providerIdentityConflict = true;
+        }
+      }
+      if (providerCredentialConflict(request.route, sandbox)) {
         conflicts.push({
           sandboxName: sandbox.name,
-          reason,
+          reason: "provider-credential",
           scope: "registered",
           recordedRoute: recorded,
         });
-        continue;
+        providerIdentityConflict = true;
       }
+      if (providerIdentityConflict) continue;
     }
     if (recorded.provider !== requested.provider || recorded.model !== requested.model) {
       conflicts.push({
@@ -315,15 +334,12 @@ function safeDisplay(value: string): string {
   return value.replace(/[\u0000-\u001f\u007f]/g, "?");
 }
 
-const ADVISORY_ROUTE_CONFLICTS = new Set<GatewayRouteConflictReason>([
-  "provider-model",
-  "custom-endpoint",
-  "custom-api",
-]);
+const ADVISORY_ROUTE_CONFLICTS = new Set<GatewayRouteConflictReason>(["provider-model"]);
 
 /**
- * True only for valid, durable routes that differ across registered sandboxes.
- * Corrupt/incomplete metadata and invalid gateway bindings remain hard errors.
+ * True only for provider/model differences that a route-only mutation can
+ * reconcile. Provider-global endpoint, API-family, and credential identity
+ * differences remain hard errors because they require unsafe provider mutation.
  */
 export function isAdvisoryGatewayRouteConflict(
   result: Exclude<GatewayRouteCompatibilityResult, { ok: true }>,
@@ -338,8 +354,8 @@ export function isAdvisoryGatewayRouteConflict(
 
 /**
  * True only when a provider/model-only route mutation can safely reconcile the
- * conflict. Custom endpoint and API-family changes require the full onboarding
- * provider setup path, which restores that identity before selecting the route.
+ * conflict. Provider-global endpoint, API-family, and credential changes stay
+ * fail-closed while another registered sandbox depends on the current identity.
  */
 export function isAdvisoryProviderModelRouteConflict(
   result: Exclude<GatewayRouteCompatibilityResult, { ok: true }>,
@@ -404,6 +420,13 @@ export function formatGatewayRouteConflict(
   const hasInvalidGatewayBinding = result.conflicts.some(
     (conflict) => conflict.reason === "invalid-gateway-binding",
   );
+  const providerIdentityDifferences = [
+    result.conflicts.some((conflict) => conflict.reason === "custom-endpoint") ? "endpoint" : null,
+    result.conflicts.some((conflict) => conflict.reason === "custom-api") ? "API family" : null,
+    result.conflicts.some((conflict) => conflict.reason === "provider-credential")
+      ? "credential identity"
+      : null,
+  ].filter((value): value is string => value !== null);
   const requiresRegistryRepair =
     hasIncompleteCustomRoute || hasIncompleteRoute || hasInvalidGatewayBinding;
   const detail = [
@@ -415,6 +438,11 @@ export function formatGatewayRouteConflict(
       : null,
     hasInvalidGatewayBinding
       ? "At least one registry row has an invalid gateway binding, so gateway separation cannot be proven; restore its known-good gateway binding or remove and re-onboard that sandbox."
+      : null,
+    providerIdentityDifferences.length > 0
+      ? `At least one registered sandbox uses a different ${providerIdentityDifferences.join(
+          ", ",
+        )} for the same shared provider. NemoClaw will not replace provider-global configuration while that sandbox remains registered.`
       : null,
   ]
     .filter(Boolean)
