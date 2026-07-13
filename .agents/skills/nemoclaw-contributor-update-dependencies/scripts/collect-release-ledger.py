@@ -224,15 +224,17 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
     ]
 
     candidates: list[tuple[Version, str]] = []
+    explicit_target_tag = args.to_ref.removeprefix("refs/tags/")
     for tag in git(repo, "tag", "--merged", target_sha).splitlines():
         version = Version.parse(tag)
         if version is None:
             continue
-        if version.prerelease and not args.include_prereleases:
-            continue
         if version <= start_version:
             continue
         tag_sha = resolve_commit(repo, f"refs/tags/{tag}")
+        explicitly_targeted = tag == explicit_target_tag and tag_sha == target_sha
+        if version.prerelease and not args.include_prereleases and not explicitly_targeted:
+            continue
         if not is_ancestor(repo, start_sha, tag_sha):
             continue
         candidates.append((version, tag))

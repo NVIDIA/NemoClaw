@@ -148,6 +148,22 @@ describe("dependency release ledger collector", () => {
     ).toEqual(["v1.0.0", "v1.0.1-rc.1", "v1.0.1", "v1.0.2", targetSha]);
   });
 
+  it("preserves an explicitly targeted prerelease identity without widening the ledger", () => {
+    const { repo } = createTaggedRepository();
+    const result = runCollector(repo, "v1.0.0", "refs/tags/v1.0.1-rc.1");
+
+    expect(result.status, result.stderr).toBe(0);
+    const ledger = JSON.parse(result.stdout) as Ledger;
+    expect(
+      ledger.releaseEndpoints.map(({ ref, tagKind, version }) => ({ ref, tagKind, version })),
+    ).toEqual([
+      { ref: "v1.0.0", tagKind: "annotated", version: "1.0.0" },
+      { ref: "v1.0.1-rc.1", tagKind: "lightweight", version: "1.0.1-rc.1" },
+    ]);
+    expect(ledger.ranges).toHaveLength(1);
+    expect(ledger.ranges[0]?.to.ref).toBe("v1.0.1-rc.1");
+  });
+
   it("fails closed for missing refs, reversed ancestry, and existing output", () => {
     const { repo, targetSha } = createTaggedRepository();
     const missing = runCollector(repo, "v1.0.0", "missing-ref");
