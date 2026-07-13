@@ -28,7 +28,7 @@
 #   bash scripts/brev-launchable-ci-cpu.sh --print-openshell-version  # resolve only
 #
 # Environment overrides:
-#   OPENSHELL_VERSION          — OpenShell CLI release tag (default: v0.0.72)
+#   OPENSHELL_VERSION          — OpenShell CLI release tag (default: stable selector below)
 #   NEMOCLAW_OPENSHELL_CHANNEL — Release channel (stable/dev/auto)
 #   NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL — Required opt-in for the unverified dev channel
 #   NEMOCLAW_REF               — NemoClaw git ref to clone (default: main)

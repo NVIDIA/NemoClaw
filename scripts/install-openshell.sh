@@ -127,7 +127,7 @@ else
 fi
 
 # invalidState: a consumed OpenShell release asset differs from the digest
-# published for the immutable v0.0.72 release, or a mutable registry tag moves.
+# published for the selected immutable release, or a mutable registry tag moves.
 # sourceBoundary: NVIDIA/OpenShell owns the release workflow, GitHub release
 # assets, and GHCR manifests; NemoClaw owns which exact artifacts it trusts.
 # whyNotSourceFix: NemoClaw cannot retroactively make an upstream publication
@@ -135,7 +135,7 @@ fi
 # regressionTest: test/install-openshell-version-check.test.ts exercises all
 # eight mappings, and scripts/check-installer-hash.sh compares them with the
 # GitHub release API on every PR, main push, weekly run, and manual dispatch.
-# removalCondition: remove these v0.0.72 entries only when NemoClaw drops that
+# removalCondition: remove these entries only when NemoClaw drops that
 # supported release or replaces them with independently verified newer pins.
 openshell_pinned_sha256() {
   local release_tag="$1" asset="$2"

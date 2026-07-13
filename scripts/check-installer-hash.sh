@@ -24,6 +24,11 @@ else
 fi
 CHECKER_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Trust-anchor rollout is intentionally two-step. First land a prerequisite PR
+# that adds the reviewed release-manifest digests here while runtime selectors
+# still name the current release. Only after that commit is on the target branch
+# may a separate pin PR select the new release. Pull-request verification runs
+# this file from the base SHA, so a pin PR can never authorize its own digests.
 readonly -a OPENSHELL_RELEASE_MANIFEST_ALLOWLIST=(
   "0.0.72|openshell-checksums-sha256.txt|0049181983eaf925ef9510382f75348229a9511d02e27196107782e7c3259ae1"
   "0.0.72|openshell-gateway-checksums-sha256.txt|3c454dc15154b8c700ec820628559ea8964c6e552d9c5f8af78b6ee19cf34547"

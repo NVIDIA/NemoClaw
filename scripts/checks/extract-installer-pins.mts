@@ -1,12 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 type Token = {
+  end: number;
   kind: "newline" | "operator" | "word";
+  start: number;
   value: string;
 };
 
@@ -29,11 +32,20 @@ type CliOptions = {
   installer: string;
 };
 
-const FUNCTION_LOCAL_PATTERN = /^local release_tag\s*=\s*\$1 asset\s*=\s*\$2$/u;
+const FUNCTION_LOCAL_SOURCE_PATTERN =
+  /^local[ \t]+release_tag[ \t]*=[ \t]*(?:"\$1"|\$1)[ \t]+asset[ \t]*=[ \t]*(?:"\$2"|\$2)$/u;
 const LITERAL_PIN_PATTERN = /^v([0-9]+\.[0-9]+\.[0-9]+):([A-Za-z0-9._+-]+)$/u;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
-const FUNCTION_SELECTOR_VALUES = new Set(["${release_tag}:${asset}", "$release_tag:$asset"]);
 const MAX_INSTALLER_INPUT_BYTES = 1024 * 1024;
+// These hashes freeze the complete reviewed scripts after normalizing only the
+// strictly parsed pin-table function and stable release selector. Update them
+// only in a prerequisite trust-anchor PR that keeps the currently selected
+// release; the later pin PR may then change release data without authorizing
+// any operational installer change. A mismatch reports the candidate hash.
+const TRUSTED_INSTALLER_TEMPLATE_SHA256 =
+  "7207ab2751971c8c14b84134e905b94c2fd54f25a2f7dd6c5eb75587c1c2c71e";
+const TRUSTED_BREV_TEMPLATE_SHA256 =
+  "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a";
 const EXPECTED_INSTALLER_ASSETS = [
   "openshell-x86_64-unknown-linux-musl.tar.gz",
   "openshell-aarch64-unknown-linux-musl.tar.gz",
@@ -229,7 +241,7 @@ function tokenizeShellSubset(source: string): Token[] {
       continue;
     }
     if (character === "\n") {
-      tokens.push({ kind: "newline", value: "\n" });
+      tokens.push({ end: index + 1, kind: "newline", start: index, value: "\n" });
       index += 1;
       continue;
     }
@@ -240,16 +252,17 @@ function tokenizeShellSubset(source: string): Token[] {
       continue;
     }
     if (character === ";" && next === ";") {
-      tokens.push({ kind: "operator", value: ";;" });
+      tokens.push({ end: index + 2, kind: "operator", start: index, value: ";;" });
       index += 2;
       continue;
     }
     if (isOperatorStart(character)) {
-      tokens.push({ kind: "operator", value: character });
+      tokens.push({ end: index + 1, kind: "operator", start: index, value: character });
       index += 1;
       continue;
     }
 
+    const wordStart = index;
     let value = "";
     while (index < source.length) {
       const wordCharacter = source[index] ?? "";
@@ -320,7 +333,7 @@ function tokenizeShellSubset(source: string): Token[] {
     if (!value) {
       fail(`unsupported shell token near ${JSON.stringify(source.slice(index, index + 16))}`);
     }
-    tokens.push({ kind: "word", value });
+    tokens.push({ end: index, kind: "word", start: wordStart, value });
   }
 
   return tokens;
@@ -328,6 +341,11 @@ function tokenizeShellSubset(source: string): Token[] {
 
 function isToken(token: Token | undefined, kind: Token["kind"], value?: string): boolean {
   return token?.kind === kind && (value === undefined || token.value === value);
+}
+
+function rawToken(source: string, token: Token | undefined): string {
+  if (!token) fail("required shell token is unavailable");
+  return source.slice(token.start, token.end);
 }
 
 function functionBodyRanges(tokens: Token[], functionName: string): Array<[number, number]> {
@@ -368,6 +386,121 @@ function functionBodyRanges(tokens: Token[], functionName: string): Array<[numbe
   return ranges;
 }
 
+type SourceEdit = {
+  end: number;
+  replacement: string;
+  start: number;
+};
+
+function functionDefinitionSourceRanges(source: string, functionName: string): SourceEdit[] {
+  const tokens = tokenizeShellSubset(source);
+  const ranges: SourceEdit[] = [];
+  for (let index = 0; index < tokens.length - 3; index += 1) {
+    const definitionStart = index;
+    const nameIndex = isToken(tokens[index], "word", "function") ? index + 1 : index;
+    if (!isToken(tokens[nameIndex], "word", functionName)) continue;
+    let cursor = nameIndex + 1;
+    if (isToken(tokens[cursor], "operator", "(")) {
+      if (!isToken(tokens[cursor + 1], "operator", ")")) continue;
+      cursor += 2;
+    }
+    if (!isToken(tokens[cursor], "operator", "{")) continue;
+
+    let depth = 1;
+    for (let bodyCursor = cursor + 1; bodyCursor < tokens.length; bodyCursor += 1) {
+      if (isToken(tokens[bodyCursor], "operator", "{")) {
+        depth += 1;
+      } else if (isToken(tokens[bodyCursor], "operator", "}")) {
+        depth -= 1;
+        if (depth === 0) {
+          const start = tokens[definitionStart]?.start;
+          const end = tokens[bodyCursor]?.end;
+          if (start === undefined || end === undefined) {
+            fail(`${functionName} source range is unavailable`);
+          }
+          ranges.push({ end, replacement: `<${functionName}:trusted-release-data>`, start });
+          index = bodyCursor;
+          break;
+        }
+      }
+    }
+    if (depth !== 0) fail(`${functionName} has an unterminated function body`);
+  }
+  return ranges;
+}
+
+function selectorVersionEdit(source: string, pattern: RegExp, label: string): SourceEdit {
+  const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
+  const matches = [...source.matchAll(new RegExp(pattern.source, flags))];
+  const match = matches[0];
+  const version = match?.[1];
+  if (matches.length !== 1 || !match || !version || match.index === undefined) {
+    fail(`${label} must contain exactly one permitted release selector literal`);
+  }
+  const relativeStart = match[0].indexOf(version);
+  if (relativeStart === -1) fail(`${label} release selector range is unavailable`);
+  const start = match.index + relativeStart;
+  return { end: start + version.length, replacement: "<trusted-release-version>", start };
+}
+
+function normalizeTrustedInstallerTemplate(
+  source: string,
+  functionName: string,
+  selectorPattern: RegExp,
+  label: string,
+): string {
+  const functionRanges = functionDefinitionSourceRanges(source, functionName);
+  if (functionRanges.length !== 1) {
+    fail(`${label} must contain exactly one ${functionName} release-data function`);
+  }
+  const edits = [
+    functionRanges[0] ?? fail(`${label} release-data range is unavailable`),
+    selectorVersionEdit(source, selectorPattern, label),
+  ].sort((left, right) => right.start - left.start);
+  for (let index = 0; index < edits.length - 1; index += 1) {
+    const current = edits[index];
+    const next = edits[index + 1];
+    if (current && next && next.end > current.start) {
+      fail(`${label} normalized release-data regions overlap`);
+    }
+  }
+  return edits.reduce(
+    (normalized, edit) =>
+      `${normalized.slice(0, edit.start)}${edit.replacement}${normalized.slice(edit.end)}`,
+    source,
+  );
+}
+
+// invalidState: a mutable PR leaves a valid-looking pin table in inert text but
+// changes which release, URL, checksum verifier, archive validator, or install
+// path actually executes. sourceBoundary: the expected hashes and normalizer
+// execute from the base-trusted checkout; PR installer files are inert input.
+// regressionTest: test/installer-hash-check.test.ts mutates comments, control
+// flow, indirect selectors, SHA commands, and alternate download/extract paths.
+// removalCondition: remove this template lock only when a base-trusted,
+// machine-readable manifest directly drives every installer operation.
+function assertTrustedTemplate(
+  source: string,
+  functionName: string,
+  selectorPattern: RegExp,
+  expectedSha256: string,
+  label: string,
+): void {
+  const normalized = normalizeTrustedInstallerTemplate(
+    source,
+    functionName,
+    selectorPattern,
+    label,
+  );
+  const actualSha256 = createHash("sha256").update(normalized).digest("hex");
+  if (actualSha256 !== expectedSha256) {
+    fail(
+      `${label} operational template is not base-trusted; ` +
+        `expected_sha256=${expectedSha256}, actual_sha256=${actualSha256}`,
+    );
+  }
+}
+
 function skipSeparators(tokens: Token[], start: number): number {
   let cursor = start;
   while (isToken(tokens[cursor], "newline") || isToken(tokens[cursor], "operator", ";")) {
@@ -391,30 +524,60 @@ function commandBeforeSeparator(
   return { command: tokens.slice(start, cursor), next: skipSeparators(tokens, cursor) };
 }
 
-function staticPinFromArm(pattern: string, commandTokens: Token[]): InstallerPin | undefined {
+function staticPinFromArm(
+  source: string,
+  patternToken: Token,
+  commandTokens: Token[],
+): InstallerPin | undefined {
+  const pattern = patternToken.value;
   const match = LITERAL_PIN_PATTERN.exec(pattern);
+  const rawPattern = rawToken(source, patternToken);
   if (!match) {
     if (pattern !== "*") {
       fail(`unsupported case pattern ${JSON.stringify(pattern)}`);
     }
-    const wildcardCommand = commandTokens
-      .filter((token) => token.kind !== "newline" && token.value !== ";")
-      .map((token) => token.value);
+    if (rawPattern !== "*") {
+      fail("the fallback case pattern must be one unquoted wildcard");
+    }
+    const wildcardTokens = commandTokens.filter(
+      (token) => token.kind !== "newline" && token.value !== ";",
+    );
+    const wildcardCommand = wildcardTokens.map((token) => token.value);
     if (wildcardCommand.join(" ") !== "return 1") {
       fail("the fallback case arm must contain only 'return 1'");
+    }
+    if (
+      rawToken(source, wildcardTokens[0]) !== "return" ||
+      rawToken(source, wildcardTokens[1]) !== "1"
+    ) {
+      fail("the fallback case arm must use literal 'return 1'");
     }
     return undefined;
   }
 
-  const command = commandTokens
-    .filter((token) => token.kind !== "newline" && token.value !== ";")
-    .map((token) => token.value);
+  if (![pattern, `'${pattern}'`, `"${pattern}"`].includes(rawPattern)) {
+    fail(`case arm ${pattern} must be one literal release-and-asset pattern`);
+  }
+
+  const staticCommandTokens = commandTokens.filter(
+    (token) => token.kind !== "newline" && token.value !== ";",
+  );
+  const command = staticCommandTokens.map((token) => token.value);
   if (command.length !== 3 || command[0] !== "printf" || command[1] !== "%s\\n") {
     fail(`case arm ${pattern} must contain exactly one static printf '%s\\n' SHA-256 command`);
+  }
+  if (
+    rawToken(source, staticCommandTokens[0]) !== "printf" ||
+    !["'%s\\n'", '"%s\\n"'].includes(rawToken(source, staticCommandTokens[1]))
+  ) {
+    fail(`case arm ${pattern} must use a literal printf '%s\\n' command`);
   }
   const sha256 = command[2] ?? "";
   if (!SHA256_PATTERN.test(sha256)) {
     fail(`case arm ${pattern} does not contain one literal lowercase SHA-256 digest`);
+  }
+  if (![sha256, `'${sha256}'`, `"${sha256}"`].includes(rawToken(source, staticCommandTokens[2]))) {
+    fail(`case arm ${pattern} must print one literal lowercase SHA-256 digest`);
   }
   return {
     asset: match[2] ?? "",
@@ -441,24 +604,54 @@ export function extractInstallerPins(source: string, options: ExtractOptions): I
   if (ranges.length !== 1) {
     fail(`expected exactly one ${options.functionName} definition, found ${ranges.length}`);
   }
+  const headerIndex = tokens.findIndex(
+    (token, index) =>
+      token.kind === "word" &&
+      token.value === options.functionName &&
+      ((isToken(tokens[index + 1], "operator", "(") &&
+        isToken(tokens[index + 2], "operator", ")") &&
+        isToken(tokens[index + 3], "operator", "{")) ||
+        isToken(tokens[index + 1], "operator", "{")),
+  );
+  if (headerIndex === -1 || rawToken(source, tokens[headerIndex]) !== options.functionName) {
+    fail(`${options.functionName} must use one literal unquoted function name`);
+  }
+  if (
+    isToken(tokens[headerIndex - 1], "word", "function") &&
+    rawToken(source, tokens[headerIndex - 1]) !== "function"
+  ) {
+    fail(`${options.functionName} must use a literal function keyword`);
+  }
   const [bodyStart, bodyEnd] = ranges[0] ?? fail(`missing ${options.functionName} body`);
   const body = tokens.slice(bodyStart, bodyEnd);
   let cursor = skipSeparators(body, 0);
 
   const local = commandBeforeSeparator(body, cursor);
-  if (!FUNCTION_LOCAL_PATTERN.test(local.command.map((token) => token.value).join(" "))) {
+  const localStart = local.command[0];
+  const localEnd = local.command.at(-1);
+  const localSource = localStart && localEnd ? source.slice(localStart.start, localEnd.end) : "";
+  if (!FUNCTION_LOCAL_SOURCE_PATTERN.test(localSource)) {
     fail(`${options.functionName} must start with local release_tag and asset inputs`);
   }
   cursor = local.next;
   if (!isToken(body[cursor], "word", "case")) {
     fail(`${options.functionName} must contain one static case table`);
   }
+  if (rawToken(source, body[cursor]) !== "case") {
+    fail(`${options.functionName} must use a literal case keyword`);
+  }
   const selector = body[cursor + 1];
-  if (!isToken(selector, "word") || !FUNCTION_SELECTOR_VALUES.has(selector.value)) {
+  if (
+    !isToken(selector, "word", "${release_tag}:${asset}") ||
+    rawToken(source, selector) !== '"${release_tag}:${asset}"'
+  ) {
     fail(`${options.functionName} must select on release_tag and asset`);
   }
   if (!isToken(body[cursor + 2], "word", "in")) {
     fail(`${options.functionName} case table is missing 'in'`);
+  }
+  if (rawToken(source, body[cursor + 2]) !== "in") {
+    fail(`${options.functionName} must use a literal in keyword`);
   }
   cursor = skipSeparators(body, cursor + 3);
 
@@ -477,13 +670,16 @@ export function extractInstallerPins(source: string, options: ExtractOptions): I
     if (cursor >= body.length) {
       fail(`${options.functionName} case arm ${pattern.value} is missing ';;'`);
     }
-    const pin = staticPinFromArm(pattern.value, body.slice(commandStart, cursor));
+    const pin = staticPinFromArm(source, pattern, body.slice(commandStart, cursor));
     if (pattern.value === "*") {
       fallbackCount += 1;
     } else if (pin) {
       pins.push({ ...pin, source: options.sourceLabel });
     }
     cursor = skipSeparators(body, cursor + 1);
+  }
+  if (rawToken(source, body[cursor]) !== "esac") {
+    fail(`${options.functionName} must use a literal esac keyword`);
   }
   cursor = skipSeparators(body, cursor + 1);
   if (cursor !== body.length) {
@@ -570,6 +766,20 @@ function runCli(): void {
     );
   }
   const releaseVersion = releaseVersions[0] ?? fail("installer pin tables contain no release");
+  assertTrustedTemplate(
+    installerSource,
+    "openshell_pinned_sha256",
+    /^MAX_VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$/gm,
+    TRUSTED_INSTALLER_TEMPLATE_SHA256,
+    "installer",
+  );
+  assertTrustedTemplate(
+    brevInstallerSource,
+    "openshell_cli_pinned_sha256",
+    /^\s*stable\s*\|\s*auto\)\s*OPENSHELL_VERSION="v([0-9]+\.[0-9]+\.[0-9]+)"\s*;;\s*$/gm,
+    TRUSTED_BREV_TEMPLATE_SHA256,
+    "Brev launchable",
+  );
   for (const [label, runtimeVersion] of [
     ["blueprint max_openshell_version", extractBlueprintMaxVersion(blueprintSource)],
     ["installer MAX_VERSION", extractInstallerRuntimeVersion(installerSource)],
