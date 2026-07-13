@@ -48,6 +48,7 @@ import {
   assertExactMainMcpLogPrivacy,
   assertExactMainPolicyNftAndIdentityContracts,
 } from "./openshell-exact-main-runtime-contracts.ts";
+import { prepareExactMainDriverConfigProof } from "./openshell-exact-main-driver-config.ts";
 
 const OPENCLAW_SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-mcp-bridge";
 const HERMES_SANDBOX_NAME = process.env.NEMOCLAW_MCP_HERMES_SANDBOX_NAME ?? "e2e-mcp-hermes";
@@ -1348,150 +1349,151 @@ liveAgentMatrixTest(
   },
 );
 
-liveAgentMatrixTest(
-  "mcp-bridge-deepagents",
-  { timeout: 45 * 60_000 },
-  async ({ artifacts, cleanup, host, sandbox }) => {
-    await artifacts.writeJson("scenario.json", {
-      id: "mcp-bridge-deepagents",
-      sandbox: DEEPAGENTS_SANDBOX_NAME,
-      server: SERVER_NAME,
-    });
-    const deepAgentsResult = `MCP_AUTH_REWRITE_OK::${TOOL_CHALLENGE}`;
-    const compatibleMock = await startCompatibleMock({
-      apiKey: COMPATIBLE_KEY,
-      model: COMPATIBLE_MODEL,
-      toolChallenge: TOOL_CHALLENGE,
-      toolResultToken: deepAgentsResult,
-      progressiveToolSearch: { toolName: "fake_fake_echo", query: "AuThEnTiCaTeD McP" },
-    });
-    cleanup.add("stop Deep Agents MCP bridge compatible endpoint mock", () =>
-      compatibleMock.close(),
-    );
-    const fakeMcp = await startFakeMcpHttpsServer({
-      secret: HOST_SECRET,
-      challenge: TOOL_CHALLENGE,
-      resultToken: deepAgentsResult,
-    });
-    cleanup.add("stop fake Deep Agents MCP HTTPS server", () => fakeMcp.close());
-    const fakeMcpTunnel = await startPublicMcpHttpsTunnel({
-      cleanup,
-      label: "fake Deep Agents MCP HTTPS server",
-      server: fakeMcp,
-    });
-    const hostAddress = await hostAddressForSandbox(host);
-    const endpointUrl = `http://${hostAddress}:${compatibleMock.port}/v1`;
-    const mcpUrl = fakeMcpTunnel.url;
-    await onboardAgent(host, cleanup, endpointUrl, {
-      agent: "langchain-deepagents-code",
-      sandboxName: DEEPAGENTS_SANDBOX_NAME,
-      artifactName: "onboard-deepagents-mcp-bridge",
-    });
-    await assertExactMainOpenShellContracts(host, DEEPAGENTS_SANDBOX_NAME);
-    await assertExactMainPolicyNftAndIdentityContracts({
-      artifacts,
-      cleanup,
-      host,
-      mcpUrl,
-      sandbox,
-      sandboxName: DEEPAGENTS_SANDBOX_NAME,
-    });
-    cleanup.add("remove Deep Agents MCP bridge", () =>
-      cleanupMcpBridge(host, DEEPAGENTS_SANDBOX_NAME, SERVER_NAME, "deepagents-config"),
-    );
+liveAgentMatrixTest("mcp-bridge-deepagents", { timeout: 60 * 60_000 }, async (fixture) => {
+  const { artifacts, cleanup, host, sandbox } = fixture;
+  await artifacts.writeJson("scenario.json", {
+    id: "mcp-bridge-deepagents",
+    sandbox: DEEPAGENTS_SANDBOX_NAME,
+    server: SERVER_NAME,
+  });
+  const deepAgentsResult = `MCP_AUTH_REWRITE_OK::${TOOL_CHALLENGE}`;
+  const compatibleMock = await startCompatibleMock({
+    apiKey: COMPATIBLE_KEY,
+    model: COMPATIBLE_MODEL,
+    toolChallenge: TOOL_CHALLENGE,
+    toolResultToken: deepAgentsResult,
+    progressiveToolSearch: { toolName: "fake_fake_echo", query: "AuThEnTiCaTeD McP" },
+  });
+  cleanup.add("stop Deep Agents MCP bridge compatible endpoint mock", () => compatibleMock.close());
+  const fakeMcp = await startFakeMcpHttpsServer({
+    secret: HOST_SECRET,
+    challenge: TOOL_CHALLENGE,
+    resultToken: deepAgentsResult,
+  });
+  cleanup.add("stop fake Deep Agents MCP HTTPS server", () => fakeMcp.close());
+  const fakeMcpTunnel = await startPublicMcpHttpsTunnel({
+    cleanup,
+    label: "fake Deep Agents MCP HTTPS server",
+    server: fakeMcp,
+  });
+  const hostAddress = await hostAddressForSandbox(host);
+  const endpointUrl = `http://${hostAddress}:${compatibleMock.port}/v1`;
+  const mcpUrl = fakeMcpTunnel.url;
+  const exactMainDriverConfigProof = prepareExactMainDriverConfigProof(
+    fixture,
+    DEEPAGENTS_SANDBOX_NAME,
+  );
+  await onboardAgent(host, cleanup, endpointUrl, {
+    agent: "langchain-deepagents-code",
+    sandboxName: DEEPAGENTS_SANDBOX_NAME,
+    artifactName: "onboard-deepagents-mcp-bridge",
+  });
+  await exactMainDriverConfigProof.assertAfterOnboard();
+  await assertExactMainOpenShellContracts(host, DEEPAGENTS_SANDBOX_NAME);
+  await assertExactMainPolicyNftAndIdentityContracts({
+    artifacts,
+    cleanup,
+    host,
+    mcpUrl,
+    sandbox,
+    sandboxName: DEEPAGENTS_SANDBOX_NAME,
+  });
+  cleanup.add("remove Deep Agents MCP bridge", () =>
+    cleanupMcpBridge(host, DEEPAGENTS_SANDBOX_NAME, SERVER_NAME, "deepagents-config"),
+  );
 
-    await assertConcurrentAddSerialized(host, cleanup, {
-      sandboxName: DEEPAGENTS_SANDBOX_NAME,
-      mcpUrl,
-      expectedAdapter: "deepagents-config",
-      artifactPrefix: "deepagents",
-    });
+  await assertConcurrentAddSerialized(host, cleanup, {
+    sandboxName: DEEPAGENTS_SANDBOX_NAME,
+    mcpUrl,
+    expectedAdapter: "deepagents-config",
+    artifactPrefix: "deepagents",
+  });
 
-    const providerName = await addBridgeAndReadStatus(host, {
-      sandboxName: DEEPAGENTS_SANDBOX_NAME,
-      mcpUrl,
-      expectedAdapter: "deepagents-config",
-      artifactPrefix: "deepagents",
-    });
-    await assertBridgeInfrastructure(host, sandbox, {
-      sandboxName: DEEPAGENTS_SANDBOX_NAME,
-      artifactPrefix: "deepagents",
-      providerName,
-      mcpUrl,
-    });
-    await assertDeepAgentsConfig(sandbox, DEEPAGENTS_SANDBOX_NAME, mcpUrl);
-    await assertSecretAbsentFromSandbox(sandbox, DEEPAGENTS_SANDBOX_NAME, ["/sandbox/.deepagents"]);
-    await assertAdapterDnsRebindingDenied(host, sandbox, cleanup, {
-      adapter: "deepagents-config",
-      artifactPrefix: "deepagents",
-      sandboxName: DEEPAGENTS_SANDBOX_NAME,
-      secretPaths: ["/sandbox/.deepagents"],
-    });
-    await assertRealAdapterToolCall(sandbox, fakeMcp, {
-      agent: "langchain-deepagents-code",
-      sandboxName: DEEPAGENTS_SANDBOX_NAME,
-      resultToken: deepAgentsResult,
-      artifactName: "deepagents-real-mcp-tool-call-initial",
-    });
-    await assertExactMainMcpLogPrivacy({
-      argumentCanaries: [TOOL_CHALLENGE, deepAgentsResult],
-      artifacts,
-      expectedTool: "fake_echo",
-      sandbox,
-      sandboxName: DEEPAGENTS_SANDBOX_NAME,
-    });
-    await restartBridgeWithoutHostSecret(host, DEEPAGENTS_SANDBOX_NAME, "deepagents");
-    await assertRealAdapterToolCall(sandbox, fakeMcp, {
-      agent: "langchain-deepagents-code",
-      sandboxName: DEEPAGENTS_SANDBOX_NAME,
-      resultToken: deepAgentsResult,
-      artifactName: "deepagents-real-mcp-tool-call-after-restart",
-    });
-    fakeMcp.setSecret(ROTATED_HOST_SECRET);
-    await rotateBridgeCredential(host, DEEPAGENTS_SANDBOX_NAME, "deepagents");
-    await assertRealAdapterToolCall(sandbox, fakeMcp, {
-      agent: "langchain-deepagents-code",
-      sandboxName: DEEPAGENTS_SANDBOX_NAME,
-      resultToken: deepAgentsResult,
-      artifactName: "deepagents-real-mcp-tool-call-after-credential-rotation",
-      expectedSecret: ROTATED_HOST_SECRET,
-    });
-    await assertSecretAbsentFromSandbox(
-      sandbox,
-      DEEPAGENTS_SANDBOX_NAME,
-      ["/sandbox/.deepagents"],
-      [HOST_SECRET, ROTATED_HOST_SECRET],
-      "deepagents-assert-secrets-absent-after-rotation",
-    );
-    await rebuildWithoutMcpHostSecret(host, DEEPAGENTS_SANDBOX_NAME, "deepagents");
-    await assertDeepAgentsConfig(sandbox, DEEPAGENTS_SANDBOX_NAME, mcpUrl);
-    await assertSecretAbsentFromSandbox(
-      sandbox,
-      DEEPAGENTS_SANDBOX_NAME,
-      ["/sandbox/.deepagents"],
-      [HOST_SECRET, ROTATED_HOST_SECRET],
-      "deepagents-assert-secrets-absent-after-rebuild",
-    );
-    await assertRealAdapterToolCall(sandbox, fakeMcp, {
-      agent: "langchain-deepagents-code",
-      sandboxName: DEEPAGENTS_SANDBOX_NAME,
-      resultToken: deepAgentsResult,
-      artifactName: "deepagents-real-mcp-tool-call-after-rebuild",
-      expectedSecret: ROTATED_HOST_SECRET,
-    });
-    await removeBridgeAndAssertEmpty(host, sandbox, {
-      agent: "langchain-deepagents-code",
-      adapter: "deepagents-config",
-      sandboxName: DEEPAGENTS_SANDBOX_NAME,
-      artifactPrefix: "deepagents",
-      providerName,
-      mcpUrl,
-    });
-    await assertAdapterRequestDeniedAfterRemove(sandbox, fakeMcp, {
-      adapter: "deepagents-config",
-      sandboxName: DEEPAGENTS_SANDBOX_NAME,
-      mcpUrl,
-      artifactPrefix: "deepagents",
-    });
-  },
-);
+  const providerName = await addBridgeAndReadStatus(host, {
+    sandboxName: DEEPAGENTS_SANDBOX_NAME,
+    mcpUrl,
+    expectedAdapter: "deepagents-config",
+    artifactPrefix: "deepagents",
+  });
+  await assertBridgeInfrastructure(host, sandbox, {
+    sandboxName: DEEPAGENTS_SANDBOX_NAME,
+    artifactPrefix: "deepagents",
+    providerName,
+    mcpUrl,
+  });
+  await assertDeepAgentsConfig(sandbox, DEEPAGENTS_SANDBOX_NAME, mcpUrl);
+  await assertSecretAbsentFromSandbox(sandbox, DEEPAGENTS_SANDBOX_NAME, ["/sandbox/.deepagents"]);
+  await assertAdapterDnsRebindingDenied(host, sandbox, cleanup, {
+    adapter: "deepagents-config",
+    artifactPrefix: "deepagents",
+    sandboxName: DEEPAGENTS_SANDBOX_NAME,
+    secretPaths: ["/sandbox/.deepagents"],
+  });
+  await assertRealAdapterToolCall(sandbox, fakeMcp, {
+    agent: "langchain-deepagents-code",
+    sandboxName: DEEPAGENTS_SANDBOX_NAME,
+    resultToken: deepAgentsResult,
+    artifactName: "deepagents-real-mcp-tool-call-initial",
+  });
+  await assertExactMainMcpLogPrivacy({
+    argumentCanaries: [TOOL_CHALLENGE, deepAgentsResult],
+    artifacts,
+    expectedTool: "fake_echo",
+    sandbox,
+    sandboxName: DEEPAGENTS_SANDBOX_NAME,
+  });
+  await restartBridgeWithoutHostSecret(host, DEEPAGENTS_SANDBOX_NAME, "deepagents");
+  await assertRealAdapterToolCall(sandbox, fakeMcp, {
+    agent: "langchain-deepagents-code",
+    sandboxName: DEEPAGENTS_SANDBOX_NAME,
+    resultToken: deepAgentsResult,
+    artifactName: "deepagents-real-mcp-tool-call-after-restart",
+  });
+  fakeMcp.setSecret(ROTATED_HOST_SECRET);
+  await rotateBridgeCredential(host, DEEPAGENTS_SANDBOX_NAME, "deepagents");
+  await assertRealAdapterToolCall(sandbox, fakeMcp, {
+    agent: "langchain-deepagents-code",
+    sandboxName: DEEPAGENTS_SANDBOX_NAME,
+    resultToken: deepAgentsResult,
+    artifactName: "deepagents-real-mcp-tool-call-after-credential-rotation",
+    expectedSecret: ROTATED_HOST_SECRET,
+  });
+  await assertSecretAbsentFromSandbox(
+    sandbox,
+    DEEPAGENTS_SANDBOX_NAME,
+    ["/sandbox/.deepagents"],
+    [HOST_SECRET, ROTATED_HOST_SECRET],
+    "deepagents-assert-secrets-absent-after-rotation",
+  );
+  await rebuildWithoutMcpHostSecret(host, DEEPAGENTS_SANDBOX_NAME, "deepagents");
+  await exactMainDriverConfigProof.assertAfterRebuild();
+  await assertDeepAgentsConfig(sandbox, DEEPAGENTS_SANDBOX_NAME, mcpUrl);
+  await assertSecretAbsentFromSandbox(
+    sandbox,
+    DEEPAGENTS_SANDBOX_NAME,
+    ["/sandbox/.deepagents"],
+    [HOST_SECRET, ROTATED_HOST_SECRET],
+    "deepagents-assert-secrets-absent-after-rebuild",
+  );
+  await assertRealAdapterToolCall(sandbox, fakeMcp, {
+    agent: "langchain-deepagents-code",
+    sandboxName: DEEPAGENTS_SANDBOX_NAME,
+    resultToken: deepAgentsResult,
+    artifactName: "deepagents-real-mcp-tool-call-after-rebuild",
+    expectedSecret: ROTATED_HOST_SECRET,
+  });
+  await removeBridgeAndAssertEmpty(host, sandbox, {
+    agent: "langchain-deepagents-code",
+    adapter: "deepagents-config",
+    sandboxName: DEEPAGENTS_SANDBOX_NAME,
+    artifactPrefix: "deepagents",
+    providerName,
+    mcpUrl,
+  });
+  await assertAdapterRequestDeniedAfterRemove(sandbox, fakeMcp, {
+    adapter: "deepagents-config",
+    sandboxName: DEEPAGENTS_SANDBOX_NAME,
+    mcpUrl,
+    artifactPrefix: "deepagents",
+  });
+});

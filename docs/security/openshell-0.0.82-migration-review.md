@@ -466,11 +466,11 @@ final stable-source review must retain the upstream
 | `OS82-06` | High | Initial policy acknowledgement and ordered retry can make the active gateway status lag enforcement. | Test initial LOADED/FAILED, hot update, retry outage/recovery, restart, exact version/hash re-read, and ordered drain. | Candidate exact-main proof now covers hot-update LOADED identity plus restart initial acknowledgement and exact version/hash recovery. Initial FAILED and isolated report outage/ordered drain remain an open runtime gate. |
 | `OS82-07` | High | Sequential nft setup can leave an incomplete policy-accept ruleset after a required command fails; Docker setup treats the error as nonfatal. | Inject each required failure; inspect IPv4/IPv6 TCP/UDP rules and direct-bypass negatives on Linux x86 and Spark arm64; verify restart and teardown. | Candidate exact-main proof now inspects the live policy-accept chain and all four required rejects before/after restart, and probes controlled IPv4 TCP/UDP listeners. Required-command fault injection, routed IPv6 behavior, Spark arm64, and physical teardown remain an open security gate. |
 | `OS82-08` | High | The supervisor image moves from one scratch binary to a 29-package Alpine filesystem resolved from a mutable base and unpinned APK names. NemoClaw's Docker path downloads it but executes only the extracted binary. | Retain exact per-arch package/version/license and file inventories; scan vulnerabilities; verify modes, multiarch manifests, base/package identities, source labels, OCI provenance, and extraction-only behavior; preserve an explicit digest. | Development identities and content are enumerated. Vulnerability results, license attribution, reproducible base/package inputs, attestation, and the final stable image remain open. |
-| `OS82-09` | Medium-high | Normalized selected-driver config can change the effective Docker gateway even when the TOML text is unchanged. | Parse the final rendered TOML with the final binary; prove loopback/bridge listeners, JWT/mTLS, restart, persisted state, and legacy gateway upgrade. | Open runtime gate. |
+| `OS82-09` | Medium-high | Normalized selected-driver config can change the effective Docker gateway even when the TOML text is unchanged. | Parse the final rendered TOML with the final binary; prove loopback/bridge listeners, JWT/mTLS, restart, persisted state, and legacy gateway upgrade. | Candidate exact-main proof now binds the actual rendered Docker TOML to the running candidate gateway, loopback and Linux bridge listeners, mTLS/JWT mounts and relay access, host gateway restart, persisted sandbox state, and rebuild. The exact-head result, legacy-gateway upgrade, and non-Linux/host-gateway platforms remain open. |
 | `OS82-10` | Medium-high | Supervisor TLS identity variables are no longer child environment. Stale tests/comments can normalize a credential leak. | Assert absence from entrypoint, exec, and connect children and update the source-of-truth rationale. | Hermes and Deep Agents now reject all three variables; the candidate exact-main entrypoint, exec, and connect probes require their absence, with exact-head execution pending. |
 | `OS82-11` | Medium-high | Live `/proc/<pid>/exe` identity changes replacement-time policy behavior. | Prove old process survives replacement and a new altered process at the same path is denied. | Candidate exact-main proof runs both processes against the real proxy and requires old=200 before/after replacement, distinct live/path hashes, and new=403; exact-head runtime result pending. |
 | `OS82-12` | Medium | OpenShell declares Docker 28.0+ while #6379 is on Docker 27 and NemoClaw marks DGX Spark tested. | Either validate and document a precise downstream exception from physical proof or raise the supported floor and preflight it. | Open product/platform decision. |
-| `OS82-13` | Low | Mount parsing/SELinux changes could affect the test-only tmpfs path. | Rerun the EXDEV tmpfs fixture and retain production no-mount evidence. | Open targeted test. |
+| `OS82-13` | Low | Mount parsing/SELinux changes could affect the test-only tmpfs path. | Rerun the EXDEV tmpfs fixture and retain production no-mount evidence. | Candidate exact-main proof injects only the reviewed tmpfs config, requires Docker's structured tmpfs representation plus `noexec`/01777 at runtime, retains it across gateway restart, and requires a fresh remount after rebuild. The wrapper is disabled outside the explicit proof lane and production still supplies no driver mounts. Exact-head, Podman, and enforcing-SELinux results remain open. |
 | `OS82-14` | Low | Sanitized MCP tool names are newly present in logs. | Record the additive observability/privacy behavior; ensure no downstream parser assumes the old shape. | Candidate exact-main check requires the real `fake_echo` tool name and rejects argument/result canaries or an `arguments` field in JSON-RPC policy logs; exact-head runtime result pending. |
 | `OS82-15` | High | The installer-hash workflow executes its checker and parser from the PR base SHA. One PR cannot safely teach that trusted base about a new release and consume the release; using the head checker would let reviewed code define its own trust rules. | First land archive safety, normalized full-script template validation, and multi-release trust while selectors remain `0.0.72`; prove the old base rejects a new release and the new base permits only structured release-data changes; then submit the `0.0.82` pin. | NemoClaw-only prerequisite implementation in progress. |
 | `OS82-16` | High | Capability clearing now depends on `capctl 0.2.4` and `bitflags 1.3.2`, but upstream notices are unchanged and the consumed binaries have no published SBOM or attestation covering this dependency graph. | Bind crate checksums and source identities to the stable lock and binaries; review the unsafe syscall boundary and advisories; update notices/licenses; retain a generated SBOM and provenance for every consumed binary. | Candidate crate source, checksums, licenses, unsafe boundary, and current RustSec absence are recorded. Stable lock-to-binary SBOM, notices, and provenance remain open. |
@@ -523,6 +523,65 @@ routed non-loopback IPv6 address, so the candidate asserts the installed IPv6
 rejects structurally; routed IPv6 bypass behavior belongs in a platform fixture
 that actually configures IPv6. No OpenShell repository mutation is part of this
 NemoClaw work.
+
+## Exact-main selected-driver and mount proof boundary
+
+The same moving-main Deep Agents job now prepares a second bounded proof only
+when `NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF=1`. A PATH wrapper delegates every
+operation to the hash-pinned candidate CLI and changes only `openshell sandbox
+create`: it adds one reviewed `--driver-config-json` value containing a tmpfs at
+`/tmp/nemoclaw-exact-main-driver-config`. Duplicate driver config is rejected.
+The helper is inactive outside that explicit lane, and NemoClaw's production
+onboard path still supplies no driver mounts.
+
+The proof does not treat successful onboarding as evidence by itself. It:
+
+1. Parses the actual mode-0600
+   `~/.local/state/nemoclaw/openshell-docker-gateway/openshell-gateway.toml`
+   with a TOML parser. It requires `compute_drivers = ["docker"]`, no unselected
+   driver table, the exact loopback endpoint and Docker network, the reviewed
+   supervisor image, the staged candidate sandbox binary, TLS with client auth,
+   mTLS auth, sandbox JWT configuration, and unauthenticated users disabled.
+2. Resolves `/proc/<gateway-pid>/exe` and requires its SHA-256, plus the CLI and
+   standalone sandbox SHA-256 values, to match the exact-main provenance
+   manifest. Successful startup therefore proves that the final candidate
+   gateway parsed the file; a stable-release aggregate test is not substituted.
+3. Reads the candidate gateway's actual sockets with `ss`. It requires both
+   `127.0.0.1:<port>` and the selected Docker network's IPv4 bridge
+   `<gateway-ip>:<port>`, rejects a wildcard listener owned by that process,
+   requires candidate CLI sandbox listing over host mTLS, and requires a real
+   sandbox exec through the supervisor relay. The container must mount its
+   sandbox JWT and all three client-mTLS files read-only.
+4. Inspects the running Docker container. The test mount must be one structured
+   `Type=tmpfs` mount and must not appear in `HostConfig.Binds`, which is the
+   representation changed for SELinux-labelled bind mounts. Inside the sandbox,
+   `/proc/mounts` must report `tmpfs,noexec`, mode 01777, and a writable marker.
+5. Stops and recovers the actual host OpenShell gateway through NemoClaw. The
+   gateway PID must change, the rendered-config digest and sandbox container ID
+   must not, the candidate binary/listeners/auth path must still match, and both
+   the tmpfs marker and a Deep Agents durable-state marker must remain.
+6. Runs the existing managed MCP rebuild with the same test-only wrapper. A new
+   Docker container is required, the tmpfs must be mounted again with the same
+   representation/options but without its old volatile marker, and the backed-up
+   Deep Agents state marker must be restored. This distinguishes a fresh tmpfs
+   mount from an accidentally retained container.
+
+The proof is intentionally Linux amd64 Docker-bridge evidence. It does not
+isolate Docker Desktop/Colima, WSL, DGX Spark's Docker 27 host-gateway route,
+Podman, IPv6 bridge routing, or an enforcing-SELinux host. The reviewed upstream
+SELinux change applies to bind mounts; this fixture neither enables bind mounts
+nor requests `selinux_label`, so it proves that the consumed tmpfs path remains
+on the unaffected structured-mount branch, not that SELinux relabelling works.
+Those platform claims need their own real hosts.
+
+Legacy upgrade is also separate. This exact-main lane starts with a fresh
+candidate gateway/config/database so every observed process can be tied to the
+candidate provenance. The existing stable gateway-upgrade test starts an old
+gateway, but cannot be cited as candidate-main evidence. An honest legacy proof
+must seed a supported old gateway and database, replace all three components with
+the final release artifacts, then repeat the listener/auth/state checks above.
+Mixing that old binary into this exact-main identity lane would invalidate the
+claim it is designed to make.
 
 ## Test-selection and false-green audit
 

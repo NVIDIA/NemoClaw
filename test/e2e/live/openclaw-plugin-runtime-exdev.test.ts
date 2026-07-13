@@ -24,6 +24,13 @@ import {
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { parseJsonFromText } from "./json-envelope.ts";
+import {
+  createOpenShellDriverConfigTestWrapper,
+  type OpenShellComponents,
+  type OpenShellDriverConfigTestWrapper,
+  resolveOpenShellSiblingComponents,
+  withOpenShellDriverConfigWrapperEnv,
+} from "./openshell-driver-config-test-wrapper.ts";
 
 // Keep this contract as a focused live test: build a deterministic custom plugin
 // on top of the complete managed runtime, prove it survives restart/rebuild, then
@@ -169,54 +176,16 @@ async function ignoreCleanupError(run: () => Promise<unknown>): Promise<void> {
   }
 }
 
-type OpenShellTmpfsWrapper = {
-  directory: string;
-  executable: string;
-  remove(): void;
-};
-
-type PinnedOpenShellComponents = {
-  cli: string;
-  gateway: string;
-  sandbox: string;
-};
+type OpenShellTmpfsWrapper = OpenShellDriverConfigTestWrapper;
+type PinnedOpenShellComponents = OpenShellComponents;
 
 function createOpenShellTmpfsWrapper(realOpenshellPath: string): OpenShellTmpfsWrapper {
-  if (!path.isAbsolute(realOpenshellPath)) {
-    throw new Error("real OpenShell path must be absolute");
-  }
-  fs.accessSync(realOpenshellPath, fs.constants.X_OK);
-
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-openshell-wrapper-"));
-  const executable = path.join(directory, "openshell");
-  const delegatedCapabilityComments = REQUIRED_OPENSHELL_MCP_FEATURES.map((marker) => {
-    assert.match(marker, /^[A-Za-z0-9_-]+$/, "delegated OpenShell capability marker must be safe");
-    return `${DELEGATED_CAPABILITY_COMMENT_PREFIX}${marker}`;
-  }).join("\n");
-  const script = `#!/bin/sh
-${delegatedCapabilityComments}
-set -eu
-if [ "$#" -ge 2 ] && [ "$1" = sandbox ] && [ "$2" = create ]; then
-  shift 2
-  for argument in "$@"; do
-    case "$argument" in
-      --driver-config-json|--driver-config-json=*)
-        printf '%s\n' 'refusing duplicate --driver-config-json in EXDEV test wrapper' >&2
-        exit 64
-        ;;
-    esac
-  done
-  exec ${shellQuote(realOpenshellPath)} sandbox create --driver-config-json ${shellQuote(EXDEV_TMPFS_DRIVER_CONFIG)} "$@"
-fi
-exec ${shellQuote(realOpenshellPath)} "$@"
-`;
-  fs.writeFileSync(executable, script, { encoding: "utf8", mode: 0o700 });
-
-  return {
-    directory,
-    executable,
-    remove: () => fs.rmSync(directory, { recursive: true, force: true }),
-  };
+  return createOpenShellDriverConfigTestWrapper({
+    delegatedCapabilityMarkers: REQUIRED_OPENSHELL_MCP_FEATURES,
+    driverConfigJson: EXDEV_TMPFS_DRIVER_CONFIG,
+    label: "exdev",
+    realOpenshellPath,
+  });
 }
 
 function withOpenShellWrapperEnv(
@@ -224,29 +193,11 @@ function withOpenShellWrapperEnv(
   wrapper: OpenShellTmpfsWrapper,
   components: PinnedOpenShellComponents,
 ): NodeJS.ProcessEnv {
-  return {
-    ...env,
-    PATH: `${wrapper.directory}${path.delimiter}${env.PATH ?? ""}`,
-    NEMOCLAW_OPENSHELL_BIN: wrapper.executable,
-    NEMOCLAW_OPENSHELL_GATEWAY_BIN: components.gateway,
-    NEMOCLAW_OPENSHELL_SANDBOX_BIN: components.sandbox,
-  };
+  return withOpenShellDriverConfigWrapperEnv(env, wrapper, components);
 }
 
 function resolvePinnedOpenShellComponents(openshellPath: string): PinnedOpenShellComponents {
-  const cli = fs.realpathSync(openshellPath);
-  fs.accessSync(cli, fs.constants.X_OK);
-  const installDirectory = path.dirname(cli);
-  const canonicalSibling = (name: string): string => {
-    const sibling = fs.realpathSync(path.join(installDirectory, name));
-    fs.accessSync(sibling, fs.constants.X_OK);
-    return sibling;
-  };
-  return {
-    cli,
-    gateway: canonicalSibling("openshell-gateway"),
-    sandbox: canonicalSibling("openshell-sandbox"),
-  };
+  return resolveOpenShellSiblingComponents(openshellPath);
 }
 
 async function installAndResolvePinnedOpenShell(

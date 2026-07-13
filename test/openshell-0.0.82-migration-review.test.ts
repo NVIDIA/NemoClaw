@@ -170,6 +170,38 @@ describe("OpenShell 0.0.82 migration review", () => {
     expect(review).toContain("cache identity omits resolved `sandbox_uid`");
   });
 
+  it("binds selected-driver and tmpfs claims to the candidate-main runtime only", () => {
+    expect(review).toContain("Exact-main selected-driver and mount proof boundary");
+    expect(review).toContain("actual mode-0600");
+    expect(review).toMatch(/no unselected\s+driver table/u);
+    expect(review).toContain("must not appear in `HostConfig.Binds`");
+    expect(review).toMatch(/fresh tmpfs\s+mount/u);
+    expect(review).toContain("existing stable gateway-upgrade test");
+    expect(review).toContain("cannot be cited as candidate-main evidence");
+    expect(review).toContain("enforcing-SELinux host");
+
+    const helper = fs.readFileSync(
+      path.join(repoRoot, "test/e2e/live/openshell-exact-main-driver-config.ts"),
+      "utf8",
+    );
+    expect(helper).toContain("parse as parseToml");
+    expect(helper).toContain('expect(gateway.compute_drivers).toEqual(["docker"])');
+    expect(helper).toContain("Object.keys(drivers)");
+    expect(helper).toContain("fs.realpathSync(`/proc/${gatewayPid}/exe`)");
+    expect(helper).toContain('["-H", "-ltnp"]');
+    expect(helper).toContain('"{{json .HostConfig.Binds}}"');
+    expect(helper).toContain('tmpfsMarker: "present"');
+    expect(helper).toContain('tmpfsMarker: "absent"');
+
+    const mcpBridge = fs.readFileSync(
+      path.join(repoRoot, "test/e2e/live/mcp-bridge.test.ts"),
+      "utf8",
+    );
+    expect(mcpBridge).toContain("prepareExactMainDriverConfigProof(");
+    expect(mcpBridge).toContain("exactMainDriverConfigProof.assertAfterOnboard()");
+    expect(mcpBridge).toContain("exactMainDriverConfigProof.assertAfterRebuild()");
+  });
+
   it("keeps the stable pin and physical Spark proof blocked until final evidence exists", () => {
     const blueprint = fs.readFileSync(
       path.join(repoRoot, "nemoclaw-blueprint", "blueprint.yaml"),
