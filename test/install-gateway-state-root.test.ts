@@ -223,4 +223,29 @@ save_usage_notice_acceptance_shell "test-version"`,
       fs.rmSync(home, { recursive: true, force: true });
     }
   });
+
+  it("uses the gateway port as the uninstall selector and rejects a mismatched gateway flag", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-port-selector-"));
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [CLI, "internal", "uninstall", "run-plan", "--yes", "--gateway", "nemoclaw-9000"],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            HOME: home,
+            NEMOCLAW_GATEWAY_PORT: "9123",
+            PATH: "",
+          },
+        },
+      );
+
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(1);
+      expect(result.stderr).toContain("NEMOCLAW_GATEWAY_PORT=9123 selects 'nemoclaw-9123'");
+      expect(fs.existsSync(path.join(home, ".nemoclaw"))).toBe(false);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
 });

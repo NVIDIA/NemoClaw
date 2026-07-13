@@ -3031,15 +3031,20 @@ On Linux, uninstall removes `~/.local/state/nemoclaw`, which contains Docker-dri
 | `--keep-openshell` | Leave OpenShell binaries installed |
 | `--delete-models` | Also remove NemoClaw-pulled Ollama models |
 | `--destroy-user-data` | Also remove preserved user data (`rebuild-backups/`, `backups/`, `sandboxes.json`) |
-| `--gateway <name>` | Override the gateway name to remove (default: `$$nemoclaw`) |
+| `--gateway <name>` | Optional consistency check; must match the name derived from `NEMOCLAW_GATEWAY_PORT` |
 
 ```bash
 $$nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models] [--destroy-user-data] [--gateway <name>]
 ```
 
+`NEMOCLAW_GATEWAY_PORT` selects the gateway instance and state root to uninstall.
+Port `8080` selects `nemoclaw` and the shared `~/.nemoclaw/` root; a non-default port selects `nemoclaw-<port>` and `~/.nemoclaw/gateways/<port>/`.
+For example, `NEMOCLAW_GATEWAY_PORT=9123 $$nemoclaw uninstall` selects `nemoclaw-9123`.
+The compatibility `--gateway` flag cannot select another instance: when present, it must match the name derived from `NEMOCLAW_GATEWAY_PORT`, or uninstall exits before cleanup.
+
 ##### User-data preservation under `~/.nemoclaw/`
 
-To avoid uninstall destroying host-side user data, uninstall preserves the following entries under `~/.nemoclaw/` by default:
+To avoid uninstall destroying host-side user data, uninstall preserves the following entries in the selected gateway's state root by default. The default gateway uses `~/.nemoclaw/`; a non-default gateway uses `~/.nemoclaw/gateways/<port>/`.
 
 | Entry | What it holds |
 |---|---|
@@ -3047,7 +3052,7 @@ To avoid uninstall destroying host-side user data, uninstall preserves the follo
 | `backups/` | Host-side workspace backups that `scripts/backup-workspace.sh` writes. Refer to [Backup and Restore](../manage-sandboxes/backup-restore). |
 | `sandboxes.json` | Host-side sandbox registry. NemoClaw uses it to map sandbox names back to their persistence directories when you reinstall. |
 
-Uninstall removes every other entry under `~/.nemoclaw/` (gateway source, runtime state, the Ollama auth proxy PID file, etc.).
+When no sibling gateways remain, uninstall removes every other entry under `~/.nemoclaw/` (gateway source, runtime state, the Ollama auth proxy PID file, etc.). When sibling gateways remain, it removes only the selected gateway's resources and port-scoped state while preserving shared host resources.
 
 `--yes` deliberately remains non-destructive for user data.
 It only acknowledges the global `Proceed?` confirmation prompt and still preserves the listed entries.
@@ -3059,9 +3064,9 @@ Decision matrix:
 | Context | Behaviour |
 |---|---|
 | Interactive TTY, preserved entries present, no env override | Prompts `Also remove them? [y/N]`. Default `N` keeps the entries. |
-| Interactive TTY, user answers `y` | Removes everything under `~/.nemoclaw/` (the previous full-removal behaviour). |
+| Interactive TTY, user answers `y` | Removes the preserved entries in the selected gateway's state root; a single-gateway uninstall also removes the remaining shared state. |
 | Non-interactive (`--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or non-TTY shell) | Preserves the entries and prints a one-line notice. |
-| `--destroy-user-data` | Skips the secondary user-data prompt and removes the preserved entries under `~/.nemoclaw/`. The global `Proceed?` confirmation still applies unless `--yes` is also passed. |
+| `--destroy-user-data` | Skips the secondary user-data prompt and removes the preserved entries in the selected gateway's state root. The global `Proceed?` confirmation still applies unless `--yes` is also passed. |
 | `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` | Skips the secondary user-data prompt and removes the preserved entries. The global `Proceed?` confirmation still applies unless `--yes` is also passed. |
 
 The preserved entries survive uninstall as inert files on disk.
