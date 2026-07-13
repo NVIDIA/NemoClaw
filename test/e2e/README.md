@@ -84,12 +84,25 @@ map to this consolidated `e2e-artifacts/live/` registry-target artifact layout.
 
 ## PR E2E check
 
-When `CI / Pull Request` completes for a PR from this repository,
-`.github/workflows/pr-e2e-gate.yaml` creates `E2E / PR Gate` for the PR head
-commit. The controller reads all changed files and builds the deterministic
-risk plan. If a runtime risk family matches, it dispatches every selected
-`requiredJobs` entry through `e2e.yaml`; otherwise the check passes without an
-E2E run.
+On open, synchronization, reopen, or transition out of draft,
+`.github/workflows/pr-e2e-gate.yaml` reserves `E2E / PR Gate` on the exact PR
+head commit, including fork heads. The trusted controller reads all changed
+files after `CI / Pull Request` completes and builds the deterministic risk
+plan. Runtime families and changes to workflow-wired live tests select
+canonical selectors from the trusted `e2e.yaml` inventory independently of
+advisor output. Ordinary internal changes execute those focused selections.
+Control-plane selections remain hash-bound in the recorded plan, but their
+credentialed execution is waived only through the exact-head approval below. Shared
+sandbox-boundary changes have a floor of `full-e2e`, `hermes-e2e`, and
+`security-posture`. E2E control-plane changes select `cloud-onboard`,
+`credential-sanitization`, and `security-posture`, but the controller does not
+run those jobs with credentials. This is a conservative path boundary that
+includes non-documentation files under `tools/e2e/` and `test/e2e/`, plus the
+E2E and PR-CI workflows, risk policy, dependency and test configuration, and
+preparation and upload actions. It does not attempt to classify an individual matching diff as
+harmless. Instead, the exact-head check fails until a maintainer records the
+control-plane exception described below. If no job is selected, the check
+passes without an E2E run.
 
 Before dispatch, the controller verifies that the PR is unchanged and that
 `main` still points to its workflow commit. It accepts only an E2E run using
@@ -99,6 +112,23 @@ belongs to `NVIDIA/NemoClaw`, and still has that head commit. The dispatch
 includes selected jobs and valid plan and correlation metadata, but not
 `targets`. The controller uses GitHub's returned run ID for waiting, evidence
 download, and completion.
+
+Credential-bearing E2E is dispatched only for internal revisions whose plan
+does not include the `e2e-control-plane` family. A fork revision that selects
+jobs and an internal revision with that family both complete the exact-head
+gate as failed without dispatching the selected credential-bearing jobs or
+exposing repository secrets. Non-secret PR CI remains required. A maintainer
+or administrator can resolve that exact revision only through the workflow's
+typed manual dispatch on `main`, choosing `resolve-fork` or
+`resolve-control-plane`.
+The controller revalidates the open PR, exact head SHA, repository origin,
+maintainer role, deterministic plan, matching failed gate, and that the
+checked-out controller commit is still `main`. The result records an explicit no-secret exception with a bounded reason and optional
+`NVIDIA/NemoClaw` Actions run URL; it does not claim the waived jobs passed.
+The URL's shape is validated, but its run contents are not. The privileged
+dispatch and reason are an auditable maintainer assertion; the controller does
+not query a separate approval record. Any new commit receives a different gate
+and requires a new decision.
 
 The Vitest reporter writes one `risk-signal.json` for each selected job and
 matrix shard.
@@ -121,11 +151,11 @@ remaining coordination time.
 These dispatches suppress PR comments and the scheduled or manual
 scorecard, including scorecard Slack reporting.
 
-Synchronizing, reopening, or closing the PR cancels its active E2E runs. A new
+Synchronizing, reopening, or closing an internal PR cancels its active E2E runs. A new
 dispatch also cancels the previous run, while the previous controller remains
 available to close its check as failed.
-The controller does not read PR Review Advisor or E2E Advisor output, so model
-availability and recommendations are not part of merge authority.
+The controller does not read PR Review Advisor output, so model availability
+and recommendations are not part of merge authority.
 
 ## Onboard performance budget
 
@@ -142,12 +172,16 @@ phase names. Cold image pulls, first-time model downloads, provider outages,
 and runner or network incidents can still affect the signal, so maintainers
 should inspect the timing table before acting on a warning.
 
-For PRs, E2E Advisor builds a deterministic risk plan from the PR head commit
-and changed-file set. It recommends required jobs for known regression families
-and still requires `cloud-onboard` when changes affect onboard behavior, trace
-timing, scorecard analysis, budget configuration, or the unified E2E workflow.
-Model advice is additive and cannot downgrade the deterministic floor. The
-scorecard remains the source of truth for advisory warm-system trend evaluation.
+For PRs, the unified PR Review Advisor builds and renders guidance from the
+deterministic risk plan for the PR head commit and changed-file set. It
+recommends jobs for known regression families and includes `cloud-onboard` when
+changes affect onboard behavior, trace timing, scorecard analysis, budget
+configuration, or the unified E2E workflow. Compatibility schema fields may
+classify that guidance as required, but rendered advisor guidance remains
+non-authoritative. Model advice is additive and cannot downgrade the
+deterministic floor. The independent PR E2E controller rebuilds the plan rather
+than consuming those recommendations, and the scorecard remains the source of
+truth for advisory warm-system trend evaluation.
 
 The `full-e2e` target enforces a separate hard acceptance contract for the
 first fresh onboarding path in that job. It measures from the onboard root span

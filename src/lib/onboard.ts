@@ -47,8 +47,8 @@ const extraPlaceholderKeysModule: typeof import("./onboard/extra-placeholder-key
 const preparedDcodeRebuild: typeof import("./onboard/prepared-dcode-rebuild") = require("./onboard/prepared-dcode-rebuild");
 const sandboxBuildPatchConfig: typeof import("./onboard/sandbox-build-patch-config") = require("./onboard/sandbox-build-patch-config");
 const baseImageResolutionFlow: typeof import("./onboard/base-image-resolution-flow") = require("./onboard/base-image-resolution-flow");
-const sandboxMessagingPreflight: typeof import("./onboard/sandbox-messaging-preflight") = require("./onboard/sandbox-messaging-preflight");
-const sandboxCreatePlan: typeof import("./onboard/sandbox-create-plan") = require("./onboard/sandbox-create-plan");
+const sandboxCreateIntentResolution: typeof import("./onboard/sandbox-create-intent-resolution") = require("./onboard/sandbox-create-intent-resolution");
+const sandboxCreatePlanMaterialization: typeof import("./onboard/sandbox-create-plan-materialization") = require("./onboard/sandbox-create-plan-materialization");
 const sandboxCreateLaunch: typeof import("./onboard/sandbox-create-launch") = require("./onboard/sandbox-create-launch");
 const onboardEntryOptions: typeof import("./onboard/entry-options") = require("./onboard/entry-options");
 const onboardSessionBootstrap: typeof import("./onboard/session-bootstrap") = require("./onboard/session-bootstrap");
@@ -162,7 +162,11 @@ const pRetry = require("p-retry");
 const runner: typeof import("./runner") = require("./runner");
 const { ROOT, SCRIPTS, redact, run, runCapture, runCaptureEx, runFile, validateName } = runner;
 const braveProviderProfile: typeof import("./onboard/brave-provider-profile") = require("./onboard/brave-provider-profile");
-const { reconcileRegisteredExtraProviders, runSandboxProviderPreDeleteCleanup } =
+const {
+  applyExtraProviderReconciliation,
+  planRegisteredExtraProviders,
+  runSandboxProviderPreDeleteCleanup,
+} =
   require("./onboard/sandbox-provider-cleanup") as typeof import("./onboard/sandbox-provider-cleanup");
 const nameValidation: typeof import("./name-validation") = require("./name-validation");
 const { getNameValidationGuidance } = nameValidation;
@@ -2290,6 +2294,32 @@ async function createSandboxWithBaseImageResolution(
   enabledChannels = filterEnabledChannelsByAgent(enabledChannels, agent);
   const effectiveSandboxGpuConfig =
     sandboxGpuConfig ?? resolveSandboxGpuConfig(gpu, { flag: null, device: null });
+  const extraProviderPlan = createIntent?.extraProviders
+    ? { extraProviders: createIntent.extraProviders, staleExtraProviders: [] }
+    : planRegisteredExtraProviders(GATEWAY_NAME, { runOpenshell });
+  const resolvedCreateIntent =
+    createIntent?.resolved ??
+    (await sandboxCreateIntentResolver.resolve({
+      sandboxName,
+      enabledChannels,
+      webSearchConfig,
+      agent,
+      sandboxGpuConfig: effectiveSandboxGpuConfig,
+      resourceProfile,
+      hermesToolGateways,
+      extraProviders: extraProviderPlan.extraProviders,
+      staleExtraProviders: extraProviderPlan.staleExtraProviders,
+      ...(createIntent?.policyTier !== undefined ? { policyTier: createIntent.policyTier } : {}),
+    }));
+  const messagingCapabilities = await sandboxCreateIntentResolver.rebind(
+    {
+      sandboxName,
+      enabledChannels,
+      webSearchConfig,
+      agent,
+    },
+    resolvedCreateIntent,
+  );
   const manageDashboard = dashboardRuntime.shouldManageDashboardForAgent(agent);
   const isManagedDcodeAgent = usesManagedDcodeIdentity(agent?.name, fromDockerfile);
   let effectivePort = 0,
@@ -2315,43 +2345,7 @@ async function createSandboxWithBaseImageResolution(
     getApiForwardPort: () => getDashboardForwardPort(chatUiUrl),
   });
   const hermesDashboardState = hermesDashboardForwarding.resolveStateForPort(effectivePort);
-  const {
-    messagingTokenDefs,
-    extraPlaceholderKeys,
-    hasMessagingTokens,
-    reusableMessagingProviders,
-    reusableMessagingChannels,
-    disabledChannelNames,
-    disabledChannels,
-  } = await sandboxMessagingPreflight.prepareSandboxMessagingPreflight(
-    {
-      channels: MESSAGING_CHANNELS,
-      enabledChannels,
-      sandboxName,
-      agentName: agent?.name ?? "openclaw",
-      webSearchConfig,
-      env: process.env,
-    },
-    {
-      readMessagingPlanFromEnv,
-      resolveDisabledChannels: channelState.resolveDisabledChannels,
-      gatewayName: GATEWAY_NAME,
-      registry,
-      providerExistsInGateway,
-      isNonInteractive,
-      promptYesNoOrDefault,
-      cliName,
-      log: (message) => console.log(message),
-      error: (message) => console.error(message),
-      exitProcess: (code) => process.exit(code),
-      getValidatedMessagingTokenByEnvKey,
-      getCredential,
-      normalizeCredentialValue,
-      registerExtraPlaceholderProviders:
-        extraPlaceholderKeysModule.registerExtraPlaceholderProviders,
-      getMessagingChannelForEnvKey,
-    },
-  );
+  const { messagingTokenDefs, hasMessagingTokens } = messagingCapabilities;
 
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
   const { existingEntry, preservedMcpState, liveExists, effectiveToolDisclosure, toolDisclosureMigrationNeeded, toolDisclosureMigrationNote } = toolDisclosureFlow.prepareSandboxToolDisclosure(sandboxName, preparedBuildContext?.rebuildTarget?.fromDockerfile ? preparedBuildContext.stagedDockerfile : fromDockerfile, isRecreateSandbox(createIntent?.recreate), inspectSandboxForCreate, createIntent?.toolDisclosure ?? null);
@@ -2674,6 +2668,11 @@ async function createSandboxWithBaseImageResolution(
     sandboxLifecycle.removeSandboxUnlessSessionReservation(previousEntry, sandboxName);
   }
 
+  applyExtraProviderReconciliation({
+    extraProviders: resolvedCreateIntent.extraProviders,
+    staleExtraProviders: resolvedCreateIntent.staleExtraProviders ?? [],
+  });
+
   // Stage build context — use the custom Dockerfile path when provided,
   // otherwise use the optimised default that only sends what the build needs.
   // The build context contains source code, scripts, and potentially API keys
@@ -2700,21 +2699,17 @@ async function createSandboxWithBaseImageResolution(
   // The caller uses this to decide whether the process 'exit' safety net
   // can be deregistered — if inline cleanup fails, we leave the handler
   // armed so the temp dir is still removed on process exit.
-  const defaultPolicyPath = path.join(
-    ROOT,
-    "nemoclaw-blueprint",
-    "policies",
-    "openclaw-sandbox.yaml",
-  );
-  // TODO: Keep GPU route resolution, policy materialization, and create execution in their focused
-  // modules; extract this remaining handoff if it acquires another responsibility. This boundary
-  // deliberately coordinates those modules without re-implementing their trust-boundary logic.
-  const basePolicyPath = (agent && agentOnboard.getAgentPolicyPath(agent)) || defaultPolicyPath;
   const dockerDriverGateway = isLinuxDockerDriverGatewayEnabled();
-  const { gpuRoutePlan, logMessage: sandboxGpuLogMessage } =
-    dockerGpuSandboxCreate.resolveDockerGpuSandboxCreatePlan(effectiveSandboxGpuConfig, {
-      dockerDriverGateway,
-    });
+  const { gpuRoutePlan, sandboxGpuLogMessage } = resolvedCreateIntent;
+  const materializationCapabilities = await sandboxCreateIntentResolver.rebind(
+    {
+      sandboxName,
+      enabledChannels,
+      webSearchConfig,
+      agent,
+    },
+    resolvedCreateIntent,
+  );
   const {
     activeMessagingChannels,
     initialSandboxPolicy,
@@ -2722,29 +2717,10 @@ async function createSandboxWithBaseImageResolution(
     createArgs,
     messagingProviders,
     compatibilityPolicyPath,
-  } = sandboxCreatePlan.prepareSandboxCreatePlan({
-    basePolicyPath,
+  } = sandboxCreatePlanMaterialization.materializeSandboxCreatePlan({
+    intent: resolvedCreateIntent,
     buildCtx,
-    sandboxName,
-    channels: MESSAGING_CHANNELS,
-    enabledChannels,
-    disabledChannelNames,
-    messagingTokenDefs,
-    reusableMessagingChannels,
-    reusableMessagingProviders,
-    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-    extraProviders: createIntent?.extraProviders ?? reconcileRegisteredExtraProviders(GATEWAY_NAME, { runOpenshell }),
-    hermesToolGateways,
-    sandboxGpuConfig: effectiveSandboxGpuConfig,
-    gpuRoutePlan,
-    sandboxGpuLogMessage,
-    appendResourceFlags: (args) =>
-      appendResourceFlagsForProfile(args, resourceProfile, getOpenshellBinary(), {
-        isNonInteractive,
-        note,
-        prompt,
-        promptOrDefault,
-      }),
+    messagingTokenDefs: materializationCapabilities.messagingTokenDefs,
     runProviderPreDeleteCleanup: () =>
       runSandboxProviderPreDeleteCleanup(sandboxName, {
         runOpenshell,
@@ -2752,11 +2728,8 @@ async function createSandboxWithBaseImageResolution(
         tolerateMissingSandbox: true,
       }),
     upsertMessagingProviders,
-    getMessagingChannelForEnvKey,
     getHermesToolGatewayProviderName: (targetSandbox) =>
       getHermesToolGatewayBroker().getHermesToolGatewayProviderName(targetSandbox),
-    agentName: agent?.name,
-    policyTier: createIntent?.policyTier,
   });
   if (initialSandboxPolicy.cleanup) {
     process.on("exit", initialSandboxPolicy.cleanup);
@@ -2806,7 +2779,7 @@ async function createSandboxWithBaseImageResolution(
       }),
       sandboxName,
       env: process.env,
-      extraPlaceholderKeys,
+      extraPlaceholderKeys: resolvedCreateIntent.extraPlaceholderKeys,
       getDashboardForwardPort,
       hermesDashboardState,
       manageDashboard,
@@ -3768,6 +3741,28 @@ const setupInference = createSetupInference();
 // ── Step 6: Messaging channels ───────────────────────────────────
 
 const MESSAGING_CHANNELS = listChannels();
+const sandboxCreateIntentResolver = sandboxCreateIntentResolution.createSandboxCreateIntentResolver<
+  AgentDefinition | null,
+  import("./resources-cmd").ResourceProfile
+>({
+  channels: MESSAGING_CHANNELS,
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  messagingPreflightDeps: { readMessagingPlanFromEnv, resolveDisabledChannels: channelState.resolveDisabledChannels, gatewayName: () => GATEWAY_NAME, registry, providerExistsInGateway, isNonInteractive, promptYesNoOrDefault, cliName, log: (message) => console.log(message), error: (message) => console.error(message), exitProcess: (code) => process.exit(code), getValidatedMessagingTokenByEnvKey, getCredential, normalizeCredentialValue, registerExtraPlaceholderProviders: extraPlaceholderKeysModule.registerExtraPlaceholderProviders, getMessagingChannelForEnvKey },
+  filterEnabledChannelsByAgent,
+  defaultPolicyPath: path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
+  getAgentPolicyPath: (agent) => (agent ? agentOnboard.getAgentPolicyPath(agent) : null),
+  resolveGpuPlan: (config) =>
+    dockerGpuSandboxCreate.resolveDockerGpuSandboxCreatePlan(config, {
+      dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
+    }),
+  appendResourceCreateArgs: (args, resourceProfile) =>
+    appendResourceFlagsForProfile(args, resourceProfile, getOpenshellBinary(), {
+      isNonInteractive,
+      note,
+      prompt,
+      promptOrDefault,
+    }),
+});
 
 function getRecordedMessagingChannelsForResume(
   resume: boolean,
@@ -4378,140 +4373,145 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     };
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     const runCoreGatewayOpenshell = setupInferenceFactory.createGatewayScopedOpenshellRunner(runOpenshell, GATEWAY_NAME);
-    const [providerInferencePhase, sandboxPhase] =
-      createCoreOnboardFlowPhases<InitialOnboardFlowContext>({
-        gatewayName: GATEWAY_NAME,
-        forceProviderSelection: forceProviderSelectionForAgentChange,
-        ...authoritativeRebuildTarget.rebuildProviderFlowOptions(opts, coreFlowContext),
-        env: process.env,
-        constants: {
-          hermesProviderName: hermesProviderAuth.HERMES_PROVIDER_NAME,
-          hermesApiKeyAuthMethod: HERMES_AUTH_METHOD_API_KEY,
-          hermesApiKeyCredentialEnv: HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
+    const [providerInferencePhase, sandboxPhase] = createCoreOnboardFlowPhases<
+      InitialOnboardFlowContext,
+      unknown,
+      MessagingChannelConfig,
+      import("./resources-cmd").ResourceProfile
+    >({
+      gatewayName: GATEWAY_NAME,
+      forceProviderSelection: forceProviderSelectionForAgentChange,
+      ...authoritativeRebuildTarget.rebuildProviderFlowOptions(opts, coreFlowContext),
+      env: process.env,
+      constants: {
+        hermesProviderName: hermesProviderAuth.HERMES_PROVIDER_NAME,
+        hermesApiKeyAuthMethod: HERMES_AUTH_METHOD_API_KEY,
+        hermesApiKeyCredentialEnv: HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
+      },
+      providerDeps: {
+        checkGatewayRouteCompatibility,
+        preflightGatewayRouteDiscovery,
+        getSandboxRecoveryAuthority: providerRecovery.getSandboxRecoveryAuthority,
+        withGatewayRouteMutationLock: gatewayRouteMutationLock.withGatewayRouteMutationLock,
+        normalizeHermesAuthMethod,
+        // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+        setupNim: (g, s, a, recover, gateway, assertRouteCompatible, canProbeRoute, recoverySessionId) => setupNim(g, s, a, recover, opts.rebuildRegistryInferenceRoute, gateway, assertRouteCompatible, canProbeRoute, recoverySessionId),
+        setupInference,
+        startRecordedStep,
+        recordStepComplete,
+        toSessionUpdates: (updates) =>
+          toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+        skippedStepMessage,
+        ...resumeProviderShim,
+        recordStateSkipped,
+        recordRepairEvent,
+        hydrateCredentialEnv,
+        configureCompatibleEndpointReasoning: reasoningMode.configureCompatibleEndpointReasoning,
+        clearCompatibleEndpointReasoning: reasoningMode.clearCompatibleEndpointReasoning,
+        repairLocalInferenceSystemdOverrideOrExit,
+        isNonInteractive,
+        getOpenshellBinary,
+        needsBedrockRuntimeAdapter: (providerName, url) =>
+          providerName === "compatible-anthropic-endpoint" &&
+          bedrockRuntimeOnboard.needsBedrockRuntimeAdapter(url),
+        isInferenceRouteReady,
+        isRoutedInferenceProvider,
+        reconcileModelRouter,
+        reupsertRoutedProvider: (gatewayName, p, url, ce) => {
+          const r = routedInference.upsertRoutedProvider(p, url, ce, {
+            // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+            upsertProvider: setupInferenceFactory.bindGatewayUpsertProvider(upsertProvider, gatewayName),
+            hydrateCredentialEnv,
+          });
+          return {
+            ok: r.ok,
+            endpointUrl: r.endpointUrl,
+            message: r.result.message,
+            status: r.result.status,
+          };
         },
-        providerDeps: {
-          checkGatewayRouteCompatibility,
-          preflightGatewayRouteDiscovery,
-          getSandboxRecoveryAuthority: providerRecovery.getSandboxRecoveryAuthority,
-          withGatewayRouteMutationLock: gatewayRouteMutationLock.withGatewayRouteMutationLock,
-          normalizeHermesAuthMethod,
-          // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-          setupNim: (g, s, a, recover, gateway, assertRouteCompatible, canProbeRoute, recoverySessionId) => setupNim(g, s, a, recover, opts.rebuildRegistryInferenceRoute, gateway, assertRouteCompatible, canProbeRoute, recoverySessionId),
-          setupInference,
-          startRecordedStep,
-          recordStepComplete,
-          toSessionUpdates: (updates) =>
-            toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
-          skippedStepMessage,
-          ...resumeProviderShim,
-          recordStateSkipped,
-          recordRepairEvent,
-          hydrateCredentialEnv,
-          configureCompatibleEndpointReasoning: reasoningMode.configureCompatibleEndpointReasoning,
-          clearCompatibleEndpointReasoning: reasoningMode.clearCompatibleEndpointReasoning,
-          repairLocalInferenceSystemdOverrideOrExit,
-          isNonInteractive,
-          getOpenshellBinary,
-          needsBedrockRuntimeAdapter: (providerName, url) =>
-            providerName === "compatible-anthropic-endpoint" &&
-            bedrockRuntimeOnboard.needsBedrockRuntimeAdapter(url),
-          isInferenceRouteReady,
-          isRoutedInferenceProvider,
-          reconcileModelRouter,
-          reupsertRoutedProvider: (gatewayName, p, url, ce) => {
-            const r = routedInference.upsertRoutedProvider(p, url, ce, {
-              // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-              upsertProvider: setupInferenceFactory.bindGatewayUpsertProvider(upsertProvider, gatewayName),
-              hydrateCredentialEnv,
-            });
-            return {
-              ok: r.ok,
-              endpointUrl: r.endpointUrl,
-              message: r.result.message,
-              status: r.result.status,
-            };
-          },
-          reserveSandboxInferenceRoute: registry.reserveSandboxInferenceRoute,
-          registryUpdateSandbox: (name, updates) => registry.updateSandbox(name, updates),
-          promptValidatedSandboxName,
-          assessHost,
-          formatSandboxBuildEstimateNote,
-          formatOnboardConfigSummary,
-          promptYesNoOrDefault,
-          cliName,
-          log: (message) => console.log(message),
-          error: (message) => console.error(message),
-          exitProcess: (code) => process.exit(code),
-          deleteEnv: (name) => {
-            delete process.env[name];
-          },
+        reserveSandboxInferenceRoute: registry.reserveSandboxInferenceRoute,
+        registryUpdateSandbox: (name, updates) => registry.updateSandbox(name, updates),
+        promptValidatedSandboxName,
+        assessHost,
+        formatSandboxBuildEstimateNote,
+        formatOnboardConfigSummary,
+        promptYesNoOrDefault,
+        cliName,
+        log: (message) => console.log(message),
+        error: (message) => console.error(message),
+        exitProcess: (code) => process.exit(code),
+        deleteEnv: (name) => {
+          delete process.env[name];
         },
-        sandbox: {
-          resumeAgentChanged,
-          requestedObservabilityEnabled: runtimeControlRequests.requestedObservabilityEnabled,
-          requestedDcodeAutoApprovalMode: runtimeControlRequests.requestedDcodeAutoApprovalMode,
-          authoritativePolicyTier:
-            opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : null,
-          recreateSandbox: isRecreateSandbox,
-          controlUiPort: _preflightDashboardPort,
-          rootDir: ROOT,
-        },
-        sandboxDeps: {
-          checkGatewayRouteCompatibility,
-          withGatewayRouteMutationLock: gatewayRouteMutationLock.withGatewayRouteMutationLock,
-          resolvePath: preparedDcodeRuntime.resolveDockerfileProbePath,
-          agentSupportsWebSearch,
-          agentSupportsWebSearchProvider,
-          note,
-          updateSession: onboardSession.updateSession,
-          getStoredMessagingChannelConfig,
-          hydrateMessagingChannelConfig,
-          messagingChannelConfigsEqual,
-          getSandboxReuseState,
-          getDcodeSelectionDrift: (name, selectedProvider, selectedModel, selectedApi) =>
-            getDcodeSelectionDrift(name, selectedProvider, selectedModel, selectedApi, {
-              runCaptureOpenshell,
-            }),
-          hasSandboxGpuDrift,
-          getSandboxHermesToolGateways: (name) => registry.getSandbox(name)?.hermesToolGateways,
-          getSandboxRegistryEntry: registry.getSandbox,
-          normalizeHermesToolGatewaySelections,
-          stringSetsEqual,
-          removeSandboxFromRegistry: registry.removeSandbox.bind(registry),
-          repairRecordedSandbox,
-          ensureValidatedWebSearchCredential,
-          isBackToSelection,
-          configureWebSearch,
-          startRecordedStep,
-          getRecordedMessagingChannelsForResume,
-          setupMessagingChannels,
-          readMessagingPlanFromEnv,
-          writePlanToEnv,
-          clearPlanEnv,
-          getRegistrySandboxMessagingPlan,
-          promptValidatedSandboxName,
-          selectResourceProfileForSandbox: () =>
-            selectResourceProfileForSandbox({ isNonInteractive, note, prompt, promptOrDefault }),
-          stopStaleDashboardListenersForSandbox,
-          listRegistrySandboxes: registry.listSandboxes,
-          reconcileRegisteredExtraProviders: (gatewayName) =>
-            reconcileRegisteredExtraProviders(gatewayName, { runOpenshell }),
-          createSandbox: preparedDcodeRuntime.bindCreateSandbox(
-            createSandboxWithBaseImageResolution.bind(null, baseImageResolutionContext),
-          ),
-          updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
-          getSandboxAgentRegistryFields,
-          recordStepComplete,
-          toSessionUpdates: (updates) =>
-            toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
-          skippedStepMessage,
-          recordStateSkipped,
-          recordRepairEvent,
-          withSandboxMutationLock: sandboxMutationLock.withSandboxMutationLock,
-          error: (message) => console.error(message),
-          exitProcess: (code) => process.exit(code),
-        },
-      });
+      },
+      sandbox: {
+        resumeAgentChanged,
+        requestedObservabilityEnabled: runtimeControlRequests.requestedObservabilityEnabled,
+        requestedDcodeAutoApprovalMode: runtimeControlRequests.requestedDcodeAutoApprovalMode,
+        authoritativePolicyTier:
+          opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : undefined,
+        recreateSandbox: isRecreateSandbox,
+        controlUiPort: _preflightDashboardPort,
+        rootDir: ROOT,
+      },
+      sandboxDeps: {
+        checkGatewayRouteCompatibility,
+        withGatewayRouteMutationLock: gatewayRouteMutationLock.withGatewayRouteMutationLock,
+        resolvePath: preparedDcodeRuntime.resolveDockerfileProbePath,
+        agentSupportsWebSearch,
+        agentSupportsWebSearchProvider,
+        note,
+        updateSession: onboardSession.updateSession,
+        getStoredMessagingChannelConfig,
+        hydrateMessagingChannelConfig,
+        messagingChannelConfigsEqual,
+        getSandboxReuseState,
+        getDcodeSelectionDrift: (name, selectedProvider, selectedModel, selectedApi) =>
+          getDcodeSelectionDrift(name, selectedProvider, selectedModel, selectedApi, {
+            runCaptureOpenshell,
+          }),
+        hasSandboxGpuDrift,
+        getSandboxHermesToolGateways: (name) => registry.getSandbox(name)?.hermesToolGateways,
+        getSandboxRegistryEntry: registry.getSandbox,
+        normalizeHermesToolGatewaySelections,
+        stringSetsEqual,
+        removeSandboxFromRegistry: registry.removeSandbox.bind(registry),
+        repairRecordedSandbox,
+        ensureValidatedWebSearchCredential,
+        isBackToSelection,
+        configureWebSearch,
+        startRecordedStep,
+        getRecordedMessagingChannelsForResume,
+        setupMessagingChannels,
+        readMessagingPlanFromEnv,
+        writePlanToEnv,
+        clearPlanEnv,
+        getRegistrySandboxMessagingPlan,
+        promptValidatedSandboxName,
+        selectResourceProfileForSandbox: () =>
+          selectResourceProfileForSandbox({ isNonInteractive, note, prompt, promptOrDefault }),
+        stopStaleDashboardListenersForSandbox,
+        listRegistrySandboxes: registry.listSandboxes,
+        planRegisteredExtraProviders: (gatewayName) =>
+          planRegisteredExtraProviders(gatewayName, { runOpenshell }),
+        resolveSandboxCreateIntent: sandboxCreateIntentResolver.resolve,
+        createSandbox: preparedDcodeRuntime.bindCreateSandbox(
+          createSandboxWithBaseImageResolution.bind(null, baseImageResolutionContext),
+        ),
+        updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
+        getSandboxAgentRegistryFields,
+        recordStepComplete,
+        toSessionUpdates: (updates) =>
+          toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+        skippedStepMessage,
+        recordStateSkipped,
+        recordRepairEvent,
+        withSandboxMutationLock: sandboxMutationLock.withSandboxMutationLock,
+        error: (message) => console.error(message),
+        exitProcess: (code) => process.exit(code),
+      },
+    });
     const coreFlowResult = await runCoreOnboardFlowSlice({
       context: coreFlowContext,
       runtime: onboardRuntimeBoundary.getRuntime(),
@@ -4561,7 +4561,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     >({
       branchState: agent ? "agent_setup" : "openclaw",
       authoritativePolicyTier:
-        opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : null,
+        opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : undefined,
       agentSetupDeps: {
         handleAgentSetup: agentOnboard.handleAgentSetup,
         agentSetupContext: () => ({

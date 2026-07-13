@@ -220,8 +220,10 @@ ARG OPENCLAW_2026_4_24_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-20
 # synchronized with agents/openclaw/dependency-review.md.
 ARG MCPORTER_VERSION=0.7.3
 ARG MCPORTER_0_7_3_INTEGRITY=sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==
+ARG MCPORTER_0_7_3_TARBALL=https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz
 COPY agents/openclaw/mcporter-runtime/package.json /usr/local/lib/nemoclaw/mcporter-runtime/package.json
 COPY agents/openclaw/mcporter-runtime/package-lock.json /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json
+COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 
 # Keep OpenClaw's jiti-generated source cache out of /tmp so provider marker
 # names do not persist in runtime snapshots or leak-scan inputs.
@@ -262,36 +264,13 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     if [ -z "$EXPECTED_INTEGRITY" ]; then \
         echo "Error: OpenClaw ${OPENCLAW_VERSION} has no committed npm integrity pin"; exit 1; \
     fi; \
-    REGISTRY_INTEGRITY=$(npm view "openclaw@${OPENCLAW_VERSION}" dist.integrity); \
-    if [ "$REGISTRY_INTEGRITY" != "$EXPECTED_INTEGRITY" ]; then \
-        echo "Error: OpenClaw ${OPENCLAW_VERSION} npm integrity mismatch"; \
-        echo "Expected: ${EXPECTED_INTEGRITY}"; \
-        echo "Actual:   ${REGISTRY_INTEGRITY}"; exit 1; \
+    OPENCLAW_PACK_PATH="$(node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts \
+        --package-spec "openclaw@${OPENCLAW_VERSION}" --integrity "$EXPECTED_INTEGRITY" \
+        --tarball-url "$EXPECTED_TARBALL" --label "OpenClaw ${OPENCLAW_VERSION}")"; \
+    if [ -z "$OPENCLAW_PACK_PATH" ] || [ ! -f "$OPENCLAW_PACK_PATH" ] || [ -L "$OPENCLAW_PACK_PATH" ]; then \
+        echo "Error: reviewed OpenClaw archive path is empty or invalid"; exit 1; \
     fi; \
-    REGISTRY_TARBALL=$(npm view "openclaw@${OPENCLAW_VERSION}" dist.tarball); \
-    if [ "$REGISTRY_TARBALL" != "$EXPECTED_TARBALL" ]; then \
-        echo "Error: OpenClaw ${OPENCLAW_VERSION} npm tarball URL mismatch"; \
-        echo "Expected: ${EXPECTED_TARBALL}"; \
-        echo "Actual:   ${REGISTRY_TARBALL}"; exit 1; \
-    fi; \
-    pack_reviewed_npm_tarball() { \
-        pack_spec="$1"; expected_integrity="$2"; pack_dir="$3"; label="$4"; \
-        pack_json="$(npm pack "$pack_spec" --pack-destination "$pack_dir" --json)"; \
-        pack_integrity="$(printf '%s' "$pack_json" | node -e 'const p = JSON.parse(require("node:fs").readFileSync(0, "utf8")); process.stdout.write(String(p[0]?.integrity ?? ""));')"; \
-        pack_filename="$(printf '%s' "$pack_json" | node -e 'const p = JSON.parse(require("node:fs").readFileSync(0, "utf8")); process.stdout.write(String(p[0]?.filename ?? ""));')"; \
-        if [ -z "$pack_integrity" ] || [ -z "$pack_filename" ]; then \
-            echo "Error: ${label} npm pack did not report filename and integrity" >&2; exit 1; \
-        fi; \
-        if [ "$pack_integrity" != "$expected_integrity" ]; then \
-            echo "Error: ${label} downloaded tarball integrity mismatch" >&2; \
-            echo "Expected: ${expected_integrity}" >&2; \
-            echo "Actual:   ${pack_integrity}" >&2; exit 1; \
-        fi; \
-        if ! pack_archive="$(node -e 'const path = require("node:path"); const [dir, filename, label] = process.argv.slice(1); const parts = filename.split(/[\\/]+/); const unsafe = !filename || path.isAbsolute(filename) || filename === "." || filename === ".." || filename.includes("/") || filename.includes("\\") || parts.includes("..") || parts.includes(""); if (unsafe) { console.error("Error: " + label + " npm pack reported unsafe archive filename: " + filename); process.exit(1); } const root = path.resolve(dir); const archive = path.resolve(root, filename); if (!archive.startsWith(root + path.sep)) { console.error("Error: " + label + " npm pack archive escaped pack directory: " + filename); process.exit(1); } process.stdout.write(archive);' "$pack_dir" "$pack_filename" "$label")"; then exit 1; fi; \
-        printf '%s\n' "$pack_archive"; \
-    }; \
-    OPENCLAW_PACK_DIR="$(mktemp -d)"; \
-    OPENCLAW_PACK_PATH="$(pack_reviewed_npm_tarball "$EXPECTED_TARBALL" "$EXPECTED_INTEGRITY" "$OPENCLAW_PACK_DIR" "OpenClaw ${OPENCLAW_VERSION}")"; \
+    OPENCLAW_PACK_DIR="$(dirname "$OPENCLAW_PACK_PATH")"; \
     npm install -g --ignore-scripts "$OPENCLAW_PACK_PATH" \
     && case "$OPENCLAW_VERSION" in \
         2026.4.24|2026.6.10) node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs ;; \
@@ -304,16 +283,14 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
         echo "Error: Installed OpenClaw ${OPENCLAW_INSTALLED_VERSION:-unknown} does not match reviewed target ${OPENCLAW_VERSION}"; exit 1; \
     fi \
     && MCPORTER_EXPECTED_INTEGRITY="" \
-    && if [ "$MCPORTER_VERSION" = "0.7.3" ]; then MCPORTER_EXPECTED_INTEGRITY="$MCPORTER_0_7_3_INTEGRITY"; fi \
+    && MCPORTER_EXPECTED_TARBALL="" \
+    && if [ "$MCPORTER_VERSION" = "0.7.3" ]; then MCPORTER_EXPECTED_INTEGRITY="$MCPORTER_0_7_3_INTEGRITY"; MCPORTER_EXPECTED_TARBALL="$MCPORTER_0_7_3_TARBALL"; fi \
     && if [ -z "$MCPORTER_EXPECTED_INTEGRITY" ]; then \
         echo "ERROR: mcporter ${MCPORTER_VERSION} has no committed npm integrity pin" >&2; exit 1; \
     fi \
-    && MCPORTER_REGISTRY_INTEGRITY=$(npm view "mcporter@${MCPORTER_VERSION}" dist.integrity) \
-    && if [ "$MCPORTER_REGISTRY_INTEGRITY" != "$MCPORTER_EXPECTED_INTEGRITY" ]; then \
-        echo "Error: mcporter ${MCPORTER_VERSION} npm integrity mismatch"; \
-        echo "Expected: ${MCPORTER_EXPECTED_INTEGRITY}"; \
-        echo "Actual:   ${MCPORTER_REGISTRY_INTEGRITY}"; exit 1; \
-    fi \
+    && node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts --verify-only \
+        --package-spec "mcporter@${MCPORTER_VERSION}" --integrity "$MCPORTER_EXPECTED_INTEGRITY" \
+        --tarball-url "$MCPORTER_EXPECTED_TARBALL" --label "mcporter ${MCPORTER_VERSION}" \
     && rm -rf /usr/local/lib/node_modules/mcporter /usr/local/bin/mcporter \
     && npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime ci \
         --ignore-scripts --omit=dev --no-audit --no-fund --no-progress \
@@ -335,6 +312,7 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
         'recipe=ignore-scripts+reviewed-lifecycle-v1' \
         "mcporter-package=mcporter@${MCPORTER_VERSION}" \
         "mcporter-integrity=${MCPORTER_EXPECTED_INTEGRITY}" \
+        "mcporter-tarball=${MCPORTER_EXPECTED_TARBALL}" \
         "mcporter-lock-sha256=${MCPORTER_LOCK_SHA256}" \
         'mcporter-recipe=locked-ci+audit-signatures-v1' \
         > "$OPENCLAW_PROVENANCE_TMP" \

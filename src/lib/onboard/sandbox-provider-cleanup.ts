@@ -5,6 +5,9 @@ import { listMessagingProviderSuffixes } from "../messaging/channels";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
 
 export {
+  applyExtraProviderReconciliation,
+  type ExtraProviderReconciliationPlan,
+  planRegisteredExtraProviders,
   type ReconcileExtraProvidersDeps,
   reconcileRegisteredExtraProviders,
 } from "./extra-provider-reconciliation";

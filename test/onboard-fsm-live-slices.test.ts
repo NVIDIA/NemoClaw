@@ -19,11 +19,14 @@ type ProbeMode =
   | "resume-core-gateway"
   | "resume-incomplete-core-gateway"
   | "authoritative-core-gateway"
+  | "authoritative-core-gateway-policy-tier"
+  | "ordinary-policy-tier"
   | "ahead-core";
 
 interface ProbeOptions {
   slice: SliceName;
   mode?: ProbeMode;
+  policyTier?: "balanced" | "restricted";
 }
 
 interface DistArtifact {
@@ -183,6 +186,9 @@ function runSliceProbe(options: ProbeOptions) {
   const gatewayHandlerPath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "onboard", "machine", "handlers", "gateway.ts"),
   );
+  const coreFlowPhasesPath = JSON.stringify(
+    path.join(repoRoot, "src", "lib", "onboard", "machine", "core-flow-phases.ts"),
+  );
   const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
 
   fs.writeFileSync(
@@ -195,9 +201,18 @@ const onboardSession = require(${sessionPath});
 const preflightHandlers = require(${preflightHandlerPath});
 const providerHandlers = require(${providerHandlerPath});
 const gatewayHandlers = require(${gatewayHandlerPath});
+const coreFlowPhases = require(${coreFlowPhasesPath});
 const registry = require(${registryPath});
 const called = [];
 const sentinel = new Error("slice-called");
+
+if (scenario.mode.endsWith("policy-tier")) {
+  coreFlowPhases.createCoreOnboardFlowPhases = (options) => {
+    const tier = options.sandbox.authoritativePolicyTier;
+    called.push("authoritative-policy-tier:" + (tier === undefined ? "undefined" : String(tier)));
+    throw sentinel;
+  };
+}
 
 function machine(state, revision = 1) {
   return { version: 1, state, stateEnteredAt: null, revision };
@@ -352,7 +367,7 @@ const { onboard } = require(${onboardPath});
       noGpu: true,
       sandboxName: "fsm-sandbox",
       resume: scenario.mode === "resume-initial" || scenario.mode.includes("core-gateway"),
-      ...(scenario.mode === "authoritative-core-gateway"
+      ...(scenario.mode.startsWith("authoritative-")
         ? {
             authoritativeResumeConfig: true,
             recreateSandbox: true,
@@ -391,6 +406,7 @@ const { onboard } = require(${onboardPath});
         ...(scenario.mode === "endpoint-override"
           ? { OPENSHELL_GATEWAY_ENDPOINT: "http://127.0.0.1:65535" }
           : {}),
+        ...(options.policyTier ? { NEMOCLAW_POLICY_TIER: options.policyTier } : {}),
       },
       timeout: probeTimeoutMs,
     },
@@ -470,5 +486,22 @@ describe("live onboard FSM slice boundaries", () => {
       "gateway:nemoclaw-9090:nemoclaw-9090",
       "provider-compat:nemoclaw-9090",
     ]);
+  });
+
+  it("leaves ordinary policy tiers non-authoritative in the runOnboard machine", () => {
+    for (const policyTier of ["balanced", "restricted"] as const) {
+      assert.deepEqual(runSliceProbe({ slice: "core", mode: "ordinary-policy-tier", policyTier }), [
+        "initial",
+        "authoritative-policy-tier:undefined",
+      ]);
+    }
+  });
+
+  it("preserves an explicit null policy tier for authoritative rebuilds", () => {
+    const called = runSliceProbe({
+      slice: "core",
+      mode: "authoritative-core-gateway-policy-tier",
+    });
+    assert.equal(called.at(-1), "authoritative-policy-tier:null");
   });
 });

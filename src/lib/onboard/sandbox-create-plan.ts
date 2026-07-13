@@ -16,6 +16,7 @@ import {
 import { buildSandboxGpuCreateArgs, type SandboxGpuCreateConfig } from "./sandbox-gpu-create";
 
 export {
+  resolvePrimaryMessagingCredentialEnvKeys,
   resolveSandboxCreateIntent,
   resolveSandboxCreateMessagingProviderRequests,
 } from "./sandbox-create-intent";
@@ -27,7 +28,10 @@ export type {
   SandboxCreatePolicyRequest,
 } from "./sandbox-create-intent-types";
 export type { SandboxCreatePlan } from "./sandbox-create-plan-materialization";
-export { materializeSandboxCreatePlan } from "./sandbox-create-plan-materialization";
+export {
+  materializeSandboxCreatePlan,
+  validateSandboxCreateIntentBindings,
+} from "./sandbox-create-plan-materialization";
 
 // Known canonical policy tier names. Kept inline so the create-time path
 // validates the env value without pulling `../policy/tiers` (which transitively
@@ -37,7 +41,10 @@ export { materializeSandboxCreatePlan } from "./sandbox-create-plan-materializat
 // the create-time policy decision.
 const KNOWN_POLICY_TIER_NAMES = new Set(["restricted", "balanced", "open"]);
 
-function readPolicyTierEnv(): string | null {
+export function resolveSandboxCreatePolicyTier(
+  authoritativePolicyTier?: string | null,
+): string | null {
+  if (authoritativePolicyTier !== undefined) return authoritativePolicyTier;
   // Only trust the env value in non-interactive mode. Interactive flows let the
   // operator override the tier via the selector after sandbox creation; if the
   // env said balanced but the operator picks restricted, an interactive trust
@@ -109,12 +116,14 @@ export function prepareSandboxCreatePlan({
   getMessagingChannelForEnvKey,
   getHermesToolGatewayProviderName,
   agentName,
-  policyTier = readPolicyTierEnv(),
+  policyTier = resolveSandboxCreatePolicyTier(),
   deps = {},
 }: PrepareSandboxCreatePlanInput): SandboxCreatePlan {
   const gpuCreateArgs = (deps.buildSandboxGpuCreateArgs ?? buildSandboxGpuCreateArgs)(
     sandboxGpuConfig,
   );
+  const resourceCreateArgs: string[] = [];
+  appendResourceFlags(resourceCreateArgs);
   const messagingProviderRequests = resolveSandboxCreateMessagingProviderRequests(
     messagingTokenDefs,
     getMessagingChannelForEnvKey,
@@ -133,6 +142,7 @@ export function prepareSandboxCreatePlan({
     hermesToolGateways,
     sandboxGpuConfig,
     gpuCreateArgs,
+    resourceCreateArgs,
     gpuRoutePlan,
     sandboxGpuLogMessage,
     agentName,
@@ -143,7 +153,6 @@ export function prepareSandboxCreatePlan({
     intent,
     buildCtx,
     messagingTokenDefs,
-    appendResourceFlags,
     runProviderPreDeleteCleanup,
     upsertMessagingProviders,
     getHermesToolGatewayProviderName,

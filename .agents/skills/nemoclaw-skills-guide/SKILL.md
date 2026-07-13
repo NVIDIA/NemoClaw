@@ -27,10 +27,12 @@ Covers routing human users' AI agents to the canonical NemoClaw Markdown documen
 For project maintainers.
 Covers the daily maintainer cadence (morning standup, daytime loop, evening handoff), workflow policy reference, documentation information-architecture refactors, cutting releases, drafting release notes, finding PRs to review, comparing PRs, cross-issue sweeps, triage, normalizing issue and PR title tags, performing security code reviews, and verifying whether stale bug reports still reproduce on the latest release.
 
-### `nemoclaw-contributor-*` (4 skills)
+### `nemoclaw-contributor-*` (5 skills)
 
 For contributors to the NemoClaw codebase.
-Covers trusted checkout setup and readiness checks, creating pull requests that follow the project template, monitoring CI and automated review feedback, drafting documentation updates, and onboarding new messaging channels.
+Covers trusted checkout setup and readiness checks, dependency migration audits, creating pull
+requests that follow the project template, monitoring CI and automated review feedback, drafting
+documentation updates, and onboarding new messaging channels.
 
 ## Skill Catalog
 
@@ -67,6 +69,7 @@ Covers trusted checkout setup and readiness checks, creating pull requests that 
 |-------|---------|
 | `nemoclaw-contributor-onboard` | Set up, repair, or verify a trusted source checkout, with explicit opt-ins for host-visible CLI exposure, the pinned agent, and runtime onboarding. |
 | `nemoclaw-contributor-create-pr` | Create GitHub pull requests that follow the NemoClaw PR template, including pre-PR checks, conventional commit titles, DCO sign-off, post-push CI monitoring, and CodeRabbit/PR Review Advisor follow-up. |
+| `nemoclaw-contributor-update-dependencies` | Audit dependency upgrades release by release, trace upstream source and test changes into downstream contracts, resolve migration concerns, and verify immutable artifacts separately. |
 | `nemoclaw-contributor-onboard-messaging-channel` | Add or review a new messaging channel with manifest-first implementation, upstream source analysis, plugin install confirmation, reachability checks, policies, docs, and tests. |
 | `nemoclaw-contributor-update-docs` | Scan recent git commits for user-facing changes and draft or update documentation pages during release prep. |
 
@@ -83,7 +86,7 @@ Skills are cumulative. Each role includes the skills from the roles above it:
 | Role | Skills included | Count | Start with |
 |------|----------------|-------|------------|
 | User | `nemoclaw-user-*` | 1 | `nemoclaw-user-guide` |
-| Contributor | `nemoclaw-user-*` + `nemoclaw-contributor-*` | 5 | `nemoclaw-contributor-onboard` |
-| Maintainer | All skills | 19 | `nemoclaw-maintainer-morning` |
+| Contributor | `nemoclaw-user-*` + `nemoclaw-contributor-*` | 6 | `nemoclaw-contributor-onboard` |
+| Maintainer | All skills | 20 | `nemoclaw-maintainer-morning` |
 
 After identifying the role, present the applicable skills from the Skill Catalog above and recommend the starting skill.

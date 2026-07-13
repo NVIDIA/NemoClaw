@@ -21,11 +21,16 @@ import {
 import { SHARED_E2E_JOB_ID } from "./credential-free-tests.mts";
 import { readPrivateRegularFile, writePrivateRegularFile } from "./private-file.ts";
 import type { E2eRiskSignal } from "./risk-signal.ts";
-import { readFreeStandingJobsInventory } from "./workflow-boundary.mts";
+import {
+  focusedE2eJobsForChangedFiles,
+  readFreeStandingJobsInventory,
+} from "./workflow-boundary.mts";
 
 const E2E_WORKFLOW = "e2e.yaml";
 const E2E_WORKFLOW_PATH = `.github/workflows/${E2E_WORKFLOW}`;
 const CHECK_NAME = "E2E / PR Gate";
+const CHECK_EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v1";
+const GITHUB_ACTIONS_APP_ID = 15368;
 const USER_AGENT = "nemoclaw-pr-e2e-gate";
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const HASH_PATTERN = /^[a-f0-9]{64}$/u;
@@ -40,6 +45,10 @@ const MAX_CONTROLLER_ERROR_CHARS = 512;
 const MAX_PR_FILES = 3000;
 const MAX_ACTIVE_RUN_PAGES_PER_STATUS = 10;
 const MAX_REPORTED_CI_JOBS = 10;
+const MAX_WAIVER_REASON_CHARS = 500;
+const MAINTAINER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u;
+const EVIDENCE_URL_PATTERN =
+  /^https:\/\/github\.com\/NVIDIA\/NemoClaw\/actions\/runs\/[1-9][0-9]*$/u;
 const ACTIVE_WORKFLOW_RUN_STATUSES = [
   "requested",
   "waiting",
@@ -59,7 +68,20 @@ type ControllerPaths = {
   evidencePath: string;
 };
 
+type ManualResolutionCommandBase = {
+  prNumber: number;
+  headSha: string;
+  workflowSha: string;
+  maintainer: string;
+  reason: string;
+  evidenceUrl?: string;
+};
+
+type ManualResolutionCommand = ManualResolutionCommandBase &
+  ({ mode: "resolve-fork" } | { mode: "resolve-control-plane" });
+
 export type ControllerCommand =
+  | { mode: "seed"; prNumber: number; headSha: string }
   | ({
       mode: "start";
       headSha: string;
@@ -78,7 +100,8 @@ export type ControllerCommand =
       stateHash: string;
     } & ControllerPaths)
   | { mode: "abandon"; checkRunId: number; childRunId?: number }
-  | { mode: "cancel"; prNumber: number };
+  | { mode: "cancel"; prNumber: number }
+  | ManualResolutionCommand;
 
 type CheckConclusion = "success" | "failure";
 
@@ -115,8 +138,23 @@ type WorkflowJob = {
   steps: Array<{ name: string; conclusion: string | null }>;
 };
 type WorkflowJobsPage = { totalCount: number; jobs: WorkflowJob[] };
-type CheckRun = { id: number };
+type CheckRun = {
+  id: number;
+  name?: string;
+  head_sha?: string;
+  external_id?: string | null;
+  status?: string;
+  conclusion?: string | null;
+  output?: { title?: string; summary?: string };
+  app?: { id?: number } | null;
+};
+type CheckRunsResponse = { total_count: number; check_runs: CheckRun[] };
 type GitReference = { ref: string; object: { type: string; sha: string } };
+type CollaboratorPermission = {
+  role_name?: string;
+  permission?: string;
+  user?: { login?: string };
+};
 
 type WorkflowDispatchDetails = {
   workflow_run_id: number;
@@ -171,6 +209,17 @@ function parseHash(value: string | undefined, name: string): string {
   const parsed = requiredArgument(value, name);
   if (!HASH_PATTERN.test(parsed)) throw new Error(`--${name} must be a lowercase SHA-256 hash`);
   return parsed;
+}
+
+function normalizedWaiverReason(value: string): string {
+  const normalized = value
+    .replace(/[\u0000-\u001f\u007f]+/gu, " ")
+    .replace(/\s{2,}/gu, " ")
+    .trim();
+  if (normalized.length < 10 || normalized.length > MAX_WAIVER_REASON_CHARS) {
+    throw new Error(`--reason must contain 10-${MAX_WAIVER_REASON_CHARS} printable characters`);
+  }
+  return normalized;
 }
 
 function sha256(value: string): string {
@@ -237,6 +286,13 @@ export function privateControllerPaths(workDir: string): ControllerPaths {
 
 export function parseControllerCommand(argv: string[]): ControllerCommand {
   const args = parseArgs(argv);
+  if (args.mode === "seed") {
+    return {
+      mode: "seed",
+      prNumber: parsePositiveId(requiredArgument(args.pr, "pr"), "--pr"),
+      headSha: requiredArgument(args.head, "head"),
+    };
+  }
   if (args.mode === "start") {
     return {
       mode: "start",
@@ -276,7 +332,26 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
       prNumber: parsePositiveId(requiredArgument(args.pr, "pr"), "--pr"),
     };
   }
-  throw new Error("--mode must be start, finish, abandon, or cancel");
+  if (args.mode === "resolve-fork" || args.mode === "resolve-control-plane") {
+    const maintainer = requiredArgument(args.maintainer, "maintainer");
+    if (!MAINTAINER_PATTERN.test(maintainer)) throw new Error("--maintainer is invalid");
+    const evidenceUrl = args.evidenceUrl?.trim();
+    if (evidenceUrl && !EVIDENCE_URL_PATTERN.test(evidenceUrl)) {
+      throw new Error("--evidence-url must name an NVIDIA/NemoClaw Actions run");
+    }
+    return {
+      mode: args.mode,
+      prNumber: parsePositiveId(requiredArgument(args.pr, "pr"), "--pr"),
+      headSha: requiredArgument(args.head, "head"),
+      workflowSha: requiredArgument(args.workflowSha, "workflow-sha"),
+      maintainer,
+      reason: normalizedWaiverReason(requiredArgument(args.reason, "reason")),
+      ...(evidenceUrl ? { evidenceUrl } : {}),
+    };
+  }
+  throw new Error(
+    "--mode must be seed, start, finish, abandon, cancel, resolve-fork, or resolve-control-plane",
+  );
 }
 
 function readRegularJson(file: string, maxBytes = MAX_PLAN_BYTES): unknown {
@@ -347,6 +422,7 @@ export function validateRiskPlan(value: unknown, allowedJobs: ReadonlySet<string
   const rebuilt = buildRiskPlan({
     headSha: value.headSha,
     changedFiles: value.changedFiles as string[],
+    focusedE2eJobs: focusedE2eJobsForChangedFiles(value.changedFiles as string[]),
   });
   if (JSON.stringify(value) !== JSON.stringify(rebuilt)) {
     throw new Error("risk plan does not match its hash and inputs");
@@ -497,20 +573,82 @@ function appendOutput(name: string, value: string): void {
   }
 }
 
-async function createCheck(
-  repository: string,
-  token: string,
-  headSha: string,
-  title: string,
-  summary: string,
-): Promise<number> {
-  const check = await githubApi<CheckRun>(`repos/${repository}/check-runs`, token, {
+export function prGateExternalId(prNumber: number, headSha: string): string {
+  if (!Number.isSafeInteger(prNumber) || prNumber < 1 || !SHA_PATTERN.test(headSha)) {
+    throw new Error("PR gate check identity is invalid");
+  }
+  return `${CHECK_EXTERNAL_ID_PREFIX}:${prNumber}:${headSha}`;
+}
+
+function validateCheckRunsResponse(value: unknown): CheckRunsResponse {
+  if (
+    !isObjectRecord(value) ||
+    !Number.isSafeInteger(value.total_count) ||
+    (value.total_count as number) < 0 ||
+    !Array.isArray(value.check_runs)
+  ) {
+    throw new Error("GitHub returned an invalid check-run listing");
+  }
+  const checkRuns = value.check_runs.map((check) => {
+    if (!isObjectRecord(check) || !Number.isSafeInteger(check.id) || (check.id as number) < 1) {
+      throw new Error("GitHub returned an invalid check run");
+    }
+    return check as CheckRun;
+  });
+  if (checkRuns.length !== value.total_count) {
+    throw new Error("GitHub returned an incomplete check-run listing");
+  }
+  return { total_count: value.total_count as number, check_runs: checkRuns };
+}
+
+async function matchingPrGateChecks(options: {
+  repository: string;
+  token: string;
+  headSha: string;
+  prNumber: number;
+}): Promise<CheckRun[]> {
+  const externalId = prGateExternalId(options.prNumber, options.headSha);
+  const response = validateCheckRunsResponse(
+    await githubApi<unknown>(
+      `repos/${options.repository}/commits/${options.headSha}/check-runs?check_name=${encodeURIComponent(CHECK_NAME)}&filter=all&per_page=100`,
+      options.token,
+      { userAgent: USER_AGENT },
+    ),
+  );
+  const sameIdentity = response.check_runs.filter(
+    (check) =>
+      check.name === CHECK_NAME &&
+      check.head_sha === options.headSha &&
+      check.external_id === externalId,
+  );
+  if (sameIdentity.some((check) => check.app?.id !== GITHUB_ACTIONS_APP_ID)) {
+    throw new Error("PR gate check identity was claimed by an unexpected GitHub App");
+  }
+  return sameIdentity.filter((check) => check.app?.id === GITHUB_ACTIONS_APP_ID);
+}
+
+async function ensurePrGateCheck(options: {
+  repository: string;
+  token: string;
+  headSha: string;
+  prNumber: number;
+}): Promise<number> {
+  const existing = await matchingPrGateChecks(options);
+  if (existing.length > 1) throw new Error("Multiple exact-head PR gate checks already exist");
+  if (existing[0]) return existing[0].id;
+
+  const check = await githubApi<CheckRun>(`repos/${options.repository}/check-runs`, options.token, {
     method: "POST",
     body: {
       name: CHECK_NAME,
-      head_sha: headSha,
+      head_sha: options.headSha,
+      external_id: prGateExternalId(options.prNumber, options.headSha),
       status: "in_progress",
-      output: { title, summary },
+      output: {
+        title: "Waiting for PR CI",
+        summary:
+          "This exact PR revision is reserved for deterministic E2E planning after CI completes.",
+      },
     },
     userAgent: USER_AGENT,
   });
@@ -518,6 +656,27 @@ async function createCheck(
     throw new Error("GitHub returned an invalid check id");
   }
   return check.id;
+}
+
+export async function seedPrGate(prNumber: number, headSha: string): Promise<number> {
+  const { token, repository } = tokenAndRepository();
+  if (!SHA_PATTERN.test(headSha)) throw new Error("PR head SHA is invalid");
+  const checkRunId = await ensurePrGateCheck({ repository, token, headSha, prNumber });
+  console.log(`Exact-head gate reserved: pr=${prNumber} sha=${headSha} check=${checkRunId}`);
+  return checkRunId;
+}
+
+async function markCheckInProgress(
+  context: { repository: string; checkRunId: number },
+  token: string,
+  title: string,
+  summary: string,
+): Promise<void> {
+  await githubApi(`repos/${context.repository}/check-runs/${context.checkRunId}`, token, {
+    method: "PATCH",
+    body: { status: "in_progress", output: { title, summary } },
+    userAgent: USER_AGENT,
+  });
 }
 
 async function completeCheck(
@@ -1054,19 +1213,7 @@ export async function dispatchPrGate(options: {
   ) {
     throw new Error("Controller dispatch inputs are invalid");
   }
-  const main = await githubApi<GitReference>(
-    `repos/${options.repository}/git/ref/heads/main`,
-    options.token,
-    { userAgent: USER_AGENT },
-  );
-  if (
-    !main ||
-    main.ref !== "refs/heads/main" ||
-    main.object?.type !== "commit" ||
-    main.object.sha !== options.workflowSha
-  ) {
-    throw new Error(`main no longer points to workflow commit ${options.workflowSha}`);
-  }
+  await assertMainWorkflowCommit(options.repository, options.token, options.workflowSha);
   const details = await githubApi<unknown>(
     `repos/${options.repository}/actions/workflows/${E2E_WORKFLOW}/dispatches`,
     options.token,
@@ -1089,6 +1236,24 @@ export async function dispatchPrGate(options: {
   return validateWorkflowDispatchDetails(details, options.repository).workflow_run_id;
 }
 
+async function assertMainWorkflowCommit(
+  repository: string,
+  token: string,
+  workflowSha: string,
+): Promise<void> {
+  const main = await githubApi<GitReference>(`repos/${repository}/git/ref/heads/main`, token, {
+    userAgent: USER_AGENT,
+  });
+  if (
+    !main ||
+    main.ref !== "refs/heads/main" ||
+    main.object?.type !== "commit" ||
+    main.object.sha !== workflowSha
+  ) {
+    throw new Error(`main no longer points to workflow commit ${workflowSha}`);
+  }
+}
+
 async function cancelChildRun(repository: string, token: string, runId: number): Promise<void> {
   try {
     await githubApi(`repos/${repository}/actions/runs/${runId}/cancel`, token, {
@@ -1109,18 +1274,31 @@ export async function startPrGate(
   if (!SHA_PATTERN.test(command.workflowSha)) throw new Error("workflow SHA is invalid");
   assertRepository(command.headRepository, "PR head repository");
   assertBranch(command.headBranch);
-  if (command.headRepository !== repository) {
-    throw new Error("PR branch must be in the base repository");
+  let pull: PullRequest | undefined;
+  let gatePrNumber = command.prNumber;
+  if (gatePrNumber === undefined) {
+    pull = await resolvePullRequest({
+      repository,
+      token,
+      headSha: command.headSha,
+      headRepository: command.headRepository,
+      headBranch: command.headBranch,
+    });
+    gatePrNumber = pull.number;
   }
-
-  const checkRunId = await createCheck(
+  const checkRunId = await ensurePrGateCheck({
     repository,
     token,
-    command.headSha,
-    "Evaluating PR commit",
-    "Validating the PR and selecting E2E jobs.",
-  );
+    headSha: command.headSha,
+    prNumber: gatePrNumber,
+  });
   appendOutput("check_id", String(checkRunId));
+  await markCheckInProgress(
+    { repository, checkRunId },
+    token,
+    "Evaluating PR commit",
+    "Validating the exact PR revision and selecting deterministic E2E jobs.",
+  );
 
   let finalized = false;
   let childRunId: number | undefined;
@@ -1171,7 +1349,7 @@ export async function startPrGate(
       throw new PrerequisiteCiError(report.errorMessage);
     }
 
-    const pull = await resolvePullRequest({
+    pull ??= await resolvePullRequest({
       repository,
       token,
       headSha: command.headSha,
@@ -1179,17 +1357,21 @@ export async function startPrGate(
       headBranch: command.headBranch,
     });
     if (
-      command.headRepository !== repository ||
-      pull.head.repo?.full_name !== repository ||
+      pull.head.repo?.full_name !== command.headRepository ||
       (command.prNumber !== undefined && pull.number !== command.prNumber)
     ) {
       throw new Error("PR identity does not match the triggering workflow run");
     }
 
     const changedFiles = await pullChangedFiles(repository, pull, token);
-    const allowedJobs = new Set(readFreeStandingJobsInventory().allowedJobs);
+    const inventory = readFreeStandingJobsInventory();
+    const allowedJobs = new Set(inventory.allowedJobs);
     const plan = validateRiskPlan(
-      buildRiskPlan({ headSha: command.headSha, changedFiles }),
+      buildRiskPlan({
+        headSha: command.headSha,
+        changedFiles,
+        focusedE2eJobs: focusedE2eJobsForChangedFiles(changedFiles, inventory),
+      }),
       allowedJobs,
     );
     writePrivateRegularFile(command.planPath, `${JSON.stringify(plan, null, 2)}\n`);
@@ -1202,6 +1384,54 @@ export async function startPrGate(
       headBranch: command.headBranch,
     });
     assertPullUnchanged(pull, currentPull);
+    if (command.headRepository !== repository && jobs.length > 0) {
+      await completeCheck(
+        { repository, checkRunId },
+        token,
+        {
+          conclusion: "failure",
+          title: "Maintainer fork exception required",
+          summary: [
+            `This exact fork revision (${command.headSha}) selected credential-bearing E2E jobs: ${jobs.join(", ")}.`,
+            "Fork code was not executed and no repository secret was exposed.",
+            "A maintainer must use the E2E / PR Gate workflow on main to record an explicit no-secret exception for this exact SHA, with a reason and any trusted supporting run.",
+          ].join("\n\n"),
+        },
+        `https://github.com/${repository}/pull/${pull.number}`,
+      );
+      appendOutput("dispatched", "false");
+      appendOutput("finalized", "true");
+      finalized = true;
+      console.log(
+        `Fork not dispatched: pr=${pull.number} sha=${command.headSha} plan=${plan.planHash} jobs=${jobs.join(",")}`,
+      );
+      return;
+    }
+    const controlPlaneFamily = plan.families.find((family) => family.id === "e2e-control-plane");
+    if (controlPlaneFamily) {
+      await completeCheck(
+        { repository, checkRunId },
+        token,
+        {
+          conclusion: "failure",
+          title: "Maintainer control-plane exception required",
+          summary: [
+            `This exact internal revision (${command.headSha}) changes trusted E2E execution or evidence code and selected credential-bearing E2E jobs: ${jobs.join(", ")}.`,
+            "No PR-controlled E2E workflow, test, support code, or evidence reporter was executed with repository credentials.",
+            "A maintainer must use the E2E / PR Gate workflow on main with the resolve-control-plane operation to record an explicit no-secret exception for this exact SHA and explain the independent review performed.",
+            `Deterministic plan: ${plan.planHash}.`,
+          ].join("\n\n"),
+        },
+        `https://github.com/${repository}/pull/${pull.number}`,
+      );
+      appendOutput("dispatched", "false");
+      appendOutput("finalized", "true");
+      finalized = true;
+      console.log(
+        `Control-plane change not dispatched: pr=${pull.number} sha=${command.headSha} plan=${plan.planHash} jobs=${jobs.join(",")}`,
+      );
+      return;
+    }
     if (jobs.length === 0) {
       await completeCheck({ repository, checkRunId }, token, {
         conclusion: "success",
@@ -1430,6 +1660,148 @@ export async function abandonPrGate(checkRunId: number, childRunId?: number): Pr
   if (cancellationError) throw cancellationError;
 }
 
+async function resolveGateException(command: ManualResolutionCommand): Promise<void> {
+  const { token, repository } = tokenAndRepository();
+  if (!SHA_PATTERN.test(command.headSha)) throw new Error("PR head SHA is invalid");
+  if (!SHA_PATTERN.test(command.workflowSha)) throw new Error("workflow SHA is invalid");
+  if (!MAINTAINER_PATTERN.test(command.maintainer)) throw new Error("maintainer login is invalid");
+  const reason = normalizedWaiverReason(command.reason);
+  if (command.evidenceUrl && !EVIDENCE_URL_PATTERN.test(command.evidenceUrl)) {
+    throw new Error("evidence URL must name an NVIDIA/NemoClaw Actions run");
+  }
+
+  const permission = await githubApi<CollaboratorPermission>(
+    `repos/${repository}/collaborators/${encodeURIComponent(command.maintainer)}/permission`,
+    token,
+    { userAgent: USER_AGENT },
+  );
+  if (
+    !permission ||
+    !["maintain", "admin"].includes(permission.role_name ?? "") ||
+    permission.user?.login?.toLowerCase() !== command.maintainer.toLowerCase()
+  ) {
+    throw new Error("E2E exceptions require a repository maintainer or administrator");
+  }
+
+  const pull = validatePullRequest(
+    await githubApi<unknown>(`repos/${repository}/pulls/${command.prNumber}`, token, {
+      userAgent: USER_AGENT,
+    }),
+  );
+  if (
+    pull.state !== "open" ||
+    pull.base.repo.full_name !== repository ||
+    !pull.head.repo ||
+    pull.head.sha !== command.headSha
+  ) {
+    throw new Error("pull request no longer matches the reviewed exact head SHA");
+  }
+  const isFork = pull.head.repo.full_name !== repository;
+  if (command.mode === "resolve-fork" && !isFork) {
+    throw new Error("fork exceptions require a fork pull request");
+  }
+  if (command.mode === "resolve-control-plane" && isFork) {
+    throw new Error("control-plane exceptions require an internal pull request");
+  }
+
+  const changedFiles = await pullChangedFiles(repository, pull, token);
+  const inventory = readFreeStandingJobsInventory();
+  const allowedJobs = new Set(inventory.allowedJobs);
+  const plan = validateRiskPlan(
+    buildRiskPlan({
+      headSha: command.headSha,
+      changedFiles,
+      focusedE2eJobs: focusedE2eJobsForChangedFiles(changedFiles, inventory),
+    }),
+    allowedJobs,
+  );
+  const jobs = riskPlanRequiredJobIds(plan);
+  if (jobs.length === 0) {
+    throw new Error("pull request does not require an E2E exception");
+  }
+  const changesControlPlane = plan.families.some((family) => family.id === "e2e-control-plane");
+  if (command.mode === "resolve-control-plane" && !changesControlPlane) {
+    throw new Error("pull request does not change the trusted E2E control plane");
+  }
+  const currentPull = validatePullRequest(
+    await githubApi<unknown>(`repos/${repository}/pulls/${command.prNumber}`, token, {
+      userAgent: USER_AGENT,
+    }),
+  );
+  assertPullUnchanged(pull, currentPull);
+
+  const matchingChecks = await matchingPrGateChecks({
+    repository,
+    token,
+    headSha: command.headSha,
+    prNumber: command.prNumber,
+  });
+  if (matchingChecks.length !== 1) {
+    throw new Error(`Expected one exact-head PR gate check; found ${matchingChecks.length}`);
+  }
+  const check = matchingChecks[0]!;
+  const expectedFailureTitle =
+    command.mode === "resolve-fork"
+      ? "Maintainer fork exception required"
+      : "Maintainer control-plane exception required";
+  if (
+    check.status !== "completed" ||
+    check.conclusion !== "failure" ||
+    check.output?.title !== expectedFailureTitle
+  ) {
+    throw new Error("PR gate must first complete with the matching exception-required failure");
+  }
+
+  const safeReason = reason.replace(/`/gu, "'");
+  const evidence = command.evidenceUrl
+    ? `Maintainer-supplied Actions reference (not validated by this controller): [${command.evidenceUrl}](${command.evidenceUrl}).`
+    : "No maintainer-supplied Actions reference was recorded.";
+  const title =
+    command.mode === "resolve-fork"
+      ? `Fork exception recorded by @${command.maintainer}`
+      : `Control-plane exception recorded by @${command.maintainer}`;
+  const approval =
+    command.mode === "resolve-fork"
+      ? `Maintainer @${command.maintainer} approved a no-secret exception for exact fork SHA \`${command.headSha}\`.`
+      : `Maintainer @${command.maintainer} recorded a no-secret exception for exact internal SHA \`${command.headSha}\`.`;
+  const nonExecution =
+    command.mode === "resolve-fork"
+      ? `Credential-bearing E2E was not run. Waived jobs: ${jobs.join(", ")}.`
+      : `Credential-bearing E2E was not run because this PR controls E2E execution or evidence. Waived jobs: ${jobs.join(", ")}. Non-secret PR CI remains required.`;
+  await assertMainWorkflowCommit(repository, token, command.workflowSha);
+  await completeCheck(
+    { repository, checkRunId: check.id },
+    token,
+    {
+      conclusion: "success",
+      title,
+      summary: [
+        approval,
+        nonExecution,
+        `Reason: ${safeReason}`,
+        evidence,
+        `Deterministic plan: \`${plan.planHash}\`.`,
+      ].join("\n\n"),
+    },
+    command.evidenceUrl ?? `https://github.com/${repository}/pull/${pull.number}`,
+  );
+  console.log(
+    `E2E exception recorded: mode=${command.mode} pr=${pull.number} sha=${command.headSha} maintainer=${command.maintainer} plan=${plan.planHash}`,
+  );
+}
+
+export async function resolveForkGate(
+  command: Extract<ManualResolutionCommand, { mode: "resolve-fork" }>,
+): Promise<void> {
+  await resolveGateException(command);
+}
+
+export async function resolveControlPlaneGate(
+  command: Extract<ManualResolutionCommand, { mode: "resolve-control-plane" }>,
+): Promise<void> {
+  await resolveGateException(command);
+}
+
 export async function cancelPrGate(prNumber: number): Promise<number> {
   const { token, repository } = tokenAndRepository();
   if (!Number.isSafeInteger(prNumber) || prNumber < 1) throw new Error("PR number is invalid");
@@ -1490,6 +1862,10 @@ function reportControllerError(error: unknown): void {
 
 async function main(): Promise<void> {
   const command = parseControllerCommand(process.argv.slice(2));
+  if (command.mode === "seed") {
+    await seedPrGate(command.prNumber, command.headSha);
+    return;
+  }
   if (command.mode === "start") {
     await startPrGate(command);
     return;
@@ -1506,6 +1882,10 @@ async function main(): Promise<void> {
   }
   if (command.mode === "abandon") {
     await abandonPrGate(command.checkRunId, command.childRunId);
+    return;
+  }
+  if (command.mode === "resolve-fork" || command.mode === "resolve-control-plane") {
+    await resolveGateException(command);
     return;
   }
   await cancelPrGate(command.prNumber);

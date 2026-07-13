@@ -10,7 +10,7 @@ import { RISK_RULES } from "../advisors/risk-plan.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
-const DEFAULT_ADVISOR_PATH = join(REPO_ROOT, ".github", "workflows", "e2e-advisor.yaml");
+const DEFAULT_ADVISOR_PATH = join(REPO_ROOT, ".github", "workflows", "pr-review-advisor.yaml");
 const META_JOBS = new Set(["report-to-pr", "scorecard"]);
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
 const GITHUB_SCRIPT_NODE24_ACTION =
@@ -523,7 +523,7 @@ function validateTraceTiming(errors: string[], workflow: OperationsWorkflow): vo
   }
 }
 
-function validateAdvisorRetirement(errors: string[], advisorPath: string): void {
+function validateUnifiedAdvisorBoundary(errors: string[], advisorPath: string): void {
   const source = readFileSync(advisorPath, "utf8");
   const advisor = YAML.parse(source) as OperationsWorkflow;
   const permissionBlocks = [
@@ -536,10 +536,10 @@ function validateAdvisorRetirement(errors: string[], advisorPath: string): void 
         permissions === "write-all" || permissionMap(permissions).actions === "write",
     )
   ) {
-    errors.push("E2E advisor must not hold actions: write");
+    errors.push("Unified advisor must not hold actions: write");
   }
   if (/createWorkflowDispatch|workflow_dispatches/u.test(source)) {
-    errors.push("E2E advisor must not auto-dispatch workflows");
+    errors.push("Unified advisor must not auto-dispatch workflows");
   }
 }
 
@@ -554,7 +554,7 @@ export function validateE2eOperationsWorkflow(
   validateIssueRoutingRetirement(errors, workflow);
   validateScorecard(errors, workflow);
   validateTraceTiming(errors, workflow);
-  validateAdvisorRetirement(errors, advisorPath);
+  validateUnifiedAdvisorBoundary(errors, advisorPath);
   return errors;
 }
 

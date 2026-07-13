@@ -66,6 +66,7 @@ describe("handleSandboxState live DCode selection", () => {
     });
 
     expect(calls.createSandbox.mock.calls[0]?.at(-1)).toEqual({
+      resolved: expect.any(Object),
       recreate: false,
       toolDisclosure: "progressive",
       observabilityEnabled: true,
@@ -185,6 +186,7 @@ describe("handleSandboxState live DCode selection", () => {
       "openai-completions",
     );
     expect(calls.createSandbox.mock.calls[0]?.at(-1)).toEqual({
+      resolved: expect.any(Object),
       recreate: true,
       toolDisclosure: "progressive",
       observabilityEnabled: false,
@@ -206,6 +208,7 @@ describe("handleSandboxState live DCode selection", () => {
 
     expect(calls.removeSandbox).not.toHaveBeenCalled();
     expect(calls.createSandbox.mock.calls[0]?.at(-1)).toEqual({
+      resolved: expect.any(Object),
       recreate: true,
       toolDisclosure: "progressive",
       observabilityEnabled: false,

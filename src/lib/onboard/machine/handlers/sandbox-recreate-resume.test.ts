@@ -20,7 +20,10 @@ describe("handleSandboxState resume recreation", () => {
     session.steps.sandbox.status = "complete";
     const { deps, calls } = createDeps({
       getSandboxReuseState: () => "ready",
-      reconcileRegisteredExtraProviders: vi.fn(() => ["healthy-extra-provider"]),
+      planRegisteredExtraProviders: vi.fn(() => ({
+        extraProviders: ["healthy-extra-provider"],
+        staleExtraProviders: [],
+      })),
       getSandboxRegistryEntry: () => ({
         name: "saved",
         provider: "provider",
@@ -45,7 +48,7 @@ describe("handleSandboxState resume recreation", () => {
     expect(calls.note).toHaveBeenCalledWith(
       "  [resume] Recreate sandbox requested; recreating sandbox.",
     );
-    expect(deps.reconcileRegisteredExtraProviders).toHaveBeenCalledWith("nemoclaw");
+    expect(deps.planRegisteredExtraProviders).toHaveBeenCalledWith("nemoclaw");
     expect(calls.removeSandbox).not.toHaveBeenCalled();
     expect(calls.createSandbox).toHaveBeenCalledTimes(1);
     const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
@@ -65,7 +68,10 @@ describe("handleSandboxState resume recreation", () => {
     session.steps.sandbox.status = "complete";
     const { deps, calls } = createDeps({
       getSandboxReuseState: () => "missing",
-      reconcileRegisteredExtraProviders: vi.fn(() => []),
+      planRegisteredExtraProviders: vi.fn(() => ({
+        extraProviders: [],
+        staleExtraProviders: ["stale-extra-provider"],
+      })),
     });
     calls.createSandbox.mockResolvedValue("saved");
 
@@ -75,12 +81,13 @@ describe("handleSandboxState resume recreation", () => {
       sandboxName: "saved",
     });
 
-    expect(deps.reconcileRegisteredExtraProviders).toHaveBeenCalledWith("nemoclaw");
+    expect(deps.planRegisteredExtraProviders).toHaveBeenCalledWith("nemoclaw");
     expect(calls.createSandbox).toHaveBeenCalledTimes(1);
     const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
     expect(createSandboxCall[14]).toMatchObject({
       extraProviders: [],
       recreate: true,
+      resolved: expect.objectContaining({ staleExtraProviders: ["stale-extra-provider"] }),
     });
   });
 });

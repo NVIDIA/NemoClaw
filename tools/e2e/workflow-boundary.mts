@@ -38,6 +38,12 @@ export interface FreeStandingJobsInventory {
   explicitOnlyJobs: string[];
   freeStandingTargets: string[];
   targetToJob: Map<string, string>;
+  liveTestToJobs: Map<string, string[]>;
+}
+
+export interface FocusedE2eJob {
+  id: string;
+  matchedFiles: string[];
 }
 
 type CachedFreeStandingJobsInventory = {
@@ -48,6 +54,7 @@ type CachedFreeStandingJobsInventory = {
 
 const SELECTOR_PATTERN = /^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$/;
 const SELECTOR_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+const LIVE_TEST_FILE_PATTERN = /test\/e2e\/live\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.test\.ts/g;
 const FREE_STANDING_JOB_MARKER = "E2E_JOB";
 const FREE_STANDING_TARGET_MARKER = "E2E_TARGET_ID";
 const FREE_STANDING_DEFAULT_ENABLED_MARKER = "E2E_DEFAULT_ENABLED";
@@ -83,6 +90,23 @@ function asRecord(value: unknown): WorkflowRecord {
     : {};
 }
 
+function collectLiveTestFiles(value: unknown): string[] {
+  if (typeof value === "string") return value.match(LIVE_TEST_FILE_PATTERN) ?? [];
+  if (Array.isArray(value)) return value.flatMap(collectLiveTestFiles);
+  if (!value || typeof value !== "object") return [];
+  return Object.values(value).flatMap(collectLiveTestFiles);
+}
+
+function addMapValue(map: Map<string, string[]>, key: string, value: string): void {
+  const values = map.get(key) ?? [];
+  if (!values.includes(value)) values.push(value);
+  map.set(key, values);
+}
+
+function cloneStringArrayMap(map: ReadonlyMap<string, readonly string[]>): Map<string, string[]> {
+  return new Map([...map].map(([key, values]) => [key, [...values]]));
+}
+
 function findDuplicates(values: readonly string[]): string[] {
   const seen = new Set<string>();
   const duplicates = new Set<string>();
@@ -103,6 +127,7 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
   const explicitOnlyJobs: string[] = [];
   const freeStandingTargets: string[] = [];
   const targetToJob = new Map<string, string>();
+  const liveTestToJobs = new Map<string, string[]>();
 
   for (const [jobId, rawJob] of Object.entries(jobs)) {
     const job = asRecord(rawJob);
@@ -128,6 +153,7 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
 
     allowedJobs.push(jobId);
     workflowJobs.push(jobId);
+    for (const file of collectLiveTestFiles(rawJob)) addMapValue(liveTestToJobs, file, jobId);
     if (Object.hasOwn(env, FREE_STANDING_DEFAULT_ENABLED_MARKER)) {
       if (env[FREE_STANDING_DEFAULT_ENABLED_MARKER] !== "0") {
         errors.push(`${jobId} job ${FREE_STANDING_DEFAULT_ENABLED_MARKER} must be "0" when set`);
@@ -155,6 +181,7 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
         allowedJobs.push(row.id);
         freeStandingTargets.push(row.id);
         targetToJob.set(row.id, SHARED_E2E_JOB_ID);
+        addMapValue(liveTestToJobs, row.file, row.id);
       }
     } catch (error) {
       errors.push(
@@ -184,6 +211,14 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
       explicitOnlyJobs,
       freeStandingTargets,
       targetToJob,
+      liveTestToJobs: new Map(
+        [...liveTestToJobs]
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([file, jobs]) => [
+            file,
+            [...jobs].sort((left, right) => left.localeCompare(right)),
+          ]),
+      ),
     },
   };
 }
@@ -203,6 +238,7 @@ function cloneFreeStandingJobsInventory(
     explicitOnlyJobs: [...inventory.explicitOnlyJobs],
     freeStandingTargets: [...inventory.freeStandingTargets],
     targetToJob: new Map(inventory.targetToJob),
+    liveTestToJobs: cloneStringArrayMap(inventory.liveTestToJobs),
   };
 }
 
@@ -233,6 +269,21 @@ export function readFreeStandingJobsInventory(
     inventory: cloneFreeStandingJobsInventory(inventory),
   });
   return inventory;
+}
+
+export function focusedE2eJobsForChangedFiles(
+  changedFiles: readonly string[],
+  inventory: FreeStandingJobsInventory = readFreeStandingJobsInventory(),
+): FocusedE2eJob[] {
+  const matchedFilesByJob = new Map<string, string[]>();
+  for (const file of [...new Set(changedFiles)].sort((left, right) => left.localeCompare(right))) {
+    for (const job of inventory.liveTestToJobs.get(file) ?? []) {
+      addMapValue(matchedFilesByJob, job, file);
+    }
+  }
+  return [...matchedFilesByJob]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([id, matchedFiles]) => ({ id, matchedFiles }));
 }
 
 export interface WorkflowDispatchSelectorEvaluation {
