@@ -28,6 +28,30 @@ describe("resolveRunningOllamaMenuEntry", () => {
         "Local Ollama (Windows host:11434) — running (requires Docker Desktop WSL integration)",
     });
   });
+
+  it("renders a start action for installed-but-stopped Ollama on WSL (#6750)", () => {
+    const entry = resolveRunningOllamaMenuEntry({
+      hasOllama: true,
+      ollamaRunning: false,
+      ollamaHost: null,
+      isWsl: true,
+      ollamaPort: 11434,
+    });
+
+    expect(entry).toEqual({ key: "ollama", label: "Start local Ollama (WSL:11434)" });
+  });
+
+  it("renders a start action for installed-but-stopped Ollama on non-WSL hosts (#6750)", () => {
+    const entry = resolveRunningOllamaMenuEntry({
+      hasOllama: true,
+      ollamaRunning: false,
+      ollamaHost: null,
+      isWsl: false,
+      ollamaPort: 11434,
+    });
+
+    expect(entry).toEqual({ key: "ollama", label: "Start local Ollama (localhost:11434)" });
+  });
 });
 
 describe("resolveOllamaInstallMenuEntry", () => {

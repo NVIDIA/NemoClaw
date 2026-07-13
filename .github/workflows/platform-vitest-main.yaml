@@ -23,6 +23,57 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  ubuntu-2604-contract:
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:26.04@sha256:b7f48194d4d8b763a478a621cdc81c27be222ba2206ca3ca6bc42b49685f3d9e
+    timeout-minutes: 20
+    steps:
+      - name: Install runner dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates git python3
+          rm -rf /var/lib/apt/lists/*
+
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Verify Ubuntu 26.04 userspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          . /etc/os-release
+          test "$ID" = "ubuntu"
+          test "$VERSION_ID" = "26.04"
+          printf 'os=%s version=%s arch=%s\n' "$ID" "$VERSION_ID" "$(uname -m)"
+          node --version
+          npm --version
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Run Ubuntu 26.04 compatibility contracts
+        run: |
+          npx vitest run --project cli \
+            src/lib/onboard/preflight.test.ts \
+            src/lib/onboard/preflight-ubuntu-2604.test.ts
+          npx vitest run --project integration test/platform.test.ts
+          npx vitest run --project installer-integration \
+            --testTimeout 30000 \
+            test/install-preflight.test.ts
+
   macos-vitest:
     runs-on: macos-26
     timeout-minutes: 20

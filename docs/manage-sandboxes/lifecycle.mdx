@@ -193,6 +193,26 @@ For full details on port conflicts and overrides, refer to [Port already in use]
 
 </AgentOnly>
 
+## Stop and Start a Sandbox
+
+Stop a sandbox's container to free CPU, memory, and GPU resources without losing anything:
+
+```bash
+$$nemoclaw <sandbox-name> stop
+```
+
+Workspace files, credentials, network policies, and the registry entry are preserved; only the container stops running.
+The shared host gateway and tunnel services keep serving other sandboxes.
+
+Start it again later; NemoClaw restarts the container and repairs the in-sandbox gateway and host forwards:
+
+```bash
+$$nemoclaw <sandbox-name> start
+```
+
+Refer to [`$$nemoclaw <name> stop`](../reference/commands#$$nemoclaw-name-stop) and [`$$nemoclaw <name> start`](../reference/commands#$$nemoclaw-name-start) for details.
+Use [`$$nemoclaw <name> destroy`](../reference/commands#$$nemoclaw-name-destroy) when you want to delete the sandbox instead.
+
 ## Reconfigure or Recover
 
 Recover from a misconfigured sandbox without re-running the full onboard wizard or destroying workspace state.

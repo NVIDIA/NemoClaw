@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { OLLAMA_HOST_DOCKER_INTERNAL, validateOllamaPortConfiguration } from "../inference/local";
 import { OLLAMA_PORT } from "../core/ports";
+import { OLLAMA_HOST_DOCKER_INTERNAL, validateOllamaPortConfiguration } from "../inference/local";
 import {
   getInstalledOllamaVersion,
   getRunningOllamaDaemonVersion,
@@ -80,9 +80,13 @@ export function resolveRunningOllamaMenuEntry(
     (input.ollamaHost === OLLAMA_HOST_DOCKER_INTERNAL ? !windowsHostSuffix : !input.isWsl);
   const runningSuffix = input.ollamaRunning ? " — running" : "";
   const suggestionSuffix = suggested ? " (suggested)" : "";
+  // A stopped daemon renders as an action, not a status: selecting the entry
+  // starts Ollama, and a bare "Local Ollama (WSL:11434)" reads as a
+  // reachability claim when the daemon is down (#6750).
+  const labelPrefix = input.ollamaRunning ? "Local Ollama" : "Start local Ollama";
   return {
     key: "ollama",
-    label: `Local Ollama (${hostDisplay})${runningSuffix}${windowsHostSuffix}${suggestionSuffix}`,
+    label: `${labelPrefix} (${hostDisplay})${runningSuffix}${windowsHostSuffix}${suggestionSuffix}`,
   };
 }
 

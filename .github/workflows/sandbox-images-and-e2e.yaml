@@ -218,10 +218,78 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Save Hermes production image
+        run: |
+          set -euo pipefail
+          docker save nemoclaw-hermes-production | gzip > /tmp/hermes-isolation-image.tar.gz
+          gzip -t /tmp/hermes-isolation-image.tar.gz
+
+      - name: Upload Hermes isolation image
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hermes-isolation-image
+          path: /tmp/hermes-isolation-image.tar.gz
+          retention-days: 1
+
       - name: Clean up Docker auth
         if: always()
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
+
+  state-dir-guard-metadata:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [build-sandbox-images, build-hermes-sandbox-image]
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/state-dir-guard-metadata
+      E2E_TARGET_ID: state-dir-guard-metadata
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_OPENCLAW_TEST_IMAGE: nemoclaw-production
+      NEMOCLAW_HERMES_TEST_IMAGE: nemoclaw-hermes-production
+    steps:
+      - *checkout
+
+      - *setup-node
+
+      - *install-root-dependencies
+
+      - name: Download OpenClaw production image
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: isolation-image
+          path: /tmp
+
+      - name: Download Hermes production image
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: hermes-isolation-image
+          path: /tmp
+
+      - name: Load production images
+        run: |
+          set -euo pipefail
+          gunzip -c /tmp/isolation-image.tar.gz | docker load
+          gunzip -c /tmp/hermes-isolation-image.tar.gz | docker load
+          docker image inspect nemoclaw-production >/dev/null
+          docker image inspect nemoclaw-hermes-production >/dev/null
+
+      - name: Install filesystem metadata tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends acl attr
+          command -v setfacl getfacl setfattr getfattr >/dev/null
+
+      - name: Run installed state-dir guard metadata test
+        timeout-minutes: 15
+        run: |
+          npx vitest run --project e2e-live \
+            test/e2e/live/state-dir-guard-metadata.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload state-dir guard metadata artifacts
+        if: always()
+        uses: ./.github/actions/upload-e2e-artifacts
 
   build-sandbox-images-arm64:
     if: inputs.run_arm64
