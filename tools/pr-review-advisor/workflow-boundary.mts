@@ -249,6 +249,7 @@ function checkAnalysisJob(errors: string[], reviewJob: WorkflowRecord): void {
   requireEnv(errors, "review job", reviewJob, "FD_FIND_VERSION", "9.0.0-1");
   requireEnv(errors, "review job", reviewJob, "RIPGREP_VERSION", "14.1.0-1");
   requireEnv(errors, "review job", reviewJob, "TYPEBOX_VERSION", "1.1.38");
+  requireEnv(errors, "review job", reviewJob, "VITEST_VERSION", "4.1.9");
   requireEnv(errors, "review job", reviewJob, "YAML_VERSION", "2.8.3");
   requireEnv(
     errors,
@@ -366,6 +367,7 @@ done < <(find "$ADVISOR_WORKDIR" -type l -print0)`;
   );
   requireRunContains(errors, install, "--ignore-scripts");
   requireRunContains(errors, install, '"typebox@${TYPEBOX_VERSION}"');
+  requireRunContains(errors, install, '"vitest@${VITEST_VERSION}"');
   requireRunContains(errors, install, '"yaml@${YAML_VERSION}"');
   requireRunContains(errors, install, '"$ADVISOR_DIR/node_modules"');
 

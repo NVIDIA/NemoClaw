@@ -483,6 +483,7 @@ printf 'sudo %s\\n' "$*" >> "$CALL_LOG"
             RIPGREP_VERSION: "14.1.0-1",
             RUNNER_TEMP: path.join(tmp, "runner"),
             TYPEBOX_VERSION: "test-typebox-version",
+            VITEST_VERSION: "test-vitest-version",
             YAML_VERSION: "test-yaml-version",
           },
         },
@@ -497,6 +498,7 @@ printf 'sudo %s\\n' "$*" >> "$CALL_LOG"
       expect(fs.readFileSync(callLog, "utf8")).toContain("rg --version");
       expect(fs.readFileSync(callLog, "utf8")).toContain("--ignore-scripts");
       expect(fs.readFileSync(callLog, "utf8")).toContain("typebox@test-typebox-version");
+      expect(fs.readFileSync(callLog, "utf8")).toContain("vitest@test-vitest-version");
       expect(fs.readFileSync(callLog, "utf8")).toContain("yaml@test-yaml-version");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -642,6 +644,7 @@ process.exitCode = valid ? 0 : 1;`,
     const errors = validateMutation((source) =>
       source
         .replace('      FD_FIND_VERSION: "9.0.0-1"', '      FD_FIND_VERSION: "latest"')
+        .replace('      VITEST_VERSION: "4.1.9"', '      VITEST_VERSION: "latest"')
         .replace('      YAML_VERSION: "2.8.3"', '      YAML_VERSION: "latest"')
         .replace(
           '      PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW: "false"',
@@ -652,6 +655,7 @@ process.exitCode = valid ? 0 : 1;`,
     expect(errors).toEqual(
       expect.arrayContaining([
         "review job env.FD_FIND_VERSION must be 9.0.0-1",
+        "review job env.VITEST_VERSION must be 4.1.9",
         "review job env.YAML_VERSION must be 2.8.3",
         "review job env.PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW must be false",
       ]),
