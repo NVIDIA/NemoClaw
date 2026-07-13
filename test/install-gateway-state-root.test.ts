@@ -11,6 +11,23 @@ import { describe, expect, it } from "vitest";
 const INSTALLER = path.join(import.meta.dirname, "..", "scripts", "install.sh");
 const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
 
+const stateSymlinkCases = [
+  {
+    label: "gateways",
+    setup(root: string, controlled: string): void {
+      fs.mkdirSync(root);
+      fs.symlinkSync(controlled, path.join(root, "gateways"), "dir");
+    },
+  },
+  {
+    label: "selected-port",
+    setup(root: string, controlled: string): void {
+      fs.mkdirSync(path.join(root, "gateways"), { recursive: true });
+      fs.symlinkSync(controlled, path.join(root, "gateways", "9123"), "dir");
+    },
+  },
+];
+
 function writeJson(filePath: string, value: unknown): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify(value));
@@ -140,22 +157,15 @@ save_usage_notice_acceptance_shell "test-version"`,
     }
   });
 
-  it.each([
-    "gateways",
-    "selected-port",
-  ])("rejects a symlinked %s state ancestor before writing usage acceptance", (symlinkLocation) => {
+  it.each(
+    stateSymlinkCases,
+  )("rejects a symlinked $label state ancestor before writing usage acceptance", ({ setup }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-state-symlink-"));
     try {
       const root = path.join(home, ".nemoclaw");
       const controlled = path.join(home, "controlled");
       fs.mkdirSync(controlled);
-      if (symlinkLocation === "gateways") {
-        fs.mkdirSync(root);
-        fs.symlinkSync(controlled, path.join(root, "gateways"), "dir");
-      } else {
-        fs.mkdirSync(path.join(root, "gateways"), { recursive: true });
-        fs.symlinkSync(controlled, path.join(root, "gateways", "9123"), "dir");
-      }
+      setup(root, controlled);
 
       const result = runInstallerFunctions(
         home,
