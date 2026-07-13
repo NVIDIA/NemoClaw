@@ -12,10 +12,10 @@ const DEFAULT_PACKAGE_LOCK_PATH = join(REPO_ROOT, "package-lock.json");
 const TRUSTED_WORKFLOW_REF = "${{ github.workflow_sha }}";
 const CANONICAL_ADVISOR_NPM_CI = "npm ci --ignore-scripts --no-audit --no-fund";
 const ADVISOR_RUNTIME_PACKAGE_PINS = [
-  ["@earendil-works/pi-coding-agent", "0.80.6"],
-  ["typebox", "1.1.38"],
-  ["yaml", "2.8.3"],
-  ["vitest", "4.1.9"],
+  { packageName: "@earendil-works/pi-coding-agent", envName: "PI_SDK_VERSION", version: "0.80.6" },
+  { packageName: "typebox", envName: "TYPEBOX_VERSION", version: "1.1.38" },
+  { packageName: "yaml", envName: "YAML_VERSION", version: "2.8.3" },
+  { packageName: "vitest", envName: "VITEST_VERSION", version: "4.1.9" },
 ] as const;
 
 type WorkflowRecord = Record<string, unknown>;
@@ -154,10 +154,10 @@ function checkAdvisorRuntimePackageLock(errors: string[], packageLockPath: strin
     return;
   }
   const packages = asRecord(lock.packages);
-  for (const [name, expectedVersion] of ADVISOR_RUNTIME_PACKAGE_PINS) {
-    const actualVersion = asRecord(packages[`node_modules/${name}`]).version;
-    if (actualVersion !== expectedVersion) {
-      errors.push(`advisor package lock must pin ${name}@${expectedVersion}`);
+  for (const { packageName, version } of ADVISOR_RUNTIME_PACKAGE_PINS) {
+    const actualVersion = asRecord(packages[`node_modules/${packageName}`]).version;
+    if (actualVersion !== version) {
+      errors.push(`advisor package lock must pin ${packageName}@${version}`);
     }
   }
 }
@@ -283,12 +283,11 @@ function checkAnalysisJob(errors: string[], reviewJob: WorkflowRecord): void {
     "PR_REVIEW_ADVISOR_MODEL",
     "${{ matrix.advisor.model }}",
   );
-  requireEnv(errors, "review job", reviewJob, "PI_SDK_VERSION", "0.80.6");
   requireEnv(errors, "review job", reviewJob, "FD_FIND_VERSION", "9.0.0-1");
   requireEnv(errors, "review job", reviewJob, "RIPGREP_VERSION", "14.1.0-1");
-  requireEnv(errors, "review job", reviewJob, "TYPEBOX_VERSION", "1.1.38");
-  requireEnv(errors, "review job", reviewJob, "YAML_VERSION", "2.8.3");
-  requireEnv(errors, "review job", reviewJob, "VITEST_VERSION", "4.1.9");
+  for (const { envName, version } of ADVISOR_RUNTIME_PACKAGE_PINS) {
+    requireEnv(errors, "review job", reviewJob, envName, version);
+  }
   requireEnv(
     errors,
     "review job",
