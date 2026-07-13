@@ -274,6 +274,23 @@ describe("Docker image-storage detection", () => {
     });
   });
 
+  it("fails closed for a non-default Unix socket that can forward a remote daemon (#6757)", () => {
+    vi.stubEnv("DOCKER_HOST", "unix:///tmp/forwarded-remote.sock");
+    vi.stubEnv("DOCKER_CONTEXT", "default");
+
+    expect(
+      probeDockerHostLocality({
+        dockerInfo: () => nativeDockerInfo(),
+        osRelease: nativeHost.osRelease,
+        platform: nativeHost.platform,
+      }),
+    ).toEqual({
+      ok: false,
+      reason:
+        "Docker uses a non-default socket (unix:///tmp/forwarded-remote.sock) whose daemon host filesystem cannot be verified",
+    });
+  });
+
   it("reads the Docker selection when each storage probe starts (#6757)", () => {
     vi.stubEnv("DOCKER_CONTEXT", "remote-builder");
     vi.stubEnv("DOCKER_HOST", "");

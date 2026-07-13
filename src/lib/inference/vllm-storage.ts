@@ -15,6 +15,7 @@ const IMAGE_PULL_TEMP_HEADROOM_BYTES = 3n * GIB_BYTES;
 const MODEL_MINIMUM_HEADROOM_BYTES = 2n * GIB_BYTES;
 const DEFAULT_CONTAINERD_ROOT = "/var/lib/containerd";
 const DEFAULT_CONTAINERD_CONFIG = "/etc/containerd/config.toml";
+const DEFAULT_DOCKER_SOCKET = "/var/run/docker.sock";
 
 interface StorageProbeDeps {
   dockerContext: string | undefined;
@@ -197,8 +198,12 @@ function nativeDockerHostProblem(info: DockerInfoShape, deps: StorageProbeDeps):
   }
 
   const endpoint = dockerHost;
-  if (endpoint && !endpoint.startsWith("unix://") && !path.isAbsolute(endpoint)) {
-    return `Docker uses a remote endpoint (${endpoint})`;
+  if (endpoint) {
+    const localSocket = endpoint.startsWith("unix://") || path.isAbsolute(endpoint);
+    if (!localSocket) return `Docker uses a remote endpoint (${endpoint})`;
+    if (endpoint !== DEFAULT_DOCKER_SOCKET && endpoint !== `unix://${DEFAULT_DOCKER_SOCKET}`) {
+      return `Docker uses a non-default socket (${endpoint}) whose daemon host filesystem cannot be verified`;
+    }
   }
   return null;
 }

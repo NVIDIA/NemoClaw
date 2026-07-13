@@ -797,16 +797,25 @@ describe("installVllm model resolution", () => {
   it.each([
     {
       reason: "Docker uses a remote endpoint (ssh://builder.example.test)",
+      selectorDescription: "remote DOCKER_HOST",
       selectorName: "DOCKER_HOST" as const,
       selectorValue: "ssh://builder.example.test",
     },
     {
       reason:
+        "Docker uses a non-default socket (unix:///tmp/forwarded-remote.sock) whose daemon host filesystem cannot be verified",
+      selectorDescription: "forwarded Unix DOCKER_HOST",
+      selectorName: "DOCKER_HOST" as const,
+      selectorValue: "unix:///tmp/forwarded-remote.sock",
+    },
+    {
+      reason:
         "Docker uses a named context (remote-builder) whose host filesystem cannot be verified",
+      selectorDescription: "named DOCKER_CONTEXT",
       selectorName: "DOCKER_CONTEXT" as const,
       selectorValue: "remote-builder",
     },
-  ])("blocks a cached image for an unverifiable $selectorName (#6757)", async ({
+  ])("blocks a cached image for an unverifiable $selectorDescription (#6757)", async ({
     reason,
     selectorName,
     selectorValue,
@@ -840,6 +849,7 @@ describe("installVllm model resolution", () => {
     expect(mocks.probeModelCacheStorage).not.toHaveBeenCalled();
     expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
     expect(mocks.dockerSpawn).not.toHaveBeenCalled();
+    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
     expect(errSpy).toHaveBeenCalledWith(expect.stringContaining(reason));
   });
 
