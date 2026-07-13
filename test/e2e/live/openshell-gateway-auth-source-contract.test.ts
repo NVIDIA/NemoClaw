@@ -12,9 +12,12 @@ const OPENSHELL_GATEWAY_AUTH_CONTRACT_VERSION = "0.0.72";
 test(
   `OpenShell ${OPENSHELL_GATEWAY_AUTH_CONTRACT_VERSION} Docker-driver gateway auth uses NemoClaw mTLS plus sandbox JWT`,
   { timeout: LIVE_TIMEOUT_MS },
-  (fixtures) =>
-    runOpenShellGatewayAuthSourceContractScenario(fixtures, {
-      buildDockerDriverGatewayLaunch,
-      ensureDockerDriverGatewayLocalTlsBundle,
-    }),
+  ({ artifacts, cleanup, host, skip }) =>
+    runOpenShellGatewayAuthSourceContractScenario(
+      { artifacts, cleanup, host, skip },
+      {
+        buildDockerDriverGatewayLaunch,
+        ensureDockerDriverGatewayLocalTlsBundle,
+      },
+    ),
 );

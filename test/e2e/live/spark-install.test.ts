@@ -54,7 +54,7 @@ function sourceInstalledPathProbe(): string {
   ].join("; ");
 }
 
-async function bestEffortCleanup(host: HostCliClient): Promise<void> {
+async function bestEffortPreclean(host: HostCliClient): Promise<void> {
   const cleanup = [
     `if command -v nemoclaw >/dev/null 2>&1; then nemoclaw ${shellQuote(SANDBOX_NAME)} destroy --yes >/dev/null 2>&1 || true; fi`,
     `if command -v openshell >/dev/null 2>&1; then openshell sandbox delete ${shellQuote(SANDBOX_NAME)} >/dev/null 2>&1 || true; fi`,
@@ -70,7 +70,7 @@ async function bestEffortCleanup(host: HostCliClient): Promise<void> {
 liveTest(
   "spark install path: standard non-interactive install leaves NemoClaw and OpenShell usable",
   { timeout: LIVE_TIMEOUT_MS },
-  async ({ artifacts, cleanup, host, secrets }) => {
+  async ({ artifacts, cleanup, host, sandbox, secrets }) => {
     await artifacts.target.declare({
       id: "spark-install",
       sandboxName: SANDBOX_NAME,
@@ -102,8 +102,27 @@ liveTest(
 
     const hosted = requireHostedInferenceConfig(secrets);
     const redactionValues = [hosted.apiKey];
-    cleanup.add(`remove ${SANDBOX_NAME} after Spark install smoke`, () => bestEffortCleanup(host));
-    await bestEffortCleanup(host);
+    cleanup.trackGateway(host, "nemoclaw", {
+      artifactName: "cleanup-spark-install-state-openshell-gateway-destroy",
+      env: env(),
+      redactionValues,
+      timeoutMs: 120_000,
+    });
+    cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+      sandbox.cleanupSandbox(SANDBOX_NAME, {
+        artifactName: "cleanup-spark-install-state-openshell-sandbox-delete",
+        env: env(),
+        redactionValues,
+        timeoutMs: 120_000,
+      }),
+    );
+    cleanup.trackSandbox(host, SANDBOX_NAME, {
+      artifactName: "cleanup-spark-install-state-nemoclaw-destroy",
+      env: env(),
+      redactionValues,
+      timeoutMs: 120_000,
+    });
+    await bestEffortPreclean(host);
 
     const installLog = process.env.INSTALL_LOG ?? artifacts.pathFor("logs/install.log");
     fs.mkdirSync(path.dirname(installLog), { recursive: true });

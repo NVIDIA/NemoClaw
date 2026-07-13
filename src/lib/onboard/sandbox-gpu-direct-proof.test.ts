@@ -7,157 +7,12 @@ vi.mock("../adapters/docker", () => ({
   dockerInfoFormat: vi.fn(),
 }));
 
-import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import {
   createDirectSandboxGpuVerifier,
-  dockerNvidiaRuntimeAvailable,
-  formatSandboxGpuPassthroughNote,
-  parseDockerRuntimeNames,
-  sandboxGpuRemediationLines,
-  validateSandboxGpuPreflight,
+  isExplicitNvidiaSmiDriverProofFailure,
 } from "./sandbox-gpu-preflight";
 
-function sandboxGpuConfig(overrides: Partial<SandboxGpuConfig> = {}): SandboxGpuConfig {
-  return {
-    mode: "auto",
-    hostGpuDetected: true,
-    hostGpuPlatform: "linux",
-    sandboxGpuEnabled: true,
-    sandboxGpuDevice: null,
-    errors: [],
-    ...overrides,
-  };
-}
-
-describe("sandbox GPU preflight", () => {
-  it("formats Jetson sandbox GPU notes around the NVIDIA runtime backend", () => {
-    expect(formatSandboxGpuPassthroughNote({ hostGpuPlatform: "jetson" })).toContain(
-      "Docker NVIDIA runtime",
-    );
-    expect(
-      formatSandboxGpuPassthroughNote({
-        resumeHasResolvedGpuIntent: true,
-        recordedGpuPassthroughBeforePreflight: true,
-      }),
-    ).toContain("Continuing GPU passthrough");
-    expect(formatSandboxGpuPassthroughNote({ requestedGpuPassthrough: true })).toContain(
-      "GPU passthrough requested",
-    );
-  });
-
-  it("parses Docker runtime names from JSON and plain-text output", () => {
-    expect(parseDockerRuntimeNames('{"io.containerd.runc.v2":{},"nvidia":{}}')).toContain("nvidia");
-    expect(parseDockerRuntimeNames("runc nvidia io.containerd.runc.v2")).toContain("nvidia");
-    expect(parseDockerRuntimeNames("<no value>")).toEqual([]);
-  });
-
-  it("checks Jetson sandbox GPU support through Docker NVIDIA runtime availability", () => {
-    const dockerInfo = vi.fn(() => '{"runc":{},"nvidia":{}}');
-    expect(dockerNvidiaRuntimeAvailable({ dockerInfoFormat: dockerInfo })).toBe(true);
-
-    expect(() =>
-      validateSandboxGpuPreflight(sandboxGpuConfig({ hostGpuPlatform: "jetson" }), {
-        platform: "linux",
-        dockerInfoFormat: dockerInfo,
-        getDockerCdiSpecDirs: vi.fn(() => {
-          throw new Error("Jetson preflight must not require CDI");
-        }),
-        findReadableNvidiaCdiSpecFiles: vi.fn(() => {
-          throw new Error("Jetson preflight must not inspect CDI specs");
-        }),
-      }),
-    ).not.toThrow();
-    expect(dockerInfo).toHaveBeenCalledWith(
-      "{{json .Runtimes}}",
-      expect.objectContaining({ ignoreError: true }),
-    );
-  });
-
-  it("keeps generic Linux sandbox GPU preflight on the CDI path", () => {
-    const getDockerCdiSpecDirs = vi.fn(() => ["/etc/cdi"]);
-    const findReadableNvidiaCdiSpecFiles = vi.fn(() => ["/etc/cdi/nvidia.yaml"]);
-    const dockerInfo = vi.fn(() => '{"runc":{},"nvidia":{}}');
-
-    expect(() =>
-      validateSandboxGpuPreflight(sandboxGpuConfig(), {
-        platform: "linux",
-        env: {},
-        release: "6.8.0-generic",
-        procVersion: "Linux version 6.8.0-generic",
-        dockerInfoFormat: dockerInfo,
-        getDockerCdiSpecDirs,
-        findReadableNvidiaCdiSpecFiles,
-      }),
-    ).not.toThrow();
-    expect(getDockerCdiSpecDirs).toHaveBeenCalled();
-    expect(findReadableNvidiaCdiSpecFiles).toHaveBeenCalledWith(["/etc/cdi"]);
-    expect(dockerInfo).not.toHaveBeenCalled();
-  });
-
-  it("skips CDI spec validation on Docker Desktop WSL so Docker --gpus can be used", () => {
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const getDockerCdiSpecDirs = vi.fn(() => ["/etc/cdi"]);
-    const findReadableNvidiaCdiSpecFiles = vi.fn(() => []);
-
-    try {
-      expect(() =>
-        validateSandboxGpuPreflight(sandboxGpuConfig(), {
-          platform: "linux",
-          env: { WSL_DISTRO_NAME: "Ubuntu" },
-          dockerInfoFormat: vi.fn(() => '"Docker Desktop"'),
-          getDockerCdiSpecDirs,
-          findReadableNvidiaCdiSpecFiles,
-        }),
-      ).not.toThrow();
-      expect(getDockerCdiSpecDirs).not.toHaveBeenCalled();
-      expect(findReadableNvidiaCdiSpecFiles).not.toHaveBeenCalled();
-      expect(logSpy.mock.calls.map((call) => call[0]).join("\n")).toContain(
-        "Docker --gpus compatibility path",
-      );
-    } finally {
-      logSpy.mockRestore();
-    }
-  });
-
-  it("prints neutral WSL remediation when Docker runtime cannot be determined", () => {
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((
-      code?: number | string | null,
-    ) => {
-      throw new Error(`exit:${code}`);
-    }) as never);
-
-    try {
-      expect(() =>
-        validateSandboxGpuPreflight(sandboxGpuConfig(), {
-          platform: "linux",
-          env: { WSL_DISTRO_NAME: "Ubuntu" },
-          dockerInfoFormat: vi.fn(() => ""),
-          getDockerCdiSpecDirs: vi.fn(() => ["/etc/cdi"]),
-          findReadableNvidiaCdiSpecFiles: vi.fn(() => []),
-        }),
-      ).toThrow("exit:1");
-      const message = errorSpy.mock.calls.map((call) => call[0]).join("\n");
-      expect(message).toContain("could not determine whether Docker is Docker Desktop");
-      expect(message).toContain("If using Docker Desktop");
-      expect(message).toContain("If using native Docker Engine inside WSL");
-      expect(message).not.toContain("sudo systemctl restart docker");
-    } finally {
-      errorSpy.mockRestore();
-      exitSpy.mockRestore();
-    }
-  });
-
-  it("keeps generic Linux CDI remediation outside Docker Desktop WSL", () => {
-    expect(sandboxGpuRemediationLines().join("\n")).toContain("sudo nvidia-ctk");
-    expect(sandboxGpuRemediationLines({ wslDockerDesktop: true }).join("\n")).toContain(
-      "Docker Desktop WSL",
-    );
-    expect(sandboxGpuRemediationLines({ wslDockerDesktopStatus: "unknown" }).join("\n")).toContain(
-      "could not determine",
-    );
-  });
-
+describe("direct sandbox GPU proof", () => {
   it("treats optional direct sandbox GPU proof failures as non-fatal and reports unverified", () => {
     const runOpenshell = vi.fn(() => ({ status: 1, stdout: "", stderr: "optional proof failed" }));
     const verifier = createDirectSandboxGpuVerifier({
@@ -190,6 +45,123 @@ describe("sandbox GPU preflight", () => {
     expect(runOpenshell).toHaveBeenCalledTimes(2);
     expect(result?.status).toBe("unverified");
     expect(result?.cudaVerified).toBe(false);
+  });
+
+  it.each([
+    "Failed to initialize NVML: Driver/library version mismatch",
+    "NVIDIA-SMI has failed because it couldn't communicate with the NVIDIA driver.",
+    "No devices were found",
+    "Unable to determine the device handle for GPU 0000:01:00.0: Unknown Error",
+  ])("returns a structured required nvidia-smi failure for %s", (diagnostic) => {
+    const verifier = createDirectSandboxGpuVerifier({
+      runOpenshell: vi.fn(() => ({ status: 1, stdout: "", stderr: diagnostic })),
+      detectNvidiaPlatform: () => "linux",
+      buildDirectSandboxGpuProofCommands: vi.fn(() => [
+        {
+          id: "nvidia-smi",
+          args: ["sandbox", "exec", "demo", "--", "nvidia-smi"],
+          label: "nvidia-smi when available",
+        },
+      ]),
+      compactText: (value) => value.trim(),
+      redact: (value) => String(value),
+    });
+
+    const result = verifier("demo");
+
+    expect(result).toMatchObject({
+      status: "failed",
+      cudaVerified: false,
+      label: "nvidia-smi when available",
+      detail: expect.stringContaining(diagnostic),
+    });
+    expect(isExplicitNvidiaSmiDriverProofFailure(result)).toBe(true);
+  });
+
+  it("keeps a required nvidia-smi exec or policy error on the hard-failure path", () => {
+    const verifier = createDirectSandboxGpuVerifier({
+      runOpenshell: vi.fn(() => ({
+        status: 1,
+        stdout: "",
+        stderr: "openshell sandbox exec denied by policy",
+      })),
+      detectNvidiaPlatform: () => "linux",
+      buildDirectSandboxGpuProofCommands: vi.fn(() => [
+        {
+          id: "nvidia-smi",
+          args: ["sandbox", "exec", "demo", "--", "nvidia-smi"],
+          label: "nvidia-smi when available",
+        },
+      ]),
+      compactText: (value) => value.trim(),
+      redact: (value) => String(value),
+    });
+
+    expect(() => verifier("demo")).toThrow(
+      "GPU proof failed: nvidia-smi when available (status 1): openshell sandbox exec denied by policy",
+    );
+  });
+
+  it("keeps an explicit nvidia-smi failure authoritative over a later CUDA pass", () => {
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({
+        status: 1,
+        stdout: "",
+        stderr: "Failed to initialize NVML: Driver/library version mismatch",
+      })
+      .mockReturnValueOnce({ status: 0, stdout: "cuInit(0)=0", stderr: "" });
+    const verifier = createDirectSandboxGpuVerifier({
+      runOpenshell,
+      detectNvidiaPlatform: () => "linux",
+      buildDirectSandboxGpuProofCommands: vi.fn(() => [
+        {
+          id: "nvidia-smi",
+          args: ["sandbox", "exec", "demo", "--", "nvidia-smi"],
+          label: "nvidia-smi when available",
+        },
+        {
+          id: "cuda-init",
+          args: ["sandbox", "exec", "demo", "--", "cuda-init"],
+          label: "cuInit(0) via libcuda.so.1",
+          optional: true,
+        },
+      ]),
+      compactText: (value) => value.trim(),
+      redact: (value) => String(value),
+    });
+
+    const result = verifier("demo");
+
+    expect(runOpenshell).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({
+      status: "failed",
+      cudaVerified: false,
+      label: "nvidia-smi when available",
+      detail: expect.stringContaining("Failed to initialize NVML"),
+    });
+    expect(isExplicitNvidiaSmiDriverProofFailure(result)).toBe(true);
+  });
+
+  it("rejects lookalike structured nvidia-smi results", () => {
+    expect(
+      isExplicitNvidiaSmiDriverProofFailure({
+        status: "failed",
+        cudaVerified: false,
+        label: "nvidia-smi when available",
+        detail: "openshell sandbox exec denied by policy",
+        at: "2026-07-07T00:00:00.000Z",
+      }),
+    ).toBe(false);
+    expect(
+      isExplicitNvidiaSmiDriverProofFailure({
+        status: "failed",
+        cudaVerified: false,
+        label: "cuInit(0) via libcuda.so.1",
+        detail: "Failed to initialize NVML",
+        at: "2026-07-07T00:00:00.000Z",
+      }),
+    ).toBe(false);
   });
 
   it("reports failed when the CUDA usability proof reaches the driver and fails (#4231)", () => {
@@ -337,31 +309,6 @@ describe("sandbox GPU preflight", () => {
       expect(message).not.toContain("sudo nvidia-ctk");
     } finally {
       errorSpy.mockRestore();
-    }
-  });
-
-  it("exits with an explicit Jetson NVIDIA runtime message when runtime support is missing", () => {
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((
-      code?: number | string | null,
-    ) => {
-      throw new Error(`exit:${code}`);
-    }) as never);
-
-    try {
-      expect(() =>
-        validateSandboxGpuPreflight(sandboxGpuConfig({ hostGpuPlatform: "jetson" }), {
-          platform: "linux",
-          dockerInfoFormat: vi.fn(() => '{"runc":{}}'),
-        }),
-      ).toThrow("exit:1");
-      const message = errorSpy.mock.calls.map((call) => call[0]).join("\n");
-      expect(message).toContain("Docker NVIDIA runtime was not detected");
-      expect(message).toContain("NVIDIA Container Runtime semantics, not CDI");
-      expect(message).toContain("nvidia-ctk runtime configure --runtime=docker");
-    } finally {
-      errorSpy.mockRestore();
-      exitSpy.mockRestore();
     }
   });
 });

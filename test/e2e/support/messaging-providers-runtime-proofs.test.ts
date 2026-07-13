@@ -18,6 +18,7 @@ import {
 import {
   parseInstalledSlackProof,
   SLACK_INSTALLED_RUNTIME_PROOF_SOURCE,
+  SLACK_MANAGED_NPM_PROJECT_DISCOVERY_SOURCE,
 } from "../live/messaging-providers-slack-runtime-proof.ts";
 import { TELEGRAM_INSTALLED_RUNTIME_PROOF_SOURCE } from "../live/messaging-providers-telegram-runtime-proof.ts";
 
@@ -153,6 +154,54 @@ describe("messaging provider installed-runtime proofs", () => {
     );
     expect(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE.match(/allowLegacyTestApi &&/gu)).toHaveLength(2);
     expect(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE).toContain("/api/chat.postMessage");
+  });
+
+  it("finds Slack only in its canonical managed npm project", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-managed-project-"));
+    const projectsDir = path.join(dir, "npm", "projects");
+    const slackProject = path.join(projectsDir, "openclaw-slack-reviewed");
+    const unrelatedProject = path.join(projectsDir, "unrelated-plugin");
+    const malformedProject = path.join(projectsDir, "malformed-plugin");
+    const slackPackageRoot = path.join(slackProject, "node_modules", "@openclaw", "slack");
+
+    try {
+      fs.mkdirSync(slackPackageRoot, { recursive: true });
+      fs.writeFileSync(
+        path.join(slackProject, "package.json"),
+        JSON.stringify({ dependencies: { "@openclaw/slack": "2026.6.10" } }),
+      );
+      fs.mkdirSync(path.join(unrelatedProject, "node_modules", "@openclaw", "slack"), {
+        recursive: true,
+      });
+      fs.writeFileSync(
+        path.join(unrelatedProject, "package.json"),
+        JSON.stringify({ dependencies: { "@openclaw/discord": "2026.6.10" } }),
+      );
+      fs.mkdirSync(malformedProject, { recursive: true });
+      fs.writeFileSync(path.join(malformedProject, "package.json"), "not json");
+
+      const source = [
+        'import fs from "node:fs";',
+        'import path from "node:path";',
+        SLACK_MANAGED_NPM_PROJECT_DISCOVERY_SOURCE,
+        "const candidates = [];",
+        "addManagedNpmProjectSlackCandidates(",
+        "  process.env.NEMOCLAW_TEST_PROJECTS_DIR,",
+        "  (candidate) => candidates.push(path.resolve(candidate)),",
+        ");",
+        "process.stdout.write(JSON.stringify(candidates));",
+      ].join("\n");
+      const result = spawnSync(process.execPath, ["--input-type=module", "-"], {
+        encoding: "utf8",
+        env: { ...process.env, NEMOCLAW_TEST_PROJECTS_DIR: projectsDir },
+        input: source,
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual([path.resolve(slackPackageRoot)]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("reports loader stderr without accepting stderr as a Slack proof (#6467)", () => {

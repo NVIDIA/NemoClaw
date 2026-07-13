@@ -15,7 +15,7 @@ import {
 } from "./state-file-key-merge-test-fixture";
 
 describe("key-allowlist state-file merge", () => {
-  it("restores allowlisted display preferences with fresh managed routing", () => {
+  it("uses the shipped Deep Agents ownership policy to restore display preferences with fresh managed routing", () => {
     const backup = {
       models: { default: "openai:nvidia/old-model" },
       update: { check: true, auto_update: true },

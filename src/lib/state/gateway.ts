@@ -35,6 +35,11 @@ function parseSandboxRow(output: string, sandboxName: string): string[] | null {
   return null;
 }
 
+/** True when `sandbox list` contains an exact first-column sandbox name. */
+export function hasSandboxListEntry(output: string, sandboxName: string): boolean {
+  return parseSandboxRow(output, sandboxName) !== null;
+}
+
 export function parseSandboxStatus(output: string, sandboxName: string): string | null {
   const cols = parseSandboxRow(output, sandboxName);
   return cols && cols.length >= 2 ? cols[1] : null;

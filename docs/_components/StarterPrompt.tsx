@@ -96,7 +96,7 @@ When you need an API key, bot token, app token, or other secret, use the checked
   - Helper: https://raw.githubusercontent.com/NVIDIA/NemoClaw/dd61a307d7ddf7be99de8ff1e2678fb8ef42f8e6/scripts/local-credential-helper.mts (SHA-256 \`1a42bbe8dbc9003cb79d4e641b53760571aacd85293671aee97c09c0746fef33\`)
   - Form: https://raw.githubusercontent.com/NVIDIA/NemoClaw/dd61a307d7ddf7be99de8ff1e2678fb8ef42f8e6/docs/resources/local-credential-form.html (SHA-256 \`5512a256e0ad7c63a26ab82cf4f5924e98652097172ab8a5dc9d9358dd4f6ae8\`)
 - Treat the two immutable URL and digest pairs as one reviewed trust boundary. Stop if either verification fails; do not substitute another URL, helper, form, or digest. Put fetched copies in a private temporary directory restricted to the current user.
-- The helper requires Node.js 22.16 or newer. If that runtime is unavailable, use a secure local terminal prompt or local app prompt instead; never ask for the value in chat and never fall back to generated code.
+- The helper requires Node.js 22.19 or newer. If that runtime is unavailable, use a secure local terminal prompt or local app prompt instead; never ask for the value in chat and never fall back to generated code.
 - Run the helper with \`--execution-profile isolated\` for stateless commands. Pass one \`--field NAME:type\` per value, then a literal \`--\` and the exact approved argv. The helper serves a one-time \`http://127.0.0.1\` form, accepts a single submission, then runs that argv; it enforces loopback-only access, requires an absolute executable, and strips ambient credential and process-control variables. Never put credentials in argv. For example:
 
 \`\`\`shell

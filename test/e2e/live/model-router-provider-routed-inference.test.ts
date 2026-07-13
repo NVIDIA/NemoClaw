@@ -21,6 +21,8 @@ const ONBOARD_TIMEOUT_MS = 25 * 60_000;
 const HEALTH_ATTEMPTS = 20;
 const COMPLETION_ATTEMPTS = 3;
 
+process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
+
 interface ModelRouterHealth {
   healthy_count?: unknown;
 }
@@ -116,12 +118,11 @@ test("model-router provider-routed onboard returns routed inference.local PONG",
     timeoutMs: 120_000,
   });
 
-  cleanup.add(`destroy sandbox ${SANDBOX_NAME}`, async () => {
-    await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
-      artifactName: "cleanup-nemoclaw-destroy-model-router-provider-routed",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 120_000,
-    });
+  cleanup.trackSandbox(host, SANDBOX_NAME, {
+    artifactName: "cleanup-nemoclaw-destroy-model-router-provider-routed",
+    env: buildAvailabilityProbeEnv(),
+    redactionValues: [apiKey],
+    timeoutMs: 120_000,
   });
 
   const onboard = await host.command(

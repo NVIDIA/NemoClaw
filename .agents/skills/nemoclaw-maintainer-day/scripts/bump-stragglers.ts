@@ -106,18 +106,10 @@ function main(): void {
 }
 
 function ensureReleaseLabel(repo: string, label: string): void {
-  const labels = ghJsonArray<{ name: string }>([
-    "label",
-    "list",
-    "--repo",
-    repo,
-    "--search",
-    label,
-    "--json",
-    "name",
-    "--limit",
-    "100",
-  ]);
+  const labels = ghJsonArray<{ name: string }>(
+    ["label", "list", "--repo", repo, "--search", label, "--json", "name", "--limit", "100"],
+    { emptyOutputIsEmptyArray: true },
+  );
   if (labels.some((entry) => entry.name === label)) return;
 
   gh([
@@ -133,8 +125,12 @@ function ensureReleaseLabel(repo: string, label: string): void {
   ]);
 }
 
-function ghJsonArray<T>(args: string[]): T[] {
+function ghJsonArray<T>(
+  args: string[],
+  { emptyOutputIsEmptyArray = false }: { emptyOutputIsEmptyArray?: boolean } = {},
+): T[] {
   const output = gh(args);
+  if (output === "" && emptyOutputIsEmptyArray) return [];
   try {
     const parsed = JSON.parse(output) as unknown;
     if (!Array.isArray(parsed)) {

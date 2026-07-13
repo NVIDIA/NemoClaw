@@ -151,7 +151,7 @@ dcode -n "Summarize this repository"
 ```
 
 The managed `dcode`, `dcode.real`, and `deepagents-code` launchers use `/opt/venv/bin/python3 -I` to run the pinned package with an isolated import path and `HOME=/sandbox`.
-For interactive sessions, each launcher supervises its own process descendants so terminal exit or disconnect terminates the associated LangGraph server tree without affecting another session.
+For interactive and headless sessions, each launcher supervises its own process descendants so completion, terminal exit, or disconnect terminates the associated LangGraph server tree without affecting another session.
 After a disconnect, the supervisor uses bounded grace periods before it kills unresponsive processes from that session.
 The supervisor runs inside the Linux OpenShell sandbox and fails closed if invoked outside Linux; the host operating system does not change this sandbox guarantee.
 They disable Deep Agents Code package update checks and the LangGraph server version check, block CLI and TUI update/install commands, and disable nested remote sandbox providers, remote async subagents, MCP commands and project auto-loading, startup commands, executable hooks, ACP mode, interpreter tool calling, shell allow-list overrides, native LangSmith tracing, and ambient OpenTelemetry exporter configuration.

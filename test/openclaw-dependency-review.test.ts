@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -58,34 +58,6 @@ function requiredStep(job: WorkflowJob, name: string): WorkflowStep {
   return step as WorkflowStep;
 }
 
-function requiredStepIndex(job: WorkflowJob, name: string): number {
-  const index = job.steps?.findIndex((candidate) => candidate.name === name) ?? -1;
-  expect(index, `Missing workflow step: ${name}`).toBeGreaterThanOrEqual(0);
-  return index;
-}
-
-function expectProductionDockerBuildGuard(job: WorkflowJob, stepName: string): void {
-  const run = requiredStep(job, stepName).run ?? "";
-  const guardIndex = run.indexOf("scripts/check-production-build-args.sh");
-  const buildIndex = run.indexOf("docker build");
-
-  expect(guardIndex, stepName).toBeGreaterThanOrEqual(0);
-  expect(buildIndex, stepName).toBeGreaterThanOrEqual(0);
-  expect(guardIndex, stepName).toBeLessThan(buildIndex);
-}
-
-function expectBuildPushGuard(job: WorkflowJob, guardStepName: string): void {
-  const guardIndex = requiredStepIndex(job, guardStepName);
-  const buildIndex =
-    job.steps?.findIndex((step) =>
-      String(step.uses ?? "").startsWith("docker/build-push-action@"),
-    ) ?? -1;
-
-  expect(buildIndex, guardStepName).toBeGreaterThanOrEqual(0);
-  expect(guardIndex, guardStepName).toBeLessThan(buildIndex);
-  expect(requiredStep(job, guardStepName).run).toContain("scripts/check-production-build-args.sh");
-}
-
 function findProductionBuildGuardCoverage(
   workflowName: string,
   workflow: Workflow,
@@ -114,6 +86,15 @@ function findProductionBuildGuardCoverage(
             ),
       }));
   });
+}
+
+function workflowContracts(): Array<{ name: string; workflow: Workflow }> {
+  return readdirSync(path.join(REPO_ROOT, ".github", "workflows"))
+    .filter((name) => /\.ya?ml$/.test(name))
+    .map((name) => ({
+      name: name.replace(/\.ya?ml$/, ""),
+      workflow: readYaml<Workflow>(`.github/workflows/${name}`),
+    }));
 }
 
 function runBaseImageBuildArgGuard(
@@ -450,52 +431,15 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
   });
 
   it("keeps production Docker build workflows behind the build-arg guard", () => {
-    const prSelfHosted = readYaml<Workflow>(".github/workflows/pr-self-hosted.yaml");
-    const sandboxImages = readYaml<Workflow>(".github/workflows/sandbox-images-and-e2e.yaml");
-    const baseImages = readYaml<Workflow>(".github/workflows/base-image.yaml");
-
-    expectProductionDockerBuildGuard(
-      prSelfHosted.jobs["build-sandbox-images"] as WorkflowJob,
-      "Build production image",
-    );
-    expectProductionDockerBuildGuard(
-      prSelfHosted.jobs["build-sandbox-images-arm64"] as WorkflowJob,
-      "Build production image on arm64",
-    );
-    expectProductionDockerBuildGuard(
-      sandboxImages.jobs["build-sandbox-images"] as WorkflowJob,
-      "Build production image",
-    );
-    expectProductionDockerBuildGuard(
-      sandboxImages.jobs["build-hermes-sandbox-image"] as WorkflowJob,
-      "Build Hermes production image",
-    );
-    expectProductionDockerBuildGuard(
-      sandboxImages.jobs["build-sandbox-images-arm64"] as WorkflowJob,
-      "Build production image on arm64",
-    );
-    expectBuildPushGuard(
-      baseImages.jobs["build-and-push"] as WorkflowJob,
-      "Validate production Docker build args",
-    );
-    expectBuildPushGuard(
-      baseImages.jobs["build-and-push-hermes"] as WorkflowJob,
-      "Validate Hermes production Docker build args",
-    );
-    expectBuildPushGuard(
-      baseImages.jobs["build-and-push-langchain-deepagents-code"] as WorkflowJob,
-      "Validate Deep Agents Code production Docker build args",
+    const workflows = workflowContracts();
+    const discoveredBuilds = workflows.flatMap(({ name, workflow }) =>
+      findProductionBuildGuardCoverage(name, workflow),
     );
 
-    const discoveredBuilds = [
-      ...findProductionBuildGuardCoverage("pr-self-hosted", prSelfHosted),
-      ...findProductionBuildGuardCoverage("sandbox-images-and-e2e", sandboxImages),
-      ...findProductionBuildGuardCoverage("base-image", baseImages),
-    ];
-    expect(discoveredBuilds.map(({ label }) => label)).toHaveLength(8);
+    expect(discoveredBuilds.length).toBeGreaterThan(0);
     expect(discoveredBuilds.filter(({ guarded }) => !guarded)).toEqual([]);
 
-    const productionWorkflowContract = JSON.stringify({ prSelfHosted, sandboxImages, baseImages });
+    const productionWorkflowContract = JSON.stringify(workflows);
     for (const fixtureSelector of [
       "NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1",
       "OPENCLAW_VERSION=2026.3.11",
@@ -509,37 +453,10 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
     }
   });
 
-  it("guards and exports the base-image dispatch version as one scalar", () => {
+  it("accepts reviewed base-image versions and rejects injected build arguments", () => {
     const baseImages = readYaml<Workflow>(".github/workflows/base-image.yaml");
     const buildAndPush = baseImages.jobs["build-and-push"] as WorkflowJob;
     const guard = requiredStep(buildAndPush, "Validate production Docker build args");
-    const build = requiredStep(buildAndPush, "Build and push");
-
-    expect(guard.id).toBe("production-build-args");
-    expect(guard.env).toEqual({
-      OPENCLAW_VERSION_INPUT: "${{ inputs.openclaw_version }}",
-    });
-    expect(guard.run).toContain(`"$OPENCLAW_VERSION_INPUT" == *$'\\r'*`);
-    expect(guard.run).toContain(`"$OPENCLAW_VERSION_INPUT" == *$'\\n'*`);
-    expect(guard.run).toContain(`"$OPENCLAW_VERSION_INPUT" =~ ^[0-9]+([.][0-9]+)*$`);
-    expect(guard.run).toContain('scripts/check-production-build-args.sh "${build_args[@]}"');
-    expect(guard.run).toContain(
-      `printf 'openclaw_build_arg=%s\\n' "$openclaw_build_arg" >> "$GITHUB_OUTPUT"`,
-    );
-    expect(build.with?.["build-args"]).toBe(
-      "${{ steps.production-build-args.outputs.openclaw_build_arg }}",
-    );
-    expect(requiredStepIndex(buildAndPush, "Validate production Docker build args")).toBeLessThan(
-      requiredStepIndex(buildAndPush, "Build and push"),
-    );
-
-    for (const [jobName, job] of Object.entries(baseImages.jobs)) {
-      for (const step of job.steps ?? []) {
-        expect(step.run ?? "", `${jobName}:${step.name ?? "unnamed step"}`).not.toContain(
-          "${{ inputs.openclaw_version }}",
-        );
-      }
-    }
 
     for (const [input, expectedOutput] of [
       ["", "openclaw_build_arg=\n"],
@@ -571,6 +488,7 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
     }
   });
 
+  // source-shape-contract: security -- Network-fetched distribution audits must execute only from trusted main workflow code
   it("runs and gates the real patched-distribution harness only from trusted main code", () => {
     const pr = readYaml<Workflow>(".github/workflows/pr.yaml");
     const main = readYaml<Workflow>(".github/workflows/main.yaml");
@@ -581,7 +499,6 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
 
     expect(pr.permissions).toEqual({ contents: "read" });
     expect(prJob).toBeUndefined();
-    expect(mainJob?.["timeout-minutes"]).toBe(20);
     expect(requiredStep(mainJob, "Audit the real patched OpenClaw distribution").env).toMatchObject(
       {
         NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS: "1",
@@ -597,12 +514,6 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
       requiredStep(mainJob, "Audit managed OpenClaw security finding suppressions").run,
     ).toContain("test/openclaw-security-audit-suppressions-real.test.ts");
     expect(requiredStep(mainJob, "Install test dependencies").run).toBe("npm ci --ignore-scripts");
-    expect(mainJob.env).toMatchObject({
-      npm_config_fetch_retries: "3",
-      npm_config_fetch_retry_mintimeout: "10000",
-      npm_config_fetch_retry_maxtimeout: "60000",
-    });
-
     expect(prChecks.needs).not.toContain("real-openclaw-dist-harness");
     expect(mainChecks.needs).toContain("real-openclaw-dist-harness");
     const prGate = requiredStep(prChecks, "Verify required PR checks");

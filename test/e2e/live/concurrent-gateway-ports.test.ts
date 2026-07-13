@@ -204,7 +204,7 @@ async function prerequisiteOrSkip(
   skip(message);
 }
 
-async function bestEffortCleanup(
+async function bestEffortPreclean(
   host: HostCliClient,
   sandbox: SandboxClient,
   gatewayA: string,
@@ -269,6 +269,26 @@ async function bestEffortCleanup(
   }
 }
 
+async function cleanupNemoClawSandbox(
+  host: HostCliClient,
+  name: string,
+  port: string,
+): Promise<void> {
+  const result = await command(host, [name, "destroy", "--yes"], {
+    artifactName: `cleanup-destroy-${name}`,
+    env: commandEnv({ NEMOCLAW_GATEWAY_PORT: port }),
+    timeoutMs: 5 * 60_000,
+  });
+  const output = resultText(result);
+  expect(
+    result.exitCode === 0 ||
+      /Sandbox '.+' does not exist|Run 'nemoclaw onboard' to create one|sandbox .* not found|no such sandbox/iu.test(
+        output,
+      ),
+    `cleanup concurrent gateway sandbox ${name}: ${output}`,
+  ).toBe(true);
+}
+
 test("concurrent gateway ports: onboards two sandboxes on isolated gateways and dashboards", {
   timeout: TEST_TIMEOUT_MS,
 }, async ({ artifacts, cleanup, host, sandbox, skip }) => {
@@ -278,7 +298,13 @@ test("concurrent gateway ports: onboards two sandboxes on isolated gateways and 
   ).toBe(true);
 
   await prerequisiteOrSkip(host, skip, "docker", ["info"], "prereq-docker-info");
-  await prerequisiteOrSkip(host, skip, "bash", ["-lc", "command -v openshell"], "prereq-openshell");
+  await prerequisiteOrSkip(
+    host,
+    skip,
+    "bash",
+    ["-lc", 'command -v "$1"', "prereq-openshell", host.openshellCommandPath],
+    "prereq-openshell",
+  );
   await prerequisiteOrSkip(
     host,
     skip,
@@ -309,11 +335,39 @@ test("concurrent gateway ports: onboards two sandboxes on isolated gateways and 
     await artifacts.writeJson("fake-openai-requests.json", fake.requests());
     await fake.close();
   });
-  cleanup.add("remove concurrent gateway sandboxes and gateways", async () => {
-    await bestEffortCleanup(host, sandbox, gatewayA, gatewayB);
-  });
+  for (const gateway of [gatewayA, gatewayB]) {
+    cleanup.trackGateway(host, gateway, {
+      artifactName: `cleanup-gateway-destroy-${gateway}`,
+      env: openshellEnvForGateway(gateway),
+      timeoutMs: 60_000,
+    });
+  }
+  for (const port of [
+    18799, 18798, 18797, 18796, 18795, 18794, 18793, 18792, 18791, 18790, 18789,
+  ]) {
+    cleanup.trackForward(host, port, {
+      artifactName: `cleanup-forward-stop-${port}`,
+      env: commandEnv(),
+      timeoutMs: 15_000,
+    });
+  }
+  for (const [name, gateway, port] of [
+    [SANDBOX_A, gatewayA, GATEWAY_PORT_A],
+    [SANDBOX_B, gatewayB, GATEWAY_PORT_B],
+  ] as const) {
+    cleanup.trackDisposable(`delete concurrent gateway OpenShell sandbox ${name}`, () =>
+      sandbox.cleanupSandbox(name, {
+        artifactName: `cleanup-openshell-delete-${name}`,
+        env: openshellEnvForGateway(gateway),
+        timeoutMs: 60_000,
+      }),
+    );
+    cleanup.trackDisposable(`destroy concurrent gateway sandbox ${name}`, () =>
+      cleanupNemoClawSandbox(host, name, port),
+    );
+  }
 
-  await bestEffortCleanup(host, sandbox, gatewayA, gatewayB);
+  await bestEffortPreclean(host, sandbox, gatewayA, gatewayB);
 
   const onboardA = await runOnboard(
     host,

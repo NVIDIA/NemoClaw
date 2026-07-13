@@ -481,6 +481,7 @@ jobs:
         run: |
           set -euo pipefail
           npx vitest run --project "${TEST_PROJECT}" "${TEST_FILE}" \
+            --tags-filter=e2e/credential-free \
             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - name: Upload test artifacts
@@ -1694,14 +1695,19 @@ jobs:
 
   hermes-gpu-startup:
     needs: generate-matrix
-    if: ${{ contains(format(',{0},', inputs.jobs), ',hermes-gpu-startup,') || contains(format(',{0},', inputs.targets), ',hermes-gpu-startup,') }}
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (contains(format(',{0},', inputs.jobs), ',hermes-gpu-startup,') || contains(format(',{0},', inputs.targets), ',hermes-gpu-startup,')) }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
-    timeout-minutes: 75
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        scenario: [native, fallback, compatibility-only]
     env:
       E2E_JOB: "1"
-      E2E_DEFAULT_ENABLED: "0"
       E2E_TARGET_ID: "hermes-gpu-startup"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-gpu-startup
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}
+      E2E_HERMES_GPU_STARTUP_SCENARIO: ${{ matrix.scenario }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
@@ -1709,7 +1715,7 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_RECREATE_SANDBOX: "1"
       NEMOCLAW_SANDBOX_GPU: "1"
-      NEMOCLAW_SANDBOX_NAME: e2e-hermes-gpu-startup
+      NEMOCLAW_SANDBOX_NAME: e2e-hermes-gpu-startup-${{ matrix.scenario }}
       NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: "60"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -1717,21 +1723,230 @@ jobs:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
+      - name: Checkout trusted Hermes GPU runtime fixture
+        if: ${{ matrix.scenario == 'fallback' }}
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
+          path: .trusted-hermes-gpu-fixture-${{ github.run_id }}-${{ github.run_attempt }}
+          sparse-checkout: tools/e2e/hermes-gpu-docker-runtime-fixture.sh
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Install trusted Hermes GPU runtime fixture
+        if: ${{ matrix.scenario == 'fallback' }}
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          BASH_ENV: /dev/null
+          E2E_HERMES_GPU_STARTUP_SCENARIO: ${{ matrix.scenario }}
+          ENV: /dev/null
+          TRUSTED_DISPATCH_SHA: ${{ github.sha }}
+          TRUSTED_FIXTURE_SHA256: e273c4baa7fe89546d64517cf56eafec30aeda7b355971263605ab1327fade02
+          TRUSTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          trusted_checkout="$GITHUB_WORKSPACE/.trusted-hermes-gpu-fixture-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          trusted_source="$trusted_checkout/tools/e2e/hermes-gpu-docker-runtime-fixture.sh"
+          trusted_fixture="/usr/local/libexec/nemoclaw/hermes-gpu-docker-runtime-fixture.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.${E2E_HERMES_GPU_STARTUP_SCENARIO}"
+          trusted_state_root=/var/lib/nemoclaw-e2e
+
+          run_trusted_fixture() {
+            /usr/bin/sudo -n /usr/bin/env -i \
+              PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+              /bin/bash "$trusted_fixture" "$@"
+          }
+
+          [[ "$TRUSTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ ]] \
+            || { echo "Trusted workflow SHA must be an immutable commit" >&2; exit 1; }
+          [[ "$TRUSTED_DISPATCH_SHA" = "$TRUSTED_WORKFLOW_SHA" ]] \
+            || { echo "Trusted fixture must match the dispatched main workflow" >&2; exit 1; }
+          [[ "$TRUSTED_FIXTURE_SHA256" =~ ^[a-f0-9]{64}$ ]] \
+            || { echo "Trusted fixture SHA-256 must be pinned" >&2; exit 1; }
+          [ "$(/usr/bin/git -C "$trusted_checkout" rev-parse HEAD)" = "$TRUSTED_WORKFLOW_SHA" ] \
+            || { echo "Trusted fixture checkout does not match the workflow SHA" >&2; exit 1; }
+          [ -f "$trusted_source" ] && [ ! -L "$trusted_source" ] \
+            || { echo "Trusted Docker fixture must be a regular non-symlink file" >&2; exit 1; }
+
+          /usr/bin/sudo /usr/bin/install -d -o root -g root -m 0755 /usr/local/libexec/nemoclaw
+          /usr/bin/sudo /usr/bin/install -o root -g root -m 0500 \
+            "$trusted_source" "$trusted_fixture"
+          [ "$(/usr/bin/sudo /usr/bin/stat -c '%a %u %g' "$trusted_fixture")" = "500 0 0" ] \
+            || { echo "Trusted Docker fixture ownership or mode is invalid" >&2; exit 1; }
+          printf '%s  %s\n' "$TRUSTED_FIXTURE_SHA256" "$trusted_fixture" \
+            | /usr/bin/sudo /usr/bin/sha256sum -c -
+          /usr/bin/sudo /usr/bin/cmp -s "$trusted_source" "$trusted_fixture" \
+            || { echo "Installed Docker fixture does not match trusted workflow code" >&2; exit 1; }
+          /usr/bin/sudo /usr/bin/install -d -o root -g root -m 0700 "$trusted_state_root"
+
+          # Recover any root-owned snapshot left by a hard-cancelled earlier run before
+          # PR-controlled build or test code executes on this persistent GPU runner.
+          if ! /usr/bin/sudo /usr/bin/find "$trusted_state_root" -mindepth 1 -maxdepth 1 \
+            -type d -name 'hermes-gpu-fallback-docker-runtime.*' -print0 \
+            | while IFS= read -r -d '' stale_state_dir; do
+                if ! run_trusted_fixture restore \
+                  "$stale_state_dir" /etc/docker/daemon.json >/dev/null; then
+                  exit 1
+                fi
+              done; then
+            echo "Could not recover stale Docker fallback state" >&2
+            exit 1
+          fi
+
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
+      - name: Reassert trusted Node runtime
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        env:
+          BASH_ENV: /dev/null
+          E2E_HERMES_GPU_STARTUP_SCENARIO: ${{ matrix.scenario }}
+          ENV: /dev/null
+          NODE_OPTIONS: ""
+        with:
+          node-version: "22"
+
       - name: Run Hermes GPU startup live Vitest test
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          BASH_ENV: /dev/null
+          E2E_HERMES_GPU_STARTUP_SCENARIO: ${{ matrix.scenario }}
+          ENV: /dev/null
         run: |
           set -euo pipefail
+
+          if [ "$E2E_HERMES_GPU_STARTUP_SCENARIO" = fallback ]; then
+            umask 077
+            daemon_json=/etc/docker/daemon.json
+            trusted_fixture="/usr/local/libexec/nemoclaw/hermes-gpu-docker-runtime-fixture.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.${E2E_HERMES_GPU_STARTUP_SCENARIO}"
+            trusted_state_root=/var/lib/nemoclaw-e2e
+
+            run_trusted_fixture() {
+              /usr/bin/sudo -n /usr/bin/env -i \
+                PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                /bin/bash "$trusted_fixture" "$@"
+            }
+
+            mkdir -p "$E2E_ARTIFACT_DIR"
+            [ "$(/usr/bin/sudo /usr/bin/stat -c '%a %u %g' "$trusted_fixture")" = "500 0 0" ] \
+              || { echo "Trusted Docker fixture ownership or mode changed" >&2; exit 1; }
+            /usr/bin/sudo /usr/bin/install -d -o root -g root -m 0700 "$trusted_state_root"
+            state_dir="$(/usr/bin/sudo /usr/bin/mktemp -d \
+              "$trusted_state_root/hermes-gpu-fallback-docker-runtime.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.fallback.XXXXXX")"
+            /usr/bin/sudo /usr/bin/chown root:root "$state_dir"
+            /usr/bin/sudo /usr/bin/chmod 0700 "$state_dir"
+
+            # SOURCE_OF_TRUTH_REVIEW (Hermes GPU fallback fixture; #6110):
+            # invalidState: a cancelled fallback test leaves the runner-global Docker default
+            # runtime changed, contaminating later OpenShell jobs on this self-hosted runner.
+            # sourceBoundary: daemon mutation uses only immutable root-owned workflow_sha
+            # code; the PR test cannot replace the helper or its root-owned snapshot state.
+            # whyNotSourceFix: production must fail closed when GPU attachment is ambiguous;
+            # this fixture needs a real no-GPU partial container on an nvidia-default runner.
+            # regressionTest: hermes-gpu-startup-workflow-boundary requires this same-step trap.
+            # removalCondition: remove the daemon fixture when OpenShell can create a provably
+            # GPU-unattached partial sandbox without consulting Docker's default runtime.
+            restore_docker_default_runtime() {
+              local command_status=$?
+              local restore_status=0
+              local restored_runtime=""
+              trap - EXIT INT TERM
+              set +e
+              restored_runtime="$(run_trusted_fixture restore "$state_dir" "$daemon_json")"
+              restore_status=$?
+              if [ "$restore_status" -eq 0 ] && [ -n "$restored_runtime" ]; then
+                printf '%s\n' "$restored_runtime" \
+                  >"$E2E_ARTIFACT_DIR/docker-default-runtime-restored.txt" \
+                  || restore_status=1
+              fi
+              if [ "$restore_status" -ne 0 ]; then
+                exit 1
+              fi
+              exit "$command_status"
+            }
+
+            # OpenShell leaves Runtime unset after the wrapper strips --gpu, so Docker
+            # otherwise substitutes its daemon default. Force runc only within this
+            # trap-guarded process so production can prove the partial container has no GPU.
+            trap restore_docker_default_runtime EXIT
+            trap 'exit 130' INT
+            trap 'exit 143' TERM
+            original_runtime="$(run_trusted_fixture capture "$state_dir" "$daemon_json")"
+            printf '%s\n' "$original_runtime" \
+              >"$E2E_ARTIFACT_DIR/docker-default-runtime-before.txt"
+            selected_runtime="$(run_trusted_fixture select-runc "$state_dir" "$daemon_json")"
+            printf '%s\n' "$selected_runtime" \
+              >"$E2E_ARTIFACT_DIR/docker-default-runtime-during.txt"
+          fi
+
           npx vitest run --project e2e-live \
             test/e2e/live/hermes-gpu-startup.test.ts \
             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
+      - name: Recover Docker daemon after Hermes GPU fallback fixture
+        if: always()
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          BASH_ENV: /dev/null
+          E2E_HERMES_GPU_STARTUP_SCENARIO: ${{ matrix.scenario }}
+          ENV: /dev/null
+        run: |
+          set -euo pipefail
+          if [ "$E2E_HERMES_GPU_STARTUP_SCENARIO" != fallback ]; then
+            exit 0
+          fi
+
+          recovery_failed=0
+          restored_runtime=""
+          trusted_fixture="/usr/local/libexec/nemoclaw/hermes-gpu-docker-runtime-fixture.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.${E2E_HERMES_GPU_STARTUP_SCENARIO}"
+          trusted_state_root=/var/lib/nemoclaw-e2e
+          state_prefix="hermes-gpu-fallback-docker-runtime.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.fallback."
+
+          run_trusted_fixture() {
+            /usr/bin/sudo -n /usr/bin/env -i \
+              PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+              /bin/bash "$trusted_fixture" "$@"
+          }
+
+          if ! /usr/bin/sudo /usr/bin/find "$trusted_state_root" -mindepth 1 -maxdepth 1 \
+            -type d -name "${state_prefix}*" -print0 \
+            | while IFS= read -r -d '' state_dir; do
+                if ! restored_runtime="$(run_trusted_fixture restore \
+                  "$state_dir" /etc/docker/daemon.json)"; then
+                  exit 1
+                fi
+                if [ -n "$restored_runtime" ]; then
+                  printf '%s\n' "$restored_runtime" \
+                    >"$E2E_ARTIFACT_DIR/docker-default-runtime-restored.txt"
+                fi
+              done; then
+            recovery_failed=1
+          fi
+          if [ "$recovery_failed" -ne 0 ]; then
+            echo "Independent Docker daemon recovery could not prove restoration" >&2
+            exit 1
+          fi
+
+      - name: Remove trusted Hermes GPU runtime fixture
+        if: ${{ always() && matrix.scenario == 'fallback' }}
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          BASH_ENV: /dev/null
+          E2E_HERMES_GPU_STARTUP_SCENARIO: ${{ matrix.scenario }}
+          ENV: /dev/null
+        run: |
+          set -euo pipefail
+          trusted_fixture="/usr/local/libexec/nemoclaw/hermes-gpu-docker-runtime-fixture.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.${E2E_HERMES_GPU_STARTUP_SCENARIO}"
+          /usr/bin/sudo /usr/bin/rm -f -- "$trusted_fixture"
+
       - name: Upload Hermes GPU startup artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-hermes-gpu-startup-${{ matrix.scenario }}
+          path: e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}/
 
       - name: Clean up Docker auth
         if: always()

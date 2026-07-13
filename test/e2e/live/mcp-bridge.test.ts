@@ -15,6 +15,7 @@ import { parseOpenShellPolicy } from "../../../src/lib/policy/merge";
 import type { McpBridgeEntry } from "../../../src/lib/state/registry";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
+import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { assertExitZero as expectExitZero, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
@@ -70,6 +71,8 @@ const MCP_MUTATION_TIMEOUT_MS: Record<McpAdapter, number> = {
   "hermes-config": 12 * 60_000,
   mcporter: 3 * 60_000,
 };
+const MCP_BRIDGE_ALREADY_ABSENT =
+  /No MCP servers are registered|No MCP server '.+' is registered|MCP server '.+' not found/iu;
 
 function expectExitNonZero(result: ShellProbeResult, label: string, pattern: RegExp): void {
   expect(
@@ -83,24 +86,22 @@ function parseCurrentPolicy(raw: string): string {
   return parseOpenShellPolicy(raw).yamlBody;
 }
 
-async function bestEffortRemoveBridge(
+async function cleanupMcpBridge(
   host: HostCliClient,
   sandboxName: string,
   server: string,
   adapter: McpAdapter,
 ): Promise<void> {
-  await host.nemoclaw([sandboxName, "mcp", "remove", server, "--force"], {
+  const result = await host.nemoclaw([sandboxName, "mcp", "remove", server, "--force"], {
     artifactName: `cleanup-mcp-remove-${server}`,
     env: buildAvailabilityProbeEnv(),
     timeoutMs: MCP_MUTATION_TIMEOUT_MS[adapter],
   });
-}
-
-async function cleanupSandbox(host: HostCliClient, sandboxName: string): Promise<void> {
-  await host.bestEffortCleanupSandbox(sandboxName, {
-    artifactName: "cleanup-destroy-sandbox",
-    timeoutMs: 15 * 60_000,
-  });
+  assertCleanupSucceededOrAbsent(
+    result,
+    MCP_BRIDGE_ALREADY_ABSENT,
+    `cleanup MCP bridge ${server} on sandbox ${sandboxName}`,
+  );
 }
 
 async function onboardAgent(
@@ -109,9 +110,10 @@ async function onboardAgent(
   endpointUrl: string,
   options: { agent: McpAgent; sandboxName: string; artifactName: string },
 ): Promise<void> {
-  cleanup.add(`destroy MCP bridge ${options.agent} sandbox`, () =>
-    cleanupSandbox(host, options.sandboxName),
-  );
+  cleanup.trackSandbox(host, options.sandboxName, {
+    artifactName: "cleanup-destroy-sandbox",
+    timeoutMs: 15 * 60_000,
+  });
   await host.cleanupSandbox(options.sandboxName, {
     artifactName: "precleanup-destroy-sandbox",
     timeoutMs: 15 * 60_000,
@@ -180,7 +182,7 @@ async function assertAdapterDnsRebindingDenied(
     rebindMcp.close(),
   );
   cleanup.add(`remove ${options.artifactPrefix} DNS rebinding MCP bridge`, () =>
-    bestEffortRemoveBridge(host, options.sandboxName, REBIND_SERVER_NAME, options.adapter),
+    cleanupMcpBridge(host, options.sandboxName, REBIND_SERVER_NAME, options.adapter),
   );
   const rebindMcpUrl = `https://${REBIND_HOSTNAME}:${rebindMcp.port}/mcp`;
   const hostsFixture = await setupDnsRebindingHostsFixture(
@@ -410,12 +412,7 @@ async function assertConcurrentAddSerialized(
   },
 ): Promise<void> {
   cleanup.add(`remove ${options.artifactPrefix} concurrent MCP bridge`, () =>
-    bestEffortRemoveBridge(
-      host,
-      options.sandboxName,
-      CONCURRENT_SERVER_NAME,
-      options.expectedAdapter,
-    ),
+    cleanupMcpBridge(host, options.sandboxName, CONCURRENT_SERVER_NAME, options.expectedAdapter),
   );
   const args = [
     options.sandboxName,
@@ -870,10 +867,10 @@ test("mcp-bridge", { timeout: 45 * 60_000 }, async ({ artifacts, cleanup, host, 
   });
 
   cleanup.add("remove MCP bridge", () =>
-    bestEffortRemoveBridge(host, OPENCLAW_SANDBOX_NAME, SERVER_NAME, "mcporter"),
+    cleanupMcpBridge(host, OPENCLAW_SANDBOX_NAME, SERVER_NAME, "mcporter"),
   );
   cleanup.add("remove unexpected missing-secret MCP state", () =>
-    bestEffortRemoveBridge(host, OPENCLAW_SANDBOX_NAME, "missingsecret", "mcporter"),
+    cleanupMcpBridge(host, OPENCLAW_SANDBOX_NAME, "missingsecret", "mcporter"),
   );
 
   await expectMcpCliFailure(
@@ -1227,7 +1224,7 @@ liveAgentMatrixTest(
       artifactName: "onboard-hermes-mcp-bridge",
     });
     cleanup.add("remove Hermes MCP bridge", () =>
-      bestEffortRemoveBridge(host, HERMES_SANDBOX_NAME, SERVER_NAME, "hermes-config"),
+      cleanupMcpBridge(host, HERMES_SANDBOX_NAME, SERVER_NAME, "hermes-config"),
     );
 
     await assertConcurrentAddSerialized(host, cleanup, {
@@ -1386,7 +1383,7 @@ liveAgentMatrixTest(
       artifactName: "onboard-deepagents-mcp-bridge",
     });
     cleanup.add("remove Deep Agents MCP bridge", () =>
-      bestEffortRemoveBridge(host, DEEPAGENTS_SANDBOX_NAME, SERVER_NAME, "deepagents-config"),
+      cleanupMcpBridge(host, DEEPAGENTS_SANDBOX_NAME, SERVER_NAME, "deepagents-config"),
     );
 
     await assertConcurrentAddSerialized(host, cleanup, {

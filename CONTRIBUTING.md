@@ -86,7 +86,7 @@ That section is a planning aid, not a commitment that a specific issue or featur
 
 Install the following before you begin.
 
-- Node.js 22.16+ and npm 10+
+- Node.js 22.19+ and npm 10+
 - Python 3.11+ (for documentation tooling)
 - Docker (running)
 - [hadolint](https://github.com/hadolint/hadolint) (Dockerfile linter — `brew install hadolint` on macOS)
@@ -226,6 +226,29 @@ npx vitest run --project e2e-support
 This project is fast and does not run live targets. Live E2E remains opt-in through
 `npm run test:live-e2e` or the applicable GitHub Actions workflow.
 
+### Test Declarative Behavior
+
+Do not read a shipped YAML, JSON, manifest, workflow, or E2E runtime file only to assert its keys,
+lists, or literal text. Schema tests should use small synthetic fixtures. Behavior tests should pass
+the configuration through its consumer or validator and mutate important inputs to prove both the
+accepted and rejected outcomes.
+
+A direct read may remain only when it protects a security or compatibility trust boundary that
+cannot be observed at a more stable boundary. Put this annotation immediately above that one test
+and give the concrete reason:
+
+```ts
+// source-shape-contract: security -- Cross-field digest equality protects the shipped trust anchor
+it("keeps both immutable image digests aligned", () => {
+  // ...
+});
+```
+
+`npm run source-shape:check` rejects unsupported categories, short or misplaced reasons, and any
+exception whose file, test title, and category are not in the exact reviewed allowlist. It also
+rejects unused allowlist entries, so one exception cannot silently replace another. Its output and
+metrics list every accepted exception so these contracts remain visible during review.
+
 ### Focused Vitest Feedback
 
 Use `npm run test:changed` for the staged, unstaged, and untracked changes in the current checkout,
@@ -265,6 +288,10 @@ assignments, so reset mock implementations and restore raw mutations in the test
 Live E2E projects do not enable this automatic cleanup because their stateful targets require
 explicit, validated teardown.
 
+Plugin tests also require each test to execute at least one Vitest `expect` assertion. This check
+is scoped to the plugin project; root projects may continue using Node `assert` where that is the
+existing contract.
+
 ### Test Titles as Behavioral Documentation
 
 Write `describe` and `it` titles so the Vitest tree reads as behavioral documentation. Start test
@@ -299,6 +326,10 @@ If you still have `core.hooksPath` set from an old Husky setup, Git will ignore 
 
 `npm run check` is the whole-repository pre-commit and full CLI/plugin coverage baseline for broad changes to hooks, formatters, generated checks, or shared validation behavior.
 It is not part of routine PR preparation for a focused change.
+Full coverage enforces the aggregate ratchets in `ci/coverage-threshold-*.json` and per-file floors
+for security-sensitive SSRF, credential filtering and redaction, policy mutation, and state-lock
+modules. CLI coverage shards defer the per-file checks until their reports are merged. Pull requests
+also upload CLI and plugin Cobertura reports for advisory changed-file coverage feedback.
 
 For doc-only changes, you do not need to run the full test suite by default.
 Commit and push normally so the hooks run, then run the docs build:

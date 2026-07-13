@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { dockerImageInspectFormat } from "../adapters/docker";
 import { dockerSpawn } from "../adapters/docker/exec";
 import { LOCAL_SANDBOX_IMAGE_REPO } from "../domain/sandbox/image-tag";
 import {
@@ -12,6 +13,7 @@ import {
   type SandboxBuildContextOrigin,
 } from "../sandbox/build-context";
 import { buildSubprocessEnv } from "../subprocess-env";
+import { isImmutableDockerImageId } from "./openshell-docker-sandbox-containers";
 
 const TRUTHY_FLAG_VALUES = new Set(["1", "true", "yes", "on"]);
 const FALSY_FLAG_VALUES = new Set(["0", "false", "no", "off"]);
@@ -36,12 +38,15 @@ export interface SandboxPrebuildInput {
     args: readonly string[],
     options: { env: NodeJS.ProcessEnv; stdio: "inherit" },
   ) => Promise<number | null>;
+  inspectImageId?: (imageRef: string) => string;
   log?: (message: string) => void;
 }
 
 export interface SandboxPrebuildResult {
   createArgs: string[];
   imageRef: string | null;
+  /** Immutable local image identity; mutable tags never authorize fallback. */
+  imageId: string | null;
 }
 
 interface TrustedStagedBuildContext {
@@ -150,13 +155,13 @@ export async function prebuildSandboxImageIfEligible(
   const env = input.env ?? process.env;
   const log = input.log ?? console.log;
   if (!resolveSandboxPrebuildEnabled(env, input.dockerDriverGateway)) {
-    return { createArgs, imageRef: null };
+    return { createArgs, imageRef: null, imageId: null };
   }
   if (input.origin !== "generated") {
     log(
       "  Local BuildKit build skipped for a custom Dockerfile; using the gateway builder instead.",
     );
-    return { createArgs, imageRef: null };
+    return { createArgs, imageRef: null, imageId: null };
   }
   const fromIndex = createArgs.indexOf("--from");
   const fromDockerfile = createArgs[fromIndex + 1];
@@ -165,7 +170,7 @@ export async function prebuildSandboxImageIfEligible(
     !fromDockerfile ||
     path.resolve(fromDockerfile) !== path.resolve(input.buildCtx, "Dockerfile")
   ) {
-    return { createArgs, imageRef: null };
+    return { createArgs, imageRef: null, imageId: null };
   }
   let trustedContext: TrustedStagedBuildContext | null;
   try {
@@ -175,13 +180,13 @@ export async function prebuildSandboxImageIfEligible(
     log(
       `  Local BuildKit build skipped: staged build context could not be inspected (${detail}); using the gateway builder instead.`,
     );
-    return { createArgs, imageRef: null };
+    return { createArgs, imageRef: null, imageId: null };
   }
   if (!trustedContext) {
     log(
       "  Local BuildKit build skipped: staged build context failed trust validation; using the gateway builder instead.",
     );
-    return { createArgs, imageRef: null };
+    return { createArgs, imageRef: null, imageId: null };
   }
 
   const imageRef = sandboxLocalImageRef(input.sandboxName, input.buildId);
@@ -207,18 +212,39 @@ export async function prebuildSandboxImageIfEligible(
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     log(`  Local BuildKit build could not start (${detail}); using the gateway builder instead.`);
-    return { createArgs, imageRef: null };
+    return { createArgs, imageRef: null, imageId: null };
   }
 
   if (status !== 0) {
     const detail = status === null ? " without an exit status" : ` (exit ${status})`;
     log(`  Local BuildKit build failed${detail}; using the gateway builder instead.`);
-    return { createArgs, imageRef: null };
+    return { createArgs, imageRef: null, imageId: null };
   }
 
   createArgs[fromIndex + 1] = imageRef;
+  const inspectImageId =
+    input.inspectImageId ??
+    ((ref: string) =>
+      dockerImageInspectFormat("{{.Id}}", ref, {
+        ignoreError: true,
+      }).trim());
+  let imageId: string | null = null;
+  try {
+    const inspected = inspectImageId(imageRef).trim();
+    if (isImmutableDockerImageId(inspected)) imageId = inspected.toLowerCase();
+  } catch {
+    // Native creation can still use the local tag. Automatic compatibility
+    // fallback will refuse it unless the exact container supplies an immutable
+    // image ID before cleanup.
+  }
+  if (!imageId) {
+    log(
+      "  Local image identity could not be proven; an operator-authorized GPU compatibility fallback may fail closed if no exact native container identity becomes available.",
+    );
+  }
   return {
     createArgs,
     imageRef,
+    imageId,
   };
 }

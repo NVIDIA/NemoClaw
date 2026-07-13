@@ -166,7 +166,7 @@ function commandEnv(hostedEnv: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   };
 }
 
-async function bestEffort(run: () => Promise<unknown>): Promise<void> {
+async function preCleanBestEffort(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
   } catch {
@@ -194,9 +194,9 @@ function probeShell(): string {
   );
 }
 
-async function cleanupCronSandbox(sandbox: SandboxClient): Promise<void> {
-  await bestEffort(() =>
-    sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
+async function preCleanCronSandbox(sandbox: SandboxClient): Promise<void> {
+  await preCleanBestEffort(() =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
       artifactName: "cleanup-openshell-delete-cron-preflight",
       env: commandEnv(),
       timeoutMs: 60_000,
@@ -236,25 +236,28 @@ test("cron preflight reaches managed inference.local provider without EAI_AGAIN"
     skip(`Docker is required for cron preflight E2E: ${resultText(dockerInfo)}`);
   }
 
-  cleanup.add(`destroy cron preflight sandbox ${SANDBOX_NAME}`, async () => {
-    await bestEffort(() =>
-      host.nemoclaw([SANDBOX_NAME, "destroy", "--yes"], {
-        artifactName: "cleanup-nemoclaw-destroy-cron-preflight",
-        env: commandEnv(),
-        timeoutMs: 120_000,
-      }),
-    );
-    await cleanupCronSandbox(sandbox);
+  const cleanupEnv = commandEnv();
+  cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "cleanup-openshell-delete-cron-preflight",
+      env: cleanupEnv,
+      timeoutMs: 60_000,
+    }),
+  );
+  cleanup.trackSandbox(host, SANDBOX_NAME, {
+    artifactName: "cleanup-nemoclaw-destroy-cron-preflight",
+    env: cleanupEnv,
+    timeoutMs: 120_000,
   });
 
-  await bestEffort(() =>
+  await preCleanBestEffort(() =>
     host.nemoclaw([SANDBOX_NAME, "destroy", "--yes"], {
       artifactName: "pre-cleanup-nemoclaw-destroy-cron-preflight",
       env: commandEnv(),
       timeoutMs: 120_000,
     }),
   );
-  await cleanupCronSandbox(sandbox);
+  await preCleanCronSandbox(sandbox);
 
   let install: ShellProbeResult | undefined;
   for (let attempt = 1; attempt <= INSTALL_ATTEMPTS; attempt += 1) {

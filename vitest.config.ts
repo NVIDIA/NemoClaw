@@ -15,6 +15,7 @@ import { CliCoverageSequencer } from "./test/helpers/cli-coverage-sequencer";
 import { resolveIntegrationProjectScheduling } from "./test/helpers/integration-project-scheduling";
 import { sourceLoaderNodeOptions } from "./test/helpers/source-loader-options";
 import { testTimeout } from "./test/helpers/timeouts";
+import { resolveVitestCoverageThresholds } from "./test/helpers/vitest-coverage-thresholds";
 import { resolveVitestFeedback } from "./test/helpers/vitest-feedback";
 import { vitestStateIsolation } from "./test/helpers/vitest-state-isolation";
 import { vitestWatchTriggerPatterns } from "./test/helpers/vitest-watch-triggers";
@@ -120,6 +121,7 @@ export default defineConfig({
             "test/package-contract/**",
             "test/install-express-prompt.test.ts",
             "test/install-build-dependency-preflight.test.ts",
+            "test/install-clone-ref.test.ts",
             "test/install-preflight.test.ts",
             "test/install-preflight-docker-bootstrap.test.ts",
             "test/install-openshell-version-check.test.ts",
@@ -137,6 +139,7 @@ export default defineConfig({
           include: [
             "test/install-express-prompt.test.ts",
             "test/install-build-dependency-preflight.test.ts",
+            "test/install-clone-ref.test.ts",
             "test/install-preflight.test.ts",
             "test/install-preflight-docker-bootstrap.test.ts",
             "test/install-openshell-version-check.test.ts",
@@ -231,6 +234,7 @@ export default defineConfig({
       include: ["src/**/*.ts", "bin/**/*.js", "nemoclaw/src/**/*.ts", "nemoclaw/src/**/*.cts"],
       exclude: ["**/*.test.ts", "dist/**"],
       reporter: ["text-summary", "json-summary"],
+      thresholds: resolveVitestCoverageThresholds(process.argv.slice(2)),
     },
   },
 });

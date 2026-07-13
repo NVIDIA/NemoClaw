@@ -68,9 +68,10 @@ const {
   runSandboxConfigSync,
   writeSandboxConfigSyncFile,
 }: typeof import("./onboard/config-sync") = require("./onboard/config-sync");
-const dockerGpuPatch: typeof import("./onboard/docker-gpu-patch") = require("./onboard/docker-gpu-patch");
 const dockerGpuLocalInference: typeof import("./onboard/docker-gpu-local-inference") = require("./onboard/docker-gpu-local-inference");
 const dockerGpuSandboxCreate: typeof import("./onboard/docker-gpu-sandbox-create") = require("./onboard/docker-gpu-sandbox-create");
+const dockerGpuRoute: typeof import("./onboard/docker-gpu-route") = require("./onboard/docker-gpu-route");
+const sandboxGpuCreateFlow: typeof import("./onboard/sandbox-gpu-create-flow") = require("./onboard/sandbox-gpu-create-flow");
 const dockerDriverGatewayLaunch: typeof import("./onboard/docker-driver-gateway-launch") = require("./onboard/docker-driver-gateway-launch");
 const dockerDriverGatewayRuntime: typeof import("./onboard/docker-driver-gateway-runtime") = require("./onboard/docker-driver-gateway-runtime");
 const dockerDriverGatewayCutover: typeof import("./onboard/docker-driver-gateway-cutover") = require("./onboard/docker-driver-gateway-cutover");
@@ -117,13 +118,6 @@ const {
 const {
   finalizeCreatedSandbox,
 }: typeof import("./onboard/created-sandbox-finalization") = require("./onboard/created-sandbox-finalization");
-const {
-  reportSandboxCreateFailure,
-  reportSandboxReadinessFailure,
-}: typeof import("./onboard/created-sandbox-failure") = require("./onboard/created-sandbox-failure");
-const {
-  runSandboxCreateStep,
-}: typeof import("./onboard/sandbox-create-step") = require("./onboard/sandbox-create-step");
 const providerKeyBridge: typeof import("./onboard/provider-key-bridge") = require("./onboard/provider-key-bridge");
 const {
   isLinuxDockerDriverGatewayEnabled,
@@ -556,7 +550,6 @@ const buildContext = require("./build-context");
 const httpProbe: typeof import("./adapters/http/probe") = require("./adapters/http/probe");
 const modelPrompts: typeof import("./inference/model-prompts") = require("./inference/model-prompts");
 const providerModels: typeof import("./inference/provider-models") = require("./inference/provider-models");
-const sandboxCreateStream: typeof import("./sandbox/create-stream") = require("./sandbox/create-stream");
 const validationRecovery: typeof import("./validation-recovery") = require("./validation-recovery");
 const webSearch: typeof import("./inference/web-search") = require("./inference/web-search");
 const openshellInstallFlow: typeof import("./onboard/openshell-install") =
@@ -787,8 +780,6 @@ const { getSandboxReuseState, repairRecordedSandbox } = sandboxReuse.createSandb
   getSandboxStateFromOutputs,
   note,
 });
-
-const { streamSandboxCreate } = sandboxCreateStream;
 
 const {
   executeSandboxCommandForVerification,
@@ -1777,11 +1768,21 @@ async function startGatewayWithOptions(
   step(2, 8, "Starting OpenShell gateway");
 
   if (isLinuxDockerDriverGatewayEnabled()) {
+    const selectedGpuRoute = dockerGpuRoute.initialDockerGpuRoute(
+      dockerGpuRoute.resolveDockerGpuRoutePlan(
+        { sandboxGpuEnabled: gpuPassthrough, hostGpuPlatform: _gpu?.platform },
+        {
+          dockerDriverGateway: true,
+          dockerDesktopWsl: dockerGpuSandboxCreate.isDockerDesktopWslRuntime(),
+        },
+      ),
+    );
     return startDockerDriverGateway({
       exitOnFailure,
       skipSandboxBridgeReachability: dockerGpuLocalInference.shouldSkipGpuBridgeProbe(
         gpuPassthrough,
         _gpu?.platform,
+        selectedGpuRoute,
       ),
     });
   }
@@ -2715,16 +2716,22 @@ async function createSandboxWithBaseImageResolution(
     "policies",
     "openclaw-sandbox.yaml",
   );
+  // TODO: Keep GPU route resolution, policy materialization, and create execution in their focused
+  // modules; extract this remaining handoff if it acquires another responsibility. This boundary
+  // deliberately coordinates those modules without re-implementing their trust-boundary logic.
   const basePolicyPath = (agent && agentOnboard.getAgentPolicyPath(agent)) || defaultPolicyPath;
   const dockerDriverGateway = isLinuxDockerDriverGatewayEnabled();
+  const { gpuRoutePlan, logMessage: sandboxGpuLogMessage } =
+    dockerGpuSandboxCreate.resolveDockerGpuSandboxCreatePlan(effectiveSandboxGpuConfig, {
+      dockerDriverGateway,
+    });
   const {
     activeMessagingChannels,
     initialSandboxPolicy,
     policyTier: resolvedCreatePolicyTier,
     createArgs,
     messagingProviders,
-    useDockerGpuPatch,
-    sandboxGpuLogMessage,
+    compatibilityPolicyPath,
   } = sandboxCreatePlan.prepareSandboxCreatePlan({
     basePolicyPath,
     buildCtx,
@@ -2739,7 +2746,8 @@ async function createSandboxWithBaseImageResolution(
     extraProviders: createIntent?.extraProviders ?? reconcileRegisteredExtraProviders(GATEWAY_NAME, { runOpenshell }),
     hermesToolGateways,
     sandboxGpuConfig: effectiveSandboxGpuConfig,
-    dockerDriverGateway,
+    gpuRoutePlan,
+    sandboxGpuLogMessage,
     appendResourceFlags: (args) =>
       appendResourceFlagsForProfile(args, resourceProfile, getOpenshellBinary(), {
         isNonInteractive,
@@ -2776,6 +2784,7 @@ async function createSandboxWithBaseImageResolution(
   const configuredMessagingChannels =
     getChannelsFromPlan(plannedMessagingState?.plan) ?? activeMessagingChannels;
   sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig({ configuredMessagingChannels });
+  const initialGpuRoute = dockerGpuRoute.initialDockerGpuRoute(gpuRoutePlan);
   const { buildId, dashboardRemoteBindPrepared } =
     await preparedDcodeRebuild.resolveSandboxBuildPatch({
       preparedBuildContext,
@@ -2792,43 +2801,65 @@ async function createSandboxWithBaseImageResolution(
       ...(isManagedDcodeAgent ? { dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode } : {}),
       hermesToolGateways,
       sandboxGpuConfig: effectiveSandboxGpuConfig,
+      selectedGpuRoute: initialGpuRoute,
       ...baseImageResolutionFlow.getBaseImageResolutionPatchOptions(baseImageResolutionContext),
       gatewayPort: GATEWAY_PORT,
     });
   const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
-  const { createResult, prebuild, effectiveDashboardPort, dockerGpuCreatePatch } =
-    await runSandboxCreateStep(
-      {
-        agent,
-        observabilityEnabled: createIntent?.observabilityEnabled === true,
-        chatUiUrl,
-        createArgs,
-        sandboxName,
-        env: process.env,
-        extraPlaceholderKeys,
-        getDashboardForwardPort,
-        hermesDashboardState,
-        manageDashboard,
-        openshellShellCommand,
-        openshellArgv,
-        prebuild: { buildCtx, buildId, dockerDriverGateway, origin },
-        useDockerGpuPatch,
-        gpuDevice: effectiveSandboxGpuConfig.sandboxGpuDevice,
-        gpuBackend: effectiveSandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic",
-        timeoutSecs: sandboxReadyTimeoutSecs,
-      },
-      {
-        prepareCreateLaunch: sandboxCreateLaunch.prepareSandboxCreateLaunchWithPrebuild,
-        createDockerGpuPatch: dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch,
-        streamCreate: streamSandboxCreate,
-        isSandboxReady,
-        isTerminalAgent: agentDefs.isTerminalAgent,
-        addTraceEvent: onboardTracing.addTraceEvent,
-        runOpenshell,
-        runCaptureOpenshell,
-        sleepSeconds,
-      },
-    );
+  const { createArgv, effectiveDashboardPort, prebuild, sandboxEnv, sandboxStartupCommand } =
+    await sandboxCreateLaunch.prepareSandboxCreateLaunchWithPrebuild({
+      agent,
+      observabilityEnabled: createIntent?.observabilityEnabled === true,
+      chatUiUrl,
+      createArgs: dockerGpuRoute.renderSandboxCreateArgsForGpuRoute(createArgs, initialGpuRoute, {
+        compatibilityPolicyPath,
+      }),
+      sandboxName,
+      env: process.env,
+      extraPlaceholderKeys,
+      getDashboardForwardPort,
+      hermesDashboardState,
+      manageDashboard,
+      openshellShellCommand,
+      openshellArgv,
+      prebuild: { buildCtx, buildId, dockerDriverGateway, origin },
+    });
+  const restoreBackupPath =
+    pendingStateRestore?.manifest?.backupPath ?? pendingStateRestoreBackupPath;
+  const {
+    createResult,
+    dockerGpuCreatePatch,
+    route: selectedGpuRoute,
+    firstCreateOutput,
+    registryImageRef,
+  } = await sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
+    {
+      sandboxName,
+      provider,
+      sandboxGpuConfig: effectiveSandboxGpuConfig,
+      gpuRoutePlan,
+      initialGpuRoute,
+      compatibilityPolicyPath,
+      dockerDriverGateway,
+      gatewayPort: GATEWAY_PORT,
+      sandboxReadyTimeoutSecs,
+      createArgv,
+      sandboxEnv,
+      sandboxStartupCommand,
+      prebuild,
+      restoreBackupPath,
+      terminalAgent: agentDefs.isTerminalAgent(agent),
+      persistStartupCommand: dockerDriverGateway === true && agent?.name === "hermes",
+    },
+    {
+      runOpenshell,
+      runCaptureOpenshell,
+      sleep: sleepSeconds,
+      openshellArgv,
+      verifyDirectSandboxGpu,
+    },
+  );
+
   if (initialSandboxPolicy.cleanup && initialSandboxPolicy.cleanup()) {
     process.removeListener("exit", initialSandboxPolicy.cleanup);
   }
@@ -2842,73 +2873,6 @@ async function createSandboxWithBaseImageResolution(
     process.removeListener("exit", cleanupBuildCtx);
   }
 
-  dockerGpuCreatePatch.exitOnPatchError();
-
-  const restoreBackupPath =
-    pendingStateRestore?.manifest?.backupPath ?? pendingStateRestoreBackupPath;
-
-  if (createResult.status !== 0) {
-    reportSandboxCreateFailure(
-      {
-        sandboxName,
-        createStatus: createResult.status,
-        createOutput: createResult.output,
-        restoreBackupPath,
-        createArgs: prebuild.createArgs,
-      },
-      {
-        classifyCreateFailure: classifySandboxCreateFailure,
-        printCreateFailureDiagnostics: (name, options) =>
-          sandboxCreateFailureDiagnostics.printSandboxCreateFailureDiagnostics(name, options),
-        printRecoveryHints: printSandboxCreateRecoveryHints,
-        warn: (message) => console.warn(message),
-        error: (message) => console.error(message),
-        exitProcess: (code) => process.exit(code),
-      },
-    );
-  }
-
-  dockerGpuCreatePatch.ensureApplied();
-  dockerGpuCreatePatch.waitForSupervisorReconnectIfNeeded();
-
-  // Wait for OpenShell to report the sandbox Ready before registering.
-  // On first run the sandbox can take longer to initialize;
-  // without this gate, NemoClaw registers a phantom sandbox that
-  // causes "sandbox not found" on every subsequent connect/status call.
-  console.log("  Waiting for sandbox to become ready...");
-  const readiness = sandboxReadinessTracing.waitForCreatedSandboxReadyWithTrace({
-    sandboxName,
-    timeoutSecs: sandboxReadyTimeoutSecs,
-    runCaptureOpenshell,
-    isSandboxReady,
-    getSandboxFailurePhase: gatewayState.getSandboxFailurePhase,
-    sleep: sleepSeconds,
-  });
-
-  if (!readiness.ready) {
-    reportSandboxReadinessFailure(
-      {
-        sandboxName,
-        readiness,
-        createStatus: createResult.status,
-        timeoutSecs: sandboxReadyTimeoutSecs,
-        restoreBackupPath,
-        useDockerGpuPatch,
-      },
-      {
-        printReadinessFailure: (result, name, timeoutSecs) =>
-          sandboxReadinessTracing.printReadinessFailure(result, name, timeoutSecs),
-        printCreateFailureDiagnostics: (name, options) =>
-          sandboxCreateFailureDiagnostics.printSandboxCreateFailureDiagnostics(name, options),
-        printDockerGpuReadinessFailure: () => dockerGpuCreatePatch.printReadinessFailureIfEnabled(),
-        deleteSandbox: (name) => runOpenshell(["sandbox", "delete", name], { ignoreError: true }),
-        cliName,
-        error: (message) => console.error(message),
-        exitProcess: (code) => process.exit(code),
-      },
-    );
-  }
-
   if (manageDashboard) {
     console.log("  Waiting for NemoClaw dashboard to become ready...");
     sandboxReadinessTracing.waitForDashboardReadyWithTrace({
@@ -2920,18 +2884,20 @@ async function createSandboxWithBaseImageResolution(
   }
 
   if (effectiveSandboxGpuConfig.sandboxGpuEnabled) {
-    // Runs the GPU proof, preserving Docker-GPU patch Error-phase diagnostics
-    // when applicable, then gates host-network local inference reachability (#4509).
-    dockerGpuLocalInference.verifyGpuSandboxAfterReady(effectiveSandboxGpuConfig, provider, {
-      sandboxName,
-      dockerDriverGateway,
-      useDockerGpuPatch,
-      verifyDirectSandboxGpu,
-      verifyGpuOrExit: dockerGpuCreatePatch.verifyGpuOrExit,
-      selectedMode: dockerGpuCreatePatch.selectedMode,
-      runCaptureOpenshell,
-      log: console.log,
-    });
+    dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAfterReady(
+      effectiveSandboxGpuConfig,
+      provider,
+      {
+        sandboxName,
+        dockerDriverGateway,
+        selectedRoute: selectedGpuRoute,
+        verifyDirectSandboxGpu,
+        verifyGpuOrExit: dockerGpuCreatePatch.verifyGpuOrExit,
+        selectedMode: dockerGpuCreatePatch.selectedMode,
+        runCaptureOpenshell,
+        log: console.log,
+      },
+    );
   }
 
   let actualDashboardPort = 0;
@@ -2950,7 +2916,10 @@ async function createSandboxWithBaseImageResolution(
 
   // openshell tags images with seconds; buildId is ms. Parse actual tag from output. Fixes #2672.
   const resolvedImageTag =
-    prebuild.imageRef ?? resolveSandboxImageTagFromCreateOutput(createResult.output, buildId);
+    registryImageRef ??
+    prebuild.imageRef ??
+    buildContext.extractBuiltImageRef(`${firstCreateOutput}\n${createResult.output}`) ??
+    resolveSandboxImageTagFromCreateOutput(`${firstCreateOutput}\n${createResult.output}`, buildId);
   const sandboxRuntimeFields = getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
   finalizeCreatedSandbox(
     {

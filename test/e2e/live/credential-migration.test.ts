@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
@@ -36,7 +37,7 @@ function testEnv(home: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv
   return testHomeEnvironment(home, extra);
 }
 
-async function bestEffort(run: () => Promise<unknown>): Promise<void> {
+async function bestEffortPreclean(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
   } catch {
@@ -86,34 +87,47 @@ async function ensureOpenshellAvailable(host: HostCliClient, home: string): Prom
   return afterInstall;
 }
 
+async function cleanupCredentialMigrationNemoClawSandbox(
+  host: HostCliClient,
+  home: string,
+): Promise<void> {
+  const env = testEnv(home);
+  const result = await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
+    artifactName: "cleanup-nemoclaw-destroy",
+    env,
+    redactionValues: [
+      process.env.NVIDIA_INFERENCE_API_KEY ?? "",
+      process.env.COMPATIBLE_API_KEY ?? "",
+    ],
+    timeoutMs: 120_000,
+  });
+  assertCleanupSucceededOrAbsent(
+    result,
+    /Sandbox '.+' does not exist|Run 'nemoclaw onboard' to create one|sandbox .* not found|no such sandbox/iu.test(
+      resultText(result),
+    ),
+    `cleanup credential migration sandbox ${SANDBOX_NAME}`,
+  );
+}
+
 async function cleanupCredentialMigrationState(host: HostCliClient, home: string): Promise<void> {
   const env = testEnv(home);
-  await bestEffort(() =>
-    host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
-      artifactName: "cleanup-nemoclaw-destroy",
-      env,
-      redactionValues: [
-        process.env.NVIDIA_INFERENCE_API_KEY ?? "",
-        process.env.COMPATIBLE_API_KEY ?? "",
-      ],
-      timeoutMs: 120_000,
-    }),
-  );
-  await bestEffort(() =>
+  await bestEffortPreclean(() => cleanupCredentialMigrationNemoClawSandbox(host, home));
+  await bestEffortPreclean(() =>
     host.command("openshell", ["sandbox", "delete", SANDBOX_NAME], {
       artifactName: "cleanup-openshell-sandbox-delete",
       env,
       timeoutMs: 60_000,
     }),
   );
-  await bestEffort(() =>
+  await bestEffortPreclean(() =>
     host.command("openshell", ["forward", "stop", "18789"], {
       artifactName: "cleanup-openshell-forward-stop",
       env,
       timeoutMs: 30_000,
     }),
   );
-  await bestEffort(() =>
+  await bestEffortPreclean(() =>
     host.command("openshell", ["gateway", "destroy", "-g", "nemoclaw"], {
       artifactName: "cleanup-openshell-gateway-destroy",
       env,
@@ -124,7 +138,7 @@ async function cleanupCredentialMigrationState(host: HostCliClient, home: string
 
 test("credential migration stages legacy file into gateway and removes plaintext safely", {
   timeout: ONBOARD_TIMEOUT_MS + INSTALL_TIMEOUT_MS + 5 * 60_000,
-}, async ({ artifacts, cleanup, host, secrets, skip }) => {
+}, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
   // Use the existing nightly secret as the legacy provider credential. The
   // onboard child env below deliberately does not receive that credential, so
   // the only source is ~/.nemoclaw/credentials.json — matching the retired
@@ -160,10 +174,30 @@ test("credential migration stages legacy file into gateway and removes plaintext
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cred-migration-"));
   const nemoclawDir = path.join(home, ".nemoclaw");
   const legacyFile = path.join(nemoclawDir, "credentials.json");
-  cleanup.add(`remove credential migration state for ${SANDBOX_NAME}`, async () => {
-    await cleanupCredentialMigrationState(host, home);
-    fs.rmSync(home, { recursive: true, force: true });
+  const cleanupEnv = testEnv(home);
+  cleanup.trackDisposable(`remove credential migration test home ${home}`, () =>
+    fs.rmSync(home, { recursive: true, force: true }),
+  );
+  cleanup.trackGateway(host, "nemoclaw", {
+    artifactName: "cleanup-openshell-gateway-destroy",
+    env: cleanupEnv,
+    timeoutMs: 120_000,
   });
+  cleanup.trackForward(host, 18789, {
+    artifactName: "cleanup-openshell-forward-stop",
+    env: cleanupEnv,
+    timeoutMs: 30_000,
+  });
+  cleanup.trackDisposable(`delete credential migration OpenShell sandbox ${SANDBOX_NAME}`, () =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "cleanup-openshell-sandbox-delete",
+      env: cleanupEnv,
+      timeoutMs: 60_000,
+    }),
+  );
+  cleanup.trackDisposable(`destroy credential migration sandbox ${SANDBOX_NAME}`, () =>
+    cleanupCredentialMigrationNemoClawSandbox(host, home),
+  );
 
   await artifacts.target.declare({
     id: "credential-migration",

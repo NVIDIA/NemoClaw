@@ -93,7 +93,7 @@ def parse_hash(data, label):
     )
     if state_match is None:
         fail(f"{label} contains an unexpected MCP state record")
-    return tuple(digests)
+    return tuple(digests), state_match.groups()
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
@@ -138,10 +138,16 @@ if api_key_lines != 1:
     fail("Hermes environment does not contain exactly one canonical generated API key")
 base_env_bytes = "".join(base_env_lines).encode("utf-8")
 
-strict_config_digest, strict_env_digest = parse_hash(strict_hash_bytes, "Hermes strict hash")
-compat_config_digest, compat_env_digest = parse_hash(
+strict_digests, strict_mcp_state = parse_hash(strict_hash_bytes, "Hermes strict hash")
+compat_digests, compat_mcp_state = parse_hash(
     compat_hash_bytes, "Hermes compatibility hash"
 )
+strict_config_digest, strict_env_digest = strict_digests
+compat_config_digest, compat_env_digest = compat_digests
+if strict_mcp_state[0] != strict_mcp_state[1]:
+    fail("Hermes strict hash contains pending MCP state")
+if compat_mcp_state != strict_mcp_state:
+    fail("Hermes compatibility hash MCP state differs from the strict anchor")
 if not secrets.compare_digest(strict_config_digest, digest(config_bytes)):
     fail("Hermes config differs from the strict startup base")
 if not secrets.compare_digest(strict_env_digest, digest(base_env_bytes)):

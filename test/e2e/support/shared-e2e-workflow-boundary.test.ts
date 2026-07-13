@@ -12,10 +12,7 @@ import {
   discoverCredentialFreeTests,
   stripCredentialFreeTestDeclarations,
 } from "../../../tools/e2e/credential-free-tests.mts";
-import {
-  evaluateE2eWorkflowDispatchSelectors,
-  validateE2eWorkflowBoundary,
-} from "../../../tools/e2e/workflow-boundary.mts";
+import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 
 type Workflow = {
@@ -62,21 +59,6 @@ describe("shared E2E workflow boundary", () => {
     ).toEqual(declaredFiles);
   });
 
-  it("keeps discovered tests default-enabled and selectively dispatchable", () => {
-    expect(validateE2eWorkflowBoundary()).toEqual([]);
-
-    for (const { id } of discoverCredentialFreeTests()) {
-      for (const selector of [{ targets: id }, { jobs: id }]) {
-        expect(evaluateE2eWorkflowDispatchSelectors(selector)).toMatchObject({
-          valid: true,
-          liveTargetsRun: false,
-          selectedFreeStandingJobs: [id],
-        });
-      }
-      expect(evaluateE2eWorkflowDispatchSelectors({}).selectedFreeStandingJobs).toContain(id);
-    }
-  });
-
   it("ratchets shared setup, tagged test execution, and aggregation", () => {
     const errors = validateMutatedWorkflow((workflow) => {
       const job = workflow.jobs["shared-e2e"];
@@ -92,6 +74,7 @@ describe("shared E2E workflow boundary", () => {
       expect.arrayContaining([
         "shared E2E job must set CHECK_DOC_LINKS_REMOTE to 0",
         'step \'Run tagged credential-free test\' run script must include npx vitest run --project "${TEST_PROJECT}" "${TEST_FILE}"',
+        "step 'Run tagged credential-free test' run script must include --tags-filter=e2e/credential-free",
         "report-to-pr job must wait for shared-e2e",
       ]),
     );

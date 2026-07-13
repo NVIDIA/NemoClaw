@@ -11,11 +11,11 @@ import { expect } from "../fixtures/e2e-test.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { type FakeDockerApi, startFakeDockerApi } from "./messaging-providers-helpers.ts";
 import {
-  bestEffort,
   cleanupSandbox,
   expectExitZero,
   phase6Env,
   resultText,
+  runSecondaryCleanup,
   sandboxEncodedSh,
   sandboxNode,
   sandboxSh,
@@ -93,7 +93,7 @@ export async function cleanupPairingSandbox(
   prefix: string,
 ): Promise<void> {
   await cleanupSandbox(host, sandboxName, env, redactions, prefix);
-  await bestEffort(() =>
+  await runSecondaryCleanup(() =>
     host.command("openshell", ["gateway", "destroy", "-g", "nemoclaw"], {
       artifactName: `${prefix}-openshell-gateway-destroy`,
       env,

@@ -13,7 +13,16 @@ import {
   isFastProjectTestPath,
   isScannedTestPath,
 } from "../scripts/checks/no-test-dist-imports";
-import { findProjectOverlaps, parseProjectListing } from "../scripts/checks/vitest-project-overlap";
+import {
+  discoverVitestCandidates,
+  EXPECTED_VITEST_PROJECTS,
+  expectedProjectForTestPath,
+  findProjectMembershipMismatches,
+  findProjectRosterMismatches,
+  parseProjectListing,
+  parseProjectRoster,
+  resolveVitestInvocation,
+} from "../scripts/checks/vitest-project-overlap";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const SOURCE_RUNTIME = path.join(REPO_ROOT, "test", "helpers", "onboard-script-mocks.cjs");
@@ -645,21 +654,156 @@ describe("fast-project transitive import boundary", () => {
 });
 
 describe("Vitest project membership boundary", () => {
-  it("accepts disjoint listings and reports duplicate membership", () => {
-    const disjoint = parseProjectListing("[cli] src/a.test.ts\n[integration] test/b.test.ts\n");
-    expect(findProjectOverlaps(disjoint.projectsByFile)).toEqual([]);
+  it("discovers broad test candidates while ignoring dependencies and helpers (#6692)", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-vitest-candidates-"));
+    const included = [
+      "src/unit.test.ts",
+      "src/parser.spec.mts",
+      "src/dist/generated.test.ts",
+      "test/integration.test.js",
+      "test/component.test.tsx",
+      "test/.venv/environment.test.ts",
+      "nemoclaw/src/plugin.spec.cts",
+      "nemoclaw/src/coverage/generated.spec.ts",
+    ];
+    const excluded = ["src/helper.ts", "test/node_modules/dependency.spec.ts"];
 
-    const overlapping = parseProjectListing(
-      "[cli] src/a.test.ts\n[integration] test/b.test.ts\n[package-contract] src/a.test.ts\n",
-    );
-    expect(findProjectOverlaps(overlapping.projectsByFile)).toEqual([
-      ["src/a.test.ts", new Set(["cli", "package-contract"])],
+    try {
+      for (const file of [...included, ...excluded]) {
+        const absolutePath = path.join(fixtureRoot, file);
+        fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+        fs.writeFileSync(absolutePath, "");
+      }
+
+      expect([...discoverVitestCandidates(fixtureRoot)]).toEqual(
+        included.sort((left, right) => left.localeCompare(right)),
+      );
+    } finally {
+      fs.rmSync(fixtureRoot, { force: true, recursive: true });
+    }
+  });
+
+  it("maps candidate paths to their exact project contract (#6692)", () => {
+    const expectedProjects = new Map<string, string | undefined>([
+      ["src/example.spec.ts", "cli"],
+      ["nemoclaw/src/example.test.js", "plugin"],
+      ["test/coverage-ratchet.test.ts", "integration"],
+      ["test/vitest-coverage-thresholds.test.ts", "integration"],
+      ["test/example.test.js", "integration"],
+      ["test/install-build-dependency-preflight.test.ts", "installer-integration"],
+      ["test/install-clone-ref.test.ts", "installer-integration"],
+      ["test/install-express-prompt.test.ts", "installer-integration"],
+      ["test/install-openshell-version-check.test.ts", "installer-integration"],
+      ["test/install-preflight-docker-bootstrap.test.ts", "installer-integration"],
+      ["test/install-preflight.test.ts", "installer-integration"],
+      ["test/package-contract/example.test.js", "package-contract"],
+      ["test/e2e/support/example.test.js", "e2e-support"],
+      ["test/e2e/live/example.spec.ts", "e2e-live"],
+      ["test/e2e/brev-e2e.test.ts", "e2e-branch-validation"],
+      ["test/e2e/other.test.ts", undefined],
     ]);
+
+    for (const [file, project] of expectedProjects) {
+      expect(expectedProjectForTestPath(file), file).toBe(project);
+    }
+  });
+
+  it("invokes Vitest through Node on every platform (#6692)", () => {
+    expect(resolveVitestInvocation(["list", "--filesOnly"], REPO_ROOT)).toEqual({
+      command: process.execPath,
+      args: [path.join(REPO_ROOT, "node_modules", "vitest", "vitest.mjs"), "list", "--filesOnly"],
+    });
+  });
+
+  it("reports zero, overlap, wrong, unsupported, and unexpected memberships (#6692)", () => {
+    const candidates = new Set([
+      "src/missing.test.ts",
+      "test/overlap.test.ts",
+      "nemoclaw/src/wrong.test.ts",
+      "test/e2e/unsupported.test.ts",
+      "test\\good.test.ts",
+    ]);
+    const listing = parseProjectListing(
+      [
+        "[integration] test/good.test.ts",
+        "[integration] test\\good.test.ts",
+        "[integration] test/overlap.test.ts",
+        "[cli] test/overlap.test.ts",
+        "[cli] nemoclaw/src/wrong.test.ts",
+        "[integration] src/helper.ts",
+      ].join("\n"),
+    );
+
+    expect(findProjectMembershipMismatches(candidates, listing.projectsByFile)).toEqual([
+      {
+        file: "nemoclaw/src/wrong.test.ts",
+        expected: new Set(["plugin"]),
+        actual: new Set(["cli"]),
+        reason: "wrong-project",
+      },
+      {
+        file: "src/helper.ts",
+        expected: new Set(),
+        actual: new Set(["integration"]),
+        reason: "unexpected-listing",
+      },
+      {
+        file: "src/missing.test.ts",
+        expected: new Set(["cli"]),
+        actual: new Set(),
+        reason: "zero-membership",
+      },
+      {
+        file: "test/e2e/unsupported.test.ts",
+        expected: new Set(),
+        actual: new Set(),
+        reason: "unsupported-candidate",
+      },
+      {
+        file: "test/overlap.test.ts",
+        expected: new Set(["integration"]),
+        actual: new Set(["cli", "integration"]),
+        reason: "overlap",
+      },
+    ]);
+  });
+
+  it("accepts the exact project roster and reports a renamed project (#6692)", () => {
+    const exactRoster = parseProjectRoster(
+      JSON.stringify({
+        projects: EXPECTED_VITEST_PROJECTS.map((name) => ({ name, tags: [] })),
+        tags: [],
+      }),
+    );
+    expect(findProjectRosterMismatches(exactRoster)).toEqual({
+      missing: [],
+      unexpected: [],
+    });
+
+    const renamed = parseProjectRoster(
+      JSON.stringify({
+        projects: [
+          ...EXPECTED_VITEST_PROJECTS.filter((name) => name !== "e2e-branch-validation").map(
+            (name) => ({ name, tags: [] }),
+          ),
+          { name: "e2e-branch", tags: [] },
+          { name: "empty-project", tags: [] },
+        ],
+        tags: [],
+      }),
+    );
+    expect(findProjectRosterMismatches(renamed)).toEqual({
+      missing: ["e2e-branch-validation"],
+      unexpected: ["e2e-branch", "empty-project"],
+    });
   });
 
   it("fails closed when Vitest listing output changes shape", () => {
     expect(() => parseProjectListing("unexpected output")).toThrow(
       "Could not parse Vitest project listing line",
+    );
+    expect(() => parseProjectRoster('{"projects": [{"tags": []}]}')).toThrow(
+      "Every Vitest project roster entry must have a non-empty name",
     );
   });
 });

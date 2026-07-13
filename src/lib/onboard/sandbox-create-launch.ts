@@ -75,6 +75,20 @@ export interface SandboxCreateLaunchWithPrebuild extends SandboxCreateLaunch {
   prebuild: SandboxPrebuildResult;
 }
 
+export function renderSandboxCreateCommand(
+  createArgs: readonly string[],
+  sandboxStartupCommand: readonly string[],
+  openshellShellCommand: OpenshellShellCommand,
+): string {
+  return `${openshellShellCommand([
+    "sandbox",
+    "create",
+    ...createArgs,
+    "--",
+    ...sandboxStartupCommand,
+  ])} 2>&1`;
+}
+
 export interface SandboxRuntimeEnvArgsInput {
   agent: AgentDefinition | null;
   chatUiUrl: string;
@@ -182,7 +196,11 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
   // lets the real exit code flow through to run().
   const sandboxStartupCommand = ["env", ...envArgs, "nemoclaw-start"];
   const openshellArgs = ["sandbox", "create", ...input.createArgs, "--", ...sandboxStartupCommand];
-  const createCommand = `${input.openshellShellCommand(openshellArgs)} 2>&1`;
+  const createCommand = renderSandboxCreateCommand(
+    input.createArgs,
+    sandboxStartupCommand,
+    input.openshellShellCommand,
+  );
   const createArgv = input.openshellArgv
     ? input.openshellArgv(openshellArgs)
     : ["bash", "-lc", createCommand];
