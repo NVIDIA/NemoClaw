@@ -298,6 +298,11 @@
     },
     {
       "file": "test/pr-review-advisor-workflow-boundary.test.ts",
+      "test": "rejects deleting or weakening analysis-workspace symlink removal",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-review-advisor-workflow-boundary.test.ts",
       "test": "requires one advisor lane to publish the PR comment",
       "category": "security"
     },

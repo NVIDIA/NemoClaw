@@ -233,6 +233,13 @@ export function validatePrReviewAdvisorWorkflowBoundary(
   requireStepWith(errors, dispatchCheckout, "path", "pr-workdir");
   requireStepWith(errors, dispatchCheckout, "persist-credentials", false);
 
+  const setDefaultWorkdir = requireStep(errors, steps, "Set default advisor workdir");
+  requireRunContains(
+    errors,
+    setDefaultWorkdir,
+    'echo "ADVISOR_WORKDIR=$GITHUB_WORKSPACE/pr-workdir" >> "$GITHUB_ENV"',
+  );
+
   const targetCheckout = requireStep(errors, steps, "Prepare target PR checkout");
   requireRunContains(errors, targetCheckout, '[[ ! "$TARGET_REPO" =~ ^[A-Za-z0-9_.-]+/');
   requireRunContains(errors, targetCheckout, '[[ ! "$TARGET_PR" =~ ^[0-9]+$ ]]');
@@ -266,6 +273,38 @@ export function validatePrReviewAdvisorWorkflowBoundary(
     '[[ ! "$TARGET_PR" =~',
     'git -C "$TARGET_DIR" fetch --no-tags target "pull/${TARGET_PR}/head',
   );
+
+  const removeSymlinks = requireStep(errors, steps, "Remove symlinks from analysis workspace");
+  if (removeSymlinks && stringValue(removeSymlinks.shell).trim() !== "bash") {
+    errors.push("Remove symlinks from analysis workspace must use the bash shell");
+  }
+  const expectedSymlinkRemoval = `while IFS= read -r -d '' link; do
+  rm -- "$link"
+done < <(find "$ADVISOR_WORKDIR" -type l -print0)`;
+  if (removeSymlinks && stringValue(removeSymlinks.run).trim() !== expectedSymlinkRemoval) {
+    errors.push(
+      "Remove symlinks from analysis workspace must use the canonical fail-closed cleanup script",
+    );
+  }
+  const removeSymlinksIndex = steps.findIndex(
+    (step) => step.name === "Remove symlinks from analysis workspace",
+  );
+  if (removeSymlinksIndex >= 0) {
+    for (const workspaceStepName of [
+      "Checkout PR workspace (read-only data)",
+      "Checkout dispatch workspace (read-only data)",
+      "Set default advisor workdir",
+      "Prepare target PR checkout",
+    ]) {
+      const workspaceStepIndex = steps.findIndex((step) => step.name === workspaceStepName);
+      if (workspaceStepIndex >= 0 && removeSymlinksIndex < workspaceStepIndex) {
+        errors.push(
+          `Remove symlinks from analysis workspace must run after workspace-selection step '${workspaceStepName}'`,
+        );
+      }
+    }
+  }
+
   const install = requireStep(errors, steps, "Install Pi SDK");
   requireRunContains(
     errors,
@@ -278,6 +317,10 @@ export function validatePrReviewAdvisorWorkflowBoundary(
   requireRunContains(errors, install, "$ADVISOR_DIR/node_modules");
 
   const analyze = requireStep(errors, steps, "Run PR review advisor");
+  const analyzeIndex = steps.findIndex((step) => step.name === "Run PR review advisor");
+  if (removeSymlinksIndex >= 0 && analyzeIndex >= 0 && removeSymlinksIndex > analyzeIndex) {
+    errors.push("Remove symlinks from analysis workspace must run before Run PR review advisor");
+  }
   requireRunContains(errors, analyze, 'cd "$ADVISOR_WORKDIR"');
   requireRunContains(errors, analyze, "$ADVISOR_DIR/tools/pr-review-advisor/analyze.mts");
   requireRunContains(errors, analyze, "$ADVISOR_DIR/tools/pr-review-advisor/schema.json");

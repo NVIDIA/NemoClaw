@@ -161,6 +161,17 @@ jobs:
           echo "ADVISOR_WORKDIR=$TARGET_DIR" >> "$GITHUB_ENV"
           echo "PR_NUMBER=$TARGET_PR" >> "$GITHUB_ENV"
 
+      # The advisor reads repository files while holding its model API key.
+      # Remove worktree symlinks so untrusted PR data cannot redirect a read
+      # to runner files such as /proc/self/environ. Git diff still reads the
+      # committed objects, so symlink additions and changes remain visible.
+      - name: Remove symlinks from analysis workspace
+        shell: bash
+        run: |
+          while IFS= read -r -d '' link; do
+            rm -- "$link"
+          done < <(find "$ADVISOR_WORKDIR" -type l -print0)
+
       - name: Install Pi SDK
         run: |
           if ! command -v rg >/dev/null 2>&1; then
