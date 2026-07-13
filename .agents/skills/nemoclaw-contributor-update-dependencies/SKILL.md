@@ -82,8 +82,8 @@ a caller-selected GitHub Enterprise or arbitrary host. The collector binds the A
 canonical repository identity, inventories and peels every remote semantic-version tag, rejects
 missing local range tags or rewritten tag objects, and lists releases with pagination. A canonical
 repository rename or redirect must stop the run and be supplied explicitly. For an untagged target,
-pass `--github-target-ref` naming the exact advertised upstream branch ref; raw commit-object lookup
-is not repository-membership evidence because GitHub can expose fork and pull-request objects
+pass `--github-target-ref` naming the exact advertised upstream branch ref; raw commit-object lookup is
+not repository-membership evidence because GitHub can expose fork and pull-request objects
 through the base repository's object network. It records `absent` only when the authenticated viewer
 is proven able to see drafts; otherwise a missing tag is `not-published` with draft visibility
 called out. Shallow history, replace refs, grafts, missing commit objects, API, authentication, shape,
