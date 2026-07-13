@@ -13,8 +13,11 @@ Ordered list of what NemoClaw maintainers look for in a pull request. Higher ite
 4. **CI green** — all required checks in `statusCheckRollup` must pass.
 5. **No merge conflicts** — `mergeStateStatus` must be clean.
 6. **No unresolved major/critical CodeRabbit findings** — correctness and safety findings block; style nits do not. Use judgment on borderline cases.
-7. **No unresolved actionable PR Review Advisor findings** — correctness, security, acceptance-coverage, and test-depth findings block unless explicitly judged false-positive. Ask the user before acting on ambiguous or design-changing advice.
-8. **Tests for touched risky code** — risky areas must have test coverage, either added in the PR or pre-existing. No exceptions.
+7. **Tests for touched risky code** — risky areas must have test coverage, either added in the PR or pre-existing. No exceptions.
+
+## Manual review inputs
+
+The PR Review Advisor provides a second opinion, not merge authority. Read its comment when present and verify each substantive claim against the code, tests, and workflow evidence. Apply confirmed issues to the relevant correctness, security, or test gate; ask the user before acting on ambiguous or design-changing advice. Its recommendation labels, absence, and comment provenance do not affect `check-gates.ts` or `allPass`, and a positive recommendation never substitutes for explicit human authorization.
 
 ## Quality expectations (block if violated, but fixable via salvage)
 

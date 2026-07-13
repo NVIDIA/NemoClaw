@@ -4,7 +4,10 @@
 name: PR Review / Advisor
 
 on:
-  pull_request:
+  # The target event loads this workflow from the trusted base branch and makes
+  # advisor secrets available for both internal and fork PRs. The analysis job
+  # never executes PR-controlled content and has no write permission.
+  pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
     inputs:
@@ -37,21 +40,25 @@ on:
         type: boolean
         default: true
 
-permissions:
-  contents: read
-  # PR comments are posted via the issues comments endpoint, but PR-scoped
-  # tokens often require pull-requests: write for PR issue comments.
-  pull-requests: write
-  issues: write
+# Each job declares its own privilege domain. In particular, no model-bearing
+# job can write to a pull request, and the publisher never receives the model
+# credential or the untrusted PR worktree.
+permissions: {}
 
 concurrency:
-  group: pr-review-advisor-${{ github.event.pull_request.number || github.ref }}
+  group: pr-review-advisor-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.target_repo || github.repository }}-${{ inputs.target_pr || '' }}
   cancel-in-progress: true
 
 jobs:
   review:
     name: PR review advisor (${{ matrix.advisor.label }})
-    if: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'NVIDIA/NemoClaw') }}
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' }}
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      issues: read
+      pull-requests: read
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     continue-on-error: ${{ !matrix.advisor.publish_comment }}
@@ -72,72 +79,68 @@ jobs:
             artifact_name: pr-review-advisor-nemotron-ultra
             publish_comment: false
     env:
-      # Pin the Pi SDK to a known-good version. Updates should go through
-      # normal dependency review so a compromised upstream release cannot run
-      # automatically in this secret-bearing job.
+      # Pin runtime packages to reviewed versions. Updates go through normal
+      # dependency review rather than floating in a secret-bearing job.
       PI_SDK_VERSION: "0.80.6"
       # The review ledger imports TypeBox directly. Pi 0.80.6 shrinkwraps its
       # own copy, so the advisor runtime must install this direct dependency.
       TYPEBOX_VERSION: "1.1.38"
-      # Keep the grep tool deterministic for the pinned Ubuntu runner. A newer
-      # package must be reviewed and updated explicitly instead of floating.
+      FD_FIND_VERSION: "9.0.0-1"
       RIPGREP_VERSION: "14.1.0-1"
       PR_REVIEW_ADVISOR_TIMEOUT_MS: "900000"
       PR_REVIEW_ADVISOR_HEARTBEAT_MS: "60000"
-      # CI status is captured as point-in-time GitHub context. Historical
-      # PR_REVIEW_ADVISOR_WAIT_* variables were never consumed by the advisor,
-      # so do not claim that this job waits for required checks to settle.
       PR_REVIEW_ADVISOR_MODEL: ${{ matrix.advisor.model }}
       PR_REVIEW_ADVISOR_ARTIFACT_DIR: ${{ matrix.advisor.artifact_dir }}
       PR_REVIEW_ADVISOR_COMMENT_MARKER: "<!-- nemoclaw-pr-review-advisor -->"
       PR_REVIEW_ADVISOR_COMMENT_TITLE: PR Review Advisor
       PR_REVIEW_ADVISOR_COMMENT_LABEL: PR review advisor
       PR_REVIEW_ADVISOR_WORKFLOW_NAME: "PR Review / Advisor"
-      PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW: ${{ matrix.advisor.publish_comment }}
-      # Trusted implementation code is always checked out here. PR content is
-      # only read as inert analysis data under ADVISOR_WORKDIR.
+      PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW: "false"
+      # Only executable code from this checkout may run in the analysis job.
       ADVISOR_DIR: ${{ github.workspace }}/advisor
     steps:
-      - name: Checkout trusted advisor code (main)
+      - name: Checkout trusted advisor code (workflow revision)
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           repository: NVIDIA/NemoClaw
-          ref: main
+          ref: ${{ github.workflow_sha }}
           path: advisor
           persist-credentials: false
+          lfs: false
+          submodules: false
 
-      - name: Checkout PR workspace (read-only data)
-        if: ${{ github.event_name == 'pull_request' }}
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          path: pr-workdir
-          fetch-depth: 0
-          persist-credentials: false
-
+      # A dispatch without target_repo is maintainer-triggered and analyzes the
+      # exact commit that supplied the trusted workflow. It is still treated as
+      # read-only data and never supplies executable advisor code.
       - name: Checkout dispatch workspace (read-only data)
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.target_repo == '' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.target_repo == '' && inputs.target_pr == '' }}
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          ref: ${{ github.sha }}
           path: pr-workdir
           fetch-depth: 0
           persist-credentials: false
-
-      - name: Setup Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: "22"
+          lfs: false
+          submodules: false
 
       - name: Set default advisor workdir
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.target_repo == '' && inputs.target_pr == '' }}
         run: echo "ADVISOR_WORKDIR=$GITHUB_WORKSPACE/pr-workdir" >> "$GITHUB_ENV"
 
-      - name: Prepare target PR checkout
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' }}
+      # pull_request_target content is fetched manually so no PR-controlled
+      # action, hook, submodule, LFS filter, or package setup can run. The base
+      # and head are bound to the immutable SHAs in the triggering event.
+      - name: Prepare isolated analysis workspace
+        if: ${{ github.event_name == 'pull_request_target' || (github.event_name == 'workflow_dispatch' && (inputs.target_repo != '' || inputs.target_pr != '')) }}
         env:
-          TARGET_REPO: ${{ inputs.target_repo }}
-          TARGET_PR: ${{ inputs.target_pr }}
-          TARGET_BASE: ${{ inputs.target_base }}
+          TARGET_REPO: ${{ github.event_name == 'pull_request_target' && github.repository || inputs.target_repo }}
+          TARGET_PR: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.number || inputs.target_pr }}
+          TARGET_BASE: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.ref || inputs.target_base }}
+          PR_BASE_SHA: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.sha || '' }}
+          EXPECTED_HEAD_SHA: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || '' }}
+          GIT_LFS_SKIP_SMUDGE: "1"
         run: |
+          set -euo pipefail
           if [[ ! "$TARGET_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
             echo "::error::target_repo must match owner/repo with GitHub-safe characters"
             exit 1
@@ -150,21 +153,51 @@ jobs:
             echo "::error::target_base must be a safe branch/ref token"
             exit 1
           fi
+          if [ -n "$PR_BASE_SHA" ] && [[ ! "$PR_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::event base SHA must be exactly 40 lowercase hexadecimal characters"
+            exit 1
+          fi
+          if [ -n "$EXPECTED_HEAD_SHA" ] && [[ ! "$EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::event head SHA must be exactly 40 lowercase hexadecimal characters"
+            exit 1
+          fi
+
           TARGET_DIR=/tmp/pr-review-advisor-target
           rm -rf "$TARGET_DIR"
           mkdir -p "$TARGET_DIR"
           git -C "$TARGET_DIR" init
+          git -C "$TARGET_DIR" config core.hooksPath /dev/null
+          git -C "$TARGET_DIR" config submodule.recurse false
           git -C "$TARGET_DIR" remote add target "https://github.com/${TARGET_REPO}.git"
-          git -C "$TARGET_DIR" fetch --no-tags target "$TARGET_BASE"
-          git -C "$TARGET_DIR" fetch --no-tags target "pull/${TARGET_PR}/head:refs/remotes/target/pr-${TARGET_PR}"
-          git -C "$TARGET_DIR" checkout --detach "refs/remotes/target/pr-${TARGET_PR}"
+
+          if [ -n "$PR_BASE_SHA" ]; then
+            BASE_FETCH="$PR_BASE_SHA"
+          else
+            BASE_FETCH="refs/heads/${TARGET_BASE}"
+          fi
+          git -C "$TARGET_DIR" fetch --no-tags --no-recurse-submodules target \
+            "${BASE_FETCH}:refs/remotes/target/base"
+          git -C "$TARGET_DIR" fetch --no-tags --no-recurse-submodules target \
+            "refs/pull/${TARGET_PR}/head:refs/remotes/target/pr-${TARGET_PR}"
+
+          if [ -n "$PR_BASE_SHA" ] && [ "$(git -C "$TARGET_DIR" rev-parse refs/remotes/target/base)" != "$PR_BASE_SHA" ]; then
+            echo "::error::Fetched base does not match the triggering PR base SHA"
+            exit 1
+          fi
+          git -C "$TARGET_DIR" -c submodule.recurse=false checkout --detach \
+            "refs/remotes/target/pr-${TARGET_PR}"
+          ACTUAL_HEAD_SHA="$(git -C "$TARGET_DIR" rev-parse HEAD)"
+          if [ -n "$EXPECTED_HEAD_SHA" ] && [ "$ACTUAL_HEAD_SHA" != "$EXPECTED_HEAD_SHA" ]; then
+            echo "::error::Fetched pull ref does not match the triggering PR head SHA"
+            exit 1
+          fi
+
           echo "ADVISOR_WORKDIR=$TARGET_DIR" >> "$GITHUB_ENV"
           echo "PR_NUMBER=$TARGET_PR" >> "$GITHUB_ENV"
 
-      # The advisor reads repository files while holding its model API key.
-      # Remove worktree symlinks so untrusted PR data cannot redirect a read
-      # to runner files such as /proc/self/environ. Git diff still reads the
-      # committed objects, so symlink additions and changes remain visible.
+      # The advisor reads repository files while holding its model key. Remove
+      # worktree symlinks first so an untrusted link cannot redirect a read to
+      # runner state. Git still retains the link target in committed objects.
       - name: Remove symlinks from analysis workspace
         shell: bash
         run: |
@@ -172,13 +205,46 @@ jobs:
             rm -- "$link"
           done < <(find "$ADVISOR_WORKDIR" -type l -print0)
 
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: "22"
+
       - name: Install Pi SDK
         run: |
-          if ! command -v rg >/dev/null 2>&1; then
-            sudo apt-get update -qq
-            sudo apt-get install -y --no-install-recommends "ripgrep=${RIPGREP_VERSION}"
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            "fd-find=${FD_FIND_VERSION}" \
+            "ripgrep=${RIPGREP_VERSION}"
+
+          INSTALLED_FD_FIND_VERSION="$(dpkg-query -W -f='${Version}' fd-find)"
+          INSTALLED_RIPGREP_VERSION="$(dpkg-query -W -f='${Version}' ripgrep)"
+          if [ "$INSTALLED_FD_FIND_VERSION" != "$FD_FIND_VERSION" ]; then
+            echo "::error::fd-find package version $INSTALLED_FD_FIND_VERSION does not match $FD_FIND_VERSION"
+            exit 1
           fi
-          rg --version
+          if [ "$INSTALLED_RIPGREP_VERSION" != "$RIPGREP_VERSION" ]; then
+            echo "::error::ripgrep package version $INSTALLED_RIPGREP_VERSION does not match $RIPGREP_VERSION"
+            exit 1
+          fi
+
+          command -v fdfind >/dev/null
+          command -v rg >/dev/null
+          EXPECTED_FD_BINARY_VERSION="${FD_FIND_VERSION%%-*}"
+          EXPECTED_RG_BINARY_VERSION="${RIPGREP_VERSION%%-*}"
+          FD_BINARY_VERSION="$(fdfind --version)"
+          RG_BINARY_VERSION="$(rg --version)"
+          RG_BINARY_VERSION="${RG_BINARY_VERSION%%$'\n'*}"
+          if [ "$FD_BINARY_VERSION" != "fd $EXPECTED_FD_BINARY_VERSION" ]; then
+            echo "::error::fdfind binary version $FD_BINARY_VERSION does not match fd $EXPECTED_FD_BINARY_VERSION"
+            exit 1
+          fi
+          if [ "$RG_BINARY_VERSION" != "ripgrep $EXPECTED_RG_BINARY_VERSION" ]; then
+            echo "::error::rg binary version $RG_BINARY_VERSION does not match ripgrep $EXPECTED_RG_BINARY_VERSION"
+            exit 1
+          fi
+
           PI_SDK_DIR="$RUNNER_TEMP/pi-sdk"
           npm install --prefix "$PI_SDK_DIR" --ignore-scripts --no-save --package-lock=false --before=2026-07-11T00:00:00.000Z "@earendil-works/pi-coding-agent@${PI_SDK_VERSION}" "typebox@${TYPEBOX_VERSION}"
           rm -rf "$ADVISOR_DIR/node_modules"
@@ -188,8 +254,8 @@ jobs:
         id: analysis
         continue-on-error: true
         env:
-          BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && format('target/{0}', inputs.target_base) || inputs.base_ref) }}
-          HEAD_REF: ${{ github.event_name == 'pull_request' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}
+          BASE_REF: ${{ github.event_name == 'pull_request_target' && 'target/base' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'target/base' || inputs.base_ref) }}
+          HEAD_REF: ${{ github.event_name == 'pull_request_target' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.target_pr }}
           PR_REVIEW_ADVISOR_RUN_ANALYSIS: ${{ github.event_name == 'workflow_dispatch' && inputs.run_analysis == false && '0' || '1' }}
           GH_TOKEN: ${{ github.token }}
@@ -199,7 +265,7 @@ jobs:
           OUT_DIR="$GITHUB_WORKSPACE/artifacts/$PR_REVIEW_ADVISOR_ARTIFACT_DIR"
           export OUT_DIR
           if [ ! -f "$ADVISOR_DIR/tools/pr-review-advisor/analyze.mts" ]; then
-            echo "Skipping PR review advisor: trusted main checkout does not yet contain analyze.mts"
+            echo "Skipping PR review advisor: trusted base checkout does not contain analyze.mts"
             mkdir -p "$OUT_DIR"
             HEAD_SHA="$(git rev-parse "$HEAD_REF" 2>/dev/null || git rev-parse HEAD)"
             export BASE_REF HEAD_REF HEAD_SHA
@@ -208,10 +274,10 @@ jobs:
           const path = require("node:path");
           const outDir = process.env.OUT_DIR;
           const title = process.env.PR_REVIEW_ADVISOR_COMMENT_TITLE || "PR Review Advisor";
-          const reason = "Trusted main checkout does not yet contain tools/pr-review-advisor/analyze.mts; advisor will run after the implementation lands on main.";
+          const reason = "Trusted base checkout does not contain tools/pr-review-advisor/analyze.mts; advisor will run after the implementation lands on the base branch.";
           const result = {
             version: 1,
-            baseRef: process.env.BASE_REF || "origin/main",
+            baseRef: process.env.BASE_REF || "target/base",
             headRef: process.env.HEAD_REF || "HEAD",
             headSha: process.env.HEAD_SHA || "unknown",
             changedFiles: [],
@@ -219,7 +285,26 @@ jobs:
             findings: [],
             acceptanceCoverage: [],
             securityCategories: [{ category: "Holistic Security Posture", verdict: "warning", justification: "Advisor bootstrap skip; human review required." }],
+            sourceOfTruthReview: [],
             testDepth: { verdict: "unknown", rationale: reason, suggestedTests: [] },
+            e2e: {
+              coverage: {
+                classifiedDomains: [],
+                requiredTests: [],
+                optionalTests: [],
+                newE2eRecommendations: [],
+                noE2eReason: reason,
+                confidence: "low",
+              },
+              targets: {
+                relevantChangedFiles: [],
+                exactHeadCredentialFreeTests: [],
+                required: [],
+                optional: [],
+                noTargetE2eReason: reason,
+                confidence: "low",
+              },
+            },
             positives: [],
             reviewCompleteness: { limitations: [reason], requiresHumanReview: true },
           };
@@ -235,8 +320,8 @@ jobs:
               ! grep -Fq "PR_REVIEW_ADVISOR_COMMENT_MARKER" "$ADVISOR_DIR/tools/pr-review-advisor/comment.mts"
           }; then
             echo "PR_REVIEW_ADVISOR_SUPPORTED=0" >> "$GITHUB_ENV"
-            echo "Skipping PR review advisor: trusted main checkout does not yet support $PR_REVIEW_ADVISOR_MODEL"
-            export PR_REVIEW_ADVISOR_UNAVAILABLE_REASON="Trusted main checkout does not yet support advisor model $PR_REVIEW_ADVISOR_MODEL; this parallel advisor will run after the implementation lands on main."
+            echo "Skipping PR review advisor: trusted base checkout does not yet support $PR_REVIEW_ADVISOR_MODEL"
+            export PR_REVIEW_ADVISOR_UNAVAILABLE_REASON="Trusted base checkout does not yet support advisor model $PR_REVIEW_ADVISOR_MODEL; this parallel advisor will run after the implementation lands on the base branch."
             PR_REVIEW_ADVISOR_RUN_ANALYSIS=0 node --experimental-strip-types "$ADVISOR_DIR/tools/pr-review-advisor/analyze.mts" \
               --base "$BASE_REF" \
               --head "$HEAD_REF" \
@@ -261,30 +346,6 @@ jobs:
             printf '# %s\n\nAdvisor analysis did not produce a summary. See raw artifacts/logs.\n' "$PR_REVIEW_ADVISOR_COMMENT_TITLE" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Post PR review advisor comment
-        if: ${{ always() && github.event_name == 'pull_request' && matrix.advisor.publish_comment }}
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ secrets.PR_REVIEW_ADVISOR_GITHUB_TOKEN || github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          if [ "${PR_REVIEW_ADVISOR_SUPPORTED:-1}" = "0" ]; then
-            echo "Skipping PR review advisor comment: trusted main checkout does not yet support $PR_REVIEW_ADVISOR_MODEL"
-            exit 0
-          fi
-          if [ -f "$ADVISOR_DIR/tools/pr-review-advisor/comment.mts" ]; then
-            node --experimental-strip-types "$ADVISOR_DIR/tools/pr-review-advisor/comment.mts" \
-              --repo "$GITHUB_REPOSITORY" \
-              --pr "$PR_NUMBER" \
-              --summary "$GITHUB_WORKSPACE/artifacts/$PR_REVIEW_ADVISOR_ARTIFACT_DIR/pr-review-advisor-summary.md" \
-              --result "$GITHUB_WORKSPACE/artifacts/$PR_REVIEW_ADVISOR_ARTIFACT_DIR/pr-review-advisor-final-result.json" \
-              --marker "$PR_REVIEW_ADVISOR_COMMENT_MARKER" \
-              --title "$PR_REVIEW_ADVISOR_COMMENT_TITLE" \
-              --label "$PR_REVIEW_ADVISOR_COMMENT_LABEL"
-          else
-            echo "Skipping PR review advisor comment: trusted main checkout does not yet contain comment.mts"
-          fi
-
       - name: Upload advisor artifacts
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -302,3 +363,139 @@ jobs:
             echo "::error::PR review advisor analysis did not complete: outcome=$ANALYSIS_OUTCOME"
             exit 1
           fi
+
+  publish:
+    name: Publish PR review advisor
+    needs: review
+    if: ${{ always() && github.event_name == 'pull_request_target' && needs.review.result != 'cancelled' }}
+    # Publication is best-effort and must never hide the primary analysis
+    # lane's required outcome in the review matrix above.
+    continue-on-error: true
+    permissions:
+      contents: read
+      pull-requests: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      PR_REVIEW_ADVISOR_COMMENT_MARKER: "<!-- nemoclaw-pr-review-advisor -->"
+      PR_REVIEW_ADVISOR_COMMENT_TITLE: PR Review Advisor
+      PR_REVIEW_ADVISOR_COMMENT_LABEL: PR review advisor
+      PR_REVIEW_ADVISOR_WORKFLOW_NAME: "PR Review / Advisor"
+      PR_REVIEW_ADVISOR_WORKFLOW_PATH: .github/workflows/pr-review-advisor.yaml
+      PR_REVIEW_ADVISOR_EVENT_NAME: ${{ github.event_name }}
+      PR_REVIEW_ADVISOR_RUN_ID: ${{ github.run_id }}
+      PR_REVIEW_ADVISOR_RUN_ATTEMPT: ${{ github.run_attempt }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      TRUSTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
+      PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      ADVISOR_DIR: ${{ github.workspace }}/advisor
+      PUBLISH_ARTIFACT_DIR: ${{ github.workspace }}/publish-artifacts/pr-review-advisor
+      PR_REVIEW_ADVISOR_MAX_RESULT_BYTES: "2097152"
+      PR_REVIEW_ADVISOR_MAX_SUMMARY_BYTES: "1048576"
+    steps:
+      - name: Checkout trusted comment publisher (workflow revision)
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
+          path: advisor
+          persist-credentials: false
+          lfs: false
+          submodules: false
+
+      # With no run-id or repository override, download-artifact can only read
+      # the named artifact produced by this same workflow run.
+      - name: Download primary advisor artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: pr-review-advisor
+          path: publish-artifacts/pr-review-advisor
+
+      - name: Validate primary advisor artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$PR_NUMBER" =~ ^[0-9]+$ ]] || [[ ! "$EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || [[ ! "$TRUSTED_WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]] || [[ ! "$PR_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Invalid target-event publication identity"
+            exit 1
+          fi
+
+          export RESULT_PATH="$PUBLISH_ARTIFACT_DIR/pr-review-advisor-final-result.json"
+          export SUMMARY_PATH="$PUBLISH_ARTIFACT_DIR/pr-review-advisor-summary.md"
+          node <<'NODE'
+          const fs = require("node:fs");
+          const path = require("node:path");
+
+          function requireBoundedRegularFile(file, maxBytes, label) {
+            const stat = fs.lstatSync(file);
+            if (!stat.isFile() || stat.isSymbolicLink()) {
+              throw new Error(`${label} must be a regular non-symlink file`);
+            }
+            if (stat.size <= 0 || stat.size > maxBytes) {
+              throw new Error(`${label} size ${stat.size} is outside 1..${maxBytes} bytes`);
+            }
+            const root = `${fs.realpathSync(process.env.PUBLISH_ARTIFACT_DIR)}${path.sep}`;
+            const real = fs.realpathSync(file);
+            if (!real.startsWith(root)) throw new Error(`${label} escapes the artifact directory`);
+          }
+
+          requireBoundedRegularFile(
+            process.env.RESULT_PATH,
+            Number(process.env.PR_REVIEW_ADVISOR_MAX_RESULT_BYTES),
+            "advisor result",
+          );
+          requireBoundedRegularFile(
+            process.env.SUMMARY_PATH,
+            Number(process.env.PR_REVIEW_ADVISOR_MAX_SUMMARY_BYTES),
+            "advisor summary",
+          );
+          const result = JSON.parse(fs.readFileSync(process.env.RESULT_PATH, "utf8"));
+          if (!result || typeof result !== "object" || Array.isArray(result)) {
+            throw new Error("advisor result must be a JSON object");
+          }
+          if (result.version !== 1) throw new Error("advisor result version must be 1");
+          if (result.headSha !== process.env.EXPECTED_HEAD_SHA) {
+            throw new Error("advisor result head SHA does not match the triggering PR head");
+          }
+          if (!result.summary || typeof result.summary !== "object" || Array.isArray(result.summary)) {
+            throw new Error("advisor result summary must be an object");
+          }
+          if (!Array.isArray(result.findings)) {
+            throw new Error("advisor result findings must be an array");
+          }
+          if (!result.e2e || typeof result.e2e !== "object" || Array.isArray(result.e2e)) {
+            throw new Error("advisor result e2e must be an object");
+          }
+          if (!result.e2e.coverage || typeof result.e2e.coverage !== "object" || Array.isArray(result.e2e.coverage)) {
+            throw new Error("advisor result e2e.coverage must be an object");
+          }
+          if (!result.e2e.targets || typeof result.e2e.targets !== "object" || Array.isArray(result.e2e.targets)) {
+            throw new Error("advisor result e2e.targets must be an object");
+          }
+          NODE
+
+          LIVE_HEAD_SHA="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.head.sha')"
+          if [ "$LIVE_HEAD_SHA" != "$EXPECTED_HEAD_SHA" ]; then
+            echo "::error::PR head changed after analysis; refusing to publish a stale review"
+            exit 1
+          fi
+          LIVE_BASE_SHA="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.base.sha')"
+          if [ "$LIVE_BASE_SHA" != "$PR_BASE_SHA" ]; then
+            echo "::error::PR base changed after analysis; refusing to publish a stale review"
+            exit 1
+          fi
+
+      - name: Post PR review advisor comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node --experimental-strip-types "$ADVISOR_DIR/tools/pr-review-advisor/comment.mts" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pr "$PR_NUMBER" \
+            --summary "$PUBLISH_ARTIFACT_DIR/pr-review-advisor-summary.md" \
+            --result "$PUBLISH_ARTIFACT_DIR/pr-review-advisor-final-result.json" \
+            --marker "$PR_REVIEW_ADVISOR_COMMENT_MARKER" \
+            --title "$PR_REVIEW_ADVISOR_COMMENT_TITLE" \
+            --label "$PR_REVIEW_ADVISOR_COMMENT_LABEL"

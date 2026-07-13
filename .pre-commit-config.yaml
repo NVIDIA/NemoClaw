@@ -250,7 +250,7 @@ repos:
         entry: npm run typecheck:cli -- --incremental
         language: system
         pass_filenames: false
-        files: ^(agents/hermes|bin|scripts|src|test|tools|nemoclaw-blueprint/scripts)/.*\.(ts|tsx|mts|cts|json)$|^\.agents/skills/nemoclaw-maintainer-day/scripts/(check-gates|pra-gate|shared)\.ts$|^nemoclaw/src/(lib/subprocess-env|blueprint/private-networks)\.ts$|^(package(-lock)?\.json|tsconfig\.cli\.json|vitest\.config\.ts)$
+        files: ^(agents/hermes|bin|scripts|src|test|tools|nemoclaw-blueprint/scripts)/.*\.(ts|tsx|mts|cts|json)$|^\.agents/skills/nemoclaw-maintainer-day/scripts/(check-gates|shared)\.ts$|^nemoclaw/src/(lib/subprocess-env|blueprint/private-networks)\.ts$|^(package(-lock)?\.json|tsconfig\.cli\.json|vitest\.config\.ts)$
         stages: [pre-push]
         priority: 10
 

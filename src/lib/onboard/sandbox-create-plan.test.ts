@@ -78,7 +78,6 @@ function expectCredentialBindingFailure({
     policyPath: "/tmp/policy.yaml",
     appliedPresets: [],
   }));
-  const appendResources = vi.fn();
   const cleanupProviders = vi.fn();
   const upsertProviders = vi.fn(() => []);
 
@@ -88,14 +87,12 @@ function expectCredentialBindingFailure({
       buildCtx: "/tmp/nemoclaw-build-1",
       messagingTokenDefs: materializedTokenDefs,
       prepareInitialSandboxCreatePolicy: preparePolicy,
-      appendResourceFlags: appendResources,
       runProviderPreDeleteCleanup: cleanupProviders,
       upsertMessagingProviders: upsertProviders,
       getHermesToolGatewayProviderName: vi.fn(),
     }),
   ).toThrow(expectedMessage);
   expect(preparePolicy).not.toHaveBeenCalled();
-  expect(appendResources).not.toHaveBeenCalled();
   expect(cleanupProviders).not.toHaveBeenCalled();
   expect(upsertProviders).not.toHaveBeenCalled();
 }
@@ -162,11 +159,14 @@ describe("resolveSandboxCreateIntent", () => {
       reusableMessagingChannels: ["discord", "slack"],
       reusableMessagingProviders: ["sandbox-existing-discord", "sandbox-slack-bridge"],
       extraProviders: ["custom-provider", "custom-provider", ""],
+      staleExtraProviders: ["stale-provider", "stale-provider", ""],
       hermesToolGateways: ["github"],
       sandboxGpuConfig,
       gpuCreateArgs: ["--gpu", "--gpu-device", "nvidia.com/gpu=0"],
+      resourceCreateArgs: ["--cpu", "4", "--memory", "16Gi"],
       gpuRoutePlan: "native-only" as const,
       sandboxGpuLogMessage: "gpu note",
+      extraPlaceholderKeys: ["TELEGRAM_BOT_TOKEN_AGENT_A"],
       agentName: "hermes",
       policyTier: "balanced",
     };
@@ -182,6 +182,9 @@ describe("resolveSandboxCreateIntent", () => {
     ]);
     expect(first.reusableMessagingProviders).toEqual(["sandbox-existing-discord"]);
     expect(first.extraProviders).toEqual(["custom-provider"]);
+    expect(first.staleExtraProviders).toEqual(["stale-provider"]);
+    expect(first.resourceCreateArgs).toEqual(["--cpu", "4", "--memory", "16Gi"]);
+    expect(first.extraPlaceholderKeys).toEqual(["TELEGRAM_BOT_TOKEN_AGENT_A"]);
     expect(first.policy).toEqual({
       basePolicyPath: "/repo/policy.yaml",
       activeMessagingChannels: ["telegram", "discord", "whatsapp"],
@@ -221,6 +224,7 @@ describe("resolveSandboxCreateIntent", () => {
       hermesToolGateways: ["github"],
       sandboxGpuConfig,
       gpuCreateArgs: ["--gpu"],
+      resourceCreateArgs: ["--memory", "16g"],
       gpuRoutePlan: "native-only",
       sandboxGpuLogMessage: null,
       agentName: "hermes",
@@ -237,10 +241,6 @@ describe("resolveSandboxCreateIntent", () => {
         events.push("policy");
         return { policyPath: "/tmp/policy.yaml", appliedPresets: ["telegram"] };
       }),
-      appendResourceFlags: (args) => {
-        events.push("resources");
-        args.push("--memory", "16g");
-      },
       runProviderPreDeleteCleanup: () => events.push("cleanup"),
       upsertMessagingProviders: vi.fn((receivedTokenDefs) => {
         events.push("upsert");
@@ -253,7 +253,7 @@ describe("resolveSandboxCreateIntent", () => {
       },
     });
 
-    expect(events).toEqual(["policy", "resources", "cleanup", "upsert", "hermes"]);
+    expect(events).toEqual(["policy", "cleanup", "upsert", "hermes"]);
     expect(result.createArgs).toEqual([
       "--from",
       "/tmp/nemoclaw-build-1/Dockerfile",

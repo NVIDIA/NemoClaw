@@ -141,7 +141,7 @@ jobs:
         name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
         with:
-          node-version: 22
+          node-version: 22.19.0
           cache: npm
 
       - &install-root-dependencies
@@ -236,6 +236,59 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
+  messaging-plan-image-boundary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - *checkout
+
+      - *dockerhub-auth
+
+      - *setup-node
+
+      - name: Resolve sandbox base image
+        uses: ./.github/actions/resolve-sandbox-base-image
+
+      - name: Resolve Hermes base image
+        uses: ./.github/actions/resolve-hermes-base-image
+
+      - name: Build and verify OpenClaw messaging plan boundary
+        env:
+          BASE_IMAGE: ${{ env.BASE_IMAGE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          messaging_plan_b64="$(node --experimental-strip-types scripts/check-messaging-plan-image-boundary.mts plan openclaw)"
+          build_args=(
+            --build-arg "BASE_IMAGE=${BASE_IMAGE}"
+            --build-arg "NEMOCLAW_MESSAGING_PLAN_B64=${messaging_plan_b64}"
+          )
+          scripts/check-production-build-args.sh "${build_args[@]}"
+          docker build "${build_args[@]}" -t nemoclaw-openclaw-plan-boundary .
+          node --experimental-strip-types scripts/check-messaging-plan-image-boundary.mts verify \
+            nemoclaw-openclaw-plan-boundary openclaw
+
+      - name: Build and verify Hermes messaging plan boundary
+        env:
+          HERMES_BASE_IMAGE: ${{ env.HERMES_BASE_IMAGE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          messaging_plan_b64="$(node --experimental-strip-types scripts/check-messaging-plan-image-boundary.mts plan hermes)"
+          build_args=(
+            -f agents/hermes/Dockerfile
+            --build-arg "BASE_IMAGE=${HERMES_BASE_IMAGE}"
+            --build-arg "NEMOCLAW_MESSAGING_PLAN_B64=${messaging_plan_b64}"
+          )
+          scripts/check-production-build-args.sh "${build_args[@]}"
+          docker build "${build_args[@]}" -t nemoclaw-hermes-plan-boundary .
+          node --experimental-strip-types scripts/check-messaging-plan-image-boundary.mts verify \
+            nemoclaw-hermes-plan-boundary hermes
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
   state-dir-guard-metadata:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -290,7 +343,6 @@ jobs:
       - name: Upload state-dir guard metadata artifacts
         if: always()
         uses: ./.github/actions/upload-e2e-artifacts
-
   build-sandbox-images-arm64:
     if: inputs.run_arm64
     runs-on: ubuntu-24.04-arm

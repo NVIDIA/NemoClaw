@@ -50,6 +50,7 @@ describe("handleSandboxState", () => {
     const result = await handleSandboxState(baseOptions(deps));
 
     expect(calls.startStep).toHaveBeenCalledWith("sandbox", {
+      sandboxName: "my-assistant",
       provider: "provider",
       model: "model",
     });
@@ -71,6 +72,7 @@ describe("handleSandboxState", () => {
       [],
       null,
       {
+        resolved: expect.any(Object),
         recreate: false,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
@@ -130,6 +132,22 @@ describe("handleSandboxState", () => {
     expect(calls.createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
       policyTier: "restricted",
     });
+  });
+
+  it("preserves an authoritative null tier in the sandbox create intent", async () => {
+    const { deps, calls } = createDeps();
+
+    await handleSandboxState({
+      ...baseOptions(deps),
+      agent: { name: "langchain-deepagents-code" },
+      authoritativeResumeConfig: true,
+      authoritativePolicyTier: null,
+    });
+
+    expect(calls.resolveCreateIntent).toHaveBeenCalledWith(
+      expect.objectContaining({ policyTier: null }),
+    );
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toHaveProperty("policyTier", null);
   });
 
   it("rejects observability for a selected non-DCode agent", async () => {
@@ -431,6 +449,7 @@ describe("handleSandboxState", () => {
       ["nous-audio"],
       null,
       {
+        resolved: expect.any(Object),
         recreate: false,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
@@ -541,6 +560,7 @@ describe("handleSandboxState", () => {
       [],
       null,
       {
+        resolved: expect.any(Object),
         recreate: true,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
@@ -749,6 +769,7 @@ describe("handleSandboxState", () => {
       [],
       null,
       {
+        resolved: expect.any(Object),
         recreate: true,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
@@ -868,6 +889,7 @@ describe("handleSandboxState", () => {
       [],
       null,
       {
+        resolved: expect.any(Object),
         recreate: true,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
