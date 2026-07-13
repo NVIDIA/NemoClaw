@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { dockerCapture, dockerLogs } from "../adapters/docker";
 import { GATEWAY_PORT } from "../core/ports";
+import { rejectSymlinksOnPath } from "../state/config-io";
 import { nemoclawStateRoot } from "../state/state-root";
 import { createDockerGpuDiagnosticRedactor } from "./docker-gpu-diagnostic-redaction";
 import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
@@ -153,7 +154,9 @@ export function collectDockerGpuPatchDiagnostics(
     `${timestampForPath(now)}-${sanitizePathPart(sandboxName)}-docker-gpu-patch`,
   );
   try {
+    rejectSymlinksOnPath(dir);
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    rejectSymlinksOnPath(dir);
   } catch {
     return null;
   }

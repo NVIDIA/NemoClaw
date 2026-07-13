@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { GATEWAY_PORT } from "../core/ports";
+import { rejectSymlinksOnPath } from "../state/config-io";
 import { nemoclawStateRoot } from "../state/state-root";
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
@@ -162,7 +163,9 @@ export function collectSandboxCreateFailureDiagnostics(
   );
 
   try {
+    rejectSymlinksOnPath(dir);
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    rejectSymlinksOnPath(dir);
   } catch {
     return null;
   }
