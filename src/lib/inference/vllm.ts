@@ -79,8 +79,9 @@ export interface VllmProfile {
 // Platform manifests and decimal compressed sizes published by NGC for the
 // named release tags. Pinning the digest makes a cache hit authoritative: an
 // explicit pull cannot begin downloading different same-tag layers.
-const VLLM_IMAGES = {
+export const VLLM_IMAGES = {
   ngc2603Post1: {
+    tag: "nvcr.io/nvidia/vllm:26.03.post1-py3",
     amd64: {
       ref: "nvcr.io/nvidia/vllm@sha256:7be6c2f676c36059a494fe17254e69ae5c677535ba6191044e5fc8e42a91c773",
       downloadSizeBytes: 8_928_665_752,
@@ -91,6 +92,7 @@ const VLLM_IMAGES = {
     },
   },
   ngc2605Post1: {
+    tag: "nvcr.io/nvidia/vllm:26.05.post1-py3",
     arm64: {
       ref: "nvcr.io/nvidia/vllm@sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2",
       downloadSizeBytes: 9_603_085_145,
