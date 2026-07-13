@@ -7,13 +7,14 @@ Ordered list of what NemoClaw maintainers look for in a pull request. Higher ite
 
 ## Hard gates (all must pass to approve)
 
-1. **Contributor compliance** — the PR body has the contributor's DCO declaration and every commit appears as `Verified` in GitHub. Maintainers reject noncompliant PRs and do not repair contributor history.
-2. **Security correctness** — no sandbox escape, SSRF, credential exposure, policy bypass, or installer trust violation. PRs touching risky areas (see [RISKY-AREAS.md](RISKY-AREAS.md)) get a deep security pass before anything else.
-3. **CI green** — all required checks in `statusCheckRollup` must pass.
-4. **No merge conflicts** — `mergeStateStatus` must be clean.
-5. **No unresolved major/critical CodeRabbit findings** — correctness and safety findings block; style nits do not. Use judgment on borderline cases.
-6. **No unresolved actionable PR Review Advisor findings** — correctness, security, acceptance-coverage, and test-depth findings block unless explicitly judged false-positive. Ask the user before acting on ambiguous or design-changing advice.
-7. **Tests for touched risky code** — risky areas must have test coverage, either added in the PR or pre-existing. No exceptions.
+1. **Product scope approved** — the PR implements existing supported behavior or a linked, accepted product decision. Working code and green checks do not authorize a new integration, solution, third-party stack, custom image, or documentation surface. If ownership and lifecycle are not established, do not approve. Route independent solutions through [Community Solutions](../../../docs/resources/community-contributions.mdx).
+2. **Contributor compliance** — the PR body has the contributor's DCO declaration and every commit appears as `Verified` in GitHub. Maintainers reject noncompliant PRs and do not repair contributor history.
+3. **Security correctness** — no sandbox escape, SSRF, credential exposure, policy bypass, or installer trust violation. PRs touching risky areas (see [RISKY-AREAS.md](RISKY-AREAS.md)) get a deep security pass before anything else.
+4. **CI green** — all required checks in `statusCheckRollup` must pass.
+5. **No merge conflicts** — `mergeStateStatus` must be clean.
+6. **No unresolved major/critical CodeRabbit findings** — correctness and safety findings block; style nits do not. Use judgment on borderline cases.
+7. **No unresolved actionable PR Review Advisor findings** — correctness, security, acceptance-coverage, and test-depth findings block unless explicitly judged false-positive. Ask the user before acting on ambiguous or design-changing advice.
+8. **Tests for touched risky code** — risky areas must have test coverage, either added in the PR or pre-existing. No exceptions.
 
 ## Quality expectations (block if violated, but fixable via salvage)
 
@@ -44,3 +45,5 @@ Version labels activate release work; they are not readiness claims. If an open 
 - **Code style and formatting** — not a reason to block or delay. No opportunistic reformatting.
 - **Documentation completeness** — not required for approval unless the PR changes user-facing behavior.
 - **Architectural elegance** — the goal is lower future merge pain, not aesthetic cleanup.
+
+Product scope approval is distinct from architectural elegance and remains a hard gate.
