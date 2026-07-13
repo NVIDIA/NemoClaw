@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   dockerSpawn: vi.fn(),
   dockerStop: vi.fn(),
   getGpuIndicesByName: vi.fn<(_pattern: RegExp) => number[]>(() => []),
+  probeDockerHostLocality: vi.fn(),
   probeDockerStorage: vi.fn(),
   probeModelCacheStorage: vi.fn(),
   runCapture: vi.fn(),
@@ -42,6 +43,7 @@ vi.mock("./vllm-storage", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./vllm-storage")>();
   return {
     ...actual,
+    probeDockerHostLocality: mocks.probeDockerHostLocality,
     probeDockerStorage: mocks.probeDockerStorage,
     probeModelCacheStorage: mocks.probeModelCacheStorage,
   };
@@ -57,6 +59,7 @@ import {
 
 beforeEach(() => {
   mocks.dockerImageInspectFormat.mockReturnValue("");
+  mocks.probeDockerHostLocality.mockReturnValue({ ok: true });
   mocks.probeDockerStorage.mockReturnValue({
     ok: true,
     capacity: { availableBytes: 1_000_000_000_000n, path: "/docker", source: "Docker" },
@@ -789,6 +792,61 @@ describe("installVllm model resolution", () => {
     expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalledTimes(1);
     expect(mocks.probeModelCacheStorage).toHaveBeenCalledTimes(2);
     expect(mocks.dockerSpawn).not.toHaveBeenCalled();
+  });
+
+  it("blocks a cached image when the Docker host cannot be verified (#6757)", async () => {
+    process.env.DOCKER_HOST = "ssh://builder.example.test";
+    delete process.env.DOCKER_CONTEXT;
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    mockSuccessfulVllmInstall(profile.containerName);
+    mocks.dockerImageInspectFormat.mockReturnValue("sha256:cached-image");
+    mocks.probeDockerHostLocality.mockReturnValue({
+      ok: false,
+      reason: "Docker uses a remote endpoint (ssh://builder.example.test)",
+    });
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(mocks.probeDockerHostLocality).toHaveBeenCalledTimes(1);
+    expect(mocks.probeModelCacheStorage).not.toHaveBeenCalled();
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(mocks.dockerSpawn).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Docker uses a remote endpoint (ssh://builder.example.test)"),
+    );
+  });
+
+  it("allows the dedicated override for an unverifiable cached-image host (#6757)", async () => {
+    process.env.DOCKER_HOST = "ssh://builder.example.test";
+    delete process.env.DOCKER_CONTEXT;
+    process.env.NEMOCLAW_IGNORE_VLLM_DISK_SPACE = "1";
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    mockSuccessfulVllmInstall(profile.containerName);
+    mocks.dockerImageInspectFormat.mockReturnValue("sha256:cached-image");
+    mocks.probeDockerHostLocality.mockReturnValue({
+      ok: false,
+      reason: "Docker uses a remote endpoint (ssh://builder.example.test)",
+    });
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(mocks.probeDockerHostLocality).toHaveBeenCalledTimes(2);
+    expect(mocks.probeModelCacheStorage).not.toHaveBeenCalled();
+    expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalledTimes(1);
+    expect(mocks.dockerSpawn).toHaveBeenCalledTimes(1);
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining("NEMOCLAW_IGNORE_VLLM_DISK_SPACE=1"),
+    );
   });
 
   it("uses one Docker context throughout a successful managed install (#6757)", async () => {

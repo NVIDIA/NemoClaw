@@ -36,6 +36,7 @@ import {
   formatStorageBytes,
   imageStorageRequirementBytes,
   modelStorageRequirementBytes,
+  probeDockerHostLocality,
   probeDockerStorage,
   probeModelCacheStorage,
   type StorageProbeResult,
@@ -680,11 +681,13 @@ async function modelStorageAccepted(
   opts: InstallVllmOptions,
 ): Promise<boolean> {
   const cacheDir = hostHfCacheDir();
+  const dockerHost = probeDockerHostLocality();
+  const probe: StorageProbeResult = dockerHost.ok ? probeModelCacheStorage(cacheDir) : dockerHost;
   return storageWarningAccepted(
     {
       item: model.id,
       itemLabel: "Model",
-      probe: probeModelCacheStorage(cacheDir),
+      probe,
       question: "  Continue with the model download anyway? [y/N]: ",
       remediation: [
         `Free or expand storage for ${cacheDir} before continuing.`,

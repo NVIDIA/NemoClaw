@@ -56,6 +56,8 @@ export type StorageProbeResult =
   | { ok: true; capacity: StorageCapacity }
   | { ok: false; reason: string; path?: string; source?: string };
 
+export type DockerHostLocalityResult = { ok: true } | { ok: false; reason: string };
+
 interface DockerInfoShape {
   ClientInfo?: { Context?: unknown };
   DockerRootDir?: unknown;
@@ -199,6 +201,16 @@ function nativeDockerHostProblem(info: DockerInfoShape, deps: StorageProbeDeps):
     return `Docker uses a remote endpoint (${endpoint})`;
   }
   return null;
+}
+
+export function probeDockerHostLocality(
+  overrides: Partial<StorageProbeDeps> = {},
+): DockerHostLocalityResult {
+  const deps = { ...defaultStorageProbeDeps(), ...overrides };
+  const info = parseDockerInfo(deps.dockerInfo());
+  if (!info) return { ok: false, reason: "docker info did not return valid JSON" };
+  const hostProblem = nativeDockerHostProblem(info, deps);
+  return hostProblem ? { ok: false, reason: hostProblem } : { ok: true };
 }
 
 export function resolveDockerStorageLocations(

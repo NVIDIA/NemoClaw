@@ -9,6 +9,7 @@ import {
   formatStorageBytes,
   imageStorageRequirementBytes,
   modelStorageRequirementBytes,
+  probeDockerHostLocality,
   probeDockerStorage,
   probeModelCacheStorage,
   resolveDockerStorageLocations,
@@ -212,6 +213,26 @@ describe("Docker image-storage detection", () => {
       ok: false,
       reason:
         "Docker uses a named context (remote-builder) whose host filesystem cannot be verified",
+    });
+  });
+
+  it("checks Docker host locality without requiring image-store capacity (#6757)", () => {
+    expect(
+      probeDockerHostLocality({
+        ...nativeHost,
+        dockerInfo: () => nativeDockerInfo({ Driver: "unrecognized" }),
+      }),
+    ).toEqual({ ok: true });
+
+    expect(
+      probeDockerHostLocality({
+        ...nativeHost,
+        dockerHost: "ssh://builder.example.test",
+        dockerInfo: () => nativeDockerInfo({ Driver: "unrecognized" }),
+      }),
+    ).toEqual({
+      ok: false,
+      reason: "Docker uses a remote endpoint (ssh://builder.example.test)",
     });
   });
 
