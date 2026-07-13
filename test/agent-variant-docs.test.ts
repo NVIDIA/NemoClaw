@@ -188,7 +188,7 @@ title: "Example"
       });
 
       expect(rendered).toContain(
-        "[OpenShell 0.0.72 compatibility review](../security/openshell-0.0.72-compatibility-review#source-of-truth-boundaries)",
+        "[OpenShell gateway compatibility review](../security/openshell-0.0.72-compatibility-review#source-of-truth-boundaries)",
       );
       expect(rendered).not.toMatch(
         /\/user-guide\/(?:openclaw|hermes|deepagents)\/security\/openshell-0\.0\.72-compatibility-review/,
