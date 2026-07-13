@@ -126,6 +126,39 @@ describe("OpenShell 0.0.82 migration review", () => {
     );
   });
 
+  it("keeps exact-main runtime proofs separate from upstream-only fault injection", () => {
+    expect(review).toContain("This boundary deliberately does not fake fault injection");
+    expect(review).toContain("fails only `report_policy_status`");
+    expect(review).toMatch(/no downstream control\s+between individual required nft commands/u);
+    expect(review).toContain("policy-accept output chain");
+    expect(review).toContain("exactly one IPv4/IPv6 TCP/UDP port-unreachable reject each");
+    expect(review).toMatch(/old process to remain\s+allowed before and after replacement/u);
+    expect(review).toMatch(/new altered process at the\s+same path receives HTTP 403/u);
+    expect(review).toMatch(/Argument and result\s+canaries/u);
+    expect(review).toMatch(/No OpenShell repository mutation is part of this\s+NemoClaw work/u);
+
+    const helper = fs.readFileSync(
+      path.join(repoRoot, "test", "e2e", "live", "openshell-exact-main-runtime-contracts.ts"),
+      "utf8",
+    );
+    expect(helper).toContain('chain.policy !== "accept"');
+    expect(helper).toContain("expected exactly one ${family} ${protocol} reject rule");
+    expect(helper).toContain("DIRECT_BYPASS_PROBE_CODE");
+    expect(helper).toContain('sha256sum \\"/proc/$old_pid/exe\\"');
+    expect(helper).toContain('[ "$new_status" = 403 ]');
+    expect(helper).toContain("line.includes(`tools=${options.expectedTool}`)");
+    expect(helper).toContain("not.toMatch(/\\barguments\\b[\"']?\\s*[:=]/iu)");
+    expect(helper).not.toContain("iptables -F");
+    expect(helper).not.toContain("nft flush ruleset");
+
+    const mcpBridge = fs.readFileSync(
+      path.join(repoRoot, "test", "e2e", "live", "mcp-bridge.test.ts"),
+      "utf8",
+    );
+    expect(mcpBridge).toContain("assertExactMainPolicyNftAndIdentityContracts({");
+    expect(mcpBridge).toContain("assertExactMainMcpLogPrivacy({");
+  });
+
   it("keeps the stable pin and physical Spark proof blocked until final evidence exists", () => {
     const blueprint = fs.readFileSync(
       path.join(repoRoot, "nemoclaw-blueprint", "blueprint.yaml"),

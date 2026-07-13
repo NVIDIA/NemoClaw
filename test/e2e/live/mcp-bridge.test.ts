@@ -44,6 +44,10 @@ import {
 } from "./mcp-bridge-servers.ts";
 import { assertRawOpenShellAllowedIpsRebindingDenied } from "./openshell-allowed-ips-rebinding.ts";
 import { assertExactMainOpenShellContracts } from "./openshell-exact-main-exec.ts";
+import {
+  assertExactMainMcpLogPrivacy,
+  assertExactMainPolicyNftAndIdentityContracts,
+} from "./openshell-exact-main-runtime-contracts.ts";
 
 const OPENCLAW_SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-mcp-bridge";
 const HERMES_SANDBOX_NAME = process.env.NEMOCLAW_MCP_HERMES_SANDBOX_NAME ?? "e2e-mcp-hermes";
@@ -1384,6 +1388,14 @@ liveAgentMatrixTest(
       artifactName: "onboard-deepagents-mcp-bridge",
     });
     await assertExactMainOpenShellContracts(host, DEEPAGENTS_SANDBOX_NAME);
+    await assertExactMainPolicyNftAndIdentityContracts({
+      artifacts,
+      cleanup,
+      host,
+      mcpUrl,
+      sandbox,
+      sandboxName: DEEPAGENTS_SANDBOX_NAME,
+    });
     cleanup.add("remove Deep Agents MCP bridge", () =>
       cleanupMcpBridge(host, DEEPAGENTS_SANDBOX_NAME, SERVER_NAME, "deepagents-config"),
     );
@@ -1420,6 +1432,13 @@ liveAgentMatrixTest(
       sandboxName: DEEPAGENTS_SANDBOX_NAME,
       resultToken: deepAgentsResult,
       artifactName: "deepagents-real-mcp-tool-call-initial",
+    });
+    await assertExactMainMcpLogPrivacy({
+      argumentCanaries: [TOOL_CHALLENGE, deepAgentsResult],
+      artifacts,
+      expectedTool: "fake_echo",
+      sandbox,
+      sandboxName: DEEPAGENTS_SANDBOX_NAME,
     });
     await restartBridgeWithoutHostSecret(host, DEEPAGENTS_SANDBOX_NAME, "deepagents");
     await assertRealAdapterToolCall(sandbox, fakeMcp, {

@@ -234,11 +234,18 @@ Commits: `2e2b497f`, `ed8ce820`, `5207f118`, `ff9af8e3`, `709aa0fe`.
 
 - `ff9af8e3` acknowledges the exact initially loaded sandbox policy revision and
   reconciles an initial mismatch instead of leaving version zero/pending state.
-  Status delivery uses an unbounded FIFO and retries retryable failures without a
-  terminal attempt limit. Policy enforcement continues, but an older unavailable
-  acknowledgement can head-of-line block later status delivery. NemoClaw must
-  prove initial load, failed load, hot update, outage/recovery ordering, restart,
-  and an exact policy re-read; `policy set --wait` alone is insufficient evidence.
+  `run_policy_status_reporter` consumes an unbounded FIFO independently of the
+  enforcement loop and retries a retryable head item forever, with backoff capped
+  at 32 seconds. Policy enforcement therefore continues, but an older unavailable
+  acknowledgement can head-of-line block every later status. The separate
+  construction-failure path makes five best-effort report attempts and then
+  preserves the startup error. Upstream unit coverage proves matching, mismatched,
+  global, version-zero, local-override, provider-composed, unbound, and 128-item
+  FIFO cases; its live test proves a sparse initial revision becomes loaded. It
+  does not isolate report-RPC outage/recovery or force initial policy construction
+  failure. NemoClaw must therefore prove the observable success path and retain
+  the two fault paths as explicit gates; `policy set --wait` alone is insufficient
+  evidence.
 - The Podman import fix, Docker-version typo, man-page date, and setup action bump
   do not change the consumed Docker runtime contract.
 
@@ -278,8 +285,15 @@ Commits: `5f38b7c4`, `ccdac9ce`, `caaa5165`, `8c0ecac8`, `233d207e`,
   atomic batch to sequential commands. Required failures can occur after the
   policy-accept chain and accept rules exist but before all IPv4/IPv6 TCP/UDP
   rejects exist; the outer Docker setup records that failure as nonfatal. The
-  final runtime proof must inject failures, inspect the actual installed rules,
-  and verify that direct bypass remains unavailable through restart and teardown.
+  exact required sequence is table creation, table flush, policy-accept output
+  chain, proxy accept, loopback accept, IPv4 TCP reject, IPv6 TCP reject, IPv4 UDP
+  reject, and IPv6 UDP reject; conntrack and log commands interspersed in that
+  sequence are optional. `install_bypass_rules` stops at a required failure, while
+  `create_netns_for_proxy` catches that error and returns the namespace as usable.
+  Upstream tests inspect generated arguments and required flags but do not execute
+  per-command failures. The final runtime proof must inspect the actual installed
+  rules and verify direct bypass remains unavailable through restart and teardown;
+  deterministic partial-failure injection remains an upstream testability gate.
 - `10702133` makes each driver's default supervisor tag follow the gateway
   version. NemoClaw supplies an explicit image and supervisor binary, so the
   downstream invariant remains exact CLI/gateway/sandbox/component equality plus
@@ -289,11 +303,19 @@ Commits: `5f38b7c4`, `ccdac9ce`, `caaa5165`, `8c0ecac8`, `233d207e`,
   children. Those values remain supervisor identity material; NemoClaw tests and
   comments must assert absence rather than describing child injection.
 - Network binary identity now hashes the live `/proc/<pid>/exe` target. The
-  migration must prove that an already-running allowed process survives on-disk
-  replacement while a newly launched altered binary at the same path is denied.
+  cache remains keyed by the cleaned display path while its fingerprint and hash
+  come from the live process inode. Upstream proves that an already-running Bash
+  resolves to the old hash after unlink/replacement, but does not start the altered
+  replacement and require its network request to fail. The migration must prove
+  both halves in one live proxy session: the old process remains allowed and a new
+  altered process at the same display path receives an exact policy denial.
 - `ccdac9ce` adds sanitized MCP tool names to policy logs without logging
-  arguments. This is an additive observability/privacy change and NemoClaw has no
-  strict parser for the old format.
+  arguments. Both the full JSON-RPC message and allowed MCP shorthand now include
+  `rule_methods=tools/call tools=<name>`; `tool_names_for_log` reads only the
+  parsed call name and replaces control characters. Upstream allow/deny tests
+  assert that nested argument values are absent. This is an additive
+  observability/privacy change and a repository-wide consumer search found no
+  NemoClaw parser coupled to the old field order.
 - Native Kubernetes sidecar/PVC/Helm changes, OpenShift documentation, and the TUI
   warning destination are not consumed by NemoClaw's Docker integration.
 
@@ -323,19 +345,64 @@ exists merely to avoid a newline in an OpenShell command argument.
 | `OS82-03` | High | `src/lib/actions/sandbox/exec.ts`, command dispatch, docs, and internal wrappers encode the old newline rejection. | Remove the obsolete public rejection and newline-only wrappers; prove byte-exact LF, CR, CRLF, quotes, and heredoc argv; retain NUL plus multiline workdir/environment rejection. | Source and internal-wrapper migration complete; candidate runtime proof open. |
 | `OS82-04` | High | OpenShell child launch now clears the complete capability bounding set. Hosts without `CAP_SETPCAP` may fail if their runtime does not pre-clear it. | Prove entrypoint, exec, and connect launch with `CapBnd=0` on Linux Docker, DGX Spark arm64, macOS Docker Desktop/Colima, WSL, and Colossus; update NemoClaw's #3280 caveat only from runtime evidence. | Open runtime gate. |
 | `OS82-05` | High | Versioned credential placeholders and the eight-generation window change long-running MCP behavior. | Regenerate the exact-version child-visible manifest; reject reserved `v<digits>_` names; test more than eight rotations, removed keys, detach, restart/rebuild, fresh exec revision, expiry, and literal-placeholder scans. | Open migration and runtime gate. |
-| `OS82-06` | High | Initial policy acknowledgement and ordered retry can make the active gateway status lag enforcement. | Test initial LOADED/FAILED, hot update, retry outage/recovery, restart, exact version/hash re-read, and ordered drain. | Open runtime gate. |
-| `OS82-07` | High | Sequential nft setup can leave an incomplete policy-accept ruleset after a required command fails; Docker setup treats the error as nonfatal. | Inject each required failure; inspect IPv4/IPv6 TCP/UDP rules and direct-bypass negatives on Linux x86 and Spark arm64; verify restart and teardown. | Open security gate. |
+| `OS82-06` | High | Initial policy acknowledgement and ordered retry can make the active gateway status lag enforcement. | Test initial LOADED/FAILED, hot update, retry outage/recovery, restart, exact version/hash re-read, and ordered drain. | Candidate exact-main proof now covers hot-update LOADED identity plus restart initial acknowledgement and exact version/hash recovery. Initial FAILED and isolated report outage/ordered drain remain an open runtime gate. |
+| `OS82-07` | High | Sequential nft setup can leave an incomplete policy-accept ruleset after a required command fails; Docker setup treats the error as nonfatal. | Inject each required failure; inspect IPv4/IPv6 TCP/UDP rules and direct-bypass negatives on Linux x86 and Spark arm64; verify restart and teardown. | Candidate exact-main proof now inspects the live policy-accept chain and all four required rejects before/after restart, and probes controlled IPv4 TCP/UDP listeners. Required-command fault injection, routed IPv6 behavior, Spark arm64, and physical teardown remain an open security gate. |
 | `OS82-08` | High | The supervisor image gains Alpine and three networking packages and changes binary mode. | Review SBOM, vulnerabilities, licenses, executables, modes, multiarch manifests, source labels, and OCI provenance; preserve an explicit digest. | Development image content audited; missing attestation and final stable image remain open. |
 | `OS82-09` | Medium-high | Normalized selected-driver config can change the effective Docker gateway even when the TOML text is unchanged. | Parse the final rendered TOML with the final binary; prove loopback/bridge listeners, JWT/mTLS, restart, persisted state, and legacy gateway upgrade. | Open runtime gate. |
 | `OS82-10` | Medium-high | Supervisor TLS identity variables are no longer child environment. Stale tests/comments can normalize a credential leak. | Assert absence from entrypoint, exec, and connect children and update the source-of-truth rationale. | Hermes and Deep Agents now reject all three variables; candidate entrypoint/exec/connect runtime proof remains open. |
-| `OS82-11` | Medium-high | Live `/proc/<pid>/exe` identity changes replacement-time policy behavior. | Prove old process survives replacement and a new altered process at the same path is denied. | Open runtime gate. |
+| `OS82-11` | Medium-high | Live `/proc/<pid>/exe` identity changes replacement-time policy behavior. | Prove old process survives replacement and a new altered process at the same path is denied. | Candidate exact-main proof runs both processes against the real proxy and requires old=200 before/after replacement, distinct live/path hashes, and new=403; exact-head runtime result pending. |
 | `OS82-12` | Medium | OpenShell declares Docker 28.0+ while #6379 is on Docker 27 and NemoClaw marks DGX Spark tested. | Either validate and document a precise downstream exception from physical proof or raise the supported floor and preflight it. | Open product/platform decision. |
 | `OS82-13` | Low | Mount parsing/SELinux changes could affect the test-only tmpfs path. | Rerun the EXDEV tmpfs fixture and retain production no-mount evidence. | Open targeted test. |
-| `OS82-14` | Low | Sanitized MCP tool names are newly present in logs. | Record the additive observability/privacy behavior; ensure no downstream parser assumes the old shape. | Source-reviewed; targeted log check pending. |
+| `OS82-14` | Low | Sanitized MCP tool names are newly present in logs. | Record the additive observability/privacy behavior; ensure no downstream parser assumes the old shape. | Candidate exact-main check requires the real `fake_echo` tool name and rejects argument/result canaries or an `arguments` field in JSON-RPC policy logs; exact-head runtime result pending. |
 | `OS82-15` | High | The installer-hash workflow executes its checker and parser from the PR base SHA. One PR cannot safely teach that trusted base about a new release and consume the release; using the head checker would let reviewed code define its own trust rules. | First land archive safety, normalized full-script template validation, and multi-release trust while selectors remain `0.0.72`; prove the old base rejects a new release and the new base permits only structured release-data changes; then submit the `0.0.82` pin. | NemoClaw-only prerequisite implementation in progress. |
 
 An unresolved critical or high concern blocks the version selector change. A green
 aggregate test suite does not override an open ledger row.
+
+## Exact-main policy, nft, identity, and log proof boundary
+
+The moving-main Deep Agents job now invokes
+`openshell-exact-main-runtime-contracts.ts` only when
+`NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF=1`. The proof runs before MCP registration,
+uses a temporary base-policy extension, and restores the exact captured base
+policy before the managed MCP lifecycle continues. It performs these concrete
+checks against the reviewed CLI, gateway, supervisor image, and sandbox binary:
+
+1. Apply a hot policy revision with `--wait`, then independently require the
+   effective and stored-revision JSON to agree on sandbox, version, active
+   version, hash, and LOADED/effective state.
+2. Read `nft -j` inside the real `sandbox-*` network namespace. Require the
+   dangerous policy-accept output chain, proxy and loopback accepts before the
+   rejects, and exactly one IPv4/IPv6 TCP/UDP port-unreachable reject each.
+3. Restart the actual OpenShell-managed Docker container. Require the same exact
+   policy revision/hash, the initial-revision acknowledgement log for that
+   version, and the complete nft ruleset again.
+4. Bind controlled TCP and UDP echo listeners to the supervisor-side
+   `10.200.0.1` veth, then require workload direct connections to fail quickly
+   with `ECONNREFUSED`. This distinguishes nft rejection from an unreachable or
+   unbound external address.
+5. Allow a copied Bash at one exact path to open the real proxy, replace the
+   path with a different executable inode, and require the old process to remain
+   allowed before and after replacement while the new altered process at the
+   same path receives HTTP 403. The evidence records different
+   `/proc/<old-pid>/exe` and replacement-path hashes.
+6. After the authenticated real MCP call, read sandbox policy logs and require
+   `decision=allow rule_methods=tools/call tools=fake_echo`. Argument and result
+   canaries, plus any `arguments` field, are forbidden from those JSON-RPC lines.
+
+This boundary deliberately does not fake fault injection. OpenShell exposes no
+hook that fails only `report_policy_status` while allowing policy polling and
+mutation to continue; stopping the gateway would conflate the reporting outage
+with loss of the source being polled. It likewise exposes no downstream control
+between individual required nft commands. Editing the installed table after
+startup would prove that NemoClaw can damage nft state, not that OpenShell handles
+a real command failure. The smallest honest missing proofs are upstream-injected
+report transport/construction failures and an nft executor that can fail each
+required command, followed by the physical Spark run. The Docker namespace has no
+routed non-loopback IPv6 address, so the candidate asserts the installed IPv6
+rejects structurally; routed IPv6 bypass behavior belongs in a platform fixture
+that actually configures IPv6. No OpenShell repository mutation is part of this
+NemoClaw work.
 
 ## Test-selection and false-green audit
 
