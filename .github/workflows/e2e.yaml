@@ -657,6 +657,7 @@ jobs:
     if: ${{ contains(format(',{0},', inputs.jobs), ',mcp-bridge-dev,') || contains(format(',{0},', inputs.targets), ',mcp-bridge-dev,') }}
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: read
     timeout-minutes: 180
     env:
@@ -666,8 +667,10 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/mcp-bridge-dev
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_MCP_BRIDGE_AGENT_MATRIX: "1"
+      NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
       NEMOCLAW_OPENSHELL_CHANNEL: dev
       NEMOCLAW_RUN_LIVE_E2E: "1"
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:fc441051102b1a16ffcabf59878fa464d3c548f29bfbfa6e4acb232ab67198b7
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -704,6 +707,233 @@ jobs:
       - name: Generate MCP test TLS
         run: bash test/e2e/setup-mcp-test-tls.sh
 
+      - name: Stage exact OpenShell main artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OPENSHELL_SOURCE_SHA: bb72d0123c748ed7e209880f7bab593e10aae221
+          OPENSHELL_RUN_ID: "29215426930"
+        run: |
+          set -euo pipefail
+          staging_root="${RUNNER_TEMP}/openshell-bb72-bin"
+          artifact_root="$(mktemp -d "${RUNNER_TEMP}/openshell-bb72.XXXXXX")"
+          trap 'rm -rf "$artifact_root"' EXIT
+          rm -rf "$staging_root"
+          mkdir -m 700 "$staging_root"
+
+          fetch_artifact() {
+            local id="$1" name="$2" zip_sha="$3" output="$4"
+            local metadata="$artifact_root/${name}.json"
+            gh api "repos/NVIDIA/OpenShell/actions/artifacts/${id}" > "$metadata"
+            jq -e \
+              --arg name "$name" \
+              --arg sha "$OPENSHELL_SOURCE_SHA" \
+              --arg run "$OPENSHELL_RUN_ID" \
+              --arg digest "sha256:${zip_sha}" '
+                .name == $name and
+                .expired == false and
+                .digest == $digest and
+                (.workflow_run.id | tostring) == $run and
+                .workflow_run.head_sha == $sha and
+                .workflow_run.head_branch == "main" and
+                .workflow_run.head_repository_id == 1166129534
+              ' "$metadata" >/dev/null
+            gh api "repos/NVIDIA/OpenShell/actions/artifacts/${id}/zip" > "$output"
+            printf '%s  %s\n' "$zip_sha" "$output" | sha256sum -c -
+          }
+
+          extract_packaged_binary() {
+            python3 - "$@" <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path, PurePosixPath
+          import stat
+          import sys
+          import tarfile
+          import zipfile
+
+          zip_path, zip_member, archive_sha, tar_member, binary_sha, output = sys.argv[1:]
+          with zipfile.ZipFile(zip_path) as archive:
+              members = archive.infolist()
+              if len(members) != 1 or members[0].filename != zip_member:
+                  raise SystemExit(f"unexpected ZIP member set: {[item.filename for item in members]}")
+              info = members[0]
+              mode = info.external_attr >> 16
+              if info.is_dir() or not stat.S_ISREG(mode):
+                  raise SystemExit(f"ZIP member is not a regular file: {zip_member}")
+              if PurePosixPath(zip_member).parts != (zip_member,):
+                  raise SystemExit(f"unsafe ZIP member path: {zip_member}")
+              nested = archive.read(info)
+          if hashlib.sha256(nested).hexdigest() != archive_sha:
+              raise SystemExit(f"inner archive digest mismatch: {zip_member}")
+          with tarfile.open(fileobj=__import__("io").BytesIO(nested), mode="r:gz") as archive:
+              members = archive.getmembers()
+              if len(members) != 1 or members[0].name != tar_member:
+                  raise SystemExit(f"unexpected tar member set: {[item.name for item in members]}")
+              member = members[0]
+              if (
+                  not member.isfile()
+                  or member.linkname
+                  or member.mode != 0o755
+                  or member.uid != 0
+                  or member.gid != 0
+                  or PurePosixPath(member.name).parts != (tar_member,)
+              ):
+                  raise SystemExit(f"unsafe tar member metadata: {member.name}")
+              extracted = archive.extractfile(member)
+              if extracted is None:
+                  raise SystemExit(f"unable to read tar member: {member.name}")
+              binary = extracted.read()
+          if hashlib.sha256(binary).hexdigest() != binary_sha:
+              raise SystemExit(f"binary digest mismatch: {tar_member}")
+          target = Path(output)
+          descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+          with os.fdopen(descriptor, "wb") as stream:
+              stream.write(binary)
+          PY
+          }
+
+          verify_raw_binary_artifact() {
+            python3 - "$@" <<'PY'
+          import hashlib
+          from pathlib import PurePosixPath
+          import stat
+          import sys
+          import zipfile
+
+          zip_path, member_name, binary_sha = sys.argv[1:]
+          with zipfile.ZipFile(zip_path) as archive:
+              members = archive.infolist()
+              if len(members) != 1 or members[0].filename != member_name:
+                  raise SystemExit(f"unexpected raw ZIP member set: {[item.filename for item in members]}")
+              info = members[0]
+              mode = info.external_attr >> 16
+              if (
+                  info.is_dir()
+                  or not stat.S_ISREG(mode)
+                  or stat.S_IMODE(mode) != 0o755
+                  or PurePosixPath(member_name).parts != (member_name,)
+              ):
+                  raise SystemExit(f"unsafe raw ZIP member metadata: {member_name}")
+              binary = archive.read(info)
+          if hashlib.sha256(binary).hexdigest() != binary_sha:
+              raise SystemExit(f"raw binary digest mismatch: {member_name}")
+          PY
+          }
+
+          fetch_artifact \
+            8266446648 cli-linux-amd64 \
+            78923b27a492204b6e869d9f5f392e57b37d8ddcb9367d746f4ee46cfaf0e5a2 \
+            "$artifact_root/cli-linux-amd64.zip"
+          extract_packaged_binary \
+            "$artifact_root/cli-linux-amd64.zip" \
+            openshell-x86_64-unknown-linux-musl.tar.gz \
+            d1732c0b87801560afd1b06cfea31c60d6a357100d5b817b4a4fb181b0b71933 \
+            openshell \
+            09083ef8087e5191fc3513a7239b08041b511fdeb7f2fe074bdf8820886cbea1 \
+            "$staging_root/openshell"
+
+          fetch_artifact \
+            8266452366 gateway-binary-linux-amd64 \
+            39504758f07a8bac0a52d958ec56e380ac59824bde8db72a815a9b82c6bbcfd6 \
+            "$artifact_root/gateway-binary-linux-amd64.zip"
+          extract_packaged_binary \
+            "$artifact_root/gateway-binary-linux-amd64.zip" \
+            openshell-gateway-x86_64-unknown-linux-gnu.tar.gz \
+            5e3728564b1f965cb5d320bab4f37d388303723f42a64c308227dbc1ef382043 \
+            openshell-gateway \
+            39e75f7a2a96c220e3f2d645067f0623d922385ade07edb2037a27cc07ea81d1 \
+            "$staging_root/openshell-gateway"
+
+          fetch_artifact \
+            8266435047 supervisor-binary-linux-amd64 \
+            7b2e47adbbfc644806b465a4f4c3c7bfaba7117e1f19ec9f151b37695b418bf4 \
+            "$artifact_root/supervisor-binary-linux-amd64.zip"
+          extract_packaged_binary \
+            "$artifact_root/supervisor-binary-linux-amd64.zip" \
+            openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz \
+            6f7040e89ec249df7f3b36ddff609a87f096fcdf62cd5c28e86757f175e40a7a \
+            openshell-sandbox \
+            58e5d99261d2b8ea06664d020995830fd3f153ea692f36622b92f9b827ea60c8 \
+            "$staging_root/openshell-sandbox"
+
+          fetch_artifact \
+            8266448422 rust-binary-supervisor-sandbox-linux-amd64 \
+            cb043b6a8d5aec9a048e4bbefdf6df12cc939e76cebaf69828acd65f96a36dc2 \
+            "$artifact_root/supervisor-image-binary-amd64.zip"
+          verify_raw_binary_artifact \
+            "$artifact_root/supervisor-image-binary-amd64.zip" \
+            openshell-sandbox \
+            8e89067afca2d1c02a25fb19906dd27fd8d524ee4eb3b2b36b1210338dae9235
+
+          fetch_artifact \
+            8266451406 rust-binary-supervisor-sandbox-linux-arm64 \
+            fccd6b98e64732cd00c54f1923449954d6a7d3294887c708bb62be90159b68a6 \
+            "$artifact_root/supervisor-image-binary-arm64.zip"
+          verify_raw_binary_artifact \
+            "$artifact_root/supervisor-image-binary-arm64.zip" \
+            openshell-sandbox \
+            8ec9b88c49f001d070ada7bb5a98fb6f96498fc446b0f2f614056247d7300b85
+
+          chmod 600 "$staging_root/openshell" "$staging_root/openshell-gateway" "$staging_root/openshell-sandbox"
+          mkdir -p "$E2E_ARTIFACT_DIR"
+          jq -n \
+            --arg sourceSha "$OPENSHELL_SOURCE_SHA" \
+            --arg runId "$OPENSHELL_RUN_ID" \
+            --arg supervisorImage "$OPENSHELL_DOCKER_SUPERVISOR_IMAGE" \
+            '{
+              schemaVersion: 2,
+              sourceRepository: "NVIDIA/OpenShell",
+              sourceSha: $sourceSha,
+              workflowRunId: ($runId | tonumber),
+              observedCliVersion: "0.0.82-dev.11+gbb72d012",
+              producerVersions: {
+                cargo: "0.0.82-dev.11+gbb72d0123",
+                python: "0.0.82.dev11+gbb72d0123"
+              },
+              componentVersions: {
+                cli: "0.0.82-dev.11+gbb72d012",
+                gateway: "0.0.82-dev.11+gbb72d012",
+                standaloneSandbox: "0.0.82-dev.11+gbb72d012",
+                supervisorImage: "0.0.82-dev.11+gbb72d0123"
+              },
+              attestationStatus: "absent",
+              credentialBoundarySources: [
+                {path: "crates/openshell-core/src/google_cloud.rs", blobSha1: "fcab45ae086ea7b45a7326b46ceb849c8f115474"},
+                {path: "crates/openshell-core/src/provider_credentials.rs", blobSha1: "65310b3a43ee279443f08f09db67febdedc62a33"},
+                {path: "crates/openshell-core/src/secrets.rs", blobSha1: "e93bdc53900ae342e11a64f50a53b16ac75be256"}
+              ],
+              supervisorImage: {
+                reference: $supervisorImage,
+                indexSha256: "fc441051102b1a16ffcabf59878fa464d3c548f29bfbfa6e4acb232ab67198b7",
+                attestationStatus: "absent",
+                sourceLabels: "absent",
+                platforms: {
+                  "linux/amd64": {
+                    runtimeEvidence: "required-in-this-job",
+                    childManifestSha256: "4a54b434decd007d2a966edb5db751adb3ca4cf8ab8ac0b248901f8efe614b71",
+                    configSha256: "5432194fa43840c333bc7b166bf6e7c0e15247e9dc195cb9a38c1a85b7415f44",
+                    binaryLayerSha256: "d1baeaebaddef6291e0a94b697f28c3c319ac2ec1a83843026e89553cc7cd27e",
+                    binarySha256: "8e89067afca2d1c02a25fb19906dd27fd8d524ee4eb3b2b36b1210338dae9235",
+                    buildArtifact: {id: 8266448422, zipSha256: "cb043b6a8d5aec9a048e4bbefdf6df12cc939e76cebaf69828acd65f96a36dc2"}
+                  },
+                  "linux/arm64": {
+                    runtimeEvidence: "identity-only",
+                    childManifestSha256: "fab8d5c551991648a19bf7876d2edf19fdcf4e95139ce5f75d638354c0820d51",
+                    configSha256: "66a1d121d6386e19297d05a950ba7409c5752f337bacfbc156c7c76513e40136",
+                    binaryLayerSha256: "818c727cb5cbcdb78918a274ca6b9aa85be6a95fdb604e49f523cf2c87f2eba4",
+                    binarySha256: "8ec9b88c49f001d070ada7bb5a98fb6f96498fc446b0f2f614056247d7300b85",
+                    buildArtifact: {id: 8266451406, zipSha256: "fccd6b98e64732cd00c54f1923449954d6a7d3294887c708bb62be90159b68a6"}
+                  }
+                }
+              },
+              artifacts: {
+                cli: {id: 8266446648, name: "cli-linux-amd64", zipMember: "openshell-x86_64-unknown-linux-musl.tar.gz", archiveMember: "openshell", zipSha256: "78923b27a492204b6e869d9f5f392e57b37d8ddcb9367d746f4ee46cfaf0e5a2", archiveSha256: "d1732c0b87801560afd1b06cfea31c60d6a357100d5b817b4a4fb181b0b71933", binarySha256: "09083ef8087e5191fc3513a7239b08041b511fdeb7f2fe074bdf8820886cbea1"},
+                gateway: {id: 8266452366, name: "gateway-binary-linux-amd64", zipMember: "openshell-gateway-x86_64-unknown-linux-gnu.tar.gz", archiveMember: "openshell-gateway", zipSha256: "39504758f07a8bac0a52d958ec56e380ac59824bde8db72a815a9b82c6bbcfd6", archiveSha256: "5e3728564b1f965cb5d320bab4f37d388303723f42a64c308227dbc1ef382043", binarySha256: "39e75f7a2a96c220e3f2d645067f0623d922385ade07edb2037a27cc07ea81d1"},
+                standaloneSandbox: {id: 8266435047, name: "supervisor-binary-linux-amd64", zipMember: "openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz", archiveMember: "openshell-sandbox", zipSha256: "7b2e47adbbfc644806b465a4f4c3c7bfaba7117e1f19ec9f151b37695b418bf4", archiveSha256: "6f7040e89ec249df7f3b36ddff609a87f096fcdf62cd5c28e86757f175e40a7a", binarySha256: "58e5d99261d2b8ea06664d020995830fd3f153ea692f36622b92f9b827ea60c8"}
+              }
+            }' > "$E2E_ARTIFACT_DIR/openshell-exact-main-provenance.json"
+          unset GH_TOKEN
+
       - name: Revoke Docker auth before unverified dev tooling
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
@@ -711,9 +941,28 @@ jobs:
       - name: Install OpenShell CLI
         env:
           NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1"
-          NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1"
+          NEMOCLAW_OPENSHELL_FORCE_INSTALL: "0"
         run: |
           set -euo pipefail
+          staging_root="${RUNNER_TEMP}/openshell-bb72-bin"
+          install_root="$HOME/.local/bin"
+          mkdir -p "$install_root"
+          for binary in openshell openshell-gateway openshell-sandbox; do
+            [[ -f "$staging_root/$binary" && ! -L "$staging_root/$binary" ]]
+            install -m 755 "$staging_root/$binary" "$install_root/$binary"
+          done
+          printf '%s  %s\n' \
+            09083ef8087e5191fc3513a7239b08041b511fdeb7f2fe074bdf8820886cbea1 \
+            "$install_root/openshell" | sha256sum -c -
+          printf '%s  %s\n' \
+            39e75f7a2a96c220e3f2d645067f0623d922385ade07edb2037a27cc07ea81d1 \
+            "$install_root/openshell-gateway" | sha256sum -c -
+          printf '%s  %s\n' \
+            58e5d99261d2b8ea06664d020995830fd3f153ea692f36622b92f9b827ea60c8 \
+            "$install_root/openshell-sandbox" | sha256sum -c -
+          echo "$install_root" >> "$GITHUB_PATH"
+          export PATH="$install_root:$PATH"
+          "$install_root/openshell" --version | grep -Fx 'openshell 0.0.82-dev.11+gbb72d012'
           bash scripts/install-openshell.sh
 
       - id: mcp_runtime_compatibility
@@ -722,6 +971,17 @@ jobs:
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
           npx tsx tools/e2e/mcp-bridge-runtime-compatibility.mts
+
+      - name: Require exact-main full lifecycle
+        if: always()
+        env:
+          COMPATIBILITY_MODE: ${{ steps.mcp_runtime_compatibility.outputs.mode }}
+        run: |
+          set -euo pipefail
+          if [[ "$COMPATIBILITY_MODE" != "full-lifecycle" ]]; then
+            echo "::error::Exact OpenShell main proof requires full-lifecycle; got '${COMPATIBILITY_MODE:-missing}'" >&2
+            exit 1
+          fi
 
       - name: Run MCP OpenShell provider live test
         if: ${{ steps.mcp_runtime_compatibility.outputs.mode == 'full-lifecycle' }}
@@ -740,6 +1000,7 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-live \
             test/e2e/live/mcp-bridge.test.ts \
+            -t '^mcp-bridge-deepagents$' \
             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
 
       - id: mcp_artifact_secret_scan

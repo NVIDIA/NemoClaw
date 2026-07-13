@@ -27,6 +27,7 @@ import {
   assertHermesInspectionRejectsUnmanagedFields,
   assertHermesRemovalSurvivesGatewayRestart,
 } from "./mcp-bridge-hermes-lifecycle.ts";
+import { assertExactMainMultilineExecContract } from "./openshell-exact-main-exec.ts";
 import {
   buildMcpDnsRebindingProbeScript,
   hostAddressForSandbox,
@@ -1382,6 +1383,7 @@ liveAgentMatrixTest(
       sandboxName: DEEPAGENTS_SANDBOX_NAME,
       artifactName: "onboard-deepagents-mcp-bridge",
     });
+    await assertExactMainMultilineExecContract(host, DEEPAGENTS_SANDBOX_NAME);
     cleanup.add("remove Deep Agents MCP bridge", () =>
       cleanupMcpBridge(host, DEEPAGENTS_SANDBOX_NAME, SERVER_NAME, "deepagents-config"),
     );

@@ -58,7 +58,7 @@ ENV_PLACEHOLDER_RE = re.compile(
     r"^Bearer openshell:resolve:env:([A-Za-z_][A-Za-z0-9_]{0,127})$"
 )
 OPENSHELL_REVISIONED_CREDENTIAL_NAME_RE = re.compile(r"^v[0-9]+_[A-Za-z0-9_]+$")
-BOUNDARY_MANIFEST_NAME = "openshell-child-visible-credentials.v0.0.72.json"
+BOUNDARY_MANIFEST_NAME = "openshell-child-visible-credentials.bb72d0123c.json"
 ANSI_ESCAPE_RE = re.compile(
     r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\)|[@-_])"
 )
@@ -142,7 +142,10 @@ def _load_credential_boundary_manifest() -> dict[str, object]:
     if manifest_path is None:
         raise RuntimeError("Hermes MCP credential boundary manifest is missing")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if not isinstance(manifest, dict) or manifest.get("openshellVersion") != "0.0.72":
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("openshellVersion") != "0.0.82-dev.11+gbb72d012"
+    ):
         raise RuntimeError("Hermes MCP credential boundary manifest is invalid")
     return manifest
 

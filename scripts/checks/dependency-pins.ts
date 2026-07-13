@@ -36,6 +36,11 @@ const OPENSHELL_RELEASE_MANIFESTS = [
   "openshell-gateway-checksums-sha256.txt",
   "openshell-sandbox-checksums-sha256.txt",
 ] as const;
+const EXACT_MAIN_PROOF = {
+  manifestName: "openshell-child-visible-credentials.bb72d0123c.json",
+  sourceSha: "bb72d0123c748ed7e209880f7bab593e10aae221",
+  version: "0.0.82-dev.11+gbb72d012",
+} as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -308,6 +313,7 @@ function verifyOpenShellPins(
     supervisorManifestDigests: string;
     updateHermesAgent: string;
   },
+  exactMainProof: boolean,
   failures: string[],
 ): void {
   for (const [argName, expectedVersion] of [
@@ -396,51 +402,96 @@ function verifyOpenShellPins(
     ".github/workflows/e2e.yaml gateway auth OpenShell version",
     failures,
   );
-  compare(
-    extractMappingString(
-      sources.credentialBoundary,
-      ["openshellVersion"],
+  if (exactMainProof) {
+    compare(
+      extractMappingString(
+        sources.credentialBoundary,
+        ["openshellVersion"],
+        "OpenShell exact-main credential-boundary manifest version",
+        failures,
+      ),
+      EXACT_MAIN_PROOF.version,
+      "OpenShell exact-main credential-boundary manifest version",
+      failures,
+    );
+    compare(
+      extractMappingString(
+        sources.credentialBoundary,
+        ["openshellCommit"],
+        "OpenShell exact-main credential-boundary manifest commit",
+        failures,
+      ),
+      EXACT_MAIN_PROOF.sourceSha,
+      "OpenShell exact-main credential-boundary manifest commit",
+      failures,
+    );
+    for (const [source, label] of [
+      [sources.mcpBridgeValidation, "OpenShell credential-boundary import"],
+      [sources.hermesDockerfile, "Hermes Dockerfile credential-boundary manifest"],
+      [sources.hermesMcpConfigTransaction, "Hermes MCP transaction credential-boundary manifest"],
+    ] as const) {
+      if (!source.includes(EXACT_MAIN_PROOF.manifestName)) {
+        failures.push(`${label}: expected a reference to ${EXACT_MAIN_PROOF.manifestName}`);
+      }
+    }
+    compare(
+      extractSingle(
+        sources.hermesMcpConfigTransaction,
+        /manifest\.get\("openshellVersion"\)\s*!=\s*"([^"]+)"/,
+        "Hermes MCP transaction expected exact-main OpenShell version",
+        failures,
+      ),
+      EXACT_MAIN_PROOF.version,
+      "Hermes MCP transaction expected exact-main OpenShell version",
+      failures,
+    );
+  } else {
+    compare(
+      extractMappingString(
+        sources.credentialBoundary,
+        ["openshellVersion"],
+        "OpenShell credential-boundary manifest version",
+        failures,
+      ),
+      pins.maxVersion,
       "OpenShell credential-boundary manifest version",
       failures,
-    ),
-    pins.maxVersion,
-    "OpenShell credential-boundary manifest version",
-    failures,
-  );
-  compare(
-    extractSingle(
-      sources.mcpBridgeValidation,
-      /openshell-child-visible-credentials\.v([0-9]+\.[0-9]+\.[0-9]+)\.json/,
+    );
+    compare(
+      extractSingle(
+        sources.mcpBridgeValidation,
+        /openshell-child-visible-credentials\.v([0-9]+\.[0-9]+\.[0-9]+)\.json/,
+        "OpenShell credential-boundary import",
+        failures,
+      ),
+      pins.maxVersion,
       "OpenShell credential-boundary import",
       failures,
-    ),
-    pins.maxVersion,
-    "OpenShell credential-boundary import",
-    failures,
-  );
-  compareCredentialBoundaryManifestReferences(
-    sources.hermesDockerfile,
-    "Hermes Dockerfile",
-    pins.maxVersion,
-    failures,
-  );
-  compareCredentialBoundaryManifestReferences(
-    sources.hermesMcpConfigTransaction,
-    "Hermes MCP transaction",
-    pins.maxVersion,
-    failures,
-  );
-  compare(
-    extractSingle(
+    );
+    compareCredentialBoundaryManifestReferences(
+      sources.hermesDockerfile,
+      "Hermes Dockerfile",
+      pins.maxVersion,
+      failures,
+    );
+    compareCredentialBoundaryManifestReferences(
       sources.hermesMcpConfigTransaction,
-      /manifest\.get\("openshellVersion"\)\s*!=\s*"([0-9]+\.[0-9]+\.[0-9]+)"/,
+      "Hermes MCP transaction",
+      pins.maxVersion,
+      failures,
+    );
+    compare(
+      extractSingle(
+        sources.hermesMcpConfigTransaction,
+        /manifest\.get\("openshellVersion"\)\s*!=\s*"([0-9]+\.[0-9]+\.[0-9]+)"/,
+        "Hermes MCP transaction expected OpenShell version",
+        failures,
+      ),
+      pins.maxVersion,
       "Hermes MCP transaction expected OpenShell version",
       failures,
-    ),
-    pins.maxVersion,
-    "Hermes MCP transaction expected OpenShell version",
-    failures,
-  );
+    );
+  }
   compareCredentialBoundaryManifestReferences(
     sources.updateHermesAgent,
     "Hermes update script",
@@ -548,9 +599,19 @@ export function verifyDependencyPins(rootDir: string = REPO_ROOT): string[] {
     failures,
   );
   const updateHermesAgent = readText(rootDir, "scripts/update-hermes-agent.sh", failures);
+  const exactMainProof = /NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF:\s*["']?1["']?/.test(
+    e2eWorkflowSource,
+  );
+  if (exactMainProof && !e2eWorkflowSource.includes(EXACT_MAIN_PROOF.sourceSha)) {
+    failures.push(
+      `OpenShell exact-main workflow: expected a reference to ${EXACT_MAIN_PROOF.sourceSha}`,
+    );
+  }
   const credentialBoundarySource = readText(
     rootDir,
-    `src/lib/actions/sandbox/openshell-child-visible-credentials.v${pins.openshell.maxVersion}.json`,
+    exactMainProof
+      ? `src/lib/actions/sandbox/${EXACT_MAIN_PROOF.manifestName}`
+      : `src/lib/actions/sandbox/openshell-child-visible-credentials.v${pins.openshell.maxVersion}.json`,
     failures,
   );
   const mcpBridgeValidation = readText(
@@ -618,6 +679,7 @@ export function verifyDependencyPins(rootDir: string = REPO_ROOT): string[] {
       supervisorManifestDigests,
       updateHermesAgent,
     },
+    exactMainProof,
     failures,
   );
   verifyOpenClawPins(

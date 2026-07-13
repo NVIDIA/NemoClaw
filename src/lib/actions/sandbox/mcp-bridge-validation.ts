@@ -17,7 +17,7 @@ import { normalizeMcpServerUrl } from "./mcp-bridge-url-validation";
 // must reject a missing or malformed security manifest instead of letting the
 // CLI start with a weakened credential-name denylist. Input, package, image,
 // and workflow contracts pin its structure, installed path, and version.
-import childVisibleCredentialManifest from "./openshell-child-visible-credentials.v0.0.72.json";
+import childVisibleCredentialManifest from "./openshell-child-visible-credentials.bb72d0123c.json";
 
 export {
   MCP_SERVER_URL_MAX_LENGTH,

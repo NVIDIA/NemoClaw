@@ -14,6 +14,43 @@ const DEV_DOCKER_CLEANUP_NAME = "Revoke Docker auth before unverified dev toolin
 const DEV_COMPATIBILITY_STEP_NAME = "Classify OpenShell credential-boundary compatibility";
 const DEV_COMPATIBILITY_STEP_ID = "mcp_runtime_compatibility";
 const DEV_COMPATIBILITY_TOOL = "tools/e2e/mcp-bridge-runtime-compatibility.mts";
+const DEV_EXACT_MAIN_STAGE_NAME = "Stage exact OpenShell main artifacts";
+const DEV_EXACT_MAIN_FULL_LIFECYCLE_NAME = "Require exact-main full lifecycle";
+const DEV_EXACT_MAIN_SOURCE_SHA = "bb72d0123c748ed7e209880f7bab593e10aae221";
+const DEV_EXACT_MAIN_RUN_ID = "29215426930";
+const DEV_EXACT_MAIN_CLI_VERSION = "0.0.82-dev.11+gbb72d012";
+const DEV_EXACT_MAIN_SUPERVISOR_INDEX =
+  "fc441051102b1a16ffcabf59878fa464d3c548f29bfbfa6e4acb232ab67198b7";
+const DEV_EXACT_MAIN_REQUIRED_STAGE_TOKENS = [
+  DEV_EXACT_MAIN_CLI_VERSION,
+  "0.0.82-dev.11+gbb72d0123",
+  "0.0.82.dev11+gbb72d0123",
+  DEV_EXACT_MAIN_SUPERVISOR_INDEX,
+  "8266446648",
+  "78923b27a492204b6e869d9f5f392e57b37d8ddcb9367d746f4ee46cfaf0e5a2",
+  "d1732c0b87801560afd1b06cfea31c60d6a357100d5b817b4a4fb181b0b71933",
+  "09083ef8087e5191fc3513a7239b08041b511fdeb7f2fe074bdf8820886cbea1",
+  "8266452366",
+  "39504758f07a8bac0a52d958ec56e380ac59824bde8db72a815a9b82c6bbcfd6",
+  "5e3728564b1f965cb5d320bab4f37d388303723f42a64c308227dbc1ef382043",
+  "39e75f7a2a96c220e3f2d645067f0623d922385ade07edb2037a27cc07ea81d1",
+  "8266435047",
+  "7b2e47adbbfc644806b465a4f4c3c7bfaba7117e1f19ec9f151b37695b418bf4",
+  "6f7040e89ec249df7f3b36ddff609a87f096fcdf62cd5c28e86757f175e40a7a",
+  "58e5d99261d2b8ea06664d020995830fd3f153ea692f36622b92f9b827ea60c8",
+  "8266448422",
+  "cb043b6a8d5aec9a048e4bbefdf6df12cc939e76cebaf69828acd65f96a36dc2",
+  "4a54b434decd007d2a966edb5db751adb3ca4cf8ab8ac0b248901f8efe614b71",
+  "5432194fa43840c333bc7b166bf6e7c0e15247e9dc195cb9a38c1a85b7415f44",
+  "d1baeaebaddef6291e0a94b697f28c3c319ac2ec1a83843026e89553cc7cd27e",
+  "8e89067afca2d1c02a25fb19906dd27fd8d524ee4eb3b2b36b1210338dae9235",
+  "8266451406",
+  "fccd6b98e64732cd00c54f1923449954d6a7d3294887c708bb62be90159b68a6",
+  "fab8d5c551991648a19bf7876d2edf19fdcf4e95139ce5f75d638354c0820d51",
+  "66a1d121d6386e19297d05a950ba7409c5752f337bacfbc156c7c76513e40136",
+  "818c727cb5cbcdb78918a274ca6b9aa85be6a95fdb604e49f523cf2c87f2eba4",
+  "8ec9b88c49f001d070ada7bb5a98fb6f96498fc446b0f2f614056247d7300b85",
+] as const;
 const DEV_COMPATIBILITY_RUN = [
   "set -euo pipefail",
   'export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"',
@@ -31,7 +68,8 @@ const LEGACY_WORKFLOWS = [
   ".github/workflows/nightly-e2e.yaml",
 ] as const;
 const FORBIDDEN_INFERENCE_SECRETS =
-  /ANTHROPIC_API_KEY|AWS_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY)|COMPATIBLE_(?:ANTHROPIC_)?API_KEY|GITHUB_TOKEN|GH_TOKEN|NVIDIA_(?:INFERENCE_)?API_KEY|OPENAI_API_KEY/;
+  /ANTHROPIC_API_KEY|AWS_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY)|COMPATIBLE_(?:ANTHROPIC_)?API_KEY|NVIDIA_(?:INFERENCE_)?API_KEY|OPENAI_API_KEY/;
+const GITHUB_CREDENTIAL = /GITHUB_TOKEN|GH_TOKEN/;
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -144,6 +182,18 @@ function validateJobIdentity(
       "dev",
       "mcp-bridge-dev must select the OpenShell dev channel",
     );
+    requireEqual(
+      errors,
+      env.NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF,
+      "1",
+      "mcp-bridge-dev must enable the exact-main live contract proof",
+    );
+    requireEqual(
+      errors,
+      env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
+      `ghcr.io/nvidia/openshell/supervisor@sha256:${DEV_EXACT_MAIN_SUPERVISOR_INDEX}`,
+      "mcp-bridge-dev must pin the exact reviewed supervisor index",
+    );
     if (Object.hasOwn(env, "NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL")) {
       errors.push("mcp-bridge-dev must scope unverified artifact opt-in to its installer step");
     }
@@ -160,8 +210,14 @@ function validateJobSecurity(
   canonicalDockerAuth: UnknownRecord,
 ): void {
   const permissions = asRecord(job.permissions);
-  if (Object.keys(permissions).sort().join(",") !== "contents" || permissions.contents !== "read") {
-    errors.push(`${jobName} must use only contents:read permissions`);
+  const expectedPermissions =
+    jobName === "mcp-bridge-dev" ? { actions: "read", contents: "read" } : { contents: "read" };
+  if (!hasExactEntries(permissions, expectedPermissions)) {
+    errors.push(
+      jobName === "mcp-bridge-dev"
+        ? "mcp-bridge-dev must use only actions:read and contents:read permissions"
+        : "mcp-bridge must use only contents:read permissions",
+    );
   }
 
   const checkouts = asSteps(job).filter((step) =>
@@ -177,7 +233,7 @@ function validateJobSecurity(
     }
   }
   if (FORBIDDEN_INFERENCE_SECRETS.test(JSON.stringify(job))) {
-    errors.push(`${jobName} must not receive inference or GitHub credentials`);
+    errors.push(`${jobName} must not receive inference credentials`);
   }
 
   const login = namedStep(job, "Authenticate to Docker Hub");
@@ -205,6 +261,38 @@ function validateJobSecurity(
     errors.push(`${jobName} Docker auth cleanup must remain the final step`);
   }
   if (jobName === "mcp-bridge-dev") {
+    const exactStages = steps.filter((step) => step.name === DEV_EXACT_MAIN_STAGE_NAME);
+    const exactStage = exactStages[0] ?? {};
+    if (exactStages.length !== 1) {
+      errors.push("mcp-bridge-dev must use exactly one exact-main artifact staging step");
+    }
+    const exactStageEnv = asRecord(exactStage.env);
+    if (
+      !hasExactEntries(exactStageEnv, {
+        GH_TOKEN: "${{ github.token }}",
+        OPENSHELL_RUN_ID: DEV_EXACT_MAIN_RUN_ID,
+        OPENSHELL_SOURCE_SHA: DEV_EXACT_MAIN_SOURCE_SHA,
+      })
+    ) {
+      errors.push(
+        "mcp-bridge-dev exact-main staging credentials and source identity must remain exact",
+      );
+    }
+    for (const step of steps) {
+      if (step !== exactStage && GITHUB_CREDENTIAL.test(JSON.stringify(step))) {
+        errors.push(
+          "mcp-bridge-dev may expose the GitHub token only to exact-main artifact staging",
+        );
+        break;
+      }
+    }
+    requireContains(
+      errors,
+      exactStage.run,
+      "unset GH_TOKEN",
+      "mcp-bridge-dev exact-main staging must remove GH_TOKEN before dev binaries run",
+    );
+
     const devCleanup = namedStep(job, DEV_DOCKER_CLEANUP_NAME);
     const install = namedStep(job, "Install OpenShell CLI");
     const expectedDevCleanup = {
@@ -217,9 +305,14 @@ function validateJobSecurity(
     }
     const devCleanupIndex = steps.indexOf(devCleanup);
     const installIndex = steps.indexOf(install);
-    if (devCleanupIndex <= steps.indexOf(login) || installIndex <= devCleanupIndex) {
+    const exactStageIndex = steps.indexOf(exactStage);
+    if (
+      exactStageIndex <= steps.indexOf(login) ||
+      devCleanupIndex <= exactStageIndex ||
+      installIndex <= devCleanupIndex
+    ) {
       errors.push(
-        "mcp-bridge-dev Docker auth revocation must follow setup and precede the dev installer",
+        "mcp-bridge-dev exact staging must precede credential revocation and the dev installer",
       );
     }
     if (
@@ -227,6 +320,13 @@ function validateJobSecurity(
       steps.slice(devCleanupIndex + 1).some((step) => step.name === "Authenticate to Docker Hub")
     ) {
       errors.push("mcp-bridge-dev must not restore Docker auth after dev-tooling revocation");
+    }
+  } else {
+    if (GITHUB_CREDENTIAL.test(JSON.stringify(job))) {
+      errors.push("mcp-bridge must not receive GitHub credentials");
+    }
+    if (Object.keys(namedStep(job, DEV_EXACT_MAIN_STAGE_NAME)).length > 0) {
+      errors.push("mcp-bridge stable lane must not stage exact-main development artifacts");
     }
   }
 }
@@ -239,9 +339,11 @@ function validateJobExecution(
   const steps = asSteps(job);
   const cloudflared = namedStep(job, "Install and verify cloudflared prerequisite");
   const tls = namedStep(job, "Generate MCP test TLS");
+  const exactStage = namedStep(job, DEV_EXACT_MAIN_STAGE_NAME);
   const install = namedStep(job, "Install OpenShell CLI");
   const run = namedStep(job, "Run MCP OpenShell provider live test");
   const compatibility = namedStep(job, DEV_COMPATIBILITY_STEP_NAME);
+  const requireFullLifecycle = namedStep(job, DEV_EXACT_MAIN_FULL_LIFECYCLE_NAME);
   const compatibilitySteps = steps.filter((step) =>
     asString(step.run).includes(DEV_COMPATIBILITY_TOOL),
   );
@@ -297,22 +399,61 @@ function validateJobExecution(
   if (steps.indexOf(tls) < 0 || steps.indexOf(install) <= steps.indexOf(tls)) {
     errors.push(`${jobName} must generate HTTPS fixtures before installing OpenShell`);
   }
-  requireEqual(
-    errors,
-    asRecord(install.env).NEMOCLAW_OPENSHELL_FORCE_INSTALL,
-    "1",
-    `${jobName} must force the selected OpenShell install`,
-  );
   const installEnv = asRecord(install.env);
   if (jobName === "mcp-bridge-dev") {
+    requireEqual(
+      errors,
+      installEnv.NEMOCLAW_OPENSHELL_FORCE_INSTALL,
+      "0",
+      "mcp-bridge-dev must preserve the exact staged OpenShell binaries",
+    );
     requireEqual(
       errors,
       installEnv.NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL,
       "1",
       "mcp-bridge-dev installer must explicitly authorize unverified dev artifacts",
     );
+
+    const stageRun = asString(exactStage.run);
+    for (const token of DEV_EXACT_MAIN_REQUIRED_STAGE_TOKENS) {
+      if (!stageRun.includes(token)) {
+        errors.push(`mcp-bridge-dev exact-main staging is missing reviewed identity: ${token}`);
+      }
+    }
+    for (const required of [
+      "zipfile.ZipFile",
+      "tarfile.open",
+      "len(members) != 1",
+      "member.isfile()",
+      "stat.S_ISREG",
+      "os.O_NOFOLLOW",
+      'attestationStatus: "absent"',
+      'runtimeEvidence: "identity-only"',
+    ]) {
+      requireContains(
+        errors,
+        stageRun,
+        required,
+        "mcp-bridge-dev exact-main staging must validate immutable artifact structure and provenance",
+      );
+    }
+    if (
+      steps.indexOf(exactStage) <= steps.indexOf(tls) ||
+      steps.indexOf(install) <= steps.indexOf(exactStage)
+    ) {
+      errors.push(
+        "mcp-bridge-dev must stage exact-main artifacts after fixtures and before installation",
+      );
+    }
   } else if (Object.hasOwn(installEnv, "NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL")) {
     errors.push("mcp-bridge stable installer must not authorize unverified dev artifacts");
+  } else {
+    requireEqual(
+      errors,
+      installEnv.NEMOCLAW_OPENSHELL_FORCE_INSTALL,
+      "1",
+      "mcp-bridge must force the selected stable OpenShell install",
+    );
   }
   requireContains(
     errors,
@@ -352,10 +493,30 @@ function validateJobExecution(
       DEV_FULL_LIFECYCLE_CONDITION,
       "mcp-bridge-dev must run the full MCP lifecycle only for an aligned runtime",
     );
+    const expectedFullLifecycleRun = [
+      "set -euo pipefail",
+      'if [[ "$COMPATIBILITY_MODE" != "full-lifecycle" ]]; then',
+      "  echo \"::error::Exact OpenShell main proof requires full-lifecycle; got '${COMPATIBILITY_MODE:-missing}'\" >&2",
+      "  exit 1",
+      "fi",
+      "",
+    ].join("\n");
+    if (
+      Object.keys(requireFullLifecycle).sort().join(",") !== "env,if,name,run" ||
+      requireFullLifecycle.if !== "always()" ||
+      requireFullLifecycle.name !== DEV_EXACT_MAIN_FULL_LIFECYCLE_NAME ||
+      requireFullLifecycle.run !== expectedFullLifecycleRun ||
+      !hasExactEntries(asRecord(requireFullLifecycle.env), {
+        COMPATIBILITY_MODE: "${{ steps.mcp_runtime_compatibility.outputs.mode }}",
+      })
+    ) {
+      errors.push("mcp-bridge-dev must fail unless the exact-main proof runs full-lifecycle");
+    }
     if (
       steps.indexOf(install) < 0 ||
       steps.indexOf(compatibility) <= steps.indexOf(install) ||
-      steps.indexOf(run) <= steps.indexOf(compatibility)
+      steps.indexOf(requireFullLifecycle) <= steps.indexOf(compatibility) ||
+      steps.indexOf(run) <= steps.indexOf(requireFullLifecycle)
     ) {
       errors.push(
         "mcp-bridge-dev must classify the installed runtime before the full MCP lifecycle",
@@ -371,6 +532,14 @@ function validateJobExecution(
   }
   for (const required of ["--project e2e-live", "test/e2e/live/mcp-bridge.test.ts"]) {
     requireContains(errors, run.run, required, `${jobName} must run the unified MCP live test`);
+  }
+  if (jobName === "mcp-bridge-dev") {
+    requireContains(
+      errors,
+      run.run,
+      "-t '^mcp-bridge-deepagents$'",
+      "mcp-bridge-dev exact-main proof must run the reviewed Deep Agents lifecycle",
+    );
   }
   requireEqual(
     errors,

@@ -142,4 +142,101 @@ describe("MCP workflow artifact boundary", () => {
       fs.rmSync(directory, { force: true, recursive: true });
     }
   });
+
+  it("confines actions:read and the GitHub token to exact-main artifact staging", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+    const workflowPath = path.join(directory, "e2e.yaml");
+    try {
+      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+        jobs: Record<
+          string,
+          {
+            permissions: Record<string, string>;
+            steps: Array<{ env?: Record<string, string>; name?: string }>;
+          }
+        >;
+      };
+      const dev = workflow.jobs["mcp-bridge-dev"];
+      const install = dev.steps.find((step) => step.name === "Install OpenShell CLI");
+      requireFixture(install, "MCP dev installer fixture is missing");
+      dev.permissions.packages = "read";
+      install.env = { ...install.env, GH_TOKEN: "${{ github.token }}" };
+      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toEqual(
+        expect.arrayContaining([
+          "mcp-bridge-dev must use only actions:read and contents:read permissions",
+          "mcp-bridge-dev may expose the GitHub token only to exact-main artifact staging",
+        ]),
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects source, artifact, archive, and supervisor identity drift", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+    const workflowPath = path.join(directory, "e2e.yaml");
+    try {
+      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+        jobs: Record<
+          string,
+          {
+            env: Record<string, string>;
+            steps: Array<{ env?: Record<string, string>; name?: string; run?: string }>;
+          }
+        >;
+      };
+      const dev = workflow.jobs["mcp-bridge-dev"];
+      const stage = dev.steps.find((step) => step.name === "Stage exact OpenShell main artifacts");
+      requireFixture(stage?.env && stage.run, "exact-main staging fixture is missing");
+      stage.env.OPENSHELL_SOURCE_SHA = "a".repeat(40);
+      stage.run = stage.run
+        .replaceAll("8266446648", "9999999999")
+        .replaceAll(
+          "d1732c0b87801560afd1b06cfea31c60d6a357100d5b817b4a4fb181b0b71933",
+          "b".repeat(64),
+        );
+      dev.env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE = `ghcr.io/nvidia/openshell/supervisor@sha256:${"c".repeat(64)}`;
+      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+      const errors = validateMcpOpenShellWorkflowBoundary(workflowPath);
+      expect(errors).toEqual(
+        expect.arrayContaining([
+          "mcp-bridge-dev exact-main staging credentials and source identity must remain exact",
+          "mcp-bridge-dev must pin the exact reviewed supervisor index",
+          "mcp-bridge-dev exact-main staging is missing reviewed identity: 8266446648",
+          "mcp-bridge-dev exact-main staging is missing reviewed identity: d1732c0b87801560afd1b06cfea31c60d6a357100d5b817b4a4fb181b0b71933",
+        ]),
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects unsafe extraction or a skippable exact-main lifecycle", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+    const workflowPath = path.join(directory, "e2e.yaml");
+    try {
+      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+        jobs: Record<string, { steps: Array<{ if?: string; name?: string; run?: string }> }>;
+      };
+      const steps = workflow.jobs["mcp-bridge-dev"].steps;
+      const stage = steps.find((step) => step.name === "Stage exact OpenShell main artifacts");
+      const required = steps.find((step) => step.name === "Require exact-main full lifecycle");
+      requireFixture(stage?.run && required, "exact-main proof fixtures are missing");
+      stage.run = stage.run.replace("tarfile.open", "tarfile.unchecked_open");
+      required.if = "success()";
+      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toEqual(
+        expect.arrayContaining([
+          "mcp-bridge-dev exact-main staging must validate immutable artifact structure and provenance",
+          "mcp-bridge-dev must fail unless the exact-main proof runs full-lifecycle",
+        ]),
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
 });
