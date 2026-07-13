@@ -10,7 +10,7 @@ Use this reference to find migration risk that version searches and existing tes
 | Surface | Inspect upstream | Trace downstream | Silent failure examples |
 |---|---|---|---|
 | CLI | commands, flags, argument order, output formats, errors, exit codes | command builders, parsers, shell scripts, docs, fixtures | success parsed as failure; ignored new default |
-| Configuration | schemas, keys, defaults, precedence, paths, migrations | generated config, environment assembly, recovery, doctor checks | valid config selects different driver or endpoint |
+| Configuration provenance | schemas, keys, defaults, precedence, empty/presence semantics, base-image environment, templates, specs, paths, migrations | final image/config inspection, driver request, engine-materialized state, process environments, recovery | inherited image value selects a weaker mode before the downstream can enforce it |
 | API and protocol | protobuf, JSON, REST, headers, enums, pagination | clients, status probes, mocks, recorded fixtures | unknown field discarded; state misclassified |
 | Security and identity | auth, credentials, secret rewriting, certificates, policy | provider mutation, redaction, child env, network policy | credential bypass, stale identity reuse, false green status |
 | Lifecycle | create, start, restart, update, rebuild, destroy, cleanup | onboarding, rollback, retries, locks, crash recovery | orphan resources, double mutation, incomplete teardown |
@@ -53,6 +53,16 @@ For each upstream change:
    reported version constant.
 10. For proof workflows, identify the first checked-out-code execution, every credential lifetime,
     how tools are resolved, and whether producer workflow/event/attempt/conclusion are machine-bound.
+11. For configuration that controls security or topology, enumerate every input layer and the exact
+    merge order, then identify when the value is first consumed. Require prevention before that
+    point and bind any final-artifact inspection to the immutable artifact actually launched.
+12. Materialize and compare expected-versus-observed manifests for the final artifact, driver
+    request, engine state before first execution, PID 1, every helper/sidecar, and intended workload
+    descendants. Verify executable identity, ancestry, namespaces, security settings, and exact
+    driver-owned replacements and mount sources; never select a workload as the first or sole child.
+13. Keep upstream required-fix SHAs, audit target and producer identity, and downstream PR-head
+    proof identity in separate fields. Prove ancestry and manifest bindings between domains rather
+    than comparing unrelated repository SHAs for equality.
 
 ## Concern schema
 

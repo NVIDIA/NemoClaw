@@ -23,6 +23,15 @@ a failed release workflow is a source boundary but not a shippable artifact boun
 Artifacts uploaded before a later job failure remain non-shippable even when their individual
 metadata and source SHA look correct.
 
+For GitHub repositories, pass `--github-repository OWNER/REPO` and the API hostname to the
+collector. It binds the canonical repository ID, verifies local commits against peeled remote tag
+refs, and uses the paginated release listing. GitHub exposes drafts only to viewers with push
+access, so an omitted tag is `absent` only with proven full draft visibility; otherwise it is
+`not-published`, which proves no visible published release but not that no draft exists. API,
+authentication, response-shape, identity, timestamp, URL, tag, and timeout failures stop collection.
+Release `target_commitish` is reported creation input, not resolved tag identity. None of this
+infers producer success or package/container publication from the release object.
+
 ## Adjacent-range procedure
 
 For every `release N -> release N+1` range:
@@ -61,6 +70,15 @@ When a tag lacks a successful release:
 
 When the target is an unreleased commit, label the last range `latest-tag -> candidate-commit` and
 repeat that range against the final tag before shipping.
+
+Keep four identity records beside the ledger: required upstream fix SHAs; the exact upstream audit
+target; the upstream artifact producer repository/head/workflow/run/attempt; and the downstream
+NemoClaw PR head plus proof manifest. Require the audit target to descend from every required fix,
+the upstream producer and artifacts to bind to that target, and the downstream manifest to pin those
+artifacts while its workflow binds to the exact NemoClaw head. Upstream and downstream SHAs are
+different identity domains, not values that should equal each other. Descendant evidence can inform
+the next audit range but cannot close the requested target, and predecessor evidence cannot be
+inherited forward.
 
 ## Minimum per-range output
 

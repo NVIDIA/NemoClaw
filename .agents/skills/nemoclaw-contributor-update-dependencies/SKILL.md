@@ -26,10 +26,12 @@ Copy this checklist into the working plan and keep it current:
 ```text
 Dependency-upgrade progress:
 - [ ] Resolve exact current and target identities, ancestry, and release status
+- [ ] Separate required-fix, upstream target/producer, and downstream proof identities
 - [ ] Enumerate every adjacent release/tag range in the upgrade gap
 - [ ] Read release notes, changelog, commits, source diffs, and upstream tests per range
 - [ ] Diff resolved direct and transitive dependencies, licenses, notices, and SBOM coverage
 - [ ] Map changed upstream contracts to direct and indirect NemoClaw consumers
+- [ ] Trace configuration provenance, precedence, and the earliest enforcement point
 - [ ] Separate build, distributed, extracted, installed, and executed artifact surfaces
 - [ ] Inventory downstream workarounds and verify each removal condition
 - [ ] Audit persisted-state and cache keys against every behavior-changing input
@@ -67,8 +69,21 @@ intentional reviewed artifact:
   --repo <upstream-worktree> \
   --from <current-tag> \
   --to <target-tag-or-commit> \
+  --required-fix <required-upstream-fix-ref> \
+  --github-repository <owner/repository> \
+  --github-host <github-hostname> \
   --output <temporary-ledger.json>
 ```
+
+Repeat `--required-fix` for every upstream commit the requested upgrade must contain. For
+GitHub-hosted dependencies, use `--github-repository` with an authenticated `gh` CLI and set
+`--github-host` explicitly for GitHub Enterprise. The collector binds the API host and canonical
+repository identity, peels every remote tag to the exact local commit, and lists releases with
+pagination. It records `absent` only when the authenticated viewer is proven able to see drafts;
+otherwise a missing tag is `not-published` with draft visibility called out. API, authentication,
+shape, identity, tag, and timeout ambiguity fail collection. Producer workflow/run/attempt and
+registry/package publication remain separate evidence; collect and add them before calling an
+endpoint shippable.
 
 For a multi-release upgrade, never collapse the result into one aggregate `old..new` summary.
 Read [references/release-ledger.md](references/release-ledger.md) and complete every adjacent
@@ -120,6 +135,34 @@ Trace each key through production code, scripts, workflows, fixtures, tests, doc
 outputs. Include indirect consumers such as parsers of human-readable output, assumptions about
 defaults, sibling-binary discovery, and tests that encode old behavior without naming the
 dependency.
+
+For every security- or topology-controlling environment variable and configuration key, derive its
+complete provenance and precedence: base-image `Config.Env`, every Dockerfile stage, template,
+spec, host environment, generated config, driver insertion, persisted state, and runtime default.
+Record whether absence, an empty value, duplication, or an invalid value have distinct semantics.
+Assume user-supplied images, Dockerfiles, shells, build stages, and entrypoints can influence any
+check executed inside them. If the product deliberately defines one of these as trusted code,
+record that boundary and its consequences; never let trusted input self-attest an external security
+invariant. A Dockerfile `RUN` assertion is not authoritative when an inherited `SHELL` or
+executable can redefine it.
+
+Identify when each changed control is first consumed and enforce it before that execution. A safe
+create-inspect-start runtime may materialize and inspect configuration after create but before
+start; when create and start are atomic or create itself runs code, reject before invoking the
+dependency. Post-start inspection can corroborate the result but cannot close an earlier exposure.
+When final artifact state matters, inspect it with a trusted verifier, bind the immutable inspected
+identity to the exact artifact consumed, and reject tag or path substitution. If a supported
+topology cannot make the pre-execution proof authoritative, fail closed or exclude that flow.
+
+Keep separate expected-versus-observed manifests for every authority and merge boundary: immutable
+final OCI config, driver create request, engine-materialized config before first execution, PID 1,
+every helper or sidecar, and each intended workload descendant. Cover image identity,
+entrypoint/command, user, environment including duplicates, capabilities, no-new-privileges and
+seccomp, mounts with source/type/read-only properties, namespaces, PID limits, sockets, executable
+digest, ancestry, and start/restart identity. Never identify a workload as merely the first or sole
+child. A neutral final-image value may be replaced by a driver-owned token, TLS path, identity, or
+endpoint; verify the authorized transition and exact mount/source evidence rather than reusing the
+pre-merge expectation or calling every difference drift.
 
 Do not mark a change irrelevant because a literal search returned no result. An exclusion needs
 both upstream source evidence describing the boundary and downstream evidence showing NemoClaw
@@ -196,6 +239,12 @@ For each runtime or stateful migration, cover the applicable happy path, negativ
 state, restart or rotation, persisted-state transition, rollback, and teardown. State explicitly
 when one of these paths is inapplicable and cite the boundary that makes it so.
 
+For inherited configuration and image controls, include poisoned-base and multi-stage fixtures,
+presence-versus-empty cases, duplicate keys, build and inspection failures, immutable-ID or tag
+drift, helper/sidecar confusion, and proof that rejection occurs before the first dependency-managed
+execution. Text scanning the proposed Dockerfile is not a substitute for inspecting the final image,
+materialized runtime configuration, or processes that the runtime actually consumes and starts.
+
 Treat an automatic rebuild, upgrade, or migration command as an attempted transition, not its own
 postcondition. Re-read the runtime and persisted state in a fresh process after the mutation. Return
 zero only when every in-scope target is current and attested; stopped, skipped, unknown,
@@ -211,6 +260,14 @@ Existing green tests only prove what they cover. If no test would fail for the i
 migration concern, add one or retain a specific source/runtime proof. After concern-specific
 verification, run the repository's normal targeted checks, hooks, exact-head CI, and automated
 review gates.
+
+Keep identity domains explicit before citing proof. Record each required upstream fix SHA and prove
+the upstream audit target descends from all of them. Bind an upstream artifact producer's repository,
+`head_sha`, workflow/run/attempt, component versions, and retained artifact metadata to that exact
+upstream target. Separately bind the downstream proof workflow to the exact NemoClaw PR head and a
+machine-readable manifest that pins the upstream target and artifact digests. Do not compare
+unrelated upstream and downstream SHAs as if they should be equal. Descendant, predecessor, moving
+development-tag, or earlier-PR-head evidence is a different result even when it contains the fix.
 
 Inspect test selectors, version gates, conditional skips, expected-failure markers, and matrix
 exclusions at the candidate identity. A green run is invalid migration evidence when the changed
