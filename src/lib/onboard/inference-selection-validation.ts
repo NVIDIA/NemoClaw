@@ -109,17 +109,6 @@ export interface InferenceSelectionValidationHelpers {
   ): Promise<EndpointValidationResult>;
 }
 
-function probeReportsMissingOpenAiSurface(probe?: { failures?: unknown[] }): boolean {
-  const failures = probe?.failures;
-  if (!Array.isArray(failures)) return false;
-  return failures.some(
-    (failure) =>
-      typeof failure === "object" &&
-      failure !== null &&
-      (failure as { httpStatus?: unknown }).httpStatus === 404,
-  );
-}
-
 function printOpenAiSurfaceGuidance(): void {
   console.error(
     "  This agent needs an endpoint that serves the OpenAI Chat Completions API (/v1/chat/completions).",
@@ -396,18 +385,14 @@ export function createInferenceSelectionValidationHelpers(
       return { ok: true, api: intendedApi, pinnedAddresses };
     }
     printValidationFailure(label, probe);
-    if (intendedApi === "openai-completions" && probeReportsMissingOpenAiSurface(probe)) {
+    const recovery = getProbeRecovery(probe, { allowModelRetry: true });
+    if (intendedApi === "openai-completions" && recovery.kind === "endpoint") {
       printOpenAiSurfaceGuidance();
     }
     if (deps.isNonInteractive()) {
       exitNonInteractiveValidationFailure();
     }
-    const retry = await deps.promptValidationRecovery(
-      label,
-      getProbeRecovery(probe, { allowModelRetry: true }),
-      credentialEnv,
-      helpUrl,
-    );
+    const retry = await deps.promptValidationRecovery(label, recovery, credentialEnv, helpUrl);
     if (retry === "selection") {
       console.log("  Please choose a provider/model again.");
       console.log("");
