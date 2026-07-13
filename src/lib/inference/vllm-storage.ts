@@ -27,21 +27,24 @@ interface StorageProbeDeps {
   statfs: (target: string) => { bavail: bigint; bsize: bigint };
 }
 
-const defaultDeps: StorageProbeDeps = {
-  dockerContext: process.env.DOCKER_CONTEXT,
-  dockerHost: process.env.DOCKER_HOST,
-  dockerInfo: () =>
-    dockerCapture(["info", "--format", "{{json .}}"], {
-      env: buildVllmDockerEnv(),
-      ignoreError: true,
-      timeout: 10_000,
-    }),
-  exists: fs.existsSync,
-  osRelease: os.release(),
-  platform: process.platform,
-  readFile: (target) => fs.readFileSync(target, "utf8"),
-  statfs: (target) => fs.statfsSync(target, { bigint: true }),
-};
+function defaultStorageProbeDeps(): StorageProbeDeps {
+  const dockerEnv = buildVllmDockerEnv();
+  return {
+    dockerContext: dockerEnv.DOCKER_CONTEXT,
+    dockerHost: dockerEnv.DOCKER_HOST,
+    dockerInfo: () =>
+      dockerCapture(["info", "--format", "{{json .}}"], {
+        env: dockerEnv,
+        ignoreError: true,
+        timeout: 10_000,
+      }),
+    exists: fs.existsSync,
+    osRelease: os.release(),
+    platform: process.platform,
+    readFile: (target) => fs.readFileSync(target, "utf8"),
+    statfs: (target) => fs.statfsSync(target, { bigint: true }),
+  };
+}
 
 export interface StorageCapacity {
   availableBytes: bigint;
@@ -202,7 +205,7 @@ export function resolveDockerStorageLocations(
   rawInfo: string,
   overrides: Partial<StorageProbeDeps> = {},
 ): { ok: true; locations: DockerStorageLocation[] } | { ok: false; reason: string } {
-  const deps = { ...defaultDeps, ...overrides };
+  const deps = { ...defaultStorageProbeDeps(), ...overrides };
   const info = parseDockerInfo(rawInfo);
   if (!info) return { ok: false, reason: "docker info did not return valid JSON" };
   const hostProblem = nativeDockerHostProblem(info, deps);
@@ -278,7 +281,7 @@ function capacityForLocation(
 }
 
 export function probeDockerStorage(overrides: Partial<StorageProbeDeps> = {}): StorageProbeResult {
-  const deps = { ...defaultDeps, ...overrides };
+  const deps = { ...defaultStorageProbeDeps(), ...overrides };
   const rawInfo = deps.dockerInfo();
   const resolved = resolveDockerStorageLocations(rawInfo, deps);
   if (!resolved.ok) return resolved;
@@ -310,7 +313,7 @@ export function probeModelCacheStorage(
   cacheDir: string,
   overrides: Partial<StorageProbeDeps> = {},
 ): StorageProbeResult {
-  const deps = { ...defaultDeps, ...overrides };
+  const deps = { ...defaultStorageProbeDeps(), ...overrides };
   const target = nearestExistingPath(cacheDir, deps.exists);
   return capacityForLocation(
     {

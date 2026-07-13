@@ -39,6 +39,7 @@ const nativeHost = {
 };
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { force: true, recursive: true });
 });
 
@@ -207,6 +208,23 @@ describe("Docker image-storage detection", () => {
         nativeDockerInfo({ ClientInfo: { Context: "remote-builder" } }),
         nativeHost,
       ),
+    ).toEqual({
+      ok: false,
+      reason:
+        "Docker uses a named context (remote-builder) whose host filesystem cannot be verified",
+    });
+  });
+
+  it("reads the Docker selection when each storage probe starts (#6757)", () => {
+    vi.stubEnv("DOCKER_CONTEXT", "remote-builder");
+    vi.stubEnv("DOCKER_HOST", "");
+
+    expect(
+      probeDockerStorage({
+        dockerInfo: () => nativeDockerInfo(),
+        osRelease: nativeHost.osRelease,
+        platform: nativeHost.platform,
+      }),
     ).toEqual({
       ok: false,
       reason:

@@ -791,6 +791,39 @@ describe("installVllm model resolution", () => {
     expect(mocks.dockerSpawn).not.toHaveBeenCalled();
   });
 
+  it("uses one Docker context throughout a successful managed install (#6757)", async () => {
+    process.env.DOCKER_CONTEXT = "local-test-context";
+    delete process.env.DOCKER_HOST;
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    mockSuccessfulVllmInstall(profile.containerName);
+
+    const result = await installVllm(profile, {
+      hasImage: false,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(mocks.probeDockerStorage).toHaveBeenCalledTimes(1);
+
+    const dockerAdapterOptions = [
+      ...mocks.dockerImageInspectFormat.mock.calls.map((call) => call[2]),
+      ...mocks.dockerPullWithProgressWatchdog.mock.calls.map((call) => call[1]),
+      ...mocks.dockerSpawn.mock.calls.map((call) => call[1]),
+      ...mocks.dockerForceRm.mock.calls.map((call) => call[1]),
+      ...mocks.dockerRunDetached.mock.calls.map((call) => call[1]),
+      ...mocks.dockerCapture.mock.calls.map((call) => call[1]),
+    ];
+    expect(dockerAdapterOptions).toHaveLength(6);
+    for (const options of dockerAdapterOptions) {
+      expect(options).toEqual(
+        expect.objectContaining({
+          env: expect.objectContaining({ DOCKER_CONTEXT: "local-test-context" }),
+        }),
+      );
+    }
+  });
+
   it("starts the long-lived vLLM container through Docker argv, not a shell command", async () => {
     process.env.HF_TOKEN = "hf_test";
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
