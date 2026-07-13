@@ -147,21 +147,42 @@ describe("vLLM profile detection", () => {
     expect(profile!.defaultModel.envValue).toBe("qwen3.6-35b-a3b-nvfp4");
   });
 
-  it("keeps generic Linux on the smaller Nemotron Nano default", () => {
-    const profile = detectVllmProfile({ platform: "linux", type: "nvidia" });
+  it.each([
+    {
+      arch: "arm64",
+      image:
+        "nvcr.io/nvidia/vllm@sha256:447995cbb57e6c7cf792cab95e9852e5f62b5fb6d2f39e030fa4eda9a54eadb4",
+      imageDownloadSizeBytes: 8_640_000_000,
+    },
+    {
+      arch: "x64",
+      image:
+        "nvcr.io/nvidia/vllm@sha256:7be6c2f676c36059a494fe17254e69ae5c677535ba6191044e5fc8e42a91c773",
+      imageDownloadSizeBytes: 8_320_000_000,
+    },
+  ] as const)("keeps generic Linux on the smaller Nemotron Nano default for $arch", async ({
+    arch,
+    image,
+    imageDownloadSizeBytes,
+  }) => {
+    const originalArch = Object.getOwnPropertyDescriptor(process, "arch");
+    try {
+      Object.defineProperty(process, "arch", { configurable: true, value: arch });
+      vi.resetModules();
+      const { detectVllmProfile: detectVllmProfileForArch } = await import("./vllm");
 
-    expect(profile).not.toBeNull();
-    expect(profile!.name).toBe("Linux + NVIDIA GPU");
-    expect(profile!.image).toBe(
-      process.arch === "arm64"
-        ? "nvcr.io/nvidia/vllm@sha256:447995cbb57e6c7cf792cab95e9852e5f62b5fb6d2f39e030fa4eda9a54eadb4"
-        : "nvcr.io/nvidia/vllm@sha256:7be6c2f676c36059a494fe17254e69ae5c677535ba6191044e5fc8e42a91c773",
-    );
-    expect(profile!.imageDownloadSizeBytes).toBe(
-      process.arch === "arm64" ? 8_640_000_000 : 8_320_000_000,
-    );
-    expect(profile!.defaultModel.id).toBe("nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8");
-    expect(profile!.defaultModel.envValue).toBe("nemotron-3-nano-4b");
+      const profile = detectVllmProfileForArch({ platform: "linux", type: "nvidia" });
+
+      expect(profile).not.toBeNull();
+      expect(profile!.name).toBe("Linux + NVIDIA GPU");
+      expect(profile!.image).toBe(image);
+      expect(profile!.imageDownloadSizeBytes).toBe(imageDownloadSizeBytes);
+      expect(profile!.defaultModel.id).toBe("nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8");
+      expect(profile!.defaultModel.envValue).toBe("nemotron-3-nano-4b");
+    } finally {
+      if (originalArch) Object.defineProperty(process, "arch", originalArch);
+      vi.resetModules();
+    }
   });
 
   it("generic-Linux default model pins the tool-call flags (#6314)", () => {
