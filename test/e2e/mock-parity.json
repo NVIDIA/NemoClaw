@@ -463,12 +463,8 @@
       ]
     },
     {
-      "live": "test/e2e/live/state-dir-guard-xattr-acl.test.ts",
-      "liveOnlyReason": "Proves state-dir-guard.py's xattr/ACL preservation against a real sandbox filesystem's kernel ACL and mode-sync semantics; a fast mock cannot reproduce real POSIX ACL/mode-resync behavior."
-    },
-    {
-      "live": "test/e2e/live/hermes-state-dir-guard-xattr-acl.test.ts",
-      "liveOnlyReason": "Hermes counterpart proving the same real-sandbox xattr/ACL preservation contract through nemohermes shields up/down; a fast mock cannot reproduce real POSIX ACL/mode-resync behavior."
+      "live": "test/e2e/live/state-dir-guard-metadata.test.ts",
+      "liveOnlyReason": "Runs the installed guard from both production images against a real bind-mounted Linux filesystem; mocks cannot reproduce kernel xattr copying, POSIX ACL mask synchronization, inode replacement, or allocated-byte behavior."
     }
   ]
 }
