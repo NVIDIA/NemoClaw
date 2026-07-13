@@ -25,6 +25,11 @@ type ExtractOptions = {
   sourceLabel: string;
 };
 
+type SandboxBuildPin = {
+  sha256: string;
+  version: string;
+};
+
 type CliOptions = {
   blueprint: string;
   brevInstaller: string;
@@ -43,7 +48,7 @@ const MAX_INSTALLER_INPUT_BYTES = 1024 * 1024;
 // release; the later pin PR may then change release data without authorizing
 // any operational installer change. A mismatch reports the candidate hash.
 const TRUSTED_INSTALLER_TEMPLATE_SHA256 =
-  "7858227dbcb727613ed9fa13a1dd993a04b74d1341fca5087bf38e868588ef5d";
+  "a101f002bd8e02aa7b38960ddcb76c9fca419bc3766f6870446f6a7e99e14d78";
 const TRUSTED_BREV_TEMPLATE_SHA256 =
   "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a";
 const EXPECTED_INSTALLER_ASSETS = [
@@ -220,6 +225,14 @@ function extractInstallerMinimumVersion(source: string): string {
   );
 }
 
+function extractInstallerDevelopmentMinimumVersion(source: string): string {
+  return extractSingleVersion(
+    source,
+    /^DEV_MIN_VERSION="([0-9]+\.[0-9]+\.[0-9]+)"\s*$/gm,
+    "installer DEV_MIN_VERSION",
+  );
+}
+
 function extractBrevStableRuntimeVersion(source: string): string {
   return extractSingleVersion(
     source,
@@ -249,7 +262,12 @@ function tokenizeShellSubset(source: string): Token[] {
       continue;
     }
     if (character === "\n") {
-      tokens.push({ end: index + 1, kind: "newline", start: index, value: "\n" });
+      tokens.push({
+        end: index + 1,
+        kind: "newline",
+        start: index,
+        value: "\n",
+      });
       index += 1;
       continue;
     }
@@ -260,12 +278,22 @@ function tokenizeShellSubset(source: string): Token[] {
       continue;
     }
     if (character === ";" && next === ";") {
-      tokens.push({ end: index + 2, kind: "operator", start: index, value: ";;" });
+      tokens.push({
+        end: index + 2,
+        kind: "operator",
+        start: index,
+        value: ";;",
+      });
       index += 2;
       continue;
     }
     if (isOperatorStart(character)) {
-      tokens.push({ end: index + 1, kind: "operator", start: index, value: character });
+      tokens.push({
+        end: index + 1,
+        kind: "operator",
+        start: index,
+        value: character,
+      });
       index += 1;
       continue;
     }
@@ -426,7 +454,11 @@ function functionDefinitionSourceRanges(source: string, functionName: string): S
           if (start === undefined || end === undefined) {
             fail(`${functionName} source range is unavailable`);
           }
-          ranges.push({ end, replacement: `<${functionName}:trusted-release-data>`, start });
+          ranges.push({
+            end,
+            replacement: `<${functionName}:trusted-release-data>`,
+            start,
+          });
           index = bodyCursor;
           break;
         }
@@ -448,21 +480,149 @@ function selectorVersionEdit(source: string, pattern: RegExp, label: string): So
   const relativeStart = match[0].indexOf(version);
   if (relativeStart === -1) fail(`${label} release selector range is unavailable`);
   const start = match.index + relativeStart;
-  return { end: start + version.length, replacement: "<trusted-release-version>", start };
+  return {
+    end: start + version.length,
+    replacement: "<trusted-release-version>",
+    start,
+  };
+}
+
+// invalidState: a dependency pin PR needs to add standalone sandbox binary
+// identities but could hide control flow or arbitrary commands inside the map
+// if the whole function were normalized without first parsing its grammar.
+// sourceBoundary: this base-trusted parser accepts only literal digest case
+// alternatives that print literal versions and a fail-closed default branch.
+// regressionTest: installer-hash-check.test.ts covers valid additions plus
+// control-flow, unknown-command, duplicate-digest, and malformed-version edits.
+// removalCondition: remove this parser only when the standalone sandbox build
+// identity map is generated from a base-trusted machine-readable manifest.
+function extractSandboxBuildPins(source: string): SandboxBuildPin[] {
+  const functionName = "pinned_sandbox_build_version";
+  const tokens = tokenizeShellSubset(source);
+  const bodyRanges = functionBodyRanges(tokens, functionName);
+  if (bodyRanges.length !== 1) {
+    fail(`installer must contain exactly one ${functionName} release-data function`);
+  }
+  const [bodyStart, bodyEnd] = bodyRanges[0] ?? fail(`${functionName} body range is unavailable`);
+  let cursor = skipSeparators(tokens, bodyStart);
+
+  const localCommand = commandBeforeSeparator(tokens, cursor);
+  if (
+    localCommand.command.length !== 2 ||
+    !isToken(localCommand.command[0], "word", "local") ||
+    !isToken(localCommand.command[1], "word", "digest=$1")
+  ) {
+    fail(`${functionName} must begin with exactly local digest="$1"`);
+  }
+  cursor = skipSeparators(tokens, localCommand.next);
+
+  const caseCommand = commandBeforeSeparator(tokens, cursor);
+  if (
+    caseCommand.command.length !== 3 ||
+    !isToken(caseCommand.command[0], "word", "case") ||
+    !isToken(caseCommand.command[1], "word", "$digest") ||
+    !isToken(caseCommand.command[2], "word", "in")
+  ) {
+    fail(`${functionName} must dispatch exactly on "$digest"`);
+  }
+  cursor = skipSeparators(tokens, caseCommand.next);
+
+  const pins: SandboxBuildPin[] = [];
+  const seenDigests = new Set<string>();
+  let sawDefaultBranch = false;
+  while (cursor < bodyEnd) {
+    if (isToken(tokens[cursor], "word", "*")) {
+      sawDefaultBranch = true;
+      cursor += 1;
+      if (!isToken(tokens[cursor], "operator", ")")) {
+        fail(`${functionName} default branch must be exactly *)`);
+      }
+      cursor = skipSeparators(tokens, cursor + 1);
+      const defaultCommand = commandBeforeSeparator(tokens, cursor);
+      if (
+        defaultCommand.command.length !== 2 ||
+        !isToken(defaultCommand.command[0], "word", "return") ||
+        !isToken(defaultCommand.command[1], "word", "1")
+      ) {
+        fail(`${functionName} default branch must return 1`);
+      }
+      cursor = skipSeparators(tokens, defaultCommand.next);
+      if (!isToken(tokens[cursor], "operator", ";;")) {
+        fail(`${functionName} default branch must end with ;;`);
+      }
+      cursor = skipSeparators(tokens, cursor + 1);
+      if (!isToken(tokens[cursor], "word", "esac")) {
+        fail(`${functionName} must end with esac after its default branch`);
+      }
+      cursor = skipSeparators(tokens, cursor + 1);
+      if (cursor !== bodyEnd) {
+        fail(`${functionName} contains commands after its case statement`);
+      }
+      break;
+    }
+
+    const digests: string[] = [];
+    let expectDigest = true;
+    while (cursor < bodyEnd && !isToken(tokens[cursor], "operator", ")")) {
+      const token = tokens[cursor];
+      if (expectDigest) {
+        if (!isToken(token, "word") || !SHA256_PATTERN.test(token.value)) {
+          fail(`${functionName} case patterns must contain literal SHA-256 digests`);
+        }
+        if (seenDigests.has(token.value)) {
+          fail(`${functionName} contains duplicate digest ${token.value}`);
+        }
+        seenDigests.add(token.value);
+        digests.push(token.value);
+      } else if (!isToken(token, "word", "|")) {
+        fail(`${functionName} digest alternatives must be separated by |`);
+      }
+      expectDigest = !expectDigest;
+      cursor += 1;
+    }
+    if (digests.length === 0 || expectDigest || !isToken(tokens[cursor], "operator", ")")) {
+      fail(`${functionName} contains a malformed digest case pattern`);
+    }
+    cursor = skipSeparators(tokens, cursor + 1);
+
+    const printfCommand = commandBeforeSeparator(tokens, cursor);
+    const version = printfCommand.command[2]?.value ?? "";
+    if (
+      printfCommand.command.length !== 3 ||
+      !isToken(printfCommand.command[0], "word", "printf") ||
+      !isToken(printfCommand.command[1], "word", "%s\\n") ||
+      !/^[0-9]+\.[0-9]+\.[0-9]+$/u.test(version)
+    ) {
+      fail(`${functionName} digest branches must print exactly one literal X.Y.Z version`);
+    }
+    for (const sha256 of digests) pins.push({ sha256, version });
+    cursor = skipSeparators(tokens, printfCommand.next);
+    if (!isToken(tokens[cursor], "operator", ";;")) {
+      fail(`${functionName} digest branches must end with ;;`);
+    }
+    cursor = skipSeparators(tokens, cursor + 1);
+  }
+
+  if (!sawDefaultBranch) fail(`${functionName} must contain a fail-closed default branch`);
+  if (pins.length === 0) fail(`${functionName} must contain at least one sandbox build pin`);
+  return pins;
 }
 
 function normalizeTrustedInstallerTemplate(
   source: string,
-  functionName: string,
+  functionNames: readonly string[],
   selectorPatterns: readonly RegExp[],
   label: string,
 ): string {
-  const functionRanges = functionDefinitionSourceRanges(source, functionName);
-  if (functionRanges.length !== 1) {
-    fail(`${label} must contain exactly one ${functionName} release-data function`);
-  }
+  const functionRanges = functionNames.flatMap((functionName) => {
+    const ranges = functionDefinitionSourceRanges(source, functionName);
+    if (ranges.length !== 1) {
+      fail(`${label} must contain exactly one ${functionName} release-data function`);
+    }
+    return ranges;
+  });
   const edits = [
-    functionRanges[0] ?? fail(`${label} release-data range is unavailable`),
+    ...functionRanges,
     ...selectorPatterns.map((pattern, index) =>
       selectorVersionEdit(source, pattern, `${label} selector ${index + 1}`),
     ),
@@ -491,14 +651,14 @@ function normalizeTrustedInstallerTemplate(
 // machine-readable manifest directly drives every installer operation.
 function assertTrustedTemplate(
   source: string,
-  functionName: string,
+  functionNames: readonly string[],
   selectorPatterns: readonly RegExp[],
   expectedSha256: string,
   label: string,
 ): void {
   const normalized = normalizeTrustedInstallerTemplate(
     source,
-    functionName,
+    functionNames,
     selectorPatterns,
     label,
   );
@@ -531,7 +691,10 @@ function commandBeforeSeparator(
   ) {
     cursor += 1;
   }
-  return { command: tokens.slice(start, cursor), next: skipSeparators(tokens, cursor) };
+  return {
+    command: tokens.slice(start, cursor),
+    next: skipSeparators(tokens, cursor),
+  };
 }
 
 function staticPinFromArm(
@@ -776,16 +939,26 @@ function runCli(): void {
     );
   }
   const releaseVersion = releaseVersions[0] ?? fail("installer pin tables contain no release");
+  const sandboxBuildPins = extractSandboxBuildPins(installerSource);
+  if (!sandboxBuildPins.some((pin) => pin.version === releaseVersion)) {
+    fail(
+      `pinned_sandbox_build_version must contain at least one digest for release ${releaseVersion}`,
+    );
+  }
   assertTrustedTemplate(
     installerSource,
-    "openshell_pinned_sha256",
-    [/^MIN_VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$/gm, /^MAX_VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$/gm],
+    ["openshell_pinned_sha256", "pinned_sandbox_build_version"],
+    [
+      /^MIN_VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$/gm,
+      /^MAX_VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$/gm,
+      /^DEV_MIN_VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$/gm,
+    ],
     TRUSTED_INSTALLER_TEMPLATE_SHA256,
     "installer",
   );
   assertTrustedTemplate(
     brevInstallerSource,
-    "openshell_cli_pinned_sha256",
+    ["openshell_cli_pinned_sha256"],
     [/^\s*stable\s*\|\s*auto\)\s*OPENSHELL_VERSION="v([0-9]+\.[0-9]+\.[0-9]+)"\s*;;\s*$/gm],
     TRUSTED_BREV_TEMPLATE_SHA256,
     "Brev launchable",
@@ -794,6 +967,7 @@ function runCli(): void {
     ["blueprint max_openshell_version", extractBlueprintMaxVersion(blueprintSource)],
     ["installer MIN_VERSION", extractInstallerMinimumVersion(installerSource)],
     ["installer MAX_VERSION", extractInstallerRuntimeVersion(installerSource)],
+    ["installer DEV_MIN_VERSION", extractInstallerDevelopmentMinimumVersion(installerSource)],
     ["Brev stable OpenShell default", extractBrevStableRuntimeVersion(brevInstallerSource)],
   ] as const) {
     if (runtimeVersion !== releaseVersion) {
