@@ -636,10 +636,12 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         );
         break;
       }
-      const authoritativeReservationName = authoritativeResumeConfig
-        ? (sandboxName ?? (await deps.promptValidatedSandboxName(agent)))
-        : null;
-      if (authoritativeReservationName) sandboxName = authoritativeReservationName;
+      const sandboxStepComplete = session?.steps?.sandbox?.status === "complete";
+      const resumeReservationName =
+        authoritativeResumeConfig || !sandboxStepComplete
+          ? (sandboxName ?? (await deps.promptValidatedSandboxName(agent)))
+          : null;
+      if (resumeReservationName) sandboxName = resumeReservationName;
       const routedInferenceProvider = deps.isRoutedInferenceProvider(provider);
       if (routedInferenceProvider) {
         // #4564: re-upsert the gateway provider with the sandbox-facing
@@ -667,8 +669,8 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             credentialEnv,
           );
           const reserved =
-            reupserted.ok && authoritativeReservationName
-              ? deps.reserveSandboxInferenceRoute(authoritativeReservationName, {
+            reupserted.ok && resumeReservationName
+              ? deps.reserveSandboxInferenceRoute(resumeReservationName, {
                   provider: selectedProvider,
                   model: selectedModel,
                   endpointUrl: reupserted.endpointUrl,
@@ -688,22 +690,20 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           deps.exitProcess(reupserted.status ?? 1);
         }
         if (reserved === false) {
-          deps.error(
-            `  Failed to reserve inference route for sandbox '${authoritativeReservationName}'.`,
-          );
+          deps.error(`  Failed to reserve inference route for sandbox '${resumeReservationName}'.`);
           deps.exitProcess(1);
         }
         endpointUrl = reupserted.endpointUrl;
       }
-      if (authoritativeReservationName && !routedInferenceProvider) {
+      if (resumeReservationName && !routedInferenceProvider) {
         const reserved = await deps.withGatewayRouteMutationLock(gatewayName, () => {
-          assertProviderInferenceRouteCompatible(deps, gatewayName, authoritativeReservationName, {
+          assertProviderInferenceRouteCompatible(deps, gatewayName, resumeReservationName, {
             provider: selectedProvider,
             model: selectedModel,
             endpointUrl,
             preferredInferenceApi,
           });
-          return deps.reserveSandboxInferenceRoute(authoritativeReservationName, {
+          return deps.reserveSandboxInferenceRoute(resumeReservationName, {
             provider: selectedProvider,
             model: selectedModel,
             endpointUrl,
@@ -714,9 +714,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           });
         });
         if (!reserved) {
-          deps.error(
-            `  Failed to reserve inference route for sandbox '${authoritativeReservationName}'.`,
-          );
+          deps.error(`  Failed to reserve inference route for sandbox '${resumeReservationName}'.`);
           deps.exitProcess(1);
         }
       }

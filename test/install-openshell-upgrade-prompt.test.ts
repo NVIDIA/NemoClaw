@@ -337,6 +337,49 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
     expect(openshellLog).toBe("");
   });
 
+  it("ignores a route-only reservation during pre-upgrade backup (#6500)", () => {
+    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+      {
+        NON_INTERACTIVE: "1",
+        NEMOCLAW_SINGLE_SESSION: "1",
+      },
+      {
+        registryJson:
+          '{"sandboxes":{"tm":{"name":"tm","pendingRouteReservation":true,"provider":"nvidia-prod","model":"nemotron"}}}',
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("RESTORE=");
+    expect(result.stdout).toContain("CONFIRMED_NAMES=");
+    expect(result.stdout + result.stderr).not.toContain("managed-image");
+    expect(cliLog).toBe("");
+    expect(openshellLog).toBe("");
+  });
+
+  it("backs up only real sandboxes in a mixed reservation registry (#6500)", () => {
+    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+      {
+        NON_INTERACTIVE: "1",
+        NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: '["alpha","beta"]',
+      },
+      {
+        hasOldCli: false,
+        openshellVersion: "0.0.44",
+        registryJson:
+          '{"sandboxes":{"tm":{"name":"tm","pendingRouteReservation":true},"alpha":{"name":"alpha"},"beta":{"name":"beta","pendingRouteReservation":true,"createdAt":"2026-07-13T00:00:00.000Z"}}}',
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Backing up 2 sandbox(es)");
+    expect(result.stdout).toContain('CONFIRMED_NAMES=["alpha","beta"]');
+    expect(result.stdout + result.stderr).not.toContain('"tm"');
+    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("require-all-env=1");
+    expect(openshellLog).toBe("");
+  });
+
   it("continues after the user manually prepared the old gateway state", () => {
     const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
       {

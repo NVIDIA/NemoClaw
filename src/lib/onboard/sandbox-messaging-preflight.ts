@@ -26,7 +26,7 @@ export interface SandboxMessagingPreflightInput {
 export interface SandboxMessagingPreflightDeps {
   readMessagingPlanFromEnv(): SandboxMessagingPlan | null;
   resolveDisabledChannels(sandboxName: string): string[];
-  gatewayName: string;
+  gatewayName(): string;
   registry: MessagingConflictGuardDeps["registry"];
   providerExistsInGateway(name: string): boolean;
   isNonInteractive(): boolean;
@@ -106,7 +106,7 @@ async function checkMessagingPlanConflicts(
     deps.enforceMessagingChannelConflicts ?? defaultEnforceMessagingChannelConflicts;
   await enforceMessagingChannelConflicts({
     sandboxName,
-    gatewayName: deps.gatewayName,
+    gatewayName: deps.gatewayName(),
     currentPlan,
     currentSandboxDisabledChannels: disabledChannels,
     registry: deps.registry,

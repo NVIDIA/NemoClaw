@@ -22,15 +22,17 @@ The prefix in each skill name indicates who it is for.
 For end users operating a NemoClaw sandbox.
 Covers routing human users' AI agents to the canonical NemoClaw Markdown documentation.
 
-### `nemoclaw-maintainer-*` (13 skills)
+### `nemoclaw-maintainer-*` (14 skills)
 
 For project maintainers.
-Covers the daily maintainer cadence (morning standup, daytime loop, evening handoff), workflow policy reference, cutting releases, drafting release notes, finding PRs to review, comparing PRs, cross-issue sweeps, triage, normalizing issue and PR title tags, performing security code reviews, and verifying whether stale bug reports still reproduce on the latest release.
+Covers the daily maintainer cadence (morning standup, daytime loop, evening handoff), workflow policy reference, documentation information-architecture refactors, cutting releases, drafting release notes, finding PRs to review, comparing PRs, cross-issue sweeps, triage, normalizing issue and PR title tags, performing security code reviews, and verifying whether stale bug reports still reproduce on the latest release.
 
-### `nemoclaw-contributor-*` (4 skills)
+### `nemoclaw-contributor-*` (5 skills)
 
 For contributors to the NemoClaw codebase.
-Covers trusted checkout setup and readiness checks, creating pull requests that follow the project template, monitoring CI and automated review feedback, drafting documentation updates, and onboarding new messaging channels.
+Covers trusted checkout setup and readiness checks, dependency migration audits, creating pull
+requests that follow the project template, monitoring CI and automated review feedback, drafting
+documentation updates, and onboarding new messaging channels.
 
 ## Skill Catalog
 
@@ -57,6 +59,7 @@ Covers trusted checkout setup and readiness checks, creating pull requests that 
 | `nemoclaw-maintainer-find-review-pr` | Find open security PRs with Urgent or High Project Priority, link each to its issue, detect duplicates, and present a review summary. |
 | `nemoclaw-maintainer-pr-comparator` | Compare competing PRs for the same issue and recommend which one to merge. |
 | `nemoclaw-maintainer-normalize-title-tags` | Preview and remove bracketed `NemoClaw` title tags from issues and PRs case-insensitively, even when the tag appears later in the title. |
+| `nemoclaw-maintainer-refactor-docs` | Split oversized Fern docs into focused topics with journey-based navigation, canonical ownership, route-safe redirects, variant checks, and deduplication. |
 | `nemoclaw-maintainer-security-code-review` | Perform a 9-category security review of a PR or issue, producing per-category PASS/WARNING/FAIL verdicts. |
 | `nemoclaw-maintainer-verify-stale` | Verify whether old issues with native Issue Type `Bug` still reproduce on latest. Reuses or provisions a Brev box, scores confidence, and proposes evidence-backed Project/comment writes for approval; never auto-closes. |
 
@@ -66,6 +69,7 @@ Covers trusted checkout setup and readiness checks, creating pull requests that 
 |-------|---------|
 | `nemoclaw-contributor-onboard` | Set up, repair, or verify a trusted source checkout, with explicit opt-ins for host-visible CLI exposure, the pinned agent, and runtime onboarding. |
 | `nemoclaw-contributor-create-pr` | Create GitHub pull requests that follow the NemoClaw PR template, including pre-PR checks, conventional commit titles, DCO sign-off, post-push CI monitoring, and CodeRabbit/PR Review Advisor follow-up. |
+| `nemoclaw-contributor-update-dependencies` | Audit dependency upgrades release by release, trace upstream source and test changes into downstream contracts, resolve migration concerns, and verify immutable artifacts separately. |
 | `nemoclaw-contributor-onboard-messaging-channel` | Add or review a new messaging channel with manifest-first implementation, upstream source analysis, plugin install confirmation, reachability checks, policies, docs, and tests. |
 | `nemoclaw-contributor-update-docs` | Scan recent git commits for user-facing changes and draft or update documentation pages during release prep. |
 
@@ -82,7 +86,7 @@ Skills are cumulative. Each role includes the skills from the roles above it:
 | Role | Skills included | Count | Start with |
 |------|----------------|-------|------------|
 | User | `nemoclaw-user-*` | 1 | `nemoclaw-user-guide` |
-| Contributor | `nemoclaw-user-*` + `nemoclaw-contributor-*` | 5 | `nemoclaw-contributor-onboard` |
-| Maintainer | All skills | 18 | `nemoclaw-maintainer-morning` |
+| Contributor | `nemoclaw-user-*` + `nemoclaw-contributor-*` | 6 | `nemoclaw-contributor-onboard` |
+| Maintainer | All skills | 20 | `nemoclaw-maintainer-morning` |
 
 After identifying the role, present the applicable skills from the Skill Catalog above and recommend the starting skill.

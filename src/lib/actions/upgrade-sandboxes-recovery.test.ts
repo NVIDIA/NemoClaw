@@ -45,8 +45,10 @@ function createRecoveryHarness(
       Partial<{
         agent: "openclaw" | "hermes" | "langchain-deepagents-code" | null;
         agentVersion: string | null;
+        createdAt: string;
         nemoclawVersion: string | null;
         fromDockerfile: string | null;
+        pendingRouteReservation: true;
       }>
     >;
     confirmedLegacyManagedNames?: string[] | string;
@@ -136,6 +138,44 @@ afterEach(() => {
 });
 
 describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
+  it("returns before gateway preflight for a route-only reservation (#6500)", async () => {
+    const harness = createRecoveryHarness(["tm"], {
+      registryOverrides: {
+        tm: { pendingRouteReservation: true },
+      },
+    });
+
+    await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+
+    expect(harness.liveListSpy).not.toHaveBeenCalled();
+    expect(harness.latestBackupSpy).not.toHaveBeenCalled();
+    expect(harness.rebuildSpy).not.toHaveBeenCalled();
+    expect(console.log).toHaveBeenCalledWith("  No sandboxes found in the registry.");
+  });
+
+  it("recovers real sandboxes while ignoring a route-only reservation (#6500)", async () => {
+    const harness = createRecoveryHarness(["tm", "alpha", "beta"], {
+      registryOverrides: {
+        tm: { pendingRouteReservation: true },
+        beta: {
+          pendingRouteReservation: true,
+          createdAt: "2026-07-13T00:00:00.000Z",
+        },
+      },
+    });
+
+    await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+
+    expect(harness.latestBackupSpy.mock.calls.map((call: unknown[]) => call[0])).toEqual([
+      "alpha",
+      "beta",
+    ]);
+    expect(harness.rebuildSpy.mock.calls.map((call: unknown[]) => call[0])).toEqual([
+      "alpha",
+      "beta",
+    ]);
+  });
+
   it("passes every non-Ready sandbox's validated manifest into rebuild", async () => {
     const harness = createRecoveryHarness(["alpha", "beta"]);
 

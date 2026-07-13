@@ -56,16 +56,17 @@ describe("command-registry", () => {
   });
 
   describe("sandboxCommands()", () => {
-    it("should return exactly 58 entries", () => {
-      // 50 visible + 8 hidden (shields×3 + config get/set/rotate-token +
+    it("should return exactly 60 entries", () => {
+      // 52 visible + 8 hidden (shields×3 + config get/set/rotate-token +
       // inference get/set).
-      // 50 visible includes the sessions group (root + list + reset + delete +
+      // 52 visible includes the sessions group (root + list + reset + delete +
       // export), the agents quartet (add + apply + delete + list), the
-      // singular `agent` passthrough that forwards to `openclaw agent`, and
-      // the download + upload host-side openshell wrappers, plus five MCP
-      // bridge display entries under the `mcp` parent and the gateway restart
-      // command under the `gateway` parent.
-      expect(sandboxCommands()).toHaveLength(58);
+      // singular `agent` passthrough that forwards to `openclaw agent`, the
+      // download + upload host-side openshell wrappers, the stop + start
+      // container lifecycle pair (#6026), plus five MCP bridge display entries
+      // under the `mcp` parent and the gateway restart command under the
+      // `gateway` parent.
+      expect(sandboxCommands()).toHaveLength(60);
     });
 
     it("every entry has scope sandbox", () => {
@@ -224,9 +225,9 @@ describe("command-registry", () => {
   });
 
   describe("sandboxActionTokens()", () => {
-    it("returns exactly 33 unique action tokens including empty string", () => {
+    it("returns exactly 35 unique action tokens including empty string", () => {
       const tokens = sandboxActionTokens();
-      expect(tokens).toHaveLength(33);
+      expect(tokens).toHaveLength(35);
       // Must contain every first-level sandbox action plus the empty default action.
       const expected = new Set([
         "agent",
@@ -236,6 +237,8 @@ describe("command-registry", () => {
         "download",
         "exec",
         "status",
+        "stop",
+        "start",
         "doctor",
         "inference",
         "logs",

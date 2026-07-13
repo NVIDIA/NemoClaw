@@ -13,6 +13,16 @@ Use the release scripts for normal release operations. Do not run raw `git tag`,
 
 The release is one annotated semver tag on an already-merged `origin/main` commit. The GitHub workflow moves `latest`; release admins promote `lkg` manually after validation. After the tag and `latest` are verified, automatically move remaining open issues/PRs from the released version label to the next patch label, draft release notes, then verify the maintainer-published Announcement before final handoff.
 
+## LKG Production Image Dispatch
+
+When a release admin creates or moves `lkg` to a commit carrying an exact `vX.Y.Z` tag, the `Release / LKG Brev Image` workflow dispatches the `Release Production Image` workflow in `brevdev/nemoclaw-image` on its `main` branch.
+The dispatch passes the immutable semver tag instead of the mutable `lkg` tag.
+The source workflow requires the `NEMOCLAW_IMAGE_DISPATCH_TOKEN` Actions secret with Actions read/write access to `brevdev/nemoclaw-image`; a missing secret fails before the API request, and the workflow summary never includes its value.
+The trigger summary records the selected release tag, full commit SHA, target workflow, and dispatch result.
+A rejected dispatch fails the trigger run but does not move or roll back `lkg`.
+Deleting `lkg` does not dispatch an image build.
+The downstream scheduled reconciliation remains available if the event-driven dispatch fails or is delayed.
+
 ## Hard Rules
 
 - Tag only the commit captured in a generated release plan.

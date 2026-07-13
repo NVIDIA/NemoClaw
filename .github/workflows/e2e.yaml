@@ -39,6 +39,16 @@ on:
         required: false
         default: ""
         type: string
+      base_sha:
+        description: PR base commit selected by the controller.
+        required: false
+        default: ""
+        type: string
+      workflow_sha:
+        description: Trusted E2E workflow commit selected by the controller.
+        required: false
+        default: ""
+        type: string
       plan_hash:
         description: SHA-256 of the selected E2E plan.
         required: false
@@ -82,7 +92,9 @@ jobs:
       - name: Validate controller dispatch
         if: ${{ inputs.checkout_sha != '' }}
         env:
+          BASE_SHA: ${{ inputs.base_sha }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
           GITHUB_TOKEN: ${{ github.token }}
           JOBS: ${{ inputs.jobs }}
           PLAN_HASH: ${{ inputs.plan_hash }}
@@ -91,10 +103,13 @@ jobs:
           TARGETS: ${{ inputs.targets }}
           WORKFLOW_EVENT: ${{ github.event_name }}
           WORKFLOW_REF: ${{ github.ref }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
           set -euo pipefail
           [[ "$WORKFLOW_EVENT" == "workflow_dispatch" && "$WORKFLOW_REF" == "refs/heads/main" ]] || { echo "::error::PR E2E runs must be dispatched from main"; exit 1; }
           [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::checkout_sha must be a lowercase 40-character SHA"; exit 1; }
+          [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::base_sha must be a lowercase 40-character SHA"; exit 1; }
+          [[ "$EXPECTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ && "$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA" ]] || { echo "::error::workflow_sha must match the trusted workflow commit"; exit 1; }
           [[ "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]] || { echo "::error::checked-out commit does not match checkout_sha"; exit 1; }
           [[ "$PLAN_HASH" =~ ^[a-f0-9]{64}$ ]] || { echo "::error::plan_hash must be a lowercase SHA-256"; exit 1; }
           [[ "$CORRELATION_ID" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]] || { echo "::error::correlation_id must be a lowercase UUIDv4"; exit 1; }
@@ -109,6 +124,7 @@ jobs:
           [[ "$(jq -r '.state' <<< "$pull_json")" == "open" ]] || { echo "::error::pull request must still be open"; exit 1; }
           [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$GITHUB_REPOSITORY" ]] || { echo "::error::pull request must originate from this repository"; exit 1; }
           [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha must match the PR head commit"; exit 1; }
+          [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha must match the PR base commit"; exit 1; }
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28

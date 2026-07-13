@@ -358,7 +358,7 @@ describe("createSetupNim", () => {
     expect(canProbeRoute).not.toHaveBeenCalled();
   });
 
-  it("checks shared-gateway compatibility before interactive local discovery probes (#6315)", async () => {
+  it("keeps interactive local discovery probes on when the route preflight reports a conflict (#6750)", async () => {
     const events: string[] = [];
     const canProbeRoute = vi.fn((provider: string) => {
       events.push(`preflight:${provider}`);
@@ -383,11 +383,10 @@ describe("createSetupNim", () => {
 
     await setupNim(null, null, null, true, null, "nemoclaw", undefined, canProbeRoute);
 
-    expect(events).toEqual([
-      "preflight:ollama-local",
-      "preflight:vllm-local",
-      "detect:false:false",
-    ]);
+    // Route conflicts are enforced at selection time; the interactive menu
+    // still probes so a running daemon renders its status truthfully.
+    expect(canProbeRoute).not.toHaveBeenCalled();
+    expect(events).toEqual(["detect:true:true"]);
   });
 
   it("rejects a known local route before host detection when its model conflicts (#6315)", async () => {

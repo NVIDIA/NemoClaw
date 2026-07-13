@@ -249,6 +249,11 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "scripts", "patch-openclaw-device-self-approval.ts"),
     path.join(stagedScriptsDir, "patch-openclaw-device-self-approval.ts"),
   );
+  fs.mkdirSync(path.join(stagedScriptsDir, "lib"), { recursive: true });
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "reviewed-npm-archive.mts"),
+    path.join(stagedScriptsDir, "lib", "reviewed-npm-archive.mts"),
+  );
 
   return { buildCtx, stagedDockerfile };
 }

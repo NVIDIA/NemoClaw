@@ -16,21 +16,25 @@ const dockerfiles = ["Dockerfile.base", "Dockerfile"].map((name) => ({
 const expectedVersion = "0.7.3";
 const expectedIntegrity =
   "sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==";
+const expectedTarball = "https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz";
 const runtimePrefix = "npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime";
 
 function extractIntegrityGate(contents: string): string {
   const startMarker = 'MCPORTER_EXPECTED_INTEGRITY=""';
   const start = contents.indexOf(startMarker);
-  const [end = -1] = [
-    contents.indexOf('MCPORTER_LOCK_SHA256="', start),
-    contents.indexOf("&& MCPORTER_REGISTRY_INTEGRITY=", start),
-  ]
+  const helperMarker =
+    "node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts --verify-only";
+  const helperStart = contents.indexOf(helperMarker, start);
+  const helperEndMarker = '--label "mcporter ${MCPORTER_VERSION}"';
+  const helperEnd = contents.indexOf(helperEndMarker, helperStart) + helperEndMarker.length;
+  const [end = -1] = [contents.indexOf('MCPORTER_LOCK_SHA256="', start), helperStart]
     .filter((index) => index > start)
     .sort((left, right) => left - right);
   expect(start).toBeGreaterThanOrEqual(0);
   expect(end).toBeGreaterThan(start);
-  return contents
-    .slice(start, end)
+  expect(helperStart).toBeGreaterThanOrEqual(end);
+  expect(helperEnd).toBeGreaterThan(helperStart);
+  return `${contents.slice(start, end)}\n${contents.slice(helperStart, helperEnd)}`
     .replace(/\\\s*\n/g, " ")
     .trim();
 }
@@ -40,7 +44,18 @@ function runIntegrityGate(contents: string, version: string) {
     "set -euo pipefail",
     `MCPORTER_VERSION=${JSON.stringify(version)}`,
     `MCPORTER_0_7_3_INTEGRITY=${JSON.stringify(expectedIntegrity)}`,
+    `MCPORTER_0_7_3_TARBALL=${JSON.stringify(expectedTarball)}`,
     `npm() { printf '%s\\n' ${JSON.stringify(expectedIntegrity)}; }`,
+    "node() {",
+    '  [ "$#" -eq 11 ] && [ "${1:-}" = "--experimental-strip-types" ] || return 81',
+    '  [ "${2:-}" = "/scripts/lib/reviewed-npm-archive.mts" ] && [ "${3:-}" = "--verify-only" ] || return 82',
+    '  [ "${4:-}" = "--package-spec" ] && [ "${5:-}" = "mcporter@${MCPORTER_VERSION}" ] || return 83',
+    '  [ "${6:-}" = "--integrity" ] && [ "${7:-}" = ' +
+      `${JSON.stringify(expectedIntegrity)} ] || return 84`,
+    '  [ "${8:-}" = "--tarball-url" ] && [ "${9:-}" = ' +
+      `${JSON.stringify(expectedTarball)} ] || return 85`,
+    '  [ "${10:-}" = "--label" ] && [ "${11:-}" = "mcporter ${MCPORTER_VERSION}" ] || return 86',
+    "}",
     extractIntegrityGate(contents),
     "printf 'gate-passed\\n'",
   ].join("\n");
@@ -68,7 +83,10 @@ describe("mcporter image supply-chain controls", () => {
 
     expect(contents).toContain(`ARG MCPORTER_VERSION=${expectedVersion}`);
     expect(contents).toContain(`ARG MCPORTER_0_7_3_INTEGRITY=${expectedIntegrity}`);
-    expect(contents).toContain('npm view "mcporter@${MCPORTER_VERSION}" dist.integrity');
+    expect(contents).toContain(`ARG MCPORTER_0_7_3_TARBALL=${expectedTarball}`);
+    expect(flattenedContents).toContain(
+      '--verify-only --package-spec "mcporter@${MCPORTER_VERSION}" --integrity "$MCPORTER_EXPECTED_INTEGRITY" --tarball-url "$MCPORTER_EXPECTED_TARBALL"',
+    );
     expect(contents).toContain(
       "COPY agents/openclaw/mcporter-runtime/package.json /usr/local/lib/nemoclaw/mcporter-runtime/package.json",
     );

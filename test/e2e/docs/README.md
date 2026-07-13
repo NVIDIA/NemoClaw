@@ -108,16 +108,20 @@ test/e2e/
 ## CI Entry Points
 
 - `tools/advisors/risk-plan.mts` is the small deterministic selection policy
-  shared by PR Review Advisor, E2E Advisor, and the PR E2E controller. It maps
+  shared by PR Review Advisor and the PR E2E controller. It maps
   changed runtime surfaces to invariant families and
   canonical `e2e.yaml` jobs; it is not a second test runner or migration-status
-  ledger. The advisors use it as recommendation context, while the controller
+  ledger. The advisor uses it as recommendation context, while the controller
   applies it independently without model output.
 
-- `.github/workflows/pr-e2e-gate.yaml` owns `E2E / PR Gate` for PRs from this
-  repository after `CI / Pull Request` completes. The controller builds the
-  risk plan from GitHub's complete file list, dispatches every selected job,
-  and verifies each expected `risk-signal.json`. See
+- `.github/workflows/pr-e2e-gate.yaml` reserves `E2E / PR Gate` on every exact
+  PR head, including forks, before `CI / Pull Request` completes. The trusted
+  controller builds the risk plan from GitHub's complete file list. Ordinary
+  internal revisions dispatch every selected job and verify each expected
+  `risk-signal.json`. For risky forks and internal revisions whose plan includes
+  the conservative `e2e-control-plane` family, it withholds credential-bearing
+  live jobs and instead requires the matching audited exact-SHA maintainer
+  exception. See
   [NemoClaw E2E CI](../README.md) for the full lifecycle.
 
 - `.github/workflows/e2e.yaml` runs selected or all supported
