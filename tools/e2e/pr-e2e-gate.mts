@@ -29,11 +29,14 @@ import {
 const E2E_WORKFLOW = "e2e.yaml";
 const E2E_WORKFLOW_PATH = `.github/workflows/${E2E_WORKFLOW}`;
 const CHECK_NAME = "E2E / PR Gate";
-const CHECK_EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v1";
+const CHECK_EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v2";
+const LEGACY_CHECK_EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v1";
 const GITHUB_ACTIONS_APP_ID = 15368;
 const USER_AGENT = "nemoclaw-pr-e2e-gate";
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const HASH_PATTERN = /^[a-f0-9]{64}$/u;
+const CI_DISPLAY_TITLE_PATTERN =
+  /^CI PR #([1-9][0-9]*) head ([a-f0-9]{40}) base ([a-f0-9]{40}) gate true$/u;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const JOB_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/u;
 const SHARD_PATTERN = /^(?:default|[A-Za-z0-9][A-Za-z0-9_-]*)$/u;
@@ -43,6 +46,7 @@ const RUN_REASONS = new Set(["passed", "failed", "interrupted"]);
 const MAX_PLAN_BYTES = 1024 * 1024;
 const MAX_CONTROLLER_ERROR_CHARS = 512;
 const MAX_PR_FILES = 3000;
+const MAX_COMPATIBILITY_FILES = 300;
 const MAX_ACTIVE_RUN_PAGES_PER_STATUS = 10;
 const MAX_REPORTED_CI_JOBS = 10;
 const MAX_WAIVER_REASON_CHARS = 500;
@@ -71,6 +75,7 @@ type ControllerPaths = {
 type ManualResolutionCommandBase = {
   prNumber: number;
   headSha: string;
+  baseSha: string;
   workflowSha: string;
   maintainer: string;
   reason: string;
@@ -81,7 +86,7 @@ type ManualResolutionCommand = ManualResolutionCommandBase &
   ({ mode: "resolve-fork" } | { mode: "resolve-control-plane" });
 
 export type ControllerCommand =
-  | { mode: "seed"; prNumber: number; headSha: string }
+  | { mode: "seed"; prNumber: number; headSha: string; baseSha: string }
   | ({
       mode: "start";
       headSha: string;
@@ -89,6 +94,7 @@ export type ControllerCommand =
       headBranch: string;
       workflowSha: string;
       ciConclusion: string;
+      ciDisplayTitle: string;
       ciRunId: number;
       ciRunAttempt: number;
       prNumber?: number;
@@ -149,7 +155,6 @@ type CheckRun = {
   app?: { id?: number } | null;
 };
 type CheckRunsResponse = { total_count: number; check_runs: CheckRun[] };
-type GitReference = { ref: string; object: { type: string; sha: string } };
 type CollaboratorPermission = {
   role_name?: string;
   permission?: string;
@@ -171,8 +176,9 @@ type WorkflowRunIdentity = {
 };
 
 export type PrGateState = {
-  version: 1;
+  version: 2;
   commitSha: string;
+  baseSha: string;
   workflowSha: string;
   planHash: string;
   correlationId: string;
@@ -209,6 +215,20 @@ function parseHash(value: string | undefined, name: string): string {
   const parsed = requiredArgument(value, name);
   if (!HASH_PATTERN.test(parsed)) throw new Error(`--${name} must be a lowercase SHA-256 hash`);
   return parsed;
+}
+
+export function parseCiRunIdentity(displayTitle: string): {
+  prNumber: number;
+  headSha: string;
+  baseSha: string;
+} {
+  const match = CI_DISPLAY_TITLE_PATTERN.exec(displayTitle);
+  if (!match) throw new Error("CI run title does not contain a valid PR and base identity");
+  return {
+    prNumber: parsePositiveId(match[1]!, "CI run PR number"),
+    headSha: match[2]!,
+    baseSha: match[3]!,
+  };
 }
 
 function normalizedWaiverReason(value: string): string {
@@ -291,6 +311,7 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
       mode: "seed",
       prNumber: parsePositiveId(requiredArgument(args.pr, "pr"), "--pr"),
       headSha: requiredArgument(args.head, "head"),
+      baseSha: requiredArgument(args.base, "base"),
     };
   }
   if (args.mode === "start") {
@@ -301,6 +322,7 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
       headBranch: requiredArgument(args.headBranch, "head-branch"),
       workflowSha: requiredArgument(args.workflowSha, "workflow-sha"),
       ciConclusion: requiredArgument(args.ciConclusion, "ci-conclusion"),
+      ciDisplayTitle: requiredArgument(args.ciDisplayTitle, "ci-display-title"),
       ciRunId: parsePositiveId(requiredArgument(args.ciRunId, "ci-run-id"), "--ci-run-id"),
       ciRunAttempt: parsePositiveId(
         requiredArgument(args.ciRunAttempt, "ci-run-attempt"),
@@ -343,6 +365,7 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
       mode: args.mode,
       prNumber: parsePositiveId(requiredArgument(args.pr, "pr"), "--pr"),
       headSha: requiredArgument(args.head, "head"),
+      baseSha: requiredArgument(args.base, "base"),
       workflowSha: requiredArgument(args.workflowSha, "workflow-sha"),
       maintainer,
       reason: normalizedWaiverReason(requiredArgument(args.reason, "reason")),
@@ -359,11 +382,14 @@ function readRegularJson(file: string, maxBytes = MAX_PLAN_BYTES): unknown {
 }
 
 export function validatePrGateState(value: unknown): PrGateState {
-  if (!isObjectRecord(value) || value.version !== 1) {
+  if (!isObjectRecord(value) || value.version !== 2) {
     throw new Error("State version is invalid");
   }
   if (typeof value.commitSha !== "string" || !SHA_PATTERN.test(value.commitSha)) {
     throw new Error("State commit SHA is invalid");
+  }
+  if (typeof value.baseSha !== "string" || !SHA_PATTERN.test(value.baseSha)) {
+    throw new Error("State base SHA is invalid");
   }
   if (typeof value.workflowSha !== "string" || !SHA_PATTERN.test(value.workflowSha)) {
     throw new Error("State workflow SHA is invalid");
@@ -573,11 +599,16 @@ function appendOutput(name: string, value: string): void {
   }
 }
 
-export function prGateExternalId(prNumber: number, headSha: string): string {
-  if (!Number.isSafeInteger(prNumber) || prNumber < 1 || !SHA_PATTERN.test(headSha)) {
+export function prGateExternalId(prNumber: number, headSha: string, baseSha: string): string {
+  if (
+    !Number.isSafeInteger(prNumber) ||
+    prNumber < 1 ||
+    !SHA_PATTERN.test(headSha) ||
+    !SHA_PATTERN.test(baseSha)
+  ) {
     throw new Error("PR gate check identity is invalid");
   }
-  return `${CHECK_EXTERNAL_ID_PREFIX}:${prNumber}:${headSha}`;
+  return `${CHECK_EXTERNAL_ID_PREFIX}:${prNumber}:${headSha}:${baseSha}`;
 }
 
 function validateCheckRunsResponse(value: unknown): CheckRunsResponse {
@@ -601,13 +632,11 @@ function validateCheckRunsResponse(value: unknown): CheckRunsResponse {
   return { total_count: value.total_count as number, check_runs: checkRuns };
 }
 
-async function matchingPrGateChecks(options: {
+async function listPrGateChecks(options: {
   repository: string;
   token: string;
   headSha: string;
-  prNumber: number;
 }): Promise<CheckRun[]> {
-  const externalId = prGateExternalId(options.prNumber, options.headSha);
   const response = validateCheckRunsResponse(
     await githubApi<unknown>(
       `repos/${options.repository}/commits/${options.headSha}/check-runs?check_name=${encodeURIComponent(CHECK_NAME)}&filter=all&per_page=100`,
@@ -615,11 +644,30 @@ async function matchingPrGateChecks(options: {
       { userAgent: USER_AGENT },
     ),
   );
-  const sameIdentity = response.check_runs.filter(
-    (check) =>
-      check.name === CHECK_NAME &&
-      check.head_sha === options.headSha &&
-      check.external_id === externalId,
+  return response.check_runs.filter(
+    (check) => check.name === CHECK_NAME && check.head_sha === options.headSha,
+  );
+}
+
+function isPrGateLineage(check: CheckRun, prNumber: number, headSha: string): boolean {
+  const externalId = check.external_id;
+  return (
+    externalId === `${LEGACY_CHECK_EXTERNAL_ID_PREFIX}:${prNumber}:${headSha}` ||
+    (typeof externalId === "string" &&
+      externalId.startsWith(`${CHECK_EXTERNAL_ID_PREFIX}:${prNumber}:${headSha}:`))
+  );
+}
+
+async function matchingPrGateChecks(options: {
+  repository: string;
+  token: string;
+  headSha: string;
+  baseSha: string;
+  prNumber: number;
+}): Promise<CheckRun[]> {
+  const externalId = prGateExternalId(options.prNumber, options.headSha, options.baseSha);
+  const sameIdentity = (await listPrGateChecks(options)).filter(
+    (check) => check.external_id === externalId,
   );
   if (sameIdentity.some((check) => check.app?.id !== GITHUB_ACTIONS_APP_ID)) {
     throw new Error("PR gate check identity was claimed by an unexpected GitHub App");
@@ -631,10 +679,27 @@ async function ensurePrGateCheck(options: {
   repository: string;
   token: string;
   headSha: string;
+  baseSha: string;
   prNumber: number;
 }): Promise<number> {
-  const existing = await matchingPrGateChecks(options);
-  if (existing.length > 1) throw new Error("Multiple exact-head PR gate checks already exist");
+  const checks = await listPrGateChecks(options);
+  const lineage = checks.filter((check) =>
+    isPrGateLineage(check, options.prNumber, options.headSha),
+  );
+  if (lineage.some((check) => check.app?.id !== GITHUB_ACTIONS_APP_ID)) {
+    throw new Error("PR gate check identity was claimed by an unexpected GitHub App");
+  }
+  const externalId = prGateExternalId(options.prNumber, options.headSha, options.baseSha);
+  const existing = lineage.filter((check) => check.external_id === externalId);
+  if (existing.length > 1) throw new Error("Multiple exact-diff PR gate checks already exist");
+  for (const stale of lineage.filter((check) => check.external_id !== externalId)) {
+    await completeCheck({ repository: options.repository, checkRunId: stale.id }, options.token, {
+      conclusion: "failure",
+      title: "PR base changed",
+      summary:
+        "This check was computed for an earlier PR base and cannot authorize the current diff.",
+    });
+  }
   if (existing[0]) return existing[0].id;
 
   const check = await githubApi<CheckRun>(`repos/${options.repository}/check-runs`, options.token, {
@@ -642,12 +707,12 @@ async function ensurePrGateCheck(options: {
     body: {
       name: CHECK_NAME,
       head_sha: options.headSha,
-      external_id: prGateExternalId(options.prNumber, options.headSha),
+      external_id: externalId,
       status: "in_progress",
       output: {
         title: "Waiting for PR CI",
         summary:
-          "This exact PR revision is reserved for deterministic E2E planning after CI completes.",
+          "This exact PR head and base revision is reserved for deterministic E2E planning after CI completes.",
       },
     },
     userAgent: USER_AGENT,
@@ -658,11 +723,25 @@ async function ensurePrGateCheck(options: {
   return check.id;
 }
 
-export async function seedPrGate(prNumber: number, headSha: string): Promise<number> {
+export async function seedPrGate(
+  prNumber: number,
+  headSha: string,
+  baseSha: string,
+): Promise<number> {
   const { token, repository } = tokenAndRepository();
   if (!SHA_PATTERN.test(headSha)) throw new Error("PR head SHA is invalid");
-  const checkRunId = await ensurePrGateCheck({ repository, token, headSha, prNumber });
-  console.log(`Exact-head gate reserved: pr=${prNumber} sha=${headSha} check=${checkRunId}`);
+  if (!SHA_PATTERN.test(baseSha)) throw new Error("PR base SHA is invalid");
+  await requireLiveExactDiff({ repository, token, prNumber, headSha, baseSha });
+  const checkRunId = await ensurePrGateCheck({
+    repository,
+    token,
+    headSha,
+    baseSha,
+    prNumber,
+  });
+  console.log(
+    `Exact-diff gate reserved: pr=${prNumber} head=${headSha} base=${baseSha} check=${checkRunId}`,
+  );
   return checkRunId;
 }
 
@@ -792,6 +871,35 @@ function validatePullRequest(value: unknown): PullRequest {
     throw new Error("GitHub returned an invalid pull request changed-file count");
   }
   return { ...identity, changed_files: value.changed_files as number };
+}
+
+async function requireLiveExactDiff(options: {
+  repository: string;
+  token: string;
+  prNumber: number;
+  headSha: string;
+  baseSha: string;
+}): Promise<PullRequest> {
+  const pull = validatePullRequest(
+    await githubApi<unknown>(
+      `repos/${options.repository}/pulls/${options.prNumber}`,
+      options.token,
+      {
+        userAgent: USER_AGENT,
+      },
+    ),
+  );
+  if (
+    pull.number !== options.prNumber ||
+    pull.state !== "open" ||
+    !pull.head.repo ||
+    pull.head.sha !== options.headSha ||
+    pull.base.sha !== options.baseSha ||
+    pull.base.repo.full_name !== options.repository
+  ) {
+    throw new Error("pull request no longer matches the expected exact head and base SHAs");
+  }
+  return pull;
 }
 
 function pullIdentity(pull: PullRequestListItem): Record<string, unknown> {
@@ -1148,6 +1256,93 @@ export function validateWorkflowDispatchDetails(
   return value as WorkflowDispatchDetails;
 }
 
+function validateMainReference(value: unknown): string {
+  if (
+    !isObjectRecord(value) ||
+    value.ref !== "refs/heads/main" ||
+    !isObjectRecord(value.object) ||
+    value.object.type !== "commit" ||
+    typeof value.object.sha !== "string" ||
+    !SHA_PATTERN.test(value.object.sha)
+  ) {
+    throw new Error("GitHub returned an invalid main branch reference");
+  }
+  return value.object.sha;
+}
+
+function validateCompatibleMainComparison(
+  value: unknown,
+  workflowSha: string,
+  mainSha: string,
+): void {
+  if (
+    !isObjectRecord(value) ||
+    value.status !== "ahead" ||
+    !Number.isSafeInteger(value.ahead_by) ||
+    (value.ahead_by as number) < 1 ||
+    value.behind_by !== 0 ||
+    !isObjectRecord(value.base_commit) ||
+    value.base_commit.sha !== workflowSha ||
+    !isObjectRecord(value.merge_base_commit) ||
+    value.merge_base_commit.sha !== workflowSha ||
+    !isObjectRecord(value.head_commit) ||
+    value.head_commit.sha !== mainSha ||
+    !Array.isArray(value.files)
+  ) {
+    throw new Error(`main is not a validated descendant of workflow commit ${workflowSha}`);
+  }
+  if (value.files.length >= MAX_COMPATIBILITY_FILES) {
+    throw new Error("main advance changed too many files to validate completely");
+  }
+  const changedFiles = new Set<string>();
+  for (const entry of value.files) {
+    if (
+      !isObjectRecord(entry) ||
+      typeof entry.filename !== "string" ||
+      (entry.previous_filename !== undefined && typeof entry.previous_filename !== "string")
+    ) {
+      throw new Error("GitHub returned an invalid main comparison file");
+    }
+    for (const file of [entry.previous_filename, entry.filename]) {
+      if (typeof file !== "string") continue;
+      assertRepositoryPath(file);
+      changedFiles.add(file);
+    }
+  }
+  const plan = buildRiskPlan({ headSha: mainSha, changedFiles: [...changedFiles] });
+  if (plan.families.some((family) => family.id === "e2e-control-plane")) {
+    throw new Error(`main advanced through trusted E2E control-plane changes after ${workflowSha}`);
+  }
+}
+
+async function readMainWorkflowCommit(repository: string, token: string): Promise<string> {
+  return validateMainReference(
+    await githubApi<unknown>(`repos/${repository}/git/ref/heads/main`, token, {
+      userAgent: USER_AGENT,
+    }),
+  );
+}
+
+async function compatibleMainWorkflowCommit(
+  repository: string,
+  token: string,
+  workflowSha: string,
+): Promise<string> {
+  const mainSha = await readMainWorkflowCommit(repository, token);
+  if (mainSha === workflowSha) return mainSha;
+  const comparison = await githubApi<unknown>(
+    `repos/${repository}/compare/${workflowSha}...${mainSha}`,
+    token,
+    { userAgent: USER_AGENT },
+  );
+  validateCompatibleMainComparison(comparison, workflowSha, mainSha);
+  const confirmedMainSha = await readMainWorkflowCommit(repository, token);
+  if (confirmedMainSha !== mainSha) {
+    throw new Error(`main changed again while validating workflow commit ${workflowSha}`);
+  }
+  return mainSha;
+}
+
 function diagnosticValue(value: unknown): string {
   const serialized = JSON.stringify(value) ?? String(value);
   return serialized.length > 256 ? `${serialized.slice(0, 253)}...` : serialized;
@@ -1194,10 +1389,11 @@ export async function dispatchPrGate(options: {
   jobs: readonly string[];
   prNumber: number;
   commitSha: string;
+  baseSha: string;
   workflowSha: string;
   planHash: string;
   correlationId: string;
-}): Promise<number> {
+}): Promise<{ runId: number; workflowSha: string }> {
   assertRepository(options.repository, "repository");
   if (
     !options.token ||
@@ -1207,13 +1403,18 @@ export async function dispatchPrGate(options: {
     !Number.isSafeInteger(options.prNumber) ||
     options.prNumber < 1 ||
     !SHA_PATTERN.test(options.commitSha) ||
+    !SHA_PATTERN.test(options.baseSha) ||
     !SHA_PATTERN.test(options.workflowSha) ||
     !HASH_PATTERN.test(options.planHash) ||
     !CORRELATION_PATTERN.test(options.correlationId)
   ) {
     throw new Error("Controller dispatch inputs are invalid");
   }
-  await assertMainWorkflowCommit(options.repository, options.token, options.workflowSha);
+  const workflowSha = await compatibleMainWorkflowCommit(
+    options.repository,
+    options.token,
+    options.workflowSha,
+  );
   const details = await githubApi<unknown>(
     `repos/${options.repository}/actions/workflows/${E2E_WORKFLOW}/dispatches`,
     options.token,
@@ -1225,6 +1426,8 @@ export async function dispatchPrGate(options: {
           jobs: options.jobs.join(","),
           pr_number: String(options.prNumber),
           checkout_sha: options.commitSha,
+          base_sha: options.baseSha,
+          workflow_sha: workflowSha,
           plan_hash: options.planHash,
           correlation_id: options.correlationId,
         },
@@ -1233,25 +1436,8 @@ export async function dispatchPrGate(options: {
       userAgent: USER_AGENT,
     },
   );
-  return validateWorkflowDispatchDetails(details, options.repository).workflow_run_id;
-}
-
-async function assertMainWorkflowCommit(
-  repository: string,
-  token: string,
-  workflowSha: string,
-): Promise<void> {
-  const main = await githubApi<GitReference>(`repos/${repository}/git/ref/heads/main`, token, {
-    userAgent: USER_AGENT,
-  });
-  if (
-    !main ||
-    main.ref !== "refs/heads/main" ||
-    main.object?.type !== "commit" ||
-    main.object.sha !== workflowSha
-  ) {
-    throw new Error(`main no longer points to workflow commit ${workflowSha}`);
-  }
+  const runId = validateWorkflowDispatchDetails(details, options.repository).workflow_run_id;
+  return { runId, workflowSha };
 }
 
 async function cancelChildRun(repository: string, token: string, runId: number): Promise<void> {
@@ -1274,23 +1460,32 @@ export async function startPrGate(
   if (!SHA_PATTERN.test(command.workflowSha)) throw new Error("workflow SHA is invalid");
   assertRepository(command.headRepository, "PR head repository");
   assertBranch(command.headBranch);
-  let pull: PullRequest | undefined;
-  let gatePrNumber = command.prNumber;
-  if (gatePrNumber === undefined) {
-    pull = await resolvePullRequest({
-      repository,
-      token,
-      headSha: command.headSha,
-      headRepository: command.headRepository,
-      headBranch: command.headBranch,
-    });
-    gatePrNumber = pull.number;
+  const ciIdentity = parseCiRunIdentity(command.ciDisplayTitle);
+  if (
+    ciIdentity.headSha !== command.headSha ||
+    (command.prNumber !== undefined && command.prNumber !== ciIdentity.prNumber)
+  ) {
+    throw new Error("CI run identity does not match the triggering workflow run");
+  }
+  const pull = await requireLiveExactDiff({
+    repository,
+    token,
+    prNumber: ciIdentity.prNumber,
+    headSha: ciIdentity.headSha,
+    baseSha: ciIdentity.baseSha,
+  });
+  if (
+    pull.head.repo?.full_name !== command.headRepository ||
+    pull.head.ref !== command.headBranch
+  ) {
+    throw new Error("PR repository or branch does not match the triggering CI run");
   }
   const checkRunId = await ensurePrGateCheck({
     repository,
     token,
     headSha: command.headSha,
-    prNumber: gatePrNumber,
+    baseSha: ciIdentity.baseSha,
+    prNumber: ciIdentity.prNumber,
   });
   appendOutput("check_id", String(checkRunId));
   await markCheckInProgress(
@@ -1323,7 +1518,7 @@ export async function startPrGate(
       }
       const report = ciFailureReport({
         repository,
-        prNumber: command.prNumber,
+        prNumber: ciIdentity.prNumber,
         ciRunId: command.ciRunId,
         ciRunAttempt: command.ciRunAttempt,
         ciConclusion: command.ciConclusion,
@@ -1336,9 +1531,7 @@ export async function startPrGate(
         token,
         {
           conclusion: "failure",
-          title: command.prNumber
-            ? `PR #${command.prNumber} CI did not pass`
-            : "PR CI did not pass",
+          title: `PR #${ciIdentity.prNumber} CI did not pass`,
           summary: report.summary,
         },
         report.ciRunUrl,
@@ -1347,20 +1540,6 @@ export async function startPrGate(
       appendOutput("finalized", "true");
       finalized = true;
       throw new PrerequisiteCiError(report.errorMessage);
-    }
-
-    pull ??= await resolvePullRequest({
-      repository,
-      token,
-      headSha: command.headSha,
-      headRepository: command.headRepository,
-      headBranch: command.headBranch,
-    });
-    if (
-      pull.head.repo?.full_name !== command.headRepository ||
-      (command.prNumber !== undefined && pull.number !== command.prNumber)
-    ) {
-      throw new Error("PR identity does not match the triggering workflow run");
     }
 
     const changedFiles = await pullChangedFiles(repository, pull, token);
@@ -1392,9 +1571,9 @@ export async function startPrGate(
           conclusion: "failure",
           title: "Maintainer fork exception required",
           summary: [
-            `This exact fork revision (${command.headSha}) selected credential-bearing E2E jobs: ${jobs.join(", ")}.`,
+            `This exact fork diff (head ${command.headSha}, base ${ciIdentity.baseSha}) selected credential-bearing E2E jobs: ${jobs.join(", ")}.`,
             "Fork code was not executed and no repository secret was exposed.",
-            "A maintainer must use the E2E / PR Gate workflow on main to record an explicit no-secret exception for this exact SHA, with a reason and any trusted supporting run.",
+            "A maintainer must use the E2E / PR Gate workflow on main to record an explicit no-secret exception for these exact head and base SHAs, with a reason and any trusted supporting run.",
           ].join("\n\n"),
         },
         `https://github.com/${repository}/pull/${pull.number}`,
@@ -1416,9 +1595,9 @@ export async function startPrGate(
           conclusion: "failure",
           title: "Maintainer control-plane exception required",
           summary: [
-            `This exact internal revision (${command.headSha}) changes trusted E2E execution or evidence code and selected credential-bearing E2E jobs: ${jobs.join(", ")}.`,
+            `This exact internal diff (head ${command.headSha}, base ${ciIdentity.baseSha}) changes trusted E2E execution or evidence code and selected credential-bearing E2E jobs: ${jobs.join(", ")}.`,
             "No PR-controlled E2E workflow, test, support code, or evidence reporter was executed with repository credentials.",
-            "A maintainer must use the E2E / PR Gate workflow on main with the resolve-control-plane operation to record an explicit no-secret exception for this exact SHA and explain the independent review performed.",
+            "A maintainer must use the E2E / PR Gate workflow on main with the resolve-control-plane operation to record an explicit no-secret exception for these exact head and base SHAs and explain the independent review performed.",
             `Deterministic plan: ${plan.planHash}.`,
           ].join("\n\n"),
         },
@@ -1450,21 +1629,24 @@ export async function startPrGate(
     if (!CORRELATION_PATTERN.test(correlationId)) {
       throw new Error("generated correlation ID is invalid");
     }
-    childRunId = await dispatchPrGate({
+    const dispatch = await dispatchPrGate({
       repository,
       token,
       jobs,
       prNumber: pull.number,
       commitSha: command.headSha,
+      baseSha: ciIdentity.baseSha,
       workflowSha: command.workflowSha,
       planHash: plan.planHash,
       correlationId,
     });
+    childRunId = dispatch.runId;
     appendOutput("run_id", String(childRunId));
     const state: PrGateState = {
-      version: 1,
+      version: 2,
       commitSha: command.headSha,
-      workflowSha: command.workflowSha,
+      baseSha: ciIdentity.baseSha,
+      workflowSha: dispatch.workflowSha,
       planHash: plan.planHash,
       correlationId,
       prNumber: pull.number,
@@ -1615,6 +1797,23 @@ export async function finishPrGate(options: {
       expectedShards: state.expectedShards,
       signals,
     });
+    await requireLiveExactDiff({
+      repository,
+      token,
+      prNumber: state.prNumber,
+      headSha: state.commitSha,
+      baseSha: state.baseSha,
+    });
+    const matchingChecks = await matchingPrGateChecks({
+      repository,
+      token,
+      headSha: state.commitSha,
+      baseSha: state.baseSha,
+      prNumber: state.prNumber,
+    });
+    if (matchingChecks.length !== 1 || matchingChecks[0]!.id !== options.checkRunId) {
+      throw new Error("controller state does not match the exact PR gate check");
+    }
     await completeCheck(context, token, verdict, childRunUrl);
     appendOutput("finalized", "true");
     finalized = true;
@@ -1663,6 +1862,7 @@ export async function abandonPrGate(checkRunId: number, childRunId?: number): Pr
 async function resolveGateException(command: ManualResolutionCommand): Promise<void> {
   const { token, repository } = tokenAndRepository();
   if (!SHA_PATTERN.test(command.headSha)) throw new Error("PR head SHA is invalid");
+  if (!SHA_PATTERN.test(command.baseSha)) throw new Error("PR base SHA is invalid");
   if (!SHA_PATTERN.test(command.workflowSha)) throw new Error("workflow SHA is invalid");
   if (!MAINTAINER_PATTERN.test(command.maintainer)) throw new Error("maintainer login is invalid");
   const reason = normalizedWaiverReason(command.reason);
@@ -1692,9 +1892,10 @@ async function resolveGateException(command: ManualResolutionCommand): Promise<v
     pull.state !== "open" ||
     pull.base.repo.full_name !== repository ||
     !pull.head.repo ||
-    pull.head.sha !== command.headSha
+    pull.head.sha !== command.headSha ||
+    pull.base.sha !== command.baseSha
   ) {
-    throw new Error("pull request no longer matches the reviewed exact head SHA");
+    throw new Error("pull request no longer matches the reviewed exact head and base SHAs");
   }
   const isFork = pull.head.repo.full_name !== repository;
   if (command.mode === "resolve-fork" && !isFork) {
@@ -1734,10 +1935,11 @@ async function resolveGateException(command: ManualResolutionCommand): Promise<v
     repository,
     token,
     headSha: command.headSha,
+    baseSha: command.baseSha,
     prNumber: command.prNumber,
   });
   if (matchingChecks.length !== 1) {
-    throw new Error(`Expected one exact-head PR gate check; found ${matchingChecks.length}`);
+    throw new Error(`Expected one exact-diff PR gate check; found ${matchingChecks.length}`);
   }
   const check = matchingChecks[0]!;
   const expectedFailureTitle =
@@ -1762,13 +1964,21 @@ async function resolveGateException(command: ManualResolutionCommand): Promise<v
       : `Control-plane exception recorded by @${command.maintainer}`;
   const approval =
     command.mode === "resolve-fork"
-      ? `Maintainer @${command.maintainer} approved a no-secret exception for exact fork SHA \`${command.headSha}\`.`
-      : `Maintainer @${command.maintainer} recorded a no-secret exception for exact internal SHA \`${command.headSha}\`.`;
+      ? `Maintainer @${command.maintainer} approved a no-secret exception for exact fork head \`${command.headSha}\` on base \`${command.baseSha}\`.`
+      : `Maintainer @${command.maintainer} recorded a no-secret exception for exact internal head \`${command.headSha}\` on base \`${command.baseSha}\`.`;
   const nonExecution =
     command.mode === "resolve-fork"
       ? `Credential-bearing E2E was not run. Waived jobs: ${jobs.join(", ")}.`
       : `Credential-bearing E2E was not run because this PR controls E2E execution or evidence. Waived jobs: ${jobs.join(", ")}. Non-secret PR CI remains required.`;
-  await assertMainWorkflowCommit(repository, token, command.workflowSha);
+  await compatibleMainWorkflowCommit(repository, token, command.workflowSha);
+  const finalPull = await requireLiveExactDiff({
+    repository,
+    token,
+    prNumber: command.prNumber,
+    headSha: command.headSha,
+    baseSha: command.baseSha,
+  });
+  assertPullUnchanged(pull, finalPull);
   await completeCheck(
     { repository, checkRunId: check.id },
     token,
@@ -1786,7 +1996,7 @@ async function resolveGateException(command: ManualResolutionCommand): Promise<v
     command.evidenceUrl ?? `https://github.com/${repository}/pull/${pull.number}`,
   );
   console.log(
-    `E2E exception recorded: mode=${command.mode} pr=${pull.number} sha=${command.headSha} maintainer=${command.maintainer} plan=${plan.planHash}`,
+    `E2E exception recorded: mode=${command.mode} pr=${pull.number} head=${command.headSha} base=${command.baseSha} maintainer=${command.maintainer} plan=${plan.planHash}`,
   );
 }
 
@@ -1863,7 +2073,7 @@ function reportControllerError(error: unknown): void {
 async function main(): Promise<void> {
   const command = parseControllerCommand(process.argv.slice(2));
   if (command.mode === "seed") {
-    await seedPrGate(command.prNumber, command.headSha);
+    await seedPrGate(command.prNumber, command.headSha, command.baseSha);
     return;
   }
   if (command.mode === "start") {

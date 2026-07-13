@@ -23,6 +23,7 @@ import {
 const HEAD_SHA = "a".repeat(40);
 const BASE_SHA = "b".repeat(40);
 const WORKFLOW_SHA = "d".repeat(40);
+const ADVANCED_WORKFLOW_SHA = "e".repeat(40);
 const CI_RUN_ID = 99;
 const CI_RUN_ATTEMPT = 3;
 
@@ -52,7 +53,7 @@ function exactPrGateCheck(overrides: Record<string, unknown> = {}) {
     id: 17,
     name: "E2E / PR Gate",
     head_sha: HEAD_SHA,
-    external_id: prGateExternalId(42, HEAD_SHA),
+    external_id: prGateExternalId(42, HEAD_SHA, BASE_SHA),
     status: "in_progress",
     conclusion: null,
     app: { id: 15368 },
@@ -74,6 +75,25 @@ function mainWorkflowRefRoute(sha = WORKFLOW_SHA) {
       githubResponse({
         ref: "refs/heads/main",
         object: { type: "commit", sha },
+      }),
+  );
+}
+
+function compatibleMainComparisonRoute(
+  files: Array<{ filename: string; previous_filename?: string }>,
+  mainSha = ADVANCED_WORKFLOW_SHA,
+) {
+  return githubFetchRoute(
+    ({ url }) => url.includes(`/compare/${WORKFLOW_SHA}...${mainSha}`),
+    () =>
+      githubResponse({
+        status: "ahead",
+        ahead_by: 1,
+        behind_by: 0,
+        base_commit: { sha: WORKFLOW_SHA },
+        merge_base_commit: { sha: WORKFLOW_SHA },
+        head_commit: { sha: mainSha },
+        files,
       }),
   );
 }
@@ -125,6 +145,8 @@ function startCommand(workDir: string) {
     WORKFLOW_SHA,
     "--ci-conclusion",
     "success",
+    "--ci-display-title",
+    `CI PR #42 head ${HEAD_SHA} base ${BASE_SHA} gate true`,
     "--ci-run-attempt",
     String(CI_RUN_ATTEMPT),
     "--ci-run-id",
@@ -296,7 +318,7 @@ describe("PR E2E controller exception safety", () => {
     }
   });
 
-  it("records an authorized exact-SHA fork exception without claiming tests passed", async () => {
+  it("records an authorized exact-head/base fork exception after a compatible main advance", async () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     const requests: RecordedGitHubRequest[] = [];
@@ -325,7 +347,8 @@ describe("PR E2E controller exception safety", () => {
             conclusion: "failure",
             output: { title: "Maintainer fork exception required" },
           }),
-          mainWorkflowRefRoute(),
+          mainWorkflowRefRoute(ADVANCED_WORKFLOW_SHA),
+          compatibleMainComparisonRoute([{ filename: "docs/get-started/quickstart.mdx" }]),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
             () => githubResponse({}),
@@ -339,6 +362,7 @@ describe("PR E2E controller exception safety", () => {
       mode: "resolve-fork",
       prNumber: 42,
       headSha: HEAD_SHA,
+      baseSha: BASE_SHA,
       workflowSha: WORKFLOW_SHA,
       maintainer: "maintainer",
       reason: "The fork cannot safely receive credential-bearing test secrets.",
@@ -399,6 +423,7 @@ describe("PR E2E controller exception safety", () => {
       mode: "resolve-control-plane",
       prNumber: 42,
       headSha: HEAD_SHA,
+      baseSha: BASE_SHA,
       workflowSha: WORKFLOW_SHA,
       maintainer: "maintainer",
       reason: "The control-plane change received independent non-secret validation.",
@@ -445,6 +470,7 @@ describe("PR E2E controller exception safety", () => {
         mode: "resolve-control-plane",
         prNumber: 42,
         headSha: HEAD_SHA,
+        baseSha: BASE_SHA,
         workflowSha: WORKFLOW_SHA,
         maintainer: "contributor",
         reason: "A write-role collaborator tried to record an exception.",
@@ -489,6 +515,7 @@ describe("PR E2E controller exception safety", () => {
     const common = {
       prNumber: 42,
       headSha: HEAD_SHA,
+      baseSha: BASE_SHA,
       workflowSha: WORKFLOW_SHA,
       maintainer: "maintainer",
       reason: "The resolver operation must match the pull request origin.",
@@ -530,6 +557,7 @@ describe("PR E2E controller exception safety", () => {
         mode: "resolve-control-plane",
         prNumber: 42,
         headSha: HEAD_SHA,
+        baseSha: BASE_SHA,
         workflowSha: WORKFLOW_SHA,
         maintainer: "maintainer",
         reason: "The ordinary change does not qualify for this exception.",
@@ -572,6 +600,7 @@ describe("PR E2E controller exception safety", () => {
         mode: "resolve-control-plane",
         prNumber: 42,
         headSha: HEAD_SHA,
+        baseSha: BASE_SHA,
         workflowSha: WORKFLOW_SHA,
         maintainer: "maintainer",
         reason: "The failed gate must match the requested exception type.",
@@ -580,7 +609,7 @@ describe("PR E2E controller exception safety", () => {
     expect(requests.some((request) => request.method === "PATCH")).toBe(false);
   });
 
-  it("rejects a manual exception after main advances past the controller commit", async () => {
+  it("rejects a manual exception after main advances through the E2E control plane", async () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     const requests: RecordedGitHubRequest[] = [];
@@ -604,7 +633,8 @@ describe("PR E2E controller exception safety", () => {
             conclusion: "failure",
             output: { title: "Maintainer control-plane exception required" },
           }),
-          mainWorkflowRefRoute(BASE_SHA),
+          mainWorkflowRefRoute(ADVANCED_WORKFLOW_SHA),
+          compatibleMainComparisonRoute([{ filename: ".github/workflows/e2e.yaml" }]),
         ],
         requests,
       ),
@@ -615,11 +645,12 @@ describe("PR E2E controller exception safety", () => {
         mode: "resolve-control-plane",
         prNumber: 42,
         headSha: HEAD_SHA,
+        baseSha: BASE_SHA,
         workflowSha: WORKFLOW_SHA,
         maintainer: "maintainer",
-        reason: "The controller commit must still be the current main revision.",
+        reason: "The controller commit must not be followed by control-plane changes.",
       }),
-    ).rejects.toThrow(/main no longer points to workflow commit/u);
+    ).rejects.toThrow(/main advanced through trusted E2E control-plane changes/u);
     expect(requests.some((request) => request.method === "PATCH")).toBe(false);
   });
 
@@ -663,6 +694,7 @@ describe("PR E2E controller exception safety", () => {
         mode: "resolve-control-plane",
         prNumber: 42,
         headSha: HEAD_SHA,
+        baseSha: BASE_SHA,
         workflowSha: WORKFLOW_SHA,
         maintainer: "maintainer",
         reason: "The internal head changed while the review was being recorded.",
@@ -700,11 +732,106 @@ describe("PR E2E controller exception safety", () => {
         mode: "resolve-fork",
         prNumber: 42,
         headSha: HEAD_SHA,
+        baseSha: BASE_SHA,
         workflowSha: WORKFLOW_SHA,
         maintainer: "maintainer",
         reason: "The reviewed revision has since changed upstream.",
       }),
     ).rejects.toThrow(/no longer matches/u);
+    expect(requests.some((request) => request.method === "PATCH")).toBe(false);
+  });
+
+  it("rejects a fork exception after the pull request is retargeted", async () => {
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    const requests: RecordedGitHubRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url }) => url.endsWith("/collaborators/maintainer/permission"),
+            () => githubResponse({ role_name: "maintain", user: { login: "maintainer" } }),
+          ),
+          githubFetchRoute(
+            ({ url }) => url.endsWith("/pulls/42"),
+            () =>
+              githubResponse({
+                ...forkPullRequest(),
+                base: { ...forkPullRequest().base, sha: "f".repeat(40) },
+              }),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    await expect(
+      resolveForkGate({
+        mode: "resolve-fork",
+        prNumber: 42,
+        headSha: HEAD_SHA,
+        baseSha: BASE_SHA,
+        workflowSha: WORKFLOW_SHA,
+        maintainer: "maintainer",
+        reason: "The reviewed base revision has since changed upstream.",
+      }),
+    ).rejects.toThrow(/no longer matches the reviewed exact head and base SHAs/u);
+    expect(requests.some((request) => request.method === "PATCH")).toBe(false);
+  });
+
+  it("rejects a manual exception when the base changes immediately before completion", async () => {
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    const requests: RecordedGitHubRequest[] = [];
+    let pullReads = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url }) => url.endsWith("/collaborators/maintainer/permission"),
+            () => githubResponse({ role_name: "maintain", user: { login: "maintainer" } }),
+          ),
+          githubFetchRoute(
+            ({ url }) => url.endsWith("/pulls/42"),
+            () => {
+              pullReads += 1;
+              return githubResponse(
+                pullReads < 3
+                  ? pullRequest()
+                  : {
+                      ...pullRequest(),
+                      base: { ...pullRequest().base, sha: "f".repeat(40) },
+                    },
+              );
+            },
+          ),
+          githubFetchRoute(
+            ({ url }) => url.includes("/pulls/42/files?"),
+            () => githubResponse([{ filename: "tools/e2e/pr-e2e-gate.mts" }]),
+          ),
+          existingPrGateCheckRunsRoute({
+            status: "completed",
+            conclusion: "failure",
+            output: { title: "Maintainer control-plane exception required" },
+          }),
+          mainWorkflowRefRoute(),
+        ],
+        requests,
+      ),
+    );
+
+    await expect(
+      resolveControlPlaneGate({
+        mode: "resolve-control-plane",
+        prNumber: 42,
+        headSha: HEAD_SHA,
+        baseSha: BASE_SHA,
+        workflowSha: WORKFLOW_SHA,
+        maintainer: "maintainer",
+        reason: "The exact base must remain current until the exception is recorded.",
+      }),
+    ).rejects.toThrow(/expected exact head and base/u);
+    expect(pullReads).toBe(3);
     expect(requests.some((request) => request.method === "PATCH")).toBe(false);
   });
 });

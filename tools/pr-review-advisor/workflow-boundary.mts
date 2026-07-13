@@ -8,7 +8,15 @@ import YAML from "yaml";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "pr-review-advisor.yaml");
+const DEFAULT_PACKAGE_LOCK_PATH = join(REPO_ROOT, "package-lock.json");
 const TRUSTED_WORKFLOW_REF = "${{ github.workflow_sha }}";
+const CANONICAL_ADVISOR_NPM_CI = "npm ci --ignore-scripts --no-audit --no-fund";
+const ADVISOR_RUNTIME_PACKAGE_PINS = [
+  { packageName: "@earendil-works/pi-coding-agent", envName: "PI_SDK_VERSION", version: "0.80.6" },
+  { packageName: "typebox", envName: "TYPEBOX_VERSION", version: "1.1.38" },
+  { packageName: "yaml", envName: "YAML_VERSION", version: "2.8.3" },
+  { packageName: "vitest", envName: "VITEST_VERSION", version: "4.1.9" },
+] as const;
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
@@ -78,6 +86,19 @@ function requireRunContains(
   }
 }
 
+function requireRunLine(
+  errors: string[],
+  step: WorkflowStep | undefined,
+  expected: string,
+  message: string,
+): void {
+  if (!step) return;
+  const lines = stringValue(step.run)
+    .split(/\r?\n/u)
+    .map((line) => line.trim());
+  if (!lines.includes(expected)) errors.push(message);
+}
+
 function requireRunOrder(
   errors: string[],
   step: WorkflowStep | undefined,
@@ -120,6 +141,23 @@ function requireExactPermissions(
   for (const permission of Object.keys(actual)) {
     if (!Object.hasOwn(expected, permission)) {
       errors.push(`${jobName} job permissions.${permission} is not allowed`);
+    }
+  }
+}
+
+function checkAdvisorRuntimePackageLock(errors: string[], packageLockPath: string): void {
+  let lock: WorkflowRecord;
+  try {
+    lock = asRecord(JSON.parse(readFileSync(packageLockPath, "utf8")));
+  } catch {
+    errors.push(`failed to read or parse advisor package lock: ${packageLockPath}`);
+    return;
+  }
+  const packages = asRecord(lock.packages);
+  for (const { packageName, version } of ADVISOR_RUNTIME_PACKAGE_PINS) {
+    const actualVersion = asRecord(packages[`node_modules/${packageName}`]).version;
+    if (actualVersion !== version) {
+      errors.push(`advisor package lock must pin ${packageName}@${version}`);
     }
   }
 }
@@ -245,12 +283,11 @@ function checkAnalysisJob(errors: string[], reviewJob: WorkflowRecord): void {
     "PR_REVIEW_ADVISOR_MODEL",
     "${{ matrix.advisor.model }}",
   );
-  requireEnv(errors, "review job", reviewJob, "PI_SDK_VERSION", "0.80.6");
   requireEnv(errors, "review job", reviewJob, "FD_FIND_VERSION", "9.0.0-1");
   requireEnv(errors, "review job", reviewJob, "RIPGREP_VERSION", "14.1.0-1");
-  requireEnv(errors, "review job", reviewJob, "TYPEBOX_VERSION", "1.1.38");
-  requireEnv(errors, "review job", reviewJob, "VITEST_VERSION", "4.1.9");
-  requireEnv(errors, "review job", reviewJob, "YAML_VERSION", "2.8.3");
+  for (const { envName, version } of ADVISOR_RUNTIME_PACKAGE_PINS) {
+    requireEnv(errors, "review job", reviewJob, envName, version);
+  }
   requireEnv(
     errors,
     "review job",
@@ -365,11 +402,18 @@ done < <(find "$ADVISOR_WORKDIR" -type l -print0)`;
     install,
     '"$RG_BINARY_VERSION" != "ripgrep $EXPECTED_RG_BINARY_VERSION"',
   );
+  requireRunContains(errors, install, "npm ci");
+  requireRunContains(errors, install, 'cd "$ADVISOR_DIR"');
   requireRunContains(errors, install, "--ignore-scripts");
-  requireRunContains(errors, install, '"typebox@${TYPEBOX_VERSION}"');
-  requireRunContains(errors, install, '"vitest@${VITEST_VERSION}"');
-  requireRunContains(errors, install, '"yaml@${YAML_VERSION}"');
-  requireRunContains(errors, install, '"$ADVISOR_DIR/node_modules"');
+  requireRunContains(errors, install, "--no-audit");
+  requireRunContains(errors, install, "--no-fund");
+  requireRunLine(
+    errors,
+    install,
+    CANONICAL_ADVISOR_NPM_CI,
+    "step 'Install Pi SDK' must use the canonical lockfile-only npm ci command",
+  );
+  requireRunOrder(errors, install, 'cd "$ADVISOR_DIR"', CANONICAL_ADVISOR_NPM_CI);
 
   const analyze = requireStep(errors, steps, "Run PR review advisor");
   requireRunContains(errors, analyze, 'cd "$ADVISOR_WORKDIR"');
@@ -529,6 +573,7 @@ function checkPublishJob(errors: string[], publishJob: WorkflowRecord): void {
 
 export function validatePrReviewAdvisorWorkflowBoundary(
   workflowPath = DEFAULT_WORKFLOW_PATH,
+  packageLockPath = DEFAULT_PACKAGE_LOCK_PATH,
 ): string[] {
   const errors: string[] = [];
   let workflow: WorkflowRecord;
@@ -541,6 +586,7 @@ export function validatePrReviewAdvisorWorkflowBoundary(
   if (workflow.name !== "PR Review / Advisor") {
     errors.push("workflow name must remain PR Review / Advisor");
   }
+  checkAdvisorRuntimePackageLock(errors, packageLockPath);
   checkTargetTriggers(errors, workflow);
   const concurrencyGroup = stringValue(asRecord(workflow.concurrency).group);
   if (!concurrencyGroup.includes("github.event_name")) {
