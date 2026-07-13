@@ -1125,6 +1125,34 @@ Terminal agents do not have a gateway runtime and fail as unsupported.
 
 </AgentOnly>
 
+### `$$nemoclaw <name> stop`
+
+Stop the sandbox's Docker container while preserving all of its state.
+Workspace files, credentials, network policies, the registry entry, and the OpenShell sandbox record stay in place; only the container stops running.
+Use this to free CPU, memory, and GPU resources without destroying the sandbox; use [`$$nemoclaw <name> destroy`](#$$nemoclaw-name-destroy) when you want to delete it instead.
+
+```bash
+$$nemoclaw my-assistant stop
+```
+
+For OpenClaw-managed gateways, the command first asks the in-sandbox gateway to shut down its channels gracefully; agent-managed gateways (for example Hermes) are supervised inside the sandbox and shut down with the container's stop signal.
+Then the container stops; a container stuck in a crash loop is stopped the same way, which also disarms its restart policy.
+The shared host gateway, tunnel services, and any local NIM inference container serve other sandboxes and keep running.
+Stopping an already-stopped sandbox succeeds without changes.
+The command controls the local container directly, so it is available for local-container drivers (the default Docker driver and the vm driver) and unavailable for remote drivers such as kubernetes; if the Docker daemon itself is unreachable, the command reports the outage instead of guessing at container state.
+
+### `$$nemoclaw <name> start`
+
+Restart a sandbox container that was stopped with [`$$nemoclaw <name> stop`](#$$nemoclaw-name-stop) or by a host reboot, then repair the in-sandbox gateway and host-side forwards the same way [`$$nemoclaw <name> recover`](#$$nemoclaw-name-recover) does.
+
+```bash
+$$nemoclaw my-assistant start
+```
+
+Starting an already-running sandbox skips the container start and still runs the gateway and forward health checks.
+A paused container is unpaused.
+If the container was removed entirely, `start` fails and points you to `$$nemoclaw <name> rebuild`.
+
 ### `$$nemoclaw <name> status`
 
 Show sandbox-scoped status, health, and inference configuration for one registered sandbox.

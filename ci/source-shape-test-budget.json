@@ -392,6 +392,11 @@
       "category": "security"
     },
     {
+      "file": "test/release-lkg-brev-image.test.ts",
+      "test": "keeps LKG dispatch inside the trusted secret boundary (#6772)",
+      "category": "security"
+    },
+    {
       "file": "test/repro-4538-raw-doctor-perms.test.ts",
       "test": "emitted openclaw() guard restores the contract AND preserves a nonzero exit",
       "category": "security"

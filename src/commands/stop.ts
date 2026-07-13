@@ -17,7 +17,7 @@ export default class DeprecatedStopCommand extends NemoClawCommand {
   static state = "deprecated" as const;
   static deprecationOptions = {
     message:
-      "Deprecated: use 'nemoclaw tunnel stop' for tunnel-only shutdown. This legacy command also releases the managed host gateway port.",
+      "Deprecated: use 'nemoclaw tunnel stop' for tunnel-only shutdown. This legacy command also releases the managed host gateway port. To stop a sandbox container instead, use 'nemoclaw <name> stop'.",
   };
   static flags = {};
 
