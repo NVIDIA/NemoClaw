@@ -78,7 +78,7 @@ describe("PR review advisor turn trace", () => {
       .filter((result) => result.contentType === "json" && result.content.includes('"riskPlan"'))
       .reduce((total, result) => total + Buffer.byteLength(result.content, "utf8"), 0);
     const exactMetadata = turns
-      .at(-1)
+      .find((turn) => turn.name === "synthesize-json")
       ?.contextToolResults?.find(
         (result) => result.toolName === "pr_review_exact_metadata",
       )?.content;

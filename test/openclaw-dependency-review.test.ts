@@ -136,9 +136,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("downloaded tarball integrity");
     expect(review).toContain("npm pack --json");
     expect(review).toContain("install the verified archive path");
-    expect(review).toContain(
-      "reported filename must be contained inside the freshly created pack directory",
-    );
+    expect(review).toContain("contained regular-file basename in a fresh directory");
     expect(review).toContain("unsafe reported archive filenames");
     expect(review).toContain("no installer code consumes raw `npm pack --json` filenames");
     expect(review).toContain("The #4434 compatibility-shim disposition is explicitly accepted");
@@ -224,14 +222,14 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("Issue #4434 full live acceptance");
     expect(review).toContain("code-backed for the reviewed `openclaw@2026.6.10` artifact");
     expect(review).toContain("src/lib/messaging/channels/manifests.test.ts");
-    expect(review).toContain("npm audit result in this note is a manual snapshot");
+    expect(review).toContain("npm audit result in this note remains a point-in-time snapshot");
     expect(review).toContain("Advisory audit revalidated: 2026-07-03");
     expect(review).toContain("0` critical vulnerabilities across `763` total dependencies");
     expect(review).toContain("Node `v22.22.2`");
     expect(review).toContain("engine requirement of `>=22.19.0`");
-    expect(review).toContain(
-      "CI job for `npm install --package-lock-only --ignore-scripts && npm audit --omit=dev --json`",
-    );
+    expect(review).toContain("Default PR and main CI now rematerialize");
+    expect(review).toContain("`npm audit --omit=dev --json`");
+    expect(review).toContain("configured threshold in `ci/reviewed-npm-audit.json` is `high`");
     expect(review).toContain("Transitive Dependency Graph Rationale");
     expect(review).toContain(
       "The OpenClaw 2026.6.10 bump does not newly introduce an unfrozen OpenClaw transitive graph",
@@ -283,13 +281,13 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("issue #5896");
     expect(review).toContain("route-provenance additions remain with their");
     expect(review).toContain("`src/lib/state/sandbox.ts` is 100 lines smaller");
-    expect(review).toContain("shared archive-installer redesign remains explicitly deferred");
-    expect(review).toContain("Deferred #5896 Archive Consolidation Contract");
+    expect(review).toContain("Shared #5896 Archive and Audit Contract");
+    expect(review).toContain("`scripts/lib/reviewed-npm-archive.mts`");
     expect(review).toContain("protected exact provenance marker");
-    expect(review).toContain("mcporter package, SRI, lockfile SHA-256");
+    expect(review).toContain("mcporter package, SRI, tarball URL, lockfile SHA-256");
     expect(review).toContain("removes the marker before applying NemoClaw patches");
     expect(review).toContain("fifteen fallback states");
-    expect(review).toContain("issue #5896 section 2");
+    expect(review).toContain("Issue #5896 section 2");
     expect(review).toContain("issue #5896 section 9");
     expect(review).toContain("direct source- and target-traversal vectors");
     expect(review).toContain("Live gateway display output is treated as untrusted text");
@@ -303,7 +301,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("test/onboard-resume-provider-recovery.test.ts");
   });
 
-  it("keeps every reviewed archive boundary on the deferred invariant matrix (#5896)", () => {
+  it("keeps every reviewed archive boundary on the shared invariant matrix (#5896)", () => {
     const result = spawnSync(
       "bash",
       [
@@ -312,9 +310,10 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
 set -euo pipefail
 
 messaging_build_applier=${JSON.stringify(MESSAGING_BUILD_APPLIER)}
+reviewed_archive_helper=scripts/lib/reviewed-npm-archive.mts
 
 boundary_marker_count="$(grep -hF 'Reviewed-archive invariants (#5896):' Dockerfile Dockerfile.base "$messaging_build_applier" | wc -l | tr -d ' ')"
-test "$boundary_marker_count" -eq 5
+test "$boundary_marker_count" -eq 4
 
 check_contains() {
   haystack="$1"
@@ -326,16 +325,25 @@ check_contains() {
   esac
 }
 
+check_not_contains() {
+  haystack="$1"
+  needle="$2"
+  label="$3"
+  case "$haystack" in
+    *"$needle"*) echo "superseded $label remains: $needle" >&2; exit 1 ;;
+    *) ;;
+  esac
+}
+
 codex_acp_block="$(sed -n '/# Pre-install the codex-acp package/,/# Upgrade OpenClaw if the base image is stale./p' Dockerfile)"
 check_contains "$codex_acp_block" "CODEX_ACP_TARBALL='${CODEX_ACP_TARBALL}'" "codex-acp tarball"
-check_contains "$codex_acp_block" 'npm view "\${CODEX_ACP_SPEC}" dist.integrity' "codex-acp registry integrity"
-check_contains "$codex_acp_block" 'npm view "\${CODEX_ACP_SPEC}" dist.tarball' "codex-acp registry tarball"
-check_contains "$codex_acp_block" 'npm pack "$pack_spec" --pack-destination "$pack_dir" --json' "codex-acp pack"
-check_contains "$codex_acp_block" 'CODEX_ACP_PACK_PATH="$(pack_reviewed_npm_tarball "$CODEX_ACP_TARBALL" "$CODEX_ACP_0_11_1_INTEGRITY" "$CODEX_ACP_PACK_DIR" "$CODEX_ACP_SPEC")"' "codex-acp pack path"
+check_contains "$codex_acp_block" '/scripts/lib/reviewed-npm-archive.mts' "codex-acp shared helper"
+check_contains "$codex_acp_block" '--package-spec "$CODEX_ACP_SPEC" --integrity "$CODEX_ACP_0_11_1_INTEGRITY"' "codex-acp reviewed identity"
+check_contains "$codex_acp_block" '--tarball-url "$CODEX_ACP_TARBALL"' "codex-acp reviewed tarball"
 check_contains "$codex_acp_block" '"$CODEX_ACP_PACK_PATH"' "codex-acp local install path"
-check_contains "$codex_acp_block" 'reported unsafe archive filename' "codex-acp unsafe filename guard"
-check_contains "$codex_acp_block" 'CODEX_ACP_PACK_DIR="$(mktemp -d)"' "codex-acp fresh pack directory"
+check_contains "$codex_acp_block" 'CODEX_ACP_PACK_DIR="$(dirname "$CODEX_ACP_PACK_PATH")"' "codex-acp pack directory"
 check_contains "$codex_acp_block" 'rm -rf "$CODEX_ACP_PACK_DIR"' "codex-acp cleanup"
+check_not_contains "$codex_acp_block" 'pack_reviewed_npm_tarball' "codex-acp inline pack helper"
 
 for dockerfile in Dockerfile Dockerfile.base; do
   case "$dockerfile" in
@@ -344,13 +352,17 @@ for dockerfile in Dockerfile Dockerfile.base; do
   esac
   openclaw_block="$(sed -n "/ARG OPENCLAW_VERSION=2026.6.10/,/$end_marker/p" "$dockerfile")"
   check_contains "$openclaw_block" "ARG OPENCLAW_2026_6_10_TARBALL=${OPENCLAW_TARBALL}" "$dockerfile tarball arg"
-  check_contains "$openclaw_block" 'npm view "openclaw@\${OPENCLAW_VERSION}" dist.integrity' "$dockerfile registry integrity"
-  check_contains "$openclaw_block" 'npm view "openclaw@\${OPENCLAW_VERSION}" dist.tarball' "$dockerfile registry tarball"
-  check_contains "$openclaw_block" 'OPENCLAW_PACK_PATH="$(pack_reviewed_npm_tarball "$EXPECTED_TARBALL" "$EXPECTED_INTEGRITY" "$OPENCLAW_PACK_DIR"' "$dockerfile pack path"
+  check_contains "$openclaw_block" '/scripts/lib/reviewed-npm-archive.mts' "$dockerfile shared helper"
+  check_contains "$openclaw_block" '--package-spec "openclaw@\${OPENCLAW_VERSION}" --integrity "$EXPECTED_INTEGRITY"' "$dockerfile reviewed identity"
+  check_contains "$openclaw_block" '--tarball-url "$EXPECTED_TARBALL"' "$dockerfile reviewed tarball"
   check_contains "$openclaw_block" '"$OPENCLAW_PACK_PATH"' "$dockerfile local install path"
-  check_contains "$openclaw_block" 'reported unsafe archive filename' "$dockerfile unsafe filename guard"
-  check_contains "$openclaw_block" 'OPENCLAW_PACK_DIR="$(mktemp -d)"' "$dockerfile fresh pack directory"
+  check_contains "$openclaw_block" 'OPENCLAW_PACK_DIR="$(dirname "$OPENCLAW_PACK_PATH")"' "$dockerfile pack directory"
+  if [ "$dockerfile" = Dockerfile.base ]; then
+    check_contains "$openclaw_block" '[ ! -f "$OPENCLAW_PACK_PATH" ]' "$dockerfile archive path guard"
+  fi
   check_contains "$openclaw_block" 'rm -rf "$OPENCLAW_PACK_DIR"' "$dockerfile cleanup"
+  check_not_contains "$openclaw_block" 'REGISTRY_INTEGRITY=$(npm view' "$dockerfile inline integrity lookup"
+  check_not_contains "$openclaw_block" 'pack_reviewed_npm_tarball' "$dockerfile inline pack helper"
   check_contains "$openclaw_block" 'openclaw-base-provenance-v1' "$dockerfile base provenance path"
   check_contains "$openclaw_block" 'recipe=ignore-scripts+reviewed-lifecycle-v1' "$dockerfile base provenance recipe"
   check_contains "$openclaw_block" 'mcporter-package=mcporter@' "$dockerfile mcporter provenance package"
@@ -365,22 +377,24 @@ check_contains "$(cat Dockerfile)" '0:0:444' "runtime provenance exact metadata"
 check_contains "$(cat Dockerfile)" 'rm -rf "$OPENCLAW_PROVENANCE_PATH"' "runtime provenance consumption"
 
 optional_plugin_block="$(sed -n '/# Install non-messaging OpenClaw plugins that need to match the runtime./,/^RUN OPENCLAW_VERSION=/p' Dockerfile)"
-check_contains "$optional_plugin_block" 'npm view "$plugin_spec" dist.integrity' "optional plugin registry integrity"
-check_contains "$optional_plugin_block" 'npm view "$plugin_spec" dist.tarball' "optional plugin registry tarball"
-check_contains "$optional_plugin_block" 'npm pack "$expected_tarball" --pack-destination "$NEMOCLAW_OPENCLAW_PLUGIN_PACK_DIR" --json' "optional plugin pack"
+check_contains "$optional_plugin_block" '/scripts/lib/reviewed-npm-archive.mts' "optional plugin shared helper"
+check_contains "$optional_plugin_block" '--package-spec "$plugin_spec" --integrity "$expected_integrity"' "optional plugin reviewed identity"
+check_contains "$optional_plugin_block" '--tarball-url "$expected_tarball"' "optional plugin reviewed tarball"
 check_contains "$optional_plugin_block" 'openclaw plugins install "npm-pack:\${plugin_archive}"' "optional plugin npm-pack install"
-check_contains "$optional_plugin_block" 'reported unsafe archive filename' "optional plugin unsafe filename guard"
-check_contains "$optional_plugin_block" 'NEMOCLAW_OPENCLAW_PLUGIN_PACK_DIR="$(mktemp -d)"' "optional plugin fresh pack directory"
-check_contains "$optional_plugin_block" 'rm -rf "$NEMOCLAW_OPENCLAW_PLUGIN_PACK_DIR"' "optional plugin cleanup"
+check_contains "$optional_plugin_block" 'rm -rf "$(dirname "$plugin_archive")"' "optional plugin cleanup"
+check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optional plugin inline pack helper"
 
-	grep -Fq 'spawnSync("npm", ["pack", packageSpec, "--pack-destination", rootDir, "--json"]' "$messaging_build_applier"
+	grep -Fq 'packReviewedNpmArchive({' "$messaging_build_applier"
 	grep -Fq '["openclaw", "plugins", "install", \`npm-pack:\${packed.archivePath}\`]' "$messaging_build_applier"
-	grep -Fq 'OPENCLAW_MESSAGING_PLUGIN_ARCHIVE_PROVENANCE_POLICY.registryIntegrityField' "$messaging_build_applier"
-	grep -Fq 'downloaded tarball integrity mismatch' "$messaging_build_applier"
-	grep -Fq 'mkdtempSync(join(tmpdir(), "nemoclaw-openclaw-plugin-pack-"))' "$messaging_build_applier"
-	grep -Fq 'rmSync(rootDir, { recursive: true, force: true })' "$messaging_build_applier"
-	grep -Fq 'resolveNpmPackArchivePath(packageSpec, rootDir, filename)' "$messaging_build_applier"
-	grep -Fq 'reported unsafe archive filename' "$messaging_build_applier"
+	grep -Fq 'rmSync(packed.rootDir, { recursive: true, force: true })' "$messaging_build_applier"
+	grep -Fq 'from "../../../../../scripts/lib/reviewed-npm-archive.mts"' "$messaging_build_applier"
+	grep -Fq 'spawnSync(request.npmExecutable ?? "npm", args' "$reviewed_archive_helper"
+	grep -Fq '["view", request.packageSpec, "dist.integrity"]' "$reviewed_archive_helper"
+	grep -Fq '["view", request.packageSpec, "dist.tarball"]' "$reviewed_archive_helper"
+	grep -Fq '["pack", request.tarballUrl, "--pack-destination", rootDirectory, "--json"]' "$reviewed_archive_helper"
+	grep -Fq 'reported unsafe archive filename' "$reviewed_archive_helper"
+	! grep -Fq 'npmViewString(' "$messaging_build_applier"
+	! grep -Fq 'resolveNpmPackArchivePath(' "$messaging_build_applier"
 	issue_4434_patch=${JSON.stringify(ISSUE_4434_PATCH)}
 	grep -Fq 'formatRawAssistantErrorForUi' "$issue_4434_patch"
 	grep -Fq 'OPENSHELL_SANDBOX !== "1"' "$issue_4434_patch"

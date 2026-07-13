@@ -20,9 +20,9 @@ reviews:
     enabled: true
     drafts: false
 
-  # E2E recommendations intentionally do not live here. The E2E Advisor derives
-  # them from each PR diff and the current workflows instead of a duplicated,
-  # manually synchronized path-to-job catalog.
+  # E2E recommendations intentionally do not live here. The unified PR Review
+  # Advisor derives them from each PR diff and the current workflows instead of
+  # a duplicated, manually synchronized path-to-job catalog.
   path_instructions:
     - path: "docs/**"
       instructions: &fern-doc-links |
@@ -238,7 +238,7 @@ reviews:
         - Do not duplicate GitHub issue tracking, CI status, or another advisor's
           responsibility.
 
-    - path: "tools/{pr-review-advisor,e2e-advisor}/**"
+    - path: "tools/{advisors,pr-review-advisor}/**"
       instructions: *guardrail
 
 knowledge_base:

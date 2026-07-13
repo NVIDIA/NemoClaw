@@ -394,13 +394,67 @@ jobs:
 
           node <<'NODE'
           const TEST_FILE_RE = /^(test|src|nemoclaw\/src)\/.*\.(test|spec)\.(?:[cm]?[jt]s)$/;
+          const GRAPHQL_URL = "https://api.github.com/graphql";
+          const GRAPHQL_BATCH_SIZE = 25;
+          const RETRY_ATTEMPTS = 4;
+          const RETRY_BASE_MS = 250;
+          const RETRY_MAX_MS = 4000;
           const { BASE_SHA, GH_TOKEN, HEAD_REPO, HEAD_SHA, PR_NUMBER, REPO } = process.env;
           const headers = { Authorization: `Bearer ${GH_TOKEN}`, "X-GitHub-Api-Version": "2022-11-28" };
 
-          async function getJson(url) {
-            const response = await fetch(url, { headers });
+          async function withRetry(label, fn) {
+            let lastError;
+            for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt += 1) {
+              try {
+                return await fn();
+              } catch (error) {
+                lastError = error;
+                const retriable = error && (error.transient === true || /HTTP (408|425|429|5\d{2})/.test(String(error.message ?? "")));
+                if (!retriable || attempt === RETRY_ATTEMPTS) throw error;
+                const jitter = Math.random() * RETRY_BASE_MS;
+                const delay = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** (attempt - 1)) + jitter;
+                console.error(`retry: ${label} attempt ${attempt} failed (${error.message}); sleeping ${Math.round(delay)}ms`);
+                await new Promise((resolve) => setTimeout(resolve, delay));
+              }
+            }
+            throw lastError;
+          }
+
+          async function requestJson(url, init) {
+            let response;
+            try {
+              response = await fetch(url, init);
+            } catch (error) {
+              const wrapped = new Error(`${url}: network error ${error?.message ?? error}`);
+              wrapped.transient = true;
+              throw wrapped;
+            }
             if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
             return response.json();
+          }
+
+          async function getJson(url) {
+            return withRetry(url, () => requestJson(url, { headers }));
+          }
+
+          async function graphql(query, variables) {
+            const body = JSON.stringify({ query, variables });
+            const label = `graphql ${variables.owner}/${variables.name}@${variables.oid}`;
+            return withRetry(label, async () => {
+              const payload = await requestJson(GRAPHQL_URL, {
+                method: "POST",
+                headers: { ...headers, "Content-Type": "application/json" },
+                body,
+              });
+              if (Array.isArray(payload.errors) && payload.errors.length > 0) {
+                const messages = payload.errors.map((entry) => entry.message).join("; ");
+                const transient = payload.errors.some((entry) => entry.type === "RATE_LIMITED" || /timed? *out|unavailable|internal/i.test(entry.message ?? ""));
+                const error = new Error(`${label}: GraphQL errors: ${messages}`);
+                if (transient) error.transient = true;
+                throw error;
+              }
+              return payload.data;
+            });
           }
 
           async function getPullFiles() {
@@ -412,18 +466,67 @@ jobs:
             }
           }
 
-          async function getContent(repo, ref, file) {
+          async function getContentViaRest(repo, ref, file) {
             if (!file) return null;
             const encodedPath = file.split("/").map(encodeURIComponent).join("/");
             const url = `https://api.github.com/repos/${repo}/contents/${encodedPath}?ref=${encodeURIComponent(ref)}`;
-            const response = await fetch(url, { headers });
-            if (response.status === 404) return null;
-            if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
-            const body = await response.json();
-            if (body.type !== "file" || body.encoding !== "base64" || typeof body.content !== "string") {
-              throw new Error(`Could not decode file contents for ${file}`);
+            return withRetry(url, async () => {
+              let response;
+              try {
+                response = await fetch(url, { headers });
+              } catch (error) {
+                const wrapped = new Error(`${url}: network error ${error?.message ?? error}`);
+                wrapped.transient = true;
+                throw wrapped;
+              }
+              if (response.status === 404) return null;
+              if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
+              const body = await response.json();
+              if (body.type !== "file" || body.encoding !== "base64" || typeof body.content !== "string") {
+                throw new Error(`Could not decode file contents for ${file}`);
+              }
+              return Buffer.from(body.content.replace(/\s/g, ""), "base64").toString("utf8");
+            });
+          }
+
+          function splitRepoName(fullName) {
+            const [owner, name] = fullName.split("/");
+            if (!owner || !name) throw new Error(`Unexpected repository full name: ${fullName}`);
+            return { owner, name };
+          }
+
+          function buildBlobQuery(paths) {
+            const aliases = paths.map((_, index) => `      f${index}: object(expression: $e${index}) { __typename ... on Blob { text isBinary isTruncated byteSize } }`).join("\n");
+            const params = paths.map((_, index) => `$e${index}: String!`).join(", ");
+            return `query($owner: String!, $name: String!, ${params}) {\n  repository(owner: $owner, name: $name) {\n${aliases}\n  }\n}`;
+          }
+
+          async function fetchBlobs(repoFullName, oid, paths) {
+            const results = new Map();
+            if (paths.length === 0) return results;
+            const { owner, name } = splitRepoName(repoFullName);
+            const rest = [];
+            for (let start = 0; start < paths.length; start += GRAPHQL_BATCH_SIZE) {
+              const chunk = paths.slice(start, start + GRAPHQL_BATCH_SIZE);
+              const query = buildBlobQuery(chunk);
+              const variables = { owner, name, oid };
+              chunk.forEach((path, index) => { variables[`e${index}`] = `${oid}:${path}`; });
+              const data = await graphql(query, variables);
+              const repository = data?.repository;
+              if (!repository) throw new Error(`GraphQL repository not found: ${repoFullName}`);
+              chunk.forEach((path, index) => {
+                const node = repository[`f${index}`];
+                if (!node) { results.set(path, null); return; }
+                if (node.__typename !== "Blob") { results.set(path, null); return; }
+                if (node.isBinary) throw new Error(`${path} is binary; refusing to count if statements`);
+                if (node.text === null || node.isTruncated) { rest.push(path); return; }
+                results.set(path, node.text);
+              });
             }
-            return Buffer.from(body.content.replace(/\s/g, ""), "base64").toString("utf8");
+            for (const path of rest) {
+              results.set(path, await getContentViaRest(repoFullName, oid, path));
+            }
+            return results;
           }
 
           function assertRepositoryName(repo, label) {
@@ -596,8 +699,7 @@ jobs:
             return stripTriviaAndLiterals(text).match(/\bif\s*\(/g)?.length ?? 0;
           }
 
-          async function countAt(repo, ref, file) {
-            const text = await getContent(repo, ref, file);
+          function countText(text) {
             return text === null ? 0 : countIfStatements(text);
           }
 
@@ -609,6 +711,17 @@ jobs:
             assertRepositoryName(REPO, "REPO");
             assertRepositoryName(HEAD_REPO, "HEAD_REPO");
 
+            const basePaths = [...new Set(changedTests.map((file) => (
+              TEST_FILE_RE.test(file.previous_filename ?? "") ? file.previous_filename : file.filename
+            )))];
+            const headPaths = [...new Set(changedTests
+              .filter((file) => file.status !== "removed" && TEST_FILE_RE.test(file.filename))
+              .map((file) => file.filename))];
+            const [baseBlobs, headBlobs] = await Promise.all([
+              fetchBlobs(REPO, BASE_SHA, basePaths),
+              fetchBlobs(HEAD_REPO, HEAD_SHA, headPaths),
+            ]);
+
             const details = [];
             let baseTotal = 0;
             let headTotal = 0;
@@ -616,8 +729,8 @@ jobs:
             for (const file of changedTests) {
               const basePath = TEST_FILE_RE.test(file.previous_filename ?? "") ? file.previous_filename : file.filename;
               const headPath = file.status === "removed" || !TEST_FILE_RE.test(file.filename) ? null : file.filename;
-              const baseCount = await countAt(REPO, BASE_SHA, basePath);
-              const headCount = await countAt(HEAD_REPO, HEAD_SHA, headPath);
+              const baseCount = countText(baseBlobs.get(basePath) ?? null);
+              const headCount = countText(headPath === null ? null : (headBlobs.get(headPath) ?? null));
               baseTotal += baseCount;
               headTotal += headCount;
               if (headCount > baseCount) {

@@ -16,6 +16,12 @@ function readWorkflows() {
 }
 
 describe("sandbox image workflow boundary", () => {
+  it("accepts the production-image handoff and focused metadata probe", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual([]);
+  });
+
   it("rejects auth ordering drift, incomplete cleanup, and registry writes", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
     const hermes = imageWorkflow.jobs["build-hermes-sandbox-image"];
@@ -111,6 +117,47 @@ describe("sandbox image workflow boundary", () => {
 
       expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(error);
     }
+  });
+
+  it("keeps messaging plan image probes isolated, guarded, local, and verified", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const probe = imageWorkflow.jobs["messaging-plan-image-boundary"];
+    probe["timeout-minutes"] = 60;
+    probe.needs = "build-sandbox-images";
+    probe.steps!.find((step) => step.name === "Set up Node")!.with!["node-version"] = "22";
+    probe.steps!.push({ ...probe.steps!.find((step) => step.name === "Set up Node")! });
+    probe.steps!.push({
+      name: "Publish probe image",
+      uses: "actions/upload-artifact@0000000000000000000000000000000000000000",
+    });
+
+    const openclaw = probe.steps!.find(
+      (step) => step.name === "Build and verify OpenClaw messaging plan boundary",
+    )!;
+    openclaw.run = openclaw.run!.replace(
+      'scripts/check-production-build-args.sh "${build_args[@]}"',
+      'echo "guard bypassed"',
+    );
+
+    const hermes = probe.steps!.find(
+      (step) => step.name === "Build and verify Hermes messaging plan boundary",
+    )!;
+    hermes.run = hermes.run!.replace(
+      "check-messaging-plan-image-boundary.mts verify",
+      "check-messaging-plan-image-boundary.mts bypass",
+    );
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
+      expect.arrayContaining([
+        "messaging plan image boundary must retain its 30-minute budget",
+        "messaging plan image boundary must remain isolated from canonical image jobs",
+        "messaging plan image boundary must set up Node exactly once",
+        "messaging plan image boundary must use Node 22.19.0",
+        'openclaw messaging plan image boundary must include scripts/check-production-build-args.sh "${build_args[@]}"',
+        "hermes messaging plan image boundary must include node --experimental-strip-types scripts/check-messaging-plan-image-boundary.mts verify nemoclaw-hermes-plan-boundary hermes",
+        "messaging plan image boundary must not publish probe image artifacts",
+      ]),
+    );
   });
 
   it("rejects coupling, rebuilding, or failing to reuse the OpenClaw image artifact", () => {
@@ -221,6 +268,65 @@ describe("sandbox image workflow boundary", () => {
         "Hermes secret boundary must retain its 60-minute probe budget",
         "Hermes root entrypoint must run after either secret-boundary outcome",
         "Hermes root entrypoint must retain its 45-minute probe budget",
+      ]),
+    );
+  });
+
+  it("rejects rebuilding, incomplete handoff, or weak metadata-probe tooling", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const hermes = imageWorkflow.jobs["build-hermes-sandbox-image"];
+    const hermesSave = hermes.steps!.find((step) => step.name === "Save Hermes production image")!;
+    hermesSave.run = "echo skipped";
+    const hermesUpload = hermes.steps!.find(
+      (step) => step.name === "Upload Hermes isolation image",
+    )!;
+    hermesUpload.with!.name = "wrong-image";
+
+    const metadata = imageWorkflow.jobs["state-dir-guard-metadata"];
+    metadata.needs = ["build-sandbox-images"];
+    metadata["timeout-minutes"] = 15;
+    metadata.env!.NEMOCLAW_HERMES_TEST_IMAGE = "rebuilt-hermes";
+    metadata.steps!.push({
+      ...imageWorkflow.jobs["build-sandbox-images"].steps!.find(
+        (step) => step.name === "Authenticate to Docker Hub",
+      )!,
+    });
+    const openclawDownload = metadata.steps!.find(
+      (step) => step.name === "Download OpenClaw production image",
+    )!;
+    openclawDownload.with!.name = "wrong-image";
+    const load = metadata.steps!.find((step) => step.name === "Load production images")!;
+    load.run = "echo skipped";
+    const tools = metadata.steps!.find(
+      (step) => step.name === "Install filesystem metadata tools",
+    )!;
+    tools.run = "sudo apt-get install acl";
+    const probe = metadata.steps!.find(
+      (step) => step.name === "Run installed state-dir guard metadata test",
+    )!;
+    probe["timeout-minutes"] = 5;
+    probe.run = `${probe.run}\ndocker build -t rebuilt-hermes .`;
+    hermes.steps!.push({ ...probe });
+    const upload = metadata.steps!.find(
+      (step) => step.name === "Upload state-dir guard metadata artifacts",
+    )!;
+    delete upload.if;
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
+      expect.arrayContaining([
+        "Hermes producer must save and verify its production image exactly once",
+        "Hermes producer must upload the saved production image before auth cleanup",
+        "state-dir guard metadata must depend on both production image producers",
+        "state-dir guard metadata job must retain its 30-minute budget",
+        "state-dir guard metadata must consume both named prebuilt production images",
+        "state-dir guard metadata must not authenticate to Docker Hub",
+        "state-dir guard metadata must not rebuild either production image",
+        "build-hermes-sandbox-image must not run the failure-isolated state-dir guard probe",
+        "state-dir guard metadata must download the saved OpenClaw production image",
+        "state-dir guard metadata image load must include /tmp/isolation-image.tar.gz | docker load",
+        "state-dir guard metadata tool setup must include sudo apt-get install --yes --no-install-recommends acl attr",
+        "state-dir guard metadata probe must retain its 15-minute budget",
+        "state-dir guard metadata must always use the shared E2E artifact uploader",
       ]),
     );
   });

@@ -3,18 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { homedir, tmpdir } from "node:os";
-import { dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
+import { packReviewedNpmArchive } from "../../../../../scripts/lib/reviewed-npm-archive.mts";
 import { discordManifest } from "../../channels/discord/manifest.ts";
 import { slackManifest } from "../../channels/slack/manifest.ts";
 import { teamsManifest } from "../../channels/teams/manifest.ts";
@@ -137,8 +130,6 @@ export const OPENCLAW_MESSAGING_PLUGIN_ARCHIVE_PROVENANCE_POLICY = Object.freeze
   registryTarballField: "dist.tarball",
   registryTarballUrl: "must-match-committed-url",
 } as const);
-
-const NPM_METADATA_MAX_BUFFER = 16 * 1024 * 1024;
 
 type HermesUvPackageInstall = {
   readonly spec: string;
@@ -1162,110 +1153,6 @@ function runCommand(args: readonly string[], env: Env): void {
   }
 }
 
-function npmViewString(packageSpec: string, field: string, env: Env): string {
-  const result = spawnSync("npm", ["view", packageSpec, field], {
-    encoding: "utf-8",
-    env: env as NodeJS.ProcessEnv,
-    maxBuffer: NPM_METADATA_MAX_BUFFER,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    const detail = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
-    throw new MessagingBuildApplierError(
-      `npm view ${packageSpec} ${field} failed${detail ? `: ${detail}` : ""}`,
-    );
-  }
-  return String(result.stdout ?? "").trim();
-}
-
-function resolveNpmPackArchivePath(packageSpec: string, rootDir: string, filename: string): string {
-  const filenameSegments = filename.split(/[\\/]+/);
-  if (
-    !filename ||
-    isAbsolute(filename) ||
-    filename === "." ||
-    filename === ".." ||
-    filename.includes("/") ||
-    filename.includes("\\") ||
-    filenameSegments.includes("..") ||
-    filenameSegments.includes("")
-  ) {
-    throw new MessagingBuildApplierError(
-      `npm pack ${packageSpec} reported unsafe archive filename: ${filename}`,
-    );
-  }
-
-  const root = resolve(rootDir);
-  const archivePath = resolve(root, filename);
-  if (!archivePath.startsWith(root + sep)) {
-    throw new MessagingBuildApplierError(
-      `npm pack ${packageSpec} reported archive path outside pack directory: ${filename}`,
-    );
-  }
-  return archivePath;
-}
-
-// Reviewed-archive invariants (#5896): registry SRI at the caller, packed-byte
-// SRI, a contained basename in a fresh directory, local-archive-only install,
-// and cleanup. This Node primitive is shared by all messaging plugin installs.
-function packNpmArchive(
-  packageSpec: string,
-  expectedIntegrity: string,
-  env: Env,
-): { readonly archivePath: string; readonly rootDir: string } {
-  const rootDir = mkdtempSync(join(tmpdir(), "nemoclaw-openclaw-plugin-pack-"));
-  const result = spawnSync("npm", ["pack", packageSpec, "--pack-destination", rootDir, "--json"], {
-    encoding: "utf-8",
-    env: env as NodeJS.ProcessEnv,
-    maxBuffer: NPM_METADATA_MAX_BUFFER,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (result.error) {
-    rmSync(rootDir, { recursive: true, force: true });
-    throw result.error;
-  }
-  if (result.status !== 0) {
-    const detail = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
-    rmSync(rootDir, { recursive: true, force: true });
-    throw new MessagingBuildApplierError(
-      `npm pack ${packageSpec} failed${detail ? `: ${detail}` : ""}`,
-    );
-  }
-
-  let packed: unknown;
-  try {
-    packed = JSON.parse(String(result.stdout ?? ""));
-  } catch (error) {
-    rmSync(rootDir, { recursive: true, force: true });
-    throw new MessagingBuildApplierError(
-      `npm pack ${packageSpec} did not return JSON: ${String(error)}`,
-    );
-  }
-  const [entry] = Array.isArray(packed) ? packed : [];
-  const filename = isObject(entry) && typeof entry.filename === "string" ? entry.filename : "";
-  const actualIntegrity =
-    isObject(entry) && typeof entry.integrity === "string" ? entry.integrity : "";
-  if (!filename || !actualIntegrity) {
-    rmSync(rootDir, { recursive: true, force: true });
-    throw new MessagingBuildApplierError(
-      `npm pack ${packageSpec} did not report filename and integrity`,
-    );
-  }
-  if (actualIntegrity !== expectedIntegrity) {
-    rmSync(rootDir, { recursive: true, force: true });
-    throw new MessagingBuildApplierError(
-      `OpenClaw plugin ${packageSpec} downloaded tarball integrity mismatch. Expected: ${expectedIntegrity}. Actual: ${actualIntegrity}`,
-    );
-  }
-  try {
-    return { archivePath: resolveNpmPackArchivePath(packageSpec, rootDir, filename), rootDir };
-  } catch (error) {
-    rmSync(rootDir, { recursive: true, force: true });
-    throw error;
-  }
-}
-
 function packVerifiedOpenClawPluginArchive(
   install: OpenClawPluginInstall,
   env: Env,
@@ -1285,27 +1172,14 @@ function packVerifiedOpenClawPluginArchive(
       `OpenClaw plugin ${install.npmPackageSpec} has no committed npm tarball URL`,
     );
   }
-  const actual = npmViewString(
-    install.npmPackageSpec,
-    OPENCLAW_MESSAGING_PLUGIN_ARCHIVE_PROVENANCE_POLICY.registryIntegrityField,
-    env,
-  );
-  if (actual !== install.integrity) {
-    throw new MessagingBuildApplierError(
-      `OpenClaw plugin ${install.npmPackageSpec} npm integrity mismatch. Expected: ${install.integrity}. Actual: ${actual}`,
-    );
-  }
-  const actualTarballUrl = npmViewString(
-    install.npmPackageSpec,
-    OPENCLAW_MESSAGING_PLUGIN_ARCHIVE_PROVENANCE_POLICY.registryTarballField,
-    env,
-  );
-  if (actualTarballUrl !== install.tarballUrl) {
-    throw new MessagingBuildApplierError(
-      `OpenClaw plugin ${install.npmPackageSpec} npm tarball URL mismatch. Expected: ${install.tarballUrl}. Actual: ${actualTarballUrl}`,
-    );
-  }
-  return packNpmArchive(install.npmPackageSpec, install.integrity, env);
+  const archive = packReviewedNpmArchive({
+    env: env as NodeJS.ProcessEnv,
+    expectedIntegrity: install.integrity,
+    label: `OpenClaw plugin ${install.npmPackageSpec}`,
+    packageSpec: install.npmPackageSpec,
+    tarballUrl: install.tarballUrl,
+  });
+  return { archivePath: archive.archivePath, rootDir: archive.rootDirectory };
 }
 
 type CredentialPlaceholderRule = {

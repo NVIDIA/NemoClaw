@@ -115,6 +115,7 @@ For each relevant commit, determine which doc page(s) it affects. Use this mappi
 If a commit does not map to any existing page but introduces a user-visible concept, flag it as needing a new page.
 If a commit already changes files under `docs/`, include those pages in the target page list and run a docs review or edit pass against them using the style guidance in Step 5.
 Do not assume an existing doc change is complete, correctly placed, or style-compliant just because it landed with the source commit.
+If the target section has become too large or needs information-architecture changes, flag the structural work for a maintainer and use `nemoclaw-maintainer-refactor-docs` instead of improvising a structural rewrite during release catch-up.
 
 ## Step 3: Read the Commit Details
 

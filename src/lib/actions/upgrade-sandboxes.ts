@@ -210,7 +210,9 @@ export async function upgradeSandboxes(
   const checkOnly = normalized.check === true;
   const skipConfirm = shouldSkipUpgradeConfirmation(normalized);
 
-  const sandboxes = registry.listSandboxes().sandboxes;
+  const sandboxes = registry
+    .listSandboxes()
+    .sandboxes.filter((sandbox) => !registry.isRouteOnlySandboxReservation(sandbox));
   if (sandboxes.length === 0) {
     console.log("  No sandboxes found in the registry.");
     return;
