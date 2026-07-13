@@ -192,6 +192,20 @@ jobs:
         shell: bash
         run: CI=true npx vitest run --project installer-integration
 
+  reviewed-npm-audit:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Audit reviewed production npm graphs
+        uses: ./.github/actions/ci-reviewed-npm-audit
+
   cli-test-shards:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -366,6 +380,7 @@ jobs:
       - static-checks
       - build-typecheck
       - installer-integration
+      - reviewed-npm-audit
       - cli-tests
       - plugin-tests
       - e2e-support
@@ -382,6 +397,7 @@ jobs:
           STATIC_RESULT: ${{ needs['static-checks'].result }}
           BUILD_TYPECHECK_RESULT: ${{ needs['build-typecheck'].result }}
           INSTALLER_INTEGRATION_RESULT: ${{ needs['installer-integration'].result }}
+          REVIEWED_NPM_AUDIT_RESULT: ${{ needs['reviewed-npm-audit'].result }}
           CLI_TESTS_RESULT: ${{ needs['cli-tests'].result }}
           PLUGIN_TESTS_RESULT: ${{ needs['plugin-tests'].result }}
           E2E_SUPPORT_RESULT: ${{ needs['e2e-support'].result }}
@@ -417,6 +433,7 @@ jobs:
             require_success "static-checks" "$STATIC_RESULT"
             require_success "build-typecheck" "$BUILD_TYPECHECK_RESULT"
             require_success "installer-integration" "$INSTALLER_INTEGRATION_RESULT"
+            require_success "reviewed-npm-audit" "$REVIEWED_NPM_AUDIT_RESULT"
             require_success "cli-tests" "$CLI_TESTS_RESULT"
             require_success "plugin-tests" "$PLUGIN_TESTS_RESULT"
             require_success "e2e-support" "$E2E_SUPPORT_RESULT"
@@ -426,6 +443,7 @@ jobs:
             allow_success_or_skipped "static-checks" "$STATIC_RESULT"
             allow_success_or_skipped "build-typecheck" "$BUILD_TYPECHECK_RESULT"
             allow_success_or_skipped "installer-integration" "$INSTALLER_INTEGRATION_RESULT"
+            allow_success_or_skipped "reviewed-npm-audit" "$REVIEWED_NPM_AUDIT_RESULT"
             allow_success_or_skipped "cli-tests" "$CLI_TESTS_RESULT"
             allow_success_or_skipped "plugin-tests" "$PLUGIN_TESTS_RESULT"
             allow_success_or_skipped "e2e-support" "$E2E_SUPPORT_RESULT"

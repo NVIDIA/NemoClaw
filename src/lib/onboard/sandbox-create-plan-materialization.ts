@@ -40,7 +40,7 @@ function messagingProviderRequestKey(
   return JSON.stringify([request.name, request.envKey]);
 }
 
-function bindMessagingTokenDefs(
+export function validateSandboxCreateIntentBindings(
   intent: SandboxCreateIntent,
   messagingTokenDefs: readonly MessagingTokenDef[],
 ): MessagingTokenDef[] {
@@ -48,9 +48,25 @@ function bindMessagingTokenDefs(
   const enabledRequests = intent.messagingProviderRequests.filter(
     ({ channel }) => !channel || !disabledChannelNames.has(channel),
   );
+  const intentRequestKeys = new Set(
+    intent.messagingProviderRequests.map(messagingProviderRequestKey),
+  );
   const tokenDefsByRequest = new Map(
     messagingTokenDefs.map((tokenDef) => [messagingProviderRequestKey(tokenDef), tokenDef]),
   );
+
+  if (tokenDefsByRequest.size !== messagingTokenDefs.length) {
+    throw new Error(
+      "Cannot materialize sandbox create intent; duplicate credential bindings found.",
+    );
+  }
+  if (
+    messagingTokenDefs.some(
+      (tokenDef) => !intentRequestKeys.has(messagingProviderRequestKey(tokenDef)),
+    )
+  ) {
+    throw new Error("Cannot materialize sandbox create intent; credential binding set changed.");
+  }
 
   return enabledRequests.map((request) => {
     const tokenDef = tokenDefsByRequest.get(messagingProviderRequestKey(request));
@@ -102,13 +118,12 @@ export function materializeSandboxCreatePlan({
   intent,
   buildCtx,
   messagingTokenDefs,
-  appendResourceFlags,
   runProviderPreDeleteCleanup,
   upsertMessagingProviders,
   getHermesToolGatewayProviderName,
   prepareInitialSandboxCreatePolicy = getInitialSandboxCreatePolicy,
 }: MaterializeSandboxCreatePlanInput): SandboxCreatePlan {
-  const enabledMessagingTokenDefs = bindMessagingTokenDefs(intent, messagingTokenDefs);
+  const enabledMessagingTokenDefs = validateSandboxCreateIntentBindings(intent, messagingTokenDefs);
   const { initialSandboxPolicy, compatibilityPolicyPath } = prepareSandboxGpuRoutePolicies(
     intent.policy.basePolicyPath,
     [...intent.policy.activeMessagingChannels],
@@ -129,9 +144,9 @@ export function materializeSandboxCreatePlan({
     "--policy",
     initialSandboxPolicy.policyPath,
     ...intent.gpuCreateArgs,
+    ...intent.resourceCreateArgs,
   ];
 
-  appendResourceFlags(createArgs);
   runProviderPreDeleteCleanup();
   const providerChannels = resolveProviderChannelMap(intent.messagingProviderRequests);
   const messagingProviders = filterDisabledMessagingProviders(

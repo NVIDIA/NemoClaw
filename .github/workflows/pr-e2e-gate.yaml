@@ -8,11 +8,74 @@ on:
     workflows: ["CI / Pull Request"]
     types: [completed]
   pull_request_target:
-    types: [synchronize, reopened, closed]
+    types: [opened, synchronize, reopened, ready_for_review, closed]
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Exact-head exception type to record.
+        required: true
+        default: resolve-fork
+        type: choice
+        options:
+          - resolve-fork
+          - resolve-control-plane
+      pr_number:
+        description: Pull request number to resolve.
+        required: true
+        type: string
+      expected_head_sha:
+        description: Exact 40-character PR head SHA reviewed by the maintainer.
+        required: true
+        type: string
+      waiver_reason:
+        description: Why credentialed E2E cannot be run safely for this revision.
+        required: true
+        type: string
+      evidence_url:
+        description: Optional maintainer-supplied NVIDIA/NemoClaw Actions reference.
+        required: false
+        default: ""
+        type: string
 
 permissions: {}
 
 jobs:
+  initialize:
+    if: ${{ github.event_name == 'pull_request_target' && github.repository == 'NVIDIA/NemoClaw' && github.event.action != 'closed' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      checks: write
+      contents: read
+    concurrency:
+      group: pr-e2e-gate-seed-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout controller
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: "22"
+
+      - name: Install controller dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Reserve exact-head gate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: >-
+          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
+          --mode seed
+          --pr "$PR_NUMBER"
+          --head "$HEAD_SHA"
+
   cancel-superseded:
     if: ${{ github.event_name == 'pull_request_target' && github.repository == 'NVIDIA/NemoClaw' && github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
@@ -45,7 +108,7 @@ jobs:
           --pr "$PR_NUMBER"
 
   coordinate:
-    if: ${{ github.event_name == 'workflow_run' && github.repository == 'NVIDIA/NemoClaw' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.head_repository.full_name == github.repository }}
+    if: ${{ github.event_name == 'workflow_run' && github.repository == 'NVIDIA/NemoClaw' && github.event.workflow_run.event == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     permissions:
@@ -231,3 +294,49 @@ jobs:
       - name: Remove private workspace
         if: ${{ always() && steps.workspace.outputs.work_dir != '' }}
         run: rm -rf -- "${{ steps.workspace.outputs.work_dir }}"
+
+  resolve-exception:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      checks: write
+      contents: read
+      pull-requests: read
+    concurrency:
+      group: pr-e2e-gate-resolve-${{ inputs.operation }}-${{ inputs.pr_number }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout controller
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: "22"
+
+      - name: Install controller dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Record E2E exception
+        env:
+          EVIDENCE_URL: ${{ inputs.evidence_url }}
+          EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          MAINTAINER: ${{ github.triggering_actor }}
+          OPERATION: ${{ inputs.operation }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          WAIVER_REASON: ${{ inputs.waiver_reason }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: >-
+          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
+          --mode "$OPERATION"
+          --pr "$PR_NUMBER"
+          --head "$EXPECTED_HEAD_SHA"
+          --workflow-sha "$WORKFLOW_SHA"
+          --maintainer "$MAINTAINER"
+          --reason "$WAIVER_REASON"
+          --evidence-url "$EVIDENCE_URL"

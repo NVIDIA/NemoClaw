@@ -102,6 +102,7 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "patch-openclaw-mcp-npx.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-issue-4434-diagnostics.ts"));
     writeFixture(path.join("scripts", "patch-openclaw-device-self-approval.ts"));
+    writeFixture(path.join("scripts", "lib", "reviewed-npm-archive.mts"));
   }
 
   function expectDockerfileScriptCopiesExist(buildCtx: string, stagedDockerfile: string) {

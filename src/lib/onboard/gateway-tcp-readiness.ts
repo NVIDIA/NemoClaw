@@ -32,7 +32,7 @@
  *
  * Using the HTTP probe against a running Docker-driver gateway therefore
  * always fails the `{200, 401}` whitelist, which was the regression the
- * e2e-advisor caught in the first attempt at a shared fix.
+ * advisor review caught in the first attempt at a shared fix.
  *
  * A plain TCP probe is sufficient for detecting #3111's failure mode
  * (crashed binary → nothing listening → TCP fails) without making
