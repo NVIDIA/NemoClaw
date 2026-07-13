@@ -51,6 +51,11 @@ function writeFakeCommand(binDir: string, name: string): void {
   );
 }
 
+function writeOptionalFixture(omitted: boolean | undefined, write: () => void): void {
+  const selectedWrite = omitted ? undefined : write;
+  selectedWrite?.();
+}
+
 function runPrepareWorkspace(
   env: Partial<{
     TARGET_REPO: string;
@@ -152,7 +157,7 @@ function runArtifactValidation(
   options.symlinkResult
     ? fs.symlinkSync(resultFixturePath, resultPath)
     : fs.copyFileSync(resultFixturePath, resultPath);
-  if (!options.omitAnalysisResult) {
+  writeOptionalFixture(options.omitAnalysisResult, () => {
     fs.writeFileSync(
       analysisResultFixturePath,
       `${JSON.stringify(options.analysisResult ?? result)}\n`,
@@ -160,14 +165,14 @@ function runArtifactValidation(
     options.symlinkAnalysisResult
       ? fs.symlinkSync(analysisResultFixturePath, analysisResultPath)
       : fs.copyFileSync(analysisResultFixturePath, analysisResultPath);
-  }
-  if (!options.omitSummary) {
+  });
+  writeOptionalFixture(options.omitSummary, () => {
     fs.writeFileSync(
       path.join(artifactDir, "pr-review-advisor-summary.md"),
       options.summary ?? "# PR Review Advisor\n",
     );
-  }
-  if (!options.omitSecondaryArtifact) {
+  });
+  writeOptionalFixture(options.omitSecondaryArtifact, () => {
     fs.mkdirSync(secondaryArtifactDir);
     fs.writeFileSync(secondaryResultFixturePath, `${JSON.stringify(secondaryResult)}\n`);
     options.symlinkSecondaryResult
@@ -177,13 +182,13 @@ function runArtifactValidation(
       path.join(secondaryArtifactDir, "pr-review-advisor-result.json"),
       `${JSON.stringify(options.secondaryAnalysisResult ?? secondaryResult)}\n`,
     );
-    if (!options.omitSecondarySummary) {
+    writeOptionalFixture(options.omitSecondarySummary, () => {
       fs.writeFileSync(
         path.join(secondaryArtifactDir, "pr-review-advisor-summary.md"),
         options.secondarySummary ?? "# PR Review Advisor (second opinion)\n",
       );
-    }
-  }
+    });
+  });
   fs.writeFileSync(
     path.join(binDir, "gh"),
     '#!/bin/bash\ncase "$*" in *".base.sha"*) printf \'%s\\n\' "$FAKE_LIVE_BASE" ;; *) printf \'%s\\n\' "$FAKE_LIVE_HEAD" ;; esac\n',
