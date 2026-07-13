@@ -33,13 +33,16 @@ function nativeDockerInfo(overrides: Record<string, unknown> = {}): string {
 }
 
 const nativeHost = {
+  clientContainerized: false,
   dockerContext: undefined,
   dockerHost: undefined,
   osRelease: "6.8.0-generic",
   platform: "linux" as NodeJS.Platform,
+  sharesInitMountNamespace: true,
 };
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { force: true, recursive: true });
 });
@@ -280,6 +283,26 @@ describe("Docker image-storage detection", () => {
 
     expect(
       probeDockerHostLocality({
+        clientContainerized: false,
+        dockerInfo: () => nativeDockerInfo(),
+        osRelease: nativeHost.osRelease,
+        platform: nativeHost.platform,
+        sharesInitMountNamespace: true,
+      }),
+    ).toEqual({
+      ok: false,
+      reason:
+        "Docker uses a non-default socket (unix:///tmp/forwarded-remote.sock) whose daemon host filesystem cannot be verified",
+    });
+  });
+
+  it("fails closed when the default Docker socket is mounted into a client container (#6757)", () => {
+    vi.stubEnv("DOCKER_HOST", "unix:///var/run/docker.sock");
+    vi.stubEnv("DOCKER_CONTEXT", "default");
+    vi.spyOn(fs, "existsSync").mockImplementation((target) => target === "/.dockerenv");
+
+    expect(
+      probeDockerHostLocality({
         dockerInfo: () => nativeDockerInfo(),
         osRelease: nativeHost.osRelease,
         platform: nativeHost.platform,
@@ -287,7 +310,22 @@ describe("Docker image-storage detection", () => {
     ).toEqual({
       ok: false,
       reason:
-        "Docker uses a non-default socket (unix:///tmp/forwarded-remote.sock) whose daemon host filesystem cannot be verified",
+        "Docker client runs inside a container, so daemon bind-mount storage cannot be verified",
+    });
+  });
+
+  it("fails closed when the Docker client has a private mount namespace (#6757)", () => {
+    expect(
+      probeDockerHostLocality({
+        ...nativeHost,
+        dockerHost: "unix:///var/run/docker.sock",
+        dockerInfo: () => nativeDockerInfo(),
+        sharesInitMountNamespace: false,
+      }),
+    ).toEqual({
+      ok: false,
+      reason:
+        "Docker client does not share the init mount namespace, so daemon bind-mount storage cannot be verified",
     });
   });
 
@@ -297,9 +335,11 @@ describe("Docker image-storage detection", () => {
 
     expect(
       probeDockerStorage({
+        clientContainerized: false,
         dockerInfo: () => nativeDockerInfo(),
         osRelease: nativeHost.osRelease,
         platform: nativeHost.platform,
+        sharesInitMountNamespace: true,
       }),
     ).toEqual({
       ok: false,

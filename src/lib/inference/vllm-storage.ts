@@ -18,6 +18,7 @@ const DEFAULT_CONTAINERD_CONFIG = "/etc/containerd/config.toml";
 const DEFAULT_DOCKER_SOCKET = "/var/run/docker.sock";
 
 interface StorageProbeDeps {
+  clientContainerized: boolean;
   dockerContext: string | undefined;
   dockerHost: string | undefined;
   dockerInfo: () => string;
@@ -25,12 +26,40 @@ interface StorageProbeDeps {
   osRelease: string;
   platform: NodeJS.Platform;
   readFile: (target: string) => string;
+  sharesInitMountNamespace: boolean;
   statfs: (target: string) => { bavail: bigint; bsize: bigint };
+}
+
+function clientLooksContainerized(): boolean {
+  if (String(process.env.container ?? "").trim()) return true;
+  if (
+    fs.existsSync("/.dockerenv") ||
+    fs.existsSync("/run/.containerenv") ||
+    fs.existsSync("/run/systemd/container")
+  ) {
+    return true;
+  }
+  try {
+    return /(?:^|[/:.-])(?:docker|kubepods|containerd|libpod|lxc)(?:$|[/:.-])/im.test(
+      fs.readFileSync("/proc/self/cgroup", "utf8"),
+    );
+  } catch {
+    return false;
+  }
+}
+
+function clientSharesInitMountNamespace(): boolean {
+  try {
+    return fs.readlinkSync("/proc/self/ns/mnt") === fs.readlinkSync("/proc/1/ns/mnt");
+  } catch {
+    return false;
+  }
 }
 
 function defaultStorageProbeDeps(): StorageProbeDeps {
   const dockerEnv = buildVllmDockerEnv();
   return {
+    clientContainerized: clientLooksContainerized(),
     dockerContext: dockerEnv.DOCKER_CONTEXT,
     dockerHost: dockerEnv.DOCKER_HOST,
     dockerInfo: () =>
@@ -43,6 +72,7 @@ function defaultStorageProbeDeps(): StorageProbeDeps {
     osRelease: os.release(),
     platform: process.platform,
     readFile: (target) => fs.readFileSync(target, "utf8"),
+    sharesInitMountNamespace: clientSharesInitMountNamespace(),
     statfs: (target) => fs.statfsSync(target, { bigint: true }),
   };
 }
@@ -179,6 +209,12 @@ function containerdRootFromConfig(deps: StorageProbeDeps): ContainerdRootResult 
 function nativeDockerHostProblem(info: DockerInfoShape, deps: StorageProbeDeps): string | null {
   if (deps.platform !== "linux") return `Docker runs behind a ${deps.platform} host boundary`;
   if (/microsoft|wsl/i.test(deps.osRelease)) return "Docker runs behind a WSL host boundary";
+  if (deps.clientContainerized) {
+    return "Docker client runs inside a container, so daemon bind-mount storage cannot be verified";
+  }
+  if (!deps.sharesInitMountNamespace) {
+    return "Docker client does not share the init mount namespace, so daemon bind-mount storage cannot be verified";
+  }
   if (info.OSType !== "linux") return "Docker is not using a Linux engine";
 
   const product = `${String(info.Name ?? "")} ${String(info.OperatingSystem ?? "")}`;

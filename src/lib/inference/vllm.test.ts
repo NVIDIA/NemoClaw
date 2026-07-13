@@ -815,6 +815,13 @@ describe("installVllm model resolution", () => {
       selectorName: "DOCKER_CONTEXT" as const,
       selectorValue: "remote-builder",
     },
+    {
+      reason:
+        "Docker client runs inside a container, so daemon bind-mount storage cannot be verified",
+      selectorDescription: "default socket mounted into a client container",
+      selectorName: "DOCKER_HOST" as const,
+      selectorValue: "unix:///var/run/docker.sock",
+    },
   ])("blocks a cached image for an unverifiable $selectorDescription (#6757)", async ({
     reason,
     selectorName,
