@@ -216,6 +216,44 @@ describe("Docker image-storage detection", () => {
     });
   });
 
+  it.each([
+    {
+      boundary: "non-Linux host",
+      expected: "Docker runs behind a darwin host boundary",
+      info: nativeDockerInfo(),
+      overrides: { ...nativeHost, platform: "darwin" as NodeJS.Platform },
+    },
+    {
+      boundary: "WSL kernel",
+      expected: "Docker runs behind a WSL host boundary",
+      info: nativeDockerInfo(),
+      overrides: { ...nativeHost, osRelease: "5.15.153.1-microsoft-standard-WSL2" },
+    },
+    {
+      boundary: "Docker Desktop VM",
+      expected: "Docker runs inside a VM or compatibility layer",
+      info: nativeDockerInfo({ OperatingSystem: "Docker Desktop" }),
+      overrides: nativeHost,
+    },
+    {
+      boundary: "Colima VM",
+      expected: "Docker runs inside a VM or compatibility layer",
+      info: nativeDockerInfo({ OperatingSystem: "Colima" }),
+      overrides: nativeHost,
+    },
+    {
+      boundary: "Podman compatibility layer",
+      expected: "Docker runs inside a VM or compatibility layer",
+      info: nativeDockerInfo({ OperatingSystem: "Podman Engine" }),
+      overrides: nativeHost,
+    },
+  ])("fails closed across a $boundary (#6757)", ({ expected, info, overrides }) => {
+    expect(resolveDockerStorageLocations(info, overrides)).toEqual({
+      ok: false,
+      reason: expected,
+    });
+  });
+
   it("checks Docker host locality without requiring image-store capacity (#6757)", () => {
     expect(
       probeDockerHostLocality({

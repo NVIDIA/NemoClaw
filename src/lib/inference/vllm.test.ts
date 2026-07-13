@@ -794,15 +794,32 @@ describe("installVllm model resolution", () => {
     expect(mocks.dockerSpawn).not.toHaveBeenCalled();
   });
 
-  it("blocks a cached image when the Docker host cannot be verified (#6757)", async () => {
-    process.env.DOCKER_HOST = "ssh://builder.example.test";
+  it.each([
+    {
+      reason: "Docker uses a remote endpoint (ssh://builder.example.test)",
+      selectorName: "DOCKER_HOST" as const,
+      selectorValue: "ssh://builder.example.test",
+    },
+    {
+      reason:
+        "Docker uses a named context (remote-builder) whose host filesystem cannot be verified",
+      selectorName: "DOCKER_CONTEXT" as const,
+      selectorValue: "remote-builder",
+    },
+  ])("blocks a cached image for an unverifiable $selectorName (#6757)", async ({
+    reason,
+    selectorName,
+    selectorValue,
+  }) => {
+    delete process.env.DOCKER_HOST;
     delete process.env.DOCKER_CONTEXT;
+    process.env[selectorName] = selectorValue;
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
     mockSuccessfulVllmInstall(profile.containerName);
     mocks.dockerImageInspectFormat.mockReturnValue("sha256:cached-image");
     mocks.probeDockerHostLocality.mockReturnValue({
       ok: false,
-      reason: "Docker uses a remote endpoint (ssh://builder.example.test)",
+      reason,
     });
 
     const result = await installVllm(profile, {
@@ -812,13 +829,18 @@ describe("installVllm model resolution", () => {
     });
 
     expect(result).toEqual({ ok: false });
+    expect(mocks.dockerImageInspectFormat).toHaveBeenCalledWith(
+      "{{.Id}}",
+      profile.image,
+      expect.objectContaining({
+        env: expect.objectContaining({ [selectorName]: selectorValue }),
+      }),
+    );
     expect(mocks.probeDockerHostLocality).toHaveBeenCalledTimes(1);
     expect(mocks.probeModelCacheStorage).not.toHaveBeenCalled();
     expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
     expect(mocks.dockerSpawn).not.toHaveBeenCalled();
-    expect(errSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Docker uses a remote endpoint (ssh://builder.example.test)"),
-    );
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining(reason));
   });
 
   it("allows the dedicated override for an unverifiable cached-image host (#6757)", async () => {

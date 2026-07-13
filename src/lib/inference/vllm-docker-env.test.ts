@@ -13,6 +13,7 @@ describe("managed vLLM Docker client environment", () => {
     vi.stubEnv("DOCKER_CONFIG", "/tmp/nemoclaw-docker-config");
     vi.stubEnv("DOCKER_CONTEXT", "remote-builder");
     vi.stubEnv("DOCKER_HOST", "ssh://fallback.example.test");
+    vi.stubEnv("DOCKER_TLS", "1");
     vi.stubEnv("UNRELATED_SECRET", "do-not-forward");
 
     const env = buildVllmDockerEnv({ HF_TOKEN: "hf_test" });
@@ -22,6 +23,7 @@ describe("managed vLLM Docker client environment", () => {
         DOCKER_CONFIG: "/tmp/nemoclaw-docker-config",
         DOCKER_CONTEXT: "remote-builder",
         DOCKER_HOST: "ssh://fallback.example.test",
+        DOCKER_TLS: "1",
         HF_TOKEN: "hf_test",
       }),
     );
