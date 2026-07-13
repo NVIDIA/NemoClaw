@@ -10,8 +10,12 @@ import argparse
 import json
 import os
 import re
+import selectors
+import shutil
+import signal
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cmp_to_key
@@ -35,6 +39,17 @@ RFC3339_RE = re.compile(
 GITHUB_API_TIMEOUT_SECONDS = 30
 GIT_COMMAND_TIMEOUT_SECONDS = 120
 MAX_TAG_PEEL_DEPTH = 32
+MAX_COMMAND_STDOUT_BYTES = 16 * 1024 * 1024
+MAX_COMMAND_STDERR_BYTES = 1024 * 1024
+MAX_COMMAND_STDIN_BYTES = 1024 * 1024
+MAX_GIT_RECORDS = 100_000
+MAX_REACHABLE_OBJECT_RECORDS = 1_000_000
+MAX_GITHUB_PAGES = 1_000
+MAX_GITHUB_RECORDS = 100_000
+MAX_RELEASE_ENDPOINTS = 10_000
+MAX_TOTAL_COMMIT_RECORDS = 200_000
+MAX_TOTAL_CHANGED_PATH_RECORDS = 200_000
+MAX_LEDGER_OUTPUT_BYTES = 32 * 1024 * 1024
 
 
 class LedgerError(RuntimeError):
@@ -48,6 +63,17 @@ class GitCommandResult:
     returncode: int
     stdout: str
     stderr: str
+
+
+@dataclass(frozen=True)
+class TrustedExecutables:
+    """Absolute executable identities resolved before upstream evidence is read."""
+
+    gh: str | None
+    git: str
+
+
+TRUSTED_EXECUTABLES: TrustedExecutables | None = None
 
 
 @dataclass(frozen=True)
@@ -146,24 +172,226 @@ def compare_tagged_versions(
     return (left[1] > right[1]) - (left[1] < right[1])
 
 
+def resolve_trusted_executable(
+    requested: str | None, name: str, upstream_repo: Path
+) -> str:
+    """Resolve one executable before reading input and reject upstream-owned tools."""
+
+    candidate = requested or shutil.which(name)
+    if not candidate:
+        raise LedgerError(
+            f"could not execute {name}: no trusted executable was resolved"
+        )
+    candidate_path = Path(candidate).expanduser()
+    if not candidate_path.is_absolute():
+        raise LedgerError(f"trusted {name} executable must be an absolute path")
+    try:
+        resolved = candidate_path.resolve(strict=True)
+        repository_root = upstream_repo.expanduser().resolve(strict=True)
+    except OSError as error:
+        raise LedgerError(
+            f"could not resolve trusted {name} executable: {error}"
+        ) from error
+    if not resolved.is_file() or not os.access(resolved, os.X_OK):
+        raise LedgerError(
+            f"trusted {name} executable is not an executable regular file"
+        )
+    if resolved == repository_root or resolved.is_relative_to(repository_root):
+        raise LedgerError(
+            f"trusted {name} executable must not come from the upstream worktree"
+        )
+    return str(resolved)
+
+
+def configure_trusted_executables(args: argparse.Namespace) -> None:
+    """Freeze Git and optional GitHub CLI identities before collection starts."""
+
+    global TRUSTED_EXECUTABLES
+    upstream_repo = Path(args.repo)
+    git_executable = resolve_trusted_executable(
+        args.git_executable, "git", upstream_repo
+    )
+    TRUSTED_EXECUTABLES = TrustedExecutables(gh=None, git=git_executable)
+    if args.github_target_ref:
+        require_valid_target_ref(args.github_target_ref)
+    gh_executable = (
+        resolve_trusted_executable(args.gh_executable, "gh", upstream_repo)
+        if args.github_repository
+        else None
+    )
+    TRUSTED_EXECUTABLES = TrustedExecutables(gh=gh_executable, git=git_executable)
+
+
+def trusted_executables() -> TrustedExecutables:
+    """Return the frozen executable identities or fail before invoking a subprocess."""
+
+    if TRUSTED_EXECUTABLES is None:
+        raise LedgerError("trusted executable identities were not configured")
+    return TRUSTED_EXECUTABLES
+
+
+def terminate_process_group(process: subprocess.Popen[bytes]) -> None:
+    """Terminate a bounded command and any descendants that retain its output pipes."""
+
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+
+
+def run_bounded_command(
+    command: list[str],
+    *,
+    description: str,
+    environment: dict[str, str],
+    timeout_seconds: int,
+    input_text: str | None = None,
+    stdout_limit: int = MAX_COMMAND_STDOUT_BYTES,
+    stderr_limit: int = MAX_COMMAND_STDERR_BYTES,
+) -> GitCommandResult:
+    """Stream a subprocess through byte ceilings and terminate on timeout or excess."""
+
+    input_bytes = input_text.encode("utf-8") if input_text is not None else None
+    if input_bytes is not None and len(input_bytes) > MAX_COMMAND_STDIN_BYTES:
+        raise LedgerError(
+            f"{description} input exceeds the {MAX_COMMAND_STDIN_BYTES}-byte limit"
+        )
+    try:
+        process = subprocess.Popen(
+            command,
+            env=environment,
+            stdin=subprocess.PIPE if input_bytes is not None else subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+    except OSError as error:
+        raise LedgerError(f"could not execute {description}: {error}") from error
+
+    if input_bytes is not None and process.stdin is not None:
+        try:
+            process.stdin.write(input_bytes)
+        except BrokenPipeError:
+            pass
+        finally:
+            process.stdin.close()
+
+    selector = selectors.DefaultSelector()
+    streams = {"stdout": bytearray(), "stderr": bytearray()}
+    limits = {"stdout": stdout_limit, "stderr": stderr_limit}
+    assert process.stdout is not None
+    assert process.stderr is not None
+    selector.register(process.stdout, selectors.EVENT_READ, "stdout")
+    selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+    deadline = time.monotonic() + timeout_seconds
+    try:
+        while selector.get_map():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                terminate_process_group(process)
+                raise LedgerError(
+                    f"{description} timed out after {timeout_seconds} seconds"
+                )
+            events = selector.select(min(remaining, 0.25))
+            for key, _ in events:
+                chunk = os.read(key.fileobj.fileno(), 64 * 1024)
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    key.fileobj.close()
+                    continue
+                stream_name = key.data
+                stream = streams[stream_name]
+                if len(stream) + len(chunk) > limits[stream_name]:
+                    terminate_process_group(process)
+                    raise LedgerError(
+                        f"{description} {stream_name} exceeds the "
+                        f"{limits[stream_name]}-byte limit"
+                    )
+                stream.extend(chunk)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            terminate_process_group(process)
+            raise LedgerError(
+                f"{description} timed out after {timeout_seconds} seconds"
+            )
+        returncode = process.wait(timeout=remaining)
+    except subprocess.TimeoutExpired as error:
+        terminate_process_group(process)
+        raise LedgerError(
+            f"{description} timed out after {timeout_seconds} seconds"
+        ) from error
+    finally:
+        selector.close()
+
+    try:
+        stdout = bytes(streams["stdout"]).decode("utf-8")
+        stderr = bytes(streams["stderr"]).decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise LedgerError(f"{description} returned non-UTF-8 output") from error
+    return GitCommandResult(
+        returncode=returncode,
+        stdout=stdout.rstrip("\n"),
+        stderr=stderr.rstrip("\n"),
+    )
+
+
+def bounded_lines(text: str, description: str, maximum: int) -> list[str]:
+    """Split already byte-bounded text and enforce an explicit record ceiling."""
+
+    lines = text.splitlines()
+    if len(lines) > maximum:
+        raise LedgerError(f"{description} exceeds the {maximum}-record limit")
+    return lines
+
+
 def trusted_git_environment() -> dict[str, str]:
     """Return an environment that cannot redirect or extend the selected repository."""
 
     environment = {
-        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+        "GIT_ATTR_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_NO_LAZY_FETCH": "1",
+        "GIT_NO_REPLACE_OBJECTS": "1",
+        "GIT_PAGER": "cat",
+        "GIT_TERMINAL_PROMPT": "0",
+        "LC_ALL": "C",
     }
-    environment.update(
-        {
-            "GIT_ATTR_NOSYSTEM": "1",
-            "GIT_CONFIG_GLOBAL": os.devnull,
-            "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_NO_LAZY_FETCH": "1",
-            "GIT_NO_REPLACE_OBJECTS": "1",
-            "GIT_PAGER": "cat",
-            "GIT_TERMINAL_PROMPT": "0",
-            "LC_ALL": "C",
-        }
+    if temporary_directory := os.environ.get("TMPDIR"):
+        environment["TMPDIR"] = temporary_directory
+    return environment
+
+
+def trusted_github_environment() -> dict[str, str]:
+    """Return only authentication, config, proxy, and TLS inputs needed by ``gh api``."""
+
+    allowed = (
+        "ALL_PROXY",
+        "GH_CONFIG_DIR",
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+        "HOME",
+        "HTTPS_PROXY",
+        "HTTP_PROXY",
+        "NO_PROXY",
+        "SSL_CERT_DIR",
+        "SSL_CERT_FILE",
+        "XDG_CONFIG_HOME",
+        "all_proxy",
+        "https_proxy",
+        "http_proxy",
+        "no_proxy",
     )
+    environment = {key: os.environ[key] for key in allowed if key in os.environ}
+    environment.update({"GH_PROMPT_DISABLED": "1", "LC_ALL": "C", "NO_COLOR": "1"})
     return environment
 
 
@@ -176,7 +404,7 @@ def run_git(
     """Run one bounded Git command without ambient repository or helper controls."""
 
     command = [
-        "git",
+        trusted_executables().git,
         "--no-pager",
         "-c",
         "log.showSignature=false",
@@ -188,26 +416,12 @@ def run_git(
     if repo is not None:
         command.extend(("-C", str(repo)))
     command.extend(args)
-    try:
-        result = subprocess.run(
-            command,
-            check=False,
-            capture_output=True,
-            input=input_text,
-            text=True,
-            env=trusted_git_environment(),
-            timeout=GIT_COMMAND_TIMEOUT_SECONDS,
-        )
-    except subprocess.TimeoutExpired as error:
-        raise LedgerError(
-            f"git {' '.join(args)} timed out after {GIT_COMMAND_TIMEOUT_SECONDS} seconds"
-        ) from error
-    except OSError as error:
-        raise LedgerError(f"could not execute git {' '.join(args)}: {error}") from error
-    captured = GitCommandResult(
-        returncode=result.returncode,
-        stdout=result.stdout.rstrip("\n"),
-        stderr=result.stderr.rstrip("\n"),
+    captured = run_bounded_command(
+        command,
+        description=f"git {' '.join(args)}",
+        environment=trusted_git_environment(),
+        input_text=input_text,
+        timeout_seconds=GIT_COMMAND_TIMEOUT_SECONDS,
     )
     if captured.returncode != 0 and not allow_failure:
         detail = (
@@ -297,7 +511,13 @@ def require_safe_repository_configuration(repo: Path) -> None:
             f"could not inspect repository safety configuration: {detail}"
         )
     if unsafe.returncode == 0:
-        entries = ", ".join(line for line in unsafe.stdout.splitlines() if line)
+        entries = ", ".join(
+            line
+            for line in bounded_lines(
+                unsafe.stdout, "repository configuration entries", MAX_GIT_RECORDS
+            )
+            if line
+        )
         raise LedgerError(
             "the upstream worktree has repository configuration that can extend config "
             f"or weaken fsck ({entries}); use a clean clone without include.* or fsck.* settings"
@@ -318,7 +538,9 @@ def require_complete_local_history(repo: Path) -> None:
         detail = partial_clone.stderr.strip() or "unknown Git config failure"
         raise LedgerError(f"could not inspect extensions.partialClone: {detail}")
     if partial_clone.returncode == 0:
-        values = partial_clone.stdout.splitlines() or [""]
+        values = bounded_lines(
+            partial_clone.stdout, "partial-clone configuration", MAX_GIT_RECORDS
+        ) or [""]
         rendered = ", ".join(repr(value) for value in values)
         raise LedgerError(
             "the upstream worktree configures extensions.partialClone "
@@ -337,7 +559,17 @@ def require_complete_local_history(repo: Path) -> None:
         detail = partial_filter_keys.stderr.strip() or "unknown Git config failure"
         raise LedgerError(f"could not inspect remote partial-clone filters: {detail}")
     if partial_filter_keys.returncode == 0:
-        keys = ", ".join(sorted(set(partial_filter_keys.stdout.splitlines())))
+        keys = ", ".join(
+            sorted(
+                set(
+                    bounded_lines(
+                        partial_filter_keys.stdout,
+                        "partial-clone filter configuration",
+                        MAX_GIT_RECORDS,
+                    )
+                )
+            )
+        )
         raise LedgerError(
             "the upstream worktree configures remote partial-clone filters "
             f"({keys}); use a non-promisor clone with a complete object closure"
@@ -354,14 +586,22 @@ def require_complete_local_history(repo: Path) -> None:
     if promisor_keys.returncode not in (0, 1):
         detail = promisor_keys.stderr.strip() or "unknown Git config failure"
         raise LedgerError(f"could not inspect remote promisor settings: {detail}")
-    for key in sorted(set(promisor_keys.stdout.splitlines())):
+    for key in sorted(
+        set(
+            bounded_lines(
+                promisor_keys.stdout, "promisor configuration", MAX_GIT_RECORDS
+            )
+        )
+    ):
         configured = run_git(repo, "config", "--get-all", key, allow_failure=True)
         if configured.returncode != 0:
             detail = (
                 configured.stderr.strip() or "setting disappeared during collection"
             )
             raise LedgerError(f"could not inspect {key}: {detail}")
-        values = configured.stdout.splitlines() or [""]
+        values = bounded_lines(
+            configured.stdout, f"promisor setting {key!r}", MAX_GIT_RECORDS
+        ) or [""]
         for value in values:
             normalized = value.strip().casefold()
             if normalized in {"0", "false", "no", "off"}:
@@ -469,7 +709,10 @@ def require_complete_reachable_objects(
             or "unknown traversal failure"
         )
         raise LedgerError(f"could not prove the reachable object closure: {detail}")
-    missing = [line for line in traversal.stdout.splitlines() if line.startswith("?")]
+    object_records = bounded_lines(
+        traversal.stdout, "reachable object inventory", MAX_REACHABLE_OBJECT_RECORDS
+    )
+    missing = [line for line in object_records if line.startswith("?")]
     if missing:
         raise LedgerError(
             "the upstream worktree has missing objects in the target closure: "
@@ -533,7 +776,11 @@ def require_valid_target_ref(ref: str) -> None:
 def version_and_tag_for_start(repo: Path, ref: str, sha: str) -> tuple[Version, str]:
     """Select the semantic-version tag that defines the starting endpoint."""
 
-    tags = git(repo, "tag", "--points-at", sha).splitlines()
+    tags = bounded_lines(
+        git(repo, "tag", "--points-at", sha),
+        "tags at starting endpoint",
+        MAX_GIT_RECORDS,
+    )
     direct_tag = ref.removeprefix("refs/tags/")
     direct_version = Version.parse(direct_tag)
     if direct_tag in tags and direct_version is not None:
@@ -584,7 +831,7 @@ def parse_commits(repo: Path, older: str, newer: str) -> list[dict[str, str]]:
         f"{older}..{newer}",
     )
     commits: list[dict[str, str]] = []
-    for line in raw.splitlines():
+    for line in bounded_lines(raw, "commit history", MAX_GIT_RECORDS):
         if not line:
             continue
         parts = line.split("\x1f", 2)
@@ -608,7 +855,7 @@ def parse_changed_paths(repo: Path, older: str, newer: str) -> list[dict[str, An
         newer,
     )
     paths: list[dict[str, Any]] = []
-    for line in raw.splitlines():
+    for line in bounded_lines(raw, "changed-path inventory", MAX_GIT_RECORDS):
         fields = line.split("\t")
         if len(fields) < 2:
             raise LedgerError(f"could not parse changed path record: {line!r}")
@@ -647,8 +894,11 @@ def github_api_json(
 ) -> Any:
     """Read JSON from one authenticated GitHub API GET or fail closed."""
 
+    gh_executable = trusted_executables().gh
+    if gh_executable is None:
+        raise LedgerError("trusted gh executable was not configured")
     command = [
-        "gh",
+        gh_executable,
         "api",
         "--hostname",
         api_host,
@@ -660,20 +910,12 @@ def github_api_json(
     ]
     if paginate:
         command.extend(("--paginate", "--slurp"))
-    try:
-        result = subprocess.run(
-            command,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-        )
-    except subprocess.TimeoutExpired as error:
-        raise LedgerError(
-            f"GitHub {description} timed out after {timeout_seconds} seconds"
-        ) from error
-    except OSError as error:
-        raise LedgerError(f"could not execute gh for {description}: {error}") from error
+    result = run_bounded_command(
+        command,
+        description=f"GitHub {description}",
+        environment=trusted_github_environment(),
+        timeout_seconds=timeout_seconds,
+    )
     if result.returncode != 0:
         detail = (
             result.stderr.strip()
@@ -682,9 +924,20 @@ def github_api_json(
         )
         raise LedgerError(f"GitHub {description} failed: {detail}")
     try:
-        return json.loads(result.stdout)
+        payload = json.loads(result.stdout)
     except json.JSONDecodeError as error:
         raise LedgerError(f"GitHub {description} returned malformed JSON") from error
+    if paginate and isinstance(payload, list):
+        if len(payload) > MAX_GITHUB_PAGES:
+            raise LedgerError(
+                f"GitHub {description} exceeds the {MAX_GITHUB_PAGES}-page limit"
+            )
+        record_count = sum(len(page) for page in payload if isinstance(page, list))
+        if record_count > MAX_GITHUB_RECORDS:
+            raise LedgerError(
+                f"GitHub {description} exceeds the {MAX_GITHUB_RECORDS}-record limit"
+            )
+    return payload
 
 
 def require_object(payload: Any, description: str) -> dict[str, Any]:
@@ -1119,7 +1372,11 @@ def verify_remote_tag_inventory(
             continue
         require_exact_local_tag(tag, remote)
 
-    for tag in git(repo, "tag", "--merged", target_sha).splitlines():
+    for tag in bounded_lines(
+        git(repo, "tag", "--merged", target_sha),
+        "merged semantic-version tags",
+        MAX_GIT_RECORDS,
+    ):
         if Version.parse(tag) is None:
             continue
         local_commit_sha = resolve_commit(repo, f"refs/tags/{tag}")
@@ -1232,7 +1489,11 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
     candidates: list[tuple[Version, str, str]] = []
     in_range_tag_object_shas: list[str] = []
     explicit_target_tag = explicitly_referenced_tag(repo, args.to_ref, target_sha)
-    for tag in git(repo, "tag", "--merged", target_sha).splitlines():
+    for tag in bounded_lines(
+        git(repo, "tag", "--merged", target_sha),
+        "final merged semantic-version tags",
+        MAX_GIT_RECORDS,
+    ):
         version = Version.parse(tag)
         if version is None:
             continue
@@ -1275,6 +1536,10 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
         )
 
     candidates.sort(key=cmp_to_key(compare_candidates))
+    if len(candidates) + 1 > MAX_RELEASE_ENDPOINTS:
+        raise LedgerError(
+            f"release endpoint inventory exceeds the {MAX_RELEASE_ENDPOINTS}-record limit"
+        )
     endpoints.extend(
         endpoint_for_tag(repo, tag, version) for version, tag, _sha in candidates
     )
@@ -1364,6 +1629,8 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
                 }
 
     ranges: list[dict[str, Any]] = []
+    total_commit_records = 0
+    total_changed_path_records = 0
     for older, newer in zip(endpoints, endpoints[1:]):
         if not is_ancestor(repo, older["sha"], newer["sha"]):
             raise LedgerError(
@@ -1371,13 +1638,26 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
                 f"{older['ref']} is not an ancestor of {newer['ref']}"
             )
         commits = parse_commits(repo, older["sha"], newer["sha"])
+        changed_paths = parse_changed_paths(repo, older["sha"], newer["sha"])
+        total_commit_records += len(commits)
+        total_changed_path_records += len(changed_paths)
+        if total_commit_records > MAX_TOTAL_COMMIT_RECORDS:
+            raise LedgerError(
+                "aggregate commit history exceeds the "
+                f"{MAX_TOTAL_COMMIT_RECORDS}-record limit"
+            )
+        if total_changed_path_records > MAX_TOTAL_CHANGED_PATH_RECORDS:
+            raise LedgerError(
+                "aggregate changed-path inventory exceeds the "
+                f"{MAX_TOTAL_CHANGED_PATH_RECORDS}-record limit"
+            )
         ranges.append(
             {
                 "from": older,
                 "to": newer,
                 "commitCount": len(commits),
                 "commits": commits,
-                "changedPaths": parse_changed_paths(repo, older["sha"], newer["sha"]),
+                "changedPaths": changed_paths,
                 "shortstat": git(
                     repo,
                     "diff",
@@ -1555,6 +1835,20 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help=f"Timeout for each GitHub API query (default: {GITHUB_API_TIMEOUT_SECONDS})",
     )
     parser.add_argument(
+        "--git-executable",
+        help=(
+            "Absolute, pre-reviewed Git executable resolved before upstream input; "
+            "defaults to resolving git once from the initial PATH"
+        ),
+    )
+    parser.add_argument(
+        "--gh-executable",
+        help=(
+            "Absolute, pre-reviewed gh executable resolved before upstream input; "
+            "defaults to resolving gh once from the initial PATH when GitHub evidence is requested"
+        ),
+    )
+    parser.add_argument(
         "--output", default="-", help="Output JSON path, or - for stdout"
     )
     args = parser.parse_args(argv)
@@ -1568,6 +1862,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         parser.error("--github-target-ref requires --github-repository")
     if args.github_target_ref and not args.github_target_ref.startswith("refs/heads/"):
         parser.error("--github-target-ref must be a complete refs/heads/... branch ref")
+    for option, value in (
+        ("--git-executable", args.git_executable),
+        ("--gh-executable", args.gh_executable),
+    ):
+        if value and not Path(value).expanduser().is_absolute():
+            parser.error(f"{option} must be an absolute path")
     return args
 
 
@@ -1576,13 +1876,26 @@ def main(argv: list[str]) -> int:
 
     try:
         args = parse_args(argv)
+        configure_trusted_executables(args)
         payload = json.dumps(collect(args), indent=2, sort_keys=True) + "\n"
+        payload_size = len(payload.encode("utf-8"))
+        if payload_size > MAX_LEDGER_OUTPUT_BYTES:
+            raise LedgerError(
+                f"ledger output exceeds the {MAX_LEDGER_OUTPUT_BYTES}-byte limit"
+            )
         if args.output == "-":
             sys.stdout.write(payload)
         else:
             output = Path(args.output).expanduser()
             try:
-                with output.open("x", encoding="utf-8") as output_file:
+                flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+                prior_umask = os.umask(0o177)
+                try:
+                    descriptor = os.open(output, flags, 0o600)
+                finally:
+                    os.umask(prior_umask)
+                with os.fdopen(descriptor, "w", encoding="utf-8") as output_file:
                     output_file.write(payload)
             except FileExistsError as error:
                 raise LedgerError(
