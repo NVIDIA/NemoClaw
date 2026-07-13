@@ -26,9 +26,17 @@ metadata and source SHA look correct.
 For GitHub repositories, pass `--github-repository OWNER/REPO` and the API hostname to the
 collector. It binds the canonical repository ID, requires a rerun when the requested name redirects
 or was renamed, inventories paginated remote semantic-version refs, and verifies every in-range tag
-against the local root object and peeled commit. Shallow history, missing tag/commit objects,
-`refs/replace`, and grafts stop collection. Partial/promisor clones also stop collection before
-ref resolution or history traversal so lazy fetch cannot conceal incomplete object closure. For an
+against the local root object and peeled commit. It rechecks the canonical repository identity,
+exact advertised target ref, full semantic-version tag-root inventory, and full visible release
+inventory after local range collection; a changed value invalidates the run. Shallow history,
+missing or corrupt reachable objects, `refs/replace`, grafts, alternates, promisor packs, repository
+config includes, and `fsck.*` overrides stop collection. Partial/promisor clone configuration,
+including an empty marker or invalid promisor boolean, also stops collection before ref resolution
+or history traversal so lazy fetch cannot conceal incomplete object closure. Every Git command is
+bounded and non-interactive, ignores ambient `GIT_*` controls plus system/global config, disables
+replacement objects and lazy fetch, suppresses signature display, and cannot invoke configured
+filesystem-monitor, pager, external diff, textconv, or signature helpers. The collector traverses
+the complete target and in-range tag object closure and runs strict full integrity checks. For an
 untagged candidate, pass the exact advertised `refs/heads/...` ref and require it to equal the audit
 target; a raw Git commit endpoint can expose fork or pull-request objects and does not prove
 upstream-ref membership. GitHub exposes drafts only to viewers with push access, so an omitted tag

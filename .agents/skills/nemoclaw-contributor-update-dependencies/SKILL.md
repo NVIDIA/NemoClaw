@@ -87,13 +87,23 @@ not repository-membership evidence because GitHub can expose fork and pull-reque
 the base repository's object network. It records `absent` only when the authenticated viewer is
 proven able to see drafts; otherwise a missing tag is `not-published` with draft visibility called
 out. Shallow history, replace refs, grafts, missing commit objects, API, authentication, shape,
-identity, tag, and timeout ambiguity fail collection. Producer workflow/run/attempt and
+identity, tag, and timeout ambiguity fail collection. Before returning evidence, it rechecks the
+canonical repository identity, exact target branch ref, complete remote semantic-version tag-root
+inventory, and complete visible release inventory; any drift requires a fresh run. Producer workflow/run/attempt and
 registry/package publication remain separate evidence; collect and add them before calling an
 endpoint shippable.
 
-Reject partial/promisor clones before resolving refs or traversing history. Lazy object fetching
-can otherwise make an incomplete checkout appear complete during `rev-parse`, ancestry, log, or
-diff collection; build the ledger from a non-promisor clone with the complete object closure.
+The collector runs every Git subprocess through one bounded, non-interactive runner. It removes
+ambient `GIT_*` repository, object, config, replacement, helper, signature, and lazy-fetch controls;
+ignores system and global Git config; suppresses signature display, pagers, external diff/textconv,
+and filesystem-monitor helpers; and rejects repository config includes or `fsck.*` overrides.
+Reject partial/promisor clones before resolving refs or traversing history, including empty
+partial-clone markers, enabled or invalid promisor settings, alternate object databases, and
+residual promisor packs. Lazy object fetching can otherwise make an incomplete checkout appear
+complete during `rev-parse`, ancestry, log, or diff collection. Build the ledger from a
+self-contained non-promisor clone: the collector traverses the entire target closure and in-range
+tag roots with lazy fetch disabled, then runs strict full object-integrity checks before accepting
+the evidence.
 
 For a multi-release upgrade, never collapse the result into one aggregate `old..new` summary.
 Read [references/release-ledger.md](references/release-ledger.md) and complete every adjacent

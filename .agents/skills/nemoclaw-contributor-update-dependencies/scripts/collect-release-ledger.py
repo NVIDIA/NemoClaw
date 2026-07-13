@@ -33,11 +33,21 @@ RFC3339_RE = re.compile(
     r"(?:\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})"
 )
 GITHUB_API_TIMEOUT_SECONDS = 30
+GIT_COMMAND_TIMEOUT_SECONDS = 120
 MAX_TAG_PEEL_DEPTH = 32
 
 
 class LedgerError(RuntimeError):
     """Raised when the requested release range cannot be proven."""
+
+
+@dataclass(frozen=True)
+class GitCommandResult:
+    """Captured output from one bounded, hermetic Git command."""
+
+    returncode: int
+    stdout: str
+    stderr: str
 
 
 @dataclass(frozen=True)
@@ -136,24 +146,81 @@ def compare_tagged_versions(
     return (left[1] > right[1]) - (left[1] < right[1])
 
 
-def git(repo: Path, *args: str, allow_failure: bool = False) -> str:
-    """Run Git in ``repo`` and return stdout without its final newline."""
+def trusted_git_environment() -> dict[str, str]:
+    """Return an environment that cannot redirect or extend the selected repository."""
 
-    environment = os.environ.copy()
-    environment["GIT_NO_REPLACE_OBJECTS"] = "1"
-    environment.pop("GIT_REPLACE_REF_BASE", None)
-    environment.pop("GIT_NAMESPACE", None)
-    result = subprocess.run(
-        ["git", "-C", str(repo), *args],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=environment,
+    environment = {
+        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+    }
+    environment.update(
+        {
+            "GIT_ATTR_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_NO_LAZY_FETCH": "1",
+            "GIT_NO_REPLACE_OBJECTS": "1",
+            "GIT_PAGER": "cat",
+            "GIT_TERMINAL_PROMPT": "0",
+            "LC_ALL": "C",
+        }
     )
-    if result.returncode != 0 and not allow_failure:
-        detail = result.stderr.strip() or result.stdout.strip() or "unknown Git failure"
+    return environment
+
+
+def run_git(
+    repo: Path | None,
+    *args: str,
+    allow_failure: bool = False,
+    input_text: str | None = None,
+) -> GitCommandResult:
+    """Run one bounded Git command without ambient repository or helper controls."""
+
+    command = [
+        "git",
+        "--no-pager",
+        "-c",
+        "log.showSignature=false",
+        "-c",
+        "core.commitGraph=false",
+        "-c",
+        "core.fsmonitor=false",
+    ]
+    if repo is not None:
+        command.extend(("-C", str(repo)))
+    command.extend(args)
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            input=input_text,
+            text=True,
+            env=trusted_git_environment(),
+            timeout=GIT_COMMAND_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise LedgerError(
+            f"git {' '.join(args)} timed out after {GIT_COMMAND_TIMEOUT_SECONDS} seconds"
+        ) from error
+    except OSError as error:
+        raise LedgerError(f"could not execute git {' '.join(args)}: {error}") from error
+    captured = GitCommandResult(
+        returncode=result.returncode,
+        stdout=result.stdout.rstrip("\n"),
+        stderr=result.stderr.rstrip("\n"),
+    )
+    if captured.returncode != 0 and not allow_failure:
+        detail = (
+            captured.stderr.strip() or captured.stdout.strip() or "unknown Git failure"
+        )
         raise LedgerError(f"git {' '.join(args)} failed: {detail}")
-    return result.stdout.rstrip("\n")
+    return captured
+
+
+def git(repo: Path, *args: str, allow_failure: bool = False) -> str:
+    """Run bounded, hermetic Git in ``repo`` and return stdout."""
+
+    return run_git(repo, *args, allow_failure=allow_failure).stdout
 
 
 def resolve_commit(repo: Path, ref: str) -> str:
@@ -182,56 +249,130 @@ def explicitly_referenced_tag(repo: Path, ref: str, sha: str) -> str | None:
 def is_ancestor(repo: Path, older: str, newer: str) -> bool:
     """Return whether ``older`` is an ancestor of ``newer``."""
 
-    environment = os.environ.copy()
-    environment["GIT_NO_REPLACE_OBJECTS"] = "1"
-    environment.pop("GIT_REPLACE_REF_BASE", None)
-    environment.pop("GIT_NAMESPACE", None)
-    result = subprocess.run(
-        ["git", "-C", str(repo), "merge-base", "--is-ancestor", older, newer],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=environment,
+    result = run_git(
+        repo,
+        "merge-base",
+        "--is-ancestor",
+        older,
+        newer,
+        allow_failure=True,
     )
     if result.returncode not in (0, 1):
-        detail = result.stderr.strip() or "unknown merge-base failure"
+        detail = (
+            result.stderr.strip()
+            or result.stdout.strip()
+            or "unknown merge-base failure"
+        )
         raise LedgerError(f"could not compare {older} and {newer}: {detail}")
     return result.returncode == 0
+
+
+def absolute_git_path(repo: Path, relative_path: str) -> Path:
+    """Resolve one repository-owned Git path without ambient path overrides."""
+
+    configured = Path(git(repo, "rev-parse", "--git-path", relative_path))
+    return (
+        configured.resolve()
+        if configured.is_absolute()
+        else (repo / configured).resolve()
+    )
+
+
+def require_safe_repository_configuration(repo: Path) -> None:
+    """Reject repository configuration that can weaken or extend evidence collection."""
+
+    unsafe = run_git(
+        repo,
+        "config",
+        "--show-scope",
+        "--show-origin",
+        "--name-only",
+        "--get-regexp",
+        r"^(include(if)?\.|fsck\.)",
+        allow_failure=True,
+    )
+    if unsafe.returncode not in (0, 1):
+        detail = unsafe.stderr.strip() or "unknown Git config failure"
+        raise LedgerError(
+            f"could not inspect repository safety configuration: {detail}"
+        )
+    if unsafe.returncode == 0:
+        entries = ", ".join(line for line in unsafe.stdout.splitlines() if line)
+        raise LedgerError(
+            "the upstream worktree has repository configuration that can extend config "
+            f"or weaken fsck ({entries}); use a clean clone without include.* or fsck.* settings"
+        )
 
 
 def require_complete_local_history(repo: Path) -> None:
     """Reject shallow or promisor history before resolving release evidence."""
 
-    partial_clone_remote = git(
+    partial_clone = run_git(
         repo,
         "config",
-        "--get",
+        "--get-all",
         "extensions.partialClone",
         allow_failure=True,
     )
-    raw_promisor_settings = git(
+    if partial_clone.returncode not in (0, 1):
+        detail = partial_clone.stderr.strip() or "unknown Git config failure"
+        raise LedgerError(f"could not inspect extensions.partialClone: {detail}")
+    if partial_clone.returncode == 0:
+        values = partial_clone.stdout.splitlines() or [""]
+        rendered = ", ".join(repr(value) for value in values)
+        raise LedgerError(
+            "the upstream worktree configures extensions.partialClone "
+            f"({rendered}); use a non-promisor clone with a complete object closure"
+        )
+
+    partial_filter_keys = run_git(
         repo,
         "config",
+        "--name-only",
+        "--get-regexp",
+        r"^remote\..*\.partialclonefilter$",
+        allow_failure=True,
+    )
+    if partial_filter_keys.returncode not in (0, 1):
+        detail = partial_filter_keys.stderr.strip() or "unknown Git config failure"
+        raise LedgerError(f"could not inspect remote partial-clone filters: {detail}")
+    if partial_filter_keys.returncode == 0:
+        keys = ", ".join(sorted(set(partial_filter_keys.stdout.splitlines())))
+        raise LedgerError(
+            "the upstream worktree configures remote partial-clone filters "
+            f"({keys}); use a non-promisor clone with a complete object closure"
+        )
+
+    promisor_keys = run_git(
+        repo,
+        "config",
+        "--name-only",
         "--get-regexp",
         r"^remote\..*\.promisor$",
         allow_failure=True,
     )
-    enabled_promisors: list[str] = []
-    for setting in raw_promisor_settings.splitlines():
-        key, separator, value = setting.partition(" ")
-        normalized = value.strip().casefold() if separator else "true"
-        if normalized not in {"0", "false", "no", "off"}:
-            enabled_promisors.append(key)
-    if partial_clone_remote or enabled_promisors:
-        details = []
-        if partial_clone_remote:
-            details.append(f"extensions.partialClone={partial_clone_remote!r}")
-        details.extend(f"{key}=true" for key in enabled_promisors)
-        raise LedgerError(
-            "the upstream worktree is a partial/promisor clone "
-            f"({', '.join(details)}); materialize the complete object closure in a "
-            "non-promisor clone before collection"
-        )
+    if promisor_keys.returncode not in (0, 1):
+        detail = promisor_keys.stderr.strip() or "unknown Git config failure"
+        raise LedgerError(f"could not inspect remote promisor settings: {detail}")
+    for key in sorted(set(promisor_keys.stdout.splitlines())):
+        configured = run_git(repo, "config", "--get-all", key, allow_failure=True)
+        if configured.returncode != 0:
+            detail = (
+                configured.stderr.strip() or "setting disappeared during collection"
+            )
+            raise LedgerError(f"could not inspect {key}: {detail}")
+        values = configured.stdout.splitlines() or [""]
+        for value in values:
+            normalized = value.strip().casefold()
+            if normalized in {"0", "false", "no", "off"}:
+                continue
+            state = (
+                "enabled" if normalized in {"", "1", "true", "yes", "on"} else "invalid"
+            )
+            raise LedgerError(
+                f"the upstream worktree has {state} promisor setting {key}={value!r}; "
+                "use a non-promisor clone with a complete object closure"
+            )
 
     shallow = git(repo, "rev-parse", "--is-shallow-repository")
     if shallow != "false":
@@ -241,6 +382,25 @@ def require_complete_local_history(repo: Path) -> None:
             )
         raise LedgerError(
             f"could not determine whether the upstream worktree is shallow: {shallow!r}"
+        )
+
+    for relative_path, description in (
+        ("objects/info/alternates", "alternate object database"),
+        ("objects/info/http-alternates", "HTTP alternate object database"),
+    ):
+        configured_path = absolute_git_path(repo, relative_path)
+        if configured_path.exists():
+            raise LedgerError(
+                f"the upstream worktree contains an {description} at {configured_path}; "
+                "use a self-contained clone"
+            )
+
+    object_directory = absolute_git_path(repo, "objects")
+    promisor_packs = sorted((object_directory / "pack").glob("*.promisor"))
+    if promisor_packs:
+        raise LedgerError(
+            "the upstream worktree contains residual promisor pack markers: "
+            + ", ".join(str(path) for path in promisor_packs)
         )
 
 
@@ -253,10 +413,7 @@ def require_unmodified_local_history(repo: Path) -> None:
             "the upstream worktree contains refs/replace history overrides; remove them "
             "before collection"
         )
-    graft_path_text = git(repo, "rev-parse", "--git-path", "info/grafts")
-    graft_path = Path(graft_path_text)
-    if not graft_path.is_absolute():
-        graft_path = repo / graft_path
+    graft_path = absolute_git_path(repo, "info/grafts")
     if graft_path.exists():
         raise LedgerError(
             f"the upstream worktree contains a grafts file at {graft_path}; remove it "
@@ -267,24 +424,12 @@ def require_unmodified_local_history(repo: Path) -> None:
 def require_local_commit_object(repo: Path, sha: str, description: str) -> None:
     """Require a commit object without allowing a partial clone to fetch it lazily."""
 
-    environment = os.environ.copy()
-    environment["GIT_NO_LAZY_FETCH"] = "1"
-    environment["GIT_NO_REPLACE_OBJECTS"] = "1"
-    environment.pop("GIT_REPLACE_REF_BASE", None)
-    environment.pop("GIT_NAMESPACE", None)
-    result = subprocess.run(
-        [
-            "git",
-            "-C",
-            str(repo),
-            "cat-file",
-            "--batch-check=%(objectname) %(objecttype)",
-        ],
-        check=False,
-        capture_output=True,
-        input=f"{sha}\n",
-        text=True,
-        env=environment,
+    result = run_git(
+        repo,
+        "cat-file",
+        "--batch-check=%(objectname) %(objecttype)",
+        allow_failure=True,
+        input_text=f"{sha}\n",
     )
     if result.returncode != 0:
         detail = (
@@ -304,6 +449,75 @@ def require_local_commit_object(repo: Path, sha: str, description: str) -> None:
     )
 
 
+def require_complete_reachable_objects(
+    repo: Path, target_sha: str, tag_object_shas: list[str]
+) -> None:
+    """Prove the target graph and every in-range tag object are present locally."""
+
+    traversal = run_git(
+        repo,
+        "rev-list",
+        "--objects",
+        "--missing=print",
+        target_sha,
+        allow_failure=True,
+    )
+    if traversal.returncode != 0:
+        detail = (
+            traversal.stderr.strip()
+            or traversal.stdout.strip()
+            or "unknown traversal failure"
+        )
+        raise LedgerError(f"could not prove the reachable object closure: {detail}")
+    missing = [line for line in traversal.stdout.splitlines() if line.startswith("?")]
+    if missing:
+        raise LedgerError(
+            "the upstream worktree has missing objects in the target closure: "
+            + ", ".join(missing[:10])
+        )
+
+    for tag_object_sha in sorted(set(tag_object_shas)):
+        inspected = run_git(
+            repo,
+            "cat-file",
+            "--batch-check=%(objectname) %(objecttype)",
+            allow_failure=True,
+            input_text=f"{tag_object_sha}\n",
+        )
+        identity = inspected.stdout.strip()
+        if inspected.returncode != 0 or identity not in {
+            f"{tag_object_sha} commit",
+            f"{tag_object_sha} tag",
+        }:
+            detail = inspected.stderr.strip() or identity or "missing object"
+            raise LedgerError(
+                f"could not prove in-range tag object {tag_object_sha}: {detail}"
+            )
+
+    integrity = run_git(
+        repo,
+        "-c",
+        f"fsck.skipList={os.devnull}",
+        "fsck",
+        "--full",
+        "--strict",
+        "--no-dangling",
+        "--no-reflogs",
+        target_sha,
+        *sorted(set(tag_object_shas)),
+        allow_failure=True,
+    )
+    if integrity.returncode != 0:
+        detail = (
+            integrity.stderr.strip()
+            or integrity.stdout.strip()
+            or "unknown fsck failure"
+        )
+        raise LedgerError(
+            f"the reachable object closure failed integrity checks: {detail}"
+        )
+
+
 def require_valid_target_ref(ref: str) -> None:
     """Require one complete branch ref suitable for authoritative target binding."""
 
@@ -311,12 +525,7 @@ def require_valid_target_ref(ref: str) -> None:
         raise LedgerError(
             "--github-target-ref must be a complete refs/heads/... branch ref"
         )
-    result = subprocess.run(
-        ["git", "check-ref-format", ref],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    result = run_git(None, "check-ref-format", ref, allow_failure=True)
     if result.returncode != 0:
         raise LedgerError(f"--github-target-ref is not a valid Git ref: {ref!r}")
 
@@ -388,7 +597,16 @@ def parse_commits(repo: Path, older: str, newer: str) -> list[dict[str, str]]:
 def parse_changed_paths(repo: Path, older: str, newer: str) -> list[dict[str, Any]]:
     """Collect rename-aware changed-path evidence for a release range."""
 
-    raw = git(repo, "diff", "--name-status", "--find-renames", older, newer)
+    raw = git(
+        repo,
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--name-status",
+        "--find-renames",
+        older,
+        newer,
+    )
     paths: list[dict[str, Any]] = []
     for line in raw.splitlines():
         fields = line.split("\t")
@@ -535,7 +753,6 @@ def require_https_url(
     *,
     expected_host: str,
     expected_path: str | None = None,
-    expected_path_prefix: str | None = None,
 ) -> str:
     """Require an HTTPS URL bound to the selected GitHub host and repository path."""
 
@@ -553,6 +770,7 @@ def require_https_url(
         or parsed.username is not None
         or parsed.password is not None
         or port is not None
+        or parsed.params
         or parsed.query
         or parsed.fragment
     ):
@@ -560,16 +778,11 @@ def require_https_url(
             f"GitHub {description} returned a URL outside {expected_host!r}"
         )
     decoded_path = unquote(parsed.path)
-    if (
-        expected_path is not None
-        and decoded_path.casefold() != expected_path.casefold()
+    if "\\" in decoded_path or any(
+        component in {".", ".."} for component in decoded_path.split("/")
     ):
-        raise LedgerError(
-            f"GitHub {description} returned a URL for the wrong repository"
-        )
-    if expected_path_prefix is not None and not decoded_path.casefold().startswith(
-        expected_path_prefix.casefold()
-    ):
+        raise LedgerError(f"GitHub {description} returned a non-canonical URL path")
+    if expected_path is not None and decoded_path != expected_path:
         raise LedgerError(
             f"GitHub {description} returned a URL for the wrong repository"
         )
@@ -667,7 +880,7 @@ def validate_github_release(
         item.get("html_url"),
         f"release {tag!r} html_url",
         expected_host=repository_identity["apiHost"],
-        expected_path_prefix=f"/{full_name}/releases/",
+        expected_path=f"/{full_name}/releases/tag/{tag}",
     )
     state = "draft" if draft else "prerelease" if prerelease else "published"
     return {
@@ -973,6 +1186,8 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
     repo = Path(args.repo).expanduser().resolve()
     if git(repo, "rev-parse", "--is-inside-work-tree") != "true":
         raise LedgerError(f"not a Git worktree: {repo}")
+    repo = Path(git(repo, "rev-parse", "--show-toplevel")).resolve()
+    require_safe_repository_configuration(repo)
     require_unmodified_local_history(repo)
     require_complete_local_history(repo)
 
@@ -1015,13 +1230,17 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
     ]
 
     candidates: list[tuple[Version, str, str]] = []
+    in_range_tag_object_shas: list[str] = []
     explicit_target_tag = explicitly_referenced_tag(repo, args.to_ref, target_sha)
     for tag in git(repo, "tag", "--merged", target_sha).splitlines():
         version = Version.parse(tag)
         if version is None:
             continue
         tag_sha = resolve_commit(repo, f"refs/tags/{tag}")
-        if not is_ancestor(repo, start_sha, tag_sha) or tag_sha == start_sha:
+        if not is_ancestor(repo, start_sha, tag_sha):
+            continue
+        in_range_tag_object_shas.append(git(repo, "rev-parse", f"refs/tags/{tag}"))
+        if tag_sha == start_sha:
             continue
         explicitly_targeted = tag == explicit_target_tag and tag_sha == target_sha
         precedence = version.compare_precedence(start_version)
@@ -1071,6 +1290,8 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
                 "createdAt": git(repo, "show", "-s", "--format=%cI", target_sha),
             }
         )
+
+    require_complete_reachable_objects(repo, target_sha, in_range_tag_object_shas)
 
     if explicit_target_tag is None and args.github_repository:
         if not args.github_target_ref:
@@ -1160,12 +1381,73 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
                 "shortstat": git(
                     repo,
                     "diff",
+                    "--no-ext-diff",
+                    "--no-textconv",
                     "--shortstat",
                     older["sha"],
                     newer["sha"],
                 ),
             }
         )
+
+    remote_verified_at = None
+    if publication_source is not None:
+        assert remote_tag_inventory is not None
+        rechecked_inventory = github_semver_tag_inventory(
+            publication_source, args.github_timeout_seconds
+        )
+        if rechecked_inventory != remote_tag_inventory:
+            raise LedgerError(
+                "GitHub semantic-version tag refs changed during collection; rerun "
+                "against one stable remote snapshot"
+            )
+        rechecked_releases = github_release_publications(
+            publication_source, args.github_timeout_seconds
+        )
+        if rechecked_releases != releases:
+            raise LedgerError(
+                "GitHub release publications changed during collection; rerun against "
+                "one stable remote snapshot"
+            )
+        if target_remote_ref is not None:
+            rechecked_target_ref = github_target_ref_identity(
+                publication_source,
+                target_remote_ref["ref"],
+                target_sha,
+                args.github_timeout_seconds,
+            )
+            if rechecked_target_ref != target_remote_ref:
+                raise LedgerError(
+                    "GitHub target ref identity changed during collection; rerun against "
+                    "one stable remote snapshot"
+                )
+        rechecked_repository = github_repository_identity(
+            args.github_repository,
+            args.github_host,
+            args.github_timeout_seconds,
+        )
+        stable_repository_fields = (
+            "provider",
+            "apiHost",
+            "repositoryId",
+            "nodeId",
+            "fullName",
+            "visibility",
+            "url",
+            "viewerCanPush",
+        )
+        changed_fields = [
+            field
+            for field in stable_repository_fields
+            if rechecked_repository[field] != publication_source[field]
+        ]
+        if changed_fields:
+            raise LedgerError(
+                "GitHub repository identity or permissions changed during collection: "
+                + ", ".join(changed_fields)
+            )
+        remote_verified_at = rechecked_repository["collectedAt"]
+        publication_source["verifiedAt"] = remote_verified_at
 
     if explicit_target_tag is not None:
         explicit_version = Version.parse(explicit_target_tag)
@@ -1196,7 +1478,7 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
         target["remoteRef"] = target_remote_ref
 
     ledger = {
-        "schemaVersion": 4,
+        "schemaVersion": 5,
         "repository": str(repo),
         "start": endpoints[0],
         "requiredFixes": required_fixes,
@@ -1211,6 +1493,7 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
             "provider": "github",
             "apiHost": publication_source["apiHost"],
             "repositoryId": publication_source["repositoryId"],
+            "verifiedAt": remote_verified_at,
             "count": len(remote_tag_inventory),
             "tags": [remote_tag_inventory[tag] for tag in sorted(remote_tag_inventory)],
         }

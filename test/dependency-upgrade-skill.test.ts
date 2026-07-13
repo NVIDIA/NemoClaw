@@ -28,12 +28,14 @@ type Ledger = {
     requestedName: string;
     repositoryId: number;
     url: string;
+    verifiedAt: string;
     viewerCanPush: boolean | null;
     visibility: string;
   };
   requiredFixes: Array<{ ref: string; sha: string }>;
   remoteTagInventory?: {
     count: number;
+    verifiedAt: string;
     tags: Array<{
       commitSha: string;
       ref: string;
@@ -89,6 +91,7 @@ type FakeResponse = {
   delayMs?: number;
   exitCode?: number;
   json?: unknown;
+  jsonSequence?: unknown[];
   rawStdout?: string;
   stderr?: string;
 };
@@ -252,8 +255,15 @@ function fakeGitHubEnvironment(
 const fs = require("node:fs");
 const responses = ${JSON.stringify(responses)};
 const args = process.argv.slice(2);
-fs.appendFileSync(${JSON.stringify(invocationLog)}, JSON.stringify(args) + "\\n");
 const endpoint = args.find((argument) => argument.startsWith("repos/"));
+let priorEndpointCalls = 0;
+if (fs.existsSync(${JSON.stringify(invocationLog)})) {
+  priorEndpointCalls = fs.readFileSync(${JSON.stringify(invocationLog)}, "utf8")
+    .trim().split("\\n").filter(Boolean)
+    .map((line) => JSON.parse(line))
+    .filter((invocation) => invocation.includes(endpoint)).length;
+}
+fs.appendFileSync(${JSON.stringify(invocationLog)}, JSON.stringify(args) + "\\n");
 const response = responses[endpoint];
 if (!response) {
   process.stderr.write("unexpected gh invocation: " + args.join(" ") + "\\n");
@@ -263,8 +273,11 @@ if (response.delayMs) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, response.delayMs);
 }
 if (response.stderr) process.stderr.write(response.stderr);
+const json = response.jsonSequence
+  ? response.jsonSequence[Math.min(priorEndpointCalls, response.jsonSequence.length - 1)]
+  : response.json;
 if (response.rawStdout !== undefined) process.stdout.write(response.rawStdout);
-else if (response.json !== undefined) process.stdout.write(JSON.stringify(response.json) + "\\n");
+else if (json !== undefined) process.stdout.write(JSON.stringify(json) + "\\n");
 process.exit(response.exitCode ?? 0);
 `,
     { mode: 0o755 },
@@ -425,7 +438,7 @@ describe("dependency release ledger collector", () => {
       previousPath: "contract.txt",
       status: "R100",
     });
-    expect(ledger.schemaVersion).toBe(4);
+    expect(ledger.schemaVersion).toBe(5);
     expect(ledger.target).toMatchObject({
       kind: "commit",
       requestedRef: targetSha,
@@ -477,6 +490,7 @@ describe("dependency release ledger collector", () => {
       requestedName: "acme/dependency",
       repositoryId: 42,
       url: "https://github.com/Acme/Dependency",
+      verifiedAt: expect.any(String),
       viewerCanPush: true,
       visibility: "public",
     });
@@ -913,7 +927,7 @@ describe("dependency release ledger collector", () => {
     expect(invocations[0]).toContain("repos/acme/dependency");
     for (const invocation of invocations.slice(1)) {
       expect(invocation.find((argument) => argument.startsWith("repos/"))).toMatch(
-        /^repos\/Acme\/Dependency\//u,
+        /^(?:repos\/acme\/dependency|repos\/Acme\/Dependency\/)/u,
       );
     }
     const paginatedInvocations = invocations.filter((invocation) =>
@@ -922,11 +936,92 @@ describe("dependency release ledger collector", () => {
           argument.includes("/git/matching-refs/tags/") || argument.includes("/releases?"),
       ),
     );
-    expect(paginatedInvocations).toHaveLength(2);
+    expect(paginatedInvocations).toHaveLength(4);
     for (const invocation of paginatedInvocations) {
       expect(invocation).toEqual(expect.arrayContaining(["--paginate", "--slurp"]));
     }
   });
+
+  it("fails when any remote identity changes during collection", () => {
+    const { repo, targetSha } = createTaggedRepository();
+    const evidence = readGitEvidence(repo, targetSha);
+    const fullName = "Acme/Dependency";
+    const repositoryEndpoint = "repos/acme/dependency";
+    const inventoryEndpoint = `repos/${fullName}/git/matching-refs/tags/?per_page=100`;
+    const releaseEndpoint = `repos/${fullName}/releases?per_page=100`;
+    const targetEndpoint = `repos/${fullName}/git/ref/heads/main`;
+    const repositoryPayload = {
+      full_name: fullName,
+      html_url: `https://github.com/${fullName}`,
+      id: 42,
+      node_id: "R_kg_dependency",
+      permissions: { push: true },
+      visibility: "public",
+    };
+    const refs = Object.entries(evidence.tags).map(([tag, identity]) => ({
+      object: { sha: identity.objectSha, type: identity.objectType },
+      ref: `refs/tags/${tag}`,
+    }));
+    const releases = [
+      githubRelease("v1.0.0", 100, { immutable: true }),
+      githubRelease("v1.0.1", 101, { draft: true }),
+    ];
+    const cases: Array<{ expected: string; overrides: Record<string, FakeResponse> }> = [
+      {
+        expected: "semantic-version tag refs changed",
+        overrides: {
+          [inventoryEndpoint]: {
+            jsonSequence: [
+              [refs],
+              [[...refs, { object: { sha: targetSha, type: "commit" }, ref: "refs/tags/v1.0.3" }]],
+            ],
+          },
+        },
+      },
+      {
+        expected: "release publications changed",
+        overrides: {
+          [releaseEndpoint]: {
+            jsonSequence: [[releases], [[...releases, githubRelease("v1.0.2", 102)]]],
+          },
+        },
+      },
+      {
+        expected: "not audit target",
+        overrides: {
+          [targetEndpoint]: {
+            jsonSequence: [
+              { object: { sha: targetSha, type: "commit" }, ref: "refs/heads/main" },
+              {
+                object: { sha: evidence.tags["v1.0.2"]?.commitSha, type: "commit" },
+                ref: "refs/heads/main",
+              },
+            ],
+          },
+        },
+      },
+      {
+        expected: "repository identity or permissions changed",
+        overrides: {
+          [repositoryEndpoint]: {
+            jsonSequence: [repositoryPayload, { ...repositoryPayload, id: 43 }],
+          },
+        },
+      },
+    ];
+
+    for (const testCase of cases) {
+      const result = runCollector(
+        repo,
+        "v1.0.0",
+        targetSha,
+        ["--github-repository", "acme/dependency", "--github-target-ref", "refs/heads/main"],
+        fakeGitHubEnvironment(evidence, { responseOverrides: testCase.overrides }),
+      );
+      expect(result.status, testCase.expected).toBe(1);
+      expect(result.stderr).toContain(testCase.expected);
+    }
+  }, 60_000);
 
   it("fails closed for API errors, missing gh, and timeouts", () => {
     const { repo, targetSha } = createTaggedRepository();
@@ -1273,15 +1368,15 @@ describe("dependency release ledger collector", () => {
     git(repo, "config", "extensions.partialClone", "origin");
     const partial = runCollector(repo, "v1.0.0", targetSha);
     expect(partial.status).toBe(1);
-    expect(partial.stderr).toContain("partial/promisor clone");
-    expect(partial.stderr).toContain("extensions.partialClone='origin'");
+    expect(partial.stderr).toContain("configures extensions.partialClone");
+    expect(partial.stderr).toContain("'origin'");
     git(repo, "config", "--unset", "extensions.partialClone");
 
     git(repo, "config", "remote.origin.promisor", "true");
     const promisor = runCollector(repo, "v1.0.0", targetSha);
     expect(promisor.status).toBe(1);
-    expect(promisor.stderr).toContain("partial/promisor clone");
-    expect(promisor.stderr).toContain("remote.origin.promisor=true");
+    expect(promisor.stderr).toContain("enabled promisor setting");
+    expect(promisor.stderr).toContain("remote.origin.promisor='true'");
     git(repo, "config", "--unset", "remote.origin.promisor");
 
     const replacedCommit = git(repo, "rev-parse", "v1.0.0^{commit}");
