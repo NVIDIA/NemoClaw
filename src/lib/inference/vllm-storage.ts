@@ -1,0 +1,318 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { parse as parseToml } from "smol-toml";
+import { dockerCapture } from "../adapters/docker";
+import { buildVllmDockerEnv } from "./vllm-docker-env";
+
+export const VLLM_STORAGE_OVERRIDE_ENV = "NEMOCLAW_IGNORE_VLLM_DISK_SPACE";
+
+const GIB_BYTES = 1024n ** 3n;
+const IMAGE_PULL_TEMP_HEADROOM_BYTES = 3n * GIB_BYTES;
+const MODEL_MINIMUM_HEADROOM_BYTES = 2n * GIB_BYTES;
+const DEFAULT_CONTAINERD_ROOT = "/var/lib/containerd";
+const DEFAULT_CONTAINERD_CONFIG = "/etc/containerd/config.toml";
+
+interface StorageProbeDeps {
+  dockerContext: string | undefined;
+  dockerHost: string | undefined;
+  dockerInfo: () => string;
+  exists: (target: string) => boolean;
+  osRelease: string;
+  platform: NodeJS.Platform;
+  readFile: (target: string) => string;
+  statfs: (target: string) => { bavail: bigint; bsize: bigint };
+}
+
+const defaultDeps: StorageProbeDeps = {
+  dockerContext: process.env.DOCKER_CONTEXT,
+  dockerHost: process.env.DOCKER_HOST,
+  dockerInfo: () =>
+    dockerCapture(["info", "--format", "{{json .}}"], {
+      env: buildVllmDockerEnv(),
+      ignoreError: true,
+      timeout: 10_000,
+    }),
+  exists: fs.existsSync,
+  osRelease: os.release(),
+  platform: process.platform,
+  readFile: (target) => fs.readFileSync(target, "utf8"),
+  statfs: (target) => fs.statfsSync(target, { bigint: true }),
+};
+
+export interface StorageCapacity {
+  availableBytes: bigint;
+  path: string;
+  source: string;
+}
+
+export type StorageProbeResult =
+  | { ok: true; capacity: StorageCapacity }
+  | { ok: false; reason: string; path?: string; source?: string };
+
+interface DockerInfoShape {
+  ClientInfo?: { Context?: unknown };
+  DockerRootDir?: unknown;
+  Driver?: unknown;
+  DriverStatus?: unknown;
+  Name?: unknown;
+  OperatingSystem?: unknown;
+  OSType?: unknown;
+  SecurityOptions?: unknown;
+}
+
+interface DockerStorageLocation {
+  path: string;
+  source: string;
+}
+
+function positiveBytes(value: number, label: string): bigint {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`${label} must be a positive finite byte count`);
+  }
+  return BigInt(Math.ceil(value));
+}
+
+/**
+ * Containerd retains compressed content alongside an unpacked snapshot, and
+ * pull staging can briefly coexist with both. Three times the advertised
+ * compressed size plus a fixed staging allowance is intentionally
+ * conservative for the pinned multi-gigabyte NGC images.
+ */
+export function imageStorageRequirementBytes(downloadSizeBytes: number): bigint {
+  return (
+    positiveBytes(downloadSizeBytes, "vLLM image download size") * 3n +
+    IMAGE_PULL_TEMP_HEADROOM_BYTES
+  );
+}
+
+/**
+ * Hugging Face downloads need the published repository size plus temporary
+ * write headroom. A local cache cannot prove which blobs a mutable remote
+ * revision will reuse, so the estimate deliberately does not subtract it.
+ */
+export function modelStorageRequirementBytes(downloadSizeBytes: number): bigint {
+  const downloadBytes = positiveBytes(downloadSizeBytes, "vLLM model download size");
+  const tenPercent = (downloadBytes + 9n) / 10n;
+  const headroom =
+    tenPercent > MODEL_MINIMUM_HEADROOM_BYTES ? tenPercent : MODEL_MINIMUM_HEADROOM_BYTES;
+  return downloadBytes + headroom;
+}
+
+export function formatStorageBytes(bytes: bigint): string {
+  const roundedTenths = (bytes * 10n + GIB_BYTES / 2n) / GIB_BYTES;
+  const whole = roundedTenths / 10n;
+  const fraction = roundedTenths % 10n;
+  return fraction === 0n ? `${String(whole)} GiB` : `${String(whole)}.${String(fraction)} GiB`;
+}
+
+function parseDockerInfo(raw: string): DockerInfoShape | null {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === "object" ? (parsed as DockerInfoShape) : null;
+  } catch {
+    return null;
+  }
+}
+
+function isContainerdImageStore(info: DockerInfoShape): boolean {
+  return (
+    Array.isArray(info.DriverStatus) &&
+    info.DriverStatus.some(
+      (entry) =>
+        Array.isArray(entry) &&
+        entry[0] === "driver-type" &&
+        entry[1] === "io.containerd.snapshotter.v1",
+    )
+  );
+}
+
+function absoluteString(value: unknown): string | null {
+  return typeof value === "string" && path.isAbsolute(value) ? value : null;
+}
+
+type ContainerdRootResult = { ok: true; root: string } | { ok: false; reason: string };
+
+function containerdRootFromConfig(deps: StorageProbeDeps): ContainerdRootResult {
+  if (!deps.exists(DEFAULT_CONTAINERD_CONFIG)) {
+    return { ok: true, root: DEFAULT_CONTAINERD_ROOT };
+  }
+  try {
+    const parsed = parseToml(deps.readFile(DEFAULT_CONTAINERD_CONFIG)) as Record<string, unknown>;
+    if (parsed.imports !== undefined) {
+      if (!Array.isArray(parsed.imports)) {
+        return { ok: false, reason: "containerd config declares malformed imports" };
+      }
+      if (parsed.imports.length > 0) {
+        return {
+          ok: false,
+          reason: "containerd config imports other files that can override its image-store root",
+        };
+      }
+    }
+    const root = absoluteString(parsed.root);
+    if (root) return { ok: true, root };
+    if (parsed.root !== undefined) {
+      return {
+        ok: false,
+        reason: "containerd config does not declare an absolute image-store root",
+      };
+    }
+    return { ok: true, root: DEFAULT_CONTAINERD_ROOT };
+  } catch (err) {
+    return {
+      ok: false,
+      reason: `could not read ${DEFAULT_CONTAINERD_CONFIG}: ${(err as Error).message}`,
+    };
+  }
+}
+
+function nativeDockerHostProblem(info: DockerInfoShape, deps: StorageProbeDeps): string | null {
+  if (deps.platform !== "linux") return `Docker runs behind a ${deps.platform} host boundary`;
+  if (/microsoft|wsl/i.test(deps.osRelease)) return "Docker runs behind a WSL host boundary";
+  if (info.OSType !== "linux") return "Docker is not using a Linux engine";
+
+  const product = `${String(info.Name ?? "")} ${String(info.OperatingSystem ?? "")}`;
+  if (/docker desktop|colima|podman/i.test(product)) {
+    return "Docker runs inside a VM or compatibility layer";
+  }
+
+  const explicitContext = deps.dockerContext?.trim();
+  const reportedContext =
+    typeof info.ClientInfo?.Context === "string" ? info.ClientInfo.Context.trim() : "";
+  const context = explicitContext || reportedContext;
+  if (!context) return "docker info did not report the effective Docker context";
+  if (context !== "default") {
+    return `Docker uses a named context (${context}) whose host filesystem cannot be verified`;
+  }
+
+  // DOCKER_CONTEXT has precedence over DOCKER_HOST. An explicit default
+  // context therefore selects the local default even when DOCKER_HOST is set.
+  const endpoint = explicitContext ? "" : (deps.dockerHost?.trim() ?? "");
+  if (endpoint && !endpoint.startsWith("unix://") && !path.isAbsolute(endpoint)) {
+    return `Docker uses a remote endpoint (${endpoint})`;
+  }
+  return null;
+}
+
+export function resolveDockerStorageLocations(
+  rawInfo: string,
+  overrides: Partial<StorageProbeDeps> = {},
+): { ok: true; locations: DockerStorageLocation[] } | { ok: false; reason: string } {
+  const deps = { ...defaultDeps, ...overrides };
+  const info = parseDockerInfo(rawInfo);
+  if (!info) return { ok: false, reason: "docker info did not return valid JSON" };
+  const hostProblem = nativeDockerHostProblem(info, deps);
+  if (hostProblem) return { ok: false, reason: hostProblem };
+
+  const dockerRoot = absoluteString(info.DockerRootDir);
+  if (!dockerRoot) {
+    return { ok: false, reason: "docker info did not report an absolute DockerRootDir" };
+  }
+  if (!isContainerdImageStore(info)) {
+    const driver = typeof info.Driver === "string" ? info.Driver : "";
+    const classicDrivers = new Set([
+      "aufs",
+      "btrfs",
+      "devicemapper",
+      "fuse-overlayfs",
+      "overlay2",
+      "vfs",
+      "zfs",
+    ]);
+    if (!classicDrivers.has(driver)) {
+      return {
+        ok: false,
+        reason: driver
+          ? `docker reported ambiguous image-storage driver ${driver}`
+          : "docker info did not report a recognized image-storage driver",
+      };
+    }
+    return {
+      ok: true,
+      locations: [{ path: dockerRoot, source: "Docker root directory" }],
+    };
+  }
+
+  if (
+    Array.isArray(info.SecurityOptions) &&
+    info.SecurityOptions.some((entry) => String(entry).includes("rootless"))
+  ) {
+    return { ok: false, reason: "rootless containerd image-store location is ambiguous" };
+  }
+  const containerd = containerdRootFromConfig(deps);
+  if (!containerd.ok) return containerd;
+  return {
+    ok: true,
+    locations: [
+      { path: containerd.root, source: "containerd image store" },
+      { path: dockerRoot, source: "Docker pull staging" },
+    ],
+  };
+}
+
+function capacityForLocation(
+  location: DockerStorageLocation,
+  statfs: StorageProbeDeps["statfs"],
+): StorageProbeResult {
+  try {
+    const stats = statfs(location.path);
+    const availableBytes = stats.bavail * stats.bsize;
+    if (availableBytes < 0n) throw new Error("filesystem reported negative available space");
+    return { ok: true, capacity: { ...location, availableBytes } };
+  } catch (err) {
+    return {
+      ok: false,
+      reason: `could not inspect ${location.path}: ${(err as Error).message}`,
+      path: location.path,
+      source: location.source,
+    };
+  }
+}
+
+export function probeDockerStorage(overrides: Partial<StorageProbeDeps> = {}): StorageProbeResult {
+  const deps = { ...defaultDeps, ...overrides };
+  const rawInfo = deps.dockerInfo();
+  const resolved = resolveDockerStorageLocations(rawInfo, deps);
+  if (!resolved.ok) return resolved;
+
+  let limiting: StorageCapacity | null = null;
+  for (const location of resolved.locations) {
+    const result = capacityForLocation(location, deps.statfs);
+    if (!result.ok) return result;
+    if (!limiting || result.capacity.availableBytes < limiting.availableBytes) {
+      limiting = result.capacity;
+    }
+  }
+  return limiting
+    ? { ok: true, capacity: limiting }
+    : { ok: false, reason: "docker info did not report a usable image-storage path" };
+}
+
+function nearestExistingPath(target: string, exists: (candidate: string) => boolean): string {
+  let candidate = path.resolve(target);
+  while (!exists(candidate)) {
+    const parent = path.dirname(candidate);
+    if (parent === candidate) return candidate;
+    candidate = parent;
+  }
+  return candidate;
+}
+
+export function probeModelCacheStorage(
+  cacheDir: string,
+  overrides: Partial<StorageProbeDeps> = {},
+): StorageProbeResult {
+  const deps = { ...defaultDeps, ...overrides };
+  const target = nearestExistingPath(cacheDir, deps.exists);
+  return capacityForLocation(
+    {
+      path: target,
+      source: target === path.resolve(cacheDir) ? "model cache" : "model cache filesystem",
+    },
+    deps.statfs,
+  );
+}

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   type DetectInferenceProviderHostStateDeps,
@@ -16,6 +16,10 @@ const SUPPORTED_WINDOWS_OLLAMA = {
   startLabel: ({ reachable }: { reachable: boolean; loopbackOnly: boolean }) =>
     reachable ? "Use Ollama on Windows host - running (suggested)" : "Start Ollama on Windows host",
 } as const;
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 function buildDeps(
   overrides: Partial<DetectInferenceProviderHostStateDeps> = {},
@@ -94,17 +98,21 @@ describe("detectInferenceProviderHostState", () => {
   });
 
   it("collects local Ollama and vLLM state into one provider host snapshot", () => {
+    vi.stubEnv("DOCKER_CONTEXT", "remote-builder");
+    vi.stubEnv("DOCKER_HOST", "ssh://fallback.example.test");
+    const dockerCapture = vi.fn(() => "sha256:cached-image\n");
     const deps = buildDeps({
       hostCommandExists: vi.fn((command) => command === "ollama"),
       findReachableOllamaHost: vi.fn(() => "127.0.0.1"),
       runCapture: vi.fn((command) =>
         command.join(" ").includes(`http://127.0.0.1:8000/v1/models`) ? "{}" : "",
       ),
-      dockerCapture: vi.fn(() => "sha256:cached-image\n"),
+      dockerCapture,
       detectVllmProfile: vi.fn<DetectInferenceProviderHostStateDeps["detectVllmProfile"]>(() => ({
         name: "Linux + NVIDIA GPU",
         platform: "linux" as const,
         image: "nvcr.io/nvidia/vllm:test",
+        imageDownloadSizeBytes: 1,
         defaultModel: {} as never,
         containerName: "nemoclaw-vllm",
         dockerRunFlags: [],
@@ -125,6 +133,17 @@ describe("detectInferenceProviderHostState", () => {
     expect(state.gpuNimCapable).toBe(true);
     expect(state.ollamaInstallMenu.entry).toBeNull();
     expect(deps.getWindowsHostOllamaDockerRequirement).toHaveBeenCalledWith(null);
+    expect(dockerCapture).toHaveBeenCalledWith(
+      ["image", "inspect", "--format", "{{.Id}}", "nvcr.io/nvidia/vllm:test"],
+      expect.objectContaining({
+        env: expect.objectContaining({
+          DOCKER_CONTEXT: "remote-builder",
+          DOCKER_HOST: "ssh://fallback.example.test",
+        }),
+        ignoreError: true,
+        timeout: 10_000,
+      }),
+    );
   });
 
   it("detects a reachable Windows-host Ollama beside WSL-local Ollama and warns outside mirrored networking", () => {

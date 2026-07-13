@@ -15,7 +15,9 @@ describe("detectVllmProfile", () => {
     expect(profile).not.toBeNull();
     expect(profile!.name).toBe("DGX Spark");
     expect(profile!.defaultModel.id).toBe("nvidia/Qwen3.6-35B-A3B-NVFP4");
-    expect(profile!.image).toBe("nvcr.io/nvidia/vllm:26.05.post1-py3");
+    expect(profile!.image).toBe(
+      "nvcr.io/nvidia/vllm@sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2",
+    );
   });
 
   it("returns the Spark profile when legacy gpu.spark is true", () => {
@@ -28,7 +30,9 @@ describe("detectVllmProfile", () => {
     const profile = detectVllmProfile({ platform: "station", type: "nvidia" });
     expect(profile).not.toBeNull();
     expect(profile!.name).toBe("DGX Station");
-    expect(profile!.image).toBe("nvcr.io/nvidia/vllm:26.05.post1-py3");
+    expect(profile!.image).toBe(
+      "nvcr.io/nvidia/vllm@sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2",
+    );
     expect(profile!.defaultModel.id).toBe("deepseek-ai/DeepSeek-V4-Flash");
     expect(profile!.defaultModel.envValue).toBe("deepseek-v4-flash");
   });
@@ -38,7 +42,11 @@ describe("detectVllmProfile", () => {
     expect(profile).not.toBeNull();
     expect(profile!.name).toBe("Linux + NVIDIA GPU");
     expect(profile!.defaultModel.id).toContain("Nemotron-3-Nano-4B");
-    expect(profile!.image).toBe("nvcr.io/nvidia/vllm:26.03.post1-py3");
+    expect(profile!.image).toBe(
+      process.arch === "arm64"
+        ? "nvcr.io/nvidia/vllm@sha256:447995cbb57e6c7cf792cab95e9852e5f62b5fb6d2f39e030fa4eda9a54eadb4"
+        : "nvcr.io/nvidia/vllm@sha256:7be6c2f676c36059a494fe17254e69ae5c677535ba6191044e5fc8e42a91c773",
+    );
   });
 
   it("prefers Spark over generic when both flags qualify", () => {
