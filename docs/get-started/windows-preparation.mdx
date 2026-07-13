@@ -162,6 +162,7 @@ You can also start it yourself beforehand with `ollama serve`.
 
 You can also use Ollama for Windows.
 During onboarding, NemoClaw can use an already-running Windows-host daemon, start or restart an installed daemon, or install Ollama on the Windows host.
+The Windows-host Ollama path requires Docker Desktop WSL integration; with native Docker Engine inside WSL, the onboarding menu labels the Windows-host actions accordingly, so use the WSL Ollama instance instead.
 If the installer offers express install on WSL, accepting it selects this Windows-host Ollama path automatically.
 When Ollama runs on the Windows host, NemoClaw detects it from WSL through `host.docker.internal` and pulls missing models through the Ollama HTTP API.
 Do not run both the Windows and WSL Ollama instances on port `11434` at the same time.
