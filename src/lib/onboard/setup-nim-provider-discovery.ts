@@ -157,8 +157,16 @@ export function prepareProviderDiscovery(options: {
     requestedModel,
     recoveredRegistryRoute,
     recordedProviderReaders,
+    // Interactive menus always probe: the probe only drives status display
+    // (" — running" suffix, detection banner), and route conflicts are still
+    // enforced at selection time via assertRouteCompatible. Gating the probe
+    // on the route preflight hid a running daemon from the menu whenever the
+    // registry held an unrelated same-gateway route (#6750).
     probeOllama:
-      intent.ollama && (ollamaPreflightPassed || (canProbeRoute?.("ollama-local") ?? true)),
-    probeVllm: intent.vllm && (vllmPreflightPassed || (canProbeRoute?.("vllm-local") ?? true)),
+      intent.ollama &&
+      (!nonInteractive || ollamaPreflightPassed || (canProbeRoute?.("ollama-local") ?? true)),
+    probeVllm:
+      intent.vllm &&
+      (!nonInteractive || vllmPreflightPassed || (canProbeRoute?.("vllm-local") ?? true)),
   };
 }

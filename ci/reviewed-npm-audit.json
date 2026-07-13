@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "nodeVersion": "22.22.2",
+  "severityThreshold": "high",
+  "artifactDirectory": "coverage/reviewed-npm-audit",
+  "archivePackages": [
+    {
+      "label": "OpenClaw 2026.6.10",
+      "packageSpec": "openclaw@2026.6.10",
+      "integrity": "sha512-LcooND2tBQw8A+kc1Ujltu3lg30bJ0w7XaeRy7eYzobb8BBdcW6DOGbwJL4vpj1vl9+gjRceOtlh5nh9OARcug==",
+      "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.6.10.tgz"
+    },
+    {
+      "label": "Codex ACP 0.11.1",
+      "packageSpec": "@zed-industries/codex-acp@0.11.1",
+      "integrity": "sha512-My2VSlBtvJipJhImHjFDej2ut/p00QqOISRnZgLgLrSIzjgvdcQvAhaZviWj7XPhk4UIdIb0OoA+Lrls824uiQ==",
+      "tarballUrl": "https://registry.npmjs.org/@zed-industries/codex-acp/-/codex-acp-0.11.1.tgz"
+    },
+    {
+      "label": "OpenClaw diagnostics OTEL 2026.6.10",
+      "packageSpec": "@openclaw/diagnostics-otel@2026.6.10",
+      "integrity": "sha512-EJt0fjk4bcR3N/9u00f1pL0BJYG5yfC09DV3l6rWDmytpE2vUeBZWpx4pOmFDreGV+7DKxhCbQDgDAmvZGjLag==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.6.10.tgz"
+    },
+    {
+      "label": "OpenClaw Brave plugin 2026.6.10",
+      "packageSpec": "@openclaw/brave-plugin@2026.6.10",
+      "integrity": "sha512-DDRnb4reL99O8kbISNbRFyk/xoUPYHsXG3UGikKAsVs+zIldYYA0hY0d3Z2aWoE+0vfda27mJUByCo7Xr15qdw==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.6.10.tgz"
+    },
+    {
+      "label": "OpenClaw Discord plugin 2026.6.10",
+      "packageSpec": "@openclaw/discord@2026.6.10",
+      "integrity": "sha512-NKp/j00l+rk5PC0Lv/0fOIiiQJ1c/OpG9471zqXUDKQie6pQ1Fi9KUZUouyoTMmfLh/n4S0CkEMqrON40eBKXA==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.6.10.tgz"
+    },
+    {
+      "label": "OpenClaw Slack plugin 2026.6.10",
+      "packageSpec": "@openclaw/slack@2026.6.10",
+      "integrity": "sha512-OOsMLjPcbWhQRM5XDwfdrACjJmKqavFtpuIlhHAXWrLrd/p7SyIVE9AoKS0yxOx6bqGDIMJ9+knzdViHMLgBdA==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.6.10.tgz"
+    },
+    {
+      "label": "OpenClaw WhatsApp plugin 2026.6.10",
+      "packageSpec": "@openclaw/whatsapp@2026.6.10",
+      "integrity": "sha512-k/XrRdZY77SHrdaRwJOEB7/JRbjp4yVgGD/ZNyakjTMqo32XRVtwPBUnj7726rW8Kl5yyOMQQLKFiD9MDfhmPQ==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/whatsapp/-/whatsapp-2026.6.10.tgz"
+    },
+    {
+      "label": "OpenClaw Microsoft Teams plugin 2026.6.10",
+      "packageSpec": "@openclaw/msteams@2026.6.10",
+      "integrity": "sha512-GjHnCPvjbnI0C7mEFcdT2uKDH4/WwOe2dZBfQiWxBtkE76m6TNG0J9dJjD4mc8/pk8rXSO0cWw+KV9jzWtF9VA==",
+      "tarballUrl": "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.6.10.tgz"
+    },
+    {
+      "label": "Tencent WeChat plugin 2.4.3",
+      "packageSpec": "@tencent-weixin/openclaw-weixin@2.4.3",
+      "integrity": "sha512-dPQbidUNWigC6V10vGW4i+GLH09x+6zUhafZRjuxkJ9GDu8o62WBsnUTojp4KqUH756hz+t2v9khiCRSi0dBDw==",
+      "tarballUrl": "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz"
+    }
+  ],
+  "lockedGraphs": [
+    {
+      "label": "mcporter 0.7.3 locked runtime graph",
+      "packageSpec": "mcporter@0.7.3",
+      "integrity": "sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==",
+      "tarballUrl": "https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz",
+      "directory": "agents/openclaw/mcporter-runtime"
+    }
+  ]
+}

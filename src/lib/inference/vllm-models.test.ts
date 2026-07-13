@@ -16,6 +16,25 @@ import {
 } from "./vllm-models";
 
 describe("vllm model registry", () => {
+  it("records a finite positive Hugging Face download size for every model", () => {
+    for (const model of VLLM_MODELS) {
+      expect(Number.isFinite(model.downloadSizeBytes)).toBe(true);
+      expect(model.downloadSizeBytes).toBeGreaterThan(0);
+    }
+  });
+
+  it("pins the official Hugging Face repository totals", () => {
+    expect(
+      Object.fromEntries(VLLM_MODELS.map((model) => [model.envValue, model.downloadSizeBytes])),
+    ).toEqual({
+      "qwen3.6-27b": 30_900_000_000,
+      "deepseek-r1-distill-70b": 141_000_000_000,
+      "nemotron-3-nano-4b": 5_280_000_000,
+      "deepseek-v4-flash": 160_000_000_000,
+      "qwen3.6-35b-a3b-nvfp4": 23_500_000_000,
+    });
+  });
+
   it("returns null when NEMOCLAW_VLLM_MODEL is unset so the caller can fall back to the profile default", () => {
     expect(selectVllmModelFromEnv({} as NodeJS.ProcessEnv)).toBeNull();
   });

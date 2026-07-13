@@ -6,6 +6,7 @@ import { OLLAMA_PORT, VLLM_PORT } from "../core/ports";
 import { findReachableOllamaHost, OLLAMA_HOST_DOCKER_INTERNAL } from "../inference/local";
 import type { NvidiaPlatform } from "../inference/nim";
 import { detectVllmProfile, type VllmProfile } from "../inference/vllm";
+import { buildVllmDockerEnv } from "../inference/vllm-docker-env";
 import {
   type ContainerRuntime,
   isWsl as defaultIsWsl,
@@ -23,7 +24,10 @@ import { buildVllmMenuEntries, type VllmMenuEntry } from "./vllm-menu";
 import { detectWindowsHostOllama, type WindowsHostOllamaState } from "./windows-host-ollama";
 
 type RunCapture = (args: string[], options?: { ignoreError?: boolean }) => string;
-type DockerCapture = (args: string[], options?: { ignoreError?: boolean }) => string;
+type DockerCapture = (
+  args: string[],
+  options?: { env?: NodeJS.ProcessEnv; ignoreError?: boolean; timeout?: number },
+) => string;
 
 export interface InferenceProviderHostGpu {
   nimCapable?: boolean;
@@ -166,7 +170,13 @@ export function detectInferenceProviderHostState(
   const vllmProfile = deps.detectVllmProfile(input.gpu);
   const hasVllmImage = !!(
     vllmProfile &&
-    deps.dockerCapture(["images", "-q", vllmProfile.image], { ignoreError: true }).trim()
+    deps
+      .dockerCapture(["image", "inspect", "--format", "{{.Id}}", vllmProfile.image], {
+        env: buildVllmDockerEnv({}, input.env),
+        ignoreError: true,
+        timeout: 10_000,
+      })
+      .trim()
   );
   const windowsHostOllamaDockerRequirement = deps.getWindowsHostOllamaDockerRequirement(
     isWsl ? deps.getContainerRuntime() : null,

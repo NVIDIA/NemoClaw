@@ -23,6 +23,11 @@ export type ReconcileExtraProvidersDeps = {
   warn?: (message: string) => void;
 };
 
+export type ExtraProviderReconciliationPlan = {
+  readonly extraProviders: readonly string[];
+  readonly staleExtraProviders: readonly string[];
+};
+
 type IndeterminateProbeReason =
   | "aggregate-time-budget"
   | "ambiguous-diagnostic"
@@ -139,9 +144,10 @@ function probeExtraProvider(context: ProviderProbeContext): ProviderProbeOutcome
  *
  * Each recorded name is checked independently in the selected gateway. Only an
  * exact provider-specific not-found diagnostic omits that name from this sandbox
- * create and prunes it from the local extra-provider registry, so retries and
- * `--fresh` starts no longer inherit the stale attachment. Successful probes and
- * every indeterminate outcome (including throws, timeouts, transport failures,
+ * create plan. Applying the completed plan later prunes it from the local
+ * extra-provider registry, so retries and `--fresh` starts no longer inherit
+ * the stale attachment. Successful probes and every indeterminate outcome
+ * (including throws, timeouts, transport failures,
  * and missing-gateway diagnostics) preserve the recorded name. Probes share an
  * aggregate time budget; any names left after that budget are preserved. Sandbox
  * creation is still the final authority if gateway state changes after a probe.
@@ -151,17 +157,18 @@ function probeExtraProvider(context: ProviderProbeContext): ProviderProbeOutcome
  * Removal condition: delete this defensive prune once OpenShell/NemoClaw gateway
  * reset owns extra-provider lifecycle cleanup before sandbox creation (#6501).
  */
-export function reconcileRegisteredExtraProviders(
+export function planRegisteredExtraProviders(
   gatewayName: string,
   deps: ReconcileExtraProvidersDeps = {},
-): string[] {
+): ExtraProviderReconciliationPlan {
   const recorded = (deps.listExtraProviders ?? defaultListExtraProviders)();
-  if (recorded.length === 0) return recorded;
+  if (recorded.length === 0) {
+    return { extraProviders: [], staleExtraProviders: [] };
+  }
   if (!gatewayName) throw new Error("OpenShell gateway name is required.");
   assertNoOpenShellGatewayEndpointOverride();
 
   const runOpenshell = deps.runOpenshell ?? defaultRunOpenshell;
-  const removeExtraProvider = deps.removeExtraProvider ?? defaultRemoveExtraProvider;
   const nowMs = deps.nowMs ?? monotonicNowMs;
   const warn = deps.warn ?? ((message: string) => console.warn(message));
   const deadlineMs = nowMs() + PROVIDER_RECONCILIATION_BUDGET_MS;
@@ -174,6 +181,7 @@ export function reconcileRegisteredExtraProviders(
   };
 
   const reconciled: string[] = [];
+  const staleExtraProviders: string[] = [];
   for (const name of recorded) {
     const outcome = probeExtraProvider({
       gatewayName,
@@ -186,7 +194,7 @@ export function reconcileRegisteredExtraProviders(
     if (outcome.keep) {
       reconciled.push(name);
     } else {
-      removeExtraProvider(name);
+      staleExtraProviders.push(name);
     }
   }
 
@@ -198,5 +206,23 @@ export function reconcileRegisteredExtraProviders(
     );
   }
 
-  return reconciled;
+  return { extraProviders: reconciled, staleExtraProviders };
+}
+
+export function applyExtraProviderReconciliation(
+  plan: ExtraProviderReconciliationPlan,
+  deps: Pick<ReconcileExtraProvidersDeps, "removeExtraProvider"> = {},
+): void {
+  const removeExtraProvider = deps.removeExtraProvider ?? defaultRemoveExtraProvider;
+  for (const name of plan.staleExtraProviders) removeExtraProvider(name);
+}
+
+export function reconcileRegisteredExtraProviders(
+  gatewayName: string,
+  deps: ReconcileExtraProvidersDeps = {},
+): string[] {
+  // Compatibility wrapper for focused #6501 tests; remove with that defensive prune.
+  const plan = planRegisteredExtraProviders(gatewayName, deps);
+  applyExtraProviderReconciliation(plan, deps);
+  return [...plan.extraProviders];
 }

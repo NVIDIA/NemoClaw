@@ -15,7 +15,9 @@ import {
 } from "./helpers/e2e-workflow-contract";
 
 type CiWorkflow = {
-  on?: { pull_request?: { paths?: string[] } };
+  "run-name"?: string;
+  on?: { pull_request?: { paths?: string[]; types?: string[] } };
+  concurrency?: { group?: string; "cancel-in-progress"?: boolean };
   permissions?: Record<string, string>;
   jobs: Record<string, WorkflowJob & { if?: string; needs?: string | string[] }>;
 };
@@ -591,7 +593,6 @@ describe("pull request and main workflow contracts", () => {
     }
     for (const path of [
       ".agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts",
-      ".agents/skills/nemoclaw-maintainer-day/scripts/pra-gate.ts",
       ".agents/skills/nemoclaw-maintainer-day/scripts/shared.ts",
       "agents/hermes/generate-config.ts",
       "bin/nemoclaw.ts",
@@ -706,6 +707,20 @@ describe("pull request and main workflow contracts", () => {
 
   // source-shape-contract: security -- Pull requests must execute base-trusted actions while main uses reviewed repository actions
   it("reuses the same shared CI actions in PR and main workflows", () => {
+    expect(prWorkflow.on?.pull_request?.types).toEqual([
+      "opened",
+      "synchronize",
+      "reopened",
+      "edited",
+    ]);
+    expect(prWorkflow["run-name"]).toBe(
+      "CI PR #${{ github.event.pull_request.number }} head ${{ github.event.pull_request.head.sha }} base ${{ github.event.pull_request.base.sha }} gate ${{ github.event.action != 'edited' || github.event.changes.base != null }}",
+    );
+    expect(prWorkflow.concurrency).toEqual({
+      group:
+        "${{ github.workflow }}-${{ github.ref }}-${{ github.event.action != 'edited' || github.event.changes.base != null }}",
+      "cancel-in-progress": true,
+    });
     for (const [jobName, stepName, trustedActionPath, mainActionPath] of [
       [
         "static-checks",
@@ -992,7 +1007,9 @@ describe("pull request and main workflow contracts", () => {
       E2E_SUPPORT_RESULT: "success",
       INSTALLER_INTEGRATION_RESULT: "success",
       PLUGIN_TESTS_RESULT: "success",
+      REVIEWED_NPM_AUDIT_RESULT: "success",
       STATIC_RESULT: "success",
+      WECHAT_RUNTIME_AUDIT_RESULT: "success",
     };
     const successfulMain = {
       BUILD_TYPECHECK_RESULT: "success",
@@ -1001,8 +1018,10 @@ describe("pull request and main workflow contracts", () => {
       E2E_SUPPORT_RESULT: "success",
       INSTALLER_INTEGRATION_RESULT: "success",
       PLUGIN_TESTS_RESULT: "success",
+      REVIEWED_NPM_AUDIT_RESULT: "success",
       REAL_OPENCLAW_DIST_HARNESS_RESULT: "success",
       STATIC_RESULT: "success",
+      WECHAT_RUNTIME_AUDIT_RESULT: "success",
     };
 
     const codeSuccess = runWorkflowShellStep(prGate, successfulCode);
@@ -1020,7 +1039,9 @@ describe("pull request and main workflow contracts", () => {
       E2E_SUPPORT_RESULT: "skipped",
       INSTALLER_INTEGRATION_RESULT: "skipped",
       PLUGIN_TESTS_RESULT: "skipped",
+      REVIEWED_NPM_AUDIT_RESULT: "skipped",
       STATIC_RESULT: "skipped",
+      WECHAT_RUNTIME_AUDIT_RESULT: "skipped",
     });
     const mainSuccess = runWorkflowShellStep(mainGate, successfulMain);
     const mainFailure = runWorkflowShellStep(mainGate, {

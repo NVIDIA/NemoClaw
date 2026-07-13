@@ -40,7 +40,9 @@ function notRunningBackupSkipMessage(name: string): string {
 }
 
 export async function backupAll(): Promise<void> {
-  const { sandboxes } = registry.listSandboxes();
+  const sandboxes = registry
+    .listSandboxes()
+    .sandboxes.filter((sandbox) => !registry.isRouteOnlySandboxReservation(sandbox));
   if (sandboxes.length === 0) {
     console.log("  No sandboxes registered. Nothing to back up.");
     return;

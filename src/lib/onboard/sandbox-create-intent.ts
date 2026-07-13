@@ -66,7 +66,7 @@ function resolveActiveMessagingChannels({
 >): string[] {
   const primaryCredentialEnvKeys = new Set(primaryMessagingCredentialEnvKeys);
   const qrSelectedChannels = resolveQrSelectedChannels(
-    channels,
+    [...channels],
     enabledChannels,
     disabledChannelNames,
   );
@@ -138,11 +138,14 @@ export function resolveSandboxCreateIntent({
   reusableMessagingChannels,
   reusableMessagingProviders,
   extraProviders,
+  staleExtraProviders,
   hermesToolGateways,
   sandboxGpuConfig,
   gpuCreateArgs,
+  resourceCreateArgs = [],
   gpuRoutePlan,
   sandboxGpuLogMessage,
+  extraPlaceholderKeys = [],
   agentName,
   policyTier,
 }: ResolveSandboxCreateIntentInput): SandboxCreateIntent {
@@ -171,6 +174,7 @@ export function resolveSandboxCreateIntent({
     messagingProviderRequests: messagingProviderRequests.map((request) => ({ ...request })),
     reusableMessagingProviders: enabledReusableMessagingProviders,
     extraProviders: [...new Set(extraProviders ?? [])].filter(Boolean),
+    staleExtraProviders: [...new Set(staleExtraProviders ?? [])].filter(Boolean),
     hermesToolGateways: [...hermesToolGateways],
     policy: {
       basePolicyPath,
@@ -183,8 +187,10 @@ export function resolveSandboxCreateIntent({
       },
     },
     gpuCreateArgs: [...gpuCreateArgs],
+    resourceCreateArgs: [...resourceCreateArgs],
     gpuRoutePlan,
     sandboxGpuLogMessage,
     disabledChannelNames: [...disabledChannelNames],
+    extraPlaceholderKeys: [...extraPlaceholderKeys],
   };
 }

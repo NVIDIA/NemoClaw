@@ -1,7 +1,7 @@
 {
   "$comment": "Single source of truth for NemoClaw launch claims and platform support. Covers platforms, inference providers, supported agents, messaging integrations, and deployment paths. Scripts read this to generate README and docs tables. QA/CI update platform/provider rows; the engineering owner reviews other rows. Docs are derived.",
   "version": "1.1",
-  "updated": "2026-06-25",
+  "updated": "2026-07-12",
 
   "project_status": {
     "stage": "alpha",
@@ -31,7 +31,7 @@
       "status": "tested",
       "prd_priority": "P0",
       "ci_tested": true,
-      "notes": "Primary tested path. Ubuntu 24.04 is the validated distro in production source (`DEFAULT_COMPAT_IMAGE` in `src/lib/onboard/docker-driver-gateway-compat.ts:16` and the preflight tests pin 24.04 only); the installer's package-manager probes assume apt-get. Other distros (Ubuntu 22.04, Fedora, Rocky, Alma, NixOS, Arch) may work but are not validated."
+      "notes": "Primary tested path. Ubuntu 24.04 has host-level onboarding validation. A digest-pinned Ubuntu 26.04 userspace lane builds the CLI and runs preflight, installer, and platform contracts on eligible main pushes; Docker-host, AppArmor, Landlock, and live onboarding validation on 26.04 remain pending. Other distros (Ubuntu 22.04, Fedora, Rocky, Alma, NixOS, Arch) may work but are not validated."
     },
     {
       "name": "macOS (Apple Silicon)",
@@ -147,7 +147,7 @@
       "name": "Local vLLM (managed install/start)",
       "status": "caveated",
       "endpoint_type": "Local OpenAI-compatible",
-      "notes": "Appears by default on DGX Spark and DGX Station. Generic Linux NVIDIA GPU hosts require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm`. Host must have the NVIDIA Container Toolkit installed and a CDI spec present (`onboard` asserts CDI presence). NemoClaw pulls or starts the stable NGC vLLM container for each host profile. See `src/lib/inference/vllm.ts:55,177` for the pins. DGX Spark and DGX Station use `nvcr.io/nvidia/vllm:26.05.post1-py3`; generic Linux NVIDIA GPU hosts use `nvcr.io/nvidia/vllm:26.03.post1-py3`. Validated defaults are listed in `src/lib/inference/vllm-models.ts`: DGX Spark uses `nvidia/Qwen3.6-35B-A3B-NVFP4`, DGX Station uses `deepseek-ai/DeepSeek-V4-Flash`, and Linux NVIDIA GPU uses `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8`. Image pulls require NGC registry login (`docker login nvcr.io`); onboard prompts for the NGC API key when authentication is missing."
+      "notes": "Appears by default on DGX Spark and DGX Station. DGX Station remains deferred until its managed-vLLM onboarding path is validated end-to-end on physical hardware. Generic Linux NVIDIA GPU hosts require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm`. Host must have the NVIDIA Container Toolkit installed and a CDI spec present (`onboard` asserts CDI presence). NemoClaw pins each host profile to an immutable NGC platform digest. DGX Spark and DGX Station use the `linux/arm64` digest published under `nvcr.io/nvidia/vllm:26.05.post1-py3`; generic Linux NVIDIA GPU hosts use the matching `linux/arm64` or `linux/amd64` digest published under `nvcr.io/nvidia/vllm:26.03.post1-py3`. Validated defaults are listed in `src/lib/inference/vllm-models.ts`: DGX Spark uses `nvidia/Qwen3.6-35B-A3B-NVFP4`, DGX Station uses `deepseek-ai/DeepSeek-V4-Flash`, and Linux NVIDIA GPU uses `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8`. Image pulls require NGC registry login (`docker login nvcr.io`); onboard prompts for the NGC API key when authentication is missing."
     }
   ],
 

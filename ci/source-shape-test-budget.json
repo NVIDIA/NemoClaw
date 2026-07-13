@@ -102,11 +102,6 @@
       "category": "compatibility"
     },
     {
-      "file": "test/e2e-advisor.test.ts",
-      "test": "strips untrusted symlinks before secret-bearing advisor steps",
-      "category": "security"
-    },
-    {
       "file": "test/e2e-fixture-dependency-review.test.ts",
       "test": "keeps installed fixture dependencies on exact versions",
       "category": "security"
@@ -262,8 +257,23 @@
       "category": "compatibility"
     },
     {
+      "file": "test/messaging-image-env-contract.test.ts",
+      "test": "%s keeps the full plan in build processes but not final runtime environments (#5896)",
+      "category": "security"
+    },
+    {
       "file": "test/mcp-openshell-workflow.test.ts",
       "test": "keeps the setup docs aligned with the stable default",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/onboard-performance-config-schema.test.ts",
+      "test": "keeps configured budgets derived from the checked-in samples",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/onboard-performance-config-schema.test.ts",
+      "test": "records five independent successful exact-head samples",
       "category": "compatibility"
     },
     {
@@ -392,6 +402,11 @@
       "category": "security"
     },
     {
+      "file": "test/release-lkg-brev-image.test.ts",
+      "test": "keeps LKG dispatch inside the trusted secret boundary (#6772)",
+      "category": "security"
+    },
+    {
       "file": "test/repro-4538-raw-doctor-perms.test.ts",
       "test": "emitted openclaw() guard restores the contract AND preserves a nonzero exit",
       "category": "security"
@@ -455,6 +470,11 @@
       "file": "test/vitest-watch-triggers.test.ts",
       "test": "registers the focused mappings at the root configuration boundary (#6692)",
       "category": "compatibility"
+    },
+    {
+      "file": "test/wechat-runtime-audit-workflow.test.ts",
+      "test": "makes the trusted audit required in PR and main workflows",
+      "category": "security"
     }
   ]
 }

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { getGatewayReuseState, shouldSelectNamedGatewayForReuse } from "../state/gateway";
 
 export type GatewayReuseSnapshot = {
@@ -28,11 +29,12 @@ export function createGatewayReuseHelpers(deps: GatewayReuseDeps): GatewayReuseH
 
   function getGatewayReuseSnapshot(): GatewayReuseSnapshot {
     const gatewayName = currentGatewayName();
-    const gatewayStatus = deps.runCaptureOpenshell(["status"], { ignoreError: true });
+    const probeOptions = { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS };
+    const gatewayStatus = deps.runCaptureOpenshell(["status"], probeOptions);
     const gwInfo = deps.runCaptureOpenshell(["gateway", "info", "-g", gatewayName], {
-      ignoreError: true,
+      ...probeOptions,
     });
-    const activeGatewayInfo = deps.runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
+    const activeGatewayInfo = deps.runCaptureOpenshell(["gateway", "info"], probeOptions);
     return {
       gatewayStatus,
       gwInfo,

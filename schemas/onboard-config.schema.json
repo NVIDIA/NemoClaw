@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/NVIDIA/NemoClaw/schemas/onboard-config.schema.json",
   "title": "NemoClaw onboard performance budget config",
-  "description": "Advisory warm-system cloud onboard timing budget consumed by the nightly scorecard.",
+  "description": "Advisory warm-system cloud onboard timing budget and full-E2E cold-path phase budget.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -12,7 +12,8 @@
     "scope",
     "totalBudgetMs",
     "regressionWarning",
-    "phaseRegressionWarning"
+    "phaseRegressionWarning",
+    "fullE2eColdPath"
   ],
   "properties": {
     "$comment": {
@@ -37,6 +38,48 @@
     },
     "phaseRegressionWarning": {
       "$ref": "#/$defs/threshold"
+    },
+    "fullE2eColdPath": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rootStartToFirstTurnCompletionBudgetMs",
+        "rootEndToFirstTurnCompletionBudgetMs",
+        "phaseBudgetsMs"
+      ],
+      "properties": {
+        "rootStartToFirstTurnCompletionBudgetMs": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Maximum time from the nemoclaw.onboard root start until the first agent-turn command completes."
+        },
+        "rootEndToFirstTurnCompletionBudgetMs": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": {
+            "$data": "1/rootStartToFirstTurnCompletionBudgetMs"
+          },
+          "description": "Maximum time from the nemoclaw.onboard root end until the first agent-turn command completes."
+        },
+        "phaseBudgetsMs": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "nemoclaw.onboard.phase.preflight",
+            "nemoclaw.onboard.phase.gateway",
+            "nemoclaw.onboard.phase.provider_selection",
+            "nemoclaw.onboard.phase.inference",
+            "nemoclaw.onboard.phase.sandbox"
+          ],
+          "properties": {
+            "nemoclaw.onboard.phase.preflight": { "$ref": "#/$defs/milliseconds" },
+            "nemoclaw.onboard.phase.gateway": { "$ref": "#/$defs/milliseconds" },
+            "nemoclaw.onboard.phase.provider_selection": { "$ref": "#/$defs/milliseconds" },
+            "nemoclaw.onboard.phase.inference": { "$ref": "#/$defs/milliseconds" },
+            "nemoclaw.onboard.phase.sandbox": { "$ref": "#/$defs/milliseconds" }
+          }
+        }
+      }
     }
   },
   "$defs": {
@@ -54,6 +97,10 @@
           "minimum": 0
         }
       }
+    },
+    "milliseconds": {
+      "type": "number",
+      "minimum": 0
     }
   }
 }

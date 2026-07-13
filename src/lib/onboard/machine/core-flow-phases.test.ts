@@ -208,7 +208,36 @@ function createPhases(
       selectResourceProfileForSandbox: vi.fn(async () => null),
       stopStaleDashboardListenersForSandbox: vi.fn(),
       listRegistrySandboxes: () => ({ sandboxes: [] }),
-      reconcileRegisteredExtraProviders: vi.fn(() => []),
+      planRegisteredExtraProviders: vi.fn(() => ({
+        extraProviders: [],
+        staleExtraProviders: [],
+      })),
+      resolveSandboxCreateIntent: vi.fn(
+        async ({ sandboxName, extraProviders, staleExtraProviders }) => ({
+          sandboxName,
+          activeMessagingChannels: [],
+          messagingProviderRequests: [],
+          reusableMessagingProviders: [],
+          extraProviders: [...extraProviders],
+          staleExtraProviders: [...staleExtraProviders],
+          hermesToolGateways: [],
+          policy: {
+            basePolicyPath: "/repo/policy.yaml",
+            activeMessagingChannels: [],
+            options: {
+              directGpu: false,
+              additionalPresets: [],
+              policyTier: null,
+            },
+          },
+          gpuCreateArgs: [],
+          resourceCreateArgs: [],
+          gpuRoutePlan: "none" as const,
+          sandboxGpuLogMessage: null,
+          disabledChannelNames: [],
+          extraPlaceholderKeys: [],
+        }),
+      ),
       createSandbox: vi.fn(async () => "created-sandbox"),
       updateSandboxRegistry: vi.fn(),
       getSandboxAgentRegistryFields: () => ({ agent: "openclaw" }),
@@ -236,8 +265,16 @@ function createPhases(
 describe("core onboard flow phases", () => {
   it("carries provider selection output into sandbox setup", async () => {
     const updateSandboxRegistry = vi.fn();
+    const createSandbox = vi.fn(async () => "created-sandbox");
     const [providerPhase, sandboxPhase] = createPhases({
-      sandboxDeps: { updateSandboxRegistry },
+      sandboxDeps: {
+        createSandbox,
+        planRegisteredExtraProviders: vi.fn(() => ({
+          extraProviders: ["current-provider"],
+          staleExtraProviders: ["stale-provider"],
+        })),
+        updateSandboxRegistry,
+      },
     });
 
     const providerResult = await providerPhase.run(context());
@@ -279,6 +316,12 @@ describe("core onboard flow phases", () => {
         credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       }),
     );
+    expect(createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
+      resolved: {
+        extraProviders: ["current-provider"],
+        staleExtraProviders: ["stale-provider"],
+      },
+    });
   });
 
   it("passes fresh context through to provider setup recovery policy", async () => {

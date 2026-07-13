@@ -59,7 +59,7 @@ function runPreparedContextScenario(scenario: PreparedContextScenario): Prepared
     path.join(repoRoot, "src", "lib", "onboard", "sandbox-dockerfile-patch-flow.ts"),
   );
   const sandboxCreatePlanPath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "onboard", "sandbox-create-plan.ts"),
+    path.join(repoRoot, "src", "lib", "onboard", "sandbox-create-plan-materialization.ts"),
   );
   const imageTagPath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "domain", "sandbox", "image-tag.ts"),
@@ -75,7 +75,7 @@ const preflight = require(${preflightPath});
 const credentials = require(${credentialsPath});
 const buildContextStage = require(${buildContextStagePath});
 const dockerfilePatchFlow = require(${dockerfilePatchFlowPath});
-const sandboxCreatePlan = require(${sandboxCreatePlanPath});
+const sandboxCreatePlanMaterialization = require(${sandboxCreatePlanPath});
 const imageTag = require(${imageTagPath});
 const { loadAgent } = require(${agentDefsPath});
 
@@ -100,10 +100,10 @@ dockerfilePatchFlow.prepareSandboxDockerfilePatch = async () => {
   throw new Error("prepared context was unexpectedly repatched");
 };
 
-const prepareSandboxCreatePlan = sandboxCreatePlan.prepareSandboxCreatePlan;
-sandboxCreatePlan.prepareSandboxCreatePlan = (input) => {
+const materializeSandboxCreatePlan = sandboxCreatePlanMaterialization.materializeSandboxCreatePlan;
+sandboxCreatePlanMaterialization.materializeSandboxCreatePlan = (input) => {
   planBuildContexts.push(input.buildCtx);
-  return prepareSandboxCreatePlan(input);
+  return materializeSandboxCreatePlan(input);
 };
 const resolveSandboxImageTagFromCreateOutput = imageTag.resolveSandboxImageTagFromCreateOutput;
 imageTag.resolveSandboxImageTagFromCreateOutput = (output, receivedBuildId, warn) => {

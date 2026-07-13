@@ -4,14 +4,25 @@
 
 import { pathToFileURL } from "node:url";
 
+import {
+  credentialFreeTestIdForFile,
+  type TrustedE2eRecommendationInventory,
+  trustedE2eRecommendationInventory,
+} from "../advisors/e2e-recommendations.mts";
 import { upsertStickyComment } from "../advisors/github.mts";
 import { parseArgs, readIfExists, readJsonIfExists } from "../advisors/io.mts";
 
 const MARKER = "<!-- nemoclaw-pr-review-advisor -->";
 const COMMENT_TITLE = "PR Review Advisor";
+const E2E_RENDER_LIMIT = 20;
+const MAX_COMMENT_BYTES = 60 * 1024;
+const COMMENT_TRUNCATION_NOTICE =
+  "\n\n_Comment truncated to fit GitHub's size limit. The workflow artifact contains the complete review._\n";
+let cachedE2eInventory: TrustedE2eRecommendationInventory | undefined;
 
 type ReviewAdvisorResult = {
   headSha?: string;
+  changedFiles?: string[];
   summary?: {
     recommendation?: string;
     confidence?: string;
@@ -43,12 +54,51 @@ type ReviewAdvisorResult = {
       safetyBoundary?: string;
     };
   }>;
+  e2e?: {
+    coverage?: {
+      requiredTests?: Array<{ id?: string; reason?: string }>;
+      optionalTests?: Array<{ id?: string; reason?: string }>;
+      newE2eRecommendations?: Array<{
+        domain?: string;
+        reason?: string;
+        suggestedTest?: string;
+      }>;
+      noE2eReason?: string | null;
+    };
+    targets?: {
+      exactHeadCredentialFreeTests?: Array<{
+        id?: string;
+        file?: string;
+        headSha?: string;
+      }>;
+      required?: Array<{
+        id?: string;
+        workflow?: string;
+        selectorType?: string;
+        required?: boolean;
+        reason?: string;
+      }>;
+      optional?: Array<{
+        id?: string;
+        workflow?: string;
+        selectorType?: string;
+        required?: boolean;
+        reason?: string;
+      }>;
+      noTargetE2eReason?: string | null;
+    };
+  };
 };
 
 type CommentMetadata = {
   runId?: string;
   runAttempt?: string;
   commentId?: string;
+  eventName?: string;
+  prNumber?: string;
+  workflowSha?: string;
+  baseSha?: string;
+  workflowPath?: string;
 };
 
 type Finding = NonNullable<ReviewAdvisorResult["findings"]>[number];
@@ -97,8 +147,13 @@ async function main(): Promise<void> {
     resultExplicit: Boolean(args.result),
   });
   const baseMetadata = {
-    runId: process.env.GITHUB_RUN_ID,
-    runAttempt: process.env.GITHUB_RUN_ATTEMPT,
+    runId: process.env.PR_REVIEW_ADVISOR_RUN_ID || process.env.GITHUB_RUN_ID,
+    runAttempt: process.env.PR_REVIEW_ADVISOR_RUN_ATTEMPT || process.env.GITHUB_RUN_ATTEMPT,
+    eventName: process.env.PR_REVIEW_ADVISOR_EVENT_NAME || process.env.GITHUB_EVENT_NAME,
+    prNumber: pr,
+    workflowSha: process.env.TRUSTED_WORKFLOW_SHA,
+    baseSha: process.env.PR_BASE_SHA,
+    workflowPath: process.env.PR_REVIEW_ADVISOR_WORKFLOW_PATH,
   };
   const body = buildComment({
     summary,
@@ -210,23 +265,202 @@ export function buildComment({
       ? `**Status:** ${escapeCommentText(result.summary.oneLine)}\n`
       : "";
   const findingsDetails = renderFindingsDetails(findingRecords);
+  const e2eDetails = renderE2eDetails(result);
   const details = runUrl ? `\n[Workflow run details](${runUrl})` : "";
   const hiddenMetadata = renderHiddenMetadata(result, metadata);
   const posture = reviewPosture(result?.summary?.recommendation, blockerCount);
   const headline = reviewHeadline(result?.summary?.recommendation, blockerCount);
   const heading = validateSingleLineCommentField(title || COMMENT_TITLE, "title");
   const renderedMarker = validateCommentMarker(marker || MARKER);
-  return `${renderedMarker}
-${hiddenMetadata}## ${heading} — ${headline}
+  const prefix = `${renderedMarker}\n${hiddenMetadata}`;
+  const content = `## ${heading} — ${headline}
 
-**Merge posture:** ${posture}
+**Advisor assessment:** ${posture}
 **Primary next action:** ${primaryNextAction(findingRecords)}
-**Findings:** ${compactCount(blockerCount, "required", "required")} · ${compactCount(warningCount, "warning")} · ${compactCount(suggestionCount, "optional suggestion")}
-${informational}${secondary}${findingsDetails}${details}
+**Findings:** ${compactCount(blockerCount, "blocker")} · ${compactCount(warningCount, "warning")} · ${compactCount(suggestionCount, "optional suggestion")}
+${informational}${secondary}${e2eDetails}${findingsDetails}${details}
 
-This is an automated review. Required findings need action before merge. Warnings and optional suggestions do not require a response or follow-up. A human maintainer makes the final merge decision.
+This is an automated, non-authoritative review. Findings are inputs to maintainer adjudication. Warnings and optional suggestions do not require a response or follow-up. A human maintainer makes the final merge decision.
 
 `;
+  return boundedComment(prefix, content);
+}
+
+function renderE2eDetails(result?: ReviewAdvisorResult): string {
+  const coverage = result?.e2e?.coverage;
+  const targets = result?.e2e?.targets;
+  if (!coverage && !targets) return "";
+
+  const inventory = commentE2eInventory();
+  const exactHeadCredentialFreeJobIds = trustedExactHeadCredentialFreeJobIds(result);
+  const requiredCoverage = trustedCoverageItems(coverage?.requiredTests, inventory);
+  const optionalCoverage = trustedCoverageItems(coverage?.optionalTests, inventory);
+  const newRecommendations: NonNullable<
+    NonNullable<ReviewAdvisorResult["e2e"]>["coverage"]
+  >["newE2eRecommendations"] = [];
+  const requiredTargets = trustedTargetItems(
+    targets?.required,
+    true,
+    inventory,
+    exactHeadCredentialFreeJobIds,
+  );
+  const optionalTargets = trustedTargetItems(
+    targets?.optional,
+    false,
+    inventory,
+    exactHeadCredentialFreeJobIds,
+  );
+  const noE2eReason = "No deterministic or trusted-inventory E2E coverage was selected.";
+  const noTargetE2eReason = "No trusted E2E selector was selected.";
+  const lines = [
+    "",
+    "### E2E guidance",
+    "_Advisory only: coverage and selector recommendations are non-authoritative. E2E / PR Gate independently computes and dispatches trusted jobs without consuming this output._",
+    "",
+  ];
+
+  lines.push(
+    `**Recommended coverage:** ${renderE2eIds(requiredCoverage) || "_None_"}`,
+    `**Recommended selectors:** ${renderE2eIds(requiredTargets) || "_None_"}`,
+  );
+  if (requiredCoverage.length > 0) {
+    lines.push("");
+    for (const item of requiredCoverage.slice(0, E2E_RENDER_LIMIT)) {
+      const id = escapeLocationHtml(item.id || "E2E test");
+      const reason = item.reason ? ` — ${escapeCommentText(item.reason)}` : "";
+      lines.push(`- <code>${id}</code>${reason}`);
+    }
+  }
+  if (requiredTargets.length > 0) {
+    lines.push("");
+    for (const item of requiredTargets.slice(0, E2E_RENDER_LIMIT)) {
+      const id = escapeLocationHtml(item.id || "E2E target");
+      const reason = item.reason ? ` — ${escapeCommentText(item.reason)}` : "";
+      lines.push(`- <code>${id}</code>${reason}`);
+    }
+  }
+
+  if (optionalCoverage.length > 0 || optionalTargets.length > 0 || newRecommendations.length > 0) {
+    lines.push(
+      "",
+      "<details>",
+      `<summary>${compactCount(optionalCoverage.length, "optional coverage item")} · ${compactCount(optionalTargets.length, "optional selector")} · ${compactCount(newRecommendations.length, "new-test recommendation")}</summary>`,
+      "",
+    );
+    for (const item of optionalCoverage.slice(0, E2E_RENDER_LIMIT)) {
+      lines.push(
+        `- Optional coverage <code>${escapeLocationHtml(item.id || "unnamed")}</code>${item.reason ? ` — ${escapeCommentText(item.reason)}` : ""}`,
+      );
+    }
+    for (const item of optionalTargets.slice(0, E2E_RENDER_LIMIT)) {
+      lines.push(
+        `- Optional selector <code>${escapeLocationHtml(item.id || "unnamed")}</code>${item.reason ? ` — ${escapeCommentText(item.reason)}` : ""}`,
+      );
+    }
+    for (const item of newRecommendations.slice(0, E2E_RENDER_LIMIT)) {
+      const name = item.suggestedTest || item.domain || "E2E test";
+      lines.push(
+        `- New test: ${escapeCommentText(name)}${item.reason ? ` — ${escapeCommentText(item.reason)}` : ""}`,
+      );
+    }
+    lines.push("", "</details>");
+  }
+
+  if (requiredCoverage.length === 0 && requiredTargets.length === 0 && noE2eReason) {
+    lines.push("", `**Why no E2E coverage is recommended:** ${escapeCommentText(noE2eReason)}`);
+  }
+  if (requiredTargets.length === 0 && noTargetE2eReason) {
+    lines.push("", `**Why no selector is recommended:** ${escapeCommentText(noTargetE2eReason)}`);
+  }
+  lines.push("");
+  return `${lines.join("\n")}\n`;
+}
+
+function trustedCoverageItems(
+  items: Array<{ id?: string; reason?: string }> | undefined,
+  inventory: TrustedE2eRecommendationInventory,
+): Array<{ id: string; reason: string }> {
+  const allowedIds = new Set([...inventory.allowedJobIds, ...inventory.liveSupportedTargetIds]);
+  const seen = new Set<string>();
+  return (items ?? []).flatMap((item) => {
+    const id = item.id;
+    if (!id || !allowedIds.has(id) || seen.has(id)) return [];
+    seen.add(id);
+    return [{ id, reason: "Selected from the trusted checked-in E2E coverage inventory." }];
+  });
+}
+
+function trustedTargetItems(
+  items:
+    | Array<{
+        id?: string;
+        workflow?: string;
+        selectorType?: string;
+        required?: boolean;
+        reason?: string;
+      }>
+    | undefined,
+  required: boolean,
+  inventory: TrustedE2eRecommendationInventory,
+  exactHeadCredentialFreeJobIds: ReadonlySet<string>,
+): Array<{ id: string; reason: string }> {
+  const allowedJobs = new Set(inventory.allowedJobIds);
+  const allowedTargets = new Set(inventory.liveSupportedTargetIds);
+  const seen = new Set<string>();
+  return (items ?? []).flatMap((item) => {
+    const id = item.id;
+    const selectorType = item.selectorType;
+    if (!id || item.workflow !== inventory.workflow || item.required !== required) return [];
+    const trustedTuple =
+      (selectorType === "all" && id === inventory.fanoutId) ||
+      (selectorType === "job" && (allowedJobs.has(id) || exactHeadCredentialFreeJobIds.has(id))) ||
+      (selectorType === "target" && allowedTargets.has(id));
+    const key = `${selectorType}:${id}`;
+    if (!trustedTuple || seen.has(key)) return [];
+    seen.add(key);
+    const reason =
+      selectorType === "all"
+        ? "Selected as the trusted full E2E fan-out selector."
+        : selectorType === "job"
+          ? exactHeadCredentialFreeJobIds.has(id) && !allowedJobs.has(id)
+            ? "Selected as a trusted exact-head credential-free E2E job."
+            : "Selected as a trusted checked-in E2E job."
+          : "Selected as a trusted live-supported E2E target.";
+    return [{ id, reason }];
+  });
+}
+
+function trustedExactHeadCredentialFreeJobIds(result?: ReviewAdvisorResult): Set<string> {
+  const ids = new Set<string>();
+  const headSha = result?.headSha;
+  if (!headSha || !/^[0-9a-f]{40}$/.test(headSha)) return ids;
+  const changedFiles = new Set(
+    (result.changedFiles ?? []).filter((file): file is string => typeof file === "string"),
+  );
+  const evidence = result.e2e?.targets?.exactHeadCredentialFreeTests;
+  if (!Array.isArray(evidence)) return ids;
+
+  for (const item of evidence) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    if (Object.keys(item).some((key) => !["id", "file", "headSha"].includes(key))) continue;
+    const { id, file, headSha: evidenceHeadSha } = item;
+    if (!id || !file || evidenceHeadSha !== headSha || !changedFiles.has(file)) continue;
+    if (credentialFreeTestIdForFile(file) !== id) continue;
+    ids.add(id);
+  }
+  return ids;
+}
+
+function commentE2eInventory(): TrustedE2eRecommendationInventory {
+  cachedE2eInventory ??= trustedE2eRecommendationInventory();
+  return cachedE2eInventory;
+}
+
+function renderE2eIds(items: Array<{ id?: string }>): string {
+  return items
+    .slice(0, E2E_RENDER_LIMIT)
+    .map((item) => `<code>${escapeLocationHtml(item.id || "unnamed")}</code>`)
+    .join(", ");
 }
 
 function collectFindingRecords(result?: ReviewAdvisorResult): FindingRecord[] {
@@ -245,6 +479,13 @@ function renderHiddenMetadata(result?: ReviewAdvisorResult, metadata?: CommentMe
     metadata?.runId ? `run_id: ${safeMetadataValue(metadata.runId)}` : undefined,
     metadata?.runAttempt ? `run_attempt: ${safeMetadataValue(metadata.runAttempt)}` : undefined,
     metadata?.commentId ? `comment_id: ${safeMetadataValue(metadata.commentId)}` : undefined,
+    metadata?.eventName ? `event: ${safeMetadataValue(metadata.eventName)}` : undefined,
+    metadata?.prNumber ? `pr_number: ${safeMetadataValue(metadata.prNumber)}` : undefined,
+    metadata?.workflowSha ? `workflow_sha: ${safeMetadataValue(metadata.workflowSha)}` : undefined,
+    metadata?.baseSha ? `base_sha: ${safeMetadataValue(metadata.baseSha)}` : undefined,
+    metadata?.workflowPath
+      ? `workflow_path: ${safeMetadataValue(metadata.workflowPath)}`
+      : undefined,
   ].filter((field): field is string => Boolean(field));
   return fields.length > 0 ? `<!-- ${fields.join("; ")} -->\n` : "";
 }
@@ -256,23 +497,46 @@ function safeMetadataValue(value: string): string {
     .slice(0, 120);
 }
 
+function boundedComment(prefix: string, content: string): string {
+  const full = `${prefix}${content}`;
+  if (Buffer.byteLength(full, "utf8") <= MAX_COMMENT_BYTES) return full;
+  const contentBytes =
+    MAX_COMMENT_BYTES -
+    Buffer.byteLength(prefix, "utf8") -
+    Buffer.byteLength(COMMENT_TRUNCATION_NOTICE, "utf8");
+  if (contentBytes <= 0) throw new Error("PR review advisor metadata exceeds comment size limit");
+  return `${prefix}${truncateUtf8(content, contentBytes).trimEnd()}${COMMENT_TRUNCATION_NOTICE}`;
+}
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  let low = 0;
+  let high = value.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (Buffer.byteLength(value.slice(0, middle), "utf8") <= maxBytes) low = middle;
+    else high = middle - 1;
+  }
+  if (low > 0 && /[\uD800-\uDBFF]/.test(value[low - 1])) low -= 1;
+  return value.slice(0, low);
+}
+
 function reviewHeadline(recommendation: string | undefined, blockerCount: number): string {
-  if (blockerCount > 0) return "Changes requested";
+  if (blockerCount > 0) return "Blocking findings reported";
   if (recommendation === "superseded") return "Superseded";
   if (recommendation === "info_only") return "Informational";
-  return "No blocking findings";
+  return "No blocking findings reported";
 }
 
 function reviewPosture(recommendation: string | undefined, blockerCount: number): string {
-  if (blockerCount > 0) return "Do not merge until required findings are fixed";
+  if (blockerCount > 0) return "Blocking findings require maintainer adjudication";
   if (recommendation === "superseded") return "Superseded by other work";
   if (recommendation === "info_only") return "Informational / low confidence";
-  return "No blocking advisor findings";
+  return "No blocking advisor findings reported";
 }
 
 function primaryNextAction(records: FindingRecord[]): string {
   if (records.some((record) => record.finding.severity === "blocker")) {
-    return "Fix the required findings below.";
+    return "Review the blocking findings below.";
   }
   if (records.some((record) => record.finding.severity === "warning")) {
     return "Review the warnings below.";
@@ -298,7 +562,7 @@ function renderFindingsDetails(records: FindingRecord[]): string {
   const suggestionFindings = records.filter((record) => record.finding.severity === "suggestion");
   const lines: string[] = [];
   if (blockerFindings.length > 0) {
-    lines.push("", "### Required before merge", "");
+    lines.push("", "### Blocking findings for maintainer adjudication", "");
     for (const record of blockerFindings.slice(0, 20)) lines.push(formatFinding(record), "");
   }
   if (warningFindings.length === 0 && suggestionFindings.length === 0)
@@ -368,14 +632,14 @@ function findingTitle(finding: Finding): string {
 }
 
 function severityLabel(severity?: string): string {
-  if (severity === "blocker") return "Required";
+  if (severity === "blocker") return "Blocker";
   if (severity === "warning") return "Warning";
   if (severity === "suggestion") return "Optional";
   return "Review";
 }
 
 function actionFieldLabel(severity?: string): string {
-  if (severity === "blocker") return "Required action";
+  if (severity === "blocker") return "Recommended action";
   if (severity === "warning") return "Recommendation";
   if (severity === "suggestion") return "Optional change";
   return "Recommendation";

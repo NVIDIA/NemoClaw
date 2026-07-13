@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 import {
   evaluateE2eWorkflowDispatchSelectors,
+  focusedE2eJobsForChangedFiles,
   readFreeStandingJobsInventory,
   validateE2eWorkflowBoundary,
   validateFreeStandingWorkflowInventory,
@@ -229,6 +230,27 @@ describe("e2e workflow boundary", () => {
     expect(inventory.targetToJob.size).toBeGreaterThan(0);
     expect(inventory.workflowJobs.every((job) => workflowJobs.has(job))).toBe(true);
     expect([...inventory.targetToJob.values()].every((job) => workflowJobs.has(job))).toBe(true);
+    expect(inventory.liveTestToJobs.get("test/e2e/live/token-rotation.test.ts")).toEqual([
+      "token-rotation",
+    ]);
+    expect(inventory.liveTestToJobs.get("test/e2e/live/full-e2e.test.ts")).toEqual(
+      expect.arrayContaining(["full-e2e", "security-posture"]),
+    );
+    expect(
+      focusedE2eJobsForChangedFiles(
+        [
+          "test/e2e/live/token-rotation.test.ts",
+          "docs/get-started/quickstart.mdx",
+          "test/e2e/live/token-rotation.test.ts",
+        ],
+        inventory,
+      ),
+    ).toEqual([
+      {
+        id: "token-rotation",
+        matchedFiles: ["test/e2e/live/token-rotation.test.ts"],
+      },
+    ]);
   });
 
   it("rejects malformed free-standing workflow metadata before matrix generation", {
