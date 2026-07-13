@@ -10,6 +10,7 @@ import type {
 } from "../../../inference/gateway-route-compatibility";
 import type { WebSearchConfig } from "../../../inference/web-search";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
+import type { OnboardInferenceCapabilityCache } from "../../inference-capability-cache";
 import type {
   createProviderRecoveryReceiptLedger,
   ProviderRecoveryReceipt,
@@ -39,6 +40,8 @@ export interface ProviderInferenceSetupOptions {
   preferredInferenceApi?: string | null;
   /** Public addresses approved for custom endpoint host probes. */
   endpointPinnedAddresses?: readonly string[];
+  /** One-shot host capability cache carried only through this onboarding run. */
+  inferenceCapabilityCache?: OnboardInferenceCapabilityCache;
   /** Onboard session that owns the route reservation this setup creates. */
   reservationSessionId?: string;
   /** Recheck recorded-route ownership after acquiring route mutation locks. */
@@ -60,6 +63,7 @@ export interface ProviderSelectionResult {
   reuseGatewayCredentialWithoutLocalKey?: boolean;
   recoveredFromSandbox?: boolean;
   endpointPinnedAddresses?: string[];
+  inferenceCapabilityCache?: OnboardInferenceCapabilityCache;
 }
 
 export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
@@ -339,6 +343,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let skipHostInferenceSmoke = false;
   let reuseGatewayCredentialWithoutLocalKey = false;
   let endpointPinnedAddresses: string[] | undefined;
+  let inferenceCapabilityCache: OnboardInferenceCapabilityCache | undefined;
   const effectiveResume = resume && !fresh;
   const stateResults: OnboardStateTransitionResult[] = [];
   const retryStateResults: OnboardStateTransitionResult[] = [];
@@ -509,6 +514,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       recoveredRecordedProvider = selection.recoveredFromSandbox === true;
       forceInferenceSetup ||= recoveredRecordedProvider;
       endpointPinnedAddresses = selection.endpointPinnedAddresses;
+      inferenceCapabilityCache = selection.inferenceCapabilityCache;
       shouldRecordProviderSelection = true;
     }
 
@@ -584,6 +590,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
               : {}),
             ...(preferredInferenceApi ? { preferredInferenceApi } : {}),
             ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
+            ...(inferenceCapabilityCache ? { inferenceCapabilityCache } : {}),
             reservationSessionId: session?.sessionId,
           };
           await deps.startRecordedStep("inference", { provider, model });
@@ -772,6 +779,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         ...(reuseGatewayCredentialWithoutLocalKey ? { reuseGatewayCredentialWithoutLocalKey } : {}),
         ...(preferredInferenceApi ? { preferredInferenceApi } : {}),
         ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
+        ...(inferenceCapabilityCache ? { inferenceCapabilityCache } : {}),
         ...providerRecovery.setupOptions(
           recoveredRecordedProvider,
           confirmedSandboxName,

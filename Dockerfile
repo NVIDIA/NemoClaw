@@ -21,11 +21,11 @@ ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000 \
     NPM_CONFIG_FETCH_TIMEOUT=300000
 COPY nemoclaw/package.json nemoclaw/package-lock.json nemoclaw/tsconfig.json /opt/nemoclaw/
+WORKDIR /opt/nemoclaw
+RUN npm ci
 COPY nemoclaw/src/ /opt/nemoclaw/src/
 COPY scripts/checks/verify-openshell-policy-boundary-dependencies.mts /opt/nemoclaw-build-checks/
-WORKDIR /opt/nemoclaw
-RUN npm ci \
-    && npm run build \
+RUN npm run build \
     && node --experimental-strip-types \
         /opt/nemoclaw-build-checks/verify-openshell-policy-boundary-dependencies.mts \
         /opt/nemoclaw/dist/shared/openshell-policy-boundary.cjs
@@ -113,14 +113,9 @@ RUN set -eu; \
     command -v tmux >/dev/null
 
 
-# Copy built plugin and blueprint into the sandbox
-COPY --from=builder /opt/nemoclaw/dist/ /opt/nemoclaw/dist/
-COPY nemoclaw/openclaw.plugin.json /opt/nemoclaw/
+# Install runtime dependencies before copying mutable build outputs so source
+# and blueprint changes keep the production dependency layer cached.
 COPY nemoclaw/package.json nemoclaw/package-lock.json /opt/nemoclaw/
-COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
-RUN chmod -R a+rX /opt/nemoclaw /opt/nemoclaw-blueprint/
-
-# Install runtime dependencies only (no devDependencies, no build step)
 WORKDIR /opt/nemoclaw
 ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false \
@@ -129,13 +124,20 @@ ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=20000 \
     NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000 \
     NPM_CONFIG_FETCH_TIMEOUT=300000
+RUN npm ci --omit=dev
+
+# Copy built plugin and blueprint into the sandbox
+COPY --from=builder /opt/nemoclaw/dist/ /opt/nemoclaw/dist/
+COPY nemoclaw/openclaw.plugin.json /opt/nemoclaw/
+COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
+RUN chmod -R a+rX /opt/nemoclaw /opt/nemoclaw-blueprint/
+
 # The builder-stage verify-openshell-policy-boundary-dependencies.mts check is
 # the primary security gate: it enforces the generated boundary's strict module
 # dependency allowlist before this stage copies it. The node check below is
 # defense in depth only and proves the copied runtime still exports the complete
 # audited interface; function availability does not replace dependency lockdown.
-RUN npm ci --omit=dev \
-    && test -f /usr/local/bin/node \
+RUN test -f /usr/local/bin/node \
     && test -d /opt/nemoclaw/node_modules/json5 \
     && node -e 'const boundary = require("/opt/nemoclaw/dist/shared/openshell-policy-boundary.cjs"); for (const name of ["parseOpenShellPolicy", "stripProviderComposedPolicies", "withoutProviderComposedPolicies"]) { if (typeof boundary[name] !== "function") throw new Error("OpenShell policy boundary export is unavailable: " + name); }' \
     && node_unsafe="$(find -L /usr/local/bin/node -maxdepth 0 \( ! -user root -o -perm /022 \) -print -quit)" \
