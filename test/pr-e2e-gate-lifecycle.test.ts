@@ -31,6 +31,7 @@ const BASE_SHA = "b".repeat(40);
 const WORKFLOW_SHA = "d".repeat(40);
 const CI_RUN_ID = 99;
 const CI_RUN_ATTEMPT = 3;
+const GATE_RUN_ID = 77;
 const CORRELATION_ID = "12345678-1234-4123-8123-123456789abc";
 
 afterEach(() => {
@@ -138,6 +139,8 @@ function startCommand(workDir: string, prNumber = "42") {
     String(CI_RUN_ATTEMPT),
     "--ci-run-id",
     String(CI_RUN_ID),
+    "--gate-run-id",
+    String(GATE_RUN_ID),
     "--pr",
     prNumber,
     "--work-dir",

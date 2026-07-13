@@ -118,6 +118,11 @@ jobs:
     if: ${{ github.event_name == 'workflow_run' && github.repository == 'NVIDIA/NemoClaw' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.path == '.github/workflows/pr.yaml' && endsWith(github.event.workflow_run.display_title, ' gate true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    outputs:
+      exception_mode: ${{ steps.start.outputs.exception_mode }}
+      exception_pr_number: ${{ steps.start.outputs.exception_pr_number }}
+      exception_head_sha: ${{ steps.start.outputs.exception_head_sha }}
+      exception_base_sha: ${{ steps.start.outputs.exception_base_sha }}
     permissions:
       actions: write
       checks: write
@@ -158,6 +163,7 @@ jobs:
           CI_DISPLAY_TITLE: ${{ github.event.workflow_run.display_title }}
           CI_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
           CI_RUN_ID: ${{ github.event.workflow_run.id }}
+          GATE_RUN_ID: ${{ github.run_id }}
           GITHUB_TOKEN: ${{ github.token }}
           HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
           HEAD_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
@@ -176,6 +182,7 @@ jobs:
           --ci-display-title "$CI_DISPLAY_TITLE"
           --ci-run-attempt "$CI_RUN_ATTEMPT"
           --ci-run-id "$CI_RUN_ID"
+          --gate-run-id "$GATE_RUN_ID"
           --pr "$PR_NUMBER"
           --work-dir "$WORK_DIR"
 
@@ -303,6 +310,59 @@ jobs:
       - name: Remove private workspace
         if: ${{ always() && steps.workspace.outputs.work_dir != '' }}
         run: rm -rf -- "${{ steps.workspace.outputs.work_dir }}"
+
+  approve-exception:
+    name: Approve no-secret E2E exception
+    needs: coordinate
+    if: ${{ needs.coordinate.result == 'success' && needs.coordinate.outputs.exception_mode != '' && github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: e2e-no-secret-exception
+      deployment: false
+    permissions:
+      actions: read
+      checks: write
+      contents: read
+      pull-requests: read
+    concurrency:
+      group: pr-e2e-gate-approve-${{ needs.coordinate.outputs.exception_pr_number }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout controller
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: "22"
+
+      - name: Install controller dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Record approved E2E exception
+        env:
+          APPROVAL_RUN_ATTEMPT: ${{ github.run_attempt }}
+          APPROVAL_RUN_ID: ${{ github.run_id }}
+          EXCEPTION_MODE: ${{ needs.coordinate.outputs.exception_mode }}
+          EXPECTED_BASE_SHA: ${{ needs.coordinate.outputs.exception_base_sha }}
+          EXPECTED_HEAD_SHA: ${{ needs.coordinate.outputs.exception_head_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.coordinate.outputs.exception_pr_number }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: >-
+          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
+          --mode resolve-approved
+          --exception-mode "$EXCEPTION_MODE"
+          --pr "$PR_NUMBER"
+          --head "$EXPECTED_HEAD_SHA"
+          --base "$EXPECTED_BASE_SHA"
+          --workflow-sha "$WORKFLOW_SHA"
+          --approval-run-id "$APPROVAL_RUN_ID"
+          --approval-run-attempt "$APPROVAL_RUN_ATTEMPT"
 
   resolve-exception:
     if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' }}
