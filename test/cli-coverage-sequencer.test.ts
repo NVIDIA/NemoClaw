@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 
@@ -8,17 +9,25 @@ import { describe, expect, it } from "vitest";
 import type { TestSpecification, Vitest } from "vitest/node";
 
 import {
-  assignWeightedShards,
+  assignStableShards,
   CliCoverageSequencer,
   cliTestTimingHints,
   parseCliTestTimingHints,
-  shouldUseDurationAwareSharding,
+  shouldUseCliCoverageSharding,
   timingWeightForPath,
   type WeightedShardEntry,
 } from "./helpers/cli-coverage-sequencer";
 
 function assignmentKeys(entries: readonly WeightedShardEntry<string>[]) {
-  return assignWeightedShards(entries, 4).map((shard) => shard.entries.map((entry) => entry.key));
+  return assignStableShards(entries, 4).map((shard) => shard.entries.map((entry) => entry.key));
+}
+
+function assignmentOwners(entries: readonly WeightedShardEntry<string>[], shardCount = 4) {
+  return new Map(
+    assignStableShards(entries, shardCount).flatMap((shard) =>
+      shard.entries.map((entry) => [entry.key, shard.index] as const),
+    ),
+  );
 }
 
 function testSpecification(file: string, taskId: string): TestSpecification {
@@ -36,7 +45,49 @@ function sequencer(index: number, count: number): CliCoverageSequencer {
   } as unknown as Vitest);
 }
 
-describe("CLI coverage duration-aware sharding", () => {
+function checkedInCliCoverageEntries(): WeightedShardEntry<string>[] {
+  const files = execFileSync(
+    "git",
+    [
+      "ls-files",
+      "src/**/*.test.ts",
+      "test/*.test.ts",
+      "test/*.test.js",
+      "test/**/*.test.ts",
+      "test/**/*.test.js",
+    ],
+    { encoding: "utf8" },
+  )
+    .trim()
+    .split("\n");
+  const installerProjectFiles = new Set([
+    "test/install-express-prompt.test.ts",
+    "test/install-build-dependency-preflight.test.ts",
+    "test/install-clone-ref.test.ts",
+    "test/install-preflight.test.ts",
+    "test/install-preflight-docker-bootstrap.test.ts",
+    "test/install-openshell-version-check.test.ts",
+  ]);
+
+  return files
+    .filter(
+      (file) =>
+        file.startsWith("src/") ||
+        (!file.startsWith("test/e2e/") &&
+          !file.startsWith("test/package-contract/") &&
+          !installerProjectFiles.has(file)),
+    )
+    .map((file) => {
+      const projectName = file.startsWith("src/") ? "cli" : "integration";
+      return {
+        key: `${projectName}:${file}`,
+        weightMs: timingWeightForPath(file),
+        value: file,
+      };
+    });
+}
+
+describe("stable CLI coverage sharding", () => {
   it("assigns every file exactly once and independently of discovery order", () => {
     const entries = [
       { key: "slow-a", weightMs: 50_000, value: "slow-a" },
@@ -54,37 +105,63 @@ describe("CLI coverage duration-aware sharding", () => {
     expect(forward.flat().sort()).toEqual(entries.map((entry) => entry.key).sort());
   });
 
-  it("separates slow outliers and keeps estimated shard weights close", () => {
-    const entries = [
-      { key: "slow-a", weightMs: 50_000, value: "slow-a" },
-      { key: "slow-b", weightMs: 49_000, value: "slow-b" },
-      { key: "warm-a", weightMs: 15_000, value: "warm-a" },
-      { key: "warm-b", weightMs: 14_000, value: "warm-b" },
-      ...Array.from({ length: 12 }, (_, index) => ({
-        key: `regular-${String(index).padStart(2, "0")}`,
-        weightMs: 5_000,
-        value: `regular-${index}`,
-      })),
+  it("keeps existing files on the same shards when the test roster changes", () => {
+    const entries = Array.from({ length: 8 }, (_, index) => ({
+      key: `regular-${String(index + 1).padStart(2, "0")}`,
+      weightMs: 5_000,
+      value: `regular-${index + 1}`,
+    }));
+    const baseline = assignmentOwners(entries);
+    const withAddition = assignmentOwners([
+      { key: "regular-00", weightMs: 5_000, value: "regular-0" },
+      ...entries,
+    ]);
+    const withRemoval = assignmentOwners(entries.slice(1));
+
+    for (const entry of entries) {
+      expect(withAddition.get(entry.key), entry.key).toBe(baseline.get(entry.key));
+    }
+    for (const entry of entries.slice(1)) {
+      expect(withRemoval.get(entry.key), entry.key).toBe(baseline.get(entry.key));
+    }
+  });
+
+  it("keeps recorded project and path keys on their stable shards", () => {
+    const keys = [
+      "integration:test/local-credential-helper-fields.test.ts",
+      "integration:test/hermes-restart-config-seal-write-lock.test.ts",
+      "integration:test/regular-0.test.ts",
+      "cli:src/lib/example.test.ts",
     ];
-    const shards = assignWeightedShards(entries, 4);
-    const owners = new Map(
-      shards.flatMap((shard) => shard.entries.map((entry) => [entry.key, shard.index] as const)),
+    const owners = assignmentOwners(
+      keys.map((key) => ({ key, weightMs: 5_000, value: key })),
+      8,
     );
+
+    expect(Object.fromEntries(owners)).toEqual({
+      "cli:src/lib/example.test.ts": 7,
+      "integration:test/hermes-restart-config-seal-write-lock.test.ts": 2,
+      "integration:test/local-credential-helper-fields.test.ts": 1,
+      "integration:test/regular-0.test.ts": 3,
+    });
+  });
+
+  it("keeps the checked-in test roster balanced across the eight CI shards", () => {
+    const shards = assignStableShards(checkedInCliCoverageEntries(), 8);
     const weights = shards.map((shard) => shard.totalWeightMs);
+    const averageWeight = weights.reduce((total, weight) => total + weight, 0) / weights.length;
 
-    expect(owners.get("slow-a")).not.toBe(owners.get("slow-b"));
-    expect(Math.max(...weights)).toBeLessThanOrEqual(50_000);
-    expect(Math.min(...weights)).toBeGreaterThanOrEqual(44_000);
+    expect(Math.max(...weights)).toBeLessThanOrEqual(averageWeight * 1.05);
   });
 
-  it("uses duration-aware scheduling only for CLI coverage projects", () => {
-    expect(shouldUseDurationAwareSharding(["cli", "integration"])).toBe(true);
-    expect(shouldUseDurationAwareSharding(["integration"])).toBe(true);
-    expect(shouldUseDurationAwareSharding(["plugin"])).toBe(false);
-    expect(shouldUseDurationAwareSharding([])).toBe(false);
+  it("uses stable sharding only for CLI coverage projects", () => {
+    expect(shouldUseCliCoverageSharding(["cli", "integration"])).toBe(true);
+    expect(shouldUseCliCoverageSharding(["integration"])).toBe(true);
+    expect(shouldUseCliCoverageSharding(["plugin"])).toBe(false);
+    expect(shouldUseCliCoverageSharding([])).toBe(false);
   });
 
-  it("wires the measured hints into the Vitest sequencer", async () => {
+  it("wires stable project and path ownership into the Vitest sequencer", async () => {
     const specifications = [
       testSpecification("test/local-credential-helper-fields.test.ts", "local-credentials"),
       testSpecification("test/hermes-restart-config-seal-write-lock.test.ts", "hermes-config"),
