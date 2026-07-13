@@ -9,6 +9,7 @@ import {
   formatGatewayRouteImpactWarning,
   type GatewayInferenceRoute,
   isAdvisoryGatewayRouteConflict,
+  isAdvisoryProviderModelRouteConflict,
   preflightGatewayRouteDiscovery,
 } from "./gateway-route-compatibility";
 
@@ -153,6 +154,9 @@ describe("shared gateway inference route compatibility", () => {
     expect(isAdvisoryGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toBe(
       true,
     );
+    expect(
+      isAdvisoryProviderModelRouteConflict(result as Exclude<typeof result, { ok: true }>),
+    ).toBe(true);
     const warning = formatGatewayRouteImpactWarning(result as Exclude<typeof result, { ok: true }>);
     expect(warning).toContain("will re-point the one shared inference route");
     expect(warning).toContain("'stopped-peer' (nvidia-prod / nvidia/model-a)");
@@ -280,6 +284,37 @@ describe("shared gateway inference route compatibility", () => {
     );
 
     expect(result).toMatchObject({ ok: false, conflicts: [{ reason }] });
+    expect(isAdvisoryGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toBe(
+      true,
+    );
+    expect(
+      isAdvisoryProviderModelRouteConflict(result as Exclude<typeof result, { ok: true }>),
+    ).toBe(false);
+  });
+
+  it("does not let a model difference hide a custom endpoint conflict (#6315)", () => {
+    const result = check(
+      route("compatible-endpoint", "target/model", {
+        endpointUrl: "https://target.example.test/v1",
+        preferredInferenceApi: "openai-completions",
+      }),
+      [
+        sandbox("custom-peer", {
+          provider: "compatible-endpoint",
+          model: "peer/model",
+          endpointUrl: "https://peer.example.test/v1",
+          preferredInferenceApi: "openai-completions",
+        }),
+      ],
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      conflicts: [{ sandboxName: "custom-peer", reason: "custom-endpoint" }],
+    });
+    expect(
+      isAdvisoryProviderModelRouteConflict(result as Exclude<typeof result, { ok: true }>),
+    ).toBe(false);
   });
 
   it.each([

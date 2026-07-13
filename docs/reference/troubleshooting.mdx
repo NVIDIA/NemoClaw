@@ -359,7 +359,8 @@ OpenShell currently exposes one inference route per gateway.
 NemoClaw records each sandbox's intended provider and model, but the gateway can expose only one of those routes at a time.
 Onboarding with a different valid route warns immediately before changing the live route.
 The warning names every affected registered sandbox and its recorded provider and model.
-The affected sandboxes use that route until another onboarding run or `$$nemoclaw <name> connect` warns and re-points it.
+The affected sandboxes use that route until another onboarding run or, when custom endpoint and API-family identity match, `$$nemoclaw <name> connect` warns and re-points its provider and model.
+`connect` refuses different custom endpoints or API families because its provider/model-only route change cannot safely reconstruct that metadata.
 
 Run `$$nemoclaw <name> status` to compare the sandbox's recorded route with the live shared route.
 The normal Model and Provider lines remain the sandbox's recorded configuration.
@@ -367,7 +368,7 @@ A separate warning shows the live and recorded routes when they differ.
 The JSON status report exposes the same live and recorded routes in `routeDrift`.
 
 If `inference set` reports a valid shared-route conflict, align the named sandbox records or remove a sandbox you no longer need.
-Onboarding and connect intentionally provide the time-shared route-switching path.
+Onboarding applies complete time-shared route changes; `connect` re-points only when any custom endpoint and API-family identity already match.
 
 If the error names incomplete legacy custom-route metadata, back up and remove the affected sandbox, then re-onboard it with an explicit custom endpoint and API family.
 For an OpenAI-compatible route, replace the example endpoint, model, and sandbox name in this recovery sequence:

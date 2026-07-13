@@ -126,6 +126,69 @@ describe("connect route containment", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [
+      "endpoint",
+      {
+        endpointUrl: "https://peer.example.test/v1",
+        preferredInferenceApi: "openai-completions",
+      },
+    ],
+    [
+      "API family",
+      {
+        endpointUrl: "https://target.example.test/v1",
+        preferredInferenceApi: "openai-responses",
+      },
+    ],
+  ] as const)("refuses a different complete custom %s before route reads, mutation, or target probes (#6315)", async (_difference, peerRoute) => {
+    const target = {
+      name: "target",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      provider: "compatible-endpoint",
+      model: "target/model",
+      endpointUrl: "https://target.example.test/v1",
+      preferredInferenceApi: "openai-completions",
+    } as const;
+    const harness = createConnectHarness({
+      inferenceGetOutput:
+        "Gateway inference:\n  Provider: compatible-endpoint\n  Model: target/model\n",
+      registryEntry: target,
+      registryEntries: [
+        target,
+        {
+          name: "peer",
+          agent: "openclaw",
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          provider: "compatible-endpoint",
+          model: "peer/model",
+          ...peerRoute,
+        },
+      ],
+    });
+
+    await expect(harness.connectSandbox("target", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.captureOpenshellSpy).not.toHaveBeenCalledWith(
+      ["inference", "get", "-g", "nemoclaw"],
+      expect.any(Object),
+    );
+    const targetProbeCalls = harness.captureOpenshellSpy.mock.calls.filter(
+      ([args]) => Array.isArray(args) && args.join(" ").includes("inference.local/v1/models"),
+    );
+    expect(targetProbeCalls).toHaveLength(0);
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+    expect(harness.errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Cannot set compatible-endpoint / target/model"),
+    );
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
   it("rechecks peers after waiting for the shared gateway route lock", async () => {
     let releaseLock!: () => void;
     const released = new Promise<void>((resolve) => {

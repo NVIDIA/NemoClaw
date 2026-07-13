@@ -4,7 +4,7 @@
 import {
   checkGatewayRouteCompatibility,
   GatewayRouteConflictError,
-  isAdvisoryGatewayRouteConflict,
+  isAdvisoryProviderModelRouteConflict,
 } from "../../inference/gateway-route-compatibility";
 import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../onboard/env";
 import type { SandboxEntry } from "../../state/registry";
@@ -47,7 +47,7 @@ export function assertSandboxGatewayRouteCompatible(
     route: sb,
     sandboxes: registry.listSandboxes().sandboxes,
   });
-  if (!result.ok && !isAdvisoryGatewayRouteConflict(result)) {
+  if (!result.ok && !isAdvisoryProviderModelRouteConflict(result)) {
     throw new GatewayRouteConflictError(result);
   }
 }

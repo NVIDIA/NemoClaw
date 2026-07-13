@@ -819,9 +819,10 @@ If another terminal is already connected to the sandbox, `connect` prints a note
 An unknown model slug, malformed extra-args JSON, or a gated model (for example `deepseek-r1-distill-70b`) with no `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` exits non-zero with the same error the installer would emit, before any sandbox readiness probe or SSH attach.
 Unset the managed-vLLM variable, or fix the value, before retrying.
 
-When the live OpenShell gateway inference route differs from the route recorded for the target sandbox, `connect` warns and re-points the shared route to that sandbox's recorded provider and model.
+When the live OpenShell gateway inference route differs from the route recorded for the target sandbox, `connect` first verifies that any custom endpoint and API family match, then warns and re-points the shared route to that sandbox's recorded provider and model.
 This switch lets registered sandboxes with different valid routes time-share the gateway.
-Incomplete route metadata and invalid gateway bindings remain hard errors.
+Different custom endpoints or API families, incomplete route metadata, and invalid gateway bindings remain hard errors because a provider/model-only connect-time change cannot reconstruct or prove that identity.
+Re-run onboarding when you need to apply a complete custom route.
 Use `$$nemoclaw inference set --provider <provider> --model <model>` to make an intentional compatible route change outside the connect flow.
 Before it opens SSH, `connect` probes `https://inference.local/v1/models` from inside the sandbox with the selected agent's trusted CA and proxy context.
 HTTP `200` through `499` confirms that the route is reachable.

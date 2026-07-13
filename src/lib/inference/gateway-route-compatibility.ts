@@ -272,16 +272,13 @@ export function checkGatewayRouteCompatibility(
       continue;
     }
 
-    if (recorded.provider !== requested.provider || recorded.model !== requested.model) {
-      conflicts.push({
-        sandboxName: sandbox.name,
-        reason: "provider-model",
-        scope: "registered",
-        recordedRoute: recorded,
-      });
-      continue;
-    }
-    if (CUSTOM_ROUTE_PROVIDERS.has(requested.provider)) {
+    // A provider/model-only mutation cannot restore custom provider metadata.
+    // Compare that identity first so a simultaneous model difference cannot
+    // hide an endpoint or API-family conflict from connect-time containment.
+    if (
+      recorded.provider === requested.provider &&
+      CUSTOM_ROUTE_PROVIDERS.has(requested.provider)
+    ) {
       const reason = customRouteConflict(requested.provider, request.route, sandbox);
       if (reason) {
         conflicts.push({
@@ -290,7 +287,16 @@ export function checkGatewayRouteCompatibility(
           scope: "registered",
           recordedRoute: recorded,
         });
+        continue;
       }
+    }
+    if (recorded.provider !== requested.provider || recorded.model !== requested.model) {
+      conflicts.push({
+        sandboxName: sandbox.name,
+        reason: "provider-model",
+        scope: "registered",
+        recordedRoute: recorded,
+      });
     }
   }
 
@@ -326,6 +332,22 @@ export function isAdvisoryGatewayRouteConflict(
     result.conflicts.length > 0 &&
     result.conflicts.every(
       (conflict) => conflict.scope !== "requested" && ADVISORY_ROUTE_CONFLICTS.has(conflict.reason),
+    )
+  );
+}
+
+/**
+ * True only when a provider/model-only route mutation can safely reconcile the
+ * conflict. Custom endpoint and API-family changes require the full onboarding
+ * provider setup path, which restores that identity before selecting the route.
+ */
+export function isAdvisoryProviderModelRouteConflict(
+  result: Exclude<GatewayRouteCompatibilityResult, { ok: true }>,
+): boolean {
+  return (
+    result.conflicts.length > 0 &&
+    result.conflicts.every(
+      (conflict) => conflict.scope !== "requested" && conflict.reason === "provider-model",
     )
   );
 }
