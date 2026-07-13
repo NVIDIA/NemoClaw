@@ -8,19 +8,22 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { createOpenShellDriverConfigTestWrapper } from "../live/openshell-driver-config-test-wrapper.ts";
 import {
   EXACT_MAIN_DRIVER_CONFIG_JSON,
   EXACT_MAIN_DRIVER_CONFIG_PROOF_ENV,
   EXACT_MAIN_TMPFS_MOUNT,
   prepareExactMainDriverConfigProof,
 } from "../live/openshell-exact-main-driver-config.ts";
-import { createOpenShellDriverConfigTestWrapper } from "../live/openshell-driver-config-test-wrapper.ts";
 
 const originalProofEnv = process.env[EXACT_MAIN_DRIVER_CONFIG_PROOF_ENV];
+const restoreProofEnv =
+  originalProofEnv === undefined
+    ? () => Reflect.deleteProperty(process.env, EXACT_MAIN_DRIVER_CONFIG_PROOF_ENV)
+    : () => Reflect.set(process.env, EXACT_MAIN_DRIVER_CONFIG_PROOF_ENV, originalProofEnv);
 
 afterEach(() => {
-  if (originalProofEnv === undefined) delete process.env[EXACT_MAIN_DRIVER_CONFIG_PROOF_ENV];
-  else process.env[EXACT_MAIN_DRIVER_CONFIG_PROOF_ENV] = originalProofEnv;
+  restoreProofEnv();
 });
 
 describe("exact-main selected-driver config proof boundary", () => {

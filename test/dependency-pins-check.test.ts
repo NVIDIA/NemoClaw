@@ -174,14 +174,15 @@ ARG HERMES_SEMVER=${hermesSemver}
     "agents/hermes/manifest.yaml": `
 expected_version: "${overrides.hermesManifestVersion ?? hermesSemver}"
 `,
+    ...(exactMainProof
+      ? {
+          [`src/lib/actions/sandbox/${exactMainManifestName}`]: JSON.stringify({
+            openshellCommit: exactMainSourceSha,
+            openshellVersion: exactMainVersion,
+          }),
+        }
+      : {}),
   };
-
-  if (exactMainProof) {
-    files[`src/lib/actions/sandbox/${exactMainManifestName}`] = JSON.stringify({
-      openshellCommit: exactMainSourceSha,
-      openshellVersion: exactMainVersion,
-    });
-  }
 
   for (const [relativePath, contents] of Object.entries(files)) {
     const target = path.join(root, relativePath);

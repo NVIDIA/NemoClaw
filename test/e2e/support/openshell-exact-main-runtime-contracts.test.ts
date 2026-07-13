@@ -127,8 +127,7 @@ describe("OpenShell exact-main policy, nft, and process-identity proof helpers",
 
   it("rejects the feasible sequential-install partial state instead of calling it green", () => {
     const partial = completeRuleset();
-    const entries = partial.nftables;
-    if (!Array.isArray(entries)) throw new Error("fixture nftables must be an array");
+    const entries = partial.nftables as Array<Record<string, unknown>>;
     entries.pop();
     expect(() => inspectExactMainNftRuleset(JSON.stringify(partial))).toThrow(
       "expected exactly one ipv6 udp reject rule, got 0",
