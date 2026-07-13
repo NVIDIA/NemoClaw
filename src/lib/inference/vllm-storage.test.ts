@@ -146,6 +146,23 @@ describe("Docker image-storage detection", () => {
     });
   });
 
+  it("fails closed with an actionable reason for rootless containerd (#6757)", () => {
+    const result = resolveDockerStorageLocations(
+      nativeDockerInfo({
+        Driver: "overlayfs",
+        DriverStatus: [["driver-type", "io.containerd.snapshotter.v1"]],
+        SecurityOptions: ["name=rootless"],
+      }),
+      nativeHost,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      reason:
+        "rootless Docker detected; managed vLLM cannot verify the containerd image-store location",
+    });
+  });
+
   it("returns an inconclusive result for remote Docker contexts (#6757)", () => {
     expect(
       resolveDockerStorageLocations(nativeDockerInfo(), {

@@ -241,7 +241,11 @@ export function resolveDockerStorageLocations(
     Array.isArray(info.SecurityOptions) &&
     info.SecurityOptions.some((entry) => String(entry).includes("rootless"))
   ) {
-    return { ok: false, reason: "rootless containerd image-store location is ambiguous" };
+    return {
+      ok: false,
+      reason:
+        "rootless Docker detected; managed vLLM cannot verify the containerd image-store location",
+    };
   }
   const containerd = containerdRootFromConfig(deps);
   if (!containerd.ok) return containerd;

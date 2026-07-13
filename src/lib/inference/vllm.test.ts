@@ -759,6 +759,38 @@ describe("installVllm model resolution", () => {
     expect(mocks.dockerSpawn).not.toHaveBeenCalled();
   });
 
+  it("rechecks model capacity for a cached image before hf download (#6757)", async () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    process.env.NEMOCLAW_VLLM_MODEL = profile.defaultModel.envValue;
+    mockSuccessfulVllmInstall(profile.containerName);
+    mocks.dockerImageInspectFormat.mockReturnValue("sha256:cached-image");
+    mocks.probeModelCacheStorage
+      .mockReturnValueOnce({
+        ok: true,
+        capacity: {
+          availableBytes: 1_000_000_000_000n,
+          path: "/shared",
+          source: "model cache",
+        },
+      })
+      .mockReturnValueOnce({
+        ok: true,
+        capacity: { availableBytes: 1n, path: "/shared", source: "model cache" },
+      });
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(mocks.probeDockerStorage).not.toHaveBeenCalled();
+    expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalledTimes(1);
+    expect(mocks.probeModelCacheStorage).toHaveBeenCalledTimes(2);
+    expect(mocks.dockerSpawn).not.toHaveBeenCalled();
+  });
+
   it("starts the long-lived vLLM container through Docker argv, not a shell command", async () => {
     process.env.HF_TOKEN = "hf_test";
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
