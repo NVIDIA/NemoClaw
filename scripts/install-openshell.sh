@@ -127,7 +127,7 @@ else
 fi
 
 # invalidState: a consumed OpenShell release asset differs from the digest
-# published for the immutable v0.0.72 release, or a mutable registry tag moves.
+# published for the selected immutable release, or a mutable registry tag moves.
 # sourceBoundary: NVIDIA/OpenShell owns the release workflow, GitHub release
 # assets, and GHCR manifests; NemoClaw owns which exact artifacts it trusts.
 # whyNotSourceFix: NemoClaw cannot retroactively make an upstream publication
@@ -135,7 +135,7 @@ fi
 # regressionTest: test/install-openshell-version-check.test.ts exercises all
 # eight mappings, and scripts/check-installer-hash.sh compares them with the
 # GitHub release API on every PR, main push, weekly run, and manual dispatch.
-# removalCondition: remove these v0.0.72 entries only when NemoClaw drops that
+# removalCondition: remove these entries only when NemoClaw drops that
 # supported release or replaces them with independently verified newer pins.
 openshell_pinned_sha256() {
   local release_tag="$1" asset="$2"
@@ -173,6 +173,22 @@ openshell_pinned_sha256() {
 openshell_checksum_line() {
   local checksum_file="$1" asset="$2"
   awk -v asset="$asset" '$2 == asset { print; found=1; exit } END { if (!found) exit 1 }' "$checksum_file"
+}
+
+# A pinned digest authenticates bytes, but it does not make extraction safe.
+# Every consumed OpenShell archive must contain exactly the one regular binary
+# selected by its asset name. This rejects absolute/parent paths, extra or
+# duplicate members, and links/devices before tar can write anything.
+validate_openshell_archive() {
+  local archive="$1" expected_member="$2" members verbose
+  members="$(LC_ALL=C tar -tzf "$archive")" \
+    || fail "Unable to list OpenShell archive $(basename "$archive")"
+  [ "$members" = "$expected_member" ] \
+    || fail "Unsafe OpenShell archive $(basename "$archive"): expected exactly one member named $expected_member"
+  verbose="$(LC_ALL=C tar -tvzf "$archive")" \
+    || fail "Unable to inspect OpenShell archive $(basename "$archive")"
+  [[ "$verbose" != *$'\n'* && "${verbose:0:1}" = "-" && "${verbose##* }" = "$expected_member" ]] \
+    || fail "Unsafe OpenShell archive $(basename "$archive"): $expected_member must be one regular file"
 }
 
 version_gte() {
@@ -746,6 +762,16 @@ for i in "${!ASSETS[@]}"; do
   fi
   (cd "$tmpdir" && printf '%s\n' "$checksum_line" | $SHA_CMD -c -) \
     || fail "SHA-256 checksum verification failed for $asset_name"
+done
+
+for asset_name in "${ASSETS[@]}"; do
+  case "$asset_name" in
+    openshell-gateway-*) expected_member="openshell-gateway" ;;
+    openshell-sandbox-*) expected_member="openshell-sandbox" ;;
+    openshell-*) expected_member="openshell" ;;
+    *) fail "No expected archive member is defined for $asset_name" ;;
+  esac
+  validate_openshell_archive "$tmpdir/$asset_name" "$expected_member"
 done
 
 for asset_name in "${ASSETS[@]}"; do

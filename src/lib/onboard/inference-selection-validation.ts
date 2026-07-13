@@ -3,6 +3,7 @@
 
 import { getCredential } from "../credentials/store";
 import { getCompatibleAnthropicOpenAiSurfaceBaseUrl } from "../inference/config";
+import type { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 
 const { probeAnthropicEndpoint, probeOpenAiLikeEndpointOptimized } =
   require("../inference/onboard-probes") as {
@@ -78,6 +79,7 @@ export interface InferenceSelectionValidationHelpers {
       skipResponsesProbe?: boolean;
       probeStreaming?: boolean;
       allowHostDockerInternal?: boolean;
+      capabilityCache?: OnboardInferenceCapabilityCache;
     },
   ): Promise<EndpointValidationResult>;
   validateAnthropicSelectionWithRetryMessage(
@@ -196,6 +198,7 @@ export function createInferenceSelectionValidationHelpers(
       skipResponsesProbe?: boolean;
       probeStreaming?: boolean;
       allowHostDockerInternal?: boolean;
+      capabilityCache?: OnboardInferenceCapabilityCache;
     } = {},
   ): Promise<EndpointValidationResult> {
     const apiKey = credentialEnv ? resolveCredential(credentialEnv) : "";
@@ -204,6 +207,7 @@ export function createInferenceSelectionValidationHelpers(
       calibrateTimeouts: true,
     });
     if (!probe.ok) {
+      options.capabilityCache?.invalidate();
       printValidationFailure(label, probe);
       if (deps.isNonInteractive()) {
         exitNonInteractiveValidationFailure();
@@ -225,7 +229,17 @@ export function createInferenceSelectionValidationHelpers(
     } else {
       console.log(`  ${probe.label} available — ${deps.agentProductName()} will use ${probe.api}.`);
     }
-    return { ok: true, api: probe.api ?? "openai-completions" };
+    const api = probe.api ?? "openai-completions";
+    if (api === "openai-completions" && probe.validated !== false) {
+      options.capabilityCache?.rememberCompletedOpenAiChat({
+        endpointUrl,
+        model,
+        authMode: options.authMode,
+        requireChatCompletionsToolCalling: options.requireChatCompletionsToolCalling,
+        extraHeaders: options.extraHeaders,
+      });
+    }
+    return { ok: true, api };
   }
 
   async function validateAnthropicSelectionWithRetryMessage(

@@ -102,6 +102,18 @@ function firstSnapshotTimestamp(listOutput: string): string {
   return match[0];
 }
 
+function snapshotManifestDirectories(): string[] {
+  return fs
+    .readdirSync(BACKUP_DIR, { withFileTypes: true })
+    .filter(
+      (entry) =>
+        entry.isDirectory() &&
+        fs.existsSync(path.join(BACKUP_DIR, entry.name, "rebuild-manifest.json")),
+    )
+    .map((entry) => entry.name)
+    .sort();
+}
+
 test("snapshot commands preserve create/list/latest restore/targeted restore/no-leak lifecycle", {
   timeout: LIVE_TIMEOUT_MS,
 }, async ({ artifacts, cleanup, host, sandbox, skip }) => {
@@ -119,6 +131,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
       "timestamp-targeted restore recovers the first snapshot state",
       "snapshot directory excludes credential-bearing env/json files",
       "snapshot help advertises create/list/restore",
+      "strict backup-all starts a stopped Docker sandbox, creates a snapshot, and returns it to exited state",
     ],
   });
 
@@ -364,10 +377,129 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
   expect(resultText(help)).toContain("snapshot list");
   expect(resultText(help)).toContain("snapshot restore");
 
+  const snapshotsBeforeStoppedBackup = snapshotManifestDirectories();
+  const containerLookup = await host.command(
+    "docker",
+    [
+      "ps",
+      "-aq",
+      "--filter",
+      "label=openshell.ai/managed-by=openshell",
+      "--filter",
+      `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
+    ],
+    {
+      artifactName: "phase-10-stopped-backup-container-lookup",
+      env: commandEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(containerLookup.exitCode, resultText(containerLookup)).toBe(0);
+  const containerIds = containerLookup.stdout.split(/\r?\n/).filter(Boolean);
+  expect(containerIds).toHaveLength(1);
+  const containerId = containerIds[0] as string;
+
+  const stop = await host.command("docker", ["stop", containerId], {
+    artifactName: "phase-10-stop-sandbox-container",
+    env: commandEnv(),
+    timeoutMs: 60_000,
+  });
+  expect(stop.exitCode, resultText(stop)).toBe(0);
+
+  const strictBackup = await host.command("nemoclaw", ["backup-all"], {
+    artifactName: "phase-10-strict-backup-all-stopped",
+    env: { ...commandEnv(), NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS: "1" },
+    timeoutMs: 180_000,
+  });
+  expect(strictBackup.exitCode, resultText(strictBackup)).toBe(0);
+  expect(resultText(strictBackup)).toContain(`Starting stopped sandbox '${SANDBOX_NAME}'`);
+  expect(resultText(strictBackup)).toContain(`Returned '${SANDBOX_NAME}' to its stopped state`);
+  expect(resultText(strictBackup)).toContain("1 backed up, 0 failed, 0 skipped");
+
+  const finalContainerState = await host.command(
+    "docker",
+    ["inspect", "--format", "{{.State.Status}}", containerId],
+    {
+      artifactName: "phase-10-final-container-state",
+      env: commandEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(finalContainerState.exitCode, resultText(finalContainerState)).toBe(0);
+  expect(finalContainerState.stdout.trim()).toBe("exited");
+
+  const snapshotsAfterStoppedBackup = snapshotManifestDirectories();
+  const stoppedBackupSnapshots = snapshotsAfterStoppedBackup.filter(
+    (entry) => !snapshotsBeforeStoppedBackup.includes(entry),
+  );
+  expect(stoppedBackupSnapshots).toHaveLength(1);
+  const stoppedBackupTimestamp = stoppedBackupSnapshots[0] as string;
+  const stoppedBackupManifest = JSON.parse(
+    fs.readFileSync(path.join(BACKUP_DIR, stoppedBackupTimestamp, "rebuild-manifest.json"), "utf8"),
+  ) as { sandboxName?: unknown; backedUpDirs?: unknown };
+  expect(stoppedBackupManifest.sandboxName).toBe(SANDBOX_NAME);
+  expect(stoppedBackupManifest.backedUpDirs).toEqual(expect.arrayContaining(["workspace"]));
+
+  const restart = await host.command("docker", ["start", containerId], {
+    artifactName: "phase-10-restart-for-stopped-snapshot-restore",
+    env: commandEnv(),
+    timeoutMs: 60_000,
+  });
+  expect(restart.exitCode, resultText(restart)).toBe(0);
+  const waitForExec = await host.command(
+    "bash",
+    [
+      "-lc",
+      'name="$1"; for _i in $(seq 1 30); do openshell sandbox exec --name "$name" -- true >/dev/null 2>&1 && exit 0; sleep 2; done; openshell sandbox exec --name "$name" -- true',
+      "wait-for-sandbox-exec",
+      SANDBOX_NAME,
+    ],
+    {
+      artifactName: "phase-10-wait-for-restarted-sandbox-exec",
+      env: commandEnv(),
+      timeoutMs: 90_000,
+    },
+  );
+  expect(waitForExec.exitCode, resultText(waitForExec)).toBe(0);
+  const perturbAfterStoppedBackup = await sandbox.exec(
+    SANDBOX_NAME,
+    ["sh", "-lc", `printf '%s' 'BROKEN_AFTER_STOPPED_BACKUP' > ${MARKER_FILE}`],
+    {
+      artifactName: "phase-10-perturb-after-stopped-backup",
+      env: commandEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(perturbAfterStoppedBackup.exitCode, resultText(perturbAfterStoppedBackup)).toBe(0);
+  const restoreStoppedBackup = await host.command(
+    "nemoclaw",
+    [SANDBOX_NAME, "snapshot", "restore", stoppedBackupTimestamp],
+    {
+      artifactName: "phase-10-restore-stopped-backup",
+      env: commandEnv(),
+      timeoutMs: 120_000,
+    },
+  );
+  expect(restoreStoppedBackup.exitCode, resultText(restoreStoppedBackup)).toBe(0);
+  expect(resultText(restoreStoppedBackup)).toContain("Restored");
+  await expectSandboxFileContent(
+    sandbox,
+    MARKER_FILE,
+    markerContent,
+    "phase-10-read-marker-after-stopped-backup-restore",
+  );
+  expect(scanSnapshotCredentialLeaks(BACKUP_DIR)).toEqual([]);
+  await artifacts.writeJson("phase-10-stopped-backup-proof.json", {
+    containerId,
+    finalContainerState: finalContainerState.stdout.trim(),
+    stoppedBackupTimestamp,
+  });
+
   await artifacts.target.complete({
     id: "snapshot-commands",
     status: "passed",
     firstSnapshotTimestamp: timestamp,
+    stoppedBackupTimestamp,
     backupDir: BACKUP_DIR,
   });
 });
