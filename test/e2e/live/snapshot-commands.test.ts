@@ -105,7 +105,6 @@ function firstSnapshotTimestamp(listOutput: string): string {
 }
 
 function snapshotManifestDirectories(): string[] {
-  if (!fs.existsSync(BACKUP_DIR)) return [];
   return fs
     .readdirSync(BACKUP_DIR, { withFileTypes: true })
     .filter(
