@@ -14,11 +14,14 @@ Record for the current dependency and every candidate endpoint:
 - whether the commit is verified under the upstream project's policy;
 - tag ancestry from the currently supported release;
 - GitHub or registry release status: published, draft, prerelease, failed, or absent;
-- producer workflow run and attempt when artifacts exist;
+- producer repository, workflow path, event, run, attempt, status, conclusion, and source SHA when
+  artifacts exist;
 - release date and the next endpoint.
 
 Treat a tag, release, package publication, and container publication as separate facts. A tag with
 a failed release workflow is a source boundary but not a shippable artifact boundary.
+Artifacts uploaded before a later job failure remain non-shippable even when their individual
+metadata and source SHA look correct.
 
 ## Adjacent-range procedure
 

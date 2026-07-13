@@ -17,11 +17,13 @@ Use this reference to find migration risk that version searches and existing tes
 | Persisted state and caches | materialization inputs, cache keys, snapshots, schema versions, invalidation | prepared roots, generated config, UID/GID, driver, platform, policy, recovery | same-version config change reuses stale identity or rootfs |
 | Network | DNS, TLS, CONNECT, proxying, SSRF, timeouts | policy generation, probes, tunnels, error classification | fail-open route, re-resolution, misleading transport error |
 | Runtime topology | processes, sidecars, drivers, images, sockets, ports | build, publish, download, store, extract, install, execute, cleanup | narrow extraction is mistaken for a narrow distributed image |
+| Component selection and identity | binary/image precedence, fallbacks, version output, content digests | sibling discovery, driver config, registry state, gateway reuse, live PID 1 | matching CLI version hides different supervisor bytes or a mutable image tag |
 | Packaging | asset names, archive layout, hashes, libc, architectures | installers, Brev, workflows, sibling-binary discovery | correct version with missing binary or unsupported host |
 | Dependency graph | resolved versions, sources, checksums, features, build scripts, native or unsafe code | lockfiles, notices, SBOM, advisories, allowlists, direct callers | transitive security implementation is absent from notices or review |
 | Build and image content | base digests, package repositories, package pins, build stages, provenance, full image contents | accepted images, extraction paths, security scans, runtime selectors | mutable base or unpinned package changes behind a trusted product version |
 | Platform support | declared minimums, kernel features, capabilities, runtime versions | supported-host matrix, preflight, fallbacks, affected hardware | upstream CI passes on a newer runtime than the supported user host |
 | Observability | status fields, logs, warnings, health semantics | doctor, status UI, automated recovery, troubleshooting | unhealthy runtime reported ready |
+| Evidence pipeline | producer run state, workflow path/event/attempt, credentials, checkout order, tool resolution | base-owned verification workflows, artifact staging, provenance records | PR code poisons verification tools or an artifact from a failed run is accepted |
 | Compatibility | deprecations, removals, fallback rules, feature gates | version selection, old fixtures, upgrade/recovery paths | workaround masks new contract or blocks recovery |
 
 Inspect adjacent source when a changed file delegates to an apparently unchanged contract. A new
@@ -46,6 +48,11 @@ For each upstream change:
    materialization code and compare it with the cache key and cache-hit validation.
 8. For images and archives, trace each content set through build, publication, download, storage,
    verification, extraction, installation, and execution. Do not collapse these into one surface.
+9. For multi-component runtimes, derive selection precedence and compare the selected artifact's
+   content identity with persisted state and the live executable. Vary bytes while holding the
+   reported version constant.
+10. For proof workflows, identify the first checked-out-code execution, every credential lifetime,
+    how tools are resolved, and whether producer workflow/event/attempt/conclusion are machine-bound.
 
 ## Concern schema
 
@@ -92,6 +99,8 @@ Strong evidence directly exercises or defines the contract:
 - cache invalidation proofs that vary one material input while holding the dependency version fixed;
 - wire-level behavior for network and credential boundaries;
 - affected-platform proof for platform-specific migrations.
+- a base-trusted verifier that runs before proposed code, binds a successful producer run, and
+  revokes credentials before proposed code executes.
 
 Weak evidence cannot close a material concern by itself:
 
@@ -99,6 +108,8 @@ Weak evidence cannot close a material concern by itself:
 - no literal version string was found;
 - release notes did not mention a breaking change;
 - the CLI printed the expected version;
+- one component printed the expected version while a sibling binary or image was selected;
+- artifact metadata matched a source SHA but the producer run ultimately failed;
 - a moving development tag worked once;
 - source compiled without errors.
 

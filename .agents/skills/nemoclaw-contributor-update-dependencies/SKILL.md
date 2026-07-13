@@ -33,10 +33,12 @@ Dependency-upgrade progress:
 - [ ] Separate build, distributed, extracted, installed, and executed artifact surfaces
 - [ ] Inventory downstream workarounds and verify each removal condition
 - [ ] Audit persisted-state and cache keys against every behavior-changing input
+- [ ] Bind reported versions to the artifacts actually selected and executed
 - [ ] Record every concern with evidence, failure mode, and disposition
 - [ ] Implement migrations in dependency-release order
 - [ ] Add concern-specific tests and runtime proofs
 - [ ] Audit immutable artifacts and every downstream selector
+- [ ] Audit the trust boundary of artifact-verification workflows
 - [ ] Re-run the migration audit on the final tag and exact PR head
 - [ ] Report resolved concerns, exclusions, and remaining external gates
 ```
@@ -131,6 +133,14 @@ with the cache key and cache-hit validation. Prove invalidation by changing one 
 time while keeping the dependency version fixed, as well as by changing the version. A version-only
 key does not protect same-version configuration changes.
 
+For a release with multiple binaries, packages, images, drivers, or fallbacks, derive the actual
+selection precedence from source. A CLI version is not the identity of a sibling daemon,
+supervisor, extracted image binary, or already-running process. Record an immutable content identity
+for the selected artifact: file SHA-256, package digest, OCI manifest digest, or equivalent. Test
+same-version content replacement and mixed-component installs. For live evidence, bind the
+recorded identity to the executable or image the runtime actually selected, such as
+`/proc/<pid>/exe`, rather than to the artifact that merely existed beside it.
+
 ## 4. Build the concern ledger
 
 Use the schema in [references/contract-audit.md](references/contract-audit.md). Every concern must
@@ -186,6 +196,12 @@ For each runtime or stateful migration, cover the applicable happy path, negativ
 state, restart or rotation, persisted-state transition, rollback, and teardown. State explicitly
 when one of these paths is inapplicable and cite the boundary that makes it so.
 
+When upstream marks a security, cleanup, or observability operation optional or non-fatal, execute
+that operation on a host known to provide the prerequisite capability. Distinguish a genuinely
+unsupported capability from a malformed command, wrong argument, missing package, or swallowed
+error. An absent optional result is green only when the runtime reports the degraded state
+truthfully and the product has explicitly accepted that degradation.
+
 Existing green tests only prove what they cover. If no test would fail for the identified
 migration concern, add one or retain a specific source/runtime proof. After concern-specific
 verification, run the repository's normal targeted checks, hooks, exact-head CI, and automated
@@ -212,6 +228,7 @@ After semantic migration work is complete, verify the final release and consumed
 
 - immutable tag commit, ancestry, signature or platform verification, and release status;
 - exact producer workflow run and rerun attempt;
+- producer repository, workflow path, event, status, conclusion, source SHA, and run attempt;
 - release attestations and source/build identity;
 - local, manifest, and release-API hashes for every consumed asset;
 - exact archive member names, types, paths, and duplicates before extraction; reject absolute or
@@ -228,6 +245,14 @@ After semantic migration work is complete, verify the final release and consumed
   downloads, stores, verifies, extracts, installs, and executes. Extracting one binary narrows the
   runtime attack surface but does not erase unaudited content in the distributed artifact;
 - coherence of every downstream selector and fallback with the trusted hash tables.
+
+Audit the verifier as part of the supply chain. A base-owned workflow must stage and verify exact
+artifacts before running code from the proposed change when GitHub, registry, or signing
+credentials are present. Use immutable or sanitized verification tools, prevent checked-out code
+from poisoning `PATH` or workflow environment files, and revoke credentials before untrusted code
+runs. Artifact metadata alone is insufficient: reject artifacts from a run that uploaded output
+before later failing, from the wrong workflow/event/attempt, or from a different repository or
+source SHA.
 
 Repeat source comparisons and the concern ledger against the final tag. Candidate-main evidence
 does not become stable-release evidence merely because the expected version was tagged.
