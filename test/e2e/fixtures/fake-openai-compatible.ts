@@ -129,7 +129,8 @@ export async function startFakeOpenAiCompatibleServer(
   const host = options.host ?? "127.0.0.1";
   const child = spawn(process.execPath, ["--experimental-strip-types", SERVER_SCRIPT], {
     env: {
-      ...process.env,
+      PATH: process.env.PATH ?? "",
+      HOME: process.env.HOME ?? "",
       NEMOCLAW_FAKE_OPENAI_API_KEY: options.apiKey ?? "",
       NEMOCLAW_FAKE_OPENAI_CHAT_CONTENT: options.chatContent ?? "ok",
       NEMOCLAW_FAKE_OPENAI_FORBIDDEN_MARKERS: JSON.stringify(options.forbiddenMarkers ?? []),

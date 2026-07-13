@@ -374,13 +374,21 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
   expect(fs.existsSync(SESSION_FILE), `${SESSION_FILE} missing`).toBe(true);
   expect(readJsonFile(SESSION_FILE)).toMatchObject({ agent: "hermes" });
 
-  const inferenceGet = await sandbox.openshell(["inference", "get"], {
+  const inferenceGet = await sandbox.openshell(["inference", "get", "--json"], {
     artifactName: "phase-3-openshell-inference-get",
     env: commandEnv(),
     timeoutMs: 30_000,
   });
   expect(inferenceGet.exitCode, resultText(inferenceGet)).toBe(0);
-  expect(resultText(inferenceGet)).toContain(inference.providerName);
+  const inferenceState = JSON.parse(resultText(inferenceGet)) as {
+    provider: string | null;
+    model: string | null;
+  };
+  expect(
+    inferenceState.provider,
+    `expected route provider ${inference.expectedRouteProvider}`,
+  ).toBe(inference.expectedRouteProvider);
+  expect(inferenceState.model, `expected model ${inference.model}`).toBe(inference.model);
 
   const policy = await sandbox.openshell(["policy", "get", "--full", SANDBOX_NAME], {
     artifactName: "phase-3-openshell-policy-get",

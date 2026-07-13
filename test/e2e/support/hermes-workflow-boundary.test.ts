@@ -167,6 +167,21 @@ describe("Hermes GPU boundary", () => {
     );
   });
 
+  it("rejects unconditional live secret in hermes-e2e mock run step", () => {
+    const errors = wfErrors((workflow) => {
+      const run = step(workflow.jobs["hermes-e2e"], "Run Hermes live Vitest test");
+      run.env = { NVIDIA_INFERENCE_API_KEY: KEY };
+    }, validateE2eWorkflowBoundary);
+
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          "hermes-e2e run step must guard NVIDIA_INFERENCE_API_KEY behind the inference mode condition",
+        ),
+      ]),
+    );
+  });
+
   it.each([
     ["hash", (fixture: string) => `${fixture}\n# drift`, "trusted SHA-256"],
     ["mode", (fixture: string) => fixture.replace("install -m 0600", "install -m 0644"), "0644"],
