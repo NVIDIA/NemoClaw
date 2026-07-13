@@ -124,9 +124,20 @@ describe("dependency upgrade skill policy", () => {
     expect(skill).toContain("does not erase unaudited content in the distributed artifact");
     expect(skill).toContain("mutable bases, unpinned package resolution");
     expect(skill).toContain("build provenance as unresolved reproducibility inputs");
+    expect(skill).toContain("A CLI version is not the identity of a sibling daemon");
+    expect(skill).toContain("same-version content replacement and mixed-component installs");
+    expect(skill).toContain(
+      "When upstream marks a security, cleanup, or observability operation optional",
+    );
+    expect(skill).toContain("producer repository, workflow path, event, status, conclusion");
+    expect(skill).toContain("before running code from the proposed change");
+    expect(skill).toMatch(/prevent checked-out code\s+from poisoning `PATH`/u);
+    expect(skill).toContain("Artifact metadata alone is insufficient");
     expect(contractAudit).toContain("| Persisted state and caches |");
+    expect(contractAudit).toContain("| Component selection and identity |");
     expect(contractAudit).toContain("| Dependency graph |");
     expect(contractAudit).toContain("| Build and image content |");
+    expect(contractAudit).toContain("| Evidence pipeline |");
   });
 });
 
