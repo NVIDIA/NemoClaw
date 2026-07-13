@@ -23,6 +23,7 @@ export type SandboxRecord = {
   observabilityEnabled?: boolean;
   provider?: string | null;
   model?: string | null;
+  dashboardPort?: number | null;
 };
 export type DcodeProbeState = "active" | "idle" | "unverifiable" | "no-runtime";
 

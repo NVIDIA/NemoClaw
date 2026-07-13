@@ -21,6 +21,10 @@ import {
 import { withGatewayRouteMutationLock } from "../../inference/gateway-route-mutation-lock";
 import * as nim from "../../inference/nim";
 import { listMessagingProviderSuffixes } from "../../messaging/channels";
+import {
+  findAvailableDashboardPort,
+  getRegistryOccupiedDashboardPorts,
+} from "../../onboard/dashboard-port";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import {
   isDcodeAgent,
@@ -178,6 +182,34 @@ function resolveSrcPodImage(
 }
 
 // Auto-create a sandbox that clones the image of an existing one.
+// Dashboard ports are per-sandbox host resources: the host forward for src's
+// port is owned by src, so a clone that inherits the port gets a dashboard URL
+// that points at src's dashboard and a rebuild preflight that rejects the
+// clone forever (#6746). Allocate dst's own port instead, from the same
+// per-gateway forward list + cross-gateway registry occupancy view as
+// onboard's `ensureDashboardForward`. Sources without a dashboard port
+// (non-dashboard-managed agents) leave the clone's field unset.
+function allocateCloneDashboardPort(
+  dstName: string,
+  srcEntry: { dashboardPort?: number | null },
+): number | null {
+  const srcPort = srcEntry.dashboardPort;
+  if (typeof srcPort !== "number" || !Number.isInteger(srcPort) || srcPort <= 0) return null;
+  const forwards = captureOpenshell(["forward", "list"], { ignoreError: true });
+  try {
+    return findAvailableDashboardPort(
+      dstName,
+      srcPort,
+      forwards.output || "",
+      undefined,
+      getRegistryOccupiedDashboardPorts(dstName),
+    );
+  } catch (err) {
+    console.error(`  ${err instanceof Error ? err.message : String(err)}`);
+    snapshotExit(1);
+  }
+}
+
 // Used by `snapshot restore --to <dst>` when dst does not exist yet: reuses
 // the source's baked image so the user does not have to re-run onboarding.
 // Returns true on success; on failure, logs and throws SnapshotCommandError.
@@ -187,6 +219,12 @@ async function autoCreateSandboxFromSource(
   srcEntry: SandboxEntry | { name: string },
   fromImage: string,
 ): Promise<void> {
+  // Allocate before creating the sandbox so dashboard-port-range exhaustion
+  // aborts cleanly instead of leaving a created-but-unregistered sandbox.
+  const dstDashboardPort = allocateCloneDashboardPort(
+    dstName,
+    srcEntry as { dashboardPort?: number | null },
+  );
   const basePolicy = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
   const openshellBin = getOpenshellBinary();
   const sourceObservabilityEnabled =
@@ -269,6 +307,7 @@ async function autoCreateSandboxFromSource(
     // so clear src's proof rather than inheriting it — otherwise dst could show
     // `Sandbox GPU: enabled (CUDA verified)` based on another sandbox's run (#4231).
     sandboxGpuProof: null,
+    dashboardPort: dstDashboardPort,
   });
 
   console.log(`  ${G}\u2713${R} Sandbox '${dstName}' created`);
