@@ -42,13 +42,13 @@ describe("detectVllmProfile", () => {
       arch: "arm64",
       image:
         "nvcr.io/nvidia/vllm@sha256:447995cbb57e6c7cf792cab95e9852e5f62b5fb6d2f39e030fa4eda9a54eadb4",
-      imageDownloadSizeBytes: 8_640_000_000,
+      imageDownloadSizeBytes: 9_278_081_698,
     },
     {
       arch: "x64",
       image:
         "nvcr.io/nvidia/vllm@sha256:7be6c2f676c36059a494fe17254e69ae5c677535ba6191044e5fc8e42a91c773",
-      imageDownloadSizeBytes: 8_320_000_000,
+      imageDownloadSizeBytes: 8_928_665_752,
     },
   ] as const)("returns the generic Linux profile for non-Spark/Station NVIDIA $arch hosts", async ({
     arch,

@@ -83,17 +83,17 @@ const VLLM_IMAGES = {
   ngc2603Post1: {
     amd64: {
       ref: "nvcr.io/nvidia/vllm@sha256:7be6c2f676c36059a494fe17254e69ae5c677535ba6191044e5fc8e42a91c773",
-      downloadSizeBytes: 8_320_000_000,
+      downloadSizeBytes: 8_928_665_752,
     },
     arm64: {
       ref: "nvcr.io/nvidia/vllm@sha256:447995cbb57e6c7cf792cab95e9852e5f62b5fb6d2f39e030fa4eda9a54eadb4",
-      downloadSizeBytes: 8_640_000_000,
+      downloadSizeBytes: 9_278_081_698,
     },
   },
   ngc2605Post1: {
     arm64: {
       ref: "nvcr.io/nvidia/vllm@sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2",
-      downloadSizeBytes: 8_940_000_000,
+      downloadSizeBytes: 9_603_085_145,
     },
   },
 } as const;
