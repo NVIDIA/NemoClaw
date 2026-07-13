@@ -175,6 +175,12 @@ Inspect test selectors, version gates, conditional skips, expected-failure marke
 exclusions at the candidate identity. A green run is invalid migration evidence when the changed
 contract or candidate version was skipped.
 
+Treat matrix flags, environment toggles, and workflow labels as selection intent, not proof of
+execution. For every required case, retain positive evidence that the runner collected and passed
+the exact test identifier: an unskipped result plus a case-specific post-success marker or artifact.
+Compare the intended matrix with the observed test IDs and count. A filtered one-case run cannot
+stand in for a three-case matrix even when the workflow configuration says the matrix is enabled.
+
 ## 7. Audit release identity separately
 
 After semantic migration work is complete, verify the final release and consumed artifacts:

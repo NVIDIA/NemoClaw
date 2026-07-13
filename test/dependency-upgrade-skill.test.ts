@@ -94,6 +94,8 @@ describe("dependency upgrade skill policy", () => {
     expect(skill).toContain("Release notes are leads, not proof");
     expect(skill).toContain("Existing green tests only prove what they cover");
     expect(skill).toContain("Inspect test selectors, version gates, conditional skips");
+    expect(skill).toContain("Treat matrix flags, environment toggles, and workflow labels");
+    expect(skill).toContain("Compare the intended matrix with the observed test IDs and count");
     expect(skill).toContain("never silently audit a stale checkout");
     expect(skill).toContain("An unresolved high-impact concern blocks the version bump");
     expect(skill).toContain("This skill authorizes changes only in NVIDIA/NemoClaw");
