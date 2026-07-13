@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+interface:
+  display_name: "NemoClaw Maintainer Docs Refactor"
+  short_description: "Refactor growing docs into consistent topics"
+  default_prompt: "Use $nemoclaw-maintainer-refactor-docs to reorganize a large NemoClaw docs section into focused pages with consistent navigation, routes, and redirects."
