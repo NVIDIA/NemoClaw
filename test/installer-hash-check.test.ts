@@ -296,14 +296,14 @@ const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => strin
   "installer-sandbox-build-pin-change": (source) =>
     mutateSandboxBuildFunction(source, (functionSource) =>
       functionSource.replace(
-        `      printf '%s\\n' "0.0.72"
+        `      printf '%s\\n' "0.0.82"
       ;;
     *)`,
-        `      printf '%s\\n' "0.0.72"
+        `      printf '%s\\n' "0.0.82"
       ;;
-    145246049bd73c60452ac3c2b4b1801663196c8e2f80575af820289c78c1cf09 | \\
-      76bc19b70d9f1e1e9871307045796cd39cc7b8fc4c08ffc90593cc934f36d500)
-      printf '%s\\n' "0.0.82"
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | \\
+      bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)
+      printf '%s\\n' "0.0.83"
       ;;
     *)`,
       ),
