@@ -3641,23 +3641,24 @@ def _configure_shields_target_metadata(
             )
 
     sandbox_uid, sandbox_gid = _sandbox_identity()
-    if mode == "locked":
-        desired_uid = os.geteuid()
-        desired_gid = os.getegid()
-        desired_dir_mode = 0o755
-        desired_file_mode = 0o444
-        # `/sandbox` must remain a usable home, but its sticky root-owned entry
-        # prevents the sandbox identity from renaming the root-owned `.hermes`
-        # lock root out from under the protected files.
-        parent_meta.update({"uid": os.geteuid(), "gid": sandbox_gid, "mode": 0o1775})
-    elif mode == "mutable":
-        desired_uid = sandbox_uid
-        desired_gid = sandbox_gid
-        desired_dir_mode = 0o3770
-        desired_file_mode = 0o640
-        parent_meta.update({"uid": sandbox_uid, "gid": sandbox_gid, "mode": 0o755})
-    else:
+    if mode not in ("locked", "mutable"):
         raise UnsafePathError(f"refusing unsupported Hermes shields target: {mode}")
+
+    locked = mode == "locked"
+    desired_uid = os.geteuid() if locked else sandbox_uid
+    desired_gid = os.getegid() if locked else sandbox_gid
+    desired_dir_mode = 0o755 if locked else 0o3770
+    desired_file_mode = 0o444 if locked else 0o640
+    # `/sandbox` must remain a usable home, but its sticky root-owned entry
+    # prevents the sandbox identity from renaming the root-owned `.hermes`
+    # lock root out from under the protected files.
+    parent_meta.update(
+        {
+            "uid": desired_uid,
+            "gid": sandbox_gid,
+            "mode": 0o1775 if locked else 0o755,
+        }
+    )
 
     state_data["parent"] = parent_meta
     state_data["parent_flags"] = int(state_data.get("parent_flags", 0)) & ~(
