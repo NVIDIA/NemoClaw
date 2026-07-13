@@ -75,7 +75,6 @@ const PROVIDER_SELECTION_TEST_TIMEOUT_MS = testTimeout(60_000);
 const TEST_REMOTE_PROVIDER_CONFIG = {
   build: { label: "NVIDIA Endpoints", providerName: "nvidia-prod" },
   openai: { label: "OpenAI", providerName: "openai-api" },
-  minimax: { label: "MiniMax", providerName: "minimax-api" },
   custom: {
     label: "Other OpenAI-compatible endpoint",
     providerName: "compatible-endpoint",
@@ -98,11 +97,6 @@ const TEST_SETUP_NIM_REMOTE_PROVIDER_CONFIG: SetupNimFlowDeps["remoteProviderCon
     ...TEST_REMOTE_PROVIDER_CONFIG.openai,
     endpointUrl: "https://api.openai.com/v1",
     credentialEnv: "OPENAI_API_KEY",
-  },
-  minimax: {
-    ...TEST_REMOTE_PROVIDER_CONFIG.minimax,
-    endpointUrl: "https://api.minimax.io/v1",
-    credentialEnv: "MINIMAX_API_KEY",
   },
   custom: {
     ...TEST_REMOTE_PROVIDER_CONFIG.custom,
@@ -201,7 +195,6 @@ function makeSetupNimFlowDeps(overrides: Partial<SetupNimFlowDeps> = {}): SetupN
     resolveAgentInferenceApi: (_agentName, _provider, preferredInferenceApi) =>
       preferredInferenceApi,
     clearCompatibleEndpointReasoning: () => null,
-    applyKnownModelContextWindow: () => null,
     maybePromptForInferenceInputCapability: async () => {},
     ...overrides,
   };
@@ -1270,7 +1263,7 @@ child_process.spawnSync = (cmd, args, opts) => {
   return originalSpawnSync(cmd, args, opts);
 };
 
-const answers = ["9", "1"];
+const answers = ["8", "1"];
 const messages = [];
 const commands = [];
 
@@ -1452,7 +1445,7 @@ child_process.spawnSync = (cmd, args, opts) => {
 const messages = [];
 const runCommands = [];
 const shellCommands = [];
-const answers = ["9", "1"];
+const answers = ["8", "1"];
 
 credentials.prompt = async (message) => {
   messages.push(message);
@@ -2235,7 +2228,7 @@ const { setupNim } = require(${onboardPath});
   });
 
   it("returns to provider selection when Ollama manual entry chooses back", async () => {
-    const answers = ["9", "1"];
+    const answers = ["8", "1"];
     const messages: string[] = [];
     const lines: string[] = [];
     const stateSelections: string[] = [];
@@ -2315,7 +2308,7 @@ const fs = require("fs");
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["9", "1", "y"];
+const answers = ["8", "1", "y"];
 const messages = [];
 const pullLog = ${JSON.stringify(pullLog)};
 let listAttempts = 0;
@@ -2411,7 +2404,7 @@ const fs = require("fs");
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["9", "1", "y", "2", "llama3.2:3b", "y"];
+const answers = ["8", "1", "y", "2", "llama3.2:3b", "y"];
 const messages = [];
 const pullLog = ${JSON.stringify(pullLog)};
 
@@ -2515,7 +2508,7 @@ const fs = require("fs");
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["9", "1", "n", "1", "y"];
+const answers = ["8", "1", "n", "1", "y"];
 const messages = [];
 const pullLog = ${JSON.stringify(pullLog)};
 
@@ -2617,7 +2610,7 @@ const fs = require("fs");
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["9", "1"];
+const answers = ["8", "1"];
 const messages = [];
 const pullLog = ${JSON.stringify(pullLog)};
 
@@ -3126,7 +3119,7 @@ const { setupNim } = require(${onboardPath});
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["5", "", "", ""];
+const answers = ["4", "", "", ""];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -3755,7 +3748,7 @@ const { setupNim } = require(${onboardPath});
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["5", "https://proxy.example.com/v1/chat/completions?token=secret#frag", "custom-model", "retry", "proxy-good", "custom-model"];
+const answers = ["4", "https://proxy.example.com/v1/chat/completions?token=secret#frag", "custom-model", "retry", "proxy-good", "custom-model"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -3873,12 +3866,12 @@ printf '%s' "$status"
       { mode: 0o755 },
     );
 
-    // vLLM is option 9 (build, openrouter, openai, minimax, custom, anthropic, anthropicCompatible, gemini, vllm)
+    // vLLM is option 8 (build, openrouter, openai, custom, anthropic, anthropicCompatible, gemini, vllm)
     const script = String.raw`
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["9"];
+const answers = ["8"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -3977,7 +3970,7 @@ printf '%s' "$status"
       { mode: 0o755 },
     );
 
-    // NIM-local is option 9 (build, openrouter, openai, minimax, custom, anthropic, anthropicCompatible, gemini, nim-local)
+    // NIM-local is option 8 (build, openrouter, openai, custom, anthropic, anthropicCompatible, gemini, nim-local)
     // No ollama, no vLLM — only NIM-local shows up as experimental option
     const script = String.raw`
 const credentials = require(${credentialsPath});
@@ -3992,8 +3985,8 @@ nimMod.startNimContainerByName = () => "container-123";
 nimMod.waitForNimHealth = () => true;
 nimMod.isNgcLoggedIn = () => true;
 
-// Select option 9 (nim-local), then model 1
-const answers = ["9", "1"];
+// Select option 8 (nim-local), then model 1
+const answers = ["8", "1"];
 const messages = [];
 
 credentials.prompt = async (message) => {

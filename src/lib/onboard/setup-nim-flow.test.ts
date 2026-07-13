@@ -371,6 +371,41 @@ describe("createSetupNim", () => {
     expect(canProbeRoute).not.toHaveBeenCalled();
   });
 
+  it("selects MiniMax from the interactive provider menu and applies its context window", async () => {
+    const applyKnownModelContextWindow = vi.fn(() => null);
+    const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
+      async ({ selected }, state) => {
+        expect(selected.key).toBe("minimax");
+        state.model = "MiniMax-M3";
+        state.provider = "minimax-api";
+        state.endpointUrl = "https://api.minimax.io/v1";
+        state.credentialEnv = "MINIMAX_API_KEY";
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        applyKnownModelContextWindow,
+        handleRemoteProviderSelection,
+        selectFromNumberedMenu: (_rawChoice, _defaultIndex, options) => {
+          const selected = options.find(({ key }) => key === "minimax");
+          expect(selected).toBeDefined();
+          return selected!;
+        },
+      }),
+    );
+
+    const result = await setupNim(null);
+
+    expect(result).toMatchObject({
+      provider: "minimax-api",
+      model: "MiniMax-M3",
+      endpointUrl: "https://api.minimax.io/v1",
+      credentialEnv: "MINIMAX_API_KEY",
+    });
+    expect(applyKnownModelContextWindow).toHaveBeenCalledWith("minimax-api", "MiniMax-M3");
+  });
+
   it("checks shared-gateway compatibility before interactive local discovery probes (#6315)", async () => {
     const events: string[] = [];
     const canProbeRoute = vi.fn((provider: string) => {
