@@ -11,6 +11,13 @@ const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "pr-review
 const DEFAULT_PACKAGE_LOCK_PATH = join(REPO_ROOT, "package-lock.json");
 const TRUSTED_WORKFLOW_REF = "${{ github.workflow_sha }}";
 const CANONICAL_ADVISOR_NPM_CI = "npm ci --ignore-scripts --no-audit --no-fund";
+const FORBIDDEN_ARTIFACT_DOWNLOAD_WITH_KEYS = [
+  "run-id",
+  "github-token",
+  "repository",
+  "pattern",
+  "merge-multiple",
+] as const;
 const ADVISOR_RUNTIME_PACKAGE_PINS = [
   { packageName: "@earendil-works/pi-coding-agent", envName: "PI_SDK_VERSION", version: "0.80.6" },
   { packageName: "typebox", envName: "TYPEBOX_VERSION", version: "1.1.38" },
@@ -528,7 +535,7 @@ function checkPublishJob(errors: string[], publishJob: WorkflowRecord): void {
   if (download && booleanValue(download["continue-on-error"]) === true) {
     errors.push("primary advisor artifact download must fail closed");
   }
-  for (const forbidden of ["run-id", "github-token", "repository", "pattern", "merge-multiple"]) {
+  for (const forbidden of FORBIDDEN_ARTIFACT_DOWNLOAD_WITH_KEYS) {
     if (Object.hasOwn(asRecord(download?.with), forbidden)) {
       errors.push(`Download primary advisor artifact must not set with.${forbidden}`);
     }
@@ -550,7 +557,7 @@ function checkPublishJob(errors: string[], publishJob: WorkflowRecord): void {
   if (secondaryDownload && booleanValue(secondaryDownload["continue-on-error"]) !== true) {
     errors.push("secondary advisor artifact download must remain non-blocking");
   }
-  for (const forbidden of ["run-id", "github-token", "repository", "pattern", "merge-multiple"]) {
+  for (const forbidden of FORBIDDEN_ARTIFACT_DOWNLOAD_WITH_KEYS) {
     if (Object.hasOwn(asRecord(secondaryDownload?.with), forbidden)) {
       errors.push(`Download secondary advisor artifact must not set with.${forbidden}`);
     }
