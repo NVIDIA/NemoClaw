@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { dockerSpawnSync } from "../../adapters/docker/exec";
 import { type AgentBranding, getAgentBranding } from "../../cli/branding";
+import { isErrnoException } from "../../core/errno";
 import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../../core/ports";
 import { isStdinTty, readLineFromStdin } from "../../core/stdin";
 import { sleepMs } from "../../core/wait";
@@ -28,7 +29,12 @@ import { resolveGatewayName } from "../../onboard/gateway-binding";
 import { stopHostGatewayProcesses } from "../../onboard/host-gateway-process";
 import { isModelRouterCommandLineForPort } from "../../onboard/model-router-process";
 import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
-import { readGatewayRegistryFile, registryEntryGatewayPort } from "../../state/gateway-registry";
+import {
+  assertGatewayStatePathSafe,
+  type GatewayRegistryDocument,
+  readGatewayRegistryFile,
+  registryEntryGatewayPort,
+} from "../../state/gateway-registry";
 import { GATEWAYS_SUBDIR } from "../../state/state-root";
 import { stopOpenRouterRuntimeAdapter } from "./openrouter-runtime-adapter-cleanup";
 import { classifyShimPath, type FileSystemDeps } from "./plan";
@@ -120,6 +126,29 @@ function pathEntryExists(target: string, runtime: Pick<UninstallRuntime, "exists
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return runtime.existsSync(target);
     return true;
+  }
+}
+
+type SharedRegistrySiblingStatus = "none" | "present" | "uncertain";
+
+function sharedRegistrySiblingStatus(
+  paths: UninstallPaths,
+  runtime: Pick<UninstallRuntime, "existsSync">,
+): SharedRegistrySiblingStatus {
+  const sharedRoot = path.dirname(paths.managedSwapMarkerPath);
+  const registryFile = path.join(sharedRoot, "sandboxes.json");
+  if (!pathEntryExists(registryFile, runtime)) return "none";
+  try {
+    const registry = readGatewayRegistryFile(path.dirname(sharedRoot), registryFile);
+    if (!registry) return "uncertain";
+    return Object.values(registry.sandboxes).some(
+      (entry) => registryEntryGatewayPort(entry) !== GATEWAY_PORT,
+    )
+      ? "present"
+      : "none";
+  } catch {
+    // Unknown ownership must never permit host-global cleanup.
+    return "uncertain";
   }
 }
 
@@ -705,6 +734,93 @@ function selectedRegistrySandboxNames(paths: UninstallPaths, runtime: UninstallR
   return names.sort();
 }
 
+function writeRegistryAtomic(
+  home: string,
+  registryFile: string,
+  registry: GatewayRegistryDocument,
+): void {
+  assertGatewayStatePathSafe(home, path.dirname(registryFile));
+  const tempFile = `${registryFile}.uninstall.${String(process.pid)}.${String(Date.now())}`;
+  let fd: number | null = null;
+  try {
+    fd = fs.openSync(
+      tempFile,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL,
+      0o600,
+    );
+    fs.writeFileSync(fd, `${JSON.stringify(registry, null, 2)}\n`);
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = null;
+    fs.renameSync(tempFile, registryFile);
+  } finally {
+    if (fd !== null) fs.closeSync(fd);
+    try {
+      fs.rmSync(tempFile, { force: true });
+    } catch {
+      // Best effort after an interrupted atomic write.
+    }
+  }
+}
+
+function pruneSelectedRowsFromSharedRegistry(
+  paths: UninstallPaths,
+  expectedSelectedNames: readonly string[],
+  runtime: UninstallRuntime,
+): boolean {
+  const sharedRoot = path.dirname(paths.managedSwapMarkerPath);
+  const home = path.dirname(sharedRoot);
+  const registryFile = path.join(sharedRoot, "sandboxes.json");
+  const lock = `${registryFile}.lock`;
+  let acquired = false;
+  try {
+    assertGatewayStatePathSafe(home, lock);
+    fs.mkdirSync(lock, { mode: 0o700 });
+    acquired = true;
+
+    const registry = readGatewayRegistryFile(home, registryFile);
+    if (!registry) throw new Error(`${registryFile} disappeared during scoped uninstall`);
+    const selectedNames = Object.entries(registry.sandboxes)
+      .filter(([, entry]) => registryEntryGatewayPort(entry) === GATEWAY_PORT)
+      .map(([name]) => name)
+      .sort();
+    if (JSON.stringify(selectedNames) !== JSON.stringify([...expectedSelectedNames].sort())) {
+      throw new Error(`${registryFile} changed during scoped uninstall`);
+    }
+
+    if (selectedNames.length === 0) return true;
+    const remainingSandboxes = Object.fromEntries(
+      Object.entries(registry.sandboxes).filter(
+        ([, entry]) => registryEntryGatewayPort(entry) !== GATEWAY_PORT,
+      ),
+    );
+    const defaultSandbox =
+      registry.defaultSandbox && Object.hasOwn(remainingSandboxes, registry.defaultSandbox)
+        ? registry.defaultSandbox
+        : (Object.keys(remainingSandboxes).sort()[0] ?? null);
+    writeRegistryAtomic(home, registryFile, {
+      ...registry,
+      defaultSandbox,
+      sandboxes: remainingSandboxes,
+    });
+    runtime.log(
+      `Removed ${String(selectedNames.length)} selected-gateway row(s) from the shared sandbox registry.`,
+    );
+    return true;
+  } catch (error) {
+    const detail =
+      isErrnoException(error) && error.code === "EEXIST"
+        ? `another state operation owns ${lock}`
+        : error instanceof Error
+          ? error.message
+          : String(error);
+    runtime.warn(`Could not safely update the shared sandbox registry: ${detail}`);
+    return false;
+  } finally {
+    if (acquired) fs.rmSync(lock, { recursive: true, force: true });
+  }
+}
+
 function removeOpenShellResources(
   options: UninstallRunOptions,
   runtime: UninstallRuntime,
@@ -948,57 +1064,76 @@ function removeOllamaModels(options: UninstallRunOptions, runtime: UninstallRunt
   }
 }
 
-function otherGatewayEnvironmentsRemain(paths: UninstallPaths, runtime: UninstallRuntime): boolean {
+interface OtherGatewayInspection {
+  otherGatewayEnvironmentsRemain: boolean;
+  sharedRegistryMustBePreserved: boolean;
+}
+
+function inspectOtherGatewayEnvironments(
+  paths: UninstallPaths,
+  runtime: UninstallRuntime,
+): OtherGatewayInspection {
   const sharedRoot = path.dirname(paths.managedSwapMarkerPath);
   const selectedRoot = path.resolve(paths.nemoclawStateDir);
   const selectedIsDefault = selectedRoot === path.resolve(sharedRoot);
+  const sharedRegistryStatus = sharedRegistrySiblingStatus(paths, runtime);
+  if (sharedRegistryStatus !== "none") {
+    return {
+      otherGatewayEnvironmentsRemain: true,
+      sharedRegistryMustBePreserved: true,
+    };
+  }
 
   if (!selectedIsDefault && pathEntryExists(sharedRoot, runtime)) {
-    const defaultRegistryFile = path.join(sharedRoot, "sandboxes.json");
-    if (pathEntryExists(defaultRegistryFile, runtime)) {
-      try {
-        const home = path.dirname(sharedRoot);
-        const defaultRegistry = readGatewayRegistryFile(home, defaultRegistryFile);
-        if (
-          defaultRegistry &&
-          Object.values(defaultRegistry.sandboxes).some(
-            (entry) => registryEntryGatewayPort(entry) === DEFAULT_GATEWAY_PORT,
-          )
-        ) {
-          return true;
-        }
-      } catch {
-        // Malformed, unreadable, or symlinked shared registry state could be
-        // a live default environment. Preserve shared resources.
-        return true;
-      }
-    }
     try {
       if (fs.readdirSync(sharedRoot).some((entry) => !SHARED_HOST_STATE_ENTRIES.has(entry))) {
-        return true;
+        return {
+          otherGatewayEnvironmentsRemain: true,
+          sharedRegistryMustBePreserved: false,
+        };
       }
     } catch {
       // Do not remove a host-shared resource when we cannot prove that the
       // default-port environment is absent.
-      return true;
+      return {
+        otherGatewayEnvironmentsRemain: true,
+        sharedRegistryMustBePreserved: false,
+      };
     }
   }
 
   const gatewaysDir = path.join(sharedRoot, GATEWAYS_SUBDIR);
-  if (!pathEntryExists(gatewaysDir, runtime)) return false;
+  if (!pathEntryExists(gatewaysDir, runtime)) {
+    return {
+      otherGatewayEnvironmentsRemain: false,
+      sharedRegistryMustBePreserved: false,
+    };
+  }
   try {
     const gatewaysStat = fs.lstatSync(gatewaysDir);
-    if (gatewaysStat.isSymbolicLink() || !gatewaysStat.isDirectory()) return true;
-    return fs.readdirSync(gatewaysDir, { withFileTypes: true }).some((entry) => {
+    if (gatewaysStat.isSymbolicLink() || !gatewaysStat.isDirectory()) {
+      return {
+        otherGatewayEnvironmentsRemain: true,
+        sharedRegistryMustBePreserved: false,
+      };
+    }
+    const siblingExists = fs.readdirSync(gatewaysDir, { withFileTypes: true }).some((entry) => {
       const candidate = path.resolve(gatewaysDir, entry.name);
       if (candidate === selectedRoot) return false;
       // Any other filesystem object is conservatively treated as gateway
       // state. In particular, never follow or dismiss a symlink here.
       return true;
     });
+    return {
+      otherGatewayEnvironmentsRemain: siblingExists,
+      sharedRegistryMustBePreserved: false,
+    };
   } catch {
     // An unreadable sibling registry is still potentially live.
-    return true;
+    return {
+      otherGatewayEnvironmentsRemain: true,
+      sharedRegistryMustBePreserved: false,
+    };
   }
 }
 
@@ -1014,7 +1149,7 @@ function removeManagedSwap(paths: UninstallPaths, runtime: UninstallRuntime): vo
     );
     return;
   }
-  if (otherGatewayEnvironmentsRemain(paths, runtime)) {
+  if (inspectOtherGatewayEnvironments(paths, runtime).otherGatewayEnvironmentsRemain) {
     runtime.log(
       "Other NemoClaw gateway-port environments remain; keeping the host-shared /swapfile.",
     );
@@ -1106,6 +1241,7 @@ function executePlan(
   runtime: UninstallRuntime,
   preserveUnderStateDir: readonly string[],
   scopedToSelectedGateway: boolean,
+  sharedRegistryMustBePreserved: boolean,
   sandboxNames: readonly string[],
 ): { ok: boolean } {
   let ok = true;
@@ -1216,6 +1352,20 @@ function executePlan(
       }
       const sharedRoot = path.dirname(paths.managedSwapMarkerPath);
       const selectedIsDefault = path.resolve(paths.nemoclawStateDir) === path.resolve(sharedRoot);
+      if (scopedToSelectedGateway && selectedIsDefault && sharedRegistryMustBePreserved) {
+        if (
+          !preserveUnderStateDir.includes("sandboxes.json") &&
+          !pruneSelectedRowsFromSharedRegistry(paths, sandboxNames, runtime)
+        ) {
+          return { ok: false };
+        }
+        removePath(paths.selectedGatewayLocalStateDir, runtime);
+        runtime.log(
+          "Legacy sibling gateway rows remain; kept the shared default-root state for their recovery.",
+        );
+        runtime.log("Sibling gateways remain; kept shared OpenShell and NemoClaw config.");
+        continue;
+      }
       if (
         !removePathExcept(
           paths.nemoclawStateDir,
@@ -1280,7 +1430,8 @@ export function runUninstallPlan(
   }
   const resolvedOptions = { ...options, gatewayName: expectedGatewayName };
   const { paths, plan } = buildRunPlan(resolvedOptions, { ...deps, env: runtime.env });
-  const scopedToSelectedGateway = otherGatewayEnvironmentsRemain(paths, runtime);
+  const gatewayInspection = inspectOtherGatewayEnvironments(paths, runtime);
+  const { otherGatewayEnvironmentsRemain: scopedToSelectedGateway } = gatewayInspection;
   let sandboxNames: string[] = [];
   if (scopedToSelectedGateway) {
     try {
@@ -1302,6 +1453,7 @@ export function runUninstallPlan(
     runtime,
     preserveUnderStateDir,
     scopedToSelectedGateway,
+    gatewayInspection.sharedRegistryMustBePreserved,
     sandboxNames,
   );
   if (ok) {
