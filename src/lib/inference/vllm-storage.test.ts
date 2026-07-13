@@ -379,7 +379,7 @@ describe("Hugging Face model-cache storage", () => {
     const dockerReadBind = vi.fn((_image: string, sourcePath: string) => {
       expect(fs.statSync(sourcePath).mode & 0o777).toBe(0o600);
       const token = fs.readFileSync(sourcePath, "utf8");
-      expect(sourcePath).not.toContain(token);
+      expect(sourcePath).not.toContain(token.slice("nemoclaw-storage-token:".length));
       return token;
     });
 
