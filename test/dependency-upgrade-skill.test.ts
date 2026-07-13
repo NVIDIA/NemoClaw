@@ -329,6 +329,8 @@ describe("dependency upgrade skill policy", () => {
     expect(skill).toContain("Existing green tests only prove what they cover");
     expect(skill).toContain("Inspect test selectors, version gates, conditional skips");
     expect(skill).toContain("Treat matrix flags, environment toggles, and workflow labels");
+    expect(skill).toContain("A protocol identity must bind the behavior that interprets it");
+    expect(skill).toContain("old sandbox and helper, new host runtime");
     expect(skill).toContain("Compare the intended matrix with the observed test IDs and count");
     expect(skill).toContain("never silently audit a stale checkout");
     expect(skill).toContain("Separate required-fix, upstream target/producer");

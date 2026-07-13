@@ -156,6 +156,47 @@ outputs. Include indirect consumers such as parsers of human-readable output, as
 defaults, sibling-binary discovery, and tests that encode old behavior without naming the
 dependency.
 
+Build an authority graph for every production selector, compatibility selector, candidate proof,
+and historical identity. Optional test lanes, workflow flags, and candidate manifests may add
+evidence, but must never globally choose or replace the production authority. Prove each lane
+against its own exact consumer graph: installer, fallback, runtime guard, packaged image, docs,
+workflow, and validator. A stable installer paired with a candidate-only runtime manifest is a
+contradiction even when both identities are individually reviewed.
+
+Negative-test the authority graph. Adding, removing, or renaming an optional candidate proof must
+not change which stable selectors the validator accepts. Conversely, activating the candidate lane
+must add exact candidate requirements without relaxing stable coherence. Make contradictory
+stable/candidate mixes fail before aggregate CI, and design the final release transition so legacy
+identities can remain recognizable for cleanup without remaining authorized for new mutations.
+
+Treat every packaged protocol schema or manifest-digest change as a cross-release migration. First
+inventory the exact protocols already deployed in long-lived images and state. Require current
+identity for new mutations, but retain a bounded, immutable history for ownership-checked cleanup;
+unknown history stays fatal. Before changing bytes, record the outgoing shipped schema, digest, and
+identity set. Test current, historical, unknown, rollback, and probe-to-action race paths. Never
+invent historical entries for unshipped candidates or widen legacy cleanup into normal mutation.
+
+A protocol identity must bind the behavior that interprets it, not only its data manifest. Hash or
+otherwise authenticate the exact helper/server bytes, wire/action schema, registry bytes, and
+rollback capability as one bundle. Derive historical descriptors from archived outgoing bundle
+bytes rather than hand-entered digests. Differentially test every independent implementation of
+the schema against the same adversarial corpus; "equivalent" parsers that disagree on integer
+bounds, version aliases, duplicate identities, or unknown fields are a migration failure.
+
+Acquire an immutable dependency-runtime lease before the first side effect when a long operation
+invokes an installed CLI plus sibling services. Bind the exact canonical executable and component
+set by content digest, platform, version, source, and install generation, and execute every command
+through that lease. Coordinate installer activation and lifecycle commands with shared/exclusive
+locking so a validated N build cannot pivot to N+1 between probe and mutation. A stable version
+string or ambient candidate flag is not artifact proof.
+
+Rollback compatibility is an edge between two generations, not a property of either endpoint.
+Before destructive work, prove the exact old image/helper bundle can be restored while the new host
+component set is active. Prefer an ownership-bound remove receipt that records the preimage and
+post-removal digest, then restore only when current state still matches. Test the real topology:
+old sandbox and helper, new host runtime, forced failure after each destructive step, exact
+restoration, process restart, unknown pair rejection, and candidate-without-proof rejection.
+
 For every security- or topology-controlling environment variable and configuration key, derive its
 complete provenance and precedence: base-image `Config.Env`, every Dockerfile stage, template,
 spec, host environment, generated config, driver insertion, persisted state, and runtime default.
@@ -248,6 +289,12 @@ When sequential intermediate versions expose incompatible migrations, use focuse
 branches or tests to isolate the boundary. Do not ship unsupported intermediate pins merely to
 make the analysis easier.
 
+For installers that replace several cooperating binaries, stage and validate the complete set
+before touching the live install. Switch them through one atomic indirection when possible; if the
+platform cannot do that, retain exact backups and roll every component back on any failure. Inject
+failure at each stage, launch during the transition, and verify the selected CLI, siblings, and
+running service never report a successful mixed-component install.
+
 ## 6. Verify concerns, then verify the repository
 
 Verification must answer the concern ledger row by row:
@@ -278,6 +325,14 @@ Treat an automatic rebuild, upgrade, or migration command as an attempted transi
 postcondition. Re-read the runtime and persisted state in a fresh process after the mutation. Return
 zero only when every in-scope target is current and attested; stopped, skipped, unknown,
 unattestable, or still-stale targets remain failures.
+
+Model replacement disposition durably from before create through registration. Every throw,
+process exit, timeout, signal, cleanup result, and post-create validation path must distinguish
+`confirmed absent`, `may exist`, `attested`, and `registered`; one typed exception is not a state
+machine. If a replacement may exist, atomically remove or quarantine any old active registry row
+and preserve recovery intent outside the active namespace. Never restore old runtime metadata over
+that name until a healthy, identity-bound gateway returns exact NotFound. A nonzero `get`, empty
+output, timeout, authentication failure, or transport failure is unknown, not absence.
 
 When upstream marks a security, cleanup, or observability operation optional or non-fatal, execute
 that operation on a host known to provide the prerequisite capability. Distinguish a genuinely
