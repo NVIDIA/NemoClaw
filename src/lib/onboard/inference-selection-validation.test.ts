@@ -6,9 +6,48 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
+import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import { createInferenceSelectionValidationHelpers } from "./inference-selection-validation";
 
 describe("inference selection validation", () => {
+  it("records a completed Chat Completions selection for the matching smoke check", async () => {
+    const capabilityCache = new OnboardInferenceCapabilityCache();
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "test-key",
+      probeOpenAiLikeEndpoint: vi.fn(() => ({
+        ok: true,
+        api: "openai-completions",
+        label: "Chat Completions API",
+      })),
+      promptValidationRecovery: vi.fn(async () => "selection" as const),
+    });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await expect(
+        helpers.validateOpenAiLikeSelection(
+          "OpenAI",
+          "https://api.example.test/v1/",
+          "model-a",
+          "OPENAI_API_KEY",
+          undefined,
+          undefined,
+          { capabilityCache },
+        ),
+      ).resolves.toEqual({ ok: true, api: "openai-completions" });
+      expect(
+        capabilityCache.takeCompletedOpenAiChat({
+          endpointUrl: "https://api.example.test/v1",
+          model: "model-a",
+        }),
+      ).toBe(true);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it("preserves non-zero exit signaling when non-interactive endpoint validation fails (#5721)", async () => {
     const originalExitCode = process.exitCode;
     const error = vi.spyOn(console, "error").mockImplementation(() => {});

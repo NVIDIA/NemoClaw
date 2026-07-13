@@ -2506,7 +2506,9 @@ A custom OpenClaw sandbox is recoverable only when the selected backup independe
 ### `$$nemoclaw backup-all`
 
 Back up all registered running sandboxes to `~/.nemoclaw/rebuild-backups/`.
-Sandboxes that are not running are skipped with remediation guidance.
+A registered docker-driver sandbox whose container is stopped is started for the duration of the backup and returned to its stopped state afterward.
+If the container cannot be returned to the stopped state, the command fails and reports that the container was left running.
+Sandboxes that are not running and cannot be started this way are skipped with remediation guidance.
 
 ```bash
 $$nemoclaw backup-all
@@ -2514,7 +2516,7 @@ $$nemoclaw backup-all
 
 Before an OpenShell upgrade, the installer prepares the current release CLI and uses it to run `backup-all` in strict mode.
 Strict mode requires every registered sandbox to produce a fresh backup and aborts before gateway changes if any sandbox is skipped or fails.
-When strict mode reports a skipped stopped sandbox, start that sandbox or its container and rerun the installer or `$$nemoclaw backup-all`.
+When strict mode reports a skipped sandbox, start that sandbox or its container and rerun the installer or `$$nemoclaw backup-all`.
 
 A running sandbox whose in-sandbox SSH endpoint does not answer fails its backup and aborts the run.
 For a standalone `$$nemoclaw backup-all` run, set `NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1` exactly to skip such sandboxes instead of failing.

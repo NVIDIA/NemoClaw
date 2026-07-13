@@ -311,6 +311,7 @@ export function createSetupInference(
             deps.verifyOnboardInferenceSmoke({
               ...input,
               pinnedAddresses: endpointPinnedAddresses,
+              capabilityCache: options.inferenceCapabilityCache,
             }),
           isNonInteractive: deps.isNonInteractive,
           registry: {
@@ -364,6 +365,7 @@ export function createSetupInference(
               skipHostInferenceSmoke: options.skipHostInferenceSmoke === true,
               preferredInferenceApi: options.preferredInferenceApi ?? null,
               pinnedAddresses: endpointPinnedAddresses,
+              capabilityCache: options.inferenceCapabilityCache,
             },
             {
               ...commonDeps,
@@ -449,6 +451,7 @@ export function createSetupInference(
             endpointUrl,
             credentialEnv,
             pinnedAddresses: endpointPinnedAddresses,
+            capabilityCache: options.inferenceCapabilityCache,
           });
         if (sandboxName) {
           commonDeps.registry.updateSandbox(sandboxName);
