@@ -72,18 +72,28 @@ intentional reviewed artifact:
   --required-fix <required-upstream-fix-ref> \
   --github-repository <owner/repository> \
   --github-host <github-hostname> \
+  --github-target-ref refs/heads/<branch-for-untagged-target> \
   --output <temporary-ledger.json>
 ```
 
 Repeat `--required-fix` for every upstream commit the requested upgrade must contain. For
 GitHub-hosted dependencies, use `--github-repository` with an authenticated `gh` CLI and set
 `--github-host` explicitly for GitHub Enterprise. The collector binds the API host and canonical
-repository identity, peels every remote tag to the exact local commit, and lists releases with
-pagination. It records `absent` only when the authenticated viewer is proven able to see drafts;
-otherwise a missing tag is `not-published` with draft visibility called out. API, authentication,
-shape, identity, tag, and timeout ambiguity fail collection. Producer workflow/run/attempt and
+repository identity, inventories and peels every remote semantic-version tag, rejects missing local
+range tags or rewritten tag objects, and lists releases with pagination. A canonical repository
+rename or redirect must stop the run and be supplied explicitly. For an untagged target, pass
+`--github-target-ref` naming the exact advertised upstream branch ref; raw commit-object lookup is
+not repository-membership evidence because GitHub can expose fork and pull-request objects through
+the base repository's object network. It records `absent` only when the authenticated viewer is
+proven able to see drafts; otherwise a missing tag is `not-published` with draft visibility called
+out. Shallow history, replace refs, grafts, missing commit objects, API, authentication, shape,
+identity, tag, and timeout ambiguity fail collection. Producer workflow/run/attempt and
 registry/package publication remain separate evidence; collect and add them before calling an
 endpoint shippable.
+
+Reject partial/promisor clones before resolving refs or traversing history. Lazy object fetching
+can otherwise make an incomplete checkout appear complete during `rev-parse`, ancestry, log, or
+diff collection; build the ledger from a non-promisor clone with the complete object closure.
 
 For a multi-release upgrade, never collapse the result into one aggregate `old..new` summary.
 Read [references/release-ledger.md](references/release-ledger.md) and complete every adjacent
@@ -157,12 +167,19 @@ topology cannot make the pre-execution proof authoritative, fail closed or exclu
 Keep separate expected-versus-observed manifests for every authority and merge boundary: immutable
 final OCI config, driver create request, engine-materialized config before first execution, PID 1,
 every helper or sidecar, and each intended workload descendant. Cover image identity,
-entrypoint/command, user, environment including duplicates, capabilities, no-new-privileges and
-seccomp, mounts with source/type/read-only properties, namespaces, PID limits, sockets, executable
-digest, ancestry, and start/restart identity. Never identify a workload as merely the first or sole
-child. A neutral final-image value may be replaced by a driver-owned token, TLS path, identity, or
-endpoint; verify the authorized transition and exact mount/source evidence rather than reusing the
-pre-merge expectation or calling every difference drift.
+entrypoint/command, user, environment including duplicates, `Config.Healthcheck`, `Config.Volumes`,
+capabilities, no-new-privileges and seccomp, mounts with source/type/read-only properties,
+namespaces, PID limits, sockets, executable digest, ancestry, and start/restart identity. Require
+both final-image and engine-materialized `Config.Healthcheck` to be disabled unless its command,
+user, security settings, credential window, and lifecycle are an explicit supported contract.
+Inventory every engine-scheduled healthcheck, hook, and auxiliary exec because it may not descend
+from PID 1 or obey an entrypoint override. Compare image-declared volumes with realized mounts and
+reject duplicate,
+equal, ancestor, descendant, or normalized-path-overlapping destinations that can shadow a trusted
+mount. Never identify a workload as merely the first or sole child. A neutral final-image value may
+be replaced by a driver-owned token, TLS path, identity, or endpoint; verify the authorized
+transition and exact mount/source evidence rather than reusing the pre-merge expectation or calling
+every difference drift.
 
 Do not mark a change irrelevant because a literal search returned no result. An exclusion needs
 both upstream source evidence describing the boundary and downstream evidence showing NemoClaw
@@ -241,9 +258,11 @@ when one of these paths is inapplicable and cite the boundary that makes it so.
 
 For inherited configuration and image controls, include poisoned-base and multi-stage fixtures,
 presence-versus-empty cases, duplicate keys, build and inspection failures, immutable-ID or tag
-drift, helper/sidecar confusion, and proof that rejection occurs before the first dependency-managed
-execution. Text scanning the proposed Dockerfile is not a substitute for inspecting the final image,
-materialized runtime configuration, or processes that the runtime actually consumes and starts.
+drift, inherited healthchecks, image-declared and overlapping volumes, engine-scheduled auxiliary
+execs, helper/sidecar confusion, and proof that rejection occurs before the first
+dependency-managed execution. Text scanning the proposed Dockerfile is not a substitute for
+inspecting the final image, materialized runtime configuration, or processes that the runtime
+actually consumes and starts.
 
 Treat an automatic rebuild, upgrade, or migration command as an attempted transition, not its own
 postcondition. Re-read the runtime and persisted state in a fresh process after the mutation. Return
@@ -262,7 +281,8 @@ verification, run the repository's normal targeted checks, hooks, exact-head CI,
 review gates.
 
 Keep identity domains explicit before citing proof. Record each required upstream fix SHA and prove
-the upstream audit target descends from all of them. Bind an upstream artifact producer's repository,
+the upstream audit target descends from all of them. Bind an untagged target to an exact advertised
+upstream ref, not mere raw-object availability. Bind an upstream artifact producer's repository,
 `head_sha`, workflow/run/attempt, component versions, and retained artifact metadata to that exact
 upstream target. Separately bind the downstream proof workflow to the exact NemoClaw PR head and a
 machine-readable manifest that pins the upstream target and artifact digests. Do not compare

@@ -24,13 +24,19 @@ Artifacts uploaded before a later job failure remain non-shippable even when the
 metadata and source SHA look correct.
 
 For GitHub repositories, pass `--github-repository OWNER/REPO` and the API hostname to the
-collector. It binds the canonical repository ID, verifies local commits against peeled remote tag
-refs, and uses the paginated release listing. GitHub exposes drafts only to viewers with push
-access, so an omitted tag is `absent` only with proven full draft visibility; otherwise it is
-`not-published`, which proves no visible published release but not that no draft exists. API,
-authentication, response-shape, identity, timestamp, URL, tag, and timeout failures stop collection.
-Release `target_commitish` is reported creation input, not resolved tag identity. None of this
-infers producer success or package/container publication from the release object.
+collector. It binds the canonical repository ID, requires a rerun when the requested name redirects
+or was renamed, inventories paginated remote semantic-version refs, and verifies every in-range tag
+against the local root object and peeled commit. Shallow history, missing tag/commit objects,
+`refs/replace`, and grafts stop collection. Partial/promisor clones also stop collection before
+ref resolution or history traversal so lazy fetch cannot conceal incomplete object closure. For an
+untagged candidate, pass the exact advertised `refs/heads/...` ref and require it to equal the audit
+target; a raw Git commit endpoint can expose fork or pull-request objects and does not prove
+upstream-ref membership. GitHub exposes drafts only to viewers with push access, so an omitted tag
+is `absent` only with proven full draft visibility; otherwise it is `not-published`, which proves no
+visible published release but not that no draft exists. API, authentication, response-shape,
+identity, timestamp, URL, tag, and timeout failures stop collection. Release `target_commitish` is
+reported creation input, not resolved tag identity. None of this infers producer success or
+package/container publication from the release object.
 
 ## Adjacent-range procedure
 
@@ -74,18 +80,18 @@ repeat that range against the final tag before shipping.
 Keep four identity records beside the ledger: required upstream fix SHAs; the exact upstream audit
 target; the upstream artifact producer repository/head/workflow/run/attempt; and the downstream
 NemoClaw PR head plus proof manifest. Require the audit target to descend from every required fix,
-the upstream producer and artifacts to bind to that target, and the downstream manifest to pin those
-artifacts while its workflow binds to the exact NemoClaw head. Upstream and downstream SHAs are
-different identity domains, not values that should equal each other. Descendant evidence can inform
-the next audit range but cannot close the requested target, and predecessor evidence cannot be
-inherited forward.
+bind an untagged audit target to its exact advertised upstream ref, require the upstream producer and
+artifacts to bind to that target, and require the downstream manifest to pin those artifacts while
+its workflow binds to the exact NemoClaw head. Upstream and downstream SHAs are different identity
+domains, not values that should equal each other. Descendant evidence can inform the next audit
+range but cannot close the requested target, and predecessor evidence cannot be inherited forward.
 
 ## Minimum per-range output
 
 ```text
 Range: <old-tag>..<new-tag>
 Identity: <old-sha> -> <new-sha>
-Release state: <published|failed|absent|candidate>
+Release state: <published|prerelease|draft|failed|absent|not-published|unreleased-commit>
 Commits and changed paths: <ledger reference>
 Notes claims: <claims or none>
 Source/test findings: <behavioral findings>

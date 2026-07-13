@@ -32,6 +32,15 @@ type Ledger = {
     visibility: string;
   };
   requiredFixes: Array<{ ref: string; sha: string }>;
+  remoteTagInventory?: {
+    count: number;
+    tags: Array<{
+      commitSha: string;
+      ref: string;
+      rootObjectType: string;
+      tagObjectShas: string[];
+    }>;
+  };
   schemaVersion: number;
   releaseEndpoints: Array<{
     publication?: {
@@ -41,7 +50,13 @@ type Ledger = {
       tag: string | null;
     };
     ref: string;
-    remoteTag?: { commitSha: string; rootObjectType: string; tagObjectShas: string[] };
+    remoteRef?: { commitSha: string; ref: string; repositoryId: number };
+    remoteTag?: {
+      commitSha: string;
+      ref: string;
+      rootObjectType: string;
+      tagObjectShas: string[];
+    };
     sha: string;
     tag: string | null;
     tagKind: "annotated" | "lightweight" | null;
@@ -55,6 +70,8 @@ type Ledger = {
   }>;
   target: {
     kind: "commit" | "tag";
+    remoteRef?: { commitSha: string; ref: string; repositoryId: number };
+    remoteTag?: { commitSha: string; ref: string };
     requestedRef: string;
     sha: string;
     tag: string | null;
@@ -63,7 +80,6 @@ type Ledger = {
 };
 
 type GitEvidence = {
-  commits: string[];
   repo: string;
   tags: Record<string, { commitSha: string; objectSha: string; objectType: "commit" | "tag" }>;
   targetSha: string;
@@ -78,6 +94,7 @@ type FakeResponse = {
 };
 
 type FakeGitHubOptions = {
+  additionalRemoteTags?: GitEvidence["tags"];
   apiHost?: string;
   fullName?: string;
   invocationLog?: string;
@@ -129,7 +146,6 @@ function readGitEvidence(repo: string, targetSha: string): GitEvidence {
     };
   }
   return {
-    commits: git(repo, "rev-list", "--all").split("\n").filter(Boolean),
     repo,
     tags,
     targetSha,
@@ -178,6 +194,7 @@ function fakeGitHubEnvironment(
   const apiHost = options.apiHost ?? "github.com";
   const fullName = options.fullName ?? "Acme/Dependency";
   const requestedName = "acme/dependency";
+  const remoteTags = { ...evidence.tags, ...options.additionalRemoteTags };
   const responses: Record<string, FakeResponse> = {};
   responses[`repos/${requestedName}`] = {
     json:
@@ -192,7 +209,7 @@ function fakeGitHubEnvironment(
         visibility: "public",
       } satisfies Record<string, unknown>),
   };
-  responses[`repos/${requestedName}/releases?per_page=100`] = {
+  responses[`repos/${fullName}/releases?per_page=100`] = {
     json: options.releasePages ?? [
       [
         githubRelease("v1.0.0", 100, { apiHost, fullName, immutable: true }),
@@ -200,15 +217,17 @@ function fakeGitHubEnvironment(
       ],
     ],
   };
-  for (const [tag, identity] of Object.entries(evidence.tags)) {
-    responses[`repos/${requestedName}/git/ref/tags/${encodeURIComponent(tag)}`] = {
-      json: {
+  responses[`repos/${fullName}/git/matching-refs/tags/?per_page=100`] = {
+    json: [
+      Object.entries(remoteTags).map(([tag, identity]) => ({
         object: { sha: identity.objectSha, type: identity.objectType },
         ref: `refs/tags/${tag}`,
-      },
-    };
+      })),
+    ],
+  };
+  for (const [tag, identity] of Object.entries(remoteTags)) {
     if (identity.objectType === "tag") {
-      responses[`repos/${requestedName}/git/tags/${identity.objectSha}`] = {
+      responses[`repos/${fullName}/git/tags/${identity.objectSha}`] = {
         json: {
           object: { sha: identity.commitSha, type: "commit" },
           sha: identity.objectSha,
@@ -217,9 +236,12 @@ function fakeGitHubEnvironment(
       };
     }
   }
-  for (const sha of evidence.commits) {
-    responses[`repos/${requestedName}/git/commits/${sha}`] = { json: { sha } };
-  }
+  responses[`repos/${fullName}/git/ref/heads/main`] = {
+    json: {
+      object: { sha: evidence.targetSha, type: "commit" },
+      ref: "refs/heads/main",
+    },
+  };
   Object.assign(responses, options.responseOverrides ?? {});
 
   const gh = path.join(bin, "gh");
@@ -297,6 +319,11 @@ describe("dependency upgrade skill policy", () => {
     expect(skill).toContain("Compare the intended matrix with the observed test IDs and count");
     expect(skill).toContain("never silently audit a stale checkout");
     expect(skill).toContain("Separate required-fix, upstream target/producer");
+    expect(skill).toContain("--github-target-ref");
+    expect(skill).toContain("raw commit-object lookup is");
+    expect(skill).toContain("inventories and peels every remote semantic-version tag");
+    expect(skill).toContain("Shallow history, replace refs, grafts");
+    expect(skill).toContain("Reject partial/promisor clones before resolving refs");
     expect(skill).toContain("missing tag is `not-published`");
     expect(skill).toContain("Do not compare");
     expect(skill).toMatch(/unrelated upstream and downstream SHAs as if they should be equal/u);
@@ -339,6 +366,10 @@ describe("dependency upgrade skill policy", () => {
     expect(skill).toContain("never let trusted input self-attest");
     expect(skill).toContain("separate expected-versus-observed manifests");
     expect(skill).toContain("every helper or sidecar");
+    expect(skill).toContain("`Config.Healthcheck`, `Config.Volumes`");
+    expect(skill).toContain("engine-scheduled healthcheck, hook, and auxiliary exec");
+    expect(skill).toContain("normalized-path-overlapping destinations");
+    expect(skill).toContain("inherited healthchecks, image-declared and overlapping volumes");
     expect(skill).toMatch(/Never identify a workload as merely the first or sole\s+child/u);
     expect(skill).toMatch(/driver-owned token, TLS path, identity, or\s+endpoint/u);
     expect(skill).toMatch(/rather than reusing the\s+pre-merge expectation/u);
@@ -360,6 +391,9 @@ describe("dependency upgrade skill policy", () => {
     expect(contractAudit).toContain("| Build and image content |");
     expect(contractAudit).toContain("| Evidence pipeline |");
     expect(contractAudit).toContain("engine state before first execution");
+    expect(contractAudit).toContain("engine-materialized `Config.Healthcheck`");
+    expect(contractAudit).toContain("compare `Config.Volumes` with realized mount destinations");
+    expect(contractAudit).toContain("Raw object lookup does not prove upstream-ref membership");
     expect(contractAudit).toContain("upstream required-fix SHAs");
   });
 });
@@ -391,7 +425,7 @@ describe("dependency release ledger collector", () => {
       previousPath: "contract.txt",
       status: "R100",
     });
-    expect(ledger.schemaVersion).toBe(3);
+    expect(ledger.schemaVersion).toBe(4);
     expect(ledger.target).toMatchObject({
       kind: "commit",
       requestedRef: targetSha,
@@ -408,7 +442,14 @@ describe("dependency release ledger collector", () => {
       repo,
       "v1.0.0",
       targetSha,
-      ["--required-fix", "v1.0.1", "--github-repository", "acme/dependency"],
+      [
+        "--required-fix",
+        "v1.0.1",
+        "--github-repository",
+        "acme/dependency",
+        "--github-target-ref",
+        "refs/heads/main",
+      ],
       fakeGitHubEnvironment(evidence),
     );
 
@@ -449,24 +490,155 @@ describe("dependency release ledger collector", () => {
       rootObjectType: "commit",
       tagObjectShas: [],
     });
+    expect(ledger.remoteTagInventory).toMatchObject({
+      count: 4,
+      tags: expect.arrayContaining([
+        expect.objectContaining({
+          ref: "refs/tags/v1.0.0",
+          rootObjectType: "tag",
+          tagObjectShas: [evidence.tags["v1.0.0"]?.objectSha],
+        }),
+        expect.objectContaining({
+          ref: "refs/tags/v1.0.1",
+          rootObjectType: "commit",
+          tagObjectShas: [],
+        }),
+      ]),
+    });
     expect(ledger.target).toMatchObject({
       kind: "commit",
       requestedRef: targetSha,
-      remoteCommit: { commitSha: targetSha, repositoryId: 42 },
+      remoteRef: {
+        commitSha: targetSha,
+        ref: "refs/heads/main",
+        repositoryId: 42,
+      },
       sha: targetSha,
     });
     expect(ledger.requiredFixes).toEqual([
       {
         ref: "v1.0.1",
-        remoteCommit: {
-          apiHost: "github.com",
-          commitSha: evidence.tags["v1.0.1"]?.commitSha,
-          provider: "github",
-          repositoryId: 42,
-        },
         sha: evidence.tags["v1.0.1"]?.commitSha,
       },
     ]);
+  });
+
+  it("rejects a fork-only object unless the advertised upstream target ref matches", () => {
+    const { repo, targetSha: upstreamTargetSha } = createTaggedRepository();
+    const evidence = readGitEvidence(repo, upstreamTargetSha);
+    git(repo, "switch", "--create", "external-fork");
+    const forkOnlySha = commit(repo, "fork-only.txt", "fork\n", "fork-only target");
+    git(repo, "switch", "main");
+
+    const result = runCollector(
+      repo,
+      "v1.0.0",
+      forkOnlySha,
+      ["--github-repository", "acme/dependency", "--github-target-ref", "refs/heads/main"],
+      fakeGitHubEnvironment(evidence),
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("target ref 'refs/heads/main' resolves to");
+    expect(result.stderr).toContain(upstreamTargetSha);
+    expect(result.stderr).toContain(forkOnlySha);
+  });
+
+  it("rejects an in-range remote semantic-version tag missing from the local checkout", () => {
+    const { repo, targetSha } = createTaggedRepository();
+    const evidence = readGitEvidence(repo, targetSha);
+    const result = runCollector(
+      repo,
+      "v1.0.0",
+      targetSha,
+      ["--github-repository", "acme/dependency", "--github-target-ref", "refs/heads/main"],
+      fakeGitHubEnvironment(evidence, {
+        additionalRemoteTags: {
+          "v1.0.3": {
+            commitSha: targetSha,
+            objectSha: targetSha,
+            objectType: "commit",
+          },
+        },
+      }),
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("remote semantic-version tag 'v1.0.3'");
+    expect(result.stderr).toContain("missing from the local checkout");
+  });
+
+  it("rejects remote semantic-version tags whose commit objects are not materialized", () => {
+    const { repo, targetSha } = createTaggedRepository();
+    const evidence = readGitEvidence(repo, targetSha);
+    const missingSha = "a".repeat(40);
+    const result = runCollector(
+      repo,
+      "v1.0.0",
+      targetSha,
+      ["--github-repository", "acme/dependency", "--github-target-ref", "refs/heads/main"],
+      fakeGitHubEnvironment(evidence, {
+        additionalRemoteTags: {
+          "v9.9.9": {
+            commitSha: missingSha,
+            objectSha: missingSha,
+            objectType: "commit",
+          },
+        },
+      }),
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`remote tag 'v9.9.9' commit ${missingSha}`);
+    expect(result.stderr).toContain("absent from the local object database");
+  });
+
+  it("rejects an in-range local semantic-version tag absent from the remote inventory", () => {
+    const { repo, targetSha } = createTaggedRepository();
+    const evidence = readGitEvidence(repo, targetSha);
+    git(repo, "tag", "v1.0.1-local.1", "v1.0.1");
+    const result = runCollector(
+      repo,
+      "v1.0.0",
+      targetSha,
+      ["--github-repository", "acme/dependency", "--github-target-ref", "refs/heads/main"],
+      fakeGitHubEnvironment(evidence),
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("local semantic-version tag 'v1.0.1-local.1'");
+    expect(result.stderr).toContain("absent from the bound GitHub repository");
+  });
+
+  it("rejects a redirected or renamed canonical repository identity", () => {
+    const { repo, targetSha } = createTaggedRepository();
+    const evidence = readGitEvidence(repo, targetSha);
+    const result = runCollector(
+      repo,
+      "v1.0.0",
+      targetSha,
+      ["--github-repository", "acme/dependency", "--github-target-ref", "refs/heads/main"],
+      fakeGitHubEnvironment(evidence, { fullName: "Renamed/Dependency" }),
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("canonical repository 'Renamed/Dependency' differs");
+    expect(result.stderr).toContain("rerun with the canonical");
+  });
+
+  it("requires an advertised branch ref for an untagged GitHub target", () => {
+    const { repo, targetSha } = createTaggedRepository();
+    const evidence = readGitEvidence(repo, targetSha);
+    const result = runCollector(
+      repo,
+      "v1.0.0",
+      targetSha,
+      ["--github-repository", "acme/dependency"],
+      fakeGitHubEnvironment(evidence),
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("requires --github-target-ref");
   });
 
   it("does not claim an unlisted release is absent without draft visibility", () => {
@@ -476,7 +648,7 @@ describe("dependency release ledger collector", () => {
       repo,
       "v1.0.0",
       targetSha,
-      ["--github-repository", "acme/dependency"],
+      ["--github-repository", "acme/dependency", "--github-target-ref", "refs/heads/main"],
       fakeGitHubEnvironment(evidence, {
         permissionsPush: false,
         releasePages: [[githubRelease("v1.0.0", 100)]],
@@ -497,6 +669,51 @@ describe("dependency release ledger collector", () => {
     ]);
   });
 
+  it("distinguishes unknown draft visibility from proven full visibility", () => {
+    const { repo, targetSha } = createTaggedRepository();
+    const evidence = readGitEvidence(repo, targetSha);
+    const releasePages = [[githubRelease("v1.0.0", 100)]];
+    const args = [
+      "--github-repository",
+      "acme/dependency",
+      "--github-target-ref",
+      "refs/heads/main",
+    ];
+    const unknown = runCollector(
+      repo,
+      "v1.0.0",
+      targetSha,
+      args,
+      fakeGitHubEnvironment(evidence, { permissionsPush: null, releasePages }),
+    );
+    const full = runCollector(
+      repo,
+      "v1.0.0",
+      targetSha,
+      args,
+      fakeGitHubEnvironment(evidence, { permissionsPush: true, releasePages }),
+    );
+
+    expect(unknown.status, unknown.stderr).toBe(0);
+    expect(full.status, full.stderr).toBe(0);
+    const unknownLedger = JSON.parse(unknown.stdout) as Ledger;
+    const fullLedger = JSON.parse(full.stdout) as Ledger;
+    expect(unknownLedger.publicationSource).toMatchObject({
+      draftVisibility: "unknown",
+      viewerCanPush: null,
+    });
+    expect(
+      unknownLedger.releaseEndpoints.slice(1, 3).map((endpoint) => endpoint.publication?.state),
+    ).toEqual(["not-published", "not-published"]);
+    expect(fullLedger.publicationSource).toMatchObject({
+      draftVisibility: "full",
+      viewerCanPush: true,
+    });
+    expect(
+      fullLedger.releaseEndpoints.slice(1, 3).map((endpoint) => endpoint.publication?.state),
+    ).toEqual(["absent", "absent"]);
+  });
+
   it("records prereleases from every release-list page", () => {
     const { repo, targetSha } = createTaggedRepository();
     const evidence = readGitEvidence(repo, targetSha);
@@ -504,7 +721,13 @@ describe("dependency release ledger collector", () => {
       repo,
       "v1.0.0",
       targetSha,
-      ["--include-prereleases", "--github-repository", "acme/dependency"],
+      [
+        "--include-prereleases",
+        "--github-repository",
+        "acme/dependency",
+        "--github-target-ref",
+        "refs/heads/main",
+      ],
       fakeGitHubEnvironment(evidence, {
         releasePages: [
           [githubRelease("v1.0.0", 100, { immutable: true })],
@@ -537,10 +760,10 @@ describe("dependency release ledger collector", () => {
       repo,
       "v1.0.0",
       targetSha,
-      ["--github-repository", "acme/dependency"],
+      ["--github-repository", "acme/dependency", "--github-target-ref", "refs/heads/main"],
       fakeGitHubEnvironment(evidence, {
         responseOverrides: {
-          [`repos/acme/dependency/git/tags/${evidence.tags["v1.0.0"]?.objectSha}`]: {
+          [`repos/Acme/Dependency/git/tags/${evidence.tags["v1.0.0"]?.objectSha}`]: {
             json: {
               object: { sha: targetSha, type: "commit" },
               sha: evidence.tags["v1.0.0"]?.objectSha,
@@ -558,21 +781,97 @@ describe("dependency release ledger collector", () => {
       repo,
       "v1.0.0",
       targetSha,
-      ["--github-repository", "acme/dependency"],
+      ["--github-repository", "acme/dependency", "--github-target-ref", "refs/heads/main"],
       fakeGitHubEnvironment(evidence, {
-        responseOverrides: {
-          "repos/acme/dependency/git/ref/tags/v1.0.1": {
-            json: {
-              object: { sha: evidence.tags["v1.0.1"]?.objectSha, type: "tag" },
-              ref: "refs/tags/v1.0.1",
-            },
+        additionalRemoteTags: {
+          "v1.0.1": {
+            commitSha: targetSha,
+            objectSha: targetSha,
+            objectType: "commit",
           },
         },
       }),
     );
     expect(tagKindMismatch.status).toBe(1);
-    expect(tagKindMismatch.stderr).toContain("object identity differs");
+    expect(tagKindMismatch.stderr).toContain("root object differs");
   });
+
+  it("rejects malformed or internally inconsistent remote tag inventories", () => {
+    const { repo, targetSha } = createTaggedRepository();
+    const evidence = readGitEvidence(repo, targetSha);
+    const inventoryEndpoint = "repos/Acme/Dependency/git/matching-refs/tags/?per_page=100";
+    const annotatedObject = evidence.tags["v1.0.0"];
+    if (!annotatedObject) throw new Error("test fixture omitted v1.0.0");
+    const validEntry = {
+      object: { sha: annotatedObject.objectSha, type: annotatedObject.objectType },
+      ref: "refs/tags/v1.0.0",
+    };
+    const cases: Array<{ expected: string; options: FakeGitHubOptions }> = [
+      {
+        expected: "tag-ref inventory had the wrong shape",
+        options: { responseOverrides: { [inventoryEndpoint]: { json: {} } } },
+      },
+      {
+        expected: "returned non-tag ref",
+        options: {
+          responseOverrides: {
+            [inventoryEndpoint]: {
+              json: [[{ object: { sha: targetSha, type: "commit" }, ref: "refs/heads/main" }]],
+            },
+          },
+        },
+      },
+      {
+        expected: "returned duplicate tag 'v1.0.0'",
+        options: {
+          responseOverrides: { [inventoryEndpoint]: { json: [[validEntry, validEntry]] } },
+        },
+      },
+      {
+        expected: "unsupported object type 'tree'",
+        options: {
+          responseOverrides: {
+            [inventoryEndpoint]: {
+              json: [
+                [
+                  {
+                    object: { sha: annotatedObject.objectSha, type: "tree" },
+                    ref: "refs/tags/v1.0.0",
+                  },
+                ],
+              ],
+            },
+          },
+        },
+      },
+      {
+        expected: "returned the wrong object",
+        options: {
+          responseOverrides: {
+            [`repos/Acme/Dependency/git/tags/${annotatedObject.objectSha}`]: {
+              json: {
+                object: { sha: annotatedObject.commitSha, type: "commit" },
+                sha: targetSha,
+                tag: "v1.0.0",
+              },
+            },
+          },
+        },
+      },
+    ];
+
+    for (const testCase of cases) {
+      const result = runCollector(
+        repo,
+        "v1.0.0",
+        targetSha,
+        ["--github-repository", "acme/dependency", "--github-target-ref", "refs/heads/main"],
+        fakeGitHubEnvironment(evidence, testCase.options),
+      );
+      expect(result.status, testCase.expected).toBe(1);
+      expect(result.stderr).toContain(testCase.expected);
+    }
+  }, 45_000);
 
   it("binds an explicit GitHub host instead of inheriting GH_HOST", () => {
     const { repo, targetSha } = createTaggedRepository();
@@ -583,7 +882,14 @@ describe("dependency release ledger collector", () => {
       repo,
       "v1.0.0",
       targetSha,
-      ["--github-repository", "acme/dependency", "--github-host", apiHost],
+      [
+        "--github-repository",
+        "acme/dependency",
+        "--github-host",
+        apiHost,
+        "--github-target-ref",
+        "refs/heads/main",
+      ],
       {
         ...fakeGitHubEnvironment(evidence, { apiHost, invocationLog }),
         GH_HOST: "attacker.invalid",
@@ -601,7 +907,24 @@ describe("dependency release ledger collector", () => {
     expect(invocations.length).toBeGreaterThan(0);
     for (const invocation of invocations) {
       expect(invocation).toEqual(expect.arrayContaining(["--hostname", apiHost]));
+      expect(invocation).toEqual(expect.arrayContaining(["--method", "GET"]));
       expect(invocation).not.toContain("attacker.invalid");
+    }
+    expect(invocations[0]).toContain("repos/acme/dependency");
+    for (const invocation of invocations.slice(1)) {
+      expect(invocation.find((argument) => argument.startsWith("repos/"))).toMatch(
+        /^repos\/Acme\/Dependency\//u,
+      );
+    }
+    const paginatedInvocations = invocations.filter((invocation) =>
+      invocation.some(
+        (argument) =>
+          argument.includes("/git/matching-refs/tags/") || argument.includes("/releases?"),
+      ),
+    );
+    expect(paginatedInvocations).toHaveLength(2);
+    for (const invocation of paginatedInvocations) {
+      expect(invocation).toEqual(expect.arrayContaining(["--paginate", "--slurp"]));
     }
   });
 
@@ -612,7 +935,7 @@ describe("dependency release ledger collector", () => {
       repo,
       "v1.0.0",
       targetSha,
-      ["--github-repository", "acme/dependency"],
+      ["--github-repository", "acme/dependency", "--github-target-ref", "refs/heads/main"],
       fakeGitHubEnvironment(evidence, {
         responseOverrides: {
           "repos/acme/dependency": {
@@ -626,14 +949,14 @@ describe("dependency release ledger collector", () => {
       repo,
       "v1.0.0",
       targetSha,
-      ["--github-repository", "acme/dependency"],
+      ["--github-repository", "acme/dependency", "--github-target-ref", "refs/heads/main"],
       environmentWithoutGh(),
     );
     const repositoryNotFound = runCollector(
       repo,
       "v1.0.0",
       targetSha,
-      ["--github-repository", "acme/dependency"],
+      ["--github-repository", "acme/dependency", "--github-target-ref", "refs/heads/main"],
       fakeGitHubEnvironment(evidence, {
         responseOverrides: {
           "repos/acme/dependency": {
@@ -647,7 +970,14 @@ describe("dependency release ledger collector", () => {
       repo,
       "v1.0.0",
       targetSha,
-      ["--github-repository", "acme/dependency", "--github-timeout-seconds", "1"],
+      [
+        "--github-repository",
+        "acme/dependency",
+        "--github-timeout-seconds",
+        "1",
+        "--github-target-ref",
+        "refs/heads/main",
+      ],
       fakeGitHubEnvironment(evidence, {
         responseOverrides: { "repos/acme/dependency": { delayMs: 1500, json: {} } },
       }),
@@ -666,7 +996,7 @@ describe("dependency release ledger collector", () => {
   it("rejects malformed repository and release payloads", () => {
     const { repo, targetSha } = createTaggedRepository();
     const evidence = readGitEvidence(repo, targetSha);
-    const releaseEndpoint = "repos/acme/dependency/releases?per_page=100";
+    const releaseEndpoint = "repos/Acme/Dependency/releases?per_page=100";
     const cases: Array<{ expected: string; options: FakeGitHubOptions }> = [
       {
         expected: "malformed JSON",
@@ -757,13 +1087,13 @@ describe("dependency release ledger collector", () => {
         repo,
         "v1.0.0",
         targetSha,
-        ["--github-repository", "acme/dependency"],
+        ["--github-repository", "acme/dependency", "--github-target-ref", "refs/heads/main"],
         fakeGitHubEnvironment(evidence, testCase.options),
       );
       expect(result.status, testCase.expected).toBe(1);
       expect(result.stderr).toContain(testCase.expected);
     }
-  });
+  }, 60_000);
 
   it("rejects draft visibility contradictions", () => {
     const { repo, targetSha } = createTaggedRepository();
@@ -772,7 +1102,7 @@ describe("dependency release ledger collector", () => {
       repo,
       "v1.0.0",
       targetSha,
-      ["--github-repository", "acme/dependency"],
+      ["--github-repository", "acme/dependency", "--github-target-ref", "refs/heads/main"],
       fakeGitHubEnvironment(evidence, { permissionsPush: false }),
     );
 
@@ -832,23 +1162,26 @@ describe("dependency release ledger collector", () => {
     });
   });
 
-  it("URL-encodes exact build-metadata tag identities for GitHub", () => {
+  it("preserves exact build-metadata tag identities from the remote inventory", () => {
     const { repo, targetSha } = createTaggedRepository();
     git(repo, "tag", "v1.0.3+build.7", targetSha);
     const evidence = readGitEvidence(repo, targetSha);
-    const invocationLog = path.join(repo, "encoded-tag-invocations.jsonl");
     const result = runCollector(
       repo,
       "v1.0.0",
       "refs/tags/v1.0.3+build.7",
       ["--github-repository", "acme/dependency"],
-      fakeGitHubEnvironment(evidence, { invocationLog }),
+      fakeGitHubEnvironment(evidence),
     );
 
     expect(result.status, result.stderr).toBe(0);
-    expect(fs.readFileSync(invocationLog, "utf8")).toContain(
-      "repos/acme/dependency/git/ref/tags/v1.0.3%2Bbuild.7",
-    );
+    const ledger = JSON.parse(result.stdout) as Ledger;
+    expect(ledger.target).toMatchObject({
+      remoteTag: {
+        commitSha: targetSha,
+        ref: "refs/tags/v1.0.3+build.7",
+      },
+    });
   });
 
   it("orders equal-precedence build identities by proven commit ancestry", () => {
@@ -925,6 +1258,50 @@ describe("dependency release ledger collector", () => {
     expect(fs.readFileSync(output, "utf8")).toBe("preserve me\n");
   });
 
+  it("rejects shallow or promisor history, replace refs, and grafted ancestry", () => {
+    const { repo, targetSha } = createTaggedRepository();
+    const shallowRepo = fs.mkdtempSync(path.join(os.tmpdir(), "dependency-release-shallow-"));
+    temporaryDirectories.push(shallowRepo);
+    execFileSync("git", ["clone", "--depth", "1", "--no-local", repo, shallowRepo], {
+      encoding: "utf8",
+      stdio: "pipe",
+    });
+    const shallow = runCollector(shallowRepo, "v1.0.0", "HEAD");
+    expect(shallow.status).toBe(1);
+    expect(shallow.stderr).toContain("worktree is shallow");
+
+    git(repo, "config", "extensions.partialClone", "origin");
+    const partial = runCollector(repo, "v1.0.0", targetSha);
+    expect(partial.status).toBe(1);
+    expect(partial.stderr).toContain("partial/promisor clone");
+    expect(partial.stderr).toContain("extensions.partialClone='origin'");
+    git(repo, "config", "--unset", "extensions.partialClone");
+
+    git(repo, "config", "remote.origin.promisor", "true");
+    const promisor = runCollector(repo, "v1.0.0", targetSha);
+    expect(promisor.status).toBe(1);
+    expect(promisor.stderr).toContain("partial/promisor clone");
+    expect(promisor.stderr).toContain("remote.origin.promisor=true");
+    git(repo, "config", "--unset", "remote.origin.promisor");
+
+    const replacedCommit = git(repo, "rev-parse", "v1.0.0^{commit}");
+    const replacementCommit = git(repo, "rev-parse", "v1.0.1^{commit}");
+    git(repo, "replace", replacedCommit, replacementCommit);
+    const replaced = runCollector(repo, "v1.0.0", targetSha);
+    expect(replaced.status).toBe(1);
+    expect(replaced.stderr).toContain("refs/replace history overrides");
+    git(repo, "replace", "-d", replacedCommit);
+
+    const graftPathText = git(repo, "rev-parse", "--git-path", "info/grafts");
+    const graftPath = path.isAbsolute(graftPathText)
+      ? graftPathText
+      : path.join(repo, graftPathText);
+    fs.writeFileSync(graftPath, `${targetSha} ${git(repo, "rev-parse", "v1.0.0")}\n`);
+    const grafted = runCollector(repo, "v1.0.0", targetSha);
+    expect(grafted.status).toBe(1);
+    expect(grafted.stderr).toContain("contains a grafts file");
+  });
+
   it("proves every required fix is an ancestor of the audit target", () => {
     const { repo, targetSha } = createTaggedRepository();
     const accepted = runCollector(repo, "v1.0.0", targetSha, [
@@ -963,6 +1340,23 @@ describe("dependency release ledger collector", () => {
       "--github-timeout-seconds",
       "0",
     ]);
+    const orphanTargetRef = runCollector(repo, "v1.0.0", targetSha, [
+      "--github-target-ref",
+      "refs/heads/main",
+    ]);
+    const abbreviatedTargetRef = runCollector(repo, "v1.0.0", targetSha, [
+      "--github-repository",
+      "acme/dependency",
+      "--github-target-ref",
+      "main",
+    ]);
+    const malformedTargetRef = runCollector(
+      repo,
+      "v1.0.0",
+      targetSha,
+      ["--github-repository", "acme/dependency", "--github-target-ref", "refs/heads/main..invalid"],
+      environmentWithoutGh(),
+    );
 
     expect(invalidRepository.status).toBe(2);
     expect(invalidRepository.stderr).toContain("OWNER/REPO");
@@ -970,6 +1364,12 @@ describe("dependency release ledger collector", () => {
     expect(invalidHost.stderr).toContain("hostname without scheme");
     expect(invalidTimeout.status).toBe(2);
     expect(invalidTimeout.stderr).toContain("between 1 and 300");
+    expect(orphanTargetRef.status).toBe(2);
+    expect(orphanTargetRef.stderr).toContain("requires --github-repository");
+    expect(abbreviatedTargetRef.status).toBe(2);
+    expect(abbreviatedTargetRef.stderr).toContain("complete refs/heads/");
+    expect(malformedTargetRef.status).toBe(1);
+    expect(malformedTargetRef.stderr).toContain("not a valid Git ref");
   });
 
   it("does not invoke gh when GitHub evidence is not requested", () => {

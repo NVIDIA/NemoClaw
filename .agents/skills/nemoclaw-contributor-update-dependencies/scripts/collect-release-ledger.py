@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -138,11 +139,16 @@ def compare_tagged_versions(
 def git(repo: Path, *args: str, allow_failure: bool = False) -> str:
     """Run Git in ``repo`` and return stdout without its final newline."""
 
+    environment = os.environ.copy()
+    environment["GIT_NO_REPLACE_OBJECTS"] = "1"
+    environment.pop("GIT_REPLACE_REF_BASE", None)
+    environment.pop("GIT_NAMESPACE", None)
     result = subprocess.run(
         ["git", "-C", str(repo), *args],
         check=False,
         capture_output=True,
         text=True,
+        env=environment,
     )
     if result.returncode != 0 and not allow_failure:
         detail = result.stderr.strip() or result.stdout.strip() or "unknown Git failure"
@@ -176,16 +182,143 @@ def explicitly_referenced_tag(repo: Path, ref: str, sha: str) -> str | None:
 def is_ancestor(repo: Path, older: str, newer: str) -> bool:
     """Return whether ``older`` is an ancestor of ``newer``."""
 
+    environment = os.environ.copy()
+    environment["GIT_NO_REPLACE_OBJECTS"] = "1"
+    environment.pop("GIT_REPLACE_REF_BASE", None)
+    environment.pop("GIT_NAMESPACE", None)
     result = subprocess.run(
         ["git", "-C", str(repo), "merge-base", "--is-ancestor", older, newer],
         check=False,
         capture_output=True,
         text=True,
+        env=environment,
     )
     if result.returncode not in (0, 1):
         detail = result.stderr.strip() or "unknown merge-base failure"
         raise LedgerError(f"could not compare {older} and {newer}: {detail}")
     return result.returncode == 0
+
+
+def require_complete_local_history(repo: Path) -> None:
+    """Reject shallow or promisor history before resolving release evidence."""
+
+    partial_clone_remote = git(
+        repo,
+        "config",
+        "--get",
+        "extensions.partialClone",
+        allow_failure=True,
+    )
+    raw_promisor_settings = git(
+        repo,
+        "config",
+        "--get-regexp",
+        r"^remote\..*\.promisor$",
+        allow_failure=True,
+    )
+    enabled_promisors: list[str] = []
+    for setting in raw_promisor_settings.splitlines():
+        key, separator, value = setting.partition(" ")
+        normalized = value.strip().casefold() if separator else "true"
+        if normalized not in {"0", "false", "no", "off"}:
+            enabled_promisors.append(key)
+    if partial_clone_remote or enabled_promisors:
+        details = []
+        if partial_clone_remote:
+            details.append(f"extensions.partialClone={partial_clone_remote!r}")
+        details.extend(f"{key}=true" for key in enabled_promisors)
+        raise LedgerError(
+            "the upstream worktree is a partial/promisor clone "
+            f"({', '.join(details)}); materialize the complete object closure in a "
+            "non-promisor clone before collection"
+        )
+
+    shallow = git(repo, "rev-parse", "--is-shallow-repository")
+    if shallow != "false":
+        if shallow == "true":
+            raise LedgerError(
+                "the upstream worktree is shallow; fetch complete history before collection"
+            )
+        raise LedgerError(
+            f"could not determine whether the upstream worktree is shallow: {shallow!r}"
+        )
+
+
+def require_unmodified_local_history(repo: Path) -> None:
+    """Reject local mechanisms that can rewrite commit ancestry."""
+
+    replace_refs = git(repo, "for-each-ref", "--format=%(refname)", "refs/replace")
+    if replace_refs:
+        raise LedgerError(
+            "the upstream worktree contains refs/replace history overrides; remove them "
+            "before collection"
+        )
+    graft_path_text = git(repo, "rev-parse", "--git-path", "info/grafts")
+    graft_path = Path(graft_path_text)
+    if not graft_path.is_absolute():
+        graft_path = repo / graft_path
+    if graft_path.exists():
+        raise LedgerError(
+            f"the upstream worktree contains a grafts file at {graft_path}; remove it "
+            "before collection"
+        )
+
+
+def require_local_commit_object(repo: Path, sha: str, description: str) -> None:
+    """Require a commit object without allowing a partial clone to fetch it lazily."""
+
+    environment = os.environ.copy()
+    environment["GIT_NO_LAZY_FETCH"] = "1"
+    environment["GIT_NO_REPLACE_OBJECTS"] = "1"
+    environment.pop("GIT_REPLACE_REF_BASE", None)
+    environment.pop("GIT_NAMESPACE", None)
+    result = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "cat-file",
+            "--batch-check=%(objectname) %(objecttype)",
+        ],
+        check=False,
+        capture_output=True,
+        input=f"{sha}\n",
+        text=True,
+        env=environment,
+    )
+    if result.returncode != 0:
+        detail = (
+            result.stderr.strip() or result.stdout.strip() or "unknown cat-file failure"
+        )
+        raise LedgerError(f"could not inspect {description} commit {sha}: {detail}")
+    identity = result.stdout.strip()
+    if identity == f"{sha} commit":
+        return
+    if identity == f"{sha} missing":
+        raise LedgerError(
+            f"{description} commit {sha} is absent from the local object database; "
+            "fetch complete refs and commit history before collection"
+        )
+    raise LedgerError(
+        f"{description} object {sha} is not a local commit object: {identity!r}"
+    )
+
+
+def require_valid_target_ref(ref: str) -> None:
+    """Require one complete branch ref suitable for authoritative target binding."""
+
+    if not ref.startswith("refs/heads/"):
+        raise LedgerError(
+            "--github-target-ref must be a complete refs/heads/... branch ref"
+        )
+    result = subprocess.run(
+        ["git", "check-ref-format", ref],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise LedgerError(f"--github-target-ref is not a valid Git ref: {ref!r}")
 
 
 def version_and_tag_for_start(repo: Path, ref: str, sha: str) -> tuple[Version, str]:
@@ -462,6 +595,11 @@ def github_repository_identity(
     )
     if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", full_name) is None:
         raise LedgerError("GitHub repository lookup returned an invalid canonical name")
+    if full_name.casefold() != repository.casefold():
+        raise LedgerError(
+            f"GitHub canonical repository {full_name!r} differs from requested "
+            f"{repository!r}; rerun with the canonical --github-repository value"
+        )
     repository_id = require_positive_int(payload.get("id"), "repository id")
     node_id = require_nonempty_string(payload.get("node_id"), "repository node_id")
     visibility = payload.get("visibility")
@@ -552,7 +690,7 @@ def github_release_publications(
 ) -> dict[str, dict[str, Any]]:
     """List all visible releases once, retaining honest draft-visibility semantics."""
 
-    repository = repository_identity["requestedName"]
+    repository = repository_identity["fullName"]
     api_host = repository_identity["apiHost"]
     payload = github_api_json(
         api_host,
@@ -605,40 +743,24 @@ def publication_for_tag(
     }
 
 
-def github_tag_identity(
+def github_tag_identity_from_root(
     repository_identity: dict[str, Any],
     tag: str,
-    expected_commit_sha: str,
-    expected_tag_kind: str,
-    expected_root_object_sha: str,
+    root_type: Any,
+    root_sha: Any,
     timeout_seconds: int,
 ) -> dict[str, Any]:
-    """Resolve and peel a remote lightweight or annotated tag to the local commit."""
+    """Peel one inventoried remote tag ref to its exact commit."""
 
-    repository = repository_identity["requestedName"]
+    repository = repository_identity["fullName"]
     api_host = repository_identity["apiHost"]
-    description = f"tag ref lookup for {tag!r}"
-    ref = require_object(
-        github_api_json(
-            api_host,
-            f"repos/{repository}/git/ref/tags/{quote(tag, safe='')}",
-            description,
-            timeout_seconds,
-        ),
-        description,
-    )
-    if ref.get("ref") != f"refs/tags/{tag}":
-        raise LedgerError(f"GitHub tag ref lookup for {tag!r} returned the wrong ref")
-    target = require_object(ref.get("object"), f"tag ref {tag!r} object")
-    object_type = target.get("type")
-    object_sha = require_sha(target.get("sha"), f"tag ref {tag!r}")
-    root_type = object_type
-    root_sha = object_sha
-    expected_root_type = "tag" if expected_tag_kind == "annotated" else "commit"
-    if root_type != expected_root_type or root_sha != expected_root_object_sha:
+    if root_type not in ("commit", "tag"):
         raise LedgerError(
-            f"GitHub tag ref {tag!r} object identity differs from the local tag object"
+            f"GitHub tag ref {tag!r} had unsupported object type {root_type!r}"
         )
+    object_type = root_type
+    object_sha = require_sha(root_sha, f"tag ref {tag!r}")
+    exact_root_sha = object_sha
     tag_objects: list[str] = []
     seen: set[str] = set()
     while object_type == "tag":
@@ -680,48 +802,167 @@ def github_tag_identity(
         raise LedgerError(
             f"GitHub tag {tag!r} resolved to unsupported object type {object_type!r}"
         )
-    if object_sha != expected_commit_sha:
-        raise LedgerError(
-            f"GitHub tag {tag!r} resolves to {object_sha}, not local {expected_commit_sha}"
-        )
     return {
         "provider": "github",
         "apiHost": api_host,
         "repositoryId": repository_identity["repositoryId"],
         "ref": f"refs/tags/{tag}",
         "rootObjectType": root_type,
-        "rootObjectSha": root_sha,
+        "rootObjectSha": exact_root_sha,
         "tagObjectShas": tag_objects,
         "commitSha": object_sha,
     }
 
 
-def github_commit_identity(
-    repository_identity: dict[str, Any], sha: str, timeout_seconds: int
-) -> dict[str, Any]:
-    """Prove that an untagged audit target belongs to the bound GitHub repository."""
+def github_semver_tag_inventory(
+    repository_identity: dict[str, Any], timeout_seconds: int
+) -> dict[str, dict[str, Any]]:
+    """Inventory and peel every remote semantic-version tag ref."""
 
-    repository = repository_identity["requestedName"]
+    repository = repository_identity["fullName"]
     api_host = repository_identity["apiHost"]
-    description = f"commit lookup for {sha!r}"
+    description = f"paginated tag-ref inventory for {repository!r}"
+    payload = github_api_json(
+        api_host,
+        f"repos/{repository}/git/matching-refs/tags/?per_page=100",
+        description,
+        timeout_seconds,
+        paginate=True,
+    )
+    if not isinstance(payload, list) or any(
+        not isinstance(page, list) for page in payload
+    ):
+        raise LedgerError("GitHub paginated tag-ref inventory had the wrong shape")
+    inventory: dict[str, dict[str, Any]] = {}
+    for page in payload:
+        for raw_ref in page:
+            ref = require_object(raw_ref, "tag-ref inventory entry")
+            full_ref = require_nonempty_string(ref.get("ref"), "tag-ref inventory ref")
+            if not full_ref.startswith("refs/tags/"):
+                raise LedgerError(
+                    f"GitHub tag-ref inventory returned non-tag ref {full_ref!r}"
+                )
+            tag = full_ref.removeprefix("refs/tags/")
+            if Version.parse(tag) is None:
+                continue
+            if tag in inventory:
+                raise LedgerError(
+                    f"GitHub tag-ref inventory returned duplicate tag {tag!r}"
+                )
+            target = require_object(ref.get("object"), f"tag ref {tag!r} object")
+            inventory[tag] = github_tag_identity_from_root(
+                repository_identity,
+                tag,
+                target.get("type"),
+                target.get("sha"),
+                timeout_seconds,
+            )
+    return inventory
+
+
+def verify_remote_tag_inventory(
+    repo: Path,
+    inventory: dict[str, dict[str, Any]],
+    start_sha: str,
+    target_sha: str,
+) -> None:
+    """Require every remote SemVer tag in the audit ancestry to exist exactly locally."""
+
+    def require_exact_local_tag(tag: str, remote: dict[str, Any]) -> None:
+        local_root_sha = git(
+            repo,
+            "rev-parse",
+            "--verify",
+            f"refs/tags/{tag}",
+            allow_failure=True,
+        )
+        if not local_root_sha:
+            raise LedgerError(
+                f"remote semantic-version tag {tag!r} lies in the audit range but is "
+                "missing from the local checkout; fetch all remote tags and rerun"
+            )
+        local_kind = tag_kind(repo, tag)
+        local_root_type = "tag" if local_kind == "annotated" else "commit"
+        if (
+            remote["rootObjectType"] != local_root_type
+            or remote["rootObjectSha"] != local_root_sha
+        ):
+            raise LedgerError(
+                f"remote semantic-version tag {tag!r} root object differs from the local tag"
+            )
+        local_commit_sha = resolve_commit(repo, f"refs/tags/{tag}")
+        if remote["commitSha"] != local_commit_sha:
+            raise LedgerError(
+                f"remote semantic-version tag {tag!r} peels to {remote['commitSha']}, "
+                f"not local {local_commit_sha}"
+            )
+
+    for tag, remote in sorted(inventory.items()):
+        commit_sha = remote["commitSha"]
+        require_local_commit_object(repo, commit_sha, f"remote tag {tag!r}")
+        if not is_ancestor(repo, start_sha, commit_sha) or not is_ancestor(
+            repo, commit_sha, target_sha
+        ):
+            continue
+        require_exact_local_tag(tag, remote)
+
+    for tag in git(repo, "tag", "--merged", target_sha).splitlines():
+        if Version.parse(tag) is None:
+            continue
+        local_commit_sha = resolve_commit(repo, f"refs/tags/{tag}")
+        if not is_ancestor(repo, start_sha, local_commit_sha):
+            continue
+        remote = inventory.get(tag)
+        if remote is None:
+            raise LedgerError(
+                f"local semantic-version tag {tag!r} lies in the audit range but is absent "
+                "from the bound GitHub repository"
+            )
+        require_exact_local_tag(tag, remote)
+
+
+def github_target_ref_identity(
+    repository_identity: dict[str, Any],
+    target_ref: str,
+    expected_commit_sha: str,
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    """Bind an untagged target to one exact advertised branch ref."""
+
+    repository = repository_identity["fullName"]
+    api_host = repository_identity["apiHost"]
+    short_ref = target_ref.removeprefix("refs/")
+    description = f"target ref lookup for {target_ref!r}"
     payload = require_object(
         github_api_json(
             api_host,
-            f"repos/{repository}/git/commits/{sha}",
+            f"repos/{repository}/git/ref/{quote(short_ref, safe='/')}",
             description,
             timeout_seconds,
         ),
         description,
     )
-    remote_sha = require_sha(payload.get("sha"), description)
-    if remote_sha != sha:
+    if payload.get("ref") != target_ref:
         raise LedgerError(
-            f"GitHub commit lookup returned {remote_sha}, not local {sha}"
+            f"GitHub target ref lookup returned the wrong ref for {target_ref!r}"
+        )
+    target = require_object(payload.get("object"), f"target ref {target_ref!r} object")
+    if target.get("type") != "commit":
+        raise LedgerError(
+            f"GitHub target ref {target_ref!r} had unsupported object type "
+            f"{target.get('type')!r}"
+        )
+    remote_sha = require_sha(target.get("sha"), f"target ref {target_ref!r}")
+    if remote_sha != expected_commit_sha:
+        raise LedgerError(
+            f"GitHub target ref {target_ref!r} resolves to {remote_sha}, not audit target "
+            f"{expected_commit_sha}"
         )
     return {
         "provider": "github",
         "apiHost": api_host,
         "repositoryId": repository_identity["repositoryId"],
+        "ref": target_ref,
         "commitSha": remote_sha,
     }
 
@@ -732,6 +973,8 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
     repo = Path(args.repo).expanduser().resolve()
     if git(repo, "rev-parse", "--is-inside-work-tree") != "true":
         raise LedgerError(f"not a Git worktree: {repo}")
+    require_unmodified_local_history(repo)
+    require_complete_local_history(repo)
 
     start_sha = resolve_commit(repo, args.from_ref)
     target_sha = resolve_commit(repo, args.to_ref)
@@ -829,51 +1072,75 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
             }
         )
 
+    if explicit_target_tag is None and args.github_repository:
+        if not args.github_target_ref:
+            raise LedgerError(
+                "an untagged GitHub audit target requires --github-target-ref "
+                "refs/heads/<branch>"
+            )
+        require_valid_target_ref(args.github_target_ref)
+    elif explicit_target_tag is not None and args.github_target_ref:
+        raise LedgerError(
+            "--github-target-ref is only valid when --to is an untagged commit or branch"
+        )
+
     publication_source = None
-    target_remote_commit = None
+    remote_tag_inventory = None
+    target_remote_ref = None
     if args.github_repository:
         publication_source = github_repository_identity(
             args.github_repository,
             args.github_host,
             args.github_timeout_seconds,
         )
+        if explicit_target_tag is None:
+            assert args.github_target_ref is not None
+            target_remote_ref = github_target_ref_identity(
+                publication_source,
+                args.github_target_ref,
+                target_sha,
+                args.github_timeout_seconds,
+            )
+        remote_tag_inventory = github_semver_tag_inventory(
+            publication_source, args.github_timeout_seconds
+        )
+        verify_remote_tag_inventory(repo, remote_tag_inventory, start_sha, target_sha)
         releases = github_release_publications(
             publication_source, args.github_timeout_seconds
         )
         for endpoint in endpoints:
             tag = endpoint["tag"]
             if isinstance(tag, str):
-                endpoint["remoteTag"] = github_tag_identity(
-                    publication_source,
-                    tag,
-                    endpoint["sha"],
-                    endpoint["tagKind"],
-                    endpoint["tagObjectSha"],
-                    args.github_timeout_seconds,
+                remote_tag = remote_tag_inventory.get(tag)
+                if remote_tag is None:
+                    raise LedgerError(
+                        f"local release endpoint tag {tag!r} is absent from the bound "
+                        "GitHub repository"
+                    )
+                expected_root_type = (
+                    "tag" if endpoint["tagKind"] == "annotated" else "commit"
                 )
+                if (
+                    remote_tag["rootObjectType"] != expected_root_type
+                    or remote_tag["rootObjectSha"] != endpoint["tagObjectSha"]
+                    or remote_tag["commitSha"] != endpoint["sha"]
+                ):
+                    raise LedgerError(
+                        f"GitHub release endpoint tag {tag!r} differs from the local tag "
+                        "object or peeled commit"
+                    )
+                endpoint["remoteTag"] = remote_tag
                 endpoint["publication"] = publication_for_tag(
                     tag, releases, publication_source
                 )
             else:
-                endpoint["remoteCommit"] = github_commit_identity(
-                    publication_source,
-                    endpoint["sha"],
-                    args.github_timeout_seconds,
-                )
+                assert target_remote_ref is not None
+                endpoint["remoteRef"] = target_remote_ref
                 endpoint["publication"] = {
                     "provider": "github",
                     "state": "unreleased-commit",
                     "tag": None,
                 }
-        target_remote_commit = github_commit_identity(
-            publication_source, target_sha, args.github_timeout_seconds
-        )
-        for required_fix in required_fixes:
-            required_fix["remoteCommit"] = github_commit_identity(
-                publication_source,
-                required_fix["sha"],
-                args.github_timeout_seconds,
-            )
 
     ranges: list[dict[str, Any]] = []
     for older, newer in zip(endpoints, endpoints[1:]):
@@ -925,11 +1192,11 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
             "version": None,
             "sha": target_sha,
         }
-    if target_remote_commit is not None:
-        target["remoteCommit"] = target_remote_commit
+    if target_remote_ref is not None:
+        target["remoteRef"] = target_remote_ref
 
     ledger = {
-        "schemaVersion": 3,
+        "schemaVersion": 4,
         "repository": str(repo),
         "start": endpoints[0],
         "requiredFixes": required_fixes,
@@ -939,6 +1206,14 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
     }
     if publication_source is not None:
         ledger["publicationSource"] = publication_source
+    if remote_tag_inventory is not None:
+        ledger["remoteTagInventory"] = {
+            "provider": "github",
+            "apiHost": publication_source["apiHost"],
+            "repositoryId": publication_source["repositoryId"],
+            "count": len(remote_tag_inventory),
+            "tags": [remote_tag_inventory[tag] for tag in sorted(remote_tag_inventory)],
+        }
     return ledger
 
 
@@ -983,6 +1258,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="GitHub API hostname to bind and pass explicitly to gh (default: github.com)",
     )
     parser.add_argument(
+        "--github-target-ref",
+        help=(
+            "Required advertised refs/heads/... ref for an untagged GitHub target; the "
+            "remote ref must resolve exactly to --to"
+        ),
+    )
+    parser.add_argument(
         "--github-timeout-seconds",
         type=int,
         default=GITHUB_API_TIMEOUT_SECONDS,
@@ -1005,6 +1287,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         parser.error("--github-timeout-seconds must be between 1 and 300")
     if not args.github_repository and args.github_host != "github.com":
         parser.error("--github-host requires --github-repository")
+    if args.github_target_ref and not args.github_repository:
+        parser.error("--github-target-ref requires --github-repository")
+    if args.github_target_ref and not args.github_target_ref.startswith("refs/heads/"):
+        parser.error("--github-target-ref must be a complete refs/heads/... branch ref")
     return args
 
 

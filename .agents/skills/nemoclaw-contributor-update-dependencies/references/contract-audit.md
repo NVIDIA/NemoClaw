@@ -16,7 +16,7 @@ Use this reference to find migration risk that version searches and existing tes
 | Lifecycle | create, start, restart, update, rebuild, destroy, cleanup | onboarding, rollback, retries, locks, crash recovery | orphan resources, double mutation, incomplete teardown |
 | Persisted state and caches | materialization inputs, cache keys, snapshots, schema versions, invalidation | prepared roots, generated config, UID/GID, driver, platform, policy, recovery | same-version config change reuses stale identity or rootfs |
 | Network | DNS, TLS, CONNECT, proxying, SSRF, timeouts | policy generation, probes, tunnels, error classification | fail-open route, re-resolution, misleading transport error |
-| Runtime topology | processes, sidecars, drivers, images, sockets, ports | build, publish, download, store, extract, install, execute, cleanup | narrow extraction is mistaken for a narrow distributed image |
+| Runtime topology | processes, sidecars, drivers, images, `Config.Healthcheck`, `Config.Volumes`, hooks, sockets, ports | build, publish, download, store, extract, install, engine-scheduled execs, mount overlap, execute, cleanup | inherited healthcheck runs with credentials; anonymous volume shadows a trusted mount |
 | Component selection and identity | binary/image precedence, fallbacks, version output, content digests | sibling discovery, driver config, registry state, gateway reuse, live PID 1 | matching CLI version hides different supervisor bytes or a mutable image tag |
 | Packaging | asset names, archive layout, hashes, libc, architectures | installers, Brev, workflows, sibling-binary discovery | correct version with missing binary or unsupported host |
 | Dependency graph | resolved versions, sources, checksums, features, build scripts, native or unsafe code | lockfiles, notices, SBOM, advisories, allowlists, direct callers | transitive security implementation is absent from notices or review |
@@ -58,11 +58,19 @@ For each upstream change:
     point and bind any final-artifact inspection to the immutable artifact actually launched.
 12. Materialize and compare expected-versus-observed manifests for the final artifact, driver
     request, engine state before first execution, PID 1, every helper/sidecar, and intended workload
-    descendants. Verify executable identity, ancestry, namespaces, security settings, and exact
-    driver-owned replacements and mount sources; never select a workload as the first or sole child.
+    descendants. Require final-image and engine-materialized `Config.Healthcheck` to be disabled or
+    explicitly secured, inventory engine-scheduled healthchecks, hooks, and auxiliary execs, and
+    compare `Config.Volumes` with realized mount destinations. Reject equal or normalized
+    ancestor/descendant overlaps that can shadow trusted mounts. Verify executable identity,
+    ancestry, namespaces, security settings, and exact driver-owned replacements and mount sources;
+    never select a workload as the first or sole child.
 13. Keep upstream required-fix SHAs, audit target and producer identity, and downstream PR-head
     proof identity in separate fields. Prove ancestry and manifest bindings between domains rather
     than comparing unrelated repository SHAs for equality.
+14. For an untagged GitHub target, bind the exact canonical repository and an advertised branch ref
+    that equals the audit target. Inventory remote semantic-version tag refs before trusting local
+    adjacent ranges. Raw object lookup does not prove upstream-ref membership because fork and pull
+    request objects can be visible through the base repository object network.
 
 ## Concern schema
 
