@@ -242,13 +242,63 @@ describe("waitForPort", () => {
 });
 
 describe("waitForHttp", () => {
-  it("returns true when curl reaches the endpoint", () => {
+  it("reaches a loopback server directly when an HTTP proxy is configured", async () => {
+    const server = childProcess.spawn(
+      process.execPath,
+      [
+        "-e",
+        "const h=require('node:http');" +
+          "const s=h.createServer((_,r)=>{r.writeHead(204);r.end();});" +
+          "s.listen(0,'127.0.0.1',()=>console.log(s.address().port));",
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+    const port = await new Promise<number>((resolve, reject) => {
+      server.once("error", reject);
+      server.stdout.once("data", (chunk) => resolve(Number(String(chunk).trim())));
+      server.once("exit", (code) => reject(new Error(`loopback test server exited ${code}`)));
+    });
+    const previousProxy = process.env.http_proxy;
+    process.env.http_proxy = "http://127.0.0.1:1";
+
+    try {
+      expect(waitForHttp(`http://127.0.0.1:${port}/health`, 2)).toBe(true);
+    } finally {
+      Reflect.deleteProperty(process.env, "http_proxy");
+      Object.assign(process.env, previousProxy === undefined ? {} : { http_proxy: previousProxy });
+      await new Promise<void>((resolve) => {
+        server.once("exit", () => resolve());
+        server.kill("SIGTERM");
+      });
+    }
+  });
+
+  it("uses a direct Node probe for loopback endpoints", () => {
     const buildValidatedCurlCommandArgs = curlArgs.buildValidatedCurlCommandArgs;
     const buildArgs = vi
       .spyOn(curlArgs, "buildValidatedCurlCommandArgs")
       .mockImplementation(buildValidatedCurlCommandArgs);
     const spawnSync = vi.spyOn(childProcess, "spawnSync").mockReturnValue(spawnResult(0));
     const url = "http://127.0.0.1:8080/health";
+
+    expect(waitForHttp(url, 1)).toBe(true);
+    expect(buildArgs).not.toHaveBeenCalled();
+    expect(spawnSync.mock.calls[0]?.[0]).toBe(process.execPath);
+    const probeArgs = spawnSync.mock.calls[0]?.[1];
+    expect(probeArgs?.[0]).toBe("-e");
+    expect(probeArgs?.[1]).toContain("require('node:http')");
+    expect(probeArgs?.[1]).not.toContain(url);
+    expect(probeArgs?.at(-1)).toBe(url);
+    expect(spawnSync.mock.calls[0]?.[2]).toMatchObject({ timeout: 2_000 });
+  });
+
+  it("keeps the validated curl path for non-loopback endpoints", () => {
+    const buildValidatedCurlCommandArgs = curlArgs.buildValidatedCurlCommandArgs;
+    const buildArgs = vi
+      .spyOn(curlArgs, "buildValidatedCurlCommandArgs")
+      .mockImplementation(buildValidatedCurlCommandArgs);
+    const spawnSync = vi.spyOn(childProcess, "spawnSync").mockReturnValue(spawnResult(0));
+    const url = "https://example.com/health";
     const rawArgs = ["-sf", "--connect-timeout", "1", "--max-time", "1", url];
 
     expect(waitForHttp(url, 1)).toBe(true);

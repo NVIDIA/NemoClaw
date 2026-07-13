@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../state/registry", () => ({
+  isRouteOnlySandboxReservation: (entry: { pendingRouteReservation?: true; createdAt?: string }) =>
+    entry.pendingRouteReservation === true && entry.createdAt === undefined,
   listSandboxes: mocks.listSandboxes,
 }));
 vi.mock("../state/sandbox", () => ({
@@ -83,6 +85,64 @@ describe("backupAll", () => {
     expect(mocks.backupSandboxState).not.toHaveBeenCalled();
     expect(logSpy.mock.calls.flat().join("\n")).toContain("No sandboxes registered");
     logSpy.mockRestore();
+  });
+
+  it("returns before gateway preflight when the registry has only a route reservation (#6500)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "tm", pendingRouteReservation: true }],
+      defaultSandbox: null,
+    });
+    process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await backupAll();
+
+    expect(mocks.captureSandboxListWithGatewayPreflightOrExit).not.toHaveBeenCalled();
+    expect(mocks.backupSandboxState).not.toHaveBeenCalled();
+    expect(mocks.startStoppedSandboxContainerForBackup).not.toHaveBeenCalled();
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(logSpy.mock.calls.flat().join("\n")).toContain("No sandboxes registered");
+  });
+
+  it("backs up real sandboxes while ignoring a route-only reservation (#6500)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [
+        { name: "tm", pendingRouteReservation: true },
+        { name: "alpha" },
+        {
+          name: "beta",
+          pendingRouteReservation: true,
+          createdAt: "2026-07-13T00:00:00.000Z",
+        },
+      ],
+      defaultSandbox: "alpha",
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["alpha", "beta"]));
+    mocks.backupSandboxState.mockImplementation((name: string) => ({
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: `/backups/${name}/timestamp` },
+    }));
+    process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await backupAll();
+
+    expect(mocks.backupSandboxState.mock.calls.map(([name]) => name)).toEqual(["alpha", "beta"]);
+    expect(mocks.startStoppedSandboxContainerForBackup).not.toHaveBeenCalled();
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(logSpy.mock.calls.flat().join("\n")).toContain(
+      "Pre-upgrade backup: 2 backed up, 0 failed, 0 skipped",
+    );
   });
 
   it("passes the backup action context to gateway preflight", async () => {

@@ -491,6 +491,10 @@ const authoritativeRebuildTarget: typeof import("./onboard/authoritative-rebuild
   require("./onboard/authoritative-rebuild-target");
 const { assertDashboardPortNotReserved, buildRequiredPreflightPorts } =
   require("./onboard/preflight-ports") as typeof import("./onboard/preflight-ports");
+const { failFastOnForeignGatewayPortConflict } =
+  require("./onboard/gateway-port-conflict") as typeof import("./onboard/gateway-port-conflict");
+const { printPortConflictReport } =
+  require("./onboard/port-conflict-report") as typeof import("./onboard/port-conflict-report");
 const { tryCleanupOrphanedDashboardForward } =
   require("./onboard/orphaned-dashboard-forward") as typeof import("./onboard/orphaned-dashboard-forward");
 const { destroyGatewayForReuse } =
@@ -1496,6 +1500,13 @@ async function preflight(
   });
 
   ensureOpenshellForOnboard();
+  await failFastOnForeignGatewayPortConflict({
+    gatewayPort: GATEWAY_PORT,
+    checkPortAvailable,
+    getGatewayPortCheckOptions: dockerDriverGatewayEnv.getGatewayPortCheckOptions,
+    isDockerDriverGatewayPortListener,
+    exitProcess: (code) => process.exit(code),
+  });
 
   // Classify gateway state before port checks. Legacy non-Docker-driver
   // path destroys stale/unnamed gateways here so the port frees up for
@@ -1648,34 +1659,13 @@ async function preflight(
         if (outcome.kind === "killed-still-blocked") portCheck = outcome.portCheck;
         else if (outcome.kind !== "not-openshell") continue;
       }
-      console.error("");
-      console.error(`  !! Port ${port} is not available.`);
-      console.error(`     ${label} needs this port.`);
-      console.error("");
-      if (portCheck.process && portCheck.process !== "unknown") {
-        console.error(
-          `     Blocked by: ${portCheck.process}${portCheck.pid ? ` (PID ${portCheck.pid})` : ""}`,
-        );
-        console.error("");
-        console.error("     To fix, stop the conflicting process:");
-        console.error("");
-        if (portCheck.pid) {
-          console.error(`       sudo kill ${portCheck.pid}`);
-        } else {
-          console.error(`       sudo lsof -i :${port} -sTCP:LISTEN -P -n`);
-        }
-        for (const hint of getPortConflictServiceHints()) {
-          console.error(hint);
-        }
-      } else {
-        console.error(`     Could not identify the process using port ${port}.`);
-        console.error(`     Run: sudo lsof -i :${port} -sTCP:LISTEN`);
-      }
-      console.error("");
-      console.error(`     Or rerun with a different port:`);
-      console.error(`       ${envVar}=<port> nemoclaw onboard`);
-      console.error("");
-      console.error(`     Detail: ${portCheck.reason}`);
+      printPortConflictReport({
+        port,
+        label,
+        envVar,
+        portCheck,
+        serviceHints: getPortConflictServiceHints(),
+      });
       process.exit(1);
     }
     console.log(`  ✓ Port ${port} available (${label})`);

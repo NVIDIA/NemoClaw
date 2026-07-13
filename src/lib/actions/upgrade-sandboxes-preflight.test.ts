@@ -37,7 +37,11 @@ vi.mock("../runtime-recovery", () => ({
   parseReadySandboxNames: mocks.parseReadySandboxNames,
 }));
 vi.mock("../sandbox/version", () => ({ checkAgentVersion: mocks.checkAgentVersion }));
-vi.mock("../state/registry", () => ({ listSandboxes: mocks.listSandboxes }));
+vi.mock("../state/registry", () => ({
+  isRouteOnlySandboxReservation: (entry: { pendingRouteReservation?: true; createdAt?: string }) =>
+    entry.pendingRouteReservation === true && entry.createdAt === undefined,
+  listSandboxes: mocks.listSandboxes,
+}));
 vi.mock("../state/sandbox", () => ({ getLatestBackup: mocks.getLatestBackup }));
 
 import { upgradeSandboxes, upgradeSandboxesDependencies } from "./upgrade-sandboxes";

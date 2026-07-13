@@ -1,0 +1,84 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Contribute Community Solutions"
+sidebar-title: "Community Solutions"
+description: "Choose whether a solution belongs in the canonical NemoClaw repository or the NVIDIA NemoClaw Community repository."
+description-agent: "Routes third-party solutions, custom integrations, recipes, custom images, and end-to-end examples to NemoClaw Community unless maintainers approved them as a supported NemoClaw product surface. Use when submitting or reviewing a contribution that may create product scope."
+keywords: ["nemoclaw community contributions", "nemoclaw third-party integrations", "nemoclaw examples", "nemoclaw product scope"]
+content:
+  type: "concept"
+---
+
+NemoClaw's canonical documentation describes behavior that the project has chosen to support and maintain.
+The [NVIDIA NemoClaw Community](https://github.com/NVIDIA/nemoclaw-community) repository hosts community-driven examples, showcases, custom integrations, and complete solution workflows.
+
+A solution can work correctly from an engineering perspective without becoming a supported NemoClaw product surface.
+
+<Warning>
+Passing tests, building successfully, or working in one environment does not establish product approval.
+Canonical documentation creates an ongoing commitment to compatibility, security review, lifecycle support, and maintenance.
+</Warning>
+
+## Choose the Contribution Destination
+
+Use the repository whose ownership model matches the contribution.
+
+| Contribution | Destination |
+|---|---|
+| Documentation for behavior already implemented and maintained by NemoClaw | Canonical NemoClaw repository |
+| Implementation of an accepted NemoClaw issue or design | Canonical NemoClaw repository |
+| Third-party tool integration or custom image that NemoClaw does not ship | NemoClaw Community repository |
+| End-to-end solution for a specific use case | NemoClaw Community repository |
+| Showcase, deployment recipe, or complete blueprint pattern | NemoClaw Community repository |
+| Proposal for a new supported product surface | NemoClaw Discussion before implementation or documentation |
+
+## Use the Canonical Repository
+
+Submit a product or documentation contribution to the canonical NemoClaw repository only when all of the following conditions are satisfied.
+
+- The contribution implements existing supported behavior or an accepted product decision.
+- The affected functionality has a clear maintainer and long-term ownership model.
+- Compatibility, upgrade, security, and lifecycle expectations are defined.
+- Tests validate the supported behavior at the appropriate runtime boundary.
+- The documentation describes the maintained implementation instead of serving as its first definition.
+
+If a contribution would make users reasonably believe that NemoClaw supports a new integration, workflow, or third-party stack, obtain maintainer alignment on that product decision before opening the implementation or documentation PR.
+
+## Use the Community Repository
+
+Submit a solution to NemoClaw Community when it combines NemoClaw with components or workflows that the core project does not maintain.
+
+Common community contributions include:
+
+- Custom sandbox images and third-party tool stacks.
+- Application-specific agents and automation workflows.
+- Complete blueprints that combine an agent, model, policy, and integration.
+- Deployment recipes and showcases for particular environments.
+- Working solutions that demonstrate demand for a possible future product capability.
+
+Follow the contribution and review requirements in the NemoClaw Community repository.
+Community placement does not imply that the solution is insecure or low quality.
+It keeps ownership and support expectations accurate while allowing users to share useful work.
+
+## Propose Promotion into NemoClaw
+
+A community solution may later become a supported NemoClaw capability.
+
+Start a [NemoClaw Discussion](https://github.com/NVIDIA/NemoClaw/discussions) to establish product scope, ownership, lifecycle expectations, and acceptance criteria.
+If maintainers accept the proposal, implement and validate the supported capability before adding it to the canonical documentation.
+
+## Review Product Scope Before Approval
+
+Reviewers must evaluate product alignment before technical merge readiness.
+
+Ask the following questions:
+
+- Does the PR document or implement behavior that NemoClaw already supports?
+- Would merging the PR create a new support promise or product surface?
+- Is there an accepted issue or design decision for that scope?
+- Who owns compatibility, upgrades, security review, testing, and user support?
+- Would the contribution remain valuable as a community solution without becoming a core feature?
+
+Do not approve a PR only because the implementation works or automated checks pass.
+When the product decision is missing, request maintainer alignment or route the contribution to NemoClaw Community.
