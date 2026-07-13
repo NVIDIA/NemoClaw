@@ -18,6 +18,12 @@ const ALTERNATE_INTEGRITY =
   "sha512-PzSJiYqmwpTudmakYs2oCJ57OW3VwEJYf8buTuKvuRvcYEUf/KOTu2dD6pLf2XYgDKErpvcDaoSAJ1nGCyvzAA==";
 const HERMES_SEMVER = "7.8.9";
 const MAP_SHA256 = "b".repeat(64);
+const MANIFEST_SHA256 = "c".repeat(64);
+const OPENSHELL_RELEASE_MANIFESTS = [
+  "openshell-checksums-sha256.txt",
+  "openshell-gateway-checksums-sha256.txt",
+  "openshell-sandbox-checksums-sha256.txt",
+] as const;
 
 type FixtureOverrides = Partial<Record<string, string>>;
 
@@ -40,6 +46,17 @@ function writeFixture(root: string, overrides: FixtureOverrides = {}): void {
     `https://registry.npmjs.org/openclaw/-/openclaw-${openclawVersion}.tgz`;
   const openclawArg = `OPENCLAW_${openclawVersion.replace(/[.-]/g, "_")}`;
   const hermesSemver = overrides.hermesSemver ?? HERMES_SEMVER;
+  const installerHashVersions = [
+    overrides.installerHashExtraVersion,
+    overrides.installerHashVersion ?? openshellMax,
+  ].filter((version): version is string => version !== undefined);
+  const installerHashAllowlist = installerHashVersions
+    .flatMap((version) =>
+      OPENSHELL_RELEASE_MANIFESTS.filter(
+        (manifest) => manifest !== overrides.installerHashOmitManifest,
+      ).map((manifest) => `  "${version}|${manifest}|${MANIFEST_SHA256}"`),
+    )
+    .join("\n");
 
   const files: Record<string, string> = {
     "nemoclaw-blueprint/blueprint.yaml": `
@@ -52,7 +69,9 @@ MAX_VERSION="${overrides.installerMax ?? openshellMax}"
 PIN_VERSION="${overrides.installerPinExpression ?? "$MAX_VERSION"}"
 `,
     "scripts/check-installer-hash.sh": `
-OPENSHELL_RELEASE_VERSION="${overrides.installerHashVersion ?? openshellMax}"
+readonly -a OPENSHELL_RELEASE_MANIFEST_ALLOWLIST=(
+${installerHashAllowlist}
+)
 `,
     "scripts/brev-launchable-ci-cpu.sh": `
 case "$NEMOCLAW_REF" in
@@ -177,6 +196,14 @@ describe("dependency pin drift check", () => {
     );
   });
 
+  it("accepts the blueprint maximum in a multi-release manifest allowlist (#5242)", () => {
+    withFixture(
+      "nemoclaw-dependency-pins-multi-release-",
+      { installerHashExtraVersion: "1.2.3" },
+      (root) => expect(verifyDependencyPins(root)).toEqual([]),
+    );
+  });
+
   it("reports exact operational consumer drift (#5242)", () => {
     withFixture(
       "nemoclaw-dependency-pins-drift-",
@@ -210,7 +237,7 @@ describe("dependency pin drift check", () => {
           "OpenShell installer MIN_VERSION: expected 1.2.3, found 1.2.2",
           "OpenShell installer MAX_VERSION: expected 1.2.4, found 1.2.3",
           "OpenShell installer PIN_VERSION: expected $MAX_VERSION, found 1.2.4",
-          "OpenShell installer hash release: expected 1.2.4, found 1.2.3",
+          "OpenShell release-manifest allowlist: expected one complete entry for 1.2.4",
           "OpenShell supported fallback version: expected 1.2.4, found 1.2.3",
           "OpenShell minimum fallback version: expected 1.2.3, found 1.2.2",
           "OpenShell supervisor manifest digest map: expected a reference to 1.2.4",
@@ -256,6 +283,18 @@ describe("dependency pin drift check", () => {
     withFixture("nemoclaw-dependency-pins-authority-", overrides, (root) => {
       expect(verifyDependencyPins(root)).toEqual([failure]);
     });
+  });
+
+  it("rejects an incomplete manifest allowlist entry for the blueprint maximum (#5242)", () => {
+    withFixture(
+      "nemoclaw-dependency-pins-incomplete-openshell-allowlist-",
+      { installerHashOmitManifest: "openshell-sandbox-checksums-sha256.txt" },
+      (root) => {
+        expect(verifyDependencyPins(root)).toEqual([
+          "OpenShell release-manifest allowlist: expected one complete entry for 1.2.4",
+        ]);
+      },
+    );
   });
 
   it("rejects an ambiguous operational authority (#5242)", () => {

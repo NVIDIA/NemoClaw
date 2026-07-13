@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -31,9 +32,12 @@ export interface WeightedShard<T> {
   entries: WeightedShardEntry<T>[];
 }
 
-const durationAwareProjects = new Set(["cli", "integration"]);
+const cliCoverageProjects = new Set(["cli", "integration"]);
+// Changing this salt remaps every coverage test. The fixed value was selected
+// against the checked-in timing hints so stable ownership stays balanced.
+const stableShardSalt = "1612";
 // Only measured outliers are stored; new and ordinary files share the
-// conservative fallback so stale hints can affect speed, never correctness.
+// conservative fallback used to estimate each stable shard's load.
 const timingHintsUrl = new URL("../../ci/cli-test-timing-hints.json", import.meta.url);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -98,7 +102,7 @@ function compareKeys(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-export function assignWeightedShards<T>(
+export function assignStableShards<T>(
   entries: readonly WeightedShardEntry<T>[],
   shardCount: number,
 ): WeightedShard<T>[] {
@@ -119,30 +123,20 @@ export function assignWeightedShards<T>(
     seenKeys.add(entry.key);
   }
 
-  const ranked = [...entries].sort(
-    (left, right) => right.weightMs - left.weightMs || compareKeys(left.key, right.key),
-  );
+  const ranked = [...entries].sort((left, right) => compareKeys(left.key, right.key));
   const shards: WeightedShard<T>[] = Array.from({ length: shardCount }, (_, index) => ({
     index: index + 1,
     totalWeightMs: 0,
     entries: [],
   }));
 
-  // Longest-processing-time assignment separates the expensive files first,
-  // then deterministic key/index ties keep every runner's partition identical.
+  // Membership depends only on a file's durable project/path key. Adding,
+  // removing, or renaming another test cannot move existing files between the
+  // long-lived coverage shards and change which source maps are merged together.
   for (const entry of ranked) {
-    let target = shards[0];
-    if (!target) throw new Error("Weighted shard allocation requires at least one shard");
-    for (const candidate of shards.slice(1)) {
-      if (
-        candidate.totalWeightMs < target.totalWeightMs ||
-        (candidate.totalWeightMs === target.totalWeightMs &&
-          (candidate.entries.length < target.entries.length ||
-            (candidate.entries.length === target.entries.length && candidate.index < target.index)))
-      ) {
-        target = candidate;
-      }
-    }
+    const digest = createHash("sha256").update(`${stableShardSalt}:${entry.key}`).digest();
+    const target = shards[digest.readUInt32BE(0) % shardCount];
+    if (!target) throw new Error("Stable shard allocation requires at least one shard");
     target.entries.push(entry);
     target.totalWeightMs += entry.weightMs;
   }
@@ -150,10 +144,10 @@ export function assignWeightedShards<T>(
   return shards;
 }
 
-export function shouldUseDurationAwareSharding(projectNames: readonly string[]): boolean {
+export function shouldUseCliCoverageSharding(projectNames: readonly string[]): boolean {
   return (
     projectNames.length > 0 &&
-    projectNames.every((projectName) => durationAwareProjects.has(projectName))
+    projectNames.every((projectName) => cliCoverageProjects.has(projectName))
   );
 }
 
@@ -167,18 +161,18 @@ function relativeTestPath(root: string, moduleId: string): string {
 
 export class CliCoverageSequencer extends BaseSequencer {
   override async shard(files: TestSpecification[]): Promise<TestSpecification[]> {
-    if (!shouldUseDurationAwareSharding(files.map((file) => file.project.name))) {
+    if (!shouldUseCliCoverageSharding(files.map((file) => file.project.name))) {
       return super.shard(files);
     }
 
     const shard = this.ctx.config.shard;
     if (!shard) return files;
 
-    const assignments = assignWeightedShards(
+    const assignments = assignStableShards(
       files.map((file) => {
         const filePath = relativeTestPath(this.ctx.config.root, file.moduleId);
         return {
-          key: `${file.project.name}:${filePath}:${file.pool}:${file.taskId}`,
+          key: `${file.project.name}:${filePath}`,
           weightMs: timingWeightForPath(filePath),
           value: file,
         };
