@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { isErrnoException } from "../core/errno";
 import { isObjectRecord } from "../core/json-types";
+import { GATEWAY_PORT } from "../core/ports";
 import type { InferenceSelection } from "../inference/selection";
 import {
   inferenceSelectionRegistryFields,
@@ -163,7 +164,7 @@ export interface SandboxRegistry {
 export type SandboxRemovalReceipt = reversibleRemoval.RegistryRemovalReceipt<SandboxEntry>;
 
 export const REGISTRY_FILE = path.join(
-  nemoclawStateRoot(process.env.HOME || "/tmp"),
+  nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY_PORT),
   "sandboxes.json",
 );
 export const LOCK_DIR = `${REGISTRY_FILE}.lock`;

@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { GATEWAY_PORT } from "../core/ports";
 import { nemoclawStateRoot } from "../state/state-root";
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
@@ -155,7 +156,7 @@ export function collectSandboxCreateFailureDiagnostics(
   const homeDir = options.homeDir ?? os.homedir();
   const now = options.now ?? new Date();
   const dir = path.join(
-    nemoclawStateRoot(homeDir),
+    nemoclawStateRoot(homeDir, GATEWAY_PORT),
     "onboard-failures",
     `${timestampForPath(now)}-${sanitizePathPart(sandboxName)}`,
   );

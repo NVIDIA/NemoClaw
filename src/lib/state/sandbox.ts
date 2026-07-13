@@ -31,6 +31,7 @@ import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
 import type { AgentStateFile } from "../agent/defs.js";
 import { loadAgent } from "../agent/defs.js";
 import { isObjectRecord, type UnknownRecord } from "../core/json-types.js";
+import { GATEWAY_PORT } from "../core/ports.js";
 import {
   BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION,
   classifyFailedDirsFromTarStderr,
@@ -58,7 +59,7 @@ import { nemoclawStateRoot } from "./state-root.js";
 import { runTarListing } from "./tar-listing.js";
 
 const HOME_DIR = path.resolve(process.env.HOME || os.homedir());
-const REBUILD_BACKUPS_DIR = path.join(nemoclawStateRoot(HOME_DIR), "rebuild-backups");
+const REBUILD_BACKUPS_DIR = path.join(nemoclawStateRoot(HOME_DIR, GATEWAY_PORT), "rebuild-backups");
 
 const MANIFEST_VERSION = 1;
 export const OPENCLAW_IMAGE_PLUGIN_PROVENANCE_RESTORE_ERROR =
@@ -579,7 +580,7 @@ function computeBlueprintDigest(): string | null {
   // Look for blueprint.yaml relative to the agent-defs ROOT
   const candidates = [
     path.join(
-      nemoclawStateRoot(process.env.HOME || "/tmp"),
+      nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY_PORT),
       "blueprints",
       "0.1.0",
       "blueprint.yaml",

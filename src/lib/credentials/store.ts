@@ -14,6 +14,7 @@ import path from "node:path";
 import readline from "node:readline";
 
 import { isErrnoException } from "../core/errno";
+import { GATEWAY_PORT } from "../core/ports";
 import { createPromptActivityCleanup } from "../core/prompt-activity";
 import { listMessagingCredentialMetadata } from "../messaging/channels";
 import { rejectSymlinksOnPath } from "../state/config-io";
@@ -128,10 +129,10 @@ export function getCredsDir(): string {
   const home = resolveHomeDir();
   if (_cachedHome !== home) {
     _cachedHome = home;
-    _credsDir = nemoclawStateRoot(home);
+    _credsDir = nemoclawStateRoot(home, GATEWAY_PORT);
     _legacyCredsFile = null;
   }
-  return _credsDir || nemoclawStateRoot(home);
+  return _credsDir || nemoclawStateRoot(home, GATEWAY_PORT);
 }
 
 /**

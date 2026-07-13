@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { isErrnoException, isPermissionError } from "../core/errno";
+import { GATEWAY_PORT } from "../core/ports";
 import { shellQuote } from "../core/shell-quote";
 import { nemoclawStateRoot } from "./state-root";
 
@@ -26,7 +27,7 @@ type SerializableConfig = JsonScalar | JsonValue[] | object;
 // heal opt out cleanly when a caller routes a sandbox-internal path here.
 function hostNemoclawDir(): string {
   const home = process.env.HOME ?? os.homedir();
-  return path.resolve(nemoclawStateRoot(home));
+  return path.resolve(nemoclawStateRoot(home, GATEWAY_PORT));
 }
 
 function isHostNemoclawRoot(dirPath: string): boolean {
@@ -61,7 +62,7 @@ function cleanupTempFile(filePath: string): void {
 
 function buildRemediation(): string {
   const home = process.env.HOME ?? os.homedir();
-  const nemoclawDir = nemoclawStateRoot(home);
+  const nemoclawDir = nemoclawStateRoot(home, GATEWAY_PORT);
   const backupDir = `${nemoclawDir}.backup.${String(process.pid)}`;
   const recoveryHome = path.join(
     os.tmpdir(),

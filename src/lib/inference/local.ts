@@ -14,7 +14,7 @@ import { createBearerAuthConfig } from "../adapters/http/auth-config";
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import type { CurlProbeOptions, CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
-import { OLLAMA_PORT, OLLAMA_PROXY_PORT, VLLM_PORT } from "../core/ports";
+import { GATEWAY_PORT, OLLAMA_PORT, OLLAMA_PROXY_PORT, VLLM_PORT } from "../core/ports";
 import { sleepSeconds } from "../core/wait";
 import { containerCanReachHostLoopback, isWsl } from "../platform";
 import { type CaptureResult, runCapture, runCaptureEx, shellQuote } from "../runner";
@@ -245,7 +245,10 @@ export interface LocalProviderHealthProbeOptions {
 }
 
 function defaultLoadOllamaProxyToken(): string | null {
-  const tokenPath = nodePath.join(nemoclawStateRoot(os.homedir()), "ollama-proxy-token");
+  const tokenPath = nodePath.join(
+    nemoclawStateRoot(os.homedir(), GATEWAY_PORT),
+    "ollama-proxy-token",
+  );
   try {
     if (fs.existsSync(tokenPath)) {
       const token = fs.readFileSync(tokenPath, "utf-8").trim();

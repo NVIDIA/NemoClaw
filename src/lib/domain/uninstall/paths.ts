@@ -3,6 +3,7 @@
 
 import path from "node:path";
 
+import { GATEWAY_PORT } from "../../core/ports";
 import { nemoclawStateRoot } from "../../state/state-root";
 
 export const DEFAULT_GATEWAY_NAME = "nemoclaw";
@@ -70,7 +71,7 @@ export function defaultUninstallPaths(options: UninstallPathOptions): UninstallP
       binName,
       path: path.join(options.home, ".local", "bin", binName),
     })),
-    nemoclawStateDir: nemoclawStateRoot(options.home),
+    nemoclawStateDir: nemoclawStateRoot(options.home, GATEWAY_PORT),
     gatewayLocalStateDir: path.join(options.home, ".local", "state", "nemoclaw"),
     openshellConfigDir: path.join(options.home, ".config", "openshell"),
     openshellInstallPaths: openshellInstallPathsForBinDirs(["/usr/local/bin", xdgBinHome]),

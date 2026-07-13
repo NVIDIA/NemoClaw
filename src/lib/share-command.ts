@@ -13,6 +13,7 @@ import { spawnSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { GATEWAY_PORT } from "./core/ports";
 import type { ShareCommandDeps } from "./share-command-deps";
 import { buildShareCommandDeps } from "./share-command-deps";
 import { nemoclawStateRoot } from "./state/state-root";
@@ -61,7 +62,11 @@ export function isMountPoint(dir: string): boolean {
 }
 
 export function defaultShareMountDir(sandboxName: string): string {
-  return path.join(nemoclawStateRoot(process.env.HOME || os.homedir()), "mounts", sandboxName);
+  return path.join(
+    nemoclawStateRoot(process.env.HOME || os.homedir(), GATEWAY_PORT),
+    "mounts",
+    sandboxName,
+  );
 }
 
 /**

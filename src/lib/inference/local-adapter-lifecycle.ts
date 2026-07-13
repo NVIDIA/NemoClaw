@@ -8,6 +8,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 
+import { GATEWAY_PORT } from "../core/ports";
 import { waitUntilAsync } from "../core/wait";
 import { nemoclawStateRoot } from "../state/state-root";
 
@@ -23,7 +24,7 @@ export type RunFn = (
   options?: { ignoreError?: boolean; suppressOutput?: boolean },
 ) => unknown;
 
-export const DEFAULT_LOCAL_ADAPTER_STATE_DIR = nemoclawStateRoot(os.homedir());
+export const DEFAULT_LOCAL_ADAPTER_STATE_DIR = nemoclawStateRoot(os.homedir(), GATEWAY_PORT);
 
 export function ensureLocalAdapterStateDir(stateDir = DEFAULT_LOCAL_ADAPTER_STATE_DIR): void {
   if (!fs.existsSync(stateDir)) {

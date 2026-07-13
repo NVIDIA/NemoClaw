@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { dockerCapture, dockerLogs } from "../adapters/docker";
+import { GATEWAY_PORT } from "../core/ports";
 import { nemoclawStateRoot } from "../state/state-root";
 import { createDockerGpuDiagnosticRedactor } from "./docker-gpu-diagnostic-redaction";
 import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
@@ -147,7 +148,7 @@ export function collectDockerGpuPatchDiagnostics(
   const logs = deps.dockerLogs ?? dockerLogs;
   const now = (deps.now ?? (() => new Date()))();
   const dir = path.join(
-    nemoclawStateRoot(home),
+    nemoclawStateRoot(home, GATEWAY_PORT),
     "onboard-failures",
     `${timestampForPath(now)}-${sanitizePathPart(sandboxName)}-docker-gpu-patch`,
   );
