@@ -1467,6 +1467,19 @@ export async function startPrGate(
   ) {
     throw new Error("CI run identity does not match the triggering workflow run");
   }
+  const existingChecks = await matchingPrGateChecks({
+    repository,
+    token,
+    headSha: command.headSha,
+    baseSha: ciIdentity.baseSha,
+    prNumber: ciIdentity.prNumber,
+  });
+  if (existingChecks.length > 1) {
+    throw new Error("Multiple exact-diff PR gate checks already exist");
+  }
+  const existingCheckRunId =
+    existingChecks[0]?.status === "in_progress" ? existingChecks[0].id : undefined;
+  if (existingCheckRunId) appendOutput("check_id", String(existingCheckRunId));
   const pull = await requireLiveExactDiff({
     repository,
     token,
@@ -1487,7 +1500,7 @@ export async function startPrGate(
     baseSha: ciIdentity.baseSha,
     prNumber: ciIdentity.prNumber,
   });
-  appendOutput("check_id", String(checkRunId));
+  if (checkRunId !== existingCheckRunId) appendOutput("check_id", String(checkRunId));
   await markCheckInProgress(
     { repository, checkRunId },
     token,

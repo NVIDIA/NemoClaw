@@ -397,6 +397,7 @@ jobs:
       PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
       ADVISOR_DIR: ${{ github.workspace }}/advisor
       PUBLISH_ARTIFACT_DIR: ${{ github.workspace }}/publish-artifacts/pr-review-advisor
+      SECONDARY_PUBLISH_ARTIFACT_DIR: ${{ github.workspace }}/publish-artifacts/pr-review-advisor-nemotron-ultra
       PR_REVIEW_ADVISOR_MAX_RESULT_BYTES: "2097152"
       PR_REVIEW_ADVISOR_MAX_SUMMARY_BYTES: "1048576"
     steps:
@@ -418,23 +419,49 @@ jobs:
           name: pr-review-advisor
           path: publish-artifacts/pr-review-advisor
 
-      - name: Validate primary advisor artifact
+      # A missing or invalid second opinion must not suppress a completed
+      # primary review. A present artifact must pass the same validation before
+      # the publisher includes its sanitized status.
+      - name: Download secondary advisor artifact
+        id: download-secondary-advisor-artifact
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: pr-review-advisor-nemotron-ultra
+          path: publish-artifacts/pr-review-advisor-nemotron-ultra
+
+      - name: Validate advisor artifacts
+        id: validate-advisor-artifacts
         env:
           GH_TOKEN: ${{ github.token }}
+          SECONDARY_ARTIFACT_OUTCOME: ${{ steps.download-secondary-advisor-artifact.outcome }}
         run: |
           set -euo pipefail
           if [[ ! "$PR_NUMBER" =~ ^[0-9]+$ ]] || [[ ! "$EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || [[ ! "$TRUSTED_WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]] || [[ ! "$PR_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
             echo "::error::Invalid target-event publication identity"
             exit 1
           fi
+          if [ "$SECONDARY_ARTIFACT_OUTCOME" != "success" ] && [ "$SECONDARY_ARTIFACT_OUTCOME" != "failure" ]; then
+            echo "::error::Invalid secondary advisor artifact outcome"
+            exit 1
+          fi
 
+          export ANALYSIS_RESULT_PATH="$PUBLISH_ARTIFACT_DIR/pr-review-advisor-result.json"
           export RESULT_PATH="$PUBLISH_ARTIFACT_DIR/pr-review-advisor-final-result.json"
           export SUMMARY_PATH="$PUBLISH_ARTIFACT_DIR/pr-review-advisor-summary.md"
+          export SECONDARY_ANALYSIS_RESULT_PATH="$SECONDARY_PUBLISH_ARTIFACT_DIR/pr-review-advisor-result.json"
+          export SECONDARY_RESULT_PATH="$SECONDARY_PUBLISH_ARTIFACT_DIR/pr-review-advisor-final-result.json"
+          export SECONDARY_SUMMARY_PATH="$SECONDARY_PUBLISH_ARTIFACT_DIR/pr-review-advisor-summary.md"
           node <<'NODE'
           const fs = require("node:fs");
           const path = require("node:path");
+          const { isDeepStrictEqual } = require("node:util");
 
-          function requireBoundedRegularFile(file, maxBytes, label) {
+          function requireBoundedRegularFile(rootDir, file, maxBytes, label) {
+            const rootStat = fs.lstatSync(rootDir);
+            if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+              throw new Error(`${label} artifact root must be a regular non-symlink directory`);
+            }
             const stat = fs.lstatSync(file);
             if (!stat.isFile() || stat.isSymbolicLink()) {
               throw new Error(`${label} must be a regular non-symlink file`);
@@ -442,44 +469,131 @@ jobs:
             if (stat.size <= 0 || stat.size > maxBytes) {
               throw new Error(`${label} size ${stat.size} is outside 1..${maxBytes} bytes`);
             }
-            const root = `${fs.realpathSync(process.env.PUBLISH_ARTIFACT_DIR)}${path.sep}`;
+            const root = `${fs.realpathSync(rootDir)}${path.sep}`;
             const real = fs.realpathSync(file);
             if (!real.startsWith(root)) throw new Error(`${label} escapes the artifact directory`);
           }
 
-          requireBoundedRegularFile(
+          function readJson(file, label) {
+            const value = JSON.parse(fs.readFileSync(file, "utf8"));
+            if (!value || typeof value !== "object" || Array.isArray(value)) {
+              throw new Error(`${label} must be a JSON object`);
+            }
+            return value;
+          }
+
+          function validateFinalResult(result, label) {
+            if (!result || typeof result !== "object" || Array.isArray(result)) {
+              throw new Error(`${label} must be a JSON object`);
+            }
+            if (result.version !== 1) throw new Error(`${label} version must be 1`);
+            if (result.headSha !== process.env.EXPECTED_HEAD_SHA) {
+              throw new Error(`${label} head SHA does not match the triggering PR head`);
+            }
+            if (!result.summary || typeof result.summary !== "object" || Array.isArray(result.summary)) {
+              throw new Error(`${label} summary must be an object`);
+            }
+            if (!["low", "medium", "high"].includes(result.summary.confidence)) {
+              throw new Error(`${label} summary confidence must be low, medium, or high`);
+          }
+            if (!Array.isArray(result.findings)) {
+              throw new Error(`${label} findings must be an array`);
+            }
+            for (const finding of result.findings) {
+              if (!finding || typeof finding !== "object" || Array.isArray(finding)) {
+                throw new Error(`${label} findings must contain JSON objects`);
+              }
+              if (!["blocker", "warning", "suggestion"].includes(finding.severity)) {
+                throw new Error(`${label} finding severity must be blocker, warning, or suggestion`);
+              }
+            }
+            if (!result.e2e || typeof result.e2e !== "object" || Array.isArray(result.e2e)) {
+              throw new Error(`${label} e2e must be an object`);
+            }
+            if (!result.e2e.coverage || typeof result.e2e.coverage !== "object" || Array.isArray(result.e2e.coverage)) {
+              throw new Error(`${label} e2e.coverage must be an object`);
+            }
+            if (!result.e2e.targets || typeof result.e2e.targets !== "object" || Array.isArray(result.e2e.targets)) {
+              throw new Error(`${label} e2e.targets must be an object`);
+            }
+          }
+
+          function validateAnalysisResult(analysisResult, finalResult, label) {
+            const statusCount = [
+              analysisResult.version === 1,
+              analysisResult.failed === true,
+              analysisResult.skipped === true,
+            ].filter(Boolean).length;
+            if (statusCount !== 1) {
+              throw new Error(`${label} must report exactly one analysis status`);
+            }
+            if (analysisResult.version === 1) {
+              if (!isDeepStrictEqual(analysisResult, finalResult)) {
+                throw new Error(`${label} completed analysis result must match its final result`);
+              }
+              return;
+            }
+            if (analysisResult.failed === true) {
+              if (typeof analysisResult.reason !== "string" || !analysisResult.reason.trim()) {
+                throw new Error(`${label} failed analysis must include a reason`);
+              }
+              if (analysisResult.partial === true) {
+                if (!Number.isInteger(analysisResult.findingCount) || analysisResult.findingCount !== finalResult.findings.length) {
+                  throw new Error(`${label} partial finding count must match its final result`);
+                }
+              } else if (finalResult.findings.length !== 0) {
+                throw new Error(`${label} failed analysis without a partial marker must not publish findings`);
+              }
+              return;
+            }
+            if (analysisResult.skipped === true) {
+              if (typeof analysisResult.reason !== "string" || !analysisResult.reason.trim()) {
+                throw new Error(`${label} skipped analysis must include a reason`);
+              }
+              if (finalResult.findings.length !== 0) {
+                throw new Error(`${label} skipped analysis must not publish findings`);
+              }
+              return;
+            }
+            throw new Error(`${label} must report completed, failed, or skipped analysis status`);
+          }
+
+          function validateLane(rootDir, analysisResultPath, resultPath, summaryPath, label) {
+            requireBoundedRegularFile(rootDir, analysisResultPath, Number(process.env.PR_REVIEW_ADVISOR_MAX_RESULT_BYTES), `${label} analysis result`);
+            requireBoundedRegularFile(rootDir, resultPath, Number(process.env.PR_REVIEW_ADVISOR_MAX_RESULT_BYTES), `${label} final result`);
+            requireBoundedRegularFile(rootDir, summaryPath, Number(process.env.PR_REVIEW_ADVISOR_MAX_SUMMARY_BYTES), `${label} summary`);
+            const analysisResult = readJson(analysisResultPath, `${label} analysis result`);
+            const finalResult = readJson(resultPath, `${label} final result`);
+            validateFinalResult(finalResult, `${label} final result`);
+            validateAnalysisResult(analysisResult, finalResult, label);
+          }
+
+          validateLane(
+            process.env.PUBLISH_ARTIFACT_DIR,
+            process.env.ANALYSIS_RESULT_PATH,
             process.env.RESULT_PATH,
-            Number(process.env.PR_REVIEW_ADVISOR_MAX_RESULT_BYTES),
-            "advisor result",
-          );
-          requireBoundedRegularFile(
             process.env.SUMMARY_PATH,
-            Number(process.env.PR_REVIEW_ADVISOR_MAX_SUMMARY_BYTES),
-            "advisor summary",
+            "primary advisor",
           );
-          const result = JSON.parse(fs.readFileSync(process.env.RESULT_PATH, "utf8"));
-          if (!result || typeof result !== "object" || Array.isArray(result)) {
-            throw new Error("advisor result must be a JSON object");
+          let secondaryArtifactValidated = false;
+          if (process.env.SECONDARY_ARTIFACT_OUTCOME === "success") {
+            try {
+              validateLane(
+                process.env.SECONDARY_PUBLISH_ARTIFACT_DIR,
+                process.env.SECONDARY_ANALYSIS_RESULT_PATH,
+                process.env.SECONDARY_RESULT_PATH,
+                process.env.SECONDARY_SUMMARY_PATH,
+                "secondary advisor",
+              );
+              secondaryArtifactValidated = true;
+            } catch {
+              console.error("::warning::Secondary advisor artifact failed validation; publishing the primary review without it");
+            }
           }
-          if (result.version !== 1) throw new Error("advisor result version must be 1");
-          if (result.headSha !== process.env.EXPECTED_HEAD_SHA) {
-            throw new Error("advisor result head SHA does not match the triggering PR head");
-          }
-          if (!result.summary || typeof result.summary !== "object" || Array.isArray(result.summary)) {
-            throw new Error("advisor result summary must be an object");
-          }
-          if (!Array.isArray(result.findings)) {
-            throw new Error("advisor result findings must be an array");
-          }
-          if (!result.e2e || typeof result.e2e !== "object" || Array.isArray(result.e2e)) {
-            throw new Error("advisor result e2e must be an object");
-          }
-          if (!result.e2e.coverage || typeof result.e2e.coverage !== "object" || Array.isArray(result.e2e.coverage)) {
-            throw new Error("advisor result e2e.coverage must be an object");
-          }
-          if (!result.e2e.targets || typeof result.e2e.targets !== "object" || Array.isArray(result.e2e.targets)) {
-            throw new Error("advisor result e2e.targets must be an object");
-          }
+          fs.appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            `secondary_artifact_validated=${secondaryArtifactValidated}\n`,
+          );
           NODE
 
           LIVE_HEAD_SHA="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.head.sha')"
@@ -496,12 +610,22 @@ jobs:
       - name: Post PR review advisor comment
         env:
           GH_TOKEN: ${{ github.token }}
+          SECONDARY_ARTIFACT_VALIDATED: ${{ steps.validate-advisor-artifacts.outputs.secondary_artifact_validated }}
         run: |
+          SECONDARY_ARGS=()
+          if [ "$SECONDARY_ARTIFACT_VALIDATED" = "true" ]; then
+            SECONDARY_ARGS=(
+              --second-opinion-analysis-result "$SECONDARY_PUBLISH_ARTIFACT_DIR/pr-review-advisor-result.json"
+              --second-opinion-result "$SECONDARY_PUBLISH_ARTIFACT_DIR/pr-review-advisor-final-result.json"
+            )
+          fi
           node --experimental-strip-types "$ADVISOR_DIR/tools/pr-review-advisor/comment.mts" \
             --repo "$GITHUB_REPOSITORY" \
             --pr "$PR_NUMBER" \
             --summary "$PUBLISH_ARTIFACT_DIR/pr-review-advisor-summary.md" \
+            --analysis-result "$PUBLISH_ARTIFACT_DIR/pr-review-advisor-result.json" \
             --result "$PUBLISH_ARTIFACT_DIR/pr-review-advisor-final-result.json" \
             --marker "$PR_REVIEW_ADVISOR_COMMENT_MARKER" \
             --title "$PR_REVIEW_ADVISOR_COMMENT_TITLE" \
-            --label "$PR_REVIEW_ADVISOR_COMMENT_LABEL"
+            --label "$PR_REVIEW_ADVISOR_COMMENT_LABEL" \
+            "${SECONDARY_ARGS[@]}"

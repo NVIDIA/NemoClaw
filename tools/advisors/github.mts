@@ -146,6 +146,58 @@ export async function upsertStickyComment({
   }
 }
 
+export async function deleteBotOwnedStickyComments({
+  repo,
+  pr,
+  token,
+  markers,
+  label,
+  userAgent,
+}: {
+  repo: string;
+  pr: string;
+  token: string;
+  markers: readonly string[];
+  label: string;
+  userAgent?: string;
+}): Promise<number> {
+  if (markers.length === 0) return 0;
+  const comments: GitHubComment[] = [];
+  for (let page = 1; ; page += 1) {
+    const batch = await githubApi<GitHubComment[]>(
+      `repos/${repo}/issues/${pr}/comments?per_page=100&page=${page}`,
+      token,
+      { userAgent },
+    );
+    comments.push(...batch);
+    if (batch.length < 100) break;
+  }
+  const matches = comments.filter((comment) => {
+    const body = comment.body;
+    return (
+      Number.isSafeInteger(comment.id) &&
+      comment.id > 0 &&
+      comment.user?.login === "github-actions[bot]" &&
+      typeof body === "string" &&
+      markers.some((marker) => firstCommentLine(body) === marker)
+    );
+  });
+  for (const comment of matches) {
+    await githubApi(`repos/${repo}/issues/comments/${comment.id}`, token, {
+      method: "DELETE",
+      userAgent,
+    });
+  }
+  if (matches.length > 0) {
+    console.log(`Deleted ${matches.length} ${label} comment(s) on ${repo}#${pr}`);
+  }
+  return matches.length;
+}
+
+function firstCommentLine(body: string): string {
+  return body.trimStart().split(/\r?\n/u, 1)[0]?.trim() ?? "";
+}
+
 async function findExistingComment(
   repo: string,
   pr: string,
