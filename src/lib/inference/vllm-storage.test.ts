@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  dockerSocketPeerSharesMountNamespace,
   formatStorageBytes,
   imageStorageRequirementBytes,
   modelStorageRequirementBytes,
@@ -39,7 +40,7 @@ const nativeHost = {
   dockerHost: undefined,
   osRelease: "6.8.0-generic",
   platform: "linux" as NodeJS.Platform,
-  sharesInitMountNamespace: true,
+  dockerSocketPeerSharesMountNamespace: () => true,
 };
 
 afterEach(() => {
@@ -288,7 +289,7 @@ describe("Docker image-storage detection", () => {
         dockerInfo: () => nativeDockerInfo(),
         osRelease: nativeHost.osRelease,
         platform: nativeHost.platform,
-        sharesInitMountNamespace: true,
+        dockerSocketPeerSharesMountNamespace: () => true,
       }),
     ).toEqual({
       ok: false,
@@ -315,19 +316,57 @@ describe("Docker image-storage detection", () => {
     });
   });
 
-  it("fails closed when the Docker client has a private mount namespace (#6757)", () => {
+  it("classifies the Docker socket peer mount namespace without trusting procfs PID 1", () => {
+    const capture = vi.fn(() => "shared\n");
+
+    expect(dockerSocketPeerSharesMountNamespace("/var/run/docker.sock", capture, "linux")).toBe(
+      true,
+    );
+    expect(capture).toHaveBeenCalledWith(
+      expect.arrayContaining(["python3", "-I", "-c", "/var/run/docker.sock"]),
+      { ignoreError: true, timeout: 5_000 },
+    );
+    capture.mockReturnValueOnce("different\n");
+    expect(dockerSocketPeerSharesMountNamespace("/var/run/docker.sock", capture, "linux")).toBe(
+      false,
+    );
+    capture.mockReturnValueOnce("unknown\n");
+    expect(
+      dockerSocketPeerSharesMountNamespace("/var/run/docker.sock", capture, "linux"),
+    ).toBeNull();
+  });
+
+  it("fails closed when the Docker socket peer has a different mount namespace (#6757)", () => {
     expect(
       probeDockerHostLocality({
         ...nativeHost,
         dockerHost: "unix:///var/run/docker.sock",
         dockerInfo: () => nativeDockerInfo(),
-        sharesInitMountNamespace: false,
+        dockerSocketPeerSharesMountNamespace: () => false,
       }),
     ).toEqual({
       ok: false,
       reason:
-        "Docker client does not share the init mount namespace, so daemon bind-mount storage cannot be verified",
+        "Docker client and socket peer use different mount namespaces, so daemon filesystem identity cannot be verified",
     });
+  });
+
+  it("fails closed before statfs when a nested PID namespace hides the socket peer (#6757)", () => {
+    const statfs = vi.fn(() => ({ bavail: 1_000n, bsize: GIB }));
+
+    expect(
+      probeDockerStorage({
+        ...nativeHost,
+        dockerHost: "unix:///var/run/docker.sock",
+        dockerInfo: () => nativeDockerInfo(),
+        dockerSocketPeerSharesMountNamespace: () => null,
+        statfs,
+      }),
+    ).toEqual({
+      ok: false,
+      reason: "Docker socket peer PID or mount namespace could not be verified",
+    });
+    expect(statfs).not.toHaveBeenCalled();
   });
 
   it("reads the Docker selection when each storage probe starts (#6757)", () => {
@@ -340,7 +379,7 @@ describe("Docker image-storage detection", () => {
         dockerInfo: () => nativeDockerInfo(),
         osRelease: nativeHost.osRelease,
         platform: nativeHost.platform,
-        sharesInitMountNamespace: true,
+        dockerSocketPeerSharesMountNamespace: () => true,
       }),
     ).toEqual({
       ok: false,
@@ -377,10 +416,15 @@ describe("Hugging Face model-cache storage", () => {
     tempDirs.push(root);
     const cacheDir = path.join(root, ".cache", "huggingface");
     const dockerReadBind = vi.fn((_image: string, sourcePath: string) => {
-      expect(fs.statSync(sourcePath).mode & 0o777).toBe(0o600);
-      const token = fs.readFileSync(sourcePath, "utf8");
-      expect(sourcePath).not.toContain(token.slice("nemoclaw-storage-token:".length));
-      return token;
+      const fd = fs.openSync(sourcePath, "r");
+      try {
+        expect(fs.fstatSync(fd).mode & 0o777).toBe(0o600);
+        const token = fs.readFileSync(fd, "utf8");
+        expect(sourcePath).not.toContain(token.slice("nemoclaw-storage-token:".length));
+        return token;
+      } finally {
+        fs.closeSync(fd);
+      }
     });
 
     expect(
@@ -411,7 +455,6 @@ describe("Hugging Face model-cache storage", () => {
           dockerHost: "unix:///var/run/docker.sock",
           dockerInfo: () => nativeDockerInfo(),
           dockerReadBind: () => "",
-          sharesInitMountNamespace: true,
         },
       ),
     ).toEqual({

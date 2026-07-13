@@ -633,6 +633,32 @@ describe("installVllm model resolution", () => {
     expect(errors).toContain("Available: unknown (");
   });
 
+  it("does not pull an uncached image when a nested PID namespace hides the Docker peer (#6757)", async () => {
+    const profile = detectVllmProfile({ platform: "station", type: "nvidia" })!;
+    process.env.NEMOCLAW_VLLM_MODEL = profile.defaultModel.envValue;
+    mockSuccessfulVllmInstall(profile.containerName);
+    mocks.probeDockerStorage.mockReturnValue({
+      ok: false,
+      reason: "Docker socket peer PID or mount namespace could not be verified",
+    });
+
+    const result = await installVllm(profile, {
+      hasImage: false,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(mocks.probeDockerStorage).toHaveBeenCalledTimes(1);
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(mocks.probeDockerBindIdentity).not.toHaveBeenCalled();
+    expect(mocks.dockerSpawn).not.toHaveBeenCalled();
+    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Docker socket peer PID or mount namespace could not be verified"),
+    );
+  });
+
   it("honors only the dedicated disk-space override in non-interactive setup (#6757)", async () => {
     const profile = detectVllmProfile({ platform: "station", type: "nvidia" })!;
     process.env.NEMOCLAW_VLLM_MODEL = profile.defaultModel.envValue;

@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { dockerCapture } from "../adapters/docker";
+import { runCapture } from "../runner";
 import { buildVllmDockerEnv } from "./vllm-docker-env";
 
 export const VLLM_STORAGE_OVERRIDE_ENV = "NEMOCLAW_IGNORE_VLLM_DISK_SPACE";
@@ -17,6 +18,43 @@ const MODEL_MINIMUM_HEADROOM_BYTES = 2n * GIB_BYTES;
 const DEFAULT_CONTAINERD_ROOT = "/var/lib/containerd";
 const DEFAULT_CONTAINERD_CONFIG = "/etc/containerd/config.toml";
 const DEFAULT_DOCKER_SOCKET = "/var/run/docker.sock";
+const DOCKER_SOCKET_PEER_PROBE_TIMEOUT_MS = 5_000;
+// SO_PEERCRED translates the daemon PID into the caller's PID namespace. A
+// hidden peer therefore exposes the namespace-local PID 1 topology directly,
+// while equal mountinfo snapshots prove that client-side statfs sees the same
+// mount table as the process serving the selected Docker socket.
+const DOCKER_SOCKET_PEER_PROBE = String.raw`
+import socket
+import struct
+import sys
+
+def read_mountinfo(target):
+    with open(target, "rb") as stream:
+        return stream.read()
+
+sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+sock.settimeout(2)
+try:
+    sock.connect(sys.argv[1])
+    size = struct.calcsize("3i")
+    peer_pid, _, _ = struct.unpack(
+        "3i", sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, size)
+    )
+    if peer_pid <= 0:
+        print("unknown")
+    else:
+        own_before = read_mountinfo("/proc/self/mountinfo")
+        peer = read_mountinfo(f"/proc/{peer_pid}/mountinfo")
+        own_after = read_mountinfo("/proc/self/mountinfo")
+        if own_before != own_after:
+            print("unknown")
+        else:
+            print("shared" if own_before == peer else "different")
+except (OSError, ValueError):
+    print("unknown")
+finally:
+    sock.close()
+`;
 
 interface StorageProbeDeps {
   clientContainerized: boolean;
@@ -24,11 +62,11 @@ interface StorageProbeDeps {
   dockerHost: string | undefined;
   dockerInfo: () => string;
   dockerReadBind: (image: string, sourcePath: string) => string;
+  dockerSocketPeerSharesMountNamespace: () => boolean | null;
   exists: (target: string) => boolean;
   osRelease: string;
   platform: NodeJS.Platform;
   readFile: (target: string) => string;
-  sharesInitMountNamespace: boolean;
   statfs: (target: string) => { bavail: bigint; bsize: bigint };
 }
 
@@ -50,14 +88,22 @@ function clientLooksContainerized(): boolean {
   }
 }
 
-function clientSharesInitMountNamespace(): boolean {
-  try {
-    // This catches a private mount namespace only when procfs exposes host PID 1.
-    // A daemon-side sentinel check is the authoritative bind-identity proof.
-    return fs.readlinkSync("/proc/self/ns/mnt") === fs.readlinkSync("/proc/1/ns/mnt");
-  } catch {
-    return false;
-  }
+export function dockerSocketPeerSharesMountNamespace(
+  socketPath: string,
+  capture: (
+    command: readonly string[],
+    options: { ignoreError: true; timeout: number },
+  ) => string = runCapture,
+  platform: NodeJS.Platform = process.platform,
+): boolean | null {
+  if (platform !== "linux") return null;
+  const result = capture(["python3", "-I", "-c", DOCKER_SOCKET_PEER_PROBE, socketPath], {
+    ignoreError: true,
+    timeout: DOCKER_SOCKET_PEER_PROBE_TIMEOUT_MS,
+  }).trim();
+  if (result === "shared") return true;
+  if (result === "different") return false;
+  return null;
 }
 
 function defaultStorageProbeDeps(): StorageProbeDeps {
@@ -92,11 +138,21 @@ function defaultStorageProbeDeps(): StorageProbeDeps {
           timeout: 30_000,
         },
       ),
+    dockerSocketPeerSharesMountNamespace: () => {
+      const endpoint = dockerEnv.DOCKER_HOST?.trim() ?? "";
+      const socketPath = endpoint.startsWith("unix://")
+        ? endpoint.slice("unix://".length)
+        : path.isAbsolute(endpoint)
+          ? endpoint
+          : endpoint
+            ? ""
+            : DEFAULT_DOCKER_SOCKET;
+      return socketPath ? dockerSocketPeerSharesMountNamespace(socketPath) : null;
+    },
     exists: fs.existsSync,
     osRelease: os.release(),
     platform: process.platform,
     readFile: (target) => fs.readFileSync(target, "utf8"),
-    sharesInitMountNamespace: clientSharesInitMountNamespace(),
     statfs: (target) => fs.statfsSync(target, { bigint: true }),
   };
 }
@@ -236,9 +292,6 @@ function nativeDockerHostProblem(info: DockerInfoShape, deps: StorageProbeDeps):
   if (deps.clientContainerized) {
     return "Docker client runs inside a container, so daemon bind-mount storage cannot be verified";
   }
-  if (!deps.sharesInitMountNamespace) {
-    return "Docker client does not share the init mount namespace, so daemon bind-mount storage cannot be verified";
-  }
   if (info.OSType !== "linux") return "Docker is not using a Linux engine";
 
   const product = `${String(info.Name ?? "")} ${String(info.OperatingSystem ?? "")}`;
@@ -264,6 +317,14 @@ function nativeDockerHostProblem(info: DockerInfoShape, deps: StorageProbeDeps):
     if (endpoint !== DEFAULT_DOCKER_SOCKET && endpoint !== `unix://${DEFAULT_DOCKER_SOCKET}`) {
       return `Docker uses a non-default socket (${endpoint}) whose daemon host filesystem cannot be verified`;
     }
+  }
+
+  const sharesPeerMountNamespace = deps.dockerSocketPeerSharesMountNamespace();
+  if (sharesPeerMountNamespace === false) {
+    return "Docker client and socket peer use different mount namespaces, so daemon filesystem identity cannot be verified";
+  }
+  if (sharesPeerMountNamespace === null) {
+    return "Docker socket peer PID or mount namespace could not be verified";
   }
   return null;
 }
