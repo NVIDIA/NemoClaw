@@ -55,7 +55,7 @@ describe("detectVllmProfile", () => {
     image,
     imageDownloadSizeBytes,
   }) => {
-    const originalArch = Object.getOwnPropertyDescriptor(process, "arch");
+    const originalArch = Object.getOwnPropertyDescriptor(process, "arch")!;
     try {
       Object.defineProperty(process, "arch", { configurable: true, value: arch });
       vi.resetModules();
@@ -70,7 +70,7 @@ describe("detectVllmProfile", () => {
       expect(profile!.image).toBe(image);
       expect(profile!.imageDownloadSizeBytes).toBe(imageDownloadSizeBytes);
     } finally {
-      if (originalArch) Object.defineProperty(process, "arch", originalArch);
+      Object.defineProperty(process, "arch", originalArch);
       vi.resetModules();
     }
   });

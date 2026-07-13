@@ -165,7 +165,7 @@ describe("vLLM profile detection", () => {
     image,
     imageDownloadSizeBytes,
   }) => {
-    const originalArch = Object.getOwnPropertyDescriptor(process, "arch");
+    const originalArch = Object.getOwnPropertyDescriptor(process, "arch")!;
     try {
       Object.defineProperty(process, "arch", { configurable: true, value: arch });
       vi.resetModules();
@@ -180,7 +180,7 @@ describe("vLLM profile detection", () => {
       expect(profile!.defaultModel.id).toBe("nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8");
       expect(profile!.defaultModel.envValue).toBe("nemotron-3-nano-4b");
     } finally {
-      if (originalArch) Object.defineProperty(process, "arch", originalArch);
+      Object.defineProperty(process, "arch", originalArch);
       vi.resetModules();
     }
   });
