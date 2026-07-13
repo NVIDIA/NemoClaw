@@ -14,6 +14,15 @@ const ASSET = "openshell-x86_64-unknown-linux-musl.tar.gz";
 const PINNED_ASSET_SHA256 = "37836c3b50383e03249c5e16512c1806e591fba8451408a84fb2f628ddb318c4";
 
 type FakeSystemOptions = {
+  archiveShape?:
+    | "absolute"
+    | "device"
+    | "duplicate"
+    | "extra"
+    | "hardlink"
+    | "safe"
+    | "symlink"
+    | "traversal";
   checksum: "match" | "mismatch" | "unpinned";
   nodeSourceChecksumTool?: boolean;
   openshellVersion?: string;
@@ -133,6 +142,26 @@ exit 0
     path.join(fakeBin, "tar"),
     `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> ${JSON.stringify(tarLog)}
+shape=${JSON.stringify(options.archiveShape ?? "safe")}
+if [ "\${1:-}" = "-tzf" ] && [ "$shape" != "safe" ]; then
+  case "$shape" in
+    absolute) printf '/tmp/openshell\\n' ;;
+    traversal) printf '../openshell\\n' ;;
+    duplicate) printf 'openshell\\nopenshell\\n' ;;
+    extra) printf 'openshell\\nunexpected\\n' ;;
+    *) printf 'openshell\\n' ;;
+  esac
+  exit 0
+fi
+if [ "\${1:-}" = "-tvzf" ] && [ "$shape" != "safe" ]; then
+  case "$shape" in
+    symlink) printf 'lrwxrwxrwx 0/0 0 2026-01-01 00:00 openshell -> target\\n' ;;
+    hardlink) printf 'hrwxr-xr-x 0/0 0 2026-01-01 00:00 openshell link to target\\n' ;;
+    device) printf 'crw-rw-rw- 0/0 1,3 2026-01-01 00:00 openshell\\n' ;;
+    *) printf '%s\\n' '-rwxr-xr-x 0/0 1 2026-01-01 00:00 openshell' ;;
+  esac
+  exit 0
+fi
 exec /usr/bin/tar "$@"
 `,
   );
@@ -345,6 +374,30 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
         "--version",
       ]);
       expect(out).toContain("CI-Ready CPU launchable setup complete");
+    } finally {
+      fake.cleanup();
+    }
+  });
+
+  it.each([
+    "absolute",
+    "traversal",
+    "duplicate",
+    "extra",
+    "symlink",
+    "hardlink",
+    "device",
+  ] as const)("rejects an unsafe %s archive before extraction or install", (archiveShape) => {
+    const { fake, result } = runLaunchable({ archiveShape, checksum: "match" });
+    try {
+      const out = combinedLaunchableOutput(result, fake.launchLog);
+      expect(result.status, out).toBe(1);
+      expect(out).toContain(`Unsafe OpenShell archive ${ASSET}`);
+      const tarCalls = fs.readFileSync(fake.tarLog, "utf-8");
+      expect(tarCalls).not.toMatch(/^xzf /m);
+      expect(fs.existsSync(fake.sudoLog) ? fs.readFileSync(fake.sudoLog, "utf-8") : "").not.toMatch(
+        /^install -m 755 .*openshell/m,
+      );
     } finally {
       fake.cleanup();
     }

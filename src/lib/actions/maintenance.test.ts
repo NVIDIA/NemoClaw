@@ -11,6 +11,9 @@ const mocks = vi.hoisted(() => ({
   dockerListImagesFormat: vi.fn().mockReturnValue(""),
   dockerRmi: vi.fn(),
   prompt: vi.fn(),
+  startStoppedSandboxContainerForBackup: vi.fn(),
+  backupStartedSandboxState: vi.fn(),
+  returnSandboxContainerToStopped: vi.fn(),
 }));
 
 vi.mock("../state/registry", () => ({
@@ -36,6 +39,11 @@ vi.mock("../cli/branding", () => ({
 vi.mock("../credentials/store", () => ({
   prompt: mocks.prompt,
 }));
+vi.mock("./sandbox/stopped-sandbox-backup", () => ({
+  startStoppedSandboxContainerForBackup: mocks.startStoppedSandboxContainerForBackup,
+  backupStartedSandboxState: mocks.backupStartedSandboxState,
+  returnSandboxContainerToStopped: mocks.returnSandboxContainerToStopped,
+}));
 vi.mock("../domain/lifecycle/options", () => ({
   normalizeGarbageCollectImagesOptions: (o: unknown) => o || {},
 }));
@@ -48,12 +56,15 @@ import { backupAll, garbageCollectImages, shouldSkipUnreachableSandboxBackup } f
 describe("backupAll", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.backupStartedSandboxState.mockReset();
     delete process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS;
     mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue({
       status: 0,
       output: "sb-good\nsb-bad\n",
     });
     mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-good", "sb-bad"]));
+    mocks.startStoppedSandboxContainerForBackup.mockReturnValue(null);
+    mocks.returnSandboxContainerToStopped.mockReturnValue(true);
   });
 
   afterEach(() => {
@@ -189,6 +200,159 @@ describe("backupAll", () => {
     expect(errorOutput).toContain("rerun the installer or");
     expect(errorOutput).toContain("Resolve each skipped sandbox using its reason above");
     expect(errorOutput).not.toContain("prepare the upgrade manually");
+  });
+
+  it("starts a stopped container, backs it up, and returns it to stopped so strict mode passes (#6500)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-good" }, { name: "sb-stopped" }],
+      defaultSandbox: null,
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-good"]));
+    mocks.backupSandboxState.mockReturnValue({
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/sb-good/timestamp" },
+    });
+    mocks.startStoppedSandboxContainerForBackup.mockImplementation((name: string) =>
+      name === "sb-stopped" ? { containerName: "openshell-sb-stopped-abc" } : null,
+    );
+    mocks.backupStartedSandboxState.mockResolvedValue({
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/sb-stopped/timestamp" },
+    });
+    process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await backupAll();
+
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(mocks.backupStartedSandboxState).toHaveBeenCalledWith("sb-stopped");
+    expect(mocks.backupSandboxState).toHaveBeenCalledWith("sb-good");
+    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith("openshell-sb-stopped-abc");
+    const logOutput = logSpy.mock.calls.flat().join("\n");
+    expect(logOutput).toContain("Starting stopped sandbox 'sb-stopped' to back it up");
+    expect(logOutput).toContain("Returned 'sb-stopped' to its stopped state");
+    expect(logOutput).toContain("2 backed up, 0 failed, 0 skipped");
+    expect(logOutput).not.toContain("Skipping 'sb-stopped'");
+  });
+
+  it("returns the container to stopped and counts a failure when the started backup fails (#6500)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-stopped" }],
+      defaultSandbox: null,
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set());
+    mocks.startStoppedSandboxContainerForBackup.mockReturnValue({
+      containerName: "openshell-sb-stopped-abc",
+    });
+    mocks.backupStartedSandboxState.mockResolvedValue({
+      success: false,
+      backedUpDirs: [],
+      failedDirs: ["identity"],
+      failedDirReasons: { identity: "permission denied" },
+      backedUpFiles: [],
+      failedFiles: [],
+    });
+    process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await expect(backupAll()).rejects.toThrow("exit:1");
+
+    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith("openshell-sb-stopped-abc");
+    expect(logSpy.mock.calls.flat().join("\n")).toContain("0 backed up, 1 failed, 0 skipped");
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain(
+      "backup failed (identity (permission denied))",
+    );
+  });
+
+  it("fails when the started container cannot be returned to its stopped state (#6500)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-stopped" }],
+      defaultSandbox: null,
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set());
+    mocks.startStoppedSandboxContainerForBackup.mockReturnValue({
+      containerName: "openshell-sb-stopped-abc",
+    });
+    mocks.backupStartedSandboxState.mockResolvedValue({
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/sb-stopped/timestamp" },
+    });
+    mocks.returnSandboxContainerToStopped.mockReturnValue(false);
+    process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await expect(backupAll()).rejects.toThrow("exit:1");
+
+    expect(logSpy.mock.calls.flat().join("\n")).toContain("0 backed up, 1 failed, 0 skipped");
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain(
+      "backup cleanup failed (could not return its container to the stopped state",
+    );
+  });
+
+  it("returns a started container to stopped when an orphan manifest skips backup (#6500)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-stopped" }],
+      defaultSandbox: null,
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set());
+    mocks.startStoppedSandboxContainerForBackup.mockReturnValue({
+      containerName: "openshell-sb-stopped-abc",
+    });
+    mocks.backupStartedSandboxState.mockRejectedValue(
+      new Error("Agent 'sb-stopped' not found: /path/to/manifest.yaml"),
+    );
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await backupAll();
+
+    expect(mocks.returnSandboxContainerToStopped).toHaveBeenCalledWith("openshell-sb-stopped-abc");
+    const output = logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Returned 'sb-stopped' to its stopped state");
+    expect(output).toContain("Skipped 'sb-stopped' (orphan manifest)");
+  });
+
+  it("keeps the not-running skip when no stopped container can be started (#6114)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-stopped" }],
+      defaultSandbox: null,
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set());
+    mocks.startStoppedSandboxContainerForBackup.mockReturnValue(null);
+    process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await expect(backupAll()).rejects.toThrow("exit:1");
+
+    expect(mocks.backupStartedSandboxState).not.toHaveBeenCalled();
+    expect(mocks.returnSandboxContainerToStopped).not.toHaveBeenCalled();
+    expect(logSpy.mock.calls.flat().join("\n")).toContain("Skipping 'sb-stopped' (not running");
   });
 
   it("continues backup loop when backupSandboxState throws for one sandbox", async () => {

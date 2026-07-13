@@ -10,6 +10,7 @@ import type { GatewayRouteDiscoveryConstraints } from "../inference/gateway-rout
 import type { VllmProfile } from "../inference/vllm";
 import { isBackToSelection } from "../navigation";
 import type { HermesAuthMethod } from "./hermes-auth";
+import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import type { ProviderSelectionResult } from "./machine/handlers/provider-inference";
 import type { ProviderInferenceProbeRoute } from "./machine/handlers/provider-inference-route-containment";
 import type {
@@ -249,6 +250,7 @@ export function createSetupNim(
     let allowToolsIncompatible = false;
     let reuseGatewayCredential = false;
     let endpointPinnedAddresses: string[] | undefined;
+    const inferenceCapabilityCache = new OnboardInferenceCapabilityCache();
     const nvidiaFeaturedModels = deps.createNvidiaFeaturedModelSession({
       defaultModel: resolveAgentDefaultCloudModel(agent),
       writeLine: deps.log,
@@ -267,6 +269,7 @@ export function createSetupNim(
         nimContainer,
         allowToolsIncompatible,
         ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
+        inferenceCapabilityCache,
         nvidiaFeaturedModels,
         openRouterFeaturedModels,
       };
@@ -635,6 +638,7 @@ export function createSetupNim(
       reuseGatewayCredentialWithoutLocalKey: reuseGatewayCredential,
       ...(recoveredFromSandbox ? { recoveredFromSandbox: true } : {}),
       ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
+      inferenceCapabilityCache,
     };
   };
 }
