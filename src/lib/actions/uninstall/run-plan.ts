@@ -157,6 +157,16 @@ const PRESERVED_USER_DATA_ENTRIES: readonly string[] = [
   "sandboxes.json",
 ];
 
+// These entries can exist in the shared root without representing a running
+// default-port environment. Any other shared-root entry is treated
+// conservatively as default-port state when uninstalling a non-default port.
+const SHARED_HOST_STATE_ENTRIES = new Set([
+  ...PRESERVED_USER_DATA_ENTRIES,
+  "source",
+  GATEWAYS_SUBDIR,
+  "managed_swap",
+]);
+
 function removePathExcept(
   target: string,
   preserve: readonly string[],
@@ -811,19 +821,37 @@ function removeOllamaModels(options: UninstallRunOptions, runtime: UninstallRunt
 
 function otherGatewayEnvironmentsRemain(paths: UninstallPaths, runtime: UninstallRuntime): boolean {
   const sharedRoot = path.dirname(paths.managedSwapMarkerPath);
-  if (paths.nemoclawStateDir !== sharedRoot) return true;
-  const gatewaysDir = path.join(sharedRoot, "gateways");
+  const selectedRoot = path.resolve(paths.nemoclawStateDir);
+  const selectedIsDefault = selectedRoot === path.resolve(sharedRoot);
+
+  if (!selectedIsDefault && runtime.existsSync(sharedRoot)) {
+    try {
+      if (fs.readdirSync(sharedRoot).some((entry) => !SHARED_HOST_STATE_ENTRIES.has(entry))) {
+        return true;
+      }
+    } catch {
+      // Do not remove a host-shared resource when we cannot prove that the
+      // default-port environment is absent.
+      return true;
+    }
+  }
+
+  const gatewaysDir = path.join(sharedRoot, GATEWAYS_SUBDIR);
   if (!runtime.existsSync(gatewaysDir)) return false;
   try {
-    return fs.readdirSync(gatewaysDir).length > 0;
+    return fs
+      .readdirSync(gatewaysDir)
+      .some((entry) => path.resolve(gatewaysDir, entry) !== selectedRoot);
   } catch {
-    return false;
+    // An unreadable sibling registry is still potentially live.
+    return true;
   }
 }
 
 function removeManagedSwap(paths: UninstallPaths, runtime: UninstallRuntime): void {
   if (!runtime.existsSync("/swapfile")) {
     runtime.log("No /swapfile found; skipping swap cleanup.");
+    removePath(paths.managedSwapMarkerPath, runtime);
     return;
   }
   if (!runtime.existsSync(paths.managedSwapMarkerPath)) {
@@ -851,8 +879,10 @@ function removeManagedSwap(paths: UninstallPaths, runtime: UninstallRuntime): vo
     return;
   }
   const rm = runtime.run("sudo", ["rm", "-f", "/swapfile"], { env: runtime.env, stdio: "ignore" });
-  if (rm.status === 0) runtime.log("Swap file removed");
-  else runtime.warn("Failed to remove /swapfile.");
+  if (rm.status === 0) {
+    runtime.log("Swap file removed");
+    removePath(paths.managedSwapMarkerPath, runtime);
+  } else runtime.warn("Failed to remove /swapfile.");
 }
 
 function detectPreservableEntries(paths: UninstallPaths, runtime: UninstallRuntime): string[] {
@@ -980,7 +1010,7 @@ function executePlan(
       if (
         !removePathExcept(
           paths.nemoclawStateDir,
-          [...preserveUnderStateDir, GATEWAYS_SUBDIR],
+          [...preserveUnderStateDir, GATEWAYS_SUBDIR, path.basename(paths.managedSwapMarkerPath)],
           runtime,
         )
       )

@@ -214,7 +214,10 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
     fs.rmSync(home, { recursive: true, force: true });
   });
 
-  function runCli(args: string[]): { code: number; stdout: string; stderr: string } {
+  function runCli(
+    args: string[],
+    envOverrides: NodeJS.ProcessEnv = {},
+  ): { code: number; stdout: string; stderr: string } {
     const result = spawnSync(process.execPath, [CLI, ...args], {
       encoding: "utf-8",
       timeout: 30_000,
@@ -226,6 +229,8 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
         NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
         NEMOCLAW_STATUS_PROBE_TIMEOUT_MS: "2000",
         NEMOCLAW_TEST_NO_SLEEP: "1",
+        NEMOCLAW_GATEWAY_PORT: "",
+        ...envOverrides,
       },
     });
     return {
@@ -282,6 +287,20 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
     // `list` succeeds even when the live gateway is unreachable: the
     // registry-only listing is the documented fallback behavior (#2666).
     expect(code).toBe(0);
+  });
+
+  it("nemoclaw list reads the registry scoped to a non-default gateway port (#3053)", () => {
+    const port = 9123;
+    fs.rmSync(path.join(home, ".nemoclaw", "sandboxes.json"), { force: true });
+    seedRegistry(nemoclawStateRoot(home, port));
+
+    const { code, stdout, stderr } = runCli(["list"], {
+      NEMOCLAW_GATEWAY_PORT: String(port),
+    });
+    const combined = `${stdout}\n${stderr}`;
+
+    expect(code).toBe(0);
+    expect(combined).toContain("my-assist");
   });
 
   it(
