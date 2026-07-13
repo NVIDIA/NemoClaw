@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -100,6 +101,8 @@ type FixtureMode =
   | "installer-pin-selector-drift"
   | "installer-sandbox-build-control-flow"
   | "installer-sandbox-build-duplicate-digest"
+  | "installer-sandbox-build-literalized-input"
+  | "installer-sandbox-build-literalized-selector"
   | "installer-sandbox-build-malformed-version"
   | "installer-sandbox-build-pin-change"
   | "installer-sandbox-build-unknown-command"
@@ -202,8 +205,16 @@ const mutateSandboxBuildFunction = (
 ): string => {
   const start = source.indexOf("pinned_sandbox_build_version() {");
   const end = source.indexOf("\ncomponent_build_version() {", start);
-  if (start === -1 || end === -1) return source;
-  return `${source.slice(0, start)}${mutate(source.slice(start, end))}${source.slice(end)}`;
+  assert.notEqual(start, -1, "sandbox build function start marker must exist");
+  assert.notEqual(end, -1, "sandbox build function end marker must exist");
+  const functionSource = source.slice(start, end);
+  const mutated = mutate(functionSource);
+  assert.notEqual(
+    mutated,
+    functionSource,
+    "sandbox build fixture mutation must change the function",
+  );
+  return `${source.slice(0, start)}${mutated}${source.slice(end)}`;
 };
 
 const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> = {
@@ -264,24 +275,38 @@ const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => strin
       functionSource.replace("return 1", "return 0"),
     ),
   "installer-sandbox-build-duplicate-digest": (source) =>
-    source.replace(
-      "      32ca44fe7d9e6d332f2a753c6b8a1a6117b7388281dad9b5274d23ffc67e216f)",
-      "      32ca44fe7d9e6d332f2a753c6b8a1a6117b7388281dad9b5274d23ffc67e216f | \\\n      f9f991a24d10772ad5d24ae27a8ea6baad8cac671695bd90fcd0355e0e0ad198)",
+    mutateSandboxBuildFunction(source, (functionSource) =>
+      functionSource.replace(
+        "      32ca44fe7d9e6d332f2a753c6b8a1a6117b7388281dad9b5274d23ffc67e216f)",
+        "      32ca44fe7d9e6d332f2a753c6b8a1a6117b7388281dad9b5274d23ffc67e216f | \\\n      f9f991a24d10772ad5d24ae27a8ea6baad8cac671695bd90fcd0355e0e0ad198)",
+      ),
+    ),
+  "installer-sandbox-build-literalized-input": (source) =>
+    mutateSandboxBuildFunction(source, (functionSource) =>
+      functionSource.replace('local digest="$1"', "local digest='$1'"),
+    ),
+  "installer-sandbox-build-literalized-selector": (source) =>
+    mutateSandboxBuildFunction(source, (functionSource) =>
+      functionSource.replace('case "$digest" in', "case '$digest' in"),
     ),
   "installer-sandbox-build-malformed-version": (source) =>
-    source.replace(`printf '%s\\n' "0.0.72"`, `printf '%s\\n' "v0.0.72"`),
+    mutateSandboxBuildFunction(source, (functionSource) =>
+      functionSource.replace(`printf '%s\\n' "0.0.72"`, `printf '%s\\n' "v0.0.72"`),
+    ),
   "installer-sandbox-build-pin-change": (source) =>
-    source.replace(
-      `      printf '%s\\n' "0.0.72"
+    mutateSandboxBuildFunction(source, (functionSource) =>
+      functionSource.replace(
+        `      printf '%s\\n' "0.0.72"
       ;;
     *)`,
-      `      printf '%s\\n' "0.0.72"
+        `      printf '%s\\n' "0.0.72"
       ;;
     145246049bd73c60452ac3c2b4b1801663196c8e2f80575af820289c78c1cf09 | \\
       76bc19b70d9f1e1e9871307045796cd39cc7b8fc4c08ffc90593cc934f36d500)
       printf '%s\\n' "0.0.82"
       ;;
     *)`,
+      ),
     ),
   "installer-sandbox-build-unknown-command": (source) =>
     mutateSandboxBuildFunction(source, (functionSource) =>
@@ -727,6 +752,8 @@ describe("installer hash verification", () => {
   it.each([
     "installer-sandbox-build-control-flow",
     "installer-sandbox-build-duplicate-digest",
+    "installer-sandbox-build-literalized-input",
+    "installer-sandbox-build-literalized-selector",
     "installer-sandbox-build-malformed-version",
     "installer-sandbox-build-unknown-command",
   ] as const)("rejects untrusted sandbox build map mutation %s", (mode) => {

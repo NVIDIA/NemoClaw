@@ -510,7 +510,8 @@ function extractSandboxBuildPins(source: string): SandboxBuildPin[] {
   if (
     localCommand.command.length !== 2 ||
     !isToken(localCommand.command[0], "word", "local") ||
-    !isToken(localCommand.command[1], "word", "digest=$1")
+    !isToken(localCommand.command[1], "word", "digest=$1") ||
+    rawToken(source, localCommand.command[1]) !== 'digest="$1"'
   ) {
     fail(`${functionName} must begin with exactly local digest="$1"`);
   }
@@ -521,6 +522,7 @@ function extractSandboxBuildPins(source: string): SandboxBuildPin[] {
     caseCommand.command.length !== 3 ||
     !isToken(caseCommand.command[0], "word", "case") ||
     !isToken(caseCommand.command[1], "word", "$digest") ||
+    rawToken(source, caseCommand.command[1]) !== '"$digest"' ||
     !isToken(caseCommand.command[2], "word", "in")
   ) {
     fail(`${functionName} must dispatch exactly on "$digest"`);
