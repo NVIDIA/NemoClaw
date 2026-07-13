@@ -29,6 +29,8 @@ The integration has three parts:
 - An agent adapter writes the MCP endpoint into LangChain Deep Agents Code config.
 </AgentOnly>
 
+This integration depends on the OpenShell MCP/JSON-RPC L7 policy support from [NVIDIA/OpenShell#1865](https://github.com/NVIDIA/OpenShell/pull/1865).
+
 NemoClaw v0.0.74 defaults to the pinned stable OpenShell `0.0.72` release, which exposes native `protocol: mcp` policy handling and provider-backed credential replacement.
 The optional OpenShell development channel is compatibility evidence only and is not a shipping target.
 

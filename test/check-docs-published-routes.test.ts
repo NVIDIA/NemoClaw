@@ -13,6 +13,7 @@ import {
   findBrokenPublishedManageSandboxRoutes,
   findBrokenPublishedRedirects,
   findBrokenPublishedRoutes,
+  findMissingDirectLegacyManageSandboxRedirects,
   resolvePublishedRoute,
 } from "../scripts/check-docs-published-routes.ts";
 
@@ -165,6 +166,33 @@ redirects:
     ]);
   });
 
+  it("rejects Manage Sandboxes HTML redirects that would require a second hop", () => {
+    const fernYaml = `
+redirects:
+  - source: /nemoclaw/latest/:path*/index.html
+    destination: /nemoclaw/latest/:path*
+  - source: /nemoclaw/:path*.html
+    destination: /nemoclaw/:path*
+  - source: /nemoclaw/latest/manage-sandboxes/lifecycle
+    destination: /nemoclaw/latest/user-guide/openclaw/manage-sandboxes/operate-sandboxes/view-sandbox-status
+`;
+
+    expect(findMissingDirectLegacyManageSandboxRedirects(fernYaml)).toEqual([
+      {
+        source: "/nemoclaw/latest/manage-sandboxes/lifecycle.html",
+        destination: null,
+        expected:
+          "/nemoclaw/latest/user-guide/openclaw/manage-sandboxes/operate-sandboxes/view-sandbox-status",
+      },
+      {
+        source: "/nemoclaw/latest/manage-sandboxes/lifecycle/index.html",
+        destination: null,
+        expected:
+          "/nemoclaw/latest/user-guide/openclaw/manage-sandboxes/operate-sandboxes/view-sandbox-status",
+      },
+    ]);
+  });
+
   it("can guard inference links without expanding checks to unrelated links", () => {
     const index = buildPublishedRouteIndex(navYaml);
     const source = commandsSource(`
@@ -248,6 +276,10 @@ See [Missing Other Page](../other/missing).
 
 describe("Manage Sandboxes extension routes", () => {
   const index = buildPublishedRouteIndex();
+
+  it("redirects legacy HTML routes directly to their final pages", () => {
+    expect(findMissingDirectLegacyManageSandboxRedirects()).toEqual([]);
+  });
 
   it("publishes MCP pages under the MCP Servers group for every agent variant", () => {
     for (const variant of ["openclaw", "hermes", "deepagents"]) {

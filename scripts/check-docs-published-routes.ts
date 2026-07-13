@@ -142,6 +142,51 @@ export type RedirectViolation = {
   variant: AgentVariant | null;
 };
 
+export type LegacyHtmlRedirectViolation = {
+  source: string;
+  destination: string | null;
+  expected: string;
+};
+
+/**
+ * Require renamed Manage Sandboxes routes to preserve their legacy HTML forms
+ * with direct redirects. Falling through to the generic HTML rules would first
+ * remove `.html` or `/index.html`, then require a second redirect to the final
+ * page.
+ */
+export function findMissingDirectLegacyManageSandboxRedirects(
+  fernYaml: string = readFileSync(path.join(repoRoot, "fern", "docs.yml"), "utf8"),
+): LegacyHtmlRedirectViolation[] {
+  const config = parse(fernYaml) as {
+    redirects?: Array<{ source: string; destination: string }>;
+  };
+  const redirects = config.redirects ?? [];
+  const directDestinations = new Map(
+    redirects.map((redirect) => [redirect.source, redirect.destination]),
+  );
+  const violations: LegacyHtmlRedirectViolation[] = [];
+
+  for (const redirect of redirects) {
+    if (
+      (!redirect.source.includes("/manage-sandboxes") &&
+        !redirect.destination.includes("/manage-sandboxes")) ||
+      redirect.source.includes(":path") ||
+      redirect.source.endsWith(".html")
+    ) {
+      continue;
+    }
+
+    for (const source of [`${redirect.source}.html`, `${redirect.source}/index.html`]) {
+      const destination = directDestinations.get(source) ?? null;
+      if (destination !== redirect.destination) {
+        violations.push({ source, destination, expected: redirect.destination });
+      }
+    }
+  }
+
+  return violations;
+}
+
 /**
  * Validate static inference and Manage Sandboxes redirect destinations against the published route map.
  * Variant placeholders are expanded independently so one unsupported agent route
@@ -404,7 +449,12 @@ function main(): void {
     ...findBrokenPublishedManageSandboxRoutes("about/release-notes.mdx", index),
   ];
   const redirectViolations = findBrokenPublishedRedirects(index);
-  if (violations.length > 0 || redirectViolations.length > 0) {
+  const legacyHtmlRedirectViolations = findMissingDirectLegacyManageSandboxRedirects();
+  if (
+    violations.length > 0 ||
+    redirectViolations.length > 0 ||
+    legacyHtmlRedirectViolations.length > 0
+  ) {
     console.error(
       "check-docs-published-routes: internal links resolve to no published Fern route.",
     );
@@ -425,10 +475,17 @@ function main(): void {
           `    resolves to ${v.resolved} — not a published route`,
       );
     }
+    for (const v of legacyHtmlRedirectViolations) {
+      console.error(
+        `  fern/docs.yml legacy route ${v.source}\n` +
+          `    targets ${v.destination ?? "no direct redirect"}\n` +
+          `    expected direct destination ${v.expected}`,
+      );
+    }
     process.exit(1);
   }
   console.log(
-    `check-docs-published-routes: OK — ${GUARDED_SOURCE_PAGES.length} guarded page(s) plus release-note inference and Manage Sandboxes links, all checked links resolve to published routes`,
+    `check-docs-published-routes: OK — ${GUARDED_SOURCE_PAGES.length} guarded page(s) plus release-note links and direct Manage Sandboxes legacy HTML redirects`,
   );
 }
 

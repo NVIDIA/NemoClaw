@@ -73,6 +73,8 @@ unset GITHUB_MCP_TOKEN
 `restart` requires a successful provider update, waits until the sandbox receives a new opaque provider revision, reapplies policy, and refreshes the adapter.
 An ambiguous or failed update is not treated as successful merely because another writer advanced the provider revision.
 
+Restart resolves the endpoint hostname again before updating its pinned network policy.
+
 The raw value passes only through the OpenShell provider command's process environment and is not added to argv, NemoClaw state, or sandbox config.
 Revoke the old credential upstream after restart succeeds.
 

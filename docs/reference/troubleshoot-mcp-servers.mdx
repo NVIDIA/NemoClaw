@@ -55,7 +55,7 @@ Rebuild a Deep Agents sandbox, then retry the managed MCP command:
 
 ```bash
 nemo-deepagents <name> rebuild
-nemo-deepagents <name> mcp add <server-name> <url>
+nemo-deepagents <name> mcp add <server-name> --url <url> --env <credential-env>
 ```
 
 NemoClaw does not auto-load user-owned `/sandbox/.deepagents/.mcp.json` or project MCP files into managed configuration.
