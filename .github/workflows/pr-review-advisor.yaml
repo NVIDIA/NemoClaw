@@ -87,7 +87,7 @@ jobs:
       TYPEBOX_VERSION: "1.1.38"
       # Workflow-boundary modules parse YAML before the advisor session starts.
       YAML_VERSION: "2.8.3"
-      # Inventory discovery executes the repository's trusted Vitest entrypoint.
+      # Credential-free inventory discovery executes the trusted Vitest entrypoint.
       VITEST_VERSION: "4.1.9"
       FD_FIND_VERSION: "9.0.0-1"
       RIPGREP_VERSION: "14.1.0-1"
