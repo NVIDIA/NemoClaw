@@ -1538,7 +1538,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--github-host",
         default="github.com",
-        help="GitHub API hostname to bind and pass explicitly to gh (default: github.com)",
+        choices=("github.com",),
+        help="Trusted GitHub API hostname to bind explicitly to gh (github.com only)",
     )
     parser.add_argument(
         "--github-target-ref",
@@ -1561,15 +1562,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", args.github_repository
     ):
         parser.error("--github-repository must use OWNER/REPO form")
-    if (
-        not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?", args.github_host)
-        or ".." in args.github_host
-    ):
-        parser.error("--github-host must be a hostname without scheme, path, or port")
     if not 1 <= args.github_timeout_seconds <= 300:
         parser.error("--github-timeout-seconds must be between 1 and 300")
-    if not args.github_repository and args.github_host != "github.com":
-        parser.error("--github-host requires --github-repository")
     if args.github_target_ref and not args.github_repository:
         parser.error("--github-target-ref requires --github-repository")
     if args.github_target_ref and not args.github_target_ref.startswith("refs/heads/"):

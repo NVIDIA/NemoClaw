@@ -888,11 +888,11 @@ describe("dependency release ledger collector", () => {
     }
   }, 45_000);
 
-  it("binds an explicit GitHub host instead of inheriting GH_HOST", () => {
+  it("binds github.com explicitly instead of inheriting GH_HOST", () => {
     const { repo, targetSha } = createTaggedRepository();
     const evidence = readGitEvidence(repo, targetSha);
     const invocationLog = path.join(repo, "gh-invocations.jsonl");
-    const apiHost = "github.example.com";
+    const apiHost = "github.com";
     const result = runCollector(
       repo,
       "v1.0.0",
@@ -1424,12 +1424,13 @@ describe("dependency release ledger collector", () => {
       "--github-repository",
       "acme/dependency/extra",
     ]);
-    const invalidHost = runCollector(repo, "v1.0.0", targetSha, [
-      "--github-repository",
-      "acme/dependency",
-      "--github-host",
-      "https://github.com",
-    ]);
+    const invalidHost = runCollector(
+      repo,
+      "v1.0.0",
+      targetSha,
+      ["--github-repository", "acme/dependency", "--github-host", "attacker.example"],
+      environmentWithoutGh(),
+    );
     const invalidTimeout = runCollector(repo, "v1.0.0", targetSha, [
       "--github-repository",
       "acme/dependency",
@@ -1457,7 +1458,8 @@ describe("dependency release ledger collector", () => {
     expect(invalidRepository.status).toBe(2);
     expect(invalidRepository.stderr).toContain("OWNER/REPO");
     expect(invalidHost.status).toBe(2);
-    expect(invalidHost.stderr).toContain("hostname without scheme");
+    expect(invalidHost.stderr).toContain("invalid choice");
+    expect(invalidHost.stderr).not.toContain("could not execute gh");
     expect(invalidTimeout.status).toBe(2);
     expect(invalidTimeout.stderr).toContain("between 1 and 300");
     expect(orphanTargetRef.status).toBe(2);

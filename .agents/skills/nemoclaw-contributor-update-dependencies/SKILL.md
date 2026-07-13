@@ -71,22 +71,22 @@ intentional reviewed artifact:
   --to <target-tag-or-commit> \
   --required-fix <required-upstream-fix-ref> \
   --github-repository <owner/repository> \
-  --github-host <github-hostname> \
   --github-target-ref refs/heads/<branch-for-untagged-target> \
   --output <temporary-ledger.json>
 ```
 
 Repeat `--required-fix` for every upstream commit the requested upgrade must contain. For
-GitHub-hosted dependencies, use `--github-repository` with an authenticated `gh` CLI and set
-`--github-host` explicitly for GitHub Enterprise. The collector binds the API host and canonical
-repository identity, inventories and peels every remote semantic-version tag, rejects missing local
-range tags or rewritten tag objects, and lists releases with pagination. A canonical repository
-rename or redirect must stop the run and be supplied explicitly. For an untagged target, pass
-`--github-target-ref` naming the exact advertised upstream branch ref; raw commit-object lookup is
-not repository-membership evidence because GitHub can expose fork and pull-request objects through
-the base repository's object network. It records `absent` only when the authenticated viewer is
-proven able to see drafts; otherwise a missing tag is `not-published` with draft visibility called
-out. Shallow history, replace refs, grafts, missing commit objects, API, authentication, shape,
+public GitHub dependencies, use `--github-repository` with an authenticated `gh` CLI. Remote
+collection is deliberately restricted to `github.com`; it will not route ambient authentication to
+a caller-selected GitHub Enterprise or arbitrary host. The collector binds the API host and
+canonical repository identity, inventories and peels every remote semantic-version tag, rejects
+missing local range tags or rewritten tag objects, and lists releases with pagination. A canonical
+repository rename or redirect must stop the run and be supplied explicitly. For an untagged target,
+pass `--github-target-ref` naming the exact advertised upstream branch ref; raw commit-object lookup
+is not repository-membership evidence because GitHub can expose fork and pull-request objects
+through the base repository's object network. It records `absent` only when the authenticated viewer
+is proven able to see drafts; otherwise a missing tag is `not-published` with draft visibility
+called out. Shallow history, replace refs, grafts, missing commit objects, API, authentication, shape,
 identity, tag, and timeout ambiguity fail collection. Before returning evidence, it rechecks the
 canonical repository identity, exact target branch ref, complete remote semantic-version tag-root
 inventory, and complete visible release inventory; any drift requires a fresh run. Producer workflow/run/attempt and
