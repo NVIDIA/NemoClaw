@@ -5,13 +5,13 @@
 
 ## Status and decision
 
-This is a candidate migration review, not approval to ship OpenShell 0.0.82.
-The reviewed upstream endpoint is OpenShell `main` at
-[`bb72d0123c748ed7e209880f7bab593e10aae221`](https://github.com/NVIDIA/OpenShell/commit/bb72d0123c748ed7e209880f7bab593e10aae221).
-OpenShell has not published a stable `v0.0.82` tag or release at this endpoint.
-NemoClaw therefore remains pinned to `0.0.72` until the final release identity,
-semantic migrations, artifact provenance, supported-platform proofs, and DGX Spark
-credential-substitution proof below are complete.
+OpenShell published stable tag `v0.0.82` at verified commit
+[`94cdd697c55aedb571f177ec13cfa54a8e213919`](https://github.com/NVIDIA/OpenShell/commit/94cdd697c55aedb571f177ec13cfa54a8e213919).
+This review binds NemoClaw's `0.0.82` selectors to that exact source and its
+published artifacts. It is not blanket approval for every upstream platform or
+driver: exact-head NemoClaw CI/advisor review, the supported-platform proofs, and
+the physical DGX Spark credential-substitution proof below remain separate merge
+and issue-closure gates.
 
 The source under review includes
 [`40194f935ef6e29cb07500b9109314778ab6915c`](https://github.com/NVIDIA/OpenShell/commit/40194f935ef6e29cb07500b9109314778ab6915c),
@@ -24,15 +24,18 @@ MCP tool call with credential substitution.
 
 ## Audit method and exact boundary
 
-The current identity is OpenShell `v0.0.72` at
-`8cb16de9eae4c44d7d31e1493747d8c10abb5963`. The candidate identity is the exact
-remote `main` SHA above, not a local branch name or the moving `dev` tag.
+The previous identity is OpenShell `v0.0.72` at
+`8cb16de9eae4c44d7d31e1493747d8c10abb5963`. The selected identity is the exact
+stable tag SHA above, not a local branch name or the moving `dev` tag. Its parent
+is the previously reviewed candidate `bb72d0123c748ed7e209880f7bab593e10aae221`;
+the only terminal delta is a verified Dependabot workflow-action update with no
+runtime or packaging-contract change.
 
 The audit enumerated every stable adjacent tag, then read the release notes,
 complete commit list, changed paths, source diffs, and upstream tests for each
 range. Release notes were treated as leads rather than proof. The resulting boundary
-contains 10 adjacent ranges, 46 commits, and 174 distinct changed paths in the
-aggregate `v0.0.72..bb72d012` comparison.
+contains 10 adjacent ranges, 47 commits, and 175 distinct changed paths in the
+aggregate `v0.0.72..v0.0.82` comparison.
 
 The ledger was produced with:
 
@@ -40,7 +43,7 @@ The ledger was produced with:
 collect-release-ledger.py \
   --repo <read-only-openshell-checkout> \
   --from v0.0.72 \
-  --to origin/main
+  --to v0.0.82
 ```
 
 | Range | Commits | Changed paths | Diff size |
@@ -54,7 +57,7 @@ collect-release-ledger.py \
 | `v0.0.78 -> v0.0.79` | 1 | 1 | +1 / -1 |
 | `v0.0.79 -> v0.0.80` | 5 | 15 | +1,373 / -96 |
 | `v0.0.80 -> v0.0.81` | 4 | 9 | +617 / -24 |
-| `v0.0.81 -> bb72d012` | 11 | 75 | +7,850 / -982 |
+| `v0.0.81 -> v0.0.82` | 12 | 76 | +7,851 / -983 |
 
 Release publication is a separate gate from source ancestry:
 
@@ -74,8 +77,12 @@ Release publication is a separate gate from source ancestry:
   `0.0.82-dev.11+gbb72d0123`; and Python wheel filenames use
   `0.0.82.dev11+gbb72d0123`. Development compatibility manifests must record
   the observed CLI output separately from producer and component versions. A
-  moving prerelease is useful for compatibility work, but is not a stable
+  moving prerelease was useful for compatibility work, but is not the stable
   selector or final provenance record.
+- Stable tag `v0.0.82` was published by successful `Release Tag` workflow run
+  [29260186856](https://github.com/NVIDIA/OpenShell/actions/runs/29260186856)
+  at `94cdd697`. The release is neither draft nor prerelease, and the selected
+  CLI and gateway report `0.0.82`.
 
 ### Rust dependency and notice delta
 
@@ -100,20 +107,20 @@ found no advisory entry naming `capctl`; that absence is inventory evidence, not
 proof that the unsafe boundary is vulnerability-free.
 
 OpenShell's `THIRD-PARTY-NOTICES` object is byte-identical at `v0.0.72` and
-`bb72d012` (`41eda0e0a83429e874544b507977c3a56f5a489f`). It does not name
-`capctl` and still records only `bitflags 2.10.0`, while the candidate lock has
+`v0.0.82` (`41eda0e0a83429e874544b507977c3a56f5a489f`). It does not name
+`capctl` and still records only `bitflags 2.10.0`, while the stable lock has
 `bitflags 1.3.2` and `2.11.1`. OpenShell has source-directory CycloneDX tooling,
-but its license check is advisory and the candidate release job neither
-generates nor publishes that SBOM. The release job attests VM-driver archives,
-not the consumed CLI, gateway, standalone sandbox archives, or supervisor OCI
-image. Final approval therefore requires a lock-to-binary dependency inventory,
-current notices/licenses, advisory results, and provenance for the stable
-artifacts; the unchanged notice cannot be treated as evidence that the Rust
-dependency graph stayed constant.
+but its license check is advisory and the release job neither generates nor
+publishes that SBOM. The stable release does publish SLSA attestations for the
+consumed archives, as recorded below, but not for the supervisor OCI image. The
+lock-to-binary dependency inventory, notices/licenses, advisory results, archive
+provenance, and image provenance must therefore remain separate claims; the
+unchanged notice cannot be treated as evidence that the Rust dependency graph
+stayed constant.
 
 ## Artifact baseline and provenance gap
 
-The currently shipped `0.0.72` supervisor index
+The previously shipped `0.0.72` supervisor index
 `sha256:80ed9cda5bf672fefdb9dcd4604b40a8b09c0891b6eb9d03e10227c7e3dfb49d`
 resolves to these exact platform identities:
 
@@ -130,10 +137,9 @@ for that index. Therefore `0.0.72` has no verifiable source-to-image attestation
 matching release tags or timestamps cannot fill the gap. The immutable index
 digest is the strongest enforceable runtime control for the baseline, while the
 child manifest and config identities above are audit evidence rather than source
-provenance. The final `0.0.82` artifact audit must verify any upstream OCI
-attestation and source labels that are actually published, or explicitly retain
-this provenance gap as an unresolved supply-chain gate. NemoClaw cannot
-manufacture a missing upstream attestation.
+provenance. The stable `0.0.82` audit below found the same missing OCI
+attestation and source labels and explicitly retains that provenance gap.
+NemoClaw cannot manufacture a missing upstream attestation.
 
 NemoClaw now validates the shape of every consumed OpenShell archive before any
 extraction: the asset must contain exactly one regular file with the expected
@@ -141,6 +147,56 @@ CLI, gateway, or sandbox binary name. Absolute paths, parent traversal, extra or
 duplicate members, links, and devices fail closed. This structural validation is
 independent of release SHA-256 verification and also constrains the explicitly
 unverified development-channel path.
+
+### Stable v0.0.82 artifact evidence
+
+The successful `Release Tag` run above published three checksum manifests whose
+release-asset SHA-256 values are independently trusted by NemoClaw's base-owned
+verifier:
+
+| Manifest | SHA-256 |
+|---|---|
+| `openshell-checksums-sha256.txt` | `74ba77d368744f412b2dd246099b63b38937962807333ded2b6284580a2d014e` |
+| `openshell-gateway-checksums-sha256.txt` | `c0a369ba2c66bcde3c18ce2753b04ff942d1fe1b5f3e4656de520f6d4b175477` |
+| `openshell-sandbox-checksums-sha256.txt` | `3300b9856cdbe8e3f9b0f8068bbad93673739c4cfd3212c80dc0675168ee2b8d` |
+
+Every archive consumed by the installer and Brev path matches both the release
+manifest and GitHub's release-asset digest:
+
+| Consumed archive | SHA-256 |
+|---|---|
+| `openshell-x86_64-unknown-linux-musl.tar.gz` | `d3d73904bd6e2f81f5913ca2347eb0e772eb45d82fbee9880be3e0c416eaf802` |
+| `openshell-aarch64-unknown-linux-musl.tar.gz` | `f1113a9cfed452860d62658da67f48a657f502e23f1117b38111867ba13521ca` |
+| `openshell-aarch64-apple-darwin.tar.gz` | `ce70f93fa079e939712e7c34e29814181d78a984d9ddfcfd4f64f6d30b9a706a` |
+| `openshell-gateway-x86_64-unknown-linux-gnu.tar.gz` | `999c6ce18b7ae3a23a7d5c22136a79cfb9c7e45ed6a5777db49229e3fb0e6255` |
+| `openshell-gateway-aarch64-unknown-linux-gnu.tar.gz` | `9851da7d3bdd1d679917a56e560024ee1d6ffc8635cef1adfdadb34f1b7ddc37` |
+| `openshell-gateway-aarch64-apple-darwin.tar.gz` | `0b31e3a36a7a997db82814a026b6371a31ed8f40ff6449bf74fea803df7bf930` |
+| `openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz` | `90437f9de79d0cd6f1a2d2c5d7d20a52c0c7c7552ffcb003314ed1811e54e8dc` |
+| `openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz` | `0fc3f9213aee418fe240690748387652567e0b42e37412232f943dc857fc01b5` |
+
+GitHub's SLSA verifier accepts the attestations for those archives and binds
+their exact digests to source commit `94cdd697`, the release workflow, and run
+attempt. Archive-shape inspection found exactly the expected regular binary in
+each tarball. The extracted standalone sandbox identities used when an older
+host loader cannot execute `--version` are
+`145246049bd73c60452ac3c2b4b1801663196c8e2f80575af820289c78c1cf09`
+for Linux amd64 and
+`76bc19b70d9f1e1e9871307045796cd39cc7b8fc4c08ffc90593cc934f36d500`
+for Linux arm64.
+
+The stable supervisor image is pinned to immutable multi-architecture index
+`sha256:790485a36adc43ff4562b92de5387cebfb05b5c1e27b62738779b37f01939365`:
+
+| Platform | Child manifest | Config |
+|---|---|---|
+| Linux amd64 | `sha256:c198fb65edfefd00e1766debe0526a2cf63d4feeb8607f738587c938f32b16f4` | `sha256:12a54074f62120d63c9e6a94610e648947300b28427964d7aa9c9e7d8cb02805` |
+| Linux arm64 | `sha256:b63b16a368824b827263665dece0d1285110c853964cc2ba9398ef6b13f892c3` | `sha256:e83840632cbc1b202f0886bf4e03ca78e84d2cef45dfe42b2627bb1b4bc7902f` |
+
+The stable OCI publication retains the candidate image's upstream provenance
+limitation: the index has no OCI referrers, attestations, SBOM, or source labels.
+NemoClaw therefore enforces the immutable index and platform identities above
+and does not claim source-to-image provenance. This gap remains distinct from
+the SLSA-bound release archives.
 
 ### Candidate development artifact evidence
 
@@ -221,8 +277,8 @@ Actions output, but not cryptographically to source: GitHub returned no
 attestation for the index or either child manifest, and the OCI configs expose no
 source, revision, or version labels. Development proof must therefore record
 `attestationStatus: absent`, preserve every digest above, and avoid claiming
-source-to-image provenance. The final stable release must be audited anew rather
-than inheriting this development evidence.
+source-to-image provenance. The stable release was audited anew in the preceding
+section rather than inheriting these development identities.
 
 ## Adjacent release findings
 
@@ -354,10 +410,11 @@ not consumed. `420a855d` adds upstream supervisor proxy-hostname regression test
 without changing product source. The failed stable publication is nevertheless a
 hard artifact gate for this source tag.
 
-### v0.0.81 to candidate main bb72d012
+### v0.0.81 to v0.0.82
 
 Commits: `5f38b7c4`, `ccdac9ce`, `caaa5165`, `8c0ecac8`, `233d207e`,
-`10702133`, `bebf440b`, `8eacb477`, `614c8c16`, `40194f93`, `bb72d012`.
+`10702133`, `bebf440b`, `8eacb477`, `614c8c16`, `40194f93`, `bb72d012`,
+`94cdd697`.
 
 - `40194f93` closes two placeholder leak paths: missing resolver state now rejects
   reserved credential markers, and missing TLS-termination state returns a
@@ -417,6 +474,9 @@ Commits: `5f38b7c4`, `ccdac9ce`, `caaa5165`, `8c0ecac8`, `233d207e`,
   NemoClaw parser coupled to the old field order.
 - Native Kubernetes sidecar/PVC/Helm changes, OpenShift documentation, and the TUI
   warning destination are not consumed by NemoClaw's Docker integration.
+- `94cdd697` updates only the verified `astral-sh/setup-uv` action reference. It
+  is the final tag commit and adds no runtime, package, or artifact-layout delta
+  beyond the already reviewed `bb72d012` source.
 
 The newline migration was audited beyond the public `exec` guard. Production
 gateway RPC now sends its reviewed module source directly, and the live E2E
@@ -449,31 +509,32 @@ usable. The target then reattaches through `mcp restart`, rebuilds without the
 host MCP secret, and removes the bridge. Every request is identified independently
 of its credential, and the upstream ledger is required to contain no literal
 resolve placeholder.
-The workflow runs this bounded target only against the exact reviewed development
-artifacts and scans its artifacts for the whole generated-secret prefix. The
-final stable-source review must retain the upstream
-`expired_retained_generation_does_not_resolve` unit and rerun this live contract.
+The workflow first ran this bounded target against the exact reviewed development
+artifacts and scanned its artifacts for the whole generated-secret prefix. The
+stable-source review retains the upstream
+`expired_retained_generation_does_not_resolve` unit; the final exact-head live
+contract must execute without the candidate-only compatibility bypass.
 
 ## Downstream concern ledger
 
 | ID | Severity | Downstream consumer and failure mode | Required disposition | Current state |
 |---|---|---|---|---|
-| `OS82-01` | Critical | All stable selectors, archives, checksums, binaries, and the supervisor image could identify different builds. | Pin one published tag; verify producer run, signatures/attestations, release hashes, extracted binaries, component versions, OCI index and child manifests; reject archive traversal, links, devices, duplicates, or unexpected members. | Blocked: no stable `v0.0.82` release. |
+| `OS82-01` | Critical | All stable selectors, archives, checksums, binaries, and the supervisor image could identify different builds. | Pin one published tag; verify producer run, signatures/attestations, release hashes, extracted binaries, component versions, OCI index and child manifests; reject archive traversal, links, devices, duplicates, or unexpected members. | Closed for dependency selection: stable tag `94cdd697`, producer run 29260186856, three manifest digests, eight consumed archive digests and SLSA attestations, extracted sandbox identities, and the immutable multiarch supervisor index are recorded and enforced. |
 | `OS82-02` | Critical | `mcp status` can be honest while the affected Spark still cannot initialize resolver/CA state or perform a credential-bearing request. | Physical Docker 27 DGX Spark: register credential, require status success, load tools, complete a real MCP tool call, and prove the literal placeholder never reaches upstream. | Blocked on assigned hardware proof. |
-| `OS82-03` | High | `src/lib/actions/sandbox/exec.ts`, command dispatch, docs, and internal wrappers encode the old newline rejection. | Remove the obsolete public rejection and newline-only wrappers; prove byte-exact LF, CR, CRLF, quotes, and heredoc argv; retain NUL plus multiline workdir/environment rejection. | Source and internal-wrapper migration complete; candidate runtime proof open. |
+| `OS82-03` | High | `src/lib/actions/sandbox/exec.ts`, command dispatch, docs, and internal wrappers encode the old newline rejection. | Remove the obsolete public rejection and newline-only wrappers; prove byte-exact LF, CR, CRLF, quotes, and heredoc argv; retain NUL plus multiline workdir/environment rejection. | Source and internal-wrapper migration complete; stable exact-head runtime proof remains a merge gate. |
 | `OS82-04` | High | OpenShell child launch now clears the complete capability bounding set. Hosts without `CAP_SETPCAP` may fail if their runtime does not pre-clear it. | Prove entrypoint, exec, and connect launch with `CapBnd=0` on Linux Docker, DGX Spark arm64, macOS Docker Desktop/Colima, WSL, and Colossus; update NemoClaw's #3280 caveat only from runtime evidence. | Candidate exact-main proof now inspects the actual entrypoint, exec, and forced-TTY connect children for full `CapBnd=0`; exact-head Linux execution and every other platform remain open. |
-| `OS82-05` | High | Versioned credential placeholders and the eight-generation window change long-running MCP behavior. | Regenerate the exact-version child-visible manifest; reject reserved `v<digits>_` names; test more than eight rotations, removed keys, detach, restart/rebuild, fresh exec revision, expiry, and literal-placeholder scans. | Exact-main generation-window proof implemented and workflow-mandatory; live execution, final manifest, and stable-source rerun remain open. |
+| `OS82-05` | High | Versioned credential placeholders and the eight-generation window change long-running MCP behavior. | Regenerate the exact-version child-visible manifest; reject reserved `v<digits>_` names; test more than eight rotations, removed keys, detach, restart/rebuild, fresh exec revision, expiry, and literal-placeholder scans. | The exact `v0.0.82` child-visible manifest is the production authority and the generation-window proof is workflow-mandatory; stable exact-head live execution remains a merge gate. |
 | `OS82-06` | High | Initial policy acknowledgement and ordered retry can make the active gateway status lag enforcement. | Test initial LOADED/FAILED, hot update, retry outage/recovery, restart, exact version/hash re-read, and ordered drain. | Candidate exact-main proof now covers hot-update LOADED identity plus restart initial acknowledgement and exact version/hash recovery. Initial FAILED and isolated report outage/ordered drain remain an open runtime gate. |
 | `OS82-07` | High | Sequential nft setup can leave an incomplete policy-accept ruleset after a required command fails; Docker setup treats the error as nonfatal. | Inject each required failure; inspect IPv4/IPv6 TCP/UDP rules and direct-bypass negatives on Linux x86 and Spark arm64; verify restart and teardown. | Candidate exact-main proof now inspects the live policy-accept chain and all four required rejects before/after restart, and probes controlled IPv4 TCP/UDP listeners. Required-command fault injection, routed IPv6 behavior, Spark arm64, and physical teardown remain an open security gate. |
-| `OS82-08` | High | The supervisor image moves from one scratch binary to a 29-package Alpine filesystem resolved from a mutable base and unpinned APK names. NemoClaw's Docker path downloads it but executes only the extracted binary. | Retain exact per-arch package/version/license and file inventories; scan vulnerabilities; verify modes, multiarch manifests, base/package identities, source labels, OCI provenance, and extraction-only behavior; preserve an explicit digest. | Development identities and content are enumerated. Vulnerability results, license attribution, reproducible base/package inputs, attestation, and the final stable image remain open. |
+| `OS82-08` | High | The supervisor image moves from one scratch binary to a 29-package Alpine filesystem resolved from a mutable base and unpinned APK names. NemoClaw's Docker path downloads it but executes only the extracted binary. | Retain exact per-arch package/version/license and file inventories; scan vulnerabilities; verify modes, multiarch manifests, base/package identities, source labels, OCI provenance, and extraction-only behavior; preserve an explicit digest. | The final stable index, child manifests, configs, and candidate-equivalent package/file inventory are recorded. The upstream image still has no OCI attestation, SBOM, source labels, or reproducible base/package inputs; NemoClaw enforces the immutable index and explicitly retains that provenance limitation. |
 | `OS82-09` | Medium-high | Normalized selected-driver config can change the effective Docker gateway even when the TOML text is unchanged. | Parse the final rendered TOML with the final binary; prove loopback/bridge listeners, JWT/mTLS, restart, persisted state, and legacy gateway upgrade. | Candidate exact-main proof now binds the actual rendered Docker TOML to the running candidate gateway, loopback and Linux bridge listeners, mTLS/JWT mounts and relay access, host gateway restart, persisted sandbox state, and rebuild. The exact-head result, legacy-gateway upgrade, and non-Linux/host-gateway platforms remain open. |
 | `OS82-10` | Medium-high | Supervisor TLS identity variables are no longer child environment. Stale tests/comments can normalize a credential leak. | Assert absence from entrypoint, exec, and connect children and update the source-of-truth rationale. | Hermes and Deep Agents now reject all three variables; the candidate exact-main entrypoint, exec, and connect probes require their absence, with exact-head execution pending. |
 | `OS82-11` | Medium-high | Live `/proc/<pid>/exe` identity changes replacement-time policy behavior. | Prove old process survives replacement and a new altered process at the same path is denied. | Candidate exact-main proof runs both processes against the real proxy and requires old=200 before/after replacement, distinct live/path hashes, and new=403; exact-head runtime result pending. |
 | `OS82-12` | Medium | OpenShell declares Docker 28.0+ while #6379 is on Docker 27 and NemoClaw marks DGX Spark tested. | Either validate and document a precise downstream exception from physical proof or raise the supported floor and preflight it. | Open product/platform decision. |
 | `OS82-13` | Low | Mount parsing/SELinux changes could affect the test-only tmpfs path. | Rerun the EXDEV tmpfs fixture and retain production no-mount evidence. | Candidate exact-main proof injects only the reviewed tmpfs config, requires Docker's structured tmpfs representation plus `noexec`/01777 at runtime, retains it across gateway restart, and requires a fresh remount after rebuild. The wrapper is disabled outside the explicit proof lane and production still supplies no driver mounts. Exact-head, Podman, and enforcing-SELinux results remain open. |
 | `OS82-14` | Low | Sanitized MCP tool names are newly present in logs. | Record the additive observability/privacy behavior; ensure no downstream parser assumes the old shape. | Candidate exact-main check requires the real `fake_echo` tool name and rejects argument/result canaries or an `arguments` field in JSON-RPC policy logs; exact-head runtime result pending. |
-| `OS82-15` | High | The installer-hash workflow executes its checker and parser from the PR base SHA. One PR cannot safely teach that trusted base about a new release and consume the release; using the head checker would let reviewed code define its own trust rules. | First land archive safety, normalized full-script template validation, and multi-release trust while selectors remain `0.0.72`; prove the old base rejects a new release and the new base permits only structured release-data changes; then submit the `0.0.82` pin. | NemoClaw-only prerequisite implementation in progress. |
-| `OS82-16` | High | Capability clearing now depends on `capctl 0.2.4` and `bitflags 1.3.2`, but upstream notices are unchanged and the consumed binaries have no published SBOM or attestation covering this dependency graph. | Bind crate checksums and source identities to the stable lock and binaries; review the unsafe syscall boundary and advisories; update notices/licenses; retain a generated SBOM and provenance for every consumed binary. | Candidate crate source, checksums, licenses, unsafe boundary, and current RustSec absence are recorded. Stable lock-to-binary SBOM, notices, and provenance remain open. |
+| `OS82-15` | High | The installer-hash workflow executes its checker and parser from the PR base SHA. One PR cannot safely teach that trusted base about a new release and consume the release; using the head checker would let reviewed code define its own trust rules. | First land archive safety, normalized full-script template validation, and multi-release trust while selectors remain `0.0.72`; prove the old base rejects a new release and the new base permits only structured release-data changes; then submit the `0.0.82` pin. | Manifest trust landed in #6778. Follow-up #6779 strictly parses sandbox digest-to-version release data before normalizing it and proves the full `0.0.82` tree with the base-trusted checker; it must land before this selector commit. |
+| `OS82-16` | High | Capability clearing now depends on `capctl 0.2.4` and `bitflags 1.3.2`, but upstream notices are unchanged and the consumed binaries have no published SBOM or attestation covering this dependency graph. | Bind crate checksums and source identities to the stable lock and binaries; review the unsafe syscall boundary and advisories; update notices/licenses; retain a generated SBOM and provenance for every consumed binary. | The stable lock, crate checksums, source identities, licenses, unsafe boundary, current RustSec absence, and SLSA-bound archives are recorded. Upstream still publishes no binary SBOM and its unchanged notices omit the new graph; that limitation remains explicit rather than being presented as complete attribution. |
 | `OS82-17` | Medium | The VM driver bakes configurable UID/GID into prepared rootfs state, but its same-version cache key omits both values and can reuse stale passwd/group entries after configuration drift. | Keep NemoClaw's selected driver Docker-only. Before any VM path is supported, key prepared images by UID/GID or purge them and prove identity/ownership after change and restart. | Source-reviewed exclusion for the current Docker topology; VM configuration-churn compatibility is unproven. |
 
 An unresolved critical or high concern blocks the version selector change. A green
@@ -600,16 +661,18 @@ restart/rebuild, and cleanup without a conditional skip or expected failure.
 
 ## Final acceptance gates
 
-1. The trusted installer/hash prerequisite lands on NemoClaw `main` while all
-   runtime selectors remain `0.0.72`. Its base-owned parser rejects operational
-   installer drift and permits only validated release-data and selector changes.
-2. A stable OpenShell tag contains `bb72d012` or a reviewed descendant. Re-run
-   this entire adjacent-source audit for every commit between `bb72d012` and that
-   tag.
-3. The tag has a successful release publication. Every consumed archive and OCI
-   child manifest is bound to that producer run and source identity. Stable
-   binary and image SBOMs, notices, licenses, advisory results, and provenance
-   account for the exact Rust and APK graphs above.
+1. The trusted manifest prerequisite has landed on NemoClaw `main` as #6778
+   while runtime selectors remain `0.0.72`. The structured sandbox-build-map
+   follow-up #6779 must also land before this selector commit; its base-owned
+   parser rejects operational installer drift and permits only validated
+   release-data and selector changes.
+2. Stable tag `v0.0.82` contains the reviewed candidate and only terminal action
+   update `94cdd697`. The full adjacent-source audit above includes that commit.
+3. The tag has successful release publication run 29260186856. Every consumed
+   archive is bound to that producer/source through exact release digests and
+   SLSA attestations, and the OCI index/children are immutable. Missing upstream
+   image attestation/SBOM/source labels and incomplete notices remain recorded
+   provenance and attribution limitations rather than false-green evidence.
 4. Blueprint bounds, installer tables, Brev defaults, workflow pins, feature-gate
    hashes, supervisor digest, credential manifest, tests, and active docs select
    one coherent version.

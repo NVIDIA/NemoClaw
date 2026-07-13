@@ -13,8 +13,8 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 
 // #3474). The former bash script is a self-contained installer-script behavioral
 // test: it runs scripts/install-openshell.sh under a stubbed PATH where the
-// already-installed openshell reports a too-new version (0.0.73) and the
-// downloaded archives produce a binary that reports the pinned 0.0.72.
+// already-installed openshell reports a too-new version (0.0.83) and the
+// downloaded archives produce a binary that reports the pinned 0.0.82.
 //
 // This credential-free E2E test does not exercise
 // the registry-driven steady-state probe model. There is no OpenClaw instance,
@@ -23,7 +23,7 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 
 const INSTALL_SCRIPT = path.join(REPO_ROOT, "scripts", "install-openshell.sh");
 
-test("openshell-version-pin: selects shipping 0.0.72 between older and too-new releases", () => {
+test("openshell-version-pin: selects shipping 0.0.82 between older and too-new releases", () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-resolver-"));
   const binDir = path.join(tmpDir, "bin");
   fs.mkdirSync(binDir);
@@ -31,9 +31,9 @@ test("openshell-version-pin: selects shipping 0.0.72 between older and too-new r
     path.join(binDir, "gh"),
     `#!/bin/sh
 printf '%s\\n' '${JSON.stringify([
-      { tagName: "v0.0.71" },
-      { tagName: "v0.0.73" },
-      { tagName: "v0.0.72" },
+      { tagName: "v0.0.81" },
+      { tagName: "v0.0.83" },
+      { tagName: "v0.0.82" },
     ])}'`,
   );
 
@@ -48,17 +48,17 @@ printf '%s\\n' '${JSON.stringify([
 const pin = require(${JSON.stringify(path.join(REPO_ROOT, "src/lib/onboard/openshell-pin.ts"))});
 const version = require(${JSON.stringify(path.join(REPO_ROOT, "src/lib/onboard/openshell-version.ts"))});
 const deps = {
-  getBlueprintMinOpenshellVersion: () => "0.0.72",
-  getBlueprintMaxOpenshellVersion: () => "0.0.72",
+  getBlueprintMinOpenshellVersion: () => "0.0.82",
+  getBlueprintMaxOpenshellVersion: () => "0.0.82",
   versionGte: version.versionGte,
 };
 const resolution = pin.resolveOpenshellInstallPin(deps);
 const replacement = pin.computeOpenshellInstallEnv(
-  { INSTALLED_OPENSHELL_VERSION: "0.0.71" },
+  { INSTALLED_OPENSHELL_VERSION: "0.0.81" },
   deps,
 );
 process.stdout.write(JSON.stringify({
-  installed: version.getInstalledOpenshellVersion("openshell 0.0.71"),
+  installed: version.getInstalledOpenshellVersion("openshell 0.0.81"),
   resolution,
   replacement: replacement.env,
 }));`,
@@ -71,13 +71,13 @@ process.stdout.write(JSON.stringify({
     );
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
-      installed: "0.0.71",
-      resolution: { kind: "pin", version: "0.0.72", latest: "0.0.73", reason: "max-cap" },
+      installed: "0.0.81",
+      resolution: { kind: "pin", version: "0.0.82", latest: "0.0.83", reason: "max-cap" },
       replacement: {
-        INSTALLED_OPENSHELL_VERSION: "0.0.71",
-        NEMOCLAW_OPENSHELL_MIN_VERSION: "0.0.72",
-        NEMOCLAW_OPENSHELL_MAX_VERSION: "0.0.72",
-        NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.72",
+        INSTALLED_OPENSHELL_VERSION: "0.0.81",
+        NEMOCLAW_OPENSHELL_MIN_VERSION: "0.0.82",
+        NEMOCLAW_OPENSHELL_MAX_VERSION: "0.0.82",
+        NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.82",
       },
     });
   } finally {
@@ -86,9 +86,9 @@ process.stdout.write(JSON.stringify({
 });
 
 const PINNED_OPEN_SHELL_SHA256 = {
-  cliLinuxX64: "37836c3b50383e03249c5e16512c1806e591fba8451408a84fb2f628ddb318c4",
-  gatewayLinuxX64: "03225fb9388b682af1a5f1614b26b75f828da6031e3ffc1fd920b6fbe5f70877",
-  sandboxLinuxX64: "811f914b6a6a3a3f4533449ddebebb6422333861a27a5fa848db6cbfdffdd230",
+  cliLinuxX64: "d3d73904bd6e2f81f5913ca2347eb0e772eb45d82fbee9880be3e0c416eaf802",
+  gatewayLinuxX64: "999c6ce18b7ae3a23a7d5c22136a79cfb9c7e45ed6a5777db49229e3fb0e6255",
+  sandboxLinuxX64: "90437f9de79d0cd6f1a2d2c5d7d20a52c0c7c7552ffcb003314ed1811e54e8dc",
 };
 
 type GhDownloadMode = "success" | "fail";
@@ -98,7 +98,7 @@ function writeExecutable(target: string, contents: string): void {
 }
 
 // Bash helpers shared by the gh and curl stubs: write a fake archive and emit
-// the same pinned digest lines the real OpenShell v0.0.72 release uses. A fake
+// the same pinned digest lines the real OpenShell v0.0.82 release uses. A fake
 // sha256sum below keeps this test self-contained even though the tarball bytes are
 // synthetic.
 const SHARED_DOWNLOAD_BASH_HELPERS = `\
@@ -326,11 +326,11 @@ async function runVersionPinTarget(
     fs.writeFileSync(downloadLog, "");
 
     createFakeUname(fakeBin);
-    createFakeStickyOpenshell(fakeBin, "0.0.73");
+    createFakeStickyOpenshell(fakeBin, "0.0.83");
     createFakeHelperBinaries(fakeBin);
     createFakeGh(fakeBin, downloadLog, options.ghDownloadMode);
     createFakeCurl(fakeBin, downloadLog);
-    createFakeTar(fakeBin, "0.0.72");
+    createFakeTar(fakeBin, "0.0.82");
     createFakeStrings(fakeBin);
     createFakeSha256sum(fakeBin);
 
@@ -353,40 +353,40 @@ async function runVersionPinTarget(
     // "above the maximum" hard-fail before download).
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
 
-    // Assertion 2: download-log-contains-v0.0.72 — pinned release tag was
+    // Assertion 2: download-log-contains-v0.0.82 — pinned release tag was
     // requested from the release host.
     const downloads = fs.readFileSync(downloadLog, "utf-8");
-    expect(downloads).toContain("v0.0.72");
+    expect(downloads).toContain("v0.0.82");
 
-    // Assertion 3: download-log-excludes-v0.0.73 — the too-new sticky version
+    // Assertion 3: download-log-excludes-v0.0.83 — the too-new sticky version
     // is never re-fetched.
-    expect(downloads).not.toContain("v0.0.73");
+    expect(downloads).not.toContain("v0.0.83");
 
     if (options.ghDownloadMode === "fail") {
       // Assertion 3b: curl-fallback-observed — the installer must recover from
       // gh download failure by re-requesting the pinned assets via curl.
-      expect(downloads).toContain("gh download-fail v0.0.72");
+      expect(downloads).toContain("gh download-fail v0.0.82");
       expect(downloads).toContain("curl ");
     } else {
-      expect(downloads).toContain("gh download v0.0.72");
+      expect(downloads).toContain("gh download v0.0.82");
       expect(downloads).not.toContain("curl ");
     }
 
-    // Assertion 4: replaced-openshell-reports-0.0.72 — the binary on disk in
+    // Assertion 4: replaced-openshell-reports-0.0.82 — the binary on disk in
     // the active install dir (== fakeBin, since ACTIVE_OPENSHELL_BIN resolved
-    // there and it is writable) was overwritten with the pinned 0.0.72 build.
+    // there and it is writable) was overwritten with the pinned 0.0.82 build.
     const replacedVersion = spawnSync(path.join(fakeBin, "openshell"), ["--version"], {
       encoding: "utf8",
     });
     expect(replacedVersion.status).toBe(0);
-    expect(replacedVersion.stdout).toContain("0.0.72");
-    expect(replacedVersion.stdout).not.toContain("0.0.73");
+    expect(replacedVersion.stdout).toContain("0.0.82");
+    expect(replacedVersion.stdout).not.toContain("0.0.83");
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 }
 
-test("openshell-version-pin: replaces sticky too-new openshell with pinned 0.0.72 via gh download", async ({
+test("openshell-version-pin: replaces sticky too-new openshell with pinned 0.0.82 via gh download", async ({
   artifacts,
 }) => {
   await runVersionPinTarget(artifacts, { ghDownloadMode: "success" });

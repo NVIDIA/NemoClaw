@@ -21,7 +21,7 @@ const adjacentRanges = [
   { from: "v0.0.78", to: "v0.0.79", commits: 1, paths: 1 },
   { from: "v0.0.79", to: "v0.0.80", commits: 5, paths: 15 },
   { from: "v0.0.80", to: "v0.0.81", commits: 4, paths: 9 },
-  { from: "v0.0.81", to: "bb72d012", commits: 11, paths: 75 },
+  { from: "v0.0.81", to: "v0.0.82", commits: 12, paths: 76 },
 ] as const;
 
 const auditedCommits = [
@@ -71,11 +71,12 @@ const auditedCommits = [
   "614c8c16",
   "40194f93",
   "bb72d012",
+  "94cdd697",
 ] as const;
 
 describe("OpenShell 0.0.82 migration review", () => {
-  it("records every adjacent release range and all 46 audited commits", () => {
-    expect(adjacentRanges.reduce((total, range) => total + range.commits, 0)).toBe(46);
+  it("records every adjacent release range and all 47 audited commits", () => {
+    expect(adjacentRanges.reduce((total, range) => total + range.commits, 0)).toBe(47);
     for (const range of adjacentRanges) {
       expect(review).toContain(
         `| \`${range.from} -> ${range.to}\` | ${range.commits} | ${range.paths} |`,
@@ -84,16 +85,21 @@ describe("OpenShell 0.0.82 migration review", () => {
     for (const commit of auditedCommits) {
       expect(review, `missing audited OpenShell commit ${commit}`).toContain(commit);
     }
-    expect(review).toContain("174 distinct changed paths");
+    expect(review).toContain("175 distinct changed paths");
   });
 
   it("keeps source ancestry, release publication, and artifact provenance as separate gates", () => {
-    expect(review).toContain("This is a candidate migration review, not approval to ship");
+    expect(review).toContain("published stable tag `v0.0.82` at verified commit");
     expect(review).toContain("v0.0.81` is a source tag");
     expect(review).toContain("it has no GitHub release");
     expect(review).toContain("failed the Ubuntu 26.04 rootless-Podman E2E job");
     expect(review).toContain("no verifiable source-to-image attestation");
     expect(review).toContain("reject archive traversal, links, devices, duplicates");
+    expect(review).toContain("29260186856");
+    expect(review).toContain(
+      "sha256:790485a36adc43ff4562b92de5387cebfb05b5c1e27b62738779b37f01939365",
+    );
+    expect(review).toContain("SLSA-bound release archives");
   });
 
   it("records exact development identities without treating them as a stable release", () => {
@@ -109,7 +115,7 @@ describe("OpenShell 0.0.82 migration review", () => {
     expect(review).toContain("8266448422");
     expect(review).toContain("8266451406");
     expect(review).toContain("attestationStatus: absent");
-    expect(review).toContain("final stable release must be audited anew");
+    expect(review).toContain("stable release was audited anew");
   });
 
   it("tracks every material migration concern and refuses false-green evidence", () => {
@@ -202,7 +208,7 @@ describe("OpenShell 0.0.82 migration review", () => {
     expect(mcpBridge).toContain("exactMainDriverConfigProof.assertAfterRebuild()");
   });
 
-  it("keeps the stable pin and physical Spark proof blocked until final evidence exists", () => {
+  it("binds stable selectors while keeping the physical Spark proof separate", () => {
     const blueprint = fs.readFileSync(
       path.join(repoRoot, "nemoclaw-blueprint", "blueprint.yaml"),
       "utf8",
@@ -215,16 +221,16 @@ describe("OpenShell 0.0.82 migration review", () => {
           "lib",
           "actions",
           "sandbox",
-          "openshell-child-visible-credentials.v0.0.72.json",
+          "openshell-child-visible-credentials.v0.0.82.json",
         ),
         "utf8",
       ),
     ) as { openshellVersion: string };
 
-    expect(blueprint).toContain('min_openshell_version: "0.0.72"');
-    expect(blueprint).toContain('max_openshell_version: "0.0.72"');
-    expect(manifest.openshellVersion).toBe("0.0.72");
-    expect(review).toContain("remains pinned to `0.0.72`");
+    expect(blueprint).toContain('min_openshell_version: "0.0.82"');
+    expect(blueprint).toContain('max_openshell_version: "0.0.82"');
+    expect(manifest.openshellVersion).toBe("0.0.82");
+    expect(review).toContain("binds NemoClaw's `0.0.82` selectors");
     expect(review).toContain("physical Docker 27 DGX Spark");
     expect(review).toContain("loopback first-byte test");
     expect(review).not.toContain("did not add a true connection-level test");

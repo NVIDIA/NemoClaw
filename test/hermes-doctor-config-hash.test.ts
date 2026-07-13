@@ -69,7 +69,7 @@ describe("Hermes doctor and config hash boundary", () => {
     const mcpConfigTransactionPath = path.join(libDir, "hermes-mcp-config-transaction.py");
     const mcpCredentialBoundaryPath = path.join(
       libDir,
-      "openshell-child-visible-credentials.v0.0.72.json",
+      "openshell-child-visible-credentials.v0.0.82.json",
     );
     const nestedDir = path.join(preloadsDir, "nested");
     const profileDir = path.join(tmp, "etc-profile.d");

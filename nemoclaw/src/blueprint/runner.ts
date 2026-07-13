@@ -358,7 +358,7 @@ function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditio
   const existingNetworkPolicies = current.network_policies ?? {};
   const output: UnknownRecord = {};
 
-  // Stable OpenShell 0.0.72 exposes composable top-level policy sections as
+  // OpenShell 0.0.72 and later expose composable top-level policy sections as
   // mappings. Preserve unknown mapping sections for forward compatibility, but
   // fail closed on a scalar or sequence until its mutation semantics are
   // reviewed for the next supported OpenShell contract.

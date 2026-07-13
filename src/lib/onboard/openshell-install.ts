@@ -177,7 +177,7 @@ export function ensureOpenshellForOnboard(deps: OpenShellInstallDeps): OpenShell
         deps.exit(1);
       }
     } else {
-      const minOpenshellVersion = deps.getBlueprintMinOpenshellVersion() ?? "0.0.72";
+      const minOpenshellVersion = deps.getBlueprintMinOpenshellVersion() ?? "0.0.82";
       const currentVersionOutput = deps.runCaptureOpenshell(["--version"], {
         ignoreError: true,
       });

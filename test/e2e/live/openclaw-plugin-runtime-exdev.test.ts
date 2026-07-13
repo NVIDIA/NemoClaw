@@ -66,7 +66,7 @@ assert.equal(
 const NEMOCLAW_RELEASE_TAG = "v0.0.71";
 const NEMOCLAW_RELEASE_COMMIT = "e4b9111f5f0535c2fc3d6fbe8dc8dca101a6fdce";
 const NEMOCLAW_RELEASE_OPENSHELL_VERSION = "0.0.71";
-const CURRENT_OPENSHELL_VERSION = "0.0.72";
+const CURRENT_OPENSHELL_VERSION = "0.0.82";
 const NEMOCLAW_SOURCE_REPOSITORY = "https://github.com/NVIDIA/NemoClaw.git";
 const SANDBOX_BASE_IMAGE_REF = "ghcr.io/nvidia/nemoclaw/sandbox-base:v0.0.71";
 const TOOL_DISCLOSURE_ENV_REFERENCE = "${NEMOCLAW_TOOL_DISCLOSURE}";
@@ -849,7 +849,7 @@ test("a custom OpenClaw plugin survives restart, recreation, and rebuild without
     contract: [
       "the exact NemoClaw v0.0.71 checkout installs, builds, and reports its tagged CLI version",
       "the tagged CLI uses OpenShell 0.0.71 with matching source, base image, and OpenClaw runtime",
-      "the current CLI reinstalls OpenShell 0.0.72 before current lifecycle coverage",
+      "the current CLI reinstalls OpenShell 0.0.82 before current lifecycle coverage",
       "release-matched peer/dev dependencies prune private OpenClaw and link the host runtime",
       "gateway log, runtime inspection, tools.catalog, and tools.invoke prove weather/get_weather",
       "custom-plugin v1 survives restart, recreation installs v2, and rebuild installs v3",
@@ -960,7 +960,7 @@ test("a custom OpenClaw plugin survives restart, recreation, and rebuild without
     "v0-0-71",
     NEMOCLAW_RELEASE_OPENSHELL_VERSION,
   );
-  // OpenShell 0.0.71 predates the current 0.0.72 MCP capability marker.
+  // OpenShell 0.0.71 predates the current 0.0.82 MCP capability marker.
   // The tagged CLI's own onboarding preflight below owns this compatibility check.
   const taggedOpenShellWrapper = createOpenShellTmpfsWrapper(taggedPinnedOpenshell.cli);
   cleanup.add("remove v0.0.71 EXDEV OpenShell PATH wrapper", taggedOpenShellWrapper.remove);

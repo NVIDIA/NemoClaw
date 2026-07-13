@@ -53,6 +53,9 @@ const PINNED_SANDBOX_BUILD_VERSIONS = new Map<string, string>([
   // old to execute `--version` (the release requires GLIBC_2.39).
   ["f9f991a24d10772ad5d24ae27a8ea6baad8cac671695bd90fcd0355e0e0ad198", "0.0.72"],
   ["32ca44fe7d9e6d332f2a753c6b8a1a6117b7388281dad9b5274d23ffc67e216f", "0.0.72"],
+  // OpenShell v0.0.82 standalone sandbox binaries.
+  ["145246049bd73c60452ac3c2b4b1801663196c8e2f80575af820289c78c1cf09", "0.0.82"],
+  ["76bc19b70d9f1e1e9871307045796cd39cc7b8fc4c08ffc90593cc934f36d500", "0.0.82"],
 ]);
 
 export function pinnedOpenShellSandboxBuildVersion(sha256: string): string | null {
@@ -104,7 +107,7 @@ function componentBuildVersionsMatch(left: string, right: string): boolean {
 // from version text alone. sourceBoundary: OpenShell owns component identity
 // and the future native capability response; this scanner is an artifact and
 // install-repair preflight only and never authorizes an MCP mutation.
-// whyNotSourceFix: v0.0.72 has no structured installed-feature response.
+// whyNotSourceFix: v0.0.82 has no structured installed-feature response.
 // regressionTest: openshell-feature-gate.test.ts covers mixed roots, symlink
 // farms, stale components, unreadable binaries, and the pinned sandbox digest.
 // removalCondition: replace this scan when OpenShell exposes a versioned native

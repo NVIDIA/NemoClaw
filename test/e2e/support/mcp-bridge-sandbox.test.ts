@@ -167,22 +167,19 @@ describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
     }
   });
 
-  it("pins the resolve-validate-connect source contract to OpenShell v0.0.72", () => {
-    const commit = "8cb16de9eae4c44d7d31e1493747d8c10abb5963";
+  it("pins the resolve-validate-connect source contract to OpenShell v0.0.82", () => {
+    const commit = "94cdd697c55aedb571f177ec13cfa54a8e213919";
     const sourcePath = "crates/openshell-supervisor-network/src/proxy.rs";
     const citations = [
-      `${sourcePath}:2476-2502`,
-      `${sourcePath}:2527-2567`,
-      `${sourcePath}:2622-2630`,
-      `${sourcePath}:822-832`,
-      `${sourcePath}:3885-3893`,
-      `${sourcePath}:4123-4125`,
+      `${sourcePath}:2648-2674`,
+      `${sourcePath}:2699-2739`,
+      `${sourcePath}:2794-2803`,
+      `${sourcePath}:1079-1081`,
+      `${sourcePath}:4093-4100`,
+      `${sourcePath}:4340-4342`,
     ];
 
-    for (const docsPath of [
-      "docs/deployment/set-up-mcp-bridge.mdx",
-      "docs/security/openshell-0.0.72-compatibility-review.mdx",
-    ]) {
+    for (const docsPath of ["docs/deployment/set-up-mcp-bridge.mdx"]) {
       const docs = fs.readFileSync(docsPath, "utf8");
       expect(docs, docsPath).toContain(commit);
       for (const citation of citations) expect(docs, docsPath).toContain(citation);
@@ -296,7 +293,7 @@ network_policies:
       contractSource.indexOf("} finally {"),
     );
     expect(contractSource).toContain(
-      "https://github.com/NVIDIA/OpenShell/blob/8cb16de9eae4c44d7d31e1493747d8c10abb5963/",
+      "https://github.com/NVIDIA/OpenShell/blob/94cdd697c55aedb571f177ec13cfa54a8e213919/",
     );
     expect(contractSource).not.toContain("host.nemoclaw");
     expect(contractSource).not.toContain("assertAdapterDnsRebindingDenied");

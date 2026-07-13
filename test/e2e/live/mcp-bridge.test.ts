@@ -281,7 +281,7 @@ async function assertAdapterDnsRebindingDenied(
   );
 
   // If OpenShell resolved a second time after validating allowed_ips, this
-  // reachable runner address would receive the request. The pinned v0.0.72
+  // reachable runner address would receive the request. The pinned v0.0.82
   // implementation instead returns the one resolved-and-validated SocketAddr
   // list directly to connect; see the exact proxy.rs citation in the helper.
   const reboundAddress = await hostPrivateAddressForSandbox(host);

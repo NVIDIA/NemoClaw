@@ -50,13 +50,11 @@ function writeFixture(root: string, overrides: FixtureOverrides = {}): void {
   const openclawArg = `OPENCLAW_${openclawVersion.replace(/[.-]/g, "_")}`;
   const hermesSemver = overrides.hermesSemver ?? HERMES_SEMVER;
   const exactMainProof = overrides.exactMainProof === "1";
-  const credentialManifestName = exactMainProof
-    ? (overrides.exactMainManifestName ?? EXACT_MAIN_MANIFEST)
-    : `openshell-child-visible-credentials.v${openshellMax}.json`;
-  const credentialVersion = exactMainProof
-    ? (overrides.exactMainVersion ?? EXACT_MAIN_VERSION)
-    : (overrides.credentialVersion ?? openshellMax);
-  const credentialCommit = overrides.exactMainSourceSha ?? EXACT_MAIN_SHA;
+  const credentialManifestName = `openshell-child-visible-credentials.v${openshellMax}.json`;
+  const credentialVersion = overrides.credentialVersion ?? openshellMax;
+  const exactMainManifestName = overrides.exactMainManifestName ?? EXACT_MAIN_MANIFEST;
+  const exactMainVersion = overrides.exactMainVersion ?? EXACT_MAIN_VERSION;
+  const exactMainSourceSha = overrides.exactMainSourceSha ?? EXACT_MAIN_SHA;
   const installerHashVersions = [
     overrides.installerHashExtraVersion,
     overrides.installerHashVersion ?? openshellMax,
@@ -102,21 +100,17 @@ ${
     steps:
       - name: Stage exact OpenShell main artifacts
         env:
-          OPENSHELL_SOURCE_SHA: ${credentialCommit}
-        run: echo ${credentialCommit}`
+          OPENSHELL_SOURCE_SHA: ${exactMainSourceSha}
+        run: echo ${exactMainSourceSha}`
     : ""
 }
 `,
     [`src/lib/actions/sandbox/${credentialManifestName}`]: JSON.stringify({
-      openshellCommit: credentialCommit,
+      openshellCommit: "f".repeat(40),
       openshellVersion: credentialVersion,
     }),
     "src/lib/actions/sandbox/mcp-bridge-validation.ts": `
-import boundary from "./${
-      exactMainProof
-        ? credentialManifestName
-        : `openshell-child-visible-credentials.v${overrides.mcpImportVersion ?? openshellMax}.json`
-    }";
+import boundary from "./openshell-child-visible-credentials.v${overrides.mcpImportVersion ?? openshellMax}.json";
 `,
     "src/lib/onboard/openshell-version.ts": `
 export const SUPPORTED_OPENSHELL_FALLBACK_VERSION = "${overrides.fallbackVersion ?? openshellMax}";
@@ -135,23 +129,11 @@ const BUILDS = new Map([
 ]);
 `,
     "agents/hermes/Dockerfile": `
-COPY src/lib/actions/sandbox/${credentialManifestName} /usr/local/lib/nemoclaw/${
-      exactMainProof
-        ? credentialManifestName
-        : `openshell-child-visible-credentials.v${overrides.hermesDockerfileBoundaryVersion ?? openshellMax}.json`
-    }
+COPY src/lib/actions/sandbox/${credentialManifestName} /usr/local/lib/nemoclaw/${`openshell-child-visible-credentials.v${overrides.hermesDockerfileBoundaryVersion ?? openshellMax}.json`}
 `,
     "agents/hermes/mcp-config-transaction.py": `
-BOUNDARY_MANIFEST_NAME = "${
-      exactMainProof
-        ? credentialManifestName
-        : `openshell-child-visible-credentials.v${overrides.hermesTransactionBoundaryVersion ?? openshellMax}.json`
-    }"
-if manifest.get("openshellVersion") != "${
-      exactMainProof
-        ? credentialVersion
-        : (overrides.hermesTransactionExpectedVersion ?? openshellMax)
-    }":
+BOUNDARY_MANIFEST_NAME = "openshell-child-visible-credentials.v${overrides.hermesTransactionBoundaryVersion ?? openshellMax}.json"
+if manifest.get("openshellVersion") != "${overrides.hermesTransactionExpectedVersion ?? openshellMax}":
     raise RuntimeError("invalid")
 `,
     "scripts/update-hermes-agent.sh": `
@@ -194,6 +176,13 @@ expected_version: "${overrides.hermesManifestVersion ?? hermesSemver}"
 `,
   };
 
+  if (exactMainProof) {
+    files[`src/lib/actions/sandbox/${exactMainManifestName}`] = JSON.stringify({
+      openshellCommit: exactMainSourceSha,
+      openshellVersion: exactMainVersion,
+    });
+  }
+
   for (const [relativePath, contents] of Object.entries(files)) {
     const target = path.join(root, relativePath);
     fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -222,20 +211,17 @@ describe("dependency pin drift check", () => {
     });
   });
 
-  it("accepts the fixed exact-main proof boundary without changing the stable release pin", () => {
+  it("keeps an optional exact-main proof from selecting production credential authority", () => {
     withFixture("nemoclaw-dependency-pins-exact-main-", { exactMainProof: "1" }, (root) =>
       expect(verifyDependencyPins(root)).toEqual([]),
     );
   });
 
-  it("rejects exact-main source drift even when every proof consumer drifts together", () => {
+  it("ignores optional exact-main identity drift in the production pin graph", () => {
     withFixture(
       "nemoclaw-dependency-pins-exact-main-drift-",
       { exactMainProof: "1", exactMainSourceSha: "a".repeat(40) },
-      (root) =>
-        expect(verifyDependencyPins(root)).toEqual([
-          `OpenShell exact-main workflow: expected a reference to ${EXACT_MAIN_SHA}`,
-        ]),
+      (root) => expect(verifyDependencyPins(root)).toEqual([]),
     );
   });
 
