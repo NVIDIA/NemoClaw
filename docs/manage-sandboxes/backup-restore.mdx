@@ -258,9 +258,9 @@ Restore safe Deep Agents files only, then run the managed rebuild or onboarding 
 
 </AgentOnly>
 
-## Back Up All Running Sandboxes
+## Back Up Registered Sandboxes
 
-To back up every registered, running sandbox in one step, run `$$nemoclaw backup-all`.
+To back up every registered sandbox that is running, or whose stopped Docker-driver container can be started temporarily, run `$$nemoclaw backup-all`.
 Use this host-installed command before broad maintenance such as `$$nemoclaw update`, `$$nemoclaw upgrade-sandboxes`, or an OpenShell gateway migration.
 
 ```bash
@@ -268,7 +268,9 @@ $$nemoclaw backup-all
 ```
 
 `backup-all` walks the sandboxes registered on the host, creates a snapshot for each running sandbox, and stores the snapshot bundles under `~/.nemoclaw/rebuild-backups/<name>/`.
-If a registered sandbox is stopped, start the sandbox or its container and rerun `$$nemoclaw backup-all` so NemoClaw can capture a fresh snapshot before maintenance.
+If a registered docker-driver sandbox's container is stopped, `backup-all` starts the container for the duration of the backup and returns it to its stopped state afterward.
+If the container cannot be returned to the stopped state, the backup run fails and reports that the container was left running.
+If a sandbox is not running and its container cannot be started this way, start the sandbox or its container and rerun `$$nemoclaw backup-all` so NemoClaw can capture a fresh snapshot before maintenance.
 When a backup fails, NemoClaw identifies the affected state item and reports one of these causes when available: `permission denied`, `tar read error`, or `absent after extraction`.
 Use `$$nemoclaw <name> snapshot list` and `$$nemoclaw <name> snapshot restore` to inspect or restore one sandbox's bundles later.
 

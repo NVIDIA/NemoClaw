@@ -16,6 +16,7 @@
 // duplicate every helper's exact signature.
 
 import type { HermesAuthMethod } from "../hermes-auth";
+import type { OnboardInferenceCapabilityCache } from "../inference-capability-cache";
 
 export type SetupInferenceResult = { ok: true; retry?: undefined } | { retry: "selection" };
 
@@ -66,6 +67,7 @@ export type VerifyOnboardInferenceSmoke = (input: {
   credentialEnv?: string | null;
   forceOpenAiLike?: boolean;
   pinnedAddresses?: readonly string[];
+  capabilityCache?: OnboardInferenceCapabilityCache;
 }) => void | Promise<void>;
 
 export type PromptValidationRecovery = (

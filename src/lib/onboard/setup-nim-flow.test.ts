@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentDefinition } from "../agent/defs";
 import type { VllmProfile } from "../inference/vllm";
+import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import { getWindowsHostOllamaDockerRequirement } from "./local-inference-topology";
 import type { InferenceProviderHostState } from "./provider-host-state";
 import { createSetupNim, type SetupNimFlowDeps } from "./setup-nim-flow";
@@ -280,7 +281,9 @@ describe("createSetupNim", () => {
     expect(maybePromptForInferenceInputCapability).toHaveBeenCalledWith(
       "nvidia/nemotron-3-super-120b-a12b",
     );
-    expect(result).toEqual({
+    const { inferenceCapabilityCache, ...resultWithoutCache } = result;
+    expect(inferenceCapabilityCache).toBeInstanceOf(OnboardInferenceCapabilityCache);
+    expect(resultWithoutCache).toEqual({
       model: "nvidia/nemotron-3-super-120b-a12b",
       provider: "nvidia-prod",
       endpointUrl: "https://integrate.api.nvidia.com/v1",
