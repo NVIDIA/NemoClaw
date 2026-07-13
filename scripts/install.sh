@@ -3092,8 +3092,10 @@ main() {
   step 3 "Onboarding"
   if [ -n "$_cli_runner" ]; then
     local _registered_sandbox_count=""
-    if _registered_sandbox_count="$(registered_sandbox_count)" \
-      && [[ "$_registered_sandbox_count" -gt 0 ]]; then
+    if ! _registered_sandbox_count="$(registered_sandbox_count)"; then
+      error "Could not inspect the existing sandbox registry. Onboarding was not started."
+    fi
+    if [[ "$_registered_sandbox_count" -gt 0 ]]; then
       warn "Existing sandbox sessions detected. Onboarding may disrupt running agents."
       if [[ "${NEMOCLAW_SINGLE_SESSION:-}" == "1" ]]; then
         error "Aborting — NEMOCLAW_SINGLE_SESSION is set. Destroy existing sessions with '${_CLI_BIN} <name> destroy' before reinstalling."
