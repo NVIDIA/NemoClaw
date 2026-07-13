@@ -52,7 +52,6 @@ TIER_0_GATES = (
     ("mergeable", "Mergeable"),
     ("contributor_compliance", "Contributor compliance"),
     ("branch_protection", "Branch protection"),
-    ("pr_advisor_merge_as_is", "PR Review Advisor: merge as-is"),
     ("coderabbit_threads_resolved", "Automated-review threads resolved"),
 )
 TIER_0_KEYS = tuple(key for key, _label in TIER_0_GATES)

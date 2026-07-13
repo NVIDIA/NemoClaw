@@ -54,6 +54,8 @@ export interface ModelValidationFailure extends ValidationFailureLike {
 export type ModelValidationResult = ModelValidationSuccess | ModelValidationFailure;
 
 export interface SandboxCreateIntent {
+  /** Complete secret-free create plan resolved by the onboarding machine. */
+  readonly resolved?: import("./sandbox-create-intent-types").SandboxCreateIntent;
   readonly recreate: boolean;
   readonly toolDisclosure: import("../tool-disclosure").ToolDisclosure;
   readonly observabilityEnabled: boolean;

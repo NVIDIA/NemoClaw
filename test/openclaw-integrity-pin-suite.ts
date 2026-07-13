@@ -33,6 +33,12 @@ const PRODUCTION_BUILD_ARG_GUARD = path.join(
   "scripts",
   "check-production-build-args.sh",
 );
+const REVIEWED_NPM_ARCHIVE_HELPER = path.join(
+  REPO_ROOT,
+  "scripts",
+  "lib",
+  "reviewed-npm-archive.mts",
+);
 const UNPINNED_OPENCLAW_VERSION = "2026.6.11";
 const PINNED_OPENCLAW_VERSION = "2026.6.10";
 const PINNED_OPENCLAW_INTEGRITY =
@@ -46,6 +52,7 @@ const PINNED_CODEX_ACP_INTEGRITY =
 const PINNED_MCPORTER_VERSION = "0.7.3";
 const PINNED_MCPORTER_INTEGRITY =
   "sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==";
+const PINNED_MCPORTER_TARBALL = "https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz";
 const MCPORTER_LOCKFILE = path.join(
   REPO_ROOT,
   "agents",
@@ -99,6 +106,7 @@ function openClawBaseProvenance(
     "recipe=ignore-scripts+reviewed-lifecycle-v1",
     `mcporter-package=mcporter@${PINNED_MCPORTER_VERSION}`,
     `mcporter-integrity=${PINNED_MCPORTER_INTEGRITY}`,
+    `mcporter-tarball=${PINNED_MCPORTER_TARBALL}`,
     `mcporter-lock-sha256=${PINNED_MCPORTER_LOCK_SHA256}`,
     "mcporter-recipe=locked-ci+audit-signatures-v1",
     "",
@@ -173,10 +181,45 @@ function runInstallBlock(
   const provenancePath = path.join(tmp, "openclaw-base-provenance-v1");
   const mcporterRuntime = path.join(tmp, "mcporter-runtime");
   const mcporterBin = path.join(tmp, "bin", "mcporter");
+  const reviewedNpmExecutable = path.join(tmp, "bin", "reviewed-npm-fixture");
   fs.mkdirSync(path.dirname(mcporterBin), { recursive: true });
   fs.mkdirSync(mcporterRuntime, { recursive: true });
   fs.copyFileSync(MCPORTER_LOCKFILE, path.join(mcporterRuntime, "package-lock.json"));
   fs.writeFileSync(blueprint, fs.readFileSync(BLUEPRINT, "utf-8"));
+  fs.writeFileSync(
+    reviewedNpmExecutable,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      `printf 'npm %s\\n' "$*" >> ${JSON.stringify(log)}`,
+      'if [ "${1:-}" = "view" ]; then',
+      `  if [ "\${2:-}" = "@zed-industries/codex-acp@${PINNED_CODEX_ACP_VERSION}" ]; then`,
+      `    if [ "\${3:-}" = "dist.integrity" ]; then printf '%s\\n' ${JSON.stringify(codexAcpRegistryIntegrity)}; else printf '%s\\n' ${JSON.stringify(codexAcpRegistryTarball)}; fi`,
+      `  elif [ "\${2:-}" = "mcporter@${PINNED_MCPORTER_VERSION}" ]; then`,
+      `    if [ "\${3:-}" = "dist.integrity" ]; then printf '%s\\n' ${JSON.stringify(PINNED_MCPORTER_INTEGRITY)}; else printf '%s\\n' ${JSON.stringify(PINNED_MCPORTER_TARBALL)}; fi`,
+      "  else",
+      `    if [ "\${3:-}" = "dist.integrity" ]; then printf '%s\\n' ${JSON.stringify(registryIntegrity)}; else printf '%s\\n' ${JSON.stringify(registryTarball)}; fi`,
+      "  fi",
+      "  exit 0",
+      "fi",
+      'if [ "${1:-}" = "pack" ]; then',
+      '  pack_spec="${2:-}"; pack_dir=""',
+      '  while [ "$#" -gt 0 ]; do if [ "${1:-}" = "--pack-destination" ]; then pack_dir="${2:-}"; shift 2; continue; fi; shift; done',
+      '  pack_file="$(basename "$pack_spec")"',
+      `  reported_pack_file=${JSON.stringify(packFilename ?? "")}`,
+      ...(packFilename === null
+        ? []
+        : ['  reported_pack_file="${reported_pack_file:-$pack_file}"']),
+      '  printf "fake tarball" > "$pack_dir/$pack_file"',
+      `  case "$pack_spec" in *"codex-acp"*) pack_integrity=${JSON.stringify(codexAcpPackIntegrity)} ;; *) pack_integrity=${JSON.stringify(packIntegrity)} ;; esac`,
+      '  printf \'[{"filename":"%s","integrity":"%s"}]\\n\' "$reported_pack_file" "$pack_integrity"',
+      "  exit 0",
+      "fi",
+      "exit 1",
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
   const writeProvenanceFile = () => {
     fs.writeFileSync(provenancePath, baseProvenance as string, { mode: 0o444 });
   };
@@ -209,6 +252,9 @@ function runInstallBlock(
     `CODEX_ACP_0_11_1_INTEGRITY=${JSON.stringify(codexAcpCommittedIntegrity)}`,
     `MCPORTER_VERSION=${JSON.stringify(PINNED_MCPORTER_VERSION)}`,
     `MCPORTER_0_7_3_INTEGRITY=${JSON.stringify(PINNED_MCPORTER_INTEGRITY)}`,
+    `MCPORTER_0_7_3_TARBALL=${JSON.stringify(PINNED_MCPORTER_TARBALL)}`,
+    `export NEMOCLAW_REVIEWED_NPM_EXECUTABLE=${JSON.stringify(reviewedNpmExecutable)}`,
+    "export NODE_OPTIONS=",
     `installed_openclaw_version=${JSON.stringify(installedOpenClawVersion)}`,
     `installed_mcporter_version=${JSON.stringify(installedMcporterVersion)}`,
     "node() {",
@@ -257,7 +303,8 @@ function runInstallBlock(
       .replaceAll("/tmp/blueprint.yaml", blueprint)
       .replaceAll(OPENCLAW_BASE_PROVENANCE_PATH, provenancePath)
       .replaceAll("/usr/local/lib/nemoclaw/mcporter-runtime", mcporterRuntime)
-      .replaceAll("/usr/local/bin/mcporter", mcporterBin),
+      .replaceAll("/usr/local/bin/mcporter", mcporterBin)
+      .replaceAll("/scripts/lib/reviewed-npm-archive.mts", REVIEWED_NPM_ARCHIVE_HELPER),
   ].join("\n");
   const scriptPath = path.join(tmp, "run.sh");
   fs.writeFileSync(scriptPath, script, { mode: 0o700 });
@@ -323,6 +370,37 @@ function runOptionalOpenClawPluginBlock(
   );
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-plugin-integrity-"));
   const log = path.join(tmp, "calls.log");
+  const reviewedNpmExecutable = path.join(tmp, "reviewed-npm-fixture");
+  fs.writeFileSync(
+    reviewedNpmExecutable,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      `printf 'npm %s\\n' "$*" >> ${JSON.stringify(log)}`,
+      'if [ "${1:-}" = "pack" ]; then',
+      '  pack_spec="${2:-}"; pack_dir=""',
+      '  while [ "$#" -gt 0 ]; do if [ "${1:-}" = "--pack-destination" ]; then pack_dir="${2:-}"; shift 2; continue; fi; shift; done',
+      '  pack_file="$(basename "$pack_spec")"',
+      `  reported_pack_file=${JSON.stringify(pluginPackFilename)}`,
+      '  reported_pack_file="${reported_pack_file:-$pack_file}"',
+      '  printf "fake plugin tarball" > "$pack_dir/$pack_file"',
+      '  case "$pack_spec" in',
+      `    *"diagnostics-otel"*) printf '[{"filename":"%s","integrity":"%s"}]\\n' "$reported_pack_file" ${JSON.stringify(diagnosticsRegistryIntegrity)} ;;`,
+      `    *"brave-plugin"*) printf '[{"filename":"%s","integrity":"%s"}]\\n' "$reported_pack_file" ${JSON.stringify(braveRegistryIntegrity)} ;;`,
+      "    *) exit 1 ;;",
+      "  esac",
+      "  exit 0",
+      "fi",
+      'if [ "${1:-}" != "view" ]; then exit 1; fi',
+      'case "${2:-}" in',
+      `  "@openclaw/diagnostics-otel@${PINNED_OPENCLAW_VERSION}") if [ "\${3:-}" = "dist.integrity" ]; then printf '%s\\n' ${JSON.stringify(diagnosticsRegistryIntegrity)}; else printf '%s\\n' ${JSON.stringify(diagnosticsRegistryTarball)}; fi ;;`,
+      `  "@openclaw/brave-plugin@${PINNED_OPENCLAW_VERSION}") if [ "\${3:-}" = "dist.integrity" ]; then printf '%s\\n' ${JSON.stringify(braveRegistryIntegrity)}; else printf '%s\\n' ${JSON.stringify(braveRegistryTarball)}; fi ;;`,
+      "  *) exit 1 ;;",
+      "esac",
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
   const script = [
     "#!/usr/bin/env bash",
     "set -euo pipefail",
@@ -332,6 +410,8 @@ function runOptionalOpenClawPluginBlock(
     `OPENCLAW_BRAVE_PLUGIN_2026_6_10_INTEGRITY=${JSON.stringify(PINNED_OPENCLAW_BRAVE_PLUGIN_INTEGRITY)}`,
     `NEMOCLAW_OPENCLAW_OTEL=${otel ? "1" : "0"}`,
     `NEMOCLAW_WEB_SEARCH_ENABLED=${webSearch ? "1" : "0"}`,
+    `export NEMOCLAW_REVIEWED_NPM_EXECUTABLE=${JSON.stringify(reviewedNpmExecutable)}`,
+    "export NODE_OPTIONS=",
     'openclaw() { printf \'openclaw %s\\nopenclaw-env %s %s\\n\' "$*" "${NPM_CONFIG_IGNORE_SCRIPTS:-}" "${npm_config_ignore_scripts:-}" >> "$call_log"; }',
     "npm() {",
     '  printf "npm %s\\n" "$*" >> "$call_log";',
@@ -358,7 +438,7 @@ function runOptionalOpenClawPluginBlock(
     "  esac",
     "  return 1",
     "}",
-    command,
+    command.replaceAll("/scripts/lib/reviewed-npm-archive.mts", REVIEWED_NPM_ARCHIVE_HELPER),
   ].join("\n");
   const scriptPath = path.join(tmp, "run.sh");
   fs.writeFileSync(scriptPath, script, { mode: 0o700 });
@@ -399,10 +479,10 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         expect(reviewNote).toContain("downloaded tarball integrity");
         expect(reviewNote).toContain("bind reviewed npm installs to verified local archives");
         expect(reviewNote).toContain("npm pack --json");
-        expect(reviewNote).toContain("reject reported archive filenames");
-        expect(reviewNote).toContain("unsafe reported archive filenames");
+        expect(reviewNote).toContain("rejects reported archive filenames");
+        expect(reviewNote).toContain("unsafe archive paths");
         expect(reviewNote).toContain("each reviewed npm plugin registry integrity");
-        expect(reviewNote).toContain("install the verified archive path");
+        expect(reviewNote).toContain("returns only the verified local `.tgz` path");
         expect(reviewNote).toContain("OpenClaw Compiled-Dist Patch Runtime Boundary");
         expect(reviewNote).toContain(
           "The long-term source of truth for these behaviors remains upstream OpenClaw",
@@ -801,6 +881,15 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           },
         ],
         [
+          "wrong mcporter tarball",
+          {
+            baseProvenance: openClawBaseProvenance().replace(
+              `mcporter-tarball=${PINNED_MCPORTER_TARBALL}`,
+              "mcporter-tarball=https://registry.npmjs.org/mcporter/-/mcporter-0.7.2.tgz",
+            ),
+          },
+        ],
+        [
           "wrong mcporter lock",
           {
             baseProvenance: openClawBaseProvenance().replace(
@@ -974,7 +1063,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           expect(
             `${item.outcome.result.stdout}${item.outcome.result.stderr}`,
             item.label,
-          ).toContain(`npm pack reported unsafe archive filename: ${item.unsafeFilename}`);
+          ).toContain(`reported unsafe archive filename: ${item.unsafeFilename}`);
           expect(item.outcome.calls, item.label).toContain("npm pack");
           expect(item.outcome.calls, item.label).not.toContain(item.blockedCommand);
         }
@@ -994,7 +1083,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
             packFilename: null,
           },
         );
-        const diagnostic = `OpenClaw ${PINNED_OPENCLAW_VERSION} npm pack did not report filename and integrity`;
+        const diagnostic = `npm pack openclaw@${PINNED_OPENCLAW_VERSION} did not report filename and integrity`;
 
         expect(result.status).not.toBe(0);
         expect(result.stderr).toContain(diagnostic);
@@ -1163,6 +1252,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           "CODEX_ACP_0_11_1_INTEGRITY",
           "HERMES_NPM_INTEGRITY",
           "MCPORTER_0_7_3_INTEGRITY",
+          "MCPORTER_0_7_3_TARBALL",
           "OPENCLAW_2026_3_11_INTEGRITY",
           "OPENCLAW_2026_3_11_TARBALL",
           "OPENCLAW_2026_4_24_INTEGRITY",

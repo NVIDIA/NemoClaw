@@ -33,6 +33,7 @@ import {
   hasDcodeObservabilityDrift,
   isDcodeAgent,
 } from "../../observability-policy-presets";
+import type { SandboxCreateIntent as ResolvedSandboxCreateIntent } from "../../sandbox-create-intent-types";
 import { withSandboxPhaseTrace } from "../../tracing";
 import type { SandboxCreateIntent } from "../../types";
 import { branchTo, type OnboardStateTransitionResult } from "../result";
@@ -133,7 +134,7 @@ export interface SandboxStateOptions<
     ): Promise<WebSearchConfig | null>;
     startRecordedStep(
       stepName: string,
-      updates: { provider: string; model: string },
+      updates: { sandboxName?: string | null; provider: string; model: string },
     ): Promise<void>;
     getRecordedMessagingChannelsForResume(
       resume: boolean,
@@ -153,7 +154,21 @@ export interface SandboxStateOptions<
     selectResourceProfileForSandbox(): Promise<ResourceProfile | null>;
     stopStaleDashboardListenersForSandbox(sandboxes: unknown[], sandboxName: string): void;
     listRegistrySandboxes(): { sandboxes: unknown[] };
-    reconcileRegisteredExtraProviders(gatewayName: string): readonly string[];
+    planRegisteredExtraProviders(
+      gatewayName: string,
+    ): import("../../extra-provider-reconciliation").ExtraProviderReconciliationPlan;
+    resolveSandboxCreateIntent(input: {
+      sandboxName: string;
+      enabledChannels: readonly string[];
+      webSearchConfig: WebSearchConfig | null;
+      agent: Agent;
+      sandboxGpuConfig: SandboxGpuConfig;
+      resourceProfile: ResourceProfile | null;
+      hermesToolGateways: readonly string[];
+      extraProviders: readonly string[];
+      staleExtraProviders: readonly string[];
+      policyTier?: string | null;
+    }): Promise<ResolvedSandboxCreateIntent>;
     createSandbox(
       gpu: Gpu,
       model: string,
@@ -169,7 +184,7 @@ export interface SandboxStateOptions<
       resourceProfile: ResourceProfile | null,
       hermesToolGateways: string[],
       hermesAuthMethod: HermesAuthMethod | null,
-      createIntent: SandboxCreateIntent,
+      createIntent: CompleteSandboxCreateIntent,
     ): Promise<string>;
     updateSandboxRegistry(sandboxName: string, updates: Record<string, unknown>): void;
     getSandboxAgentRegistryFields(
@@ -266,6 +281,9 @@ function effectiveHermesToolGatewaysForWebSearch(
 }
 
 type SandboxCreationDecision = Exclude<SandboxResumeDecision, { readonly kind: "reuse" }>;
+type CompleteSandboxCreateIntent = SandboxCreateIntent & {
+  readonly resolved: ResolvedSandboxCreateIntent;
+};
 
 function observabilityRequestValidationError(
   issue: ManagedSandboxFeatureIssue | null,
@@ -611,12 +629,31 @@ class SandboxStateFlow<
     return state.webSearchConfig;
   }
 
-  private buildSandboxCreateIntent(
+  private async buildSandboxCreateIntent(
     state: SandboxStepState<WebSearchConfig>,
+    sandboxName: string,
     decision: SandboxCreationDecision,
     extraProviders: readonly string[],
-  ): SandboxCreateIntent {
+    staleExtraProviders: readonly string[],
+    resourceProfile: ResourceProfile | null,
+    hermesToolGateways: readonly string[],
+  ): Promise<CompleteSandboxCreateIntent> {
+    const resolved = await this.deps.resolveSandboxCreateIntent({
+      sandboxName,
+      enabledChannels: state.selectedMessagingChannels,
+      webSearchConfig: state.webSearchConfig,
+      agent: this.options.agent,
+      sandboxGpuConfig: this.options.sandboxGpuConfig,
+      resourceProfile,
+      hermesToolGateways,
+      extraProviders,
+      staleExtraProviders,
+      ...(this.options.authoritativePolicyTier !== undefined
+        ? { policyTier: this.options.authoritativePolicyTier }
+        : {}),
+    });
     return {
+      resolved,
       recreate: decision.kind !== "create",
       toolDisclosure: toolDisclosureOrDefault(state.session?.toolDisclosure),
       observabilityEnabled: state.session?.observabilityEnabled === true,
@@ -628,7 +665,7 @@ class SandboxStateFlow<
       isDcodeAgent((this.options.agent as { name?: string } | null)?.name)
         ? { dcodeAutoApprovalMode: this.dcodeAutoApprovalMode }
         : {}),
-      ...(this.options.authoritativePolicyTier
+      ...(this.options.authoritativePolicyTier !== undefined
         ? { policyTier: this.options.authoritativePolicyTier }
         : {}),
       extraProviders,
@@ -646,26 +683,35 @@ class SandboxStateFlow<
       state.webSearchConfig as unknown as SharedWebSearchConfig | null,
       this.options.hermesToolGateways,
     );
-    const extraProviders = this.deps.reconcileRegisteredExtraProviders(this.options.gatewayName);
-    const createIntent = this.buildSandboxCreateIntent(state, decision, extraProviders);
+    const extraProviderPlan = this.deps.planRegisteredExtraProviders(this.options.gatewayName);
     const resourceProfile = await this.deps.selectResourceProfileForSandbox();
+    const createIntent = await this.buildSandboxCreateIntent(
+      state,
+      requestedSandboxName,
+      decision,
+      extraProviderPlan.extraProviders,
+      extraProviderPlan.staleExtraProviders,
+      resourceProfile,
+      effectiveHermesToolGateways,
+    );
     const createAndRecord = async (): Promise<SandboxStepState<WebSearchConfig>> => {
       this.assertGatewayRouteCompatible(requestedSandboxName);
-      await applySandboxResumeDecision(decision, state.sandboxName, this.deps);
       await this.deps.startRecordedStep("sandbox", {
+        sandboxName: requestedSandboxName,
         provider: this.options.provider,
         model: this.options.model,
       });
+      this.deps.updateSession((current) => {
+        current.messagingPlan = messagingPlan;
+        return current;
+      });
+      await applySandboxResumeDecision(decision, state.sandboxName, this.deps);
       if (this.options.fresh) {
         this.deps.stopStaleDashboardListenersForSandbox(
           this.deps.listRegistrySandboxes().sandboxes,
           requestedSandboxName,
         );
       }
-      this.deps.updateSession((current) => {
-        current.messagingPlan = messagingPlan;
-        return current;
-      });
       const sandboxName = await withSandboxPhaseTrace(
         requestedSandboxName,
         this.options.provider,

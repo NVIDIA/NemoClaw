@@ -8,8 +8,19 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+const REQUIRED_CHECK_NAMES = [
+  "checks",
+  "check-hash",
+  "changes",
+  "commit-lint",
+  "dco-check",
+  "E2E / PR Gate",
+] as const;
+
 interface ComplianceFixture {
   body: string;
+  checkConclusions?: Record<string, string>;
+  checkNames?: string[];
   commitOutput?: string;
   commitAuthorLogins?: string[];
   contributorCommitPages?: Array<
@@ -35,8 +46,6 @@ interface ComplianceFixture {
 }
 
 interface ComparatorFixture extends ComplianceFixture {
-  checkNames?: string[];
-  checkConclusions?: Record<string, string>;
   headRefOid?: string;
   state?: string;
   mergeable?: string;
@@ -60,11 +69,11 @@ function runGate(fixture: ComplianceFixture) {
     url: "https://github.com/NVIDIA/NemoClaw/pull/42",
     body: fixture.body,
     files: [],
-    statusCheckRollup: ["checks", "commit-lint", "dco-check"].map((name) => ({
+    statusCheckRollup: (fixture.checkNames ?? REQUIRED_CHECK_NAMES).map((name) => ({
       __typename: "CheckRun",
       name,
       status: "COMPLETED",
-      conclusion: "SUCCESS",
+      conclusion: fixture.checkConclusions?.[name] ?? "SUCCESS",
     })),
     mergeStateStatus: "CLEAN",
     headRefOid: "abc123",
@@ -166,13 +175,11 @@ function runComparatorGate(fixture: ComparatorFixture, prNumber = "42") {
     state: fixture.state ?? "OPEN",
     body: fixture.body,
     headRefOid: fixture.headRefOid ?? "abc123",
-    statusCheckRollup: (fixture.checkNames ?? ["checks", "commit-lint", "dco-check"]).map(
-      (name) => ({
-        name,
-        status: "COMPLETED",
-        conclusion: fixture.checkConclusions?.[name] ?? "SUCCESS",
-      }),
-    ),
+    statusCheckRollup: (fixture.checkNames ?? REQUIRED_CHECK_NAMES).map((name) => ({
+      name,
+      status: "COMPLETED",
+      conclusion: fixture.checkConclusions?.[name] ?? "SUCCESS",
+    })),
     mergeable: fixture.mergeable ?? "MERGEABLE",
     mergeStateStatus: fixture.mergeStateStatus ?? "CLEAN",
     reviewDecision: fixture.reviewDecision ?? "APPROVED",
@@ -239,6 +246,7 @@ describe("maintainer merge-gate contributor compliance", () => {
     expect(output.advisories.contributorApprovalOverlap.details).toContain(
       "not proof of independent approval",
     );
+    expect(output.gates).not.toHaveProperty("prAdvisor");
     expect(output.allPass).toBe(true);
   });
 
@@ -916,13 +924,9 @@ describe("maintainer PR comparator contributor compliance", () => {
     expect(result.status).toBe(0);
     const output = JSON.parse(result.stdout);
     expect(output.gates.ci_green_latest_sha).toBe(false);
-    expect(output.details.ci_missing_required_checks).toEqual([
-      "checks",
-      "commit-lint",
-      "dco-check",
-    ]);
+    expect(output.details.ci_missing_required_checks).toEqual(REQUIRED_CHECK_NAMES);
     expect(output.failures).toContain(
-      "substantive:ci_failures=0,pending=0,missing=checks,commit-lint,dco-check",
+      "substantive:ci_failures=0,pending=0,missing=checks,check-hash,changes,commit-lint,dco-check,E2E / PR Gate",
     );
   });
 
@@ -943,17 +947,53 @@ describe("maintainer PR comparator contributor compliance", () => {
   });
 
   it("names a missing required check and fails the CI gate", () => {
-    const result = runComparatorGate({
+    const fixture = {
       body: "Signed-off-by: Example User <user@example.com>",
       verified: true,
-      checkNames: ["checks", "commit-lint"],
-    });
+      checkNames: REQUIRED_CHECK_NAMES.filter((name) => name !== "E2E / PR Gate"),
+    };
+    const mergeGate = runGate(fixture);
+    const comparator = runComparatorGate(fixture);
 
-    expect(result.status).toBe(0);
-    const output = JSON.parse(result.stdout);
-    expect(output.gates.ci_green_latest_sha).toBe(false);
-    expect(output.details.ci_missing_required_checks).toEqual(["dco-check"]);
-    expect(output.failures).toContain("substantive:ci_failures=0,pending=0,missing=dco-check");
+    expect(mergeGate.status).toBe(0);
+    expect(comparator.status).toBe(0);
+    const mergeOutput = JSON.parse(mergeGate.stdout);
+    const comparatorOutput = JSON.parse(comparator.stdout);
+    expect(mergeOutput.gates.ci).toMatchObject({
+      pass: false,
+      missingChecks: ["E2E / PR Gate"],
+    });
+    expect(mergeOutput.allPass).toBe(false);
+    expect(comparatorOutput.gates.ci_green_latest_sha).toBe(false);
+    expect(comparatorOutput.details.ci_missing_required_checks).toEqual(["E2E / PR Gate"]);
+    expect(comparatorOutput.failures).toContain(
+      "substantive:ci_failures=0,pending=0,missing=E2E / PR Gate",
+    );
+  });
+
+  it.each([
+    "NEUTRAL",
+    "SKIPPED",
+  ])("requires a literal SUCCESS conclusion from E2E / PR Gate when it is %s", (conclusion) => {
+    const fixture = {
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      checkConclusions: { "E2E / PR Gate": conclusion },
+    };
+    const mergeGate = runGate(fixture);
+    const comparator = runComparatorGate(fixture);
+
+    expect(mergeGate.status).toBe(0);
+    expect(comparator.status).toBe(0);
+    const mergeOutput = JSON.parse(mergeGate.stdout);
+    const comparatorOutput = JSON.parse(comparator.stdout);
+    expect(mergeOutput.gates.ci).toMatchObject({
+      pass: false,
+      failingChecks: [`E2E / PR Gate: ${conclusion}`],
+    });
+    expect(mergeOutput.allPass).toBe(false);
+    expect(comparatorOutput.gates.ci_green_latest_sha).toBe(false);
+    expect(comparatorOutput.details.ci_failing_checks).toEqual([`E2E / PR Gate: ${conclusion}`]);
   });
 
   it.each([
