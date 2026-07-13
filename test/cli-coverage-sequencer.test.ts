@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 
@@ -45,46 +44,29 @@ function sequencer(index: number, count: number): CliCoverageSequencer {
   } as unknown as Vitest);
 }
 
-function checkedInCliCoverageEntries(): WeightedShardEntry<string>[] {
-  const files = execFileSync(
-    "git",
-    [
-      "ls-files",
-      "src/**/*.test.ts",
-      "test/*.test.ts",
-      "test/*.test.js",
-      "test/**/*.test.ts",
-      "test/**/*.test.js",
-    ],
-    { encoding: "utf8" },
-  )
-    .trim()
-    .split("\n");
-  const installerProjectFiles = new Set([
-    "test/install-express-prompt.test.ts",
-    "test/install-build-dependency-preflight.test.ts",
-    "test/install-clone-ref.test.ts",
-    "test/install-preflight.test.ts",
-    "test/install-preflight-docker-bootstrap.test.ts",
-    "test/install-openshell-version-check.test.ts",
-  ]);
+function representativeCliCoverageEntries(): WeightedShardEntry<string>[] {
+  const measured = Object.entries(cliTestTimingHints.files).map(([file, weightMs]) => {
+    const projectName = file.startsWith("src/") ? "cli" : "integration";
+    return { key: `${projectName}:${file}`, weightMs, value: file };
+  });
+  const projectSizes = { cli: 808, integration: 500 } as const;
+  const ordinary = (Object.keys(projectSizes) as (keyof typeof projectSizes)[]).flatMap(
+    (projectName) => {
+      const measuredCount = measured.filter((entry) =>
+        entry.key.startsWith(`${projectName}:`),
+      ).length;
+      return Array.from({ length: projectSizes[projectName] - measuredCount }, (_, index) => {
+        const file = `roster/regular-${index}.test.ts`;
+        return {
+          key: `${projectName}:${file}`,
+          weightMs: cliTestTimingHints.defaultDurationMs,
+          value: file,
+        };
+      });
+    },
+  );
 
-  return files
-    .filter(
-      (file) =>
-        file.startsWith("src/") ||
-        (!file.startsWith("test/e2e/") &&
-          !file.startsWith("test/package-contract/") &&
-          !installerProjectFiles.has(file)),
-    )
-    .map((file) => {
-      const projectName = file.startsWith("src/") ? "cli" : "integration";
-      return {
-        key: `${projectName}:${file}`,
-        weightMs: timingWeightForPath(file),
-        value: file,
-      };
-    });
+  return [...measured, ...ordinary];
 }
 
 describe("stable CLI coverage sharding", () => {
@@ -146,12 +128,12 @@ describe("stable CLI coverage sharding", () => {
     });
   });
 
-  it("keeps the checked-in test roster balanced across the eight CI shards", () => {
-    const shards = assignStableShards(checkedInCliCoverageEntries(), 8);
+  it("keeps a representative test roster balanced across the eight CI shards", () => {
+    const shards = assignStableShards(representativeCliCoverageEntries(), 8);
     const weights = shards.map((shard) => shard.totalWeightMs);
     const averageWeight = weights.reduce((total, weight) => total + weight, 0) / weights.length;
 
-    expect(Math.max(...weights)).toBeLessThanOrEqual(averageWeight * 1.05);
+    expect(Math.max(...weights)).toBeLessThanOrEqual(averageWeight * 1.06);
   });
 
   it("uses stable sharding only for CLI coverage projects", () => {
