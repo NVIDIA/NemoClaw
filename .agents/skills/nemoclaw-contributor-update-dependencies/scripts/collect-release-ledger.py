@@ -33,6 +33,8 @@ class LedgerError(RuntimeError):
 @total_ordering
 @dataclass(frozen=True)
 class Version:
+    """A SemVer identity with ordering suitable for release-ledger endpoints."""
+
     major: int
     minor: int
     patch: int
@@ -40,6 +42,8 @@ class Version:
 
     @classmethod
     def parse(cls, value: str) -> Version | None:
+        """Parse a complete SemVer tag, accepting an optional leading ``v``."""
+
         match = SEMVER_RE.fullmatch(value)
         if not match:
             return None
@@ -51,6 +55,8 @@ class Version:
         )
 
     def __lt__(self, other: object) -> bool:
+        """Compare versions using SemVer core and prerelease precedence rules."""
+
         if not isinstance(other, Version):
             return NotImplemented
         core = (self.major, self.minor, self.patch)
@@ -65,6 +71,8 @@ class Version:
 
     @staticmethod
     def _prerelease_is_less(left: str, right: str) -> bool:
+        """Return whether one dot-delimited prerelease has lower precedence."""
+
         left_parts = left.split(".")
         right_parts = right.split(".")
         for left_part, right_part in zip(left_parts, right_parts):
@@ -80,11 +88,15 @@ class Version:
         return len(left_parts) < len(right_parts)
 
     def render(self) -> str:
+        """Render the normalized version without a tag's optional leading ``v``."""
+
         base = f"{self.major}.{self.minor}.{self.patch}"
         return f"{base}-{self.prerelease}" if self.prerelease else base
 
 
 def git(repo: Path, *args: str, allow_failure: bool = False) -> str:
+    """Run Git in ``repo`` and return stdout without its final newline."""
+
     result = subprocess.run(
         ["git", "-C", str(repo), *args],
         check=False,
@@ -98,6 +110,8 @@ def git(repo: Path, *args: str, allow_failure: bool = False) -> str:
 
 
 def resolve_commit(repo: Path, ref: str) -> str:
+    """Resolve ``ref`` to one full commit SHA or raise ``LedgerError``."""
+
     sha = git(repo, "rev-parse", "--verify", f"{ref}^{{commit}}")
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise LedgerError(f"{ref!r} did not resolve to a full commit SHA")
@@ -105,6 +119,8 @@ def resolve_commit(repo: Path, ref: str) -> str:
 
 
 def is_ancestor(repo: Path, older: str, newer: str) -> bool:
+    """Return whether ``older`` is an ancestor of ``newer``."""
+
     result = subprocess.run(
         ["git", "-C", str(repo), "merge-base", "--is-ancestor", older, newer],
         check=False,
@@ -118,6 +134,8 @@ def is_ancestor(repo: Path, older: str, newer: str) -> bool:
 
 
 def version_and_tag_for_start(repo: Path, ref: str, sha: str) -> tuple[Version, str]:
+    """Select the semantic-version tag that defines the starting endpoint."""
+
     tags = git(repo, "tag", "--points-at", sha).splitlines()
     direct_tag = ref.removeprefix("refs/tags/")
     direct_version = Version.parse(direct_tag)
@@ -138,6 +156,8 @@ def version_and_tag_for_start(repo: Path, ref: str, sha: str) -> tuple[Version, 
 
 
 def tag_kind(repo: Path, tag: str) -> str:
+    """Classify ``tag`` as annotated or lightweight."""
+
     object_type = git(repo, "cat-file", "-t", f"refs/tags/{tag}")
     if object_type == "tag":
         return "annotated"
@@ -147,6 +167,8 @@ def tag_kind(repo: Path, tag: str) -> str:
 
 
 def tag_date(repo: Path, tag: str) -> str:
+    """Return ``tag`` creation time in strict ISO-8601 form."""
+
     return git(
         repo,
         "for-each-ref",
@@ -156,6 +178,8 @@ def tag_date(repo: Path, tag: str) -> str:
 
 
 def parse_commits(repo: Path, older: str, newer: str) -> list[dict[str, str]]:
+    """Collect deterministic commit evidence for ``older..newer``."""
+
     raw = git(
         repo,
         "log",
@@ -175,6 +199,8 @@ def parse_commits(repo: Path, older: str, newer: str) -> list[dict[str, str]]:
 
 
 def parse_changed_paths(repo: Path, older: str, newer: str) -> list[dict[str, Any]]:
+    """Collect rename-aware changed-path evidence for a release range."""
+
     raw = git(repo, "diff", "--name-status", "--find-renames", older, newer)
     paths: list[dict[str, Any]] = []
     for line in raw.splitlines():
@@ -192,6 +218,8 @@ def parse_changed_paths(repo: Path, older: str, newer: str) -> list[dict[str, An
 
 
 def endpoint_for_tag(repo: Path, tag: str, version: Version) -> dict[str, Any]:
+    """Build a release endpoint from a semantic-version tag."""
+
     sha = resolve_commit(repo, f"refs/tags/{tag}")
     return {
         "ref": tag,
@@ -203,6 +231,8 @@ def endpoint_for_tag(repo: Path, tag: str, version: Version) -> dict[str, Any]:
 
 
 def collect(args: argparse.Namespace) -> dict[str, Any]:
+    """Collect adjacent release endpoints and range evidence for ``args``."""
+
     repo = Path(args.repo).expanduser().resolve()
     if git(repo, "rev-parse", "--is-inside-work-tree") != "true":
         raise LedgerError(f"not a Git worktree: {repo}")
@@ -289,6 +319,8 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
+    """Parse collector command-line arguments."""
+
     parser = argparse.ArgumentParser(
         description="Collect adjacent semantic-version tag ranges and their exact Git evidence."
     )
@@ -305,6 +337,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def main(argv: list[str]) -> int:
+    """Write the ledger atomically and return a process exit status."""
+
     try:
         args = parse_args(argv)
         payload = json.dumps(collect(args), indent=2, sort_keys=True) + "\n"
