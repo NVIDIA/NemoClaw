@@ -36,7 +36,7 @@ describe("wrapExecCommandWithRuntimeEnv", () => {
       "cat <<'EOF'\nline one\nline 'two'\nEOF",
     ];
     const wrapped = wrapExecCommandWithRuntimeEnv([
-      process.execPath,
+      "node",
       "-e",
       "process.stdout.write(JSON.stringify(process.argv.slice(1)))",
       ...payloads,
