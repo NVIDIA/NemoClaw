@@ -249,6 +249,7 @@ function checkAnalysisJob(errors: string[], reviewJob: WorkflowRecord): void {
   requireEnv(errors, "review job", reviewJob, "FD_FIND_VERSION", "9.0.0-1");
   requireEnv(errors, "review job", reviewJob, "RIPGREP_VERSION", "14.1.0-1");
   requireEnv(errors, "review job", reviewJob, "TYPEBOX_VERSION", "1.1.38");
+  requireEnv(errors, "review job", reviewJob, "YAML_VERSION", "2.8.3");
   requireEnv(
     errors,
     "review job",
@@ -353,7 +354,11 @@ done < <(find "$ADVISOR_WORKDIR" -type l -print0)`;
   requireRunContains(errors, install, "command -v rg");
   requireRunContains(errors, install, 'FD_BINARY_VERSION="$(fdfind --version)"');
   requireRunContains(errors, install, 'RG_BINARY_VERSION="$(rg --version)"');
-  requireRunContains(errors, install, '"$FD_BINARY_VERSION" != "fd $EXPECTED_FD_BINARY_VERSION"');
+  requireRunContains(
+    errors,
+    install,
+    '"$FD_BINARY_VERSION" != "fdfind $EXPECTED_FD_BINARY_VERSION"',
+  );
   requireRunContains(
     errors,
     install,
@@ -361,6 +366,7 @@ done < <(find "$ADVISOR_WORKDIR" -type l -print0)`;
   );
   requireRunContains(errors, install, "--ignore-scripts");
   requireRunContains(errors, install, '"typebox@${TYPEBOX_VERSION}"');
+  requireRunContains(errors, install, '"yaml@${YAML_VERSION}"');
   requireRunContains(errors, install, '"$ADVISOR_DIR/node_modules"');
 
   const analyze = requireStep(errors, steps, "Run PR review advisor");
