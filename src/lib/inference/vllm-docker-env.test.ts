@@ -29,4 +29,13 @@ describe("managed vLLM Docker client environment", () => {
     );
     expect(env.UNRELATED_SECRET).toBeUndefined();
   });
+
+  it("does not inherit Docker selectors omitted from an explicit source (#6757)", () => {
+    vi.stubEnv("DOCKER_HOST", "ssh://ambient.example.test");
+
+    const env = buildVllmDockerEnv({}, { DOCKER_CONTEXT: "requested-context" });
+
+    expect(env.DOCKER_CONTEXT).toBe("requested-context");
+    expect(env.DOCKER_HOST).toBeUndefined();
+  });
 });

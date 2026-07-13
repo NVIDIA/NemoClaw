@@ -26,5 +26,9 @@ export function buildVllmDockerEnv(
     const value = source[name];
     if (value !== undefined) dockerEnv[name] = value;
   }
-  return buildSubprocessEnv({ ...dockerEnv, ...extra });
+  const env = buildSubprocessEnv({ ...dockerEnv, ...extra });
+  for (const name of DOCKER_CLIENT_ENV_NAMES) {
+    if (source[name] === undefined && extra[name] === undefined) delete env[name];
+  }
+  return env;
 }
