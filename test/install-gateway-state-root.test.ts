@@ -202,12 +202,13 @@ save_usage_notice_acceptance_shell "test-version"`,
         metadata: { gatewayName: "nemoclaw-9123" },
       });
 
-      const result = spawnSync(process.execPath, [CLI, "credentials", "list"], {
+      const result = spawnSync(process.execPath, [CLI, "agents", "list"], {
         encoding: "utf8",
         env: {
           ...process.env,
           HOME: home,
           NEMOCLAW_GATEWAY_PORT: "9123",
+          PATH: "",
         },
       });
 
