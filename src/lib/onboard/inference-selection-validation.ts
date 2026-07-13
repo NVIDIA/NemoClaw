@@ -126,7 +126,7 @@ function printOpenAiSurfaceGuidance(): void {
   );
   console.error("  The selected Anthropic-compatible endpoint does not serve it.");
   console.error("  Use an OpenAI-compatible endpoint, or switch to an Anthropic-native agent:");
-  console.error("  `nemoclaw onboard --agent openclaw` or `nemohermes onboard`.");
+  console.error("  `nemoclaw onboard --agent openclaw`.");
 }
 
 export function createInferenceSelectionValidationHelpers(

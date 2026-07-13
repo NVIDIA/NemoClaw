@@ -531,7 +531,7 @@ exit 0
     }
   });
 
-  it("suggests an OpenAI-compatible endpoint or Anthropic-native agent when an Anthropic-only endpoint lacks Chat Completions (#6765)", async () => {
+  it("suggests an OpenAI-compatible endpoint or OpenClaw when an Anthropic-only endpoint lacks Chat Completions (#6765)", async () => {
     const originalExitCode = process.exitCode;
     const probeOpenAiLikeEndpoint = vi.fn(async () => ({
       ok: false,
@@ -567,7 +567,8 @@ exit 0
         "Other Anthropic-compatible endpoint endpoint validation failed.",
       );
       expect(errorOutput).toContain("OpenAI Chat Completions API (/v1/chat/completions)");
-      expect(errorOutput).toContain("`nemoclaw onboard --agent openclaw` or `nemohermes onboard`.");
+      expect(errorOutput).toContain("`nemoclaw onboard --agent openclaw`.");
+      expect(errorOutput).not.toContain("nemohermes");
     } finally {
       process.exitCode = originalExitCode;
       error.mockRestore();
