@@ -21,6 +21,70 @@ afterEach(() => {
 });
 
 describe("uninstall gateway-port segregation (#3053)", () => {
+  it("falls back to legacy gateway destroy only when gateway remove is unsupported", () => {
+    const calls: Array<{ args: string[]; command: string }> = [];
+    const responses = new Map<string, RunResult>([
+      [
+        "openshell gateway remove nemoclaw",
+        { status: 2, stdout: "", stderr: "unrecognized subcommand 'remove'" },
+      ],
+    ]);
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: (command) => command !== "docker" && command !== "pgrep",
+        env: { HOME: "/home/test", TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        isTty: false,
+        rmSync: vi.fn(),
+        run: (command, args) => {
+          calls.push({ args, command });
+          return responses.get([command, ...args].join(" ")) ?? ok();
+        },
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const openshellCalls = calls
+      .filter(({ command }) => command === "openshell")
+      .map(({ args }) => args);
+    expect(openshellCalls).toContainEqual(["gateway", "remove", "nemoclaw"]);
+    expect(openshellCalls).toContainEqual(["gateway", "destroy", "-g", "nemoclaw"]);
+  });
+
+  it("does not hide a current gateway remove failure behind the legacy verb", () => {
+    const calls: Array<{ args: string[]; command: string }> = [];
+    const warnings: string[] = [];
+    const responses = new Map<string, RunResult>([
+      ["openshell gateway remove nemoclaw", { status: 1, stdout: "", stderr: "permission denied" }],
+    ]);
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: (command) => command !== "docker" && command !== "pgrep",
+        env: { HOME: "/home/test", TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        isTty: false,
+        rmSync: vi.fn(),
+        run: (command, args) => {
+          calls.push({ args, command });
+          return responses.get([command, ...args].join(" ")) ?? ok();
+        },
+        runDocker: () => ok(""),
+        error: (line) => warnings.push(line),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const openshellCalls = calls
+      .filter(({ command }) => command === "openshell")
+      .map(({ args }) => args);
+    expect(openshellCalls).toContainEqual(["gateway", "remove", "nemoclaw"]);
+    expect(openshellCalls.some((args) => args[1] === "destroy")).toBe(false);
+    expect(warnings.join("\n")).toContain("Gateway 'nemoclaw' already removed or unreachable");
+  });
+
   it("preserves the gateways/ subtree so uninstalling one environment leaves the others", () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-gwpreserve-"));
     try {
