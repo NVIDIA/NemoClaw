@@ -545,7 +545,7 @@ exit 0`,
 dest="\${@: -1}"
 mkdir -p "$(dirname "$dest")"
   cat > "$dest" <<'EOF'
-  #!/usr/bin/env bash
+#!/usr/bin/env bash
 if [ "\${1:-}" = "--version" ]; then echo "openshell ${REQUIRED_OPENSHELL_VERSION}"; exit 0; fi
 # ${OPENSHELL_FEATURE_MARKERS}
 exit 0
@@ -567,10 +567,13 @@ exit 0`,
 
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(expected.status);
       expect(result.stderr.includes("Unsafe OpenShell archive")).toBe(expected.unsafe);
-      expect(expected.unsafe && fs.existsSync(path.join(tmp, "local-bin", "openshell"))).toBe(
-        false,
+      const installedVersion = spawnSync(path.join(fakeBin, "openshell"), ["--version"], {
+        encoding: "utf8",
+      }).stdout.trim();
+      expect(installedVersion).toBe(
+        expected.unsafe ? "openshell 0.0.36" : `openshell ${REQUIRED_OPENSHELL_VERSION}`,
       );
-      expect(expected.unsafe && /^xzf /m.test(fs.readFileSync(tarLog, "utf8"))).toBe(false);
+      expect(/^xzf /m.test(fs.readFileSync(tarLog, "utf8"))).toBe(!expected.unsafe);
       const downloads = fs.readFileSync(downloadLog, "utf-8");
       expect(downloads).toContain("openshell-aarch64-apple-darwin.tar.gz");
       expect(downloads).toContain("openshell-gateway-aarch64-apple-darwin.tar.gz");
