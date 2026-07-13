@@ -3,7 +3,10 @@
 
 import { describe, expect, it } from "vitest";
 import { buildRiskPlan, RISK_RULES, riskPlanRequiredJobIds } from "../tools/advisors/risk-plan.mts";
-import { readFreeStandingJobsInventory } from "../tools/e2e/workflow-boundary.mts";
+import {
+  focusedE2eJobsForChangedFiles,
+  readFreeStandingJobsInventory,
+} from "../tools/e2e/workflow-boundary.mts";
 import { classifyTestDepth } from "../tools/pr-review-advisor/analyze.mts";
 
 const HEAD_SHA = "a".repeat(40);
@@ -18,7 +21,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(2);
+    expect(first.version).toBe(3);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -32,14 +35,48 @@ describe("deterministic PR risk plan", () => {
     expect(result.requiredJobs).toEqual([]);
   });
 
-  it("keeps the canonical cloud-onboard live test in the platform floor (#6446)", () => {
+  it("keeps every live test behind the control-plane exception and preserves the cloud floor (#6446)", () => {
     const canonical = plan("test/e2e/live/cloud-onboard.test.ts");
     const ordinaryLiveTest = plan("test/e2e/live/full.test.ts");
 
     expect(canonical.families.map((family) => family.id)).toContain("platform-install");
+    expect(canonical.families.map((family) => family.id)).toContain("e2e-control-plane");
     expect(riskPlanRequiredJobIds(canonical)).toContain("cloud-onboard");
-    expect(ordinaryLiveTest.families).toEqual([]);
-    expect(ordinaryLiveTest.requiredJobs).toEqual([]);
+    expect(ordinaryLiveTest.families.map((family) => family.id)).toEqual(["e2e-control-plane"]);
+    expect(riskPlanRequiredJobIds(ordinaryLiveTest)).toEqual([
+      "cloud-onboard",
+      "credential-sanitization",
+      "security-posture",
+    ]);
+  });
+
+  it("hashes trusted focused E2E selections into their canonical jobs", () => {
+    const changedFiles = ["test/e2e/live/token-rotation.test.ts"];
+    const focusedE2eJobs = focusedE2eJobsForChangedFiles(changedFiles);
+    const result = buildRiskPlan({ headSha: HEAD_SHA, changedFiles, focusedE2eJobs });
+    const withoutFocusedSelection = buildRiskPlan({ headSha: HEAD_SHA, changedFiles });
+
+    expect(focusedE2eJobs).toEqual([
+      {
+        id: "token-rotation",
+        matchedFiles: ["test/e2e/live/token-rotation.test.ts"],
+      },
+    ]);
+    expect(result.families).toContainEqual(
+      expect.objectContaining({
+        id: "focused-e2e",
+        matchedFiles: ["test/e2e/live/token-rotation.test.ts"],
+        requiredJobs: ["token-rotation"],
+      }),
+    );
+    expect(result.requiredJobs).toContainEqual(
+      expect.objectContaining({
+        id: "token-rotation",
+        families: ["focused-e2e"],
+        matchedFiles: ["test/e2e/live/token-rotation.test.ts"],
+      }),
+    );
+    expect(result.planHash).not.toBe(withoutFocusedSelection.planHash);
   });
 
   it("does not infer security or inference risk from unrelated path substrings", () => {
@@ -143,6 +180,63 @@ describe("deterministic PR risk plan", () => {
 
     expect(result.families.map((family) => family.id)).toEqual(expect.arrayContaining(families));
     expect(riskPlanRequiredJobIds(result)).toEqual(expect.arrayContaining(jobs));
+  });
+
+  it.each([
+    ".github/workflows/e2e.yaml",
+    ".github/workflows/pr-e2e-gate.yaml",
+    ".github/workflows/pr.yaml",
+    ".github/actions/prepare-e2e/action.yaml",
+    ".github/actions/upload-e2e-artifacts/action.yaml",
+    "package-lock.json",
+    "package.json",
+    "vitest.config.ts",
+    "tools/advisors/github.mts",
+    "tools/advisors/io.mts",
+    "tools/advisors/risk-plan.mts",
+    "tools/e2e/pr-e2e-gate.mts",
+    "tools/e2e/risk-signal.ts",
+    "tools/e2e/private-file.ts",
+    "tools/e2e/workflow-plan.mts",
+    "tools/e2e/workflow-boundary.mts",
+    "tools/e2e/job-map.txt",
+    "test/e2e/registry/runtime-support.ts",
+    "test/e2e/risk-signal-reporter.ts",
+    "test/e2e/lib/security-posture-assertions.sh",
+    "test/e2e/lib/redact-text.py",
+    "test/e2e/lib/fake-slack-api.cjs",
+    "test/e2e/fixtures/runtime-input.txt",
+    "test/e2e/e2e-cloud-experimental/full-e2e",
+    "test/e2e/live/registry-targets.test.ts",
+    "test/e2e/live/runtime-overrides.test.ts",
+    "test/e2e/live/dashboard-remote-bind.test.ts",
+  ])("keeps the E2E control plane in a fail-closed runtime floor: %s", (file) => {
+    const result = plan(file);
+
+    expect(result.families.map((family) => family.id)).toContain("e2e-control-plane");
+    expect(riskPlanRequiredJobIds(result)).toEqual(
+      expect.arrayContaining(["cloud-onboard", "credential-sanitization", "security-posture"]),
+    );
+  });
+
+  it("keeps E2E documentation outside the credentialed control-plane exception", () => {
+    const result = plan("test/e2e/README.md", "test/e2e/docs/README.md");
+
+    expect(result.families).toEqual([]);
+    expect(result.requiredJobs).toEqual([]);
+  });
+
+  it.each([
+    "nemoclaw/src/blueprint/runner.ts",
+    "nemoclaw-blueprint/blueprint.yaml",
+    "agents/hermes/config/build.ts",
+  ])("keeps the shared sandbox boundary in both agent and security floors: %s", (file) => {
+    const result = plan(file);
+
+    expect(result.families.map((family) => family.id)).toContain("sandbox-boundary");
+    expect(riskPlanRequiredJobIds(result)).toEqual(
+      expect.arrayContaining(["full-e2e", "hermes-e2e", "security-posture"]),
+    );
   });
 
   it("keeps every required job selected for broad runtime changes (#6446)", () => {

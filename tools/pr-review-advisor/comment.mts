@@ -281,13 +281,13 @@ function renderE2eDetails(result?: ReviewAdvisorResult): string {
   const lines = [
     "",
     "### E2E guidance",
-    "_Selector recommendations only; E2E / PR Gate independently dispatches trusted jobs and reports their state._",
+    "_Advisory only: coverage and selector recommendations are non-authoritative. E2E / PR Gate independently computes and dispatches trusted jobs without consuming this output._",
     "",
   ];
 
   lines.push(
-    `**Required coverage:** ${renderE2eIds(requiredCoverage) || "_None_"}`,
-    `**Required selectors:** ${renderE2eIds(requiredTargets) || "_None_"}`,
+    `**Recommended coverage:** ${renderE2eIds(requiredCoverage) || "_None_"}`,
+    `**Recommended selectors:** ${renderE2eIds(requiredTargets) || "_None_"}`,
   );
   if (requiredCoverage.length > 0) {
     lines.push("");
@@ -333,12 +333,15 @@ function renderE2eDetails(result?: ReviewAdvisorResult): string {
   }
 
   if (requiredCoverage.length === 0 && requiredTargets.length === 0 && coverage?.noE2eReason) {
-    lines.push("", `**Why no E2E is required:** ${escapeCommentText(coverage.noE2eReason)}`);
+    lines.push(
+      "",
+      `**Why no E2E coverage is recommended:** ${escapeCommentText(coverage.noE2eReason)}`,
+    );
   }
   if (requiredTargets.length === 0 && targets?.noTargetE2eReason) {
     lines.push(
       "",
-      `**Why no selector is required:** ${escapeCommentText(targets.noTargetE2eReason)}`,
+      `**Why no selector is recommended:** ${escapeCommentText(targets.noTargetE2eReason)}`,
     );
   }
   lines.push("");

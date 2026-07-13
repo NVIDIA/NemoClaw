@@ -344,7 +344,10 @@ function checkCi(
     const status = (check.status ?? "").toUpperCase();
     if (status !== "COMPLETED") {
       pending.push(checkName);
-    } else if (!passing.has(conclusion)) {
+    } else if (
+      !passing.has(conclusion) ||
+      (checkName === "E2E / PR Gate" && conclusion !== "SUCCESS")
+    ) {
       failing.push(`${checkName}: ${conclusion}`);
     }
   }

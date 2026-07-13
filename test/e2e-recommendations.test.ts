@@ -20,6 +20,17 @@ import {
 
 const E2E_WORKFLOW = "e2e.yaml";
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
+const E2E_CONTROL_PLANE_JOB_IDS = new Set([
+  "cloud-onboard",
+  "credential-sanitization",
+  "security-posture",
+]);
+
+function withoutControlPlaneRecommendations<T extends { id: string }>(
+  recommendations: readonly T[],
+): T[] {
+  return recommendations.filter((item) => !E2E_CONTROL_PLANE_JOB_IDS.has(item.id));
+}
 
 function metadata(
   overrides: Partial<{ baseRef: string; headRef: string; changedFiles: string[] }> = {},
@@ -160,9 +171,10 @@ describe("E2E recommendation normalizer", () => {
     };
 
     const normalized = normalizeE2eTargetAdvisorResult(raw, metadata());
-    expect(normalized.required).toHaveLength(1);
+    const modelRecommendations = withoutControlPlaneRecommendations(normalized.required);
+    expect(modelRecommendations).toHaveLength(1);
     expect(normalized.optional).toHaveLength(1);
-    expect(normalized.required[0]).not.toHaveProperty("dispatchCommand");
+    expect(modelRecommendations[0]).not.toHaveProperty("dispatchCommand");
     expect(normalized.optional[0]).not.toHaveProperty("dispatchCommand");
   });
 
@@ -181,7 +193,7 @@ describe("E2E recommendation normalizer", () => {
       },
       metadata(),
     );
-    expect(normalized.required).toHaveLength(0);
+    expect(withoutControlPlaneRecommendations(normalized.required)).toHaveLength(0);
   });
 
   it("rejects legacy typed-shell workflows while accepting Vitest fan-out", () => {
@@ -210,7 +222,9 @@ describe("E2E recommendation normalizer", () => {
       },
       metadata(),
     );
-    expect(normalized.required.map((item) => item.id)).toEqual(["e2e-all"]);
+    expect(withoutControlPlaneRecommendations(normalized.required).map((item) => item.id)).toEqual([
+      "e2e-all",
+    ]);
   });
 
   it("forces the required flag from the array position, ignoring the model's value", () => {
@@ -272,7 +286,9 @@ describe("E2E recommendation normalizer", () => {
       },
       metadata(),
     );
-    expect(normalized.required.map((item) => item.id)).toEqual(["ubuntu-repo-cloud-openclaw"]);
+    expect(withoutControlPlaneRecommendations(normalized.required).map((item) => item.id)).toEqual([
+      "ubuntu-repo-cloud-openclaw",
+    ]);
   });
 
   it("drops malformed recommendations and de-duplicates by id", () => {
@@ -304,7 +320,9 @@ describe("E2E recommendation normalizer", () => {
       confidence: "medium",
     };
     const normalized = normalizeE2eTargetAdvisorResult(raw, metadata());
-    expect(normalized.required.map((item) => item.id)).toEqual(["ubuntu-repo-cloud-openclaw"]);
+    expect(withoutControlPlaneRecommendations(normalized.required).map((item) => item.id)).toEqual([
+      "ubuntu-repo-cloud-openclaw",
+    ]);
   });
 
   it("drops unknown or unsupported registry ids while preserving live-supported ids and fan-out", () => {
@@ -340,7 +358,7 @@ describe("E2E recommendation normalizer", () => {
       confidence: "medium",
     };
     const normalized = normalizeE2eTargetAdvisorResult(raw, metadata());
-    expect(normalized.required.map((item) => item.id)).toEqual([
+    expect(withoutControlPlaneRecommendations(normalized.required).map((item) => item.id)).toEqual([
       "e2e-all",
       "ubuntu-repo-cloud-openclaw",
     ]);
@@ -363,10 +381,10 @@ describe("E2E recommendation normalizer", () => {
       metadata(),
     );
 
-    expect(normalized.required).toEqual([]);
+    expect(withoutControlPlaneRecommendations(normalized.required)).toEqual([]);
   });
 
-  it("suppresses fan-out for a new E2E test that is not workflow-wired", () => {
+  it("suppresses unsafe fan-out while retaining the control-plane floor", () => {
     const normalized = normalizeE2eTargetAdvisorResult(
       {
         required: [
@@ -385,10 +403,14 @@ describe("E2E recommendation normalizer", () => {
       { e2eWorkflowText: "jobs:\n  live-targets:\n    steps: []\n" },
     );
 
-    expect(normalized.required).toEqual([]);
+    expect(normalized.required.map((item) => item.id)).toEqual([
+      "cloud-onboard",
+      "credential-sanitization",
+      "security-posture",
+    ]);
     expect(normalized.optional).toEqual([]);
-    expect(normalized.noTargetE2eReason).toContain("not wired into `.github/workflows/e2e.yaml`");
-    expect(normalized.noTargetE2eReason).toContain("test/e2e/live/new-unwired-openclaw.test.ts");
+    expect(normalized.required.map((item) => item.id)).not.toContain("e2e-all");
+    expect(normalized.noTargetE2eReason).toBeNull();
   });
 
   it.each([
@@ -435,8 +457,13 @@ describe("E2E recommendation normalizer", () => {
       },
     );
 
+    expect(normalized.required.map((item) => item.id)).toEqual([
+      "cloud-onboard",
+      "credential-sanitization",
+      "security-posture",
+    ]);
     expect(normalized.required.map((item) => item.id)).not.toContain("string-only");
-    expect(normalized.noTargetE2eReason).toContain("not wired");
+    expect(normalized.noTargetE2eReason).toBeNull();
   });
 
   it("recognizes a standalone block-comment credential-free declaration", () => {
@@ -480,9 +507,14 @@ describe("E2E recommendation normalizer", () => {
       },
     );
 
+    expect(normalized.required.map((item) => item.id)).toEqual([
+      "cloud-onboard",
+      "credential-sanitization",
+      "security-posture",
+    ]);
     expect(normalized.required.map((item) => item.id)).not.toContain("docs-validation");
     expect(normalized.required.map((item) => item.id)).not.toContain("e2e-all");
-    expect(normalized.noTargetE2eReason).toContain(file);
+    expect(normalized.noTargetE2eReason).toBeNull();
   });
 
   it("keeps the deterministic floor while suppressing unwired-test fan-out", () => {
@@ -509,6 +541,9 @@ describe("E2E recommendation normalizer", () => {
     );
 
     expect(normalized.required.map((item) => item.id)).toEqual([
+      "cloud-onboard",
+      "credential-sanitization",
+      "security-posture",
       "full-e2e",
       "hermes-e2e",
       "onboard-repair",
@@ -570,6 +605,8 @@ jobs:
 
     expect(normalized.required.map((item) => [item.selectorType, item.id])).toEqual([
       ["job", "cloud-onboard"],
+      ["job", "credential-sanitization"],
+      ["job", "security-posture"],
       ["job", "token-rotation"],
     ]);
     expect(normalized.required.find((item) => item.id === "token-rotation")).not.toHaveProperty(
@@ -606,6 +643,9 @@ jobs:
     );
 
     expect(normalized.required.map((item) => [item.selectorType, item.id])).toEqual([
+      ["job", "cloud-onboard"],
+      ["job", "credential-sanitization"],
+      ["job", "security-posture"],
       ["job", "token-rotation"],
     ]);
     expect(normalized.required[0]).not.toHaveProperty("dispatchCommand");
@@ -638,7 +678,12 @@ jobs:
       },
     );
 
-    expect(normalized.required).toEqual([]);
+    expect(normalized.required.map((item) => item.id)).toEqual([
+      "cloud-onboard",
+      "credential-sanitization",
+      "security-posture",
+    ]);
+    expect(normalized.required.map((item) => item.id)).not.toContain("steal-secrets");
   });
 
   it("does not derive a focused job from job-like workflow comments", () => {
@@ -658,7 +703,12 @@ jobs:
       },
     );
 
-    expect(normalized.required).toEqual([]);
+    expect(normalized.required.map((item) => item.id)).toEqual([
+      "cloud-onboard",
+      "credential-sanitization",
+      "security-posture",
+    ]);
+    expect(normalized.required.map((item) => item.id)).not.toContain("cloud-inference");
   });
 
   it("removes optional recommendations whose id duplicates a required one", () => {

@@ -56,7 +56,7 @@ visibly incomplete, but their final-result artifact preserves any open canonical
 before the failure so later runs and reviewers do not lose substantive review history.
 
 The workflow is advisory and must not be configured as an E2E-required status check. Its combined
-comment includes deterministic-plan-backed E2E guidance and the reasons for required coverage, but
+comment includes deterministic-plan-backed E2E guidance and the reasons for recommended coverage, but
 does not dispatch or report pass/fail for E2E jobs. Model availability must not become the authority
 for whether a pull request can merge.
 For PRs from this repository, the PR E2E controller separately rebuilds the plan from GitHub's
@@ -157,6 +157,9 @@ reference their covering open ledger finding, while satisfied and not-applicable
 Every result also includes nested `e2e.coverage` and `e2e.targets` guidance. The trusted normalizer
 restores deterministic requirements, filters target and job selections against the supported
 inventory, drops command-shaped model output, and emits selector identifiers and reasons only.
+The compatibility schema retains `requiredTests` and `targets.required`, but those names describe
+the normalized advisory tier, not merge requirements. Rendered comments label them as recommended;
+the independent PR E2E controller does not consume advisor output.
 Findings can also include safe simplification metadata with delete, stdlib,
 native, YAGNI, or shrink tags; those suggestions must keep validation, security, data-loss prevention,
 and required tests intact. Only blockers set a blocking advisory recommendation; results without

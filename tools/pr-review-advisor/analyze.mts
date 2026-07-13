@@ -44,6 +44,7 @@ import {
   type RunAdvisorResult,
   runReadOnlyAdvisor,
 } from "../advisors/session.mts";
+import { focusedE2eJobsForChangedFiles } from "../e2e/workflow-boundary.mts";
 import {
   createReviewFindingLedger,
   createReviewLedgerToolController,
@@ -838,6 +839,7 @@ async function collectDeterministicContext(options: {
   const riskPlan = buildRiskPlan({
     headSha: options.headSha,
     changedFiles: options.changedFiles,
+    focusedE2eJobs: focusedE2eJobsForChangedFiles(options.changedFiles),
   });
   const riskyAreas = [
     ...detectRiskyAreas(options.changedFiles),

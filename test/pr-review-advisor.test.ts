@@ -33,11 +33,7 @@ import {
   reviewQualityIssues,
   writeDeterministicContextArtifacts,
 } from "../tools/pr-review-advisor/analyze.mts";
-import {
-  buildComment,
-  normalizeCommentOptions,
-  readCommentArtifacts,
-} from "../tools/pr-review-advisor/comment.mts";
+import { buildComment } from "../tools/pr-review-advisor/comment.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 
@@ -278,15 +274,21 @@ describe("PR review advisor", () => {
     const comment = buildComment({ summary: renderSummary(result), result });
     expect(comment).toContain("### E2E guidance");
     expect(comment).toContain(
-      "Selector recommendations only; E2E / PR Gate independently dispatches",
+      "Advisory only: coverage and selector recommendations are non-authoritative",
+    );
+    expect(comment).toContain(
+      "E2E / PR Gate independently computes and dispatches trusted jobs without consuming this output",
     );
     expect(comment).toContain("<code>upgrade-stale-sandbox</code>");
-    expect(comment).toContain("**Required selectors:**");
+    expect(comment).toContain("**Recommended coverage:**");
+    expect(comment).toContain("**Recommended selectors:**");
+    expect(comment).not.toContain("**Required coverage:**");
+    expect(comment).not.toContain("**Required selectors:**");
     expect(comment).not.toContain("gh workflow run");
     expect(comment).not.toContain("rm -rf");
   });
 
-  it("renders the reasons for required E2E coverage", () => {
+  it("renders the reasons for recommended E2E coverage", () => {
     const result = normalizeReviewResult(
       validResult({
         e2e: {
@@ -316,9 +318,21 @@ describe("PR review advisor", () => {
     );
 
     const comment = buildComment({ summary: renderSummary(result), result });
+    expect(comment).toContain("**Recommended coverage:** <code>advisor-workflow</code>");
     expect(comment).toContain(
       "- <code>advisor-workflow</code> — The combined advisor path needs end-to-end regression coverage.",
     );
+    expect(comment).toContain("**Why no selector is recommended:** No live dispatch is required.");
+
+    const noE2eResult = normalizeReviewResult(validResult(), metadata());
+    const noE2eComment = buildComment({
+      summary: renderSummary(noE2eResult),
+      result: noE2eResult,
+    });
+    expect(noE2eComment).toContain("**Why no E2E coverage is recommended:** No E2E impact.");
+    expect(noE2eComment).toContain("**Why no selector is recommended:** No E2E target impact.");
+    expect(noE2eComment).not.toContain("Why no E2E is required");
+    expect(noE2eComment).not.toContain("Why no selector is required");
   });
 
   it("sanitizes malformed enum values and preserves deterministic fallback gates", () => {
@@ -1426,63 +1440,6 @@ diff --git a/test/example.test.ts b/test/example.test.ts
     expect(comment).toContain("\\`code\\` &lt;tag&gt;");
     expect(comment).not.toContain("</details> @team");
     expect(comment).not.toContain("### injected <script>");
-  });
-
-  it("validates configurable comment CLI fields and explicit artifacts", () => {
-    const tmp = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-comment-"));
-    const defaultSummary = path.join(
-      tmp,
-      "artifacts",
-      "pr-review-advisor",
-      "pr-review-advisor-summary.md",
-    );
-    const laneSummary = path.join(
-      tmp,
-      "artifacts",
-      "pr-review-advisor-nemotron-ultra",
-      "pr-review-advisor-summary.md",
-    );
-    const laneResult = path.join(
-      tmp,
-      "artifacts",
-      "pr-review-advisor-nemotron-ultra",
-      "pr-review-advisor-final-result.json",
-    );
-    fs.mkdirSync(path.dirname(defaultSummary), { recursive: true });
-    fs.writeFileSync(defaultSummary, "# default lane\n");
-
-    try {
-      expect(
-        normalizeCommentOptions({
-          marker: "<!-- nemoclaw-pr-review-advisor-nemotron-ultra -->",
-          title: "PR Review Advisor (Nemotron Ultra)",
-          label: "PR review advisor (Nemotron Ultra)",
-        }),
-      ).toMatchObject({ marker: "<!-- nemoclaw-pr-review-advisor-nemotron-ultra -->" });
-      expect(() =>
-        normalizeCommentOptions({ marker: "<!-- other -->", title: "ok", label: "ok" }),
-      ).toThrow(/marker must be a safe/);
-      expect(() =>
-        normalizeCommentOptions({
-          marker: "<!-- nemoclaw-pr-review-advisor -->",
-          title: "bad\nheading",
-          label: "ok",
-        }),
-      ).toThrow(/title must be a non-empty single-line string/);
-      expect(() =>
-        readCommentArtifacts(laneSummary, laneResult, { summaryExplicit: true }),
-      ).toThrow(`No PR review advisor summary found at ${laneSummary}`);
-      fs.mkdirSync(path.dirname(laneSummary), { recursive: true });
-      fs.writeFileSync(laneSummary, "# nemotron lane\n");
-      expect(() =>
-        readCommentArtifacts(laneSummary, laneResult, {
-          summaryExplicit: true,
-          resultExplicit: true,
-        }),
-      ).toThrow(`No PR review advisor result found at ${laneResult}`);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
   });
 
   it("normalizes output that validates against the JSON schema", () => {

@@ -53,7 +53,7 @@ gate_state_open=$([ "$state" = "OPEN" ] && echo true || echo false)
 
 # Gate 2: CI green on latest head SHA. statusCheckRollup contains the latest run.
 # Fail closed when required checks are missing, including an empty rollup.
-required_checks='["checks","commit-lint","dco-check"]'
+required_checks='["checks","check-hash","changes","commit-lint","dco-check","E2E / PR Gate"]'
 observed_checks=$(printf '%s' "$raw" | jq -c '[(.statusCheckRollup // [])[] | (.name // .context // empty)] | unique')
 missing_checks=$(jq -cn --argjson required "$required_checks" --argjson observed "$observed_checks" '$required - $observed')
 missing_check_count=$(printf '%s' "$missing_checks" | jq 'length')
@@ -68,9 +68,13 @@ ci_failing_checks=$(printf '%s' "$raw" | jq -c '[
     else
       (.status // "" | ascii_upcase) as $status
       | (.conclusion // "" | ascii_upcase) as $conclusion
+      | (.name // .context // "(unknown)") as $name
       | select($status == "COMPLETED")
-      | select($conclusion != "SUCCESS" and $conclusion != "NEUTRAL" and $conclusion != "SKIPPED")
-      | "\(.name // .context // "(unknown)"): \($conclusion)"
+      | select(
+          ($name == "E2E / PR Gate" and $conclusion != "SUCCESS") or
+          ($name != "E2E / PR Gate" and $conclusion != "SUCCESS" and $conclusion != "NEUTRAL" and $conclusion != "SKIPPED")
+        )
+      | "\($name): \($conclusion)"
     end
 ]')
 ci_pending_checks=$(printf '%s' "$raw" | jq -c '[
