@@ -172,7 +172,7 @@ export function detectInferenceProviderHostState(
     vllmProfile &&
     deps
       .dockerCapture(["image", "inspect", "--format", "{{.Id}}", vllmProfile.image], {
-        env: buildVllmDockerEnv(),
+        env: buildVllmDockerEnv({}, input.env),
         ignoreError: true,
         timeout: 10_000,
       })

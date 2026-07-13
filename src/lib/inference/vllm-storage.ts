@@ -180,7 +180,9 @@ function nativeDockerHostProblem(info: DockerInfoShape, deps: StorageProbeDeps):
     return "Docker runs inside a VM or compatibility layer";
   }
 
-  const explicitContext = deps.dockerContext?.trim();
+  const dockerHost = deps.dockerHost?.trim() ?? "";
+  // DOCKER_HOST takes precedence over DOCKER_CONTEXT in the Docker CLI.
+  const explicitContext = dockerHost ? "" : deps.dockerContext?.trim();
   const reportedContext =
     typeof info.ClientInfo?.Context === "string" ? info.ClientInfo.Context.trim() : "";
   const context = explicitContext || reportedContext;
@@ -189,9 +191,7 @@ function nativeDockerHostProblem(info: DockerInfoShape, deps: StorageProbeDeps):
     return `Docker uses a named context (${context}) whose host filesystem cannot be verified`;
   }
 
-  // DOCKER_CONTEXT has precedence over DOCKER_HOST. An explicit default
-  // context therefore selects the local default even when DOCKER_HOST is set.
-  const endpoint = explicitContext ? "" : (deps.dockerHost?.trim() ?? "");
+  const endpoint = dockerHost;
   if (endpoint && !endpoint.startsWith("unix://") && !path.isAbsolute(endpoint)) {
     return `Docker uses a remote endpoint (${endpoint})`;
   }

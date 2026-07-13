@@ -158,12 +158,25 @@ describe("Docker image-storage detection", () => {
     });
   });
 
-  it("honors DOCKER_CONTEXT precedence over DOCKER_HOST (#6757)", () => {
+  it("honors DOCKER_HOST precedence over DOCKER_CONTEXT (#6757)", () => {
     expect(
       resolveDockerStorageLocations(nativeDockerInfo(), {
         ...nativeHost,
         dockerContext: "default",
         dockerHost: "ssh://builder.example.test",
+      }),
+    ).toEqual({
+      ok: false,
+      reason: "Docker uses a remote endpoint (ssh://builder.example.test)",
+    });
+  });
+
+  it("ignores a named DOCKER_CONTEXT when DOCKER_HOST selects a local socket (#6757)", () => {
+    expect(
+      resolveDockerStorageLocations(nativeDockerInfo(), {
+        ...nativeHost,
+        dockerContext: "remote-builder",
+        dockerHost: "unix:///var/run/docker.sock",
       }),
     ).toEqual({
       ok: true,

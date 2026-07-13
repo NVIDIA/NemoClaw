@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   type DetectInferenceProviderHostStateDeps,
@@ -16,10 +16,6 @@ const SUPPORTED_WINDOWS_OLLAMA = {
   startLabel: ({ reachable }: { reachable: boolean; loopbackOnly: boolean }) =>
     reachable ? "Use Ollama on Windows host - running (suggested)" : "Start Ollama on Windows host",
 } as const;
-
-afterEach(() => {
-  vi.unstubAllEnvs();
-});
 
 function buildDeps(
   overrides: Partial<DetectInferenceProviderHostStateDeps> = {},
@@ -47,12 +43,13 @@ function buildDeps(
 function detectWithDeps(
   deps: DetectInferenceProviderHostStateDeps,
   gpu: InferenceProviderHostGpu | null = null,
+  env: NodeJS.ProcessEnv = {},
 ) {
   return detectInferenceProviderHostState({
     gpu,
     experimental: true,
     platform: "linux",
-    env: {},
+    env,
     log: () => {},
     installedOllamaVersion: "0.24.0",
     runningOllamaVersion: "0.24.0",
@@ -98,8 +95,6 @@ describe("detectInferenceProviderHostState", () => {
   });
 
   it("collects local Ollama and vLLM state into one provider host snapshot", () => {
-    vi.stubEnv("DOCKER_CONTEXT", "remote-builder");
-    vi.stubEnv("DOCKER_HOST", "ssh://fallback.example.test");
     const dockerCapture = vi.fn(() => "sha256:cached-image\n");
     const deps = buildDeps({
       hostCommandExists: vi.fn((command) => command === "ollama"),
@@ -121,7 +116,14 @@ describe("detectInferenceProviderHostState", () => {
       })),
     });
 
-    const state = detectWithDeps(deps, { nimCapable: true, type: "nvidia", platform: "linux" });
+    const state = detectWithDeps(
+      deps,
+      { nimCapable: true, type: "nvidia", platform: "linux" },
+      {
+        DOCKER_CONTEXT: "remote-builder",
+        DOCKER_HOST: "ssh://fallback.example.test",
+      },
+    );
 
     expect(state.hasOllama).toBe(true);
     expect(state.ollamaRunning).toBe(true);
