@@ -41,8 +41,8 @@ During release prep, run the skill first, make any doc version bumps, then open 
 The skill lives in `.agents/skills/nemoclaw-contributor-update-docs/` and follows the style guide below automatically.
 
 Use the maintainer-owned `nemoclaw-maintainer-refactor-docs` skill when a page or section has grown too large, mixes several user tasks, or needs a nested TOC.
-It inventories the existing content, organizes topics around the user journey, keeps foldable navigation groups non-clickable, assigns one canonical owner per topic, and preserves Fern routes, redirects, and agent variants during the split.
-The skill lives in `.agents/skills/nemoclaw-maintainer-refactor-docs/`.
+Use it to inventory the existing content, organize topics around the user journey, keep foldable navigation groups non-clickable, assign one canonical owner per topic, and preserve Fern routes, redirects, and agent variants during the split.
+Find the skill in `.agents/skills/nemoclaw-maintainer-refactor-docs/`.
 
 ## Markdown Docs for AI Agents
 
