@@ -378,7 +378,9 @@ describe("Hugging Face model-cache storage", () => {
     const cacheDir = path.join(root, ".cache", "huggingface");
     const dockerReadBind = vi.fn((_image: string, sourcePath: string) => {
       expect(fs.statSync(sourcePath).mode & 0o777).toBe(0o600);
-      return fs.readFileSync(sourcePath, "utf8");
+      const token = fs.readFileSync(sourcePath, "utf8");
+      expect(sourcePath).not.toContain(token);
+      return token;
     });
 
     expect(

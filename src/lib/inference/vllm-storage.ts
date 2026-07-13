@@ -398,8 +398,8 @@ export function probeDockerBindIdentity(
   if (hostProblem) return { ok: false, reason: hostProblem };
 
   const target = nearestExistingPath(cacheDir, deps.exists);
-  const token = randomUUID();
-  const sentinelPath = path.join(target, `.nemoclaw-storage-probe-${token}`);
+  const token = `nemoclaw-storage-token:${randomUUID()}`;
+  const sentinelPath = path.join(target, `.nemoclaw-storage-probe-${randomUUID()}`);
   try {
     fs.writeFileSync(sentinelPath, token, { encoding: "utf8", flag: "wx", mode: 0o600 });
     if (deps.dockerReadBind(image, sentinelPath) !== token) {
