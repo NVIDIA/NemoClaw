@@ -36,6 +36,7 @@ import {
   formatStorageBytes,
   imageStorageRequirementBytes,
   modelStorageRequirementBytes,
+  probeDockerBindIdentity,
   probeDockerHostLocality,
   probeDockerStorage,
   probeModelCacheStorage,
@@ -679,9 +680,12 @@ async function imageStorageAccepted(
 async function modelStorageAccepted(
   model: VllmModelDef,
   opts: InstallVllmOptions,
+  bindProbeImage?: string,
 ): Promise<boolean> {
   const cacheDir = hostHfCacheDir();
-  const dockerHost = probeDockerHostLocality();
+  const dockerHost = bindProbeImage
+    ? probeDockerBindIdentity(cacheDir, bindProbeImage)
+    : probeDockerHostLocality();
   const probe: StorageProbeResult = dockerHost.ok ? probeModelCacheStorage(cacheDir) : dockerHost;
   return storageWarningAccepted(
     {
@@ -800,7 +804,7 @@ export async function installVllm(
   if (!hasImage && !(await imageStorageAccepted(profile, opts))) {
     return { ok: false };
   }
-  if (!(await modelStorageAccepted(model, opts))) {
+  if (!(await modelStorageAccepted(model, opts, hasImage ? profile.image : undefined))) {
     return { ok: false };
   }
 
@@ -810,9 +814,9 @@ export async function installVllm(
     return { ok: false };
   }
 
-  // The image and model cache can share one filesystem. Re-probe after the
-  // explicit pull so their individually valid estimates cannot overcommit it.
-  if (!(await modelStorageAccepted(model, opts))) {
+  // The image now exists, so this re-probe also proves daemon/client bind
+  // identity before their individually valid estimates can overcommit storage.
+  if (!(await modelStorageAccepted(model, opts, profile.image))) {
     return { ok: false };
   }
 

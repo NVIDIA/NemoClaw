@@ -9,6 +9,7 @@ import {
   formatStorageBytes,
   imageStorageRequirementBytes,
   modelStorageRequirementBytes,
+  probeDockerBindIdentity,
   probeDockerHostLocality,
   probeDockerStorage,
   probeModelCacheStorage,
@@ -371,6 +372,54 @@ describe("Docker image-storage detection", () => {
 });
 
 describe("Hugging Face model-cache storage", () => {
+  it("proves Docker bind identity with a bounded read-only sentinel round trip (#6757)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-vllm-bind-identity-"));
+    tempDirs.push(root);
+    const cacheDir = path.join(root, ".cache", "huggingface");
+    const dockerReadBind = vi.fn((_image: string, sourcePath: string) => {
+      expect(fs.statSync(sourcePath).mode & 0o777).toBe(0o600);
+      return fs.readFileSync(sourcePath, "utf8");
+    });
+
+    expect(
+      probeDockerBindIdentity(cacheDir, "example.test/vllm@sha256:pinned", {
+        ...nativeHost,
+        dockerInfo: () => nativeDockerInfo(),
+        dockerReadBind,
+      }),
+    ).toEqual({ ok: true });
+    expect(dockerReadBind).toHaveBeenCalledWith(
+      "example.test/vllm@sha256:pinned",
+      expect.stringMatching(/\.nemoclaw-storage-probe-/),
+    );
+    expect(fs.readdirSync(root)).toEqual([]);
+  });
+
+  it("fails closed when namespace-local PID 1 hides a private mount namespace (#6757)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-vllm-bind-identity-"));
+    tempDirs.push(root);
+
+    expect(
+      probeDockerBindIdentity(
+        path.join(root, ".cache", "huggingface"),
+        "example.test/vllm@sha256:pinned",
+        {
+          ...nativeHost,
+          clientContainerized: false,
+          dockerHost: "unix:///var/run/docker.sock",
+          dockerInfo: () => nativeDockerInfo(),
+          dockerReadBind: () => "",
+          sharesInitMountNamespace: true,
+        },
+      ),
+    ).toEqual({
+      ok: false,
+      reason:
+        "Docker daemon could not read the client storage sentinel; bind-mount filesystem identity cannot be verified",
+    });
+    expect(fs.readdirSync(root)).toEqual([]);
+  });
+
   it("checks the nearest existing filesystem before creating the cache directory (#6757)", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-vllm-storage-"));
     tempDirs.push(root);

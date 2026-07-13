@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -22,6 +23,7 @@ interface StorageProbeDeps {
   dockerContext: string | undefined;
   dockerHost: string | undefined;
   dockerInfo: () => string;
+  dockerReadBind: (image: string, sourcePath: string) => string;
   exists: (target: string) => boolean;
   osRelease: string;
   platform: NodeJS.Platform;
@@ -50,6 +52,8 @@ function clientLooksContainerized(): boolean {
 
 function clientSharesInitMountNamespace(): boolean {
   try {
+    // This catches a private mount namespace only when procfs exposes host PID 1.
+    // A daemon-side sentinel check is the authoritative bind-identity proof.
     return fs.readlinkSync("/proc/self/ns/mnt") === fs.readlinkSync("/proc/1/ns/mnt");
   } catch {
     return false;
@@ -68,6 +72,26 @@ function defaultStorageProbeDeps(): StorageProbeDeps {
         ignoreError: true,
         timeout: 10_000,
       }),
+    dockerReadBind: (image, sourcePath) =>
+      dockerCapture(
+        [
+          "run",
+          "--rm",
+          "--network=none",
+          "--pull=never",
+          "--entrypoint",
+          "/bin/cat",
+          "--mount",
+          `type=bind,src=${sourcePath},dst=/nemoclaw-storage-sentinel,readonly`,
+          image,
+          "/nemoclaw-storage-sentinel",
+        ],
+        {
+          env: dockerEnv,
+          ignoreError: true,
+          timeout: 30_000,
+        },
+      ),
     exists: fs.existsSync,
     osRelease: os.release(),
     platform: process.platform,
@@ -360,6 +384,40 @@ function nearestExistingPath(target: string, exists: (candidate: string) => bool
     candidate = parent;
   }
   return candidate;
+}
+
+export function probeDockerBindIdentity(
+  cacheDir: string,
+  image: string,
+  overrides: Partial<StorageProbeDeps> = {},
+): DockerHostLocalityResult {
+  const deps = { ...defaultStorageProbeDeps(), ...overrides };
+  const info = parseDockerInfo(deps.dockerInfo());
+  if (!info) return { ok: false, reason: "docker info did not return valid JSON" };
+  const hostProblem = nativeDockerHostProblem(info, deps);
+  if (hostProblem) return { ok: false, reason: hostProblem };
+
+  const target = nearestExistingPath(cacheDir, deps.exists);
+  const token = randomUUID();
+  const sentinelPath = path.join(target, `.nemoclaw-storage-probe-${token}`);
+  try {
+    fs.writeFileSync(sentinelPath, token, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    if (deps.dockerReadBind(image, sentinelPath) !== token) {
+      return {
+        ok: false,
+        reason:
+          "Docker daemon could not read the client storage sentinel; bind-mount filesystem identity cannot be verified",
+      };
+    }
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      reason: `could not verify Docker bind-mount filesystem identity at ${target}: ${(err as Error).message}`,
+    };
+  } finally {
+    fs.rmSync(sentinelPath, { force: true });
+  }
 }
 
 export function probeModelCacheStorage(

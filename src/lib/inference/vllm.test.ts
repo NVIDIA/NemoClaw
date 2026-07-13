@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   dockerSpawn: vi.fn(),
   dockerStop: vi.fn(),
   getGpuIndicesByName: vi.fn<(_pattern: RegExp) => number[]>(() => []),
+  probeDockerBindIdentity: vi.fn(),
   probeDockerHostLocality: vi.fn(),
   probeDockerStorage: vi.fn(),
   probeModelCacheStorage: vi.fn(),
@@ -43,6 +44,7 @@ vi.mock("./vllm-storage", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./vllm-storage")>();
   return {
     ...actual,
+    probeDockerBindIdentity: mocks.probeDockerBindIdentity,
     probeDockerHostLocality: mocks.probeDockerHostLocality,
     probeDockerStorage: mocks.probeDockerStorage,
     probeModelCacheStorage: mocks.probeModelCacheStorage,
@@ -59,6 +61,7 @@ import {
 
 beforeEach(() => {
   mocks.dockerImageInspectFormat.mockReturnValue("");
+  mocks.probeDockerBindIdentity.mockReturnValue({ ok: true });
   mocks.probeDockerHostLocality.mockReturnValue({ ok: true });
   mocks.probeDockerStorage.mockReturnValue({
     ok: true,
@@ -758,6 +761,8 @@ describe("installVllm model resolution", () => {
 
     expect(result).toEqual({ ok: false });
     expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalledTimes(1);
+    expect(mocks.probeDockerHostLocality).toHaveBeenCalledTimes(1);
+    expect(mocks.probeDockerBindIdentity).toHaveBeenCalledTimes(1);
     expect(mocks.probeModelCacheStorage).toHaveBeenCalledTimes(2);
     expect(mocks.dockerSpawn).not.toHaveBeenCalled();
   });
@@ -790,6 +795,8 @@ describe("installVllm model resolution", () => {
     expect(result).toEqual({ ok: false });
     expect(mocks.probeDockerStorage).not.toHaveBeenCalled();
     expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalledTimes(1);
+    expect(mocks.probeDockerHostLocality).not.toHaveBeenCalled();
+    expect(mocks.probeDockerBindIdentity).toHaveBeenCalledTimes(2);
     expect(mocks.probeModelCacheStorage).toHaveBeenCalledTimes(2);
     expect(mocks.dockerSpawn).not.toHaveBeenCalled();
   });
@@ -822,6 +829,13 @@ describe("installVllm model resolution", () => {
       selectorName: "DOCKER_HOST" as const,
       selectorValue: "unix:///var/run/docker.sock",
     },
+    {
+      reason:
+        "Docker daemon could not read the client storage sentinel; bind-mount filesystem identity cannot be verified",
+      selectorDescription: "namespace-local PID 1 bind mismatch",
+      selectorName: "DOCKER_HOST" as const,
+      selectorValue: "unix:///var/run/docker.sock",
+    },
   ])("blocks a cached image for an unverifiable $selectorDescription (#6757)", async ({
     reason,
     selectorName,
@@ -833,7 +847,7 @@ describe("installVllm model resolution", () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
     mockSuccessfulVllmInstall(profile.containerName);
     mocks.dockerImageInspectFormat.mockReturnValue("sha256:cached-image");
-    mocks.probeDockerHostLocality.mockReturnValue({
+    mocks.probeDockerBindIdentity.mockReturnValue({
       ok: false,
       reason,
     });
@@ -852,7 +866,10 @@ describe("installVllm model resolution", () => {
         env: expect.objectContaining({ [selectorName]: selectorValue }),
       }),
     );
-    expect(mocks.probeDockerHostLocality).toHaveBeenCalledTimes(1);
+    expect(mocks.probeDockerBindIdentity).toHaveBeenCalledWith(
+      path.join(os.homedir(), ".cache", "huggingface"),
+      profile.image,
+    );
     expect(mocks.probeModelCacheStorage).not.toHaveBeenCalled();
     expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
     expect(mocks.dockerSpawn).not.toHaveBeenCalled();
@@ -867,7 +884,7 @@ describe("installVllm model resolution", () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
     mockSuccessfulVllmInstall(profile.containerName);
     mocks.dockerImageInspectFormat.mockReturnValue("sha256:cached-image");
-    mocks.probeDockerHostLocality.mockReturnValue({
+    mocks.probeDockerBindIdentity.mockReturnValue({
       ok: false,
       reason: "Docker uses a remote endpoint (ssh://builder.example.test)",
     });
@@ -879,7 +896,7 @@ describe("installVllm model resolution", () => {
     });
 
     expect(result).toEqual({ ok: true });
-    expect(mocks.probeDockerHostLocality).toHaveBeenCalledTimes(2);
+    expect(mocks.probeDockerBindIdentity).toHaveBeenCalledTimes(2);
     expect(mocks.probeModelCacheStorage).not.toHaveBeenCalled();
     expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalledTimes(1);
     expect(mocks.dockerSpawn).toHaveBeenCalledTimes(1);

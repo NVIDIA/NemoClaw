@@ -97,7 +97,8 @@ NemoClaw recognizes an image cache hit only when Docker contains the exact platf
 A cache hit skips the cold-pull capacity check, but the explicit watched `docker pull` still runs against that immutable digest.
 Before trusting the host model-cache capacity, NemoClaw also verifies that the selected Docker daemon maps bind mounts to the local host; a remote or unverifiable Docker host makes the model-cache check inconclusive.
 An explicit Unix socket is trusted only when it is Docker's default `/var/run/docker.sock`; any other socket can forward to a daemon with a different filesystem and is treated as unverifiable.
-Running the Docker client inside a container or a distinct mount namespace is also unverifiable, even when the default socket is mounted at its canonical path.
+Known container markers and mount namespaces distinguishable from visible PID 1 are rejected immediately.
+For namespace-local procfs and other ambiguous cases, NemoClaw asks the pinned cached vLLM image to read a random mode-`0600` sentinel through a bounded, read-only Docker bind mount before it trusts client-side capacity.
 The pull is idempotent for the cached digest and cannot select different layers from a moved release tag.
 The model-download helper and the long-lived vLLM container use `--pull=never`, so an implicit pull cannot bypass the storage gate.
 The second model-cache check detects capacity consumed by the image pull before the model download command can start.
