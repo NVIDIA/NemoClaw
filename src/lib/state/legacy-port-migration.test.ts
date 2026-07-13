@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { migrateLegacyPortState } from "./legacy-port-migration";
 
@@ -27,6 +27,7 @@ function readJson(filePath: string): Record<string, unknown> {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const home of homes.splice(0)) fs.rmSync(home, { recursive: true, force: true });
 });
 
@@ -145,6 +146,64 @@ describe("legacy non-default gateway state migration", () => {
     expect(
       fs.existsSync(path.join(shared, "rebuild-backups", "port-box", "old", "manifest.json")),
     ).toBe(true);
+  });
+
+  it("removes shared ownership before moves and resumes an interrupted migration", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const selected = path.join(shared, "gateways", "9123");
+    const legacyRegistry = path.join(shared, "sandboxes.json");
+    const selectedRegistry = path.join(selected, "sandboxes.json");
+    const backupSource = path.join(shared, "rebuild-backups", "port-box");
+    const backupDestination = path.join(selected, "rebuild-backups", "port-box");
+    writeJson(legacyRegistry, {
+      defaultSandbox: "default-box",
+      sandboxes: {
+        "default-box": { name: "default-box", gatewayName: "nemoclaw", gatewayPort: 8080 },
+        "port-box": { name: "port-box", gatewayName: "nemoclaw-9123", gatewayPort: 9123 },
+      },
+    });
+    writeJson(path.join(backupSource, "snapshot", "manifest.json"), {});
+
+    const renameSync = fs.renameSync.bind(fs);
+    const failMove = (): never => {
+      throw new Error("injected post-registry move failure");
+    };
+    const renameSpy = vi
+      .spyOn(fs, "renameSync")
+      .mockImplementation((source, destination) =>
+        String(source) === backupSource ? failMove() : renameSync(source, destination),
+      );
+
+    expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
+      /injected post-registry move failure/,
+    );
+    renameSpy.mockRestore();
+
+    expect(Object.keys(readJson(legacyRegistry).sandboxes as object)).toEqual(["default-box"]);
+    expect(fs.existsSync(selectedRegistry)).toBe(false);
+    expect(fs.existsSync(path.join(shared, ".gateway-state-migration"))).toBe(true);
+    expect(() => migrateLegacyPortState({ home, gatewayPort: 8080 })).toThrow(
+      /recoverable migration for gateway port 9123 is pending/,
+    );
+
+    for (const staleLock of [
+      path.join(shared, ".gateway-state-migration.lock"),
+      `${legacyRegistry}.lock`,
+      `${selectedRegistry}.lock`,
+    ]) {
+      fs.mkdirSync(staleLock, { recursive: true });
+      fs.writeFileSync(path.join(staleLock, "owner"), String(Number.MAX_SAFE_INTEGER));
+    }
+
+    expect(migrateLegacyPortState({ home, gatewayPort: 9123 })).toEqual({
+      migratedSandboxNames: ["port-box"],
+      migratedSession: false,
+      warnings: [],
+    });
+    expect(Object.keys(readJson(selectedRegistry).sandboxes as object)).toEqual(["port-box"]);
+    expect(fs.existsSync(path.join(backupDestination, "snapshot", "manifest.json"))).toBe(true);
+    expect(fs.existsSync(path.join(shared, ".gateway-state-migration"))).toBe(false);
   });
 
   it("partitions provable rows but leaves credentials whose gateway ownership is ambiguous", () => {

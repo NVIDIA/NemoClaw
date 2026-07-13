@@ -2105,13 +2105,18 @@ EOF
 }
 
 print_openshell_upgrade_manual_commands() {
+  local gateway_port gateway_name gateway_port_env=""
+  gateway_port="$(resolve_nemoclaw_gateway_port)" || return 1
+  gateway_name="$(nemoclaw_gateway_name)" || return 1
+  if [ "$gateway_port" -ne 8080 ]; then
+    gateway_port_env="NEMOCLAW_GATEWAY_PORT=${gateway_port} "
+  fi
   cat <<EOF
   Manual upgrade path (after installing the current CLI with OpenShell deferred):
-    NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 ${_CLI_BIN} backup-all
-    openshell gateway remove nemoclaw || openshell gateway destroy -g nemoclaw || openshell gateway destroy
-    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains
-    curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash
-    ${_CLI_BIN} upgrade-sandboxes --check
+    ${gateway_port_env}NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 ${_CLI_BIN} backup-all
+    openshell gateway remove ${gateway_name} || openshell gateway destroy -g ${gateway_name}
+    curl -fsSL https://www.nvidia.com/nemoclaw.sh | ${gateway_port_env}NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash
+    ${gateway_port_env}${_CLI_BIN} upgrade-sandboxes --check
 
   The prepared installer rerun lists pre-fingerprint sandboxes and asks you to
   confirm their managed-image provenance. For a non-interactive rerun, set
