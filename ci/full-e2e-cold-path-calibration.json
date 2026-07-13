@@ -1,0 +1,164 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\n\nFive independent workflow_dispatch full-e2e samples of current-main baseline 1a74b8348c2182fbf806726341186f008444e28e with the phase-measurement changes at 4544d07c8bfd500c3b64a74380ef5cd0e62089f5. All runs completed install, BuildKit prebuild without fallback, the silence assertion, and the expected first turn. Each budget is derived independently so phase caps diagnose regressions; they are not portions that must sum to the root-start budget.",
+  "schemaVersion": 1,
+  "calibratedAt": "2026-07-13",
+  "baselineMainSha": "1a74b8348c2182fbf806726341186f008444e28e",
+  "measurementHeadSha": "4544d07c8bfd500c3b64a74380ef5cd0e62089f5",
+  "workflowPath": ".github/workflows/e2e.yaml",
+  "job": "full-e2e",
+  "derivation": {
+    "percentile": 95,
+    "percentileMethod": "nearest-rank",
+    "minimumHeadroomMs": 5000,
+    "relativeHeadroomPercent": 10,
+    "roundUpMs": 1000
+  },
+  "samples": [
+    {
+      "runId": 29285379553,
+      "runUrl": "https://github.com/NVIDIA/NemoClaw/actions/runs/29285379553",
+      "headSha": "4544d07c8bfd500c3b64a74380ef5cd0e62089f5",
+      "conclusion": "success",
+      "installExitCode": 0,
+      "firstTurnExitCode": 0,
+      "performancePassed": true,
+      "usedBuildKitPrebuild": true,
+      "buildKitFallback": false,
+      "maxSilenceSecs": 31,
+      "responseChars": 23,
+      "measurementsMs": {
+        "onboardRoot": 170850,
+        "rootStartToFirstTurnCompletion": 178403,
+        "rootEndToInstallCompletion": 137,
+        "firstTurnCommand": 7413,
+        "rootEndToFirstTurnCompletion": 7553,
+        "phases": {
+          "nemoclaw.onboard.phase.preflight": 1251,
+          "nemoclaw.onboard.phase.gateway": 65,
+          "nemoclaw.onboard.phase.provider_selection": 2312,
+          "nemoclaw.onboard.phase.inference": 669,
+          "nemoclaw.onboard.phase.sandbox": 126615
+        }
+      }
+    },
+    {
+      "runId": 29285384233,
+      "runUrl": "https://github.com/NVIDIA/NemoClaw/actions/runs/29285384233",
+      "headSha": "4544d07c8bfd500c3b64a74380ef5cd0e62089f5",
+      "conclusion": "success",
+      "installExitCode": 0,
+      "firstTurnExitCode": 0,
+      "performancePassed": true,
+      "usedBuildKitPrebuild": true,
+      "buildKitFallback": false,
+      "maxSilenceSecs": 31,
+      "responseChars": 23,
+      "measurementsMs": {
+        "onboardRoot": 149056,
+        "rootStartToFirstTurnCompletion": 155856,
+        "rootEndToInstallCompletion": 135,
+        "firstTurnCommand": 6662,
+        "rootEndToFirstTurnCompletion": 6800,
+        "phases": {
+          "nemoclaw.onboard.phase.preflight": 1132,
+          "nemoclaw.onboard.phase.gateway": 58,
+          "nemoclaw.onboard.phase.provider_selection": 1142,
+          "nemoclaw.onboard.phase.inference": 563,
+          "nemoclaw.onboard.phase.sandbox": 105938
+        }
+      }
+    },
+    {
+      "runId": 29285387079,
+      "runUrl": "https://github.com/NVIDIA/NemoClaw/actions/runs/29285387079",
+      "headSha": "4544d07c8bfd500c3b64a74380ef5cd0e62089f5",
+      "conclusion": "success",
+      "installExitCode": 0,
+      "firstTurnExitCode": 0,
+      "performancePassed": true,
+      "usedBuildKitPrebuild": true,
+      "buildKitFallback": false,
+      "maxSilenceSecs": 32,
+      "responseChars": 23,
+      "measurementsMs": {
+        "onboardRoot": 177334,
+        "rootStartToFirstTurnCompletion": 186018,
+        "rootEndToInstallCompletion": 168,
+        "firstTurnCommand": 8512,
+        "rootEndToFirstTurnCompletion": 8684,
+        "phases": {
+          "nemoclaw.onboard.phase.preflight": 1193,
+          "nemoclaw.onboard.phase.gateway": 51,
+          "nemoclaw.onboard.phase.provider_selection": 1358,
+          "nemoclaw.onboard.phase.inference": 638,
+          "nemoclaw.onboard.phase.sandbox": 132561
+        }
+      }
+    },
+    {
+      "runId": 29285389469,
+      "runUrl": "https://github.com/NVIDIA/NemoClaw/actions/runs/29285389469",
+      "headSha": "4544d07c8bfd500c3b64a74380ef5cd0e62089f5",
+      "conclusion": "success",
+      "installExitCode": 0,
+      "firstTurnExitCode": 0,
+      "performancePassed": true,
+      "usedBuildKitPrebuild": true,
+      "buildKitFallback": false,
+      "maxSilenceSecs": 32,
+      "responseChars": 23,
+      "measurementsMs": {
+        "onboardRoot": 175231,
+        "rootStartToFirstTurnCompletion": 182517,
+        "rootEndToInstallCompletion": 131,
+        "firstTurnCommand": 7152,
+        "rootEndToFirstTurnCompletion": 7286,
+        "phases": {
+          "nemoclaw.onboard.phase.preflight": 1205,
+          "nemoclaw.onboard.phase.gateway": 62,
+          "nemoclaw.onboard.phase.provider_selection": 1377,
+          "nemoclaw.onboard.phase.inference": 805,
+          "nemoclaw.onboard.phase.sandbox": 130203
+        }
+      }
+    },
+    {
+      "runId": 29285391845,
+      "runUrl": "https://github.com/NVIDIA/NemoClaw/actions/runs/29285391845",
+      "headSha": "4544d07c8bfd500c3b64a74380ef5cd0e62089f5",
+      "conclusion": "success",
+      "installExitCode": 0,
+      "firstTurnExitCode": 0,
+      "performancePassed": true,
+      "usedBuildKitPrebuild": true,
+      "buildKitFallback": false,
+      "maxSilenceSecs": 30,
+      "responseChars": 23,
+      "measurementsMs": {
+        "onboardRoot": 155691,
+        "rootStartToFirstTurnCompletion": 160740,
+        "rootEndToInstallCompletion": 104,
+        "firstTurnCommand": 4942,
+        "rootEndToFirstTurnCompletion": 5049,
+        "phases": {
+          "nemoclaw.onboard.phase.preflight": 5101,
+          "nemoclaw.onboard.phase.gateway": 211,
+          "nemoclaw.onboard.phase.provider_selection": 1585,
+          "nemoclaw.onboard.phase.inference": 583,
+          "nemoclaw.onboard.phase.sandbox": 118007
+        }
+      }
+    }
+  ],
+  "derivedBudgetsMs": {
+    "rootStartToFirstTurnCompletionBudgetMs": 205000,
+    "rootEndToFirstTurnCompletionBudgetMs": 14000,
+    "phaseBudgetsMs": {
+      "nemoclaw.onboard.phase.preflight": 11000,
+      "nemoclaw.onboard.phase.gateway": 6000,
+      "nemoclaw.onboard.phase.provider_selection": 8000,
+      "nemoclaw.onboard.phase.inference": 6000,
+      "nemoclaw.onboard.phase.sandbox": 146000
+    }
+  }
+}

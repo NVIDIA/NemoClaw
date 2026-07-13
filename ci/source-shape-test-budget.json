@@ -267,6 +267,16 @@
       "category": "compatibility"
     },
     {
+      "file": "test/onboard-performance-config-schema.test.ts",
+      "test": "keeps configured budgets derived from the checked-in samples",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/onboard-performance-config-schema.test.ts",
+      "test": "records five independent successful exact-head samples",
+      "category": "compatibility"
+    },
+    {
       "file": "test/openclaw-dependency-review.test.ts",
       "test": "runs and gates the real patched-distribution harness only from trusted main code",
       "category": "security"
