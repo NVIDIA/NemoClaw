@@ -531,6 +531,73 @@ if (args.includes("log")) {
     expect(result.stderr).toContain("stdout exceeds the 16777216-byte limit");
   });
 
+  it("rejects excessive SemVer inventories before remote tag peeling", () => {
+    const probe = spawnSync(
+      python3,
+      [
+        "-c",
+        [
+          "import json, runpy, sys",
+          "module = runpy.run_path(sys.argv[1], run_name='ledger_test')",
+          "inventory = module['github_semver_tag_inventory']",
+          "scope = inventory.__globals__",
+          "scope['MAX_SEMVER_TAGS'] = 2",
+          "scope['github_api_json'] = lambda *args, **kwargs: [[{'ref': f'refs/tags/v1.0.{index}', 'object': {'type': 'tag', 'sha': str(index) * 40}} for index in range(3)]]",
+          "peels = []",
+          "scope['github_tag_identity_from_root'] = lambda *args, **kwargs: peels.append(args[1])",
+          "result = {}",
+          "try:",
+          "    inventory({'apiHost': 'github.com', 'fullName': 'Acme/Dependency'}, 30)",
+          "except module['LedgerError'] as error:",
+          "    result = {'error': str(error), 'peels': peels}",
+          "print(json.dumps(result))",
+        ].join("\n"),
+        collector,
+      ],
+      { encoding: "utf8" },
+    );
+
+    expect(probe.status, probe.stderr).toBe(0);
+    expect(JSON.parse(probe.stdout)).toEqual({
+      error: "GitHub semantic-version tag inventory exceeds the 2-record limit",
+      peels: [],
+    });
+  });
+
+  it("batches local tag metadata and caps it before per-tag work", () => {
+    const probe = spawnSync(
+      python3,
+      [
+        "-c",
+        [
+          "import json, runpy, sys",
+          "from pathlib import Path",
+          "module = runpy.run_path(sys.argv[1], run_name='ledger_test')",
+          "inventory = module['local_semver_tag_inventory']",
+          "scope = inventory.__globals__",
+          "scope['MAX_SEMVER_TAGS'] = 2",
+          "records = '\\n'.join('\\x1f'.join((f'v1.0.{index}', 'commit', str(index) * 40, '', '', '2026-01-01T00:00:00+00:00')) for index in range(3))",
+          "calls = []",
+          "scope['git'] = lambda *args: calls.append(args) or records",
+          "result = {}",
+          "try:",
+          "    inventory(Path('.'), 'f' * 40)",
+          "except module['LedgerError'] as error:",
+          "    result = {'calls': len(calls), 'error': str(error)}",
+          "print(json.dumps(result))",
+        ].join("\n"),
+        collector,
+      ],
+      { encoding: "utf8" },
+    );
+
+    expect(probe.status, probe.stderr).toBe(0);
+    expect(JSON.parse(probe.stdout)).toEqual({
+      calls: 1,
+      error: "local semantic-version tag inventory exceeds the 2-record limit",
+    });
+  });
+
   it("creates a new ledger with mode 0600 under a permissive caller umask", () => {
     const { repo } = createRepository();
     const outputDirectory = temporaryDirectory("dependency-ledger-output-");
@@ -553,5 +620,41 @@ if (args.includes("log")) {
     } finally {
       fs.closeSync(descriptor);
     }
+  });
+
+  it("does not publish a partial ledger when file fsync fails", () => {
+    const outputDirectory = temporaryDirectory("dependency-ledger-atomic-output-");
+    const output = path.join(outputDirectory, "ledger.json");
+    const probe = spawnSync(
+      python3,
+      [
+        "-c",
+        [
+          "import json, runpy, sys",
+          "from pathlib import Path",
+          "module = runpy.run_path(sys.argv[1], run_name='ledger_test')",
+          "write_output = module['write_private_output_atomically']",
+          "scope = write_output.__globals__",
+          "scope['os'].fsync = lambda descriptor: (_ for _ in ()).throw(OSError('simulated fsync failure'))",
+          "target = Path(sys.argv[2])",
+          "error = None",
+          "try:",
+          "    write_output(target, 'partial ledger\\n')",
+          "except OSError as caught:",
+          "    error = str(caught)",
+          "print(json.dumps({'error': error, 'exists': target.exists(), 'entries': sorted(path.name for path in target.parent.iterdir())}))",
+        ].join("\n"),
+        collector,
+        output,
+      ],
+      { encoding: "utf8" },
+    );
+
+    expect(probe.status, probe.stderr).toBe(0);
+    expect(JSON.parse(probe.stdout)).toEqual({
+      entries: [],
+      error: "simulated fsync failure",
+      exists: false,
+    });
   });
 });

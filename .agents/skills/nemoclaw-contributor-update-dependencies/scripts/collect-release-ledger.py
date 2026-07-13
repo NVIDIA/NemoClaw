@@ -15,6 +15,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -47,6 +48,7 @@ MAX_REACHABLE_OBJECT_RECORDS = 1_000_000
 MAX_GITHUB_PAGES = 1_000
 MAX_GITHUB_RECORDS = 100_000
 MAX_RELEASE_ENDPOINTS = 10_000
+MAX_SEMVER_TAGS = MAX_RELEASE_ENDPOINTS
 MAX_TOTAL_COMMIT_RECORDS = 200_000
 MAX_TOTAL_CHANGED_PATH_RECORDS = 200_000
 MAX_LEDGER_OUTPUT_BYTES = 32 * 1024 * 1024
@@ -159,6 +161,18 @@ class Version:
         if self.prerelease:
             base = f"{base}-{self.prerelease}"
         return f"{base}+{self.build}" if self.build else base
+
+
+@dataclass(frozen=True)
+class LocalSemverTag:
+    """One batched local semantic-version tag identity."""
+
+    commit_sha: str
+    created_at: str
+    kind: str
+    root_object_sha: str
+    tag: str
+    version: Version
 
 
 def compare_tagged_versions(
@@ -663,32 +677,43 @@ def require_unmodified_local_history(repo: Path) -> None:
         )
 
 
-def require_local_commit_object(repo: Path, sha: str, description: str) -> None:
-    """Require a commit object without allowing a partial clone to fetch it lazily."""
+def local_object_types(repo: Path, shas: set[str]) -> dict[str, str]:
+    """Batch local object types without allowing a partial clone to fetch lazily."""
 
+    ordered = sorted(shas)
+    if len(ordered) > MAX_SEMVER_TAGS:
+        raise LedgerError(
+            f"remote semantic-version commit inventory exceeds the "
+            f"{MAX_SEMVER_TAGS}-record limit"
+        )
     result = run_git(
         repo,
         "cat-file",
         "--batch-check=%(objectname) %(objecttype)",
         allow_failure=True,
-        input_text=f"{sha}\n",
+        input_text="".join(f"{sha}\n" for sha in ordered),
     )
     if result.returncode != 0:
         detail = (
             result.stderr.strip() or result.stdout.strip() or "unknown cat-file failure"
         )
-        raise LedgerError(f"could not inspect {description} commit {sha}: {detail}")
-    identity = result.stdout.strip()
-    if identity == f"{sha} commit":
-        return
-    if identity == f"{sha} missing":
-        raise LedgerError(
-            f"{description} commit {sha} is absent from the local object database; "
-            "fetch complete refs and commit history before collection"
-        )
-    raise LedgerError(
-        f"{description} object {sha} is not a local commit object: {identity!r}"
+        raise LedgerError(f"could not inspect remote tag commit objects: {detail}")
+    records = bounded_lines(
+        result.stdout, "remote semantic-version commit object inventory", len(ordered)
     )
+    if len(records) != len(ordered):
+        raise LedgerError(
+            "Git returned an incomplete remote tag commit object inventory"
+        )
+    types: dict[str, str] = {}
+    for expected_sha, record in zip(ordered, records, strict=True):
+        fields = record.split(" ", 1)
+        if len(fields) != 2 or fields[0] != expected_sha:
+            raise LedgerError(
+                f"could not parse remote tag commit object record: {record!r}"
+            )
+        types[expected_sha] = fields[1]
+    return types
 
 
 def require_complete_reachable_objects(
@@ -800,26 +825,60 @@ def version_and_tag_for_start(repo: Path, ref: str, sha: str) -> tuple[Version, 
     return ordered[-1]
 
 
-def tag_kind(repo: Path, tag: str) -> str:
-    """Classify ``tag`` as annotated or lightweight."""
+def local_semver_tag_inventory(
+    repo: Path, target_sha: str
+) -> dict[str, LocalSemverTag]:
+    """Batch local merged-tag identities and cap SemVer work before expansion."""
 
-    object_type = git(repo, "cat-file", "-t", f"refs/tags/{tag}")
-    if object_type == "tag":
-        return "annotated"
-    if object_type == "commit":
-        return "lightweight"
-    raise LedgerError(f"tag {tag!r} points to unsupported object type {object_type!r}")
-
-
-def tag_date(repo: Path, tag: str) -> str:
-    """Return ``tag`` creation time in strict ISO-8601 form."""
-
-    return git(
+    raw = git(
         repo,
         "for-each-ref",
-        "--format=%(creatordate:iso-strict)",
-        f"refs/tags/{tag}",
+        f"--merged={target_sha}",
+        "--format=%(refname:strip=2)%1f%(objecttype)%1f%(objectname)"
+        "%1f%(*objecttype)%1f%(*objectname)%1f%(creatordate:iso-strict)",
+        "refs/tags",
     )
+    inventory: dict[str, LocalSemverTag] = {}
+    for record in bounded_lines(raw, "merged tag inventory", MAX_GIT_RECORDS):
+        fields = record.split("\x1f")
+        if len(fields) != 6:
+            raise LedgerError(f"could not parse local tag inventory record: {record!r}")
+        tag, root_type, root_sha, peeled_type, peeled_sha, created_at = fields
+        version = Version.parse(tag)
+        if version is None:
+            continue
+        if tag in inventory:
+            raise LedgerError(f"local tag inventory returned duplicate tag {tag!r}")
+        if len(inventory) >= MAX_SEMVER_TAGS:
+            raise LedgerError(
+                f"local semantic-version tag inventory exceeds the "
+                f"{MAX_SEMVER_TAGS}-record limit"
+            )
+        if SHA_RE.fullmatch(root_sha) is None:
+            raise LedgerError(f"local tag {tag!r} omitted a full root object SHA")
+        if root_type == "commit":
+            commit_sha = root_sha
+            kind = "lightweight"
+        elif root_type == "tag" and peeled_type == "commit":
+            commit_sha = peeled_sha
+            kind = "annotated"
+        else:
+            raise LedgerError(
+                f"local tag {tag!r} points to unsupported object type {root_type!r}"
+            )
+        if SHA_RE.fullmatch(commit_sha) is None:
+            raise LedgerError(f"local tag {tag!r} omitted a full commit SHA")
+        if not created_at:
+            raise LedgerError(f"local tag {tag!r} omitted its creation time")
+        inventory[tag] = LocalSemverTag(
+            commit_sha=commit_sha,
+            created_at=created_at,
+            kind=kind,
+            root_object_sha=root_sha,
+            tag=tag,
+            version=version,
+        )
+    return inventory
 
 
 def parse_commits(repo: Path, older: str, newer: str) -> list[dict[str, str]]:
@@ -871,18 +930,17 @@ def parse_changed_paths(repo: Path, older: str, newer: str) -> list[dict[str, An
     return paths
 
 
-def endpoint_for_tag(repo: Path, tag: str, version: Version) -> dict[str, Any]:
+def endpoint_for_tag(identity: LocalSemverTag) -> dict[str, Any]:
     """Build a release endpoint from a semantic-version tag."""
 
-    sha = resolve_commit(repo, f"refs/tags/{tag}")
     return {
-        "ref": tag,
-        "tag": tag,
-        "sha": sha,
-        "version": version.render(),
-        "tagKind": tag_kind(repo, tag),
-        "tagObjectSha": git(repo, "rev-parse", f"refs/tags/{tag}"),
-        "createdAt": tag_date(repo, tag),
+        "ref": identity.tag,
+        "tag": identity.tag,
+        "sha": identity.commit_sha,
+        "version": identity.version.render(),
+        "tagKind": identity.kind,
+        "tagObjectSha": identity.root_object_sha,
+        "createdAt": identity.created_at,
     }
 
 
@@ -1285,7 +1343,7 @@ def github_tag_identity_from_root(
 def github_semver_tag_inventory(
     repository_identity: dict[str, Any], timeout_seconds: int
 ) -> dict[str, dict[str, Any]]:
-    """Inventory and peel every remote semantic-version tag ref."""
+    """Inventory bounded remote SemVer roots before peeling any tag objects."""
 
     repository = repository_identity["fullName"]
     api_host = repository_identity["apiHost"]
@@ -1301,7 +1359,7 @@ def github_semver_tag_inventory(
         not isinstance(page, list) for page in payload
     ):
         raise LedgerError("GitHub paginated tag-ref inventory had the wrong shape")
-    inventory: dict[str, dict[str, Any]] = {}
+    roots: dict[str, tuple[Any, Any]] = {}
     for page in payload:
         for raw_ref in page:
             ref = require_object(raw_ref, "tag-ref inventory entry")
@@ -1313,76 +1371,82 @@ def github_semver_tag_inventory(
             tag = full_ref.removeprefix("refs/tags/")
             if Version.parse(tag) is None:
                 continue
-            if tag in inventory:
+            if tag in roots:
                 raise LedgerError(
                     f"GitHub tag-ref inventory returned duplicate tag {tag!r}"
                 )
             target = require_object(ref.get("object"), f"tag ref {tag!r} object")
-            inventory[tag] = github_tag_identity_from_root(
-                repository_identity,
-                tag,
-                target.get("type"),
-                target.get("sha"),
-                timeout_seconds,
-            )
-    return inventory
+            if len(roots) >= MAX_SEMVER_TAGS:
+                raise LedgerError(
+                    f"GitHub semantic-version tag inventory exceeds the "
+                    f"{MAX_SEMVER_TAGS}-record limit"
+                )
+            roots[tag] = (target.get("type"), target.get("sha"))
+    return {
+        tag: github_tag_identity_from_root(
+            repository_identity,
+            tag,
+            root_type,
+            root_sha,
+            timeout_seconds,
+        )
+        for tag, (root_type, root_sha) in roots.items()
+    }
 
 
 def verify_remote_tag_inventory(
     repo: Path,
     inventory: dict[str, dict[str, Any]],
+    local_inventory: dict[str, LocalSemverTag],
     start_sha: str,
     target_sha: str,
 ) -> None:
     """Require every remote SemVer tag in the audit ancestry to exist exactly locally."""
 
     def require_exact_local_tag(tag: str, remote: dict[str, Any]) -> None:
-        local_root_sha = git(
-            repo,
-            "rev-parse",
-            "--verify",
-            f"refs/tags/{tag}",
-            allow_failure=True,
-        )
-        if not local_root_sha:
+        local = local_inventory.get(tag)
+        if local is None:
             raise LedgerError(
                 f"remote semantic-version tag {tag!r} lies in the audit range but is "
                 "missing from the local checkout; fetch all remote tags and rerun"
             )
-        local_kind = tag_kind(repo, tag)
-        local_root_type = "tag" if local_kind == "annotated" else "commit"
+        local_root_type = "tag" if local.kind == "annotated" else "commit"
         if (
             remote["rootObjectType"] != local_root_type
-            or remote["rootObjectSha"] != local_root_sha
+            or remote["rootObjectSha"] != local.root_object_sha
         ):
             raise LedgerError(
                 f"remote semantic-version tag {tag!r} root object differs from the local tag"
             )
-        local_commit_sha = resolve_commit(repo, f"refs/tags/{tag}")
-        if remote["commitSha"] != local_commit_sha:
+        if remote["commitSha"] != local.commit_sha:
             raise LedgerError(
                 f"remote semantic-version tag {tag!r} peels to {remote['commitSha']}, "
-                f"not local {local_commit_sha}"
+                f"not local {local.commit_sha}"
             )
 
+    object_types = local_object_types(
+        repo, {remote["commitSha"] for remote in inventory.values()}
+    )
     for tag, remote in sorted(inventory.items()):
         commit_sha = remote["commitSha"]
-        require_local_commit_object(repo, commit_sha, f"remote tag {tag!r}")
+        object_type = object_types[commit_sha]
+        if object_type == "missing":
+            # The target closure was proven complete before remote collection. An absent
+            # commit therefore cannot lie in start..target and needs no local tag proof.
+            continue
+        if object_type != "commit":
+            raise LedgerError(
+                f"remote tag {tag!r} object {commit_sha} is not a local commit object: "
+                f"{object_type!r}"
+            )
         if not is_ancestor(repo, start_sha, commit_sha) or not is_ancestor(
             repo, commit_sha, target_sha
         ):
             continue
         require_exact_local_tag(tag, remote)
 
-    for tag in bounded_lines(
-        git(repo, "tag", "--merged", target_sha),
-        "merged semantic-version tags",
-        MAX_GIT_RECORDS,
-    ):
-        if Version.parse(tag) is None:
-            continue
-        local_commit_sha = resolve_commit(repo, f"refs/tags/{tag}")
-        if not is_ancestor(repo, start_sha, local_commit_sha):
+    for tag, local in sorted(local_inventory.items()):
+        if not is_ancestor(repo, start_sha, local.commit_sha):
             continue
         remote = inventory.get(tag)
         if remote is None:
@@ -1476,33 +1540,34 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
         required_fixes.append({"ref": required_ref, "sha": required_sha})
 
     start_version, start_tag = version_and_tag_for_start(repo, args.from_ref, start_sha)
+    local_tag_inventory = local_semver_tag_inventory(repo, target_sha)
+    start_identity = local_tag_inventory.get(start_tag)
+    if start_identity is None or start_identity.commit_sha != start_sha:
+        raise LedgerError(
+            f"starting semantic-version tag {start_tag!r} is absent from the merged tag inventory"
+        )
     endpoints: list[dict[str, Any]] = [
         {
             "ref": args.from_ref,
             "tag": start_tag,
             "sha": start_sha,
             "version": start_version.render(),
-            "tagKind": tag_kind(repo, start_tag),
-            "tagObjectSha": git(repo, "rev-parse", f"refs/tags/{start_tag}"),
-            "createdAt": tag_date(repo, start_tag),
+            "tagKind": start_identity.kind,
+            "tagObjectSha": start_identity.root_object_sha,
+            "createdAt": start_identity.created_at,
         }
     ]
 
-    candidates: list[tuple[Version, str, str]] = []
+    candidates: list[LocalSemverTag] = []
     in_range_tag_object_shas: list[str] = []
     explicit_target_tag = explicitly_referenced_tag(repo, args.to_ref, target_sha)
-    for tag in bounded_lines(
-        git(repo, "tag", "--merged", target_sha),
-        "final merged semantic-version tags",
-        MAX_GIT_RECORDS,
-    ):
-        version = Version.parse(tag)
-        if version is None:
-            continue
-        tag_sha = resolve_commit(repo, f"refs/tags/{tag}")
+    for identity in local_tag_inventory.values():
+        tag = identity.tag
+        tag_sha = identity.commit_sha
+        version = identity.version
         if not is_ancestor(repo, start_sha, tag_sha):
             continue
-        in_range_tag_object_shas.append(git(repo, "rev-parse", f"refs/tags/{tag}"))
+        in_range_tag_object_shas.append(identity.root_object_sha)
         if tag_sha == start_sha:
             continue
         explicitly_targeted = tag == explicit_target_tag and tag_sha == target_sha
@@ -1518,23 +1583,21 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
             and not explicitly_targeted
         ):
             continue
-        candidates.append((version, tag, tag_sha))
+        candidates.append(identity)
 
-    def compare_candidates(
-        left: tuple[Version, str, str], right: tuple[Version, str, str]
-    ) -> int:
-        precedence = left[0].compare_precedence(right[0])
+    def compare_candidates(left: LocalSemverTag, right: LocalSemverTag) -> int:
+        precedence = left.version.compare_precedence(right.version)
         if precedence != 0:
             return precedence
-        if left[2] == right[2]:
-            return (left[1] > right[1]) - (left[1] < right[1])
-        if is_ancestor(repo, left[2], right[2]):
+        if left.commit_sha == right.commit_sha:
+            return (left.tag > right.tag) - (left.tag < right.tag)
+        if is_ancestor(repo, left.commit_sha, right.commit_sha):
             return -1
-        if is_ancestor(repo, right[2], left[2]):
+        if is_ancestor(repo, right.commit_sha, left.commit_sha):
             return 1
         raise LedgerError(
             "equal-precedence semantic-version tags are incomparable by commit ancestry: "
-            f"{left[1]!r} and {right[1]!r}"
+            f"{left.tag!r} and {right.tag!r}"
         )
 
     candidates.sort(key=cmp_to_key(compare_candidates))
@@ -1542,11 +1605,13 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
         raise LedgerError(
             f"release endpoint inventory exceeds the {MAX_RELEASE_ENDPOINTS}-record limit"
         )
-    endpoints.extend(
-        endpoint_for_tag(repo, tag, version) for version, tag, _sha in candidates
-    )
+    endpoints.extend(endpoint_for_tag(identity) for identity in candidates)
 
     if all(endpoint["sha"] != target_sha for endpoint in endpoints):
+        if len(endpoints) >= MAX_RELEASE_ENDPOINTS:
+            raise LedgerError(
+                f"release endpoint inventory exceeds the {MAX_RELEASE_ENDPOINTS}-record limit"
+            )
         endpoints.append(
             {
                 "ref": args.to_ref,
@@ -1592,7 +1657,13 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
         remote_tag_inventory = github_semver_tag_inventory(
             publication_source, args.github_timeout_seconds
         )
-        verify_remote_tag_inventory(repo, remote_tag_inventory, start_sha, target_sha)
+        verify_remote_tag_inventory(
+            repo,
+            remote_tag_inventory,
+            local_tag_inventory,
+            start_sha,
+            target_sha,
+        )
         releases = github_release_publications(
             publication_source, args.github_timeout_seconds
         )
@@ -1873,6 +1944,31 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return args
 
 
+def write_private_output_atomically(output: Path, payload: str) -> None:
+    """Fsync a private temporary file, then claim ``output`` without replacement."""
+
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{output.name}.", suffix=".tmp", dir=output.parent
+    )
+    temporary = Path(temporary_name)
+    descriptor_open = True
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output_file:
+            descriptor_open = False
+            output_file.write(payload)
+            output_file.flush()
+            os.fsync(output_file.fileno())
+        try:
+            os.link(temporary, output, follow_symlinks=False)
+        except FileExistsError as error:
+            raise LedgerError(f"refusing to overwrite output path: {output}") from error
+    finally:
+        if descriptor_open:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
+
+
 def main(argv: list[str]) -> int:
     """Write the ledger atomically and return a process exit status."""
 
@@ -1889,20 +1985,7 @@ def main(argv: list[str]) -> int:
             sys.stdout.write(payload)
         else:
             output = Path(args.output).expanduser()
-            try:
-                flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-                flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-                prior_umask = os.umask(0o177)
-                try:
-                    descriptor = os.open(output, flags, 0o600)
-                finally:
-                    os.umask(prior_umask)
-                with os.fdopen(descriptor, "w", encoding="utf-8") as output_file:
-                    output_file.write(payload)
-            except FileExistsError as error:
-                raise LedgerError(
-                    f"refusing to overwrite output path: {output}"
-                ) from error
+            write_private_output_atomically(output, payload)
         return 0
     except (LedgerError, OSError) as error:
         print(f"collect-release-ledger: error: {error}", file=sys.stderr)

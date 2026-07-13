@@ -109,10 +109,11 @@ endpoint shippable.
 
 The collector freezes absolute executable identities before reading the upstream worktree, rejects
 tools located inside it, invokes Git and `gh` with minimal allowlisted environments, disables
-prompts, and streams subprocess output through byte and record ceilings. Oversized Git history,
-object/path inventories, GitHub pagination, stderr, or final JSON fail closed. A file ledger is
-created exclusively with mode 0600; do not weaken its permissions because upstream text and private
-release visibility may be sensitive.
+prompts, and streams subprocess output through byte and record ceilings. It caps semantic-version
+tag inventories before per-tag subprocess or API expansion. Oversized Git history, object/path
+inventories, GitHub pagination, stderr, or final JSON fail closed. A file ledger is fsynced in a
+temporary file with mode 0600 and atomically published without replacement; do not weaken its
+permissions because upstream text and private release visibility may be sensitive.
 
 The collector runs every Git subprocess through one bounded, non-interactive runner. It removes
 ambient `GIT_*` repository, object, config, replacement, helper, signature, and lazy-fetch controls;

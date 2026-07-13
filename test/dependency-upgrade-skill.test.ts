@@ -584,7 +584,7 @@ describe("dependency release ledger collector", () => {
     expect(result.stderr).toContain("missing from the local checkout");
   });
 
-  it("rejects remote semantic-version tags whose commit objects are not materialized", () => {
+  it("ignores absent remote tag commits outside the proven target closure", () => {
     const { repo, targetSha } = createTaggedRepository();
     const evidence = readGitEvidence(repo, targetSha);
     const missingSha = "a".repeat(40);
@@ -603,10 +603,12 @@ describe("dependency release ledger collector", () => {
         },
       }),
     );
-
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain(`remote tag 'v9.9.9' commit ${missingSha}`);
-    expect(result.stderr).toContain("absent from the local object database");
+    expect(result.status, result.stderr).toBe(0);
+    expect((JSON.parse(result.stdout) as Ledger).remoteTagInventory?.tags).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ commitSha: missingSha, ref: "refs/tags/v9.9.9" }),
+      ]),
+    );
   });
 
   it("rejects an in-range local semantic-version tag absent from the remote inventory", () => {
