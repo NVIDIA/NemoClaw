@@ -367,6 +367,11 @@
       "category": "compatibility"
     },
     {
+      "file": "test/release-lkg-brev-image.test.ts",
+      "test": "keeps LKG dispatch inside the trusted secret boundary (#6772)",
+      "category": "security"
+    },
+    {
       "file": "test/regression-e2e-workflow.test.ts",
       "test": "collects the gateway drift regression from its integration project (#6692)",
       "category": "compatibility"

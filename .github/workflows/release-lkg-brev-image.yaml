@@ -1,0 +1,34 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Release / LKG Brev Image
+
+on:
+  push:
+    tags:
+      - lkg
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-lkg-brev-image
+  cancel-in-progress: false
+
+jobs:
+  dispatch-production-image:
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event.deleted == false }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out LKG target
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Dispatch production image build
+        env:
+          LKG_SHA: ${{ github.sha }}
+          NEMOCLAW_IMAGE_DISPATCH_TOKEN: ${{ secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN }}
+        run: scripts/release-lkg-brev-image.sh
