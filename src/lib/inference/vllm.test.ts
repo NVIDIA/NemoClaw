@@ -101,6 +101,21 @@ function mockSuccessfulVllmInstall(containerName: string): void {
   mocks.dockerCapture.mockReturnValue(`${containerName}\n`);
 }
 
+function mockInconclusiveDockerStorage(): void {
+  mocks.probeDockerStorage.mockReturnValue({
+    ok: false,
+    reason: "Docker uses a remote endpoint (ssh://builder.example.test)",
+  });
+}
+
+function mockInconclusiveModelCacheStorage(): void {
+  mocks.dockerImageInspectFormat.mockReturnValue("sha256:cached-image");
+  mocks.probeModelCacheStorage.mockReturnValue({
+    ok: false,
+    reason: "could not inspect the model cache: permission denied",
+  });
+}
+
 describe("vLLM served route identity", () => {
   it("uses one safe served-model override and rejects ambiguous aliases (#6315)", () => {
     expect(resolveVllmServedModelId("catalog/model", [])).toBe("catalog/model");
@@ -550,6 +565,66 @@ describe("installVllm model resolution", () => {
     expect(errSpy).toHaveBeenCalledWith(
       expect.stringContaining("Non-interactive setup stops before the guarded download"),
     );
+  });
+
+  it.each([
+    {
+      name: "inconclusive Docker storage in non-interactive mode",
+      hasImage: false,
+      nonInteractive: true,
+      replies: [],
+      expectedPromptCalls: 0,
+      expectedWarning: "Unable to verify Docker storage for the managed vLLM image",
+      setup: mockInconclusiveDockerStorage,
+    },
+    {
+      name: "inconclusive Docker storage after an interactive decline",
+      hasImage: false,
+      nonInteractive: false,
+      replies: ["y", "n"],
+      expectedPromptCalls: 2,
+      expectedWarning: "Unable to verify Docker storage for the managed vLLM image",
+      setup: mockInconclusiveDockerStorage,
+    },
+    {
+      name: "inconclusive model-cache storage in non-interactive mode",
+      hasImage: true,
+      nonInteractive: true,
+      replies: [],
+      expectedPromptCalls: 0,
+      expectedWarning: "Unable to verify model-cache storage for managed vLLM",
+      setup: mockInconclusiveModelCacheStorage,
+    },
+    {
+      name: "inconclusive model-cache storage after an interactive decline",
+      hasImage: true,
+      nonInteractive: false,
+      replies: ["y", "n"],
+      expectedPromptCalls: 2,
+      expectedWarning: "Unable to verify model-cache storage for managed vLLM",
+      setup: mockInconclusiveModelCacheStorage,
+    },
+  ] as const)("$name stops before guarded downloads (#6757)", async (testCase) => {
+    const profile = detectVllmProfile({ platform: "station", type: "nvidia" })!;
+    process.env.NEMOCLAW_VLLM_MODEL = profile.defaultModel.envValue;
+    mockSuccessfulVllmInstall(profile.containerName);
+    testCase.setup();
+    const replies = [...testCase.replies];
+    const promptFn = vi.fn(async () => replies.shift() ?? "");
+
+    const result = await installVllm(profile, {
+      hasImage: testCase.hasImage,
+      nonInteractive: testCase.nonInteractive,
+      promptFn,
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(promptFn).toHaveBeenCalledTimes(testCase.expectedPromptCalls);
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(mocks.dockerSpawn).not.toHaveBeenCalled();
+    const errors = errSpy.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
+    expect(errors).toContain(testCase.expectedWarning);
+    expect(errors).toContain("Available: unknown (");
   });
 
   it("honors only the dedicated disk-space override in non-interactive setup (#6757)", async () => {
