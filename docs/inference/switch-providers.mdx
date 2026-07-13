@@ -103,7 +103,7 @@ A rebuild reuses the recorded endpoint and cannot change it.
 OpenShell exposes one live inference route per gateway, while NemoClaw records each sandbox's intended provider and model.
 Onboarding a sandbox with a different valid route warns immediately before it re-points the shared route.
 The warning names every affected registered sandbox and its recorded provider and model.
-Those sandboxes use the new live route until a later onboarding run or `$$nemoclaw <name> connect` re-points it again.
+Those sandboxes use the new live route until a later onboarding run or `$$nemoclaw <name> connect` warns and re-points it again.
 
 `$$nemoclaw <name> status` continues to show that sandbox's recorded provider and model and prints an explicit warning when the live shared route differs.
 Incomplete custom-route metadata and invalid gateway bindings remain hard errors because NemoClaw cannot identify those routes safely.

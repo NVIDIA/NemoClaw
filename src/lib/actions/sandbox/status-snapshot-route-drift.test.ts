@@ -129,5 +129,20 @@ describe("collectSandboxStatusSnapshot route drift", () => {
     const snapshot = await collectSandboxStatusSnapshot("alpha", snapshotDeps({}));
 
     expect(snapshot.routeDrift).toBeNull();
+    expect(snapshot.currentProvider).toBe("unknown");
+    expect(snapshot.currentModel).toBe("unknown");
+  });
+
+  it("does not mix partial recorded metadata with the live route (#6315)", async () => {
+    liveGatewayInference("openai", "gpt-5.2");
+
+    const snapshot = await collectSandboxStatusSnapshot(
+      "alpha",
+      snapshotDeps({ provider: "nvidia" }),
+    );
+
+    expect(snapshot.routeDrift).toBeNull();
+    expect(snapshot.currentProvider).toBe("nvidia");
+    expect(snapshot.currentModel).toBe("unknown");
   });
 });

@@ -300,8 +300,8 @@ export async function collectSandboxStatusSnapshot(
   // Model/provider are sandbox-scoped status fields, so prefer the durable
   // route recorded for this sandbox. The live shared route is shown separately
   // as drift instead of being mislabeled as this sandbox's configuration.
-  const currentModel = (sb && sb.model) || (live && live.model) || "unknown";
-  const currentProvider = (sb && sb.provider) || (live && live.provider) || "unknown";
+  const currentModel = sb ? sb.model || "unknown" : (live && live.model) || "unknown";
+  const currentProvider = sb ? sb.provider || "unknown" : (live && live.provider) || "unknown";
   const routeDriftPlan =
     sb && sb.provider && sb.model
       ? planInferenceRouteReconcile(live, { provider: sb.provider, model: sb.model })
