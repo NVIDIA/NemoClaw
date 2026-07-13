@@ -3,6 +3,7 @@
 
 import { dockerContainerInspectFormat } from "../../adapters/docker/inspect";
 import { dockerCapture } from "../../adapters/docker/run";
+import { findLabeledSandboxContainers } from "../../onboard/docker-driver-sandbox-recovery";
 import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
 import { resolveSandboxContainerOwner } from "./sandbox-container-owner";
@@ -31,7 +32,7 @@ export interface StartedForBackup {
 interface StartDeps {
   getSandboxDriver: (name: string) => string | null | undefined;
   listSandboxNames: () => string[];
-  dockerPsAllNames: () => string;
+  listLabeledContainerNames: (sandboxName: string) => string[];
   dockerInspectStatus: (containerName: string) => string;
   dockerStart: (containerName: string) => string;
 }
@@ -45,8 +46,8 @@ const defaultStartDeps: StartDeps = {
     }
   },
   listSandboxNames: () => registry.listSandboxes().sandboxes.map((entry) => entry.name),
-  dockerPsAllNames: () =>
-    dockerCapture(["ps", "-a", "--format", "{{.Names}}"], { ignoreError: true }),
+  listLabeledContainerNames: (sandboxName) =>
+    findLabeledSandboxContainers(sandboxName).map((container) => container.name),
   dockerInspectStatus: (containerName) =>
     dockerContainerInspectFormat("{{.State.Status}}", containerName, { ignoreError: true }),
   // `docker start` echoes the container name on success and prints nothing to
@@ -60,12 +61,20 @@ export function startStoppedSandboxContainerForBackup(
 ): StartedForBackup | null {
   const deps: StartDeps = { ...defaultStartDeps, ...depsOverride };
   if (deps.getSandboxDriver(sandboxName) !== "docker") return null;
+  const labeledContainerNames = deps.listLabeledContainerNames(sandboxName);
+  // Lifecycle mutation must fail closed on missing or ambiguous ownership.
+  // Name matching alone is insufficient because starting a container executes
+  // its entrypoint; label discovery establishes the OpenShell owner first.
+  if (labeledContainerNames.length !== 1) return null;
   const containerName = resolveSandboxContainerOwner(
-    deps.dockerPsAllNames(),
+    labeledContainerNames[0] ?? "",
     sandboxName,
     deps.listSandboxNames(),
   );
   if (!containerName) return null;
+  // GPU recovery siblings must be renamed through the dedicated recovery flow
+  // before they are startable as the sandbox's active container.
+  if (/-nemoclaw-gpu-backup-\d+$/.test(containerName)) return null;
   const status = deps.dockerInspectStatus(containerName).trim().toLowerCase();
   if (status !== "exited" && status !== "created") return null;
   if (deps.dockerStart(containerName).trim() === "") return null;
@@ -74,10 +83,13 @@ export function startStoppedSandboxContainerForBackup(
 
 interface StopDeps {
   dockerStop: (containerName: string) => string;
+  dockerInspectStatus: (containerName: string) => string;
 }
 
 const defaultStopDeps: StopDeps = {
   dockerStop: (containerName) => dockerCapture(["stop", containerName], { ignoreError: true }),
+  dockerInspectStatus: (containerName) =>
+    dockerContainerInspectFormat("{{.State.Status}}", containerName, { ignoreError: true }),
 };
 
 /** Return a container started by {@link startStoppedSandboxContainerForBackup}
@@ -87,7 +99,8 @@ export function returnSandboxContainerToStopped(
   depsOverride: Partial<StopDeps> = {},
 ): boolean {
   const deps: StopDeps = { ...defaultStopDeps, ...depsOverride };
-  return deps.dockerStop(containerName).trim() !== "";
+  if (deps.dockerStop(containerName).trim() === "") return false;
+  return deps.dockerInspectStatus(containerName).trim().toLowerCase() === "exited";
 }
 
 interface BackupRetryDeps {

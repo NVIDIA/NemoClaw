@@ -76,7 +76,9 @@ export async function backupAll(): Promise<void> {
       console.log(`  Starting stopped sandbox '${sb.name}' to back it up...`);
     }
     console.log(`  Backing up '${sb.name}'...`);
-    let result: sandboxState.BackupResult;
+    let result: sandboxState.BackupResult | null = null;
+    let orphanManifestMessage: string | null = null;
+    let returnedToStopped = true;
     try {
       result = startedForBackup
         ? await backupStartedSandboxState(sb.name)
@@ -117,20 +119,29 @@ export async function backupAll(): Promise<void> {
       if (!/^Agent '[^']+' not found: .+\/manifest\.yaml$/.test(msg)) {
         throw err;
       }
-      console.log(`  ${YW}⚠${R} Skipped '${sb.name}' (orphan manifest): ${msg}`);
-      skipped++;
-      continue;
+      orphanManifestMessage = msg;
     } finally {
       if (startedForBackup) {
         if (returnSandboxContainerToStopped(startedForBackup.containerName)) {
           console.log(`  ${D}Returned '${sb.name}' to its stopped state.${R}`);
         } else {
-          console.log(
-            `  ${YW}⚠${R} Could not return '${sb.name}' to its stopped state after backup; its container was left running.`,
+          returnedToStopped = false;
+          console.error(
+            `  ${RD}✗${R} ${sb.name}: backup cleanup failed (could not return its container to the stopped state; the container was left running)`,
           );
         }
       }
     }
+    if (!returnedToStopped) {
+      failed++;
+      continue;
+    }
+    if (orphanManifestMessage) {
+      console.log(`  ${YW}⚠${R} Skipped '${sb.name}' (orphan manifest): ${orphanManifestMessage}`);
+      skipped++;
+      continue;
+    }
+    if (!result) throw new Error(`Backup for '${sb.name}' completed without a result`);
     if (result.success) {
       console.log(
         `  ${G}✓${R} ${sb.name}: ${result.backedUpDirs.length} dirs, ${result.backedUpFiles.length} files → ${result.manifest?.backupPath || "unknown"}`,

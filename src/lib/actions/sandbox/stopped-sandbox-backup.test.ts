@@ -21,7 +21,7 @@ describe("startStoppedSandboxContainerForBackup", () => {
   const deps = (over: Record<string, unknown> = {}) => ({
     getSandboxDriver: vi.fn().mockReturnValue("docker"),
     listSandboxNames: vi.fn().mockReturnValue(["my-sb"]),
-    dockerPsAllNames: vi.fn().mockReturnValue("openshell-my-sb-abc123\n"),
+    listLabeledContainerNames: vi.fn().mockReturnValue(["openshell-my-sb-abc123"]),
     dockerInspectStatus: vi.fn().mockReturnValue("exited"),
     dockerStart: vi.fn().mockReturnValue("openshell-my-sb-abc123"),
     ...over,
@@ -43,11 +43,38 @@ describe("startStoppedSandboxContainerForBackup", () => {
   it("leaves non-docker-driver sandboxes alone", () => {
     const d = deps({ getSandboxDriver: vi.fn().mockReturnValue("kubernetes") });
     expect(startStoppedSandboxContainerForBackup("my-sb", d)).toBeNull();
-    expect(d.dockerPsAllNames).not.toHaveBeenCalled();
+    expect(d.listLabeledContainerNames).not.toHaveBeenCalled();
   });
 
-  it("returns null when no container owns the sandbox name", () => {
-    const d = deps({ dockerPsAllNames: vi.fn().mockReturnValue("openshell-other-x\n") });
+  it("returns null when no labeled container owns the sandbox name", () => {
+    const d = deps({ listLabeledContainerNames: vi.fn().mockReturnValue([]) });
+    expect(startStoppedSandboxContainerForBackup("my-sb", d)).toBeNull();
+    expect(d.dockerStart).not.toHaveBeenCalled();
+  });
+
+  it("refuses ambiguous labeled containers", () => {
+    const d = deps({
+      listLabeledContainerNames: vi
+        .fn()
+        .mockReturnValue(["openshell-my-sb-old", "openshell-my-sb-new"]),
+    });
+    expect(startStoppedSandboxContainerForBackup("my-sb", d)).toBeNull();
+    expect(d.dockerInspectStatus).not.toHaveBeenCalled();
+    expect(d.dockerStart).not.toHaveBeenCalled();
+  });
+
+  it("refuses a labeled container whose name does not belong to the sandbox", () => {
+    const d = deps({ listLabeledContainerNames: vi.fn().mockReturnValue(["openshell-other-x"]) });
+    expect(startStoppedSandboxContainerForBackup("my-sb", d)).toBeNull();
+    expect(d.dockerStart).not.toHaveBeenCalled();
+  });
+
+  it("leaves GPU recovery backup siblings to the dedicated recovery flow", () => {
+    const d = deps({
+      listLabeledContainerNames: vi
+        .fn()
+        .mockReturnValue(["openshell-my-sb-nemoclaw-gpu-backup-123"]),
+    });
     expect(startStoppedSandboxContainerForBackup("my-sb", d)).toBeNull();
     expect(d.dockerStart).not.toHaveBeenCalled();
   });
@@ -71,15 +98,40 @@ describe("startStoppedSandboxContainerForBackup", () => {
 });
 
 describe("returnSandboxContainerToStopped", () => {
-  it("reports success when docker stop echoes the container name", () => {
+  it("reports success when docker stop echoes the name and inspect confirms exited", () => {
     const dockerStop = vi.fn().mockReturnValue("openshell-my-sb-abc123");
-    expect(returnSandboxContainerToStopped("openshell-my-sb-abc123", { dockerStop })).toBe(true);
+    const dockerInspectStatus = vi.fn().mockReturnValue("exited");
+    expect(
+      returnSandboxContainerToStopped("openshell-my-sb-abc123", {
+        dockerStop,
+        dockerInspectStatus,
+      }),
+    ).toBe(true);
     expect(dockerStop).toHaveBeenCalledWith("openshell-my-sb-abc123");
+    expect(dockerInspectStatus).toHaveBeenCalledWith("openshell-my-sb-abc123");
   });
 
   it("reports failure when docker stop produces no output", () => {
     const dockerStop = vi.fn().mockReturnValue("");
-    expect(returnSandboxContainerToStopped("openshell-my-sb-abc123", { dockerStop })).toBe(false);
+    const dockerInspectStatus = vi.fn();
+    expect(
+      returnSandboxContainerToStopped("openshell-my-sb-abc123", {
+        dockerStop,
+        dockerInspectStatus,
+      }),
+    ).toBe(false);
+    expect(dockerInspectStatus).not.toHaveBeenCalled();
+  });
+
+  it("reports failure when the container is still running after docker stop", () => {
+    const dockerStop = vi.fn().mockReturnValue("openshell-my-sb-abc123");
+    const dockerInspectStatus = vi.fn().mockReturnValue("running");
+    expect(
+      returnSandboxContainerToStopped("openshell-my-sb-abc123", {
+        dockerStop,
+        dockerInspectStatus,
+      }),
+    ).toBe(false);
   });
 });
 
