@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   type E2eCoverageResult,
+  type E2eExactHeadCredentialFreeTest,
   type E2eTargetAdvisorResult,
   normalizeE2eCoverageResult,
   normalizeE2eTargetAdvisorResult,
@@ -207,7 +208,9 @@ export type CombinedE2eResult = {
   targets: Pick<
     E2eTargetAdvisorResult,
     "relevantChangedFiles" | "required" | "optional" | "noTargetE2eReason" | "confidence"
-  >;
+  > & {
+    exactHeadCredentialFreeTests: Array<E2eExactHeadCredentialFreeTest & { headSha: string }>;
+  };
 };
 
 type ReviewAdvisorResult = {
@@ -1946,7 +1949,7 @@ Do not produce final JSON or update the finding ledger in this turn. Reply with 
       ],
       prompt: `Call the real \`pr_review_exact_metadata\` and \`pr_review_response_schema\` context tools, then call \`pr_review_read_ledger\`. These calls are required even if similarly named context appeared earlier. This turn is read-only: never call \`pr_review_update_ledger\`.
 
-Return the final NemoClaw PR Review Advisor JSON only. For \`findings\`, use the canonical snapshot returned by \`pr_review_read_ledger\` as the sole source of truth: do not add, drop, merge, reword, or reclassify ledger findings during serialization. Include only \`status=open\` findings in snapshot order; omit the ledger-only \`id\`, \`status\`, and \`supersededBy\` fields; and encode the schema's \`evidence\` string by joining that finding's evidence entries verbatim with newline separators. If the finding ledger exposes an unresolved inconsistency, preserve it exactly as represented rather than silently deciding it here. Synthesize acceptanceCoverage, securityCategories, sourceOfTruthReview, testDepth, e2e, positives, reviewCompleteness, and summary from the reconciled prose receipts; these non-finding sections are not stored in the ledger. For e2e.coverage preserve the tests/regressions recommendations. For e2e.targets preserve only the CI/operations selector recommendations and their reasons; never emit a dispatch command. Set each sourceOfTruthReview findingId to its covering open ledger ID for status missing/needs_followup, and to null otherwise.
+Return the final NemoClaw PR Review Advisor JSON only. For \`findings\`, use the canonical snapshot returned by \`pr_review_read_ledger\` as the sole source of truth: do not add, drop, merge, reword, or reclassify ledger findings during serialization. Include only \`status=open\` findings in snapshot order; omit the ledger-only \`id\`, \`status\`, and \`supersededBy\` fields; and encode the schema's \`evidence\` string by joining that finding's evidence entries verbatim with newline separators. If the finding ledger exposes an unresolved inconsistency, preserve it exactly as represented rather than silently deciding it here. Synthesize acceptanceCoverage, securityCategories, sourceOfTruthReview, testDepth, e2e, positives, reviewCompleteness, and summary from the reconciled prose receipts; these non-finding sections are not stored in the ledger. For e2e.coverage preserve the tests/regressions recommendations. For e2e.targets preserve only the CI/operations selector recommendations and their reasons; never emit a dispatch command. Set e2e.targets.exactHeadCredentialFreeTests to an empty array; trusted code derives and replaces that evidence after parsing. Set each sourceOfTruthReview findingId to its covering open ledger ID for status missing/needs_followup, and to null otherwise.
 
 Set the fields exactly as specified by the \`pr_review_exact_metadata\` tool for metadata.
 
@@ -2306,6 +2309,10 @@ export function normalizeCombinedE2eResult(
     coverage,
     targets: {
       relevantChangedFiles: normalizedTargets.relevantChangedFiles,
+      exactHeadCredentialFreeTests: normalizedTargets.exactHeadCredentialFreeTests.map((test) => ({
+        ...test,
+        headSha: metadata.headSha,
+      })),
       required: normalizedTargets.required,
       optional: normalizedTargets.optional,
       noTargetE2eReason: normalizedTargets.noTargetE2eReason,

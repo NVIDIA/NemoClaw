@@ -647,6 +647,7 @@ describe("E2E recommendation normalizer", () => {
 
     expect(normalized.required.map((item) => item.id)).toContain(id);
     expect(normalized.required.map((item) => item.id)).not.toContain("e2e-all");
+    expect(normalized.exactHeadCredentialFreeTests).toEqual([{ id, file }]);
     expect(normalized.noTargetE2eReason).toBeNull();
   });
 
@@ -669,6 +670,7 @@ describe("E2E recommendation normalizer", () => {
       "security-posture",
     ]);
     expect(normalized.required.map((item) => item.id)).not.toContain("string-only");
+    expect(normalized.exactHeadCredentialFreeTests).toEqual([]);
     expect(normalized.noTargetE2eReason).toBeNull();
   });
 
@@ -686,6 +688,7 @@ describe("E2E recommendation normalizer", () => {
     );
 
     expect(normalized.required.map((item) => item.id)).toContain("block-comment-proof");
+    expect(normalized.exactHeadCredentialFreeTests).toEqual([{ id: "block-comment-proof", file }]);
   });
 
   it.each([
@@ -720,7 +723,29 @@ describe("E2E recommendation normalizer", () => {
     ]);
     expect(normalized.required.map((item) => item.id)).not.toContain("docs-validation");
     expect(normalized.required.map((item) => item.id)).not.toContain("e2e-all");
+    expect(normalized.exactHeadCredentialFreeTests).toEqual([]);
     expect(normalized.noTargetE2eReason).toBeNull();
+  });
+
+  it("replaces model-provided exact-head evidence with trusted source-derived evidence", () => {
+    const normalized = normalizeE2eTargetAdvisorResult(
+      {
+        exactHeadCredentialFreeTests: [
+          {
+            id: "forged-proof",
+            file: "test/e2e/live/forged-proof.test.ts",
+            headSha: "a".repeat(40),
+          },
+        ],
+        required: [],
+        optional: [],
+        confidence: "high",
+      },
+      metadata({ changedFiles: [] }),
+    );
+
+    expect(normalized.exactHeadCredentialFreeTests).toEqual([]);
+    expect(JSON.stringify(normalized)).not.toContain("forged-proof");
   });
 
   it("keeps the deterministic floor while suppressing unwired-test fan-out", () => {

@@ -298,6 +298,7 @@ jobs:
               },
               targets: {
                 relevantChangedFiles: [],
+                exactHeadCredentialFreeTests: [],
                 required: [],
                 optional: [],
                 noTargetE2eReason: reason,

@@ -76,6 +76,11 @@ export type E2eTargetRecommendation = {
   reason: string;
 };
 
+export type E2eExactHeadCredentialFreeTest = {
+  id: string;
+  file: string;
+};
+
 export type E2eWorkflowJob = {
   id: string;
   liveTestFiles: string[];
@@ -87,6 +92,7 @@ export type E2eTargetAdvisorResult = {
   headRef: string;
   changedFiles: string[];
   relevantChangedFiles: string[];
+  exactHeadCredentialFreeTests: E2eExactHeadCredentialFreeTest[];
   required: E2eTargetRecommendation[];
   optional: E2eTargetRecommendation[];
   noTargetE2eReason: string | null;
@@ -112,11 +118,7 @@ type E2eTargetNormalizationContext = {
   freeStandingJobs: E2eWorkflowJob[];
   allowedJobIds: Set<string>;
   liveTestToJobs: Map<string, string[]>;
-};
-
-type CredentialFreeTestRow = {
-  id: string;
-  file: string;
+  exactHeadCredentialFreeTests: E2eExactHeadCredentialFreeTest[];
 };
 
 export function trustedE2eRecommendationInventory(): TrustedE2eRecommendationInventory {
@@ -300,6 +302,7 @@ export function normalizeE2eTargetAdvisorResult(
       ...stringArrayWithinChanged(result.relevantChangedFiles, metadata.changedFiles),
       ...riskPlan.families.flatMap((family) => family.matchedFiles),
     ]),
+    exactHeadCredentialFreeTests: context.exactHeadCredentialFreeTests,
     required,
     optional: optional.filter(
       (candidate) =>
@@ -354,6 +357,7 @@ function buildE2eTargetNormalizationContext(
     allowedJobIds.has(job.id),
   );
   const liveTestToJobs = new Map<string, string[]>();
+  const exactHeadCredentialFreeTests: E2eExactHeadCredentialFreeTest[] = [];
   const changedCredentialFreeProjects = new Map(
     changedFiles.flatMap((file) => {
       const project = credentialFreeTestProjectForFile(file);
@@ -376,8 +380,17 @@ function buildE2eTargetNormalizationContext(
     if (!row || !project) continue;
     addMapValue(liveTestToJobs, row.file, row.id);
     allowedJobIds.add(row.id);
+    exactHeadCredentialFreeTests.push(row);
   }
-  return { e2eWorkflowText, freeStandingJobs, allowedJobIds, liveTestToJobs };
+  return {
+    e2eWorkflowText,
+    freeStandingJobs,
+    allowedJobIds,
+    liveTestToJobs,
+    exactHeadCredentialFreeTests: exactHeadCredentialFreeTests.sort(
+      (left, right) => left.id.localeCompare(right.id) || left.file.localeCompare(right.file),
+    ),
+  };
 }
 
 function credentialFreeTestProjectForFile(file: string): "e2e-live" | "integration" | undefined {
@@ -390,8 +403,18 @@ function credentialFreeTestProjectForFile(file: string): "e2e-live" | "integrati
   return undefined;
 }
 
-function credentialFreeTestRow(file: string, source: string): CredentialFreeTestRow | undefined {
+export function credentialFreeTestIdForFile(file: string): string | undefined {
   if (!credentialFreeTestProjectForFile(file)) return undefined;
+  const id = path.posix.basename(file).replace(/\.test\.(?:js|ts)$/, "");
+  return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id) ? id : undefined;
+}
+
+function credentialFreeTestRow(
+  file: string,
+  source: string,
+): E2eExactHeadCredentialFreeTest | undefined {
+  const id = credentialFreeTestIdForFile(file);
+  if (!id) return undefined;
   const declarations = moduleTagDeclarations(source);
   if (
     declarations.some(({ tag }) => tag.startsWith("e2e/") && tag !== CREDENTIAL_FREE_TEST_TAG) ||
@@ -399,12 +422,11 @@ function credentialFreeTestRow(file: string, source: string): CredentialFreeTest
   ) {
     return undefined;
   }
-  const id = path.posix.basename(file).replace(/\.test\.(?:js|ts)$/, "");
-  return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id) ? { id, file } : undefined;
+  return { id, file };
 }
 
-function discoverTrustedCredentialFreeTests(): CredentialFreeTestRow[] {
-  const rows: CredentialFreeTestRow[] = [];
+function discoverTrustedCredentialFreeTests(): E2eExactHeadCredentialFreeTest[] {
+  const rows: E2eExactHeadCredentialFreeTest[] = [];
   const testRoot = path.join(TRUSTED_REPO_ROOT, "test");
   const pending = [testRoot];
   while (pending.length > 0) {
@@ -434,7 +456,7 @@ function trustedAllowedJobIds(): string[] {
 
 function extractAllowedE2eJobIds(
   workflowText: string,
-  credentialFreeTests: readonly CredentialFreeTestRow[],
+  credentialFreeTests: readonly E2eExactHeadCredentialFreeTest[],
 ): string[] {
   const jobs = e2eWorkflowJobs(workflowText);
   const allowed = jobs

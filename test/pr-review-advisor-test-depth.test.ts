@@ -35,6 +35,7 @@ function reviewResult(testDepth: TestDepth): ReviewResult {
       },
       targets: {
         relevantChangedFiles: [],
+        exactHeadCredentialFreeTests: [],
         required: [],
         optional: [],
         noTargetE2eReason: "No E2E target impact.",

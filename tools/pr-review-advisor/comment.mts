@@ -5,6 +5,7 @@
 import { pathToFileURL } from "node:url";
 
 import {
+  credentialFreeTestIdForFile,
   type TrustedE2eRecommendationInventory,
   trustedE2eRecommendationInventory,
 } from "../advisors/e2e-recommendations.mts";
@@ -21,6 +22,7 @@ let cachedE2eInventory: TrustedE2eRecommendationInventory | undefined;
 
 type ReviewAdvisorResult = {
   headSha?: string;
+  changedFiles?: string[];
   summary?: {
     recommendation?: string;
     confidence?: string;
@@ -64,6 +66,11 @@ type ReviewAdvisorResult = {
       noE2eReason?: string | null;
     };
     targets?: {
+      exactHeadCredentialFreeTests?: Array<{
+        id?: string;
+        file?: string;
+        headSha?: string;
+      }>;
       required?: Array<{
         id?: string;
         workflow?: string;
@@ -285,13 +292,24 @@ function renderE2eDetails(result?: ReviewAdvisorResult): string {
   if (!coverage && !targets) return "";
 
   const inventory = commentE2eInventory();
+  const exactHeadCredentialFreeJobIds = trustedExactHeadCredentialFreeJobIds(result);
   const requiredCoverage = trustedCoverageItems(coverage?.requiredTests, inventory);
   const optionalCoverage = trustedCoverageItems(coverage?.optionalTests, inventory);
   const newRecommendations: NonNullable<
     NonNullable<ReviewAdvisorResult["e2e"]>["coverage"]
   >["newE2eRecommendations"] = [];
-  const requiredTargets = trustedTargetItems(targets?.required, true, inventory);
-  const optionalTargets = trustedTargetItems(targets?.optional, false, inventory);
+  const requiredTargets = trustedTargetItems(
+    targets?.required,
+    true,
+    inventory,
+    exactHeadCredentialFreeJobIds,
+  );
+  const optionalTargets = trustedTargetItems(
+    targets?.optional,
+    false,
+    inventory,
+    exactHeadCredentialFreeJobIds,
+  );
   const noE2eReason = "No deterministic or trusted-inventory E2E coverage was selected.";
   const noTargetE2eReason = "No trusted E2E selector was selected.";
   const lines = [
@@ -384,6 +402,7 @@ function trustedTargetItems(
     | undefined,
   required: boolean,
   inventory: TrustedE2eRecommendationInventory,
+  exactHeadCredentialFreeJobIds: ReadonlySet<string>,
 ): Array<{ id: string; reason: string }> {
   const allowedJobs = new Set(inventory.allowedJobIds);
   const allowedTargets = new Set(inventory.liveSupportedTargetIds);
@@ -394,7 +413,7 @@ function trustedTargetItems(
     if (!id || item.workflow !== inventory.workflow || item.required !== required) return [];
     const trustedTuple =
       (selectorType === "all" && id === inventory.fanoutId) ||
-      (selectorType === "job" && allowedJobs.has(id)) ||
+      (selectorType === "job" && (allowedJobs.has(id) || exactHeadCredentialFreeJobIds.has(id))) ||
       (selectorType === "target" && allowedTargets.has(id));
     const key = `${selectorType}:${id}`;
     if (!trustedTuple || seen.has(key)) return [];
@@ -403,10 +422,33 @@ function trustedTargetItems(
       selectorType === "all"
         ? "Selected as the trusted full E2E fan-out selector."
         : selectorType === "job"
-          ? "Selected as a trusted checked-in E2E job."
+          ? exactHeadCredentialFreeJobIds.has(id) && !allowedJobs.has(id)
+            ? "Selected as a trusted exact-head credential-free E2E job."
+            : "Selected as a trusted checked-in E2E job."
           : "Selected as a trusted live-supported E2E target.";
     return [{ id, reason }];
   });
+}
+
+function trustedExactHeadCredentialFreeJobIds(result?: ReviewAdvisorResult): Set<string> {
+  const ids = new Set<string>();
+  const headSha = result?.headSha;
+  if (!headSha || !/^[0-9a-f]{40}$/.test(headSha)) return ids;
+  const changedFiles = new Set(
+    (result.changedFiles ?? []).filter((file): file is string => typeof file === "string"),
+  );
+  const evidence = result.e2e?.targets?.exactHeadCredentialFreeTests;
+  if (!Array.isArray(evidence)) return ids;
+
+  for (const item of evidence) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    if (Object.keys(item).some((key) => !["id", "file", "headSha"].includes(key))) continue;
+    const { id, file, headSha: evidenceHeadSha } = item;
+    if (!id || !file || evidenceHeadSha !== headSha || !changedFiles.has(file)) continue;
+    if (credentialFreeTestIdForFile(file) !== id) continue;
+    ids.add(id);
+  }
+  return ids;
 }
 
 function commentE2eInventory(): TrustedE2eRecommendationInventory {

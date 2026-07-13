@@ -169,6 +169,7 @@
           "type": "object",
           "required": [
             "relevantChangedFiles",
+            "exactHeadCredentialFreeTests",
             "required",
             "optional",
             "noTargetE2eReason",
@@ -178,6 +179,10 @@
             "relevantChangedFiles": {
               "type": "array",
               "items": { "type": "string" }
+            },
+            "exactHeadCredentialFreeTests": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/e2eExactHeadCredentialFreeTest" }
             },
             "required": {
               "type": "array",
@@ -312,6 +317,27 @@
           "minLength": 1,
           "maxLength": 2000,
           "pattern": "^[^\\r\\n]*$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "e2eExactHeadCredentialFreeTest": {
+      "type": "object",
+      "required": ["id", "file", "headSha"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "maxLength": 120
+        },
+        "file": {
+          "type": "string",
+          "pattern": "^test/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\\.test\\.(?:js|ts)$",
+          "maxLength": 500
+        },
+        "headSha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
         }
       },
       "additionalProperties": false

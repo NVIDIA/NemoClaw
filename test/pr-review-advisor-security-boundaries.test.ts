@@ -16,7 +16,7 @@ const ROOT = path.resolve(import.meta.dirname, "..");
 type ReviewMetadata = Parameters<typeof normalizeReviewResult>[1];
 
 function e2eReviewMetadata(changedFiles: string[]): ReviewMetadata {
-  const headSha = "abc123def456";
+  const headSha = "a".repeat(40);
   return {
     baseRef: "origin/main",
     headRef: "HEAD",
@@ -205,6 +205,120 @@ describe("PR review advisor security boundaries", () => {
       expect(rendered).not.toMatch(/gh workflow run|--ref attacker|evil\.yaml|forged-coverage/u);
     }
     expect(comment).toContain("<code>state-backup-restore</code>");
+  });
+
+  it("publishes a newly added credential-free selector from trusted exact-head evidence", () => {
+    const file = "test/e2e/live/publisher-exact-head-proof.test.ts";
+    const absolute = path.join(ROOT, file);
+    let result: ReturnType<typeof normalizeReviewResult>;
+    fs.writeFileSync(absolute, "// @module-tag e2e/credential-free\n");
+    try {
+      result = normalizeReviewResult(
+        {
+          e2e: {
+            targets: {
+              exactHeadCredentialFreeTests: [
+                {
+                  id: "model-forged-proof",
+                  file: "test/e2e/live/model-forged-proof.test.ts",
+                  headSha: "f".repeat(40),
+                },
+              ],
+              required: [],
+              optional: [],
+              confidence: "high",
+            },
+          },
+        },
+        e2eReviewMetadata([file]),
+      );
+    } finally {
+      fs.rmSync(absolute, { force: true });
+    }
+
+    expect(result.e2e.targets.exactHeadCredentialFreeTests).toEqual([
+      { id: "publisher-exact-head-proof", file, headSha: "a".repeat(40) },
+    ]);
+    expect(result.e2e.targets.required.map((item) => item.id)).toContain(
+      "publisher-exact-head-proof",
+    );
+    expect(JSON.stringify(result)).not.toContain("model-forged-proof");
+
+    const comment = buildComment({ summary: renderSummary(result), result });
+    expect(comment).toContain("<code>publisher-exact-head-proof</code>");
+    expect(comment).toContain("Selected as a trusted exact-head credential-free E2E job.");
+  });
+
+  it("drops malformed or mismatched exact-head selector evidence", () => {
+    const id = "publisher-exact-head-proof";
+    const file = `test/e2e/live/${id}.test.ts`;
+    const headSha = "a".repeat(40);
+    const validEvidence = { id, file, headSha };
+    const cases = [
+      { name: "missing evidence", evidence: undefined, changedFiles: [file], resultHead: headSha },
+      {
+        name: "mismatched evidence head",
+        evidence: [{ ...validEvidence, headSha: "b".repeat(40) }],
+        changedFiles: [file],
+        resultHead: headSha,
+      },
+      {
+        name: "non-changed file",
+        evidence: [validEvidence],
+        changedFiles: [],
+        resultHead: headSha,
+      },
+      {
+        name: "ID and basename mismatch",
+        evidence: [{ ...validEvidence, id: "different-id" }],
+        changedFiles: [file],
+        resultHead: headSha,
+      },
+      {
+        name: "unsupported test path",
+        evidence: [{ ...validEvidence, file: `test/e2e/support/${id}.test.ts` }],
+        changedFiles: [`test/e2e/support/${id}.test.ts`],
+        resultHead: headSha,
+      },
+      {
+        name: "invalid result head",
+        evidence: [validEvidence],
+        changedFiles: [file],
+        resultHead: "short-sha",
+      },
+      {
+        name: "extra evidence field",
+        evidence: [{ ...validEvidence, modelReason: "forged" }],
+        changedFiles: [file],
+        resultHead: headSha,
+      },
+    ];
+
+    for (const testCase of cases) {
+      const comment = buildComment({
+        summary: "unused",
+        result: {
+          headSha: testCase.resultHead,
+          changedFiles: testCase.changedFiles,
+          e2e: {
+            targets: {
+              exactHeadCredentialFreeTests: testCase.evidence,
+              required: [
+                {
+                  id,
+                  workflow: "e2e.yaml",
+                  selectorType: "job",
+                  required: true,
+                  reason: "artifact-authored reason",
+                },
+              ],
+            },
+          },
+        },
+      });
+      expect(comment, testCase.name).not.toContain(id);
+      expect(comment, testCase.name).not.toContain("artifact-authored reason");
+    }
   });
 
   it("drops command-shaped E2E items again at the comment boundary", () => {

@@ -546,6 +546,9 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     );
     expect(synthesisTurn?.prompt).toContain("<pr_review_advisor_json>");
     expect(synthesisTurn?.prompt).toContain("Set the fields exactly as specified");
+    expect(synthesisTurn?.prompt).toContain(
+      "Set e2e.targets.exactHeadCredentialFreeTests to an empty array",
+    );
     expect(validationTurn?.prompt).toContain("same agent session");
     const correctnessContext = JSON.parse(
       analysisTurns[1]?.contextToolResults?.[0]?.content || "{}",

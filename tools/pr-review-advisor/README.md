@@ -82,7 +82,7 @@ Authors and coding agents should follow the shared [PR CI and Automated Review F
 - The analysis job is limited to `NVIDIA/NemoClaw`, has read-only GitHub permissions, and is the only job that receives the model secret.
 - The analyzer collects deterministic GitHub context before model work, then removes GitHub tokens from the process environment.
   After registering the model credential in the in-memory SDK auth store, it also removes that credential from the process environment before model turns begin.
-- The separate publisher has pull-request write permission, but receives neither the model secret nor the untrusted PR worktree. It accepts only the bounded primary artifact from the same workflow run and rechecks the live PR head and base before commenting. Before rendering E2E guidance, it independently allowlists coverage IDs and exact selector tuples, ignores artifact-authored E2E prose, and supplies canonical reasons.
+- The separate publisher has pull-request write permission, but receives neither the model secret nor the untrusted PR worktree. It accepts only the bounded primary artifact from the same workflow run and rechecks the live PR head and base before commenting. Before rendering E2E guidance, it independently allowlists coverage IDs and exact selector tuples, ignores artifact-authored E2E prose, and supplies canonical reasons. A newly added credential-free test can extend the job allowlist only through trusted-normalizer evidence bound to the same head SHA, changed-file path, and basename-derived selector ID.
 - Sticky publication updates only a marker-bearing comment owned by `github-actions[bot]`; a user-authored marker cannot claim the update target.
   The rendered comment preserves its hidden identity metadata while enforcing a 60 KiB UTF-8 limit, and publication errors remain visible in the publisher logs.
 - The workflow posts advisory comments only; it does not approve, request changes, merge, push, label, or dispatch E2E.
@@ -158,8 +158,11 @@ Every result also includes nested `e2e.coverage` and `e2e.targets` guidance. The
 restores deterministic requirements before model selections, retains only allowlisted coverage IDs
 and exact supported selector tuples, and replaces model-authored reasons with canonical trusted
 reasons. It discards free-form E2E domains, new-test recommendations, and no-selection explanations.
-The trusted publisher independently repeats the ID and tuple checks and derives its own reasons
-instead of rendering E2E prose from the artifact.
+For a changed credential-free test, the normalizer also records structured exact-head evidence only
+after the trusted module-tag parser accepts the source; model-provided evidence is overwritten. The
+trusted publisher independently repeats the ID and tuple checks, verifies that evidence against the
+result head and changed-file identity, and derives its own reasons instead of rendering E2E prose
+from the artifact.
 The compatibility schema retains `requiredTests` and `targets.required`, but those names describe
 the normalized advisory tier, not merge requirements. Rendered comments label them as recommended;
 the independent PR E2E controller does not consume advisor output.
