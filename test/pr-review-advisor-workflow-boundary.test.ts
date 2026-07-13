@@ -451,7 +451,7 @@ esac
     );
     fs.writeFileSync(
       path.join(binDir, "fdfind"),
-      "#!/bin/bash\nprintf 'fdfind %s\\n' \"$*\" >> \"$CALL_LOG\"\nprintf 'fd 9.0.0\\n'\n",
+      "#!/bin/bash\nprintf 'fdfind %s\\n' \"$*\" >> \"$CALL_LOG\"\nprintf 'fdfind 9.0.0\\n'\n",
       { mode: 0o755 },
     );
     fs.writeFileSync(

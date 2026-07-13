@@ -353,7 +353,11 @@ done < <(find "$ADVISOR_WORKDIR" -type l -print0)`;
   requireRunContains(errors, install, "command -v rg");
   requireRunContains(errors, install, 'FD_BINARY_VERSION="$(fdfind --version)"');
   requireRunContains(errors, install, 'RG_BINARY_VERSION="$(rg --version)"');
-  requireRunContains(errors, install, '"$FD_BINARY_VERSION" != "fd $EXPECTED_FD_BINARY_VERSION"');
+  requireRunContains(
+    errors,
+    install,
+    '"$FD_BINARY_VERSION" != "fdfind $EXPECTED_FD_BINARY_VERSION"',
+  );
   requireRunContains(
     errors,
     install,

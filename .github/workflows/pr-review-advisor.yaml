@@ -236,8 +236,8 @@ jobs:
           FD_BINARY_VERSION="$(fdfind --version)"
           RG_BINARY_VERSION="$(rg --version)"
           RG_BINARY_VERSION="${RG_BINARY_VERSION%%$'\n'*}"
-          if [ "$FD_BINARY_VERSION" != "fd $EXPECTED_FD_BINARY_VERSION" ]; then
-            echo "::error::fdfind binary version $FD_BINARY_VERSION does not match fd $EXPECTED_FD_BINARY_VERSION"
+          if [ "$FD_BINARY_VERSION" != "fdfind $EXPECTED_FD_BINARY_VERSION" ]; then
+            echo "::error::fdfind binary version $FD_BINARY_VERSION does not match fdfind $EXPECTED_FD_BINARY_VERSION"
             exit 1
           fi
           if [ "$RG_BINARY_VERSION" != "ripgrep $EXPECTED_RG_BINARY_VERSION" ]; then
