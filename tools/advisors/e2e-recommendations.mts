@@ -9,7 +9,8 @@ import path from "node:path";
 import { getTarget, listTargets } from "../../test/e2e/registry/registry.ts";
 import { liveTargetSupport } from "../../test/e2e/registry/runtime-support.ts";
 import { moduleTagDeclarations } from "../e2e/module-tags.mts";
-import { dropUndefinedValues, enumValue, recordItems, stringOrUndefined } from "./json.mts";
+import { containsCommandShapedE2eText } from "./e2e-text.mts";
+import { enumValue, recordItems, stringOrUndefined } from "./json.mts";
 import { buildRiskPlan, type RiskPlan } from "./risk-plan.mts";
 
 const E2E_WORKFLOW = "e2e.yaml";
@@ -24,6 +25,7 @@ const FREE_STANDING_LIVE_FILE_PATTERN = /^test\/e2e\/live\/[^/]+\.ts$/;
 const ALLOWED_WORKFLOWS = new Set<string>([E2E_WORKFLOW]);
 const TARGET_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const CONFIDENCES = ["low", "medium", "high"] as const;
+const MODEL_COVERAGE_IDENTITY_FIELDS = ["workflow", "job", "script", "cost", "runner"] as const;
 const CLOUD_ONBOARD_E2E_PATTERNS: readonly RegExp[] = [
   /^src\/lib\/onboard(?:\.ts|\/)/,
   /^src\/lib\/trace\.ts$/,
@@ -46,13 +48,8 @@ export type E2eCoverageDomain = {
 };
 
 export type E2eCoverageTest = {
-  id?: string;
-  reason?: string;
-  workflow?: string;
-  job?: string;
-  script?: string;
-  cost?: string;
-  runner?: string;
+  id: string;
+  reason: string;
 };
 
 export type E2eNewRecommendation = {
@@ -75,8 +72,6 @@ export type E2eTargetRecommendation = {
   id: string;
   workflow: string;
   selectorType: E2eSelectorType;
-  target?: string;
-  suiteFilter?: string;
   required: boolean;
   reason: string;
 };
@@ -137,70 +132,54 @@ export function trustedE2eRecommendationInventory(): TrustedE2eRecommendationInv
   };
 }
 
+function trustedCoverageIds(): Set<string> {
+  const inventory = trustedE2eRecommendationInventory();
+  return new Set([...inventory.allowedJobIds, ...inventory.liveSupportedTargetIds]);
+}
+
 export function normalizeE2eCoverageResult(
   value: unknown,
   metadata: E2eRecommendationMetadata,
   riskPlan = buildRiskPlan({ headSha: "coverage-normalize", changedFiles: metadata.changedFiles }),
 ): E2eCoverageResult {
   const object = isRecord(value) ? value : {};
-  const requiredTests = sanitizeCoverageTests(object.requiredTests);
-  const requiredIds = new Set(
-    requiredTests.flatMap((test) =>
-      [test.id, test.job].filter((item): item is string => Boolean(item)),
-    ),
+  const allowedCoverageIds = trustedCoverageIds();
+  const requiredTests = deterministicCoverageTests(metadata.changedFiles, riskPlan);
+  const requiredIds = new Set(requiredTests.map((test) => test.id));
+  appendUniqueCoverageTests(
+    requiredTests,
+    sanitizeCoverageTests(object.requiredTests, allowedCoverageIds),
+    requiredIds,
   );
-  for (const job of riskPlan.requiredJobs) {
-    if (requiredIds.has(job.id)) continue;
-    requiredIds.add(job.id);
-    requiredTests.push({
-      id: job.id,
-      workflow: E2E_WORKFLOW,
-      job: job.id,
-      cost: job.tier === 3 ? "high" : "medium",
-      reason: job.reasons.join(" "),
-    });
-  }
-  if (requiresCloudOnboardE2e(metadata.changedFiles) && !requiredIds.has("cloud-onboard")) {
-    requiredIds.add("cloud-onboard");
-    requiredTests.push({
-      id: "cloud-onboard",
-      workflow: E2E_WORKFLOW,
-      job: "cloud-onboard",
-      script: "test/e2e/live/cloud-onboard.test.ts",
-      cost: "high",
-      runner: "ubuntu-latest",
-      reason:
-        "Changed onboard, trace timing, scorecard, or E2E workflow code can affect cloud onboard wall-clock behavior and should refresh the trusted cloud-onboard trace timing signal.",
-    });
-  }
 
-  const classifiedDomains = sanitizeCoverageDomains(object.classifiedDomains);
-  const classifiedNames = new Set(classifiedDomains.map((domain) => domain.domain));
-  for (const family of riskPlan.families) {
-    if (classifiedNames.has(family.id)) continue;
-    classifiedNames.add(family.id);
-    classifiedDomains.push({
-      domain: family.id,
-      reason: family.summary,
-      confidence: "high",
-      matchedFiles: family.matchedFiles,
-    });
-  }
+  const optionalTests: E2eCoverageTest[] = [];
+  appendUniqueCoverageTests(
+    optionalTests,
+    sanitizeCoverageTests(object.optionalTests, allowedCoverageIds),
+    new Set(requiredIds),
+  );
+
+  const classifiedDomains: E2eCoverageDomain[] = riskPlan.families.map((family) => ({
+    domain: family.id,
+    reason: family.summary,
+    confidence: "high",
+    matchedFiles: family.matchedFiles,
+  }));
 
   const requestedConfidence = enumValue(object.confidence, CONFIDENCES, "medium");
   return {
     classifiedDomains,
     requiredTests,
-    optionalTests: sanitizeCoverageTests(object.optionalTests).filter(
-      (test) => ![test.id, test.job].some((item) => item && requiredIds.has(item)),
-    ),
-    newE2eRecommendations: sanitizeNewRecommendations(object.newE2eRecommendations),
+    optionalTests,
+    // Free-form model prose is never retained in the normalized E2E result.
+    // The model may select trusted identifiers; trusted code supplies every
+    // published reason so command detection is defense in depth, not the
+    // authority boundary.
+    newE2eRecommendations: [],
     noE2eReason:
       requiredTests.length > 0
         ? null
-        : typeof object.noE2eReason === "string" || object.noE2eReason === null
-          ? object.noE2eReason
-          : null,
+        : "No deterministic or trusted-inventory E2E coverage was selected.",
     confidence:
       (requiredTests.length > 0 || riskPlan.families.length > 0) && requestedConfidence === "low"
         ? "medium"
@@ -208,45 +187,55 @@ export function normalizeE2eCoverageResult(
   };
 }
 
-function sanitizeCoverageDomains(value: unknown): E2eCoverageDomain[] {
-  return recordItems(value)
-    .map((item) => ({
-      domain: stringOrUndefined(item.domain),
-      reason: stringOrUndefined(item.reason),
-      confidence: enumValue(item.confidence, CONFIDENCES, "medium"),
-      matchedFiles: stringArray(item.matchedFiles),
-    }))
-    .filter((item) => item.domain && item.reason)
-    .slice(0, 50);
+function deterministicCoverageTests(changedFiles: string[], riskPlan: RiskPlan): E2eCoverageTest[] {
+  const tests: E2eCoverageTest[] = riskPlan.requiredJobs.map((job) => ({
+    id: job.id,
+    reason: job.reasons.join(" "),
+  }));
+  if (requiresCloudOnboardE2e(changedFiles) && !tests.some((test) => test.id === "cloud-onboard")) {
+    tests.push({
+      id: "cloud-onboard",
+      reason:
+        "Changed onboard, trace timing, scorecard, or E2E workflow code can affect cloud onboard wall-clock behavior and should refresh the trusted cloud-onboard trace timing signal.",
+    });
+  }
+  return tests;
 }
 
-function sanitizeCoverageTests(value: unknown): E2eCoverageTest[] {
+function appendUniqueCoverageTests(
+  output: E2eCoverageTest[],
+  candidates: E2eCoverageTest[],
+  seen: Set<string>,
+): void {
+  for (const candidate of candidates) {
+    if (seen.has(candidate.id)) continue;
+    seen.add(candidate.id);
+    output.push(candidate);
+  }
+}
+
+function sanitizeCoverageTests(
+  value: unknown,
+  allowedCoverageIds: ReadonlySet<string>,
+): E2eCoverageTest[] {
   return recordItems(value)
-    .map((item) =>
-      dropUndefinedValues({
-        id: stringOrUndefined(item.id),
-        reason: stringOrUndefined(item.reason),
-        workflow: stringOrUndefined(item.workflow),
-        job: stringOrUndefined(item.job),
-        script: stringOrUndefined(item.script),
-        cost: stringOrUndefined(item.cost),
-        runner: stringOrUndefined(item.runner),
-      }),
+    .filter(
+      (item) =>
+        !containsCommandShapedE2eText(item) &&
+        !MODEL_COVERAGE_IDENTITY_FIELDS.some((field) => Object.hasOwn(item, field)),
     )
-    .filter((item) => item.id && item.reason)
+    .flatMap((item) => {
+      const id = stringOrUndefined(item.id);
+      const suppliedReason = stringOrUndefined(item.reason);
+      return id && suppliedReason && allowedCoverageIds.has(id)
+        ? [{ id, reason: trustedCoverageReason(id) }]
+        : [];
+    })
     .slice(0, 50);
 }
 
-function sanitizeNewRecommendations(value: unknown): E2eNewRecommendation[] {
-  return recordItems(value)
-    .map((item) => ({
-      domain: stringOrUndefined(item.domain),
-      reason: stringOrUndefined(item.reason),
-      suggestedTest: stringOrUndefined(item.suggestedTest),
-      priority: enumValue(item.priority, CONFIDENCES, "medium"),
-    }))
-    .filter((item) => item.domain && item.reason && item.suggestedTest)
-    .slice(0, 50);
+function trustedCoverageReason(id: string): string {
+  return `The advisor selected the trusted \`${id}\` E2E coverage identifier.`;
 }
 
 function requiresCloudOnboardE2e(changedFiles: string[]): boolean {
@@ -300,13 +289,7 @@ export function normalizeE2eTargetAdvisorResult(
         focusedJobs,
         metadata.changedFiles,
       );
-  const noTargetE2eReason = targetReason(
-    result.noTargetE2eReason,
-    required,
-    optional,
-    unwiredTests,
-    suppressFanout,
-  );
+  const noTargetE2eReason = targetReason(required, optional, unwiredTests, suppressFanout);
   const requestedConfidence = enumValue(result.confidence, CONFIDENCES, "medium");
   return {
     version: 1,
@@ -331,20 +314,16 @@ export function normalizeE2eTargetAdvisorResult(
 }
 
 function targetReason(
-  value: unknown,
   required: E2eTargetRecommendation[],
   optional: E2eTargetRecommendation[],
   unwiredTests: string[],
   suppressFanout: boolean,
 ): string | null {
   if (suppressFanout && required.length === 0) return missingLiveWiringReason(unwiredTests);
-  if (typeof value === "string" && value.trim() && required.length === 0 && optional.length === 0) {
-    return value.trim();
-  }
   if (required.length > 0 || optional.length > 0) return null;
   return unwiredTests.length > 0
     ? missingLiveWiringReason(unwiredTests)
-    : "Advisor reported no E2E target impact.";
+    : "No trusted E2E selector was selected.";
 }
 
 function readE2eWorkflowText(): string | undefined {
@@ -627,11 +606,12 @@ function sanitizeTargetRecommendations(
   const seen = new Set<string>();
   const output: E2eTargetRecommendation[] = [];
   for (const item of recordItems(value)) {
+    if (containsCommandShapedE2eText(item)) continue;
     const id = stringOrUndefined(item.id);
-    const reason = stringOrUndefined(item.reason);
+    const suppliedReason = stringOrUndefined(item.reason);
     const workflow = stringOrUndefined(item.workflow);
-    if (!id || !reason || !workflow || !ALLOWED_WORKFLOWS.has(workflow)) continue;
-    const selectorType = normalizeSelectorType(item.selectorType, id, context.allowedJobIds);
+    if (!id || !suppliedReason || !workflow || !ALLOWED_WORKFLOWS.has(workflow)) continue;
+    const selectorType = normalizeSelectorType(item.selectorType);
     if (!selectorType) continue;
     if (selectorType === "all" && id !== E2E_ALL_ID) continue;
     if (selectorType === "job" && !context.allowedJobIds.has(id)) continue;
@@ -646,30 +626,26 @@ function sanitizeTargetRecommendations(
     const key = `${selectorType}:${id}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    output.push(
-      dropUndefinedValues({
-        id,
-        workflow,
-        selectorType,
-        target: stringOrUndefined(item.target),
-        suiteFilter: stringOrUndefined(item.suiteFilter),
-        required,
-        reason,
-      }) as E2eTargetRecommendation,
-    );
+    output.push({
+      id,
+      workflow: E2E_WORKFLOW,
+      selectorType,
+      required,
+      reason: trustedTargetReason(selectorType),
+    });
   }
   return output;
 }
 
-function normalizeSelectorType(
-  value: unknown,
-  id: string,
-  allowedJobIds: ReadonlySet<string>,
-): E2eSelectorType | null {
+function trustedTargetReason(selectorType: E2eSelectorType): string {
+  if (selectorType === "all") return "The advisor selected trusted full E2E fan-out.";
+  if (selectorType === "job") return "The advisor selected a trusted checked-in E2E job.";
+  return "The advisor selected a trusted live-supported E2E target.";
+}
+
+function normalizeSelectorType(value: unknown): E2eSelectorType | null {
   if (value === "all" || value === "target" || value === "job") return value;
-  if (id === E2E_ALL_ID) return "all";
-  if (allowedJobIds.has(id)) return "job";
-  return "target";
+  return null;
 }
 
 function stringArray(value: unknown): string[] {

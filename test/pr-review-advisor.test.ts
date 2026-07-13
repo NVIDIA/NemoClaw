@@ -212,7 +212,7 @@ describe("PR review advisor", () => {
     expect(result.reviewCompleteness.requiresHumanReview).toBe(true);
   });
 
-  it("normalizes combined E2E guidance with deterministic floors and canonical commands", () => {
+  it("normalizes combined E2E guidance with deterministic floors and canonical selectors", () => {
     const changedFiles = ["src/lib/actions/upgrade-sandboxes.ts"];
     const reviewMetadata = metadata({ changedFiles });
     reviewMetadata.deterministic.riskPlan = buildRiskPlan({
@@ -284,7 +284,6 @@ describe("PR review advisor", () => {
     expect(comment).toContain("**Recommended selectors:**");
     expect(comment).not.toContain("**Required coverage:**");
     expect(comment).not.toContain("**Required selectors:**");
-    expect(comment).not.toContain("gh workflow run");
     expect(comment).not.toContain("rm -rf");
   });
 
@@ -296,7 +295,7 @@ describe("PR review advisor", () => {
             classifiedDomains: [],
             requiredTests: [
               {
-                id: "advisor-workflow",
+                id: "security-posture",
                 reason: "The combined advisor path needs end-to-end regression coverage.",
               },
             ],
@@ -318,19 +317,25 @@ describe("PR review advisor", () => {
     );
 
     const comment = buildComment({ summary: renderSummary(result), result });
-    expect(comment).toContain("**Recommended coverage:** <code>advisor-workflow</code>");
+    expect(comment).toContain("**Recommended coverage:** <code>security-posture</code>");
     expect(comment).toContain(
-      "- <code>advisor-workflow</code> — The combined advisor path needs end-to-end regression coverage.",
+      "- <code>security-posture</code> — Selected from the trusted checked-in E2E coverage inventory.",
     );
-    expect(comment).toContain("**Why no selector is recommended:** No live dispatch is required.");
+    expect(comment).toContain(
+      "**Why no selector is recommended:** No trusted E2E selector was selected.",
+    );
 
     const noE2eResult = normalizeReviewResult(validResult(), metadata());
     const noE2eComment = buildComment({
       summary: renderSummary(noE2eResult),
       result: noE2eResult,
     });
-    expect(noE2eComment).toContain("**Why no E2E coverage is recommended:** No E2E impact.");
-    expect(noE2eComment).toContain("**Why no selector is recommended:** No E2E target impact.");
+    expect(noE2eComment).toContain(
+      "**Why no E2E coverage is recommended:** No deterministic or trusted-inventory E2E coverage was selected.",
+    );
+    expect(noE2eComment).toContain(
+      "**Why no selector is recommended:** No trusted E2E selector was selected.",
+    );
     expect(noE2eComment).not.toContain("Why no E2E is required");
     expect(noE2eComment).not.toContain("Why no selector is required");
   });

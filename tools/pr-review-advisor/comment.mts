@@ -4,6 +4,10 @@
 
 import { pathToFileURL } from "node:url";
 
+import {
+  type TrustedE2eRecommendationInventory,
+  trustedE2eRecommendationInventory,
+} from "../advisors/e2e-recommendations.mts";
 import { upsertStickyComment } from "../advisors/github.mts";
 import { parseArgs, readIfExists, readJsonIfExists } from "../advisors/io.mts";
 
@@ -13,6 +17,7 @@ const E2E_RENDER_LIMIT = 20;
 const MAX_COMMENT_BYTES = 60 * 1024;
 const COMMENT_TRUNCATION_NOTICE =
   "\n\n_Comment truncated to fit GitHub's size limit. The workflow artifact contains the complete review._\n";
+let cachedE2eInventory: TrustedE2eRecommendationInventory | undefined;
 
 type ReviewAdvisorResult = {
   headSha?: string;
@@ -61,10 +66,16 @@ type ReviewAdvisorResult = {
     targets?: {
       required?: Array<{
         id?: string;
+        workflow?: string;
+        selectorType?: string;
+        required?: boolean;
         reason?: string;
       }>;
       optional?: Array<{
         id?: string;
+        workflow?: string;
+        selectorType?: string;
+        required?: boolean;
         reason?: string;
       }>;
       noTargetE2eReason?: string | null;
@@ -273,11 +284,16 @@ function renderE2eDetails(result?: ReviewAdvisorResult): string {
   const targets = result?.e2e?.targets;
   if (!coverage && !targets) return "";
 
-  const requiredCoverage = coverage?.requiredTests ?? [];
-  const optionalCoverage = coverage?.optionalTests ?? [];
-  const newRecommendations = coverage?.newE2eRecommendations ?? [];
-  const requiredTargets = targets?.required ?? [];
-  const optionalTargets = targets?.optional ?? [];
+  const inventory = commentE2eInventory();
+  const requiredCoverage = trustedCoverageItems(coverage?.requiredTests, inventory);
+  const optionalCoverage = trustedCoverageItems(coverage?.optionalTests, inventory);
+  const newRecommendations: NonNullable<
+    NonNullable<ReviewAdvisorResult["e2e"]>["coverage"]
+  >["newE2eRecommendations"] = [];
+  const requiredTargets = trustedTargetItems(targets?.required, true, inventory);
+  const optionalTargets = trustedTargetItems(targets?.optional, false, inventory);
+  const noE2eReason = "No deterministic or trusted-inventory E2E coverage was selected.";
+  const noTargetE2eReason = "No trusted E2E selector was selected.";
   const lines = [
     "",
     "### E2E guidance",
@@ -332,20 +348,70 @@ function renderE2eDetails(result?: ReviewAdvisorResult): string {
     lines.push("", "</details>");
   }
 
-  if (requiredCoverage.length === 0 && requiredTargets.length === 0 && coverage?.noE2eReason) {
-    lines.push(
-      "",
-      `**Why no E2E coverage is recommended:** ${escapeCommentText(coverage.noE2eReason)}`,
-    );
+  if (requiredCoverage.length === 0 && requiredTargets.length === 0 && noE2eReason) {
+    lines.push("", `**Why no E2E coverage is recommended:** ${escapeCommentText(noE2eReason)}`);
   }
-  if (requiredTargets.length === 0 && targets?.noTargetE2eReason) {
-    lines.push(
-      "",
-      `**Why no selector is recommended:** ${escapeCommentText(targets.noTargetE2eReason)}`,
-    );
+  if (requiredTargets.length === 0 && noTargetE2eReason) {
+    lines.push("", `**Why no selector is recommended:** ${escapeCommentText(noTargetE2eReason)}`);
   }
   lines.push("");
   return `${lines.join("\n")}\n`;
+}
+
+function trustedCoverageItems(
+  items: Array<{ id?: string; reason?: string }> | undefined,
+  inventory: TrustedE2eRecommendationInventory,
+): Array<{ id: string; reason: string }> {
+  const allowedIds = new Set([...inventory.allowedJobIds, ...inventory.liveSupportedTargetIds]);
+  const seen = new Set<string>();
+  return (items ?? []).flatMap((item) => {
+    const id = item.id;
+    if (!id || !allowedIds.has(id) || seen.has(id)) return [];
+    seen.add(id);
+    return [{ id, reason: "Selected from the trusted checked-in E2E coverage inventory." }];
+  });
+}
+
+function trustedTargetItems(
+  items:
+    | Array<{
+        id?: string;
+        workflow?: string;
+        selectorType?: string;
+        required?: boolean;
+        reason?: string;
+      }>
+    | undefined,
+  required: boolean,
+  inventory: TrustedE2eRecommendationInventory,
+): Array<{ id: string; reason: string }> {
+  const allowedJobs = new Set(inventory.allowedJobIds);
+  const allowedTargets = new Set(inventory.liveSupportedTargetIds);
+  const seen = new Set<string>();
+  return (items ?? []).flatMap((item) => {
+    const id = item.id;
+    const selectorType = item.selectorType;
+    if (!id || item.workflow !== inventory.workflow || item.required !== required) return [];
+    const trustedTuple =
+      (selectorType === "all" && id === inventory.fanoutId) ||
+      (selectorType === "job" && allowedJobs.has(id)) ||
+      (selectorType === "target" && allowedTargets.has(id));
+    const key = `${selectorType}:${id}`;
+    if (!trustedTuple || seen.has(key)) return [];
+    seen.add(key);
+    const reason =
+      selectorType === "all"
+        ? "Selected as the trusted full E2E fan-out selector."
+        : selectorType === "job"
+          ? "Selected as a trusted checked-in E2E job."
+          : "Selected as a trusted live-supported E2E target.";
+    return [{ id, reason }];
+  });
+}
+
+function commentE2eInventory(): TrustedE2eRecommendationInventory {
+  cachedE2eInventory ??= trustedE2eRecommendationInventory();
+  return cachedE2eInventory;
 }
 
 function renderE2eIds(items: Array<{ id?: string }>): string {

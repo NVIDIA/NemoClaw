@@ -19,8 +19,8 @@ It complements the existing PR surfaces by keeping a NemoClaw maintainer code-re
 - source-of-truth review for fallback, recovery, tolerant parsing, monkeypatching, and other localized workaround behavior;
 - static test-inventory context from changed test files and nearby test names;
 - simplification review for safe delete/stdlib/native/YAGNI/shrink opportunities;
-- E2E coverage, new-test, job, target, and fan-out recommendations normalized
-  against the checked-in deterministic plan and supported inventory;
+- E2E coverage, job, target, and fan-out selections normalized against the checked-in
+  deterministic plan and supported inventory;
 - correctness and test-quality checks that CI cannot prove.
 
 It intentionally does not report GitHub mergeability, branch protection, CI status, reviewer state, CodeRabbit state, or E2E pass/fail status; those are handled elsewhere in the PR UI.
@@ -36,7 +36,7 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 5. Builds the deterministic regression risk plan and E2E inventory in trusted code and injects them into the review contexts.
 6. Runs `tools/pr-review-advisor/analyze.mts` from the trusted checkout.
 7. Runs the same advisor conversation in parallel for the primary GPT-5.6 Terra lane and an artifact-only Nemotron Ultra evaluation lane.
-8. Opens one Pi session per model variant and reviews the PR in 14 bounded turns: six small analysis/commit pairs for scope/risk, correctness/state, security/trust, tests/regressions, CI/operations, and reconciliation, followed by draft and validation JSON synthesis turns in that same session. The tests/regressions turn produces E2E coverage and new-test guidance, while the CI/operations turn selects supported E2E jobs, targets, or fan-out. No second advisor session is opened, including for synthesis repair.
+8. Opens one Pi session per model variant and reviews the PR in 14 bounded turns: six small analysis/commit pairs for scope/risk, correctness/state, security/trust, tests/regressions, CI/operations, and reconciliation, followed by draft and validation JSON synthesis turns in that same session. The tests/regressions turn analyzes E2E coverage and new-test gaps, while the CI/operations turn selects supported E2E jobs, targets, or fan-out. Only trusted identifiers from these receipts reach normalized E2E output; free-form model E2E prose is discarded. No second advisor session is opened, including for synthesis repair.
 9. Gives each commit turn one job: apply exactly one successful atomic ledger commit for the preceding analysis. The model-facing commit is one flat object with homogeneous additions, updates, resolutions, and supersessions arrays plus an explicit no-change reason; legacy nested operation unions and stringified arrays are rejected. Additions require a structured observed-versus-expected basis, a concrete file and line, and eligibility for the active stage. Positives, advisor/provider state, prior-review process state, open-PR overlap, merge coordination, and live CI/E2E status stay in prose receipts rather than becoming findings. The ledger mutation tool is the turn's only active tool, and the runner rejects prose, other tool calls, or activity after the successful commit. Rejected attempts do not mutate the ledger and may be corrected before one success. If a commit turn ends with no successful call and every attempt settled without mutating state, the runner permits one tool-only retry and then fails closed. Ledger findings receive stable `F-...` IDs, and conclusion changes require a reason plus new evidence; final synthesis can only read the ledger.
 10. Treats open ledger records as the canonical finding set. Final synthesis cannot silently add, drop, merge, reword, or reclassify those findings. Unresolved source-of-truth review entries must reference their covering open ledger ID structurally rather than relying on prose matching.
 11. Logs each turn start and settled status and writes the assistant response immediately, preserving partial failed/timed-out turn evidence and the raw transcript. If a later stage fails, already-committed canonical findings remain in the low-confidence incomplete result instead of being replaced by a generic unavailable finding.
@@ -56,7 +56,7 @@ visibly incomplete, but their final-result artifact preserves any open canonical
 before the failure so later runs and reviewers do not lose substantive review history.
 
 The workflow is advisory and must not be configured as an E2E-required status check. Its combined
-comment includes deterministic-plan-backed E2E guidance and the reasons for recommended coverage, but
+comment includes deterministic-plan-backed E2E guidance and trusted-code-authored reasons for recommended coverage, but
 does not dispatch or report pass/fail for E2E jobs. Model availability must not become the authority
 for whether a pull request can merge.
 For PRs from this repository, the PR E2E controller separately rebuilds the plan from GitHub's
@@ -82,7 +82,7 @@ Authors and coding agents should follow the shared [PR CI and Automated Review F
 - The analysis job is limited to `NVIDIA/NemoClaw`, has read-only GitHub permissions, and is the only job that receives the model secret.
 - The analyzer collects deterministic GitHub context before model work, then removes GitHub tokens from the process environment.
   After registering the model credential in the in-memory SDK auth store, it also removes that credential from the process environment before model turns begin.
-- The separate publisher has pull-request write permission, but receives neither the model secret nor the untrusted PR worktree. It accepts only the bounded primary artifact from the same workflow run and rechecks the live PR head and base before commenting.
+- The separate publisher has pull-request write permission, but receives neither the model secret nor the untrusted PR worktree. It accepts only the bounded primary artifact from the same workflow run and rechecks the live PR head and base before commenting. Before rendering E2E guidance, it independently allowlists coverage IDs and exact selector tuples, ignores artifact-authored E2E prose, and supplies canonical reasons.
 - Sticky publication updates only a marker-bearing comment owned by `github-actions[bot]`; a user-authored marker cannot claim the update target.
   The rendered comment preserves its hidden identity metadata while enforcing a 60 KiB UTF-8 limit, and publication errors remain visible in the publisher logs.
 - The workflow posts advisory comments only; it does not approve, request changes, merge, push, label, or dispatch E2E.
@@ -155,8 +155,11 @@ hints, and missing regression-test guidance so agents know what to check rather 
 as generic commentary. Every source-of-truth review item includes a `findingId`: unresolved items
 reference their covering open ledger finding, while satisfied and not-applicable items use `null`.
 Every result also includes nested `e2e.coverage` and `e2e.targets` guidance. The trusted normalizer
-restores deterministic requirements, filters target and job selections against the supported
-inventory, drops command-shaped model output, and emits selector identifiers and reasons only.
+restores deterministic requirements before model selections, retains only allowlisted coverage IDs
+and exact supported selector tuples, and replaces model-authored reasons with canonical trusted
+reasons. It discards free-form E2E domains, new-test recommendations, and no-selection explanations.
+The trusted publisher independently repeats the ID and tuple checks and derives its own reasons
+instead of rendering E2E prose from the artifact.
 The compatibility schema retains `requiredTests` and `targets.required`, but those names describe
 the normalized advisory tier, not merge requirements. Rendered comments label them as recommended;
 the independent PR E2E controller does not consume advisor output.

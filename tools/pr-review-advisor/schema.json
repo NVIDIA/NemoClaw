@@ -107,12 +107,7 @@
         "properties": {
           "surface": { "type": "string" },
           "status": {
-            "enum": [
-              "not_applicable",
-              "satisfied",
-              "needs_followup",
-              "missing"
-            ]
+            "enum": ["not_applicable", "satisfied", "needs_followup", "missing"]
           },
           "findingId": {
             "anyOf": [
@@ -161,7 +156,11 @@
               "type": "array",
               "items": { "$ref": "#/$defs/e2eNewRecommendation" }
             },
-            "noE2eReason": { "type": ["string", "null"] },
+            "noE2eReason": {
+              "type": ["string", "null"],
+              "maxLength": 2000,
+              "pattern": "^[^\\r\\n]*$"
+            },
             "confidence": { "enum": ["low", "medium", "high"] }
           },
           "additionalProperties": false
@@ -188,7 +187,11 @@
               "type": "array",
               "items": { "$ref": "#/$defs/e2eTargetRecommendation" }
             },
-            "noTargetE2eReason": { "type": ["string", "null"] },
+            "noTargetE2eReason": {
+              "type": ["string", "null"],
+              "maxLength": 2000,
+              "pattern": "^[^\\r\\n]*$"
+            },
             "confidence": { "enum": ["low", "medium", "high"] }
           },
           "additionalProperties": false
@@ -201,7 +204,12 @@
       "required": ["verdict", "rationale", "suggestedTests"],
       "properties": {
         "verdict": {
-          "enum": ["unit_sufficient", "mocks_recommended", "runtime_validation_recommended", "unknown"]
+          "enum": [
+            "unit_sufficient",
+            "mocks_recommended",
+            "runtime_validation_recommended",
+            "unknown"
+          ]
         },
         "rationale": { "type": "string" },
         "suggestedTests": {
@@ -233,12 +241,17 @@
       "type": "object",
       "required": ["domain", "reason", "confidence", "matchedFiles"],
       "properties": {
-        "domain": { "type": "string" },
-        "reason": { "type": "string" },
+        "domain": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "pattern": "^[^\\r\\n]*$"
+        },
         "confidence": { "enum": ["low", "medium", "high"] },
         "matchedFiles": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": { "type": "string", "maxLength": 500 }
         }
       },
       "additionalProperties": false
@@ -247,13 +260,17 @@
       "type": "object",
       "required": ["id", "reason"],
       "properties": {
-        "id": { "type": "string" },
-        "reason": { "type": "string" },
-        "workflow": { "type": "string" },
-        "job": { "type": "string" },
-        "script": { "type": "string" },
-        "cost": { "type": "string" },
-        "runner": { "type": "string" }
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "maxLength": 120
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "pattern": "^[^\\r\\n]*$"
+        }
       },
       "additionalProperties": false
     },
@@ -261,9 +278,19 @@
       "type": "object",
       "required": ["domain", "reason", "suggestedTest", "priority"],
       "properties": {
-        "domain": { "type": "string" },
-        "reason": { "type": "string" },
-        "suggestedTest": { "type": "string" },
+        "domain": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "pattern": "^[^\\r\\n]*$"
+        },
+        "suggestedTest": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "pattern": "^[^\\r\\n]*$"
+        },
         "priority": { "enum": ["low", "medium", "high"] }
       },
       "additionalProperties": false
@@ -272,13 +299,20 @@
       "type": "object",
       "required": ["id", "workflow", "selectorType", "required", "reason"],
       "properties": {
-        "id": { "type": "string" },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "maxLength": 120
+        },
         "workflow": { "type": "string", "const": "e2e.yaml" },
         "selectorType": { "enum": ["all", "target", "job"] },
-        "target": { "type": "string" },
-        "suiteFilter": { "type": "string" },
         "required": { "type": "boolean" },
-        "reason": { "type": "string" }
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "pattern": "^[^\\r\\n]*$"
+        }
       },
       "additionalProperties": false
     },
@@ -326,7 +360,13 @@
     },
     "simplification": {
       "type": "object",
-      "required": ["tag", "cut", "replacement", "estimatedNetLines", "safetyBoundary"],
+      "required": [
+        "tag",
+        "cut",
+        "replacement",
+        "estimatedNetLines",
+        "safetyBoundary"
+      ],
       "properties": {
         "tag": { "enum": ["delete", "stdlib", "native", "yagni", "shrink"] },
         "cut": { "type": "string" },
