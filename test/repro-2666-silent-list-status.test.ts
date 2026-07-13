@@ -291,8 +291,8 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
 
   it("nemoclaw list reads the registry scoped to a non-default gateway port (#3053)", () => {
     const port = 9123;
-    fs.rmSync(path.join(home, ".nemoclaw", "sandboxes.json"), { force: true });
-    seedRegistry(nemoclawStateRoot(home, port));
+    seedRegistry(path.join(home, ".nemoclaw"), "default-root-model");
+    seedRegistry(nemoclawStateRoot(home, port), "selected-port-model");
 
     const { code, stdout, stderr } = runCli(["list"], {
       NEMOCLAW_GATEWAY_PORT: String(port),
@@ -301,6 +301,8 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
 
     expect(code).toBe(0);
     expect(combined).toContain("my-assist");
+    expect(combined).toContain("selected-port-model");
+    expect(combined).not.toContain("default-root-model");
   });
 
   it(
