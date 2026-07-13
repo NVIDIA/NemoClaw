@@ -491,6 +491,8 @@ const authoritativeRebuildTarget: typeof import("./onboard/authoritative-rebuild
   require("./onboard/authoritative-rebuild-target");
 const { assertDashboardPortNotReserved, buildRequiredPreflightPorts } =
   require("./onboard/preflight-ports") as typeof import("./onboard/preflight-ports");
+const { failFastOnForeignGatewayPortConflict } =
+  require("./onboard/gateway-port-conflict") as typeof import("./onboard/gateway-port-conflict");
 const { printPortConflictReport } =
   require("./onboard/port-conflict-report") as typeof import("./onboard/port-conflict-report");
 const { tryCleanupOrphanedDashboardForward } =
@@ -1478,47 +1480,6 @@ function attachGatewayMetadataIfNeeded({
 // ── Step 1: Preflight ────────────────────────────────────────────
 
 type PreflightOptions = import("./onboard/fatal-runtime-preflight").FatalRuntimePreflightOptions;
-type PortProbeResult = import("./onboard/preflight").PortProbeResult;
-
-const GATEWAY_PORT_LISTENER_CANDIDATE_PROCESSES = [
-  "openshell",
-  "openshell-gateway",
-  "docker-proxy",
-  "com.docker.backend",
-  "vpnkit",
-  "rootlesskit",
-  "slirp4netns",
-];
-
-function couldBeNemoClawGatewayPortListener(portCheck: PortProbeResult): boolean {
-  if (portCheck.ok) return false;
-  const processName = String(portCheck.process || "").toLowerCase();
-  if (!processName || processName === "unknown") return true;
-  if (isDockerDriverGatewayPortListener(portCheck)) return true;
-  return GATEWAY_PORT_LISTENER_CANDIDATE_PROCESSES.some(
-    (candidate) =>
-      processName === candidate ||
-      processName.startsWith(`${candidate}-`) ||
-      processName.startsWith(`${candidate}.`),
-  );
-}
-
-async function failFastOnForeignGatewayPortConflict(): Promise<void> {
-  const portCheck = await checkPortAvailable(
-    GATEWAY_PORT,
-    dockerDriverGatewayEnv.getGatewayPortCheckOptions(),
-  );
-  if (portCheck.ok || couldBeNemoClawGatewayPortListener(portCheck)) return;
-
-  printPortConflictReport({
-    port: GATEWAY_PORT,
-    label: "OpenShell gateway",
-    envVar: "NEMOCLAW_GATEWAY_PORT",
-    portCheck,
-    serviceHints: getPortConflictServiceHints(),
-  });
-  process.exit(1);
-}
 
 async function preflight(
   preflightOpts: PreflightOptions = {},
@@ -1539,7 +1500,13 @@ async function preflight(
   });
 
   ensureOpenshellForOnboard();
-  await failFastOnForeignGatewayPortConflict();
+  await failFastOnForeignGatewayPortConflict({
+    gatewayPort: GATEWAY_PORT,
+    checkPortAvailable,
+    getGatewayPortCheckOptions: dockerDriverGatewayEnv.getGatewayPortCheckOptions,
+    isDockerDriverGatewayPortListener,
+    exitProcess: (code) => process.exit(code),
+  });
 
   // Classify gateway state before port checks. Legacy non-Docker-driver
   // path destroys stale/unnamed gateways here so the port frees up for
