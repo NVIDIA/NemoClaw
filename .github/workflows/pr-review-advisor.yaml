@@ -249,10 +249,12 @@ jobs:
             exit 1
           fi
 
-          PI_SDK_DIR="$RUNNER_TEMP/pi-sdk"
-          npm install --prefix "$PI_SDK_DIR" --ignore-scripts --no-save --package-lock=false --before=2026-07-11T00:00:00.000Z "@earendil-works/pi-coding-agent@${PI_SDK_VERSION}" "typebox@${TYPEBOX_VERSION}" "yaml@${YAML_VERSION}" "vitest@${VITEST_VERSION}"
-          rm -rf "$ADVISOR_DIR/node_modules"
-          ln -s "$PI_SDK_DIR/node_modules" "$ADVISOR_DIR/node_modules"
+          # Install only from the trusted workflow checkout's committed lockfile.
+          # --ignore-scripts keeps package lifecycle code out of this secret-bearing job.
+          (
+            cd "$ADVISOR_DIR"
+            npm ci --ignore-scripts --no-audit --no-fund
+          )
 
       - name: Run PR review advisor
         id: analysis

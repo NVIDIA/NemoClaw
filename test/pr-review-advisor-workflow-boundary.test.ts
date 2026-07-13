@@ -436,7 +436,8 @@ describe("PR review advisor workflow boundary", () => {
     const binDir = path.join(tmp, "bin");
     const callLog = path.join(tmp, "calls.log");
     fs.mkdirSync(binDir);
-    for (const name of ["npm", "rm", "ln"]) writeFakeCommand(binDir, name);
+    fs.mkdirSync(path.join(tmp, "advisor"));
+    writeFakeCommand(binDir, "npm");
     fs.writeFileSync(
       path.join(binDir, "dpkg-query"),
       `#!/bin/bash
@@ -496,10 +497,9 @@ printf 'sudo %s\\n' "$*" >> "$CALL_LOG"
       expect(fs.readFileSync(callLog, "utf8")).toContain("dpkg-query -W -f=${Version} ripgrep");
       expect(fs.readFileSync(callLog, "utf8")).toContain("fdfind --version");
       expect(fs.readFileSync(callLog, "utf8")).toContain("rg --version");
-      expect(fs.readFileSync(callLog, "utf8")).toContain("--ignore-scripts");
-      expect(fs.readFileSync(callLog, "utf8")).toContain("typebox@test-typebox-version");
-      expect(fs.readFileSync(callLog, "utf8")).toContain("yaml@test-yaml-version");
-      expect(fs.readFileSync(callLog, "utf8")).toContain("vitest@test-vitest-version");
+      expect(fs.readFileSync(callLog, "utf8")).toContain(
+        "npm ci --ignore-scripts --no-audit --no-fund",
+      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -646,7 +646,6 @@ process.exitCode = valid ? 0 : 1;`,
         .replace('      FD_FIND_VERSION: "9.0.0-1"', '      FD_FIND_VERSION: "latest"')
         .replace('      VITEST_VERSION: "4.1.9"', '      VITEST_VERSION: "latest"')
         .replace('      YAML_VERSION: "2.8.3"', '      YAML_VERSION: "latest"')
-        .replace('"vitest@${VITEST_VERSION}"', '"vitest@latest"')
         .replace(
           '      PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW: "false"',
           "      PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW: ${{ matrix.advisor.publish_comment }}",
@@ -658,24 +657,45 @@ process.exitCode = valid ? 0 : 1;`,
         "review job env.FD_FIND_VERSION must be 9.0.0-1",
         "review job env.VITEST_VERSION must be 4.1.9",
         "review job env.YAML_VERSION must be 2.8.3",
-        "step 'Install Pi SDK' run script must include \"vitest@${VITEST_VERSION}\"",
-        "step 'Install Pi SDK' must use the canonical pinned npm install command",
         "review job env.PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW must be false",
       ]),
     );
   });
 
-  it("rejects decoy Vitest text outside the pinned install command", () => {
+  it("rejects decoy lockfile-install text outside the npm invocation", () => {
     const errors = validateMutation((source) =>
       source.replace(
-        ' "yaml@${YAML_VERSION}" "vitest@${VITEST_VERSION}"',
-        " \"yaml@${YAML_VERSION}\"\n          printf '%s\\n' '\"vitest@${VITEST_VERSION}\"' >/dev/null",
+        "npm ci --ignore-scripts --no-audit --no-fund",
+        "npm install --ignore-scripts\n            printf '%s\\n' 'npm ci --ignore-scripts --no-audit --no-fund' >/dev/null",
       ),
     );
 
     expect(errors).toContain(
-      "step 'Install Pi SDK' must use the canonical pinned npm install command",
+      "step 'Install Pi SDK' must use the canonical lockfile-only npm ci command",
     );
+  });
+
+  it("rejects drift in the trusted advisor runtime package lock", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-lock-"));
+    const lockPath = path.join(tmp, "package-lock.json");
+    fs.writeFileSync(lockPath, JSON.stringify({ packages: {} }));
+    try {
+      expect(
+        validatePrReviewAdvisorWorkflowBoundary(
+          path.join(ROOT, ".github", "workflows", "pr-review-advisor.yaml"),
+          lockPath,
+        ),
+      ).toEqual(
+        expect.arrayContaining([
+          "advisor package lock must pin @earendil-works/pi-coding-agent@0.80.6",
+          "advisor package lock must pin typebox@1.1.38",
+          "advisor package lock must pin yaml@2.8.3",
+          "advisor package lock must pin vitest@4.1.9",
+        ]),
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("reports workflow parse failures through boundary errors", () => {
