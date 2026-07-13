@@ -6,7 +6,9 @@ import type { SandboxEntry } from "../state/registry";
 import {
   checkGatewayRouteCompatibility,
   formatGatewayRouteConflict,
+  formatGatewayRouteImpactWarning,
   type GatewayInferenceRoute,
+  isAdvisoryGatewayRouteConflict,
   preflightGatewayRouteDiscovery,
 } from "./gateway-route-compatibility";
 
@@ -138,7 +140,7 @@ describe("shared gateway inference route compatibility", () => {
     ).toEqual({ ok: true });
   });
 
-  it("blocks provider or model conflicts from every same-gateway registry row (#6315)", () => {
+  it("classifies valid provider or model differences as advisory and names affected sandboxes (#6315)", () => {
     const result = check(route("anthropic-prod", "claude-new"), [sandbox("stopped-peer")]);
 
     expect(result).toMatchObject({
@@ -148,6 +150,13 @@ describe("shared gateway inference route compatibility", () => {
     expect(formatGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toContain(
       "Stopped sandboxes are included",
     );
+    expect(isAdvisoryGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toBe(
+      true,
+    );
+    const warning = formatGatewayRouteImpactWarning(result as Exclude<typeof result, { ok: true }>);
+    expect(warning).toContain("will re-point the one shared inference route");
+    expect(warning).toContain("'stopped-peer' (nvidia-prod / nvidia/model-a)");
+    expect(warning).toContain("not per sandbox");
   });
 
   it("allows different routes on different gateways (#6315)", () => {
@@ -305,6 +314,9 @@ describe("shared gateway inference route compatibility", () => {
     expect(formatGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toContain(
       "remove and re-onboard that sandbox with complete custom-route metadata",
     );
+    expect(isAdvisoryGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toBe(
+      false,
+    );
   });
 
   it("fails closed when a requested custom route has no API metadata or peers (#6315)", () => {
@@ -328,6 +340,9 @@ describe("shared gateway inference route compatibility", () => {
     });
     expect(formatGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toContain(
       "requested custom route lacks durable endpoint or API-family metadata",
+    );
+    expect(isAdvisoryGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toBe(
+      false,
     );
   });
 

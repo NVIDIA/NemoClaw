@@ -4,6 +4,8 @@
 import {
   type CurrentGatewayRouteCompatibilityCheck,
   formatGatewayRouteConflict,
+  type GatewayRouteCompatibilityResult,
+  isAdvisoryGatewayRouteConflict,
 } from "../../../inference/gateway-route-compatibility";
 import {
   parseExplicitWebSearchProvider,
@@ -46,6 +48,16 @@ import {
   resolveToolDisclosureResumeSignals,
   type SandboxResumeDecision,
 } from "./sandbox-resume";
+
+function isAdvisoryPeerRouteDifference(
+  result: Exclude<GatewayRouteCompatibilityResult, { ok: true }>,
+  sandboxName: string,
+): boolean {
+  return (
+    isAdvisoryGatewayRouteConflict(result) &&
+    !result.conflicts.some((conflict) => conflict.sandboxName === sandboxName)
+  );
+}
 
 export interface SandboxStateOptions<
   Gpu,
@@ -513,9 +525,10 @@ class SandboxStateFlow<
         credentialEnv: this.options.credentialEnv,
       },
     });
-    if (!compatibility.ok) {
-      this.failGatewayRouteCheck(`  Error: ${formatGatewayRouteConflict(compatibility)}`);
-    }
+    if (compatibility.ok || isAdvisoryPeerRouteDifference(compatibility, sandboxName)) return;
+    // The target registry row is the route reservation this transaction owns.
+    // A changed target is a lost-reservation race, not an advisory peer drift.
+    this.failGatewayRouteCheck(`  Error: ${formatGatewayRouteConflict(compatibility)}`);
   }
 
   private failGatewayRouteCheck(message: string): never {

@@ -74,7 +74,7 @@ describe("connect route containment", () => {
     expect(repairLegacyDnsProxy).not.toHaveBeenCalled();
   });
 
-  it("exits before connect-time route writes when another sandbox conflicts (#6315)", async () => {
+  it("warns and restores the target route when another sandbox records a different route (#6315)", async () => {
     const alpha = {
       name: "alpha",
       agent: "openclaw",
@@ -100,25 +100,30 @@ describe("connect route containment", () => {
       ],
     });
 
-    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
-      "process.exit(1)",
-    );
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
-    expect(harness.ensureLiveSandboxSpy).not.toHaveBeenCalled();
-    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
-    expect(harness.captureOpenshellSpy).not.toHaveBeenCalled();
-    expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
-    expect(harness.applyVmDnsMonkeypatchSpy).not.toHaveBeenCalled();
-    expect(harness.runSetupDnsProxySpy).not.toHaveBeenCalled();
-    expect(harness.spawnSyncSpy).not.toHaveBeenCalledWith(
-      "openshell",
-      ["sandbox", "connect", "alpha"],
+    expect(harness.ensureLiveSandboxSpy).toHaveBeenCalledOnce();
+    expect(harness.checkAndRecoverSpy).toHaveBeenCalled();
+    expect(harness.captureOpenshellSpy).toHaveBeenCalled();
+    expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        "inference",
+        "set",
+        "--provider",
+        "anthropic-prod",
+        "--model",
+        "claude-sonnet-4-20250514",
+      ]),
       expect.any(Object),
     );
+    expect(harness.applyVmDnsMonkeypatchSpy).not.toHaveBeenCalled();
+    expect(harness.runSetupDnsProxySpy).not.toHaveBeenCalled();
     const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
-    expect(errorOutput).toContain("stopped-peer");
-    expect(errorOutput).toContain("NEMOCLAW_GATEWAY_PORT");
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(errorOutput).toContain("differs from the recorded route for sandbox 'alpha'");
+    expect(errorOutput).toContain(
+      "Aligning the gateway to anthropic-prod/claude-sonnet-4-20250514",
+    );
+    expect(exitSpy).not.toHaveBeenCalled();
   });
 
   it("rechecks peers after waiting for the shared gateway route lock", async () => {
@@ -155,18 +160,20 @@ describe("connect route containment", () => {
     Object.assign(peer!, { provider: "anthropic-prod", model: "claude-new" });
     releaseLock();
 
-    await expect(connect).rejects.toThrow("process.exit(1)");
+    await expect(connect).resolves.toBeUndefined();
     expect(harness.withGatewayRouteMutationLockSpy).toHaveBeenCalledWith(
       "nemoclaw",
       expect.any(Function),
     );
-    expect(harness.captureOpenshellSpy).toHaveBeenCalledOnce();
     expect(harness.captureOpenshellSpy).toHaveBeenCalledWith(
       ["inference", "get", "-g", "nemoclaw"],
       { ignoreError: true, timeout: 15_000 },
     );
-    expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+      expect.arrayContaining(["inference", "set", "--provider", "nvidia-prod"]),
+      expect.any(Object),
+    );
+    expect(exitSpy).not.toHaveBeenCalled();
   });
 
   it("aborts before route reads or repairs when the target changes gateways while waiting", async () => {
@@ -303,7 +310,7 @@ describe("connect route containment", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
-  it("exits before an endpoint probe when an aligned route conflicts with a stopped sandbox (#6315)", async () => {
+  it("keeps an aligned route healthy when a stopped sandbox records another valid route (#6315)", async () => {
     const alpha = {
       name: "alpha",
       agent: "openclaw",
@@ -329,16 +336,14 @@ describe("connect route containment", () => {
       ],
     });
 
-    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
-      "process.exit(1)",
-    );
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
     const routeProbeCalls = harness.captureOpenshellSpy.mock.calls.filter((call) =>
       JSON.stringify(call[0]).includes("inference.local/v1/models"),
     );
-    expect(routeProbeCalls).toHaveLength(0);
+    expect(routeProbeCalls).toHaveLength(1);
     expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(exitSpy).not.toHaveBeenCalled();
   });
 
   it("scopes every inference read and repair write to the target non-default gateway", async () => {

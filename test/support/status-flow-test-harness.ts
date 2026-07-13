@@ -136,7 +136,7 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
       sb: sandboxEntry,
       lookup,
       rpcIssue: null,
-      currentModel: options.currentModel ?? "nvidia/nemotron-live",
+      currentModel: options.currentModel ?? sandboxEntry.model,
       currentProvider: options.currentProvider ?? "ollama-local",
       routeDrift: options.routeDrift ?? null,
       inferenceHealth:

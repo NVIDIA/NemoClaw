@@ -38,6 +38,7 @@ export interface GatewayRouteConflict {
   sandboxName: string;
   reason: GatewayRouteConflictReason;
   scope?: "requested" | "registered";
+  recordedRoute?: { provider: string; model: string };
 }
 
 export type GatewayRouteCompatibilityResult =
@@ -187,6 +188,7 @@ export function preflightGatewayRouteDiscovery(
           sandboxName: sandbox.name,
           reason: "provider-model" as const,
           scope: "registered" as const,
+          recordedRoute: configuredRoute(sandbox) ?? undefined,
         })),
       },
     };
@@ -275,12 +277,20 @@ export function checkGatewayRouteCompatibility(
         sandboxName: sandbox.name,
         reason: "provider-model",
         scope: "registered",
+        recordedRoute: recorded,
       });
       continue;
     }
     if (CUSTOM_ROUTE_PROVIDERS.has(requested.provider)) {
       const reason = customRouteConflict(requested.provider, request.route, sandbox);
-      if (reason) conflicts.push({ sandboxName: sandbox.name, reason, scope: "registered" });
+      if (reason) {
+        conflicts.push({
+          sandboxName: sandbox.name,
+          reason,
+          scope: "registered",
+          recordedRoute: recorded,
+        });
+      }
     }
   }
 
@@ -297,6 +307,53 @@ export function checkGatewayRouteCompatibility(
 
 function safeDisplay(value: string): string {
   return value.replace(/[\u0000-\u001f\u007f]/g, "?");
+}
+
+const ADVISORY_ROUTE_CONFLICTS = new Set<GatewayRouteConflictReason>([
+  "provider-model",
+  "custom-endpoint",
+  "custom-api",
+]);
+
+/**
+ * True only for valid, durable routes that differ across registered sandboxes.
+ * Corrupt/incomplete metadata and invalid gateway bindings remain hard errors.
+ */
+export function isAdvisoryGatewayRouteConflict(
+  result: Exclude<GatewayRouteCompatibilityResult, { ok: true }>,
+): boolean {
+  return (
+    result.conflicts.length > 0 &&
+    result.conflicts.every(
+      (conflict) => conflict.scope !== "requested" && ADVISORY_ROUTE_CONFLICTS.has(conflict.reason),
+    )
+  );
+}
+
+/** Explain the single-gateway side effect immediately before route mutation. */
+export function formatGatewayRouteImpactWarning(
+  result: Exclude<GatewayRouteCompatibilityResult, { ok: true }>,
+): string {
+  const affected = [...result.conflicts]
+    .sort((left, right) => left.sandboxName.localeCompare(right.sandboxName))
+    .map((conflict) => {
+      const name = `'${safeDisplay(conflict.sandboxName)}'`;
+      return conflict.recordedRoute
+        ? `${name} (${safeDisplay(conflict.recordedRoute.provider)} / ${safeDisplay(conflict.recordedRoute.model)})`
+        : name;
+    })
+    .join(", ");
+  const target = result.sandboxName
+    ? `Onboarding '${safeDisplay(result.sandboxName)}'`
+    : "This onboarding run";
+  const nextRoute = `${safeDisplay(result.route.provider)} / ${safeDisplay(result.route.model)}`;
+  return (
+    `Warning: ${target} will re-point the one shared inference route on OpenShell gateway ` +
+    `'${safeDisplay(result.gatewayName)}' to ${nextRoute}. ` +
+    `Affected registered sandboxes: ${affected}. ` +
+    `They will use ${nextRoute} until the shared route is changed again. ` +
+    "OpenShell currently exposes this route per gateway, not per sandbox."
+  );
 }
 
 export function formatGatewayRouteConflict(
@@ -325,6 +382,8 @@ export function formatGatewayRouteConflict(
   const hasInvalidGatewayBinding = result.conflicts.some(
     (conflict) => conflict.reason === "invalid-gateway-binding",
   );
+  const requiresRegistryRepair =
+    hasIncompleteCustomRoute || hasIncompleteRoute || hasInvalidGatewayBinding;
   const detail = [
     hasIncompleteCustomRoute
       ? "At least one custom route lacks durable endpoint or API-family metadata, so compatibility cannot be proven; remove and re-onboard that sandbox with complete custom-route metadata."
@@ -348,7 +407,9 @@ export function formatGatewayRouteConflict(
     "Stopped sandboxes are included because they use the same gateway route when restarted. " +
     (requestedRouteIncomplete
       ? "Remove and re-onboard the sandbox with complete custom-route metadata."
-      : "Align the routes, remove the conflicting sandbox, or use another NEMOCLAW_GATEWAY_PORT.")
+      : requiresRegistryRepair
+        ? "Repair incomplete registry metadata, or remove and re-onboard the affected sandbox."
+        : "Align the recorded routes, or remove a conflicting sandbox that is no longer needed.")
   );
 }
 

@@ -7,6 +7,8 @@ import { collectSandboxStatusSnapshot, getSandboxStatusInferenceHealth } from ".
 describe("sandbox status inference.local route health (#6192)", () => {
   function snapshotDeps(options: {
     provider?: string;
+    liveProvider?: string;
+    liveModel?: string;
     providerHealth?: ReturnType<typeof getSandboxStatusInferenceHealth>;
     providerProbeThrows?: boolean;
     routeHealth: {
@@ -33,7 +35,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
       captureOpenshellForStatusImpl: async () =>
         ({
           status: 0,
-          output: `Provider: ${provider}\nModel: nvidia/nemotron\n`,
+          output: `Gateway inference:\n  Provider: ${options.liveProvider ?? provider}\n  Model: ${options.liveModel ?? "nvidia/nemotron"}\n`,
         }) as never,
       probeProviderHealthImpl: vi.fn(
         options.providerProbeThrows
@@ -126,6 +128,32 @@ describe("sandbox status inference.local route health (#6192)", () => {
     expect(snapshot.inferenceHealth?.subprobes).toEqual([
       expect.objectContaining({ ok: false, probeLabel: "upstream" }),
     ]);
+  });
+
+  it("probes the live route while status displays the sandbox's recorded route (#6315)", async () => {
+    const deps = snapshotDeps({
+      provider: "nvidia-prod",
+      liveProvider: "openai-api",
+      liveModel: "gpt-5.2",
+      routeHealth: {
+        ok: true,
+        endpoint: "https://inference.local/v1/models",
+        httpStatus: 200,
+        detail: "route reachable",
+      },
+    });
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", { deps });
+
+    expect(snapshot.currentProvider).toBe("nvidia-prod");
+    expect(snapshot.currentModel).toBe("nvidia/nemotron");
+    expect(snapshot.routeDrift).toEqual({
+      live: { provider: "openai-api", model: "gpt-5.2" },
+      recorded: { provider: "nvidia-prod", model: "nvidia/nemotron" },
+    });
+    expect(deps.probeProviderHealthImpl).toHaveBeenCalledWith("openai-api", {
+      model: "gpt-5.2",
+    });
   });
 
   it("keeps inference.local authoritative when the upstream diagnostic throws (#6192)", async () => {

@@ -249,11 +249,9 @@ function printAgentVersion(context: SandboxStatusTextContext, sandbox: SandboxEn
   }
 }
 
-// The Model/Provider lines above show the live gateway route, which the
-// shared per-gateway route lets another sandbox move (#6315). When it no
-// longer matches this sandbox's recorded route, say so instead of presenting
-// the live value as this sandbox's own; wording mirrors the connect-time
-// divergence warning (#3726).
+// The Model/Provider lines above show this sandbox's recorded route. The live
+// shared route can differ after another onboard, so report that drift
+// separately; wording mirrors the connect-time divergence warning (#3726).
 function printInferenceRouteDrift(
   drift: SandboxStatusRouteDrift | null,
   sandboxName: string,

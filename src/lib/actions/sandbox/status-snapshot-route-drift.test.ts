@@ -55,8 +55,8 @@ describe("collectSandboxStatusSnapshot route drift", () => {
       live: { provider: "openai", model: "gpt-5.2" },
       recorded: { provider: "nvidia", model: "nvidia/nemotron" },
     });
-    expect(snapshot.currentProvider).toBe("openai");
-    expect(snapshot.currentModel).toBe("gpt-5.2");
+    expect(snapshot.currentProvider).toBe("nvidia");
+    expect(snapshot.currentModel).toBe("nvidia/nemotron");
   });
 
   it("reads the sandbox's non-default gateway before computing drift (#6315)", async () => {
@@ -75,8 +75,8 @@ describe("collectSandboxStatusSnapshot route drift", () => {
       live: { provider: "openai", model: "gpt-5.2" },
       recorded: { provider: "nvidia", model: "nvidia/nemotron" },
     });
-    expect(snapshot.currentProvider).toBe("openai");
-    expect(snapshot.currentModel).toBe("gpt-5.2");
+    expect(snapshot.currentProvider).toBe("nvidia");
+    expect(snapshot.currentModel).toBe("nvidia/nemotron");
   });
 
   it("does not fall back to the default gateway for an invalid persisted binding (#6315)", async () => {

@@ -138,6 +138,7 @@ export interface SandboxStatusReport {
   agentLoadError?: string;
   model: string;
   provider: string;
+  routeDrift: SandboxStatusRouteDrift | null;
   phase: string | null;
   gatewayState: string;
   inferenceHealth: ProviderHealthStatus | null;
@@ -287,8 +288,8 @@ export async function collectSandboxStatusSnapshot(
       sb,
       lookup,
       rpcIssue,
-      currentModel: "unknown",
-      currentProvider: "unknown",
+      currentModel: (sb && sb.model) || "unknown",
+      currentProvider: (sb && sb.provider) || "unknown",
       routeDrift: null,
       inferenceHealth: null,
       terminalRuntimeHealth: null,
@@ -296,12 +297,11 @@ export async function collectSandboxStatusSnapshot(
   }
   const live =
     liveResult && !isCommandTimeout(liveResult) ? parseGatewayInference(liveResult.output) : null;
-  const currentModel = (live && live.model) || (sb && sb.model) || "unknown";
-  const currentProvider = (live && live.provider) || (sb && sb.provider) || "unknown";
-  // Status shows the live gateway route when one is readable, which silently
-  // masks a route another sandbox (or a direct `openshell inference set`)
-  // moved from under this one — the shared-route trap of #6315. Surface the
-  // divergence instead of letting the live value pass as this sandbox's own.
+  // Model/provider are sandbox-scoped status fields, so prefer the durable
+  // route recorded for this sandbox. The live shared route is shown separately
+  // as drift instead of being mislabeled as this sandbox's configuration.
+  const currentModel = (sb && sb.model) || (live && live.model) || "unknown";
+  const currentProvider = (sb && sb.provider) || (live && live.provider) || "unknown";
   const routeDriftPlan =
     sb && sb.provider && sb.model
       ? planInferenceRouteReconcile(live, { provider: sb.provider, model: sb.model })
@@ -321,8 +321,8 @@ export async function collectSandboxStatusSnapshot(
     providerHealth = maybeGetSandboxStatusInferenceHealth(
       opts.suppressInferenceProbe === true,
       lookup.state === "present",
-      currentProvider,
-      currentModel,
+      (live && live.provider) || currentProvider,
+      (live && live.model) || currentModel,
       opts.deps?.probeProviderHealthImpl,
     );
   } catch {
@@ -398,6 +398,7 @@ async function buildSandboxStatusReport(
     rpcIssue,
     currentModel,
     currentProvider,
+    routeDrift,
     inferenceHealth,
     terminalRuntimeHealth,
   } = snapshot;
@@ -421,6 +422,7 @@ async function buildSandboxStatusReport(
     ...(agent.agentLoadError ? { agentLoadError: agent.agentLoadError } : {}),
     model: currentModel,
     provider: currentProvider,
+    routeDrift,
     phase,
     gatewayState: lookup.state,
     inferenceHealth,

@@ -100,12 +100,14 @@ A rebuild reuses the recorded endpoint and cannot change it.
 
 ## Account for Shared Gateways
 
-Every sandbox registered on one OpenShell gateway must use the same provider and model.
-Custom routes must also use the same normalized endpoint and API family.
-NemoClaw includes stopped sandboxes because they depend on that route when restarted.
+OpenShell exposes one live inference route per gateway, while NemoClaw records each sandbox's intended provider and model.
+Onboarding a sandbox with a different valid route warns immediately before it re-points the shared route.
+The warning names every affected registered sandbox and its recorded provider and model.
+Those sandboxes use the new live route until a later onboarding run or `$$nemoclaw <name> connect` re-points it again.
 
-When a route conflicts, NemoClaw exits before changing the gateway, agent configuration, or host registry and names the affected sandboxes.
-Align the routes, remove a conflicting sandbox, or onboard it with another `NEMOCLAW_GATEWAY_PORT`.
+`$$nemoclaw <name> status` continues to show that sandbox's recorded provider and model and prints an explicit warning when the live shared route differs.
+Incomplete custom-route metadata and invalid gateway bindings remain hard errors because NemoClaw cannot identify those routes safely.
+Runtime `inference set` also refuses a change that would leave another registered sandbox with a different recorded route.
 
 Do not run `openshell inference set` directly on a shared NemoClaw gateway because that bypasses registry compatibility checks.
 

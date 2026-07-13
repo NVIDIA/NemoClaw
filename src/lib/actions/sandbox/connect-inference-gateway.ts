@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { assertGatewayRouteCompatibility } from "../../inference/gateway-route-compatibility";
+import {
+  checkGatewayRouteCompatibility,
+  GatewayRouteConflictError,
+  isAdvisoryGatewayRouteConflict,
+} from "../../inference/gateway-route-compatibility";
 import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../onboard/env";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
@@ -37,10 +41,13 @@ export function assertSandboxGatewayRouteCompatible(
   sb: SandboxEntry,
   gatewayName: string,
 ): void {
-  assertGatewayRouteCompatibility({
+  const result = checkGatewayRouteCompatibility({
     gatewayName,
     sandboxName,
     route: sb,
     sandboxes: registry.listSandboxes().sandboxes,
   });
+  if (!result.ok && !isAdvisoryGatewayRouteConflict(result)) {
+    throw new GatewayRouteConflictError(result);
+  }
 }
