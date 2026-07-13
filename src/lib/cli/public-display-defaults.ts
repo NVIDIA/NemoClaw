@@ -399,6 +399,18 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       order: 3.5,
     },
   ],
+  "sandbox:stop": [
+    {
+      group: "Sandbox Management",
+      order: 3.6,
+    },
+  ],
+  "sandbox:start": [
+    {
+      group: "Sandbox Management",
+      order: 3.7,
+    },
+  ],
   "sandbox:share:mount": [
     {
       group: "Sandbox Management",

@@ -28,7 +28,7 @@ Before documenting a new surface, confirm that an accepted issue or design decis
 Route independent solutions, complete use-case examples, and third-party integrations through [Community Solutions](resources/community-contributions.mdx).
 If the correct destination is unclear, request maintainer direction before drafting the page.
 
-## Update Docs with Contributor Skills
+## Update and Refactor Docs with Agent Skills
 
 If you use an AI coding agent (Cursor, Claude Code, Codex, etc.), the repo includes the `nemoclaw-contributor-update-docs` skill that automates doc work.
 Use it before writing from scratch.
@@ -39,6 +39,10 @@ For example, ask your agent to "catch up the docs for the changes I made in this
 During release prep, run the skill first, make any doc version bumps, then open the docs refresh PR.
 
 The skill lives in `.agents/skills/nemoclaw-contributor-update-docs/` and follows the style guide below automatically.
+
+Use the maintainer-owned `nemoclaw-maintainer-refactor-docs` skill when a page or section has grown too large, mixes several user tasks, or needs a nested TOC.
+Use it to inventory the existing content, organize topics around the user journey, keep foldable navigation groups non-clickable, assign one canonical owner per topic, and preserve Fern routes, redirects, and agent variants during the split.
+Find the skill in `.agents/skills/nemoclaw-maintainer-refactor-docs/`.
 
 ## Markdown Docs for AI Agents
 

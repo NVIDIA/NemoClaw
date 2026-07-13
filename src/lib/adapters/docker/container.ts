@@ -17,6 +17,10 @@ export function dockerStart(containerName: string, opts: DockerRunOptions = {}):
   return dockerRun(["start", containerName], opts);
 }
 
+export function dockerUnpause(containerName: string, opts: DockerRunOptions = {}): DockerRunResult {
+  return dockerRun(["unpause", containerName], opts);
+}
+
 // NIM (and most Python services) write errors to stderr, so a stdout-only
 // capture would silently lose the auth-error tail. Use dockerRun so we can
 // read both streams from the SpawnResult and concatenate them. Bounded by a

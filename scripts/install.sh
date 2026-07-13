@@ -1757,7 +1757,6 @@ const allEntries = Object.entries(registry.sandboxes);
 if (allEntries.some(([name, entry]) => !name.trim() || !isObjectRecord(entry) || entry.name !== name)) {
   process.exit(1);
 }
-
 const selectedPort = Number(process.argv[4]);
 const canonicalName = (port) => port === 8080 ? "nemoclaw" : `nemoclaw-${port}`;
 const portFromName = (name) => {
@@ -1791,14 +1790,19 @@ try {
   process.exit(1);
 }
 if (process.argv[5] === "selected" && entries.length !== allEntries.length) process.exit(1);
+// Keep this raw-registry predicate in sync with isRouteOnlySandboxReservation()
+// in src/lib/state/registry.ts.
+const sandboxes = entries.filter(
+  ([, entry]) => !(entry.pendingRouteReservation === true && entry.createdAt === undefined),
+);
 
 if (process.argv[3] === "count") {
-  process.stdout.write(String(entries.length));
+  process.stdout.write(String(sandboxes.length));
   process.exit(0);
 }
 if (process.argv[3] !== "ambiguous-names") process.exit(1);
 
-const ambiguous = entries
+const ambiguous = sandboxes
   .filter(([, entry]) => {
     const version = entry.nemoclawVersion;
     const hasFingerprint = typeof version === "string" && version.trim().length > 0;
@@ -2982,18 +2986,9 @@ main() {
 
   step 3 "Onboarding"
   if [ -n "$_cli_runner" ]; then
-    local selected_registry=""
-    selected_registry="$(nemoclaw_state_dir)/sandboxes.json"
-    if [[ -f "$selected_registry" ]] && node -e '
-      const fs = require("fs");
-      try {
-        const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-        const count = Object.keys(data.sandboxes || {}).length;
-        process.exit(count > 0 ? 0 : 1);
-      } catch {
-        process.exit(1);
-      }
-    ' "$selected_registry"; then
+    local _registered_sandbox_count=""
+    if _registered_sandbox_count="$(registered_sandbox_count)" \
+      && [[ "$_registered_sandbox_count" -gt 0 ]]; then
       warn "Existing sandbox sessions detected. Onboarding may disrupt running agents."
       if [[ "${NEMOCLAW_SINGLE_SESSION:-}" == "1" ]]; then
         error "Aborting — NEMOCLAW_SINGLE_SESSION is set. Destroy existing sessions with '${_CLI_BIN} <name> destroy' before reinstalling."
