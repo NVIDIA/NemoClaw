@@ -64,7 +64,7 @@ describe("atomic rebuild inference preflight", () => {
     expect(preflightRebuildInferenceRoute(input, { execute })).toEqual({ ok: true });
   });
 
-  it("sends max_completion_tokens for a GPT-5 model on the chat completions route (#6850)", () => {
+  it("sends max_completion_tokens for a GPT-5 model on the chat completions route", () => {
     const command = buildRebuildInferenceProbeCommand({ ...input, model: "gpt-5.4" });
 
     expect(command).toContain("https://inference.local/v1/chat/completions");
@@ -72,7 +72,14 @@ describe("atomic rebuild inference preflight", () => {
     expect(command).not.toContain('"max_tokens"');
   });
 
-  it("keeps max_tokens for a non-GPT-5 model on the chat completions route (#6850)", () => {
+  it("sends max_completion_tokens for an o-series model on the chat completions route", () => {
+    const command = buildRebuildInferenceProbeCommand({ ...input, model: "o3-mini" });
+
+    expect(command).toContain('"max_completion_tokens":8');
+    expect(command).not.toContain('"max_tokens"');
+  });
+
+  it("keeps max_tokens for a model that supports the legacy chat completions field", () => {
     const command = buildRebuildInferenceProbeCommand({ ...input, model: "nvidia/nemotron" });
 
     expect(command).toContain('"max_tokens":8');
