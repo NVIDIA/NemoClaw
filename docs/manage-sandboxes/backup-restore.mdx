@@ -1,11 +1,11 @@
 ---
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-title: "Backup and Restore Workspace Files"
-sidebar-title: "Backup and Restore"
-description: "How to back up and restore sandbox workspace and state files before destructive operations."
-description-agent: "Backs up and restores sandbox workspace and state files before destructive operations such as sandbox rebuilds. Use when downloading workspace files from a sandbox, uploading restored files into a new sandbox, or preserving sandbox state across rebuilds."
-keywords: ["nemoclaw backup", "nemoclaw restore", "workspace backup", "openshell sandbox download upload"]
+title: "Create and Restore Snapshots"
+sidebar-title: "Create and Restore Snapshots"
+description: "Create, list, restore, clone, and bulk-create NemoClaw snapshots for sandbox state."
+description-agent: "Explains when to back up sandbox state and how to use snapshot create, list, restore, clone, and backup-all workflows. Use before rebuilds, upgrades, destroys, or state recovery."
+keywords: ["nemoclaw snapshot", "nemoclaw backup-all", "nemoclaw restore", "sandbox backup"]
 content:
   type: "how_to"
 skill:
@@ -13,80 +13,87 @@ skill:
 ---
 import { AgentOnly } from "../_components/AgentGuide";
 
-Workspace and state files define your agent's personality, memory, user context, and durable runtime state.
-They persist across sandbox restarts, but destroying the sandbox permanently deletes them.
+NemoClaw snapshots preserve manifest-defined sandbox state before destructive or state-changing operations.
+They are the preferred backup and restore path.
 
-This guide covers snapshot commands, all-sandbox backups, and manual backup with CLI commands.
-
-## When to Back Up
+## When to Create a Snapshot
 
 <AgentOnly variant="openclaw">
-
 - Before running `$$nemoclaw <name> destroy`.
 - Before major NemoClaw version upgrades.
 - Periodically, if you have invested time customizing your agent.
-
 </AgentOnly>
 <AgentOnly variant="hermes">
-
 - Before running `$$nemoclaw <name> destroy`.
 - Before major NemoClaw version upgrades.
 - Periodically, if you have invested time customizing your agent or paired messaging channels.
-
 </AgentOnly>
 <AgentOnly variant="deepagents">
-
 - Before running `$$nemoclaw <name> destroy`.
 - Before major NemoClaw version upgrades.
 - Periodically, if you have invested time customizing Deep Agents skills, memory, or managed MCP state.
-
 </AgentOnly>
 
-## Snapshot Commands
+## Understand Snapshot Contents
 
-Use the built-in snapshot commands for the fastest backup and restore path.
 Snapshots capture all workspace state directories defined in the agent manifest and store them in `~/.nemoclaw/rebuild-backups/<name>/`.
 Agent manifests can also declare durable top-level state files.
-<AgentOnly variant="hermes">
-For Hermes, snapshots include `SOUL.md`, the Web Dashboard profile under `.hermes/dashboard-home/`, and the SQLite database behind `.hermes/state.db` using SQLite's online backup API, then restore that database through SQLite instead of copying a live raw database file.
-The dashboard profile includes `MEMORY.md` and `USER.md`, and the automatic rebuild snapshot preserves both files.
-</AgentOnly>
-<AgentOnly variant="deepagents">
-For Deep Agents, snapshots include manifest-declared state under `/sandbox/.deepagents`, including skills and runtime state, while omitting credential-bearing user files.
-NemoClaw refuses to create a snapshot when it detects an active `dcode` task or cannot verify that the Deep Agents state tree is idle.
-Wait for active `dcode` work to finish before running `$$nemoclaw <name> snapshot create`.
-</AgentOnly>
 Treat snapshot directories as private local data.
+
 <AgentOnly variant="hermes">
+Hermes snapshots include `SOUL.md`, the Web Dashboard profile under `.hermes/dashboard-home/`, and the SQLite database behind `.hermes/state.db`.
+NemoClaw uses SQLite's online backup API and restores the database through SQLite instead of copying a live raw database file.
+
+The dashboard profile includes `MEMORY.md` and `USER.md`.
 The Hermes database can contain session metadata and message history needed for a faithful restore.
 </AgentOnly>
-Snapshots also preserve sandbox registry metadata that affects rebuild behavior, including custom policy presets applied with `policy-add --from-file` or `policy-add --from-dir`.
-When you restore a snapshot, NemoClaw replays those recorded custom presets with their stored YAML content, so you do not need the original preset files on disk for the restored sandbox to keep the same policy state.
+<AgentOnly variant="deepagents">
+Deep Agents snapshots include manifest-declared state under `/sandbox/.deepagents`, including skills and runtime state, while omitting credential-bearing user files.
+NemoClaw refuses to create a snapshot when it detects an active `dcode` task or cannot verify that the Deep Agents state tree is idle.
+
+Wait for active `dcode` work to finish before running `$$nemoclaw <name> snapshot create`.
+</AgentOnly>
+
+Snapshots preserve sandbox registry metadata that affects rebuild behavior, including custom policy presets applied with `policy-add --from-file` or `policy-add --from-dir`.
+When you restore a snapshot, NemoClaw replays those recorded custom presets with their stored YAML content, so you do not need the original preset files on disk.
+
 The target sandbox's current agent manifest remains authoritative for state-file restore behavior.
 NemoClaw rejects the restore when the snapshot's agent, config directory, state-file path, or state-file strategy conflicts with that manifest.
+
 For managed images, NemoClaw applies the current manifest's managed config merge rules by default and does not fall back to whole-file replacement.
 For Deep Agents targets, whole-file config replacement is limited to sandboxes created from a custom Dockerfile.
+
+## Create and List Snapshots
 
 ```bash
 $$nemoclaw my-assistant snapshot create
 $$nemoclaw my-assistant snapshot list
-$$nemoclaw my-assistant snapshot restore
 ```
 
 `snapshot list` prints a table of version, name, timestamp, and path.
-NemoClaw computes versions (`v1`, `v2`, ..., `vN`) from timestamp order, so `vN` is always the newest snapshot.
+NemoClaw computes versions (`v1`, `v2`, through `vN`) from timestamp order, so `vN` is always the newest snapshot.
+
 `snapshot create` requires shields to be down.
 Snapshot creation and restore share the per-sandbox transition lock with the shields auto-restore timer.
+
 If a timed shields-down window expires during snapshot work, auto-restore can interrupt the operation and restore lockdown instead of allowing state or policy changes to continue past the deadline.
 Retry the snapshot in a new shields-down window if the deadline interrupts it.
 
-To tag a snapshot with a human-readable label, pass `--name`:
+Tag a snapshot with a human-readable label:
 
 ```bash
 $$nemoclaw my-assistant snapshot create --name before-upgrade
 ```
 
-To restore a specific snapshot instead of the latest, pass a version, name, or timestamp prefix:
+## Restore a Snapshot
+
+Restore the latest snapshot:
+
+```bash
+$$nemoclaw my-assistant snapshot restore
+```
+
+Pass a version, name, or timestamp prefix to select a specific snapshot:
 
 ```bash
 $$nemoclaw my-assistant snapshot restore v3
@@ -108,163 +115,49 @@ If no port is available, restore stops before deleting an existing `--force` des
 The force-overwrite path restores and verifies lockdown on a destination with an active shields timer, then revokes that timer before it deletes the destination.
 It clears the remaining local shields state only after deletion succeeds, before a same-name replacement is created.
 
-<AgentOnly variant="openclaw">
+## Restore Agent Configuration Safely
 
 The `$$nemoclaw <name> rebuild` command uses the same snapshot mechanism automatically.
-Snapshot restore performs a targeted repair for legacy `.openclaw-data` symlinks that older images created.
 NemoClaw rejects unsafe symlinks and hard links inside sandbox state during backup creation before they can enter a snapshot.
-Snapshots also preserve user-owned `openclaw.json` settings.
-During rebuild or restore, NemoClaw merges those restored settings with the freshly generated runtime config so current provider placeholders, messaging enablement, and gateway state win over stale snapshot values.
-If the restored config cannot be parsed or applied safely, NemoClaw stops the restore instead of replacing the generated config with an unsafe fallback.
 
+<AgentOnly variant="openclaw">
+Snapshot restore performs a targeted repair for legacy `.openclaw-data` symlinks that older images created.
+Snapshots also preserve user-owned `openclaw.json` settings.
+
+During rebuild or restore, NemoClaw merges those settings with the freshly generated runtime config so current provider placeholders, messaging enablement, and gateway state win over stale snapshot values.
+If the restored config cannot be parsed or applied safely, NemoClaw stops the restore instead of replacing the generated config with an unsafe fallback.
 </AgentOnly>
 <AgentOnly variant="hermes">
-
-The `$$nemoclaw <name> rebuild` command uses the same snapshot mechanism automatically.
-NemoClaw rejects unsafe symlinks and hard links inside sandbox state during backup creation before they can enter a snapshot.
 Credential-bearing Hermes files such as `auth.json` are intentionally excluded from snapshots.
 NemoClaw-regenerated Hermes config files, including `config.yaml` and `.env`, are also excluded.
-NemoClaw recreates model/provider and messaging credentials from host-side onboarding and OpenShell provider state during rebuild.
-
+NemoClaw recreates model, provider, and messaging credentials from host-side onboarding and OpenShell provider state during rebuild.
 </AgentOnly>
 <AgentOnly variant="deepagents">
+### Excluded Deep Agents State
 
-The `$$nemoclaw <name> rebuild` command uses the same snapshot mechanism automatically.
-NemoClaw rejects unsafe symlinks and hard links inside sandbox state during backup creation before they can enter a snapshot.
 Credential-bearing Deep Agents files such as `.deepagents/.env` and user-authored `.deepagents/.mcp.json` are intentionally excluded from snapshots.
 Deep Agents auth state files such as `.deepagents/.state/auth.json` and `.deepagents/.state/chatgpt-auth.json` are also excluded because the managed launcher refuses to start when upstream credential state is present.
-The managed `.deepagents/.nemoclaw-mcp.json` projection and `hooks.json` are also excluded because NemoClaw reconstructs managed MCP state and disables executable Deep Agents Code hooks in the managed harness.
+
+The managed `.deepagents/.nemoclaw-mcp.json` projection and `hooks.json` are excluded because NemoClaw reconstructs managed MCP state and disables executable Deep Agents Code hooks in the managed harness.
 NemoClaw recreates the current inference route headers, `models` and `update` tables, managed MCP projection state, and provider credentials from host-side onboarding and OpenShell provider state during rebuild.
-For a NemoClaw-managed Deep Agents image, it restores only the allowlisted `ui.show_scrollbar`, `ui.show_url_open_toast`, `threads.relative_time`, and `threads.sort_order` preferences from the previous `config.toml` when their values pass validation.
+
+### Restore Managed Deep Agents Configuration
+
+For a NemoClaw-managed Deep Agents image, NemoClaw restores only the allowlisted `ui.show_scrollbar`, `ui.show_url_open_toast`, `threads.relative_time`, and `threads.sort_order` preferences from the previous `config.toml` when their values pass validation.
 Unknown, runtime-controlled, executable, and security-sensitive backup keys are dropped instead of replacing freshly generated settings on that managed path.
-A Deep Agents target created from a custom Dockerfile restores `config.toml` as a whole file because the custom image owns its config schema, so review that backup before restoring it.
-On the managed key-level restore path, if either config is malformed, required managed data is missing, or the restore detects an unsafe link or file replacement, NemoClaw marks the restore as failed and does not fall back to copying the backed-up file wholesale.
+
+A Deep Agents target created from a custom Dockerfile restores `config.toml` as a whole file because the custom image owns its config schema.
+On the managed key-level restore path, malformed config, missing managed data, an unsafe link, or an unsafe file replacement fails the restore without falling back to a whole-file copy.
+
+### Validate Before Replacement
+
 Before a Deep Agents rebuild changes the sandbox, NemoClaw verifies the recorded inference route, provider, model, reasoning settings, web search selection, base image, and policy inputs.
 If a late check fails, NemoClaw restores the previous MCP state and keeps the existing sandbox intact.
-
-</AgentOnly>
-<AgentOnly variant="openclaw">
-For full details, refer to the [Commands reference](../reference/commands).
-</AgentOnly>
-<AgentOnly variant="hermes">
-For full details, refer to the [Commands reference](../reference/commands).
-</AgentOnly>
-<AgentOnly variant="deepagents">
-For Deep Agents, the quickstart summarizes the managed state layout and the snapshot commands shown above cover normal backup and restore workflows.
 </AgentOnly>
 
-## Manual Backup
+## Back Up Every Registered Sandbox
 
-Use `openshell sandbox download` to copy files from the sandbox to your host.
-
-<AgentOnly variant="openclaw">
-
-```bash
-SANDBOX=my-assistant
-BACKUP_DIR=~/.nemoclaw/backups/$(date +%Y%m%d-%H%M%S)
-mkdir -p "$BACKUP_DIR"
-
-openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/SOUL.md "$BACKUP_DIR/"
-openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/USER.md "$BACKUP_DIR/"
-openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/IDENTITY.md "$BACKUP_DIR/"
-openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/AGENTS.md "$BACKUP_DIR/"
-openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/MEMORY.md "$BACKUP_DIR/"
-openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/memory/ "$BACKUP_DIR/memory/"
-```
-
-</AgentOnly>
-<AgentOnly variant="hermes">
-
-```bash
-SANDBOX=my-hermes
-BACKUP_DIR=~/.nemoclaw/backups/$(date +%Y%m%d-%H%M%S)
-mkdir -p "$BACKUP_DIR/dashboard-home"
-
-openshell sandbox download "$SANDBOX" /sandbox/SOUL.md "$BACKUP_DIR/"
-openshell sandbox download "$SANDBOX" /sandbox/.hermes/state.db "$BACKUP_DIR/"
-openshell sandbox download "$SANDBOX" /sandbox/.hermes/dashboard-home/MEMORY.md "$BACKUP_DIR/dashboard-home/MEMORY.md"
-openshell sandbox download "$SANDBOX" /sandbox/.hermes/dashboard-home/USER.md "$BACKUP_DIR/dashboard-home/USER.md"
-openshell sandbox download "$SANDBOX" /sandbox/.hermes/platforms/ "$BACKUP_DIR/platforms/"
-```
-
-Copy only the dashboard profile's `MEMORY.md` and `USER.md` files.
-Do not copy `.hermes/dashboard-home/.env` or `.hermes/dashboard-home/config.yaml`; NemoClaw regenerates both files, and `.env` contains dashboard authentication material.
-
-</AgentOnly>
-<AgentOnly variant="deepagents">
-
-```bash
-SANDBOX=my-deepagents
-BACKUP_DIR=~/.nemoclaw/backups/$(date +%Y%m%d-%H%M%S)
-mkdir -p "$BACKUP_DIR"
-
-openshell sandbox download "$SANDBOX" /sandbox/.deepagents/config.toml "$BACKUP_DIR/"
-openshell sandbox download "$SANDBOX" /sandbox/.deepagents/agent/AGENTS.md "$BACKUP_DIR/agent/"
-openshell sandbox download "$SANDBOX" /sandbox/.deepagents/agent/memories/ "$BACKUP_DIR/agent/memories/"
-openshell sandbox download "$SANDBOX" /sandbox/.deepagents/skills/ "$BACKUP_DIR/skills/"
-openshell sandbox download "$SANDBOX" /sandbox/.deepagents/agent/skills/ "$BACKUP_DIR/agent-skills/"
-```
-
-Do not recursively download `/sandbox/.deepagents/.state/`.
-That directory can contain upstream credential state such as `auth.json` and `chatgpt-auth.json`, which can copy secrets to the host and restore state that the managed launcher refuses.
-Use `$$nemoclaw <name> snapshot create` when you need NemoClaw's built-in sanitizer for Deep Agents runtime state.
-
-</AgentOnly>
-
-## Manual Restore
-
-Use `openshell sandbox upload` to push files back into a sandbox.
-
-<AgentOnly variant="openclaw">
-
-```bash
-SANDBOX=my-assistant
-BACKUP_DIR=~/.nemoclaw/backups/20260320-120000  # pick a timestamp
-
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/SOUL.md" /sandbox/.openclaw/workspace/
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/USER.md" /sandbox/.openclaw/workspace/
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/IDENTITY.md" /sandbox/.openclaw/workspace/
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/AGENTS.md" /sandbox/.openclaw/workspace/
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/MEMORY.md" /sandbox/.openclaw/workspace/
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/memory/" /sandbox/.openclaw/workspace/memory/
-```
-
-</AgentOnly>
-<AgentOnly variant="hermes">
-
-```bash
-SANDBOX=my-hermes
-BACKUP_DIR=~/.nemoclaw/backups/20260320-120000  # pick a timestamp
-
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/SOUL.md" /sandbox/
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/state.db" /sandbox/.hermes/
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/dashboard-home/MEMORY.md" /sandbox/.hermes/dashboard-home/MEMORY.md
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/dashboard-home/USER.md" /sandbox/.hermes/dashboard-home/USER.md
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/platforms/" /sandbox/.hermes/platforms/
-```
-
-</AgentOnly>
-<AgentOnly variant="deepagents">
-
-```bash
-SANDBOX=my-deepagents
-BACKUP_DIR=~/.nemoclaw/backups/20260320-120000  # pick a timestamp
-
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/agent/AGENTS.md" /sandbox/.deepagents/agent/
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/agent/memories/" /sandbox/.deepagents/agent/memories/
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/skills/" /sandbox/.deepagents/skills/
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/agent-skills/" /sandbox/.deepagents/agent/skills/
-```
-
-Do not upload saved `.deepagents/.state` contents during manual restore.
-Restore safe Deep Agents files only, then run the managed rebuild or onboarding flow so NemoClaw regenerates route metadata, managed MCP projection state, and credential handling from host-side state.
-
-</AgentOnly>
-
-## Back Up Registered Sandboxes
-
-To back up every registered sandbox that is running, or whose stopped Docker-driver container can be started temporarily, run `$$nemoclaw backup-all`.
-Use this host-installed command before broad maintenance such as `$$nemoclaw update`, `$$nemoclaw upgrade-sandboxes`, or an OpenShell gateway migration.
+Run `$$nemoclaw backup-all` before broad maintenance such as `$$nemoclaw update`, `$$nemoclaw upgrade-sandboxes`, or an OpenShell gateway migration.
 
 ```bash
 $$nemoclaw backup-all
@@ -273,140 +166,14 @@ $$nemoclaw backup-all
 `backup-all` walks the sandboxes registered on the host, creates a snapshot for each eligible running or temporarily started sandbox, and stores the snapshot bundles under `~/.nemoclaw/rebuild-backups/<name>/`.
 If a registered docker-driver sandbox's container is stopped, `backup-all` starts the container for the duration of the backup and returns it to its stopped state afterward.
 If the container cannot be returned to the stopped state, the backup run fails and reports that the container was left running.
-If a sandbox is not running and its container cannot be started this way, start the sandbox or its container and rerun `$$nemoclaw backup-all` so NemoClaw can capture a fresh snapshot before maintenance.
-When a backup fails, NemoClaw identifies the affected state item and reports one of these causes when available: `permission denied`, `tar read error`, or `absent after extraction`.
+If a sandbox is not running and its container cannot be started this way, start the sandbox or its container and rerun `$$nemoclaw backup-all`.
+
+When a backup fails, NemoClaw identifies the affected state item and reports `permission denied`, `tar read error`, or `absent after extraction` when available.
 Use `$$nemoclaw <name> snapshot list` and `$$nemoclaw <name> snapshot restore` to inspect or restore one sandbox's bundles later.
 
-## Using the Backup Script
+## Related Topics
 
-<AgentOnly variant="openclaw">
-
-<Note title="Source-tree helper script">
-The [`scripts/backup-workspace.sh`](https://github.com/NVIDIA/NemoClaw/blob/main/scripts/backup-workspace.sh) helper exists only in the NemoClaw source repository for engineering workflows.
-It is not installed by the standard `curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash` installer, so host installs should use `nemoclaw backup-all` or the snapshot commands above.
-</Note>
-
-### Backup
-
-```bash
-./scripts/backup-workspace.sh backup my-assistant
-```
-
-Expected output:
-
-```text
-Backing up workspace from sandbox 'my-assistant'...
-Backup saved to /home/user/.nemoclaw/backups/20260320-120000/ (6 items)
-```
-
-### Restore
-
-Restore from the most recent backup:
-
-```bash
-./scripts/backup-workspace.sh restore my-assistant
-```
-
-Restore from a specific timestamp:
-
-```bash
-./scripts/backup-workspace.sh restore my-assistant 20260320-120000
-```
-
-## Verifying a Backup
-
-List backed-up files to confirm completeness:
-
-```bash
-ls -la ~/.nemoclaw/backups/20260320-120000/
-```
-
-Expected output:
-
-```text
-AGENTS.md
-IDENTITY.md
-MEMORY.md
-SOUL.md
-USER.md
-memory/
-```
-
-</AgentOnly>
-<AgentOnly variant="hermes">
-
-For Hermes, prefer the built-in snapshot commands for faithful restore of `state.db`.
-Use manual `openshell sandbox download` / `openshell sandbox upload` only when you need to inspect or transfer a specific file.
-
-</AgentOnly>
-<AgentOnly variant="deepagents">
-
-For Deep Agents, prefer the built-in snapshot commands for normal rebuild and restore workflows.
-Use manual `openshell sandbox download` / `openshell sandbox upload` only when you need to inspect or transfer a specific safe file or directory.
-Treat downloaded `config.toml` as inspection context.
-Do not upload an old `config.toml` over a rebuilt sandbox unless you are intentionally replacing NemoClaw's generated route metadata.
-Never manually back up or restore `.deepagents/.state/auth.json` or `.deepagents/.state/chatgpt-auth.json`.
-
-</AgentOnly>
-
-<AgentOnly variant="openclaw">
-
-## Multi-Agent Deployments
-
-When you configure OpenClaw with multiple named agents, each agent has its own workspace directory (`workspace-main/`, `workspace-support/`, `workspace-ops/`, and so on).
-Refer to [Multi-Agent Deployments](workspace-files#multi-agent-deployments).
-
-`$$nemoclaw <name> snapshot create` automatically discovers every `workspace-*/` directory under the sandbox state tree and includes it in the snapshot bundle alongside the default `workspace/`.
-`$$nemoclaw <name> snapshot restore` reapplies the full per-agent set.
-You do not need a manual per-workspace backup pattern.
-
-The sandbox entrypoint ensures every per-agent workspace lives directly under the persistent `.openclaw/` tree, so state also survives `openshell sandbox restart`.
-
-### Shared Files Across Agents
-
-Files that operators typically want consistent across every per-agent workspace, such as `AGENTS.md`, shared skills, and common templates, are not synced automatically.
-Each workspace is independent, and changes in one do not propagate.
-Operators that need this either copy the shared files explicitly to each workspace after editing or maintain a host-side sync layer.
-NVIDIA tracks shared-file tooling (shared mount, `workspaces list` command) in [#1260](https://github.com/NVIDIA/NemoClaw/issues/1260).
-
-</AgentOnly>
-<AgentOnly variant="hermes">
-
-## Hermes State
-
-Hermes does not use OpenClaw per-agent workspace directories.
-NemoClaw snapshots preserve the Hermes manifest-defined state tree and durable top-level files instead.
-Refer to [Workspace Files](workspace-files) for the Hermes state layout.
-
-</AgentOnly>
-<AgentOnly variant="deepagents">
-
-## Deep Agents State
-
-Deep Agents does not use OpenClaw per-agent workspace directories.
-NemoClaw snapshots preserve the Deep Agents manifest-defined state tree under `/sandbox/.deepagents`.
-Generated config and credential-bearing user files are handled by the managed rebuild path rather than ordinary snapshot restore.
-If you rely on upstream memory files such as `/sandbox/.deepagents/agent/AGENTS.md` or `/sandbox/.deepagents/agent/memories/`, verify that your release includes them in the manifest-backed state set or copy them manually before destroying the sandbox.
-
-</AgentOnly>
-
-## Next Steps
-
-<AgentOnly variant="openclaw">
-
-- [Workspace Files overview](workspace-files) to learn what each file does.
-- [Commands reference](../reference/commands).
-
-</AgentOnly>
-<AgentOnly variant="hermes">
-
-- [Workspace Files overview](workspace-files) to learn what each file does.
-- [Commands reference](../reference/commands).
-
-</AgentOnly>
-<AgentOnly variant="deepagents">
-
-- [Set Up MCP Servers](set-up-mcp-servers) explains managed MCP configuration for Deep Agents sandboxes.
-- [Workspace Files](workspace-files) explains the managed Deep Agents state layout.
-
-</AgentOnly>
+- [Understand Sandbox State](understand-sandbox-state) for the files each agent persists.
+- [Transfer State Manually](transfer-state-manually) when you need specific files instead of a managed snapshot.
+- [Recover and Rebuild Sandboxes](../operate-sandboxes/recover-and-rebuild-sandboxes) for automatic snapshot-backed rebuilds.
+- [Commands reference](../../reference/commands) for snapshot and backup flags.

@@ -1,0 +1,103 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Troubleshoot MCP Servers"
+sidebar-title: "Troubleshoot MCP Servers"
+description: "Diagnose managed MCP credential resolution, incomplete transactions, capability gaps, policy drift, and lifecycle-lock failures."
+description-agent: "Provides symptom-based remediation for NemoClaw-managed MCP servers. Use when mcp add, status, restart, remove, rebuild, or destroy does not converge."
+keywords: ["troubleshoot nemoclaw mcp", "mcp credential resolution", "mcp policy drift", "mcp transaction"]
+content:
+  type: "troubleshooting"
+---
+import { AgentOnly } from "../_components/AgentGuide";
+
+Use the reported status or lifecycle error to choose the matching remediation.
+
+## Credential Resolution Is Unknown
+
+If `mcp status <server>` reports identical placeholder and control rejections, first confirm the stored credential is valid.
+Rotate it with `mcp restart` when in doubt.
+
+For identical HTTP 401 or 403 responses, a confirmed-valid credential means the OpenShell gateway on this host is not rewriting `openshell:resolve:env:KEY` on egress.
+Every agent request receives the same authentication failure even when provider, attachment, readiness, and adapter checks report healthy.
+
+This is a host-side OpenShell defect rather than a NemoClaw registration problem.
+Verify the OpenShell installation on the host, tracked upstream as OpenShell issue 2161.
+
+An identical HTTP 400 remains inconclusive because the endpoint may reject the probe's `initialize` request.
+Compare status for the same server on a known-good host.
+
+A `credential resolution: unknown` verdict with an endpoint or policy detail means the probe could not reach a judgment.
+Fix the reported endpoint or policy condition, then rerun status.
+
+## Provider Is Missing During Restart
+
+If restart reports a missing provider and the original credential is not registered in OpenShell, export the same variable name used during add and retry.
+
+## Add Transaction Is Incomplete
+
+If status reports an incomplete add transaction, rerun the original `mcp add` command with the same URL and environment-variable name.
+Re-export the value if the provider still needs to be created.
+
+To abandon the transaction, run `mcp remove <server> --force`.
+NemoClaw cleans only resources whose ownership it can prove and keeps the registry entry when residual cleanup remains.
+
+## Agent MCP Capability Is Missing
+
+If add or restart reports that `mcporter`, the Hermes transaction helper, or Deep Agents managed MCP capability v2 is unavailable, rebuild the sandbox onto a current image before retrying.
+An existing Deep Agents v1 entry remains removable, destroyable, and eligible for rebuild teardown when NemoClaw can identify the exact registry-owned legacy entry.
+
+The rebuilt image must pass the v2 capability check before its MCP runtime is restored.
+
+<AgentOnly variant="deepagents">
+The rebuild installs the current projection path and reconstructs `/sandbox/.deepagents/.nemoclaw-mcp.json` from the host registry.
+Rebuild a Deep Agents sandbox, then retry the managed MCP command:
+
+```bash
+nemo-deepagents <name> rebuild
+nemo-deepagents <name> mcp add <server-name> --url <url> --env <credential-env>
+```
+
+NemoClaw does not auto-load user-owned `/sandbox/.deepagents/.mcp.json` or project MCP files into managed configuration.
+Use `nemo-deepagents <name> mcp ...` for servers that need OpenShell credential replacement and egress policy.
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+If a Hermes sandbox is alive but its gateway is not running after a supervisor or container restart, run `$$nemoclaw <sandbox> recover` before retrying the MCP command.
+Recovery re-establishes the managed service lifecycle, API forwarding, and the exit-75 reload loop used for transactional MCP configuration changes.
+</AgentOnly>
+
+## Policy or Provider Ownership Drifted
+
+If generated policy or provider metadata drifted, restart fails closed instead of overwriting same-name state.
+Resolve the reported OpenShell ownership or content mismatch, then retry.
+`remove --force` can continue cleaning other independently owned resources, but it does not claim or delete the drifted resource.
+
+Registry entries created by an earlier preview with a host-alias URL or a credential name that is now reserved remain visible so they can be removed safely.
+Status reports the unsupported boundary, and restart and rebuild fail closed.
+
+Remove the legacy entry before rebuilding or destroying the sandbox, then add a public HTTPS DNS endpoint with a dedicated service credential name.
+
+## MCP Policy Capability Is Unavailable
+
+Install the required OpenShell build and rerun onboarding.
+NemoClaw checks inspectable installed OpenShell artifacts for `protocol: mcp` capability and does not enable managed MCP from a version number alone.
+
+For image-backed or compressed supervisors without an inspectable host artifact, the onboarding check is provisional.
+Before a credential or provider side effect, the MCP command loads the exact generated policy with `policy set --wait` and exact-matches effective state.
+
+A runtime that rejects `protocol: mcp` therefore fails closed.
+
+## Lifecycle Lock Times Out
+
+Confirm that no `mcp add`, `mcp restart`, `mcp remove`, `rebuild`, or `destroy` command for the sandbox is still running, then retry the original command.
+NemoClaw recovers a lock only when its local process is provably dead or its PID has a different process-start identity.
+
+It does not expose a force-unlock flag.
+Resolve a live or ambiguous owner on the host that owns it, and do not delete the lock file manually.
+
+## Related Topics
+
+- [Add an MCP Server](../manage-sandboxes/mcp-servers/add-an-mcp-server) for endpoint and credential requirements.
+- [Manage MCP Servers](../manage-sandboxes/mcp-servers/manage-mcp-servers) for normal lifecycle operations.
+- [About Managed MCP Servers](../manage-sandboxes/mcp-servers/about-managed-mcp-servers) for the accepted security boundary.

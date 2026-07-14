@@ -10,8 +10,8 @@ import {
   type PullRequest,
   parseControllerCommand,
   prGateExternalId,
-  resolveApprovedGate,
-  resolveForkGate,
+  recordApprovedForkE2ESkip,
+  recordManualForkE2ESkip,
   startControlPlanePrGate,
   startPrGate,
 } from "../tools/e2e/pr-e2e-gate.mts";
@@ -215,15 +215,15 @@ function approvalReview(comment: string | null = null, overrides: Record<string,
   return {
     state: "approved",
     comment,
-    environments: [{ name: "e2e-no-secret-exception" }],
+    environments: [{ name: "approve-credentialed-e2e-skip-for-fork-pr" }],
     user: { login: "maintainer" },
     ...overrides,
   };
 }
 
-function approvedForkCommand() {
+function approvedForkSkipCommand() {
   return {
-    mode: "resolve-approved" as const,
+    mode: "record-approved-fork-e2e-skip" as const,
     prNumber: 42,
     headSha: HEAD_SHA,
     baseSha: BASE_SHA,
@@ -272,7 +272,7 @@ function successfulApprovedForkRoutes(approvals: unknown) {
     existingPrGateCheckRunsRoute({
       status: "completed",
       conclusion: "failure",
-      output: { title: "Maintainer fork exception required" },
+      output: { title: "Maintainer approval required to skip credentialed E2E" },
     }),
     mainWorkflowRefRoute(),
     githubFetchRoute(
@@ -282,7 +282,7 @@ function successfulApprovedForkRoutes(approvals: unknown) {
   ];
 }
 
-describe("PR E2E controller exception safety", () => {
+describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
   it("plans a risky fork without dispatching secret-bearing E2E", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-fork-"));
     const outputPath = path.join(workDir, "github-output");
@@ -333,23 +333,25 @@ describe("PR E2E controller exception safety", () => {
         conclusion: "failure",
         details_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${GATE_RUN_ID}`,
         output: {
-          title: "Maintainer fork exception required",
-          summary: expect.stringContaining("Fork code was not executed"),
+          title: "Maintainer approval required to skip credentialed E2E",
+          summary: expect.stringContaining("The selected jobs were not run"),
         },
       });
       expect(JSON.stringify(completion?.body)).toContain("Review deployments");
       expect(JSON.stringify(completion?.body)).toContain(
         `[E2E / PR Gate Controller run ${GATE_RUN_ID}](https://github.com/NVIDIA/NemoClaw/actions/runs/${GATE_RUN_ID})`,
       );
-      expect(JSON.stringify(completion?.body)).toContain("e2e-no-secret-exception");
-      expect(JSON.stringify(completion?.body)).toContain("unprotected environment fails closed");
-      expect(JSON.stringify(completion?.body)).toContain("manual workflow-dispatch resolver");
+      expect(JSON.stringify(completion?.body)).toContain(
+        "approve-credentialed-e2e-skip-for-fork-pr",
+      );
+      expect(JSON.stringify(completion?.body)).toContain("If Review deployments is absent");
+      expect(JSON.stringify(completion?.body)).toContain("approve-fork-e2e-skip");
       expect(fs.readFileSync(outputPath, "utf8")).toContain(
         [
-          "exception_mode=resolve-fork",
-          "exception_pr_number=42",
-          `exception_head_sha=${HEAD_SHA}`,
-          `exception_base_sha=${BASE_SHA}`,
+          "fork_skip_mode=record-fork-e2e-skip",
+          "fork_skip_pr_number=42",
+          `fork_skip_head_sha=${HEAD_SHA}`,
+          `fork_skip_base_sha=${BASE_SHA}`,
         ].join("\n"),
       );
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
@@ -411,7 +413,7 @@ describe("PR E2E controller exception safety", () => {
       expect(JSON.stringify(completion?.body)).toContain(
         "run `run-control-plane` with the PR number, exact head and base SHAs",
       );
-      expect(fs.readFileSync(outputPath, "utf8")).not.toContain("exception_mode=");
+      expect(fs.readFileSync(outputPath, "utf8")).not.toContain("fork_skip_mode=");
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
@@ -481,7 +483,7 @@ describe("PR E2E controller exception safety", () => {
       createGitHubFetchRouter(successfulApprovedForkRoutes([approvalReview(comment)]), requests),
     );
 
-    await expect(resolveApprovedGate(approvedForkCommand())).resolves.toBeUndefined();
+    await expect(recordApprovedForkE2ESkip(approvedForkSkipCommand())).resolves.toBeUndefined();
 
     const completion = requests.filter((request) => request.method === "PATCH").at(-1);
     expect(completion?.body).toMatchObject({
@@ -489,8 +491,10 @@ describe("PR E2E controller exception safety", () => {
       conclusion: "success",
       details_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${APPROVAL_RUN_ID}`,
       output: {
-        title: "No E2E run — exception approved by @maintainer",
-        summary: expect.stringContaining("**Outcome: EXCEPTION — credentialed E2E did not run.**"),
+        title: "Credentialed E2E skipped for fork PR — approved by @maintainer",
+        summary: expect.stringContaining(
+          "**Outcome: APPROVED SKIP — credentialed E2E did not run.**",
+        ),
       },
     });
     const summary = JSON.stringify(completion?.body);
@@ -511,8 +515,8 @@ describe("PR E2E controller exception safety", () => {
       ),
     );
 
-    await expect(resolveApprovedGate(approvedForkCommand())).rejects.toThrow(
-      /No protected-environment approval was recorded.*may be missing or lack required reviewers.*trigger fresh PR CI.*typed manual fallback/u,
+    await expect(recordApprovedForkE2ESkip(approvedForkSkipCommand())).rejects.toThrow(
+      /No required-reviewer approval was recorded.*Review deployments was absent.*missing or unprotected.*trigger fresh PR CI.*approve-fork-e2e-skip/u,
     );
     expect(requests.some((request) => request.method === "PATCH")).toBe(false);
   });
@@ -535,7 +539,10 @@ describe("PR E2E controller exception safety", () => {
       name: "an approval spanning multiple environments",
       approvals: [
         approvalReview(null, {
-          environments: [{ name: "e2e-no-secret-exception" }, { name: "production" }],
+          environments: [
+            { name: "approve-credentialed-e2e-skip-for-fork-pr" },
+            { name: "production" },
+          ],
         }),
       ],
     },
@@ -554,7 +561,7 @@ describe("PR E2E controller exception safety", () => {
       ),
     );
 
-    await expect(resolveApprovedGate(approvedForkCommand())).rejects.toThrow();
+    await expect(recordApprovedForkE2ESkip(approvedForkSkipCommand())).rejects.toThrow();
     expect(requests.some((request) => request.method === "PATCH")).toBe(false);
   });
 
@@ -584,7 +591,7 @@ describe("PR E2E controller exception safety", () => {
       createGitHubFetchRouter([approvalRunRoute(approvalWorkflowRun(overrides))], requests),
     );
 
-    await expect(resolveApprovedGate(approvedForkCommand())).rejects.toThrow(
+    await expect(recordApprovedForkE2ESkip(approvedForkSkipCommand())).rejects.toThrow(
       /trusted first-attempt gate run/u,
     );
     expect(requests.some((request) => request.method === "PATCH")).toBe(false);
@@ -593,7 +600,7 @@ describe("PR E2E controller exception safety", () => {
   it("parses only first-attempt protected-environment resolutions", () => {
     const args = [
       "--mode",
-      "resolve-approved",
+      "record-approved-fork-e2e-skip",
       "--pr",
       "42",
       "--head",
@@ -608,7 +615,7 @@ describe("PR E2E controller exception safety", () => {
       "1",
     ];
 
-    expect(parseControllerCommand(args)).toEqual(approvedForkCommand());
+    expect(parseControllerCommand(args)).toEqual(approvedForkSkipCommand());
     expect(() => parseControllerCommand([...args.slice(0, -1), "2"])).toThrow(/must be exactly 1/u);
   });
 
@@ -619,12 +626,12 @@ describe("PR E2E controller exception safety", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(createGitHubFetchRouter([], requests));
 
     await expect(
-      resolveApprovedGate({ ...approvedForkCommand(), approvalRunAttempt: 2 }),
+      recordApprovedForkE2ESkip({ ...approvedForkSkipCommand(), approvalRunAttempt: 2 }),
     ).rejects.toThrow(/must be exactly 1/u);
     expect(requests).toHaveLength(0);
   });
 
-  it("records an authorized exact-head/base fork exception after a compatible main advance", async () => {
+  it("records an approved credentialed E2E skip for the reviewed head/base after a compatible main advance", async () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     const requests: RecordedGitHubRequest[] = [];
@@ -651,7 +658,7 @@ describe("PR E2E controller exception safety", () => {
           existingPrGateCheckRunsRoute({
             status: "completed",
             conclusion: "failure",
-            output: { title: "Maintainer fork exception required" },
+            output: { title: "Maintainer approval required to skip credentialed E2E" },
           }),
           mainWorkflowRefRoute(ADVANCED_WORKFLOW_SHA),
           compatibleMainComparisonRoute([{ filename: "docs/get-started/quickstart.mdx" }]),
@@ -664,8 +671,8 @@ describe("PR E2E controller exception safety", () => {
       ),
     );
 
-    await resolveForkGate({
-      mode: "resolve-fork",
+    await recordManualForkE2ESkip({
+      mode: "record-fork-e2e-skip",
       prNumber: 42,
       headSha: HEAD_SHA,
       baseSha: BASE_SHA,
@@ -679,8 +686,10 @@ describe("PR E2E controller exception safety", () => {
       status: "completed",
       conclusion: "success",
       output: {
-        title: "No E2E run — exception approved by @maintainer",
-        summary: expect.stringContaining("**Outcome: EXCEPTION — credentialed E2E did not run.**"),
+        title: "Credentialed E2E skipped for fork PR — approved by @maintainer",
+        summary: expect.stringContaining(
+          "**Outcome: APPROVED SKIP — credentialed E2E did not run.**",
+        ),
       },
     });
     expect(JSON.stringify(completion?.body)).toContain("Selected jobs not run");
@@ -806,7 +815,7 @@ describe("PR E2E controller exception safety", () => {
     }
   });
 
-  it("rejects an E2E exception from a collaborator below maintainer role", async () => {
+  it("rejects a credentialed E2E skip from a collaborator below maintainer role", async () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     const requests: RecordedGitHubRequest[] = [];
@@ -828,14 +837,14 @@ describe("PR E2E controller exception safety", () => {
     );
 
     await expect(
-      resolveForkGate({
-        mode: "resolve-fork",
+      recordManualForkE2ESkip({
+        mode: "record-fork-e2e-skip",
         prNumber: 42,
         headSha: HEAD_SHA,
         baseSha: BASE_SHA,
         workflowSha: WORKFLOW_SHA,
         maintainer: "contributor",
-        reason: "A write-role collaborator tried to record a fork exception.",
+        reason: "A write-role collaborator tried to record a credentialed E2E skip.",
       }),
     ).rejects.toThrow(/maintainer or administrator/u);
     expect(requests.some((request) => request.method === "PATCH")).toBe(false);
@@ -909,7 +918,7 @@ describe("PR E2E controller exception safety", () => {
     }
   });
 
-  it("rejects a fork exception for an internal pull request", async () => {
+  it("rejects a fork credentialed E2E skip for an internal pull request", async () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     const requests: RecordedGitHubRequest[] = [];
@@ -937,9 +946,9 @@ describe("PR E2E controller exception safety", () => {
       maintainer: "maintainer",
       reason: "The resolver operation must match the pull request origin.",
     };
-    await expect(resolveForkGate({ mode: "resolve-fork", ...common })).rejects.toThrow(
-      /fork exceptions require a fork pull request/u,
-    );
+    await expect(
+      recordManualForkE2ESkip({ mode: "record-fork-e2e-skip", ...common }),
+    ).rejects.toThrow(/credentialed E2E skips require a fork pull request/u);
     expect(requests.some((request) => request.method === "PATCH")).toBe(false);
   });
 
@@ -966,7 +975,7 @@ describe("PR E2E controller exception safety", () => {
           existingPrGateCheckRunsRoute({
             status: "completed",
             conclusion: "failure",
-            output: { title: "Maintainer fork exception required" },
+            output: { title: "Maintainer approval required to skip credentialed E2E" },
           }),
         ],
         requests,
@@ -1110,7 +1119,7 @@ describe("PR E2E controller exception safety", () => {
     }
   });
 
-  it("rejects a stale fork exception before changing the gate", async () => {
+  it("rejects a stale fork credentialed E2E skip before changing the gate", async () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     const requests: RecordedGitHubRequest[] = [];
@@ -1135,8 +1144,8 @@ describe("PR E2E controller exception safety", () => {
     );
 
     await expect(
-      resolveForkGate({
-        mode: "resolve-fork",
+      recordManualForkE2ESkip({
+        mode: "record-fork-e2e-skip",
         prNumber: 42,
         headSha: HEAD_SHA,
         baseSha: BASE_SHA,
@@ -1148,7 +1157,7 @@ describe("PR E2E controller exception safety", () => {
     expect(requests.some((request) => request.method === "PATCH")).toBe(false);
   });
 
-  it("rejects a fork exception after the pull request is retargeted", async () => {
+  it("rejects a fork credentialed E2E skip after the pull request is retargeted", async () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     const requests: RecordedGitHubRequest[] = [];
@@ -1173,8 +1182,8 @@ describe("PR E2E controller exception safety", () => {
     );
 
     await expect(
-      resolveForkGate({
-        mode: "resolve-fork",
+      recordManualForkE2ESkip({
+        mode: "record-fork-e2e-skip",
         prNumber: 42,
         headSha: HEAD_SHA,
         baseSha: BASE_SHA,

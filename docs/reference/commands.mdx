@@ -1006,7 +1006,7 @@ Use `shields status` to inspect the current state, `shields up` to lock the sand
 
 <AgentOnly variant="openclaw,hermes">
 
-For the full mutability matrix, refer to [Runtime Controls](../manage-sandboxes/runtime-controls).
+For the full mutability matrix, refer to [Understand Runtime Changes](../manage-sandboxes/configure-sandboxes/understand-runtime-changes).
 
 </AgentOnly>
 
@@ -1540,7 +1540,7 @@ This command attempts to wipe the manifest-defined agent state while its persist
 OpenShell can retain the per-name persistent volume after sandbox deletion.
 If the wipe cannot complete, onboarding with the same name can resurface old files.
 Do not rely on a retained volume as a backup.
-Back up your workspace first with `$$nemoclaw <name> snapshot create` or refer to [Backup and Restore](../manage-sandboxes/backup-restore).
+Back up your workspace first with `$$nemoclaw <name> snapshot create` or refer to [Create and Restore Snapshots](../manage-sandboxes/state-and-backups/create-and-restore-snapshots).
 If you want to upgrade the sandbox while preserving state, use `$$nemoclaw <name> rebuild` instead.
 </Warning>
 
@@ -1952,7 +1952,7 @@ The sandbox client connects directly through OpenShell's existing egress path, a
 After the add commits, NemoClaw freshly verifies the exact generated policy, expected provider attachment, recorded provider ID, generic type, valid resource version, and exactly one credential key matching the recorded key.
 If those readiness checks pass, it sends a differential pair of wire-level MCP `initialize` requests from inside the sandbox — one with the placeholder header and one with an unresolvable control bearer — to verify that OpenShell resolves the credential on egress; otherwise it reports an inconclusive `probe skipped` result and sends no request.
 Neither outcome fails the committed add, and `--no-probe` skips this check.
-For full setup details, see [Set Up MCP Servers](../manage-sandboxes/set-up-mcp-servers).
+For full setup details, see [Add an MCP Server](../manage-sandboxes/mcp-servers/add-an-mcp-server).
 
 <AgentOnly variant="hermes">
 
@@ -3044,7 +3044,7 @@ To avoid uninstall destroying host-side user data, uninstall preserves the follo
 | Entry | What it holds |
 |---|---|
 | `rebuild-backups/` | Host-side snapshots that `$$nemoclaw <name> snapshot create` and `$$nemoclaw backup-all` write. `$$nemoclaw <name> snapshot restore` reads them back after you reinstall. |
-| `backups/` | Host-side workspace backups that `scripts/backup-workspace.sh` writes. Refer to [Backup and Restore](../manage-sandboxes/backup-restore). |
+| `backups/` | Host-side workspace backups that `scripts/backup-workspace.sh` writes. Refer to [Transfer State Manually](../manage-sandboxes/state-and-backups/transfer-state-manually). |
 | `sandboxes.json` | Host-side sandbox registry. NemoClaw uses it to map sandbox names back to their persistence directories when you reinstall. |
 
 Uninstall removes every other entry under `~/.nemoclaw/` (gateway source, runtime state, the Ollama auth proxy PID file, etc.).
@@ -3252,7 +3252,7 @@ Set them before running `$$nemoclaw onboard`.
 | `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` | JSON array of non-blank strings | Appends advanced operator-owned tokens to the managed `vllm serve` command after NemoClaw's registry defaults. Example: `["--max-num-seqs","2"]`. Malformed JSON, non-string tokens, or blank tokens fail before Docker work starts. |
 | `NEMOCLAW_IGNORE_VLLM_DISK_SPACE` | exactly `1` | Allows managed vLLM to continue when Docker image-storage or model-cache capacity is insufficient or cannot be verified; other values do not bypass the checks. |
 <AgentOnly variant="openclaw">
-| `NEMOCLAW_MINIMAL_BOOTSTRAP` | `1` to enable | Skips default OpenClaw workspace-template seeding for new pristine workspaces. Existing files are not deleted; refer to [Runtime Controls](../manage-sandboxes/runtime-controls). |
+| `NEMOCLAW_MINIMAL_BOOTSTRAP` | `1` to enable | Skips default OpenClaw workspace-template seeding for new pristine workspaces. Existing files are not deleted; refer to [Understand Runtime Changes](../manage-sandboxes/configure-sandboxes/understand-runtime-changes). |
 </AgentOnly>
 | `NEMOCLAW_MODEL_ROUTER_PYTHON` | absolute path | Pins the host Python interpreter used to create the Model Router virtual environment. Strict. NemoClaw probes only that interpreter and aborts with the failure reason if it does not qualify, rather than silently falling back to another python. Relative command names such as `python3.12` are rejected. When unset, NemoClaw probes `python3.13`, `python3.12`, `python3.11`, `python3.10`, and bare `python3`, retains every interpreter whose version is in `[3.10, 3.14)` and whose `ensurepip`, `pyexpat`, `ssl`, and `venv` stdlib modules import cleanly, and tries `python -m venv` on each in priority order until one succeeds. Set the pin when the auto-discovered interpreter is broken (for example, Homebrew `python@3.14` with a `pyexpat` dlopen mismatch on macOS). |
 

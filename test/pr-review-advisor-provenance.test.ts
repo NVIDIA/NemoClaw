@@ -105,7 +105,7 @@ describe("PR review advisor target-event provenance", () => {
     expect(previous).toBeNull();
   });
 
-  it("rejects metadata without exactly one matching run association", async () => {
+  it("rejects metadata without one matching run association", async () => {
     const association = { number: 42, head: { sha: HEAD_SHA }, base: { sha: BASE_SHA } };
     mockRun({ pull_requests: [association, association] });
 
