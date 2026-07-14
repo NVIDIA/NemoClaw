@@ -313,6 +313,10 @@ jobs:
           test -n "${DCODE_PROFILE_GATE_BUILDER}"
           printf 'BUILDX_BUILDER=%s\n' "${DCODE_PROFILE_GATE_BUILDER}" >> "${GITHUB_ENV}"
 
+      - name: Validate DCode profile gate production Docker build args
+        if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}
+        run: scripts/check-production-build-args.sh
+
       # Import the trusted publisher cache without allowing PR-controlled E2E
       # builds to replace it. The negative gate still executes every reviewed
       # Dockerfile and proves the expected production-image failure.
