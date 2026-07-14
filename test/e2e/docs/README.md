@@ -89,8 +89,9 @@ The retired `--emit-matrix` and `--plan-only` paths must not be reintroduced.
 When adding or changing a live test, update `test/e2e/mock-parity.json` with
 the fast PR-collected test that covers its mockable contract. If the behavior
 cannot be reproduced without real infrastructure, record a concise
-`liveOnlyReason` instead. The PR and `main` `e2e-support` lanes enforce this
-changed-file policy without requiring an immediate backfill of untouched tests.
+`liveOnlyReason` instead. The PR and `main` CLI coverage shards enforce this
+changed-file policy alongside the `e2e-support` project without requiring an
+immediate backfill of untouched tests.
 
 ## Repository Layout
 
@@ -141,12 +142,13 @@ test/e2e/
   invocations, and suppress PR reporting and scorecards. The workflow boundary
   requires every selected job shard to upload its evidence artifact.
 - `.github/workflows/e2e-branch-validation.yaml`, `macos-e2e.yaml`,
-  `wsl-e2e.yaml`, `ollama-proxy-e2e.yaml`, and `regression-e2e.yaml` call
-  focused E2E targets directly for their E2E coverage.
+  `wsl-e2e.yaml`, and `regression-e2e.yaml` call focused E2E targets directly
+  for their E2E coverage. Individual repository-hosted targets, including
+  `ollama-auth-proxy`, are selected through `.github/workflows/e2e.yaml`.
 - `vitest.config.ts` contains `e2e-support` for fast fixture/support tests and
-  `e2e-live` for opt-in live target execution. The PR and `main` aggregate
-  checks require `e2e-support` for code changes; the project never opts into
-  live targets.
+  `e2e-live` for opt-in live target execution. The PR and `main` CLI coverage
+  shards include `e2e-support` for code changes; they never opt into live
+  targets.
 
 ## Migration Tracking
 
