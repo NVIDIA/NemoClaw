@@ -496,32 +496,3 @@ export function createDebugCommandTestEnv(
     PATH: `${localBin}:${process.env.PATH || ""}`,
   };
 }
-
-export function writeHostAliasDockerStub(
-  localBin: string,
-  dockerLog: string,
-  hostAliases: { ip: string; hostnames: string[] }[],
-  { gatewayRunning = true }: { gatewayRunning?: boolean } = {},
-): void {
-  const resource = JSON.stringify({
-    metadata: { resourceVersion: "123" },
-    spec: { podTemplate: { spec: { hostAliases } } },
-  });
-  fs.writeFileSync(
-    path.join(localBin, "docker"),
-    [
-      "#!/usr/bin/env bash",
-      `log_file=${JSON.stringify(dockerLog)}`,
-      'printf "%s\\n" "$@" >> "$log_file"',
-      'if [ "$1" = "ps" ]; then',
-      gatewayRunning ? '  printf "%s\\n" "openshell-cluster-nemoclaw"' : "  :",
-      "  exit 0",
-      "fi",
-      'if printf "%s\\n" "$@" | grep -q "^get$"; then',
-      `  printf "%s\\n" ${JSON.stringify(resource)}`,
-      "fi",
-      "exit 0",
-    ].join("\n"),
-    { mode: 0o755 },
-  );
-}
