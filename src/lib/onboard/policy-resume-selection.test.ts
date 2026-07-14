@@ -87,28 +87,18 @@ describe("preparePolicyPresetResumeSelection web search reconciliation", () => {
   });
 });
 
-function tiers(defaults: Record<string, string[]>) {
-  return {
-    getTier: (tierName: string) => (tierName in defaults ? { name: tierName } : null),
-    resolveTierPresets: (tierName: string) => (defaults[tierName] ?? []).map((name) => ({ name })),
-  };
-}
-
 describe("preparePolicyPresetResumeSelection tier-default preservation (#6844)", () => {
-  const BALANCED = { balanced: ["npm", "brave"], restricted: [] as string[] };
+  // These exercise the real tiers.yaml through classifyPresetProvenance (no tier
+  // stub): `brave` is a Balanced default, and Restricted lists no such default.
 
   it("preserves brave on reuse when it is a Balanced-tier default and web search is off", () => {
-    const result = preparePolicyPresetResumeSelection(
-      { policies: policies(), tiers: tiers(BALANCED) },
-      "alpha",
-      {
-        recordedPolicyPresets: ["npm", "brave"],
-        agent: "openclaw",
-        webSearchConfig: null,
-        webSearchSupported: true,
-        tierName: "balanced",
-      },
-    );
+    const result = preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
+      recordedPolicyPresets: ["npm", "brave"],
+      agent: "openclaw",
+      webSearchConfig: null,
+      webSearchSupported: true,
+      tierName: "balanced",
+    });
 
     // brave is a Balanced default (an egress preset), not a stale web-search
     // leftover — it must survive reuse just like npm, and no reconcile is needed.
@@ -117,38 +107,46 @@ describe("preparePolicyPresetResumeSelection tier-default preservation (#6844)",
   });
 
   it("still prunes a stale brave on the Restricted tier (no brave default)", () => {
-    const result = preparePolicyPresetResumeSelection(
-      { policies: policies(), tiers: tiers(BALANCED) },
-      "alpha",
-      {
-        recordedPolicyPresets: ["npm", "brave"],
-        agent: "openclaw",
-        webSearchConfig: null,
-        webSearchSupported: true,
-        tierName: "restricted",
-      },
-    );
+    const result = preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
+      recordedPolicyPresets: ["npm", "brave"],
+      agent: "openclaw",
+      webSearchConfig: null,
+      webSearchSupported: true,
+      tierName: "restricted",
+    });
 
     expect(result.policyPresets).toEqual(["npm"]);
     expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
   });
 
   it("keeps brave on Balanced even when web search is set to a different provider", () => {
-    const result = preparePolicyPresetResumeSelection(
-      { policies: policies(), tiers: tiers(BALANCED) },
-      "alpha",
-      {
-        recordedPolicyPresets: ["npm", "brave"],
-        agent: "openclaw",
-        webSearchConfig: { fetchEnabled: true, provider: "tavily" },
-        webSearchConfigChanged: true,
-        webSearchSupported: true,
-        tierName: "balanced",
-      },
-    );
+    const result = preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
+      recordedPolicyPresets: ["npm", "brave"],
+      agent: "openclaw",
+      webSearchConfig: { fetchEnabled: true, provider: "tavily" },
+      webSearchConfigChanged: true,
+      webSearchSupported: true,
+      tierName: "balanced",
+    });
 
     // brave stays as the tier egress default; tavily is added as the active provider.
     expect(result.policyPresets).toEqual(["npm", "brave", "tavily"]);
+  });
+
+  it("still prunes tavily on Balanced when it is not a tier default and web search is off", () => {
+    // Boundary: the exemption is scoped to real tier defaults. tavily is NOT a
+    // Balanced default (brave is), so a leftover tavily with no matching provider
+    // is still a stale web-search preset and must be pruned.
+    const result = preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
+      recordedPolicyPresets: ["npm", "tavily"],
+      agent: "openclaw",
+      webSearchConfig: null,
+      webSearchSupported: true,
+      tierName: "balanced",
+    });
+
+    expect(result.policyPresets).toEqual(["npm"]);
+    expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
   });
 });
 

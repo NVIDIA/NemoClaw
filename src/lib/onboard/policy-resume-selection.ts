@@ -45,13 +45,8 @@ type PoliciesApi = {
   ): string[];
 };
 
-type TiersApi = {
-  getTier(tierName: string): unknown;
-  resolveTierPresets(tierName: string): Preset[];
-};
-
 export function preparePolicyPresetResumeSelection(
-  deps: { policies: PoliciesApi; tiers?: TiersApi },
+  deps: { policies: PoliciesApi },
   sandboxName: string,
   options: {
     recordedPolicyPresets: string[] | null;
@@ -106,17 +101,15 @@ export function preparePolicyPresetResumeSelection(
     customPolicyPresetNames,
   );
   // Defaults of the recorded/active tier (e.g. `brave` on Balanced) are tier
-  // egress presets, not stale web-search leftovers — exempt them from the
-  // web-search staleness prune so re-onboard reuse preserves them. (#6844)
-  const tierDefaultPresetNames =
-    options.tierName && deps.tiers?.getTier(options.tierName)
-      ? new Set(deps.tiers.resolveTierPresets(options.tierName).map((preset) => preset.name))
-      : null;
+  // egress presets, not stale web-search leftovers — pass the recorded tier +
+  // agent so the shared predicate exempts them via provenance and re-onboard
+  // reuse preserves them. (#6844)
   const isStaleBuiltinWebSearch = (name: string) =>
     isStaleBuiltinWebSearchPolicyPreset(name, {
       webSearchConfig: options.webSearchConfig,
       customPresetNames: customPolicyPresetNames,
-      tierDefaultPresetNames,
+      tierName: options.tierName,
+      agentName: options.agent,
     });
   const isInactiveObservability = (name: string) =>
     isInactiveObservabilityPolicyPreset(name, {

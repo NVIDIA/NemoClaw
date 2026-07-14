@@ -320,16 +320,6 @@ async function setupPoliciesWithSelectionInner(
   // branch before presets are recorded, so its persisted tier must also win
   // over a new prompt or non-interactive default.
   const recordedTierName = options.tierName ?? deps.getRecordedPolicyTier?.(sandboxName) ?? null;
-  // Defaults of the recorded tier (e.g. `brave` on Balanced) are tier egress
-  // presets, not stale web-search leftovers — exempt them from pruning so a
-  // reconcile-triggered reuse reapply preserves them. (#6844)
-  // getTier returns null for an unknown/non-canonical recorded tier; guard on it
-  // so resolveTierPresets (which throws on unknown tiers) is only called for a
-  // real tier, leaving non-tier reuse paths on their prior behavior.
-  const recordedTierDefaultPresetNames =
-    recordedTierName && deps.tiers.getTier(recordedTierName)
-      ? new Set(deps.tiers.resolveTierPresets(recordedTierName).map((preset) => preset.name))
-      : null;
   if (chosen !== null) {
     const knownSelectablePresets = new Set(selectablePresets.map((preset) => preset.name));
     chosen = mergeRequiredSetupPolicyPresets(chosen, {
@@ -344,9 +334,10 @@ async function setupPoliciesWithSelectionInner(
       customPresetNames,
       customOwnsObservability,
     });
-    chosen = pruneUnavailablePresets(chosen, {
-      tierDefaultPresetNames: recordedTierDefaultPresetNames,
-    });
+    // Pass the recorded tier so the pruner exempts that tier's egress defaults
+    // (e.g. `brave` on Balanced) via provenance — a reconcile-triggered reuse
+    // reapply must not narrow an applied tier default. (#6844)
+    chosen = pruneUnavailablePresets(chosen, { tierName: recordedTierName });
   }
 
   if (selectedPresets !== null) {
