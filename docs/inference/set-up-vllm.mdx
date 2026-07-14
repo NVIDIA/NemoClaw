@@ -42,6 +42,14 @@ When vLLM exposes runtime metadata such as `max_model_len`, NemoClaw uses that v
 
 Start vLLM with the model you want before onboarding because NemoClaw uses the model already served by the endpoint.
 
+<Warning>
+On DGX Spark, an existing vLLM server is operator-managed.
+NemoClaw warns when vLLM metadata heuristically indicates a large checkpoint without reported quantization, does not identify the underlying model size, or reports an unusually long context window.
+These configurations can leave too little unified-memory headroom for the host and surface as `NVRM NV_ERR_NO_MEMORY`, SSH loss, or a hard host freeze under agent/tool load.
+Prefer the managed Spark vLLM path when you want NemoClaw to use the validated Spark recipe, or restart your existing server with lower `--gpu-memory-utilization`, `--max-model-len`, `--max-num-seqs`, and `--max-num-batched-tokens` before onboarding.
+For full diagnostics and recovery steps, refer to [DGX Spark troubleshooting](../../reference/troubleshooting#dgx-spark).
+</Warning>
+
 ## Configure Structured Tool Calls
 
 Start vLLM with automatic tool choice and the tool-call parser that matches the model family when the model serves a tool-using agent.
@@ -68,6 +76,9 @@ In an interactive run, the managed path lists the supported model registry for y
 Press **Enter** to use the profile default or select another validated model with its registered `vllm serve` arguments.
 
 NemoClaw pulls the vLLM image, downloads model weights into `~/.cache/huggingface`, starts the `nemoclaw-vllm` container on `localhost:8000`, streams Hugging Face download progress, and polls `/v1/models` until the model is ready.
+The container carries a NemoClaw ownership label so later onboarding runs can distinguish it from a bring-your-own server without trusting the container name alone.
+If an existing `nemoclaw-vllm` container does not carry that label, NemoClaw preserves it and asks you to remove or rename it before installing managed vLLM.
+If another vLLM server already occupies port `8000`, the managed path stops and asks you to select the existing server or stop it first.
 Managed profiles use immutable NGC platform digests:
 
 - DGX Spark and DGX Station use the `linux/arm64` digest `sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2` with a compressed layer size of `9.60 GB` under `nvcr.io/nvidia/vllm:26.05.post1-py3`.

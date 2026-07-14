@@ -667,7 +667,7 @@ describe("E2E recommendation normalizer", () => {
 
     expect(normalized.required.map((item) => item.id)).toContain(id);
     expect(normalized.required.map((item) => item.id)).not.toContain("e2e-all");
-    expect(normalized.exactHeadCredentialFreeTests).toEqual([{ id, file }]);
+    expect(normalized.changedCredentialFreeTests).toEqual([{ id, file }]);
     expect(normalized.noTargetE2eReason).toBeNull();
   });
 
@@ -690,7 +690,7 @@ describe("E2E recommendation normalizer", () => {
       "security-posture",
     ]);
     expect(normalized.required.map((item) => item.id)).not.toContain("string-only");
-    expect(normalized.exactHeadCredentialFreeTests).toEqual([]);
+    expect(normalized.changedCredentialFreeTests).toEqual([]);
     expect(normalized.noTargetE2eReason).toBeNull();
   });
 
@@ -708,7 +708,7 @@ describe("E2E recommendation normalizer", () => {
     );
 
     expect(normalized.required.map((item) => item.id)).toContain("block-comment-proof");
-    expect(normalized.exactHeadCredentialFreeTests).toEqual([{ id: "block-comment-proof", file }]);
+    expect(normalized.changedCredentialFreeTests).toEqual([{ id: "block-comment-proof", file }]);
   });
 
   it.each([
@@ -743,14 +743,14 @@ describe("E2E recommendation normalizer", () => {
     ]);
     expect(normalized.required.map((item) => item.id)).not.toContain("docs-validation");
     expect(normalized.required.map((item) => item.id)).not.toContain("e2e-all");
-    expect(normalized.exactHeadCredentialFreeTests).toEqual([]);
+    expect(normalized.changedCredentialFreeTests).toEqual([]);
     expect(normalized.noTargetE2eReason).toBeNull();
   });
 
-  it("replaces model-provided exact-head evidence with trusted source-derived evidence", () => {
+  it("replaces model-provided changed-test evidence with trusted source-derived evidence", () => {
     const normalized = normalizeE2eTargetAdvisorResult(
       {
-        exactHeadCredentialFreeTests: [
+        changedCredentialFreeTests: [
           {
             id: "forged-proof",
             file: "test/e2e/live/forged-proof.test.ts",
@@ -764,7 +764,7 @@ describe("E2E recommendation normalizer", () => {
       metadata({ changedFiles: [] }),
     );
 
-    expect(normalized.exactHeadCredentialFreeTests).toEqual([]);
+    expect(normalized.changedCredentialFreeTests).toEqual([]);
     expect(JSON.stringify(normalized)).not.toContain("forged-proof");
   });
 
