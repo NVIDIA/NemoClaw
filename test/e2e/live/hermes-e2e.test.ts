@@ -440,7 +440,7 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
   );
   expect(deniedEgress.exitCode, resultText(deniedEgress)).not.toBe(0);
   expect(resultText(deniedEgress)).toMatch(
-    /CONNECT tunnel failed, response 403|policy[_ ]denied|not allowed by any policy/i,
+    /CONNECT tunnel failed, response 403|The requested URL returned error: 403|policy[_ ]denied|not allowed by any policy/i,
   );
 
   // Phase 4: Hermes health and sandbox state.
