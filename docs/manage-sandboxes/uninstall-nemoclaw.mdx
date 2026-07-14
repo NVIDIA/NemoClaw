@@ -32,7 +32,9 @@ Do not use `--gateway` to select another instance; when supplied for compatibili
 <Note>
 For the default gateway, the uninstall command preserves `~/.nemoclaw/rebuild-backups/`, `~/.nemoclaw/backups/`, and `~/.nemoclaw/sandboxes.json` by default.
 A non-default gateway uses the corresponding entries under `~/.nemoclaw/gateways/<port>/`.
-When no sibling gateways remain, uninstall removes every other entry under `~/.nemoclaw/`; otherwise it removes only the selected gateway's resources and port-scoped state while preserving shared host resources.
+When no sibling gateways remain, uninstall also removes the shared CLI, services, images, providers, configuration, models, and swap.
+When sibling gateways remain, it removes only the selected gateway's resources and port-scoped state and preserves those shared host resources.
+Either way, the preserved entries above stay unless you pass `--destroy-user-data`.
 
 Interactive runs prompt before they remove the preserved entries, and the default answer keeps them.
 For non-interactive runs using `--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or a non-TTY shell, pass `--destroy-user-data` or set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` to acknowledge data loss and remove the preserved entries.
