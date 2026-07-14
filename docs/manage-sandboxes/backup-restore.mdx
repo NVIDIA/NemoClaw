@@ -102,6 +102,9 @@ $$nemoclaw my-assistant snapshot restore before-upgrade --to my-assistant-clone
 $$nemoclaw my-assistant snapshot restore before-upgrade --to my-assistant-clone --force --yes
 ```
 
+For dashboard-enabled agents, NemoClaw allocates the destination sandbox its own dashboard port instead of reusing the source port.
+If no port is available, restore stops before deleting an existing `--force` destination.
+
 The force-overwrite path restores and verifies lockdown on a destination with an active shields timer, then revokes that timer before it deletes the destination.
 It clears the remaining local shields state only after deletion succeeds, before a same-name replacement is created.
 
@@ -267,7 +270,7 @@ Use this host-installed command before broad maintenance such as `$$nemoclaw upd
 $$nemoclaw backup-all
 ```
 
-`backup-all` walks the sandboxes registered on the host, creates a snapshot for each running sandbox, and stores the snapshot bundles under `~/.nemoclaw/rebuild-backups/<name>/`.
+`backup-all` walks the sandboxes registered on the host, creates a snapshot for each eligible running or temporarily started sandbox, and stores the snapshot bundles under `~/.nemoclaw/rebuild-backups/<name>/`.
 If a registered docker-driver sandbox's container is stopped, `backup-all` starts the container for the duration of the backup and returns it to its stopped state afterward.
 If the container cannot be returned to the stopped state, the backup run fails and reports that the container was left running.
 If a sandbox is not running and its container cannot be started this way, start the sandbox or its container and rerun `$$nemoclaw backup-all` so NemoClaw can capture a fresh snapshot before maintenance.
