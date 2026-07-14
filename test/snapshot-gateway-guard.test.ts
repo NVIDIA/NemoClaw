@@ -214,7 +214,7 @@ describe("snapshot VM-driver gateway guard", () => {
   it("snapshot create accepts healthy macOS VM-driver gateways without legacy cluster container", () => {
     const env = makeHealthyVmGatewayEnv("nemoclaw-snap-vm-gw-create-");
     const r = runCli("alpha snapshot create --name baseline", env);
-    expect(r.code).toBe(0);
+    expect(r.code, r.out).toBe(0);
     expect(r.out).toContain("Snapshot v1 name=baseline created");
     expect(r.out).not.toContain("Failed to query live sandbox state");
   });
@@ -227,7 +227,7 @@ describe("snapshot VM-driver gateway guard", () => {
     expect(seed.out).toContain("Snapshot v1 name=baseline created");
 
     const r = runCli("alpha snapshot restore baseline --to clone-1", env);
-    expect(r.code).toBe(0);
+    expect(r.code, r.out).toBe(0);
     expect(r.out).not.toContain("could not resolve");
     expect(r.out).not.toContain("kubectl-must-not-run");
     expect(r.out).toContain("openshell/sandbox-from:fast-path-test");
