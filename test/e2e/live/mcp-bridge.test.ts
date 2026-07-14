@@ -28,7 +28,7 @@ import {
   assertHermesInspectionRejectsUnmanagedFields,
   assertHermesRemovalSurvivesGatewayRestart,
 } from "./mcp-bridge-hermes-lifecycle.ts";
-import { isHermesRestartTransportFailure } from "./mcp-bridge-reliability.ts";
+import { retryAfterHermesRestartTransportFailure } from "./mcp-bridge-reliability.ts";
 import {
   buildMcpDnsRebindingProbeScript,
   hostAddressForSandbox,
@@ -478,19 +478,18 @@ async function assertConcurrentAddSerialized(
     policy: { registryPresent: true, gatewayPresent: true },
     adapter: { registered: true },
   });
-  let duplicateRejection = rejected[0]!;
-  if (!/already exists/iu.test(resultText(duplicateRejection))) {
-    expect(
-      isHermesRestartTransportFailure(options.expectedAdapter, resultText(duplicateRejection)),
-      `${options.artifactPrefix} rejected concurrent add must be a known managed-restart transport failure`,
-    ).toBe(true);
-    duplicateRejection = await host.nemoclaw(args, {
-      artifactName: `${options.artifactPrefix}-mcp-concurrent-add-after-restart-transport-failure`,
-      env,
-      redactionValues: [HOST_SECRET],
-      timeoutMs: 90_000,
-    });
-  }
+  const duplicateRejection = await retryAfterHermesRestartTransportFailure({
+    adapter: options.expectedAdapter,
+    diagnostic: resultText(rejected[0]!),
+    originalResult: rejected[0]!,
+    retry: () =>
+      host.nemoclaw(args, {
+        artifactName: `${options.artifactPrefix}-mcp-concurrent-add-after-restart-transport-failure`,
+        env,
+        redactionValues: [HOST_SECRET],
+        timeoutMs: 90_000,
+      }),
+  });
   expectExitNonZero(
     duplicateRejection,
     `${options.artifactPrefix} concurrent MCP add rejects the serialized duplicate`,
