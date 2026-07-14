@@ -15,6 +15,7 @@ import {
 } from "./sandbox-control";
 import {
   type GrpcOpenShellSandboxControl,
+  OpenShellGrpcOutputLimitError,
   OpenShellGrpcPreDispatchError,
 } from "./grpc-sandbox-control";
 
@@ -87,10 +88,14 @@ export async function execSandboxReadOnlyWithGrpcFallback(
       ...request,
       timeoutMs: request.timeoutMs ?? OPENSHELL_OPERATION_TIMEOUT_MS,
     });
-    if (!(result.error instanceof OpenShellGrpcPreDispatchError)) return result;
+    if (!result.error || result.error instanceof OpenShellGrpcOutputLimitError) return result;
+    const context =
+      result.error instanceof OpenShellGrpcPreDispatchError ? result.error.cause : result.error;
     dependencies.debug(
-      "OpenShell direct gRPC lookup failed before dispatch; retrying through the CLI",
-      result.error.cause,
+      result.error instanceof OpenShellGrpcPreDispatchError
+        ? "OpenShell direct gRPC lookup failed before dispatch; retrying through the CLI"
+        : "OpenShell direct gRPC read-only exec failed; retrying through the CLI",
+      context,
     );
   } catch (error) {
     dependencies.debug(

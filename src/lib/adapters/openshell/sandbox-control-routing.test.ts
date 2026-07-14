@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { OpenShellGrpcEdgeTunnelRequiredError } from "./grpc-gateway-config";
 import {
   type GrpcOpenShellSandboxControl,
+  OpenShellGrpcOutputLimitError,
   OpenShellGrpcPreDispatchError,
 } from "./grpc-sandbox-control";
 import type { OpenShellSandboxControl, SandboxExecResult } from "./sandbox-control";
@@ -99,9 +100,26 @@ describe("read-only OpenShell sandbox control routing", () => {
     expect(test.close).toHaveBeenCalledOnce();
   });
 
-  it("does not replay a post-dispatch gRPC stream failure", async () => {
+  it("retries a post-dispatch gRPC stream failure because the command is read-only", async () => {
     const grpcError = new Error("stream reset");
     const result = { status: null, stdout: "partial", stderr: "", error: grpcError };
+    const cliResult = { status: 0, stdout: "cli", stderr: "" };
+    const test = dependencies(result, cliResult);
+
+    await expect(
+      execSandboxReadOnlyWithGrpcFallback("nemoclaw", request, test.deps),
+    ).resolves.toEqual(cliResult);
+
+    expect(test.cliExec).toHaveBeenCalledWith(request);
+    expect(test.debug).toHaveBeenCalledWith(
+      expect.stringContaining("read-only exec failed"),
+      grpcError,
+    );
+  });
+
+  it("does not retry a local gRPC output limit failure", async () => {
+    const error = new OpenShellGrpcOutputLimitError(4096);
+    const result = { status: null, stdout: "partial", stderr: "", error };
     const test = dependencies(result);
 
     await expect(
