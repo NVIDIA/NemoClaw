@@ -699,8 +699,16 @@ export async function showSandboxChannelStatus(
   const disabledChannels = new Set(registry.getDisabledMessagingChannelsFromEntry(entry));
   const channelIsPaused = disabledChannels.has(channelName);
 
+  // The log-tail breadcrumb producer (the telegram runtime preload writing
+  // `[telegram] …` to /tmp/gateway.log) and the gateway process pattern only
+  // exist for OpenClaw — the telegram manifest declares `runtime.openclaw`
+  // only. A Hermes telegram sandbox has no producer for this probe, so it
+  // falls back to the basic config report instead of a misleading health
+  // verdict. Extend the gate when a non-OpenClaw producer/evaluator is added.
   const logTailEvaluator =
-    diagnostic.deepProbe === "log-tail" ? LOG_TAIL_EVALUATORS[channelName] : undefined;
+    diagnostic.deepProbe === "log-tail" && agent.name === "openclaw"
+      ? LOG_TAIL_EVALUATORS[channelName]
+      : undefined;
   let report: ChannelStatusReport;
   if (diagnostic.deepProbe === "in-sandbox-qr" && !channelIsPaused) {
     const input = buildWhatsappProbeInput(sandboxName, agent, deps);
