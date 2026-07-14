@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 import { parseControllerCommand } from "../tools/e2e/pr-e2e-gate.mts";
@@ -11,6 +13,7 @@ import { parseControllerCommand } from "../tools/e2e/pr-e2e-gate.mts";
 const HEAD_SHA = "a".repeat(40);
 const BASE_SHA = "b".repeat(40);
 const WORKFLOW_SHA = "d".repeat(40);
+const GATE_SCRIPT = fileURLToPath(new URL("../tools/e2e/pr-e2e-gate.mts", import.meta.url));
 
 function parseStartCommand(workDir: string, prNumber = "42") {
   return parseControllerCommand([
@@ -52,6 +55,18 @@ function withPrivateWorkDir(run: (workDir: string) => void) {
 }
 
 describe("PR E2E controller commands", () => {
+  it("loads under the workflow's Node strip-types runtime", () => {
+    const result = spawnSync(
+      process.execPath,
+      ["--experimental-strip-types", GATE_SCRIPT, "--mode", "invalid"],
+      { encoding: "utf8" },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("--mode must be seed, start, finish");
+    expect(result.stderr).not.toContain("ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX");
+  });
+
   it("parses a start command inside a private workspace", () => {
     withPrivateWorkDir((workDir) => {
       expect(parseStartCommand(workDir)).toMatchObject({
