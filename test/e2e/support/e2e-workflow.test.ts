@@ -36,8 +36,8 @@ describe("e2e workflow boundary", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
   });
 
-  it("rejects Hermes rebuild cache wiring drift", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-hermes-rebuild-cache-workflow-"));
+  it("rejects rebuild and DCode cache wiring drift", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-build-cache-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
     const workflow = readWorkflow() as {
       jobs: Record<
@@ -46,36 +46,58 @@ describe("e2e workflow boundary", () => {
           steps: Array<{
             env?: Record<string, unknown>;
             name?: string;
+            uses?: string;
             with?: Record<string, unknown>;
           }>;
         }
       >;
     };
-    const steps = workflow.jobs["rebuild-hermes"].steps;
-    type Step = (typeof steps)[number];
-    const cloneStep = (name: string): Step => {
+    type Step = (typeof workflow.jobs)[string]["steps"][number];
+    const cloneStep = (job: string, name: string): Step => {
+      const steps = workflow.jobs[job].steps;
       const index = steps.findIndex((step) => step.name === name);
       const clone = structuredClone(steps[index] as Step);
       steps[index] = clone;
       return clone;
     };
-    const setupBuildx = cloneStep("Set up Hermes rebuild Buildx");
-    const routeBuilds = cloneStep("Route Hermes rebuild Docker builds through Buildx");
-    const warmCurrent = cloneStep("Warm current Hermes base build cache");
-    const warmOld = cloneStep("Warm old Hermes base build cache");
-    setupBuildx.with!["driver-opts"] = "network=host";
-    routeBuilds.env!.HERMES_REBUILD_BUILDER = "default";
-    warmCurrent.with!["cache-from"] = "type=gha,scope=buildkit";
-    warmOld.with!["build-args"] = "HERMES_VERSION=latest";
+
+    const openClawSetup = cloneStep("rebuild-openclaw", "Set up rebuild Buildx");
+    const openClawRoute = cloneStep(
+      "rebuild-openclaw",
+      "Route rebuild Docker builds through Buildx",
+    );
+    const openClawWarm = cloneStep("rebuild-openclaw", "Warm current OpenClaw base build cache");
+    openClawSetup.with!["driver-opts"] = "network=host";
+    openClawRoute.env!.REBUILD_BUILDER = "default";
+    openClawWarm.with!["cache-from"] = "type=gha,scope=buildkit";
+    openClawWarm.with!["cache-to"] = "type=registry,ref=example.invalid/cache";
+
+    const hermesWarm = cloneStep("rebuild-hermes", "Warm current Hermes base build cache");
+    hermesWarm.with!["cache-from"] = "type=gha,scope=buildkit";
+    hermesWarm.with!["cache-to"] = "type=registry,ref=example.invalid/cache";
+
+    const dcodeSetup = cloneStep("live", "Set up DCode profile gate Buildx");
+    const dcodeRoute = cloneStep("live", "Route DCode profile gate Docker builds through Buildx");
+    const dcodeWarm = cloneStep("live", "Warm DCode profile gate base build cache");
+    dcodeSetup.with!["driver-opts"] = "network=host";
+    dcodeRoute.env!.DCODE_PROFILE_GATE_BUILDER = "default";
+    dcodeWarm.with!["cache-from"] = "type=gha,scope=buildkit";
+    dcodeWarm.with!["cache-to"] = "type=registry,ref=example.invalid/cache";
     fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
     try {
       expect(validateE2eWorkflowBoundary(workflowPath)).toEqual(
         expect.arrayContaining([
-          "rebuild-hermes Buildx must enable default-load for the live Docker builds",
-          "rebuild-hermes must route Docker builds to the configured Buildx builder",
-          "rebuild-hermes current base cache must import its job scope and the Hermes publisher scope",
-          "rebuild-hermes old base cache must match the live test's pinned Hermes fixture",
+          "rebuild-openclaw Buildx must enable default-load for the live Docker builds",
+          "rebuild-openclaw must route Docker builds to the configured Buildx builder",
+          "rebuild-openclaw base cache must import the trusted publisher cache",
+          "rebuild-openclaw must keep PR-controlled cache layers job-local",
+          "rebuild-hermes base cache must import the trusted publisher cache",
+          "rebuild-hermes must keep PR-controlled cache layers job-local",
+          "live DCode Buildx must enable default-load for the gate Docker builds",
+          "live DCode gate must route Docker builds to the configured Buildx builder",
+          "live DCode cache warm must import the trusted publisher cache",
+          "live DCode cache warm must keep PR-controlled cache layers job-local",
         ]),
       );
     } finally {

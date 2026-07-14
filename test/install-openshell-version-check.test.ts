@@ -1085,13 +1085,14 @@ exit 0`,
     expect(result.stdout).not.toContain("Installing OpenShell from release 'dev'");
   });
 
-  it("preserves the rebuild Hermes requested channel through the real installer boundary", () => {
+  it("preserves rebuild Hermes workflow inputs through the real installer boundary", () => {
     const childEnv = buildRebuildHermesChildEnv(
       {
         HOME: process.env.HOME,
         PATH: process.env.PATH,
         NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
         NEMOCLAW_OPENSHELL_CHANNEL: "dev",
+        BUILDX_BUILDER: "hermes-cache-builder",
         NVIDIA_API_KEY: "must-not-reach-child",
       },
       {},
@@ -1100,6 +1101,7 @@ exit 0`,
 
     expect(childEnv.NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL).toBe("1");
     expect(childEnv.NEMOCLAW_OPENSHELL_CHANNEL).toBe("dev");
+    expect(childEnv.BUILDX_BUILDER).toBe("hermes-cache-builder");
     expect(childEnv.NVIDIA_API_KEY).toBeUndefined();
     expect(result.status).not.toBe(0);
     expect(result.stdout).toContain("Installing OpenShell from release 'dev'");

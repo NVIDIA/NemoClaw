@@ -436,6 +436,84 @@ function requireJobStep(
   return step;
 }
 
+function requireReadOnlyBuildCacheImports(
+  errors: string[],
+  steps: readonly WorkflowStep[],
+  boundary: string,
+): void {
+  for (const step of steps.filter((candidate) =>
+    stringValue(candidate.uses).startsWith("docker/build-push-action@"),
+  )) {
+    const inputs = asRecord(step.with);
+    if (Object.hasOwn(inputs, "cache-to") || inputs.push === true) {
+      errors.push(`${boundary} must keep PR-controlled cache layers job-local`);
+    }
+  }
+}
+
+function validateRebuildBaseCache(
+  errors: string[],
+  jobName: string,
+  steps: readonly WorkflowStep[],
+  options: { agentName: "Hermes" | "OpenClaw"; cacheRef: string; dockerfile: string },
+): Array<WorkflowStep | undefined> {
+  requireReadOnlyBuildCacheImports(errors, steps, jobName);
+  const setupBuildx = requireJobStep(errors, jobName, steps, "Set up rebuild Buildx");
+  if (setupBuildx?.uses !== "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c") {
+    errors.push(`${jobName} must use the reviewed rebuild Buildx action`);
+  }
+  if (setupBuildx?.id !== "rebuild-buildx") {
+    errors.push(`${jobName} Buildx setup must expose the rebuild-buildx step id`);
+  }
+  if (asRecord(setupBuildx?.with)["driver-opts"] !== "default-load=true") {
+    errors.push(`${jobName} Buildx must enable default-load for the live Docker builds`);
+  }
+
+  const routeBuilds = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Route rebuild Docker builds through Buildx",
+  );
+  if (asRecord(routeBuilds?.env).REBUILD_BUILDER !== "${{ steps.rebuild-buildx.outputs.name }}") {
+    errors.push(`${jobName} must route Docker builds to the configured Buildx builder`);
+  }
+  requireRunContains(errors, routeBuilds, "test -n");
+  requireRunContains(errors, routeBuilds, "BUILDX_BUILDER=%s");
+  requireRunContains(errors, routeBuilds, '>> "${GITHUB_ENV}"');
+
+  const validateBuildArgs = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    `Validate ${options.agentName} rebuild production Docker build args`,
+  );
+  requireRunContains(errors, validateBuildArgs, "scripts/check-production-build-args.sh");
+
+  const warmCurrentBase = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    `Warm current ${options.agentName} base build cache`,
+  );
+  if (
+    warmCurrentBase?.uses !== "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a"
+  ) {
+    errors.push(`${jobName} must warm the current base with the reviewed action`);
+  }
+  const warmInputs = asRecord(warmCurrentBase?.with);
+  if (warmInputs.builder !== "${{ steps.rebuild-buildx.outputs.name }}") {
+    errors.push(`${jobName} base cache must use the routed Buildx builder`);
+  }
+  if (warmInputs.context !== "." || warmInputs.file !== options.dockerfile) {
+    errors.push(`${jobName} base cache must build the reviewed ${options.agentName} Dockerfile`);
+  }
+  if (warmInputs["cache-from"] !== options.cacheRef) {
+    errors.push(`${jobName} base cache must import the trusted publisher cache`);
+  }
+  return [setupBuildx, routeBuilds, validateBuildArgs, warmCurrentBase];
+}
+
 function requireRunContains(
   errors: string[],
   step: WorkflowStep | undefined,
@@ -1279,6 +1357,12 @@ function validateRebuildOpenClawJob(errors: string[], jobs: WorkflowRecord): voi
     errors.push("rebuild-openclaw checkout step must set persist-credentials=false");
   }
 
+  const cacheSteps = validateRebuildBaseCache(errors, jobName, steps, {
+    agentName: "OpenClaw",
+    cacheRef: "type=registry,ref=ghcr.io/nvidia/nemoclaw/sandbox-base:buildcache",
+    dockerfile: "Dockerfile.base",
+  });
+
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
   requireEnvDoesNotExposeSecret(
     errors,
@@ -1301,6 +1385,22 @@ function validateRebuildOpenClawJob(errors: string[], jobs: WorkflowRecord): voi
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/rebuild-openclaw.test.ts");
+
+  const prepareWorkspace = requireJobStep(errors, jobName, steps, "Prepare E2E workspace");
+  const orderedSteps = [...cacheSteps, prepareWorkspace, installOpenShell, runVitest];
+  if (
+    orderedSteps.every((step) => step !== undefined) &&
+    orderedSteps.some(
+      (step, index) =>
+        index > 0 &&
+        steps.indexOf(orderedSteps[index - 1] as WorkflowStep) >=
+          steps.indexOf(step as WorkflowStep),
+    )
+  ) {
+    errors.push(
+      "rebuild-openclaw Buildx setup, cache warming, workspace prep, and test must stay in order",
+    );
+  }
 }
 
 function validateRebuildHermesJob(
@@ -1393,97 +1493,11 @@ function validateRebuildHermesJob(
     errors.push(`${jobName} checkout step must set persist-credentials=false`);
   }
 
-  const setupBuildx = requireJobStep(errors, jobName, steps, "Set up Hermes rebuild Buildx");
-  if (setupBuildx?.uses !== "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c") {
-    errors.push(`${jobName} must use the reviewed Hermes rebuild Buildx action`);
-  }
-  if (setupBuildx?.id !== "hermes-rebuild-buildx") {
-    errors.push(`${jobName} Buildx setup must expose the hermes-rebuild-buildx step id`);
-  }
-  if (asRecord(setupBuildx?.with)["driver-opts"] !== "default-load=true") {
-    errors.push(`${jobName} Buildx must enable default-load for the live Docker builds`);
-  }
-
-  const routeBuilds = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Route Hermes rebuild Docker builds through Buildx",
-  );
-  if (
-    asRecord(routeBuilds?.env).HERMES_REBUILD_BUILDER !==
-    "${{ steps.hermes-rebuild-buildx.outputs.name }}"
-  ) {
-    errors.push(`${jobName} must route Docker builds to the configured Buildx builder`);
-  }
-  requireRunContains(errors, routeBuilds, "test -n");
-  requireRunContains(errors, routeBuilds, "BUILDX_BUILDER=%s");
-  requireRunContains(errors, routeBuilds, '>> "${GITHUB_ENV}"');
-
-  const validateBuildArgs = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Validate Hermes rebuild production Docker build args",
-  );
-  requireRunContains(errors, validateBuildArgs, "scripts/check-production-build-args.sh");
-
-  const warmCurrentBase = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Warm current Hermes base build cache",
-  );
-  const warmOldBase = requireJobStep(errors, jobName, steps, "Warm old Hermes base build cache");
-  const buildAction = "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a";
-  for (const [description, step] of [
-    ["current", warmCurrentBase],
-    ["old", warmOldBase],
-  ] as const) {
-    if (step?.uses !== buildAction) {
-      errors.push(`${jobName} must warm the ${description} Hermes base with the reviewed action`);
-    }
-    const inputs = asRecord(step?.with);
-    if (inputs.builder !== "${{ steps.hermes-rebuild-buildx.outputs.name }}") {
-      errors.push(`${jobName} ${description} base cache must use the routed Buildx builder`);
-    }
-    if (inputs.context !== "." || inputs.file !== "agents/hermes/Dockerfile.base") {
-      errors.push(`${jobName} ${description} base cache must build the reviewed Hermes Dockerfile`);
-    }
-  }
-
-  const currentInputs = asRecord(warmCurrentBase?.with);
-  if (
-    stringValue(currentInputs["cache-from"]).trim() !==
-    "type=gha,scope=${{ github.job }}-current-base\ntype=gha,scope=hermes-sandbox-base"
-  ) {
-    errors.push(
-      `${jobName} current base cache must import its job scope and the Hermes publisher scope`,
-    );
-  }
-  if (currentInputs["cache-to"] !== "type=gha,scope=${{ github.job }}-current-base,mode=max") {
-    errors.push(`${jobName} current base cache must export to its job-specific scope`);
-  }
-
-  const oldInputs = asRecord(warmOldBase?.with);
-  if (
-    stringValue(oldInputs["build-args"]).trim() !==
-    [
-      "HERMES_VERSION=v2026.5.16",
-      "HERMES_SEMVER=0.14.0",
-      "HERMES_TARBALL_SHA256=c0a554050a50ee9a62f3fa5cd288a167ba5640c42d647d100cdea084b7294143",
-      "HERMES_NPM_INTEGRITY=sha512-kkHSw8iprp0JWAOf3ZZF0OHzRBj3E/BbG/QV0O4lwonxuY7AWhSepOhzSMlWo21VbQ/fTLwFkr/q3cIjDZDLBA==",
-      "HERMES_UV_EXTRAS=messaging mcp",
-    ].join("\n")
-  ) {
-    errors.push(`${jobName} old base cache must match the live test's pinned Hermes fixture`);
-  }
-  if (
-    oldInputs["cache-from"] !== "type=gha,scope=${{ github.job }}-old-base-v2026-5-16" ||
-    oldInputs["cache-to"] !== "type=gha,scope=${{ github.job }}-old-base-v2026-5-16,mode=max"
-  ) {
-    errors.push(`${jobName} old base cache must use its job-specific versioned scope`);
-  }
+  const cacheSteps = validateRebuildBaseCache(errors, jobName, steps, {
+    agentName: "Hermes",
+    cacheRef: "type=registry,ref=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:buildcache",
+    dockerfile: "agents/hermes/Dockerfile.base",
+  });
 
   const runVitest = requireJobStep(
     errors,
@@ -1499,15 +1513,7 @@ function validateRebuildHermesJob(
   requireRunContains(errors, runVitest, "test/e2e/live/rebuild-hermes.test.ts");
 
   const prepareWorkspace = requireJobStep(errors, jobName, steps, "Prepare E2E workspace");
-  const orderedSteps = [
-    setupBuildx,
-    routeBuilds,
-    validateBuildArgs,
-    warmCurrentBase,
-    warmOldBase,
-    prepareWorkspace,
-    runVitest,
-  ];
+  const orderedSteps = [...cacheSteps, prepareWorkspace, runVitest];
   if (
     orderedSteps.every((step) => step !== undefined) &&
     orderedSteps.some(
@@ -3932,6 +3938,67 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     errors.push("checkout step must set persist-credentials=false");
   }
 
+  const dcodeTargetIf = "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}";
+  requireReadOnlyBuildCacheImports(errors, steps, "live DCode cache warm");
+  const dcodeBuildx = requireStep(errors, steps, "Set up DCode profile gate Buildx");
+  if (dcodeBuildx?.uses !== "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c") {
+    errors.push("live DCode profile gate must use the reviewed Buildx action");
+  }
+  if (dcodeBuildx?.id !== "dcode-profile-gate-buildx") {
+    errors.push("live DCode Buildx setup must expose the dcode-profile-gate-buildx step id");
+  }
+  if (dcodeBuildx?.if !== dcodeTargetIf) {
+    errors.push("live DCode Buildx setup must be scoped to the typed DCode target");
+  }
+  if (asRecord(dcodeBuildx?.with)["driver-opts"] !== "default-load=true") {
+    errors.push("live DCode Buildx must enable default-load for the gate Docker builds");
+  }
+
+  const routeDcodeBuilds = requireStep(
+    errors,
+    steps,
+    "Route DCode profile gate Docker builds through Buildx",
+  );
+  if (routeDcodeBuilds?.if !== dcodeTargetIf) {
+    errors.push("live DCode builder routing must be scoped to the typed DCode target");
+  }
+  if (
+    asRecord(routeDcodeBuilds?.env).DCODE_PROFILE_GATE_BUILDER !==
+    "${{ steps.dcode-profile-gate-buildx.outputs.name }}"
+  ) {
+    errors.push("live DCode gate must route Docker builds to the configured Buildx builder");
+  }
+  requireRunContains(errors, routeDcodeBuilds, "test -n");
+  requireRunContains(errors, routeDcodeBuilds, "BUILDX_BUILDER=%s");
+  requireRunContains(errors, routeDcodeBuilds, '>> "${GITHUB_ENV}"');
+
+  const warmDcodeBase = requireStep(errors, steps, "Warm DCode profile gate base build cache");
+  if (warmDcodeBase?.if !== dcodeTargetIf) {
+    errors.push("live DCode cache warm must be scoped to the typed DCode target");
+  }
+  if (warmDcodeBase?.uses !== "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a") {
+    errors.push("live DCode cache warm must use the reviewed build action");
+  }
+  const warmDcodeInputs = asRecord(warmDcodeBase?.with);
+  if (warmDcodeInputs.builder !== "${{ steps.dcode-profile-gate-buildx.outputs.name }}") {
+    errors.push("live DCode cache warm must use the routed Buildx builder");
+  }
+  if (
+    warmDcodeInputs.context !== "." ||
+    warmDcodeInputs.file !== "agents/langchain-deepagents-code/Dockerfile.base"
+  ) {
+    errors.push("live DCode cache warm must build the reviewed base Dockerfile");
+  }
+  if (
+    warmDcodeInputs["cache-from"] !==
+    "type=registry,ref=ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:buildcache"
+  ) {
+    errors.push("live DCode cache warm must import the trusted publisher cache");
+  }
+  if (Object.hasOwn(warmDcodeInputs, "cache-to") || warmDcodeInputs.push === true) {
+    errors.push("live DCode cache warm must keep PR-controlled layers job-local");
+  }
+
   const configureTrace = requireStep(errors, steps, "Configure live E2E trace directory");
   const configureTraceEnv = asRecord(configureTrace?.env);
   if (configureTraceEnv.TARGET_ID !== "${{ matrix.id }}") {
@@ -3959,10 +4026,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     "Install Deep Agents Code TUI host dependencies",
     ["expect"],
   );
-  if (
-    dcodeHostDependencies?.if !==
-    "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}"
-  ) {
+  if (dcodeHostDependencies?.if !== dcodeTargetIf) {
     errors.push("live DCode TUI host dependencies must be scoped to the typed DCode target");
   }
 
@@ -3987,10 +4051,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
       "live DCode profile import gate must build the reviewed repository base without an override",
     );
   }
-  if (
-    dcodeProfileImportGate?.["if"] !==
-    "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}"
-  ) {
+  if (dcodeProfileImportGate?.["if"] !== dcodeTargetIf) {
     errors.push("live DCode profile import gate must be scoped to the typed DCode target");
   }
   if (dcodeProfileImportGate?.shell !== "bash") {
@@ -4017,6 +4078,24 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     steps.indexOf(dcodeProfileImportGate) >= steps.indexOf(runVitest)
   ) {
     errors.push("live DCode profile import gate must run before live E2E tests");
+  }
+  const dcodeOrderedSteps = [
+    dcodeBuildx,
+    routeDcodeBuilds,
+    warmDcodeBase,
+    prepareWorkspace,
+    dcodeProfileImportGate,
+  ];
+  if (
+    dcodeOrderedSteps.every((step) => step !== undefined) &&
+    dcodeOrderedSteps.some(
+      (step, index) =>
+        index > 0 &&
+        steps.indexOf(dcodeOrderedSteps[index - 1] as WorkflowStep) >=
+          steps.indexOf(step as WorkflowStep),
+    )
+  ) {
+    errors.push("live DCode Buildx setup, cache warm, workspace prep, and gate must stay in order");
   }
   const runVitestEnv = asRecord(runVitest?.env);
   if (runVitestEnv.TARGET_ID !== "${{ matrix.id }}") {

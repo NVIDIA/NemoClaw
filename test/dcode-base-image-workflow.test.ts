@@ -35,9 +35,9 @@ type Publisher = {
   dockerfile: string;
 };
 
-type GhaCacheEntry = {
+type RegistryCacheEntry = {
   mode?: string;
-  scope?: string;
+  ref?: string;
 };
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
@@ -62,24 +62,28 @@ function publisherJobs(candidate: Workflow): Publisher[] {
   });
 }
 
-function copiedLocks(dockerfile: string): string[] {
+function copiedInputs(dockerfile: string): string[] {
   return [
     ...fs
       .readFileSync(path.join(repoRoot, dockerfile), "utf8")
-      .matchAll(/^COPY\s+(\S+\.lock)\s+/gm),
-  ].map(([, lock]) => lock);
+      .matchAll(/^COPY\s+(?!--from=)(?:--\S+\s+)*(\S+)\s+\S+/gm),
+  ].map(([, input]) => input);
 }
 
-function ghaCacheEntries(value: unknown): GhaCacheEntry[] {
+function copiedLocks(dockerfile: string): string[] {
+  return copiedInputs(dockerfile).filter((input) => input.endsWith(".lock"));
+}
+
+function registryCacheEntries(value: unknown): RegistryCacheEntry[] {
   return String(value ?? "")
     .split(/\r?\n/u)
     .map((entry) => entry.trim())
-    .filter((entry) => entry.split(",").includes("type=gha"))
+    .filter((entry) => entry.split(",").includes("type=registry"))
     .map((entry) =>
       Object.fromEntries(
         entry
           .split(",")
-          .filter((field) => field !== "type=gha")
+          .filter((field) => field !== "type=registry")
           .map((field) => field.split("=", 2) as [string, string]),
       ),
     );
@@ -88,10 +92,10 @@ function ghaCacheEntries(value: unknown): GhaCacheEntry[] {
 function validatePublishers(candidate: Workflow): string[] {
   const triggerPaths = candidate.on?.push?.paths ?? [];
   const publishers = publisherJobs(candidate);
-  const exportedScopeCounts = new Map<string, number>();
+  const exportedCacheRefCounts = new Map<string, number>();
   for (const { build } of publishers) {
-    const scope = ghaCacheEntries(build.with?.["cache-to"])[0]?.scope ?? "";
-    exportedScopeCounts.set(scope, (exportedScopeCounts.get(scope) ?? 0) + 1);
+    const cacheRef = registryCacheEntries(build.with?.["cache-to"])[0]?.ref ?? "";
+    exportedCacheRefCounts.set(cacheRef, (exportedCacheRefCounts.get(cacheRef) ?? 0) + 1);
   }
 
   return publishers.flatMap(({ jobName, job, build, buildIndex, dockerfile }) => {
@@ -102,31 +106,31 @@ function validatePublishers(candidate: Workflow): string[] {
     );
     const dockerfileExists =
       dockerfile.length > 0 && fs.existsSync(path.join(repoRoot, dockerfile));
-    const copiedLockPaths = dockerfileExists ? copiedLocks(dockerfile) : [];
+    const copiedInputPaths = dockerfileExists ? copiedInputs(dockerfile) : [];
     const dockerActions = steps.filter((step) => step.uses?.startsWith("docker/"));
     const tags = String(metadata?.with?.tags ?? "");
-    const cacheFrom = ghaCacheEntries(build.with?.["cache-from"]);
-    const cacheTo = ghaCacheEntries(build.with?.["cache-to"]);
-    const importedScope = cacheFrom[0]?.scope;
-    const exportedScope = cacheTo[0]?.scope;
+    const metadataImage = String(metadata?.with?.images ?? "");
+    const expectedCacheRef = `${metadataImage}:buildcache`;
+    const cacheFrom = registryCacheEntries(build.with?.["cache-from"]);
+    const cacheTo = registryCacheEntries(build.with?.["cache-to"]);
+    const importedCacheRef = cacheFrom[0]?.ref;
+    const exportedCacheRef = cacheTo[0]?.ref;
 
     return [
       ...(!dockerfileExists ? [`${jobName} must publish from an existing Dockerfile`] : []),
       ...(!triggerPaths.includes(dockerfile)
         ? [`${jobName} Dockerfile must trigger the publisher workflow`]
         : []),
-      ...copiedLockPaths
-        .filter((lock) => !triggerPaths.includes(lock))
-        .map((lock) => `${jobName} copied lockfile must trigger the publisher workflow: ${lock}`),
+      ...copiedInputPaths
+        .filter((input) => !triggerPaths.includes(input))
+        .map((input) => `${jobName} copied input must trigger the publisher workflow: ${input}`),
       ...(guardIndex < 0 || guardIndex >= buildIndex
         ? [`${jobName} must validate production build args before publishing`]
         : []),
       ...(!metadata?.uses?.startsWith("docker/metadata-action@")
         ? [`${jobName} must derive publication metadata with docker/metadata-action`]
         : []),
-      ...(String(metadata?.with?.images ?? "").length === 0
-        ? [`${jobName} must declare a publication image`]
-        : []),
+      ...(metadataImage.length === 0 ? [`${jobName} must declare a publication image`] : []),
       ...(!tags.includes("type=ref,event=tag") ||
       !tags.includes("type=raw,value=latest") ||
       !tags.includes("type=sha,prefix=,format=short")
@@ -147,18 +151,23 @@ function validatePublishers(candidate: Workflow): string[] {
       build.with?.labels !== "${{ steps.meta.outputs.labels }}"
         ? [`${jobName} must publish the reviewed metadata outputs`]
         : []),
-      ...(cacheFrom.length !== 1 || !importedScope
-        ? [`${jobName} cache-from must declare exactly one GHA scope`]
+      ...(cacheFrom.length !== 1 || !importedCacheRef
+        ? [`${jobName} cache-from must declare exactly one registry cache ref`]
         : []),
-      ...(cacheTo.length !== 1 || !exportedScope
-        ? [`${jobName} cache-to must declare exactly one GHA scope`]
+      ...(cacheTo.length !== 1 || !exportedCacheRef
+        ? [`${jobName} cache-to must declare exactly one registry cache ref`]
         : []),
-      ...(importedScope !== exportedScope
-        ? [`${jobName} must import and export the same GHA cache scope`]
+      ...(importedCacheRef !== exportedCacheRef
+        ? [`${jobName} must import and export the same registry cache ref`]
         : []),
-      ...(cacheTo[0]?.mode !== "max" ? [`${jobName} must export its GHA cache in max mode`] : []),
-      ...(exportedScope && exportedScopeCounts.get(exportedScope) !== 1
-        ? [`${jobName} must use a publisher-unique GHA cache scope`]
+      ...(cacheTo[0]?.mode !== "max"
+        ? [`${jobName} must export its registry cache in max mode`]
+        : []),
+      ...(exportedCacheRef && exportedCacheRef !== expectedCacheRef
+        ? [`${jobName} registry cache must use its publication image buildcache tag`]
+        : []),
+      ...(exportedCacheRef && exportedCacheRefCounts.get(exportedCacheRef) !== 1
+        ? [`${jobName} must use a publisher-unique registry cache ref`]
         : []),
     ];
   });
@@ -172,7 +181,7 @@ function pinnedAptVersion(dockerfile: string, packageName: string): string {
 }
 
 describe("base-image publication behavior", () => {
-  // source-shape-contract: security -- Publisher mutations must preserve immutable actions and guarded production build arguments
+  // source-shape-contract: security -- Publisher mutations must preserve immutable actions, guarded arguments, and trusted registry cache ownership
   it("accepts every discovered publisher and rejects supply-chain mutations", () => {
     const publishers = publisherJobs(workflow);
     expect(publishers.length).toBeGreaterThan(0);
@@ -182,7 +191,7 @@ describe("base-image publication behavior", () => {
     const mutatedPublisher = publisherJobs(mutated)[0];
     const mutatedSteps = mutatedPublisher.job.steps ?? [];
     const otherPublisher = publisherJobs(mutated)[1];
-    const otherScope = ghaCacheEntries(otherPublisher.build.with?.["cache-to"])[0]?.scope;
+    const otherCacheRef = registryCacheEntries(otherPublisher.build.with?.["cache-to"])[0]?.ref;
     const mutatedGuard = mutatedSteps.find((step) =>
       (step.run ?? "").includes("scripts/check-production-build-args.sh"),
     );
@@ -191,7 +200,7 @@ describe("base-image publication behavior", () => {
       ...mutatedPublisher.build.with,
       push: false,
       "cache-from": "type=gha",
-      "cache-to": `type=gha,scope=${otherScope}`,
+      "cache-to": `type=registry,ref=${otherCacheRef}`,
     };
     mutatedGuard!.run = "true";
 
@@ -201,10 +210,11 @@ describe("base-image publication behavior", () => {
         `${mutatedPublisher.jobName} Docker action must use a full commit SHA: docker/build-push-action@v7`,
         `${mutatedPublisher.jobName} build-push action must use a full commit SHA`,
         `${mutatedPublisher.jobName} must push the built image`,
-        `${mutatedPublisher.jobName} cache-from must declare exactly one GHA scope`,
-        `${mutatedPublisher.jobName} must import and export the same GHA cache scope`,
-        `${mutatedPublisher.jobName} must export its GHA cache in max mode`,
-        `${mutatedPublisher.jobName} must use a publisher-unique GHA cache scope`,
+        `${mutatedPublisher.jobName} cache-from must declare exactly one registry cache ref`,
+        `${mutatedPublisher.jobName} must import and export the same registry cache ref`,
+        `${mutatedPublisher.jobName} must export its registry cache in max mode`,
+        `${mutatedPublisher.jobName} registry cache must use its publication image buildcache tag`,
+        `${mutatedPublisher.jobName} must use a publisher-unique registry cache ref`,
       ]),
     );
   });
