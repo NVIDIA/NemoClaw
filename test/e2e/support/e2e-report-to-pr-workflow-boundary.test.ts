@@ -58,7 +58,7 @@ function executeGenerateMatrixWithPlannerOutput(plan: unknown) {
     fakeNpx,
     [
       "#!/usr/bin/env bash",
-      '[[ "$#" -eq 2 && "$1" == "tsx" && "$2" == "tools/e2e/workflow-plan.mts" ]] || exit 97',
+      '[[ "$#" -eq 4 && "$1" == "tsx" && "$2" == "tools/e2e/workflow-plan.mts" && "$3" == "--jobs" && "$4" == "cloud-onboard" ]] || exit 97',
       "printf '%s\\n' \"${FAKE_E2E_PLAN}\"",
       "",
     ].join("\n"),
@@ -75,7 +75,7 @@ function executeGenerateMatrixWithPlannerOutput(plan: unknown) {
           GITHUB_OUTPUT: outputPath,
           GITHUB_STEP_SUMMARY: path.join(directory, "summary.md"),
           INFERENCE_MODE: "mock",
-          JOBS: "",
+          JOBS: "cloud-onboard",
           PATH: `${binDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
           TARGETS: "",
         },
