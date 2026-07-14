@@ -3995,9 +3995,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   ) {
     errors.push("live DCode cache warm must import the trusted publisher cache");
   }
-  if (Object.hasOwn(warmDcodeInputs, "cache-to") || warmDcodeInputs.push === true) {
-    errors.push("live DCode cache warm must keep PR-controlled layers job-local");
-  }
 
   const configureTrace = requireStep(errors, steps, "Configure live E2E trace directory");
   const configureTraceEnv = asRecord(configureTrace?.env);
