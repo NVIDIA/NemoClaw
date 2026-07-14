@@ -395,6 +395,12 @@ function validateJobExecution(
   for (const required of ["--project e2e-live", "test/e2e/live/mcp-bridge.test.ts"]) {
     requireContains(errors, run.run, required, `${jobName} must run the unified MCP live test`);
   }
+  requireContains(
+    errors,
+    run.run,
+    "--reporter=test/e2e/risk-signal-reporter.ts",
+    `${jobName} must publish canonical risk-signal evidence`,
+  );
   requireEqual(
     errors,
     scan.id,

@@ -12,6 +12,31 @@ import { validateMcpOpenShellWorkflowBoundary } from "../../../tools/e2e/mcp-wor
 import { requireFixture } from "./require-fixture";
 
 describe("MCP workflow artifact boundary", () => {
+  it.each([
+    "mcp-bridge",
+    "mcp-bridge-dev",
+  ])("rejects missing canonical risk-signal evidence in %s", (jobName) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+    const workflowPath = path.join(directory, "e2e.yaml");
+    try {
+      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+        jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+      };
+      const run = workflow.jobs[jobName].steps.find(
+        (step) => step.name === "Run MCP OpenShell provider live test",
+      );
+      requireFixture(run?.run, `${jobName} MCP live-test fixture is missing`);
+      run.run = run.run.replace(" --reporter=test/e2e/risk-signal-reporter.ts", "");
+      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
+        `${jobName} must publish canonical risk-signal evidence`,
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("rejects missing, fail-fast, or in-process MCP agent shards", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
     const workflowPath = path.join(directory, "e2e.yaml");
