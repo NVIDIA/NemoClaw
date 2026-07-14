@@ -53,13 +53,13 @@ describe("e2e workflow boundary", () => {
       >;
     };
     type Step = (typeof workflow.jobs)[string]["steps"][number];
+    const missingStep = (job: string, name: string): never => {
+      throw new Error(`Missing workflow step in ${job}: ${name}`);
+    };
     const cloneStep = (job: string, name: string): Step => {
       const steps = workflow.jobs[job].steps;
       const index = steps.findIndex((step) => step.name === name);
-      if (index < 0) {
-        throw new Error(`Missing workflow step in ${job}: ${name}`);
-      }
-      const clone = structuredClone(steps[index] as Step);
+      const clone = structuredClone(steps[index] ?? missingStep(job, name));
       steps[index] = clone;
       return clone;
     };
