@@ -976,22 +976,10 @@ describe("PR E2E controller", () => {
           ),
           githubFetchRoute(
             ({ url }) =>
-              url.includes(`/actions/runs/${CI_RUN_ID}/attempts/${CI_RUN_ATTEMPT}/jobs?`),
-            ({ url }) => {
-              if (new URL(url).searchParams.get("page") === "2") {
-                return githubResponse({
-                  total_count: 101,
-                  jobs: [
-                    {
-                      id: 105,
-                      name: "late-failure",
-                      conclusion: "failure",
-                      steps: [{ name: "Run late check", conclusion: "failure" }],
-                    },
-                  ],
-                });
-              }
-              return githubResponse({
+              url.includes(`/actions/runs/${CI_RUN_ID}/attempts/${CI_RUN_ATTEMPT}/jobs?`) &&
+              new URL(url).searchParams.get("page") === "1",
+            () =>
+              githubResponse({
                 total_count: 101,
                 jobs: [
                   {
@@ -1025,8 +1013,24 @@ describe("PR E2E controller", () => {
                     steps: [],
                   })),
                 ],
-              });
-            },
+              }),
+          ),
+          githubFetchRoute(
+            ({ url }) =>
+              url.includes(`/actions/runs/${CI_RUN_ID}/attempts/${CI_RUN_ATTEMPT}/jobs?`) &&
+              new URL(url).searchParams.get("page") === "2",
+            () =>
+              githubResponse({
+                total_count: 101,
+                jobs: [
+                  {
+                    id: 105,
+                    name: "late-failure",
+                    conclusion: "failure",
+                    steps: [{ name: "Run late check", conclusion: "failure" }],
+                  },
+                ],
+              }),
           ),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
