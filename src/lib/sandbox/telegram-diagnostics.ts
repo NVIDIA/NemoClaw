@@ -374,24 +374,43 @@ export function parseTelegramBreadcrumbs(logLines: readonly string[]): TelegramB
   let lastReached = -1;
   let lastNetworkFail = -1;
   let lastBridgeNotStarted = -1;
+  let lastTokenRejected = -1;
+  let lastCredentialUnresolved = -1;
   telegramLines.forEach((line, index) => {
-    if (/rejected startup probe with HTTP\s+(401|404)/i.test(line)) bc.tokenRejected = true;
-    if (/credential placeholder.*(missing|mismatch|unresolved)/i.test(line)) {
-      bc.credentialUnresolved = true;
-    }
     const httpErr = /startup probe returned HTTP\s+(\d{3})/i.exec(line);
     if (httpErr) bc.startupHttpError = Number(httpErr[1]);
     if (/inbound update received|inbound message telegram/i.test(line)) bc.inboundReceived = true;
     if (REACHED.test(line)) lastReached = index;
     if (NETWORK_FAIL.test(line)) lastNetworkFail = index;
     if (/bridge did not start within/i.test(line)) lastBridgeNotStarted = index;
+    if (/rejected startup probe with HTTP\s+(401|404)/i.test(line)) lastTokenRejected = index;
+    if (/credential placeholder.*(missing|mismatch|unresolved)/i.test(line)) {
+      lastCredentialUnresolved = index;
+    }
   });
-  if (lastReached !== -1 && lastReached > lastNetworkFail && lastReached > lastBridgeNotStarted) {
+  // The most recent evidence wins (a `reached` positive wins ties). A token
+  // rejection or unresolved credential is a cause, honored only when it is the
+  // latest evidence over any later "reached Telegram" line — so a stale 401
+  // before a currently working bridge is not reported as token_rejected. Among
+  // failures, a token/network cause outranks the bridge-did-not-start timeout it
+  // produces; the latest of token vs network wins.
+  const lastCause = Math.max(lastTokenRejected, lastCredentialUnresolved, lastNetworkFail);
+  const lastEvidence = Math.max(lastReached, lastCause, lastBridgeNotStarted);
+  if (lastReached !== -1 && lastReached >= lastEvidence) {
     bc.providerReady = true;
-  } else if (lastNetworkFail !== -1 && lastNetworkFail > lastReached) {
-    // A network failure outranks the bridge-did-not-start timeout it causes.
+  } else if (
+    Math.max(lastTokenRejected, lastCredentialUnresolved) !== -1 &&
+    Math.max(lastTokenRejected, lastCredentialUnresolved) >= lastNetworkFail
+  ) {
+    // A 401 line also carries "token invalid or credential placeholder
+    // unresolved", so on a tie prefer tokenRejected; credentialUnresolved wins
+    // only when its own line (TELEGRAM_BOT_TOKEN missing from env) is strictly
+    // later.
+    if (lastCredentialUnresolved > lastTokenRejected) bc.credentialUnresolved = true;
+    else bc.tokenRejected = true;
+  } else if (lastNetworkFail !== -1) {
     bc.startupFailedNetwork = true;
-  } else if (lastBridgeNotStarted !== -1 && lastBridgeNotStarted > lastReached) {
+  } else if (lastBridgeNotStarted !== -1) {
     bc.bridgeNotStarted = true;
   }
   return bc;

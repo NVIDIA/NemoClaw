@@ -234,4 +234,30 @@ describe("evaluateTelegramDiagnostics over real gateway-log windows (#6743)", ()
     const report = evaluateTelegramDiagnostics(baseInput({ breadcrumbs: bc }));
     expect(report.verdict).toBe("unreachable");
   });
+
+  it("does not stay token_rejected when a later provider-ready follows a stale 401 (#6887)", () => {
+    const bc = parseTelegramBreadcrumbs([
+      "[telegram] [default] Bot API rejected startup probe with HTTP 401; token invalid or credential placeholder unresolved",
+      "[telegram] [default] provider ready (Bot API reachable; agent replies use inference.local)",
+      "[telegram] [default] inbound update received (update_id=present; message_id=present)",
+    ]);
+    expect(bc).toMatchObject({
+      tokenRejected: false,
+      credentialUnresolved: false,
+      providerReady: true,
+      inboundReceived: true,
+    });
+    expect(evaluateTelegramDiagnostics(baseInput({ breadcrumbs: bc })).verdict).toBe("healthy");
+  });
+
+  it("reports token_rejected when a 401 is the latest evidence after a working bridge (#6887)", () => {
+    const bc = parseTelegramBreadcrumbs([
+      "[telegram] [default] inbound update received (update_id=present; message_id=present)",
+      "[telegram] [default] Bot API rejected startup probe with HTTP 401; token invalid",
+    ]);
+    expect(bc).toMatchObject({ tokenRejected: true, providerReady: false });
+    expect(evaluateTelegramDiagnostics(baseInput({ breadcrumbs: bc })).verdict).toBe(
+      "token_rejected",
+    );
+  });
 });
