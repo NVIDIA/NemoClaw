@@ -69,6 +69,12 @@ describe("ollama-auth-proxy request handler", () => {
     expect(backend?.captured).toHaveLength(0);
   });
 
+  it("returns 401 for unauthenticated POST /api/tags (#3338)", async () => {
+    const res = await request(proxyPort, { path: "/api/tags", method: "POST", body: "{}" });
+    expect(res.status).toBe(401);
+    expect(backend?.captured).toHaveLength(0);
+  });
+
   it("forwards to the backend on a correct Bearer token and strips authorization + host headers", async () => {
     const res = await request(proxyPort, {
       path: "/v1/chat/completions",
