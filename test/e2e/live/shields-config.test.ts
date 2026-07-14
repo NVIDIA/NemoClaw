@@ -441,7 +441,7 @@ test("shields-config: live shields up/down locks config and detects drift", {
       artifactName: "cleanup-shields-up-before-destroy",
     });
     expect(restore.exitCode, resultText(restore)).toBe(0);
-    expect(resultText(restore)).toContain("Lockdown active");
+    expect(resultText(restore)).toMatch(/Lockdown (?:is already )?active/);
   });
 
   const configUp = await statPath(sandbox, CONFIG_PATH, "phase-3-config-perms-up");
