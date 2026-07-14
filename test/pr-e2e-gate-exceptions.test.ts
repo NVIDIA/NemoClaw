@@ -478,8 +478,24 @@ describe("PR E2E controller exception safety", () => {
     expect(summary.length).toBeLessThan(2000);
   });
 
+  it("explains how to recover when the approval environment is not protected", async () => {
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    const requests: RecordedGitHubRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [approvalRunRoute(approvalWorkflowRun()), approvalHistoryRoute([])],
+        requests,
+      ),
+    );
+
+    await expect(resolveApprovedGate(approvedForkCommand())).rejects.toThrow(
+      /No protected-environment approval was recorded.*may be missing or lack required reviewers.*trigger fresh PR CI.*typed manual fallback/u,
+    );
+    expect(requests.some((request) => request.method === "PATCH")).toBe(false);
+  });
+
   it.each([
-    { name: "an empty unconfigured history", approvals: [] },
     { name: "a malformed history object", approvals: {} },
     {
       name: "a malformed review",

@@ -2152,8 +2152,18 @@ function validateApprovalWorkflowRun(
 }
 
 function validateApprovalReview(value: unknown): { maintainer: string; comment: string | null } {
-  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_APPROVAL_REVIEWS) {
-    throw new Error("GitHub returned no bounded environment approval history");
+  if (!Array.isArray(value)) {
+    throw new Error("GitHub returned malformed environment approval history");
+  }
+  if (value.length === 0) {
+    throw new Error(
+      `No protected-environment approval was recorded for ${PR_GATE_APPROVAL_ENVIRONMENT}. The environment may be missing or lack required reviewers; configure it, then trigger fresh PR CI, or use the typed manual fallback.`,
+    );
+  }
+  if (value.length > MAX_APPROVAL_REVIEWS) {
+    throw new Error(
+      `GitHub returned more than ${MAX_APPROVAL_REVIEWS} environment approval reviews; refusing ambiguous approval history`,
+    );
   }
   const reviews = value.map((candidate) => {
     if (
