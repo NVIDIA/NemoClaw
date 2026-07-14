@@ -2,12 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { entry, makeDeps, showSandboxChannelStatus } from "./channel-status.test-helpers";
+import {
+  entry,
+  makeDeps,
+  reportSignals,
+  showSandboxChannelStatus,
+  withTelegramProbe,
+} from "./channel-status.test-helpers";
 
 describe("showSandboxChannelStatus Telegram group policy", () => {
   it("uses manifest defaults when no stored config value exists", async () => {
     const { deps, out_lines } = makeDeps({
-      exec: () => ({
+      exec: withTelegramProbe(() => ({
         status: 0,
         stdout: JSON.stringify({
           channels: {
@@ -26,16 +32,17 @@ describe("showSandboxChannelStatus Telegram group policy", () => {
           },
         }),
         stderr: "",
-      }),
+      })),
       sandbox: entry(["telegram"]),
       appliedPresets: ["telegram"],
+      gatewayPresets: ["telegram"],
     });
     const result = await showSandboxChannelStatus("alpha", {
       deps,
       channel: "telegram",
     });
 
-    const signals = result && "signals" in result ? result.signals : [];
+    const signals = reportSignals(result);
     expect(
       signals.find((signal) => signal.label === "Telegram group policy (TELEGRAM_GROUP_POLICY)"),
     ).toMatchObject({
@@ -60,7 +67,7 @@ describe("showSandboxChannelStatus Telegram group policy", () => {
 
   it("accepts Telegram disabled group policy from rendered config", async () => {
     const { deps } = makeDeps({
-      exec: () => ({
+      exec: withTelegramProbe(() => ({
         status: 0,
         stdout: JSON.stringify({
           channels: {
@@ -74,7 +81,7 @@ describe("showSandboxChannelStatus Telegram group policy", () => {
           },
         }),
         stderr: "",
-      }),
+      })),
       sandbox: entry(["telegram"], [], {
         telegram: [
           {
@@ -89,13 +96,14 @@ describe("showSandboxChannelStatus Telegram group policy", () => {
         ],
       }),
       appliedPresets: ["telegram"],
+      gatewayPresets: ["telegram"],
     });
     const result = await showSandboxChannelStatus("alpha", {
       deps,
       channel: "telegram",
     });
 
-    const signals = result && "signals" in result ? result.signals : [];
+    const signals = reportSignals(result);
     expect(
       signals.find((signal) => signal.label === "Telegram group policy (TELEGRAM_GROUP_POLICY)"),
     ).toMatchObject({

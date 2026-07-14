@@ -15,14 +15,9 @@
  * channel cannot be mistaken for working.
  */
 
-export type DiagnosticSeverity = "ok" | "warn" | "fail" | "info";
+import type { DiagnosticSignal } from "./diagnostic-signal";
 
-export type DiagnosticSignal = {
-  label: string;
-  severity: DiagnosticSeverity;
-  detail: string;
-  hint?: string;
-};
+export type { DiagnosticSeverity, DiagnosticSignal } from "./diagnostic-signal";
 
 export type WhatsappVerdict =
   | "healthy"

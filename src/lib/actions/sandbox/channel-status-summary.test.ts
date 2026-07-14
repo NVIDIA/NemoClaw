@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { entry, makeDeps, showSandboxChannelStatus } from "./channel-status.test-helpers";
+import {
+  entry,
+  makeDeps,
+  showSandboxChannelStatus,
+  withTelegramProbe,
+} from "./channel-status.test-helpers";
 
 describe("showSandboxChannelStatus summary", () => {
   it("emits a compact all-channel report when no channel is selected", async () => {
@@ -102,19 +107,20 @@ describe("showSandboxChannelStatus summary", () => {
     expect(dump).not.toMatch(/NemoClaw channels status:/);
   });
 
-  it("emits a basic per-channel report for non-whatsapp channels", async () => {
+  it("runs the telegram health probe for an explicit --channel telegram", async () => {
     const { deps, out_lines } = makeDeps({
-      exec: () => ({ status: 0, stdout: "", stderr: "" }),
+      exec: withTelegramProbe(() => ({ status: 0, stdout: "", stderr: "" })),
       sandbox: entry(["telegram"]),
       appliedPresets: ["telegram"],
+      gatewayPresets: ["telegram"],
     });
     const result = await showSandboxChannelStatus("alpha", {
       deps,
       channel: "telegram",
     });
-    expect(result && "verdict" in result && result.verdict).toBe("info");
+    expect(result && "report" in result && result.report.verdict).toBe("unknown");
     const dump = out_lines.join("\n");
-    expect(dump).toMatch(/telegram registered/);
-    expect(dump).toMatch(/preset applied/);
+    expect(dump).toMatch(/telegram channel registered/);
+    expect(dump).toMatch(/telegram preset applied/);
   });
 });

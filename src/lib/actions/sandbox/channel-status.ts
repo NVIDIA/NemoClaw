@@ -25,6 +25,10 @@ import {
 } from "../../messaging/diagnostics";
 import * as policies from "../../policy";
 import {
+  evaluateTelegramDiagnostics,
+  type TelegramDiagnosticReport,
+} from "../../sandbox/telegram-diagnostics";
+import {
   type DiagnosticSeverity,
   type DiagnosticSignal,
   evaluateWhatsappDiagnostics,
@@ -36,6 +40,7 @@ import {
 } from "../../sandbox/whatsapp-diagnostics";
 import * as registry from "../../state/registry";
 import { buildConfigStatusSignals } from "./channel-status-config";
+import { buildTelegramProbeInput } from "./telegram-probe";
 
 // runner.ts (which process-recovery transitively depends on) uses a few CJS
 // `require()` calls that vitest's CLI-test project cannot resolve at import
@@ -77,7 +82,12 @@ export type ChannelStatusOptions = {
 };
 
 type ChannelStatusSingleReport =
-  | { schemaVersion: 1; sandbox: string; channel: string; report: WhatsappDiagnosticReport }
+  | {
+      schemaVersion: 1;
+      sandbox: string;
+      channel: string;
+      report: WhatsappDiagnosticReport | TelegramDiagnosticReport;
+    }
   | {
       schemaVersion: 1;
       sandbox: string;
@@ -529,7 +539,16 @@ function buildBasicChannelReport(
   if (enabled) {
     signals.push(...buildConfigStatusSignals(sandboxName, channelName, entry, agent, deps));
   }
-  if (options.includeDeepDiagnostics ?? true) {
+  if (diagnostic.deepProbe !== undefined) {
+    // Channel has a deep probe the summary view never runs. Say so instead of
+    // leaving a silent all-[ok] that reads as healthy (#6743).
+    signals.push({
+      label: "Runtime health",
+      severity: "info",
+      detail: "not checked in summary view",
+      hint: `run \`${CLI_NAME} ${sandboxName} channels status --channel ${channelName}\` to probe live health`,
+    });
+  } else if (options.includeDeepDiagnostics ?? true) {
     signals.push({
       label: "Deep diagnostics",
       severity: "info",
@@ -578,6 +597,33 @@ function channelSupportedByAgent(channelName: string, agent: AgentDefinition): b
     .listAvailable(getMessagingManifestAvailabilityContext(agent, channelManifestRegistry.list()))
     .some((manifest) => manifest.id === channelName);
 }
+
+// Per-channel evaluators for the "log-tail" deep probe: run an in-sandbox
+// probe and classify its output. Adding a log-tail channel is one map entry
+// (plus its own probe + evaluator module); a log-tail channel absent from
+// this map falls back to the basic report.
+type LogTailEvaluator = (
+  sandboxName: string,
+  agent: AgentDefinition,
+  deps: Required<StatusDeps>,
+) => WhatsappDiagnosticReport | TelegramDiagnosticReport;
+
+const LOG_TAIL_EVALUATORS: Record<string, LogTailEvaluator> = {
+  telegram: (sandboxName, agent, deps) => {
+    // Keep the config-value signals (#5691/#5695: group policy, mention mode,
+    // allowed IDs) the basic report used to show, then append the live health
+    // signals so `--channel telegram` reports both config and health.
+    const health = evaluateTelegramDiagnostics(buildTelegramProbeInput(sandboxName, agent, deps));
+    const configSignals = buildConfigStatusSignals(
+      sandboxName,
+      "telegram",
+      deps.getSandbox(sandboxName),
+      agent,
+      deps,
+    );
+    return { ...health, signals: [...health.signals, ...configSignals] };
+  },
+};
 
 /**
  * Run the WhatsApp diagnostic or a thin per-channel summary for the named
@@ -653,6 +699,8 @@ export async function showSandboxChannelStatus(
   const disabledChannels = new Set(registry.getDisabledMessagingChannelsFromEntry(entry));
   const channelIsPaused = disabledChannels.has(channelName);
 
+  const logTailEvaluator =
+    diagnostic.deepProbe === "log-tail" ? LOG_TAIL_EVALUATORS[channelName] : undefined;
   let report: ChannelStatusReport;
   if (diagnostic.deepProbe === "in-sandbox-qr" && !channelIsPaused) {
     const input = buildWhatsappProbeInput(sandboxName, agent, deps);
@@ -662,6 +710,13 @@ export async function showSandboxChannelStatus(
       sandbox: sandboxName,
       channel: channelName,
       report: whatsappReport,
+    };
+  } else if (logTailEvaluator && !channelIsPaused) {
+    report = {
+      schemaVersion: 1,
+      sandbox: sandboxName,
+      channel: channelName,
+      report: logTailEvaluator(sandboxName, agent, deps),
     };
   } else {
     report = buildBasicChannelReport(sandboxName, channelName, agent, deps, diagnostic);
