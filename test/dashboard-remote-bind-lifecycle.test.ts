@@ -682,9 +682,6 @@ describe("remote dashboard bind production lifecycle", () => {
     let started = false;
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "");
     vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
-    vi.stubEnv("WSL_DISTRO_NAME", "");
-    vi.stubEnv("WSL_INTEROP", "");
-    vi.spyOn(os, "release").mockReturnValue("6.8.0-linux");
     vi.spyOn(registry, "getSandbox").mockReturnValue({
       name: "beta",
       dashboardPort: 18789,
@@ -705,7 +702,7 @@ describe("remote dashboard bind production lifecycle", () => {
         return { status: 0 } as never;
       });
 
-    expect(ensureSandboxPortForward("beta")).toBe(true);
+    expect(ensureSandboxPortForward("beta", { isWsl: false })).toBe(true);
     expect(runOpenshell).toHaveBeenCalledWith(
       ["forward", "stop", "18789", "beta"],
       expect.anything(),
@@ -723,7 +720,6 @@ describe("remote dashboard bind production lifecycle", () => {
     let started = false;
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "");
     vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
-    vi.stubEnv("WSL_DISTRO_NAME", "Ubuntu");
     vi.spyOn(registry, "getSandbox").mockReturnValue({
       name: "beta",
       dashboardPort: 18789,
@@ -743,7 +739,7 @@ describe("remote dashboard bind production lifecycle", () => {
         return { status: 0 } as never;
       });
 
-    expect(ensureSandboxPortForward("beta")).toBe(true);
+    expect(ensureSandboxPortForward("beta", { isWsl: true })).toBe(true);
     expect(runOpenshell).toHaveBeenCalledWith(
       ["forward", "start", "--background", "0.0.0.0:18789", "beta"],
       { ignoreError: true, stdio: "ignore" },
@@ -757,9 +753,6 @@ describe("remote dashboard bind production lifecycle", () => {
     let started = false;
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "");
     vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
-    vi.stubEnv("WSL_DISTRO_NAME", "");
-    vi.stubEnv("WSL_INTEROP", "");
-    vi.spyOn(os, "release").mockReturnValue("6.8.0-linux");
     vi.spyOn(registry, "getSandbox").mockReturnValue({
       name: "beta",
       dashboardPort: 18789,
@@ -780,7 +773,7 @@ describe("remote dashboard bind production lifecycle", () => {
         return { status: 0 } as never;
       });
 
-    expect(ensureSandboxPortForward("beta")).toBe(true);
+    expect(ensureSandboxPortForward("beta", { isWsl: false })).toBe(true);
     expect(runOpenshell).toHaveBeenCalledWith(
       ["forward", "start", "--background", "18789", "beta"],
       { ignoreError: true, stdio: "ignore" },

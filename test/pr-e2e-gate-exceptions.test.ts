@@ -168,7 +168,7 @@ function startCommand(workDir: string) {
 function approvalWorkflowRun(overrides: Record<string, unknown> = {}) {
   return {
     id: APPROVAL_RUN_ID,
-    name: "E2E / PR Gate",
+    name: "E2E / PR Gate Controller",
     path: ".github/workflows/pr-e2e-gate.yaml",
     event: "workflow_run",
     head_sha: WORKFLOW_SHA,
@@ -309,6 +309,9 @@ describe("PR E2E controller exception safety", () => {
         },
       });
       expect(JSON.stringify(completion?.body)).toContain("Review deployments");
+      expect(JSON.stringify(completion?.body)).toContain(
+        `[E2E / PR Gate Controller run ${GATE_RUN_ID}](https://github.com/NVIDIA/NemoClaw/actions/runs/${GATE_RUN_ID})`,
+      );
       expect(JSON.stringify(completion?.body)).toContain("e2e-no-secret-exception");
       expect(JSON.stringify(completion?.body)).toContain("unprotected environment fails closed");
       expect(JSON.stringify(completion?.body)).toContain("manual workflow-dispatch resolver");
@@ -376,6 +379,9 @@ describe("PR E2E controller exception safety", () => {
           ),
         },
       });
+      expect(JSON.stringify(completion?.body)).toContain(
+        `[E2E / PR Gate Controller run ${GATE_RUN_ID}](https://github.com/NVIDIA/NemoClaw/actions/runs/${GATE_RUN_ID})`,
+      );
       expect(fs.readFileSync(outputPath, "utf8")).toContain(
         [
           "exception_mode=resolve-control-plane",
@@ -461,18 +467,35 @@ describe("PR E2E controller exception safety", () => {
       conclusion: "success",
       details_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${APPROVAL_RUN_ID}`,
       output: {
-        title: "Fork exception recorded by @maintainer",
-        summary: expect.stringContaining("Validated environment approval run"),
+        title: "No E2E run — exception approved by @maintainer",
+        summary: expect.stringContaining("**Outcome: EXCEPTION — credentialed E2E did not run.**"),
       },
     });
     const summary = JSON.stringify(completion?.body);
+    expect(summary).toContain("Validated environment approval run");
     expect(summary).toContain(expectedReason);
     expect(summary).not.toContain("not validated by this controller");
     expect(summary.length).toBeLessThan(2000);
   });
 
+  it("explains how to recover when the approval environment is not protected", async () => {
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    const requests: RecordedGitHubRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [approvalRunRoute(approvalWorkflowRun()), approvalHistoryRoute([])],
+        requests,
+      ),
+    );
+
+    await expect(resolveApprovedGate(approvedForkCommand())).rejects.toThrow(
+      /No protected-environment approval was recorded.*may be missing or lack required reviewers.*trigger fresh PR CI.*typed manual fallback/u,
+    );
+    expect(requests.some((request) => request.method === "PATCH")).toBe(false);
+  });
+
   it.each([
-    { name: "an empty unconfigured history", approvals: [] },
     { name: "a malformed history object", approvals: {} },
     {
       name: "a malformed review",
@@ -636,10 +659,14 @@ describe("PR E2E controller exception safety", () => {
       status: "completed",
       conclusion: "success",
       output: {
-        title: "Fork exception recorded by @maintainer",
-        summary: expect.stringContaining("Credential-bearing E2E was not run"),
+        title: "No E2E run — exception approved by @maintainer",
+        summary: expect.stringContaining("**Outcome: EXCEPTION — credentialed E2E did not run.**"),
       },
     });
+    expect(JSON.stringify(completion?.body)).toContain("Selected jobs not run");
+    expect(JSON.stringify(completion?.body)).toContain(
+      "Approval source: manual fallback; no supporting Actions run was supplied.",
+    );
     expect(JSON.stringify(completion?.body)).not.toContain("tests passed");
   });
 
@@ -697,12 +724,13 @@ describe("PR E2E controller exception safety", () => {
       status: "completed",
       conclusion: "success",
       output: {
-        title: "Control-plane exception recorded by @maintainer",
-        summary: expect.stringContaining(
-          "Credential-bearing E2E was not run because this PR controls E2E execution or evidence",
-        ),
+        title: "No E2E run — exception approved by @maintainer",
+        summary: expect.stringContaining("**Outcome: EXCEPTION — credentialed E2E did not run.**"),
       },
     });
+    expect(JSON.stringify(completion?.body)).toContain(
+      "Selected jobs not run because this PR controls E2E execution or evidence",
+    );
     expect(JSON.stringify(completion?.body)).not.toContain("tests passed");
     expect(JSON.stringify(completion?.body)).not.toContain("Supporting trusted run");
   });
@@ -1093,7 +1121,7 @@ describe("PR E2E controller exception safety", () => {
         maintainer: "maintainer",
         reason: "The exact base must remain current until the exception is recorded.",
       }),
-    ).rejects.toThrow(/expected exact head and base/u);
+    ).rejects.toThrow(/Superseded by PR update/u);
     expect(pullReads).toBe(3);
     expect(requests.some((request) => request.method === "PATCH")).toBe(false);
   });

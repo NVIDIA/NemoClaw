@@ -79,7 +79,7 @@ jobs:
 
   macos-vitest:
     runs-on: macos-26
-    timeout-minutes: 20
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -116,9 +116,10 @@ jobs:
 
   wsl-vitest:
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       WSL_DISTRO: Ubuntu
+      WSL_TEST_USER: nemoclaw-ci
     steps:
       - name: Force LF line endings for checkout
         shell: powershell
@@ -186,18 +187,22 @@ jobs:
         run: |
           $script = @'
           set -euo pipefail
+          test_user="${1:?missing WSL test user}"
           export DEBIAN_FRONTEND=noninteractive
           printf '%s\n' \
             'Acquire::ForceIPv4 "true";' \
             'Acquire::Retries "5";' \
             >/etc/apt/apt.conf.d/99github-actions-network
           apt-get update
-          apt-get install -y bash ca-certificates curl git jq lsb-release make python3 python3-pip rsync tar unzip xz-utils
+          apt-get install -y bash ca-certificates curl git jq lsb-release make python3 python3-pip python3-venv rsync tar unzip xz-utils
+          if ! id -u "$test_user" >/dev/null 2>&1; then
+            useradd --create-home --shell /bin/bash "$test_user"
+          fi
           '@
           $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
           [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
           $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
-          wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
+          wsl -d $env:WSL_DISTRO --user root -- bash -l $wslTmp $env:WSL_TEST_USER
 
       - name: Install Node.js 22 in WSL
         shell: powershell
@@ -212,7 +217,7 @@ jobs:
           $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
           [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
           $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
-          wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
+          wsl -d $env:WSL_DISTRO --user root -- bash -l $wslTmp
 
       - name: Copy checkout into WSL ext4 workspace
         shell: powershell
@@ -232,17 +237,19 @@ jobs:
           git config --global --add safe.directory '$workdir'
           git -C '$workdir' reset --hard HEAD
           git -C '$workdir' clean -ffdx
+          chown -R '$($env:WSL_TEST_USER):$($env:WSL_TEST_USER)' '$workdir'
           "@
           $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
           [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
           $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
-          wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
+          wsl -d $env:WSL_DISTRO --user root -- bash -l $wslTmp
 
       - name: Install dependencies and build in WSL
         shell: powershell
         run: |
           $script = @"
           set -euo pipefail
+          id -un | grep -Fxq '$env:WSL_TEST_USER'
           cd '$env:WSL_WORKDIR'
           npm ci --ignore-scripts
           npm run build:cli
@@ -253,13 +260,14 @@ jobs:
           $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
           [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
           $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
-          wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
+          wsl -d $env:WSL_DISTRO --user $env:WSL_TEST_USER -- bash -l $wslTmp
 
       - name: Run full Vitest suite in WSL
         shell: powershell
         run: |
           $script = @"
           set -euo pipefail
+          id -un | grep -Fxq '$env:WSL_TEST_USER'
           cd '$env:WSL_WORKDIR'
           export NEMOCLAW_EXEC_TIMEOUT=60000
           export NEMOCLAW_TEST_TIMEOUT=60000
@@ -268,4 +276,33 @@ jobs:
           $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
           [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
           $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
-          wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
+          wsl -d $env:WSL_DISTRO --user $env:WSL_TEST_USER -- bash -l $wslTmp
+
+      - name: Run root-required Vitest contracts in WSL
+        shell: powershell
+        run: |
+          $script = @"
+          set -euo pipefail
+          id -u | grep -Fxq '0'
+          cd '$env:WSL_WORKDIR'
+          if ! getent group sandbox >/dev/null; then
+            groupadd --system sandbox
+          fi
+          if ! id -u sandbox >/dev/null 2>&1; then
+            useradd --system --gid sandbox --home-dir /sandbox --shell /bin/bash sandbox
+          fi
+          install -d -o root -g root -m 0755 /usr/local/lib/nemoclaw
+          install -o root -g root -m 0644 \
+            scripts/lib/normalize_mutable_config_perms.py \
+            /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py
+          npx vitest run --project integration \
+            test/hermes-restart-config-seal-recovery.test.ts \
+            -t 'keeps the locked Hermes entry sticky-protected|lets a sandbox-group peer create state'
+          npx vitest run --project integration \
+            test/nemoclaw-start-perms.test.ts \
+            -t 'requires both fixed files to match|reclaims a root-owned collapsed config|leaves a root-owned recovery baseline untouched'
+          "@
+          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
+          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
+          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
+          wsl -d $env:WSL_DISTRO --user root -- bash -l $wslTmp

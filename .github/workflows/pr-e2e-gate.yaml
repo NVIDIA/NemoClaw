@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: E2E / PR Gate
+name: E2E / PR Gate Controller
 
 on:
   workflow_run:
@@ -36,7 +36,7 @@ on:
         required: true
         type: string
       evidence_url:
-        description: Optional maintainer-supplied NVIDIA/NemoClaw Actions reference.
+        description: Optional Actions run URL, for example https://github.com/NVIDIA/NemoClaw/actions/runs/123. Leave blank if none.
         required: false
         default: ""
         type: string
@@ -68,7 +68,7 @@ jobs:
           node-version: "22"
 
       - name: Install controller dependencies
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Reserve exact-diff gate
         env:
@@ -103,7 +103,7 @@ jobs:
           node-version: "22"
 
       - name: Install controller dependencies
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Cancel superseded E2E runs
         env:
@@ -145,7 +145,7 @@ jobs:
           node-version: "22"
 
       - name: Install controller dependencies
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - id: workspace
         name: Create private workspace
@@ -236,8 +236,8 @@ jobs:
                     "$RUN_ID" "$run_url"
                   ;;
                 completed:failure | completed:cancelled | completed:timed_out | completed:action_required | completed:neutral | completed:skipped | completed:stale | completed:startup_failure)
-                  printf '::error title=E2E run failed::Run %s completed with conclusion %s. %s\n' \
-                    "$RUN_ID" "${state#*:}" "$run_url" >&2
+                  printf 'Run %s status=completed conclusion=%s url=%s\n' \
+                    "$RUN_ID" "${state#*:}" "$run_url"
                   ;;
                 *)
                   printf '::error title=Unexpected run state::Run %s returned an unsupported status/conclusion pair. %s\n' \
@@ -251,7 +251,7 @@ jobs:
               queued:none | in_progress:none | requested:none | waiting:none | pending:none)
                 sleep 10
                 ;;
-              completed:success)
+              completed:success | completed:failure | completed:cancelled | completed:timed_out | completed:action_required | completed:neutral | completed:skipped | completed:stale | completed:startup_failure)
                 exit 0
                 ;;
               *)
@@ -262,7 +262,8 @@ jobs:
           WAIT
 
           if [ "$wait_status" -eq 124 ]; then
-            printf '::error title=E2E run timed out::The run did not complete within 105 minutes.\n' >&2
+            printf 'Run %s did not complete within 105 minutes; finalization will cancel it and report the PR gate outcome.\n' "$RUN_ID"
+            wait_status=0
           fi
           exit "$wait_status"
 
@@ -296,6 +297,7 @@ jobs:
           --state-hash "${{ steps.start.outputs.state_hash }}"
           --check-id "${{ steps.start.outputs.check_id }}"
           --run-id "${{ steps.start.outputs.run_id }}"
+          --evidence-outcome "${{ steps.evidence.outcome }}"
 
       - name: Close incomplete check
         if: ${{ always() && steps.start.outputs.check_id != '' && steps.start.outputs.finalized != 'true' && steps.finish.outputs.finalized != 'true' }}
@@ -341,7 +343,7 @@ jobs:
           node-version: "22"
 
       - name: Install controller dependencies
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Record approved E2E exception
         env:
@@ -388,7 +390,7 @@ jobs:
           node-version: "22"
 
       - name: Install controller dependencies
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Record E2E exception
         env:
