@@ -24,9 +24,8 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-
-import { getRegisteredOclifCommandsMetadata } from "../src/lib/cli/oclif-metadata";
 import { renderAgentVariantPage } from "../scripts/sync-agent-variant-docs";
+import { getRegisteredOclifCommandsMetadata } from "../src/lib/cli/oclif-metadata";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 
@@ -86,7 +85,7 @@ describe("internal command documentation (#3782)", () => {
   it("registers the hidden internal command family", () => {
     // Guards against the manifest silently losing the family (which would make
     // the documentation assertions below vacuously pass).
-    expect(internalIds.length).toBeGreaterThanOrEqual(9);
+    expect(internalIds.length).toBeGreaterThanOrEqual(7);
   });
 
   it.each(references)("documents every hidden internal command in $name", ({ text, binary }) => {

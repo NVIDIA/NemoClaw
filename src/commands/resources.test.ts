@@ -12,6 +12,13 @@ describe("ResourcesCommand", () => {
     vi.restoreAllMocks();
   });
 
+  it("describes only the host hardware inventory it reports", () => {
+    expect(ResourcesCommand.description).toContain("CPU core count and model");
+    expect(ResourcesCommand.description).toContain("system RAM and swap");
+    expect(ResourcesCommand.description).toContain("NVIDIA GPU name and VRAM");
+    expect(ResourcesCommand.description).not.toMatch(/Kubernetes|allocatable/i);
+  });
+
   it("returns the hardware resource object in JSON mode", async () => {
     const result = await ResourcesCommand.run(["--json"], rootDir);
     expect(result).toEqual(
