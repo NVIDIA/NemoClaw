@@ -429,6 +429,20 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
   expect(policy.exitCode, resultText(policy)).toBe(0);
   expect(resultText(policy)).toMatch(/network_policies/i);
 
+  const deniedEgress = await sandbox.exec(
+    SANDBOX_NAME,
+    ["curl", "-fsS", "--connect-timeout", "5", "--max-time", "15", "https://example.com/"],
+    {
+      artifactName: "phase-3-unintended-egress-denied",
+      env: commandEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(deniedEgress.exitCode, resultText(deniedEgress)).not.toBe(0);
+  expect(resultText(deniedEgress)).toMatch(
+    /CONNECT tunnel failed, response 403|policy[_ ]denied|not allowed by any policy/i,
+  );
+
   // Phase 4: Hermes health and sandbox state.
   let health: ShellProbeResult | undefined;
   for (let attempt = 1; attempt <= 15; attempt += 1) {
