@@ -283,6 +283,9 @@ navigation:
               - page: "Brev Web UI"
                 path: deployment/brev-web-ui.mdx
                 slug: brev-web-ui
+              - page: "Gateway Lifecycle Authority"
+                path: deployment/gateway-lifecycle-authority.mdx
+                slug: gateway-lifecycle-authority
           - section: "Monitoring"
             slug: monitoring
             collapsed: open-by-default

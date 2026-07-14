@@ -9,8 +9,30 @@ import type { GatewayReuseState } from "../../../state/gateway";
 import { createSession, type Session } from "../../../state/onboard-session";
 import { flushTrace, resetTraceForTests, TRACE_FILE_ENV, type TraceArtifact } from "../../../trace";
 import type { GatewayContainerState } from "../../gateway-container-running";
+import {
+  type GatewayAttachmentProbe,
+  type GatewayOwner,
+  GatewayOwnershipError,
+  resolveGatewayOwner,
+} from "../../gateway-ownership";
 import { ONBOARD_TRACE_PHASE_NAMES } from "../../tracing";
 import { type GatewayStateOptions, handleGatewayState } from "./gateway";
+
+const EXTERNAL_OWNER: GatewayOwner = resolveGatewayOwner({
+  declaration: {
+    version: 1,
+    mode: "externally-supervised",
+    endpoint: "http://127.0.0.1:8080",
+    stateDir: "/var/lib/openshell/gateway",
+    supervisor: {
+      kind: "systemd-system",
+      serviceName: "openshell-gateway.service",
+      execPath: "/usr/local/bin/openshell-gateway",
+    },
+    requiredCapabilities: [],
+  },
+  hasPackagedService: false,
+});
 
 type Gpu = { type: string } | null;
 
@@ -39,10 +61,25 @@ function createDeps(overrides: Partial<GatewayStateOptions<Gpu>["deps"]> = {}) {
     exit: vi.fn((code: number): never => {
       throw new Error(`exit ${code}`);
     }),
+    resolveOwner: vi.fn(
+      (): GatewayOwner => resolveGatewayOwner({ declaration: null, hasPackagedService: false }),
+    ),
+    probeAttachment: vi.fn(
+      async (): Promise<GatewayAttachmentProbe> => ({
+        httpReady: true,
+        portOccupied: true,
+        listenerPids: [4242],
+        listenerScanComplete: true,
+        supervisorActive: true,
+        listenerExecPath: "/usr/local/bin/openshell-gateway",
+      }),
+    ),
   };
   return {
     calls,
     deps: {
+      resolveGatewayOwner: calls.resolveOwner,
+      probeGatewayAttachment: calls.probeAttachment,
       refreshDockerDriverGatewayReuseState: calls.refresh,
       gatewayCliSupportsLifecycleCommands: calls.lifecycle,
       verifyGatewayContainerRunning: calls.verifyContainer,
@@ -130,7 +167,17 @@ describe("handleGatewayState", () => {
       next: "provider_selection",
       transitionKind: "advance",
       updates: undefined,
-      metadata: { state: "gateway", gatewayReuseState: "missing" },
+      metadata: {
+        state: "gateway",
+        gatewayReuseState: "missing",
+        gatewayOwner: {
+          mode: "nemoclaw-managed",
+          source: "standalone",
+          endpoint: null,
+          supervisor: null,
+          requiredCapabilities: [],
+        },
+      },
     });
   });
 
@@ -398,5 +445,82 @@ describe("handleGatewayState", () => {
     );
     expect(calls.startGateway).toHaveBeenCalledOnce();
     expect(result.gatewayReuseState).toBe("missing");
+  });
+});
+
+describe("externally supervised gateway lifecycle authority", () => {
+  function externalDeps(probe: Partial<GatewayAttachmentProbe> = {}) {
+    const { calls, deps } = createDeps();
+    calls.resolveOwner.mockReturnValue(EXTERNAL_OWNER);
+    calls.probeAttachment.mockResolvedValue({
+      httpReady: true,
+      portOccupied: true,
+      listenerPids: [4242],
+      listenerScanComplete: true,
+      supervisorActive: true,
+      listenerExecPath: "/usr/local/bin/openshell-gateway",
+      ...probe,
+    });
+    return { calls, deps };
+  }
+
+  it("attaches to the supervised gateway without running any lifecycle effect (#6576)", async () => {
+    const { calls, deps } = externalDeps();
+
+    const result = await handleGatewayState(baseOptions(deps, "missing"));
+
+    expect(calls.startGateway).not.toHaveBeenCalled();
+    expect(calls.destroy).not.toHaveBeenCalled();
+    expect(calls.destroyForReuse).not.toHaveBeenCalled();
+    expect(calls.retireLegacy).not.toHaveBeenCalled();
+    expect(calls.complete).toHaveBeenCalledWith("gateway");
+    expect(result.stateResult).toMatchObject({
+      metadata: { gatewayOwner: { mode: "externally-supervised", source: "declared" } },
+    });
+  });
+
+  it("never falls back to a standalone gateway when the supervisor is inactive (#6576)", async () => {
+    const { calls, deps } = externalDeps({ supervisorActive: false });
+
+    await expect(handleGatewayState(baseOptions(deps, "missing"))).rejects.toThrow(
+      GatewayOwnershipError,
+    );
+    expect(calls.startGateway).not.toHaveBeenCalled();
+    expect(calls.destroy).not.toHaveBeenCalled();
+  });
+
+  it("fails before any effect when a competing listener holds the port (#6576)", async () => {
+    const { calls, deps } = externalDeps({ listenerPids: [4242, 4243] });
+
+    await expect(handleGatewayState(baseOptions(deps, "healthy"))).rejects.toMatchObject({
+      code: "multiple_owners",
+    });
+    expect(calls.startGateway).not.toHaveBeenCalled();
+    expect(calls.destroyForReuse).not.toHaveBeenCalled();
+  });
+
+  it("fails before any effect when the running gateway is not the declared one (#6576)", async () => {
+    const { calls, deps } = externalDeps({ listenerExecPath: "/opt/other/openshell-gateway" });
+
+    await expect(handleGatewayState(baseOptions(deps, "healthy"))).rejects.toMatchObject({
+      code: "identity_mismatch",
+    });
+    expect(calls.startGateway).not.toHaveBeenCalled();
+  });
+
+  it("revalidates the declared owner on resume rather than trusting the recorded step (#6576)", async () => {
+    const { calls, deps } = externalDeps({
+      portOccupied: false,
+      listenerPids: [],
+      httpReady: false,
+    });
+    const session = createSession();
+    session.steps = { gateway: { status: "complete" } } as Session["steps"];
+
+    await expect(
+      handleGatewayState({ ...baseOptions(deps, "healthy", session), resume: true }),
+    ).rejects.toMatchObject({ code: "gateway_unreachable" });
+    expect(calls.probeAttachment).toHaveBeenCalledOnce();
+    expect(calls.startGateway).not.toHaveBeenCalled();
   });
 });

@@ -576,6 +576,7 @@ import {
 } from "./messaging-channel-config";
 import { finalizationHandlerDeps } from "./onboard/finalization-deps";
 import { streamGatewayStart } from "./onboard/gateway";
+import { createGatewayHostRuntime } from "./onboard/gateway-host-runtime";
 import {
   mergeRequiredHermesToolGatewayPolicyPresets,
   normalizeHermesToolGatewaySelections,
@@ -1961,6 +1962,11 @@ async function startDockerDriverGateway({
   exitOnFailure?: boolean;
   skipSandboxBridgeReachability?: boolean;
 } = {}): Promise<void> {
+  // #6576: the only path that starts a gateway process, reachable from
+  // onboarding, rebuild, and recovery. An externally supervised gateway must
+  // fail here rather than reach the standalone cutover below, which would reap
+  // the live listener that the supervisor immediately restarts.
+  assertGatewayStartAllowed(exitOnFailure);
   const gatewayBin = resolveOpenShellGatewayBinary();
   const openshellVersionOutput = runCaptureOpenshell(["--version"], { ignoreError: true });
   const gatewayEnv = getDockerDriverGatewayEnv(openshellVersionOutput);
@@ -2165,27 +2171,20 @@ async function startGatewayForRecovery(options = {}): Promise<void> {
   });
 }
 
-function getGatewayStartEnv(): Record<string, string> {
-  const gatewayEnv = dockerDriverGatewayEnv.getGatewayStartNetworkEnv(GATEWAY_PORT);
-  const openshellVersion = getInstalledOpenshellVersion();
-  const stableGatewayImage = openshellVersion
-    ? `ghcr.io/nvidia/openshell/cluster:${openshellVersion}`
-    : null;
-  if (stableGatewayImage && openshellVersion) {
-    gatewayEnv.OPENSHELL_CLUSTER_IMAGE = stableGatewayImage;
-    gatewayEnv.IMAGE_TAG = openshellVersion;
-    const overlayOverride = applyOverlayfsAutoFix(stableGatewayImage);
-    if (overlayOverride) {
-      gatewayEnv.OPENSHELL_CLUSTER_IMAGE = overlayOverride;
-    }
-  }
-  return gatewayEnv;
-}
-
 const applyOverlayfsAutoFix = overlayfsAutoFix.createOverlayfsAutoFix({
   assessHost: preflightUtils.assessHost,
   ensurePatchedClusterImage: clusterImagePatch.ensurePatchedClusterImage,
 });
+
+const { assertGatewayStartAllowed, getGatewayStartEnv, machineGatewayOwnerDeps } =
+  createGatewayHostRuntime({
+    applyOverlayfsAutoFix,
+    checkGatewayPortAvailable,
+    getDockerDriverGatewayPortListenerScan,
+    getInstalledOpenshellVersion,
+    resolveOpenShellGatewayBinary,
+    waitForGatewayHttpReady,
+  });
 
 async function recoverGatewayRuntime() {
   if (isLinuxDockerDriverGatewayEnabled()) {
@@ -4301,6 +4300,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       gatewayName: GATEWAY_NAME,
       recreateSandbox: isRecreateSandbox,
       gatewayDeps: {
+        ...machineGatewayOwnerDeps,
         refreshDockerDriverGatewayReuseState,
         gatewayCliSupportsLifecycleCommands: () =>
           gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),

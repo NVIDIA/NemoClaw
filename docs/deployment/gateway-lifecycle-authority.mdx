@@ -1,0 +1,85 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Declare the OpenShell Gateway Lifecycle Authority"
+sidebar-title: "Gateway Lifecycle Authority"
+description: "Declare whether NemoClaw or an external platform supervisor owns the OpenShell gateway lifecycle, so a host never ends up with two gateway owners on the same port."
+description-agent: "Explains the gateway-management contract that platform images use to declare who owns the OpenShell gateway process. Use when an image supervises the gateway with its own service, when onboarding reports a gateway ownership or port conflict, or when a platform profile needs to attach to an existing gateway instead of starting one."
+keywords: ["nemoclaw gateway lifecycle", "externally supervised gateway", "openshell gateway service", "gateway port conflict", "gateway ownership"]
+content:
+  type: "reference"
+---
+At every point, exactly one component owns the OpenShell gateway lifecycle.
+
+Platform images sometimes supervise the gateway with their own service. If canonical onboarding does not know that, both layers believe they own the same gateway and the same port: onboarding replaces the live listener, the platform service immediately restarts it, and the host is left with a persistent bind conflict and no authoritative owner.
+
+The gateway-management contract makes that ownership explicit. NemoClaw either manages the packaged canonical gateway service, or it attaches to a gateway that an external supervisor owns — never both, and it never silently falls back to starting its own gateway when external supervision was declared.
+
+## Management modes
+
+| Mode | Who owns start, stop, restart, upgrade, and recovery |
+|---|---|
+| `nemoclaw-managed` | NemoClaw. The platform may enable the packaged service at boot, but must not add a second gateway implementation. |
+| `externally-supervised` | A platform supervisor. NemoClaw validates and attaches, but never starts, stops, or replaces the gateway process. |
+
+When nothing is declared, NemoClaw keeps its historical behavior: it manages the packaged gateway user service if it is installed, and otherwise manages a standalone gateway.
+
+## Declare the mode
+
+Point `NEMOCLAW_GATEWAY_MANAGEMENT` at a JSON file:
+
+```bash
+export NEMOCLAW_GATEWAY_MANAGEMENT=/etc/nemoclaw/gateway-management.json
+```
+
+```json
+{
+  "version": 1,
+  "mode": "externally-supervised",
+  "endpoint": "http://127.0.0.1:8080",
+  "stateDir": "/var/lib/openshell/gateway",
+  "supervisor": {
+    "kind": "systemd-system",
+    "serviceName": "openshell-gateway.service",
+    "execPath": "/usr/local/bin/openshell-gateway"
+  },
+  "requiredCapabilities": ["sandbox.create"]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `version` | Contract version. Only `1` is supported; an unrecognized version fails rather than being ignored. |
+| `mode` | `nemoclaw-managed` or `externally-supervised`. |
+| `endpoint` | Bare origin the gateway listens on. It must not embed credentials, a query string, or a path. |
+| `stateDir` | Absolute path of the gateway state directory. |
+| `supervisor` | Required for `externally-supervised`, and rejected for `nemoclaw-managed`. `kind` is `systemd-system`, `systemd-user`, or `external`. |
+| `requiredCapabilities` | Capabilities the gateway must provide: `gateway.health`, `sandbox.create`, `sandbox.exec`, `gpu.passthrough`. Requesting one this build does not implement fails before onboarding runs. |
+
+<Note>
+The declaration carries no credentials, and unknown fields are rejected rather than ignored. Ownership metadata is persisted and emitted in diagnostics and machine events, so nothing secret may travel through it.
+</Note>
+
+## What externally supervised mode enforces
+
+Before onboarding touches any provider, policy, sandbox, or registry state, NemoClaw checks that the declared owner still holds the gateway. Onboarding fails — rather than starting a competing gateway — when:
+
+- the declared supervisor is not active;
+- nothing is listening on the gateway endpoint;
+- an unrecognized process holds the gateway port;
+- more than one process holds the port, so ownership is ambiguous;
+- the running gateway is not the declared executable;
+- the listener set cannot be enumerated, so a second gateway cannot be ruled out;
+- the supervised gateway is running but does not answer a health check.
+
+These checks run identically on a fresh run and on resume: a recorded `complete` gateway step is not evidence that the declared owner still holds the port. The same guard covers rebuild and recovery, which are the other paths that can start a gateway.
+
+## Fix a failure
+
+Because NemoClaw will not manage a gateway it does not own, resolve these through the platform supervisor:
+
+```bash
+systemctl status openshell-gateway.service
+```
+
+Bring the supervised gateway up, leave exactly one process holding the port, then re-run `nemoclaw onboard`. To hand the lifecycle back to NemoClaw instead, remove the platform's gateway service and declare `nemoclaw-managed` (or remove the declaration entirely).

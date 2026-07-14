@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createSession, type Session } from "../../state/onboard-session";
 import { recordInvalidatedTargets } from "../__test-helpers__/machine-recorders";
+import { resolveGatewayOwner } from "../gateway-ownership";
 import {
   createInitialOnboardFlowPhases,
   type InitialOnboardFlowContext,
@@ -118,6 +119,16 @@ describe("initial onboard flow phases", () => {
       gatewayName: "nemoclaw",
       recreateSandbox: () => false,
       gatewayDeps: {
+        resolveGatewayOwner: () =>
+          resolveGatewayOwner({ declaration: null, hasPackagedService: false }),
+        probeGatewayAttachment: async () => ({
+          httpReady: true,
+          portOccupied: true,
+          listenerPids: [4242],
+          listenerScanComplete: true,
+          supervisorActive: null,
+          listenerExecPath: null,
+        }),
         refreshDockerDriverGatewayReuseState: async (state) => state,
         gatewayCliSupportsLifecycleCommands: () => false,
         verifyGatewayContainerRunning: () => "running",
@@ -154,7 +165,17 @@ describe("initial onboard flow phases", () => {
     expect(preflight.context.gpuPassthrough).toBe(true);
     expect(gateway.result).toEqual(
       advanceTo("provider_selection", {
-        metadata: { state: "gateway", gatewayReuseState: "healthy" },
+        metadata: {
+          state: "gateway",
+          gatewayReuseState: "healthy",
+          gatewayOwner: {
+            mode: "nemoclaw-managed",
+            source: "standalone",
+            endpoint: null,
+            supervisor: null,
+            requiredCapabilities: [],
+          },
+        },
       }),
     );
     expect(notes).toContain(
@@ -330,6 +351,16 @@ describe("initial onboard flow phases", () => {
       gatewayName: "nemoclaw",
       recreateSandbox: () => false,
       gatewayDeps: {
+        resolveGatewayOwner: () =>
+          resolveGatewayOwner({ declaration: null, hasPackagedService: false }),
+        probeGatewayAttachment: async () => ({
+          httpReady: true,
+          portOccupied: true,
+          listenerPids: [4242],
+          listenerScanComplete: true,
+          supervisorActive: null,
+          listenerExecPath: null,
+        }),
         refreshDockerDriverGatewayReuseState: vi.fn(async (state) => {
           calls.push("refresh-gateway-reuse");
           return state;
