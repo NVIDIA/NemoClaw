@@ -3325,9 +3325,7 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
     if (navigation === "exit") {
       exitOnboardFromPrompt();
     }
-    state.endpointUrl = localInference.rewriteHostLoopbackForSandbox(
-      normalizeProviderBaseUrl(endpointInput, kind),
-    );
+    state.endpointUrl = normalizeProviderBaseUrl(endpointInput, kind);
     if (!state.endpointUrl) {
       console.error(
         selected.key === "custom"

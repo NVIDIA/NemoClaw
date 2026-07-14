@@ -62,9 +62,11 @@ export function resetOllamaContainerPortCache(): void {
 export const HOST_GATEWAY_URL = "http://host.openshell.internal";
 
 export function rewriteHostLoopbackForSandbox(url: string): string {
-  if (!url || !/localhost|127\.0\.0\.1/.test(url)) return url;
+  if (!url) return url;
   try {
     const parsed = new URL(url);
+    const hostname = parsed.hostname.toLowerCase();
+    if (hostname !== "localhost" && hostname !== "127.0.0.1") return url;
     const port = parsed.port ? `:${parsed.port}` : "";
     return `${HOST_GATEWAY_URL}${port}${parsed.pathname}${parsed.search}${parsed.hash}`;
   } catch {

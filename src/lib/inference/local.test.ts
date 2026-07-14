@@ -52,11 +52,23 @@ describe("rewriteHostLoopbackForSandbox", () => {
     expect(rewriteHostLoopbackForSandbox("http://localhost/v1?x=1#frag")).toBe(
       "http://host.openshell.internal/v1?x=1#frag",
     );
+    expect(rewriteHostLoopbackForSandbox("http://LOCALHOST:8000/v1")).toBe(
+      "http://host.openshell.internal:8000/v1",
+    );
   });
 
   it("leaves a non-loopback or empty endpoint unchanged", () => {
     expect(rewriteHostLoopbackForSandbox("http://host.openshell.internal:8000/v1")).toBe(
       "http://host.openshell.internal:8000/v1",
+    );
+    expect(rewriteHostLoopbackForSandbox("https://notlocalhost.example/v1")).toBe(
+      "https://notlocalhost.example/v1",
+    );
+    expect(rewriteHostLoopbackForSandbox("https://api.example.com/v1?target=localhost")).toBe(
+      "https://api.example.com/v1?target=localhost",
+    );
+    expect(rewriteHostLoopbackForSandbox("https://api.example.com/127.0.0.1")).toBe(
+      "https://api.example.com/127.0.0.1",
     );
     expect(rewriteHostLoopbackForSandbox("https://api.example.com/v1")).toBe(
       "https://api.example.com/v1",

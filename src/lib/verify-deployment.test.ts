@@ -198,12 +198,7 @@ describe("verifyDeployment", () => {
 
   it("reports unhealthy when the inference route is reachable but returns HTTP 5xx", async () => {
     const deps = makeDeps({
-      executeSandboxCommand: (_name: string, script: string) => {
-        if (script.includes("inference.local")) {
-          return { status: 0, stdout: "503", stderr: "" };
-        }
-        return { status: 0, stdout: "200", stderr: "" };
-      },
+      executeSandboxCommand: () => ({ status: 0, stdout: "503", stderr: "" }),
     });
     const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
     expect(result.healthy).toBe(false);
