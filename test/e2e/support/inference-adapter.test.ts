@@ -181,8 +181,8 @@ describe("E2E inference adapter", () => {
         await fake.close();
       }
     } finally {
-      if (previous === undefined) delete process.env[secretName];
-      else process.env[secretName] = previous;
+      Reflect.deleteProperty(process.env, secretName);
+      Object.assign(process.env, previous === undefined ? {} : { [secretName]: previous });
     }
   });
 
