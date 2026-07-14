@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { testTimeoutOptions } from "../../helpers/timeouts.ts";
 import { LIVE_E2E_ROOT, REPO_ROOT } from "../fixtures/paths.ts";
 
 const VITEST = path.join(REPO_ROOT, "node_modules", "vitest", "vitest.mjs");
@@ -80,29 +81,33 @@ describe("live E2E target gating", () => {
     expect(collected).toEqual(discovered);
   });
 
-  it("applies each special target's explicit opt-in at real Vitest collection", () => {
-    const gatedFiles = [
-      ["sandbox-rlimits-connect.test.ts", "NEMOCLAW_E2E_CONNECT_RLIMITS"],
-      ["mcp-bridge.test.ts", "NEMOCLAW_MCP_BRIDGE_AGENT_MATRIX"],
-      ["issue-4434-tui-unreachable-inference.test.ts", "NEMOCLAW_ISSUE_4434_LIVE"],
-    ] as const;
-    const files = gatedFiles.map(([file]) => file);
-    const disabled = listLiveTests({ enabled: true, files });
-    const enabled = listLiveTests({
-      enabled: true,
-      files,
-      env: Object.fromEntries(gatedFiles.map(([, gate]) => [gate, "1"])),
-    });
+  it(
+    "applies each special target's explicit opt-in at real Vitest collection",
+    testTimeoutOptions(15_000),
+    () => {
+      const gatedFiles = [
+        ["sandbox-rlimits-connect.test.ts", "NEMOCLAW_E2E_CONNECT_RLIMITS"],
+        ["mcp-bridge.test.ts", "NEMOCLAW_MCP_BRIDGE_AGENT_MATRIX"],
+        ["issue-4434-tui-unreachable-inference.test.ts", "NEMOCLAW_ISSUE_4434_LIVE"],
+      ] as const;
+      const files = gatedFiles.map(([file]) => file);
+      const disabled = listLiveTests({ enabled: true, files });
+      const enabled = listLiveTests({
+        enabled: true,
+        files,
+        env: Object.fromEntries(gatedFiles.map(([, gate]) => [gate, "1"])),
+      });
 
-    expect(disabled.status, disabled.stderr || disabled.stdout).toBe(0);
-    expect(enabled.status, enabled.stderr || enabled.stdout).toBe(0);
-    for (const [file, gate] of gatedFiles) {
-      expect(
-        linesForFile(enabled.lines, file).length,
-        `${file} should collect more tests when ${gate}=1`,
-      ).toBeGreaterThan(linesForFile(disabled.lines, file).length);
-    }
-  });
+      expect(disabled.status, disabled.stderr || disabled.stdout).toBe(0);
+      expect(enabled.status, enabled.stderr || enabled.stdout).toBe(0);
+      for (const [file, gate] of gatedFiles) {
+        expect(
+          linesForFile(enabled.lines, file).length,
+          `${file} should collect more tests when ${gate}=1`,
+        ).toBeGreaterThan(linesForFile(disabled.lines, file).length);
+      }
+    },
+  );
 
   it("applies Linux gates at real Vitest collection", () => {
     const linuxTests = [
