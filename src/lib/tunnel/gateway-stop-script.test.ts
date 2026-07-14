@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { GATEWAY_STOP_SCRIPT } from "./gateway-stop-script";
 
 // Linux-only: execute the production shell script against real processes while
@@ -95,19 +95,10 @@ ${script}`;
   }
 
   async function waitForArgv0(pid: number, expected: string): Promise<void> {
-    const deadline = Date.now() + 5_000;
-    let observed = "";
-    while (Date.now() < deadline) {
-      try {
-        observed = readFileSync(`/proc/${pid}/cmdline`, "utf-8").split("\0")[0] ?? "";
-        if (observed === expected) return;
-      } catch {
-        // The process may still be transitioning from bash to the target executable.
-      }
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-    assert.fail(
-      `process ${pid} did not expose argv0 ${expected}; observed ${observed || "<empty>"}`,
+    await vi.waitFor(
+      () =>
+        expect(readFileSync(`/proc/${pid}/cmdline`, "utf-8").split("\0")[0] ?? "").toBe(expected),
+      { timeout: 5_000, interval: 10 },
     );
   }
 
