@@ -207,7 +207,6 @@ describe("CLI dispatch", () => {
   });
 
   it.each([
-    ["internal uninstall", ["internal", "uninstall", "run-plan", "--yes"]],
     ["native sandbox recovery", ["sandbox", "recover", "alpha"]],
     ["public sandbox diagnostics", ["alpha", "doctor"]],
   ] as const)("routes %s when legacy migration is broken", async (_label, argv) => {
@@ -219,6 +218,34 @@ describe("CLI dispatch", () => {
         expect(runOclifArgv.mock.calls.length + runOclifCommandById.mock.calls.length).toBe(1);
       },
       { migrationError: new Error("injected migration failure"), sandboxNames: ["alpha"] },
+    );
+  });
+
+  it.each([
+    ["plan", ["internal", "uninstall", "plan", "--json"]],
+    ["run-plan", ["internal", "uninstall", "run-plan", "--yes"]],
+  ] as const)("migrates legacy port state before internal uninstall %s", async (_label, argv) => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, migrateLegacyPortState, runOclifArgv }) => {
+        await dispatchCli([...argv]);
+
+        expect(migrateLegacyPortState).toHaveBeenCalledTimes(1);
+        expect(runOclifArgv).toHaveBeenCalledTimes(1);
+      },
+    );
+  });
+
+  it("fails closed before internal uninstall when legacy migration is unsafe", async () => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, migrateLegacyPortState, runOclifArgv, stderr }) => {
+        await dispatchCli(["internal", "uninstall", "run-plan", "--yes"]);
+
+        expect(migrateLegacyPortState).toHaveBeenCalledTimes(1);
+        expect(runOclifArgv).not.toHaveBeenCalled();
+        expect(stderr.join("\n")).toContain("injected migration failure");
+        expect(process.exitCode).toBe(1);
+      },
+      { migrationError: new Error("injected migration failure") },
     );
   });
 

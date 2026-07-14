@@ -113,7 +113,11 @@ function hasPublicSandboxHelpFlag(action: string, args: readonly string[]): bool
 }
 
 function isMigrationRecoveryInvocation(argv: readonly string[]): boolean {
-  if (argv[0] === "internal") return true;
+  if (argv[0] === "internal") {
+    const isStatefulUninstall =
+      argv[1] === "uninstall" && (argv[2] === "plan" || argv[2] === "run-plan");
+    return !isStatefulUninstall;
+  }
   if (argv[0] === "sandbox") {
     return MIGRATION_RECOVERY_SANDBOX_ACTIONS.has(argv[1] ?? "");
   }
