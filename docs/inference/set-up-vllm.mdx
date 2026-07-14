@@ -107,6 +107,7 @@ The model-download helper and the long-lived vLLM container use `--pull=never`, 
 
 NemoClaw treats `/var/run/docker.sock` and `/run/docker.sock` as the local default Docker socket paths.
 It cannot inspect daemon storage through a remote endpoint, a named non-default Docker context, or another Unix socket.
+When both `DOCKER_CONTEXT` and `DOCKER_HOST` are set, NemoClaw follows Docker CLI precedence and uses `DOCKER_CONTEXT`.
 When the check is inconclusive, NemoClaw prints the reason, approximate image requirement, and diagnostic commands, then continues with the pull without claiming that capacity is sufficient.
 
 When verified capacity is insufficient, the warning identifies the image, available capacity, approximate requirement, checked path and source, remediation, and diagnostic commands.
