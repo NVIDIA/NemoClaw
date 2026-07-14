@@ -222,9 +222,12 @@ export type PrGateVerdict = {
 };
 
 class ObsoleteExactDiffError extends Error {
-  constructor(readonly verdict: PrGateVerdict) {
+  readonly verdict: PrGateVerdict;
+
+  constructor(verdict: PrGateVerdict) {
     super(`${verdict.title}: ${verdict.summary}`);
     this.name = "ObsoleteExactDiffError";
+    this.verdict = verdict;
   }
 }
 
