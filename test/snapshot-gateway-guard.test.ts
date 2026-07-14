@@ -192,6 +192,7 @@ function makeVmRestoreToEnv(
 
   return {
     HOME: home,
+    NEMOCLAW_REBUILD_VERBOSE: "1",
     PATH: `${localBin}:${process.env.PATH ?? ""}`,
   };
 }
