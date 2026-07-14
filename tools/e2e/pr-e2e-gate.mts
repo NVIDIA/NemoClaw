@@ -1772,7 +1772,7 @@ export async function startPrGate(
     assertPullUnchanged(pull, currentPull);
     if (command.headRepository !== repository && jobs.length > 0) {
       const gateRunUrl = `https://github.com/${repository}/actions/runs/${command.gateRunId}`;
-      const gateRunLink = `[E2E / PR Gate Controller run ${command.gateRunId}](${gateRunUrl})`;
+      const gateRunLink = `[${WORKFLOW_NAME} run ${command.gateRunId}](${gateRunUrl})`;
       await completeCheck(
         { repository, checkRunId },
         token,
@@ -1799,7 +1799,7 @@ export async function startPrGate(
     const controlPlaneFamily = plan.families.find((family) => family.id === "e2e-control-plane");
     if (controlPlaneFamily) {
       const gateRunUrl = `https://github.com/${repository}/actions/runs/${command.gateRunId}`;
-      const gateRunLink = `[E2E / PR Gate Controller run ${command.gateRunId}](${gateRunUrl})`;
+      const gateRunLink = `[${WORKFLOW_NAME} run ${command.gateRunId}](${gateRunUrl})`;
       await completeCheck(
         { repository, checkRunId },
         token,
