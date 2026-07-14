@@ -160,6 +160,40 @@ describe("inference selection validation", () => {
     }
   });
 
+  it("routes an unreachable custom endpoint through transport recovery, not a silent loop (#6854)", async () => {
+    const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true, api: "openai-completions" }));
+    const promptValidationRecovery = vi.fn(async () => "retry" as const);
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "test-key",
+      probeOpenAiLikeEndpoint,
+      promptValidationRecovery,
+      resolveEndpointHost: async () => {
+        throw new Error("getaddrinfo ENOTFOUND example.invalid");
+      },
+    });
+
+    try {
+      await helpers.validateCustomOpenAiLikeSelection(
+        "Custom endpoint",
+        "https://example.invalid/v1",
+        "model-a",
+        "COMPATIBLE_API_KEY",
+      );
+      // A DNS-unreachable endpoint is a transport failure: the recovery prompt
+      // receives a transport classification (DNS/VPN/URL hint + retry/back/exit),
+      // not the silent selection loop the private-IP path takes.
+      expect(promptValidationRecovery).toHaveBeenCalled();
+      const recovery = promptValidationRecovery.mock.calls[0]?.[1] as { kind?: string };
+      expect(recovery.kind).toBe("transport");
+      expect(probeOpenAiLikeEndpoint).not.toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+    }
+  });
+
   it.each([
     "http://127.0.0.1:8000/v1",
     "https://inference.local/v1",
