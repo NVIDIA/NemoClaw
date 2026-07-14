@@ -14,8 +14,9 @@ before those targets run; local runners must provide it themselves.
   publishes the exact-diff `E2E / PR Gate` check.
 - `.github/workflows/e2e-branch-validation.yaml` provisions Brev instances and
   runs focused E2E targets from source on a clean machine.
-- Platform workflows such as macOS, WSL, Ollama proxy, sandbox image, and
-  regression E2E call their target E2E tests directly.
+- Platform workflows such as macOS, WSL, sandbox image, and regression E2E
+  call their target E2E tests directly. The Ollama auth proxy target is
+  selected through `.github/workflows/e2e.yaml`.
 
 The former top-level `test/e2e/test-*.sh` suite has been removed. Keep real
 shell, installer, process, Docker, OpenShell, `/proc`, and sandbox boundaries in
