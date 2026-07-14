@@ -71,6 +71,15 @@ COPY agents/openclaw/wechat-runtime/package.json /usr/local/lib/nemoclaw/wechat-
 COPY agents/openclaw/wechat-runtime/package-lock.json /usr/local/lib/nemoclaw/wechat-runtime/package-lock.json
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 
+# OpenShell blocks the link-local EC2 Instance Metadata Service. Keep AWS SDK
+# credential chains from attempting an impossible metadata discovery path.
+ENV AWS_EC2_METADATA_DISABLED=true
+
+# OpenClaw 2026.6.10 loads some generated source through jiti. Disable its
+# filesystem transform cache so source fragments that mention provider marker
+# names do not persist under /tmp/jiti inside the sandbox.
+ENV JITI_FS_CACHE=false
+
 # Base64-encoded host corporate-proxy CA bundle (#6210). Empty by default. When
 # onboard detects an operator-supplied corporate CA on the host it bakes it
 # here; the RUN below decodes it to a root-owned file that the entrypoint
@@ -105,15 +114,6 @@ RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
 # ignores a missing file, so this is a no-op when no CA was baked; at runtime
 # nemoclaw-start overrides it with the merged OpenShell + corporate bundle.
 ENV NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem
-
-# OpenShell blocks the link-local EC2 Instance Metadata Service. Keep AWS SDK
-# credential chains from attempting an impossible metadata discovery path.
-ENV AWS_EC2_METADATA_DISABLED=true
-
-# OpenClaw 2026.6.10 loads some generated source through jiti. Disable its
-# filesystem transform cache so source fragments that mention provider marker
-# names do not persist under /tmp/jiti inside the sandbox.
-ENV JITI_FS_CACHE=false
 
 # Harden: remove unnecessary build tools and network probes from base image (#830)
 # Protect runtime tools before autoremove — the GHCR base may predate the
