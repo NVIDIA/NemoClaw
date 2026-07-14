@@ -176,7 +176,25 @@ describe("Hermes GPU boundary", () => {
     expect(errors).toEqual(
       expect.arrayContaining([
         expect.stringContaining(
-          "hermes-e2e run step must guard NVIDIA_INFERENCE_API_KEY behind the inference mode condition",
+          "hermes-e2e run step must guard NVIDIA_INFERENCE_API_KEY behind a trusted main-branch dispatch",
+        ),
+      ]),
+    );
+  });
+
+  it("rejects live secret exposure to a PR checkout", () => {
+    const errors = wfErrors((workflow) => {
+      const run = step(workflow.jobs["hermes-e2e"], "Run Hermes live Vitest test");
+      run.env = {
+        NVIDIA_INFERENCE_API_KEY:
+          "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && (inputs.inference_mode || 'mock') != 'mock' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}",
+      };
+    }, validateE2eWorkflowBoundary);
+
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          "hermes-e2e run step must guard NVIDIA_INFERENCE_API_KEY behind a trusted main-branch dispatch",
         ),
       ]),
     );

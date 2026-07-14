@@ -84,7 +84,7 @@ const TRUSTED_DOCKER_HUB_PREDICATE =
 const GUARDED_DOCKER_HUB_AUTH_REQUIRED = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} && '1' || '0' }}`;
 const GUARDED_DOCKER_HUB_USERNAME = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} && secrets.DOCKERHUB_USERNAME || '' }}`;
 const GUARDED_DOCKER_HUB_TOKEN = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} && secrets.DOCKERHUB_TOKEN || '' }}`;
-const GUARDED_HERMES_E2E_INFERENCE_KEY = `\${{ (inputs.inference_mode || 'mock') != 'mock' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}`;
+const GUARDED_HERMES_E2E_INFERENCE_KEY = `\${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && (inputs.inference_mode || 'mock') != 'mock' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}`;
 
 function asRecord(value: unknown): WorkflowRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -2337,7 +2337,7 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
   const runVitestEnv = asRecord(runVitest?.env);
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== GUARDED_HERMES_E2E_INFERENCE_KEY) {
     errors.push(
-      "hermes-e2e run step must guard NVIDIA_INFERENCE_API_KEY behind the inference mode condition so mock runs do not receive the live secret",
+      "hermes-e2e run step must guard NVIDIA_INFERENCE_API_KEY behind a trusted main-branch dispatch without a PR checkout and the inference mode condition",
     );
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
