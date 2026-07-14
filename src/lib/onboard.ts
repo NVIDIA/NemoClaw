@@ -154,6 +154,7 @@ const {
 const {
   OllamaProbeFailureTracker,
 }: typeof import("./onboard/ollama-probe-failure-tracker") = require("./onboard/ollama-probe-failure-tracker");
+const { promptOllamaModelWithPreference } = require("./onboard/ollama-model-preference");
 const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
@@ -238,7 +239,6 @@ const {
   persistAndProbeOllamaProxy,
   prepareOllamaModel,
   printOllamaExposureWarning,
-  promptOllamaModel,
   startOllamaAuthProxy,
 } = require("./inference/ollama/proxy");
 const {
@@ -3019,12 +3019,7 @@ async function selectAndValidateOllamaModel(
     } else if (isNonInteractive()) {
       model = localInference.resolveNonInteractiveOllamaModel(requestedModel, recoveredModel, gpu);
     } else {
-      const preferredModel =
-        requestedModel || (process.env.NEMOCLAW_MODEL || "").trim() || recoveredModel || null;
-      model = await promptOllamaModel(gpu, {
-        excludeModels: probeFailures.excludedModels(),
-        preferredModel,
-      });
+      model = await promptOllamaModelWithPreference(gpu, defaults, probeFailures);
     }
     if (isBackToSelection(model)) {
       console.log("  Returning to provider selection.");
