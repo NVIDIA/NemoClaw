@@ -250,14 +250,39 @@ esac`,
   );
 }
 
-// tar stub: write the corresponding binary into the -C outdir. Each binary
-// reports the replacement version + carries the messaging-rewrite and MCP-L7
-// capability markers so the post-install feature probes pass.
+// tar stub: model archive listing, inspection, and extraction. Each extracted
+// binary reports the replacement version + carries the messaging-rewrite and
+// MCP-L7 capability markers so the post-install feature probes pass.
 function createFakeTar(binDir: string, replacementVersion: string): void {
   writeExecutable(
     path.join(binDir, "tar"),
     `#!/usr/bin/env bash
 set -euo pipefail
+mode="\${1:-}"
+archive="\${2:-}"
+case "$(basename "$archive")" in
+  openshell-gateway-*) name="openshell-gateway" ;;
+  openshell-sandbox-*) name="openshell-sandbox" ;;
+  openshell-*) name="openshell" ;;
+  *) exit 2 ;;
+esac
+
+case "$mode" in
+  -tzf)
+    printf '%s\\n' "$name"
+    exit 0
+    ;;
+  -tvzf)
+    printf '%s\\n' "-rwxr-xr-x 0/0 0 2026-01-01 00:00 $name"
+    exit 0
+    ;;
+  xzf|-xzf)
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+
 outdir=""
 prev=""
 for arg in "$@"; do
@@ -268,11 +293,6 @@ for arg in "$@"; do
   prev="$arg"
 done
 [ -n "$outdir" ] || exit 1
-case "$*" in
-  *openshell-gateway*) name="openshell-gateway" ;;
-  *openshell-sandbox*) name="openshell-sandbox" ;;
-  *) name="openshell" ;;
-esac
 cat > "$outdir/$name" <<'EOS'
 #!/usr/bin/env bash
 if [ "\${1:-}" = "--version" ]; then echo "openshell ${replacementVersion}"; exit 0; fi
