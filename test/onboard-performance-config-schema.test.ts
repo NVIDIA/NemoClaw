@@ -57,6 +57,23 @@ interface Calibration {
     roundUpMs: number;
   };
   samples: CalibrationSample[];
+  validationAdjustment: {
+    validatedAt: string;
+    imageChangeSha: string;
+    imageInputsVerifiedThroughSha: string;
+    adjustedMetrics: string[];
+    derivation: {
+      statistic: string;
+      minimumHeadroomMs: number;
+      relativeHeadroomPercent: number;
+      roundUpMs: number;
+    };
+    runs: CalibrationSample[];
+    derivedCapsMs: {
+      rootStartToFirstTurnCompletionBudgetMs: number;
+      sandboxPhaseBudgetMs: number;
+    };
+  };
   derivedBudgetsMs: ColdPathBudget;
 }
 
@@ -175,6 +192,37 @@ function deriveBudgets(input: Calibration): ColdPathBudget {
   };
 }
 
+function validationThreshold(
+  values: number[],
+  derivation: Calibration["validationAdjustment"]["derivation"],
+): number {
+  const maximum = Math.max(...values);
+  const headroom = Math.max(
+    derivation.minimumHeadroomMs,
+    maximum * (derivation.relativeHeadroomPercent / 100),
+  );
+  return Math.ceil((maximum + headroom) / derivation.roundUpMs) * derivation.roundUpMs;
+}
+
+function effectiveBudgets(input: Calibration): ColdPathBudget {
+  const baseline = input.derivedBudgetsMs;
+  const adjustment = input.validationAdjustment.derivedCapsMs;
+  return {
+    ...baseline,
+    rootStartToFirstTurnCompletionBudgetMs: Math.max(
+      baseline.rootStartToFirstTurnCompletionBudgetMs,
+      adjustment.rootStartToFirstTurnCompletionBudgetMs,
+    ),
+    phaseBudgetsMs: {
+      ...baseline.phaseBudgetsMs,
+      "nemoclaw.onboard.phase.sandbox": Math.max(
+        baseline.phaseBudgetsMs["nemoclaw.onboard.phase.sandbox"],
+        adjustment.sandboxPhaseBudgetMs,
+      ),
+    },
+  };
+}
+
 describe("full-E2E cold-path calibration", () => {
   // source-shape-contract: compatibility -- Exact-head provenance is durable evidence for the hosted-run budget calibration
   it("records five independent successful exact-head samples", () => {
@@ -213,9 +261,60 @@ describe("full-E2E cold-path calibration", () => {
   });
 
   // source-shape-contract: compatibility -- Recomputed thresholds keep enforced budgets tied to the reviewed calibration evidence
-  it("keeps configured budgets derived from the checked-in samples", () => {
+  it("keeps baseline budgets derived from the checked-in samples", () => {
     const derived = deriveBudgets(calibration);
     expect(calibration.derivedBudgetsMs).toEqual(derived);
-    expect(checkedInConfig.fullE2eColdPath).toEqual(derived);
+  });
+
+  // source-shape-contract: compatibility -- Post-image-growth validation may adjust only observed stale cold-path caps without pretending to replace the five-run calibration
+  it("keeps interim cap adjustments tied to functional post-change evidence", () => {
+    const validation = calibration.validationAdjustment;
+    expect(validation.validatedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/u);
+    expect(validation.imageChangeSha).toMatch(/^[0-9a-f]{40}$/u);
+    expect(validation.imageInputsVerifiedThroughSha).toMatch(/^[0-9a-f]{40}$/u);
+    expect(validation.adjustedMetrics).toEqual([
+      "rootStartToFirstTurnCompletion",
+      "nemoclaw.onboard.phase.sandbox",
+    ]);
+    expect(validation.derivation.statistic).toBe("maximum");
+    expect(validation.runs).toHaveLength(4);
+    expect(new Set(validation.runs.map((run) => run.runId)).size).toBe(4);
+    expect(validation.runs.map((run) => run.conclusion).sort()).toEqual([
+      "failure",
+      "failure",
+      "success",
+      "success",
+    ]);
+    expect(validation.runs.map((run) => run.performancePassed).sort()).toEqual([
+      false,
+      false,
+      true,
+      true,
+    ]);
+
+    for (const run of validation.runs) {
+      expect(run.runUrl).toBe(`https://github.com/NVIDIA/NemoClaw/actions/runs/${run.runId}`);
+      expect(run.headSha).toMatch(/^[0-9a-f]{40}$/u);
+      expect(run).toMatchObject({
+        installExitCode: 0,
+        firstTurnExitCode: 0,
+        usedBuildKitPrebuild: true,
+        buildKitFallback: false,
+      });
+      expect(run.maxSilenceSecs).toBeLessThanOrEqual(60);
+      expect(run.responseChars).toBeGreaterThan(0);
+    }
+
+    expect(validation.derivedCapsMs).toEqual({
+      rootStartToFirstTurnCompletionBudgetMs: validationThreshold(
+        validation.runs.map((run) => run.measurementsMs.rootStartToFirstTurnCompletion),
+        validation.derivation,
+      ),
+      sandboxPhaseBudgetMs: validationThreshold(
+        validation.runs.map((run) => run.measurementsMs.phases["nemoclaw.onboard.phase.sandbox"]),
+        validation.derivation,
+      ),
+    });
+    expect(checkedInConfig.fullE2eColdPath).toEqual(effectiveBudgets(calibration));
   });
 });

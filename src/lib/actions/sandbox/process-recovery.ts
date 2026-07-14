@@ -406,7 +406,8 @@ export function confirmRecoveredSandboxGatewayManaged(
     options.requestGatewaySupervisorActionImpl ?? executeGatewaySupervisorAction;
   const result = requestGatewaySupervisorAction(sandboxName, "probe");
   if (hasGatewayRecoveryMarker(result)) return true;
-  return result === null ? null : false;
+  if (result === null || isExactlyRetryableManagedRecoveryFailure(result)) return null;
+  return false;
 }
 
 export async function isSandboxGatewayRunningForStatus(
@@ -787,10 +788,16 @@ export function waitForRecoveredSandboxGateway(
   sleep(settleSeconds);
   if (initialManagedHealthPassed) {
     // The managed probe is a read-only, authenticated point check in the exact
-    // gateway network namespace. Its typed failure is authoritative: never let
-    // an outer-namespace HTTP response override it or extend this settle check
-    // beyond the controller's single bounded probe.
-    return managedProbe?.(sandboxName) === true;
+    // gateway network namespace. Retry only an authenticated controller result
+    // that could not classify health; a definitive failure is authoritative,
+    // and an outer-namespace HTTP response must never override either result.
+    if (!managedProbe) return false;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      const managedResult = managedProbe(sandboxName);
+      if (managedResult !== null) return managedResult;
+      if (attempt < attempts) sleep(intervalSeconds);
+    }
+    return false;
   }
   // A stopped HTTP probe is still only a point-in-time observation. PID 1 can
   // have respawned the gateway while OpenClaw is still finishing its startup

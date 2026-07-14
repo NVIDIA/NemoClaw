@@ -81,6 +81,25 @@ describe("managed gateway recovery controller", () => {
       settleSeconds: "1",
     },
     {
+      label: "transient post-settle controller race",
+      recoverResults: [successfulControl],
+      managedProbeResults: [
+        { status: 1, stdout: "", stderr: "SUPERVISOR_UNAVAILABLE" },
+        successfulProbe,
+      ],
+      expectedResult: recoveredGateway,
+      expectedActions: ["recover", "probe", "probe"],
+      settleSeconds: "1",
+    },
+    {
+      label: "persistent post-settle controller race",
+      recoverResults: [successfulControl],
+      managedProbeResults: [{ status: 1, stdout: "", stderr: "SUPERVISOR_BUSY" }],
+      expectedResult: unrecoveredGateway,
+      expectedActions: ["recover", "probe", "probe", "probe"],
+      settleSeconds: "1",
+    },
+    {
       label: "two transient controller races followed by authenticated recovery",
       recoverResults: [
         { status: 1, stdout: "", stderr: "SUPERVISOR_UNAVAILABLE" },
@@ -167,6 +186,7 @@ describe("managed gateway recovery controller", () => {
     expectedResult,
     expectedActions,
     managedProbeResult,
+    managedProbeResults,
     settleSeconds,
   }) => {
     const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
@@ -179,13 +199,16 @@ beta  127.0.0.1  18789  12345  running`;
     const previousPollInterval = process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS;
     const previousSettleSeconds = process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS;
     let recoveryActionCalls = 0;
+    let managedProbeCalls = 0;
     const requestGatewaySupervisorAction = vi.fn(
       (_sandboxName: string, action: "restart" | "recover" | "probe") => {
         const isProbe = action === "probe";
+        const probeResults = managedProbeResults ?? [managedProbeResult ?? successfulProbe];
         const result = isProbe
-          ? (managedProbeResult ?? successfulProbe)
+          ? probeResults[Math.min(managedProbeCalls, probeResults.length - 1)]
           : recoverResults[Math.min(recoveryActionCalls, recoverResults.length - 1)];
         recoveryActionCalls += Number(!isProbe);
+        managedProbeCalls += Number(isProbe);
         return result;
       },
     );

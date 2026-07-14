@@ -23,6 +23,11 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 import { listCredentialLeakPaths } from "../fixtures/phases/state-validation.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { buildRebuildHermesChildEnv } from "./rebuild-hermes-env.ts";
+import {
+  type RebuildHermesRegistryImageState,
+  rebuildHermesRegistryImageState,
+  requireRebuildHermesInitialImageTag,
+} from "./rebuild-hermes-image-state.ts";
 import { startRebuildHermesProgress } from "./rebuild-hermes-progress.ts";
 
 // The migrated scope is the legacy non-interactive shell regression: install.sh,
@@ -227,16 +232,28 @@ async function cleanupOldHermesBaseImage(
   host: HostCliClient,
   apiKey: string | undefined,
 ): Promise<void> {
-  const result = await host.command("docker", ["rmi", OLD_BASE_TAG], {
+  await removeHermesFixtureImage(host, apiKey, OLD_BASE_TAG, {
     artifactName: "cleanup-hermes-rebuild-resources-docker-rmi-old-base",
+    label: `cleanup old Hermes base image ${OLD_BASE_TAG}`,
+  });
+}
+
+async function removeHermesFixtureImage(
+  host: HostCliClient,
+  apiKey: string | undefined,
+  imageTag: string,
+  options: { artifactName: string; label: string },
+): Promise<void> {
+  const result = await host.command("docker", ["image", "rm", imageTag], {
+    artifactName: options.artifactName,
     env: hermesCleanupEnv(apiKey),
     redactionValues: hermesCleanupRedactions(apiKey),
     timeoutMs: 3 * 60_000,
   });
   assertCleanupSucceededOrAbsent(
     result,
-    /No such image|image .* not found/iu,
-    `cleanup old Hermes base image ${OLD_BASE_TAG}`,
+    /No such image|No such object|image .* not found/iu,
+    options.label,
   );
 }
 
@@ -288,7 +305,10 @@ async function waitForSandboxReady(host: HostCliClient, apiKey: string): Promise
   throw new Error(`sandbox ${SANDBOX_NAME} did not become Ready`);
 }
 
-function seedRegistryAndSession(dashboardPort: number): SessionArtifactSummary {
+function seedRegistryAndSession(
+  dashboardPort: number,
+  imageState: RebuildHermesRegistryImageState,
+): SessionArtifactSummary {
   const registry = readJsonFileOr<RegistryData>(REGISTRY_FILE, {});
   registry.sandboxes = registry.sandboxes ?? {};
 
@@ -348,7 +368,7 @@ function seedRegistryAndSession(dashboardPort: number): SessionArtifactSummary {
     // This curated old-version fixture is still a NemoClaw-managed image.
     // Preserve that provenance explicitly; an absent value must remain
     // fail-closed because it could represent a custom `--from` image.
-    fromDockerfile: null,
+    ...imageState,
     messaging: { schemaVersion: 1, plan: messagingPlan },
   };
   expect(
@@ -463,6 +483,8 @@ test(STALE_BASE_REBUILD
 
   await bestEffortPrecleanHermesResources(host, apiKey, "pre-cleanup-hermes-rebuild-resources");
 
+  let phase1ImageTag: string | null = null;
+  let oldSandboxImageState: RebuildHermesRegistryImageState | null = null;
   cleanup.trackDisposable(`remove old Hermes base image ${OLD_BASE_TAG}`, () =>
     cleanupOldHermesBaseImage(host, apiKey),
   );
@@ -480,6 +502,22 @@ test(STALE_BASE_REBUILD
     env: hermesCleanupEnv(apiKey),
     redactionValues: hermesCleanupRedactions(apiKey),
     timeoutMs: 3 * 60_000,
+  });
+  // Cleanup is LIFO: remove the sandbox before reclaiming its exact image tags,
+  // while the gateway/provider/forward remain available for sandbox teardown.
+  cleanup.trackDisposable("remove initial Hermes fixture image", async () => {
+    if (!phase1ImageTag) return;
+    await removeHermesFixtureImage(host, apiKey, phase1ImageTag, {
+      artifactName: "cleanup-hermes-rebuild-resources-docker-rmi-initial-image",
+      label: `cleanup initial Hermes fixture image ${phase1ImageTag}`,
+    });
+  });
+  cleanup.trackDisposable("remove old derived Hermes fixture image", async () => {
+    if (!oldSandboxImageState) return;
+    await removeHermesFixtureImage(host, apiKey, oldSandboxImageState.imageTag, {
+      artifactName: "cleanup-hermes-rebuild-resources-docker-rmi-old-derived-image",
+      label: `cleanup old derived Hermes fixture image ${oldSandboxImageState.imageTag}`,
+    });
   });
   cleanup.trackDisposable(`delete Hermes rebuild OpenShell sandbox ${SANDBOX_NAME}`, () =>
     sandbox.cleanupSandbox(SANDBOX_NAME, {
@@ -533,22 +571,19 @@ test(STALE_BASE_REBUILD
       phase1DashboardPort <= 65535,
     "initial Hermes onboard must persist the dashboard port used by authoritative rebuild",
   ).toBe(true);
+  phase1ImageTag = requireRebuildHermesInitialImageTag(registrySandbox().imageTag, SANDBOX_NAME);
+  await artifacts.writeJson("phase-1-owned-image.json", { imageTag: phase1ImageTag });
 
-  const deleteCurrentSandbox = await host.command(
-    "openshell",
-    ["sandbox", "delete", SANDBOX_NAME],
-    {
-      artifactName: "phase-1-delete-current-sandbox",
-      env: testEnv(apiKey),
-      redactionValues,
-      timeoutMs: OPENSHELL_TIMEOUT_MS,
-    },
-  );
-  deleteCurrentSandbox.exitCode === 0 ||
-    (await artifacts.writeText(
-      "phase-1-delete-current-sandbox-note.txt",
-      resultText(deleteCurrentSandbox),
-    ));
+  await sandbox.cleanupSandbox(SANDBOX_NAME, {
+    artifactName: "phase-1-delete-current-sandbox",
+    env: testEnv(apiKey),
+    redactionValues,
+    timeoutMs: OPENSHELL_TIMEOUT_MS,
+  });
+  await removeHermesFixtureImage(host, apiKey, phase1ImageTag, {
+    artifactName: "phase-1-remove-initial-hermes-image",
+    label: `remove initial Hermes fixture image ${phase1ImageTag}`,
+  });
   await host.command("openshell", ["forward", "stop", "8642"], {
     artifactName: "phase-1-stop-hermes-forward",
     env: testEnv(apiKey),
@@ -657,10 +692,17 @@ test(STALE_BASE_REBUILD
       },
     );
     expectExitZero(createOldSandbox, "create old Hermes sandbox");
+    oldSandboxImageState = rebuildHermesRegistryImageState(resultText(createOldSandbox));
   } finally {
     fs.rmSync(oldDockerfileDir, { recursive: true, force: true });
   }
+  const seededOldSandboxImageState =
+    oldSandboxImageState ?? fail("old Hermes sandbox create did not produce managed image state");
   await waitForSandboxReady(host, apiKey);
+  await removeHermesFixtureImage(host, apiKey, OLD_BASE_TAG, {
+    artifactName: "phase-3-release-old-hermes-base-tag",
+    label: `release old Hermes base tag ${OLD_BASE_TAG}`,
+  });
 
   progress.phase("phase 4 seed rebuild state");
   const writeMarker = await host.command(
@@ -710,11 +752,19 @@ test(STALE_BASE_REBUILD
   expectExitZero(preConfig, "read pre-rebuild Hermes config.yaml");
   expect(preConfig.stdout).toContain("discord:");
 
-  const sessionSummary = seedRegistryAndSession(phase1DashboardPort as number);
+  const sessionSummary = seedRegistryAndSession(
+    phase1DashboardPort as number,
+    seededOldSandboxImageState,
+  );
   const seededRegistry = registrySandbox();
+  expect(
+    seededRegistry.imageTag,
+    "curated rebuild registry must retain the exact old derived image tag for cleanup",
+  ).toBe(seededOldSandboxImageState.imageTag);
   await artifacts.writeJson("phase-4-registry-session-summary.json", {
     registryVersion: seededRegistry.agentVersion,
     dashboardPort: seededRegistry.dashboardPort,
+    imageTag: seededRegistry.imageTag,
     registryInference: {
       provider: seededRegistry.provider,
       endpointUrl: seededRegistry.endpointUrl,
@@ -765,6 +815,22 @@ test(STALE_BASE_REBUILD
     onOutput: progress.onOutput,
   });
   expectExitZero(rebuild, "nemoclaw rebuild Hermes sandbox");
+
+  const oldImageInspect = await host.command(
+    "docker",
+    ["image", "inspect", seededOldSandboxImageState.imageTag],
+    {
+      artifactName: "phase-6-old-derived-image-removed",
+      env: testEnv(apiKey),
+      redactionValues,
+      timeoutMs: OPENSHELL_TIMEOUT_MS,
+    },
+  );
+  expect(
+    typeof oldImageInspect.exitCode === "number" && oldImageInspect.exitCode > 0,
+    resultText(oldImageInspect),
+  ).toBe(true);
+  expect(resultText(oldImageInspect)).toMatch(/No such (?:image|object)(?::|\s)/iu);
 
   progress.phase("phase 7 verification");
   const restoredMarker = await host.command(

@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-
-import { GatewayClient, HostCliClient, SandboxClient } from "../fixtures/clients/index.ts";
 import type { CommandRunner } from "../fixtures/clients/index.ts";
+import { GatewayClient, HostCliClient, SandboxClient } from "../fixtures/clients/index.ts";
 import type { NemoClawInstance } from "../fixtures/phases/onboarding.ts";
 import type {
   ShellProbeResult,
@@ -194,6 +193,11 @@ describe("GatewayClient recovery helpers (#2701)", () => {
       const gateway = buildGateway(runner);
 
       await expect(gateway.resolveGatewayPid(fakeInstance())).resolves.toBe(1234);
+      const script = runner.calls[0]?.args.at(-1) ?? "";
+      expect(script).toContain("cat /tmp/nemoclaw-gateway.pid");
+      expect(script).toContain("/proc/$pid/stat");
+      expect(script).toContain("${20}");
+      expect(script).not.toContain("ps -eo");
     });
 
     it("returns null when the script prints non-numeric output", async () => {
