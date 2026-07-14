@@ -194,13 +194,10 @@ jobs:
             'Acquire::Retries "5";' \
             >/etc/apt/apt.conf.d/99github-actions-network
           apt-get update
-          apt-get install -y bash ca-certificates curl git jq lsb-release make python3 python3-pip python3-venv rsync sudo tar unzip xz-utils
+          apt-get install -y bash ca-certificates curl git jq lsb-release make python3 python3-pip python3-venv rsync tar unzip xz-utils
           if ! id -u "$test_user" >/dev/null 2>&1; then
             useradd --create-home --shell /bin/bash "$test_user"
           fi
-          printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$test_user" >"/etc/sudoers.d/$test_user"
-          chmod 0440 "/etc/sudoers.d/$test_user"
-          visudo -cf "/etc/sudoers.d/$test_user"
           '@
           $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
           [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
@@ -253,7 +250,6 @@ jobs:
           $script = @"
           set -euo pipefail
           id -un | grep -Fxq '$env:WSL_TEST_USER'
-          sudo -n true
           cd '$env:WSL_WORKDIR'
           npm ci --ignore-scripts
           npm run build:cli
