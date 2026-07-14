@@ -15,6 +15,7 @@ import { buildRiskPlan, type RiskPlan } from "./risk-plan.mts";
 
 const E2E_WORKFLOW = "e2e.yaml";
 const E2E_WORKFLOW_PATH = `.github/workflows/${E2E_WORKFLOW}`;
+export const E2E_RENDER_LIMIT = 20;
 const TRUSTED_REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 const E2E_ALL_ID = "e2e-all";
 const CREDENTIAL_FREE_TEST_TAG = "e2e/credential-free";

@@ -156,7 +156,8 @@ as generic commentary. Every source-of-truth review item includes a `findingId`:
 reference their covering open ledger finding, while satisfied and not-applicable items use `null`.
 Every result also includes nested `e2e.coverage` and `e2e.targets` guidance. The fields stay
 separate in JSON, but comments and summaries combine their IDs into one `Recommended E2E` list and
-one optional list. Each ID appears once. The trusted normalizer
+one optional list. Duplicate IDs appear once. If a list is longer than the display limit, the output
+reports how many more IDs exist. The trusted normalizer
 restores deterministic requirements before model selections, retains only allowlisted coverage IDs
 and exact supported selector tuples, and replaces model-authored reasons with canonical trusted
 reasons. It discards free-form E2E domains, new-test recommendations, and no-selection explanations.

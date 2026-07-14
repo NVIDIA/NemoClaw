@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
+  E2E_RENDER_LIMIT,
   type E2eCoverageResult,
   type E2eExactHeadCredentialFreeTest,
   type E2eTargetAdvisorResult,
@@ -2633,8 +2634,11 @@ function appendE2eSummary(lines: string[], e2e: CombinedE2eResult): void {
   if (required.length === 0) {
     lines.push("- _None._");
   } else {
-    for (const id of required.slice(0, 20)) {
+    for (const id of required.slice(0, E2E_RENDER_LIMIT)) {
       lines.push(`- **${id}**`);
+    }
+    if (required.length > E2E_RENDER_LIMIT) {
+      lines.push(`- _${required.length - E2E_RENDER_LIMIT} more._`);
     }
   }
   lines.push("");
@@ -2642,8 +2646,11 @@ function appendE2eSummary(lines: string[], e2e: CombinedE2eResult): void {
   if (optional.length === 0) {
     lines.push("- _None._");
   } else {
-    for (const id of optional.slice(0, 20)) {
+    for (const id of optional.slice(0, E2E_RENDER_LIMIT)) {
       lines.push(`- **${id}**`);
+    }
+    if (optional.length > E2E_RENDER_LIMIT) {
+      lines.push(`- _${optional.length - E2E_RENDER_LIMIT} more._`);
     }
   }
   lines.push("");

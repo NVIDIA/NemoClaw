@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 
 import {
   credentialFreeTestIdForFile,
+  E2E_RENDER_LIMIT,
   type TrustedE2eRecommendationInventory,
   trustedE2eRecommendationInventory,
 } from "../advisors/e2e-recommendations.mts";
@@ -15,7 +16,6 @@ import { parseArgs, readIfExists, readJsonIfExists } from "../advisors/io.mts";
 
 const MARKER = "<!-- nemoclaw-pr-review-advisor -->";
 const COMMENT_TITLE = "PR Review Advisor";
-const E2E_RENDER_LIMIT = 20;
 const MAX_COMMENT_BYTES = 60 * 1024;
 const COMMENT_TRUNCATION_NOTICE =
   "\n\n_Comment truncated to fit GitHub's size limit. The workflow artifact contains the complete review._\n";
@@ -511,7 +511,9 @@ function renderE2eDetails(result?: ReviewAdvisorResult): string {
     "",
   ];
 
-  lines.push(`**Recommended E2E:** ${renderE2eIds(requiredE2e) || "_None_"}`);
+  const hiddenRequiredCount = requiredE2e.length - E2E_RENDER_LIMIT;
+  const hiddenRequiredText = hiddenRequiredCount > 0 ? ` (+${hiddenRequiredCount} more)` : "";
+  lines.push(`**Recommended E2E:** ${renderE2eIds(requiredE2e) || "_None_"}${hiddenRequiredText}`);
 
   if (optionalE2e.length > 0) {
     lines.push(

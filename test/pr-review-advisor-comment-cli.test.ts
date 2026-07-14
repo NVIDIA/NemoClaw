@@ -6,6 +6,10 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 import {
+  E2E_RENDER_LIMIT,
+  trustedE2eRecommendationInventory,
+} from "../tools/advisors/e2e-recommendations.mts";
+import {
   buildComment,
   normalizeAdvisorLaneReport,
   normalizeCommentOptions,
@@ -16,6 +20,27 @@ import {
 const ROOT = path.resolve(import.meta.dirname, "..");
 
 describe("PR review advisor comment CLI", () => {
+  it("reports required E2E recommendations that do not fit", () => {
+    const ids = trustedE2eRecommendationInventory().allowedJobIds.slice(0, E2E_RENDER_LIMIT + 1);
+    expect(ids).toHaveLength(E2E_RENDER_LIMIT + 1);
+
+    const comment = buildComment({
+      summary: "unused",
+      result: {
+        e2e: {
+          coverage: {
+            requiredTests: ids.map((id) => ({ id, reason: "Trusted E2E recommendation." })),
+            optionalTests: [],
+          },
+          targets: { required: [], optional: [] },
+        },
+      },
+    });
+
+    expect(comment).toContain("(+1 more)");
+    expect(comment.match(/<code>/gu)).toHaveLength(E2E_RENDER_LIMIT);
+  });
+
   it("validates configurable comment CLI fields and explicit artifacts", () => {
     const tmp = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-comment-"));
     const defaultSummary = path.join(
