@@ -174,6 +174,51 @@ function signal(
   };
 }
 
+function writePassingEvidence(evidencePath: string, gate: PrGateState): void {
+  for (const job of gate.expectedJobs) {
+    for (const shard of gate.expectedShards[job]!) {
+      const directory = path.join(evidencePath, `${job}-${shard}`);
+      fs.mkdirSync(directory, { recursive: true });
+      fs.writeFileSync(
+        path.join(directory, "risk-signal.json"),
+        `${JSON.stringify(signal(gate, job, shard))}\n`,
+      );
+    }
+  }
+}
+
+function writeMalformedEvidence(evidencePath: string, _gate: PrGateState): void {
+  const directory = path.join(evidencePath, "malformed");
+  fs.mkdirSync(directory);
+  fs.writeFileSync(path.join(directory, "risk-signal.json"), "{not-json\n");
+}
+
+async function expectHandledFinalization(
+  finalization: Promise<void>,
+  _expectedSummary: string,
+): Promise<void> {
+  await expect(finalization).resolves.toBeUndefined();
+}
+
+async function expectControllerFailureFinalization(
+  finalization: Promise<void>,
+  expectedSummary: string,
+): Promise<void> {
+  await expect(finalization).rejects.toThrow(expectedSummary);
+}
+
+function expectSelectedRunLink(body: unknown): void {
+  expect(JSON.stringify(body)).toContain(
+    `[Selected E2E run 23](https://github.com/NVIDIA/NemoClaw/actions/runs/23)`,
+  );
+}
+
+function expectControllerDetailsLink(body: unknown): void {
+  expect(body).toMatchObject({
+    details_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/23",
+  });
+}
+
 function workflowRun(gate: PrGateState, overrides: Record<string, unknown> = {}) {
   return {
     id: 23,
@@ -283,14 +328,53 @@ describe("PR E2E controller lifecycle", () => {
         ...pullRequest(),
         base: { ...pullRequest().base, sha: "c".repeat(40) },
       },
-      expectedError: /expected exact head and base/u,
+      writeEvidence: writeMalformedEvidence,
+      expectedLivePullReads: 1,
+      expectedTitle: "Superseded by PR update",
+      expectedSummary:
+        "moved from head `aaaaaaa` on base `bbbbbbb` to head `aaaaaaa` on base `ccccccc`",
     },
     {
       label: "the pull request closes after dispatch",
       currentPull: { ...pullRequest(), state: "closed" },
-      expectedError: /invalid pull request state/u,
+      writeEvidence: writeMalformedEvidence,
+      expectedLivePullReads: 1,
+      expectedTitle: "PR closed — gate no longer applies",
+      expectedSummary: "closed before this gate completed",
     },
-  ])("fails finalization when $label", async ({ currentPull, expectedError }) => {
+    {
+      label: "the pull request closes after its fork repository is deleted",
+      currentPull: {
+        ...pullRequest(),
+        state: "closed",
+        head: { ...pullRequest().head, repo: null },
+      },
+      writeEvidence: writeMalformedEvidence,
+      expectedLivePullReads: 1,
+      expectedTitle: "PR closed — gate no longer applies",
+      expectedSummary: "closed before this gate completed",
+    },
+    {
+      label: "the pull request changes while passing evidence is parsed",
+      firstFinalizationPull: pullRequest(),
+      currentPull: {
+        ...pullRequest(),
+        head: { ...pullRequest().head, sha: "c".repeat(40) },
+      },
+      writeEvidence: writePassingEvidence,
+      expectedLivePullReads: 2,
+      expectedTitle: "Superseded by PR update",
+      expectedSummary:
+        "moved from head `aaaaaaa` on base `bbbbbbb` to head `ccccccc` on base `bbbbbbb`",
+    },
+  ])("records an obsolete exact-diff outcome without failing the controller when $label", async ({
+    currentPull,
+    firstFinalizationPull = currentPull,
+    writeEvidence,
+    expectedLivePullReads,
+    expectedTitle,
+    expectedSummary,
+  }) => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-retarget-"));
     const outputPath = path.join(workDir, "github-output");
     const statePath = path.join(workDir, "controller-state.json");
@@ -300,20 +384,12 @@ describe("PR E2E controller lifecycle", () => {
     fs.writeFileSync(outputPath, "", { mode: 0o600 });
     fs.writeFileSync(statePath, serializedState, { mode: 0o600 });
     fs.mkdirSync(evidencePath);
-    for (const job of gate.expectedJobs) {
-      for (const shard of gate.expectedShards[job]!) {
-        const directory = path.join(evidencePath, `${job}-${shard}`);
-        fs.mkdirSync(directory, { recursive: true });
-        fs.writeFileSync(
-          path.join(directory, "risk-signal.json"),
-          `${JSON.stringify(signal(gate, job, shard))}\n`,
-        );
-      }
-    }
+    writeEvidence(evidencePath, gate);
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     vi.stubEnv("GITHUB_OUTPUT", outputPath);
     const requests: RecordedGitHubRequest[] = [];
+    let livePullReads = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter(
         [
@@ -321,9 +397,10 @@ describe("PR E2E controller lifecycle", () => {
             ({ url, method }) => url.endsWith("/actions/runs/23") && method === "GET",
             () => githubResponse(workflowRun(gate)),
           ),
+          existingPrGateCheckRunsRoute(),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/pulls/42") && method === "GET",
-            () => githubResponse(currentPull),
+            () => githubResponse(livePullReads++ === 0 ? firstFinalizationPull : currentPull),
           ),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
@@ -342,22 +419,28 @@ describe("PR E2E controller lifecycle", () => {
           evidencePath,
           checkRunId: 17,
           childRunId: 23,
+          evidenceOutcome: "success",
         }),
-      ).rejects.toThrow(expectedError);
+      ).resolves.toBeUndefined();
       expect(
         requests.some(
           (request) => request.url.includes("/commits/") && request.url.includes("/check-runs?"),
         ),
-      ).toBe(false);
+      ).toBe(true);
       const completion = requests.find(
         (request) => request.url.endsWith("/check-runs/17") && request.method === "PATCH",
       );
       expect(completion?.body).toMatchObject({
         status: "completed",
-        conclusion: "failure",
-        output: { title: "Evidence could not be verified" },
+        conclusion: "cancelled",
+        details_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/23",
+        output: {
+          title: expectedTitle,
+          summary: expect.stringContaining(expectedSummary),
+        },
       });
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
+      expect(livePullReads).toBe(expectedLivePullReads);
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }
@@ -367,22 +450,105 @@ describe("PR E2E controller lifecycle", () => {
     {
       label: "missing evidence",
       status: "completed",
+      conclusion: "success",
+      jobs: [],
+      evidenceOutcome: "success" as const,
+      assertFinalization: expectHandledFinalization,
+      assertCompletionLink: expectSelectedRunLink,
       expectCancellation: false,
       expectedTitle: "Evidence is missing",
-      expectedError: /Missing signals: onboard-repair:default, onboard-resume:default/u,
+      expectedSummary: "Missing signals: onboard-repair:default, onboard-resume:default",
     },
     {
       label: "an unfinished child",
       status: "in_progress",
+      conclusion: "success",
+      jobs: [],
+      evidenceOutcome: "success" as const,
+      assertFinalization: expectHandledFinalization,
+      assertCompletionLink: expectSelectedRunLink,
       expectCancellation: true,
-      expectedTitle: "E2E run did not succeed",
-      expectedError: /The run concluded unfinished \(in_progress\)/u,
+      expectedTitle: "Selected E2E did not pass",
+      expectedSummary: "concluded `unfinished (in_progress)`",
     },
-  ])("closes the check as failure for $label", async ({
+    {
+      label: "a failed child job",
+      status: "completed",
+      conclusion: "failure",
+      jobs: [
+        {
+          id: 77,
+          name: "Hermes security-posture",
+          conclusion: "failure",
+          steps: [{ name: "Run security posture live Vitest test", conclusion: "failure" }],
+        },
+      ],
+      evidenceOutcome: "success" as const,
+      assertFinalization: expectHandledFinalization,
+      assertCompletionLink: expectSelectedRunLink,
+      expectCancellation: false,
+      expectedTitle: "Hermes security-posture failed",
+      expectedSummary:
+        "[Hermes security-posture](https://github.com/NVIDIA/NemoClaw/actions/runs/23/job/77) — failed step: `Run security posture live Vitest test`",
+    },
+    {
+      label: "a failed child whose job details are unavailable",
+      status: "completed",
+      conclusion: "failure",
+      jobs: null,
+      evidenceOutcome: "success" as const,
+      assertFinalization: expectHandledFinalization,
+      assertCompletionLink: expectSelectedRunLink,
+      expectCancellation: false,
+      expectedTitle: "Selected E2E did not pass",
+      expectedSummary: "Job details could not be loaded",
+    },
+    {
+      label: "the evidence download fails after a successful child",
+      status: "completed",
+      conclusion: "success",
+      jobs: [],
+      evidenceOutcome: "failure" as const,
+      assertFinalization: expectControllerFailureFinalization,
+      assertCompletionLink: expectControllerDetailsLink,
+      expectCancellation: false,
+      expectedTitle: "Evidence could not be verified",
+      expectedSummary: "Evidence download did not complete (outcome: failure)",
+    },
+    {
+      label: "the evidence download is cancelled after a successful child",
+      status: "completed",
+      conclusion: "success",
+      jobs: [],
+      evidenceOutcome: "cancelled" as const,
+      assertFinalization: expectControllerFailureFinalization,
+      assertCompletionLink: expectControllerDetailsLink,
+      expectCancellation: false,
+      expectedTitle: "Evidence could not be verified",
+      expectedSummary: "Evidence download did not complete (outcome: cancelled)",
+    },
+    {
+      label: "the evidence download is skipped after a successful child",
+      status: "completed",
+      conclusion: "success",
+      jobs: [],
+      evidenceOutcome: "skipped" as const,
+      assertFinalization: expectControllerFailureFinalization,
+      assertCompletionLink: expectControllerDetailsLink,
+      expectCancellation: false,
+      expectedTitle: "Evidence could not be verified",
+      expectedSummary: "Evidence download did not complete (outcome: skipped)",
+    },
+  ])("records the expected check and controller outcomes when $label", async ({
     status,
+    conclusion,
+    jobs,
+    evidenceOutcome,
+    assertFinalization,
+    assertCompletionLink,
     expectCancellation,
     expectedTitle,
-    expectedError,
+    expectedSummary,
   }) => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-finish-"));
     const outputPath = path.join(workDir, "github-output");
@@ -402,11 +568,18 @@ describe("PR E2E controller lifecycle", () => {
         [
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/actions/runs/23") && method === "GET",
-            () => githubResponse(workflowRun(gate, { status, conclusion: "success" })),
+            () => githubResponse(workflowRun(gate, { status, conclusion })),
           ),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/actions/runs/23/cancel") && method === "POST",
             () => githubResponse(undefined, 202),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.includes("/actions/runs/23/jobs?") && method === "GET",
+            () =>
+              jobs === null
+                ? githubResponse({ message: "temporary failure" }, 503)
+                : githubResponse({ total_count: jobs.length, jobs }),
           ),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/pulls/42") && method === "GET",
@@ -423,15 +596,15 @@ describe("PR E2E controller lifecycle", () => {
     );
 
     try {
-      await expect(
-        finishPrGate({
-          statePath,
-          stateHash: sha256(serializedState),
-          evidencePath,
-          checkRunId: 17,
-          childRunId: 23,
-        }),
-      ).rejects.toThrow(expectedError);
+      const finalization = finishPrGate({
+        statePath,
+        stateHash: sha256(serializedState),
+        evidencePath,
+        checkRunId: 17,
+        childRunId: 23,
+        evidenceOutcome,
+      });
+      await assertFinalization(finalization, expectedSummary);
       expect(requests.some((request) => request.url.endsWith("/actions/runs/23/cancel"))).toBe(
         expectCancellation,
       );
@@ -439,8 +612,12 @@ describe("PR E2E controller lifecycle", () => {
       expect(completion?.body).toMatchObject({
         status: "completed",
         conclusion: "failure",
-        output: { title: expectedTitle },
+        output: {
+          title: expectedTitle,
+          summary: expect.stringContaining(expectedSummary),
+        },
       });
+      assertCompletionLink(completion?.body);
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });

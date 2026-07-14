@@ -270,7 +270,10 @@ describe("docker-driver-gateway compatibility container", () => {
   });
 
   it("fails closed when the configured Unix socket does not answer as a Docker daemon", async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-daemon-probe-"));
+    // Darwin limits AF_UNIX socket paths to 104 bytes. Vitest's nested temp root
+    // can consume most of that budget before the fixture suffix is appended.
+    const socketTempRoot = process.platform === "darwin" ? "/tmp" : os.tmpdir();
+    const dir = fs.mkdtempSync(path.join(socketTempRoot, "nemoclaw-docker-daemon-probe-"));
     const socketPath = path.join(dir, "docker.sock");
     const server = createServer();
     await new Promise<void>((resolve, reject) => {

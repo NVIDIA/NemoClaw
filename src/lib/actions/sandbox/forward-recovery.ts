@@ -35,6 +35,7 @@ type SandboxPortDeps = {
 type SandboxForwardRecoveryOptions = {
   afterSuccess?: () => boolean;
   beforeStart?: () => boolean;
+  isWsl?: boolean;
 };
 
 function isValidPort(value: unknown): value is number {
@@ -73,7 +74,7 @@ export function ensureSandboxPortForward(
 ): boolean {
   const port = resolveSandboxDashboardPort(sandboxName);
   const remoteBindRequested = isRemoteDashboardBindRequested(process.env.NEMOCLAW_DASHBOARD_BIND);
-  const allInterfaceBindRequired = remoteBindRequested || isWsl();
+  const allInterfaceBindRequired = remoteBindRequested || isWsl({ isWsl: options.isWsl });
   if (
     remoteBindRequested &&
     registry.getSandbox(sandboxName)?.dashboardRemoteBindPrepared !== true
@@ -109,9 +110,13 @@ export function ensureSandboxPortForward(
  * Local reachability is intentionally not sufficient: an unrelated listener
  * cannot prove that OpenShell assigned this sandbox the requested host port.
  */
-export function isSandboxForwardHealthy(sandboxName: string): SandboxForwardHealth {
+export function isSandboxForwardHealthy(
+  sandboxName: string,
+  options: { isWsl?: boolean } = {},
+): SandboxForwardHealth {
   const allInterfaceBindRequired =
-    isRemoteDashboardBindRequested(process.env.NEMOCLAW_DASHBOARD_BIND) || isWsl();
+    isRemoteDashboardBindRequested(process.env.NEMOCLAW_DASHBOARD_BIND) ||
+    isWsl({ isWsl: options.isWsl });
   return isSandboxPortForwardHealthy(
     sandboxName,
     resolveSandboxDashboardPort(sandboxName),

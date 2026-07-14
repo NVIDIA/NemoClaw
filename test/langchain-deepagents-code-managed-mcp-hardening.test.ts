@@ -30,8 +30,10 @@ function runManagedHelper(source: string) {
 }
 
 describe("Deep Agents managed MCP runtime hardening", () => {
-  it("treats only the exact empty managed projection as an absent snapshot", () => {
-    const result = runManagedHelper(String.raw`
+  it.runIf(process.platform === "linux")(
+    "treats only the exact empty managed projection as an absent snapshot",
+    () => {
+      const result = runManagedHelper(String.raw`
 import importlib.util
 import sys
 
@@ -66,12 +68,15 @@ for raw in invalid:
 print("strict-tombstone-ok")
 `);
 
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim()).toBe("strict-tombstone-ok");
-  });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout.trim()).toBe("strict-tombstone-ok");
+    },
+  );
 
-  it("rejects a same-sized fully sealed descriptor not created by this process state", () => {
-    const result = runManagedHelper(String.raw`
+  it.runIf(process.platform === "linux")(
+    "rejects a same-sized fully sealed descriptor not created by this process state",
+    () => {
+      const result = runManagedHelper(String.raw`
 import fcntl
 import importlib.util
 import os
@@ -110,12 +115,15 @@ finally:
 print("descriptor-provenance-ok")
 `);
 
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim()).toBe("descriptor-provenance-ok");
-  });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout.trim()).toBe("descriptor-provenance-ok");
+    },
+  );
 
-  it("falls back on blocked memfd with repeatable digest-bound child reads", () => {
-    const result = runManagedHelper(String.raw`
+  it.runIf(process.platform === "linux")(
+    "falls back on blocked memfd with repeatable digest-bound child reads",
+    () => {
+      const result = runManagedHelper(String.raw`
 import errno
 import fcntl
 import importlib.util
@@ -223,12 +231,15 @@ print(child.managed_mcp_config_bytes(sys.argv[2]).decode(), end="")
 print("anonymous-fallback-ok")
 `);
 
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim()).toBe("anonymous-fallback-ok");
-  });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout.trim()).toBe("anonymous-fallback-ok");
+    },
+  );
 
-  it("fails closed without O_TMPFILE and does not mask unrelated memfd errors", () => {
-    const result = runManagedHelper(String.raw`
+  it.runIf(process.platform === "linux")(
+    "fails closed without O_TMPFILE and does not mask unrelated memfd errors",
+    () => {
+      const result = runManagedHelper(String.raw`
 import errno
 import importlib.util
 import os
@@ -329,7 +340,8 @@ with tempfile.TemporaryDirectory() as tempdir:
 print("fallback-fail-closed-ok")
 `);
 
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim()).toBe("fallback-fail-closed-ok");
-  });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout.trim()).toBe("fallback-fail-closed-ok");
+    },
+  );
 });
