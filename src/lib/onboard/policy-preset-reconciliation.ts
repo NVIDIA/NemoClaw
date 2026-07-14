@@ -84,6 +84,7 @@ export function isStaleBuiltinBravePolicyPreset(
   options: {
     webSearchConfig?: WebSearchConfig | null;
     customPresetNames?: ReadonlySet<string> | null;
+    tierDefaultPresetNames?: ReadonlySet<string> | null;
   } = {},
 ): boolean {
   return isStaleBuiltinWebSearchPolicyPreset(name, options);
@@ -94,9 +95,17 @@ export function isStaleBuiltinWebSearchPolicyPreset(
   options: {
     webSearchConfig?: WebSearchConfig | null;
     customPresetNames?: ReadonlySet<string> | null;
+    tierDefaultPresetNames?: ReadonlySet<string> | null;
   } = {},
 ): boolean {
   if (options.customPresetNames?.has(name)) return false;
+  // brave/tavily double as a tier's default egress preset (e.g. Brave Search API
+  // host access on the Balanced/Open tiers) AND the built-in web-search provider
+  // preset. When the preset is a default of the tier being applied it is a tier
+  // egress default, not a stale web-search leftover — keep it regardless of the
+  // web-search provider choice. The Restricted tier lists no such default, so a
+  // genuinely stale brave/tavily there still prunes. (#6844)
+  if (options.tierDefaultPresetNames?.has(name)) return false;
   if (name === "nous-web") {
     return Boolean(
       options.webSearchConfig && webSearchProviderForConfig(options.webSearchConfig) === "tavily",
@@ -114,14 +123,23 @@ export function createUnavailablePolicyPresetPruner(options: {
   webSearchConfig?: WebSearchConfig | null;
   customPresetNames?: ReadonlySet<string> | null;
   customOwnsObservability?: boolean;
-}): (presetNames: string[], pruning?: { preserveExplicitWebSearch?: boolean }) => string[] {
+}): (
+  presetNames: string[],
+  pruning?: {
+    preserveExplicitWebSearch?: boolean;
+    tierDefaultPresetNames?: ReadonlySet<string> | null;
+  },
+) => string[] {
   // Custom and interactive selections may explicitly opt into a built-in web-search
   // preset without storing provider config. Inactive observability remains ineligible.
   return (presetNames, pruning = {}) =>
     pruneDisabledMessagingPolicyPresets(presetNames, options.disabledChannels).filter(
       (name) =>
         (pruning.preserveExplicitWebSearch ||
-          !isStaleBuiltinWebSearchPolicyPreset(name, options)) &&
+          !isStaleBuiltinWebSearchPolicyPreset(name, {
+            ...options,
+            tierDefaultPresetNames: pruning.tierDefaultPresetNames,
+          })) &&
         !isInactiveObservabilityPolicyPreset(name, options),
     );
 }

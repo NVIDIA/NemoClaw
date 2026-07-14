@@ -320,6 +320,12 @@ async function setupPoliciesWithSelectionInner(
   // branch before presets are recorded, so its persisted tier must also win
   // over a new prompt or non-interactive default.
   const recordedTierName = options.tierName ?? deps.getRecordedPolicyTier?.(sandboxName) ?? null;
+  // Defaults of the recorded tier (e.g. `brave` on Balanced) are tier egress
+  // presets, not stale web-search leftovers — exempt them from pruning so a
+  // reconcile-triggered reuse reapply preserves them. (#6844)
+  const recordedTierDefaultPresetNames = recordedTierName
+    ? new Set(deps.tiers.resolveTierPresets(recordedTierName).map((preset) => preset.name))
+    : null;
   if (chosen !== null) {
     const knownSelectablePresets = new Set(selectablePresets.map((preset) => preset.name));
     chosen = mergeRequiredSetupPolicyPresets(chosen, {
@@ -334,7 +340,9 @@ async function setupPoliciesWithSelectionInner(
       customPresetNames,
       customOwnsObservability,
     });
-    chosen = pruneUnavailablePresets(chosen);
+    chosen = pruneUnavailablePresets(chosen, {
+      tierDefaultPresetNames: recordedTierDefaultPresetNames,
+    });
   }
 
   if (selectedPresets !== null) {
