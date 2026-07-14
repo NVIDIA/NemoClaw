@@ -67,8 +67,9 @@ export interface VllmModelDef {
    * Platforms whose interactive picker should offer this entry. Models with
    * platform-specific flags (the NVFP4 MoE checkpoint targets `sm_121a` only,
    * the very large V4 Flash recipe wants Station-class VRAM) appear only on
-   * profiles they can actually run on. Non-interactive callers and direct
-   * `NEMOCLAW_VLLM_MODEL` overrides bypass the filter.
+   * profiles they can actually run on. Direct `NEMOCLAW_VLLM_MODEL`
+   * overrides normally bypass the picker filter, but a model-specific runtime
+   * is rejected outside this list so an incompatible image is never pulled.
    */
   platforms: readonly VllmPlatform[];
   /**
@@ -80,6 +81,8 @@ export interface VllmModelDef {
   serveEnv?: Record<string, string>;
   /** Runtime overrides for recipes that cannot use the platform image. */
   runtime?: VllmRuntimeOverride;
+  /** Whether startup must install vLLM's fastsafetensors extra. Defaults to true. */
+  installFastSafetensors?: boolean;
 }
 
 export const VLLM_MODELS: readonly VllmModelDef[] = [
@@ -236,6 +239,10 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       // importing the playbook's host-network setting.
       dockerRunArgs: ["--shm-size", "16g"],
     },
+    // The digest-pinned vLLM image already contains the serving package, and
+    // this recipe does not use the fastsafetensors load format. Avoid mutating
+    // the reviewed runtime from the package index when the container starts.
+    installFastSafetensors: false,
   },
   {
     id: "nvidia/Qwen3.6-35B-A3B-NVFP4",
@@ -448,9 +455,11 @@ function shellQuote(value: string): string {
  * Build the `vllm serve` command line for the supplied model: the shared
  * serving flags merged with the model-specific args from the registry.
  *
- * The command is prefixed with the `pip install` that pulls the
- * `fastsafetensors` extra so existing express scripts keep working; a model
- * may prepend env exports via `serveEnv`.
+ * By default the command is prefixed with the `pip install` that pulls the
+ * `fastsafetensors` extra so existing express scripts keep working. A pinned
+ * runtime that already contains everything its recipe needs may disable that
+ * mutation with `installFastSafetensors: false`; a model may also prepend env
+ * exports via `serveEnv`.
  */
 export function buildVllmServeCommand(
   model: VllmModelDef,
@@ -470,8 +479,7 @@ export function buildVllmServeCommand(
     ...model.modelArgs,
   ];
   const extraArgs = parseVllmExtraServeArgs(env).map(shellQuote);
-  return `${envPrefix}pip install vllm[fastsafetensors] && vllm serve ${model.id} ${[
-    ...args,
-    ...extraArgs,
-  ].join(" ")}`;
+  const setup =
+    model.installFastSafetensors === false ? "" : "pip install vllm[fastsafetensors] && ";
+  return `${envPrefix}${setup}vllm serve ${model.id} ${[...args, ...extraArgs].join(" ")}`;
 }

@@ -72,6 +72,7 @@ describe("vllm model registry", () => {
 
     const cmd = buildVllmServeCommand(ultra!);
     expect(cmd).toContain("vllm serve nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4");
+    expect(cmd).not.toContain("pip install");
     expect(cmd).toContain("--revision 183968f87ae4cedce3039313cac1fd43d112c578");
     expect(cmd).toContain("--served-model-name nvidia/nemotron-3-ultra-550b-a55b");
     expect(cmd).toContain("--cpu-offload-gb 150 --cpu-offload-params experts");

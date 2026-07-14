@@ -497,6 +497,29 @@ describe("installVllm model resolution", () => {
     expect(summary).toContain("Model: Qwen/Qwen3.6-27B-FP8 (NEMOCLAW_VLLM_MODEL override)");
   });
 
+  it("rejects a Station-only runtime override before side effects on generic Linux", async () => {
+    process.env.NEMOCLAW_VLLM_MODEL = "nemotron-3-ultra-550b-a55b";
+    const profile = detectVllmProfile({ platform: "linux", type: "nvidia" })!;
+    const beforeInstall = vi.fn();
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      beforeInstall,
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(beforeInstall).not.toHaveBeenCalled();
+    expect(mocks.runCapture).not.toHaveBeenCalled();
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(mocks.dockerSpawn).not.toHaveBeenCalled();
+    const errors = errSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
+    expect(errors).toContain(
+      "NVIDIA Nemotron 3 Ultra 550B NVFP4 is not supported on Linux + NVIDIA GPU",
+    );
+  });
+
   it("installs the complete Nemotron Ultra Station recipe without another selection", async () => {
     process.env.NEMOCLAW_VLLM_MODEL = "nemotron-3-ultra-550b-a55b";
     const profile = detectVllmProfile({ platform: "station", type: "nvidia" })!;

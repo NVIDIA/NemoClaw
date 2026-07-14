@@ -798,6 +798,10 @@ export async function installVllm(
   });
   if (!resolved) return { ok: false };
   const { model, source: modelSource } = resolved;
+  if (model.runtime && !model.platforms.includes(profile.platform)) {
+    console.error(`  vLLM install failed: ${model.label} is not supported on ${profile.name}`);
+    return { ok: false };
+  }
   const runtimeProfile = resolveVllmRuntimeProfile(profile, model);
 
   let extraServeArgs: string[];
