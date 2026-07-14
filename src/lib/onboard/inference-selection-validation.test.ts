@@ -162,7 +162,11 @@ describe("inference selection validation", () => {
 
   it("routes an unreachable custom endpoint through transport recovery, not a silent loop (#6854)", async () => {
     const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true, api: "openai-completions" }));
-    const promptValidationRecovery = vi.fn(async () => "retry" as const);
+    let capturedRecovery: { kind?: string } | undefined;
+    const promptValidationRecovery = vi.fn(async (_label: string, recovery: { kind?: string }) => {
+      capturedRecovery = recovery;
+      return "retry" as const;
+    });
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const helpers = createInferenceSelectionValidationHelpers({
       isNonInteractive: () => false,
@@ -186,8 +190,7 @@ describe("inference selection validation", () => {
       // receives a transport classification (DNS/VPN/URL hint + retry/back/exit),
       // not the silent selection loop the private-IP path takes.
       expect(promptValidationRecovery).toHaveBeenCalled();
-      const recovery = promptValidationRecovery.mock.calls[0]?.[1] as { kind?: string };
-      expect(recovery.kind).toBe("transport");
+      expect(capturedRecovery?.kind).toBe("transport");
       expect(probeOpenAiLikeEndpoint).not.toHaveBeenCalled();
     } finally {
       error.mockRestore();
