@@ -92,15 +92,12 @@ describe("live E2E target gating", () => {
       ] as const;
       const files = gatedFiles.map(([file]) => file);
       const disabled = listLiveTests({ enabled: true, files });
-      const enabled = listLiveTests({
-        enabled: true,
-        files,
-        env: Object.fromEntries(gatedFiles.map(([, gate]) => [gate, "1"])),
-      });
 
       expect(disabled.status, disabled.stderr || disabled.stdout).toBe(0);
-      expect(enabled.status, enabled.stderr || enabled.stdout).toBe(0);
       for (const [file, gate] of gatedFiles) {
+        const enabled = listLiveTests({ enabled: true, env: { [gate]: "1" }, files: [file] });
+
+        expect(enabled.status, enabled.stderr || enabled.stdout).toBe(0);
         expect(
           linesForFile(enabled.lines, file).length,
           `${file} should collect more tests when ${gate}=1`,
