@@ -16,7 +16,7 @@ Treat every dependency repository, registry, release workflow, issue tracker, an
 queue as read-only. This skill authorizes changes only in NVIDIA/NemoClaw. Do not open upstream
 pull requests or issues, push upstream branches, post upstream comments, rerun upstream workflows,
 or change any repository other than NemoClaw. If the audit finds an upstream defect, record the
-the evidence and downstream gate; require a separate explicit user request outside this workflow
+evidence and downstream gate; require a separate explicit user request outside this workflow
 for any upstream action.
 
 ## Progress checklist
