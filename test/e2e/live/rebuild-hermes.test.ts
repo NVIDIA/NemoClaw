@@ -76,6 +76,10 @@ const OPENSHELL_TIMEOUT_MS = 2 * 60_000;
 const SANDBOX_CREATE_TIMEOUT_MS = 10 * 60_000;
 const REBUILD_TIMEOUT_MS = 45 * 60_000;
 const LIVE_TIMEOUT_MS = 100 * 60_000;
+// Long Docker and installer commands can become noisy when they wedge. Keep a
+// generous diagnostic tail without letting a stuck child exhaust the hosted
+// runner by growing the fixture's in-memory stdout/stderr buffers forever.
+const LONG_COMMAND_CAPTURE_LIMIT_BYTES = 4 * 1024 * 1024;
 
 interface RegistryData {
   sandboxes?: Record<string, Record<string, unknown>>;
@@ -501,6 +505,7 @@ test(STALE_BASE_REBUILD
     env: testEnv(apiKey),
     redactionValues,
     timeoutMs: INSTALL_TIMEOUT_MS,
+    captureLimitBytes: LONG_COMMAND_CAPTURE_LIMIT_BYTES,
     onOutput: progress.onOutput,
   });
   expectExitZero(install, "NemoClaw install.sh");
@@ -582,6 +587,7 @@ test(STALE_BASE_REBUILD
       env: testEnv(apiKey),
       redactionValues,
       timeoutMs: DOCKER_BUILD_TIMEOUT_MS,
+      captureLimitBytes: LONG_COMMAND_CAPTURE_LIMIT_BYTES,
       onOutput: progress.onOutput,
     },
   );
@@ -653,6 +659,7 @@ test(STALE_BASE_REBUILD
         env: testEnv(apiKey),
         redactionValues,
         timeoutMs: SANDBOX_CREATE_TIMEOUT_MS,
+        captureLimitBytes: LONG_COMMAND_CAPTURE_LIMIT_BYTES,
         onOutput: progress.onOutput,
       },
     );
@@ -742,6 +749,7 @@ test(STALE_BASE_REBUILD
           env: testEnv(apiKey),
           redactionValues,
           timeoutMs: DOCKER_BUILD_TIMEOUT_MS,
+          captureLimitBytes: LONG_COMMAND_CAPTURE_LIMIT_BYTES,
           onOutput: progress.onOutput,
         },
       );
@@ -762,6 +770,7 @@ test(STALE_BASE_REBUILD
     env: testEnv(apiKey, { NEMOCLAW_REBUILD_VERBOSE: "1" }),
     redactionValues,
     timeoutMs: REBUILD_TIMEOUT_MS,
+    captureLimitBytes: LONG_COMMAND_CAPTURE_LIMIT_BYTES,
     onOutput: progress.onOutput,
   });
   expectExitZero(rebuild, "nemoclaw rebuild Hermes sandbox");

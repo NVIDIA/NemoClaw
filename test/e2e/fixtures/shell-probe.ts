@@ -26,6 +26,8 @@ export interface ShellProbeRunOptions {
   killGraceMs?: number;
   artifactName?: string;
   redactionValues?: string[];
+  /** Retain at most the last N bytes from each output stream. */
+  captureLimitBytes?: number;
   /** Timestamp-only output observer; chunk contents never cross this boundary. */
   onOutput?: (event: ShellProbeOutputEvent) => void;
 }
@@ -82,6 +84,50 @@ function redactedError(error: unknown, message: string): Error {
   return next;
 }
 
+interface TextCapture {
+  append(chunk: string): void;
+  value(): string;
+}
+
+function createTextCapture(limitBytes: number | undefined): TextCapture {
+  if (limitBytes === undefined) {
+    let text = "";
+    return {
+      append(chunk) {
+        text += chunk;
+      },
+      value() {
+        return text;
+      },
+    };
+  }
+  if (!Number.isSafeInteger(limitBytes) || limitBytes <= 0) {
+    throw new Error("captureLimitBytes must be a positive safe integer");
+  }
+
+  let droppedBytes = 0;
+  let tail = Buffer.alloc(0);
+  return {
+    append(chunk) {
+      const incoming = Buffer.from(chunk, "utf8");
+      const combined = tail.length === 0 ? incoming : Buffer.concat([tail, incoming]);
+      if (combined.length <= limitBytes) {
+        tail = combined;
+        return;
+      }
+      const overflow = combined.length - limitBytes;
+      droppedBytes += overflow;
+      tail = Buffer.from(combined.subarray(overflow));
+    },
+    value() {
+      const output = tail.toString("utf8");
+      return droppedBytes > 0
+        ? `[shell-probe omitted ${droppedBytes} earlier bytes; showing the last ${limitBytes} bytes]\n${output}`
+        : output;
+    },
+  };
+}
+
 export class ShellProbe {
   private readonly artifacts: ArtifactSink;
   private readonly redact: (text: string, extraValues?: string[]) => string;
@@ -124,8 +170,8 @@ export class ShellProbe {
       result: await this.artifacts.writeJson(`${artifactBase}.result.json`, result),
     });
 
-    let stdout = "";
-    let stderr = "";
+    const stdout = createTextCapture(options.captureLimitBytes);
+    const stderr = createTextCapture(options.captureLimitBytes);
     const child = spawn(command, args, {
       cwd: options.cwd,
       detached: true,
@@ -137,7 +183,7 @@ export class ShellProbe {
       killGraceMs,
       signal: this.signal,
       onStdout: (chunk) => {
-        stdout += chunk;
+        stdout.append(chunk);
         try {
           options.onOutput?.({ stream: "stdout", atMs: Date.now() });
         } catch {
@@ -145,7 +191,7 @@ export class ShellProbe {
         }
       },
       onStderr: (chunk) => {
-        stderr += chunk;
+        stderr.append(chunk);
         try {
           options.onOutput?.({ stream: "stderr", atMs: Date.now() });
         } catch {
@@ -154,10 +200,14 @@ export class ShellProbe {
       },
     });
 
-    const redactedStdout = redactProbeText(stdout);
+    const capturedStdout = stdout.value();
+    const capturedStderr = stderr.value();
+    const redactedStdout = redactProbeText(capturedStdout);
     if (supervised.spawnError) {
       const redactedMessage = redactProbeText(errorMessage(supervised.spawnError));
-      const redactedStderr = redactProbeText([stderr, redactedMessage].filter(Boolean).join("\n"));
+      const redactedStderr = redactProbeText(
+        [capturedStderr, redactedMessage].filter(Boolean).join("\n"),
+      );
       await writeArtifacts({
         command: redactedCommand,
         exitCode: null,
@@ -169,7 +219,7 @@ export class ShellProbe {
       throw redactedError(supervised.spawnError, redactedMessage);
     }
 
-    const redactedStderr = redactProbeText(stderr);
+    const redactedStderr = redactProbeText(capturedStderr);
     const result: Omit<ShellProbeResult, "artifacts"> = {
       command: redactedCommand,
       exitCode: supervised.exitCode,

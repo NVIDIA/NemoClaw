@@ -338,4 +338,48 @@ describe("fixture redaction entry point", () => {
 
     await fs.rm(rootDir, { recursive: true, force: true });
   });
+
+  it("bounds high-volume shell output while preserving a redacted diagnostic tail", async () => {
+    const secret = "fake-rebuild-output-secret-value";
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-e2e-bounded-output-"));
+    try {
+      const artifacts = new ArtifactSink(path.join(rootDir, "e2e-artifacts/live/bounded-output"));
+      await artifacts.ensureRoot();
+      const probe = new ShellProbe({
+        artifacts,
+        redact: (text, extra) => redactString(text, extra),
+        signal: new AbortController().signal,
+      });
+      const stdoutPayload = `stdout-head-${"o".repeat(256)}-${secret}-stdout-tail`;
+      const stderrPayload = `stderr-head-${"e".repeat(256)}-${secret}-stderr-tail`;
+
+      const result = await probe.run(
+        trustedShellCommand({
+          command: "bash",
+          args: ["-lc", 'printf "%s" "$STDOUT_PAYLOAD"; printf "%s" "$STDERR_PAYLOAD" >&2'],
+          reason: "exercise bounded output capture for long E2E commands",
+        }),
+        {
+          artifactName: "bounded-output",
+          captureLimitBytes: 96,
+          env: { STDOUT_PAYLOAD: stdoutPayload, STDERR_PAYLOAD: stderrPayload },
+          redactionValues: [secret],
+        },
+      );
+
+      expect(result.stdout).toContain("[shell-probe omitted ");
+      expect(result.stdout).toContain("[REDACTED]-stdout-tail");
+      expect(result.stdout).not.toContain("stdout-head");
+      expect(result.stderr).toContain("[shell-probe omitted ");
+      expect(result.stderr).toContain("[REDACTED]-stderr-tail");
+      expect(result.stderr).not.toContain("stderr-head");
+      expect(result.stdout).not.toContain(secret);
+      expect(result.stderr).not.toContain(secret);
+      await expect(fs.readFile(result.artifacts.stdout, "utf8")).resolves.toBe(result.stdout);
+      await expect(fs.readFile(result.artifacts.stderr, "utf8")).resolves.toBe(result.stderr);
+      await expect(fs.readFile(result.artifacts.result, "utf8")).resolves.not.toContain(secret);
+    } finally {
+      await fs.rm(rootDir, { recursive: true, force: true });
+    }
+  });
 });
