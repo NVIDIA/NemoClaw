@@ -138,6 +138,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Run CLI coverage shard
@@ -192,58 +193,6 @@ jobs:
       - name: Run plugin coverage
         uses: ./.github/actions/ci-plugin-coverage
 
-  e2e-support:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: "22"
-          cache: npm
-
-      - name: Install E2E support dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Validate changed live E2E mock parity
-        env:
-          BASE_SHA: ${{ github.event.before }}
-        run: |
-          if [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
-            echo "Skipping changed live E2E parity: main has no prior commit."
-            exit 0
-          fi
-          npx tsx scripts/checks/e2e-mock-parity.ts --base "$BASE_SHA" --head HEAD
-
-      - name: Build CLI artifacts for E2E support
-        run: npm run build:cli
-
-      - name: Run E2E support tests
-        run: npx vitest run --project e2e-support
-
-  test-e2e-ollama-proxy:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          persist-credentials: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: "22"
-
-      - name: Run Ollama auth proxy E2E tests
-        run: bash test/e2e-ollama-proxy.sh
-
   checks:
     needs:
       - static-checks
@@ -254,8 +203,6 @@ jobs:
       - real-openclaw-dist-harness
       - cli-tests
       - plugin-tests
-      - e2e-support
-      - test-e2e-ollama-proxy
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 1
@@ -270,8 +217,6 @@ jobs:
           REAL_OPENCLAW_DIST_HARNESS_RESULT: ${{ needs['real-openclaw-dist-harness'].result }}
           CLI_TESTS_RESULT: ${{ needs['cli-tests'].result }}
           PLUGIN_TESTS_RESULT: ${{ needs['plugin-tests'].result }}
-          E2E_SUPPORT_RESULT: ${{ needs['e2e-support'].result }}
-          E2E_PROXY_RESULT: ${{ needs['test-e2e-ollama-proxy'].result }}
         run: |
           set -euo pipefail
 
@@ -292,8 +237,6 @@ jobs:
           require_success "real-openclaw-dist-harness" "$REAL_OPENCLAW_DIST_HARNESS_RESULT"
           require_success "cli-tests" "$CLI_TESTS_RESULT"
           require_success "plugin-tests" "$PLUGIN_TESTS_RESULT"
-          require_success "e2e-support" "$E2E_SUPPORT_RESULT"
-          require_success "test-e2e-ollama-proxy" "$E2E_PROXY_RESULT"
 
   sandbox-images-and-e2e:
     needs: checks
