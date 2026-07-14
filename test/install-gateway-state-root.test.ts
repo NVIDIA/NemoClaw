@@ -37,6 +37,12 @@ function readJson(filePath: string): Record<string, unknown> {
   return JSON.parse(fs.readFileSync(filePath, "utf8")) as Record<string, unknown>;
 }
 
+function sanitizedParentEnv(): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => !key.startsWith("NEMOCLAW_")),
+  ) as NodeJS.ProcessEnv;
+}
+
 function runInstallerFunctions(
   home: string,
   body: string,
@@ -44,17 +50,11 @@ function runInstallerFunctions(
   const result = spawnSync("bash", ["-c", `source "${INSTALLER}" >/dev/null\n${body}`], {
     encoding: "utf8",
     env: {
-      ...process.env,
+      ...sanitizedParentEnv(),
       BASH_ENV: "",
       ENV: "",
       HOME: home,
-      NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT: "",
-      NEMOCLAW_DASHBOARD_PORT: "",
       NEMOCLAW_GATEWAY_PORT: "9123",
-      NEMOCLAW_OLLAMA_PORT: "",
-      NEMOCLAW_OLLAMA_PROXY_PORT: "",
-      NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT: "",
-      NEMOCLAW_VLLM_PORT: "",
     },
   });
   return { output: `${result.stdout}${result.stderr}`, status: result.status };

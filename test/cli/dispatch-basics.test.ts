@@ -206,6 +206,43 @@ describe("CLI dispatch", () => {
     );
   });
 
+  it.each([
+    ["internal uninstall", ["internal", "uninstall", "run-plan", "--yes"]],
+    ["native sandbox recovery", ["sandbox", "recover", "alpha"]],
+    ["public sandbox diagnostics", ["alpha", "doctor"]],
+  ] as const)("routes %s when legacy migration is broken", async (_label, argv) => {
+    await withDirectPublicDispatch(
+      async ({ dispatchCli, migrateLegacyPortState, runOclifArgv, runOclifCommandById }) => {
+        await dispatchCli([...argv]);
+
+        expect(migrateLegacyPortState).not.toHaveBeenCalled();
+        expect(runOclifArgv.mock.calls.length + runOclifCommandById.mock.calls.length).toBe(1);
+      },
+      { migrationError: new Error("injected migration failure"), sandboxNames: ["alpha"] },
+    );
+  });
+
+  it("keeps ordinary stateful commands behind the migration gate", async () => {
+    await withDirectPublicDispatch(
+      async ({
+        dispatchCli,
+        migrateLegacyPortState,
+        runOclifArgv,
+        runOclifCommandById,
+        stderr,
+      }) => {
+        await dispatchCli(["alpha", "status"]);
+
+        expect(migrateLegacyPortState).toHaveBeenCalledTimes(1);
+        expect(runOclifArgv).not.toHaveBeenCalled();
+        expect(runOclifCommandById).not.toHaveBeenCalled();
+        expect(stderr.join("\n")).toContain("injected migration failure");
+        expect(process.exitCode).toBe(1);
+      },
+      { migrationError: new Error("injected migration failure"), sandboxNames: ["alpha"] },
+    );
+  });
+
   it("normalizes -h as a root-help alias", () => {
     expect(
       normalizeArgv(["-h"], {

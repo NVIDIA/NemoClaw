@@ -245,6 +245,60 @@ describe("legacy non-default gateway state migration", () => {
     expect(fs.existsSync(path.join(selected, "credentials.json"))).toBe(true);
   });
 
+  it.each([
+    8080, 9123,
+  ])("removes only generated stale migration-intent directories for gateway port %i", (gatewayPort) => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const preparing = path.join(shared, ".gateway-state-migration.preparing.999999.1");
+    const completed = path.join(shared, ".gateway-state-migration.completed.999999.2");
+    const unrelated = path.join(shared, ".gateway-state-migration.preparing.not-a-pid.3");
+    fs.mkdirSync(preparing, { recursive: true });
+    fs.mkdirSync(completed, { recursive: true });
+    fs.mkdirSync(unrelated, { recursive: true });
+
+    expect(migrateLegacyPortState({ home, gatewayPort })).toEqual({
+      migratedSandboxNames: [],
+      migratedSession: false,
+      warnings: [],
+    });
+
+    expect(fs.existsSync(preparing)).toBe(false);
+    expect(fs.existsSync(completed)).toBe(false);
+    expect(fs.existsSync(unrelated)).toBe(true);
+    expect(fs.existsSync(path.join(shared, ".gateway-state-migration.lock"))).toBe(false);
+  });
+
+  it("refuses to follow a stale-intent symlink", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const controlled = path.join(home, "controlled");
+    const candidate = path.join(shared, ".gateway-state-migration.completed.999999.4");
+    fs.mkdirSync(shared, { recursive: true });
+    fs.mkdirSync(controlled);
+    fs.writeFileSync(path.join(controlled, "sentinel"), "keep");
+    fs.symlinkSync(controlled, candidate, "dir");
+
+    expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(/symbolic link/);
+    expect(fs.readFileSync(path.join(controlled, "sentinel"), "utf8")).toBe("keep");
+    expect(fs.lstatSync(candidate).isSymbolicLink()).toBe(true);
+  });
+
+  it("does not sweep intent directories while another migration owns the lock", () => {
+    const home = makeHome();
+    const shared = path.join(home, ".nemoclaw");
+    const stale = path.join(shared, ".gateway-state-migration.preparing.999999.5");
+    const lock = path.join(shared, ".gateway-state-migration.lock");
+    fs.mkdirSync(stale, { recursive: true });
+    fs.mkdirSync(lock);
+    fs.writeFileSync(path.join(lock, "owner"), String(process.pid));
+
+    expect(() => migrateLegacyPortState({ home, gatewayPort: 9123 })).toThrow(
+      /another state operation owns/,
+    );
+    expect(fs.existsSync(stale)).toBe(true);
+  });
+
   it("does not modify the byte-compatible default gateway root", () => {
     const home = makeHome();
     const registry = path.join(home, ".nemoclaw", "sandboxes.json");

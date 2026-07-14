@@ -3044,7 +3044,8 @@ The compatibility `--gateway` flag cannot select another instance: when present,
 
 ##### User-data preservation under `~/.nemoclaw/`
 
-To avoid uninstall destroying host-side user data, uninstall preserves the following entries in the selected gateway's state root by default. The default gateway uses `~/.nemoclaw/`; a non-default gateway uses `~/.nemoclaw/gateways/<port>/`.
+To avoid uninstall destroying host-side user data, uninstall preserves the following entries in the selected gateway's state root by default.
+The default gateway uses `~/.nemoclaw/`; a non-default gateway uses `~/.nemoclaw/gateways/<port>/`.
 
 | Entry | What it holds |
 |---|---|
@@ -3052,7 +3053,8 @@ To avoid uninstall destroying host-side user data, uninstall preserves the follo
 | `backups/` | Host-side workspace backups that `scripts/backup-workspace.sh` writes. Refer to [Backup and Restore](../manage-sandboxes/backup-restore). |
 | `sandboxes.json` | Host-side sandbox registry. NemoClaw uses it to map sandbox names back to their persistence directories when you reinstall. |
 
-When no sibling gateways remain, uninstall removes every other entry under `~/.nemoclaw/` (gateway source, runtime state, the Ollama auth proxy PID file, etc.). When sibling gateways remain, it removes only the selected gateway's resources and port-scoped state while preserving shared host resources.
+When no sibling gateways remain, uninstall removes every other entry under `~/.nemoclaw/` (gateway source, runtime state, the Ollama auth proxy PID file, etc.).
+When sibling gateways remain, it removes only the selected gateway's resources and port-scoped state while preserving shared host resources.
 
 `--yes` deliberately remains non-destructive for user data.
 It only acknowledges the global `Proceed?` confirmation prompt and still preserves the listed entries.

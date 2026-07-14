@@ -24,6 +24,8 @@ const MIGRATION_INTENT_SELECTED_REGISTRY = "selected-registry.json";
 const MIGRATION_INTENT_REMAINING_REGISTRY = "remaining-registry.json";
 const MIGRATION_INTENT_VERSION = 1;
 const MIGRATION_LOCK_STALE_MS = 10_000;
+const STALE_MIGRATION_INTENT_PATTERN =
+  /^\.gateway-state-migration\.(?:preparing|completed)\.[1-9][0-9]*\.[1-9][0-9]*$/;
 const MAX_MIGRATABLE_JSON_BYTES = 16 * 1024 * 1024;
 const LEGACY_BUNDLE_ENTRIES = [
   "backups",
@@ -483,6 +485,29 @@ function removeMigrationIntent(home: string, sharedRoot: string, intentDir: stri
   fsyncDirectory(sharedRoot);
 }
 
+function staleMigrationIntentNames(home: string, sharedRoot: string): string[] {
+  const rootStat = lstatNoFollow(home, sharedRoot);
+  if (!rootStat) return [];
+  if (!rootStat.isDirectory()) throw migrationError(`${sharedRoot} is not a directory`);
+  return fs
+    .readdirSync(sharedRoot)
+    .filter((name) => STALE_MIGRATION_INTENT_PATTERN.test(name))
+    .sort();
+}
+
+function removeStaleMigrationIntentDirectories(home: string, sharedRoot: string): void {
+  const staleNames = staleMigrationIntentNames(home, sharedRoot);
+  for (const name of staleNames) {
+    const candidate = path.join(sharedRoot, name);
+    const stat = lstatNoFollow(home, candidate);
+    if (!stat?.isDirectory()) {
+      throw migrationError(`${candidate} is not a directory`);
+    }
+    fs.rmSync(candidate, { recursive: true, force: true });
+  }
+  if (staleNames.length > 0) fsyncDirectory(sharedRoot);
+}
+
 function applyMigrationIntent(
   home: string,
   sharedRoot: string,
@@ -613,6 +638,7 @@ export function migrateLegacyPortState(
   const legacyRegistryFile = path.join(sharedRoot, "sandboxes.json");
   const migrationLock = path.join(sharedRoot, MIGRATION_LOCK);
   const pendingBeforeLock = readMigrationIntent(home, sharedRoot);
+  const staleIntentDirectoriesExist = staleMigrationIntentNames(home, sharedRoot).length > 0;
 
   if (gatewayPort === DEFAULT_GATEWAY_PORT) {
     if (pendingBeforeLock) {
@@ -630,6 +656,14 @@ export function migrateLegacyPortState(
         );
       }
     }
+    if (staleIntentDirectoriesExist) {
+      const lock = acquireDirectoryLock(home, migrationLock);
+      try {
+        removeStaleMigrationIntentDirectories(home, sharedRoot);
+      } finally {
+        fs.rmSync(lock, { recursive: true, force: true });
+      }
+    }
     return result;
   }
 
@@ -638,11 +672,19 @@ export function migrateLegacyPortState(
   const legacyRegistry = readGatewayRegistryFile(home, legacyRegistryFile);
   const legacySessionFile = path.join(sharedRoot, "onboard-session.json");
   const legacySession = readJsonNoFollow(home, legacySessionFile);
-  if (!pendingBeforeLock && !legacyRegistry && legacySession === null) return result;
+  if (
+    !pendingBeforeLock &&
+    !legacyRegistry &&
+    legacySession === null &&
+    !staleIntentDirectoriesExist
+  ) {
+    return result;
+  }
 
   const lock = acquireDirectoryLock(home, migrationLock);
   const registryLocks: string[] = [];
   try {
+    removeStaleMigrationIntentDirectories(home, sharedRoot);
     registryLocks.push(acquireDirectoryLock(home, `${legacyRegistryFile}.lock`));
     const pendingIntent = readMigrationIntent(home, sharedRoot);
     if (pendingIntent) {

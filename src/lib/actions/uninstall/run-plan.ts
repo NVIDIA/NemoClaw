@@ -1167,7 +1167,11 @@ function inspectOtherGatewayEnvironments(
   }
 }
 
-function removeManagedSwap(paths: UninstallPaths, runtime: UninstallRuntime): void {
+function removeManagedSwap(
+  paths: UninstallPaths,
+  runtime: UninstallRuntime,
+  otherGatewayEnvironmentsRemain: boolean,
+): void {
   if (!runtime.existsSync("/swapfile")) {
     runtime.log("No /swapfile found; skipping swap cleanup.");
     removePath(paths.managedSwapMarkerPath, runtime);
@@ -1179,7 +1183,7 @@ function removeManagedSwap(paths: UninstallPaths, runtime: UninstallRuntime): vo
     );
     return;
   }
-  if (inspectOtherGatewayEnvironments(paths, runtime).otherGatewayEnvironmentsRemain) {
+  if (otherGatewayEnvironmentsRemain) {
     runtime.log(
       "Other NemoClaw gateway-port environments remain; keeping the host-shared /swapfile.",
     );
@@ -1370,7 +1374,7 @@ function executePlan(
         removeOllamaModels(options, runtime);
       }
     } else if (step.name === "State and binaries") {
-      removeManagedSwap(paths, runtime);
+      removeManagedSwap(paths, runtime, scopedToSelectedGateway);
       if (!scopedToSelectedGateway) {
         for (const pattern of paths.runtimeTempGlobs) removeGlob(pattern, runtime);
         if (options.keepOpenShell) runtime.log("Keeping OpenShell binaries as requested.");

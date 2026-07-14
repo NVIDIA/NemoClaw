@@ -41,6 +41,7 @@ import {
 
 const GLOBAL_COMMANDS = globalCommandTokens();
 const NATIVE_OCLIF_NAMESPACES = new Set(["internal", "sandbox"]);
+const MIGRATION_RECOVERY_SANDBOX_ACTIONS = new Set(["doctor", "recover"]);
 
 type RegistryModule = typeof import("../state/registry");
 type RegistryRecoveryModule = typeof import("../registry-recovery-action");
@@ -109,6 +110,18 @@ function argsBeforeSeparator(args: readonly string[]): readonly string[] {
 function hasPublicSandboxHelpFlag(action: string, args: readonly string[]): boolean {
   if (action !== "exec") return hasHelpFlag(args);
   return hasHelpFlag(argsBeforeSeparator(args));
+}
+
+function isMigrationRecoveryInvocation(argv: readonly string[]): boolean {
+  if (argv[0] === "internal") return true;
+  if (argv[0] === "sandbox") {
+    return MIGRATION_RECOVERY_SANDBOX_ACTIONS.has(argv[1] ?? "");
+  }
+  return (
+    argv.length > 1 &&
+    !GLOBAL_COMMANDS.has(argv[0] ?? "") &&
+    MIGRATION_RECOVERY_SANDBOX_ACTIONS.has(argv[1] ?? "")
+  );
 }
 
 function findRegisteredSandboxName(tokens: string[]): string | null {
@@ -465,7 +478,7 @@ export async function dispatchCli(argv: string[] = process.argv.slice(2)): Promi
     argv[0] === "version" ||
     argv[0] === "help" ||
     argv[0] === "completion";
-  if (!stateFreeInvocation) {
+  if (!stateFreeInvocation && !isMigrationRecoveryInvocation(argv)) {
     try {
       const migration = migrateLegacyPortState();
       if (migration.migratedSandboxNames.length > 0 || migration.migratedSession) {
