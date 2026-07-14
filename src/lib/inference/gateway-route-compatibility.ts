@@ -281,6 +281,20 @@ export function checkGatewayRouteCompatibility(
       continue;
     }
 
+    if (
+      CUSTOM_ROUTE_PROVIDERS.has(recorded.provider) &&
+      (!canonicalEndpoint(sandbox.endpointUrl, endpointFlavor(recorded.provider)) ||
+        !normalizedInferenceApi(sandbox.preferredInferenceApi))
+    ) {
+      conflicts.push({
+        sandboxName: sandbox.name,
+        reason: "incomplete-custom-route",
+        scope: "registered",
+        recordedRoute: recorded,
+      });
+      continue;
+    }
+
     // A provider/model-only mutation cannot safely replace provider-global
     // endpoint, API-family, or credential identity. Compare that fingerprint
     // first so a simultaneous model difference cannot hide a provider mutation.

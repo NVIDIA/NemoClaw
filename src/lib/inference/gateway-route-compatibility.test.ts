@@ -363,6 +363,31 @@ describe("shared gateway inference route compatibility", () => {
     );
   });
 
+  it("fails closed when a different provider encounters an incomplete custom peer (#6315)", () => {
+    const result = check(route("anthropic-prod", "claude-new"), [
+      sandbox("legacy-custom", {
+        provider: "compatible-endpoint",
+        model: "custom/model",
+        endpointUrl: null,
+        preferredInferenceApi: "openai-completions",
+      }),
+    ]);
+
+    expect(result).toMatchObject({
+      ok: false,
+      conflicts: [
+        {
+          sandboxName: "legacy-custom",
+          reason: "incomplete-custom-route",
+          scope: "registered",
+        },
+      ],
+    });
+    expect(isAdvisoryGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toBe(
+      false,
+    );
+  });
+
   it("fails closed when a requested custom route has no API metadata or peers (#6315)", () => {
     const result = check(
       route("compatible-endpoint", "custom/model", {
