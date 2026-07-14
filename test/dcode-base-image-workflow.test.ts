@@ -79,7 +79,7 @@ function ghaCacheEntries(value: unknown): GhaCacheEntry[] {
       Object.fromEntries(
         entry
           .split(",")
-          .slice(1)
+          .filter((field) => field !== "type=gha")
           .map((field) => field.split("=", 2) as [string, string]),
       ),
     );

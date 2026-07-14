@@ -52,16 +52,21 @@ describe("e2e workflow boundary", () => {
       >;
     };
     const steps = workflow.jobs["rebuild-hermes"].steps;
-    const setupBuildx = steps.find((step) => step.name === "Set up Hermes rebuild Buildx");
-    const routeBuilds = steps.find(
-      (step) => step.name === "Route Hermes rebuild Docker builds through Buildx",
-    );
-    const warmCurrent = steps.find((step) => step.name === "Warm current Hermes base build cache");
-    const warmOld = steps.find((step) => step.name === "Warm old Hermes base build cache");
-    setupBuildx!.with!["driver-opts"] = "network=host";
-    routeBuilds!.env!.HERMES_REBUILD_BUILDER = "default";
-    warmCurrent!.with!["cache-from"] = "type=gha,scope=buildkit";
-    warmOld!.with!["build-args"] = "HERMES_VERSION=latest";
+    type Step = (typeof steps)[number];
+    const cloneStep = (name: string): Step => {
+      const index = steps.findIndex((step) => step.name === name);
+      const clone = structuredClone(steps[index] as Step);
+      steps[index] = clone;
+      return clone;
+    };
+    const setupBuildx = cloneStep("Set up Hermes rebuild Buildx");
+    const routeBuilds = cloneStep("Route Hermes rebuild Docker builds through Buildx");
+    const warmCurrent = cloneStep("Warm current Hermes base build cache");
+    const warmOld = cloneStep("Warm old Hermes base build cache");
+    setupBuildx.with!["driver-opts"] = "network=host";
+    routeBuilds.env!.HERMES_REBUILD_BUILDER = "default";
+    warmCurrent.with!["cache-from"] = "type=gha,scope=buildkit";
+    warmOld.with!["build-args"] = "HERMES_VERSION=latest";
     fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
     try {
