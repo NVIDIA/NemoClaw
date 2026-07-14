@@ -55,6 +55,8 @@ const OPAQUE_INPUTS = [
   "test/e2e/manifests/openclaw-nvidia.yaml",
   "test/e2e/docs/parity-inventory.generated.json",
   ".github/workflows/e2e.yaml",
+  ".github/workflows/platform-vitest-main.yaml",
+  "ci/platform-vitest-macos-requirements.lock",
 ] as const;
 
 function triggeredBy(relativePath: string): string[] {
@@ -99,6 +101,12 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/e2e-migration-policy.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/e2e.yaml")).toEqual(E2E_WORKFLOW_CONTRACTS);
+    expect(triggeredBy(".github/workflows/platform-vitest-main.yaml")).toEqual([
+      "test/platform-vitest-main-workflow.test.ts",
+    ]);
+    expect(triggeredBy("ci/platform-vitest-macos-requirements.lock")).toEqual([
+      "test/platform-vitest-main-workflow.test.ts",
+    ]);
   });
 
   it("returns only concrete test files that exist (#6692)", () => {

@@ -2533,7 +2533,7 @@ A custom OpenClaw sandbox is recoverable only when the selected backup independe
 
 ### `$$nemoclaw backup-all`
 
-Back up all registered running sandboxes to `~/.nemoclaw/rebuild-backups/`.
+Back up registered sandboxes that are running or have an eligible stopped Docker-driver container to `~/.nemoclaw/rebuild-backups/`.
 A registered docker-driver sandbox whose container is stopped is started for the duration of the backup and returned to its stopped state afterward.
 If the container cannot be returned to the stopped state, the command fails and reports that the container was left running.
 Sandboxes that are not running and cannot be started this way are skipped with remediation guidance.

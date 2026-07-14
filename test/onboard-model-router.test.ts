@@ -222,8 +222,8 @@ describe("onboard Model Router setup", () => {
     }).trim();
     assert.match(sourceHead, /^[0-9a-f]{40}$/i);
     assert.equal(
-      runCapture(["git", "-C", routerDir, "rev-parse", "--show-toplevel"]).trim(),
-      routerDir,
+      fs.realpathSync(runCapture(["git", "-C", routerDir, "rev-parse", "--show-toplevel"]).trim()),
+      fs.realpathSync(routerDir),
     );
     fs.mkdirSync(path.dirname(managedCommand), { recursive: true });
     fs.writeFileSync(managedCommand, "#!/usr/bin/env sh\nexit 0\n", { mode: 0o755 });
@@ -350,7 +350,7 @@ describe("onboard Model Router setup", () => {
             "--output",
             litellmConfigPath,
           ]);
-          assert.equal(proxyConfig.cwd, blueprintDir);
+          assert.equal(fs.realpathSync(proxyConfig.cwd), fs.realpathSync(blueprintDir));
           assert.deepEqual(proxy.args, [
             "proxy",
             "--litellm-config",
@@ -362,7 +362,7 @@ describe("onboard Model Router setup", () => {
             "--port",
             String(port),
           ]);
-          assert.equal(proxy.cwd, blueprintDir);
+          assert.equal(fs.realpathSync(proxy.cwd), fs.realpathSync(blueprintDir));
           assert.deepEqual(proxy.env, {
             ROUTER_API_KEY: "router-secret",
             OPENAI_API_KEY: "router-secret",
