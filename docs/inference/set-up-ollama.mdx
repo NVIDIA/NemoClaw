@@ -180,10 +180,12 @@ Onboarding exits when a download requires confirmation and the run cannot prompt
 ## Understand Model Selection
 
 When `NEMOCLAW_MODEL` is unset, NemoClaw selects a starter model based on currently available memory.
+A non-interactive run reports the model it auto-selects and points to `NEMOCLAW_MODEL` for onboarding a specific installed model.
 If a known bootstrap model does not fit, NemoClaw warns and falls back to the largest known model that does fit.
 Unknown or custom tags pass through to the Ollama runner for validation.
 
 Interactive onboarding filters installed registry-known tags that do not fit current GPU memory.
+When `NEMOCLAW_MODEL` names one of the offered models, the interactive menu pre-selects it as the default choice.
 If no installed known tag fits, NemoClaw displays starter choices and warns when even the smallest tag might not fit.
 After a model fails validation, NemoClaw excludes it from the next installed-model menu.
 

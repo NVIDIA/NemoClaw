@@ -191,6 +191,48 @@ describe("promptOllamaModel installed-model fit filter", () => {
     expect(result).toBe("qwen3.5:9b");
     expect(result).not.toBe("nemotron-3-nano:30b");
   });
+
+  it("defaults the menu to the requested model rather than a fixed computed default", async () => {
+    const gpu = { type: "nvidia", totalMemoryMB: 131_072, availableMemoryMB: 131_072 };
+
+    const lower = loadProxyWithMocks({
+      installed: ["qwen2.5:0.5b", "qwen3.6:35b"],
+      promptValues: [""],
+    });
+    active = lower;
+    const lowerResult = await lower.proxy.promptOllamaModel(gpu, {
+      preferredModel: "qwen2.5:0.5b",
+    });
+    expect(lowerResult).toBe("qwen2.5:0.5b");
+    expect(lower.promptArgs.at(-1)).toContain("[1]");
+    lower.restore();
+    active = null;
+
+    const higher = loadProxyWithMocks({
+      installed: ["qwen2.5:0.5b", "qwen3.6:35b"],
+      promptValues: [""],
+    });
+    active = higher;
+    const higherResult = await higher.proxy.promptOllamaModel(gpu, {
+      preferredModel: "qwen3.6:35b",
+    });
+    expect(higherResult).toBe("qwen3.6:35b");
+    expect(higher.promptArgs.at(-1)).toContain("[2]");
+  });
+
+  it("keeps the computed default when the requested model is not installed", async () => {
+    const setup = loadProxyWithMocks({
+      installed: ["qwen2.5:0.5b", "qwen3.6:35b"],
+      promptValues: [""],
+    });
+    active = setup;
+    const result = await setup.proxy.promptOllamaModel(
+      { type: "nvidia", totalMemoryMB: 131_072, availableMemoryMB: 131_072 },
+      { preferredModel: "not-installed:1b" },
+    );
+    expect(result).not.toBe("not-installed:1b");
+    expect(["qwen2.5:0.5b", "qwen3.6:35b"]).toContain(result);
+  });
 });
 
 describe("prepareOllamaModel post-pull discovery", () => {

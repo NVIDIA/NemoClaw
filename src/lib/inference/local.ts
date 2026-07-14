@@ -923,10 +923,18 @@ export function resolveNonInteractiveOllamaModel(
     }
     return fallback;
   }
-  if (!explicit && !anyRegistryModelFits(gpu)) {
+  if (explicit) {
+    return explicit;
+  }
+  if (!anyRegistryModelFits(gpu)) {
     warnNoBootstrapModelFits(gpu, log);
   }
-  return explicit || getDefaultOllamaModel(gpu, runCaptureImpl);
+  const autoSelected = getDefaultOllamaModel(gpu, runCaptureImpl);
+  log(
+    `  No Ollama model requested; auto-selected '${autoSelected}'. ` +
+      "Set NEMOCLAW_MODEL to onboard a specific installed model.",
+  );
+  return autoSelected;
 }
 
 function warnNoBootstrapModelFits(gpu: GpuInfo | null, log: (message: string) => void): void {

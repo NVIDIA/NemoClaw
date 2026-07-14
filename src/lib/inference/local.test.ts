@@ -725,6 +725,23 @@ describe("local inference helpers", () => {
     ).toBe(QWEN3_6_OLLAMA_MODEL);
   });
 
+  it("announces the auto-selected model when no model is requested", async () => {
+    const { resolveNonInteractiveOllamaModel } = await import("./local");
+    const messages: string[] = [];
+    const log = (m: string) => messages.push(m);
+
+    const result = resolveNonInteractiveOllamaModel(
+      null,
+      null,
+      { type: "nvidia", totalMemoryMB: 131_072, availableMemoryMB: 131_072 },
+      log,
+      () => "",
+    );
+    expect(result).toBe(QWEN3_6_OLLAMA_MODEL);
+    expect(messages.some((m) => m.includes("No Ollama model requested"))).toBe(true);
+    expect(messages.some((m) => m.includes("NEMOCLAW_MODEL"))).toBe(true);
+  });
+
   it("resolveNonInteractiveOllamaModel surfaces the no-fit warning when even the smallest model exceeds available memory", async () => {
     const { resolveNonInteractiveOllamaModel } = await import("./local");
     const messages: string[] = [];

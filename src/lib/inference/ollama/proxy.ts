@@ -14,7 +14,7 @@ const { OLLAMA_PORT, OLLAMA_PROXY_PORT } = require("../../core/ports");
 const { isNonInteractiveEnv }: typeof import("../../core/non-interactive") =
   require("../../core/non-interactive");
 const { waitForPort } = require("../../core/wait");
-const { ensurePulledOllamaModel }: typeof import("./model-discovery") =
+const { ensurePulledOllamaModel, ollamaModelRefsMatch }: typeof import("./model-discovery") =
   require("./model-discovery");
 const {
   getDefaultOllamaModel,
@@ -491,7 +491,7 @@ function probeOllamaAuthProxyHealth(): { ok: boolean; endpoint: string; detail: 
 
 async function promptOllamaModel(
   gpu: GpuInfo | null = null,
-  promptOptions: { excludeModels?: ReadonlySet<string> } = {},
+  promptOptions: { excludeModels?: ReadonlySet<string>; preferredModel?: string | null } = {},
 ) {
   const excludeModels = promptOptions.excludeModels;
   const isExcluded = (tag: string): boolean =>
@@ -514,7 +514,13 @@ async function promptOllamaModel(
   const defaultModel = isExcluded(defaultModelCandidate)
     ? (options[0] ?? defaultModelCandidate)
     : defaultModelCandidate;
-  const defaultIndex = Math.max(0, options.indexOf(defaultModel));
+  const preferred = promptOptions.preferredModel;
+  const preferredIndex =
+    preferred != null && preferred !== ""
+      ? options.findIndex((option: string) => ollamaModelRefsMatch(option, preferred))
+      : -1;
+  const defaultIndex =
+    preferredIndex >= 0 ? preferredIndex : Math.max(0, options.indexOf(defaultModel));
 
   console.log("");
   console.log(usingInstalled ? "  Ollama models:" : "  Ollama starter models:");

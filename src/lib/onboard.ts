@@ -3019,7 +3019,12 @@ async function selectAndValidateOllamaModel(
     } else if (isNonInteractive()) {
       model = localInference.resolveNonInteractiveOllamaModel(requestedModel, recoveredModel, gpu);
     } else {
-      model = await promptOllamaModel(gpu, { excludeModels: probeFailures.excludedModels() });
+      const preferredModel =
+        requestedModel || (process.env.NEMOCLAW_MODEL || "").trim() || recoveredModel || null;
+      model = await promptOllamaModel(gpu, {
+        excludeModels: probeFailures.excludedModels(),
+        preferredModel,
+      });
     }
     if (isBackToSelection(model)) {
       console.log("  Returning to provider selection.");
