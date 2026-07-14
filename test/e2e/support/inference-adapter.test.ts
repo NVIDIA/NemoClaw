@@ -7,6 +7,11 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ArtifactSink } from "../fixtures/artifacts.ts";
+import type {
+  ProviderClient,
+  ProviderJsonRequestOptions,
+  TrustedProviderEndpoint,
+} from "../fixtures/clients/provider.ts";
 import {
   createE2EInferenceAdapter,
   type E2EInferenceAdapter,
@@ -34,32 +39,82 @@ function secrets(values: Record<string, string | undefined>) {
   };
 }
 
-function provider() {
+type ProviderRequest = {
+  endpoint: TrustedProviderEndpoint;
+  options: ProviderJsonRequestOptions;
+};
+
+function provider(
+  onRequest?: (request: ProviderRequest) => void,
+): Pick<ProviderClient, "requestJson"> {
   return {
-    requestJson: async <T = unknown>() => ({
-      json: { data: [{ id: "nvidia/nvidia/nemotron-3-ultra" }] } as T,
-      result: {
-        artifacts: { result: "", stderr: "", stdout: "" },
-        artifactPaths: [],
-        command: ["stub-provider-request"],
-        exitCode: 0,
-        signal: null,
-        stderr: "",
-        stdout: "{}",
-        timedOut: false,
-      },
-    }),
+    requestJson: async <T = unknown>(
+      endpoint: TrustedProviderEndpoint,
+      options: ProviderJsonRequestOptions = {},
+    ) => {
+      onRequest?.({ endpoint, options });
+      return {
+        json: { data: [{ id: "nvidia/nvidia/nemotron-3-ultra" }] } as T,
+        result: {
+          artifacts: { result: "", stderr: "", stdout: "" },
+          artifactPaths: [],
+          command: ["stub-provider-request"],
+          exitCode: 0,
+          signal: null,
+          stderr: "",
+          stdout: "{}",
+          timedOut: false,
+        },
+      };
+    },
   };
+}
+
+function expectProviderRequests(
+  requests: ProviderRequest[],
+  expected: {
+    apiKey: string;
+    endpointBase: string;
+    model: string;
+    modelArtifact: string;
+    chatArtifact: string;
+    prompt: string;
+    maxTokens: number;
+  },
+): void {
+  expect(requests).toHaveLength(2);
+  expect(requests[0]?.endpoint.url).toBe(`${expected.endpointBase}/models`);
+  expect(requests[0]?.options).toMatchObject({
+    artifactName: expected.modelArtifact,
+    curlMaxTimeSeconds: 15,
+    headers: [`Authorization: Bearer ${expected.apiKey}`],
+    redactionValues: [expected.apiKey],
+    timeoutMs: 30_000,
+  });
+  expect(requests[1]?.endpoint.url).toBe(`${expected.endpointBase}/chat/completions`);
+  expect(requests[1]?.options).toMatchObject({
+    artifactName: expected.chatArtifact,
+    curlMaxTimeSeconds: 90,
+    headers: ["Content-Type: application/json", `Authorization: Bearer ${expected.apiKey}`],
+    redactionValues: [expected.apiKey],
+    timeoutMs: 120_000,
+  });
+  expect(JSON.parse(String(requests[1]?.options.body))).toMatchObject({
+    model: expected.model,
+    messages: [{ role: "user", content: expected.prompt }],
+    max_tokens: expected.maxTokens,
+  });
 }
 
 async function createAdapter(options: {
   env?: NodeJS.ProcessEnv;
+  provider?: Pick<ProviderClient, "requestJson">;
   secrets?: Record<string, string | undefined>;
 }): Promise<E2EInferenceAdapter> {
   const adapter = await createE2EInferenceAdapter({
     artifacts: artifacts(),
     env: options.env ?? {},
-    provider: provider(),
+    provider: options.provider ?? provider(),
     secrets: secrets(options.secrets ?? {}),
   });
   adapters.push(adapter);
@@ -104,12 +159,15 @@ describe("E2E inference adapter", () => {
   });
 
   it("stages internal NVIDIA hosted inference as a compatible endpoint", async () => {
+    const requests: ProviderRequest[] = [];
+    const apiKey = "sk-compatible-hosted-key";
     const adapter = await createAdapter({
       env: {
         NEMOCLAW_E2E_INFERENCE_MODE: "internal-nvidia",
         NEMOCLAW_PREFERRED_API: "responses",
       },
-      secrets: { NVIDIA_INFERENCE_API_KEY: "sk-compatible-hosted-key" },
+      provider: provider((request) => requests.push(request)),
+      secrets: { NVIDIA_INFERENCE_API_KEY: apiKey },
     });
     const env = adapter.env({ NVIDIA_INFERENCE_API_KEY: "ambient-source-key" });
 
@@ -126,6 +184,18 @@ describe("E2E inference adapter", () => {
       COMPATIBLE_API_KEY: "sk-compatible-hosted-key",
     });
     expect(env.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+
+    await adapter.probeModels("internal-models");
+    await adapter.directChat("internal prompt", { artifactName: "internal-chat", maxTokens: 42 });
+    expectProviderRequests(requests, {
+      apiKey,
+      endpointBase: "https://inference-api.nvidia.com/v1",
+      model: adapter.model,
+      modelArtifact: "internal-models",
+      chatArtifact: "internal-chat",
+      prompt: "internal prompt",
+      maxTokens: 42,
+    });
   });
 
   it("rejects internal NVIDIA endpoint overrides outside the fixture-owned host", async () => {
@@ -183,9 +253,12 @@ describe("E2E inference adapter", () => {
   });
 
   it("centralizes public NVIDIA nvapi validation", async () => {
+    const requests: ProviderRequest[] = [];
+    const apiKey = "nvapi-public-test-key";
     const adapter = await createAdapter({
       env: { NEMOCLAW_E2E_INFERENCE_MODE: "public-nvidia" },
-      secrets: { NVIDIA_INFERENCE_API_KEY: "nvapi-public-test-key" },
+      provider: provider((request) => requests.push(request)),
+      secrets: { NVIDIA_INFERENCE_API_KEY: apiKey },
     });
     const env = adapter.env({
       COMPATIBLE_API_KEY: "ambient-compatible-key",
@@ -203,7 +276,19 @@ describe("E2E inference adapter", () => {
     });
     expect(env.COMPATIBLE_API_KEY).toBeUndefined();
     expect(env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE).toBeUndefined();
-    expect(requirePublicNvidiaInferenceKey("nvapi-public-test-key")).toBe("nvapi-public-test-key");
+    expect(requirePublicNvidiaInferenceKey(apiKey)).toBe(apiKey);
+
+    await adapter.probeModels("public-models");
+    await adapter.directChat("public prompt", { artifactName: "public-chat", maxTokens: 64 });
+    expectProviderRequests(requests, {
+      apiKey,
+      endpointBase: "https://integrate.api.nvidia.com/v1",
+      model: adapter.model,
+      modelArtifact: "public-models",
+      chatArtifact: "public-chat",
+      prompt: "public prompt",
+      maxTokens: 64,
+    });
   });
 
   it("rejects hosted-style keys in public NVIDIA mode", async () => {
