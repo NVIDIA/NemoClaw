@@ -2178,6 +2178,42 @@ Use `--follow` to stream logs in real time while debugging.
 
 For an end-to-end walkthrough with local inference on DGX Spark, refer to the [NVIDIA Spark playbook](https://build.nvidia.com/spark/nemoclaw).
 
+### Host freezes or logs `NVRM NV_ERR_NO_MEMORY` under local vLLM load
+
+Treat a full host freeze separately from an agent tool-call hang.
+If the Spark stops responding to SSH and ping, and the journal contains `NVRM NV_ERR_NO_MEMORY` or no software-side crash record, first isolate the local inference server before changing MCP or network policy configuration.
+For onboarding-time context, refer to [Use an Existing Server](../inference/local-inference/set-up-vllm#use-an-existing-server).
+
+Check whether vLLM is a bring-your-own server or the NemoClaw managed Spark profile:
+
+```bash
+docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
+curl -sf http://127.0.0.1:8000/v1/models
+free -h
+journalctl -k --since "24 hours ago" --no-pager | grep -Ei 'NVRM|OOM|out of memory|lockup|watchdog'
+```
+
+For an existing vLLM server, inspect its launch arguments:
+
+```bash
+docker inspect <vllm-container> --format '{{json .Config.Cmd}}'
+```
+
+Large checkpoints without explicit quantization, very long `--max-model-len` values, high `--gpu-memory-utilization`, and multiple concurrent sequences all consume the Spark's shared CPU/GPU memory pool.
+Before reintroducing agent tools, restart vLLM with a smaller envelope, for example:
+
+```bash
+vllm serve <model> \
+  --max-model-len 32768 \
+  --gpu-memory-utilization 0.75 \
+  --max-num-seqs 1 \
+  --max-num-batched-tokens 4096
+```
+
+If the host still logs `NVRM NV_ERR_NO_MEMORY` while loading the model, switch to a smaller or quantized checkpoint.
+For managed setup, prefer `NEMOCLAW_PROVIDER=install-vllm`, which selects the Spark profile and its registered model-specific serve arguments.
+After standalone vLLM is stable, re-run onboarding and add MCP servers back one group at a time.
+
 ### CoreDNS CrashLoop after onboarding
 
 If CoreDNS in the embedded k3s cluster crashes shortly after setup, it is usually because it resolves against `127.0.0.11`, which does not route inside the gateway container.

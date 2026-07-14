@@ -124,6 +124,9 @@ const HF_TOKEN_ENV_KEYS = ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"] as const;
 const MODEL_DOWNLOAD_HEARTBEAT_MS = 30_000;
 const VLLM_LAUNCH_HEARTBEAT_MS = 30_000;
 const HF_CACHE_CONTAINER_DIR = "/root/.cache/huggingface";
+export const NEMOCLAW_VLLM_CONTAINER_NAME = "nemoclaw-vllm";
+export const NEMOCLAW_VLLM_MANAGED_LABEL = "com.nvidia.nemoclaw.managed-vllm";
+const DOCKER_CONTAINER_ID_PATTERN = /^[a-f0-9]{12,64}$/;
 
 function hostHfCacheDir(): string {
   return path.join(os.homedir(), ".cache", "huggingface");
@@ -192,7 +195,7 @@ const SPARK_PROFILE: VllmProfile = {
   image: VLLM_IMAGES.ngc2605Post1.arm64.ref,
   imageDownloadSizeBytes: VLLM_IMAGES.ngc2605Post1.arm64.downloadSizeBytes,
   defaultModel: qwen35bNvfp4Model(),
-  containerName: "nemoclaw-vllm",
+  containerName: NEMOCLAW_VLLM_CONTAINER_NAME,
   dockerRunFlags: vllmDockerRunFlags(),
   pullTimeoutSec: 12 * 60 * 60,
   loadTimeoutSec: 1800,
@@ -205,7 +208,7 @@ const STATION_PROFILE: VllmProfile = {
   image: VLLM_IMAGES.ngc2605Post1.arm64.ref,
   imageDownloadSizeBytes: VLLM_IMAGES.ngc2605Post1.arm64.downloadSizeBytes,
   defaultModel: deepseekV4FlashModel(),
-  containerName: "nemoclaw-vllm",
+  containerName: NEMOCLAW_VLLM_CONTAINER_NAME,
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
   buildDockerRunFlags: () => {
     const indices = getGpuIndicesByName(/GB300/i);
@@ -239,7 +242,7 @@ const GENERIC_LINUX_PROFILE: VllmProfile | null = genericLinuxImage
       image: genericLinuxImage.ref,
       imageDownloadSizeBytes: genericLinuxImage.downloadSizeBytes,
       defaultModel: nemotronNanoModel(),
-      containerName: "nemoclaw-vllm",
+      containerName: NEMOCLAW_VLLM_CONTAINER_NAME,
       dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
       pullTimeoutSec: SPARK_PROFILE.pullTimeoutSec,
       loadTimeoutSec: SPARK_PROFILE.loadTimeoutSec,
@@ -444,6 +447,8 @@ export function buildVllmRunArgs(
     "--restart",
     "unless-stopped",
     ...safeRunFlags,
+    "--label",
+    `${NEMOCLAW_VLLM_MANAGED_LABEL}=true`,
     "-p",
     `${String(VLLM_PORT)}:8000`,
     "--name",
@@ -454,6 +459,71 @@ export function buildVllmRunArgs(
     "-lc",
     buildVllmServeCommand(model, env),
   ];
+}
+
+type VllmContainerOwnership =
+  | { kind: "absent" }
+  | { kind: "foreign" }
+  | { kind: "managed"; containerId: string; running: boolean }
+  | { kind: "unknown" };
+
+function inspectVllmContainerOwnership(containerName: string): VllmContainerOwnership {
+  const format = `{{.ID}}|{{.Names}}|{{.State}}|{{.Label "${NEMOCLAW_VLLM_MANAGED_LABEL}"}}`;
+  try {
+    const output = dockerCapture(
+      [
+        "container",
+        "ls",
+        "--all",
+        "--no-trunc",
+        "--filter",
+        `name=^/${containerName}$`,
+        "--format",
+        format,
+      ],
+      { env: buildVllmDockerEnv(), timeout: 10_000 },
+    ).trim();
+    if (!output) return { kind: "absent" };
+
+    const rows = output.split(/\r?\n/);
+    if (rows.length !== 1) return { kind: "unknown" };
+    const fields = rows[0].split("|");
+    if (fields.length !== 4) return { kind: "unknown" };
+    const [containerId, observedName, state, managedLabel] = fields;
+    if (observedName !== containerName || !DOCKER_CONTAINER_ID_PATTERN.test(containerId)) {
+      return { kind: "unknown" };
+    }
+    if (managedLabel !== "true") return { kind: "foreign" };
+    return { kind: "managed", containerId, running: state === "running" };
+  } catch {
+    return { kind: "unknown" };
+  }
+}
+
+function vllmContainerReplacementTarget(
+  containerName: string,
+): { ok: true; containerId?: string } | { ok: false; reason: string } {
+  const ownership = inspectVllmContainerOwnership(containerName);
+  if (ownership.kind === "foreign") {
+    return {
+      ok: false,
+      reason: `Container "${containerName}" already exists without the NemoClaw ownership label. NemoClaw will not remove it. Remove or rename that container, then retry managed vLLM installation.`,
+    };
+  }
+  if (ownership.kind === "unknown") {
+    return {
+      ok: false,
+      reason: `Could not verify ownership of Docker container "${containerName}". NemoClaw will not remove it. Check Docker access and retry.`,
+    };
+  }
+  return ownership.kind === "managed"
+    ? { ok: true, containerId: ownership.containerId }
+    : { ok: true };
+}
+
+export function isNemoClawManagedVllmRunning(): boolean {
+  const ownership = inspectVllmContainerOwnership(NEMOCLAW_VLLM_CONTAINER_NAME);
+  return ownership.kind === "managed" && ownership.running;
 }
 
 function startContainer(
@@ -476,13 +546,17 @@ function startContainer(
   } catch (err) {
     return { ok: false, reason: (err as Error).message };
   }
-  // Validate every launch input before replacing a potentially healthy
-  // existing container. Once validated, teardown keeps startup idempotent.
-  dockerForceRm(profile.containerName, {
-    env: buildVllmDockerEnv(),
-    ignoreError: true,
-    suppressOutput: true,
-  });
+  // Re-check immediately before teardown. Removing the inspected container ID
+  // avoids deleting an unrelated same-name container if the name changes hands.
+  const replacement = vllmContainerReplacementTarget(profile.containerName);
+  if (!replacement.ok) return replacement;
+  if (replacement.containerId) {
+    dockerForceRm(replacement.containerId, {
+      env: buildVllmDockerEnv(),
+      ignoreError: true,
+      suppressOutput: true,
+    });
+  }
   const result = dockerRunDetached(runArgs, {
     env: buildVllmDockerEnv(buildHfTokenForwardEnv()),
     ignoreError: true,
@@ -797,6 +871,14 @@ export async function installVllm(
   const prereqs = dockerPrereqsOk();
   if (!prereqs.ok) {
     console.error(`  vLLM install failed: ${String(prereqs.reason)}`);
+    return { ok: false };
+  }
+
+  // Fail before large downloads when the fixed name belongs to another
+  // operator. startContainer repeats this check to close the teardown race.
+  const replacement = vllmContainerReplacementTarget(profile.containerName);
+  if (!replacement.ok) {
+    console.error(`  vLLM install failed: ${replacement.reason}`);
     return { ok: false };
   }
 
