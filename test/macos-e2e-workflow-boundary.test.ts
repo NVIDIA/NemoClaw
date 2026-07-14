@@ -61,46 +61,37 @@ describe("macOS E2E workflow boundary", () => {
     expect(String(stepNamed("Run macOS full E2E").env?.NVIDIA_INFERENCE_API_KEY)).toContain(
       "github.ref == 'refs/heads/main'",
     );
-    expect(jobNamed("macos-docker-final-destroy").if).toContain(
-      "github.event_name != 'pull_request'",
-    );
-    expect(jobNamed("macos-docker-final-destroy").if).toContain("github.ref == 'refs/heads/main'");
   });
 
-  // source-shape-contract: compatibility -- Real Docker cleanup must invoke its gated live lane on the reviewed Intel runner and engine
-  it("runs final-destroy against a pinned Docker setup on trusted Intel macOS", () => {
-    const job = readMacosWorkflow().jobs?.["macos-docker-final-destroy"];
-    const docker = job?.steps?.find((step) => step.name === "Set up pinned Docker Engine");
-    const live = job?.steps?.find((step) => step.name === "Run macOS Docker final-destroy E2E");
+  // source-shape-contract: compatibility -- OpenShell publishes macOS gateway assets only for Apple Silicon
+  it("keeps gateway lifecycle coverage on supported Apple Silicon macOS", () => {
+    const workflow = readMacosWorkflow();
+    const lifecycle = stepNamed("Run gateway lifecycle regressions");
 
-    expect(job?.["runs-on"]).toBe("macos-15-intel");
-    expect(job?.permissions).toEqual({ contents: "read" });
-    expect(docker?.uses).toBe(
-      "docker/setup-docker-action@6d7cfa65f60a9dda7b46e5513fa982536f3c9877",
-    );
-    expect(docker?.with?.version).toBe("v27.4.0");
-    expect(live?.run).toContain("npx vitest run --project e2e-live");
-    expect(live?.run).toContain("test/e2e/live/sandbox-operations.test.ts");
-    expect(live?.env?.NEMOCLAW_RUN_LIVE_E2E).toBe("1");
-    expect(live?.env?.NEMOCLAW_NON_INTERACTIVE).toBe("1");
+    expect(jobNamed("macos-e2e")["runs-on"]).toBe("macos-26");
+    expect(JSON.stringify(workflow.jobs ?? {})).not.toContain("macos-15-intel");
+    expect(lifecycle.run).toContain("test/tunnel-gateway-port-release-runtime.test.ts");
+    expect(lifecycle.run).toContain("test/onboard-gateway-prelaunch-cutover.test.ts");
+    expect(lifecycle.run).toContain("test/onboard-gateway-legacy-identity-upgrade-runtime.test.ts");
   });
 
-  // source-shape-contract: security -- Failure-only macOS artifact publishers must retain diagnostic paths and immutable actions
-  it("pins live macOS artifact publishers to an immutable action", () => {
+  // source-shape-contract: security -- The failure-only macOS artifact publisher must retain diagnostic paths and an immutable action
+  it("pins the macOS artifact publisher to an immutable action", () => {
     const workflow = readMacosWorkflow();
     const upload = workflow.jobs?.["macos-e2e"]?.steps?.find(
       (step) => step.name === "Upload logs on failure",
     );
-    const dockerUpload = workflow.jobs?.["macos-docker-final-destroy"]?.steps?.find(
-      (step) => step.name === "Upload macOS Docker logs on failure",
-    );
 
-    for (const step of [upload, dockerUpload]) {
-      expect(step?.uses).toBe("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a");
-      expect(String(step?.with?.path)).toContain("/tmp/nemoclaw-e2e-*.log");
-      expect(String(step?.with?.path)).toContain("${{ github.workspace }}/e2e-artifacts/live");
-    }
+    expect(upload?.uses).toBe("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a");
+    const paths = String(upload?.with?.path)
+      .split(/\r?\n/)
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    expect(paths).toHaveLength(2);
+    expect(paths).toEqual([
+      "/tmp/nemoclaw-e2e-*.log",
+      "${{ github.workspace }}/e2e-artifacts/live",
+    ]);
     expect(upload?.if).toBe("failure() && github.event_name == 'pull_request'");
-    expect(dockerUpload?.if).toBe("failure()");
   });
 });

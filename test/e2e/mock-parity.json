@@ -371,6 +371,13 @@
       ]
     },
     {
+      "live": "test/e2e/live/openshell-version-pin.test.ts",
+      "fast": [
+        "test/onboard-openshell-version.test.ts",
+        "test/runner.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/overlayfs-autofix.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -382,7 +389,8 @@
       "live": "test/e2e/live/rebuild-hermes.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/rebuild-hermes-progress.test.ts"
       ]
     },
     {

@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { buildRiskPlan, RISK_RULES, riskPlanRequiredJobIds } from "../tools/advisors/risk-plan.mts";
+import {
+  buildRiskPlan,
+  RISK_RULES,
+  requiresCredentialedE2eAuthorization,
+  riskPlanRequiredJobIds,
+} from "../tools/advisors/risk-plan.mts";
 import {
   focusedE2eJobsForChangedFiles,
   readFreeStandingJobsInventory,
@@ -224,6 +229,27 @@ describe("deterministic PR risk plan", () => {
 
     expect(result.families).toEqual([]);
     expect(result.requiredJobs).toEqual([]);
+  });
+
+  it("runs controller-only changes without credentialed E2E authorization", () => {
+    const result = plan(".github/workflows/pr-e2e-gate.yaml", "tools/e2e/pr-e2e-gate.mts");
+
+    expect(result.families.map((family) => family.id)).toContain("e2e-control-plane");
+    expect(requiresCredentialedE2eAuthorization(result)).toBe(false);
+  });
+
+  it.each([
+    ".github/workflows/e2e.yaml",
+    "test/e2e/risk-signal-reporter.ts",
+    "tools/e2e/workflow-plan.mts",
+  ])("requires authorization before credentialed E2E can execute %s", (file) => {
+    expect(requiresCredentialedE2eAuthorization(plan(file))).toBe(true);
+  });
+
+  it("keeps mixed controller and credentialed execution changes behind authorization", () => {
+    const result = plan(".github/workflows/pr-e2e-gate.yaml", "test/e2e/risk-signal-reporter.ts");
+
+    expect(requiresCredentialedE2eAuthorization(result)).toBe(true);
   });
 
   it.each([

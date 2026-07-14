@@ -91,7 +91,7 @@ Use categories that match the release surface. Prefer 4-6 sections. Common categ
 - Skills, Docs, and Release Surface
 - CI and Release Confidence
 
-Every included shipped change should appear in exactly one category unless the user asks for a shorter note.
+Every included shipped change should appear in one category unless the user asks for a shorter note.
 
 ## Step 5: Handle Contributor Credit
 
@@ -131,7 +131,7 @@ Thank you to external contributor @shannonsands for the original Hermes Provider
 
 ## Step 6: Draft the Narrative
 
-Write the top section as exactly three paragraphs unless the user asks otherwise.
+Write the top section as three paragraphs unless the user asks otherwise.
 
 If the user requests a theme, let it shape the paragraphs. If the user asks for the voice of Carl Sagan, keep it subtle: cosmic scale, humility, clarity, and wonder, but no parody, no quotes, and no overdone imitation.
 

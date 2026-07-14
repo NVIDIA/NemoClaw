@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-refactor-docs
-description: "Plan and execute maintainer-owned refactors of oversized NemoClaw Fern documentation sections into focused one-topic pages with journey-based nested navigation, non-clickable group nodes, canonical troubleshooting and reference ownership, deduplicated content, variant-aware route-style links, and complete redirects. Use when a docs page or section has grown too large, when reorganizing documentation information architecture or a table of contents, when splitting pages, moving content across sections, consolidating duplicate guidance, or migrating URLs in docs/index.yml and fern/docs.yml. Trigger keywords - refactor docs, reorganize docs, split docs, nested TOC, documentation IA, one topic per page, move troubleshooting, deduplicate docs, docs too long."
+description: "Plan and execute maintainer-owned refactors of oversized NemoClaw Fern documentation sections into focused one-topic pages with concise prose, journey-based nested navigation, non-clickable group nodes, canonical troubleshooting and reference ownership, deduplicated content, variant-aware route-style links, and complete redirects. Use when a docs page or section has grown too large, when reorganizing documentation information architecture or a table of contents, when splitting pages, shortening dense paragraph blocks, moving content across sections, consolidating duplicate guidance, or migrating URLs in docs/index.yml and fern/docs.yml. Trigger keywords - refactor docs, reorganize docs, split docs, nested TOC, documentation IA, one topic per page, big paragraphs, move troubleshooting, deduplicate docs, docs too long."
 ---
 
 <!--
@@ -150,7 +150,25 @@ Follow the documentation style guide and these refactor-specific rules:
 - Keep shared lists structurally intact after variant rendering. Verify the generated variant output when an `<AgentOnly>` block appears inside or next to a list.
 - Preserve working commands and behavior claims during a structural split. Avoid opportunistic prose rewrites.
 
-## Step 6: Validate the Refactor
+## Step 6: Run a Readability Pass
+
+After the structural refactor is complete, run a separate edit across every changed source page and canonical destination page.
+Treat a prose block as a review candidate when it has four or more sentences, about 70 or more words, about 400 or more characters, or more than one distinct purpose.
+Long single sentences and paragraphs joined across conditional blocks still require review even when they stay below the sentence or word thresholds.
+
+- Split dense prose into short paragraphs when the ideas share one topic.
+- Add a descriptive H2 or H3 when a block contains distinct tasks, decisions, phases, or operational concerns.
+- Do not add a heading for a single thin paragraph or rewrite facts merely to shorten the text.
+- Preserve commands, links, callout meaning, technical claims, route ownership, and agent applicability.
+- Keep one sentence per source line and keep simple lists compact.
+- Review prose inside callouts, but exclude frontmatter, code fences, tables, headings, JSX tags, and individual list items from mechanical paragraph-size counts.
+
+Regenerate the agent variants after this edit.
+Inspect the generated OpenClaw, Hermes, and Deep Agents pages for dense blocks that do not exist in the source.
+When removing an `<AgentOnly>` wrapper joins variant-specific and shared prose, add source paragraph boundaries around the conditional block and regenerate.
+Repeat until both source and generated pages have readable paragraph blocks.
+
+## Step 7: Validate the Refactor
 
 Run the existing deterministic checks rather than inventing another route model:
 
@@ -182,10 +200,10 @@ Fern links resolve from published slug routes, so a valid link may not match a s
 Verify link comments against `docs/index.yml`, `fern/docs.yml`, generated variant mappings, and the deterministic route checks before editing.
 Missing anchors can still be real even when the page route exists.
 
-## Step 7: Run an Independent Docs Review
+## Step 8: Run an Independent Docs Review
 
 When subagents are available, give a documentation reviewer the changed files, the old-to-new ownership map, and test evidence.
-Ask it to check for content loss, duplicate ownership, variant drift, bad redirects, and style regressions without telling it the expected verdict.
+Ask it to check for content loss, duplicate ownership, variant drift, bad redirects, oversized paragraph blocks, generated paragraph joins, and style regressions without telling it the expected verdict.
 Apply valid findings and rerun affected checks.
 
 ## Completion Contract
@@ -200,6 +218,7 @@ Do not call the refactor complete until all of these conditions hold:
 - No supported variant renders a link or redirect to an unpublished page.
 - Legacy URLs redirect directly to final published pages.
 - Shared content renders correctly for every applicable agent variant.
+- Source and generated variant pages have no unresolved oversized or multi-purpose prose blocks.
 - Simple lists remain compact.
 - The docs build, route checks, link checks, and diff check pass.
 
@@ -212,6 +231,7 @@ Summarize the refactor with:
 - Canonical troubleshooting and reference ownership decisions.
 - Redirects and legacy routes preserved.
 - Variant-specific differences.
+- Readability edits made to dense paragraph blocks.
 - Validation commands and results.
 - Any intentionally deferred adjacent cleanup.
 

@@ -10,8 +10,10 @@ import { describe, expect, it } from "vitest";
 import {
   buildPublishedRouteIndex,
   findBrokenPublishedInferenceRoutes,
+  findBrokenPublishedManageSandboxRoutes,
   findBrokenPublishedRedirects,
   findBrokenPublishedRoutes,
+  findMissingDirectLegacyManageSandboxRedirects,
   resolvePublishedRoute,
 } from "../scripts/check-docs-published-routes.ts";
 
@@ -142,6 +144,55 @@ redirects:
     ]);
   });
 
+  it("validates static Manage Sandboxes redirect destinations", () => {
+    const index = buildPublishedRouteIndex(navYaml);
+    const fernYaml = `
+redirects:
+  - source: /nemoclaw/user-guide/openclaw/manage-sandboxes/legacy
+    destination: /nemoclaw/user-guide/openclaw/reference/commands
+  - source: /nemoclaw/user-guide/openclaw/manage-sandboxes/broken
+    destination: /nemoclaw/user-guide/openclaw/manage-sandboxes/missing
+  - source: /nemoclaw/manage-sandboxes/:path*
+    destination: /nemoclaw/user-guide/openclaw/manage-sandboxes/:path*
+`;
+
+    expect(findBrokenPublishedRedirects(index, fernYaml)).toEqual([
+      {
+        source: "/nemoclaw/user-guide/openclaw/manage-sandboxes/broken",
+        destination: "/nemoclaw/user-guide/openclaw/manage-sandboxes/missing",
+        resolved: "/user-guide/openclaw/manage-sandboxes/missing",
+        variant: null,
+      },
+    ]);
+  });
+
+  it("rejects Manage Sandboxes HTML redirects that would require a second hop", () => {
+    const fernYaml = `
+redirects:
+  - source: /nemoclaw/latest/:path*/index.html
+    destination: /nemoclaw/latest/:path*
+  - source: /nemoclaw/:path*.html
+    destination: /nemoclaw/:path*
+  - source: /nemoclaw/latest/manage-sandboxes/lifecycle
+    destination: /nemoclaw/latest/user-guide/openclaw/manage-sandboxes/operate-sandboxes/view-sandbox-status
+`;
+
+    expect(findMissingDirectLegacyManageSandboxRedirects(fernYaml)).toEqual([
+      {
+        source: "/nemoclaw/latest/manage-sandboxes/lifecycle.html",
+        destination: null,
+        expected:
+          "/nemoclaw/latest/user-guide/openclaw/manage-sandboxes/operate-sandboxes/view-sandbox-status",
+      },
+      {
+        source: "/nemoclaw/latest/manage-sandboxes/lifecycle/index.html",
+        destination: null,
+        expected:
+          "/nemoclaw/latest/user-guide/openclaw/manage-sandboxes/operate-sandboxes/view-sandbox-status",
+      },
+    ]);
+  });
+
   it("can guard inference links without expanding checks to unrelated links", () => {
     const index = buildPublishedRouteIndex(navYaml);
     const source = commandsSource(`
@@ -179,5 +230,81 @@ See [Missing Other Page](../other/missing).
         }),
       ]);
     });
+  });
+
+  it("can guard Manage Sandboxes links without expanding checks to unrelated links", () => {
+    const index = buildPublishedRouteIndex(navYaml);
+    const source = commandsSource(`
+See [Missing Sandbox Page](../manage-sandboxes/operate-sandboxes/missing).
+See [Missing Other Page](../other/missing).
+`);
+
+    withDocsSource(source, (docsDir) => {
+      expect(
+        findBrokenPublishedManageSandboxRoutes("reference/commands.mdx", index, docsDir),
+      ).toEqual([
+        expect.objectContaining({
+          fromRoute: "/user-guide/openclaw/reference/commands",
+          resolved: "/user-guide/openclaw/manage-sandboxes/operate-sandboxes/missing",
+        }),
+        expect.objectContaining({
+          fromRoute: "/user-guide/hermes/reference/commands",
+          resolved: "/user-guide/hermes/manage-sandboxes/operate-sandboxes/missing",
+        }),
+      ]);
+    });
+  });
+
+  it("includes Manage Sandboxes section roots in focused route violations", () => {
+    const index = buildPublishedRouteIndex(navYaml);
+    const source = commandsSource("See [Missing Manage Sandboxes Root](../manage-sandboxes).");
+
+    withDocsSource(source, (docsDir) => {
+      expect(
+        findBrokenPublishedManageSandboxRoutes("reference/commands.mdx", index, docsDir),
+      ).toEqual([
+        expect.objectContaining({
+          resolved: "/user-guide/openclaw/manage-sandboxes",
+        }),
+        expect.objectContaining({
+          resolved: "/user-guide/hermes/manage-sandboxes",
+        }),
+      ]);
+    });
+  });
+});
+
+describe("Manage Sandboxes extension routes", () => {
+  const index = buildPublishedRouteIndex();
+
+  it("redirects legacy HTML routes directly to their final pages", () => {
+    expect(findMissingDirectLegacyManageSandboxRedirects()).toEqual([]);
+  });
+
+  it("publishes MCP pages under the MCP Servers group for every agent variant", () => {
+    for (const variant of ["openclaw", "hermes", "deepagents"]) {
+      expect(
+        index.routes.has(
+          `/user-guide/${variant}/manage-sandboxes/mcp-servers/about-managed-mcp-servers`,
+        ),
+      ).toBe(true);
+      expect(
+        index.routes.has(
+          `/user-guide/${variant}/manage-sandboxes/extend-sandboxes/about-managed-mcp-servers`,
+        ),
+      ).toBe(false);
+    }
+  });
+
+  it("publishes plugin installation directly under supported Manage Sandboxes variants", () => {
+    expect(index.routes.has("/user-guide/openclaw/manage-sandboxes/install-openclaw-plugins")).toBe(
+      true,
+    );
+    expect(index.routes.has("/user-guide/hermes/manage-sandboxes/install-hermes-plugins")).toBe(
+      true,
+    );
+    expect(
+      index.routes.has("/user-guide/deepagents/manage-sandboxes/install-openclaw-plugins"),
+    ).toBe(false);
   });
 });

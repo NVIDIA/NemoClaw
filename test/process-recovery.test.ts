@@ -10,12 +10,19 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const requireSource = createRequire(import.meta.url);
-const { checkAndRecoverSandboxProcesses } = requireSource(
+const { checkAndRecoverSandboxProcesses: checkAndRecoverSandboxProcessesImpl } = requireSource(
   "../src/lib/actions/sandbox/process-recovery.ts",
 ) as typeof import("../src/lib/actions/sandbox/process-recovery.js");
 const { ensureSandboxPortForwardForPort } = requireSource(
   "../src/lib/actions/sandbox/forward-recovery.ts",
 ) as typeof import("../src/lib/actions/sandbox/forward-recovery.js");
+
+function checkAndRecoverSandboxProcesses(
+  sandboxName: string,
+  options: Parameters<typeof checkAndRecoverSandboxProcessesImpl>[1] = {},
+) {
+  return checkAndRecoverSandboxProcessesImpl(sandboxName, { isWsl: false, ...options });
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -178,7 +185,13 @@ beta  127.0.0.1  18789  12345  running`;
     ).toBe(false);
   });
 
-  it("restarts a loopback forward when remote dashboard bind is requested (#6024)", () => {
+  it.each([
+    { dashboardBind: "0.0.0.0", isWsl: false, requirement: "remote bind" },
+    { dashboardBind: "", isWsl: true, requirement: "WSL" },
+  ])("restarts a loopback forward when $requirement requires all interfaces (#6024)", ({
+    dashboardBind,
+    isWsl,
+  }) => {
     const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
     const agentRuntime = requireSource("../src/lib/agent/runtime.js");
     const registry = requireSource("../src/lib/state/registry.js");
@@ -186,7 +199,7 @@ beta  127.0.0.1  18789  12345  running`;
     const childProcess = requireSource("node:child_process");
     let forwardStarted = false;
 
-    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", dashboardBind);
     vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
     vi.spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 0,
@@ -216,7 +229,9 @@ beta  127.0.0.1  18789  12345  running`;
       });
 
     expect(
-      withFakeOpenshellBinary(() => checkAndRecoverSandboxProcesses("beta", { quiet: true })),
+      withFakeOpenshellBinary(() =>
+        checkAndRecoverSandboxProcesses("beta", { isWsl, quiet: true }),
+      ),
     ).toEqual({
       checked: true,
       wasRunning: true,

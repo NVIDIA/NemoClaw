@@ -170,30 +170,96 @@ navigation:
             slug: manage-sandboxes
             collapsed: open-by-default
             contents:
-              - page: "Manage Sandbox Lifecycle"
-                path: _build/agent-variants/manage-sandboxes/lifecycle.openclaw.generated.mdx
-                slug: lifecycle
-              - page: "Runtime Controls"
-                path: _build/agent-variants/manage-sandboxes/runtime-controls.openclaw.generated.mdx
-                slug: runtime-controls
-              - page: "Set Up Messaging Channels"
-                path: _build/agent-variants/manage-sandboxes/messaging-channels.openclaw.generated.mdx
+              - section: "Operate Sandboxes"
+                slug: operate-sandboxes
+                contents:
+                  - page: "View Sandbox Status"
+                    path: _build/agent-variants/manage-sandboxes/lifecycle.openclaw.generated.mdx
+                    slug: view-sandbox-status
+                  - page: "Run Sandboxes"
+                    path: _build/agent-variants/manage-sandboxes/run-sandboxes.openclaw.generated.mdx
+                    slug: run-sandboxes
+                  - page: "Recover and Rebuild Sandboxes"
+                    path: _build/agent-variants/manage-sandboxes/recover-rebuild-sandboxes.openclaw.generated.mdx
+                    slug: recover-and-rebuild-sandboxes
+                  - page: "Update Sandboxes"
+                    path: _build/agent-variants/manage-sandboxes/update-sandboxes.openclaw.generated.mdx
+                    slug: update-sandboxes
+                  - page: "Uninstall NemoClaw"
+                    path: _build/agent-variants/manage-sandboxes/uninstall-nemoclaw.openclaw.generated.mdx
+                    slug: uninstall-nemoclaw
+              - section: "Configure Sandboxes"
+                slug: configure-sandboxes
+                contents:
+                  - page: "Understand Runtime Changes"
+                    path: _build/agent-variants/manage-sandboxes/runtime-controls.openclaw.generated.mdx
+                    slug: understand-runtime-changes
+                  - page: "Understand Gateway Lifecycle Control"
+                    path: _build/agent-variants/manage-sandboxes/gateway-lifecycle-control.openclaw.generated.mdx
+                    slug: understand-gateway-lifecycle-control
+                  - page: "Review Sandbox Hardening"
+                    path: deployment/sandbox-hardening.mdx
+                    slug: review-sandbox-hardening
+              - section: "Messaging Channels"
                 slug: messaging-channels
-              - page: "Set Up MCP Servers"
-                path: _build/agent-variants/deployment/set-up-mcp-bridge.openclaw.generated.mdx
-                slug: set-up-mcp-servers
-              - page: "Workspace Files"
-                path: _build/agent-variants/manage-sandboxes/workspace-files.openclaw.generated.mdx
-                slug: workspace-files
-              - page: "Backup and Restore"
-                path: _build/agent-variants/manage-sandboxes/backup-restore.openclaw.generated.mdx
-                slug: backup-restore
+                contents:
+                  - page: "Choose Messaging Channels"
+                    path: _build/agent-variants/manage-sandboxes/messaging-channels.openclaw.generated.mdx
+                    slug: choose-messaging-channels
+                  - page: "Set Up Telegram"
+                    path: _build/agent-variants/manage-sandboxes/set-up-telegram.openclaw.generated.mdx
+                    slug: set-up-telegram
+                  - page: "Set Up Discord"
+                    path: _build/agent-variants/manage-sandboxes/set-up-discord.openclaw.generated.mdx
+                    slug: set-up-discord
+                  - page: "Set Up Slack"
+                    path: _build/agent-variants/manage-sandboxes/set-up-slack.openclaw.generated.mdx
+                    slug: set-up-slack
+                  - page: "Set Up WeChat"
+                    path: _build/agent-variants/manage-sandboxes/set-up-wechat.openclaw.generated.mdx
+                    slug: set-up-wechat
+                  - page: "Set Up WhatsApp"
+                    path: _build/agent-variants/manage-sandboxes/set-up-whatsapp.openclaw.generated.mdx
+                    slug: set-up-whatsapp
+                  - page: "Set Up Microsoft Teams"
+                    path: _build/agent-variants/manage-sandboxes/set-up-microsoft-teams.openclaw.generated.mdx
+                    slug: set-up-microsoft-teams
+                  - page: "Enable Channels During Onboarding"
+                    path: _build/agent-variants/manage-sandboxes/enable-channels-during-onboarding.openclaw.generated.mdx
+                    slug: enable-channels-during-onboarding
+                  - page: "Add Channels After Onboarding"
+                    path: _build/agent-variants/manage-sandboxes/add-channels-after-onboarding.openclaw.generated.mdx
+                    slug: add-channels-after-onboarding
+                  - page: "Manage Messaging Channels"
+                    path: _build/agent-variants/manage-sandboxes/manage-messaging-channels.openclaw.generated.mdx
+                    slug: manage-messaging-channels
+              - section: "MCP Servers"
+                slug: mcp-servers
+                contents:
+                  - page: "About Managed MCP Servers"
+                    path: _build/agent-variants/deployment/set-up-mcp-bridge.openclaw.generated.mdx
+                    slug: about-managed-mcp-servers
+                  - page: "Add an MCP Server"
+                    path: _build/agent-variants/manage-sandboxes/add-mcp-server.openclaw.generated.mdx
+                    slug: add-an-mcp-server
+                  - page: "Manage MCP Servers"
+                    path: _build/agent-variants/manage-sandboxes/manage-mcp-servers.openclaw.generated.mdx
+                    slug: manage-mcp-servers
               - page: "Install OpenClaw Plugins"
                 path: deployment/install-openclaw-plugins.mdx
                 slug: install-openclaw-plugins
-              - page: "Sandbox Hardening"
-                path: deployment/sandbox-hardening.mdx
-                slug: sandbox-hardening
+              - section: "State and Backups"
+                slug: state-and-backups
+                contents:
+                  - page: "Understand Sandbox State"
+                    path: _build/agent-variants/manage-sandboxes/workspace-files.openclaw.generated.mdx
+                    slug: understand-sandbox-state
+                  - page: "Create and Restore Snapshots"
+                    path: _build/agent-variants/manage-sandboxes/backup-restore.openclaw.generated.mdx
+                    slug: create-and-restore-snapshots
+                  - page: "Transfer State Manually"
+                    path: _build/agent-variants/manage-sandboxes/transfer-state-manually.openclaw.generated.mdx
+                    slug: transfer-state-manually
           - section: "Network Policy"
             slug: network-policy
             collapsed: open-by-default
@@ -277,6 +343,9 @@ navigation:
               - page: "Network Policies"
                 path: _build/agent-variants/reference/network-policies.openclaw.generated.mdx
                 slug: network-policies
+              - page: "Troubleshoot MCP Servers"
+                path: _build/agent-variants/reference/troubleshoot-mcp-servers.openclaw.generated.mdx
+                slug: troubleshoot-mcp-servers
               - page: "Troubleshooting"
                 path: _build/agent-variants/reference/troubleshooting.openclaw.generated.mdx
                 slug: troubleshooting
@@ -439,18 +508,48 @@ navigation:
             slug: manage-sandboxes
             collapsed: open-by-default
             contents:
-              - page: "Manage Sandbox Lifecycle"
-                path: _build/agent-variants/manage-sandboxes/lifecycle.deepagents.generated.mdx
-                slug: lifecycle
-              - page: "Set Up MCP Servers"
-                path: _build/agent-variants/deployment/set-up-mcp-bridge.deepagents.generated.mdx
-                slug: set-up-mcp-servers
-              - page: "Workspace Files"
-                path: _build/agent-variants/manage-sandboxes/workspace-files.deepagents.generated.mdx
-                slug: workspace-files
-              - page: "Backup and Restore"
-                path: _build/agent-variants/manage-sandboxes/backup-restore.deepagents.generated.mdx
-                slug: backup-restore
+              - section: "Operate Sandboxes"
+                slug: operate-sandboxes
+                contents:
+                  - page: "View Sandbox Status"
+                    path: _build/agent-variants/manage-sandboxes/lifecycle.deepagents.generated.mdx
+                    slug: view-sandbox-status
+                  - page: "Run Sandboxes"
+                    path: _build/agent-variants/manage-sandboxes/run-sandboxes.deepagents.generated.mdx
+                    slug: run-sandboxes
+                  - page: "Recover and Rebuild Sandboxes"
+                    path: _build/agent-variants/manage-sandboxes/recover-rebuild-sandboxes.deepagents.generated.mdx
+                    slug: recover-and-rebuild-sandboxes
+                  - page: "Update Sandboxes"
+                    path: _build/agent-variants/manage-sandboxes/update-sandboxes.deepagents.generated.mdx
+                    slug: update-sandboxes
+                  - page: "Uninstall NemoClaw"
+                    path: _build/agent-variants/manage-sandboxes/uninstall-nemoclaw.deepagents.generated.mdx
+                    slug: uninstall-nemoclaw
+              - section: "MCP Servers"
+                slug: mcp-servers
+                contents:
+                  - page: "About Managed MCP Servers"
+                    path: _build/agent-variants/deployment/set-up-mcp-bridge.deepagents.generated.mdx
+                    slug: about-managed-mcp-servers
+                  - page: "Add an MCP Server"
+                    path: _build/agent-variants/manage-sandboxes/add-mcp-server.deepagents.generated.mdx
+                    slug: add-an-mcp-server
+                  - page: "Manage MCP Servers"
+                    path: _build/agent-variants/manage-sandboxes/manage-mcp-servers.deepagents.generated.mdx
+                    slug: manage-mcp-servers
+              - section: "State and Backups"
+                slug: state-and-backups
+                contents:
+                  - page: "Understand Sandbox State"
+                    path: _build/agent-variants/manage-sandboxes/workspace-files.deepagents.generated.mdx
+                    slug: understand-sandbox-state
+                  - page: "Create and Restore Snapshots"
+                    path: _build/agent-variants/manage-sandboxes/backup-restore.deepagents.generated.mdx
+                    slug: create-and-restore-snapshots
+                  - page: "Transfer State Manually"
+                    path: _build/agent-variants/manage-sandboxes/transfer-state-manually.deepagents.generated.mdx
+                    slug: transfer-state-manually
           - section: "Security"
             slug: security
             collapsed: open-by-default
@@ -489,6 +588,9 @@ navigation:
               - page: "Network Policies"
                 path: _build/agent-variants/reference/network-policies.deepagents.generated.mdx
                 slug: network-policies
+              - page: "Troubleshoot MCP Servers"
+                path: _build/agent-variants/reference/troubleshoot-mcp-servers.deepagents.generated.mdx
+                slug: troubleshoot-mcp-servers
               - page: "Troubleshooting"
                 path: _build/agent-variants/reference/troubleshooting.deepagents.generated.mdx
                 slug: troubleshooting
@@ -657,27 +759,93 @@ navigation:
             slug: manage-sandboxes
             collapsed: open-by-default
             contents:
-              - page: "Manage Sandbox Lifecycle"
-                path: _build/agent-variants/manage-sandboxes/lifecycle.hermes.generated.mdx
-                slug: lifecycle
-              - page: "Runtime Controls"
-                path: _build/agent-variants/manage-sandboxes/runtime-controls.hermes.generated.mdx
-                slug: runtime-controls
-              - page: "Set Up Messaging Channels"
-                path: _build/agent-variants/manage-sandboxes/messaging-channels.hermes.generated.mdx
+              - section: "Operate Sandboxes"
+                slug: operate-sandboxes
+                contents:
+                  - page: "View Sandbox Status"
+                    path: _build/agent-variants/manage-sandboxes/lifecycle.hermes.generated.mdx
+                    slug: view-sandbox-status
+                  - page: "Run Sandboxes"
+                    path: _build/agent-variants/manage-sandboxes/run-sandboxes.hermes.generated.mdx
+                    slug: run-sandboxes
+                  - page: "Recover and Rebuild Sandboxes"
+                    path: _build/agent-variants/manage-sandboxes/recover-rebuild-sandboxes.hermes.generated.mdx
+                    slug: recover-and-rebuild-sandboxes
+                  - page: "Update Sandboxes"
+                    path: _build/agent-variants/manage-sandboxes/update-sandboxes.hermes.generated.mdx
+                    slug: update-sandboxes
+                  - page: "Uninstall NemoClaw"
+                    path: _build/agent-variants/manage-sandboxes/uninstall-nemoclaw.hermes.generated.mdx
+                    slug: uninstall-nemoclaw
+              - section: "Configure Sandboxes"
+                slug: configure-sandboxes
+                contents:
+                  - page: "Understand Runtime Changes"
+                    path: _build/agent-variants/manage-sandboxes/runtime-controls.hermes.generated.mdx
+                    slug: understand-runtime-changes
+                  - page: "Understand Gateway Lifecycle Control"
+                    path: _build/agent-variants/manage-sandboxes/gateway-lifecycle-control.hermes.generated.mdx
+                    slug: understand-gateway-lifecycle-control
+              - section: "Messaging Channels"
                 slug: messaging-channels
-              - page: "Set Up MCP Servers"
-                path: _build/agent-variants/deployment/set-up-mcp-bridge.hermes.generated.mdx
-                slug: set-up-mcp-servers
-              - page: "Workspace Files"
-                path: _build/agent-variants/manage-sandboxes/workspace-files.hermes.generated.mdx
-                slug: workspace-files
-              - page: "Backup and Restore"
-                path: _build/agent-variants/manage-sandboxes/backup-restore.hermes.generated.mdx
-                slug: backup-restore
+                contents:
+                  - page: "Choose Messaging Channels"
+                    path: _build/agent-variants/manage-sandboxes/messaging-channels.hermes.generated.mdx
+                    slug: choose-messaging-channels
+                  - page: "Set Up Telegram"
+                    path: _build/agent-variants/manage-sandboxes/set-up-telegram.hermes.generated.mdx
+                    slug: set-up-telegram
+                  - page: "Set Up Discord"
+                    path: _build/agent-variants/manage-sandboxes/set-up-discord.hermes.generated.mdx
+                    slug: set-up-discord
+                  - page: "Set Up Slack"
+                    path: _build/agent-variants/manage-sandboxes/set-up-slack.hermes.generated.mdx
+                    slug: set-up-slack
+                  - page: "Set Up WeChat"
+                    path: _build/agent-variants/manage-sandboxes/set-up-wechat.hermes.generated.mdx
+                    slug: set-up-wechat
+                  - page: "Set Up WhatsApp"
+                    path: _build/agent-variants/manage-sandboxes/set-up-whatsapp.hermes.generated.mdx
+                    slug: set-up-whatsapp
+                  - page: "Set Up Microsoft Teams"
+                    path: _build/agent-variants/manage-sandboxes/set-up-microsoft-teams.hermes.generated.mdx
+                    slug: set-up-microsoft-teams
+                  - page: "Enable Channels During Onboarding"
+                    path: _build/agent-variants/manage-sandboxes/enable-channels-during-onboarding.hermes.generated.mdx
+                    slug: enable-channels-during-onboarding
+                  - page: "Add Channels After Onboarding"
+                    path: _build/agent-variants/manage-sandboxes/add-channels-after-onboarding.hermes.generated.mdx
+                    slug: add-channels-after-onboarding
+                  - page: "Manage Messaging Channels"
+                    path: _build/agent-variants/manage-sandboxes/manage-messaging-channels.hermes.generated.mdx
+                    slug: manage-messaging-channels
+              - section: "MCP Servers"
+                slug: mcp-servers
+                contents:
+                  - page: "About Managed MCP Servers"
+                    path: _build/agent-variants/deployment/set-up-mcp-bridge.hermes.generated.mdx
+                    slug: about-managed-mcp-servers
+                  - page: "Add an MCP Server"
+                    path: _build/agent-variants/manage-sandboxes/add-mcp-server.hermes.generated.mdx
+                    slug: add-an-mcp-server
+                  - page: "Manage MCP Servers"
+                    path: _build/agent-variants/manage-sandboxes/manage-mcp-servers.hermes.generated.mdx
+                    slug: manage-mcp-servers
               - page: "Install Hermes Plugins"
                 path: manage-sandboxes/install-plugins-hermes.mdx
-                slug: install-plugins-hermes
+                slug: install-hermes-plugins
+              - section: "State and Backups"
+                slug: state-and-backups
+                contents:
+                  - page: "Understand Sandbox State"
+                    path: _build/agent-variants/manage-sandboxes/workspace-files.hermes.generated.mdx
+                    slug: understand-sandbox-state
+                  - page: "Create and Restore Snapshots"
+                    path: _build/agent-variants/manage-sandboxes/backup-restore.hermes.generated.mdx
+                    slug: create-and-restore-snapshots
+                  - page: "Transfer State Manually"
+                    path: _build/agent-variants/manage-sandboxes/transfer-state-manually.hermes.generated.mdx
+                    slug: transfer-state-manually
           - section: "Network Policy"
             slug: network-policy
             collapsed: open-by-default
@@ -748,6 +916,9 @@ navigation:
               - page: "Network Policies"
                 path: _build/agent-variants/reference/network-policies.hermes.generated.mdx
                 slug: network-policies
+              - page: "Troubleshoot MCP Servers"
+                path: _build/agent-variants/reference/troubleshoot-mcp-servers.hermes.generated.mdx
+                slug: troubleshoot-mcp-servers
               - page: "Troubleshooting"
                 path: _build/agent-variants/reference/troubleshooting.hermes.generated.mdx
                 slug: troubleshooting

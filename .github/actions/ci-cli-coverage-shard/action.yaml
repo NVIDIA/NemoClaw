@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 name: ci-cli-coverage-shard
-description: Run one shared CLI coverage shard and upload its Vitest blob report.
+description: Run one shared CLI, integration, and E2E-support shard and upload its Vitest blob report.
 
 inputs:
   shard:
@@ -63,6 +63,36 @@ runs:
         npm install --ignore-scripts
         cd nemoclaw && npm install --ignore-scripts
 
+    - name: Validate changed live E2E mock parity
+      if: ${{ inputs.shard == '1' }}
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        PUSH_BASE_SHA: ${{ github.event.before }}
+      run: |
+        set -euo pipefail
+        case "$EVENT_NAME" in
+          pull_request)
+            # The checked-out merge commit is authoritative when the event
+            # payload still names an older base revision.
+            base=HEAD^1
+            head=HEAD^2
+            ;;
+          push)
+            if [ "$PUSH_BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+              echo "Skipping changed live E2E parity: main has no prior commit."
+              exit 0
+            fi
+            base="$PUSH_BASE_SHA"
+            head=HEAD
+            ;;
+          *)
+            echo "Skipping changed live E2E parity for $EVENT_NAME."
+            exit 0
+            ;;
+        esac
+        npx tsx scripts/checks/e2e-mock-parity.ts --base "$base" --head "$head"
+
     - name: Build TypeScript plugin
       shell: bash
       run: cd nemoclaw && npm run build
@@ -83,13 +113,13 @@ runs:
         if-no-files-found: error
         retention-days: 1
 
-    - name: Run CLI coverage shard
+    - name: Run CLI coverage and E2E support shard
       shell: bash
       env:
         CLI_SHARD: ${{ inputs.shard }}
         CLI_SHARD_COUNT: ${{ inputs.shard-count }}
       run: |
-        npx vitest run --project cli --project integration \
+        npx vitest run --project cli --project integration --project e2e-support \
           --shard="${CLI_SHARD}/${CLI_SHARD_COUNT}" \
           --reporter=github-actions \
           --reporter=blob \

@@ -942,7 +942,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
       .map((failure) => `${failure.name}: ${failure.message}`)
       .join(" | ");
     const wslHint =
-      isWsl() && retriedAfterTimeout
+      isWsl({ isWsl: options.isWsl }) && retriedAfterTimeout
         ? " · WSL2 detected \u2014 network verification may be slower than expected. " +
           "Run `nemoclaw onboard` with the `--skip-verify` flag if this endpoint is known to be reachable."
         : "";

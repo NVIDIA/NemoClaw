@@ -32,7 +32,7 @@ These instructions are for agents and skills that evaluate NemoClaw issues and P
 ## PR Flow
 
 1. Identify whether the PR is draft, conflicted, stale, blocked, or review-ready.
-2. Apply exactly one PR type label only when enough evidence exists: `bug-fix`, `feature`, `refactor`, or `chore`. Conventional commit prefixes are strong evidence: `fix` maps to `bug-fix`, `feat` maps to `feature`, `refactor` maps to `refactor`, and `chore`, docs-only, CI-only, skill-sync, dependency, packaging, or generated-policy maintenance maps to `chore`.
+2. Apply one PR type label only when enough evidence exists: `bug-fix`, `feature`, `refactor`, or `chore`. Conventional commit prefixes are strong evidence: `fix` maps to `bug-fix`, `feat` maps to `feature`, `refactor` maps to `refactor`, and `chore`, docs-only, CI-only, skill-sync, dependency, packaging, or generated-policy maintenance maps to `chore`.
 3. Add `security` when the PR touches credentials, permissions, SSRF, sandbox escape risk, policy enforcement, or trusted installer paths.
 4. Add area/platform/provider/integration labels based on files changed and PR intent when useful for review routing.
 5. Recommend Project Status `Needs Review` for non-draft, conflict-free PRs that are awaiting maintainer review.
@@ -84,7 +84,7 @@ Use `needs: info` and ask targeted questions only when author action is required
 - A PR does not explain intent, scope, or linked issue and the diff could be interpreted multiple ways.
 - A security report lacks enough detail to route safely.
 
-Ask for exact missing fields. Do not ask broad questions like "Can you provide more details?" when specific missing data is known.
+Name the missing fields. Do not ask broad questions like "Can you provide more details?" when specific missing data is known.
 
 ## When To Use Needs Labels
 
@@ -149,7 +149,7 @@ Use this JSON-compatible shape:
 - When useful, address the author by GitHub login and reference the specific behavior, PR, or report.
 - Be friendly, specific, and direct; do not use generic filler, sarcasm, or frustration.
 - Link to existing docs or prior issues when they answer the question better than repeating guidance inline.
-- For `needs: info`, ask for exact missing details.
+- For `needs: info`, ask for the missing details.
 - For security, avoid exploit confirmation.
 - For duplicate recommendations, include the canonical item and recommend Project Status or close reason `Duplicate`.
 - For superseded or competing-work recommendations, include the canonical or related item if known.

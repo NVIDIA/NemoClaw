@@ -1,0 +1,44 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Set Up Discord"
+sidebar-title: "Set Up Discord"
+description: "Prepare a Discord bot token, server access, user restriction, and mention behavior for NemoClaw."
+description-agent: "Explains Discord bot credentials and NemoClaw server, user, and mention-mode settings. Use before enabling Discord during onboarding or adding it later."
+keywords: ["nemoclaw discord", "discord bot token", "discord server id"]
+content:
+  type: "how_to"
+---
+import { AgentOnly } from "../_components/AgentGuide";
+
+Create a Discord bot and choose its server and user access before you enable the channel.
+
+## Prepare Discord Settings
+
+Copy the bot token from the Discord Developer Portal into `DISCORD_BOT_TOKEN`.
+For server channels, enable Developer Mode in Discord, right-click the server, and copy the Server ID into `DISCORD_SERVER_ID`.
+
+By default, NemoClaw configures the bot to reply only when mentioned.
+If `DISCORD_SERVER_ID` is set and `DISCORD_REQUIRE_MENTION` is unset, NemoClaw defaults `DISCORD_REQUIRE_MENTION` to `1`.
+
+Set `DISCORD_REQUIRE_MENTION=0` if you want the bot to reply to all messages in the configured server.
+Set `DISCORD_USER_ID` to restrict access to one user.
+
+Without `DISCORD_USER_ID`, any member of the configured server can message the bot.
+
+<AgentOnly variant="openclaw">
+NemoClaw routes Discord REST and gateway traffic through the top-level managed proxy and does not write a per-account Discord proxy because OpenClaw accepts only loopback values for that field.
+</AgentOnly>
+
+## Enable Discord
+
+Export the settings before onboarding or `channels add discord`:
+
+```bash
+export DISCORD_BOT_TOKEN="<your-discord-bot-token>"
+export DISCORD_SERVER_ID="<your-discord-server-id>"
+export DISCORD_REQUIRE_MENTION=1
+```
+
+Continue with [Enable Channels During Onboarding](enable-channels-during-onboarding) or [Add Channels After Onboarding](add-channels-after-onboarding).
+If the bot logs in but delivery fails, refer to [Discord bot logs in, but the channel still does not work](../../reference/troubleshooting#discord-bot-logs-in-but-the-channel-still-does-not-work).

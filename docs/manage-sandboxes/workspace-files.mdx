@@ -1,10 +1,10 @@
 ---
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-title: "Workspace and State Files"
-sidebar-title: "Workspace Files"
+title: "Understand Sandbox State"
+sidebar-title: "Understand Sandbox State"
 description: "What agent workspace and state files are, where they live, and how they persist across sandbox restarts."
-description-agent: "Explains what agent workspace and state files are, where they live, and how they persist across sandbox restarts. Use when users ask about OpenClaw workspace files, Hermes state, Deep Agents `.deepagents` files, or preparing to back up or restore sandbox state."
+description-agent: "Explains what OpenClaw workspace files, Hermes state, and Deep Agents state are, where they live, and how they persist. Use when preparing to edit, snapshot, or transfer sandbox state."
 keywords: ["nemoclaw workspace files", "deepagents state", "soul.md", "agents.md", "sandbox persistence"]
 content:
   type: "concept"
@@ -82,6 +82,7 @@ Sandbox restarts preserve workspace files because the persistent state volume ou
 
 The `$$nemoclaw <name> rebuild` command and the sandbox upgrade flow also preserve workspace state.
 Before replacing the container, NemoClaw snapshots the workspace state directories and restores them into the rebuilt sandbox.
+
 If NemoClaw cannot archive any requested state file or directory, it reports the backup failure and stops before replacing the sandbox.
 It does not continue with a partial backup.
 
@@ -92,7 +93,7 @@ NemoClaw removes workspace files from the sandbox unless you created a snapshot 
 
 <Warning>
 Back up your workspace files before running `$$nemoclaw <name> destroy`.
-Refer to [Backup and Restore](backup-restore) for instructions.
+Refer to [Create and Restore Snapshots](create-and-restore-snapshots) for instructions.
 </Warning>
 
 ## Editing Workspace Files
@@ -105,15 +106,16 @@ You can edit them in two ways:
 
 ## Next Steps
 
-- [Set Up Task-Specific Sub-Agents](../configure-agents/set-up-sub-agent)
-- [Backup and Restore workspace files](backup-restore)
-- [Commands reference](../reference/commands)
+- [Set Up Task-Specific Sub-Agents](../../configure-agents/set-up-sub-agent)
+- [Create and Restore Snapshots](create-and-restore-snapshots)
+- [Commands reference](../../reference/commands)
 
 </AgentOnly>
 <AgentOnly variant="hermes">
 
 Hermes stores durable agent state under `/sandbox/.hermes/`, not in the OpenClaw workspace directory.
 The main Hermes configuration lives in `/sandbox/.hermes/config.yaml`.
+
 Environment settings live in `/sandbox/.hermes/.env`.
 Runtime state, such as logs, memory, platform sessions, and the SQLite state database, lives under the same `.hermes` tree.
 
@@ -146,14 +148,15 @@ Use `$$nemoclaw <name> connect` when you need to inspect runtime files interacti
 
 ## Next Steps
 
-- [Backup and Restore workspace files](backup-restore)
-- [Commands reference](../reference/commands)
+- [Create and Restore Snapshots](create-and-restore-snapshots)
+- [Commands reference](../../reference/commands)
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
 Deep Agents Code stores durable agent configuration, memory, skills, MCP state, and conversation state under its home directory.
 In a NemoClaw sandbox, `dcode` runs with `HOME=/sandbox`, so the upstream `~/.deepagents` layout maps to `/sandbox/.deepagents`.
+
 For upstream behavior, refer to the official Deep Agents Code pages for [memory and skills](https://docs.langchain.com/oss/python/deepagents/code/memory-and-skills), [MCP tools](https://docs.langchain.com/oss/python/deepagents/code/mcp-tools), and [Deep Agents Code overview](https://docs.langchain.com/oss/python/deepagents/code/overview).
 
 ## Important Deep Agents State
@@ -195,14 +198,19 @@ The Deep Agents manifest declares these durable directories:
 
 It also declares `/sandbox/.deepagents/config.toml` as a durable top-level state file with key-level ownership.
 The target sandbox's current Deep Agents manifest defines this ownership policy, so a snapshot cannot weaken it.
+
 NemoClaw keeps the newly generated inference route headers and the `models` and `update` tables authoritative during rebuild.
 On a NemoClaw-managed image, only the allowlisted `ui.show_scrollbar`, `ui.show_url_open_toast`, `threads.relative_time`, and `threads.sort_order` preferences can be restored from the previous file.
+
 Runtime-controlled, unknown, executable, and security-sensitive backup keys are dropped on that managed path.
 A Deep Agents target created from a custom Dockerfile restores `config.toml` as a whole file because the custom image owns its config schema.
+
 On the managed key-level restore path, if config validation or safe atomic replacement fails, NemoClaw marks the restore as failed instead of falling back to a whole-file copy.
 Credential-bearing files such as `.deepagents/.env` and user-authored `.deepagents/.mcp.json` are intentionally omitted from snapshots.
+
 Managed MCP state is rebuilt from the host-side NemoClaw registry and OpenShell provider state instead of treated as user-authored durable state.
 Memory files such as `/sandbox/.deepagents/agent/AGENTS.md` and `/sandbox/.deepagents/agent/memories/` are upstream Deep Agents Code files.
+
 If you rely on them before they are manifest-backed in your release, copy them manually with `$$nemoclaw <name> download` before destroying the sandbox.
 
 Running `$$nemoclaw <name> destroy` deletes the sandbox and its persistent state volume.
@@ -212,23 +220,26 @@ Back up important Deep Agents state before destroying the sandbox.
 
 Prefer NemoClaw host commands for generated configuration such as model, provider, managed MCP, and policy settings.
 Direct edits to NemoClaw-owned or non-allowlisted keys in `/sandbox/.deepagents/config.toml` can be overwritten by rebuilds.
+
 Use `$$nemoclaw <name> connect` when you need to inspect runtime files interactively, or use `openshell sandbox download` and `openshell sandbox upload` for manual file transfer.
 
 Use Deep Agents Code commands for upstream-managed memories and skills.
 For example, run `dcode skills create <name>` inside the sandbox to create a user skill, or use `/remember` inside an interactive `dcode` session to update memory.
+
 NemoClaw preserves the manifest-declared skills and state directories, but it does not inspect or validate the content of user-authored memory and skill files beyond the snapshot safety checks.
 
 ## Python Environment
 
 Deep Agents Code runs from a NemoClaw-managed Python virtual environment at `/opt/venv`.
 The sandbox places `/opt/venv/bin` before system Python directories on `PATH`, so `python3` and `pip3` resolve to the managed environment by default.
+
 NemoClaw keeps `/opt/venv` read-only to protect the pinned `dcode` harness.
 Create project-specific virtual environments under `/sandbox` when a task needs additional Python packages.
 
 ## Next Steps
 
-- [Backup and Restore workspace files](backup-restore) explains snapshot and manual transfer workflows.
-- [Set Up MCP Servers](set-up-mcp-servers) explains the NemoClaw-managed MCP path for Deep Agents sandboxes.
+- [Create and Restore Snapshots](create-and-restore-snapshots) explains the managed snapshot workflow.
+- [Add an MCP Server](../mcp-servers/add-an-mcp-server) explains the NemoClaw-managed MCP path for Deep Agents sandboxes.
 - [Deep Agents Code memory and skills](https://docs.langchain.com/oss/python/deepagents/code/memory-and-skills) explains upstream memory, `AGENTS.md`, and skill behavior.
 
 </AgentOnly>
