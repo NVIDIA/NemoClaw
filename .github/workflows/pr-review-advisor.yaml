@@ -114,7 +114,7 @@ jobs:
           submodules: false
 
       # A dispatch without target_repo is maintainer-triggered and analyzes the
-      # exact commit that supplied the trusted workflow. It is still treated as
+      # commit that supplied the trusted workflow. It is still treated as
       # read-only data and never supplies executable advisor code.
       - name: Checkout dispatch workspace (read-only data)
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.target_repo == '' && inputs.target_pr == '' }}

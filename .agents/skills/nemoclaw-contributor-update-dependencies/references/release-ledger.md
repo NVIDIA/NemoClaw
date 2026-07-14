@@ -9,7 +9,7 @@ Use this reference to turn a version gap into adjacent, auditable migration rang
 
 Record for the current dependency and every candidate endpoint:
 
-- semantic version and exact commit SHA;
+- semantic version and commit SHA;
 - lightweight or annotated tag type;
 - whether the commit is verified under the upstream project's policy;
 - tag ancestry from the currently supported release;

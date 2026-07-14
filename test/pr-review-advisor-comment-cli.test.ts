@@ -336,7 +336,7 @@ describe("PR review advisor comment CLI", () => {
       "**GPT-5.6 Terra (primary):** Completed · high confidence · 0 blockers · 1 warning · 0 suggestions",
     );
     expect(comment).toContain(
-      "**Nemotron 3 Ultra (non-blocking second opinion):** Completed · low confidence · 0 blockers · 1 warning · 0 suggestions",
+      "**Nemotron 3 Ultra (second opinion):** Completed · low confidence · 0 blockers · 1 warning · 0 suggestions",
     );
     expect(comment).toContain("normalized findings differ");
     expect(comment).toContain("normalized E2E selections differ");
@@ -359,7 +359,7 @@ describe("PR review advisor comment CLI", () => {
       },
     });
     expect(partialComment).toContain(
-      "**Nemotron 3 Ultra (non-blocking second opinion):** Failed after a partial review · low confidence · 0 blockers · 1 warning · 0 suggestions",
+      "**Nemotron 3 Ultra (second opinion):** Failed after a partial review · low confidence · 0 blockers · 1 warning · 0 suggestions",
     );
     expect(partialComment).not.toContain("Model comparison");
     expect(partialComment).not.toContain("do not publish this provider failure");

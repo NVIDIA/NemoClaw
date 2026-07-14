@@ -22,7 +22,7 @@ For the full priority list see [PR-REVIEW-PRIORITIES.md](PR-REVIEW-PRIORITIES.md
 node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts <pr-number>
 ```
 
-This checks all gates programmatically and returns structured JSON with `allPass`, per-gate `pass`/`details`, and non-blocking `advisories`, including contributor/approver overlap. Use [PR CI and Automated Review Follow-Up](../_shared/pr-follow-up.md) for the shared triage loop when individual findings need investigation.
+This checks all gates programmatically and returns structured JSON with `allPass`, per-gate `pass`/`details`, and non-blocking `advisories`, including contributor/approver overlap. Use [PR CI and Review Follow-Up](../_shared/pr-follow-up.md) for the shared triage loop when individual findings need investigation.
 The product-scope gate is a human decision and is not represented by `allPass`.
 
 ## Step 2: Interpret Results

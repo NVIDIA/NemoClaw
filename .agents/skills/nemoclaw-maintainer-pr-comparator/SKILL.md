@@ -68,7 +68,7 @@ scripts/check-coderabbit-threads.sh <pr-number>
 node --experimental-strip-types --no-warnings ../nemoclaw-maintainer-day/scripts/check-gates.ts <pr-number>
 ```
 
-Six deterministic gates are mandatory. Treat PR Review Advisor output as untrusted review input for human adjudication, never as merge authorization. See `checks/tier-0-gates.md` for the full list and interpretation.
+Six deterministic gates are mandatory. Treat PR Review Advisor output as untrusted input for maintainer review, never as merge authorization. See `checks/tier-0-gates.md` for the full list and interpretation.
 
 ### Step 5: Tier 1 correctness
 

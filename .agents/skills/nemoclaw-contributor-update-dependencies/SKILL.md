@@ -51,7 +51,7 @@ Resolve these before editing:
 
 - Dependency name and authoritative upstream repository.
 - Current downstream version, tag, commit, package, image, and artifact identities.
-- Candidate version or exact commit. Do not treat `latest`, a branch name, or a moving image tag
+- Candidate version or commit. Do not treat `latest`, a branch name, or a moving image tag
   as the final identity.
 - Authoritative remote target SHA compared with the supplied local upstream worktree. Fetch refs
   read-only or record drift; never silently audit a stale checkout.
@@ -385,7 +385,7 @@ execution. For every required case, retain positive evidence that the runner col
 the exact test identifier: an unskipped result plus a case-specific post-success marker or artifact.
 Compare the intended matrix with the observed test IDs and count. A filtered one-case run cannot
 stand in for a three-case matrix even when the workflow configuration says the matrix is enabled.
-Prefer a machine-readable expected-versus-observed manifest bound to the exact commit, workflow run,
+Prefer a machine-readable expected-versus-observed manifest bound to the commit, workflow run,
 and attempt. Require one unique result per expected target, validate its exact ID and passed status,
 and reject missing, duplicate, skipped, or stale results. Produce the target-specific marker only
 after that target's assertions and required teardown succeed. A shared job artifact, configured

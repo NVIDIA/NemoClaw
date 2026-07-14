@@ -28,7 +28,7 @@
 
 ## Verification
 <!-- Check each applicable item only when supported by the requested evidence. Run targeted tests once per relevant change set and rerun after later edits or hook autofixes that can affect the tested behavior. Do not rerun hook-covered checks. -->
-- [ ] PR description includes the DCO sign-off declaration and every commit appears as `Verified` in GitHub
+- [ ] PR description includes a `Signed-off-by:` line and every commit appears as `Verified` in GitHub
 - [ ] Normal `pre-commit`, `commit-msg`, and `pre-push` hooks passed, or `npm run check:diff` passed when hooks were skipped or unavailable
 - [ ] Targeted behavior tests pass for the current change set, or tests are marked not applicable above — command/result or justification:
 - [ ] Applicable broad gate passed — `npm test` for broad runtime/test-harness changes; `npm run check` for repo-wide validation/coverage changes — command/result:

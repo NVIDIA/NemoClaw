@@ -28,7 +28,7 @@ The downstream scheduled reconciliation remains available if the event-driven di
 - Tag only the commit captured in a generated release plan.
 - Do not generate the release plan until release-prep docs are merged or explicitly waived.
 - If `origin/main` changes after plan generation, regenerate the plan before cutting the tag.
-- Before asking for release confirmation, satisfy the canonical [pre-tag E2E evidence policy](../nemoclaw-maintainer-policies/references/release-train.md#pre-tag-e2e-evidence) for that exact commit.
+- Before asking for release confirmation, satisfy the canonical [pre-tag E2E evidence policy](../nemoclaw-maintainer-policies/references/release-train.md#pre-tag-e2e-evidence) for that commit.
 - Ask the maintainer to paste the exact confirmation phrase from the plan before cutting the tag.
 - Push only the semver tag (`vX.Y.Z`) from the agent-controlled step.
 - Never push `latest` or `lkg` from this skill.

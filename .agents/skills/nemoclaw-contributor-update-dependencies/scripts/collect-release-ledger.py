@@ -1276,7 +1276,7 @@ def github_tag_identity_from_root(
     root_sha: Any,
     timeout_seconds: int,
 ) -> dict[str, Any]:
-    """Peel one inventoried remote tag ref to its exact commit."""
+    """Peel one inventoried remote tag ref to its commit."""
 
     repository = repository_identity["fullName"]
     api_host = repository_identity["apiHost"]

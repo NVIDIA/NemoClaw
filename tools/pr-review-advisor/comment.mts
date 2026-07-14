@@ -395,11 +395,11 @@ export function buildComment({
   const content = `## ${heading} — ${headline}
 
 **Advisor assessment:** ${posture}
-**Primary next action:** ${primaryNextAction(findingRecords)}
-**Findings:** ${compactCount(blockerCount, "blocker")} · ${compactCount(warningCount, "warning")} · ${compactCount(suggestionCount, "optional suggestion")}
+**Next action:** ${nextAction(findingRecords)}
+**Findings:** ${compactCount(blockerCount, "blocker")} · ${compactCount(warningCount, "warning")} · ${compactCount(suggestionCount, "suggestion")}
 ${informational}${laneDetails}${reviewHistory}${e2eDetails}${findingsDetails}${details}
 
-This is an automated, non-authoritative review. Findings are inputs to maintainer adjudication. Warnings and optional suggestions do not require a response or follow-up. A human maintainer makes the final merge decision.
+This automated review informs maintainers. Warnings and suggestions do not require a response. A maintainer decides whether to merge.
 
 `;
   return boundedComment(prefix, content);
@@ -411,13 +411,13 @@ function renderAdvisorLanes(lanes?: AdvisorLaneReports): string {
     "",
     "### Model lanes",
     `- **GPT-5.6 Terra (primary):** ${renderLaneReport(lanes.primary)}`,
-    `- **Nemotron 3 Ultra (non-blocking second opinion):** ${renderLaneReport(lanes.secondOpinion)}`,
+    `- **Nemotron 3 Ultra (second opinion):** ${renderLaneReport(lanes.secondOpinion)}`,
   ];
   const comparison = renderLaneComparison(lanes.primary, lanes.secondOpinion);
   if (comparison) lines.push(`- **Model comparison:** ${comparison}`);
   lines.push(
     "",
-    "_Nemotron is a non-blocking second opinion. Its prose, findings, and E2E guidance do not change the primary assessment above and remain in workflow artifacts only._",
+    "_Nemotron output stays in workflow artifacts and does not change the assessment above._",
     "",
   );
   return `${lines.join("\n")}\n`;
@@ -792,7 +792,7 @@ function reviewPosture(
   confidence: string | undefined,
   blockerCount: number,
 ): string {
-  if (blockerCount > 0) return "Blocking findings require maintainer adjudication";
+  if (blockerCount > 0) return "Blockers require maintainer review";
   if (recommendation === "superseded") return "Superseded by other work";
   if (recommendation === "info_only") {
     return `Informational / ${trustedConfidence(confidence)} confidence`;
@@ -806,17 +806,17 @@ function trustedConfidence(confidence: string | undefined): string {
     : "unknown";
 }
 
-function primaryNextAction(records: FindingRecord[]): string {
+function nextAction(records: FindingRecord[]): string {
   if (records.some((record) => record.finding.severity === "blocker")) {
-    return "Review the blocking findings below.";
+    return "Review the blockers below.";
   }
   if (records.some((record) => record.finding.severity === "warning")) {
     return "Review the warnings below.";
   }
   if (records.some((record) => record.finding.severity === "suggestion")) {
-    return "Optional suggestions are listed below.";
+    return "Consider the suggestions below.";
   }
-  return "No advisor follow-up required beyond maintainer review.";
+  return "No advisor follow-up needed.";
 }
 
 function buildSecondarySummary(result?: ReviewAdvisorResult): string {
@@ -834,7 +834,7 @@ function renderFindingsDetails(records: FindingRecord[]): string {
   const suggestionFindings = records.filter((record) => record.finding.severity === "suggestion");
   const lines: string[] = [];
   if (blockerFindings.length > 0) {
-    lines.push("", "### Blocking findings for maintainer adjudication", "");
+    lines.push("", "### Blockers", "");
     for (const record of blockerFindings.slice(0, 20)) lines.push(formatFinding(record), "");
   }
   if (warningFindings.length === 0 && suggestionFindings.length === 0)
@@ -842,23 +842,15 @@ function renderFindingsDetails(records: FindingRecord[]): string {
   lines.push(
     "",
     "<details>",
-    `<summary>${countLabel(warningFindings.length, "warning")} · ${countLabel(suggestionFindings.length, "optional suggestion")}</summary>`,
+    `<summary>${countLabel(warningFindings.length, "warning")} · ${countLabel(suggestionFindings.length, "suggestion")}</summary>`,
     "",
   );
   if (warningFindings.length > 0) {
-    lines.push(
-      "### Warnings",
-      "_These merit maintainer attention but do not block by themselves._",
-      "",
-    );
+    lines.push("### Warnings", "_Warnings do not block._", "");
     for (const record of warningFindings.slice(0, 20)) lines.push(formatFinding(record), "");
   }
   if (suggestionFindings.length > 0) {
-    lines.push(
-      "### Suggestions (optional)",
-      "_No response or follow-up is expected for these suggestions._",
-      "",
-    );
+    lines.push("### Suggestions", "_No response is required._", "");
     for (const record of suggestionFindings.slice(0, 20)) lines.push(formatFinding(record), "");
   }
   lines.push("</details>", "");
@@ -875,7 +867,7 @@ function formatFinding(record: FindingRecord): string {
   if (finding.impact) lines.push(`- **Impact:** ${escapeCommentText(finding.impact)}`);
   if (finding.recommendation) {
     lines.push(
-      `- **${actionFieldLabel(finding.severity)}:** ${escapeCommentText(finding.recommendation)}`,
+      `- **${findingActionLabel(finding.severity)}:** ${escapeCommentText(finding.recommendation)}`,
     );
   }
   if (finding.verificationHint) {
@@ -906,14 +898,13 @@ function findingTitle(finding: Finding): string {
 function severityLabel(severity?: string): string {
   if (severity === "blocker") return "Blocker";
   if (severity === "warning") return "Warning";
-  if (severity === "suggestion") return "Optional";
+  if (severity === "suggestion") return "Suggestion";
   return "Review";
 }
 
-function actionFieldLabel(severity?: string): string {
-  if (severity === "blocker") return "Recommended action";
-  if (severity === "warning") return "Recommendation";
-  if (severity === "suggestion") return "Optional change";
+function findingActionLabel(severity?: string): string {
+  if (severity === "blocker") return "Fix";
+  if (severity === "suggestion") return "Suggestion";
   return "Recommendation";
 }
 
