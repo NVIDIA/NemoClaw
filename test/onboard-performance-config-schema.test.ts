@@ -57,7 +57,7 @@ interface Calibration {
     roundUpMs: number;
   };
   samples: CalibrationSample[];
-  validationAdjustment: {
+  validationAdjustment?: {
     validatedAt: string;
     imageChangeSha: string;
     imageInputsVerifiedThroughSha: string;
@@ -67,6 +67,13 @@ interface Calibration {
       minimumHeadroomMs: number;
       relativeHeadroomPercent: number;
       roundUpMs: number;
+    };
+    retirement: {
+      trigger: string;
+      minimumSampleCount: number;
+      allSamplesSameHead: boolean;
+      imageChangeMustBeAncestor: boolean;
+      action: string;
     };
     runs: CalibrationSample[];
     derivedCapsMs: {
@@ -194,7 +201,7 @@ function deriveBudgets(input: Calibration): ColdPathBudget {
 
 function validationThreshold(
   values: number[],
-  derivation: Calibration["validationAdjustment"]["derivation"],
+  derivation: NonNullable<Calibration["validationAdjustment"]>["derivation"],
 ): number {
   const maximum = Math.max(...values);
   const headroom = Math.max(
@@ -206,18 +213,20 @@ function validationThreshold(
 
 function effectiveBudgets(input: Calibration): ColdPathBudget {
   const baseline = input.derivedBudgetsMs;
-  const adjustment = input.validationAdjustment.derivedCapsMs;
+  const adjustment = input.validationAdjustment?.derivedCapsMs;
   return {
     ...baseline,
     rootStartToFirstTurnCompletionBudgetMs: Math.max(
       baseline.rootStartToFirstTurnCompletionBudgetMs,
-      adjustment.rootStartToFirstTurnCompletionBudgetMs,
+      adjustment?.rootStartToFirstTurnCompletionBudgetMs ??
+        baseline.rootStartToFirstTurnCompletionBudgetMs,
     ),
     phaseBudgetsMs: {
       ...baseline.phaseBudgetsMs,
       "nemoclaw.onboard.phase.sandbox": Math.max(
         baseline.phaseBudgetsMs["nemoclaw.onboard.phase.sandbox"],
-        adjustment.sandboxPhaseBudgetMs,
+        adjustment?.sandboxPhaseBudgetMs ??
+          baseline.phaseBudgetsMs["nemoclaw.onboard.phase.sandbox"],
       ),
     },
   };
@@ -268,7 +277,7 @@ describe("full-E2E cold-path calibration", () => {
 
   // source-shape-contract: compatibility -- Post-image-growth validation may adjust only observed stale cold-path caps without pretending to replace the five-run calibration
   it("keeps interim cap adjustments tied to functional post-change evidence", () => {
-    const validation = calibration.validationAdjustment;
+    const validation = calibration.validationAdjustment!;
     expect(validation.validatedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/u);
     expect(validation.imageChangeSha).toMatch(/^[0-9a-f]{40}$/u);
     expect(validation.imageInputsVerifiedThroughSha).toMatch(/^[0-9a-f]{40}$/u);
@@ -277,6 +286,13 @@ describe("full-E2E cold-path calibration", () => {
       "nemoclaw.onboard.phase.sandbox",
     ]);
     expect(validation.derivation.statistic).toBe("maximum");
+    expect(validation.retirement).toEqual({
+      trigger: "successful-exact-head-calibration",
+      minimumSampleCount: 5,
+      allSamplesSameHead: true,
+      imageChangeMustBeAncestor: true,
+      action: "replace-baseline-and-remove-adjustment",
+    });
     expect(validation.runs).toHaveLength(4);
     expect(new Set(validation.runs.map((run) => run.runId)).size).toBe(4);
     expect(validation.runs.map((run) => run.conclusion).sort()).toEqual([
@@ -316,5 +332,8 @@ describe("full-E2E cold-path calibration", () => {
       ),
     });
     expect(checkedInConfig.fullE2eColdPath).toEqual(effectiveBudgets(calibration));
+    expect(effectiveBudgets({ ...calibration, validationAdjustment: undefined })).toEqual(
+      calibration.derivedBudgetsMs,
+    );
   });
 });

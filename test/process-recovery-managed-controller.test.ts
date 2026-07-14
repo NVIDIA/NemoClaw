@@ -100,6 +100,17 @@ describe("managed gateway recovery controller", () => {
       settleSeconds: "1",
     },
     {
+      label: "post-settle controller race followed by terminal failure",
+      recoverResults: [successfulControl],
+      managedProbeResults: [
+        { status: 1, stdout: "", stderr: "SUPERVISOR_UNAVAILABLE" },
+        { status: 1, stdout: "", stderr: "GATEWAY_HEALTH_TIMEOUT" },
+      ],
+      expectedResult: unrecoveredGateway,
+      expectedActions: ["recover", "probe", "probe"],
+      settleSeconds: "1",
+    },
+    {
       label: "two transient controller races followed by authenticated recovery",
       recoverResults: [
         { status: 1, stdout: "", stderr: "SUPERVISOR_UNAVAILABLE" },
