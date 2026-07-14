@@ -274,17 +274,12 @@ describe("PR review advisor", () => {
 
     const comment = buildComment({ summary: renderSummary(result), result });
     expect(comment).toContain("### E2E guidance");
-    expect(comment).toContain(
-      "Advisory only: coverage and selector recommendations are non-authoritative",
-    );
-    expect(comment).toContain(
-      "E2E / PR Gate independently computes and dispatches trusted jobs without consuming this output",
-    );
+    expect(comment).toContain("Advisory only. E2E / PR Gate selects and runs jobs independently.");
     expect(comment).toContain("<code>upgrade-stale-sandbox</code>");
-    expect(comment).toContain("**Recommended coverage:**");
-    expect(comment).toContain("**Recommended selectors:**");
-    expect(comment).not.toContain("**Required coverage:**");
-    expect(comment).not.toContain("**Required selectors:**");
+    expect(comment).toContain("**Recommended E2E:**");
+    expect(comment.match(/<code>upgrade-stale-sandbox<\/code>/gu)).toHaveLength(1);
+    expect(comment).not.toContain("Recommended coverage");
+    expect(comment).not.toContain("Recommended selectors");
     expect(comment).not.toContain("rm -rf");
   });
 
@@ -323,7 +318,7 @@ describe("PR review advisor", () => {
     expect([required.coverage.optionalTests, required.targets.optional]).toEqual([[], []]);
   });
 
-  it("renders the reasons for recommended E2E coverage", () => {
+  it("renders each E2E recommendation once", () => {
     const result = normalizeReviewResult(
       validResult({
         e2e: {
@@ -353,26 +348,16 @@ describe("PR review advisor", () => {
     );
 
     const comment = buildComment({ summary: renderSummary(result), result });
-    expect(comment).toContain("**Recommended coverage:** <code>security-posture</code>");
-    expect(comment).toContain(
-      "- <code>security-posture</code> — Selected from the trusted checked-in E2E coverage inventory.",
-    );
-    expect(comment).toContain("**Recommended selectors:** <code>security-posture</code>");
-    expect(comment).not.toContain("Why no selector is recommended");
+    expect(comment).toContain("**Recommended E2E:** <code>security-posture</code>");
+    expect(comment.match(/<code>security-posture<\/code>/gu)).toHaveLength(1);
 
     const noE2eResult = normalizeReviewResult(validResult(), metadata());
     const noE2eComment = buildComment({
       summary: renderSummary(noE2eResult),
       result: noE2eResult,
     });
-    expect(noE2eComment).toContain(
-      "**Why no E2E coverage is recommended:** No deterministic or trusted-inventory E2E coverage was selected.",
-    );
-    expect(noE2eComment).toContain(
-      "**Why no selector is recommended:** No trusted E2E selector was selected.",
-    );
-    expect(noE2eComment).not.toContain("Why no E2E is required");
-    expect(noE2eComment).not.toContain("Why no selector is required");
+    expect(noE2eComment).toContain("**Recommended E2E:** _None_");
+    expect(noE2eComment).not.toContain("Why no");
   });
 
   it("sanitizes malformed enum values and preserves deterministic fallback gates", () => {
@@ -1128,6 +1113,10 @@ diff --git a/test/example.test.ts b/test/example.test.ts
     expect(summary).toContain("Blocking findings for maintainer adjudication");
     expect(summary).toContain("## Warnings");
     expect(summary).toContain("## Suggestions (optional)");
+    expect(summary).toContain("## Recommended E2E");
+    expect(summary).toContain("## Optional E2E");
+    expect(summary).not.toContain("E2E coverage");
+    expect(summary).not.toContain("E2E selectors");
     expect(summary).not.toContain("Test follow-ups");
     expect(summary).not.toContain("comment builder test");
     expect(summary).not.toContain("🛠️");

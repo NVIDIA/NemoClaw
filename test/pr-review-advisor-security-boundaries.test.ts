@@ -316,7 +316,7 @@ describe("PR review advisor security boundaries", () => {
 
     const comment = buildComment({ summary: renderSummary(result), result });
     expect(comment).toContain("<code>publisher-exact-head-proof</code>");
-    expect(comment).toContain("Selected as a trusted exact-head credential-free E2E job.");
+    expect(comment.match(/<code>publisher-exact-head-proof<\/code>/gu)).toHaveLength(1);
   });
 
   it("drops malformed or mismatched exact-head selector evidence", () => {

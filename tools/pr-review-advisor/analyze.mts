@@ -2626,54 +2626,31 @@ export function renderSummary(result: ReviewAdvisorResult): string {
 }
 
 function appendE2eSummary(lines: string[], e2e: CombinedE2eResult): void {
-  lines.push("## Required E2E coverage");
-  if (e2e.coverage.requiredTests.length === 0) {
-    lines.push(`- _None._${e2e.coverage.noE2eReason ? ` ${e2e.coverage.noE2eReason}` : ""}`);
-  } else {
-    for (const test of e2e.coverage.requiredTests.slice(0, 20)) {
-      lines.push(`- **${test.id}**: ${test.reason}`);
-    }
-  }
-  lines.push("");
-  lines.push("## Optional E2E coverage");
-  if (e2e.coverage.optionalTests.length === 0) {
+  const required = combinedE2eIds(e2e.targets.required, e2e.coverage.requiredTests);
+  const optional = combinedE2eIds(e2e.targets.optional, e2e.coverage.optionalTests);
+
+  lines.push("## Recommended E2E");
+  if (required.length === 0) {
     lines.push("- _None._");
   } else {
-    for (const test of e2e.coverage.optionalTests.slice(0, 20)) {
-      lines.push(`- **${test.id}**: ${test.reason}`);
+    for (const id of required.slice(0, 20)) {
+      lines.push(`- **${id}**`);
     }
   }
   lines.push("");
-  lines.push("## New E2E recommendations");
-  if (e2e.coverage.newE2eRecommendations.length === 0) {
+  lines.push("## Optional E2E");
+  if (optional.length === 0) {
     lines.push("- _None._");
   } else {
-    for (const recommendation of e2e.coverage.newE2eRecommendations.slice(0, 20)) {
-      lines.push(`- **${recommendation.domain}**: ${recommendation.reason}`);
-      lines.push(`  - Suggested test: ${recommendation.suggestedTest}`);
+    for (const id of optional.slice(0, 20)) {
+      lines.push(`- **${id}**`);
     }
   }
   lines.push("");
-  lines.push("## Required E2E selectors");
-  if (e2e.targets.required.length === 0) {
-    lines.push(
-      `- _None._${e2e.targets.noTargetE2eReason ? ` ${e2e.targets.noTargetE2eReason}` : ""}`,
-    );
-  } else {
-    for (const recommendation of e2e.targets.required.slice(0, 20)) {
-      lines.push(`- **${recommendation.id}**: ${recommendation.reason}`);
-    }
-  }
-  lines.push("");
-  lines.push("## Optional E2E selectors");
-  if (e2e.targets.optional.length === 0) {
-    lines.push("- _None._");
-  } else {
-    for (const recommendation of e2e.targets.optional.slice(0, 20)) {
-      lines.push(`- **${recommendation.id}**: ${recommendation.reason}`);
-    }
-  }
-  lines.push("");
+}
+
+function combinedE2eIds(targets: Array<{ id: string }>, coverage: Array<{ id: string }>): string[] {
+  return [...new Set([...targets.map(({ id }) => id), ...coverage.map(({ id }) => id)])];
 }
 
 export function renderDetailedReview(result: ReviewAdvisorResult): string {

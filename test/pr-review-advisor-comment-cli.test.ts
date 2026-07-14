@@ -296,8 +296,8 @@ describe("PR review advisor comment CLI", () => {
     expect(comment).toContain("severity counts match");
     expect(comment).not.toContain("do not publish this summary");
     expect(comment).not.toContain("do not publish this finding");
-    expect(comment).not.toContain("Why no E2E coverage is recommended");
-    expect(comment).not.toContain("Why no selector is recommended");
+    expect(comment).toContain("<summary>1 optional E2E recommendation</summary>");
+    expect(comment.match(/<code>docs-validation<\/code>/gu)).toHaveLength(1);
 
     const partialComment = buildComment({
       summary: "# ignored\n",

@@ -488,104 +488,63 @@ function renderE2eDetails(result?: ReviewAdvisorResult): string {
 
   const inventory = commentE2eInventory();
   const exactHeadCredentialFreeJobIds = trustedExactHeadCredentialFreeJobIds(result);
-  const requiredCoverage = trustedCoverageItems(coverage?.requiredTests, inventory);
-  const optionalCoverage = trustedCoverageItems(coverage?.optionalTests, inventory);
-  const newRecommendations: NonNullable<
-    NonNullable<ReviewAdvisorResult["e2e"]>["coverage"]
-  >["newE2eRecommendations"] = [];
-  const requiredTargets = trustedTargetItems(
+  const requiredCoverage = trustedCoverageIds(coverage?.requiredTests, inventory);
+  const optionalCoverage = trustedCoverageIds(coverage?.optionalTests, inventory);
+  const requiredTargets = trustedTargetIds(
     targets?.required,
     true,
     inventory,
     exactHeadCredentialFreeJobIds,
   );
-  const optionalTargets = trustedTargetItems(
+  const optionalTargets = trustedTargetIds(
     targets?.optional,
     false,
     inventory,
     exactHeadCredentialFreeJobIds,
   );
-  const noE2eReason = "No deterministic or trusted-inventory E2E coverage was selected.";
-  const noTargetE2eReason = "No trusted E2E selector was selected.";
+  const requiredE2e = uniqueE2eIds([...requiredTargets, ...requiredCoverage]);
+  const optionalE2e = uniqueE2eIds([...optionalTargets, ...optionalCoverage]);
   const lines = [
     "",
     "### E2E guidance",
-    "_Advisory only: coverage and selector recommendations are non-authoritative. E2E / PR Gate independently computes and dispatches trusted jobs without consuming this output._",
+    "_Advisory only. E2E / PR Gate selects and runs jobs independently._",
     "",
   ];
 
-  lines.push(
-    `**Recommended coverage:** ${renderE2eIds(requiredCoverage) || "_None_"}`,
-    `**Recommended selectors:** ${renderE2eIds(requiredTargets) || "_None_"}`,
-  );
-  if (requiredCoverage.length > 0) {
-    lines.push("");
-    for (const item of requiredCoverage.slice(0, E2E_RENDER_LIMIT)) {
-      const id = escapeLocationHtml(item.id || "E2E test");
-      const reason = item.reason ? ` — ${escapeCommentText(item.reason)}` : "";
-      lines.push(`- <code>${id}</code>${reason}`);
-    }
-  }
-  if (requiredTargets.length > 0) {
-    lines.push("");
-    for (const item of requiredTargets.slice(0, E2E_RENDER_LIMIT)) {
-      const id = escapeLocationHtml(item.id || "E2E target");
-      const reason = item.reason ? ` — ${escapeCommentText(item.reason)}` : "";
-      lines.push(`- <code>${id}</code>${reason}`);
-    }
-  }
+  lines.push(`**Recommended E2E:** ${renderE2eIds(requiredE2e) || "_None_"}`);
 
-  if (optionalCoverage.length > 0 || optionalTargets.length > 0 || newRecommendations.length > 0) {
+  if (optionalE2e.length > 0) {
     lines.push(
       "",
       "<details>",
-      `<summary>${compactCount(optionalCoverage.length, "optional coverage item")} · ${compactCount(optionalTargets.length, "optional selector")} · ${compactCount(newRecommendations.length, "new-test recommendation")}</summary>`,
+      `<summary>${compactCount(optionalE2e.length, "optional E2E recommendation")}</summary>`,
       "",
     );
-    for (const item of optionalCoverage.slice(0, E2E_RENDER_LIMIT)) {
-      lines.push(
-        `- Optional coverage <code>${escapeLocationHtml(item.id || "unnamed")}</code>${item.reason ? ` — ${escapeCommentText(item.reason)}` : ""}`,
-      );
-    }
-    for (const item of optionalTargets.slice(0, E2E_RENDER_LIMIT)) {
-      lines.push(
-        `- Optional selector <code>${escapeLocationHtml(item.id || "unnamed")}</code>${item.reason ? ` — ${escapeCommentText(item.reason)}` : ""}`,
-      );
-    }
-    for (const item of newRecommendations.slice(0, E2E_RENDER_LIMIT)) {
-      const name = item.suggestedTest || item.domain || "E2E test";
-      lines.push(
-        `- New test: ${escapeCommentText(name)}${item.reason ? ` — ${escapeCommentText(item.reason)}` : ""}`,
-      );
+    for (const id of optionalE2e.slice(0, E2E_RENDER_LIMIT)) {
+      lines.push(`- <code>${escapeLocationHtml(id)}</code>`);
     }
     lines.push("", "</details>");
   }
 
-  if (requiredCoverage.length === 0 && optionalCoverage.length === 0 && noE2eReason) {
-    lines.push("", `**Why no E2E coverage is recommended:** ${escapeCommentText(noE2eReason)}`);
-  }
-  if (requiredTargets.length === 0 && optionalTargets.length === 0 && noTargetE2eReason) {
-    lines.push("", `**Why no selector is recommended:** ${escapeCommentText(noTargetE2eReason)}`);
-  }
   lines.push("");
   return `${lines.join("\n")}\n`;
 }
 
-function trustedCoverageItems(
+function trustedCoverageIds(
   items: Array<{ id?: string; reason?: string }> | undefined,
   inventory: TrustedE2eRecommendationInventory,
-): Array<{ id: string; reason: string }> {
+): string[] {
   const allowedIds = new Set([...inventory.allowedJobIds, ...inventory.liveSupportedTargetIds]);
   const seen = new Set<string>();
   return (items ?? []).flatMap((item) => {
     const id = item.id;
     if (!id || !allowedIds.has(id) || seen.has(id)) return [];
     seen.add(id);
-    return [{ id, reason: "Selected from the trusted checked-in E2E coverage inventory." }];
+    return [id];
   });
 }
 
-function trustedTargetItems(
+function trustedTargetIds(
   items:
     | Array<{
         id?: string;
@@ -598,7 +557,7 @@ function trustedTargetItems(
   required: boolean,
   inventory: TrustedE2eRecommendationInventory,
   exactHeadCredentialFreeJobIds: ReadonlySet<string>,
-): Array<{ id: string; reason: string }> {
+): string[] {
   const allowedJobs = new Set(inventory.allowedJobIds);
   const allowedTargets = new Set(inventory.liveSupportedTargetIds);
   const seen = new Set<string>();
@@ -613,16 +572,12 @@ function trustedTargetItems(
     const key = `${selectorType}:${id}`;
     if (!trustedTuple || seen.has(key)) return [];
     seen.add(key);
-    const reason =
-      selectorType === "all"
-        ? "Selected as the trusted full E2E fan-out selector."
-        : selectorType === "job"
-          ? exactHeadCredentialFreeJobIds.has(id) && !allowedJobs.has(id)
-            ? "Selected as a trusted exact-head credential-free E2E job."
-            : "Selected as a trusted checked-in E2E job."
-          : "Selected as a trusted live-supported E2E target.";
-    return [{ id, reason }];
+    return [id];
   });
+}
+
+function uniqueE2eIds(ids: string[]): string[] {
+  return [...new Set(ids)];
 }
 
 function trustedExactHeadCredentialFreeJobIds(result?: ReviewAdvisorResult): Set<string> {
@@ -651,10 +606,10 @@ function commentE2eInventory(): TrustedE2eRecommendationInventory {
   return cachedE2eInventory;
 }
 
-function renderE2eIds(items: Array<{ id?: string }>): string {
-  return items
+function renderE2eIds(ids: string[]): string {
+  return ids
     .slice(0, E2E_RENDER_LIMIT)
-    .map((item) => `<code>${escapeLocationHtml(item.id || "unnamed")}</code>`)
+    .map((id) => `<code>${escapeLocationHtml(id)}</code>`)
     .join(", ");
 }
 
