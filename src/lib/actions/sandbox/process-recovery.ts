@@ -720,6 +720,26 @@ function recoveryAgentDisplayName(
   return agentRuntime.getAgentDisplayName(null);
 }
 
+function confirmManagedGatewayWithinSettleWindow(
+  sandboxName: string,
+  managedProbe: (sandboxName: string) => boolean | null,
+  sleep: (seconds: number) => void,
+  settleSeconds: number,
+  intervalSeconds: number,
+): boolean {
+  const retryLeadSeconds =
+    intervalSeconds > 0 ? Math.min(intervalSeconds, settleSeconds) : settleSeconds;
+  const beforeDeadlineSeconds = settleSeconds - retryLeadSeconds;
+  if (beforeDeadlineSeconds > 0) sleep(beforeDeadlineSeconds);
+
+  const beforeDeadlineResult = managedProbe(sandboxName);
+  if (beforeDeadlineResult === false) return false;
+  if (retryLeadSeconds > 0) sleep(retryLeadSeconds);
+  const atDeadlineResult = managedProbe(sandboxName);
+  if (atDeadlineResult !== null) return atDeadlineResult;
+  return beforeDeadlineResult === true;
+}
+
 export function waitForRecoveredSandboxGateway(
   sandboxName: string,
   options: {
@@ -794,20 +814,24 @@ export function waitForRecoveredSandboxGateway(
   if (!options.quiet) {
     console.log(`  Confirming the gateway stays responsive (~${settleSeconds}s)...`);
   }
-  sleep(settleSeconds);
   if (initialManagedHealthPassed) {
     // The managed probe is a read-only, authenticated point check in the exact
-    // gateway network namespace. Retry only an authenticated controller result
-    // that could not classify health; a definitive failure is authoritative,
-    // and an outer-namespace HTTP response must never override either result.
+    // gateway network namespace. Probe once inside the final poll interval and
+    // again at the settle deadline, so one authenticated controller race can
+    // clear without extending the configured settle window. A recent
+    // authenticated success remains authoritative when only the deadline
+    // attempt is transient; a definitive failure is authoritative, and an
+    // outer-namespace HTTP response must never override either result.
     if (!managedProbe) return false;
-    for (let attempt = 1; attempt <= attempts; attempt += 1) {
-      const managedResult = managedProbe(sandboxName);
-      if (managedResult !== null) return managedResult;
-      if (attempt < attempts) sleep(intervalSeconds);
-    }
-    return false;
+    return confirmManagedGatewayWithinSettleWindow(
+      sandboxName,
+      managedProbe,
+      sleep,
+      settleSeconds,
+      intervalSeconds,
+    );
   }
+  sleep(settleSeconds);
   // A stopped HTTP probe is still only a point-in-time observation. PID 1 can
   // have respawned the gateway while OpenClaw is still finishing its startup
   // transition, so multiple stopped results may precede a healthy listener.

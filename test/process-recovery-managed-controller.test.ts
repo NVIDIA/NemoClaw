@@ -77,7 +77,7 @@ describe("managed gateway recovery controller", () => {
       recoverResults: [successfulControl],
       managedProbeResult: successfulProbe,
       expectedResult: recoveredGateway,
-      expectedActions: ["recover", "probe"],
+      expectedActions: ["recover", "probe", "probe"],
       settleSeconds: "1",
     },
     {
@@ -96,7 +96,7 @@ describe("managed gateway recovery controller", () => {
       recoverResults: [successfulControl],
       managedProbeResults: [{ status: 1, stdout: "", stderr: "SUPERVISOR_BUSY" }],
       expectedResult: unrecoveredGateway,
-      expectedActions: ["recover", "probe", "probe", "probe"],
+      expectedActions: ["recover", "probe", "probe"],
       settleSeconds: "1",
     },
     {

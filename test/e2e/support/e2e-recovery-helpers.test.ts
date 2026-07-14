@@ -187,17 +187,20 @@ describe("GatewayClient recovery helpers (#2701)", () => {
   });
 
   describe("resolveGatewayPid", () => {
-    it("returns the parsed PID when the script prints a number", async () => {
+    it("accepts the recorded PID when its process start identity still matches", async () => {
       const runner = new ScriptedRunner();
-      runner.queue({ stdout: "1234\n" });
+      runner.queue({ stdout: "1234 987654 987654\n" });
       const gateway = buildGateway(runner);
 
       await expect(gateway.resolveGatewayPid(fakeInstance())).resolves.toBe(1234);
-      const script = runner.calls[0]?.args.at(-1) ?? "";
-      expect(script).toContain("cat /tmp/nemoclaw-gateway.pid");
-      expect(script).toContain("/proc/$pid/stat");
-      expect(script).toContain("${20}");
-      expect(script).not.toContain("ps -eo");
+    });
+
+    it("rejects a reused PID whose process start identity no longer matches", async () => {
+      const runner = new ScriptedRunner();
+      runner.queue({ stdout: "1234 987654 123456\n" });
+      const gateway = buildGateway(runner);
+
+      await expect(gateway.resolveGatewayPid(fakeInstance())).resolves.toBeNull();
     });
 
     it("returns null when the script prints non-numeric output", async () => {
@@ -214,10 +217,10 @@ describe("GatewayClient recovery helpers (#2701)", () => {
       const runner = new ScriptedRunner();
       // initial sample + 3 stable samples
       runner.queue(
-        { stdout: "100\n" },
-        { stdout: "100\n" },
-        { stdout: "100\n" },
-        { stdout: "100\n" },
+        { stdout: "100 111 111\n" },
+        { stdout: "100 111 111\n" },
+        { stdout: "100 111 111\n" },
+        { stdout: "100 111 111\n" },
       );
       const gateway = buildGateway(runner);
 
@@ -230,7 +233,7 @@ describe("GatewayClient recovery helpers (#2701)", () => {
 
     it("throws when the PID changes (crash-loop)", async () => {
       const runner = new ScriptedRunner();
-      runner.queue({ stdout: "100\n" }, { stdout: "201\n" });
+      runner.queue({ stdout: "100 111 111\n" }, { stdout: "201 222 222\n" });
       const gateway = buildGateway(runner);
 
       await expect(
@@ -243,7 +246,7 @@ describe("GatewayClient recovery helpers (#2701)", () => {
 
     it("throws when the gateway disappears mid-window", async () => {
       const runner = new ScriptedRunner();
-      runner.queue({ stdout: "100\n" }, { stdout: "" });
+      runner.queue({ stdout: "100 111 111\n" }, { stdout: "" });
       const gateway = buildGateway(runner);
 
       await expect(

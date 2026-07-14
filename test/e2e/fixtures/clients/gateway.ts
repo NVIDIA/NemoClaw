@@ -182,16 +182,16 @@ export class GatewayClient {
       'stat="$(cat "/proc/$pid/stat" 2>/dev/null || true)"; ' +
       '[ -n "$stat" ] || exit 0; rest="${stat##*) }"; ' +
       '[ "$rest" != "$stat" ] || exit 0; set -- $rest; ' +
-      '[ "$#" -ge 20 ] || exit 0; [ "${20}" = "$expected_start" ] || exit 0; ' +
-      'printf "%s\\n" "$pid"';
+      '[ "$#" -ge 20 ] || exit 0; actual_start="${20}"; ' +
+      'printf "%s %s %s\\n" "$pid" "$expected_start" "$actual_start"';
 
     const result = await this.sandbox.exec(instance.sandboxName, ["sh", "-c", script], {
       artifactName: `gateway-resolve-pid-${instance.sandboxName}`,
       env: probeEnv(),
     });
-    const trimmed = result.stdout.trim();
-    if (!/^[0-9]+$/.test(trimmed)) return null;
-    const pid = Number(trimmed);
+    const identity = result.stdout.trim().match(/^([0-9]+) ([0-9]+) ([0-9]+)$/);
+    if (result.exitCode !== 0 || !identity || identity[2] !== identity[3]) return null;
+    const pid = Number(identity[1]);
     return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
   }
 
