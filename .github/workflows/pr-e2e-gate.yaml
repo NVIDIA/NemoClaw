@@ -12,31 +12,31 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: Exact-diff action to perform.
+        description: E2E gate action to perform.
         required: true
-        default: resolve-fork
+        default: approve-fork-e2e-skip
         type: choice
         options:
-          - resolve-fork
+          - approve-fork-e2e-skip
           - run-control-plane
       pr_number:
-        description: Pull request number for the selected exact-diff action.
+        description: Pull request number for the selected E2E gate action.
         required: true
         type: string
       expected_head_sha:
-        description: Exact 40-character PR head SHA reviewed by the maintainer.
+        description: Current 40-character PR head SHA reviewed by the maintainer.
         required: true
         type: string
       expected_base_sha:
-        description: Exact 40-character PR base SHA reviewed by the maintainer.
+        description: Current 40-character PR base SHA reviewed by the maintainer.
         required: true
         type: string
       review_reason:
-        description: Why this exact revision may skip fork E2E or run control-plane E2E.
+        description: Why this fork PR may skip credentialed E2E or this internal PR may run control-plane E2E.
         required: true
         type: string
       evidence_url:
-        description: Fork exception only; optional Actions run URL. Ignored by run-control-plane, whose evidence comes from the dispatched jobs.
+        description: Fork credentialed-E2E skip only; optional Actions run URL. Ignored by run-control-plane, whose evidence comes from the dispatched jobs.
         required: false
         default: ""
         type: string
@@ -119,10 +119,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     outputs:
-      exception_mode: ${{ steps.start.outputs.exception_mode }}
-      exception_pr_number: ${{ steps.start.outputs.exception_pr_number }}
-      exception_head_sha: ${{ steps.start.outputs.exception_head_sha }}
-      exception_base_sha: ${{ steps.start.outputs.exception_base_sha }}
+      fork_skip_mode: ${{ steps.start.outputs.fork_skip_mode }}
+      fork_skip_pr_number: ${{ steps.start.outputs.fork_skip_pr_number }}
+      fork_skip_head_sha: ${{ steps.start.outputs.fork_skip_head_sha }}
+      fork_skip_base_sha: ${{ steps.start.outputs.fork_skip_base_sha }}
     permissions:
       actions: write
       checks: write
@@ -335,14 +335,14 @@ jobs:
         if: ${{ always() && steps.workspace.outputs.work_dir != '' }}
         run: rm -rf -- "${{ steps.workspace.outputs.work_dir }}"
 
-  approve-exception:
-    name: Approve no-secret E2E exception
+  approve-fork-e2e-skip:
+    name: Approve credentialed E2E skip for fork PR
     needs: coordinate
-    if: ${{ needs.coordinate.result == 'success' && needs.coordinate.outputs.exception_mode != '' && github.run_attempt == 1 }}
+    if: ${{ needs.coordinate.result == 'success' && needs.coordinate.outputs.fork_skip_mode != '' && github.run_attempt == 1 }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
-      name: e2e-no-secret-exception
+      name: approve-credentialed-e2e-skip-for-fork-pr
       deployment: false
     permissions:
       actions: read
@@ -350,7 +350,7 @@ jobs:
       contents: read
       pull-requests: read
     concurrency:
-      group: pr-e2e-gate-approve-${{ needs.coordinate.outputs.exception_pr_number }}
+      group: pr-e2e-gate-approve-fork-skip-${{ needs.coordinate.outputs.fork_skip_pr_number }}
       cancel-in-progress: true
     steps:
       - name: Checkout controller
@@ -367,18 +367,18 @@ jobs:
       - name: Install controller dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
 
-      - name: Record approved E2E exception
+      - name: Record approved credentialed E2E skip
         env:
           APPROVAL_RUN_ATTEMPT: ${{ github.run_attempt }}
           APPROVAL_RUN_ID: ${{ github.run_id }}
-          EXPECTED_BASE_SHA: ${{ needs.coordinate.outputs.exception_base_sha }}
-          EXPECTED_HEAD_SHA: ${{ needs.coordinate.outputs.exception_head_sha }}
+          EXPECTED_BASE_SHA: ${{ needs.coordinate.outputs.fork_skip_base_sha }}
+          EXPECTED_HEAD_SHA: ${{ needs.coordinate.outputs.fork_skip_head_sha }}
           GITHUB_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ needs.coordinate.outputs.exception_pr_number }}
+          PR_NUMBER: ${{ needs.coordinate.outputs.fork_skip_pr_number }}
           WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: >-
           node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
-          --mode resolve-approved
+          --mode record-approved-fork-e2e-skip
           --pr "$PR_NUMBER"
           --head "$EXPECTED_HEAD_SHA"
           --base "$EXPECTED_BASE_SHA"
@@ -386,8 +386,9 @@ jobs:
           --approval-run-id "$APPROVAL_RUN_ID"
           --approval-run-attempt "$APPROVAL_RUN_ATTEMPT"
 
-  resolve-exception:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.operation == 'resolve-fork' }}
+  record-fork-e2e-skip:
+    name: Record credentialed E2E skip for fork PR
+    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.operation == 'approve-fork-e2e-skip' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -395,7 +396,7 @@ jobs:
       contents: read
       pull-requests: read
     concurrency:
-      group: pr-e2e-gate-resolve-fork-${{ inputs.pr_number }}
+      group: pr-e2e-gate-record-fork-skip-${{ inputs.pr_number }}
       cancel-in-progress: false
     steps:
       - name: Checkout controller
@@ -412,7 +413,7 @@ jobs:
       - name: Install controller dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
 
-      - name: Record E2E exception
+      - name: Record credentialed E2E skip
         env:
           EVIDENCE_URL: ${{ inputs.evidence_url }}
           EXPECTED_BASE_SHA: ${{ inputs.expected_base_sha }}
@@ -424,7 +425,7 @@ jobs:
           WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: >-
           node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
-          --mode resolve-fork
+          --mode record-fork-e2e-skip
           --pr "$PR_NUMBER"
           --head "$EXPECTED_HEAD_SHA"
           --base "$EXPECTED_BASE_SHA"

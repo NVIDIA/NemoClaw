@@ -77,6 +77,16 @@
       "category": "security"
     },
     {
+      "file": "test/corporate-ca-build-tls-anchor.test.ts",
+      "test": "declares exactly one corporate CA build arg so onboard patching stays unambiguous",
+      "category": "security"
+    },
+    {
+      "file": "test/corporate-ca-build-tls-anchor.test.ts",
+      "test": "decodes the CA and exports NODE_EXTRA_CA_CERTS before the reinstall audit-signatures step",
+      "category": "security"
+    },
+    {
       "file": "test/dcode-base-image-workflow.test.ts",
       "test": "accepts every discovered publisher and rejects supply-chain mutations",
       "category": "security"
@@ -273,7 +283,7 @@
     },
     {
       "file": "test/onboard-performance-config-schema.test.ts",
-      "test": "records five independent successful exact-head samples",
+      "test": "records five independent successful samples for current main",
       "category": "compatibility"
     },
     {
@@ -334,6 +344,11 @@
     {
       "file": "test/pr-workflow-contract.test.ts",
       "test": "does not run npm lifecycle scripts during CI dependency installs",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-workflow-contract.test.ts",
+      "test": "folds hermetic E2E support and Ollama proxy coverage into existing Vitest lanes",
       "category": "security"
     },
     {

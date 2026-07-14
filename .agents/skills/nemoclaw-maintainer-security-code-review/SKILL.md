@@ -1,12 +1,12 @@
 ---
 name: nemoclaw-maintainer-security-code-review
-description: Performs a comprehensive security review of code changes in a GitHub PR or issue. Checks out the branch, analyzes changed files against a 9-category security checklist, and produces PASS/WARNING/FAIL verdicts. Use when reviewing pull requests for security vulnerabilities, hardcoded secrets, injection flaws, auth bypasses, or insecure configurations. Trigger keywords - security review, code review, appsec, vulnerability assessment, security audit, review PR security.
+description: Reviews code changes in a GitHub PR or issue for security. Checks changed files against nine categories and reports PASS/WARNING/FAIL verdicts. Use when reviewing pull requests for security vulnerabilities, hardcoded secrets, injection flaws, auth bypasses, or insecure configurations. Trigger keywords - security review, code review, appsec, vulnerability assessment, security audit, review PR security.
 user_invocable: true
 ---
 
 # Security Code Review
 
-Perform a thorough security review of the changes in a GitHub PR or issue, producing a structured report with per-category verdicts.
+Review the changes in a GitHub PR or issue for security. Report a verdict for each category.
 
 ## Prerequisites
 
@@ -60,7 +60,7 @@ If the PR targets a branch other than `main`, use the correct base. Check with:
 gh pr view <number> --json baseRefName -q .baseRefName
 ```
 
-## Step 4: Read Every Changed File and Diff
+## Step 4: Read Each Changed File and Diff
 
 Read the full content of each changed file and the diff for that file:
 
@@ -80,9 +80,9 @@ For large PRs (more than 30 changed files), prioritize files in this order:
 
 For each of the 9 categories below, assign a verdict:
 
-- **PASS** — no issues found (brief justification).
-- **WARNING** — potential concern (describe risk and suggested fix).
-- **FAIL** — confirmed vulnerability (describe impact, severity, and remediation).
+- **PASS** — no issues found (give a brief reason).
+- **WARNING** — a concern (describe the risk and fix).
+- **FAIL** — a vulnerability (describe the impact, severity, and fix).
 
 ### Category 1: Secrets and Credentials
 
@@ -92,55 +92,55 @@ For each of the 9 categories below, assign a verdict:
 
 ### Category 2: Input Validation and Data Sanitization
 
-- All user-controlled inputs (APIs, forms, URLs, headers, query params, file uploads) are validated against an allowlist of expected types, lengths, and formats.
-- Proper encoding and escaping to prevent XSS, SQL injection, command injection, path traversal, and SSRF.
-- Deserialization of untrusted data uses safe parsers (no `pickle.loads`, `yaml.unsafe_load`, `eval`, `new Function`, or similar).
+- Validate user-controlled inputs (APIs, forms, URLs, headers, query params, file uploads) against an allowlist of types, lengths, and formats.
+- Encode and escape inputs to prevent XSS, SQL injection, command injection, path traversal, and SSRF.
+- Use safe parsers for untrusted data (no `pickle.loads`, `yaml.unsafe_load`, `eval`, `new Function`, or similar).
 
 ### Category 3: Authentication and Authorization
 
-- All new or modified endpoints enforce authentication before processing requests.
-- Authorization logic ensures users can only access or modify resources they own or are permitted to use.
-- No privilege escalation paths (horizontal or vertical).
-- Token validation (expiry, signature, scope) is correctly implemented.
+- Authenticate new or modified endpoints before processing requests.
+- Allow users to access or modify only resources they own or may use.
+- Prevent horizontal and vertical privilege escalation.
+- Verify token expiry, signature, and scope.
 
 ### Category 4: Dependencies and Third-Party Libraries
 
-- Newly added dependencies checked for known CVEs (OSV, Snyk, GitHub Advisory DB).
-- Dependencies pinned to specific, secure versions (no floating ranges in production).
-- OSS license compatibility not violated.
-- Dependencies pulled from trusted registries only.
+- Check new dependencies for known CVEs (OSV, Snyk, GitHub Advisory DB).
+- Pin production dependencies; do not use floating ranges.
+- Preserve OSS license compatibility.
+- Use trusted registries.
 
 ### Category 5: Error Handling and Logging
 
-- Error responses do not leak stack traces, internal paths, or sensitive data.
-- Logging does not record secrets, tokens, passwords, or PII.
-- Exceptions caught at appropriate boundaries; no unhandled crashes that expose state.
+- Do not leak stack traces, internal paths, or sensitive data in errors.
+- Do not log secrets, tokens, passwords, or PII.
+- Catch exceptions where callers can handle them; do not expose state through crashes.
 
 ### Category 6: Cryptography and Data Protection
 
-- Standard, up-to-date algorithms (AES-256-GCM, RSA-2048+, SHA-256+).
+- Use current standard algorithms (AES-256-GCM, RSA-2048+, SHA-256+).
 - No MD5 or SHA-1 for security purposes. No custom cryptography.
-- Sensitive data encrypted at rest and in transit where applicable.
+- Encrypt sensitive data at rest and in transit where needed.
 
 ### Category 7: Configuration and Security Headers
 
-- Secure defaults (debug mode off, restrictive permissions, minimal port exposure).
-- If HTTP endpoints are present: CSP and CORS configured correctly. No wildcard origins in authenticated contexts.
-- Container images use non-root users, minimal base images, and pinned digests.
+- Disable debug mode, restrict permissions, and expose only needed ports.
+- For HTTP endpoints, set CSP and CORS. Do not use wildcard origins in authenticated contexts.
+- Run container images as non-root users with minimal base images and pinned digests.
 
 ### Category 8: Security Testing
 
-- Tests cover security edge cases: malicious input, boundary values, unauthorized access attempts.
-- Existing security test coverage not degraded by the change.
-- Negative test cases verify that forbidden actions are denied.
+- Test malicious input, boundary values, and unauthorized access attempts.
+- Do not reduce existing security test coverage.
+- Test that forbidden actions are denied.
 
 ### Category 9: Holistic Security Posture
 
-- Changes do not degrade overall security posture.
-- No false sense of security (client-only validation, incomplete checks).
-- Least privilege followed for code, services, and users.
-- No TOCTOU race conditions in security-critical paths.
-- No unsafe concurrency that bypasses security checks.
+- Do not weaken the system's security.
+- Do not rely on client-only validation or incomplete checks.
+- Use least privilege for code, services, and users.
+- Prevent TOCTOU race conditions in security-critical paths.
+- Prevent concurrency from bypassing security checks.
 
 ## Step 6: Produce the Report
 
@@ -148,7 +148,7 @@ Structure the output as follows:
 
 ### Verdict
 
-One paragraph summarizing the overall risk assessment and whether the PR is safe to merge.
+One paragraph summarizing the risk and whether the PR is safe to merge.
 
 ### Findings Table
 
@@ -161,7 +161,7 @@ If no findings, state explicitly that the review is clean.
 
 ### Detailed Analysis
 
-Per-category breakdown (categories 1 through 9), each with its PASS, WARNING, or FAIL verdict and justification.
+For each category, give its PASS, WARNING, or FAIL verdict and reason.
 
 ### Files Reviewed
 
@@ -169,7 +169,7 @@ List every file analyzed.
 
 ## Important Notes
 
-- If the PR has no changed files or is a draft with no code, state that and skip the analysis.
-- For NemoClaw PRs, pay special attention to sandbox escape vectors: SSRF bypasses, Dockerfile injection, network policy circumvention, credential leakage, and blueprint tampering.
+- If the PR has no changed files or is a draft with no code, state that and skip the review.
+- For NemoClaw PRs, check sandbox escape vectors: SSRF bypasses, Dockerfile injection, network policy circumvention, credential leakage, and blueprint tampering.
 - Do not skip categories. If a category is not applicable to the changes (e.g., no cryptography involved), mark it PASS with "Not applicable — no cryptographic operations in this change."
 - When in doubt about severity, err on the side of WARNING rather than PASS.

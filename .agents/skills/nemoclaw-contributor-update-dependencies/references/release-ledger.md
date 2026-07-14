@@ -9,7 +9,7 @@ Use this reference to turn a version gap into adjacent, auditable migration rang
 
 Record for the current dependency and every candidate endpoint:
 
-- semantic version and exact commit SHA;
+- semantic version and commit SHA;
 - lightweight or annotated tag type;
 - whether the commit is verified under the upstream project's policy;
 - tag ancestry from the currently supported release;
@@ -27,7 +27,7 @@ For GitHub repositories, pass `--github-repository OWNER/REPO` and the API hostn
 collector. It binds the canonical repository ID, requires a rerun when the requested name redirects
 or was renamed, inventories paginated remote semantic-version refs, and verifies every in-range tag
 against the local root object and peeled commit. It rechecks the canonical repository identity,
-exact advertised target ref, full semantic-version tag-root inventory, and full visible release
+the advertised target ref, full semantic-version tag-root inventory, and full visible release
 inventory after local range collection; a changed value invalidates the run. Shallow history,
 missing or corrupt reachable objects, `refs/replace`, grafts, alternates, promisor packs, repository
 config includes, and `fsck.*` overrides stop collection. Partial/promisor clone configuration,
@@ -37,7 +37,7 @@ bounded and non-interactive, ignores ambient `GIT_*` controls plus system/global
 replacement objects and lazy fetch, suppresses signature display, and cannot invoke configured
 filesystem-monitor, pager, external diff, textconv, or signature helpers. The collector traverses
 the complete target and in-range tag object closure and runs strict full integrity checks. For an
-untagged candidate, pass the exact advertised `refs/heads/...` ref and require it to equal the audit
+untagged candidate, pass the advertised `refs/heads/...` ref and require it to equal the audit
 target; a raw Git commit endpoint can expose fork or pull-request objects and does not prove
 upstream-ref membership. GitHub exposes drafts only to viewers with push access, so an omitted tag
 is `absent` only with proven full draft visibility; otherwise it is `not-published`, which proves no
@@ -64,7 +64,7 @@ minimum platform, or failure mode that controls the entire downstream runtime.
 
 Use evidence in this order when sources disagree:
 
-1. Exact tagged source and tests that execute the contract.
+1. Tagged source and tests that execute the contract.
 2. Published schemas, generated API definitions, and release workflow inputs.
 3. Official release notes and changelog.
 4. Commit or PR descriptions.
@@ -85,12 +85,12 @@ When a tag lacks a successful release:
 When the target is an unreleased commit, label the last range `latest-tag -> candidate-commit` and
 repeat that range against the final tag before shipping.
 
-Keep four identity records beside the ledger: required upstream fix SHAs; the exact upstream audit
+Keep four identity records beside the ledger: required upstream fix SHAs; the upstream audit
 target; the upstream artifact producer repository/head/workflow/run/attempt; and the downstream
 NemoClaw PR head plus proof manifest. Require the audit target to descend from every required fix,
-bind an untagged audit target to its exact advertised upstream ref, require the upstream producer and
+bind an untagged audit target to its advertised upstream ref, require the upstream producer and
 artifacts to bind to that target, and require the downstream manifest to pin those artifacts while
-its workflow binds to the exact NemoClaw head. Upstream and downstream SHAs are different identity
+its workflow binds to the NemoClaw head. Upstream and downstream SHAs are different identity
 domains, not values that should equal each other. Descendant evidence can inform the next audit
 range but cannot close the requested target, and predecessor evidence cannot be inherited forward.
 

@@ -36,16 +36,16 @@ At cutoff:
 2. Confirm each is intended for the release.
 3. List open PRs and issues still carrying the target label as post-tag stragglers.
 4. Generate QA handoff from merged PRs.
-5. Generate the release plan to freeze the exact candidate commit.
+5. Generate the release plan to freeze the candidate commit.
 6. Review the candidate commit's pre-tag E2E evidence.
 7. Cut the release tag only with explicit maintainer confirmation.
 8. After the tag and workflow-managed `latest` are verified, automatically move every open straggler to the next patch label.
 
 ## Pre-Tag E2E Evidence
 
-The release candidate is the exact full `origin/main` commit SHA captured by the generated release plan. At that commit, `.github/workflows/e2e.yaml` is the sole source of truth for the release E2E test set. Do not maintain a separate release-gating test list.
+The release candidate is the full `origin/main` commit SHA captured by the generated release plan. At that commit, `.github/workflows/e2e.yaml` is the sole source of truth for the release E2E test set. Do not maintain a separate release-gating test list.
 
-Before asking for the exact release confirmation phrase, build and show an evidence ledger for that SHA:
+Before asking for the release confirmation phrase, build and show an evidence ledger for that SHA:
 
 - Every E2E test execution declared by the workflow must have at least one completed, successful execution for the candidate SHA. This includes tests that require explicit selection and every expanded matrix execution.
 - Treat each expanded matrix execution as a separate ledger entry. Use its matrix `id`, or all distinguishing matrix dimensions when no single ID exists, in the test identifier so results for distinct expansions are never collapsed under the parent job.
