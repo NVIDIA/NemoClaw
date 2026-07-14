@@ -440,9 +440,8 @@ test("shields-config: live shields up/down locks config and detects drift", {
     const restore = await runNemoclaw(host, [SANDBOX_NAME, "shields", "up"], {
       artifactName: "cleanup-shields-up-before-destroy",
     });
-    if (restore.exitCode !== 0 || !resultText(restore).includes("Lockdown active")) {
-      throw new Error(`failed to restore shields before destroy: ${resultText(restore)}`);
-    }
+    expect(restore.exitCode, resultText(restore)).toBe(0);
+    expect(resultText(restore)).toContain("Lockdown active");
   });
 
   const configUp = await statPath(sandbox, CONFIG_PATH, "phase-3-config-perms-up");
