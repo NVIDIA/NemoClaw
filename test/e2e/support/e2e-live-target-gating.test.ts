@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { testTimeoutOptions } from "../../helpers/timeouts.ts";
 import { LIVE_E2E_ROOT, REPO_ROOT } from "../fixtures/paths.ts";
 
 const VITEST = path.join(REPO_ROOT, "node_modules", "vitest", "vitest.mjs");
@@ -30,14 +31,14 @@ function liveTestFiles(root = LIVE_E2E_ROOT): string[] {
 function listLiveTests(options: {
   enabled: boolean;
   env?: NodeJS.ProcessEnv;
-  file?: string;
+  files?: readonly string[];
   filesOnly?: boolean;
 }) {
   const args = [
     "list",
     "--project",
     "e2e-live",
-    ...(options.file ? [`test/e2e/live/${options.file}`] : []),
+    ...(options.files ?? []).map((file) => `test/e2e/live/${file}`),
     ...(options.filesOnly ? ["--filesOnly"] : []),
     "--passWithNoTests",
   ];
@@ -61,6 +62,10 @@ function listLiveTests(options: {
   };
 }
 
+function linesForFile(lines: readonly string[], file: string): string[] {
+  return lines.filter((line) => line.startsWith(`[e2e-live] test/e2e/live/${file} >`));
+}
+
 describe("live E2E target gating", () => {
   it("collects no live files without project opt-in and all live files with it", () => {
     const disabled = listLiveTests({ enabled: false, filesOnly: true });
@@ -76,35 +81,52 @@ describe("live E2E target gating", () => {
     expect(collected).toEqual(discovered);
   });
 
-  it.each([
-    ["sandbox-rlimits-connect.test.ts", "NEMOCLAW_E2E_CONNECT_RLIMITS"],
-    ["mcp-bridge.test.ts", "NEMOCLAW_MCP_BRIDGE_AGENT_MATRIX"],
-    ["issue-4434-tui-unreachable-inference.test.ts", "NEMOCLAW_ISSUE_4434_LIVE"],
-  ] as const)("applies %s's explicit opt-in at real Vitest collection", (file, gate) => {
-    const disabled = listLiveTests({ enabled: true, file });
-    const enabled = listLiveTests({ enabled: true, env: { [gate]: "1" }, file });
+  it(
+    "applies each special target's explicit opt-in at real Vitest collection",
+    testTimeoutOptions(15_000),
+    () => {
+      const gatedFiles = [
+        ["sandbox-rlimits-connect.test.ts", "NEMOCLAW_E2E_CONNECT_RLIMITS"],
+        ["mcp-bridge.test.ts", "NEMOCLAW_MCP_BRIDGE_AGENT_MATRIX"],
+        ["issue-4434-tui-unreachable-inference.test.ts", "NEMOCLAW_ISSUE_4434_LIVE"],
+      ] as const;
+      const files = gatedFiles.map(([file]) => file);
+      const disabled = listLiveTests({ enabled: true, files });
 
-    expect(disabled.status, disabled.stderr || disabled.stdout).toBe(0);
-    expect(enabled.status, enabled.stderr || enabled.stdout).toBe(0);
-    expect(
-      enabled.lines.length,
-      `${file} should collect more tests when ${gate}=1`,
-    ).toBeGreaterThan(disabled.lines.length);
-  });
+      expect(disabled.status, disabled.stderr || disabled.stdout).toBe(0);
+      for (const [file, gate] of gatedFiles) {
+        const enabled = listLiveTests({ enabled: true, env: { [gate]: "1" }, files: [file] });
 
-  it.each([
-    [
-      "spark-install.test.ts",
-      "spark install path: standard non-interactive install leaves NemoClaw and OpenShell usable",
-    ],
-    [
-      "openshell-gateway-upgrade.test.ts",
-      "openshell-gateway-upgrade: upgrades old working OpenClaw claw and restores survivor state",
-    ],
-  ])("applies %s's Linux gate at real Vitest collection", (file, testName) => {
-    const result = listLiveTests({ enabled: true, file });
+        expect(enabled.status, enabled.stderr || enabled.stdout).toBe(0);
+        expect(
+          linesForFile(enabled.lines, file).length,
+          `${file} should collect more tests when ${gate}=1`,
+        ).toBeGreaterThan(linesForFile(disabled.lines, file).length);
+      }
+    },
+  );
+
+  it("applies Linux gates at real Vitest collection", () => {
+    const linuxTests = [
+      [
+        "spark-install.test.ts",
+        "spark install path: standard non-interactive install leaves NemoClaw and OpenShell usable",
+      ],
+      [
+        "openshell-gateway-upgrade.test.ts",
+        "openshell-gateway-upgrade: upgrades old working OpenClaw claw and restores survivor state",
+      ],
+    ] as const;
+    const result = listLiveTests({
+      enabled: true,
+      files: linuxTests.map(([file]) => file),
+    });
 
     expect(result.status, result.stderr || result.stdout).toBe(0);
-    expect(result.lines.some((line) => line.endsWith(testName))).toBe(process.platform === "linux");
+    for (const [file, testName] of linuxTests) {
+      expect(linesForFile(result.lines, file).some((line) => line.endsWith(testName))).toBe(
+        process.platform === "linux",
+      );
+    }
   });
 });

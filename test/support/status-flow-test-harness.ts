@@ -136,8 +136,16 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
       sb: sandboxEntry,
       lookup,
       rpcIssue: null,
-      currentModel: options.currentModel ?? "nvidia/nemotron-live",
+      currentModel: options.currentModel ?? sandboxEntry.model,
       currentProvider: options.currentProvider ?? "ollama-local",
+      recordedRoute: {
+        provider: sandboxEntry.provider,
+        model: sandboxEntry.model,
+      },
+      liveRoute: {
+        provider: options.currentProvider ?? "ollama-local",
+        model: options.currentModel ?? sandboxEntry.model,
+      },
       routeDrift: options.routeDrift ?? null,
       inferenceHealth:
         options.inferenceHealth === undefined

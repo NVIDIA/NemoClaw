@@ -9,6 +9,8 @@ import {
 import {
   type CurrentGatewayRouteCompatibilityCheck,
   formatGatewayRouteConflict,
+  formatGatewayRouteImpactWarning,
+  isAdvisoryGatewayRouteConflict,
 } from "../inference/gateway-route-compatibility";
 import { withGatewayRouteMutationLock } from "../inference/gateway-route-mutation-lock";
 import {
@@ -244,12 +246,16 @@ export function createSetupInference(
             provider,
             model,
             endpointUrl,
+            credentialEnv,
             preferredInferenceApi: options.preferredInferenceApi ?? null,
           },
         });
         if (!compatibility.ok) {
-          deps.error(`  Error: ${formatGatewayRouteConflict(compatibility)}`);
-          return deps.exitProcess(1);
+          if (!isAdvisoryGatewayRouteConflict(compatibility)) {
+            deps.error(`  Error: ${formatGatewayRouteConflict(compatibility)}`);
+            return deps.exitProcess(1);
+          }
+          deps.error(`  ${formatGatewayRouteImpactWarning(compatibility)}`);
         }
         deps.step(4, 8, "Setting up inference provider");
         let endpointPinnedAddresses = options.endpointPinnedAddresses;

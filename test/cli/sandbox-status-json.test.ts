@@ -176,6 +176,13 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
       found: true,
       model: "nvidia/nemotron",
       provider: "nvidia-prod",
+      recordedRoute: { provider: "configured-provider", model: "configured-model" },
+      liveRoute: { provider: "nvidia-prod", model: "nvidia/nemotron" },
+      routeDrift: {
+        live: { provider: "nvidia-prod", model: "nvidia/nemotron" },
+        recorded: { provider: "configured-provider", model: "configured-model" },
+        canConnect: true,
+      },
       hostGpuDetected: true,
       sandboxGpuEnabled: true,
       sandboxGpuMode: "passthrough",
@@ -377,8 +384,8 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
     const parsed = JSON.parse(r.out);
     expect(parsed.rpcIssue).toEqual({ kind: "protobuf_mismatch" });
     expect(parsed.inferenceHealth).toBeNull();
-    expect(parsed.model).toBe("unknown");
-    expect(parsed.provider).toBe("unknown");
+    expect(parsed.model).toBe("test-model");
+    expect(parsed.provider).toBe("nvidia-prod");
   });
 
   it("sandbox status --json reports found:false and exits 1 for unknown sandbox via canonical form", () => {

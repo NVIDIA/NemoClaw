@@ -356,19 +356,23 @@ $$nemoclaw list
 `$$nemoclaw list` prints the recorded dashboard URL for each sandbox.
 
 OpenShell currently exposes one inference route per gateway.
-Sandboxes that share a gateway must record the same provider and model.
-Custom compatible routes must also record the same normalized endpoint and API family.
-An OpenClaw sandbox using the native Anthropic Messages frontend and a Hermes sandbox using the managed OpenAI frontend need separate gateway ports, even when they use the same custom endpoint and model.
-NemoClaw includes stopped sandboxes in this check because they use the gateway route when restarted.
+NemoClaw records each sandbox's intended provider and model, but the gateway can expose only one of those routes at a time.
+Onboarding with a different valid route warns immediately before changing the live route.
+The warning names every affected registered sandbox and its recorded provider and model.
+The affected sandboxes use that route until another onboarding run or `$$nemoclaw <name> connect` warns and re-points the provider and model.
+When another sandbox uses the same provider name, its custom endpoint, API family, and credential environment-variable name must match before onboarding or `connect` can re-point the route.
+Onboarding exits before provider or route mutation when that provider-global identity differs.
+`connect` refuses the same conflict because its provider/model-only route change cannot safely reconstruct that metadata.
 
-If onboarding, `inference set`, or connect-time route repair reports a shared-gateway conflict, choose one of these recovery paths:
+Run `$$nemoclaw <name> status` to compare the sandbox's recorded route with the live shared route.
+The normal Model and Provider lines remain the sandbox's recorded configuration.
+A separate warning shows the live and recorded routes when they differ.
+The JSON status report exposes `recordedRoute` and `liveRoute` explicitly and repeats them in `routeDrift` when they differ.
+Schema-version `1` `model` and `provider` remain live-first when the gateway route is readable and fall back to the recorded route otherwise.
+When `routeDrift.canConnect` is `false`, the route cannot be restored safely because provider-global identity differs or required route or gateway metadata is incomplete.
 
-- Align every named sandbox to the same route.
-- Remove a conflicting sandbox with `$$nemoclaw <name> destroy` when you no longer need it.
-- Onboard the sandbox against another gateway port when it needs a different route.
-
-An aligned group cannot move to a wholly new route one sandbox at a time because the first change would conflict with the remaining registry rows.
-Back up each workspace, remove or migrate the peer sandboxes, switch the last sandbox on the original gateway, then re-onboard the peers with that same route or with separate gateway ports.
+If `inference set` reports a valid shared-route conflict, align the named sandbox records or remove a sandbox you no longer need.
+If onboarding or `connect` reports a provider-global identity conflict, align the same-name provider's custom endpoint, API family, and credential environment-variable name across the named sandboxes, or remove a conflicting sandbox you no longer need.
 
 If the error names incomplete legacy custom-route metadata, back up and remove the affected sandbox, then re-onboard it with an explicit custom endpoint and API family.
 For an OpenAI-compatible route, replace the example endpoint, model, and sandbox name in this recovery sequence:
@@ -384,16 +388,6 @@ NEMOCLAW_PROVIDER=custom \
 
 If the error names an invalid gateway binding, restore the affected row's known-good `gatewayName` and `gatewayPort` metadata from a trusted backup; otherwise back up and remove the sandbox, then re-onboard it.
 Do not guess or copy a binding from another sandbox because lifecycle commands use it to select the gateway.
-
-For example, keep the first sandbox on the default gateway and assign a separate gateway to the second sandbox:
-
-```bash
-$$nemoclaw onboard --name first-sandbox
-NEMOCLAW_GATEWAY_PORT=8990 $$nemoclaw onboard --name second-sandbox
-```
-
-NemoClaw derives a separate gateway name and state directory from the second port.
-Using a different dashboard port alone does not create a separate inference route.
 
 </AgentOnly>
 

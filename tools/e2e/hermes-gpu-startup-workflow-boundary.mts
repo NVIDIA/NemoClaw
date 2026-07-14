@@ -93,11 +93,10 @@ function trustedEnv(step: WorkflowStep | undefined): boolean {
   );
 }
 
-export function validateHermesGpuStartupWorkflowBoundary(
-  workflowPath = DEFAULT_WORKFLOW_PATH,
+export function validateHermesGpuStartupWorkflow(
+  workflow: WorkflowRecord,
   fixtureFile = FIXTURE,
 ): string[] {
-  const workflow = asRecord(YAML.parse(readFileSync(workflowPath, "utf8")));
   const job = asRecord(asRecord(workflow.jobs)[JOB_NAME]);
   const errors: string[] = [];
   if (Object.keys(job).length === 0) {
@@ -409,4 +408,14 @@ rm -rf -- @state`,
   }
 
   return errors;
+}
+
+export function validateHermesGpuStartupWorkflowBoundary(
+  workflowPath = DEFAULT_WORKFLOW_PATH,
+  fixtureFile = FIXTURE,
+): string[] {
+  return validateHermesGpuStartupWorkflow(
+    asRecord(YAML.parse(readFileSync(workflowPath, "utf8"))),
+    fixtureFile,
+  );
 }
