@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, expect } from "vitest";
+import { nonWslPlatformNodeOptions } from "../helpers/platform-override-node-options";
 import { execTimeout } from "../helpers/timeouts";
 
 /**
@@ -571,6 +572,7 @@ export function runConnect(
       encoding: "utf-8",
       env: {
         HOME: tmpDir,
+        NODE_OPTIONS: nonWslPlatformNodeOptions(tmpDir, ""),
         PATH: `${path.join(tmpDir, ".local", "bin")}:/usr/bin:/bin`,
         NEMOCLAW_DISABLE_GATEWAY_DRIFT_PREFLIGHT: "1",
         NEMOCLAW_NO_CONNECT_HINT: "1",

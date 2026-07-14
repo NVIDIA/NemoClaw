@@ -10,9 +10,16 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const requireSource = createRequire(import.meta.url);
-const { checkAndRecoverSandboxProcesses } = requireSource(
+const { checkAndRecoverSandboxProcesses: checkAndRecoverSandboxProcessesImpl } = requireSource(
   "../src/lib/actions/sandbox/process-recovery.ts",
 ) as typeof import("../src/lib/actions/sandbox/process-recovery.js");
+
+function checkAndRecoverSandboxProcesses(
+  sandboxName: string,
+  options: Parameters<typeof checkAndRecoverSandboxProcessesImpl>[1] = {},
+) {
+  return checkAndRecoverSandboxProcessesImpl(sandboxName, { isWsl: false, ...options });
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
