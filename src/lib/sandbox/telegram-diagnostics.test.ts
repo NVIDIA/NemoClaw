@@ -180,10 +180,58 @@ describe("parseTelegramBreadcrumbs", () => {
   });
 
   it("classifies OpenClaw native (timestamped) network-failure lines (#6743)", () => {
+    // A network failure outranks the bridge-did-not-start timeout it causes.
     const bc = parseTelegramBreadcrumbs([
       "2026-07-14T18:55:23.313+00:00 [telegram] deleteWebhook failed: Network request for 'deleteWebhook' failed!",
       "[telegram] [default] bridge did not start within 15s; check channels.telegram.enabled",
     ]);
-    expect(bc).toMatchObject({ startupFailedNetwork: true, bridgeNotStarted: true });
+    expect(bc).toMatchObject({ startupFailedNetwork: true, bridgeNotStarted: false });
+  });
+
+  it("treats a later inbound as recovery over a stale startup network failure (#6743)", () => {
+    // Bridge started while the network was blocked, then recovered and received
+    // a message — the latest evidence (inbound) must win over the stale failure.
+    const bc = parseTelegramBreadcrumbs([
+      "2026-07-14T19:51:41.423+00:00 [telegram] deleteWebhook failed: Network request for 'deleteWebhook' failed!",
+      "[telegram] [default] bridge did not start within 15s",
+      "2026-07-14T20:03:22.254+00:00 [telegram] [diag] isolated polling ingress started spool=/sandbox/.openclaw/telegram/ingress-spool-default",
+      "2026-07-14T20:03:23.312+00:00 [telegram] Inbound message telegram:5209865443 -> @bot (direct, 2 chars)",
+    ]);
+    expect(bc).toMatchObject({
+      providerReady: true,
+      inboundReceived: true,
+      startupFailedNetwork: false,
+      bridgeNotStarted: false,
+    });
+  });
+
+  it("treats a later network failure as the current state over an earlier inbound (#6743)", () => {
+    const bc = parseTelegramBreadcrumbs([
+      "2026-07-14T20:03:23.312+00:00 [telegram] Inbound message telegram:5209865443 -> @bot (direct, 2 chars)",
+      "[telegram] transport attempt marked temporarily unhealthy for 10000ms (codes=UND_ERR_SOCKET)",
+    ]);
+    expect(bc).toMatchObject({ startupFailedNetwork: true, providerReady: false });
+  });
+});
+
+describe("evaluateTelegramDiagnostics over real gateway-log windows (#6743)", () => {
+  it("reports healthy for a bridge that recovered after a blocked startup", () => {
+    const bc = parseTelegramBreadcrumbs([
+      "2026-07-14T19:51:41.423+00:00 [telegram] deleteWebhook failed: Network request for 'deleteWebhook' failed!",
+      "[telegram] [default] bridge did not start within 15s",
+      "2026-07-14T20:03:22.254+00:00 [telegram] [diag] isolated polling ingress started spool=/sandbox/x",
+      "2026-07-14T20:03:23.312+00:00 [telegram] Inbound message telegram:5209865443 -> @bot (direct, 2 chars)",
+    ]);
+    const report = evaluateTelegramDiagnostics(baseInput({ breadcrumbs: bc }));
+    expect(report.verdict).toBe("healthy");
+  });
+
+  it("reports unreachable once the network fails again after working", () => {
+    const bc = parseTelegramBreadcrumbs([
+      "2026-07-14T20:03:23.312+00:00 [telegram] Inbound message telegram:5209865443 -> @bot (direct, 2 chars)",
+      "[telegram] transport attempt marked temporarily unhealthy for 20000ms (codes=UND_ERR_SOCKET)",
+    ]);
+    const report = evaluateTelegramDiagnostics(baseInput({ breadcrumbs: bc }));
+    expect(report.verdict).toBe("unreachable");
   });
 });

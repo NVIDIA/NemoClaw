@@ -107,7 +107,7 @@ describe("buildTelegramProbeInput", () => {
     const input = buildTelegramProbeInput("alpha", agent, deps);
     expect(input.breadcrumbs).toMatchObject({
       startupFailedNetwork: true,
-      bridgeNotStarted: true,
+      bridgeNotStarted: false,
     });
   });
 });

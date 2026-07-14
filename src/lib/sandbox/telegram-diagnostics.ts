@@ -357,21 +357,42 @@ export function parseTelegramBreadcrumbs(logLines: readonly string[]): TelegramB
     bridgeNotStarted: false,
     inboundReceived: false,
   };
-  for (const line of telegramLines) {
-    if (/\bprovider ready\b/i.test(line)) bc.providerReady = true;
+  // Tailed lines are in chronological (append) order, so the *latest* matching
+  // line reflects the current reachability state. A stale startup network
+  // failure must not outrank a later "reached Telegram" line (a bridge that
+  // started while blocked then recovered), nor vice-versa (a channel that
+  // worked then got blocked again). Track the last index of each state and let
+  // the most recent win; a network failure outranks the "bridge did not start"
+  // timeout it causes. `provider ready` / `inbound update received` are preload
+  // phrases; `Inbound message telegram:` / `isolated polling ingress started`
+  // are OpenClaw's own positive lines; `Network request … failed` /
+  // `temporarily unhealthy` / `UND_ERR_SOCKET` are its transport-failure lines.
+  const REACHED =
+    /\bprovider ready\b|inbound update received|inbound message telegram|isolated polling ingress started/i;
+  const NETWORK_FAIL =
+    /startup probe failed|network request for .+ failed|recoverable network error|temporarily unhealthy|UND_ERR_SOCKET/i;
+  let lastReached = -1;
+  let lastNetworkFail = -1;
+  let lastBridgeNotStarted = -1;
+  telegramLines.forEach((line, index) => {
     if (/rejected startup probe with HTTP\s+(401|404)/i.test(line)) bc.tokenRejected = true;
     if (/credential placeholder.*(missing|mismatch|unresolved)/i.test(line)) {
       bc.credentialUnresolved = true;
     }
-    if (
-      /startup probe failed|network request for .+ failed|recoverable network error/i.test(line)
-    ) {
-      bc.startupFailedNetwork = true;
-    }
     const httpErr = /startup probe returned HTTP\s+(\d{3})/i.exec(line);
     if (httpErr) bc.startupHttpError = Number(httpErr[1]);
-    if (/bridge did not start within/i.test(line)) bc.bridgeNotStarted = true;
-    if (/inbound update received/i.test(line)) bc.inboundReceived = true;
+    if (/inbound update received|inbound message telegram/i.test(line)) bc.inboundReceived = true;
+    if (REACHED.test(line)) lastReached = index;
+    if (NETWORK_FAIL.test(line)) lastNetworkFail = index;
+    if (/bridge did not start within/i.test(line)) lastBridgeNotStarted = index;
+  });
+  if (lastReached !== -1 && lastReached > lastNetworkFail && lastReached > lastBridgeNotStarted) {
+    bc.providerReady = true;
+  } else if (lastNetworkFail !== -1 && lastNetworkFail > lastReached) {
+    // A network failure outranks the bridge-did-not-start timeout it causes.
+    bc.startupFailedNetwork = true;
+  } else if (lastBridgeNotStarted !== -1 && lastBridgeNotStarted > lastReached) {
+    bc.bridgeNotStarted = true;
   }
   return bc;
 }
