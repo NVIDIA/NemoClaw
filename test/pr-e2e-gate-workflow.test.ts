@@ -148,6 +148,7 @@ function runStartStep(headBranch: string, prNumber = "42") {
         CI_RUN_ATTEMPT: "3",
         CI_RUN_ID: "99",
         FAKE_NODE_ARGUMENTS: argumentsPath,
+        GATE_RUN_ID: "101",
         GITHUB_TOKEN: "token",
         HEAD_BRANCH: headBranch,
         HEAD_REPOSITORY: "NVIDIA/NemoClaw",
@@ -156,6 +157,46 @@ function runStartStep(headBranch: string, prNumber = "42") {
         PR_NUMBER: prNumber,
         WORKFLOW_SHA: "d".repeat(40),
         WORK_DIR: tempDir,
+      },
+      timeout: 5_000,
+    });
+    return {
+      arguments: fs.readFileSync(argumentsPath, "utf8").split("\0").slice(0, -1),
+      result,
+    };
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+function runApprovedExceptionStep(exceptionMode: string) {
+  const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
+  const approve = step(workflow.jobs["approve-exception"], "Record approved E2E exception");
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-approve-"));
+  const binDir = path.join(tempDir, "bin");
+  const argumentsPath = path.join(tempDir, "node-arguments");
+  fs.mkdirSync(binDir);
+  fs.writeFileSync(
+    path.join(binDir, "node"),
+    '#!/usr/bin/env bash\nset -euo pipefail\nprintf \'%s\\0\' "$@" > "$FAKE_NODE_ARGUMENTS"\n',
+    { mode: 0o755 },
+  );
+
+  try {
+    const result = spawnSync("bash", ["-e", "-o", "pipefail", "-c", approve.run!], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        APPROVAL_RUN_ATTEMPT: "1",
+        APPROVAL_RUN_ID: "101",
+        EXCEPTION_MODE: exceptionMode,
+        EXPECTED_BASE_SHA: BASE_SHA,
+        EXPECTED_HEAD_SHA: HEAD_SHA,
+        FAKE_NODE_ARGUMENTS: argumentsPath,
+        GITHUB_TOKEN: "token",
+        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+        PR_NUMBER: "42",
+        WORKFLOW_SHA,
       },
       timeout: 5_000,
     });
@@ -273,6 +314,7 @@ describe("PR E2E gate workflow", () => {
     const initialize = workflow.jobs.initialize;
     const cancel = workflow.jobs["cancel-superseded"];
     const coordinate = workflow.jobs.coordinate;
+    const approveException = workflow.jobs["approve-exception"];
     const resolveException = workflow.jobs["resolve-exception"];
 
     expect(workflow.name).toBe("E2E / PR Gate");
@@ -360,6 +402,32 @@ describe("PR E2E gate workflow", () => {
     expect(coordinate.concurrency?.group).toBe(
       "pr-e2e-gate-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}",
     );
+    expect(coordinate.outputs).toEqual({
+      exception_mode: "${{ steps.start.outputs.exception_mode }}",
+      exception_pr_number: "${{ steps.start.outputs.exception_pr_number }}",
+      exception_head_sha: "${{ steps.start.outputs.exception_head_sha }}",
+      exception_base_sha: "${{ steps.start.outputs.exception_base_sha }}",
+    });
+    expect(approveException.name).toBe("Approve no-secret E2E exception");
+    expect(approveException.needs).toBe("coordinate");
+    expect(approveException.if).toBe(
+      "${{ needs.coordinate.result == 'success' && needs.coordinate.outputs.exception_mode != '' && github.run_attempt == 1 }}",
+    );
+    expect(approveException.environment).toEqual({
+      name: "e2e-no-secret-exception",
+      deployment: false,
+    });
+    expect(approveException.permissions).toEqual({
+      actions: "read",
+      checks: "write",
+      contents: "read",
+      "pull-requests": "read",
+    });
+    expect(approveException.concurrency).toEqual({
+      group: "pr-e2e-gate-approve-${{ needs.coordinate.outputs.exception_pr_number }}",
+      "cancel-in-progress": true,
+    });
+    expect(approveException.secrets).toBeUndefined();
     expect(resolveException.if).toContain("github.event_name == 'workflow_dispatch'");
     expect(resolveException.if).toContain("github.ref == 'refs/heads/main'");
     expect(resolveException.permissions).toEqual({
@@ -378,7 +446,28 @@ describe("PR E2E gate workflow", () => {
     expect(step(initialize, "Reserve exact-diff gate").run).toContain('--base "$BASE_SHA"');
     const start = step(coordinate, "Start evaluation");
     expect(start.env?.CI_DISPLAY_TITLE).toBe("${{ github.event.workflow_run.display_title }}");
+    expect(start.env?.GATE_RUN_ID).toBe("${{ github.run_id }}");
     expect(start.run).toContain('--ci-display-title "$CI_DISPLAY_TITLE"');
+    expect(start.run).toContain('--gate-run-id "$GATE_RUN_ID"');
+    const approval = step(approveException, "Record approved E2E exception");
+    expect(approval.env).toEqual({
+      APPROVAL_RUN_ATTEMPT: "${{ github.run_attempt }}",
+      APPROVAL_RUN_ID: "${{ github.run_id }}",
+      EXCEPTION_MODE: "${{ needs.coordinate.outputs.exception_mode }}",
+      EXPECTED_BASE_SHA: "${{ needs.coordinate.outputs.exception_base_sha }}",
+      EXPECTED_HEAD_SHA: "${{ needs.coordinate.outputs.exception_head_sha }}",
+      GITHUB_TOKEN: "${{ github.token }}",
+      PR_NUMBER: "${{ needs.coordinate.outputs.exception_pr_number }}",
+      WORKFLOW_SHA: "${{ github.workflow_sha }}",
+    });
+    expect(approval.run).toContain("--mode resolve-approved");
+    expect(approval.run).toContain('--exception-mode "$EXCEPTION_MODE"');
+    expect(approval.run).toContain('--pr "$PR_NUMBER"');
+    expect(approval.run).toContain('--head "$EXPECTED_HEAD_SHA"');
+    expect(approval.run).toContain('--base "$EXPECTED_BASE_SHA"');
+    expect(approval.run).toContain('--workflow-sha "$WORKFLOW_SHA"');
+    expect(approval.run).toContain('--approval-run-id "$APPROVAL_RUN_ID"');
+    expect(approval.run).toContain('--approval-run-attempt "$APPROVAL_RUN_ATTEMPT"');
     const resolution = step(resolveException, "Record E2E exception");
     expect(resolution.env?.OPERATION).toBe("${{ inputs.operation }}");
     expect(resolution.env?.WORKFLOW_SHA).toBe("${{ github.workflow_sha }}");
@@ -407,7 +496,7 @@ describe("PR E2E gate workflow", () => {
       (candidate) => candidate.name === "Install controller dependencies",
     );
 
-    expect(checkouts).toHaveLength(4);
+    expect(checkouts).toHaveLength(5);
     expect(
       checkouts.every(
         (checkout) =>
@@ -415,10 +504,10 @@ describe("PR E2E gate workflow", () => {
           checkout.with?.["persist-credentials"] === false,
       ),
     ).toBe(true);
-    expect(nodeSetups).toHaveLength(4);
+    expect(nodeSetups).toHaveLength(5);
     expect(nodeSetups.every((setup) => setup.with?.["node-version"] === "22")).toBe(true);
     expect(nodeSetups.every((setup) => !("cache" in (setup.with ?? {})))).toBe(true);
-    expect(installs).toHaveLength(4);
+    expect(installs).toHaveLength(5);
     expect(installs.every((install) => install.run === "npm ci --ignore-scripts")).toBe(true);
     expect(
       allSteps.some((candidate) => candidate.uses?.startsWith("actions/download-artifact@")),
@@ -463,6 +552,34 @@ describe("PR E2E gate workflow", () => {
 
     expect(execution.result.status).toBe(0);
     expect(execution.arguments[prFlag + 1]).toBe("");
+  });
+
+  it("passes the approved exception identity as inert exact arguments", () => {
+    const exceptionMode = "resolve-fork;printf injected";
+    const execution = runApprovedExceptionStep(exceptionMode);
+
+    expect(execution.result.status).toBe(0);
+    expect(execution.result.stderr).toBe("");
+    expect(execution.arguments).toEqual([
+      "--experimental-strip-types",
+      "tools/e2e/pr-e2e-gate.mts",
+      "--mode",
+      "resolve-approved",
+      "--exception-mode",
+      exceptionMode,
+      "--pr",
+      "42",
+      "--head",
+      HEAD_SHA,
+      "--base",
+      BASE_SHA,
+      "--workflow-sha",
+      WORKFLOW_SHA,
+      "--approval-run-id",
+      "101",
+      "--approval-run-attempt",
+      "1",
+    ]);
   });
 
   it("validates the E2E run against the PR head, base, and trusted workflow commits", () => {

@@ -142,23 +142,49 @@ Credential-bearing E2E is dispatched only for internal revisions whose plan
 does not include the `e2e-control-plane` family. A fork revision that selects
 jobs and an internal revision with that family both complete the exact-diff
 gate as failed without dispatching the selected credential-bearing jobs or
-exposing repository secrets. Non-secret PR CI remains required. A maintainer
-or administrator can resolve that exact revision only through the workflow's
-typed manual dispatch on `main`, choosing `resolve-fork` or
-`resolve-control-plane`. The maintainer must provide both `expected_head_sha`
-and `expected_base_sha`.
-The controller revalidates the open PR, exact head and base SHAs, repository
-origin, maintainer role, deterministic plan, matching failed gate, and that the
-checked-out controller commit is either still `main` or has only a compatible
-safe descendant as described above. The result records an explicit no-secret
-exception with a bounded reason and optional
-`NVIDIA/NemoClaw` Actions run URL; it does not claim the waived jobs passed.
-The URL's shape is validated, but its run contents are not. The privileged
-dispatch and reason are an auditable maintainer assertion; the controller does
-not query a separate approval record. Immediately before recording success,
-the controller reads the live PR again and requires the same exact head and
-base. Any new commit receives a different gate and requires a new decision; a
-base change also invalidates the decision.
+exposing repository secrets. Non-secret PR CI remains required. The failed
+check links to the same `E2E / PR Gate` run and publishes only allowlisted
+exception metadata for its exact PR number, mode, head SHA, and base SHA. That
+run starts `Approve no-secret E2E exception`, which waits on the protected
+`e2e-no-secret-exception` environment with `deployment: false` and therefore
+does not create a deployment record. A maintainer opens the linked run, chooses
+**Review deployments**, selects that environment, and approves it. The comment
+is optional; the workflow reads both the reviewer and comment from GitHub's run
+approval history rather than accepting an actor supplied by the job.
+
+Before rollout, create `e2e-no-secret-exception` in the repository with one or
+more required reviewers whose approving members have repository `maintain` or
+`admin` permission. Do not add environment secrets, variables, or custom
+protection apps; this job records a no-secret review decision and runs no
+PR-controlled code. Prefer disabling administrator bypass so every decision
+appears in the approval history. A missing or unprotected
+environment does not produce the one exact approval record the controller
+requires, so resolution fails closed. GitHub approval history is not bound to
+a run attempt, and the controller consequently rejects reruns of an approval
+run. Trigger fresh upstream PR CI to create a new gate run, or use the typed
+manual fallback described below. Per-PR approval concurrency cancels an older
+waiting job when a newer exact revision reaches the gate.
+
+For the button path, the controller requires a first-attempt, in-progress run
+of this exact workflow on `main`, at the trusted workflow SHA and with the
+`workflow_run` event. It requires exactly one approved review that names only
+the exact environment, then verifies that the recorded reviewer still has
+repository `maintain` or `admin` permission. The shared resolver revalidates
+the open PR, repository origin, exact head and base SHAs, deterministic plan,
+matching failed gate, and that the controller commit is either still `main` or
+has only a compatible safe descendant as described above. Immediately before
+recording success, it reads the live PR again and requires the same exact head
+and base. The result records the reviewer, bounded optional comment, validated
+approval-run URL, plan hash, and waived jobs; it never claims those jobs passed.
+
+The typed manual dispatch on `main` remains available as a fallback. Choose
+`resolve-fork` or `resolve-control-plane` and provide the PR number, current
+`expected_head_sha`, current `expected_base_sha`, a 10–500-character reason,
+and optionally an `NVIDIA/NemoClaw` Actions run URL. The controller applies the
+same PR, role, plan, failed-check, compatible-`main`, and final stale-revision
+checks. It validates the optional URL's shape but does not inspect that run's
+contents. Any new commit receives a different gate and requires a new decision;
+a base change also invalidates the decision.
 
 The Vitest reporter writes one `risk-signal.json` for each selected job and
 matrix shard.

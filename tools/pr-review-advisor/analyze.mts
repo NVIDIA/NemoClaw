@@ -2300,12 +2300,46 @@ export function normalizeCombinedE2eResult(
     recommendationMetadata,
     metadata.deterministic.riskPlan,
   );
+  const inventory = trustedE2eRecommendationInventory();
+  const selectorTypes = new Map<string, "job" | "target">([
+    ...inventory.allowedJobIds.map((id) => [id, "job"] as const),
+    ...inventory.liveSupportedTargetIds.map((id) => [id, "target"] as const),
+  ]);
+  const targetInput = isObjectRecord(object.targets) ? object.targets : {};
+  const coverageTargets = (
+    tests: E2eCoverageResult["requiredTests"],
+    required: boolean,
+  ): Array<Record<string, unknown>> =>
+    tests.flatMap((test) => {
+      const selectorType = selectorTypes.get(test.id);
+      return selectorType
+        ? [
+            {
+              id: test.id,
+              workflow: inventory.workflow,
+              selectorType,
+              required,
+              reason: "Align this trusted selector with the normalized coverage decision.",
+            },
+          ]
+        : [];
+    });
   const normalizedTargets = normalizeE2eTargetAdvisorResult(
-    object.targets ?? {},
+    {
+      ...targetInput,
+      required: [
+        ...recordItems(targetInput.required),
+        ...coverageTargets(coverage.requiredTests, true),
+      ],
+      optional: [
+        ...recordItems(targetInput.optional),
+        ...coverageTargets(coverage.optionalTests, false),
+      ],
+    },
     recommendationMetadata,
     { riskPlan: metadata.deterministic.riskPlan },
   );
-  return {
+  return reconcileCombinedE2eResult({
     coverage,
     targets: {
       relevantChangedFiles: normalizedTargets.relevantChangedFiles,
@@ -2318,6 +2352,56 @@ export function normalizeCombinedE2eResult(
       noTargetE2eReason: normalizedTargets.noTargetE2eReason,
       confidence: normalizedTargets.confidence,
     },
+  });
+}
+
+function reconcileCombinedE2eResult(result: CombinedE2eResult): CombinedE2eResult {
+  const inventory = trustedE2eRecommendationInventory();
+  const regularIds = new Set([...inventory.allowedJobIds, ...inventory.liveSupportedTargetIds]);
+  const requiredIds = [
+    ...new Set([
+      ...result.coverage.requiredTests.map((item) => item.id),
+      ...result.targets.required.filter((item) => regularIds.has(item.id)).map((item) => item.id),
+    ]),
+  ];
+  const requiredIdSet = new Set(requiredIds);
+  const optionalIds = [
+    ...new Set([
+      ...result.coverage.optionalTests.map((item) => item.id),
+      ...result.targets.optional.filter((item) => regularIds.has(item.id)).map((item) => item.id),
+    ]),
+  ].filter((id) => !requiredIdSet.has(id));
+  const coverageById = new Map(
+    [...result.coverage.requiredTests, ...result.coverage.optionalTests].map((item) => [
+      item.id,
+      item,
+    ]),
+  );
+  const alignedCoverage = (ids: readonly string[]): E2eCoverageResult["requiredTests"] =>
+    ids.map(
+      (id) =>
+        coverageById.get(id) ?? {
+          id,
+          reason: `Selected from the trusted checked-in E2E coverage inventory.`,
+        },
+    );
+  const requiredCoverage = alignedCoverage(requiredIds);
+  const optionalCoverage = alignedCoverage(optionalIds);
+  return {
+    coverage: {
+      ...result.coverage,
+      requiredTests: requiredCoverage,
+      optionalTests: optionalCoverage,
+      noE2eReason:
+        requiredCoverage.length > 0 || optionalCoverage.length > 0
+          ? null
+          : "No deterministic or trusted-inventory E2E coverage was selected.",
+      confidence:
+        requiredCoverage.length > 0 && result.coverage.confidence === "low"
+          ? "medium"
+          : result.coverage.confidence,
+    },
+    targets: result.targets,
   };
 }
 

@@ -9,8 +9,12 @@ import YAML from "yaml";
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 export type WorkflowJob = {
+  concurrency?: { group: string; "cancel-in-progress": boolean };
+  environment?: string | { name: string; deployment?: boolean };
   if?: string;
+  name?: string;
   needs?: string | string[];
+  outputs?: Record<string, string>;
   "runs-on"?: string;
   "timeout-minutes"?: number;
   uses?: string;

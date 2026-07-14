@@ -42,6 +42,7 @@ const WORKFLOW_SHA = "d".repeat(40);
 const ADVANCED_WORKFLOW_SHA = "e".repeat(40);
 const CI_RUN_ID = 99;
 const CI_RUN_ATTEMPT = 3;
+const GATE_RUN_ID = 77;
 const CORRELATION_ID = "12345678-1234-4123-8123-123456789abc";
 const BROAD_FILES = [
   "src/lib/onboard.ts",
@@ -180,6 +181,8 @@ function startCommand(workDir: string, prNumber = "42") {
     String(CI_RUN_ATTEMPT),
     "--ci-run-id",
     String(CI_RUN_ID),
+    "--gate-run-id",
+    String(GATE_RUN_ID),
     "--pr",
     prNumber,
     "--work-dir",
@@ -253,6 +256,8 @@ describe("PR E2E controller", () => {
           String(CI_RUN_ATTEMPT),
           "--ci-run-id",
           String(CI_RUN_ID),
+          "--gate-run-id",
+          String(GATE_RUN_ID),
           "--pr",
           "42",
           "--work-dir",
@@ -262,6 +267,7 @@ describe("PR E2E controller", () => {
         mode: "start",
         ciRunAttempt: CI_RUN_ATTEMPT,
         ciRunId: CI_RUN_ID,
+        gateRunId: GATE_RUN_ID,
         prNumber: 42,
         planPath: path.join(workDir, "risk-plan.json"),
         statePath: path.join(workDir, "controller-state.json"),
@@ -970,6 +976,7 @@ describe("PR E2E controller", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter(
         [
+          emptyPrGateCheckRunsRoute(),
           pullRequestDetailRoute({
             ...pullRequest(),
             base: { ...pullRequest().base, sha: "c".repeat(40) },
@@ -983,8 +990,77 @@ describe("PR E2E controller", () => {
       await expect(
         startPrGate({ ...startCommand(workDir), ciConclusion: "failure" }),
       ).rejects.toThrow(/expected exact head and base/u);
-      expect(requests).toHaveLength(1);
-      expect(requests.some((request) => request.url.includes("/check-runs"))).toBe(false);
+      expect(requests).toHaveLength(2);
+      expect(requests.filter((request) => request.url.includes("/check-runs?"))).toHaveLength(1);
+      expect(requests.some((request) => request.url.endsWith("/check-runs"))).toBe(false);
+      expect(fs.readFileSync(outputPath, "utf8")).toBe("");
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("recovers a superseded exact-diff check for the workflow cleanup step", async () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-superseded-"));
+    const outputPath = path.join(workDir, "github-output");
+    fs.writeFileSync(outputPath, "", { mode: 0o600 });
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    vi.stubEnv("GITHUB_OUTPUT", outputPath);
+    const requests: RecordedGitHubRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          existingPrGateCheckRunsRoute(),
+          pullRequestDetailRoute({
+            ...pullRequest(),
+            head: { ...pullRequest().head, sha: "c".repeat(40) },
+          }),
+        ],
+        requests,
+      ),
+    );
+
+    try {
+      await expect(startPrGate(startCommand(workDir))).rejects.toThrow(
+        /expected exact head and base/u,
+      );
+      expect(requests).toHaveLength(2);
+      expect(requests.some((request) => request.url.endsWith("/check-runs"))).toBe(false);
+      expect(requests.some((request) => request.method === "PATCH")).toBe(false);
+      expect(fs.readFileSync(outputPath, "utf8")).toBe("check_id=17\n");
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not reopen a completed check when a superseded CI event arrives", async () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-completed-"));
+    const outputPath = path.join(workDir, "github-output");
+    fs.writeFileSync(outputPath, "", { mode: 0o600 });
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    vi.stubEnv("GITHUB_OUTPUT", outputPath);
+    const requests: RecordedGitHubRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          existingPrGateCheckRunsRoute({ status: "completed", conclusion: "success" }),
+          pullRequestDetailRoute({
+            ...pullRequest(),
+            head: { ...pullRequest().head, sha: "c".repeat(40) },
+          }),
+        ],
+        requests,
+      ),
+    );
+
+    try {
+      await expect(startPrGate(startCommand(workDir))).rejects.toThrow(
+        /expected exact head and base/u,
+      );
+      expect(requests).toHaveLength(2);
+      expect(requests.some((request) => request.url.endsWith("/check-runs"))).toBe(false);
+      expect(requests.some((request) => request.method === "PATCH")).toBe(false);
       expect(fs.readFileSync(outputPath, "utf8")).toBe("");
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
@@ -1211,7 +1287,7 @@ describe("PR E2E controller", () => {
               url.includes(`/commits/${HEAD_SHA}/check-runs?`) && method === "GET",
             () => {
               checkListCalls += 1;
-              return checkListCalls === 1
+              return checkListCalls <= 2
                 ? githubResponse({ total_count: 0, check_runs: [] })
                 : githubResponse({ total_count: 1, check_runs: [exactPrGateCheck()] });
             },

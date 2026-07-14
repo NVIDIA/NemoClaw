@@ -11,6 +11,13 @@ const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "pr-review
 const DEFAULT_PACKAGE_LOCK_PATH = join(REPO_ROOT, "package-lock.json");
 const TRUSTED_WORKFLOW_REF = "${{ github.workflow_sha }}";
 const CANONICAL_ADVISOR_NPM_CI = "npm ci --ignore-scripts --no-audit --no-fund";
+const FORBIDDEN_ARTIFACT_DOWNLOAD_WITH_KEYS = [
+  "run-id",
+  "github-token",
+  "repository",
+  "pattern",
+  "merge-multiple",
+] as const;
 const ADVISOR_RUNTIME_PACKAGE_PINS = [
   { packageName: "@earendil-works/pi-coding-agent", envName: "PI_SDK_VERSION", version: "0.80.6" },
   { packageName: "typebox", envName: "TYPEBOX_VERSION", version: "1.1.38" },
@@ -501,6 +508,9 @@ function checkPublishJob(errors: string[], publishJob: WorkflowRecord): void {
     EXPECTED_HEAD_SHA: "${{ github.event.pull_request.head.sha }}",
     TRUSTED_WORKFLOW_SHA: "${{ github.workflow_sha }}",
     PR_BASE_SHA: "${{ github.event.pull_request.base.sha }}",
+    PUBLISH_ARTIFACT_DIR: "${{ github.workspace }}/publish-artifacts/pr-review-advisor",
+    SECONDARY_PUBLISH_ARTIFACT_DIR:
+      "${{ github.workspace }}/publish-artifacts/pr-review-advisor-nemotron-ultra",
   })) {
     requireEnv(errors, "publish job", publishJob, key, expected);
   }
@@ -522,33 +532,94 @@ function checkPublishJob(errors: string[], publishJob: WorkflowRecord): void {
   const download = requireStep(errors, steps, "Download primary advisor artifact");
   requireWith(errors, download, "name", "pr-review-advisor");
   requireWith(errors, download, "path", "publish-artifacts/pr-review-advisor");
-  for (const forbidden of ["run-id", "github-token", "repository", "pattern", "merge-multiple"]) {
+  if (download && booleanValue(download["continue-on-error"]) === true) {
+    errors.push("primary advisor artifact download must fail closed");
+  }
+  for (const forbidden of FORBIDDEN_ARTIFACT_DOWNLOAD_WITH_KEYS) {
     if (Object.hasOwn(asRecord(download?.with), forbidden)) {
       errors.push(`Download primary advisor artifact must not set with.${forbidden}`);
     }
   }
 
-  const validate = requireStep(errors, steps, "Validate primary advisor artifact");
+  const secondaryDownload = requireStep(errors, steps, "Download secondary advisor artifact");
+  requireWith(errors, secondaryDownload, "name", "pr-review-advisor-nemotron-ultra");
+  requireWith(
+    errors,
+    secondaryDownload,
+    "path",
+    "publish-artifacts/pr-review-advisor-nemotron-ultra",
+  );
+  if (stringValue(secondaryDownload?.id) !== "download-secondary-advisor-artifact") {
+    errors.push(
+      "Download secondary advisor artifact id must be download-secondary-advisor-artifact",
+    );
+  }
+  if (secondaryDownload && booleanValue(secondaryDownload["continue-on-error"]) !== true) {
+    errors.push("secondary advisor artifact download must remain non-blocking");
+  }
+  for (const forbidden of FORBIDDEN_ARTIFACT_DOWNLOAD_WITH_KEYS) {
+    if (Object.hasOwn(asRecord(secondaryDownload?.with), forbidden)) {
+      errors.push(`Download secondary advisor artifact must not set with.${forbidden}`);
+    }
+  }
+
+  const validate = requireStep(errors, steps, "Validate advisor artifacts");
+  if (stringValue(validate?.id) !== "validate-advisor-artifacts") {
+    errors.push("Validate advisor artifacts id must be validate-advisor-artifacts");
+  }
+  if (
+    asRecord(validate?.env).SECONDARY_ARTIFACT_OUTCOME !==
+    "${{ steps.download-secondary-advisor-artifact.outcome }}"
+  ) {
+    errors.push("Validate advisor artifacts must use the trusted secondary download step outcome");
+  }
   for (const fragment of [
     "lstatSync",
     "isSymbolicLink",
     "realpathSync",
+    "isDeepStrictEqual",
     "PR_REVIEW_ADVISOR_MAX_RESULT_BYTES",
     "PR_REVIEW_ADVISOR_MAX_SUMMARY_BYTES",
     "JSON.parse",
+    'ANALYSIS_RESULT_PATH="$PUBLISH_ARTIFACT_DIR/pr-review-advisor-result.json"',
+    'RESULT_PATH="$PUBLISH_ARTIFACT_DIR/pr-review-advisor-final-result.json"',
+    'SUMMARY_PATH="$PUBLISH_ARTIFACT_DIR/pr-review-advisor-summary.md"',
+    'SECONDARY_ANALYSIS_RESULT_PATH="$SECONDARY_PUBLISH_ARTIFACT_DIR/pr-review-advisor-result.json"',
+    'SECONDARY_RESULT_PATH="$SECONDARY_PUBLISH_ARTIFACT_DIR/pr-review-advisor-final-result.json"',
+    'SECONDARY_SUMMARY_PATH="$SECONDARY_PUBLISH_ARTIFACT_DIR/pr-review-advisor-summary.md"',
+    '"$SECONDARY_ARTIFACT_OUTCOME" != "success"',
+    '"$SECONDARY_ARTIFACT_OUTCOME" != "failure"',
     "result.version !== 1",
     "result.headSha !== process.env.EXPECTED_HEAD_SHA",
     "Array.isArray(result.findings)",
     "result.e2e.coverage",
     "result.e2e.targets",
+    "statusCount !== 1",
+    "validateAnalysisResult(analysisResult, finalResult, label)",
+    "let secondaryArtifactValidated = false",
+    'process.env.SECONDARY_ARTIFACT_OUTCOME === "success"',
+    "process.env.SECONDARY_PUBLISH_ARTIFACT_DIR",
+    "secondaryArtifactValidated = true",
+    "catch {",
+    "process.env.GITHUB_OUTPUT",
+    "secondary_artifact_validated=${secondaryArtifactValidated}",
     'gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER"',
     '"$LIVE_HEAD_SHA" != "$EXPECTED_HEAD_SHA"',
     '"$LIVE_BASE_SHA" != "$PR_BASE_SHA"',
   ]) {
     requireRunContains(errors, validate, fragment);
   }
+  requireRunOrder(errors, validate, '"primary advisor",', "let secondaryArtifactValidated = false");
 
   const comment = requireStep(errors, steps, "Post PR review advisor comment");
+  if (
+    asRecord(comment?.env).SECONDARY_ARTIFACT_VALIDATED !==
+    "${{ steps.validate-advisor-artifacts.outputs.secondary_artifact_validated }}"
+  ) {
+    errors.push(
+      "Post PR review advisor comment must use the trusted secondary artifact validation output",
+    );
+  }
   requireRunContains(errors, comment, '"$ADVISOR_DIR/tools/pr-review-advisor/comment.mts"');
   requireRunContains(
     errors,
@@ -560,13 +631,42 @@ function checkPublishJob(errors: string[], publishJob: WorkflowRecord): void {
     comment,
     '--result "$PUBLISH_ARTIFACT_DIR/pr-review-advisor-final-result.json"',
   );
-  const validateIndex = steps.findIndex(
-    (step) => step.name === "Validate primary advisor artifact",
+  requireRunContains(
+    errors,
+    comment,
+    '--analysis-result "$PUBLISH_ARTIFACT_DIR/pr-review-advisor-result.json"',
   );
+  requireRunContains(errors, comment, 'if [ "$SECONDARY_ARTIFACT_VALIDATED" = "true" ]');
+  requireRunContains(
+    errors,
+    comment,
+    '--second-opinion-analysis-result "$SECONDARY_PUBLISH_ARTIFACT_DIR/pr-review-advisor-result.json"',
+  );
+  requireRunContains(
+    errors,
+    comment,
+    '--second-opinion-result "$SECONDARY_PUBLISH_ARTIFACT_DIR/pr-review-advisor-final-result.json"',
+  );
+  requireRunContains(errors, comment, '"${SECONDARY_ARGS[@]}"');
+  const primaryDownloadIndex = steps.findIndex(
+    (step) => step.name === "Download primary advisor artifact",
+  );
+  const secondaryDownloadIndex = steps.findIndex(
+    (step) => step.name === "Download secondary advisor artifact",
+  );
+  const validateIndex = steps.findIndex((step) => step.name === "Validate advisor artifacts");
   const commentIndex = steps.findIndex((step) => step.name === "Post PR review advisor comment");
-  if (validateIndex < 0 || commentIndex < 0 || validateIndex > commentIndex) {
+  if (
+    primaryDownloadIndex < 0 ||
+    secondaryDownloadIndex < 0 ||
+    validateIndex < 0 ||
+    commentIndex < 0 ||
+    primaryDownloadIndex > validateIndex ||
+    secondaryDownloadIndex > validateIndex ||
+    validateIndex > commentIndex
+  ) {
     errors.push(
-      "primary artifact and live PR identity must be validated before the trusted comment script",
+      "same-run advisor artifacts and live PR identity must be validated before the trusted comment script",
     );
   }
 }
