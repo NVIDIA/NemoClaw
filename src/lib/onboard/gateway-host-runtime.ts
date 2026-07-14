@@ -14,8 +14,6 @@
 
 import fs from "node:fs";
 
-import { GATEWAY_PORT } from "../core/ports";
-import { getGatewayStartNetworkEnv } from "./docker-driver-gateway-env";
 import type { DockerDriverGatewayPortListenerScan } from "./docker-driver-gateway-port-listener";
 import { hasOpenShellGatewayUserService } from "./docker-driver-gateway-service";
 import { isGatewayHttpReady, waitForGatewayHttpReady } from "./gateway-http-readiness";
@@ -28,16 +26,31 @@ import {
 } from "./gateway-ownership";
 import type { PortProbeResult } from "./preflight";
 
+/** `systemctl is-active` is a local query; anything slower than this is wedged. */
+const SUPERVISOR_PROBE_TIMEOUT_MS = 5_000;
+
 export interface GatewayHostRuntimeDeps {
   applyOverlayfsAutoFix(clusterImage: string): string | null;
   checkGatewayPortAvailable(): Promise<PortProbeResult>;
-  getDockerDriverGatewayPortListenerScan(
+  /**
+   * Read lazily: the onboarding entrypoint rebinds its gateway port at runtime
+   * when an authoritative gateway is selected, so a captured value goes stale.
+   */
+  gatewayPort(): number;
+  /**
+   * Unfiltered listener enumeration. An externally supervised gateway is an
+   * ordinary systemd-run executable with no Docker-driver env markers, so the
+   * Docker-driver-filtered scan would discard it and report an unknown listener.
+   */
+  getGatewayPortListenerRawScan(
     portCheck: PortProbeResult,
     opts?: { gatewayBin?: string | null },
   ): DockerDriverGatewayPortListenerScan;
   getInstalledOpenshellVersion(): string | null;
   resolveOpenShellGatewayBinary(): string | null;
   spawnSyncImpl?: typeof import("node:child_process").spawnSync;
+  /** Overrides the readiness request; defaults to a real probe of `endpoint`. */
+  probeGatewayHttpReady?(endpoint: string | null): Promise<boolean>;
   waitForGatewayHttpReady(): Promise<boolean>;
 }
 
@@ -47,6 +60,8 @@ export interface GatewayHostRuntime {
    * owns. Applies to onboarding, rebuild, and recovery alike.
    */
   assertGatewayStartAllowed(exitOnFailure: boolean): void;
+  /** HTTPS endpoint of the gateway this process operates. */
+  getGatewayLocalEndpoint(): string;
   getGatewayOwner(): GatewayOwner;
   getGatewayStartEnv(): Record<string, string>;
   /** Gateway-ownership dependencies consumed by the onboarding FSM handler. */
@@ -58,25 +73,27 @@ export interface GatewayHostRuntime {
 }
 
 export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayHostRuntime {
-  let cachedOwner: GatewayOwner | null = null;
-
   /**
    * Resolve the one gateway lifecycle authority for this process. A malformed
    * declaration throws instead of degrading to self-management: a host that
    * meant to hand the gateway to an external supervisor must never silently get
    * a second NemoClaw-owned gateway on the same port.
+   *
+   * Recomputed on every call rather than memoized. This runtime is constructed
+   * once per process, but both of its inputs can change underneath it —
+   * onboarding installs OpenShell, which may install the packaged gateway user
+   * service — and a stale owner is exactly the failure this contract exists to
+   * prevent.
    */
   function getGatewayOwner(): GatewayOwner {
-    if (cachedOwner) return cachedOwner;
     const loaded = loadGatewayManagementDeclaration();
     if (!loaded.ok) {
       throw new Error(`Invalid gateway management declaration: ${loaded.reason}`);
     }
-    cachedOwner = resolveGatewayOwner({
+    return resolveGatewayOwner({
       declaration: loaded.declaration,
       hasPackagedService: hasOpenShellGatewayUserService(),
     });
-    return cachedOwner;
   }
 
   function isSupervisorUnitActive(owner: GatewayOwner): boolean | null {
@@ -88,6 +105,10 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     const scope = supervisor.kind === "systemd-user" ? ["--user"] : [];
     const result = spawnSyncImpl("systemctl", [...scope, "is-active", supervisor.serviceName], {
       encoding: "utf-8",
+      // spawnSync blocks the event loop, so a wedged systemd/D-Bus session would
+      // otherwise stall onboarding indefinitely. A timeout surfaces as an error,
+      // which the unknown-supervisor path below already treats as "cannot tell".
+      timeout: SUPERVISOR_PROBE_TIMEOUT_MS,
     });
     if (result.error || result.status === null) return null;
     return String(result.stdout ?? "").trim() === "active";
@@ -108,9 +129,13 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
    * `evaluateGatewayAttachment`, which sees both values.
    */
   function waitForDeclaredGatewayHttpReady(owner: GatewayOwner): Promise<boolean> {
+    if (deps.probeGatewayHttpReady) return deps.probeGatewayHttpReady(owner.endpoint);
     if (!owner.endpoint) return deps.waitForGatewayHttpReady();
+    // The endpoint is constrained to a supported loopback origin at parse time,
+    // so this cannot be pointed at an arbitrary host.
+    const endpoint = owner.endpoint;
     return waitForGatewayHttpReady({
-      probe: () => isGatewayHttpReady(undefined, `${owner.endpoint}/`),
+      probe: () => isGatewayHttpReady(undefined, `${endpoint}/`),
     });
   }
 
@@ -120,12 +145,12 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
    */
   async function probeGatewayAttachment(owner: GatewayOwner): Promise<GatewayAttachmentProbe> {
     const portCheck = await deps.checkGatewayPortAvailable();
-    const scan = deps.getDockerDriverGatewayPortListenerScan(portCheck, {
+    const scan = deps.getGatewayPortListenerRawScan(portCheck, {
       gatewayBin: deps.resolveOpenShellGatewayBinary(),
     });
     const [firstPid] = scan.pids;
     return {
-      gatewayPort: GATEWAY_PORT,
+      gatewayPort: deps.gatewayPort(),
       httpReady: await waitForDeclaredGatewayHttpReady(owner),
       // `ok` means the port is free; anything else means something holds it.
       portOccupied: !portCheck.ok,
@@ -146,8 +171,20 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     }
   }
 
+  function getGatewayLocalEndpoint(): string {
+    const { getGatewayHttpsEndpoint } =
+      require("./docker-driver-gateway-env") as typeof import("./docker-driver-gateway-env");
+    return getGatewayHttpsEndpoint(deps.gatewayPort());
+  }
+
   function getGatewayStartEnv(): Record<string, string> {
-    const gatewayEnv = getGatewayStartNetworkEnv(GATEWAY_PORT);
+    // Resolved lazily, not through a module-scope import: the gateway env module
+    // reads NEMOCLAW_GATEWAY_BIND_ADDRESS at load, and callers that reload
+    // onboarding with a different environment drop it from the require cache.
+    // A hoisted binding would pin this module to the stale first instance.
+    const { getGatewayStartNetworkEnv } =
+      require("./docker-driver-gateway-env") as typeof import("./docker-driver-gateway-env");
+    const gatewayEnv = getGatewayStartNetworkEnv(deps.gatewayPort());
     const openshellVersion = deps.getInstalledOpenshellVersion();
     const stableGatewayImage = openshellVersion
       ? `ghcr.io/nvidia/openshell/cluster:${openshellVersion}`
@@ -165,6 +202,7 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
 
   return {
     assertGatewayStartAllowed,
+    getGatewayLocalEndpoint,
     getGatewayOwner,
     getGatewayStartEnv,
     machineGatewayOwnerDeps: { probeGatewayAttachment, resolveGatewayOwner: getGatewayOwner },

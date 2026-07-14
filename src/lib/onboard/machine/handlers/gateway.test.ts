@@ -517,7 +517,9 @@ describe("externally supervised gateway lifecycle authority", () => {
       httpReady: false,
     });
     const session = createSession();
-    session.steps = { gateway: { status: "complete" } } as Session["steps"];
+    session.steps = {
+      gateway: { status: "complete", startedAt: null, completedAt: null, error: null },
+    };
 
     await expect(
       handleGatewayState({ ...baseOptions(deps, "healthy", session), resume: true }),

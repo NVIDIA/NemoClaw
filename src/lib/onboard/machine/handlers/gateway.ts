@@ -112,7 +112,7 @@ async function handleGatewayStatePhase<Gpu>({
   // the port.
   const owner = deps.resolveGatewayOwner();
   if (isExternallySupervised(owner)) {
-    return attachToExternallySupervisedGateway(owner, session, deps);
+    return attachToExternallySupervisedGateway(owner, deps);
   }
 
   let gatewayReuseState = await deps.refreshDockerDriverGatewayReuseState(initialGatewayReuseState);
@@ -277,7 +277,6 @@ async function handleGatewayStatePhase<Gpu>({
  */
 async function attachToExternallySupervisedGateway<Gpu>(
   owner: GatewayOwner,
-  session: Session | null,
   deps: GatewayStateOptions<Gpu>["deps"],
 ): Promise<GatewayStateResult> {
   const supervisor = owner.supervisor?.serviceName ?? "an external supervisor";

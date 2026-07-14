@@ -647,6 +647,7 @@ const {
   getDockerDriverGatewayRuntimeDrift,
   getDockerDriverGatewayRuntimeDriftFromSnapshot,
   getDockerDriverGatewayStateDir,
+  getGatewayPortListenerRawScan,
   isDockerDriverGatewayPortListener,
   isDockerDriverGatewayProcess,
   isDockerDriverGatewayProcessAlive,
@@ -1395,10 +1396,6 @@ function checkGatewayPortAvailable() {
   return checkPortAvailable(GATEWAY_PORT, dockerDriverGatewayEnv.getGatewayPortCheckOptions());
 }
 
-function getGatewayLocalEndpoint(): string {
-  return dockerDriverGatewayEnv.getGatewayHttpsEndpoint(GATEWAY_PORT);
-}
-
 const { gatewayClusterHealthcheckPassed, repairGatewayBootstrapSecrets } =
   createGatewayBootstrapRepairHelpers({
     buildGatewayClusterExecArgv,
@@ -1760,8 +1757,6 @@ async function startGatewayWithOptions(
     gpuPassthrough = false,
   }: { exitOnFailure?: boolean; gpuPassthrough?: boolean } = {},
 ) {
-  // #6576: shared start entrypoint for the Docker-driver and legacy paths, so
-  // neither can launch a gateway an external supervisor owns.
   assertGatewayStartAllowed(exitOnFailure);
   step(2, 8, "Starting OpenShell gateway");
 
@@ -2175,15 +2170,20 @@ const applyOverlayfsAutoFix = overlayfsAutoFix.createOverlayfsAutoFix({
   ensurePatchedClusterImage: clusterImagePatch.ensurePatchedClusterImage,
 });
 
-const { assertGatewayStartAllowed, getGatewayStartEnv, machineGatewayOwnerDeps } =
-  createGatewayHostRuntime({
-    applyOverlayfsAutoFix,
-    checkGatewayPortAvailable,
-    getDockerDriverGatewayPortListenerScan,
-    getInstalledOpenshellVersion,
-    resolveOpenShellGatewayBinary,
-    waitForGatewayHttpReady,
-  });
+const {
+  assertGatewayStartAllowed,
+  getGatewayLocalEndpoint,
+  getGatewayStartEnv,
+  machineGatewayOwnerDeps,
+} = createGatewayHostRuntime({
+  applyOverlayfsAutoFix,
+  checkGatewayPortAvailable,
+  gatewayPort: () => GATEWAY_PORT,
+  getGatewayPortListenerRawScan,
+  getInstalledOpenshellVersion,
+  resolveOpenShellGatewayBinary,
+  waitForGatewayHttpReady,
+});
 
 async function recoverGatewayRuntime() {
   assertGatewayStartAllowed(false);

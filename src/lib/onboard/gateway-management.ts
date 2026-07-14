@@ -111,9 +111,19 @@ function requireNonEmptyString(value: unknown, field: string): string | { error:
 }
 
 /**
- * The endpoint is persisted and emitted in diagnostics, so it must not be able
- * to carry a secret. Reject embedded credentials, queries, and fragments; keep
- * it to a bare origin.
+ * Hosts a declared gateway endpoint may name. The gateway is supervised on this
+ * machine, so the endpoint is always loopback.
+ */
+const SUPPORTED_GATEWAY_ENDPOINT_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
+
+/**
+ * The endpoint is persisted, emitted in diagnostics, and — for an externally
+ * supervised gateway — used as the target of a readiness request. So it must
+ * neither carry a secret nor be able to point NemoClaw at an arbitrary host.
+ *
+ * Reject embedded credentials, queries, and fragments; keep it to a bare origin;
+ * and constrain it to the supported local gateway origins, so a declaration
+ * cannot direct a request at a remote, link-local, or cloud-metadata address.
  */
 function parseEndpoint(value: unknown): string | { error: string } {
   const raw = requireNonEmptyString(value, "endpoint");
@@ -135,6 +145,14 @@ function parseEndpoint(value: unknown): string | { error: string } {
   }
   if ((url.pathname && url.pathname !== "/") || raw.includes("@")) {
     return { error: "endpoint must be a bare origin (no path)" };
+  }
+  if (!SUPPORTED_GATEWAY_ENDPOINT_HOSTS.has(url.hostname)) {
+    return {
+      error:
+        `endpoint host ${url.hostname} is not a supported local gateway origin; ` +
+        `the declared gateway is supervised on this machine, so the endpoint must be loopback ` +
+        `(one of: ${[...SUPPORTED_GATEWAY_ENDPOINT_HOSTS].join(", ")})`,
+    };
   }
   return url.origin;
 }
