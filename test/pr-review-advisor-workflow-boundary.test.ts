@@ -16,7 +16,9 @@ const HEAD_SHA = "b".repeat(40);
 const BASE_SHA = "a".repeat(40);
 
 type Workflow = {
-  jobs?: Record<string, { steps?: Array<{ name?: string; run?: string }> }>;
+  on?: { pull_request_target?: { types?: string[] } };
+  concurrency?: { group?: string; "cancel-in-progress"?: boolean };
+  jobs?: Record<string, { if?: string; steps?: Array<{ name?: string; run?: string }> }>;
 };
 
 function workflowSource(): string {
@@ -47,6 +49,11 @@ function writeFakeCommand(binDir: string, name: string): void {
     `#!/bin/bash\nprintf '${name} %s\\n' "$*" >> "$CALL_LOG"\n`,
     { mode: 0o755 },
   );
+}
+
+function writeOptionalFixture(omitted: boolean | undefined, write: () => void): void {
+  const selectedWrite = omitted ? undefined : write;
+  selectedWrite?.();
 }
 
 function runPrepareWorkspace(
@@ -112,27 +119,76 @@ fi
 function runArtifactValidation(
   result: unknown,
   options: {
+    analysisResult?: unknown;
     summary?: string;
     liveHead?: string;
     liveBase?: string;
+    omitAnalysisResult?: boolean;
+    omitSummary?: boolean;
+    symlinkAnalysisResult?: boolean;
     symlinkResult?: boolean;
+    secondaryResult?: unknown;
+    secondaryAnalysisResult?: unknown;
+    secondarySummary?: string;
+    secondaryDownloadOutcome?: "success" | "failure" | "unexpected";
+    omitSecondaryArtifact?: boolean;
+    omitSecondarySummary?: boolean;
+    symlinkSecondaryResult?: boolean;
   } = {},
 ) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-publish-"));
   const artifactDir = path.join(tmp, "artifacts");
+  const secondaryArtifactDir = path.join(tmp, "secondary-artifacts");
   const binDir = path.join(tmp, "bin");
+  const githubOutputPath = path.join(tmp, "github-output");
+  const analysisResultPath = path.join(artifactDir, "pr-review-advisor-result.json");
+  const analysisResultFixturePath = path.join(tmp, "analysis-result-fixture.json");
   const resultPath = path.join(artifactDir, "pr-review-advisor-final-result.json");
   const resultFixturePath = path.join(tmp, "result-fixture.json");
+  const secondaryResult = options.secondaryResult ?? validPrimaryResult();
+  const secondaryResultPath = path.join(
+    secondaryArtifactDir,
+    "pr-review-advisor-final-result.json",
+  );
+  const secondaryResultFixturePath = path.join(tmp, "secondary-result-fixture.json");
   fs.mkdirSync(artifactDir);
   fs.mkdirSync(binDir);
   fs.writeFileSync(resultFixturePath, `${JSON.stringify(result)}\n`);
   options.symlinkResult
     ? fs.symlinkSync(resultFixturePath, resultPath)
     : fs.copyFileSync(resultFixturePath, resultPath);
-  fs.writeFileSync(
-    path.join(artifactDir, "pr-review-advisor-summary.md"),
-    options.summary ?? "# PR Review Advisor\n",
-  );
+  writeOptionalFixture(options.omitAnalysisResult, () => {
+    fs.writeFileSync(
+      analysisResultFixturePath,
+      `${JSON.stringify(options.analysisResult ?? result)}\n`,
+    );
+    options.symlinkAnalysisResult
+      ? fs.symlinkSync(analysisResultFixturePath, analysisResultPath)
+      : fs.copyFileSync(analysisResultFixturePath, analysisResultPath);
+  });
+  writeOptionalFixture(options.omitSummary, () => {
+    fs.writeFileSync(
+      path.join(artifactDir, "pr-review-advisor-summary.md"),
+      options.summary ?? "# PR Review Advisor\n",
+    );
+  });
+  writeOptionalFixture(options.omitSecondaryArtifact, () => {
+    fs.mkdirSync(secondaryArtifactDir);
+    fs.writeFileSync(secondaryResultFixturePath, `${JSON.stringify(secondaryResult)}\n`);
+    options.symlinkSecondaryResult
+      ? fs.symlinkSync(secondaryResultFixturePath, secondaryResultPath)
+      : fs.copyFileSync(secondaryResultFixturePath, secondaryResultPath);
+    fs.writeFileSync(
+      path.join(secondaryArtifactDir, "pr-review-advisor-result.json"),
+      `${JSON.stringify(options.secondaryAnalysisResult ?? secondaryResult)}\n`,
+    );
+    writeOptionalFixture(options.omitSecondarySummary, () => {
+      fs.writeFileSync(
+        path.join(secondaryArtifactDir, "pr-review-advisor-summary.md"),
+        options.secondarySummary ?? "# PR Review Advisor (second opinion)\n",
+      );
+    });
+  });
   fs.writeFileSync(
     path.join(binDir, "gh"),
     '#!/bin/bash\ncase "$*" in *".base.sha"*) printf \'%s\\n\' "$FAKE_LIVE_BASE" ;; *) printf \'%s\\n\' "$FAKE_LIVE_HEAD" ;; esac\n',
@@ -140,7 +196,7 @@ function runArtifactValidation(
   );
   const completed = spawnSync(
     "/bin/bash",
-    ["-c", workflowStepScript("publish", "Validate primary advisor artifact")],
+    ["-c", workflowStepScript("publish", "Validate advisor artifacts")],
     {
       cwd: ROOT,
       encoding: "utf8",
@@ -149,6 +205,7 @@ function runArtifactValidation(
         EXPECTED_HEAD_SHA: HEAD_SHA,
         FAKE_LIVE_BASE: options.liveBase ?? BASE_SHA,
         FAKE_LIVE_HEAD: options.liveHead ?? HEAD_SHA,
+        GITHUB_OUTPUT: githubOutputPath,
         GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
         PATH: `${binDir}:${process.env.PATH ?? ""}`,
         PR_BASE_SHA: BASE_SHA,
@@ -156,6 +213,8 @@ function runArtifactValidation(
         PR_REVIEW_ADVISOR_MAX_RESULT_BYTES: "2097152",
         PR_REVIEW_ADVISOR_MAX_SUMMARY_BYTES: "1048576",
         PUBLISH_ARTIFACT_DIR: artifactDir,
+        SECONDARY_ARTIFACT_OUTCOME: options.secondaryDownloadOutcome ?? "success",
+        SECONDARY_PUBLISH_ARTIFACT_DIR: secondaryArtifactDir,
         TRUSTED_WORKFLOW_SHA: "c".repeat(40),
       },
     },
@@ -163,6 +222,7 @@ function runArtifactValidation(
   return {
     ...completed,
     cleanup: () => fs.rmSync(tmp, { recursive: true, force: true }),
+    githubOutput: fs.existsSync(githubOutputPath) ? fs.readFileSync(githubOutputPath, "utf8") : "",
   };
 }
 
@@ -170,7 +230,7 @@ function validPrimaryResult(): Record<string, unknown> {
   return {
     version: 1,
     headSha: HEAD_SHA,
-    summary: { recommendation: "info_only" },
+    summary: { recommendation: "info_only", confidence: "high" },
     findings: [],
     e2e: { coverage: { requiredTests: [] }, targets: { required: [] } },
   };
@@ -229,6 +289,7 @@ describe("PR review advisor workflow boundary", () => {
   // source-shape-contract: security -- Exactly one advisor lane may write PR comments and neither privilege domain may gain other GitHub capabilities
   it("requires one advisor lane to publish the PR comment", () => {
     const source = fs.readFileSync(WORKFLOW_PATH, "utf8");
+    const workflow = YAML.parse(source) as Workflow;
     const noPrimary = validateMutation((workflow) =>
       workflow.replace("publish_comment: true", "publish_comment: false"),
     );
@@ -249,6 +310,15 @@ describe("PR review advisor workflow boundary", () => {
     );
 
     expect(source).toContain("publish_comment: true");
+    expect(workflow.on?.pull_request_target?.types).toContain("edited");
+    expect(workflow.concurrency?.group).toContain(
+      "github.event_name != 'pull_request_target' || github.event.action != 'edited' || github.event.changes.base != null",
+    );
+    expect(workflow.concurrency?.["cancel-in-progress"]).toBe(true);
+    for (const jobName of ["review", "publish"]) {
+      expect(workflow.jobs?.[jobName]?.if, jobName).toContain("github.event.action != 'edited'");
+      expect(workflow.jobs?.[jobName]?.if, jobName).toContain("github.event.changes.base != null");
+    }
     expect(noPrimary).toContain("advisor matrix must identify exactly one primary artifact lane");
     expect(twoPrimaries).toContain(
       "advisor matrix must identify exactly one primary artifact lane",
@@ -436,7 +506,8 @@ describe("PR review advisor workflow boundary", () => {
     const binDir = path.join(tmp, "bin");
     const callLog = path.join(tmp, "calls.log");
     fs.mkdirSync(binDir);
-    for (const name of ["npm", "rm", "ln"]) writeFakeCommand(binDir, name);
+    fs.mkdirSync(path.join(tmp, "advisor"));
+    writeFakeCommand(binDir, "npm");
     fs.writeFileSync(
       path.join(binDir, "dpkg-query"),
       `#!/bin/bash
@@ -483,6 +554,7 @@ printf 'sudo %s\\n' "$*" >> "$CALL_LOG"
             RIPGREP_VERSION: "14.1.0-1",
             RUNNER_TEMP: path.join(tmp, "runner"),
             TYPEBOX_VERSION: "test-typebox-version",
+            VITEST_VERSION: "test-vitest-version",
             YAML_VERSION: "test-yaml-version",
           },
         },
@@ -495,9 +567,9 @@ printf 'sudo %s\\n' "$*" >> "$CALL_LOG"
       expect(fs.readFileSync(callLog, "utf8")).toContain("dpkg-query -W -f=${Version} ripgrep");
       expect(fs.readFileSync(callLog, "utf8")).toContain("fdfind --version");
       expect(fs.readFileSync(callLog, "utf8")).toContain("rg --version");
-      expect(fs.readFileSync(callLog, "utf8")).toContain("--ignore-scripts");
-      expect(fs.readFileSync(callLog, "utf8")).toContain("typebox@test-typebox-version");
-      expect(fs.readFileSync(callLog, "utf8")).toContain("yaml@test-yaml-version");
+      expect(fs.readFileSync(callLog, "utf8")).toContain(
+        "npm ci --ignore-scripts --no-audit --no-fund",
+      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -550,27 +622,136 @@ process.exitCode = valid ? 0 : 1;`,
     }
   });
 
-  it("accepts a bounded same-head primary artifact for publication", () => {
+  it("accepts bounded same-head primary and secondary artifacts for publication", () => {
     const result = runArtifactValidation(validPrimaryResult());
     try {
       expect(result.status, result.stderr).toBe(0);
+      expect(result.githubOutput).toBe("secondary_artifact_validated=true\n");
     } finally {
       result.cleanup();
     }
   });
 
-  it("rejects malformed, wrong-head, stale, and symlinked publication artifacts", () => {
+  it("accepts a validated partial primary failure for publication", () => {
+    const partialPrimary = {
+      ...validPrimaryResult(),
+      summary: { recommendation: "info_only", confidence: "low" },
+      findings: [{ severity: "warning", title: "partial primary finding" }],
+    };
+    const result = runArtifactValidation(partialPrimary, {
+      analysisResult: {
+        failed: true,
+        partial: true,
+        reason: "provider stopped",
+        findingCount: 1,
+      },
+    });
+    try {
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.githubOutput).toBe("secondary_artifact_validated=true\n");
+    } finally {
+      result.cleanup();
+    }
+  });
+
+  it("accepts failed, partial, skipped, and unavailable second-opinion outcomes", () => {
+    const partialSecondary = {
+      ...validPrimaryResult(),
+      summary: { recommendation: "info_only", confidence: "low" },
+      findings: [{ severity: "warning", title: "partial second-opinion finding" }],
+    };
+    const cases = [
+      {
+        name: "failed partial",
+        options: {
+          secondaryResult: partialSecondary,
+          secondaryAnalysisResult: {
+            failed: true,
+            partial: true,
+            reason: "provider stopped",
+            findingCount: 1,
+          },
+        },
+        validated: true,
+      },
+      {
+        name: "failed before findings",
+        options: {
+          secondaryAnalysisResult: { failed: true, reason: "provider stopped" },
+        },
+        validated: true,
+      },
+      {
+        name: "skipped",
+        options: {
+          secondaryAnalysisResult: { skipped: true, reason: "model unavailable" },
+        },
+        validated: true,
+      },
+      {
+        name: "artifact unavailable",
+        options: {
+          secondaryDownloadOutcome: "failure" as const,
+          omitSecondaryArtifact: true,
+        },
+        validated: false,
+      },
+    ];
+    for (const { name, options, validated } of cases) {
+      const result = runArtifactValidation(validPrimaryResult(), options);
+      try {
+        expect(result.status, `${name}: ${result.stdout}${result.stderr}`).toBe(0);
+        expect(result.githubOutput, name).toBe(`secondary_artifact_validated=${validated}\n`);
+      } finally {
+        result.cleanup();
+      }
+    }
+  });
+
+  it("rejects malformed, wrong-head, stale, and symlinked primary artifacts", () => {
     const cases = [
       { name: "version", artifact: { ...validPrimaryResult(), version: 2 } },
       { name: "head", artifact: { ...validPrimaryResult(), headSha: "d".repeat(40) } },
       { name: "findings", artifact: { ...validPrimaryResult(), findings: null } },
       { name: "e2e", artifact: { ...validPrimaryResult(), e2e: {} } },
-      { name: "live head", artifact: validPrimaryResult(), liveHead: "e".repeat(40) },
-      { name: "live base", artifact: validPrimaryResult(), liveBase: "e".repeat(40) },
-      { name: "symlink", artifact: validPrimaryResult(), symlinkResult: true },
+      {
+        name: "unknown status",
+        artifact: validPrimaryResult(),
+        options: { analysisResult: { unexpected: true } },
+      },
+      {
+        name: "missing status",
+        artifact: validPrimaryResult(),
+        options: { omitAnalysisResult: true },
+      },
+      {
+        name: "missing summary",
+        artifact: validPrimaryResult(),
+        options: { omitSummary: true },
+      },
+      {
+        name: "symlinked status",
+        artifact: validPrimaryResult(),
+        options: { symlinkAnalysisResult: true },
+      },
+      {
+        name: "symlinked final result",
+        artifact: validPrimaryResult(),
+        options: { symlinkResult: true },
+      },
+      {
+        name: "live head",
+        artifact: validPrimaryResult(),
+        options: { liveHead: "e".repeat(40) },
+      },
+      {
+        name: "live base",
+        artifact: validPrimaryResult(),
+        options: { liveBase: "e".repeat(40) },
+      },
     ];
-    for (const { name, artifact, liveHead, liveBase, symlinkResult } of cases) {
-      const result = runArtifactValidation(artifact, { liveHead, liveBase, symlinkResult });
+    for (const { name, artifact, options } of cases) {
+      const result = runArtifactValidation(artifact, options);
       try {
         expect(result.status, `${name}: ${result.stdout}${result.stderr}`).toBe(1);
       } finally {
@@ -579,20 +760,110 @@ process.exitCode = valid ? 0 : 1;`,
     }
   });
 
+  it("withholds every invalid secondary artifact without suppressing the primary", () => {
+    const mismatchedAnalysisResult = {
+      ...validPrimaryResult(),
+      summary: { recommendation: "info_only", confidence: "medium" },
+    };
+    const cases = [
+      {
+        name: "wrong head",
+        options: {
+          secondaryResult: { ...validPrimaryResult(), headSha: "d".repeat(40) },
+        },
+      },
+      {
+        name: "unknown status",
+        options: { secondaryAnalysisResult: { unexpected: true } },
+      },
+      {
+        name: "conflicting status",
+        options: {
+          secondaryAnalysisResult: {
+            failed: true,
+            skipped: true,
+            reason: "ambiguous status",
+          },
+        },
+      },
+      {
+        name: "completed result mismatch",
+        options: { secondaryAnalysisResult: mismatchedAnalysisResult },
+      },
+      {
+        name: "partial count mismatch",
+        options: {
+          secondaryAnalysisResult: {
+            failed: true,
+            partial: true,
+            reason: "provider stopped",
+            findingCount: 1,
+          },
+        },
+      },
+      { name: "missing artifact", options: { omitSecondaryArtifact: true } },
+      { name: "missing summary", options: { omitSecondarySummary: true } },
+      { name: "symlinked final result", options: { symlinkSecondaryResult: true } },
+    ];
+    for (const { name, options } of cases) {
+      const result = runArtifactValidation(validPrimaryResult(), options);
+      try {
+        expect(result.status, `${name}: ${result.stdout}${result.stderr}`).toBe(0);
+        expect(result.githubOutput, name).toBe("secondary_artifact_validated=false\n");
+        expect(result.stderr, name).toContain("Secondary advisor artifact failed validation");
+      } finally {
+        result.cleanup();
+      }
+    }
+  });
+
+  it("rejects an unrecognized trusted secondary download outcome", () => {
+    const result = runArtifactValidation(validPrimaryResult(), {
+      secondaryDownloadOutcome: "unexpected",
+    });
+    try {
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain("Invalid secondary advisor artifact outcome");
+      expect(result.githubOutput).toBe("");
+    } finally {
+      result.cleanup();
+    }
+  });
+
   it("rejects cross-run artifact downloads and missing publication validation", () => {
-    const crossRun = validateMutation((source) =>
+    const primaryCrossRun = validateMutation((source) =>
       source.replace(
         "          name: pr-review-advisor\n          path: publish-artifacts/pr-review-advisor",
         "          name: pr-review-advisor\n          path: publish-artifacts/pr-review-advisor\n          run-id: ${{ github.event.workflow_run.id }}",
       ),
     );
-    expect(crossRun).toContain("Download primary advisor artifact must not set with.run-id");
+    expect(primaryCrossRun).toContain("Download primary advisor artifact must not set with.run-id");
+
+    const secondaryCrossRun = validateMutation((source) =>
+      source.replace(
+        "          name: pr-review-advisor-nemotron-ultra\n          path: publish-artifacts/pr-review-advisor-nemotron-ultra",
+        "          name: pr-review-advisor-nemotron-ultra\n          path: publish-artifacts/pr-review-advisor-nemotron-ultra\n          run-id: ${{ github.event.workflow_run.id }}",
+      ),
+    );
+    expect(secondaryCrossRun).toContain(
+      "Download secondary advisor artifact must not set with.run-id",
+    );
+
+    const blockingSecondary = validateMutation((source) =>
+      source.replace(
+        "        continue-on-error: true\n        uses: actions/download-artifact",
+        "        continue-on-error: false\n        uses: actions/download-artifact",
+      ),
+    );
+    expect(blockingSecondary).toContain(
+      "secondary advisor artifact download must remain non-blocking",
+    );
 
     const noVersionCheck = validateMutation((source) =>
       source.replace("if (result.version !== 1)", "if (false)"),
     );
     expect(noVersionCheck).toContain(
-      "step 'Validate primary advisor artifact' run script must include result.version !== 1",
+      "step 'Validate advisor artifacts' run script must include result.version !== 1",
     );
   });
 
@@ -642,6 +913,7 @@ process.exitCode = valid ? 0 : 1;`,
     const errors = validateMutation((source) =>
       source
         .replace('      FD_FIND_VERSION: "9.0.0-1"', '      FD_FIND_VERSION: "latest"')
+        .replace('      VITEST_VERSION: "4.1.9"', '      VITEST_VERSION: "latest"')
         .replace('      YAML_VERSION: "2.8.3"', '      YAML_VERSION: "latest"')
         .replace(
           '      PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW: "false"',
@@ -652,10 +924,47 @@ process.exitCode = valid ? 0 : 1;`,
     expect(errors).toEqual(
       expect.arrayContaining([
         "review job env.FD_FIND_VERSION must be 9.0.0-1",
+        "review job env.VITEST_VERSION must be 4.1.9",
         "review job env.YAML_VERSION must be 2.8.3",
         "review job env.PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW must be false",
       ]),
     );
+  });
+
+  it("rejects decoy lockfile-install text outside the npm invocation", () => {
+    const errors = validateMutation((source) =>
+      source.replace(
+        "npm ci --ignore-scripts --no-audit --no-fund",
+        "npm install --ignore-scripts\n            printf '%s\\n' 'npm ci --ignore-scripts --no-audit --no-fund' >/dev/null",
+      ),
+    );
+
+    expect(errors).toContain(
+      "step 'Install Pi SDK' must use the canonical lockfile-only npm ci command",
+    );
+  });
+
+  it("rejects drift in the trusted advisor runtime package lock", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-lock-"));
+    const lockPath = path.join(tmp, "package-lock.json");
+    fs.writeFileSync(lockPath, JSON.stringify({ packages: {} }));
+    try {
+      expect(
+        validatePrReviewAdvisorWorkflowBoundary(
+          path.join(ROOT, ".github", "workflows", "pr-review-advisor.yaml"),
+          lockPath,
+        ),
+      ).toEqual(
+        expect.arrayContaining([
+          "advisor package lock must pin @earendil-works/pi-coding-agent@0.80.6",
+          "advisor package lock must pin typebox@1.1.38",
+          "advisor package lock must pin yaml@2.8.3",
+          "advisor package lock must pin vitest@4.1.9",
+        ]),
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("reports workflow parse failures through boundary errors", () => {

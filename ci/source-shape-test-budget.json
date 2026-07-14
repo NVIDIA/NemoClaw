@@ -248,12 +248,12 @@
     },
     {
       "file": "test/macos-e2e-workflow-boundary.test.ts",
-      "test": "pins live macOS artifact publishers to an immutable action",
+      "test": "pins the macOS artifact publisher to an immutable action",
       "category": "security"
     },
     {
       "file": "test/macos-e2e-workflow-boundary.test.ts",
-      "test": "runs final-destroy against a pinned Docker setup on trusted Intel macOS",
+      "test": "keeps gateway lifecycle coverage on supported Apple Silicon macOS",
       "category": "compatibility"
     },
     {
@@ -264,6 +264,16 @@
     {
       "file": "test/mcp-openshell-workflow.test.ts",
       "test": "keeps the setup docs aligned with the stable default",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/onboard-performance-config-schema.test.ts",
+      "test": "keeps configured budgets derived from the checked-in samples",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/onboard-performance-config-schema.test.ts",
+      "test": "records five independent successful exact-head samples",
       "category": "compatibility"
     },
     {
@@ -460,6 +470,11 @@
       "file": "test/vitest-watch-triggers.test.ts",
       "test": "registers the focused mappings at the root configuration boundary (#6692)",
       "category": "compatibility"
+    },
+    {
+      "file": "test/wechat-runtime-audit-workflow.test.ts",
+      "test": "makes the trusted audit required in PR and main workflows",
+      "category": "security"
     }
   ]
 }

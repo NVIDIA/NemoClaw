@@ -190,6 +190,13 @@ function loadSchema(repoRelative: string): object {
   return schema;
 }
 
+function compileConfigSchema(
+  repoRelative: string,
+  ajv = new Ajv({ allErrors: true, strict: false, $data: true }),
+) {
+  return ajv.compile(loadSchema(repoRelative));
+}
+
 type ValidationParams = { additionalProperty?: string; unevaluatedProperty?: string };
 
 /**
@@ -300,7 +307,7 @@ function main(): void {
     targets = discoverTargets();
   }
 
-  const ajv = new Ajv({ allErrors: true, strict: false });
+  const ajv = new Ajv({ allErrors: true, strict: false, $data: true });
   let totalErrors = 0;
   let totalFiles = 0;
 
@@ -309,8 +316,7 @@ function main(): void {
   for (const target of targets) {
     let validate;
     try {
-      const schema = loadSchema(target.schema);
-      validate = ajv.compile(schema);
+      validate = compileConfigSchema(target.schema, ajv);
     } catch (err) {
       console.error(`FAIL: ${target.schema}`);
       console.error(`  Could not compile schema: ${err}`);
@@ -367,6 +373,7 @@ function main(): void {
 // Export for unit tests without re-running main().
 export {
   DANGEROUS_HOSTS,
+  compileConfigSchema,
   discoverTargets,
   findDangerousHosts,
   findDangerousRouterApiBases,

@@ -84,51 +84,107 @@ map to this consolidated `e2e-artifacts/live/` registry-target artifact layout.
 
 ## PR E2E check
 
-On open, synchronization, reopen, or transition out of draft,
-`.github/workflows/pr-e2e-gate.yaml` reserves `E2E / PR Gate` on the exact PR
-head commit, including fork heads. The trusted controller reads all changed
-files after `CI / Pull Request` completes and builds the deterministic risk
-plan. Runtime families and changes to workflow-wired live tests select
+On open, synchronization, reopen, transition out of draft, or base retarget,
+`.github/workflows/pr-e2e-gate.yaml` reserves `E2E / PR Gate` for the exact PR
+head and base commits, including fork heads. A base retarget fails any earlier
+gate in that head's lineage before reserving the new exact-diff gate. The
+`CI / Pull Request` run name binds its PR number, head SHA, base SHA, and gate
+eligibility so the trusted controller can authenticate the completed run even
+when a fork `workflow_run` payload omits pull-request metadata. The controller
+also requires the completed run's workflow path to be
+`.github/workflows/pr.yaml`. Metadata-only edits are marked ineligible and are
+ignored by the controller and PR Review Advisor; base edits are eligible. PR CI
+and advisor concurrency groups include that eligibility, so an ignored
+metadata-edit run cannot cancel an eligible run for the same PR. The trusted
+controller reads all changed files after eligible PR CI completes and builds
+the deterministic risk plan.
+Runtime families and changes to workflow-wired live tests select
 canonical selectors from the trusted `e2e.yaml` inventory independently of
 advisor output. Ordinary internal changes execute those focused selections.
+Gate initialization and CI coordination share one non-cancelling concurrency
+group for the head repository and branch. Before either path creates, fails, or
+updates a check, it reads the live PR and requires the event's exact head and
+base, including when PR CI failed. This keeps a stale seed or completed CI run
+from being applied to a newer exact diff.
 Control-plane selections remain hash-bound in the recorded plan, but their
-credentialed execution is waived only through the exact-head approval below. Shared
-sandbox-boundary changes have a floor of `full-e2e`, `hermes-e2e`, and
+credentialed execution is waived only through the exact-diff approval below.
+Shared sandbox-boundary changes have a floor of `full-e2e`, `hermes-e2e`, and
 `security-posture`. E2E control-plane changes select `cloud-onboard`,
 `credential-sanitization`, and `security-posture`, but the controller does not
 run those jobs with credentials. This is a conservative path boundary that
 includes non-documentation files under `tools/e2e/` and `test/e2e/`, plus the
 E2E and PR-CI workflows, risk policy, dependency and test configuration, and
-preparation and upload actions. It does not attempt to classify an individual matching diff as
-harmless. Instead, the exact-head check fails until a maintainer records the
-control-plane exception described below. If no job is selected, the check
-passes without an E2E run.
+preparation and upload actions. It does not attempt to classify an individual
+matching diff as harmless. Instead, the exact-diff check fails until a
+maintainer records the control-plane exception described below. If no job is
+selected, the check passes without an E2E run.
 
-Before dispatch, the controller verifies that the PR is unchanged and that
-`main` still points to its workflow commit. It accepts only an E2E run using
-that commit. Each selected job checks out `checkout_sha`. Before preparation or
-secret-bearing jobs can run, `e2e.yaml` verifies that the PR remains open,
-belongs to `NVIDIA/NemoClaw`, and still has that head commit. The dispatch
-includes selected jobs and valid plan and correlation metadata, but not
-`targets`. The controller uses GitHub's returned run ID for waiting, evidence
-download, and completion.
+Before dispatch, the controller verifies that the live PR still matches the CI
+run's exact head and base. It uses its own workflow commit when that commit is
+still `main`. If `main` advanced, the controller accepts the current commit
+only when GitHub reports it as a descendant whose merge base is the workflow
+commit, the comparison contains fewer than 300 fully enumerated files, neither
+side of a rename enters the `e2e-control-plane` risk family, and a second read
+confirms that `main` did not move again. Any divergence, incomplete comparison,
+control-plane change, or second advance fails closed. The accepted `main`
+commit is recorded as the workflow SHA and passed as `workflow_sha`. Before
+matrix or secret-bearing jobs can run, `e2e.yaml` requires
+`github.workflow_sha` to match that accepted commit. Each selected job checks
+out `checkout_sha`. The same validation verifies that the PR remains open,
+belongs to `NVIDIA/NemoClaw`, and still has both the dispatched head and base
+commits. The dispatch includes selected jobs and valid plan and correlation
+metadata, but not `targets`. The controller uses GitHub's returned run ID for
+waiting, evidence download, and completion, then revalidates that the PR is
+still open with the live head, base, and exact-diff check identity before
+recording success.
 
 Credential-bearing E2E is dispatched only for internal revisions whose plan
 does not include the `e2e-control-plane` family. A fork revision that selects
-jobs and an internal revision with that family both complete the exact-head
+jobs and an internal revision with that family both complete the exact-diff
 gate as failed without dispatching the selected credential-bearing jobs or
-exposing repository secrets. Non-secret PR CI remains required. A maintainer
-or administrator can resolve that exact revision only through the workflow's
-typed manual dispatch on `main`, choosing `resolve-fork` or
-`resolve-control-plane`.
-The controller revalidates the open PR, exact head SHA, repository origin,
-maintainer role, deterministic plan, matching failed gate, and that the
-checked-out controller commit is still `main`. The result records an explicit no-secret exception with a bounded reason and optional
-`NVIDIA/NemoClaw` Actions run URL; it does not claim the waived jobs passed.
-The URL's shape is validated, but its run contents are not. The privileged
-dispatch and reason are an auditable maintainer assertion; the controller does
-not query a separate approval record. Any new commit receives a different gate
-and requires a new decision.
+exposing repository secrets. Non-secret PR CI remains required. The failed
+check links to the same `E2E / PR Gate` run and publishes only allowlisted
+exception metadata for its exact PR number, mode, head SHA, and base SHA. That
+run starts `Approve no-secret E2E exception`, which waits on the protected
+`e2e-no-secret-exception` environment with `deployment: false` and therefore
+does not create a deployment record. A maintainer opens the linked run, chooses
+**Review deployments**, selects that environment, and approves it. The comment
+is optional; the workflow reads both the reviewer and comment from GitHub's run
+approval history rather than accepting an actor supplied by the job.
+
+Before rollout, create `e2e-no-secret-exception` in the repository with one or
+more required reviewers whose approving members have repository `maintain` or
+`admin` permission. Do not add environment secrets, variables, or custom
+protection apps; this job records a no-secret review decision and runs no
+PR-controlled code. Prefer disabling administrator bypass so every decision
+appears in the approval history. A missing or unprotected
+environment does not produce the one exact approval record the controller
+requires, so resolution fails closed. GitHub approval history is not bound to
+a run attempt, and the controller consequently rejects reruns of an approval
+run. Trigger fresh upstream PR CI to create a new gate run, or use the typed
+manual fallback described below. Per-PR approval concurrency cancels an older
+waiting job when a newer exact revision reaches the gate.
+
+For the button path, the controller requires a first-attempt, in-progress run
+of this exact workflow on `main`, at the trusted workflow SHA and with the
+`workflow_run` event. It requires exactly one approved review that names only
+the exact environment, then verifies that the recorded reviewer still has
+repository `maintain` or `admin` permission. The shared resolver revalidates
+the open PR, repository origin, exact head and base SHAs, deterministic plan,
+matching failed gate, and that the controller commit is either still `main` or
+has only a compatible safe descendant as described above. Immediately before
+recording success, it reads the live PR again and requires the same exact head
+and base. The result records the reviewer, bounded optional comment, validated
+approval-run URL, plan hash, and waived jobs; it never claims those jobs passed.
+
+The typed manual dispatch on `main` remains available as a fallback. Choose
+`resolve-fork` or `resolve-control-plane` and provide the PR number, current
+`expected_head_sha`, current `expected_base_sha`, a 10–500-character reason,
+and optionally an `NVIDIA/NemoClaw` Actions run URL. The controller applies the
+same PR, role, plan, failed-check, compatible-`main`, and final stale-revision
+checks. It validates the optional URL's shape but does not inspect that run's
+contents. Any new commit receives a different gate and requires a new decision;
+a base change also invalidates the decision.
 
 The Vitest reporter writes one `risk-signal.json` for each selected job and
 matrix shard.

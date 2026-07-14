@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -9,7 +10,7 @@ import {
   type TrustedE2eRecommendationInventory,
   trustedE2eRecommendationInventory,
 } from "../advisors/e2e-recommendations.mts";
-import { upsertStickyComment } from "../advisors/github.mts";
+import { deleteBotOwnedStickyComments, upsertStickyComment } from "../advisors/github.mts";
 import { parseArgs, readIfExists, readJsonIfExists } from "../advisors/io.mts";
 
 const MARKER = "<!-- nemoclaw-pr-review-advisor -->";
@@ -108,6 +109,30 @@ type FindingRecord = {
   finding: Finding;
 };
 
+type FindingCounts = {
+  blockers: number;
+  warnings: number;
+  suggestions: number;
+};
+
+type LaneFingerprints = {
+  findings: string;
+  e2e: string;
+};
+
+export type AdvisorLaneReport = {
+  status: "completed" | "failed" | "skipped" | "unavailable";
+  partial: boolean;
+  counts?: FindingCounts;
+  confidence?: "low" | "medium" | "high";
+  fingerprints?: LaneFingerprints;
+};
+
+export type AdvisorLaneReports = {
+  primary: AdvisorLaneReport;
+  secondOpinion: AdvisorLaneReport;
+};
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error: unknown) => {
     console.error(error instanceof Error ? error.message : String(error));
@@ -122,6 +147,14 @@ async function main(): Promise<void> {
   const summaryPath = args.summary || "artifacts/pr-review-advisor/pr-review-advisor-summary.md";
   const resultPath =
     args.result || "artifacts/pr-review-advisor/pr-review-advisor-final-result.json";
+  if (!args.analysisResult) {
+    throw new Error("--analysis-result is required");
+  }
+  if (Boolean(args.secondOpinionAnalysisResult) !== Boolean(args.secondOpinionResult)) {
+    throw new Error(
+      "--second-opinion-analysis-result and --second-opinion-result must be provided together",
+    );
+  }
   const { marker, title, label } = normalizeCommentOptions({
     marker: args.marker || process.env.PR_REVIEW_ADVISOR_COMMENT_MARKER || MARKER,
     title: args.title || process.env.PR_REVIEW_ADVISOR_COMMENT_TITLE || COMMENT_TITLE,
@@ -146,6 +179,12 @@ async function main(): Promise<void> {
     summaryExplicit: Boolean(args.summary),
     resultExplicit: Boolean(args.result),
   });
+  const lanes = readAdvisorLaneReports({
+    primaryAnalysisResultPath: args.analysisResult,
+    primaryResult: result,
+    secondOpinionAnalysisResultPath: args.secondOpinionAnalysisResult,
+    secondOpinionResultPath: args.secondOpinionResult,
+  });
   const baseMetadata = {
     runId: process.env.PR_REVIEW_ADVISOR_RUN_ID || process.env.GITHUB_RUN_ID,
     runAttempt: process.env.PR_REVIEW_ADVISOR_RUN_ATTEMPT || process.env.GITHUB_RUN_ATTEMPT,
@@ -162,6 +201,7 @@ async function main(): Promise<void> {
     marker,
     title,
     metadata: baseMetadata,
+    lanes,
   });
 
   await upsertStickyComment({
@@ -179,7 +219,15 @@ async function main(): Promise<void> {
         marker,
         title,
         metadata: { ...baseMetadata, commentId: String(comment.id) },
+        lanes,
       }),
+  });
+  await deleteBotOwnedStickyComments({
+    repo,
+    pr,
+    token,
+    markers: ["<!-- nemoclaw-e2e-advisor -->", "<!-- nemoclaw-e2e-target-advisor -->"],
+    label: "legacy E2E advisor",
   });
 }
 
@@ -234,6 +282,70 @@ export function readCommentArtifacts(
   return { summary, result };
 }
 
+export function readAdvisorLaneReports({
+  primaryAnalysisResultPath,
+  primaryResult,
+  secondOpinionAnalysisResultPath,
+  secondOpinionResultPath,
+}: {
+  primaryAnalysisResultPath: string;
+  primaryResult?: ReviewAdvisorResult;
+  secondOpinionAnalysisResultPath?: string;
+  secondOpinionResultPath?: string;
+}): AdvisorLaneReports {
+  const primaryAnalysisResult = readJsonIfExists<unknown>(primaryAnalysisResultPath);
+  if (!primaryAnalysisResult) {
+    throw new Error(`No primary advisor analysis result found at ${primaryAnalysisResultPath}`);
+  }
+  const primary = normalizeAdvisorLaneReport(primaryAnalysisResult, primaryResult);
+  if (!secondOpinionAnalysisResultPath || !secondOpinionResultPath) {
+    return { primary, secondOpinion: unavailableLaneReport() };
+  }
+
+  try {
+    const secondOpinionAnalysisResult = readJsonIfExists<unknown>(secondOpinionAnalysisResultPath);
+    const secondOpinionResult = readJsonIfExists<ReviewAdvisorResult>(secondOpinionResultPath);
+    return {
+      primary,
+      secondOpinion: normalizeAdvisorLaneReport(
+        secondOpinionAnalysisResult,
+        secondOpinionResult,
+        primaryResult?.headSha,
+      ),
+    };
+  } catch {
+    // The evaluation lane is deliberately non-blocking. A malformed or
+    // unreadable second-opinion artifact is reported as unavailable and can
+    // never suppress publication of the trusted primary result.
+    return { primary, secondOpinion: unavailableLaneReport() };
+  }
+}
+
+export function normalizeAdvisorLaneReport(
+  analysisResult: unknown,
+  finalResult: unknown,
+  expectedHeadSha?: string,
+): AdvisorLaneReport {
+  if (!isRecord(analysisResult)) return unavailableLaneReport();
+  const failed = analysisResult.failed === true;
+  const skipped = analysisResult.skipped === true;
+  if (failed && skipped) return unavailableLaneReport();
+  if (skipped) return { status: "skipped", partial: false };
+
+  const partial = failed && analysisResult.partial === true;
+  if (failed && !partial) return { status: "failed", partial: false };
+  const structure = trustedLaneStructure(finalResult, expectedHeadSha);
+  if (failed) {
+    return {
+      status: "failed",
+      partial: true,
+      ...(structure ?? {}),
+    };
+  }
+  if (analysisResult.version !== 1 || !structure) return unavailableLaneReport();
+  return { status: "completed", partial: false, ...structure };
+}
+
 export function buildComment({
   summary: _summary,
   result,
@@ -241,6 +353,7 @@ export function buildComment({
   marker,
   title,
   metadata,
+  lanes,
 }: {
   summary: string;
   result?: ReviewAdvisorResult;
@@ -248,6 +361,7 @@ export function buildComment({
   marker?: string;
   title?: string;
   metadata?: CommentMetadata;
+  lanes?: AdvisorLaneReports;
 }): string {
   const findingRecords = collectFindingRecords(result);
   const blockerCount = findingRecords.filter(
@@ -259,16 +373,21 @@ export function buildComment({
   const suggestionCount = findingRecords.filter(
     (record) => record.finding.severity === "suggestion",
   ).length;
-  const secondary = buildSecondarySummary(result);
+  const reviewHistory = buildSecondarySummary(result);
   const informational =
     result?.summary?.recommendation === "info_only" && result.summary.oneLine
       ? `**Status:** ${escapeCommentText(result.summary.oneLine)}\n`
       : "";
   const findingsDetails = renderFindingsDetails(findingRecords);
   const e2eDetails = renderE2eDetails(result);
+  const laneDetails = renderAdvisorLanes(lanes);
   const details = runUrl ? `\n[Workflow run details](${runUrl})` : "";
   const hiddenMetadata = renderHiddenMetadata(result, metadata);
-  const posture = reviewPosture(result?.summary?.recommendation, blockerCount);
+  const posture = reviewPosture(
+    result?.summary?.recommendation,
+    result?.summary?.confidence,
+    blockerCount,
+  );
   const headline = reviewHeadline(result?.summary?.recommendation, blockerCount);
   const heading = validateSingleLineCommentField(title || COMMENT_TITLE, "title");
   const renderedMarker = validateCommentMarker(marker || MARKER);
@@ -278,12 +397,88 @@ export function buildComment({
 **Advisor assessment:** ${posture}
 **Primary next action:** ${primaryNextAction(findingRecords)}
 **Findings:** ${compactCount(blockerCount, "blocker")} · ${compactCount(warningCount, "warning")} · ${compactCount(suggestionCount, "optional suggestion")}
-${informational}${secondary}${e2eDetails}${findingsDetails}${details}
+${informational}${laneDetails}${reviewHistory}${e2eDetails}${findingsDetails}${details}
 
 This is an automated, non-authoritative review. Findings are inputs to maintainer adjudication. Warnings and optional suggestions do not require a response or follow-up. A human maintainer makes the final merge decision.
 
 `;
   return boundedComment(prefix, content);
+}
+
+function renderAdvisorLanes(lanes?: AdvisorLaneReports): string {
+  if (!lanes) return "";
+  const lines = [
+    "",
+    "### Model lanes",
+    `- **GPT-5.6 Terra (primary):** ${renderLaneReport(lanes.primary)}`,
+    `- **Nemotron 3 Ultra (non-blocking second opinion):** ${renderLaneReport(lanes.secondOpinion)}`,
+  ];
+  const comparison = renderLaneComparison(lanes.primary, lanes.secondOpinion);
+  if (comparison) lines.push(`- **Model comparison:** ${comparison}`);
+  lines.push(
+    "",
+    "_Nemotron is a non-blocking second opinion. Its prose, findings, and E2E guidance do not change the primary assessment above and remain in workflow artifacts only._",
+    "",
+  );
+  return `${lines.join("\n")}\n`;
+}
+
+function renderLaneReport(report: AdvisorLaneReport): string {
+  const status =
+    report.status === "completed"
+      ? "Completed"
+      : report.status === "failed"
+        ? report.partial
+          ? "Failed after a partial review"
+          : "Failed"
+        : report.status === "skipped"
+          ? "Skipped"
+          : "Unavailable";
+  if (!report.counts) return status;
+  const confidence = report.confidence ? ` · ${report.confidence} confidence` : "";
+  return `${status}${confidence} · ${compactCount(report.counts.blockers, "blocker")} · ${compactCount(report.counts.warnings, "warning")} · ${compactCount(report.counts.suggestions, "suggestion")}`;
+}
+
+function renderLaneComparison(
+  primary: AdvisorLaneReport,
+  secondOpinion: AdvisorLaneReport,
+): string | undefined {
+  if (
+    primary.status !== "completed" ||
+    secondOpinion.status !== "completed" ||
+    !primary.counts ||
+    !secondOpinion.counts ||
+    !primary.fingerprints ||
+    !secondOpinion.fingerprints
+  ) {
+    return undefined;
+  }
+  const differences = [
+    countDifference(secondOpinion.counts.blockers - primary.counts.blockers, "blocker"),
+    countDifference(secondOpinion.counts.warnings - primary.counts.warnings, "warning"),
+    countDifference(secondOpinion.counts.suggestions - primary.counts.suggestions, "suggestion"),
+  ];
+  const findingComparison =
+    primary.fingerprints.findings === secondOpinion.fingerprints.findings
+      ? "normalized findings match"
+      : "normalized findings differ";
+  const e2eComparison =
+    primary.fingerprints.e2e === secondOpinion.fingerprints.e2e
+      ? "normalized E2E selections match"
+      : "normalized E2E selections differ";
+  const countComparison = differences.every((difference) =>
+    difference.startsWith("the same number"),
+  )
+    ? "severity counts match"
+    : `Nemotron reported ${differences.join(", ")}`;
+  return `${findingComparison}; ${e2eComparison}; ${countComparison}.`;
+}
+
+function countDifference(difference: number, label: string): string {
+  if (difference === 0) return `the same number of ${label}s`;
+  const direction = difference > 0 ? "more" : "fewer";
+  const count = Math.abs(difference);
+  return `${count} ${direction} ${count === 1 ? label : `${label}s`}`;
 }
 
 function renderE2eDetails(result?: ReviewAdvisorResult): string {
@@ -366,10 +561,10 @@ function renderE2eDetails(result?: ReviewAdvisorResult): string {
     lines.push("", "</details>");
   }
 
-  if (requiredCoverage.length === 0 && requiredTargets.length === 0 && noE2eReason) {
+  if (requiredCoverage.length === 0 && optionalCoverage.length === 0 && noE2eReason) {
     lines.push("", `**Why no E2E coverage is recommended:** ${escapeCommentText(noE2eReason)}`);
   }
-  if (requiredTargets.length === 0 && noTargetE2eReason) {
+  if (requiredTargets.length === 0 && optionalTargets.length === 0 && noTargetE2eReason) {
     lines.push("", `**Why no selector is recommended:** ${escapeCommentText(noTargetE2eReason)}`);
   }
   lines.push("");
@@ -470,6 +665,111 @@ function collectFindingRecords(result?: ReviewAdvisorResult): FindingRecord[] {
   }));
 }
 
+function trustedLaneStructure(
+  value: unknown,
+  expectedHeadSha?: string,
+):
+  | {
+      counts: FindingCounts;
+      confidence?: "low" | "medium" | "high";
+      fingerprints: LaneFingerprints;
+    }
+  | undefined {
+  if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.findings)) return undefined;
+  if (expectedHeadSha && value.headSha !== expectedHeadSha) return undefined;
+  const counts: FindingCounts = { blockers: 0, warnings: 0, suggestions: 0 };
+  for (const finding of value.findings) {
+    if (!isRecord(finding)) continue;
+    if (finding.severity === "blocker") counts.blockers += 1;
+    else if (finding.severity === "warning") counts.warnings += 1;
+    else if (finding.severity === "suggestion") counts.suggestions += 1;
+  }
+  const summary = isRecord(value.summary) ? value.summary : undefined;
+  const confidence = trustedLaneConfidence(summary?.confidence);
+  return {
+    counts,
+    ...(confidence ? { confidence } : {}),
+    fingerprints: {
+      findings: opaqueFingerprint(normalizedFindingRecords(value.findings)),
+      e2e: opaqueFingerprint(e2eDecisionSets(value.e2e)),
+    },
+  };
+}
+
+function normalizedFindingRecords(value: unknown[]): unknown[] {
+  return value
+    .filter(isRecord)
+    .map((finding) => ({ ...finding }))
+    .sort((left, right) => stableJson(left).localeCompare(stableJson(right)));
+}
+
+function trustedLaneConfidence(value: unknown): "low" | "medium" | "high" | undefined {
+  return value === "low" || value === "medium" || value === "high" ? value : undefined;
+}
+
+function e2eDecisionSets(value: unknown): Record<string, string[]> {
+  const e2e = isRecord(value) ? value : {};
+  const coverage = isRecord(e2e.coverage) ? e2e.coverage : {};
+  const targets = isRecord(e2e.targets) ? e2e.targets : {};
+  return {
+    requiredCoverage: normalizedIds(coverage.requiredTests),
+    optionalCoverage: normalizedIds(coverage.optionalTests),
+    requiredSelectors: normalizedSelectors(targets.required),
+    optionalSelectors: normalizedSelectors(targets.optional),
+  };
+}
+
+function normalizedIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [
+    ...new Set(
+      value.flatMap((item) => (isRecord(item) && typeof item.id === "string" ? [item.id] : [])),
+    ),
+  ].sort();
+}
+
+function normalizedSelectors(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [
+    ...new Set(
+      value.flatMap((item) => {
+        if (
+          !isRecord(item) ||
+          typeof item.id !== "string" ||
+          typeof item.workflow !== "string" ||
+          typeof item.selectorType !== "string"
+        ) {
+          return [];
+        }
+        return [`${item.workflow}:${item.selectorType}:${item.id}`];
+      }),
+    ),
+  ].sort();
+}
+
+function opaqueFingerprint(value: unknown): string {
+  return createHash("sha256").update(stableJson(value)).digest("hex");
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (isRecord(value)) {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+function unavailableLaneReport(): AdvisorLaneReport {
+  return { status: "unavailable", partial: false };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
 function renderHiddenMetadata(result?: ReviewAdvisorResult, metadata?: CommentMetadata): string {
   const fields = [
     result?.headSha ? `head_sha: ${safeMetadataValue(result.headSha)}` : undefined,
@@ -527,11 +827,23 @@ function reviewHeadline(recommendation: string | undefined, blockerCount: number
   return "No blocking findings reported";
 }
 
-function reviewPosture(recommendation: string | undefined, blockerCount: number): string {
+function reviewPosture(
+  recommendation: string | undefined,
+  confidence: string | undefined,
+  blockerCount: number,
+): string {
   if (blockerCount > 0) return "Blocking findings require maintainer adjudication";
   if (recommendation === "superseded") return "Superseded by other work";
-  if (recommendation === "info_only") return "Informational / low confidence";
+  if (recommendation === "info_only") {
+    return `Informational / ${trustedConfidence(confidence)} confidence`;
+  }
   return "No blocking advisor findings reported";
+}
+
+function trustedConfidence(confidence: string | undefined): string {
+  return confidence === "low" || confidence === "medium" || confidence === "high"
+    ? confidence
+    : "unknown";
 }
 
 function primaryNextAction(records: FindingRecord[]): string {

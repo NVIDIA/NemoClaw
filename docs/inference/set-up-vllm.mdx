@@ -68,12 +68,52 @@ In an interactive run, the managed path lists the supported model registry for y
 Press **Enter** to use the profile default or select another validated model with its registered `vllm serve` arguments.
 
 NemoClaw pulls the vLLM image, downloads model weights into `~/.cache/huggingface`, starts the `nemoclaw-vllm` container on `localhost:8000`, streams Hugging Face download progress, and polls `/v1/models` until the model is ready.
-Managed DGX Spark and DGX Station profiles use `nvcr.io/nvidia/vllm:26.05.post1-py3`.
+Managed profiles use immutable NGC platform digests:
+
+- DGX Spark and DGX Station use the `linux/arm64` digest `sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2` with a compressed layer size of `9.60 GB` under `nvcr.io/nvidia/vllm:26.05.post1-py3`.
+  DGX Station remains deferred until this path is validated end-to-end on physical hardware.
+- Generic Linux `arm64` hosts use `sha256:447995cbb57e6c7cf792cab95e9852e5f62b5fb6d2f39e030fa4eda9a54eadb4` with a compressed layer size of `9.28 GB` under `nvcr.io/nvidia/vllm:26.03.post1-py3`.
+- Generic Linux `amd64` hosts use `sha256:7be6c2f676c36059a494fe17254e69ae5c677535ba6191044e5fc8e42a91c773` with a compressed layer size of `8.93 GB` under `nvcr.io/nvidia/vllm:26.03.post1-py3`.
+
 Image pulls from `nvcr.io` require NGC registry login.
 
 The first run can take 10 to 30 minutes.
 Later runs reuse the cached image and model weights.
 The managed container uses Docker's `--restart unless-stopped` policy, so Docker restarts it unless an operator explicitly stops it.
+
+### Check Storage Before Downloads
+
+For an uncached image, NemoClaw checks Docker image storage before the watched image pull starts.
+It checks the Hugging Face model cache before that pull and checks it again afterward before `hf download` starts.
+The image estimate includes compressed content, unpacked layers, and pull-staging headroom.
+The model estimate includes the model's full published size plus temporary-write headroom because a local cache cannot prove which files a mutable remote revision will reuse.
+
+For Docker's classic image store, NemoClaw checks the absolute `DockerRootDir` reported by `docker info`.
+For Docker's containerd image store, it checks the top-level `root` from `/etc/containerd/config.toml`, or `/var/lib/containerd` when that configuration file is absent, and also checks `DockerRootDir` for pull staging.
+The check uses the location with the least available capacity.
+The model-cache check uses `~/.cache/huggingface`, or its nearest existing parent filesystem when the cache directory does not exist yet.
+
+NemoClaw recognizes an image cache hit only when Docker contains the exact platform digest.
+A cache hit skips the cold-pull capacity check, but the explicit watched `docker pull` still runs against that immutable digest.
+Before trusting the host model-cache capacity, NemoClaw also verifies that the selected Docker daemon maps bind mounts to the local host; a remote or unverifiable Docker host makes the model-cache check inconclusive.
+An explicit Unix socket is trusted only when it is Docker's default `/var/run/docker.sock`; any other socket can forward to a daemon with a different filesystem and is treated as unverifiable.
+Known container markers are rejected immediately.
+Before trusting client-side image-store capacity, NemoClaw requires the selected default Docker socket peer to have a visible PID and share the client's mount namespace; a nested PID namespace or unverifiable peer fails closed before the image pull.
+Before trusting model-cache capacity, NemoClaw also asks the pinned cached vLLM image to read a random mode-`0600` sentinel through a bounded, read-only Docker bind mount.
+The pull is idempotent for the cached digest and cannot select different layers from a moved release tag.
+The model-download helper and the long-lived vLLM container use `--pull=never`, so an implicit pull cannot bypass the storage gate.
+The second model-cache check detects capacity consumed by the image pull before the model download command can start.
+
+When capacity is insufficient or NemoClaw cannot verify it, the warning identifies the image or model, available capacity, approximate requirement, checked path and source, remediation, and diagnostic commands.
+Interactive setup continues only when you enter `y` or `yes` explicitly.
+Pressing **Enter**, entering `n` or `no`, or entering any other response stops before the guarded pull or model download starts.
+
+<Warning>
+`--yes` and `NEMOCLAW_YES=1` do not accept managed-vLLM storage warnings.
+Non-interactive setup stops unless you set `NEMOCLAW_IGNORE_VLLM_DISK_SPACE=1` exactly.
+This override accepts both insufficient-capacity and inconclusive checks for Docker image storage and the model cache.
+Use it only after you independently verify that both storage locations can complete the downloads.
+</Warning>
 
 If image pull output stops making progress, a watchdog stops the stalled pull without imposing a fixed wall-clock limit on slow but active downloads.
 If vLLM does not become ready, NemoClaw prints a short tail of the container logs before exiting.
