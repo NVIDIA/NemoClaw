@@ -6,6 +6,10 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 import {
+  E2E_RENDER_LIMIT,
+  trustedE2eRecommendationInventory,
+} from "../tools/advisors/e2e-recommendations.mts";
+import {
   buildComment,
   normalizeAdvisorLaneReport,
   normalizeCommentOptions,
@@ -16,6 +20,49 @@ import {
 const ROOT = path.resolve(import.meta.dirname, "..");
 
 describe("PR review advisor comment CLI", () => {
+  it("reports E2E recommendations that do not fit", () => {
+    const trustedIds = trustedE2eRecommendationInventory().allowedJobIds.slice(
+      0,
+      2 * (E2E_RENDER_LIMIT + 1),
+    );
+    const requiredIds = trustedIds.slice(0, E2E_RENDER_LIMIT + 1);
+    const optionalIds = trustedIds.slice(E2E_RENDER_LIMIT + 1);
+    expect(requiredIds).toHaveLength(E2E_RENDER_LIMIT + 1);
+    expect(optionalIds).toHaveLength(E2E_RENDER_LIMIT + 1);
+
+    const comment = buildComment({
+      summary: "unused",
+      result: {
+        e2e: {
+          coverage: {
+            requiredTests: requiredIds.map((id) => ({
+              id,
+              reason: "Trusted E2E recommendation.",
+            })),
+            optionalTests: optionalIds.map((id) => ({
+              id,
+              reason: "Trusted optional E2E recommendation.",
+            })),
+          },
+          targets: { required: [], optional: [] },
+        },
+      },
+    });
+
+    const renderedIds = [...comment.matchAll(/<code>([^<]+)<\/code>/gu)].map((match) => match[1]);
+    expect(renderedIds).toEqual([
+      ...requiredIds.slice(0, E2E_RENDER_LIMIT),
+      ...optionalIds.slice(0, E2E_RENDER_LIMIT),
+    ]);
+    expect(renderedIds).not.toContain(requiredIds.at(-1));
+    expect(renderedIds).not.toContain(optionalIds.at(-1));
+    expect(comment).toContain("(+1 more)");
+    expect(comment).toContain(
+      `<summary>${E2E_RENDER_LIMIT + 1} optional E2E recommendations</summary>`,
+    );
+    expect(comment).toContain("- _1 more._");
+  });
+
   it("validates configurable comment CLI fields and explicit artifacts", () => {
     const tmp = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-comment-"));
     const defaultSummary = path.join(
@@ -289,15 +336,15 @@ describe("PR review advisor comment CLI", () => {
       "**GPT-5.6 Terra (primary):** Completed · high confidence · 0 blockers · 1 warning · 0 suggestions",
     );
     expect(comment).toContain(
-      "**Nemotron 3 Ultra (non-blocking second opinion):** Completed · low confidence · 0 blockers · 1 warning · 0 suggestions",
+      "**Nemotron 3 Ultra (second opinion):** Completed · low confidence · 0 blockers · 1 warning · 0 suggestions",
     );
     expect(comment).toContain("normalized findings differ");
     expect(comment).toContain("normalized E2E selections differ");
     expect(comment).toContain("severity counts match");
     expect(comment).not.toContain("do not publish this summary");
     expect(comment).not.toContain("do not publish this finding");
-    expect(comment).not.toContain("Why no E2E coverage is recommended");
-    expect(comment).not.toContain("Why no selector is recommended");
+    expect(comment).toContain("<summary>1 optional E2E recommendation</summary>");
+    expect(comment.match(/<code>docs-validation<\/code>/gu)).toHaveLength(1);
 
     const partialComment = buildComment({
       summary: "# ignored\n",
@@ -312,7 +359,7 @@ describe("PR review advisor comment CLI", () => {
       },
     });
     expect(partialComment).toContain(
-      "**Nemotron 3 Ultra (non-blocking second opinion):** Failed after a partial review · low confidence · 0 blockers · 1 warning · 0 suggestions",
+      "**Nemotron 3 Ultra (second opinion):** Failed after a partial review · low confidence · 0 blockers · 1 warning · 0 suggestions",
     );
     expect(partialComment).not.toContain("Model comparison");
     expect(partialComment).not.toContain("do not publish this provider failure");

@@ -233,7 +233,7 @@ Follow `.agents/skills/_shared/pr-follow-up.md`: after opening or pushing to a P
 **Adding model-specific sandbox compatibility:**
 
 - Add a declarative manifest under `nemoclaw-blueprint/model-specific-setup/<agent>/`
-- Use one exact `agent` per manifest (`openclaw`, `hermes`, etc.); do not make shared multi-agent manifests
+- Use one `agent` per manifest (`openclaw`, `hermes`, etc.); do not make shared multi-agent manifests
 - Put OpenClaw executable wrappers under `nemoclaw-blueprint/openclaw-plugins/`
 - Put Hermes executable wrappers under `agents/hermes/`
 - Keep `agents/hermes/generate-config.ts` as a thin build-time entrypoint; add Hermes env parsing, config construction, registry handling, and serialization under `agents/hermes/config/`

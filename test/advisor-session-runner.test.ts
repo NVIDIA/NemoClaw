@@ -373,11 +373,11 @@ describe("advisor session runner", () => {
     const result = await run([analysisTurn("only-analysis"), commitTurn("only-commit")]);
 
     expect(result.fatalError).toContain(
-      "only-commit atomic-terminal repair must commit turn_action successfully exactly once",
+      "only-commit atomic-terminal repair must commit turn_action successfully once",
     );
     expect(result.turnErrors).toEqual([
       expect.stringContaining(
-        "only-commit atomic-terminal repair must commit turn_action successfully exactly once",
+        "only-commit atomic-terminal repair must commit turn_action successfully once",
       ),
     ]);
     expect(sdk.state.prompts).toHaveLength(3);

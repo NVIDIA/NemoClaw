@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { dockerCapture } from "../adapters/docker";
+import { parseLiveSandboxEntries } from "../runtime-recovery";
 import { createDockerGpuDiagnosticRedactor } from "./docker-gpu-diagnostic-redaction";
 import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
 import type {
@@ -304,15 +305,6 @@ function stripAnsi(value: string): string {
   return value.replace(ANSI_RE, "");
 }
 
-function parseSandboxRowForName(output: string, sandboxName: string): string[] | null {
-  if (typeof output !== "string") return null;
-  for (const line of stripAnsi(output).split("\n")) {
-    const cols = line.trim().split(/\s+/);
-    if (cols[0] === sandboxName) return cols;
-  }
-  return null;
-}
-
 function findSandboxListLine(output: string, sandboxName: string): string | null {
   if (typeof output !== "string") return null;
   for (const line of stripAnsi(output).split("\n")) {
@@ -328,14 +320,7 @@ function parseSandboxPhaseFromGetOutput(output: string): string | null {
 }
 
 function parseSandboxPhaseFromListOutput(output: string, sandboxName: string): string | null {
-  const cols = parseSandboxRowForName(output, sandboxName);
-  if (!cols) return null;
-  return (
-    cols.find((col) => SANDBOX_FAILURE_PHASE_TOKENS.has(col)) ??
-    cols.find((col) => SANDBOX_LIVE_PHASE_TOKENS.has(col)) ??
-    cols[1] ??
-    null
-  );
+  return parseLiveSandboxEntries(output).find((entry) => entry.name === sandboxName)?.phase ?? null;
 }
 
 function isFailurePhase(phase: string | null | undefined): boolean {
