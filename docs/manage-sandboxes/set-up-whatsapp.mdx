@@ -1,0 +1,56 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Set Up WhatsApp"
+sidebar-title: "Set Up WhatsApp"
+description: "Pair experimental WhatsApp inside an OpenClaw or Hermes sandbox and understand its durable session state."
+description-agent: "Explains the experimental in-sandbox WhatsApp QR pairing flow, durable session credentials, sender allowlist, and cross-sandbox limitations. Use before enabling WhatsApp."
+keywords: ["nemoclaw whatsapp", "whatsapp qr pairing", "whatsapp session"]
+content:
+  type: "how_to"
+---
+import { AgentOnly } from "../_components/AgentGuide";
+
+WhatsApp support is experimental and pairs inside the sandbox rather than through a host-side token or OpenShell credential provider.
+
+## Pair the Sandbox
+
+Enable the channel during onboarding or with `channels add whatsapp`, rebuild the sandbox, then connect to it.
+Run the agent-specific pairing command to render the QR code:
+
+<AgentOnly variant="openclaw">
+```bash
+openclaw channels login --channel whatsapp
+```
+</AgentOnly>
+<AgentOnly variant="hermes">
+```bash
+hermes whatsapp
+```
+</AgentOnly>
+
+<AgentOnly variant="openclaw">
+NemoClaw validates the gateway URL before pairing and renders the WhatsApp QR code in a compact terminal form so it fits in smaller terminal windows.
+If pairing exits with a gateway close such as `1008`, rerun the login command once, then check `$$nemoclaw <sandbox> channels status --channel whatsapp` to diagnose the gateway and session path separately from QR rendering.
+</AgentOnly>
+
+## Protect Paired Session State
+
+<AgentOnly variant="openclaw">
+The sandbox stores mutable session credentials in durable `whatsapp` state.
+</AgentOnly>
+<AgentOnly variant="hermes">
+The sandbox stores mutable session credentials in durable `platforms/whatsapp` state.
+</AgentOnly>
+The credentials survive rebuilds without re-pairing.
+This is the runtime tradeoff of enabling WhatsApp without a host bridge: a paired sandbox can use that WhatsApp account until you unpair it or clear the durable state.
+
+NemoClaw cannot detect cross-sandbox WhatsApp conflicts the way it does for token-based channels.
+Pair only one sandbox per WhatsApp account at a time.
+
+For non-interactive onboarding, set `WHATSAPP_ALLOWED_IDS` to a nonempty comma-separated sender list to select WhatsApp for either agent.
+<AgentOnly variant="hermes">
+Hermes also uses these values as its WhatsApp sender allowlist.
+</AgentOnly>
+
+Continue with [Enable Channels During Onboarding](enable-channels-during-onboarding) or [Add Channels After Onboarding](add-channels-after-onboarding).

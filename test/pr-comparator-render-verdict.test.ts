@@ -18,7 +18,6 @@ const passingGates = {
   mergeable: true,
   contributor_compliance: true,
   branch_protection: true,
-  pr_advisor_merge_as_is: true,
   coderabbit_threads_resolved: true,
 };
 
@@ -69,19 +68,9 @@ describe("PR comparator verdict renderer", () => {
     expect(result.stderr).toContain("winner PR #123 did not pass every Tier 0 gate");
   });
 
-  it("rejects a supplied winner unless the PR Advisor recommends merge as-is", () => {
-    const result = render(
-      specFor({ ...passingGates, pr_advisor_merge_as_is: false }, { mode: "happy", winner: 123 }),
-    );
-
-    expect(result.status).toBe(64);
-    expect(result.stdout).toBe("");
-    expect(result.stderr).toContain("winner PR #123 did not pass every Tier 0 gate");
-  });
-
   it.each([
-    ["missing", (({ pr_advisor_merge_as_is: _omitted, ...gates }) => gates)(passingGates)],
-    ["non-boolean", { ...passingGates, pr_advisor_merge_as_is: "merge_as_is" }],
+    ["missing", (({ branch_protection: _omitted, ...gates }) => gates)(passingGates)],
+    ["non-boolean", { ...passingGates, branch_protection: "yes" }],
     ["unknown", { ...passingGates, invented_gate: true }],
   ])("rejects %s Tier 0 gate data", (_label, gates) => {
     const result = render(specFor(gates));

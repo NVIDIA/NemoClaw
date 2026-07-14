@@ -203,6 +203,16 @@ export interface ChannelRuntimeSecretScanSpec {
 
 export type ChannelAgentPackageManager = "openclaw-plugin" | "hermes-uv-pip";
 
+export interface ChannelAgentPackageRuntimeLockSpec {
+  readonly cachePath: string;
+  readonly installCacheEnvKey: string;
+  readonly lockFile: string;
+  readonly projectsRoot: string;
+  readonly verifierPath: string;
+  readonly offline: true;
+  readonly legacyPeerDeps: true;
+}
+
 /** Agent package/plugin install the sandbox image build should apply. */
 export interface ChannelAgentPackageSpec {
   readonly id: string;
@@ -214,6 +224,7 @@ export interface ChannelAgentPackageSpec {
   readonly integrityByVersion?: Readonly<Record<string, string>>;
   readonly tarballUrl?: string;
   readonly tarballUrlByVersion?: Readonly<Record<string, string>>;
+  readonly runtimeLock?: ChannelAgentPackageRuntimeLockSpec;
   readonly required?: boolean;
 }
 

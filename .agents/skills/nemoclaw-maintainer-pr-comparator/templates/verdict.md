@@ -23,7 +23,6 @@ Render the final scorecard with `scripts/render-verdict.py`. Below is the human-
 | Mergeable | pass | pass |
 | Contributor compliance | pass | pass |
 | Branch protection | pass | pass |
-| PR Review Advisor: merge as-is | pass | fail (changes requested) |
 | Automated-review threads resolved | pass | fail (2 unresolved) |
 | **Tier 1 — correctness** | | |
 | Test exercises bug path | pass | pass |

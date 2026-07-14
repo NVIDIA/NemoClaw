@@ -17,7 +17,18 @@ Update documentation when your change:
 - Fixes a bug that the docs describe incorrectly.
 - Changes an API, protocol, or policy schema.
 
-## Update Docs with Contributor Skills
+## Confirm Product Scope Before Writing Docs
+
+Canonical documentation describes behavior that NemoClaw has chosen to support and maintain.
+A documentation PR must not establish a new supported integration, solution workflow, custom image, third-party stack, or product surface by itself.
+
+Technical correctness, successful builds, and working examples are necessary evidence, but they are not product approval.
+Before documenting a new surface, confirm that an accepted issue or design decision defines ownership, compatibility and upgrade expectations, security review, lifecycle support, and validation.
+
+Route independent solutions, complete use-case examples, and third-party integrations through [Community Solutions](resources/community-contributions.mdx).
+If the correct destination is unclear, request maintainer direction before drafting the page.
+
+## Update and Refactor Docs with Agent Skills
 
 If you use an AI coding agent (Cursor, Claude Code, Codex, etc.), the repo includes the `nemoclaw-contributor-update-docs` skill that automates doc work.
 Use it before writing from scratch.
@@ -28,6 +39,10 @@ For example, ask your agent to "catch up the docs for the changes I made in this
 During release prep, run the skill first, make any doc version bumps, then open the docs refresh PR.
 
 The skill lives in `.agents/skills/nemoclaw-contributor-update-docs/` and follows the style guide below automatically.
+
+Use the maintainer-owned `nemoclaw-maintainer-refactor-docs` skill when a page or section has grown too large, mixes several user tasks, or needs a nested TOC.
+Use it to inventory the existing content, organize topics around the user journey, keep foldable navigation groups non-clickable, assign one canonical owner per topic, and preserve Fern routes, redirects, and agent variants during the split.
+Find the skill in `.agents/skills/nemoclaw-maintainer-refactor-docs/`.
 
 ## Markdown Docs for AI Agents
 
@@ -276,6 +291,9 @@ feat(cli): add policy-add command
 
 When reviewing documentation:
 
+- Confirm that the page documents an approved and maintained NemoClaw product surface.
+- Do not approve a new integration or solution solely because its instructions work or its checks pass.
+- Route independent third-party solutions to [Community Solutions](resources/community-contributions.mdx) when no product decision establishes core ownership.
 - Check that the style guide rules above are followed.
 - Watch for LLM-generated patterns (excessive bold, em dashes, filler).
 - Verify code examples are accurate and runnable.

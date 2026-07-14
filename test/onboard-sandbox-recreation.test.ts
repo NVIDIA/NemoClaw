@@ -89,9 +89,12 @@ const { createSandbox } = require(${onboardPath});
     );
   });
 
-  it("recreate-sandbox flag forces deletion and recreation of a ready sandbox", {
+  it.each([
+    "balanced",
+    "restricted",
+  ])("recreate-sandbox materializes and records the %s policy tier", {
     timeout: 60_000,
-  }, async () => {
+  }, async (policyTier) => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-recreate-flag-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -173,7 +176,7 @@ const { createSandbox } = require(${onboardPath});
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_POLICY_TIER: "restricted",
+        NEMOCLAW_POLICY_TIER: policyTier,
       },
     });
 
@@ -192,7 +195,7 @@ const { createSandbox } = require(${onboardPath});
     );
     assert.ok(
       payload.commands.some((entry: CommandEntry) => entry.command.includes("sandbox create")) &&
-        payload.registeredSandbox?.policyTier === "restricted",
+        payload.registeredSandbox?.policyTier === policyTier,
       "should create a sandbox and persist its tier before policy finalization",
     );
   });

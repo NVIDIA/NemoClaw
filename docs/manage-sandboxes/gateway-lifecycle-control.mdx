@@ -1,0 +1,77 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Understand Gateway Lifecycle Control"
+sidebar-title: "Understand Gateway Lifecycle Control"
+description: "Understand how NemoClaw authenticates, executes, and verifies gateway recovery and restart operations."
+description-agent: "Explains the direct root-entrypoint and OpenShell-managed gateway lifecycle topologies, controller trust boundaries, health proofs, and fail-closed behavior. Use when reviewing recover or gateway restart security."
+keywords: ["gateway lifecycle control", "nemoclaw recover", "gateway restart", "privileged control"]
+content:
+  type: "concept"
+skill:
+  priority: 20
+---
+import { AgentOnly } from "../_components/AgentGuide";
+
+Built-in OpenClaw and Hermes images support two direct-container lifecycle topologies for `recover` and `gateway restart`.
+
+| Topology | Process ownership | Lifecycle and trust boundary |
+|---|---|---|
+| Direct root entrypoint | `nemoclaw-start` is root PID 1, the gateway runs under the separate `gateway` UID, and the agent runs under the `sandbox` UID. | A root-only request channel reaches PID 1. The supervisor tracks the exact child, applies the restart seal, validates locked config, and launches the replacement under the gateway UID. |
+| OpenShell-managed | `/opt/openshell/bin/openshell-sandbox` is PID 1. It launches nonroot `nemoclaw-start`, which owns and reaps the gateway. The supervisor, gateway, and agent all use the `sandbox` UID. | A root-owned mode `0500` controller entered through sanitized registry-scoped direct-container control validates a stable process shape, authorizes one exact exit while the controller identity remains live, signals the observed child through a pidfd, waits for supervisor respawn, and proves replacement health. |
+
+The managed controller authenticates the host lifecycle action and prevents PID reuse from redirecting its signal.
+It cannot prove process provenance against a malicious process running under the same sandbox UID, and it does not create gateway and agent UID isolation.
+
+Mutable managed config retains the trust and time-of-check/time-of-use limits of managed cold start.
+<AgentOnly variant="hermes">
+In the direct root-entrypoint topology, PID 1 validates the Hermes secret boundary and runtime environment and verifies the strict root-owned hash without recomputing it.
+For Hermes, the managed controller preflights the secret boundary and verifies the strict root-owned hash when the config and environment are locked.
+
+Mutable config in the managed topology has no durable root-owned hash anchor, so a restart cannot promise a `config hash mismatch` for direct drift.
+</AgentOnly>
+
+This compatibility path remains necessary while the OpenShell-managed topology owns a nonroot supervisor and shared gateway-agent UID.
+Remove it only after the minimum supported OpenShell provides a root-owned lifecycle supervisor or a gateway UID distinct from the agent, then migrate both built-in agents to that boundary.
+
+## Verify Recovery Health
+
+For built-in OpenClaw and Hermes controllers, a successful `recover` or `gateway restart` response supplies the initial authenticated gateway-health proof.
+After the settle window, NemoClaw sends one read-only authenticated `probe` through the same controller before it declares success.
+
+The controller rechecks the exact managed child, listener, HTTP health, and required auxiliary processes from inside the gateway network namespace without restarting the gateway.
+A failed managed probe is authoritative and cannot be overridden by an outer-namespace HTTP response.
+
+Custom agents that recover through an SSH script do not use this controller probe and continue to poll ordinary gateway health.
+
+<AgentOnly variant="hermes">
+The nonroot Hermes supervisor continuously repairs the gateway, API relay, dashboard, dashboard relay, and gateway log stream.
+Four consecutive gateway health failures trigger exact-child recovery.
+
+Five unexpected gateway exits or failed replacement candidates within 60 seconds quarantine relaunch until the sandbox is recreated.
+An authenticated host action authorizes one exit bound to the exact gateway process ID and kernel start identity while the exact root controller process remains live, so deliberate `gateway restart` and controller-driven replacement do not consume that crash budget.
+
+The authorization records host intent for that exact exit; it does not claim that the host signal was the only possible cause of process termination in the shared-UID topology.
+After the in-sandbox processes are healthy, the host repairs only the host-side OpenShell forwards.
+</AgentOnly>
+
+## Fail Closed on Unsupported Topologies
+
+The host selects the matching controller automatically for `recover` and `gateway restart`.
+Ordinary `openshell sandbox exec` and manual in-sandbox relaunch are not fallback paths.
+
+A current built-in image supports both the direct root-entrypoint and OpenShell-managed topologies.
+An arbitrary nonroot entrypoint that does not match the managed OpenShell process shape fails closed with `privileged control unavailable`.
+
+Kubernetes and other deployments without a matching direct container also fail closed with `privileged control unavailable`.
+Older images without the matching supervisor or managed controller helper must be updated:
+
+```bash
+$$nemoclaw <name> rebuild --yes
+```
+
+## Related Topics
+
+- [Recover and Rebuild Sandboxes](../operate-sandboxes/recover-and-rebuild-sandboxes) for recovery commands and rebuild fallback.
+- [`gateway restart` or `recover` reports `privileged control unavailable`](../../reference/troubleshooting#gateway-restart-or-recover-reports-privileged-control-unavailable) for remediation.
+- [Trusted Computing Base](../../security/trusted-computing-base) for the broader security boundary.

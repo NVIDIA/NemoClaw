@@ -1006,7 +1006,7 @@ Use `shields status` to inspect the current state, `shields up` to lock the sand
 
 <AgentOnly variant="openclaw,hermes">
 
-For the full mutability matrix, refer to [Runtime Controls](../manage-sandboxes/runtime-controls).
+For the full mutability matrix, refer to [Understand Runtime Changes](../manage-sandboxes/configure-sandboxes/understand-runtime-changes).
 
 </AgentOnly>
 
@@ -1124,6 +1124,34 @@ Ordinary OpenShell exec and manual in-sandbox relaunch are not fallback paths.
 Terminal agents do not have a gateway runtime and fail as unsupported.
 
 </AgentOnly>
+
+### `$$nemoclaw <name> stop`
+
+Stop the sandbox's Docker container while preserving all of its state.
+Workspace files, credentials, network policies, the registry entry, and the OpenShell sandbox record stay in place; only the container stops running.
+Use this to free CPU, memory, and GPU resources without destroying the sandbox; use [`$$nemoclaw <name> destroy`](#$$nemoclaw-name-destroy) when you want to delete it instead.
+
+```bash
+$$nemoclaw my-assistant stop
+```
+
+For OpenClaw-managed gateways, the command first asks the in-sandbox gateway to shut down its channels gracefully; agent-managed gateways (for example Hermes) are supervised inside the sandbox and shut down with the container's stop signal.
+Then the container stops; a container stuck in a crash loop is stopped the same way, which also disarms its restart policy.
+The shared host gateway, tunnel services, and any local NIM inference container serve other sandboxes and keep running.
+Stopping an already-stopped sandbox succeeds without changes.
+The command controls the local container directly, so it is available for local-container drivers (the default Docker driver and the vm driver) and unavailable for remote drivers such as kubernetes; if the Docker daemon itself is unreachable, the command reports the outage instead of guessing at container state.
+
+### `$$nemoclaw <name> start`
+
+Restart a sandbox container that was stopped with [`$$nemoclaw <name> stop`](#$$nemoclaw-name-stop) or by a host reboot, then repair the in-sandbox gateway and host-side forwards the same way [`$$nemoclaw <name> recover`](#$$nemoclaw-name-recover) does.
+
+```bash
+$$nemoclaw my-assistant start
+```
+
+Starting an already-running sandbox skips the container start and still runs the gateway and forward health checks.
+A paused container is unpaused.
+If the container was removed entirely, `start` fails and points you to `$$nemoclaw <name> rebuild`.
 
 ### `$$nemoclaw <name> status`
 
@@ -1512,7 +1540,7 @@ This command attempts to wipe the manifest-defined agent state while its persist
 OpenShell can retain the per-name persistent volume after sandbox deletion.
 If the wipe cannot complete, onboarding with the same name can resurface old files.
 Do not rely on a retained volume as a backup.
-Back up your workspace first with `$$nemoclaw <name> snapshot create` or refer to [Backup and Restore](../manage-sandboxes/backup-restore).
+Back up your workspace first with `$$nemoclaw <name> snapshot create` or refer to [Create and Restore Snapshots](../manage-sandboxes/state-and-backups/create-and-restore-snapshots).
 If you want to upgrade the sandbox while preserving state, use `$$nemoclaw <name> rebuild` instead.
 </Warning>
 
@@ -1924,7 +1952,7 @@ The sandbox client connects directly through OpenShell's existing egress path, a
 After the add commits, NemoClaw freshly verifies the exact generated policy, expected provider attachment, recorded provider ID, generic type, valid resource version, and exactly one credential key matching the recorded key.
 If those readiness checks pass, it sends a differential pair of wire-level MCP `initialize` requests from inside the sandbox — one with the placeholder header and one with an unresolvable control bearer — to verify that OpenShell resolves the credential on egress; otherwise it reports an inconclusive `probe skipped` result and sends no request.
 Neither outcome fails the committed add, and `--no-probe` skips this check.
-For full setup details, see [Set Up MCP Servers](../manage-sandboxes/set-up-mcp-servers).
+For full setup details, see [Add an MCP Server](../manage-sandboxes/mcp-servers/add-an-mcp-server).
 
 <AgentOnly variant="hermes">
 
@@ -2505,7 +2533,7 @@ A custom OpenClaw sandbox is recoverable only when the selected backup independe
 
 ### `$$nemoclaw backup-all`
 
-Back up all registered running sandboxes to `~/.nemoclaw/rebuild-backups/`.
+Back up registered sandboxes that are running or have an eligible stopped Docker-driver container to `~/.nemoclaw/rebuild-backups/`.
 A registered docker-driver sandbox whose container is stopped is started for the duration of the backup and returned to its stopped state afterward.
 If the container cannot be returned to the stopped state, the command fails and reports that the container was left running.
 Sandboxes that are not running and cannot be started this way are skipped with remediation guidance.
@@ -3016,7 +3044,7 @@ To avoid uninstall destroying host-side user data, uninstall preserves the follo
 | Entry | What it holds |
 |---|---|
 | `rebuild-backups/` | Host-side snapshots that `$$nemoclaw <name> snapshot create` and `$$nemoclaw backup-all` write. `$$nemoclaw <name> snapshot restore` reads them back after you reinstall. |
-| `backups/` | Host-side workspace backups that `scripts/backup-workspace.sh` writes. Refer to [Backup and Restore](../manage-sandboxes/backup-restore). |
+| `backups/` | Host-side workspace backups that `scripts/backup-workspace.sh` writes. Refer to [Transfer State Manually](../manage-sandboxes/state-and-backups/transfer-state-manually). |
 | `sandboxes.json` | Host-side sandbox registry. NemoClaw uses it to map sandbox names back to their persistence directories when you reinstall. |
 
 Uninstall removes every other entry under `~/.nemoclaw/` (gateway source, runtime state, the Ollama auth proxy PID file, etc.).
@@ -3222,8 +3250,9 @@ Set them before running `$$nemoclaw onboard`.
 | `NEMOCLAW_INSTALL_TAG` | release tag | For internal installer commands: the release tag to install. Defaults to the admin-promoted `lkg` tag when unset. Overridden by the `--install-tag` flag. |
 | `NEMOCLAW_VLLM_MODEL` | registry slug or Hugging Face model id | Selects the model the managed-vLLM install path serves. Recognised slugs: `qwen3.6-27b`, `qwen3.6-35b-a3b-nvfp4`, `nemotron-3-nano-4b`, `deepseek-v4-flash`, `deepseek-r1-distill-70b`. Unset uses the per-platform profile default. Gated models (e.g. `deepseek-r1-distill-70b`) require `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`. |
 | `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` | JSON array of non-blank strings | Appends advanced operator-owned tokens to the managed `vllm serve` command after NemoClaw's registry defaults. Example: `["--max-num-seqs","2"]`. Malformed JSON, non-string tokens, or blank tokens fail before Docker work starts. |
+| `NEMOCLAW_IGNORE_VLLM_DISK_SPACE` | exactly `1` | Allows managed vLLM to continue when Docker image-storage or model-cache capacity is insufficient or cannot be verified; other values do not bypass the checks. |
 <AgentOnly variant="openclaw">
-| `NEMOCLAW_MINIMAL_BOOTSTRAP` | `1` to enable | Skips default OpenClaw workspace-template seeding for new pristine workspaces. Existing files are not deleted; refer to [Runtime Controls](../manage-sandboxes/runtime-controls). |
+| `NEMOCLAW_MINIMAL_BOOTSTRAP` | `1` to enable | Skips default OpenClaw workspace-template seeding for new pristine workspaces. Existing files are not deleted; refer to [Understand Runtime Changes](../manage-sandboxes/configure-sandboxes/understand-runtime-changes). |
 </AgentOnly>
 | `NEMOCLAW_MODEL_ROUTER_PYTHON` | absolute path | Pins the host Python interpreter used to create the Model Router virtual environment. Strict. NemoClaw probes only that interpreter and aborts with the failure reason if it does not qualify, rather than silently falling back to another python. Relative command names such as `python3.12` are rejected. When unset, NemoClaw probes `python3.13`, `python3.12`, `python3.11`, `python3.10`, and bare `python3`, retains every interpreter whose version is in `[3.10, 3.14)` and whose `ensurepip`, `pyexpat`, `ssl`, and `venv` stdlib modules import cleanly, and tries `python -m venv` on each in priority order until one succeeds. Set the pin when the auto-discovered interpreter is broken (for example, Homebrew `python@3.14` with a `pyexpat` dlopen mismatch on macOS). |
 
@@ -3371,7 +3400,7 @@ Set them before running `$$nemoclaw onboard`.
 
 | Variable | Format | Effect |
 |----------|--------|--------|
-| `NEMOCLAW_YES` | `1` to enable | Auto-accepts confirmation prompts (`--yes` equivalent) including in helpers like the Ollama proxy auth setup. |
+| `NEMOCLAW_YES` | `1` to enable | Auto-accepts confirmation prompts (`--yes` equivalent) including in helpers like the Ollama proxy auth setup, but does not accept managed-vLLM storage warnings. |
 | `NEMOCLAW_OLLAMA_NO_AUTOSTART` | `1` to enable | Skips the wizard's eager Ollama auto-start during inference-provider selection (equivalent to passing `--no-ollama-autostart`). When set and Ollama is not running on `localhost:11434`, the `$$nemoclaw onboard` Local Ollama path prints a warning and selects the default fallback model instead of spawning `ollama serve`. The flag covers only the provider-selection step; later setup steps (auth proxy, validation, model warm) still expect a reachable Ollama. On Linux hosts with a systemd Ollama unit, the loopback-override path may still restart the daemon before this gate runs. |
 | `NEMOCLAW_NON_INTERACTIVE_SUDO_MODE` | `prompt` or empty/unset | When set to `prompt`, allows non-interactive onboarding to use prompt-capable `sudo` for host setup steps that require elevation, which can ask for a password. Empty/unset is the default and uses `sudo -n`, which fails instead of asking for a password. Any other value is rejected. |
 | `NEMOCLAW_NO_EXPRESS` | `1` to enable | Installer-only. Skips the DGX Spark, DGX Station, and Windows WSL express install prompt and continues with the normal interactive onboarding flow. |

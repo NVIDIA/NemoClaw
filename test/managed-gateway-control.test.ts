@@ -260,6 +260,9 @@ with tempfile.TemporaryDirectory() as root:
         except control.ControlError as error:
             duplicate_supervisor = error.code
         remove_process(proc_root, 45)
+        # The preceding cases recreate fake PIDs 40 and 41, so refresh their
+        # inode-bound identities before testing stable reads and signals.
+        supervisor = control._discover_supervisor(reader)
 
         preflight_steps = []
         real_validator = control._run_fixed_validator
@@ -312,7 +315,7 @@ with tempfile.TemporaryDirectory() as root:
             duplicate = error.code
         remove_process(proc_root, 42)
 
-        expected_gateway = candidates[0]
+        expected_gateway = control._gateway_candidates(reader, supervisor, hermes)[0]
         sent = []
         real_pidfd_open = control._pidfd_open
         real_pidfd_exited = control._pidfd_exited

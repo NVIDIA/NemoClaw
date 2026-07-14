@@ -1,0 +1,189 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Transfer State Manually"
+sidebar-title: "Transfer State Manually"
+description: "Download and upload selected sandbox state files when a managed snapshot is not the right transfer path."
+description-agent: "Explains safe manual download and upload paths for OpenClaw workspace files, Hermes state, and Deep Agents state. Use when inspecting or transferring specific files."
+keywords: ["openshell sandbox download", "openshell sandbox upload", "manual sandbox backup", "workspace transfer"]
+content:
+  type: "how_to"
+skill:
+  priority: 30
+---
+import { AgentOnly } from "../_components/AgentGuide";
+
+Use manual transfer when you need to inspect or move specific state files.
+Use [Create and Restore Snapshots](create-and-restore-snapshots) for normal backup, rebuild, and restore workflows.
+
+## Download State
+
+Use `openshell sandbox download` to copy files from the sandbox to your host.
+
+<AgentOnly variant="openclaw">
+
+```bash
+SANDBOX=my-assistant
+BACKUP_DIR=~/.nemoclaw/backups/$(date +%Y%m%d-%H%M%S)
+mkdir -p "$BACKUP_DIR"
+
+openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/SOUL.md "$BACKUP_DIR/"
+openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/USER.md "$BACKUP_DIR/"
+openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/IDENTITY.md "$BACKUP_DIR/"
+openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/AGENTS.md "$BACKUP_DIR/"
+openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/MEMORY.md "$BACKUP_DIR/"
+openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/memory/ "$BACKUP_DIR/memory/"
+```
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+For Hermes, prefer [Create and Restore Snapshots](create-and-restore-snapshots) for a faithful `state.db` restore.
+Use manual download and upload only when you need to inspect or transfer a specific file.
+
+```bash
+SANDBOX=my-hermes
+BACKUP_DIR=~/.nemoclaw/backups/$(date +%Y%m%d-%H%M%S)
+mkdir -p "$BACKUP_DIR/dashboard-home"
+
+openshell sandbox download "$SANDBOX" /sandbox/SOUL.md "$BACKUP_DIR/"
+openshell sandbox download "$SANDBOX" /sandbox/.hermes/state.db "$BACKUP_DIR/"
+openshell sandbox download "$SANDBOX" /sandbox/.hermes/dashboard-home/MEMORY.md "$BACKUP_DIR/dashboard-home/MEMORY.md"
+openshell sandbox download "$SANDBOX" /sandbox/.hermes/dashboard-home/USER.md "$BACKUP_DIR/dashboard-home/USER.md"
+openshell sandbox download "$SANDBOX" /sandbox/.hermes/platforms/ "$BACKUP_DIR/platforms/"
+```
+
+Copy only the dashboard profile's `MEMORY.md` and `USER.md` files.
+Do not copy `.hermes/dashboard-home/.env` or `.hermes/dashboard-home/config.yaml`.
+NemoClaw regenerates both files, and `.env` contains dashboard authentication material.
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+```bash
+SANDBOX=my-deepagents
+BACKUP_DIR=~/.nemoclaw/backups/$(date +%Y%m%d-%H%M%S)
+mkdir -p "$BACKUP_DIR"
+
+openshell sandbox download "$SANDBOX" /sandbox/.deepagents/config.toml "$BACKUP_DIR/"
+openshell sandbox download "$SANDBOX" /sandbox/.deepagents/agent/AGENTS.md "$BACKUP_DIR/agent/"
+openshell sandbox download "$SANDBOX" /sandbox/.deepagents/agent/memories/ "$BACKUP_DIR/agent/memories/"
+openshell sandbox download "$SANDBOX" /sandbox/.deepagents/skills/ "$BACKUP_DIR/skills/"
+openshell sandbox download "$SANDBOX" /sandbox/.deepagents/agent/skills/ "$BACKUP_DIR/agent-skills/"
+```
+
+Do not recursively download `/sandbox/.deepagents/.state/`.
+That directory can contain upstream credential state such as `auth.json` and `chatgpt-auth.json`, which can copy secrets to the host and restore state that the managed launcher refuses.
+Use `$$nemoclaw <name> snapshot create` when you need NemoClaw's built-in sanitizer for Deep Agents runtime state.
+
+</AgentOnly>
+
+## Upload State
+
+Use `openshell sandbox upload` to push files back into a sandbox.
+
+<AgentOnly variant="openclaw">
+
+```bash
+SANDBOX=my-assistant
+BACKUP_DIR=~/.nemoclaw/backups/20260320-120000  # pick a timestamp
+
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/SOUL.md" /sandbox/.openclaw/workspace/
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/USER.md" /sandbox/.openclaw/workspace/
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/IDENTITY.md" /sandbox/.openclaw/workspace/
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/AGENTS.md" /sandbox/.openclaw/workspace/
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/MEMORY.md" /sandbox/.openclaw/workspace/
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/memory/" /sandbox/.openclaw/workspace/memory/
+```
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+For Hermes, prefer [Create and Restore Snapshots](create-and-restore-snapshots) for a faithful `state.db` restore.
+Use manual download and upload only when you need to inspect or transfer a specific file.
+
+```bash
+SANDBOX=my-hermes
+BACKUP_DIR=~/.nemoclaw/backups/20260320-120000  # pick a timestamp
+
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/SOUL.md" /sandbox/
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/state.db" /sandbox/.hermes/
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/dashboard-home/MEMORY.md" /sandbox/.hermes/dashboard-home/MEMORY.md
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/dashboard-home/USER.md" /sandbox/.hermes/dashboard-home/USER.md
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/platforms/" /sandbox/.hermes/platforms/
+```
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+```bash
+SANDBOX=my-deepagents
+BACKUP_DIR=~/.nemoclaw/backups/20260320-120000  # pick a timestamp
+
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/agent/AGENTS.md" /sandbox/.deepagents/agent/
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/agent/memories/" /sandbox/.deepagents/agent/memories/
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/skills/" /sandbox/.deepagents/skills/
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/agent-skills/" /sandbox/.deepagents/agent/skills/
+```
+
+Do not upload saved `.deepagents/.state` contents during manual restore.
+Restore safe Deep Agents files only, then run the managed rebuild or onboarding flow so NemoClaw regenerates route metadata, managed MCP projection state, and credential handling from host-side state.
+
+Treat downloaded `config.toml` as inspection context.
+Do not upload an old `config.toml` over a rebuilt sandbox unless you are intentionally replacing NemoClaw's generated route metadata.
+
+</AgentOnly>
+
+<AgentOnly variant="openclaw">
+
+## Use the Source-Tree Backup Helper
+
+<Note title="Source-tree helper script">
+The [`scripts/backup-workspace.sh`](https://github.com/NVIDIA/NemoClaw/blob/main/scripts/backup-workspace.sh) helper exists only in the NemoClaw source repository for engineering workflows.
+It is not installed by the standard installer, so host installs should use `nemoclaw backup-all` or the snapshot commands.
+</Note>
+
+Back up a workspace:
+
+```bash
+./scripts/backup-workspace.sh backup my-assistant
+```
+
+Expected output:
+
+```text
+Backing up workspace from sandbox 'my-assistant'...
+Backup saved to /home/user/.nemoclaw/backups/20260320-120000/ (6 items)
+```
+
+Restore the most recent backup or a specific timestamp:
+
+```bash
+./scripts/backup-workspace.sh restore my-assistant
+./scripts/backup-workspace.sh restore my-assistant 20260320-120000
+```
+
+Verify the saved files:
+
+```bash
+ls -la ~/.nemoclaw/backups/20260320-120000/
+```
+
+Expected output:
+
+```text
+AGENTS.md
+IDENTITY.md
+MEMORY.md
+SOUL.md
+USER.md
+memory/
+```
+
+</AgentOnly>
+
+## Related Topics
+
+- [Understand Sandbox State](understand-sandbox-state) for agent-specific paths and persistence rules.
+- [Create and Restore Snapshots](create-and-restore-snapshots) for managed restore and clone operations.
+- [CLI Selection Guide](../../reference/cli-selection-guide) for NemoClaw and OpenShell command boundaries.

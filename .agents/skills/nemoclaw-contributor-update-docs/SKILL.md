@@ -115,6 +115,7 @@ For each relevant commit, determine which doc page(s) it affects. Use this mappi
 If a commit does not map to any existing page but introduces a user-visible concept, flag it as needing a new page.
 If a commit already changes files under `docs/`, include those pages in the target page list and run a docs review or edit pass against them using the style guidance in Step 5.
 Do not assume an existing doc change is complete, correctly placed, or style-compliant just because it landed with the source commit.
+If the target section has become too large or needs information-architecture changes, flag the structural work for a maintainer and use `nemoclaw-maintainer-refactor-docs` instead of improvising a structural rewrite during release catch-up.
 
 ## Step 3: Read the Commit Details
 
@@ -240,7 +241,7 @@ Apply the `area: docs` label and the correct release label so reviewers can iden
 Add `area: skills` only if the PR changes a file under `.agents/skills/`.
 When creating the PR with `gh pr create`, pass the labels. For example, a pre-tag release-note docs PR for `0.0.63` uses `--label "area: docs" --label v0.0.63`. A post-release recovery docs refresh for `0.0.63` uses `--label "area: docs" --label v0.0.64`.
 If the release label does not exist, report that instead of substituting another label.
-Follow `nemoclaw-contributor-create-pr` for the PR mechanics, including [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md) and [PR CI and Automated Review Follow-Up](../_shared/pr-follow-up.md).
+Follow `nemoclaw-contributor-create-pr` for the PR mechanics, including [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md) and [PR CI and Review Follow-Up](../_shared/pr-follow-up.md).
 
 ## Tips
 
@@ -272,4 +273,4 @@ User says: "Catch up the docs for everything merged since v0.1.0."
    ```
 
    If the selected release label does not exist, report that the PR was created without the release label or that PR creation failed because the label was missing.
-   Follow up after PR creation using [PR CI and Automated Review Follow-Up](../_shared/pr-follow-up.md); use [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md) if access or authentication blocks progress.
+   Follow up after PR creation using [PR CI and Review Follow-Up](../_shared/pr-follow-up.md); use [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md) if access or authentication blocks progress.

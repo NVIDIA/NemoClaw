@@ -1,20 +1,90 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: E2E / PR Gate
+name: E2E / PR Gate Controller
 
 on:
   workflow_run:
     workflows: ["CI / Pull Request"]
     types: [completed]
   pull_request_target:
-    types: [synchronize, reopened, closed]
+    types: [opened, synchronize, reopened, ready_for_review, edited, closed]
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: E2E gate action to perform.
+        required: true
+        default: approve-fork-e2e-skip
+        type: choice
+        options:
+          - approve-fork-e2e-skip
+          - run-control-plane
+      pr_number:
+        description: Pull request number for the selected E2E gate action.
+        required: true
+        type: string
+      expected_head_sha:
+        description: Current 40-character PR head SHA reviewed by the maintainer.
+        required: true
+        type: string
+      expected_base_sha:
+        description: Current 40-character PR base SHA reviewed by the maintainer.
+        required: true
+        type: string
+      review_reason:
+        description: Why this fork PR may skip credentialed E2E or this internal PR may run control-plane E2E.
+        required: true
+        type: string
+      evidence_url:
+        description: Fork credentialed-E2E skip only; optional Actions run URL. Ignored by run-control-plane, whose evidence comes from the dispatched jobs.
+        required: false
+        default: ""
+        type: string
 
 permissions: {}
 
 jobs:
+  initialize:
+    if: ${{ github.event_name == 'pull_request_target' && github.repository == 'NVIDIA/NemoClaw' && github.event.action != 'closed' && (github.event.action != 'edited' || github.event.changes.base != null) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      checks: write
+      contents: read
+      pull-requests: read
+    concurrency:
+      group: pr-e2e-gate-${{ github.event.pull_request.head.repo.full_name }}-${{ github.event.pull_request.head.ref }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout controller
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: "22"
+
+      - name: Install controller dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Reserve exact-diff gate
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: >-
+          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
+          --mode seed
+          --pr "$PR_NUMBER"
+          --head "$HEAD_SHA"
+          --base "$BASE_SHA"
+
   cancel-superseded:
-    if: ${{ github.event_name == 'pull_request_target' && github.repository == 'NVIDIA/NemoClaw' && github.event.pull_request.head.repo.full_name == github.repository }}
+    if: ${{ github.event_name == 'pull_request_target' && github.repository == 'NVIDIA/NemoClaw' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.action != 'edited' || github.event.changes.base != null) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -33,7 +103,7 @@ jobs:
           node-version: "22"
 
       - name: Install controller dependencies
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Cancel superseded E2E runs
         env:
@@ -45,16 +115,21 @@ jobs:
           --pr "$PR_NUMBER"
 
   coordinate:
-    if: ${{ github.event_name == 'workflow_run' && github.repository == 'NVIDIA/NemoClaw' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.head_repository.full_name == github.repository }}
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && ((github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.path == '.github/workflows/pr.yaml' && endsWith(github.event.workflow_run.display_title, ' gate true')) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'run-control-plane' && github.run_attempt == 1)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    outputs:
+      fork_skip_mode: ${{ steps.start.outputs.fork_skip_mode }}
+      fork_skip_pr_number: ${{ steps.start.outputs.fork_skip_pr_number }}
+      fork_skip_head_sha: ${{ steps.start.outputs.fork_skip_head_sha }}
+      fork_skip_base_sha: ${{ steps.start.outputs.fork_skip_base_sha }}
     permissions:
       actions: write
       checks: write
       contents: read
       pull-requests: read
     concurrency:
-      group: pr-e2e-gate-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+      group: pr-e2e-gate-${{ github.repository }}-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.expected_head_sha }}
       # Let the previous coordinator observe E2E cancellation and close its check.
       cancel-in-progress: false
     steps:
@@ -70,7 +145,7 @@ jobs:
           node-version: "22"
 
       - name: Install controller dependencies
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - id: workspace
         name: Create private workspace
@@ -85,33 +160,59 @@ jobs:
         name: Start evaluation
         env:
           CI_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          CI_DISPLAY_TITLE: ${{ github.event.workflow_run.display_title }}
           CI_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
           CI_RUN_ID: ${{ github.event.workflow_run.id }}
+          GATE_RUN_ID: ${{ github.run_id }}
           GITHUB_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
           HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
           HEAD_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          MAINTAINER: ${{ github.triggering_actor }}
+          MANUAL_BASE_SHA: ${{ inputs.expected_base_sha }}
+          MANUAL_HEAD_SHA: ${{ inputs.expected_head_sha }}
+          MANUAL_PR_NUMBER: ${{ inputs.pr_number }}
           PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          REVIEW_REASON: ${{ inputs.review_reason }}
           WORKFLOW_SHA: ${{ github.workflow_sha }}
+          WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
           WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
-        run: >-
-          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
-          --mode start
-          --head "$HEAD_SHA"
-          --head-repo "$HEAD_REPOSITORY"
-          --head-branch "$HEAD_BRANCH"
-          --workflow-sha "$WORKFLOW_SHA"
-          --ci-conclusion "$CI_CONCLUSION"
-          --ci-run-attempt "$CI_RUN_ATTEMPT"
-          --ci-run-id "$CI_RUN_ID"
-          --pr "$PR_NUMBER"
-          --work-dir "$WORK_DIR"
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            node --experimental-strip-types tools/e2e/pr-e2e-gate.mts \
+              --mode start-control-plane \
+              --pr "$MANUAL_PR_NUMBER" \
+              --head "$MANUAL_HEAD_SHA" \
+              --base "$MANUAL_BASE_SHA" \
+              --workflow-sha "$WORKFLOW_SHA" \
+              --maintainer "$MAINTAINER" \
+              --reason "$REVIEW_REASON" \
+              --gate-run-id "$GATE_RUN_ID" \
+              --workflow-run-attempt "$WORKFLOW_RUN_ATTEMPT" \
+              --work-dir "$WORK_DIR"
+          else
+            node --experimental-strip-types tools/e2e/pr-e2e-gate.mts \
+              --mode start \
+              --head "$HEAD_SHA" \
+              --head-repo "$HEAD_REPOSITORY" \
+              --head-branch "$HEAD_BRANCH" \
+              --workflow-sha "$WORKFLOW_SHA" \
+              --ci-conclusion "$CI_CONCLUSION" \
+              --ci-display-title "$CI_DISPLAY_TITLE" \
+              --ci-run-attempt "$CI_RUN_ATTEMPT" \
+              --ci-run-id "$CI_RUN_ID" \
+              --gate-run-id "$GATE_RUN_ID" \
+              --pr "$PR_NUMBER" \
+              --work-dir "$WORK_DIR"
+          fi
 
       - name: Upload risk plan
         if: ${{ always() && steps.workspace.outputs.work_dir != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pr-e2e-risk-plan-${{ github.event.workflow_run.head_sha }}
+          name: pr-e2e-risk-plan-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.expected_head_sha }}
           path: ${{ steps.workspace.outputs.work_dir }}/risk-plan.json
           if-no-files-found: ignore
           retention-days: 14
@@ -157,8 +258,8 @@ jobs:
                     "$RUN_ID" "$run_url"
                   ;;
                 completed:failure | completed:cancelled | completed:timed_out | completed:action_required | completed:neutral | completed:skipped | completed:stale | completed:startup_failure)
-                  printf '::error title=E2E run failed::Run %s completed with conclusion %s. %s\n' \
-                    "$RUN_ID" "${state#*:}" "$run_url" >&2
+                  printf 'Run %s status=completed conclusion=%s url=%s\n' \
+                    "$RUN_ID" "${state#*:}" "$run_url"
                   ;;
                 *)
                   printf '::error title=Unexpected run state::Run %s returned an unsupported status/conclusion pair. %s\n' \
@@ -172,7 +273,7 @@ jobs:
               queued:none | in_progress:none | requested:none | waiting:none | pending:none)
                 sleep 10
                 ;;
-              completed:success)
+              completed:success | completed:failure | completed:cancelled | completed:timed_out | completed:action_required | completed:neutral | completed:skipped | completed:stale | completed:startup_failure)
                 exit 0
                 ;;
               *)
@@ -183,7 +284,8 @@ jobs:
           WAIT
 
           if [ "$wait_status" -eq 124 ]; then
-            printf '::error title=E2E run timed out::The run did not complete within 105 minutes.\n' >&2
+            printf 'Run %s did not complete within 105 minutes; finalization will cancel it and report the PR gate outcome.\n' "$RUN_ID"
+            wait_status=0
           fi
           exit "$wait_status"
 
@@ -217,6 +319,7 @@ jobs:
           --state-hash "${{ steps.start.outputs.state_hash }}"
           --check-id "${{ steps.start.outputs.check_id }}"
           --run-id "${{ steps.start.outputs.run_id }}"
+          --evidence-outcome "${{ steps.evidence.outcome }}"
 
       - name: Close incomplete check
         if: ${{ always() && steps.start.outputs.check_id != '' && steps.start.outputs.finalized != 'true' && steps.finish.outputs.finalized != 'true' }}
@@ -231,3 +334,102 @@ jobs:
       - name: Remove private workspace
         if: ${{ always() && steps.workspace.outputs.work_dir != '' }}
         run: rm -rf -- "${{ steps.workspace.outputs.work_dir }}"
+
+  approve-fork-e2e-skip:
+    name: Approve credentialed E2E skip for fork PR
+    needs: coordinate
+    if: ${{ needs.coordinate.result == 'success' && needs.coordinate.outputs.fork_skip_mode != '' && github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: approve-credentialed-e2e-skip-for-fork-pr
+      deployment: false
+    permissions:
+      actions: read
+      checks: write
+      contents: read
+      pull-requests: read
+    concurrency:
+      group: pr-e2e-gate-approve-fork-skip-${{ needs.coordinate.outputs.fork_skip_pr_number }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout controller
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: "22"
+
+      - name: Install controller dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Record approved credentialed E2E skip
+        env:
+          APPROVAL_RUN_ATTEMPT: ${{ github.run_attempt }}
+          APPROVAL_RUN_ID: ${{ github.run_id }}
+          EXPECTED_BASE_SHA: ${{ needs.coordinate.outputs.fork_skip_base_sha }}
+          EXPECTED_HEAD_SHA: ${{ needs.coordinate.outputs.fork_skip_head_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.coordinate.outputs.fork_skip_pr_number }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: >-
+          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
+          --mode record-approved-fork-e2e-skip
+          --pr "$PR_NUMBER"
+          --head "$EXPECTED_HEAD_SHA"
+          --base "$EXPECTED_BASE_SHA"
+          --workflow-sha "$WORKFLOW_SHA"
+          --approval-run-id "$APPROVAL_RUN_ID"
+          --approval-run-attempt "$APPROVAL_RUN_ATTEMPT"
+
+  record-fork-e2e-skip:
+    name: Record credentialed E2E skip for fork PR
+    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.operation == 'approve-fork-e2e-skip' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      checks: write
+      contents: read
+      pull-requests: read
+    concurrency:
+      group: pr-e2e-gate-record-fork-skip-${{ inputs.pr_number }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout controller
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: "22"
+
+      - name: Install controller dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Record credentialed E2E skip
+        env:
+          EVIDENCE_URL: ${{ inputs.evidence_url }}
+          EXPECTED_BASE_SHA: ${{ inputs.expected_base_sha }}
+          EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          MAINTAINER: ${{ github.triggering_actor }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          REVIEW_REASON: ${{ inputs.review_reason }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: >-
+          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
+          --mode record-fork-e2e-skip
+          --pr "$PR_NUMBER"
+          --head "$EXPECTED_HEAD_SHA"
+          --base "$EXPECTED_BASE_SHA"
+          --workflow-sha "$WORKFLOW_SHA"
+          --maintainer "$MAINTAINER"
+          --reason "$REVIEW_REASON"
+          --evidence-url "$EVIDENCE_URL"

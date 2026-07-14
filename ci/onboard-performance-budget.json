@@ -1,5 +1,5 @@
 {
-  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\n\nInitial advisory budget for the cloud-onboard-e2e warm-system trace signal. Profiling traces from #3769 were not available in durable CI artifacts when #3776 was implemented. The latest three release tags only exposed one tag-matching trace artifact, from a failed v0.0.66 nightly run, so this cap is calibrated from the latest ten distinct successful main full-trace samples available on 2026-06-23. Those samples had total durations of 298250 ms, 296926 ms, 304190 ms, 294859 ms, 305013 ms, 316147 ms, 300843 ms, 292702 ms, 201332 ms, and 206250 ms; the cap uses p95 via linear interpolation (index 8.55 between samples 8 and 9) plus 25 percent, rounded up to the nearest 30 seconds.",
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\n\nInitial advisory budget for the cloud-onboard-e2e warm-system trace signal. Profiling traces from #3769 were not available in durable CI artifacts when #3776 was implemented. The latest three release tags only exposed one tag-matching trace artifact, from a failed v0.0.66 nightly run, so this cap is calibrated from the latest ten distinct successful main full-trace samples available on 2026-06-23. Those samples had total durations of 298250 ms, 296926 ms, 304190 ms, 294859 ms, 305013 ms, 316147 ms, 300843 ms, 292702 ms, 201332 ms, and 206250 ms; the cap uses p95 via linear interpolation (index 8.55 between samples 8 and 9) plus 25 percent, rounded up to the nearest 30 seconds.\n\nThe full-e2e cold-path budgets are derived from the five current-main samples recorded in ci/full-e2e-cold-path-calibration.json. For each interval and phase independently, the budget is nearest-rank p95 plus the larger of 5 seconds or 10 percent, rounded up to the nearest second. Independent phase caps are diagnostic regression gates, not additive portions of the root-start interval.",
   "schemaVersion": 1,
   "mode": "advisory",
   "scope": "cloud-onboard-e2e warm-system",
@@ -11,5 +11,16 @@
   "phaseRegressionWarning": {
     "minDeltaMs": 30000,
     "minPercent": 30
+  },
+  "fullE2eColdPath": {
+    "rootStartToFirstTurnCompletionBudgetMs": 205000,
+    "rootEndToFirstTurnCompletionBudgetMs": 14000,
+    "phaseBudgetsMs": {
+      "nemoclaw.onboard.phase.preflight": 11000,
+      "nemoclaw.onboard.phase.gateway": 6000,
+      "nemoclaw.onboard.phase.provider_selection": 8000,
+      "nemoclaw.onboard.phase.inference": 6000,
+      "nemoclaw.onboard.phase.sandbox": 146000
+    }
   }
 }

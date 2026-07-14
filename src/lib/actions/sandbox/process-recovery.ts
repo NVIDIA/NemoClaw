@@ -828,6 +828,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     relaunchManagedSupervisorSessionImpl = relaunchManagedSupervisorSession,
     isSandboxGatewayRunningImpl = isSandboxGatewayRunning,
     waitForRecreatedSandboxOpenShellReadyImpl = waitForRecreatedSandboxOpenShellReady,
+    isWsl: isWslOverride,
   }: {
     quiet?: boolean;
     requestGatewaySupervisorAction?: typeof executeGatewaySupervisorAction;
@@ -835,6 +836,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     relaunchManagedSupervisorSessionImpl?: typeof relaunchManagedSupervisorSession;
     isSandboxGatewayRunningImpl?: typeof isSandboxGatewayRunning;
     waitForRecreatedSandboxOpenShellReadyImpl?: typeof waitForRecreatedSandboxOpenShellReady;
+    isWsl?: boolean;
   } = {},
 ) {
   const recoveryAgent = agentRuntime.getSessionAgent(sandboxName);
@@ -876,14 +878,14 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     // Gateway is alive but the host-side forward can still be dead or
     // owned by another sandbox. Probe and re-establish only when
     // necessary so the live-and-healthy path stays a no-op.
-    const forwardHealthy = isSandboxForwardHealthy(sandboxName);
+    const forwardHealthy = isSandboxForwardHealthy(sandboxName, { isWsl: isWslOverride });
     if (forwardHealthy === false) {
       if (!quiet) {
         console.log("");
         console.log(`  Dashboard port forward to '${sandboxName}' is missing or dead.`);
         console.log("  Re-establishing...");
       }
-      const forwardRecovered = ensureSandboxPortForward(sandboxName);
+      const forwardRecovered = ensureSandboxPortForward(sandboxName, { isWsl: isWslOverride });
       const dashboardForwardRecovered = ensureHermesDashboardPortForwardIfEnabled(sandboxName);
       const messagingForwardRecovered = recoverMessagingHostForward(sandboxName, { quiet });
       const declaredForwardsRecovered = recoverDeclaredAgentForwardPorts(
@@ -1116,6 +1118,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     const forwardRecovered = ensureSandboxPortForward(sandboxName, {
       afterSuccess: confirmRelaunchedManagedHealth ?? undefined,
       beforeStart: confirmRelaunchedManagedHealth ?? undefined,
+      isWsl: isWslOverride,
     });
     if (!forwardRecovered && relaunchedIdentityRejected) {
       return {
@@ -1196,6 +1199,7 @@ export function checkAndRecoverSandboxProcesses(
     relaunchManagedSupervisorSessionImpl?: typeof relaunchManagedSupervisorSession;
     isSandboxGatewayRunningImpl?: typeof isSandboxGatewayRunning;
     waitForRecreatedSandboxOpenShellReadyImpl?: typeof waitForRecreatedSandboxOpenShellReady;
+    isWsl?: boolean;
   } = {},
 ) {
   return withTimerBoundShieldsMutationLock(sandboxName, "gateway process recovery", () =>

@@ -16,19 +16,31 @@ import {
   buildRiskPlan,
   RISK_PLAN_VERSION,
   type RiskPlan,
+  requiresCredentialedE2eAuthorization,
   riskPlanRequiredJobIds,
 } from "../advisors/risk-plan.mts";
 import { SHARED_E2E_JOB_ID } from "./credential-free-tests.mts";
 import { readPrivateRegularFile, writePrivateRegularFile } from "./private-file.ts";
 import type { E2eRiskSignal } from "./risk-signal.ts";
-import { readFreeStandingJobsInventory } from "./workflow-boundary.mts";
+import {
+  focusedE2eJobsForChangedFiles,
+  readFreeStandingJobsInventory,
+} from "./workflow-boundary.mts";
 
 const E2E_WORKFLOW = "e2e.yaml";
 const E2E_WORKFLOW_PATH = `.github/workflows/${E2E_WORKFLOW}`;
+const PR_GATE_WORKFLOW_PATH = ".github/workflows/pr-e2e-gate.yaml";
+const PR_GATE_APPROVAL_ENVIRONMENT = "approve-credentialed-e2e-skip-for-fork-pr";
 const CHECK_NAME = "E2E / PR Gate";
+const WORKFLOW_NAME = "E2E / PR Gate Controller";
+const CHECK_EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v2";
+const LEGACY_CHECK_EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v1";
+const GITHUB_ACTIONS_APP_ID = 15368;
 const USER_AGENT = "nemoclaw-pr-e2e-gate";
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const HASH_PATTERN = /^[a-f0-9]{64}$/u;
+const CI_DISPLAY_TITLE_PATTERN =
+  /^CI PR #([1-9][0-9]*) head ([a-f0-9]{40}) base ([a-f0-9]{40}) gate true$/u;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const JOB_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/u;
 const SHARD_PATTERN = /^(?:default|[A-Za-z0-9][A-Za-z0-9_-]*)$/u;
@@ -38,8 +50,15 @@ const RUN_REASONS = new Set(["passed", "failed", "interrupted"]);
 const MAX_PLAN_BYTES = 1024 * 1024;
 const MAX_CONTROLLER_ERROR_CHARS = 512;
 const MAX_PR_FILES = 3000;
+const MAX_COMPATIBILITY_FILES = 300;
 const MAX_ACTIVE_RUN_PAGES_PER_STATUS = 10;
-const MAX_REPORTED_CI_JOBS = 10;
+const MAX_WORKFLOW_JOB_PAGES = 10;
+const MAX_REPORTED_WORKFLOW_JOBS = 10;
+const MAX_WAIVER_REASON_CHARS = 500;
+const MAX_APPROVAL_REVIEWS = 20;
+const MAINTAINER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u;
+const EVIDENCE_URL_PATTERN =
+  /^https:\/\/github\.com\/NVIDIA\/NemoClaw\/actions\/runs\/[1-9][0-9]*$/u;
 const ACTIVE_WORKFLOW_RUN_STATUSES = [
   "requested",
   "waiting",
@@ -59,7 +78,51 @@ type ControllerPaths = {
   evidencePath: string;
 };
 
+type EvidenceStepOutcome = "success" | "failure" | "cancelled" | "skipped";
+
+type ManualForkSkipCommandBase = {
+  prNumber: number;
+  headSha: string;
+  baseSha: string;
+  workflowSha: string;
+  maintainer: string;
+  reason: string;
+  evidenceUrl?: string;
+};
+
+type ManualForkSkipCommand = ManualForkSkipCommandBase & { mode: "record-fork-e2e-skip" };
+
+type ApprovedForkSkipCommand = {
+  mode: "record-approved-fork-e2e-skip";
+  prNumber: number;
+  headSha: string;
+  baseSha: string;
+  workflowSha: string;
+  approvalRunId: number;
+  approvalRunAttempt: number;
+};
+
+type ControlPlaneDispatchCommand = {
+  mode: "start-control-plane";
+  prNumber: number;
+  headSha: string;
+  baseSha: string;
+  workflowSha: string;
+  maintainer: string;
+  reason: string;
+  gateRunId: number;
+  workflowRunAttempt: number;
+} & ControllerPaths;
+
+type ForkSkipCommand = ManualForkSkipCommand & {
+  validatedApproval?: {
+    environment: typeof PR_GATE_APPROVAL_ENVIRONMENT;
+    runUrl: string;
+  };
+};
+
 export type ControllerCommand =
+  | { mode: "seed"; prNumber: number; headSha: string; baseSha: string }
   | ({
       mode: "start";
       headSha: string;
@@ -67,8 +130,10 @@ export type ControllerCommand =
       headBranch: string;
       workflowSha: string;
       ciConclusion: string;
+      ciDisplayTitle: string;
       ciRunId: number;
       ciRunAttempt: number;
+      gateRunId: number;
       prNumber?: number;
     } & ControllerPaths)
   | ({
@@ -76,11 +141,15 @@ export type ControllerCommand =
       checkRunId: number;
       childRunId: number;
       stateHash: string;
+      evidenceOutcome: EvidenceStepOutcome;
     } & ControllerPaths)
   | { mode: "abandon"; checkRunId: number; childRunId?: number }
-  | { mode: "cancel"; prNumber: number };
+  | { mode: "cancel"; prNumber: number }
+  | ControlPlaneDispatchCommand
+  | ManualForkSkipCommand
+  | ApprovedForkSkipCommand;
 
-type CheckConclusion = "success" | "failure";
+type CheckConclusion = "success" | "failure" | "cancelled";
 
 export type PullRequest = {
   number: number;
@@ -115,8 +184,22 @@ type WorkflowJob = {
   steps: Array<{ name: string; conclusion: string | null }>;
 };
 type WorkflowJobsPage = { totalCount: number; jobs: WorkflowJob[] };
-type CheckRun = { id: number };
-type GitReference = { ref: string; object: { type: string; sha: string } };
+type CheckRun = {
+  id: number;
+  name?: string;
+  head_sha?: string;
+  external_id?: string | null;
+  status?: string;
+  conclusion?: string | null;
+  output?: { title?: string; summary?: string };
+  app?: { id?: number } | null;
+};
+type CheckRunsResponse = { total_count: number; check_runs: CheckRun[] };
+type CollaboratorPermission = {
+  role_name?: string;
+  permission?: string;
+  user?: { login?: string };
+};
 
 type WorkflowDispatchDetails = {
   workflow_run_id: number;
@@ -133,8 +216,9 @@ type WorkflowRunIdentity = {
 };
 
 export type PrGateState = {
-  version: 1;
+  version: 2;
   commitSha: string;
+  baseSha: string;
   workflowSha: string;
   planHash: string;
   correlationId: string;
@@ -149,7 +233,15 @@ export type PrGateVerdict = {
   summary: string;
 };
 
-export class PrerequisiteCiError extends Error {}
+class ObsoleteExactDiffError extends Error {
+  readonly verdict: PrGateVerdict;
+
+  constructor(verdict: PrGateVerdict) {
+    super(`${verdict.title}: ${verdict.summary}`);
+    this.name = "ObsoleteExactDiffError";
+    this.verdict = verdict;
+  }
+}
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -171,6 +263,39 @@ function parseHash(value: string | undefined, name: string): string {
   const parsed = requiredArgument(value, name);
   if (!HASH_PATTERN.test(parsed)) throw new Error(`--${name} must be a lowercase SHA-256 hash`);
   return parsed;
+}
+
+function parseEvidenceStepOutcome(value: string | undefined): EvidenceStepOutcome {
+  const outcome = requiredArgument(value, "evidence-outcome");
+  if (!["success", "failure", "cancelled", "skipped"].includes(outcome)) {
+    throw new Error("--evidence-outcome must be success, failure, cancelled, or skipped");
+  }
+  return outcome as EvidenceStepOutcome;
+}
+
+export function parseCiRunIdentity(displayTitle: string): {
+  prNumber: number;
+  headSha: string;
+  baseSha: string;
+} {
+  const match = CI_DISPLAY_TITLE_PATTERN.exec(displayTitle);
+  if (!match) throw new Error("CI run title does not contain a valid PR and base identity");
+  return {
+    prNumber: parsePositiveId(match[1]!, "CI run PR number"),
+    headSha: match[2]!,
+    baseSha: match[3]!,
+  };
+}
+
+function normalizedWaiverReason(value: string): string {
+  const normalized = value
+    .replace(/[\u0000-\u001f\u007f]+/gu, " ")
+    .replace(/\s{2,}/gu, " ")
+    .trim();
+  if (normalized.length < 10 || normalized.length > MAX_WAIVER_REASON_CHARS) {
+    throw new Error(`--reason must contain 10-${MAX_WAIVER_REASON_CHARS} printable characters`);
+  }
+  return normalized;
 }
 
 function sha256(value: string): string {
@@ -237,6 +362,14 @@ export function privateControllerPaths(workDir: string): ControllerPaths {
 
 export function parseControllerCommand(argv: string[]): ControllerCommand {
   const args = parseArgs(argv);
+  if (args.mode === "seed") {
+    return {
+      mode: "seed",
+      prNumber: parsePositiveId(requiredArgument(args.pr, "pr"), "--pr"),
+      headSha: requiredArgument(args.head, "head"),
+      baseSha: requiredArgument(args.base, "base"),
+    };
+  }
   if (args.mode === "start") {
     return {
       mode: "start",
@@ -245,11 +378,13 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
       headBranch: requiredArgument(args.headBranch, "head-branch"),
       workflowSha: requiredArgument(args.workflowSha, "workflow-sha"),
       ciConclusion: requiredArgument(args.ciConclusion, "ci-conclusion"),
+      ciDisplayTitle: requiredArgument(args.ciDisplayTitle, "ci-display-title"),
       ciRunId: parsePositiveId(requiredArgument(args.ciRunId, "ci-run-id"), "--ci-run-id"),
       ciRunAttempt: parsePositiveId(
         requiredArgument(args.ciRunAttempt, "ci-run-attempt"),
         "--ci-run-attempt",
       ),
+      gateRunId: parsePositiveId(requiredArgument(args.gateRunId, "gate-run-id"), "--gate-run-id"),
       prNumber: args.pr ? parsePositiveId(args.pr, "--pr") : undefined,
       ...privateControllerPaths(requiredArgument(args.workDir, "work-dir")),
     };
@@ -261,6 +396,7 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
       checkRunId: parsePositiveId(requiredArgument(args.checkId, "check-id"), "--check-id"),
       childRunId: parsePositiveId(requiredArgument(args.runId, "run-id"), "--run-id"),
       stateHash: parseHash(args.stateHash, "state-hash"),
+      evidenceOutcome: parseEvidenceStepOutcome(args.evidenceOutcome),
     };
   }
   if (args.mode === "abandon") {
@@ -276,7 +412,73 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
       prNumber: parsePositiveId(requiredArgument(args.pr, "pr"), "--pr"),
     };
   }
-  throw new Error("--mode must be start, finish, abandon, or cancel");
+  if (args.mode === "start-control-plane") {
+    const maintainer = requiredArgument(args.maintainer, "maintainer");
+    if (!MAINTAINER_PATTERN.test(maintainer)) throw new Error("--maintainer is invalid");
+    const workflowRunAttempt = parsePositiveId(
+      requiredArgument(args.workflowRunAttempt, "workflow-run-attempt"),
+      "--workflow-run-attempt",
+    );
+    if (workflowRunAttempt !== 1) {
+      throw new Error("--workflow-run-attempt must be exactly 1");
+    }
+    return {
+      mode: "start-control-plane",
+      prNumber: parsePositiveId(requiredArgument(args.pr, "pr"), "--pr"),
+      headSha: requiredArgument(args.head, "head"),
+      baseSha: requiredArgument(args.base, "base"),
+      workflowSha: requiredArgument(args.workflowSha, "workflow-sha"),
+      maintainer,
+      reason: normalizedWaiverReason(requiredArgument(args.reason, "reason")),
+      gateRunId: parsePositiveId(requiredArgument(args.gateRunId, "gate-run-id"), "--gate-run-id"),
+      workflowRunAttempt,
+      ...privateControllerPaths(requiredArgument(args.workDir, "work-dir")),
+    };
+  }
+  if (args.mode === "record-fork-e2e-skip") {
+    const maintainer = requiredArgument(args.maintainer, "maintainer");
+    if (!MAINTAINER_PATTERN.test(maintainer)) throw new Error("--maintainer is invalid");
+    const evidenceUrl = args.evidenceUrl?.trim();
+    if (evidenceUrl && !EVIDENCE_URL_PATTERN.test(evidenceUrl)) {
+      throw new Error(
+        "Evidence URL must be an Actions run URL such as https://github.com/NVIDIA/NemoClaw/actions/runs/123. PR, issue, comment, job, and external URLs are not accepted. Leave the field blank if no run exists.",
+      );
+    }
+    return {
+      mode: args.mode,
+      prNumber: parsePositiveId(requiredArgument(args.pr, "pr"), "--pr"),
+      headSha: requiredArgument(args.head, "head"),
+      baseSha: requiredArgument(args.base, "base"),
+      workflowSha: requiredArgument(args.workflowSha, "workflow-sha"),
+      maintainer,
+      reason: normalizedWaiverReason(requiredArgument(args.reason, "reason")),
+      ...(evidenceUrl ? { evidenceUrl } : {}),
+    };
+  }
+  if (args.mode === "record-approved-fork-e2e-skip") {
+    const approvalRunAttempt = parsePositiveId(
+      requiredArgument(args.approvalRunAttempt, "approval-run-attempt"),
+      "--approval-run-attempt",
+    );
+    if (approvalRunAttempt !== 1) {
+      throw new Error("--approval-run-attempt must be exactly 1");
+    }
+    return {
+      mode: "record-approved-fork-e2e-skip",
+      prNumber: parsePositiveId(requiredArgument(args.pr, "pr"), "--pr"),
+      headSha: requiredArgument(args.head, "head"),
+      baseSha: requiredArgument(args.base, "base"),
+      workflowSha: requiredArgument(args.workflowSha, "workflow-sha"),
+      approvalRunId: parsePositiveId(
+        requiredArgument(args.approvalRunId, "approval-run-id"),
+        "--approval-run-id",
+      ),
+      approvalRunAttempt,
+    };
+  }
+  throw new Error(
+    "--mode must be seed, start, start-control-plane, finish, abandon, cancel, record-fork-e2e-skip, or record-approved-fork-e2e-skip",
+  );
 }
 
 function readRegularJson(file: string, maxBytes = MAX_PLAN_BYTES): unknown {
@@ -284,11 +486,14 @@ function readRegularJson(file: string, maxBytes = MAX_PLAN_BYTES): unknown {
 }
 
 export function validatePrGateState(value: unknown): PrGateState {
-  if (!isObjectRecord(value) || value.version !== 1) {
+  if (!isObjectRecord(value) || value.version !== 2) {
     throw new Error("State version is invalid");
   }
   if (typeof value.commitSha !== "string" || !SHA_PATTERN.test(value.commitSha)) {
     throw new Error("State commit SHA is invalid");
+  }
+  if (typeof value.baseSha !== "string" || !SHA_PATTERN.test(value.baseSha)) {
+    throw new Error("State base SHA is invalid");
   }
   if (typeof value.workflowSha !== "string" || !SHA_PATTERN.test(value.workflowSha)) {
     throw new Error("State workflow SHA is invalid");
@@ -347,6 +552,7 @@ export function validateRiskPlan(value: unknown, allowedJobs: ReadonlySet<string
   const rebuilt = buildRiskPlan({
     headSha: value.headSha,
     changedFiles: value.changedFiles as string[],
+    focusedE2eJobs: focusedE2eJobsForChangedFiles(value.changedFiles as string[]),
   });
   if (JSON.stringify(value) !== JSON.stringify(rebuilt)) {
     throw new Error("risk plan does not match its hash and inputs");
@@ -476,11 +682,20 @@ export function classifyPrGateEvidence(options: {
 function appendOutput(name: string, value: string): void {
   const output = process.env.GITHUB_OUTPUT;
   if (!output) return;
-  if (!/^(?:check_id|dispatched|finalized|run_id|state_hash)$/u.test(name)) {
-    throw new Error("invalid controller output name");
-  }
-  const validValue =
-    name === "state_hash" ? HASH_PATTERN.test(value) : /^(?:true|false|[1-9][0-9]*)$/u.test(value);
+  const validators: Readonly<Record<string, (candidate: string) => boolean>> = {
+    check_id: (candidate) => /^[1-9][0-9]*$/u.test(candidate),
+    dispatched: (candidate) => /^(?:true|false)$/u.test(candidate),
+    fork_skip_base_sha: (candidate) => SHA_PATTERN.test(candidate),
+    fork_skip_head_sha: (candidate) => SHA_PATTERN.test(candidate),
+    fork_skip_mode: (candidate) => candidate === "record-fork-e2e-skip",
+    fork_skip_pr_number: (candidate) => /^[1-9][0-9]*$/u.test(candidate),
+    finalized: (candidate) => /^(?:true|false)$/u.test(candidate),
+    run_id: (candidate) => /^[1-9][0-9]*$/u.test(candidate),
+    state_hash: (candidate) => HASH_PATTERN.test(candidate),
+  };
+  const validator = validators[name];
+  if (!validator) throw new Error("invalid controller output name");
+  const validValue = validator(value);
   if (!validValue) throw new Error("invalid controller output value");
   const descriptor = fs.openSync(
     output,
@@ -497,20 +712,133 @@ function appendOutput(name: string, value: string): void {
   }
 }
 
-async function createCheck(
-  repository: string,
-  token: string,
+export function prGateExternalId(prNumber: number, headSha: string, baseSha: string): string {
+  if (
+    !Number.isSafeInteger(prNumber) ||
+    prNumber < 1 ||
+    !SHA_PATTERN.test(headSha) ||
+    !SHA_PATTERN.test(baseSha)
+  ) {
+    throw new Error("PR gate check identity is invalid");
+  }
+  return `${CHECK_EXTERNAL_ID_PREFIX}:${prNumber}:${headSha}:${baseSha}`;
+}
+
+function emitForkSkipOutputs(
+  mode: ManualForkSkipCommand["mode"],
+  prNumber: number,
   headSha: string,
-  title: string,
-  summary: string,
-): Promise<number> {
-  const check = await githubApi<CheckRun>(`repos/${repository}/check-runs`, token, {
+  baseSha: string,
+): void {
+  appendOutput("fork_skip_mode", mode);
+  appendOutput("fork_skip_pr_number", String(prNumber));
+  appendOutput("fork_skip_head_sha", headSha);
+  appendOutput("fork_skip_base_sha", baseSha);
+}
+
+function validateCheckRunsResponse(value: unknown): CheckRunsResponse {
+  if (
+    !isObjectRecord(value) ||
+    !Number.isSafeInteger(value.total_count) ||
+    (value.total_count as number) < 0 ||
+    !Array.isArray(value.check_runs)
+  ) {
+    throw new Error("GitHub returned an invalid check-run listing");
+  }
+  const checkRuns = value.check_runs.map((check) => {
+    if (!isObjectRecord(check) || !Number.isSafeInteger(check.id) || (check.id as number) < 1) {
+      throw new Error("GitHub returned an invalid check run");
+    }
+    return check as CheckRun;
+  });
+  if (checkRuns.length !== value.total_count) {
+    throw new Error("GitHub returned an incomplete check-run listing");
+  }
+  return { total_count: value.total_count as number, check_runs: checkRuns };
+}
+
+async function listPrGateChecks(options: {
+  repository: string;
+  token: string;
+  headSha: string;
+}): Promise<CheckRun[]> {
+  const response = validateCheckRunsResponse(
+    await githubApi<unknown>(
+      `repos/${options.repository}/commits/${options.headSha}/check-runs?check_name=${encodeURIComponent(CHECK_NAME)}&filter=all&per_page=100`,
+      options.token,
+      { userAgent: USER_AGENT },
+    ),
+  );
+  return response.check_runs.filter(
+    (check) => check.name === CHECK_NAME && check.head_sha === options.headSha,
+  );
+}
+
+function isPrGateLineage(check: CheckRun, prNumber: number, headSha: string): boolean {
+  const externalId = check.external_id;
+  return (
+    externalId === `${LEGACY_CHECK_EXTERNAL_ID_PREFIX}:${prNumber}:${headSha}` ||
+    (typeof externalId === "string" &&
+      externalId.startsWith(`${CHECK_EXTERNAL_ID_PREFIX}:${prNumber}:${headSha}:`))
+  );
+}
+
+async function matchingPrGateChecks(options: {
+  repository: string;
+  token: string;
+  headSha: string;
+  baseSha: string;
+  prNumber: number;
+}): Promise<CheckRun[]> {
+  const externalId = prGateExternalId(options.prNumber, options.headSha, options.baseSha);
+  const sameIdentity = (await listPrGateChecks(options)).filter(
+    (check) => check.external_id === externalId,
+  );
+  if (sameIdentity.some((check) => check.app?.id !== GITHUB_ACTIONS_APP_ID)) {
+    throw new Error("PR gate check identity was claimed by an unexpected GitHub App");
+  }
+  return sameIdentity.filter((check) => check.app?.id === GITHUB_ACTIONS_APP_ID);
+}
+
+async function ensurePrGateCheck(options: {
+  repository: string;
+  token: string;
+  headSha: string;
+  baseSha: string;
+  prNumber: number;
+}): Promise<number> {
+  const checks = await listPrGateChecks(options);
+  const lineage = checks.filter((check) =>
+    isPrGateLineage(check, options.prNumber, options.headSha),
+  );
+  if (lineage.some((check) => check.app?.id !== GITHUB_ACTIONS_APP_ID)) {
+    throw new Error("PR gate check identity was claimed by an unexpected GitHub App");
+  }
+  const externalId = prGateExternalId(options.prNumber, options.headSha, options.baseSha);
+  const existing = lineage.filter((check) => check.external_id === externalId);
+  if (existing.length > 1) throw new Error("Multiple exact-diff PR gate checks already exist");
+  for (const stale of lineage.filter((check) => check.external_id !== externalId)) {
+    await completeCheck({ repository: options.repository, checkRunId: stale.id }, options.token, {
+      conclusion: "failure",
+      title: "PR base changed",
+      summary:
+        "This check was computed for an earlier PR base and cannot authorize the current diff.",
+    });
+  }
+  if (existing[0]) return existing[0].id;
+
+  const check = await githubApi<CheckRun>(`repos/${options.repository}/check-runs`, options.token, {
     method: "POST",
     body: {
       name: CHECK_NAME,
-      head_sha: headSha,
+      head_sha: options.headSha,
+      external_id: externalId,
       status: "in_progress",
-      output: { title, summary },
+      output: {
+        title: "Waiting for PR CI",
+        summary:
+          "This exact PR head and base revision is reserved for deterministic E2E planning after CI completes.",
+      },
     },
     userAgent: USER_AGENT,
   });
@@ -518,6 +846,41 @@ async function createCheck(
     throw new Error("GitHub returned an invalid check id");
   }
   return check.id;
+}
+
+export async function seedPrGate(
+  prNumber: number,
+  headSha: string,
+  baseSha: string,
+): Promise<number> {
+  const { token, repository } = tokenAndRepository();
+  if (!SHA_PATTERN.test(headSha)) throw new Error("PR head SHA is invalid");
+  if (!SHA_PATTERN.test(baseSha)) throw new Error("PR base SHA is invalid");
+  await requireLiveExactDiff({ repository, token, prNumber, headSha, baseSha });
+  const checkRunId = await ensurePrGateCheck({
+    repository,
+    token,
+    headSha,
+    baseSha,
+    prNumber,
+  });
+  console.log(
+    `Exact-diff gate reserved: pr=${prNumber} head=${headSha} base=${baseSha} check=${checkRunId}`,
+  );
+  return checkRunId;
+}
+
+async function markCheckInProgress(
+  context: { repository: string; checkRunId: number },
+  token: string,
+  title: string,
+  summary: string,
+): Promise<void> {
+  await githubApi(`repos/${context.repository}/check-runs/${context.checkRunId}`, token, {
+    method: "PATCH",
+    body: { status: "in_progress", output: { title, summary } },
+    userAgent: USER_AGENT,
+  });
 }
 
 async function completeCheck(
@@ -574,7 +937,7 @@ async function completeFailureAfterControllerError(
   context: { repository: string; checkRunId: number },
   token: string,
   title: string,
-  options: { error: unknown; detailsUrl?: string },
+  options: { error: unknown; detailsUrl?: string; recovery?: string },
 ): Promise<boolean> {
   const reason = controllerErrorMessage(options.error).replace(/`/gu, "'");
   try {
@@ -584,7 +947,13 @@ async function completeFailureAfterControllerError(
       {
         conclusion: "failure",
         title,
-        summary: `The controller could not complete the check.\n\nController error: \`${reason}\``,
+        summary: [
+          "The controller could not complete the check.",
+          options.recovery,
+          `Controller error: \`${reason}\``,
+        ]
+          .filter((paragraph): paragraph is string => Boolean(paragraph))
+          .join("\n\n"),
       },
       options.detailsUrl,
     );
@@ -595,7 +964,10 @@ async function completeFailureAfterControllerError(
   }
 }
 
-function validatePullRequestIdentity(value: unknown): PullRequestListItem {
+function validatePullRequestIdentity(
+  value: unknown,
+  options: { allowClosed?: boolean } = {},
+): PullRequestListItem {
   if (
     !isObjectRecord(value) ||
     !Number.isSafeInteger(value.number) ||
@@ -603,19 +975,25 @@ function validatePullRequestIdentity(value: unknown): PullRequestListItem {
   ) {
     throw new Error("GitHub returned an invalid pull request number");
   }
-  if (value.state !== "open") throw new Error("GitHub returned invalid pull request state");
+  if (value.state !== "open" && (!options.allowClosed || value.state !== "closed")) {
+    throw new Error("GitHub returned invalid pull request state");
+  }
   if (!isObjectRecord(value.head) || !isObjectRecord(value.base)) {
     throw new Error("GitHub returned invalid pull request refs");
   }
   const head = value.head;
   const base = value.base;
+  const validHeadRepository =
+    isObjectRecord(head.repo) &&
+    typeof head.repo.full_name === "string" &&
+    REPOSITORY_PATTERN.test(head.repo.full_name);
+  const closedWithDeletedHeadRepository =
+    options.allowClosed === true && value.state === "closed" && head.repo === null;
   if (
     typeof head.ref !== "string" ||
     typeof head.sha !== "string" ||
     !SHA_PATTERN.test(head.sha) ||
-    !isObjectRecord(head.repo) ||
-    typeof head.repo.full_name !== "string" ||
-    !REPOSITORY_PATTERN.test(head.repo.full_name) ||
+    (!validHeadRepository && !closedWithDeletedHeadRepository) ||
     typeof base.sha !== "string" ||
     !SHA_PATTERN.test(base.sha) ||
     !isObjectRecord(base.repo) ||
@@ -627,12 +1005,50 @@ function validatePullRequestIdentity(value: unknown): PullRequestListItem {
   return value as PullRequestListItem;
 }
 
-function validatePullRequest(value: unknown): PullRequest {
-  const identity = validatePullRequestIdentity(value);
+function validatePullRequest(value: unknown, options: { allowClosed?: boolean } = {}): PullRequest {
+  const identity = validatePullRequestIdentity(value, options);
   if (!isObjectRecord(value) || !Number.isSafeInteger(value.changed_files)) {
     throw new Error("GitHub returned an invalid pull request changed-file count");
   }
   return { ...identity, changed_files: value.changed_files as number };
+}
+
+async function requireLiveExactDiff(options: {
+  repository: string;
+  token: string;
+  prNumber: number;
+  headSha: string;
+  baseSha: string;
+}): Promise<PullRequest> {
+  const pull = validatePullRequest(
+    await githubApi<unknown>(
+      `repos/${options.repository}/pulls/${options.prNumber}`,
+      options.token,
+      {
+        userAgent: USER_AGENT,
+      },
+    ),
+    { allowClosed: true },
+  );
+  if (pull.number !== options.prNumber || pull.base.repo.full_name !== options.repository) {
+    throw new Error("GitHub returned mismatched pull request identity");
+  }
+  const prUrl = `https://github.com/${options.repository}/pull/${options.prNumber}`;
+  if (pull.state === "closed") {
+    throw new ObsoleteExactDiffError({
+      conclusion: "cancelled",
+      title: "PR closed — gate no longer applies",
+      summary: `[PR #${options.prNumber}](${prUrl}) closed before this gate completed. This check for head \`${options.headSha.slice(0, 7)}\` on base \`${options.baseSha.slice(0, 7)}\` no longer applies.`,
+    });
+  }
+  if (!pull.head.repo || pull.head.sha !== options.headSha || pull.base.sha !== options.baseSha) {
+    throw new ObsoleteExactDiffError({
+      conclusion: "cancelled",
+      title: "Superseded by PR update",
+      summary: `[PR #${options.prNumber}](${prUrl}) moved from head \`${options.headSha.slice(0, 7)}\` on base \`${options.baseSha.slice(0, 7)}\` to head \`${pull.head.sha.slice(0, 7)}\` on base \`${pull.base.sha.slice(0, 7)}\`. No result from this run was accepted; review the gate on the current PR revision.`,
+    });
+  }
+  return pull;
 }
 
 function pullIdentity(pull: PullRequestListItem): Record<string, unknown> {
@@ -668,7 +1084,7 @@ export async function resolvePullRequest(options: {
   );
   if (!Array.isArray(response)) throw new Error("GitHub returned an invalid pull request list");
   const matches = response
-    .map(validatePullRequestIdentity)
+    .map((candidate) => validatePullRequestIdentity(candidate))
     .filter(
       (pull) =>
         pull.head.sha === options.headSha &&
@@ -742,27 +1158,41 @@ function validateWorkflowJobsPage(value: unknown): WorkflowJobsPage {
   };
 }
 
-async function listNonPassingCiJobs(
+async function listNonPassingWorkflowJobs(
   repository: string,
   token: string,
-  ciRunId: number,
-  ciRunAttempt: number,
+  runId: number,
+  runAttempt?: number,
 ): Promise<{ jobs: WorkflowJob[]; complete: boolean }> {
-  const response = validateWorkflowJobsPage(
-    await githubApi<unknown>(
-      `repos/${repository}/actions/runs/${ciRunId}/attempts/${ciRunAttempt}/jobs?per_page=100`,
-      token,
-      { userAgent: USER_AGENT },
-    ),
-  );
-  if (response.jobs.length > response.totalCount) {
-    throw new Error("GitHub returned an invalid workflow job count");
+  const jobs: WorkflowJob[] = [];
+  let totalCount: number | undefined;
+  for (let page = 1; page <= MAX_WORKFLOW_JOB_PAGES; page += 1) {
+    const runPath = runAttempt ? `runs/${runId}/attempts/${runAttempt}` : `runs/${runId}`;
+    const response = validateWorkflowJobsPage(
+      await githubApi<unknown>(
+        `repos/${repository}/actions/${runPath}/jobs?per_page=100&page=${page}`,
+        token,
+        { userAgent: USER_AGENT },
+      ),
+    );
+    totalCount ??= response.totalCount;
+    if (response.totalCount !== totalCount || jobs.length + response.jobs.length > totalCount) {
+      throw new Error("GitHub returned an invalid workflow job count");
+    }
+    jobs.push(...response.jobs);
+    if (jobs.length === totalCount) {
+      return {
+        jobs: jobs.filter(
+          (job) => !["success", "skipped", "neutral"].includes(job.conclusion ?? ""),
+        ),
+        complete: true,
+      };
+    }
+    if (response.jobs.length < 100) break;
   }
   return {
-    jobs: response.jobs.filter(
-      (job) => !["success", "skipped", "neutral"].includes(job.conclusion ?? ""),
-    ),
-    complete: response.jobs.length === response.totalCount,
+    jobs: jobs.filter((job) => !["success", "skipped", "neutral"].includes(job.conclusion ?? "")),
+    complete: jobs.length === totalCount,
   };
 }
 
@@ -789,6 +1219,52 @@ function markdownCode(value: string, fallback: string): string {
   return `\`${normalizedCiMetadata(value, fallback).replace(/`/gu, "'")}\``;
 }
 
+function nonPassingJobDetails(options: {
+  runUrl: string;
+  runLabel: string;
+  jobs: readonly WorkflowJob[];
+  available: boolean;
+  complete: boolean;
+}): { lines: string[]; reportedJobs: readonly WorkflowJob[] } {
+  const reportedJobs = options.jobs.slice(0, MAX_REPORTED_WORKFLOW_JOBS);
+  const lines: string[] = [];
+  if (reportedJobs.length > 0) {
+    lines.push("", "Jobs that did not pass:");
+    for (const job of reportedJobs) {
+      const jobUrl = `${options.runUrl}/job/${job.id}`;
+      const failedSteps = job.steps.filter((step) => step.conclusion === "failure");
+      const detail =
+        failedSteps.length > 0
+          ? `${failedSteps.length === 1 ? "failed step" : "failed steps"}: ${failedSteps
+              .slice(0, 3)
+              .map((step) => markdownCode(step.name, "unnamed step"))
+              .join(", ")}${failedSteps.length > 3 ? ` and ${failedSteps.length - 3} more` : ""}`
+          : `concluded ${markdownCode(job.conclusion ?? "without a result", "without a result")}`;
+      lines.push(`- [${markdownLinkText(job.name)}](${jobUrl}) — ${detail}.`);
+    }
+    if (options.jobs.length > reportedJobs.length) {
+      lines.push(
+        `- ${options.jobs.length - reportedJobs.length} more; open the ${options.runLabel} for details.`,
+      );
+    }
+    if (!options.complete) {
+      lines.push(
+        `- The job listing was truncated; open the ${options.runLabel} for the full result.`,
+      );
+    }
+  } else if (options.available) {
+    lines.push(
+      "",
+      options.complete
+        ? `GitHub reported no non-passing job. Open the ${options.runLabel} for details.`
+        : `The job listing was truncated before a non-passing job was found. Open the ${options.runLabel} for details.`,
+    );
+  } else {
+    lines.push("", `Job details could not be loaded. Open the ${options.runLabel} for details.`);
+  }
+  return { lines, reportedJobs };
+}
+
 function ciFailureReport(options: {
   repository: string;
   prNumber?: number;
@@ -803,8 +1279,8 @@ function ciFailureReport(options: {
     ? `https://github.com/${options.repository}/pull/${options.prNumber}`
     : undefined;
   const ciRunUrl = `https://github.com/${options.repository}/actions/runs/${options.ciRunId}/attempts/${options.ciRunAttempt}`;
+  const runUrl = `https://github.com/${options.repository}/actions/runs/${options.ciRunId}`;
   const conclusion = normalizedCiMetadata(options.ciConclusion, "without a result");
-  const reportedJobs = options.jobs.slice(0, MAX_REPORTED_CI_JOBS);
   const ciLink = `[CI / Pull Request attempt ${options.ciRunAttempt}](${ciRunUrl})`;
   const summary = options.prNumber
     ? [
@@ -813,40 +1289,16 @@ function ciFailureReport(options: {
     : [
         `${ciLink} concluded ${markdownCode(conclusion, "without a result")}, so no E2E run was dispatched. The triggering PR was not present in the workflow event.`,
       ];
-  if (reportedJobs.length > 0) {
-    summary.push("", "Jobs that did not pass:");
-    for (const job of reportedJobs) {
-      const jobUrl = `https://github.com/${options.repository}/actions/runs/${options.ciRunId}/job/${job.id}`;
-      const failedSteps = job.steps.filter((step) => step.conclusion === "failure");
-      const detail =
-        failedSteps.length > 0
-          ? `${failedSteps.length === 1 ? "failed step" : "failed steps"}: ${failedSteps
-              .slice(0, 3)
-              .map((step) => markdownCode(step.name, "unnamed step"))
-              .join(", ")}${failedSteps.length > 3 ? ` and ${failedSteps.length - 3} more` : ""}`
-          : `concluded ${markdownCode(job.conclusion ?? "without a result", "without a result")}`;
-      summary.push(`- [${markdownLinkText(job.name)}](${jobUrl}) — ${detail}.`);
-    }
-    if (options.jobs.length > reportedJobs.length) {
-      summary.push(
-        `- ${options.jobs.length - reportedJobs.length} more; open the CI run for details.`,
-      );
-    }
-    if (!options.jobDetailsComplete) {
-      summary.push("- The job listing was truncated; open the CI run for the full result.");
-    }
-  } else if (options.jobDetailsAvailable) {
-    summary.push(
-      "",
-      options.jobDetailsComplete
-        ? "GitHub reported no non-passing job. Open the CI run for details."
-        : "The job listing was truncated before a non-passing job was found. Open the CI run for details.",
-    );
-  } else {
-    summary.push("", "Job details could not be loaded. Open the CI run for details.");
-  }
+  const details = nonPassingJobDetails({
+    runUrl,
+    runLabel: "CI run",
+    jobs: options.jobs,
+    available: options.jobDetailsAvailable,
+    complete: options.jobDetailsComplete,
+  });
+  summary.push(...details.lines);
 
-  const conciseJobs = reportedJobs.slice(0, 3).map((job) => {
+  const conciseJobs = details.reportedJobs.slice(0, 3).map((job) => {
     const failedSteps = job.steps
       .filter((step) => step.conclusion === "failure")
       .slice(0, 2)
@@ -864,6 +1316,37 @@ function ciFailureReport(options: {
     errorMessage: `${options.prNumber ? `PR #${options.prNumber}: ${prUrl}` : "Triggering PR unavailable"}; CI run attempt ${options.ciRunAttempt}: ${ciRunUrl}; CI / Pull Request concluded ${conclusion}; jobs that did not pass: ${jobMessage}${truncationMessage}`,
     ciRunUrl,
   };
+}
+
+function e2eFailureReport(options: {
+  repository: string;
+  runId: number;
+  workflowConclusion: string | null;
+  jobs: readonly WorkflowJob[];
+  jobDetailsAvailable: boolean;
+  jobDetailsComplete: boolean;
+}): PrGateVerdict {
+  const runUrl = `https://github.com/${options.repository}/actions/runs/${options.runId}`;
+  const conclusion = normalizedCiMetadata(
+    options.workflowConclusion ?? "without a result",
+    "without a result",
+  );
+  const summary = [
+    `[Selected E2E run ${options.runId}](${runUrl}) concluded ${markdownCode(conclusion, "without a result")}. No passing result was accepted.`,
+  ];
+  const details = nonPassingJobDetails({
+    runUrl,
+    runLabel: "E2E run",
+    jobs: options.jobs,
+    available: options.jobDetailsAvailable,
+    complete: options.jobDetailsComplete,
+  });
+  summary.push(...details.lines);
+  const title =
+    details.reportedJobs.length === 1
+      ? `${normalizedCiMetadata(details.reportedJobs[0]!.name, "Selected E2E job")} ${details.reportedJobs[0]!.conclusion === "failure" ? "failed" : "did not pass"}`
+      : "Selected E2E did not pass";
+  return { conclusion: "failure", title, summary: summary.join("\n") };
 }
 
 export async function pullChangedFiles(
@@ -989,6 +1472,93 @@ export function validateWorkflowDispatchDetails(
   return value as WorkflowDispatchDetails;
 }
 
+function validateMainReference(value: unknown): string {
+  if (
+    !isObjectRecord(value) ||
+    value.ref !== "refs/heads/main" ||
+    !isObjectRecord(value.object) ||
+    value.object.type !== "commit" ||
+    typeof value.object.sha !== "string" ||
+    !SHA_PATTERN.test(value.object.sha)
+  ) {
+    throw new Error("GitHub returned an invalid main branch reference");
+  }
+  return value.object.sha;
+}
+
+function validateCompatibleMainComparison(
+  value: unknown,
+  workflowSha: string,
+  mainSha: string,
+): void {
+  if (
+    !isObjectRecord(value) ||
+    value.status !== "ahead" ||
+    !Number.isSafeInteger(value.ahead_by) ||
+    (value.ahead_by as number) < 1 ||
+    value.behind_by !== 0 ||
+    !isObjectRecord(value.base_commit) ||
+    value.base_commit.sha !== workflowSha ||
+    !isObjectRecord(value.merge_base_commit) ||
+    value.merge_base_commit.sha !== workflowSha ||
+    !isObjectRecord(value.head_commit) ||
+    value.head_commit.sha !== mainSha ||
+    !Array.isArray(value.files)
+  ) {
+    throw new Error(`main is not a validated descendant of workflow commit ${workflowSha}`);
+  }
+  if (value.files.length >= MAX_COMPATIBILITY_FILES) {
+    throw new Error("main advance changed too many files to validate completely");
+  }
+  const changedFiles = new Set<string>();
+  for (const entry of value.files) {
+    if (
+      !isObjectRecord(entry) ||
+      typeof entry.filename !== "string" ||
+      (entry.previous_filename !== undefined && typeof entry.previous_filename !== "string")
+    ) {
+      throw new Error("GitHub returned an invalid main comparison file");
+    }
+    for (const file of [entry.previous_filename, entry.filename]) {
+      if (typeof file !== "string") continue;
+      assertRepositoryPath(file);
+      changedFiles.add(file);
+    }
+  }
+  const plan = buildRiskPlan({ headSha: mainSha, changedFiles: [...changedFiles] });
+  if (plan.families.some((family) => family.id === "e2e-control-plane")) {
+    throw new Error(`main advanced through trusted E2E control-plane changes after ${workflowSha}`);
+  }
+}
+
+async function readMainWorkflowCommit(repository: string, token: string): Promise<string> {
+  return validateMainReference(
+    await githubApi<unknown>(`repos/${repository}/git/ref/heads/main`, token, {
+      userAgent: USER_AGENT,
+    }),
+  );
+}
+
+async function compatibleMainWorkflowCommit(
+  repository: string,
+  token: string,
+  workflowSha: string,
+): Promise<string> {
+  const mainSha = await readMainWorkflowCommit(repository, token);
+  if (mainSha === workflowSha) return mainSha;
+  const comparison = await githubApi<unknown>(
+    `repos/${repository}/compare/${workflowSha}...${mainSha}`,
+    token,
+    { userAgent: USER_AGENT },
+  );
+  validateCompatibleMainComparison(comparison, workflowSha, mainSha);
+  const confirmedMainSha = await readMainWorkflowCommit(repository, token);
+  if (confirmedMainSha !== mainSha) {
+    throw new Error(`main changed again while validating workflow commit ${workflowSha}`);
+  }
+  return mainSha;
+}
+
 function diagnosticValue(value: unknown): string {
   const serialized = JSON.stringify(value) ?? String(value);
   return serialized.length > 256 ? `${serialized.slice(0, 253)}...` : serialized;
@@ -1035,10 +1605,11 @@ export async function dispatchPrGate(options: {
   jobs: readonly string[];
   prNumber: number;
   commitSha: string;
+  baseSha: string;
   workflowSha: string;
   planHash: string;
   correlationId: string;
-}): Promise<number> {
+}): Promise<{ runId: number; workflowSha: string }> {
   assertRepository(options.repository, "repository");
   if (
     !options.token ||
@@ -1048,25 +1619,18 @@ export async function dispatchPrGate(options: {
     !Number.isSafeInteger(options.prNumber) ||
     options.prNumber < 1 ||
     !SHA_PATTERN.test(options.commitSha) ||
+    !SHA_PATTERN.test(options.baseSha) ||
     !SHA_PATTERN.test(options.workflowSha) ||
     !HASH_PATTERN.test(options.planHash) ||
     !CORRELATION_PATTERN.test(options.correlationId)
   ) {
     throw new Error("Controller dispatch inputs are invalid");
   }
-  const main = await githubApi<GitReference>(
-    `repos/${options.repository}/git/ref/heads/main`,
+  const workflowSha = await compatibleMainWorkflowCommit(
+    options.repository,
     options.token,
-    { userAgent: USER_AGENT },
+    options.workflowSha,
   );
-  if (
-    !main ||
-    main.ref !== "refs/heads/main" ||
-    main.object?.type !== "commit" ||
-    main.object.sha !== options.workflowSha
-  ) {
-    throw new Error(`main no longer points to workflow commit ${options.workflowSha}`);
-  }
   const details = await githubApi<unknown>(
     `repos/${options.repository}/actions/workflows/${E2E_WORKFLOW}/dispatches`,
     options.token,
@@ -1078,6 +1642,8 @@ export async function dispatchPrGate(options: {
           jobs: options.jobs.join(","),
           pr_number: String(options.prNumber),
           checkout_sha: options.commitSha,
+          base_sha: options.baseSha,
+          workflow_sha: workflowSha,
           plan_hash: options.planHash,
           correlation_id: options.correlationId,
         },
@@ -1086,7 +1652,8 @@ export async function dispatchPrGate(options: {
       userAgent: USER_AGENT,
     },
   );
-  return validateWorkflowDispatchDetails(details, options.repository).workflow_run_id;
+  const runId = validateWorkflowDispatchDetails(details, options.repository).workflow_run_id;
+  return { runId, workflowSha };
 }
 
 async function cancelChildRun(repository: string, token: string, runId: number): Promise<void> {
@@ -1101,36 +1668,156 @@ async function cancelChildRun(repository: string, token: string, runId: number):
   }
 }
 
+async function dispatchSelectedPrGate(options: {
+  repository: string;
+  token: string;
+  pull: PullRequest;
+  baseSha: string;
+  workflowSha: string;
+  plan: RiskPlan;
+  checkRunId: number;
+  paths: ControllerPaths;
+}): Promise<void> {
+  const jobs = riskPlanRequiredJobIds(options.plan);
+  const expectedShards = expectedSignalShards(jobs);
+  const correlationId = randomUUID();
+  if (!CORRELATION_PATTERN.test(correlationId)) {
+    throw new Error("generated correlation ID is invalid");
+  }
+  const dispatch = await dispatchPrGate({
+    repository: options.repository,
+    token: options.token,
+    jobs,
+    prNumber: options.pull.number,
+    commitSha: options.pull.head.sha,
+    baseSha: options.baseSha,
+    workflowSha: options.workflowSha,
+    planHash: options.plan.planHash,
+    correlationId,
+  });
+  const childRunId = dispatch.runId;
+  try {
+    appendOutput("run_id", String(childRunId));
+    const state: PrGateState = {
+      version: 2,
+      commitSha: options.pull.head.sha,
+      baseSha: options.baseSha,
+      workflowSha: dispatch.workflowSha,
+      planHash: options.plan.planHash,
+      correlationId,
+      prNumber: options.pull.number,
+      expectedJobs: jobs,
+      expectedShards,
+    };
+    const serializedState = `${JSON.stringify(state, null, 2)}\n`;
+    writePrivateRegularFile(options.paths.statePath, serializedState);
+    await updateRunningCheck(
+      { repository: options.repository, checkRunId: options.checkRunId },
+      options.token,
+      {
+        childRunId,
+        jobs,
+        planHash: options.plan.planHash,
+      },
+    );
+    appendOutput("state_hash", sha256(serializedState));
+    appendOutput("dispatched", "true");
+    console.log(
+      `Run dispatched: pr=${options.pull.number} run=${childRunId} plan=${options.plan.planHash} jobs=${jobs.join(",")} url=https://github.com/${options.repository}/actions/runs/${childRunId}`,
+    );
+  } catch (error) {
+    try {
+      await cancelChildRun(options.repository, options.token, childRunId);
+    } catch (cancelError) {
+      throw new Error(
+        `${controllerErrorMessage(error)}; child cancellation failed: ${controllerErrorMessage(cancelError)}`,
+      );
+    }
+    throw error;
+  }
+}
+
 export async function startPrGate(
   command: Extract<ControllerCommand, { mode: "start" }>,
 ): Promise<void> {
   const { token, repository } = tokenAndRepository();
   if (!SHA_PATTERN.test(command.headSha)) throw new Error("PR head SHA is invalid");
   if (!SHA_PATTERN.test(command.workflowSha)) throw new Error("workflow SHA is invalid");
+  if (!Number.isSafeInteger(command.gateRunId) || command.gateRunId < 1) {
+    throw new Error("gate run ID is invalid");
+  }
   assertRepository(command.headRepository, "PR head repository");
   assertBranch(command.headBranch);
-  if (command.headRepository !== repository) {
-    throw new Error("PR branch must be in the base repository");
+  const ciIdentity = parseCiRunIdentity(command.ciDisplayTitle);
+  if (
+    ciIdentity.headSha !== command.headSha ||
+    (command.prNumber !== undefined && command.prNumber !== ciIdentity.prNumber)
+  ) {
+    throw new Error("CI run identity does not match the triggering workflow run");
   }
-
-  const checkRunId = await createCheck(
+  const existingChecks = await matchingPrGateChecks({
     repository,
     token,
-    command.headSha,
+    headSha: command.headSha,
+    baseSha: ciIdentity.baseSha,
+    prNumber: ciIdentity.prNumber,
+  });
+  if (existingChecks.length > 1) {
+    throw new Error("Multiple exact-diff PR gate checks already exist");
+  }
+  const existingCheckRunId =
+    existingChecks[0]?.status === "in_progress" ? existingChecks[0].id : undefined;
+  if (existingCheckRunId) appendOutput("check_id", String(existingCheckRunId));
+  let pull: PullRequest;
+  try {
+    pull = await requireLiveExactDiff({
+      repository,
+      token,
+      prNumber: ciIdentity.prNumber,
+      headSha: ciIdentity.headSha,
+      baseSha: ciIdentity.baseSha,
+    });
+  } catch (error) {
+    if (!(error instanceof ObsoleteExactDiffError)) throw error;
+    if (existingCheckRunId) {
+      await completeCheck({ repository, checkRunId: existingCheckRunId }, token, error.verdict);
+    }
+    appendOutput("dispatched", "false");
+    appendOutput("finalized", "true");
+    console.log(
+      `Ignored obsolete CI event: pr=${ciIdentity.prNumber} head=${ciIdentity.headSha} base=${ciIdentity.baseSha} reason=${error.verdict.title}`,
+    );
+    return;
+  }
+  if (
+    pull.head.repo?.full_name !== command.headRepository ||
+    pull.head.ref !== command.headBranch
+  ) {
+    throw new Error("PR repository or branch does not match the triggering CI run");
+  }
+  const checkRunId = await ensurePrGateCheck({
+    repository,
+    token,
+    headSha: command.headSha,
+    baseSha: ciIdentity.baseSha,
+    prNumber: ciIdentity.prNumber,
+  });
+  if (checkRunId !== existingCheckRunId) appendOutput("check_id", String(checkRunId));
+  await markCheckInProgress(
+    { repository, checkRunId },
+    token,
     "Evaluating PR commit",
-    "Validating the PR and selecting E2E jobs.",
+    "Validating the exact PR revision and selecting deterministic E2E jobs.",
   );
-  appendOutput("check_id", String(checkRunId));
 
   let finalized = false;
-  let childRunId: number | undefined;
   try {
     if (command.ciConclusion !== "success") {
       let jobs: WorkflowJob[] = [];
       let jobDetailsAvailable = true;
       let jobDetailsComplete: boolean;
       try {
-        const details = await listNonPassingCiJobs(
+        const details = await listNonPassingWorkflowJobs(
           repository,
           token,
           command.ciRunId,
@@ -1145,7 +1832,7 @@ export async function startPrGate(
       }
       const report = ciFailureReport({
         repository,
-        prNumber: command.prNumber,
+        prNumber: ciIdentity.prNumber,
         ciRunId: command.ciRunId,
         ciRunAttempt: command.ciRunAttempt,
         ciConclusion: command.ciConclusion,
@@ -1158,9 +1845,7 @@ export async function startPrGate(
         token,
         {
           conclusion: "failure",
-          title: command.prNumber
-            ? `PR #${command.prNumber} CI did not pass`
-            : "PR CI did not pass",
+          title: `PR #${ciIdentity.prNumber} CI did not pass`,
           summary: report.summary,
         },
         report.ciRunUrl,
@@ -1168,28 +1853,19 @@ export async function startPrGate(
       appendOutput("dispatched", "false");
       appendOutput("finalized", "true");
       finalized = true;
-      throw new PrerequisiteCiError(report.errorMessage);
-    }
-
-    const pull = await resolvePullRequest({
-      repository,
-      token,
-      headSha: command.headSha,
-      headRepository: command.headRepository,
-      headBranch: command.headBranch,
-    });
-    if (
-      command.headRepository !== repository ||
-      pull.head.repo?.full_name !== repository ||
-      (command.prNumber !== undefined && pull.number !== command.prNumber)
-    ) {
-      throw new Error("PR identity does not match the triggering workflow run");
+      console.log(report.errorMessage);
+      return;
     }
 
     const changedFiles = await pullChangedFiles(repository, pull, token);
-    const allowedJobs = new Set(readFreeStandingJobsInventory().allowedJobs);
+    const inventory = readFreeStandingJobsInventory();
+    const allowedJobs = new Set(inventory.allowedJobs);
     const plan = validateRiskPlan(
-      buildRiskPlan({ headSha: command.headSha, changedFiles }),
+      buildRiskPlan({
+        headSha: command.headSha,
+        changedFiles,
+        focusedE2eJobs: focusedE2eJobsForChangedFiles(changedFiles, inventory),
+      }),
       allowedJobs,
     );
     writePrivateRegularFile(command.planPath, `${JSON.stringify(plan, null, 2)}\n`);
@@ -1202,6 +1878,59 @@ export async function startPrGate(
       headBranch: command.headBranch,
     });
     assertPullUnchanged(pull, currentPull);
+    if (command.headRepository !== repository && jobs.length > 0) {
+      const gateRunUrl = `https://github.com/${repository}/actions/runs/${command.gateRunId}`;
+      const gateRunLink = `[${WORKFLOW_NAME} run ${command.gateRunId}](${gateRunUrl})`;
+      await completeCheck(
+        { repository, checkRunId },
+        token,
+        {
+          conclusion: "failure",
+          title: "Maintainer approval required to skip credentialed E2E",
+          summary: [
+            `This fork PR diff (head ${command.headSha}, base ${ciIdentity.baseSha}) selected credential-bearing E2E jobs: ${jobs.join(", ")}.`,
+            "The selected jobs were not run. No fork code received repository secrets.",
+            `Open ${gateRunLink}, choose Review deployments, and approve the \`${PR_GATE_APPROVAL_ENVIRONMENT}\` environment to record this skip. If Review deployments is absent, the environment is unprotected or the run is no longer waiting; configure it and trigger fresh PR CI. GitHub records the reviewer and optional comment. The manual \`approve-fork-e2e-skip\` workflow operation remains available as fallback.`,
+          ].join("\n\n"),
+        },
+        gateRunUrl,
+      );
+      emitForkSkipOutputs("record-fork-e2e-skip", pull.number, command.headSha, ciIdentity.baseSha);
+      appendOutput("dispatched", "false");
+      appendOutput("finalized", "true");
+      finalized = true;
+      console.log(
+        `Fork not dispatched: pr=${pull.number} sha=${command.headSha} plan=${plan.planHash} jobs=${jobs.join(",")}`,
+      );
+      return;
+    }
+    const controlPlaneFamily = plan.families.find((family) => family.id === "e2e-control-plane");
+    if (controlPlaneFamily && requiresCredentialedE2eAuthorization(plan)) {
+      const gateRunUrl = `https://github.com/${repository}/actions/runs/${command.gateRunId}`;
+      const workflowUrl = `https://github.com/${repository}/actions/workflows/${PR_GATE_WORKFLOW_PATH}`;
+      await completeCheck(
+        { repository, checkRunId },
+        token,
+        {
+          conclusion: "failure",
+          title: "Maintainer authorization required to run E2E",
+          summary: [
+            `This exact internal diff (head \`${command.headSha}\`, base \`${ciIdentity.baseSha}\`) changes code that the selected credential-bearing E2E jobs execute or trust: ${jobs.join(", ")}.`,
+            "No selected E2E job ran and no repository secret was exposed.",
+            `A repository maintainer or administrator must review this exact revision, then open the [${WORKFLOW_NAME}](${workflowUrl}) workflow and run \`run-control-plane\` with the PR number, exact head and base SHAs, and a review reason. That authorized run dispatches the selected jobs and this gate passes only if their exact-SHA evidence verifies successfully.`,
+            `Deterministic plan: \`${plan.planHash}\`.`,
+          ].join("\n\n"),
+        },
+        gateRunUrl,
+      );
+      appendOutput("dispatched", "false");
+      appendOutput("finalized", "true");
+      finalized = true;
+      console.log(
+        `Control-plane authorization required: pr=${pull.number} sha=${command.headSha} plan=${plan.planHash} jobs=${jobs.join(",")}`,
+      );
+      return;
+    }
     if (jobs.length === 0) {
       await completeCheck({ repository, checkRunId }, token, {
         conclusion: "success",
@@ -1215,65 +1944,153 @@ export async function startPrGate(
       return;
     }
 
-    const expectedShards = expectedSignalShards(jobs);
-    const correlationId = randomUUID();
-    if (!CORRELATION_PATTERN.test(correlationId)) {
-      throw new Error("generated correlation ID is invalid");
-    }
-    childRunId = await dispatchPrGate({
+    await dispatchSelectedPrGate({
       repository,
       token,
-      jobs,
-      prNumber: pull.number,
-      commitSha: command.headSha,
+      pull,
+      baseSha: ciIdentity.baseSha,
       workflowSha: command.workflowSha,
-      planHash: plan.planHash,
-      correlationId,
+      plan,
+      checkRunId,
+      paths: command,
     });
-    appendOutput("run_id", String(childRunId));
-    const state: PrGateState = {
-      version: 1,
-      commitSha: command.headSha,
-      workflowSha: command.workflowSha,
-      planHash: plan.planHash,
-      correlationId,
-      prNumber: pull.number,
-      expectedJobs: jobs,
-      expectedShards,
-    };
-    const serializedState = `${JSON.stringify(state, null, 2)}\n`;
-    writePrivateRegularFile(command.statePath, serializedState);
-    await updateRunningCheck({ repository, checkRunId }, token, {
-      childRunId,
-      jobs,
-      planHash: plan.planHash,
-    });
-    appendOutput("state_hash", sha256(serializedState));
-    appendOutput("dispatched", "true");
-    console.log(
-      `Run dispatched: pr=${pull.number} run=${childRunId} plan=${plan.planHash} jobs=${jobs.join(",")} url=https://github.com/${repository}/actions/runs/${childRunId}`,
-    );
   } catch (error) {
-    let reportedError = error;
-    if (!finalized && childRunId) {
-      try {
-        await cancelChildRun(repository, token, childRunId);
-      } catch (cancelError) {
-        reportedError = new Error(
-          `${controllerErrorMessage(error)}; child cancellation failed: ${controllerErrorMessage(cancelError)}`,
-        );
-      }
-    }
     if (!finalized) {
       const closed = await completeFailureAfterControllerError(
         { repository, checkRunId },
         token,
         "Run could not start",
-        { error: reportedError },
+        { error },
       );
       if (closed) appendOutput("finalized", "true");
     }
-    throw reportedError;
+    throw error;
+  }
+}
+
+export async function startControlPlanePrGate(command: ControlPlaneDispatchCommand): Promise<void> {
+  const { token, repository } = tokenAndRepository();
+  if (!SHA_PATTERN.test(command.headSha)) throw new Error("PR head SHA is invalid");
+  if (!SHA_PATTERN.test(command.baseSha)) throw new Error("PR base SHA is invalid");
+  if (!SHA_PATTERN.test(command.workflowSha)) throw new Error("workflow SHA is invalid");
+  if (!MAINTAINER_PATTERN.test(command.maintainer)) throw new Error("maintainer login is invalid");
+  if (!Number.isSafeInteger(command.gateRunId) || command.gateRunId < 1) {
+    throw new Error("gate run ID is invalid");
+  }
+  if (command.workflowRunAttempt !== 1) {
+    throw new Error("control-plane authorization must use the first workflow run attempt");
+  }
+  const reason = normalizedWaiverReason(command.reason);
+  await requireMaintainerPermission(
+    repository,
+    token,
+    command.maintainer,
+    "Control-plane E2E authorization",
+  );
+
+  let checkRunId: number | undefined;
+  try {
+    const pull = await requireLiveExactDiff({
+      repository,
+      token,
+      prNumber: command.prNumber,
+      headSha: command.headSha,
+      baseSha: command.baseSha,
+    });
+    if (pull.head.repo?.full_name !== repository) {
+      throw new Error("control-plane E2E authorization requires an internal pull request");
+    }
+    const changedFiles = await pullChangedFiles(repository, pull, token);
+    const inventory = readFreeStandingJobsInventory();
+    const plan = validateRiskPlan(
+      buildRiskPlan({
+        headSha: command.headSha,
+        changedFiles,
+        focusedE2eJobs: focusedE2eJobsForChangedFiles(changedFiles, inventory),
+      }),
+      new Set(inventory.allowedJobs),
+    );
+    if (!requiresCredentialedE2eAuthorization(plan)) {
+      throw new Error("pull request does not require credentialed E2E authorization");
+    }
+    const jobs = riskPlanRequiredJobIds(plan);
+    if (jobs.length === 0) {
+      throw new Error("authorized control-plane plan selected no E2E jobs");
+    }
+    writePrivateRegularFile(command.planPath, `${JSON.stringify(plan, null, 2)}\n`);
+    const currentPull = await requireLiveExactDiff({
+      repository,
+      token,
+      prNumber: command.prNumber,
+      headSha: command.headSha,
+      baseSha: command.baseSha,
+    });
+    assertPullUnchanged(pull, currentPull);
+
+    const matchingChecks = await matchingPrGateChecks({
+      repository,
+      token,
+      headSha: command.headSha,
+      baseSha: command.baseSha,
+      prNumber: command.prNumber,
+    });
+    if (matchingChecks.length !== 1) {
+      throw new Error(`Expected one exact-diff PR gate check; found ${matchingChecks.length}`);
+    }
+    const check = matchingChecks[0]!;
+    if (
+      check.status !== "completed" ||
+      check.conclusion !== "failure" ||
+      check.output?.title !== "Maintainer authorization required to run E2E"
+    ) {
+      throw new Error(
+        "PR gate must first complete with the matching control-plane authorization failure",
+      );
+    }
+    checkRunId = check.id;
+    appendOutput("check_id", String(checkRunId));
+
+    await compatibleMainWorkflowCommit(repository, token, command.workflowSha);
+    const finalPull = await requireLiveExactDiff({
+      repository,
+      token,
+      prNumber: command.prNumber,
+      headSha: command.headSha,
+      baseSha: command.baseSha,
+    });
+    assertPullUnchanged(pull, finalPull);
+    await markCheckInProgress(
+      { repository, checkRunId },
+      token,
+      `E2E execution authorized by @${command.maintainer}`,
+      `Running the exact reviewed head and base revision. Review reason: ${reason.replace(/`/gu, "'")}`,
+    );
+    await dispatchSelectedPrGate({
+      repository,
+      token,
+      pull: finalPull,
+      baseSha: command.baseSha,
+      workflowSha: command.workflowSha,
+      plan,
+      checkRunId,
+      paths: command,
+    });
+  } catch (error) {
+    if (checkRunId) {
+      const closed = await completeFailureAfterControllerError(
+        { repository, checkRunId },
+        token,
+        "Maintainer authorization required to run E2E",
+        {
+          error,
+          detailsUrl: `https://github.com/${repository}/actions/runs/${command.gateRunId}`,
+          recovery:
+            "The authorized E2E attempt did not produce an accepted result. Review the controller error and any linked child run, then launch a fresh first-attempt `run-control-plane` workflow for this exact revision.",
+        },
+      );
+      if (closed) appendOutput("finalized", "true");
+    }
+    throw error;
   }
 }
 
@@ -1334,6 +2151,7 @@ export async function finishPrGate(options: {
   evidencePath: string;
   checkRunId: number;
   childRunId: number;
+  evidenceOutcome: EvidenceStepOutcome;
 }): Promise<void> {
   const { token, repository } = tokenAndRepository();
   const childRunUrl = `https://github.com/${repository}/actions/runs/${options.childRunId}`;
@@ -1368,32 +2186,93 @@ export async function finishPrGate(options: {
     }
     const workflowConclusion =
       child.status === "completed" ? child.conclusion : `unfinished (${child.status})`;
+    const matchingChecks = await matchingPrGateChecks({
+      repository,
+      token,
+      headSha: state.commitSha,
+      baseSha: state.baseSha,
+      prNumber: state.prNumber,
+    });
+    if (matchingChecks.length !== 1 || matchingChecks[0]!.id !== options.checkRunId) {
+      throw new Error("controller state does not match the exact PR gate check");
+    }
+    const finalizeObsoleteExactDiff = async (): Promise<boolean> => {
+      try {
+        await requireLiveExactDiff({
+          repository,
+          token,
+          prNumber: state.prNumber,
+          headSha: state.commitSha,
+          baseSha: state.baseSha,
+        });
+        return false;
+      } catch (error) {
+        if (!(error instanceof ObsoleteExactDiffError)) throw error;
+        await completeCheck(context, token, error.verdict, childRunUrl);
+        appendOutput("finalized", "true");
+        finalized = true;
+        console.log(
+          `Run superseded: run=${options.childRunId} title=${error.verdict.title} url=${childRunUrl}`,
+        );
+        return true;
+      }
+    };
+    if (await finalizeObsoleteExactDiff()) return;
     const expectedSignalCount = Object.values(state.expectedShards).reduce(
       (total, shards) => total + shards.length,
       0,
     );
-    const signals =
-      workflowConclusion === "success"
-        ? findSignalFiles(options.evidencePath, {
-            ...EVIDENCE_LIMITS,
-            maxSignalFiles: expectedSignalCount + 1,
-          }).map((file) => validateSignal(readRegularJson(file), state))
-        : [];
-    const verdict = classifyPrGateEvidence({
-      workflowConclusion,
-      expectedJobs: state.expectedJobs,
-      expectedShards: state.expectedShards,
-      signals,
-    });
+    let verdict: PrGateVerdict;
+    if (workflowConclusion === "success") {
+      if (options.evidenceOutcome !== "success") {
+        throw new Error(
+          `Evidence download did not complete (outcome: ${options.evidenceOutcome}) after selected E2E run ${options.childRunId} succeeded. The controller could not verify its artifacts; inspect the Download evidence step and rerun the gate.`,
+        );
+      }
+      const signals = findSignalFiles(options.evidencePath, {
+        ...EVIDENCE_LIMITS,
+        maxSignalFiles: expectedSignalCount + 1,
+      }).map((file) => validateSignal(readRegularJson(file), state));
+      verdict = classifyPrGateEvidence({
+        workflowConclusion,
+        expectedJobs: state.expectedJobs,
+        expectedShards: state.expectedShards,
+        signals,
+      });
+      if (verdict.conclusion === "failure") {
+        verdict = {
+          ...verdict,
+          summary: `[Selected E2E run ${options.childRunId}](${childRunUrl}) completed, but its evidence did not satisfy the gate.\n\n${verdict.summary}`,
+        };
+      }
+    } else {
+      let jobs: WorkflowJob[] = [];
+      let jobDetailsAvailable = true;
+      let jobDetailsComplete = false;
+      try {
+        const details = await listNonPassingWorkflowJobs(repository, token, options.childRunId);
+        jobs = details.jobs;
+        jobDetailsComplete = details.complete;
+      } catch (error) {
+        jobDetailsAvailable = false;
+        console.warn(`Could not load E2E job details: ${controllerErrorMessage(error)}`);
+      }
+      verdict = e2eFailureReport({
+        repository,
+        runId: options.childRunId,
+        workflowConclusion,
+        jobs,
+        jobDetailsAvailable,
+        jobDetailsComplete,
+      });
+    }
+    if (await finalizeObsoleteExactDiff()) return;
     await completeCheck(context, token, verdict, childRunUrl);
     appendOutput("finalized", "true");
     finalized = true;
     console.log(
       `Run completed: run=${options.childRunId} conclusion=${verdict.conclusion} title=${verdict.title} url=${childRunUrl}`,
     );
-    if (verdict.conclusion === "failure") {
-      throw new Error(`${verdict.title}: ${verdict.summary}`);
-    }
   } catch (error) {
     if (!finalized) {
       const closed = await completeFailureAfterControllerError(
@@ -1428,6 +2307,297 @@ export async function abandonPrGate(checkRunId: number, childRunId?: number): Pr
   });
   appendOutput("finalized", "true");
   if (cancellationError) throw cancellationError;
+}
+
+function validateApprovalWorkflowRun(
+  value: unknown,
+  options: {
+    repository: string;
+    runId: number;
+    runAttempt: number;
+    workflowSha: string;
+  },
+): string {
+  if (!isObjectRecord(value)) throw new Error("GitHub returned an invalid approval workflow run");
+  const expectedUrl = `https://github.com/${options.repository}/actions/runs/${options.runId}`;
+  const valid =
+    value.id === options.runId &&
+    value.name === WORKFLOW_NAME &&
+    value.event === "workflow_run" &&
+    value.path === PR_GATE_WORKFLOW_PATH &&
+    value.head_branch === "main" &&
+    value.head_sha === options.workflowSha &&
+    value.status === "in_progress" &&
+    value.conclusion === null &&
+    options.runAttempt === 1 &&
+    value.run_attempt === options.runAttempt &&
+    value.html_url === expectedUrl;
+  if (!valid) {
+    throw new Error("approval workflow run does not match the trusted first-attempt gate run");
+  }
+  return expectedUrl;
+}
+
+function validateApprovalReview(value: unknown): { maintainer: string; comment: string | null } {
+  if (!Array.isArray(value)) {
+    throw new Error("GitHub returned malformed environment approval history");
+  }
+  if (value.length === 0) {
+    throw new Error(
+      `No required-reviewer approval was recorded for ${PR_GATE_APPROVAL_ENVIRONMENT}. If Review deployments was absent, the environment may be missing or unprotected, or the run may no longer be waiting; configure it, then trigger fresh PR CI, or use the manual approve-fork-e2e-skip fallback.`,
+    );
+  }
+  if (value.length > MAX_APPROVAL_REVIEWS) {
+    throw new Error(
+      `GitHub returned more than ${MAX_APPROVAL_REVIEWS} environment approval reviews; refusing ambiguous approval history`,
+    );
+  }
+  const reviews = value.map((candidate) => {
+    if (
+      !isObjectRecord(candidate) ||
+      typeof candidate.state !== "string" ||
+      (typeof candidate.comment !== "string" && candidate.comment !== null) ||
+      !Array.isArray(candidate.environments) ||
+      candidate.environments.length < 1 ||
+      candidate.environments.length > MAX_APPROVAL_REVIEWS ||
+      !candidate.environments.every(
+        (environment) => isObjectRecord(environment) && typeof environment.name === "string",
+      ) ||
+      !isObjectRecord(candidate.user) ||
+      typeof candidate.user.login !== "string" ||
+      !MAINTAINER_PATTERN.test(candidate.user.login)
+    ) {
+      throw new Error("GitHub returned malformed environment approval history");
+    }
+    return {
+      state: candidate.state,
+      comment: candidate.comment,
+      environments: candidate.environments as Array<{ name: string }>,
+      maintainer: candidate.user.login,
+    };
+  });
+  const matching = reviews.filter((review) =>
+    review.environments.some((environment) => environment.name === PR_GATE_APPROVAL_ENVIRONMENT),
+  );
+  if (matching.length !== 1) {
+    throw new Error("expected exactly one protected-environment approval review");
+  }
+  const review = matching[0]!;
+  if (
+    review.environments.length !== 1 ||
+    review.environments[0]!.name !== PR_GATE_APPROVAL_ENVIRONMENT ||
+    review.state !== "approved"
+  ) {
+    throw new Error("protected-environment review did not approve only the skip environment");
+  }
+  return { maintainer: review.maintainer, comment: review.comment };
+}
+
+function approvedWaiverReason(comment: string | null): string {
+  const normalizedComment = (comment ?? "")
+    .replace(/[\u0000-\u001f\u007f]+/gu, " ")
+    .replace(/\s{2,}/gu, " ")
+    .trim();
+  const baseReason = "Protected environment approval confirmed for this credentialed E2E skip.";
+  const commentPrefix = " Reviewer comment: ";
+  const maxCommentChars = MAX_WAIVER_REASON_CHARS - baseReason.length - commentPrefix.length;
+  const boundedComment = normalizedComment.slice(0, maxCommentChars);
+  const reason = boundedComment ? `${baseReason}${commentPrefix}${boundedComment}` : baseReason;
+  return normalizedWaiverReason(reason);
+}
+
+async function requireMaintainerPermission(
+  repository: string,
+  token: string,
+  maintainer: string,
+  operation: string,
+): Promise<void> {
+  const permission = await githubApi<CollaboratorPermission>(
+    `repos/${repository}/collaborators/${encodeURIComponent(maintainer)}/permission`,
+    token,
+    { userAgent: USER_AGENT },
+  );
+  if (
+    !permission ||
+    !["maintain", "admin"].includes(permission.role_name ?? "") ||
+    permission.user?.login?.toLowerCase() !== maintainer.toLowerCase()
+  ) {
+    throw new Error(`${operation} requires a repository maintainer or administrator`);
+  }
+}
+
+async function completeForkE2ESkip(command: ForkSkipCommand): Promise<void> {
+  const { token, repository } = tokenAndRepository();
+  if (!SHA_PATTERN.test(command.headSha)) throw new Error("PR head SHA is invalid");
+  if (!SHA_PATTERN.test(command.baseSha)) throw new Error("PR base SHA is invalid");
+  if (!SHA_PATTERN.test(command.workflowSha)) throw new Error("workflow SHA is invalid");
+  if (!MAINTAINER_PATTERN.test(command.maintainer)) throw new Error("maintainer login is invalid");
+  const reason = normalizedWaiverReason(command.reason);
+  if (command.evidenceUrl && !EVIDENCE_URL_PATTERN.test(command.evidenceUrl)) {
+    throw new Error("evidence URL must name an NVIDIA/NemoClaw Actions run");
+  }
+
+  await requireMaintainerPermission(
+    repository,
+    token,
+    command.maintainer,
+    "credentialed E2E skip approvals",
+  );
+
+  const pull = validatePullRequest(
+    await githubApi<unknown>(`repos/${repository}/pulls/${command.prNumber}`, token, {
+      userAgent: USER_AGENT,
+    }),
+  );
+  if (
+    pull.state !== "open" ||
+    pull.base.repo.full_name !== repository ||
+    !pull.head.repo ||
+    pull.head.sha !== command.headSha ||
+    pull.base.sha !== command.baseSha
+  ) {
+    throw new Error("pull request no longer matches the reviewed exact head and base SHAs");
+  }
+  const isFork = pull.head.repo.full_name !== repository;
+  if (!isFork) {
+    throw new Error("credentialed E2E skips require a fork pull request");
+  }
+
+  const changedFiles = await pullChangedFiles(repository, pull, token);
+  const inventory = readFreeStandingJobsInventory();
+  const allowedJobs = new Set(inventory.allowedJobs);
+  const plan = validateRiskPlan(
+    buildRiskPlan({
+      headSha: command.headSha,
+      changedFiles,
+      focusedE2eJobs: focusedE2eJobsForChangedFiles(changedFiles, inventory),
+    }),
+    allowedJobs,
+  );
+  const jobs = riskPlanRequiredJobIds(plan);
+  if (jobs.length === 0) {
+    throw new Error("pull request does not require a credentialed E2E skip");
+  }
+  const currentPull = validatePullRequest(
+    await githubApi<unknown>(`repos/${repository}/pulls/${command.prNumber}`, token, {
+      userAgent: USER_AGENT,
+    }),
+  );
+  assertPullUnchanged(pull, currentPull);
+
+  const matchingChecks = await matchingPrGateChecks({
+    repository,
+    token,
+    headSha: command.headSha,
+    baseSha: command.baseSha,
+    prNumber: command.prNumber,
+  });
+  if (matchingChecks.length !== 1) {
+    throw new Error(`Expected one exact-diff PR gate check; found ${matchingChecks.length}`);
+  }
+  const check = matchingChecks[0]!;
+  if (
+    check.status !== "completed" ||
+    check.conclusion !== "failure" ||
+    check.output?.title !== "Maintainer approval required to skip credentialed E2E"
+  ) {
+    throw new Error("PR gate must first complete with the matching skip-approval failure");
+  }
+
+  const safeReason = reason.replace(/`/gu, "'");
+  const evidence = command.validatedApproval
+    ? `Validated environment approval run for \`${command.validatedApproval.environment}\`: [${command.validatedApproval.runUrl}](${command.validatedApproval.runUrl}).`
+    : command.evidenceUrl
+      ? `Maintainer-supplied Actions reference (not validated by this controller): [${command.evidenceUrl}](${command.evidenceUrl}).`
+      : "Approval source: manual fallback; no supporting Actions run was supplied.";
+  const title = `Credentialed E2E skipped for fork PR — approved by @${command.maintainer}`;
+  const approval = `Maintainer @${command.maintainer} approved skipping credentialed E2E for fork head \`${command.headSha}\` on base \`${command.baseSha}\`.`;
+  const nonExecution = `Selected jobs not run: ${jobs.join(", ")}.`;
+  await compatibleMainWorkflowCommit(repository, token, command.workflowSha);
+  const finalPull = await requireLiveExactDiff({
+    repository,
+    token,
+    prNumber: command.prNumber,
+    headSha: command.headSha,
+    baseSha: command.baseSha,
+  });
+  assertPullUnchanged(pull, finalPull);
+  await completeCheck(
+    { repository, checkRunId: check.id },
+    token,
+    {
+      conclusion: "success",
+      title,
+      summary: [
+        "**Outcome: APPROVED SKIP — credentialed E2E did not run.**",
+        approval,
+        nonExecution,
+        `Reason: ${safeReason}`,
+        evidence,
+        `Deterministic plan: \`${plan.planHash}\`.`,
+      ].join("\n\n"),
+    },
+    command.validatedApproval?.runUrl ??
+      command.evidenceUrl ??
+      `https://github.com/${repository}/pull/${pull.number}`,
+  );
+  console.log(
+    `Credentialed E2E skip recorded: mode=${command.mode} pr=${pull.number} head=${command.headSha} base=${command.baseSha} maintainer=${command.maintainer} plan=${plan.planHash}`,
+  );
+}
+
+export async function recordManualForkE2ESkip(
+  command: Extract<ManualForkSkipCommand, { mode: "record-fork-e2e-skip" }>,
+): Promise<void> {
+  await completeForkE2ESkip(command);
+}
+
+export async function recordApprovedForkE2ESkip(command: ApprovedForkSkipCommand): Promise<void> {
+  const { token, repository } = tokenAndRepository();
+  if (!Number.isSafeInteger(command.prNumber) || command.prNumber < 1) {
+    throw new Error("PR number is invalid");
+  }
+  if (!SHA_PATTERN.test(command.headSha)) throw new Error("PR head SHA is invalid");
+  if (!SHA_PATTERN.test(command.baseSha)) throw new Error("PR base SHA is invalid");
+  if (!SHA_PATTERN.test(command.workflowSha)) throw new Error("workflow SHA is invalid");
+  if (!Number.isSafeInteger(command.approvalRunId) || command.approvalRunId < 1) {
+    throw new Error("approval run ID is invalid");
+  }
+  if (command.approvalRunAttempt !== 1) {
+    throw new Error("approval run attempt must be exactly 1");
+  }
+
+  const runUrl = validateApprovalWorkflowRun(
+    await githubApi<unknown>(`repos/${repository}/actions/runs/${command.approvalRunId}`, token, {
+      userAgent: USER_AGENT,
+    }),
+    {
+      repository,
+      runId: command.approvalRunId,
+      runAttempt: command.approvalRunAttempt,
+      workflowSha: command.workflowSha,
+    },
+  );
+  const review = validateApprovalReview(
+    await githubApi<unknown>(
+      `repos/${repository}/actions/runs/${command.approvalRunId}/approvals`,
+      token,
+      { userAgent: USER_AGENT },
+    ),
+  );
+  await completeForkE2ESkip({
+    mode: "record-fork-e2e-skip",
+    prNumber: command.prNumber,
+    headSha: command.headSha,
+    baseSha: command.baseSha,
+    workflowSha: command.workflowSha,
+    maintainer: review.maintainer,
+    reason: approvedWaiverReason(review.comment),
+    validatedApproval: {
+      environment: PR_GATE_APPROVAL_ENVIRONMENT,
+      runUrl,
+    },
+  });
 }
 
 export async function cancelPrGate(prNumber: number): Promise<number> {
@@ -1475,23 +2645,27 @@ export async function cancelPrGate(prNumber: number): Promise<number> {
   return active.size;
 }
 
-export function controllerErrorAnnotationTitle(error: unknown): string {
-  return error instanceof PrerequisiteCiError ? "PR CI did not pass" : "Controller failed";
-}
-
 function reportControllerError(error: unknown): void {
   const message = controllerErrorMessage(error);
   console.error(message);
   if (process.env.GITHUB_ACTIONS === "true") {
     const escaped = message.replace(/%/gu, "%25").replace(/\r/gu, "%0D").replace(/\n/gu, "%0A");
-    console.error(`::error title=${controllerErrorAnnotationTitle(error)}::${escaped}`);
+    console.error(`::error title=Controller failed::${escaped}`);
   }
 }
 
 async function main(): Promise<void> {
   const command = parseControllerCommand(process.argv.slice(2));
+  if (command.mode === "seed") {
+    await seedPrGate(command.prNumber, command.headSha, command.baseSha);
+    return;
+  }
   if (command.mode === "start") {
     await startPrGate(command);
+    return;
+  }
+  if (command.mode === "start-control-plane") {
+    await startControlPlanePrGate(command);
     return;
   }
   if (command.mode === "finish") {
@@ -1501,11 +2675,20 @@ async function main(): Promise<void> {
       evidencePath: command.evidencePath,
       checkRunId: command.checkRunId,
       childRunId: command.childRunId,
+      evidenceOutcome: command.evidenceOutcome,
     });
     return;
   }
   if (command.mode === "abandon") {
     await abandonPrGate(command.checkRunId, command.childRunId);
+    return;
+  }
+  if (command.mode === "record-fork-e2e-skip") {
+    await completeForkE2ESkip(command);
+    return;
+  }
+  if (command.mode === "record-approved-fork-e2e-skip") {
+    await recordApprovedForkE2ESkip(command);
     return;
   }
   await cancelPrGate(command.prNumber);

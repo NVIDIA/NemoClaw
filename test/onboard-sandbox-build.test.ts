@@ -441,6 +441,7 @@ const { createSandbox } = require(${onboardPath});
     const sandboxBaseImagePath = JSON.stringify(
       path.join(repoRoot, "src", "lib", "sandbox-base-image.ts"),
     );
+    const platformPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     writeOkOpenshell(fakeBin);
@@ -456,8 +457,11 @@ const preflight = require(${preflightPath});
 const credentials = require(${credentialsPath});
 const buildContext = require(${buildContextPath});
 const sandboxBaseImage = require(${sandboxBaseImagePath});
+const platform = require(${platformPath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
+
+platform.isWsl = () => false;
 
 const commands = [];
 const logs = [];

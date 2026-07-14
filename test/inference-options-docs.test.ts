@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import type * as TypeScript from "typescript";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
+import { VLLM_IMAGES } from "../src/lib/inference/vllm.js";
 import { getSandboxRuntimeInferenceEndpoint } from "../src/lib/onboard/docker-gpu-local-inference.js";
 import { shouldForceCompletionsApi } from "../src/lib/validation.js";
 
@@ -287,6 +288,35 @@ describe("inference setup navigation", () => {
     expect(hostValues).toEqual(["0.0.0.0"]);
     expect(markdown).toContain("default-deny inbound rules");
     expect(markdown).toContain("only from the OpenShell Docker subnet to its gateway address");
+  });
+
+  it("keeps managed image tags, digests, and compressed sizes in sync with source", () => {
+    const markdown = fs.readFileSync(vllmSetupPath, "utf8");
+    const entries = [
+      {
+        prefix: "- DGX Spark and DGX Station",
+        image: VLLM_IMAGES.ngc2605Post1.arm64,
+        tag: VLLM_IMAGES.ngc2605Post1.tag,
+      },
+      {
+        prefix: "- Generic Linux `arm64` hosts",
+        image: VLLM_IMAGES.ngc2603Post1.arm64,
+        tag: VLLM_IMAGES.ngc2603Post1.tag,
+      },
+      {
+        prefix: "- Generic Linux `amd64` hosts",
+        image: VLLM_IMAGES.ngc2603Post1.amd64,
+        tag: VLLM_IMAGES.ngc2603Post1.tag,
+      },
+    ] as const;
+
+    for (const { prefix, image, tag } of entries) {
+      const line = markdown.split("\n").find((candidate) => candidate.startsWith(prefix));
+      expect(line, `missing managed-image documentation for ${prefix}`).toBeDefined();
+      expect(line).toContain(`\`${image.ref.split("@")[1]}\``);
+      expect(line).toContain(`\`${(image.downloadSizeBytes / 1_000_000_000).toFixed(2)} GB\``);
+      expect(line).toContain(`\`${tag}\``);
+    }
   });
 
   it("keeps tool-calling remediation canonical in troubleshooting", () => {

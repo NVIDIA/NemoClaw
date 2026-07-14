@@ -7,13 +7,17 @@ Ordered list of what NemoClaw maintainers look for in a pull request. Higher ite
 
 ## Hard gates (all must pass to approve)
 
-1. **Contributor compliance** — the PR body has the contributor's DCO declaration and every commit appears as `Verified` in GitHub. Maintainers reject noncompliant PRs and do not repair contributor history.
-2. **Security correctness** — no sandbox escape, SSRF, credential exposure, policy bypass, or installer trust violation. PRs touching risky areas (see [RISKY-AREAS.md](RISKY-AREAS.md)) get a deep security pass before anything else.
-3. **CI green** — all required checks in `statusCheckRollup` must pass.
-4. **No merge conflicts** — `mergeStateStatus` must be clean.
-5. **No unresolved major/critical CodeRabbit findings** — correctness and safety findings block; style nits do not. Use judgment on borderline cases.
-6. **No unresolved actionable PR Review Advisor findings** — correctness, security, acceptance-coverage, and test-depth findings block unless explicitly judged false-positive. Ask the user before acting on ambiguous or design-changing advice.
+1. **Product scope approved** — the PR implements existing supported behavior or a linked, accepted product decision. Working code and green checks do not authorize a new integration, solution, third-party stack, custom image, or documentation surface. If ownership and lifecycle are not established, do not approve. Route independent solutions through [Community Solutions](../../../docs/resources/community-contributions.mdx).
+2. **Contributor compliance** — the PR body has the contributor's DCO declaration and every commit appears as `Verified` in GitHub. Maintainers reject noncompliant PRs and do not repair contributor history.
+3. **Security correctness** — no sandbox escape, SSRF, credential exposure, policy bypass, or installer trust violation. PRs touching risky areas (see [RISKY-AREAS.md](RISKY-AREAS.md)) get a deep security pass before anything else.
+4. **CI green** — all required checks in `statusCheckRollup` must pass.
+5. **No merge conflicts** — `mergeStateStatus` must be clean.
+6. **No unresolved major/critical CodeRabbit findings** — correctness and safety findings block; style nits do not. Use judgment on borderline cases.
 7. **Tests for touched risky code** — risky areas must have test coverage, either added in the PR or pre-existing. No exceptions.
+
+## Manual review inputs
+
+The PR Review Advisor provides a second opinion, not merge authority. Read its comment when present and verify each substantive claim against the code, tests, and workflow evidence. Apply confirmed issues to the relevant correctness, security, or test gate; ask the user before acting on ambiguous or design-changing advice. Its recommendation labels, absence, and comment provenance do not affect `check-gates.ts` or `allPass`, and a positive recommendation never substitutes for explicit human authorization.
 
 ## Quality expectations (block if violated, but fixable via salvage)
 
@@ -34,7 +38,7 @@ The team follows a daily ship cycle. All maintainer skills operate within this r
 
 1. **Morning** (`/nemoclaw-maintainer-morning`) — triage the backlog, pick items for the day, label them with the target version (e.g., `v0.0.8`).
 2. **During the day** (`/nemoclaw-maintainer-day`) — land PRs using the maintainer loop. Version labels make progress visible on dashboards.
-3. **Evening** (`/nemoclaw-maintainer-evening`) — check what shipped, identify open stragglers, generate a QA-focused summary, freeze the exact candidate SHA, collect the E2E evidence or itemized maintainer exceptions required before confirmation, cut the tag, automatically bump stragglers to the next patch, and prepare release notes for posting.
+3. **Evening** (`/nemoclaw-maintainer-evening`) — check what shipped, identify open stragglers, generate a QA-focused summary, freeze the candidate SHA, collect the E2E evidence or itemized maintainer exceptions required before confirmation, cut the tag, automatically bump stragglers to the next patch, and prepare release notes for posting.
 4. **Overnight** — QA team (different timezone) performs additional validation of the tag. Any issues they file enter the next morning's triage like any other issue.
 
 Version labels activate release work; they are not readiness claims. If an open item misses the tag, its label moves to the next patch during post-tag housekeeping.
@@ -44,3 +48,5 @@ Version labels activate release work; they are not readiness claims. If an open 
 - **Code style and formatting** — not a reason to block or delay. No opportunistic reformatting.
 - **Documentation completeness** — not required for approval unless the PR changes user-facing behavior.
 - **Architectural elegance** — the goal is lower future merge pain, not aesthetic cleanup.
+
+Product scope approval is distinct from architectural elegance and remains a hard gate.

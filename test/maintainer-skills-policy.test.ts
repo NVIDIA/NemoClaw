@@ -123,7 +123,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     const release = read(".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md");
     const policy = read(".agents/skills/nemoclaw-maintainer-policies/references/release-train.md");
 
-    expect(policy).toContain("exact full `origin/main` commit SHA");
+    expect(policy).toContain("full `origin/main` commit SHA");
     expect(policy).toContain("`.github/workflows/e2e.yaml` is the sole source of truth");
     expect(policy).toContain("Do not maintain a separate release-gating test list");
     expect(policy).toContain("at least one completed, successful execution");
@@ -142,7 +142,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(release).toContain("successful run or job URL and attempt");
     const evidenceSummary = release.indexOf("Before showing the confirmation prompt");
     const confirmationPrompt = release.indexOf(
-      "Ask the maintainer to paste the exact phrase",
+      "Ask the maintainer to paste this phrase",
       evidenceSummary,
     );
     expect(evidenceSummary).toBeGreaterThanOrEqual(0);
@@ -151,7 +151,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(evening).toContain("explicit itemized maintainer exception");
     expect(evening).toContain("tag the confirmed release commit with `vX.Y.Z`");
     expect(evening).not.toContain("tag `main`");
-    expect(dailyFlow).toContain("freeze the exact candidate SHA and review every E2E test");
+    expect(dailyFlow).toContain("freeze the candidate SHA and review every E2E test");
     expect(priorities).toContain("collect the E2E evidence or itemized maintainer exceptions");
   });
 
@@ -178,6 +178,17 @@ describe("maintainer skills follow canonical workflow policy", () => {
 
     expect(sweep).toContain("The comparator does not call it");
     expect(comparator).toContain("Cross-issue regression sweep (separate skill)");
+  });
+
+  it("uses the merge gate's unresolved-issue threshold for ready-now PRs", () => {
+    const day = read(".agents/skills/nemoclaw-maintainer-day/SKILL.md");
+    const mergeGate = read(".agents/skills/nemoclaw-maintainer-day/MERGE-GATE.md");
+    const threshold = "no unresolved correctness or security issue";
+
+    expect(day).toContain(threshold);
+    expect(mergeGate).toContain(threshold);
+    expect(day).not.toContain("no confirmed major CodeRabbit or PR Review Advisor issues");
+    expect(mergeGate).not.toContain("no confirmed major CodeRabbit or PR Review Advisor issues");
   });
 
   it("uses native bug type and approved Project writes for stale verification", () => {

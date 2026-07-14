@@ -4,6 +4,7 @@
 export type GitHubComment = {
   id: number;
   body?: string;
+  user?: { login?: string };
 };
 
 export type GitHubRequestOptions = {
@@ -120,43 +121,81 @@ export async function upsertStickyComment({
   userAgent?: string;
   bodyForComment?: (comment: GitHubComment) => string;
 }): Promise<void> {
-  try {
-    const existing = await findExistingComment(repo, pr, token, marker, userAgent);
-    if (existing) {
-      await githubApi(`repos/${repo}/issues/comments/${existing.id}`, token, {
+  const existing = await findExistingComment(repo, pr, token, marker, userAgent);
+  if (existing) {
+    await githubApi(`repos/${repo}/issues/comments/${existing.id}`, token, {
+      method: "PATCH",
+      body: { body: bodyForComment ? bodyForComment(existing) : body },
+      userAgent,
+    });
+    console.log(`Updated ${label} comment on ${repo}#${pr}`);
+  } else {
+    const created = await githubApi<GitHubComment>(`repos/${repo}/issues/${pr}/comments`, token, {
+      method: "POST",
+      body: { body },
+      userAgent,
+    });
+    if (bodyForComment) {
+      await githubApi(`repos/${repo}/issues/comments/${created.id}`, token, {
         method: "PATCH",
-        body: { body: bodyForComment ? bodyForComment(existing) : body },
+        body: { body: bodyForComment(created) },
         userAgent,
       });
-      console.log(`Updated ${label} comment on ${repo}#${pr}`);
-    } else {
-      const created = await githubApi<GitHubComment>(`repos/${repo}/issues/${pr}/comments`, token, {
-        method: "POST",
-        body: { body },
-        userAgent,
-      });
-      if (bodyForComment) {
-        await githubApi(`repos/${repo}/issues/comments/${created.id}`, token, {
-          method: "PATCH",
-          body: { body: bodyForComment(created) },
-          userAgent,
-        });
-      }
-      console.log(`Created ${label} comment on ${repo}#${pr}`);
     }
-  } catch (error: unknown) {
-    if (isPermissionError(error)) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.log(`Skipping ${label} comment due to permission error: ${message}`);
-    } else {
-      throw error;
-    }
+    console.log(`Created ${label} comment on ${repo}#${pr}`);
   }
 }
 
-export function isPermissionError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /403|404|Resource not accessible by integration|permission/i.test(message);
+export async function deleteBotOwnedStickyComments({
+  repo,
+  pr,
+  token,
+  markers,
+  label,
+  userAgent,
+}: {
+  repo: string;
+  pr: string;
+  token: string;
+  markers: readonly string[];
+  label: string;
+  userAgent?: string;
+}): Promise<number> {
+  if (markers.length === 0) return 0;
+  const comments: GitHubComment[] = [];
+  for (let page = 1; ; page += 1) {
+    const batch = await githubApi<GitHubComment[]>(
+      `repos/${repo}/issues/${pr}/comments?per_page=100&page=${page}`,
+      token,
+      { userAgent },
+    );
+    comments.push(...batch);
+    if (batch.length < 100) break;
+  }
+  const matches = comments.filter((comment) => {
+    const body = comment.body;
+    return (
+      Number.isSafeInteger(comment.id) &&
+      comment.id > 0 &&
+      comment.user?.login === "github-actions[bot]" &&
+      typeof body === "string" &&
+      markers.some((marker) => firstCommentLine(body) === marker)
+    );
+  });
+  for (const comment of matches) {
+    await githubApi(`repos/${repo}/issues/comments/${comment.id}`, token, {
+      method: "DELETE",
+      userAgent,
+    });
+  }
+  if (matches.length > 0) {
+    console.log(`Deleted ${matches.length} ${label} comment(s) on ${repo}#${pr}`);
+  }
+  return matches.length;
+}
+
+function firstCommentLine(body: string): string {
+  return body.trimStart().split(/\r?\n/u, 1)[0]?.trim() ?? "";
 }
 
 async function findExistingComment(
@@ -173,7 +212,10 @@ async function findExistingComment(
       { userAgent },
     );
     const match = comments.find(
-      (comment) => typeof comment.body === "string" && comment.body.includes(marker),
+      (comment) =>
+        comment.user?.login === "github-actions[bot]" &&
+        typeof comment.body === "string" &&
+        comment.body.includes(marker),
     );
     if (match) return match;
     if (comments.length < 100) return undefined;

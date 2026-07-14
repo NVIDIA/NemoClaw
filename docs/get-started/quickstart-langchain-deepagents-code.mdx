@@ -165,7 +165,7 @@ Sandboxes with the older managed MCP v1 runtime must rebuild before `mcp add` or
 Before launch, NemoClaw validates and canonicalizes the complete managed file as HTTPS-only definitions with exact OpenShell credential placeholders, then gives Deep Agents Code a process-local, integrity-bound snapshot for server starts and restarts.
 It prefers a sealed in-memory file when available; the OpenShell-compatible anonymous read-only descriptor fallback verifies the inode, size, and SHA-256 digest and fails closed on drift.
 Stdio commands, extra headers, raw credentials, and unrelated top-level configuration fail closed.
-For authenticated MCP setup and credential rotation, see [Set Up MCP Servers](../manage-sandboxes/set-up-mcp-servers).
+For authenticated MCP setup and credential rotation, see [Add an MCP Server](../manage-sandboxes/mcp-servers/add-an-mcp-server) and [Manage MCP Servers](../manage-sandboxes/mcp-servers/manage-mcp-servers).
 This isolated-mode guarantee applies to those managed launchers, not arbitrary Python commands in the sandbox.
 
 Interactive shell execution and other destructive tools remain behind human-in-the-loop approval prompts by default.
@@ -715,9 +715,9 @@ There is no dashboard port or long-running gateway process for this harness.
 ## Next Steps
 
 - [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) explains how to choose a provider and model.
-- [Workspace Files](../manage-sandboxes/workspace-files) explains `/sandbox/.deepagents`, memory, skills, and what NemoClaw preserves.
-- [Backup and Restore](../manage-sandboxes/backup-restore) explains snapshot and rebuild preservation.
+- [Understand Sandbox State](../manage-sandboxes/state-and-backups/understand-sandbox-state) explains `/sandbox/.deepagents`, memory, skills, and what NemoClaw preserves.
+- [Create and Restore Snapshots](../manage-sandboxes/state-and-backups/create-and-restore-snapshots) explains snapshot and rebuild preservation.
 - [Network Policies](../reference/network-policies#local-otlp-trace-export) explains the local collector egress preset.
 - [Troubleshooting](../reference/troubleshooting) covers common setup and runtime issues.
-- [Set Up MCP Servers](../manage-sandboxes/set-up-mcp-servers) explains managed MCP configuration for Deep Agents sandboxes.
+- [Add an MCP Server](../manage-sandboxes/mcp-servers/add-an-mcp-server) explains managed MCP configuration for Deep Agents sandboxes.
 - [Deep Agents Code overview](https://docs.langchain.com/oss/python/deepagents/code/overview) explains upstream `dcode` capabilities and commands.

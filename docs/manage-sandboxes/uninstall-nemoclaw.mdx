@@ -1,0 +1,60 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Uninstall NemoClaw"
+sidebar-title: "Uninstall NemoClaw"
+description: "Remove NemoClaw while choosing whether to preserve host-side backups, registry state, OpenShell, and models."
+description-agent: "Explains the built-in and hosted uninstall workflows and the user data they preserve or remove. Use when uninstalling NemoClaw or cleaning host-side state."
+keywords: ["nemoclaw uninstall", "remove nemoclaw", "destroy user data"]
+content:
+  type: "how_to"
+skill:
+  priority: 50
+---
+Use the built-in uninstall command when the installed CLI is available.
+
+```bash
+$$nemoclaw uninstall
+```
+
+| Flag | Effect |
+|---|---|
+| `--yes` | Skip the confirmation prompt. |
+| `--keep-openshell` | Leave OpenShell binaries installed. |
+| `--delete-models` | Also remove NemoClaw-pulled Ollama models. |
+| `--destroy-user-data` | Also remove preserved user data in `rebuild-backups/`, `backups/`, and `sandboxes.json`. |
+| `--gateway <name>` | Override the gateway name to remove. The default is `nemoclaw`. |
+
+<Note>
+The uninstall command preserves `~/.nemoclaw/rebuild-backups/`, `~/.nemoclaw/backups/`, and `~/.nemoclaw/sandboxes.json` by default.
+Uninstall removes every other entry under `~/.nemoclaw/`.
+
+Interactive runs prompt before they remove the preserved entries, and the default answer keeps them.
+For non-interactive runs using `--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or a non-TTY shell, pass `--destroy-user-data` or set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` to acknowledge data loss and remove the preserved entries.
+
+`--yes` stays non-destructive by design and never purges preserved user data on its own.
+Preserving `sandboxes.json` does not preserve the gateway registration, provider registrations, or Docker image its recorded sandboxes depend on.
+
+Uninstall warns that those records cannot be recovered automatically on reinstall, and the remediation is `$$nemoclaw <name> destroy` followed by `$$nemoclaw onboard`.
+</Note>
+
+The CLI command runs the version-pinned `uninstall.sh` that shipped with the installed CLI, so it does not fetch anything over the network at uninstall time.
+
+If the CLI is missing or broken, use the hosted script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash
+```
+
+The same flags apply to the hosted script.
+Pass them after `bash -s --`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash -s -- --yes --delete-models
+```
+
+## Related Topics
+
+- [Host Files and State](../../reference/host-files-and-state) for the complete host-side file and preservation reference.
+- [`$$nemoclaw uninstall`](../../reference/commands#$$nemoclaw-uninstall) for the full command contract and hosted-script comparison.
+- [Create and Restore Snapshots](../state-and-backups/create-and-restore-snapshots) before removing state you may need later.

@@ -66,12 +66,16 @@ describe("E2E operations workflow boundary", () => {
 
   it("rejects controller protocol and PR validation drift", () => {
     const workflow = readE2eOperationsWorkflow();
+    delete workflow.on?.workflow_dispatch?.inputs?.base_sha;
+    delete workflow.on?.workflow_dispatch?.inputs?.workflow_sha;
     delete workflow.on?.workflow_dispatch?.inputs?.plan_hash;
     workflow.env!.NEMOCLAW_E2E_PLAN_HASH = "${{ inputs.checkout_sha }}";
     workflow.concurrency!["cancel-in-progress"] = false;
     const validation = workflow.jobs["generate-matrix"].steps!.find(
       (step) => step.name === "Validate controller dispatch",
     )!;
+    delete validation.env?.BASE_SHA;
+    delete validation.env?.EXPECTED_WORKFLOW_SHA;
     validation.if = "${{ inputs.plan_hash != '' }}";
     validation.run = "echo unchecked";
     const checkout = workflow.jobs["generate-matrix"].steps!.find((step) =>
@@ -81,10 +85,17 @@ describe("E2E operations workflow boundary", () => {
 
     expect(validateE2eOperationsWorkflow(workflow)).toEqual(
       expect.arrayContaining([
+        "workflow_dispatch base_sha must be an optional string with an empty default",
+        "workflow_dispatch workflow_sha must be an optional string with an empty default",
         "workflow_dispatch plan_hash must be an optional string with an empty default",
         "E2E workflow must bind NEMOCLAW_E2E_PLAN_HASH to controller metadata",
         "PR E2E concurrency must cancel obsolete runs",
         "Controller validation must be activated only by checkout_sha",
+        "Controller validation must bind BASE_SHA",
+        "Controller validation must bind EXPECTED_WORKFLOW_SHA",
+        'Controller validation must retain "$BASE_SHA" =~ ^[a-f0-9]{40}$',
+        'Controller validation must retain "$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA"',
+        'Controller validation must retain [[ "$(jq -r \'.base.sha\' <<< "$pull_json")" == "$BASE_SHA" ]]',
         'Controller validation must retain "$PR_NUMBER" =~ ^[1-9][0-9]*$',
         "generate-matrix checkout must use the selected PR commit",
       ]),
@@ -386,7 +397,7 @@ describe("E2E operations workflow boundary", () => {
     }
   });
 
-  it("rejects raw trace upload ordering and advisor auto-dispatch restoration", () => {
+  it("rejects raw trace upload ordering and unified advisor auto-dispatch", () => {
     const workflow = readE2eOperationsWorkflow();
     const cloudSteps = workflow.jobs["cloud-onboard"].steps!;
     const sanitize = cloudSteps.find(
@@ -399,7 +410,7 @@ describe("E2E operations workflow boundary", () => {
     try {
       writeFileSync(advisorPath, "permissions: write-all\njobs:\n  advisor:\n    steps: []\n");
       expect(validateE2eOperationsWorkflow(workflow, advisorPath)).toContain(
-        "E2E advisor must not hold actions: write",
+        "Unified advisor must not hold actions: write",
       );
 
       writeFileSync(
@@ -409,8 +420,8 @@ describe("E2E operations workflow boundary", () => {
       expect(validateE2eOperationsWorkflow(workflow, advisorPath)).toEqual(
         expect.arrayContaining([
           "cloud-onboard trace sanitizer must retain scripts/e2e/sanitize-trace-timing.py",
-          "E2E advisor must not hold actions: write",
-          "E2E advisor must not auto-dispatch workflows",
+          "Unified advisor must not hold actions: write",
+          "Unified advisor must not auto-dispatch workflows",
         ]),
       );
     } finally {

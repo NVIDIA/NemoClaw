@@ -1,0 +1,127 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Manage Messaging Channels"
+sidebar-title: "Manage Messaging Channels"
+description: "Rotate, pause, resume, remove, and conflict-check messaging channels on an existing sandbox."
+description-agent: "Explains channel credential rotation, destructive removal, pause and resume behavior, duplicate credential and port conflicts, and full messaging stop behavior. Use after a channel is configured."
+keywords: ["nemoclaw channels remove", "nemoclaw channels stop", "messaging credential rotation", "channel conflicts"]
+content:
+  type: "how_to"
+---
+import { AgentOnly } from "../_components/AgentGuide";
+
+Use host-side channel commands to change a configured messaging channel.
+
+## Rotate Credentials
+
+Running `channels add` for a channel that is already configured overwrites stored tokens and registers the updated bridge provider.
+Rebuild the sandbox after the update so the image reflects the current channel set.
+
+For WeChat, the cached-token shortcut applies.
+Remove WeChat first when you intend to acquire a fresh account through a new QR scan.
+
+For detailed token rotation procedures, refer to [Credential Rotation](../../security/credential-rotation).
+
+## Remove a Channel
+
+Remove the channel and clear its stored credentials:
+
+```bash
+$$nemoclaw my-assistant channels remove telegram
+$$nemoclaw my-assistant channels remove wechat
+$$nemoclaw my-assistant channels remove teams
+```
+
+`channels remove wechat` clears the bot token, deletes the `<sandbox>-wechat-bridge` provider, and removes `wechat` from the enabled-channel set.
+The next rebuild omits WeChat configuration and per-account state files.
+
+For in-sandbox QR-paired channels such as WhatsApp, `channels remove` destructively clears the session directory before rebuild so stale auth files do not reconnect the channel.
+
+<AgentOnly variant="openclaw">
+The cleanup targets `/sandbox/.openclaw/<channel>/`.
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+The cleanup targets `/sandbox/.hermes/platforms/<channel>/`.
+</AgentOnly>
+
+It tries `openshell sandbox exec` and falls back to SSH if the first transport does not produce the success sentinel.
+If neither transport can reach a running sandbox, the command exits nonzero and asks you to start the sandbox and rerun it.
+
+NemoClaw leaves the registry, policy preset, and `session.policyPresets` unchanged on that failure path so a later retry can complete cleanly.
+
+`channels remove whatsapp` clears the client-side Baileys session but cannot deregister the linked device with WhatsApp's servers after the local connection is gone.
+The phone continues to list the sandbox as a Linked Device until you remove it manually or WhatsApp's 14-day inactivity timeout expires.
+
+Remove the phone entry before pairing the same account with another sandbox.
+
+## Pause and Resume a Channel
+
+Use `channels stop` when you want to pause a bridge without deleting credentials:
+
+```bash
+$$nemoclaw my-assistant channels stop telegram
+$$nemoclaw my-assistant channels start telegram
+$$nemoclaw my-assistant channels stop wechat
+$$nemoclaw my-assistant channels start wechat
+```
+
+<AgentOnly variant="openclaw">
+For WeChat, `channels stop wechat` followed by rebuild keeps the per-account state under `/sandbox/.openclaw/openclaw-weixin/accounts/` even though the bridge is no longer wired into `openclaw.json`.
+</AgentOnly>
+<AgentOnly variant="hermes">
+For WeChat, `channels stop wechat` followed by rebuild keeps the per-account state under `/sandbox/.hermes/` even though the bridge is no longer wired into Hermes config.
+</AgentOnly>
+A later `channels start wechat` plus rebuild revives the bridge against the same iLink account without a fresh QR scan.
+The bot token remains in the OpenShell provider across the stop and start cycle.
+
+When `channels start` re-enables a channel, NemoClaw reapplies the matching built-in policy preset before rebuild.
+If policy restoration fails, the command keeps the channel disabled and exits without rebuilding into a partially active state.
+
+## Avoid Cross-Sandbox Conflicts
+
+Telegram, Discord, Slack, and WeChat allow one active consumer per channel credential.
+Multiple sandboxes can use the same channel type when each uses a distinct token or WeChat bot account.
+
+For WeChat, each sandbox must own a distinct iLink `accountId`.
+Running two sandboxes against the same account causes one to lose messages.
+
+If another sandbox already uses the same token, interactive onboarding prompts for confirmation and non-interactive onboarding exits nonzero.
+For Slack, NemoClaw checks both bot and Socket Mode app tokens.
+
+For Microsoft Teams, NemoClaw also checks the local webhook port because active Teams sandboxes cannot share it.
+If NemoClaw has only legacy metadata and cannot compare credential hashes, it keeps the conservative warning.
+
+Rerun `channels add <channel>` with the intended token to refresh stored non-secret identity metadata.
+
+Before any rebuild, NemoClaw rechecks the staged messaging plan against other registered sandboxes.
+A credential or resource conflict aborts before backup or deletion and leaves the original sandbox registered and intact.
+
+Resolve the conflict, then rerun the operation.
+`$$nemoclaw status` reports cross-sandbox overlaps.
+
+## Stop All Delivery
+
+Use `channels stop` for an individual bridge or stop the sandbox when you need to stop the complete supervised runtime.
+
+<AgentOnly variant="openclaw">
+`$$nemoclaw tunnel stop` stops host auxiliary services and asks NemoClaw to stop the OpenClaw gateway inside the selected sandbox.
+The deprecated full `$$nemoclaw stop` command also attempts to release an unshared OpenShell gateway port whose ownership NemoClaw can verify.
+
+Stopping the in-sandbox gateway stops all channel delivery for that sandbox until you restart the sandbox or gateway.
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+`$$nemoclaw tunnel stop` stops host auxiliary services without stopping the supervisor-owned Hermes gateway, agent-owned host forwards, or managed OpenShell gateway port.
+The deprecated full `$$nemoclaw stop` command attempts to stop host forwards and safely release an unshared OpenShell gateway port while the Hermes gateway remains under sandbox supervision.
+</AgentOnly>
+
+Full stop preserves a shared gateway and fails closed without releasing its port when ownership is ambiguous.
+
+## Related Topics
+
+- [Add Channels After Onboarding](add-channels-after-onboarding) to configure another channel.
+- [Run Sandboxes](../operate-sandboxes/run-sandboxes) for tunnel and sandbox stop or start behavior.
+- [Troubleshooting](../../reference/troubleshooting) for channel delivery failures.
+- [Commands](../../reference/commands) for channel command flags.

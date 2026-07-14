@@ -22,9 +22,11 @@ const CLEANUP_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
 const HERMES_SECRET_BOUNDARY_STEP_ID = "hermes-secret-boundary";
 const HERMES_ROOT_AFTER_SECRET_CONDITION =
   "${{ !cancelled() && (steps.hermes-secret-boundary.outcome == 'success' || steps.hermes-secret-boundary.outcome == 'failure') }}";
+const MESSAGING_PLAN_IMAGE_BOUNDARY_JOB = "messaging-plan-image-boundary";
 const IMAGE_BUILD_JOBS = [
   "build-sandbox-images",
   "build-hermes-sandbox-image",
+  MESSAGING_PLAN_IMAGE_BOUNDARY_JOB,
   "build-sandbox-images-arm64",
 ] as const;
 const OPENCLAW_IMAGE_CONSUMER_JOBS = [
@@ -368,6 +370,118 @@ function validateGuardedProductionBuildContracts(
   }
 }
 
+function normalizedShell(run: string | undefined): string {
+  return (run ?? "")
+    .replace(/\\\r?\n\s*/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function validateMessagingPlanBoundaryBuild(
+  errors: string[],
+  job: SandboxImagesWorkflowJob,
+  options: {
+    readonly agent: "hermes" | "openclaw";
+    readonly baseArgName: "BASE_IMAGE";
+    readonly baseEnvName: "BASE_IMAGE" | "HERMES_BASE_IMAGE";
+    readonly stepName: string;
+    readonly target: string;
+  },
+): void {
+  const step = requireStep(errors, MESSAGING_PLAN_IMAGE_BOUNDARY_JOB, job, options.stepName);
+  const run = normalizedShell(step.run);
+  const expectedEnv = {
+    [options.baseEnvName]: `\${{ env.${options.baseEnvName} }}`,
+  };
+  const requiredFragments = [
+    "set -euo pipefail",
+    `node --experimental-strip-types scripts/check-messaging-plan-image-boundary.mts plan ${options.agent}`,
+    `--build-arg \"${options.baseArgName}=\${${options.baseEnvName}}\"`,
+    '--build-arg "NEMOCLAW_MESSAGING_PLAN_B64=${messaging_plan_b64}"',
+    'scripts/check-production-build-args.sh "${build_args[@]}"',
+    `docker build \"\${build_args[@]}\" -t ${options.target} .`,
+    `node --experimental-strip-types scripts/check-messaging-plan-image-boundary.mts verify ${options.target} ${options.agent}`,
+  ];
+
+  if (step.shell !== "bash" || !isDeepStrictEqual(record(step.env), expectedEnv)) {
+    errors.push(`${options.agent} messaging plan image boundary must use guarded bash env scope`);
+  }
+  for (const fragment of requiredFragments) {
+    if (!run.includes(fragment)) {
+      errors.push(`${options.agent} messaging plan image boundary must include ${fragment}`);
+    }
+  }
+
+  const planIndex = run.indexOf("check-messaging-plan-image-boundary.mts plan");
+  const guardIndex = run.indexOf("check-production-build-args.sh");
+  const buildIndex = run.indexOf(`docker build \"\${build_args[@]}\" -t ${options.target}`);
+  const verifyIndex = run.indexOf("check-messaging-plan-image-boundary.mts verify");
+  if (
+    planIndex < 0 ||
+    guardIndex <= planIndex ||
+    buildIndex <= guardIndex ||
+    verifyIndex <= buildIndex
+  ) {
+    errors.push(`${options.agent} messaging plan image boundary steps are out of order`);
+  }
+}
+
+function validateMessagingPlanImageBoundary(
+  errors: string[],
+  workflow: SandboxImagesWorkflow,
+): void {
+  const job = workflow.jobs[MESSAGING_PLAN_IMAGE_BOUNDARY_JOB] ?? {};
+  if (job["timeout-minutes"] !== 30) {
+    errors.push("messaging plan image boundary must retain its 30-minute budget");
+  }
+  if (job.needs !== undefined) {
+    errors.push("messaging plan image boundary must remain isolated from canonical image jobs");
+  }
+  const nodeSetupSteps = steps(job).filter((step) => step.name === "Set up Node");
+  if (nodeSetupSteps.length !== 1) {
+    errors.push("messaging plan image boundary must set up Node exactly once");
+  }
+  if (record(nodeSetupSteps[0]?.with)["node-version"] !== "22.19.0") {
+    errors.push("messaging plan image boundary must use Node 22.19.0");
+  }
+  for (const [stepName, action] of [
+    ["Resolve sandbox base image", "./.github/actions/resolve-sandbox-base-image"],
+    ["Resolve Hermes base image", "./.github/actions/resolve-hermes-base-image"],
+  ] as const) {
+    if (findStep(job, stepName)?.uses !== action) {
+      errors.push(`messaging plan image boundary must run '${stepName}'`);
+    }
+  }
+
+  validateMessagingPlanBoundaryBuild(errors, job, {
+    agent: "openclaw",
+    baseArgName: "BASE_IMAGE",
+    baseEnvName: "BASE_IMAGE",
+    stepName: "Build and verify OpenClaw messaging plan boundary",
+    target: "nemoclaw-openclaw-plan-boundary",
+  });
+  validateMessagingPlanBoundaryBuild(errors, job, {
+    agent: "hermes",
+    baseArgName: "BASE_IMAGE",
+    baseEnvName: "HERMES_BASE_IMAGE",
+    stepName: "Build and verify Hermes messaging plan boundary",
+    target: "nemoclaw-hermes-plan-boundary",
+  });
+
+  const builds = dockerBuildLines(job);
+  if (
+    !isDeepStrictEqual(builds, [
+      'docker build "${build_args[@]}" -t nemoclaw-openclaw-plan-boundary .',
+      'docker build "${build_args[@]}" -t nemoclaw-hermes-plan-boundary .',
+    ])
+  ) {
+    errors.push("messaging plan image boundary must build exactly two disposable local images");
+  }
+  if (steps(job).some((step) => String(step.uses ?? "").includes("upload-artifact"))) {
+    errors.push("messaging plan image boundary must not publish probe image artifacts");
+  }
+}
+
 function validateRuntimeImageReuse(errors: string[], workflow: SandboxImagesWorkflow): void {
   const producerName = "build-sandbox-images";
   const producer = workflow.jobs[producerName] ?? {};
@@ -567,6 +681,136 @@ function validateHermesImageReuse(errors: string[], workflow: SandboxImagesWorkf
       errors.push(`${label} must run after the Hermes production image build`);
     }
   }
+
+  const save = requireStep(errors, jobName, job, "Save Hermes production image");
+  if (
+    steps(job).filter((step) => step.name === "Save Hermes production image").length !== 1 ||
+    !(save.run ?? "").includes(
+      "docker save nemoclaw-hermes-production | gzip > /tmp/hermes-isolation-image.tar.gz",
+    ) ||
+    !(save.run ?? "").includes("gzip -t /tmp/hermes-isolation-image.tar.gz")
+  ) {
+    errors.push("Hermes producer must save and verify its production image exactly once");
+  }
+  const upload = requireStep(errors, jobName, job, "Upload Hermes isolation image");
+  if (
+    steps(job).filter((step) => step.name === "Upload Hermes isolation image").length !== 1 ||
+    !(upload.uses ?? "").startsWith("actions/upload-artifact@") ||
+    !FULL_SHA_ACTION.test(upload.uses ?? "") ||
+    !isDeepStrictEqual(record(upload.with), {
+      name: "hermes-isolation-image",
+      path: "/tmp/hermes-isolation-image.tar.gz",
+      "retention-days": 1,
+    }) ||
+    stepIndex(job, save.name ?? "") >= stepIndex(job, upload.name ?? "") ||
+    stepIndex(job, upload.name ?? "") >= stepIndex(job, CLEANUP_STEP_NAME)
+  ) {
+    errors.push("Hermes producer must upload the saved production image before auth cleanup");
+  }
+}
+
+function validateStateDirGuardMetadataImageReuse(
+  errors: string[],
+  workflow: SandboxImagesWorkflow,
+): void {
+  const jobName = "state-dir-guard-metadata";
+  const job = workflow.jobs[jobName] ?? {};
+  const expectedNeeds = ["build-sandbox-images", "build-hermes-sandbox-image"];
+  if (!isDeepStrictEqual(job.needs, expectedNeeds)) {
+    errors.push("state-dir guard metadata must depend on both production image producers");
+  }
+  if (job["timeout-minutes"] !== 30) {
+    errors.push("state-dir guard metadata job must retain its 30-minute budget");
+  }
+
+  const expectedEnv = {
+    E2E_ARTIFACT_DIR: "${{ github.workspace }}/e2e-artifacts/live/state-dir-guard-metadata",
+    E2E_TARGET_ID: "state-dir-guard-metadata",
+    NEMOCLAW_RUN_LIVE_E2E: "1",
+    NEMOCLAW_OPENCLAW_TEST_IMAGE: "nemoclaw-production",
+    NEMOCLAW_HERMES_TEST_IMAGE: "nemoclaw-hermes-production",
+  };
+  if (!isDeepStrictEqual(record(job.env), expectedEnv)) {
+    errors.push("state-dir guard metadata must consume both named prebuilt production images");
+  }
+  for (const stepName of ["Set up Node", "Install root dependencies"]) {
+    if (steps(job).filter((step) => step.name === stepName).length !== 1) {
+      errors.push(`${jobName} must run '${stepName}' exactly once`);
+    }
+  }
+  if (findStep(job, AUTH_STEP_NAME)) {
+    errors.push("state-dir guard metadata must not authenticate to Docker Hub");
+  }
+  const allRuns = steps(job)
+    .map((step) => step.run ?? "")
+    .join("\n");
+  if (/\bdocker\s+build\b/u.test(allRuns)) {
+    errors.push("state-dir guard metadata must not rebuild either production image");
+  }
+  for (const producerName of expectedNeeds) {
+    const producerRuns = steps(workflow.jobs[producerName] ?? {})
+      .map((step) => step.run ?? "")
+      .join("\n");
+    if (producerRuns.includes("test/e2e/live/state-dir-guard-metadata.test.ts")) {
+      errors.push(`${producerName} must not run the failure-isolated state-dir guard probe`);
+    }
+  }
+
+  const openclawDownload = requireStep(errors, jobName, job, "Download OpenClaw production image");
+  const hermesDownload = requireStep(errors, jobName, job, "Download Hermes production image");
+  for (const [label, step, expectedWith] of [
+    ["OpenClaw", openclawDownload, { name: "isolation-image", path: "/tmp" }],
+    ["Hermes", hermesDownload, { name: "hermes-isolation-image", path: "/tmp" }],
+  ] as const) {
+    if (
+      !(step.uses ?? "").startsWith("actions/download-artifact@") ||
+      !FULL_SHA_ACTION.test(step.uses ?? "") ||
+      !isDeepStrictEqual(record(step.with), expectedWith)
+    ) {
+      errors.push(`state-dir guard metadata must download the saved ${label} production image`);
+    }
+  }
+
+  const load = requireStep(errors, jobName, job, "Load production images");
+  for (const fragment of [
+    "/tmp/isolation-image.tar.gz | docker load",
+    "/tmp/hermes-isolation-image.tar.gz | docker load",
+    "docker image inspect nemoclaw-production",
+    "docker image inspect nemoclaw-hermes-production",
+  ]) {
+    if (!(load.run ?? "").includes(fragment)) {
+      errors.push(`state-dir guard metadata image load must include ${fragment}`);
+    }
+  }
+  const tools = requireStep(errors, jobName, job, "Install filesystem metadata tools");
+  for (const fragment of [
+    "sudo apt-get install --yes --no-install-recommends acl attr",
+    "command -v setfacl getfacl setfattr getfattr",
+  ]) {
+    if (!(tools.run ?? "").includes(fragment)) {
+      errors.push(`state-dir guard metadata tool setup must include ${fragment}`);
+    }
+  }
+  const probe = requireStep(errors, jobName, job, "Run installed state-dir guard metadata test");
+  if (probe["timeout-minutes"] !== 15) {
+    errors.push("state-dir guard metadata probe must retain its 15-minute budget");
+  }
+  if (!(probe.run ?? "").includes("test/e2e/live/state-dir-guard-metadata.test.ts")) {
+    errors.push("state-dir guard metadata step must run its focused live Vitest target");
+  }
+  const upload = requireStep(errors, jobName, job, "Upload state-dir guard metadata artifacts");
+  if (upload.if !== "always()" || upload.uses !== "./.github/actions/upload-e2e-artifacts") {
+    errors.push("state-dir guard metadata must always use the shared E2E artifact uploader");
+  }
+  if (
+    stepIndex(job, openclawDownload.name ?? "") >= stepIndex(job, load.name ?? "") ||
+    stepIndex(job, hermesDownload.name ?? "") >= stepIndex(job, load.name ?? "") ||
+    stepIndex(job, load.name ?? "") >= stepIndex(job, tools.name ?? "") ||
+    stepIndex(job, tools.name ?? "") >= stepIndex(job, probe.name ?? "") ||
+    stepIndex(job, probe.name ?? "") >= stepIndex(job, upload.name ?? "")
+  ) {
+    errors.push("state-dir guard metadata image handoff and evidence steps are out of order");
+  }
 }
 
 export function readSandboxImagesWorkflow(
@@ -596,8 +840,10 @@ export function validateSandboxImagesWorkflow(
   }
   validateSecretScopeAndRegistryWrites(errors, workflow);
   validateGuardedProductionBuildContracts(errors, workflow);
+  validateMessagingPlanImageBoundary(errors, workflow);
   validateRuntimeImageReuse(errors, workflow);
   validateHermesImageReuse(errors, workflow);
+  validateStateDirGuardMetadataImageReuse(errors, workflow);
   return errors;
 }
 

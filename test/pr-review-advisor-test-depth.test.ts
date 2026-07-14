@@ -24,6 +24,24 @@ function reviewResult(testDepth: TestDepth): ReviewResult {
     acceptanceCoverage: [],
     securityCategories: [],
     sourceOfTruthReview: [],
+    e2e: {
+      coverage: {
+        classifiedDomains: [],
+        requiredTests: [],
+        optionalTests: [],
+        newE2eRecommendations: [],
+        noE2eReason: "No E2E impact.",
+        confidence: "high",
+      },
+      targets: {
+        relevantChangedFiles: [],
+        changedCredentialFreeTests: [],
+        required: [],
+        optional: [],
+        noTargetE2eReason: "No E2E target impact.",
+        confidence: "high",
+      },
+    },
     testDepth,
     positives: [],
     reviewCompleteness: {
@@ -84,7 +102,7 @@ describe("PR review advisor deterministic test-depth floor", () => {
     expect(summary).not.toContain("Add model-specific regression test 1.");
     expect(comment).not.toContain("Run deterministic E2E job 1.");
     expect(comment).not.toContain("Add model-specific regression test 1.");
-    expect(comment).toContain("No blocking advisor findings");
+    expect(comment).toContain("No blocking advisor findings reported");
     expect(testDepth.suggestedTests).toHaveLength(20);
     expect(testDepth.suggestedTests).toEqual(expect.arrayContaining(deterministicTests));
   });

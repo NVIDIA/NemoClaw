@@ -371,6 +371,13 @@
       ]
     },
     {
+      "live": "test/e2e/live/openshell-version-pin.test.ts",
+      "fast": [
+        "test/onboard-openshell-version.test.ts",
+        "test/runner.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/overlayfs-autofix.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -382,7 +389,8 @@
       "live": "test/e2e/live/rebuild-hermes.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/rebuild-hermes-progress.test.ts"
       ]
     },
     {
@@ -461,6 +469,10 @@
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
+    },
+    {
+      "live": "test/e2e/live/state-dir-guard-metadata.test.ts",
+      "liveOnlyReason": "Runs the installed guard from both production images against a real bind-mounted Linux filesystem; mocks cannot reproduce kernel xattr copying, POSIX ACL mask synchronization, inode replacement, or allocated-byte behavior."
     }
   ]
 }

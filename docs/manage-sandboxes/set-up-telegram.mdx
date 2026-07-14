@@ -1,0 +1,54 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Set Up Telegram"
+sidebar-title: "Set Up Telegram"
+description: "Prepare a Telegram bot token, direct-message allowlist, group policy, and mention behavior for NemoClaw."
+description-agent: "Explains Telegram bot creation and NemoClaw allowlist, group-access, and mention-mode settings. Use before enabling Telegram during onboarding or adding it later."
+keywords: ["nemoclaw telegram", "telegram bot token", "telegram allowed ids"]
+content:
+  type: "how_to"
+---
+import { AgentOnly } from "../_components/AgentGuide";
+
+Create a Telegram bot and choose the direct-message and group behavior before you enable the channel.
+
+## Create the Bot Token
+
+Open Telegram, send `/newbot` to [@BotFather](https://t.me/BotFather), follow the prompts, and copy the token into `TELEGRAM_BOT_TOKEN`.
+For Telegram group chats, disable privacy mode before testing group replies.
+
+In @BotFather, run `/setprivacy`, choose the bot, then choose **Disable**.
+After changing privacy mode, remove the bot from each Telegram group and add it back so Telegram applies the new delivery setting.
+
+## Configure Access
+
+`TELEGRAM_ALLOWED_IDS` is a comma-separated list of Telegram user or private-chat IDs for DM access.
+For compatibility with older QA scripts, NemoClaw also accepts `TELEGRAM_AUTHORIZED_CHAT_IDS` and `TELEGRAM_CHAT_ID` as aliases, but new automation should use `TELEGRAM_ALLOWED_IDS`.
+Keep these aliases until QA automation and public repro templates have stopped exporting them for at least one full release.
+
+Group chats stay open by default so rebuilt sandboxes do not silently drop Telegram group messages because of an empty group allowlist.
+<AgentOnly variant="openclaw">
+NemoClaw defaults `TELEGRAM_GROUP_POLICY` to `open` for OpenClaw.
+Set `TELEGRAM_GROUP_POLICY=allowlist` to block group chats until explicit group entries are configured, or `TELEGRAM_GROUP_POLICY=disabled` to disable Telegram group access.
+</AgentOnly>
+<AgentOnly variant="hermes">
+Hermes does not have an equivalent disable-groups policy.
+`TELEGRAM_ALLOWED_IDS` maps to Hermes `TELEGRAM_ALLOWED_USERS`, which authorizes those users across DMs, groups, and forums.
+</AgentOnly>
+
+NemoClaw defaults `TELEGRAM_REQUIRE_MENTION` to `1`, so the bot replies in Telegram groups only when users mention it.
+Set `TELEGRAM_REQUIRE_MENTION=0` when you want the bot to reply to all group messages.
+Pairing and `TELEGRAM_ALLOWED_IDS` still govern direct messages.
+
+## Enable Telegram
+
+Export the settings before onboarding or `channels add telegram`:
+
+```bash
+export TELEGRAM_BOT_TOKEN="<your-bot-token>"
+export TELEGRAM_ALLOWED_IDS="<your-telegram-user-id>"
+export TELEGRAM_REQUIRE_MENTION=1
+```
+
+Continue with [Enable Channels During Onboarding](enable-channels-during-onboarding) or [Add Channels After Onboarding](add-channels-after-onboarding).

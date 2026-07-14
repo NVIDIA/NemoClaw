@@ -42,7 +42,7 @@ function runPluginInstallBlock(
   const command = dockerRunCommandBetween(
     dockerfile,
     "# Install non-messaging OpenClaw plugins",
-    '# hadolint ignore=DL3059,DL4006\nRUN OPENCLAW_VERSION="${OPENCLAW_VERSION}" node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase agent-install',
+    "# The reviewed cache stays root-owned and immutable to the sandbox user.",
   );
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tavily-plugin-"));
   const logPath = path.join(tmp, "calls.log");

@@ -4,24 +4,29 @@
 
 import { spawnSync } from "node:child_process";
 import {
+  accessSync,
   chmodSync,
+  constants,
   existsSync,
+  lstatSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
+import { packReviewedNpmArchive } from "../../../../../scripts/lib/reviewed-npm-archive.mts";
 import { discordManifest } from "../../channels/discord/manifest.ts";
 import { slackManifest } from "../../channels/slack/manifest.ts";
 import { teamsManifest } from "../../channels/teams/manifest.ts";
 import { telegramManifest } from "../../channels/telegram/manifest.ts";
 import { wechatManifest } from "../../channels/wechat/manifest.ts";
 import { whatsappManifest } from "../../channels/whatsapp/manifest.ts";
-import type { ChannelManifest } from "../../manifest/types.ts";
+import type { ChannelAgentPackageRuntimeLockSpec, ChannelManifest } from "../../manifest/types.ts";
 
 type Env = Record<string, string | undefined>;
 type JsonObject = Record<string, any>;
@@ -123,6 +128,7 @@ type OpenClawPluginInstall = {
   readonly npmPackageSpec?: string;
   readonly integrity?: string;
   readonly tarballUrl?: string;
+  readonly runtimeLock?: ChannelAgentPackageRuntimeLockSpec;
   readonly pin: boolean;
 };
 
@@ -137,8 +143,6 @@ export const OPENCLAW_MESSAGING_PLUGIN_ARCHIVE_PROVENANCE_POLICY = Object.freeze
   registryTarballField: "dist.tarball",
   registryTarballUrl: "must-match-committed-url",
 } as const);
-
-const NPM_METADATA_MAX_BUFFER = 16 * 1024 * 1024;
 
 type HermesUvPackageInstall = {
   readonly spec: string;
@@ -202,6 +206,28 @@ export function reviewedOpenClawPluginTarballUrlByPackageSpec(
   return Object.freeze(
     Object.fromEntries(entries.sort(([left], [right]) => left.localeCompare(right))),
   );
+}
+
+function reviewedOpenClawPluginRuntimeLocksByPackageSpec(
+  env: Env,
+  manifests: readonly ChannelManifest[],
+): Readonly<Record<string, ChannelAgentPackageRuntimeLockSpec>> {
+  const entries: [string, ChannelAgentPackageRuntimeLockSpec][] = [];
+  for (const manifest of manifests) {
+    for (const packageSpec of manifest.agentPackages ?? []) {
+      if (
+        packageSpec.agent !== "openclaw" ||
+        packageSpec.manager !== "openclaw-plugin" ||
+        !packageSpec.runtimeLock
+      ) {
+        continue;
+      }
+      const resolvedSpec = resolveOpenClawPackageSpec(packageSpec.spec, env);
+      const npmPackage = requireExactNpmPackageSpec(resolvedSpec, manifest.id);
+      entries.push([npmPackage.packageSpec, packageSpec.runtimeLock]);
+    }
+  }
+  return Object.freeze(Object.fromEntries(entries));
 }
 
 export function readMessagingBuildPlanFromEnv(
@@ -508,6 +534,7 @@ function collectOpenClawMessagingPluginInstalls(
   const trustedSpecs = trustedOpenClawPluginSpecsForManifests(trustedManifests, env);
   const reviewedIntegrity = reviewedOpenClawPluginIntegrityByPackageSpec(env, trustedManifests);
   const reviewedTarballUrls = reviewedOpenClawPluginTarballUrlByPackageSpec(env, trustedManifests);
+  const runtimeLocks = reviewedOpenClawPluginRuntimeLocksByPackageSpec(env, trustedManifests);
   for (const step of enabledBuildStepsForPhase(plan, "agent-install")) {
     if (step.kind !== "package-install") continue;
     if (step.value === undefined) {
@@ -533,6 +560,9 @@ function collectOpenClawMessagingPluginInstalls(
       ...(npmPackage ? { npmPackageSpec: npmPackage.packageSpec } : {}),
       ...(integrity ? { integrity } : {}),
       ...(tarballUrl ? { tarballUrl } : {}),
+      ...(npmPackage && runtimeLocks[npmPackage.packageSpec]
+        ? { runtimeLock: runtimeLocks[npmPackage.packageSpec] }
+        : {}),
       pin: integrity !== undefined,
     };
     const key = JSON.stringify(resolvedInstall);
@@ -659,7 +689,25 @@ export function openClawDoctorEnvOverrides(
 
 export function installOpenClawMessagingPlugins(plan: MessagingBuildPlan | null, env: Env): void {
   for (const install of collectOpenClawMessagingPluginInstalls(plan, env)) {
-    const packed = packVerifiedOpenClawPluginArchive(install, env);
+    const installCache = install.runtimeLock
+      ? requireWritableRuntimeInstallCache(install.runtimeLock, env)
+      : undefined;
+    const installEnv = {
+      ...env,
+      NPM_CONFIG_IGNORE_SCRIPTS: "true",
+      npm_config_ignore_scripts: "true",
+      ...(install.runtimeLock
+        ? {
+            NPM_CONFIG_CACHE: installCache,
+            NPM_CONFIG_OFFLINE: String(install.runtimeLock.offline),
+            NPM_CONFIG_LEGACY_PEER_DEPS: String(install.runtimeLock.legacyPeerDeps),
+          }
+        : {}),
+    };
+    // Resolve registry metadata and pack the reviewed archive through the same
+    // disposable cache used by OpenClaw. Selecting it after packing can leave
+    // fetched bytes in HOME/.npm in an earlier image layer.
+    const packed = packVerifiedOpenClawPluginArchive(install, installEnv);
     try {
       // Install through the `npm-pack:` spec so OpenClaw records npm
       // provenance (source, resolved name/version, integrity) for the
@@ -668,15 +716,75 @@ export function installOpenClawMessagingPlugins(plan: MessagingBuildPlan | null,
       // on OpenClaw >= 2026.6.10 and crash-loops channel plugins that use
       // keyed state (e.g. WhatsApp). npm-pack installs always record the
       // exact resolved version, so `--pin` is not needed.
-      runCommand(["openclaw", "plugins", "install", `npm-pack:${packed.archivePath}`], {
-        ...env,
-        NPM_CONFIG_IGNORE_SCRIPTS: "true",
-        npm_config_ignore_scripts: "true",
-      });
+      runCommand(["openclaw", "plugins", "install", `npm-pack:${packed.archivePath}`], installEnv);
+      if (install.runtimeLock) {
+        const openClawVersion = sanitizeOptionalString(env.OPENCLAW_VERSION);
+        if (!openClawVersion) {
+          throw new MessagingBuildApplierError(
+            "OPENCLAW_VERSION is required to verify the WeChat plugin peer dependency",
+          );
+        }
+        runCommand(
+          [
+            "node",
+            "--experimental-strip-types",
+            install.runtimeLock.verifierPath,
+            install.runtimeLock.lockFile,
+            install.runtimeLock.projectsRoot,
+            openClawVersion,
+          ],
+          installEnv,
+        );
+      }
     } finally {
       rmSync(packed.rootDir, { recursive: true, force: true });
     }
   }
+}
+
+export function requireWritableRuntimeInstallCache(
+  runtimeLock: ChannelAgentPackageRuntimeLockSpec,
+  env: Env,
+): string {
+  const configured = sanitizeOptionalString(env[runtimeLock.installCacheEnvKey]);
+  if (!configured) {
+    throw new MessagingBuildApplierError(
+      `${runtimeLock.installCacheEnvKey} must name the sandbox-writable temporary npm cache prepared from ${runtimeLock.cachePath}`,
+    );
+  }
+  if (!isAbsolute(configured)) {
+    throw new MessagingBuildApplierError(
+      `${runtimeLock.installCacheEnvKey} must be an absolute path`,
+    );
+  }
+
+  let installCache: string;
+  try {
+    if (lstatSync(configured).isSymbolicLink()) {
+      throw new Error("symbolic links are not allowed");
+    }
+    installCache = realpathSync(configured);
+    if (!statSync(installCache).isDirectory()) {
+      throw new Error("path is not a directory");
+    }
+    accessSync(installCache, constants.R_OK | constants.W_OK | constants.X_OK);
+  } catch (error) {
+    throw new MessagingBuildApplierError(
+      `${runtimeLock.installCacheEnvKey} must be a writable, searchable directory: ${formatError(error)}`,
+    );
+  }
+
+  // Canonicalize an existing trusted root too: on macOS, for example, /var
+  // resolves through /private/var and must still compare equal to installCache.
+  const trustedCache = existsSync(runtimeLock.cachePath)
+    ? realpathSync(runtimeLock.cachePath)
+    : resolve(runtimeLock.cachePath);
+  if (installCache === trustedCache || installCache.startsWith(`${trustedCache}${sep}`)) {
+    throw new MessagingBuildApplierError(
+      `${runtimeLock.installCacheEnvKey} must not make the trusted npm cache writable`,
+    );
+  }
+  return installCache;
 }
 
 export function runOpenClawMessagingDoctor(plan: MessagingBuildPlan | null, env: Env): void {
@@ -1162,110 +1270,6 @@ function runCommand(args: readonly string[], env: Env): void {
   }
 }
 
-function npmViewString(packageSpec: string, field: string, env: Env): string {
-  const result = spawnSync("npm", ["view", packageSpec, field], {
-    encoding: "utf-8",
-    env: env as NodeJS.ProcessEnv,
-    maxBuffer: NPM_METADATA_MAX_BUFFER,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    const detail = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
-    throw new MessagingBuildApplierError(
-      `npm view ${packageSpec} ${field} failed${detail ? `: ${detail}` : ""}`,
-    );
-  }
-  return String(result.stdout ?? "").trim();
-}
-
-function resolveNpmPackArchivePath(packageSpec: string, rootDir: string, filename: string): string {
-  const filenameSegments = filename.split(/[\\/]+/);
-  if (
-    !filename ||
-    isAbsolute(filename) ||
-    filename === "." ||
-    filename === ".." ||
-    filename.includes("/") ||
-    filename.includes("\\") ||
-    filenameSegments.includes("..") ||
-    filenameSegments.includes("")
-  ) {
-    throw new MessagingBuildApplierError(
-      `npm pack ${packageSpec} reported unsafe archive filename: ${filename}`,
-    );
-  }
-
-  const root = resolve(rootDir);
-  const archivePath = resolve(root, filename);
-  if (!archivePath.startsWith(root + sep)) {
-    throw new MessagingBuildApplierError(
-      `npm pack ${packageSpec} reported archive path outside pack directory: ${filename}`,
-    );
-  }
-  return archivePath;
-}
-
-// Reviewed-archive invariants (#5896): registry SRI at the caller, packed-byte
-// SRI, a contained basename in a fresh directory, local-archive-only install,
-// and cleanup. This Node primitive is shared by all messaging plugin installs.
-function packNpmArchive(
-  packageSpec: string,
-  expectedIntegrity: string,
-  env: Env,
-): { readonly archivePath: string; readonly rootDir: string } {
-  const rootDir = mkdtempSync(join(tmpdir(), "nemoclaw-openclaw-plugin-pack-"));
-  const result = spawnSync("npm", ["pack", packageSpec, "--pack-destination", rootDir, "--json"], {
-    encoding: "utf-8",
-    env: env as NodeJS.ProcessEnv,
-    maxBuffer: NPM_METADATA_MAX_BUFFER,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (result.error) {
-    rmSync(rootDir, { recursive: true, force: true });
-    throw result.error;
-  }
-  if (result.status !== 0) {
-    const detail = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
-    rmSync(rootDir, { recursive: true, force: true });
-    throw new MessagingBuildApplierError(
-      `npm pack ${packageSpec} failed${detail ? `: ${detail}` : ""}`,
-    );
-  }
-
-  let packed: unknown;
-  try {
-    packed = JSON.parse(String(result.stdout ?? ""));
-  } catch (error) {
-    rmSync(rootDir, { recursive: true, force: true });
-    throw new MessagingBuildApplierError(
-      `npm pack ${packageSpec} did not return JSON: ${String(error)}`,
-    );
-  }
-  const [entry] = Array.isArray(packed) ? packed : [];
-  const filename = isObject(entry) && typeof entry.filename === "string" ? entry.filename : "";
-  const actualIntegrity =
-    isObject(entry) && typeof entry.integrity === "string" ? entry.integrity : "";
-  if (!filename || !actualIntegrity) {
-    rmSync(rootDir, { recursive: true, force: true });
-    throw new MessagingBuildApplierError(
-      `npm pack ${packageSpec} did not report filename and integrity`,
-    );
-  }
-  if (actualIntegrity !== expectedIntegrity) {
-    rmSync(rootDir, { recursive: true, force: true });
-    throw new MessagingBuildApplierError(
-      `OpenClaw plugin ${packageSpec} downloaded tarball integrity mismatch. Expected: ${expectedIntegrity}. Actual: ${actualIntegrity}`,
-    );
-  }
-  try {
-    return { archivePath: resolveNpmPackArchivePath(packageSpec, rootDir, filename), rootDir };
-  } catch (error) {
-    rmSync(rootDir, { recursive: true, force: true });
-    throw error;
-  }
-}
-
 function packVerifiedOpenClawPluginArchive(
   install: OpenClawPluginInstall,
   env: Env,
@@ -1285,27 +1289,14 @@ function packVerifiedOpenClawPluginArchive(
       `OpenClaw plugin ${install.npmPackageSpec} has no committed npm tarball URL`,
     );
   }
-  const actual = npmViewString(
-    install.npmPackageSpec,
-    OPENCLAW_MESSAGING_PLUGIN_ARCHIVE_PROVENANCE_POLICY.registryIntegrityField,
-    env,
-  );
-  if (actual !== install.integrity) {
-    throw new MessagingBuildApplierError(
-      `OpenClaw plugin ${install.npmPackageSpec} npm integrity mismatch. Expected: ${install.integrity}. Actual: ${actual}`,
-    );
-  }
-  const actualTarballUrl = npmViewString(
-    install.npmPackageSpec,
-    OPENCLAW_MESSAGING_PLUGIN_ARCHIVE_PROVENANCE_POLICY.registryTarballField,
-    env,
-  );
-  if (actualTarballUrl !== install.tarballUrl) {
-    throw new MessagingBuildApplierError(
-      `OpenClaw plugin ${install.npmPackageSpec} npm tarball URL mismatch. Expected: ${install.tarballUrl}. Actual: ${actualTarballUrl}`,
-    );
-  }
-  return packNpmArchive(install.npmPackageSpec, install.integrity, env);
+  const archive = packReviewedNpmArchive({
+    env: env as NodeJS.ProcessEnv,
+    expectedIntegrity: install.integrity,
+    label: `OpenClaw plugin ${install.npmPackageSpec}`,
+    packageSpec: install.npmPackageSpec,
+    tarballUrl: install.tarballUrl,
+  });
+  return { archivePath: archive.archivePath, rootDir: archive.rootDirectory };
 }
 
 type CredentialPlaceholderRule = {
