@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildChain } from "./dashboard/contract.js";
 import { formatVerificationDiagnostics, verifyDeployment } from "./verify-deployment.js";
 
@@ -519,15 +519,15 @@ describe("verifyDeployment", () => {
   });
 
   it("retries the inference probe and recovers when the route comes up late (#6849)", async () => {
-    let inferenceCalls = 0;
+    const probeInference = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: "000", stderr: "" })
+      .mockReturnValue({ status: 0, stdout: "200", stderr: "" });
     const deps = makeDeps({
-      executeSandboxCommand: (_name: string, script: string) => {
-        if (script.includes("inference.local")) {
-          inferenceCalls += 1;
-          return { status: 0, stdout: inferenceCalls === 1 ? "000" : "200", stderr: "" };
-        }
-        return { status: 0, stdout: "200", stderr: "" };
-      },
+      executeSandboxCommand: (_name: string, script: string) =>
+        script.includes("inference.local")
+          ? probeInference()
+          : { status: 0, stdout: "200", stderr: "" },
     });
     const sleepCalls: number[] = [];
     const result = await verifyDeployment("my-sandbox", chain, deps, {
@@ -538,20 +538,15 @@ describe("verifyDeployment", () => {
     });
     expect(result.healthy).toBe(true);
     expect(result.verification.inferenceRouteWorking).toBe(true);
-    expect(inferenceCalls).toBe(2);
+    expect(probeInference).toHaveBeenCalledTimes(2);
     expect(sleepCalls).toEqual([10]);
   });
 
   it("does not retry inference after the gateway retry budget is exhausted (#6849)", async () => {
-    let gatewayCalls = 0;
-    let inferenceCalls = 0;
+    const scripts: string[] = [];
     const deps = makeDeps({
       executeSandboxCommand: (_name: string, script: string) => {
-        if (script.includes("inference.local")) {
-          inferenceCalls += 1;
-        } else if (!script.includes("openclaw --version")) {
-          gatewayCalls += 1;
-        }
+        scripts.push(script);
         return { status: 0, stdout: "000", stderr: "" };
       },
     });
@@ -565,8 +560,12 @@ describe("verifyDeployment", () => {
     expect(result.healthy).toBe(false);
     expect(result.verification.gatewayReachable).toBe(false);
     expect(result.verification.inferenceRouteWorking).toBe(false);
-    expect(gatewayCalls).toBe(3);
-    expect(inferenceCalls).toBe(1);
+    expect(
+      scripts.filter(
+        (script) => !script.includes("inference.local") && !script.includes("openclaw --version"),
+      ),
+    ).toHaveLength(3);
+    expect(scripts.filter((script) => script.includes("inference.local"))).toHaveLength(1);
     expect(sleepCalls).toEqual([10, 20]);
   });
 
