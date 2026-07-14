@@ -67,7 +67,7 @@ type ReviewAdvisorResult = {
       noE2eReason?: string | null;
     };
     targets?: {
-      exactHeadCredentialFreeTests?: Array<{
+      changedCredentialFreeTests?: Array<{
         id?: string;
         file?: string;
         headSha?: string;
@@ -487,20 +487,20 @@ function renderE2eDetails(result?: ReviewAdvisorResult): string {
   if (!coverage && !targets) return "";
 
   const inventory = commentE2eInventory();
-  const exactHeadCredentialFreeJobIds = trustedExactHeadCredentialFreeJobIds(result);
+  const changedCredentialFreeJobIds = trustedChangedCredentialFreeJobIds(result);
   const requiredCoverage = trustedCoverageIds(coverage?.requiredTests, inventory);
   const optionalCoverage = trustedCoverageIds(coverage?.optionalTests, inventory);
   const requiredTargets = trustedTargetIds(
     targets?.required,
     true,
     inventory,
-    exactHeadCredentialFreeJobIds,
+    changedCredentialFreeJobIds,
   );
   const optionalTargets = trustedTargetIds(
     targets?.optional,
     false,
     inventory,
-    exactHeadCredentialFreeJobIds,
+    changedCredentialFreeJobIds,
   );
   const requiredE2e = uniqueE2eIds([...requiredTargets, ...requiredCoverage]);
   const optionalE2e = uniqueE2eIds([...optionalTargets, ...optionalCoverage]);
@@ -561,7 +561,7 @@ function trustedTargetIds(
     | undefined,
   required: boolean,
   inventory: TrustedE2eRecommendationInventory,
-  exactHeadCredentialFreeJobIds: ReadonlySet<string>,
+  changedCredentialFreeJobIds: ReadonlySet<string>,
 ): string[] {
   const allowedJobs = new Set(inventory.allowedJobIds);
   const allowedTargets = new Set(inventory.liveSupportedTargetIds);
@@ -572,7 +572,7 @@ function trustedTargetIds(
     if (!id || item.workflow !== inventory.workflow || item.required !== required) return [];
     const trustedTuple =
       (selectorType === "all" && id === inventory.fanoutId) ||
-      (selectorType === "job" && (allowedJobs.has(id) || exactHeadCredentialFreeJobIds.has(id))) ||
+      (selectorType === "job" && (allowedJobs.has(id) || changedCredentialFreeJobIds.has(id))) ||
       (selectorType === "target" && allowedTargets.has(id));
     const key = `${selectorType}:${id}`;
     if (!trustedTuple || seen.has(key)) return [];
@@ -585,14 +585,14 @@ function uniqueE2eIds(ids: string[]): string[] {
   return [...new Set(ids)];
 }
 
-function trustedExactHeadCredentialFreeJobIds(result?: ReviewAdvisorResult): Set<string> {
+function trustedChangedCredentialFreeJobIds(result?: ReviewAdvisorResult): Set<string> {
   const ids = new Set<string>();
   const headSha = result?.headSha;
   if (!headSha || !/^[0-9a-f]{40}$/.test(headSha)) return ids;
   const changedFiles = new Set(
     (result.changedFiles ?? []).filter((file): file is string => typeof file === "string"),
   );
-  const evidence = result.e2e?.targets?.exactHeadCredentialFreeTests;
+  const evidence = result.e2e?.targets?.changedCredentialFreeTests;
   if (!Array.isArray(evidence)) return ids;
 
   for (const item of evidence) {

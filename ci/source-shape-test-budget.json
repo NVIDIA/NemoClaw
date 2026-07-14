@@ -273,7 +273,7 @@
     },
     {
       "file": "test/onboard-performance-config-schema.test.ts",
-      "test": "records five independent successful exact-head samples",
+      "test": "records five independent successful samples for current main",
       "category": "compatibility"
     },
     {

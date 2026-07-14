@@ -624,7 +624,7 @@ describe("PR E2E controller exception safety", () => {
     expect(requests).toHaveLength(0);
   });
 
-  it("records an authorized exact-head/base fork exception after a compatible main advance", async () => {
+  it("records an authorized fork exception for the reviewed head/base after a compatible main advance", async () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     const requests: RecordedGitHubRequest[] = [];

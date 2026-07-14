@@ -161,7 +161,7 @@ reports how many more IDs exist. The trusted normalizer
 restores deterministic requirements before model selections, retains only allowlisted coverage IDs
 and supported selector tuples, and replaces model-authored reasons with trusted
 reasons. It discards free-form E2E domains, new-test recommendations, and no-selection explanations.
-For a changed credential-free test, the normalizer also records structured exact-head evidence only
+For a changed credential-free test, the normalizer also records structured head evidence only
 after the trusted module-tag parser accepts the source; model-provided evidence is overwritten. The
 trusted publisher independently repeats the ID and tuple checks, verifies that evidence against the
 result head and changed-file identity, and renders only trusted IDs.

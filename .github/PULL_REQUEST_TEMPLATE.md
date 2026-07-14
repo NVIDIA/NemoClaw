@@ -16,7 +16,7 @@
 - [ ] Doc only (includes code sample changes)
 
 ## Quality Gates
-<!-- Check exactly one tests line and one docs line. Check other lines when applicable. Add every requested justification or approval reference. -->
+<!-- Check one tests line and one docs line. Check other lines when applicable. Add every requested justification or approval reference. -->
 - [ ] Tests added or updated for changed behavior
 - [ ] Existing tests cover changed behavior — justification:
 - [ ] Tests not applicable — justification:

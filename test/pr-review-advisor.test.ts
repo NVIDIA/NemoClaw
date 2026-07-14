@@ -563,9 +563,9 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
       "Required-job execution status, E2E recommendations, overlap metadata, advisor state, and positive observations",
     );
     expect(synthesisTurn?.prompt).toContain("<pr_review_advisor_json>");
-    expect(synthesisTurn?.prompt).toContain("Set the fields exactly as specified");
+    expect(synthesisTurn?.prompt).toContain("Set the metadata fields from");
     expect(synthesisTurn?.prompt).toContain(
-      "Set e2e.targets.exactHeadCredentialFreeTests to an empty array",
+      "Set e2e.targets.changedCredentialFreeTests to an empty array",
     );
     expect(validationTurn?.prompt).toContain("same agent session");
     const correctnessContext = JSON.parse(
@@ -630,9 +630,9 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     expect(
       evidence.find((result) => result.toolName === "pr_review_response_schema")?.content,
     ).toBe(JSON.stringify(schema));
-    expect(
-      evidence.find((result) => result.toolName === "pr_review_exact_metadata")?.content,
-    ).toContain(`- changedFiles: ${JSON.stringify(metadata().changedFiles)}`);
+    expect(evidence.find((result) => result.toolName === "pr_review_metadata")?.content).toContain(
+      `- changedFiles: ${JSON.stringify(metadata().changedFiles)}`,
+    );
   });
 
   it("collects static test inventory from changed test files", () => {

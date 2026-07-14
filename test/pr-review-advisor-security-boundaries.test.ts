@@ -163,7 +163,7 @@ describe("PR review advisor security boundaries", () => {
     ).rejects.toThrow(/403.*Resource not accessible/);
   });
 
-  it("deletes only bot-owned comments with exact legacy advisor markers", async () => {
+  it("deletes only bot-owned comments with legacy advisor markers", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValueOnce({
@@ -281,8 +281,8 @@ describe("PR review advisor security boundaries", () => {
     expect(comment).toContain("<code>state-backup-restore</code>");
   });
 
-  it("publishes a newly added credential-free selector from trusted exact-head evidence", () => {
-    const file = "test/e2e/live/publisher-exact-head-proof.test.ts";
+  it("publishes a newly added credential-free selector from trusted changed-test evidence", () => {
+    const file = "test/e2e/live/publisher-changed-test-proof.test.ts";
     const absolute = path.join(ROOT, file);
     let result: ReturnType<typeof normalizeReviewResult>;
     fs.writeFileSync(absolute, "// @module-tag e2e/credential-free\n");
@@ -291,7 +291,7 @@ describe("PR review advisor security boundaries", () => {
         {
           e2e: {
             targets: {
-              exactHeadCredentialFreeTests: [
+              changedCredentialFreeTests: [
                 {
                   id: "model-forged-proof",
                   file: "test/e2e/live/model-forged-proof.test.ts",
@@ -310,17 +310,17 @@ describe("PR review advisor security boundaries", () => {
       fs.rmSync(absolute, { force: true });
     }
 
-    expect(result.e2e.targets.exactHeadCredentialFreeTests).toEqual([
-      { id: "publisher-exact-head-proof", file, headSha: "a".repeat(40) },
+    expect(result.e2e.targets.changedCredentialFreeTests).toEqual([
+      { id: "publisher-changed-test-proof", file, headSha: "a".repeat(40) },
     ]);
     expect(result.e2e.targets.required.map((item) => item.id)).toContain(
-      "publisher-exact-head-proof",
+      "publisher-changed-test-proof",
     );
     expect(JSON.stringify(result)).not.toContain("model-forged-proof");
 
     const comment = buildComment({ summary: renderSummary(result), result });
-    expect(comment).toContain("<code>publisher-exact-head-proof</code>");
-    expect(comment.match(/<code>publisher-exact-head-proof<\/code>/gu)).toHaveLength(1);
+    expect(comment).toContain("<code>publisher-changed-test-proof</code>");
+    expect(comment.match(/<code>publisher-changed-test-proof<\/code>/gu)).toHaveLength(1);
   });
 
   it("reports E2E recommendations that do not fit in the job summary", () => {
@@ -370,8 +370,8 @@ describe("PR review advisor security boundaries", () => {
     ]);
   });
 
-  it("drops malformed or mismatched exact-head selector evidence", () => {
-    const id = "publisher-exact-head-proof";
+  it("drops malformed or mismatched changed-test selector evidence", () => {
+    const id = "publisher-changed-test-proof";
     const file = `test/e2e/live/${id}.test.ts`;
     const headSha = "a".repeat(40);
     const validEvidence = { id, file, headSha };
@@ -423,7 +423,7 @@ describe("PR review advisor security boundaries", () => {
           changedFiles: testCase.changedFiles,
           e2e: {
             targets: {
-              exactHeadCredentialFreeTests: testCase.evidence,
+              changedCredentialFreeTests: testCase.evidence,
               required: [
                 {
                   id,

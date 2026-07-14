@@ -201,8 +201,8 @@ Follow these rules when filling in the template:
 - **Summary:** Write 1-3 plain sentences describing what changes and why. Describe before-and-after behavior when it applies. Use existing repository terms instead of inventing a label for the PR. Derive this from the commit messages and diff.
 - **Related Issue:** Include `Fixes #NNN` or `Closes #NNN` if an issue exists. Remove the section entirely if there is no related issue.
 - **Changes:** List concrete changes. If the PR adds an abstraction, configuration, fallback, migration, or compatibility path, name its current requirement and consumer, explain why a direct change is insufficient, and identify the test that protects it.
-- **Type of Change:** Check exactly one box. Use `[x]` for checked, `[ ]` for unchecked.
-- **Quality Gates:** Check exactly one tests line and one docs line, then check every other line that applies to the diff. If tests/docs are not needed or existing coverage is sufficient, include the justification. If sensitive paths changed or a non-success CI check is accepted, record the authorized reviewer, maintainer-approved waiver, approval link, or follow-up issue.
+- **Type of Change:** Check one box. Use `[x]` for checked, `[ ]` for unchecked.
+- **Quality Gates:** Check one tests line and one docs line, then check every other line that applies to the diff. If tests/docs are not needed or existing coverage is sufficient, include the justification. If sensitive paths changed or a non-success CI check is accepted, record the authorized reviewer, maintainer-approved waiver, approval link, or follow-up issue.
 - **Verification:** Check only the boxes backed by the requested command/result, justification, normal hook evidence, or fallback evidence. Do not check boxes for steps you skipped or did not verify. The DCO declaration and GitHub verification checkbox is mandatory before PR creation because Step 4 must pass first. For focused changes, leave the broad-gate line unchecked unless you actually ran the applicable command.
 - **DCO Sign-Off:** Replace `{name}` and `{email}` with values from `git config user.name` and `git config user.email`.
 

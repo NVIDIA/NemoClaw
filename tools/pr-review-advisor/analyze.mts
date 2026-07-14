@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   E2E_RENDER_LIMIT,
   type E2eCoverageResult,
-  type E2eExactHeadCredentialFreeTest,
+  type E2eChangedCredentialFreeTest,
   type E2eTargetAdvisorResult,
   normalizeE2eCoverageResult,
   normalizeE2eTargetAdvisorResult,
@@ -73,8 +73,8 @@ const OPEN_PR_OVERLAP_LIMIT = 80;
 const OPEN_PR_OVERLAP_CONCURRENCY = 6;
 const RISK_CONTEXT_PATH_SAMPLE_LIMIT = 20;
 const RISK_CONTEXT_PATH_CHARACTER_LIMIT = 240;
-const EXACT_METADATA_CHANGED_FILE_LIMIT = 20;
-const EXACT_METADATA_CHANGED_FILE_BYTE_LIMIT = 8192;
+const METADATA_CHANGED_FILE_LIMIT = 20;
+const METADATA_CHANGED_FILE_BYTE_LIMIT = 8192;
 const SECURITY_REVIEW_SKILL_PATH =
   ".agents/skills/nemoclaw-maintainer-security-code-review/SKILL.md";
 const TRUSTED_SECURITY_REVIEW_SKILL_PATH = path.resolve(
@@ -210,7 +210,7 @@ export type CombinedE2eResult = {
     E2eTargetAdvisorResult,
     "relevantChangedFiles" | "required" | "optional" | "noTargetE2eReason" | "confidence"
   > & {
-    exactHeadCredentialFreeTests: Array<E2eExactHeadCredentialFreeTest & { headSha: string }>;
+    changedCredentialFreeTests: Array<E2eChangedCredentialFreeTest & { headSha: string }>;
   };
 };
 
@@ -1100,7 +1100,7 @@ function detectWorkflowSignals(changedFiles: string[], diff: string): string[] {
     signals.push("Workflow requests write-scoped permissions.");
   if (/npm install|pip install|curl .*\|.*sh|uv tool install/.test(diff))
     signals.push(
-      "Workflow installs runtime dependencies; verify exact pins and disabled lifecycle hooks.",
+      "Workflow installs runtime dependencies; verify pins and disabled lifecycle hooks.",
     );
   if (/github\.event\.pull_request\.(title|body|head\.ref)/.test(diff))
     signals.push(
@@ -1464,11 +1464,11 @@ export async function collectTrustedPreviousAdvisorReview(
 ): Promise<PreviousAdvisorReview | null> {
   // Kept with the deterministic context collector for now: the provenance
   // decision depends on GitHub issue comments, Actions-run metadata, and the
-  // exact previous-review body that is injected into prompt context.
+  // previous-review body that is injected into prompt context.
   //
   // Source-of-truth model: issue comments are mutable, replayable PR context.
   // A previous advisor comment is accepted only when its hidden metadata is
-  // bound to the actual comment id and to an exact PR Review / Advisor workflow
+  // bound to the actual comment id and to the PR Review / Advisor workflow
   // path, attempt, event contract, and time window. Legacy pull_request runs
   // bind run.head_sha directly to the analyzed head. pull_request_target runs
   // instead bind the trusted workflow SHA and require one run.pull_requests
@@ -1928,7 +1928,7 @@ Do not produce final JSON or update the finding ledger in this turn. Reply with 
         "Reconcile only findings in the shared ledger with update, resolve, or supersede/deduplicate operations. Every conclusion-changing or closing operation must identify the affected finding IDs and give an evidence-backed reason. Keep reconciled non-finding conclusions in the prose receipt.",
       )}
 
-Do not start a new broad review; use read-only tools only to resolve a specific contradiction or missing citation. Treat the shared ledger, not prose notes, as the finding candidate set. Collapse records that share a root cause and remedy into one finding, resolve conflicting conclusions, keep the highest evidence-warranted severity, and resolve claims supported only by PR metadata, wording preferences, heuristic signals, line counts, hypothetical failures, or non-binding issue text. Reconcile prior advisor findings. Ensure every unmet binding acceptance clause, security FAIL/WARNING, sourceOfTruthReview missing/needs_followup item, and changed risk invariant without checked-in evidence maps to exactly one eligible candidate finding unless a more specific finding already covers it. Required-job execution status, E2E recommendations, overlap metadata, advisor state, and positive observations remain non-finding receipt material. Never silently discard a finding-ledger record. Reconcile acceptance, security-category, source-of-truth, test-depth, E2E coverage/target, positive, and limitation conclusions in the receipt without pretending they are stored in the ledger.
+Do not start a new broad review; use read-only tools only to resolve a specific contradiction or missing citation. Treat the shared ledger, not prose notes, as the finding candidate set. Collapse records that share a root cause and remedy into one finding, resolve conflicting conclusions, keep the highest evidence-warranted severity, and resolve claims supported only by PR metadata, wording preferences, heuristic signals, line counts, hypothetical failures, or non-binding issue text. Reconcile prior advisor findings. Ensure every unmet binding acceptance clause, security FAIL/WARNING, sourceOfTruthReview missing/needs_followup item, and changed risk invariant without checked-in evidence maps to one eligible candidate finding unless a more specific finding already covers it. Required-job execution status, E2E recommendations, overlap metadata, advisor state, and positive observations remain non-finding receipt material. Never silently discard a finding-ledger record. Reconcile acceptance, security-category, source-of-truth, test-depth, E2E coverage/target, positive, and limitation conclusions in the receipt without pretending they are stored in the ledger.
 
 Do not produce final JSON or update the finding ledger in this turn. Reply with at most 12 concise stage-analysis bullets identifying every resolution/deduplication reason and the resulting acceptance, security, source-of-truth, test-depth, positive, and limitation conclusions.
 `,
@@ -1938,10 +1938,10 @@ Do not produce final JSON or update the finding ledger in this turn. Reply with 
       title: "draft the structured advisor result",
       contextToolResults: [
         createAdvisorContextToolResult(
-          "pr_review_exact_metadata",
-          exactMetadataFields(metadata),
+          "pr_review_metadata",
+          metadataFields(metadata),
           "text",
-          "exact metadata fields",
+          "metadata fields",
         ),
         createAdvisorContextToolResult(
           "pr_review_response_schema",
@@ -1950,11 +1950,11 @@ Do not produce final JSON or update the finding ledger in this turn. Reply with 
           "PR review advisor JSON schema",
         ),
       ],
-      prompt: `Call the real \`pr_review_exact_metadata\` and \`pr_review_response_schema\` context tools, then call \`pr_review_read_ledger\`. These calls are required even if similarly named context appeared earlier. This turn is read-only: never call \`pr_review_update_ledger\`.
+      prompt: `Call the real \`pr_review_metadata\` and \`pr_review_response_schema\` context tools, then call \`pr_review_read_ledger\`. These calls are required even if similarly named context appeared earlier. This turn is read-only: never call \`pr_review_update_ledger\`.
 
-Return the final NemoClaw PR Review Advisor JSON only. For \`findings\`, use the canonical snapshot returned by \`pr_review_read_ledger\` as the sole source of truth: do not add, drop, merge, reword, or reclassify ledger findings during serialization. Include only \`status=open\` findings in snapshot order; omit the ledger-only \`id\`, \`status\`, and \`supersededBy\` fields; and encode the schema's \`evidence\` string by joining that finding's evidence entries verbatim with newline separators. If the finding ledger exposes an unresolved inconsistency, preserve it as represented rather than silently deciding it here. Synthesize acceptanceCoverage, securityCategories, sourceOfTruthReview, testDepth, e2e, positives, reviewCompleteness, and summary from the reconciled prose receipts; these non-finding sections are not stored in the ledger. For e2e.coverage preserve the tests/regressions recommendations. For e2e.targets preserve only the CI/operations selector recommendations and their reasons; never emit a dispatch command. Set e2e.targets.exactHeadCredentialFreeTests to an empty array; trusted code derives and replaces that evidence after parsing. Set each sourceOfTruthReview findingId to its covering open ledger ID for status missing/needs_followup, and to null otherwise.
+Return the final NemoClaw PR Review Advisor JSON only. For \`findings\`, use the canonical snapshot returned by \`pr_review_read_ledger\` as the sole source of truth: do not add, drop, merge, reword, or reclassify ledger findings during serialization. Include only \`status=open\` findings in snapshot order; omit the ledger-only \`id\`, \`status\`, and \`supersededBy\` fields; and encode the schema's \`evidence\` string by joining that finding's evidence entries verbatim with newline separators. If the finding ledger exposes an unresolved inconsistency, preserve it as represented rather than silently deciding it here. Synthesize acceptanceCoverage, securityCategories, sourceOfTruthReview, testDepth, e2e, positives, reviewCompleteness, and summary from the reconciled prose receipts; these non-finding sections are not stored in the ledger. For e2e.coverage preserve the tests/regressions recommendations. For e2e.targets preserve only the CI/operations selector recommendations and their reasons; never emit a dispatch command. Set e2e.targets.changedCredentialFreeTests to an empty array; trusted code derives and replaces that evidence after parsing. Set each sourceOfTruthReview findingId to its covering open ledger ID for status missing/needs_followup, and to null otherwise.
 
-Set the fields exactly as specified by the \`pr_review_exact_metadata\` tool for metadata.
+Set the metadata fields from the \`pr_review_metadata\` tool.
 
 Return JSON matching the schema returned by the \`pr_review_response_schema\` tool. Prefer <pr_review_advisor_json>{...}</pr_review_advisor_json> with raw JSON directly inside the tags and no Markdown outside the tags.
 `,
@@ -1967,7 +1967,7 @@ Return JSON matching the schema returned by the \`pr_review_response_schema\` to
       requireToolsBeforeText: ["pr_review_read_ledger"],
       prompt: [
         "Inspect the JSON draft in your immediately preceding response. This is a read-only validation turn in the same agent session: call `pr_review_read_ledger` again, never call `pr_review_update_ledger`, and do not start another code review.",
-        "Correct any schema, metadata, encoding, placeholder-quality, sourceOfTruthReview findingId, e2e, or canonical-ledger serialization defect you can see. The exact metadata and response schema returned by the prior turn's real context tools remain authoritative. Preserve the prior analysis receipts for non-finding sections. For `findings`, include only the open records from the fresh ledger snapshot in snapshot order without adding, dropping, merging, rewording, or reclassifying them; omit ledger-only fields and join each finding's evidence entries with newline separators.",
+        "Correct any schema, metadata, encoding, placeholder-quality, sourceOfTruthReview findingId, e2e, or canonical-ledger serialization defect you can see. The metadata and response schema returned by the prior turn's real context tools remain authoritative. Preserve the prior analysis receipts for non-finding sections. For `findings`, include only the open records from the fresh ledger snapshot in snapshot order without adding, dropping, merging, rewording, or reclassifying them; omit ledger-only fields and join each finding's evidence entries with newline separators.",
         "Return the final schema-valid NemoClaw PR Review Advisor JSON only, preferably inside <pr_review_advisor_json> tags with no Markdown outside the tags.",
       ].join("\n\n"),
     },
@@ -2247,11 +2247,11 @@ function promptArtifactSlug(name: string): string {
   );
 }
 
-function exactMetadataFields(metadata: ReviewMetadata): string {
+function metadataFields(metadata: ReviewMetadata): string {
   const changedFiles = JSON.stringify(metadata.changedFiles);
   const bounded =
-    metadata.changedFiles.length <= EXACT_METADATA_CHANGED_FILE_LIMIT &&
-    Buffer.byteLength(changedFiles, "utf8") <= EXACT_METADATA_CHANGED_FILE_BYTE_LIMIT;
+    metadata.changedFiles.length <= METADATA_CHANGED_FILE_LIMIT &&
+    Buffer.byteLength(changedFiles, "utf8") <= METADATA_CHANGED_FILE_BYTE_LIMIT;
   return [
     "- version: 1",
     `- baseRef: ${JSON.stringify(metadata.baseRef)}`,
@@ -2346,7 +2346,7 @@ export function normalizeCombinedE2eResult(
     coverage,
     targets: {
       relevantChangedFiles: normalizedTargets.relevantChangedFiles,
-      exactHeadCredentialFreeTests: normalizedTargets.exactHeadCredentialFreeTests.map((test) => ({
+      changedCredentialFreeTests: normalizedTargets.changedCredentialFreeTests.map((test) => ({
         ...test,
         headSha: metadata.headSha,
       })),
