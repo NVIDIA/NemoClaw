@@ -341,6 +341,7 @@ describe("fixture redaction entry point", () => {
 
   it("bounds high-volume shell output while preserving a redacted diagnostic tail", async () => {
     const secret = "fake-rebuild-output-secret-value";
+    const boundarySecret = "fake-secret-that-crosses-the-capture-boundary";
     const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-e2e-bounded-output-"));
     try {
       const artifacts = new ArtifactSink(path.join(rootDir, "e2e-artifacts/live/bounded-output"));
@@ -350,7 +351,9 @@ describe("fixture redaction entry point", () => {
         redact: (text, extra) => redactString(text, extra),
         signal: new AbortController().signal,
       });
-      const stdoutPayload = `stdout-head-${"o".repeat(256)}-${secret}-stdout-tail`;
+      const stdoutSuffix = `${secret}-stdout-tail`;
+      const stdoutTail = `${"t".repeat(84 - stdoutSuffix.length)}${stdoutSuffix}`;
+      const stdoutPayload = `${"o".repeat(64)}${boundarySecret}${stdoutTail}`;
       const stderrPayload = `stderr-head-${"e".repeat(256)}-${secret}-stderr-tail`;
 
       const result = await probe.run(
@@ -363,13 +366,13 @@ describe("fixture redaction entry point", () => {
           artifactName: "bounded-output",
           captureLimitBytes: 96,
           env: { STDOUT_PAYLOAD: stdoutPayload, STDERR_PAYLOAD: stderrPayload },
-          redactionValues: [secret],
+          redactionValues: [secret, boundarySecret],
         },
       );
 
       expect(result.stdout).toContain("[shell-probe omitted ");
       expect(result.stdout).toContain("[REDACTED]-stdout-tail");
-      expect(result.stdout).not.toContain("stdout-head");
+      expect(result.stdout).not.toContain(boundarySecret.slice(-12));
       expect(result.stderr).toContain("[shell-probe omitted ");
       expect(result.stderr).toContain("[REDACTED]-stderr-tail");
       expect(result.stderr).not.toContain("stderr-head");

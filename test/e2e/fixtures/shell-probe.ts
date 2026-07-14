@@ -86,7 +86,11 @@ function redactedError(error: unknown, message: string): Error {
 
 interface TextCapture {
   append(chunk: string): void;
-  value(): string;
+  value(): {
+    droppedBytes: number;
+    limitBytes?: number;
+    text: string;
+  };
 }
 
 function createTextCapture(limitBytes: number | undefined): TextCapture {
@@ -97,7 +101,7 @@ function createTextCapture(limitBytes: number | undefined): TextCapture {
         text += chunk;
       },
       value() {
-        return text;
+        return { droppedBytes: 0, text };
       },
     };
   }
@@ -120,12 +124,23 @@ function createTextCapture(limitBytes: number | undefined): TextCapture {
       tail = Buffer.from(combined.subarray(overflow));
     },
     value() {
-      const output = tail.toString("utf8");
-      return droppedBytes > 0
-        ? `[shell-probe omitted ${droppedBytes} earlier bytes; showing the last ${limitBytes} bytes]\n${output}`
-        : output;
+      return { droppedBytes, limitBytes, text: tail.toString("utf8") };
     },
   };
+}
+
+function redactTruncatedSecretPrefix(text: string, redactionValues: string[]): string {
+  let fragmentLength = 0;
+  for (const value of redactionValues) {
+    const maxLength = Math.min(value.length - 1, text.length);
+    for (let length = maxLength; length > fragmentLength; length -= 1) {
+      if (text.startsWith(value.slice(-length))) {
+        fragmentLength = length;
+        break;
+      }
+    }
+  }
+  return fragmentLength > 0 ? `[REDACTED]${text.slice(fragmentLength)}` : text;
 }
 
 export class ShellProbe {
@@ -160,6 +175,15 @@ export class ShellProbe {
     };
     const redactProbeText = (text: string) =>
       this.redact(enforcedValues.length > 0 ? enforceLocalRedaction(text) : text, redactionValues);
+    const renderCapturedText = (capture: TextCapture): string => {
+      const { droppedBytes, limitBytes, text } = capture.value();
+      const boundarySafeText =
+        droppedBytes > 0 ? redactTruncatedSecretPrefix(text, enforcedValues) : text;
+      const redacted = redactProbeText(boundarySafeText);
+      return droppedBytes > 0
+        ? `[shell-probe omitted ${droppedBytes} earlier bytes; showing the last ${limitBytes} bytes]\n${redacted}`
+        : redacted;
+    };
     const redactedCommand = [command, ...args].map(redactProbeText);
     const artifactBase = `shell/${safeArtifactBase(redactProbeText(options.artifactName ?? command))}`;
     const writeArtifacts = async (
@@ -200,26 +224,22 @@ export class ShellProbe {
       },
     });
 
-    const capturedStdout = stdout.value();
-    const capturedStderr = stderr.value();
-    const redactedStdout = redactProbeText(capturedStdout);
+    const redactedStdout = renderCapturedText(stdout);
+    const redactedStderr = renderCapturedText(stderr);
     if (supervised.spawnError) {
       const redactedMessage = redactProbeText(errorMessage(supervised.spawnError));
-      const redactedStderr = redactProbeText(
-        [capturedStderr, redactedMessage].filter(Boolean).join("\n"),
-      );
+      const stderrWithError = [redactedStderr, redactedMessage].filter(Boolean).join("\n");
       await writeArtifacts({
         command: redactedCommand,
         exitCode: null,
         signal: null,
         timedOut: supervised.timedOut,
         stdout: redactedStdout,
-        stderr: redactedStderr,
+        stderr: stderrWithError,
       });
       throw redactedError(supervised.spawnError, redactedMessage);
     }
 
-    const redactedStderr = redactProbeText(capturedStderr);
     const result: Omit<ShellProbeResult, "artifacts"> = {
       command: redactedCommand,
       exitCode: supervised.exitCode,
