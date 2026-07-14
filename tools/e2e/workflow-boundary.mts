@@ -1393,6 +1393,90 @@ function validateRebuildHermesJob(
     errors.push(`${jobName} checkout step must set persist-credentials=false`);
   }
 
+  const setupBuildx = requireJobStep(errors, jobName, steps, "Set up Hermes rebuild Buildx");
+  if (setupBuildx?.uses !== "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c") {
+    errors.push(`${jobName} must use the reviewed Hermes rebuild Buildx action`);
+  }
+  if (setupBuildx?.id !== "hermes-rebuild-buildx") {
+    errors.push(`${jobName} Buildx setup must expose the hermes-rebuild-buildx step id`);
+  }
+  if (asRecord(setupBuildx?.with)["driver-opts"] !== "default-load=true") {
+    errors.push(`${jobName} Buildx must enable default-load for the live Docker builds`);
+  }
+
+  const routeBuilds = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Route Hermes rebuild Docker builds through Buildx",
+  );
+  if (
+    asRecord(routeBuilds?.env).HERMES_REBUILD_BUILDER !==
+    "${{ steps.hermes-rebuild-buildx.outputs.name }}"
+  ) {
+    errors.push(`${jobName} must route Docker builds to the configured Buildx builder`);
+  }
+  requireRunContains(errors, routeBuilds, "test -n");
+  requireRunContains(errors, routeBuilds, "BUILDX_BUILDER=%s");
+  requireRunContains(errors, routeBuilds, '>> "${GITHUB_ENV}"');
+
+  const warmCurrentBase = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Warm current Hermes base build cache",
+  );
+  const warmOldBase = requireJobStep(errors, jobName, steps, "Warm old Hermes base build cache");
+  const buildAction = "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a";
+  for (const [description, step] of [
+    ["current", warmCurrentBase],
+    ["old", warmOldBase],
+  ] as const) {
+    if (step?.uses !== buildAction) {
+      errors.push(`${jobName} must warm the ${description} Hermes base with the reviewed action`);
+    }
+    const inputs = asRecord(step?.with);
+    if (inputs.builder !== "${{ steps.hermes-rebuild-buildx.outputs.name }}") {
+      errors.push(`${jobName} ${description} base cache must use the routed Buildx builder`);
+    }
+    if (inputs.context !== "." || inputs.file !== "agents/hermes/Dockerfile.base") {
+      errors.push(`${jobName} ${description} base cache must build the reviewed Hermes Dockerfile`);
+    }
+  }
+
+  const currentInputs = asRecord(warmCurrentBase?.with);
+  if (
+    stringValue(currentInputs["cache-from"]).trim() !==
+    "type=gha,scope=${{ github.job }}-current-base\ntype=gha,scope=hermes-sandbox-base"
+  ) {
+    errors.push(
+      `${jobName} current base cache must import its job scope and the Hermes publisher scope`,
+    );
+  }
+  if (currentInputs["cache-to"] !== "type=gha,scope=${{ github.job }}-current-base,mode=max") {
+    errors.push(`${jobName} current base cache must export to its job-specific scope`);
+  }
+
+  const oldInputs = asRecord(warmOldBase?.with);
+  if (
+    stringValue(oldInputs["build-args"]).trim() !==
+    [
+      "HERMES_VERSION=v2026.5.16",
+      "HERMES_SEMVER=0.14.0",
+      "HERMES_TARBALL_SHA256=c0a554050a50ee9a62f3fa5cd288a167ba5640c42d647d100cdea084b7294143",
+      "HERMES_NPM_INTEGRITY=sha512-kkHSw8iprp0JWAOf3ZZF0OHzRBj3E/BbG/QV0O4lwonxuY7AWhSepOhzSMlWo21VbQ/fTLwFkr/q3cIjDZDLBA==",
+      "HERMES_UV_EXTRAS=messaging mcp",
+    ].join("\n")
+  ) {
+    errors.push(`${jobName} old base cache must match the live test's pinned Hermes fixture`);
+  }
+  if (
+    oldInputs["cache-from"] !== "type=gha,scope=${{ github.job }}-old-base-v2026-5-16" ||
+    oldInputs["cache-to"] !== "type=gha,scope=${{ github.job }}-old-base-v2026-5-16,mode=max"
+  ) {
+    errors.push(`${jobName} old base cache must use its job-specific versioned scope`);
+  }
+
   const runVitest = requireJobStep(
     errors,
     jobName,
@@ -1405,6 +1489,29 @@ function validateRebuildHermesJob(
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/rebuild-hermes.test.ts");
+
+  const prepareWorkspace = requireJobStep(errors, jobName, steps, "Prepare E2E workspace");
+  const orderedSteps = [
+    setupBuildx,
+    routeBuilds,
+    warmCurrentBase,
+    warmOldBase,
+    prepareWorkspace,
+    runVitest,
+  ];
+  if (
+    orderedSteps.every((step) => step !== undefined) &&
+    orderedSteps.some(
+      (step, index) =>
+        index > 0 &&
+        steps.indexOf(orderedSteps[index - 1] as WorkflowStep) >=
+          steps.indexOf(step as WorkflowStep),
+    )
+  ) {
+    errors.push(
+      `${jobName} Buildx setup, cache warming, workspace prep, and test must stay in order`,
+    );
+  }
 }
 
 function validateSandboxRebuildJob(errors: string[], jobs: WorkflowRecord): void {

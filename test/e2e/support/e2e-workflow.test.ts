@@ -36,6 +36,48 @@ describe("e2e workflow boundary", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
   });
 
+  it("rejects Hermes rebuild cache wiring drift", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-hermes-rebuild-cache-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        {
+          steps: Array<{
+            env?: Record<string, unknown>;
+            name?: string;
+            with?: Record<string, unknown>;
+          }>;
+        }
+      >;
+    };
+    const steps = workflow.jobs["rebuild-hermes"].steps;
+    const setupBuildx = steps.find((step) => step.name === "Set up Hermes rebuild Buildx");
+    const routeBuilds = steps.find(
+      (step) => step.name === "Route Hermes rebuild Docker builds through Buildx",
+    );
+    const warmCurrent = steps.find((step) => step.name === "Warm current Hermes base build cache");
+    const warmOld = steps.find((step) => step.name === "Warm old Hermes base build cache");
+    setupBuildx!.with!["driver-opts"] = "network=host";
+    routeBuilds!.env!.HERMES_REBUILD_BUILDER = "default";
+    warmCurrent!.with!["cache-from"] = "type=gha,scope=buildkit";
+    warmOld!.with!["build-args"] = "HERMES_VERSION=latest";
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      expect(validateE2eWorkflowBoundary(workflowPath)).toEqual(
+        expect.arrayContaining([
+          "rebuild-hermes Buildx must enable default-load for the live Docker builds",
+          "rebuild-hermes must route Docker builds to the configured Buildx builder",
+          "rebuild-hermes current base cache must import its job scope and the Hermes publisher scope",
+          "rebuild-hermes old base cache must match the live test's pinned Hermes fixture",
+        ]),
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   // source-shape-contract: security -- Mutates the shipped workflow to prove PR-safe routing rejects credential-backed smokes
   it("rejects credential-backed provider smokes in the PR-safe inference-routing job", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-inference-routing-workflow-"));

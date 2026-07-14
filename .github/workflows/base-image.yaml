@@ -123,8 +123,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=openclaw-sandbox-base
+          cache-to: type=gha,scope=openclaw-sandbox-base,mode=max
           build-args: ${{ steps.production-build-args.outputs.openclaw_build_arg }}
 
   build-and-push-hermes:
@@ -172,8 +172,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=hermes-sandbox-base
+          cache-to: type=gha,scope=hermes-sandbox-base,mode=max
 
   build-and-push-langchain-deepagents-code:
     if: github.repository == 'NVIDIA/NemoClaw'
@@ -220,5 +220,5 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=langchain-deepagents-code-sandbox-base
+          cache-to: type=gha,scope=langchain-deepagents-code-sandbox-base,mode=max

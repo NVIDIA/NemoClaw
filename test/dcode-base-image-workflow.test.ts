@@ -35,6 +35,11 @@ type Publisher = {
   dockerfile: string;
 };
 
+type GhaCacheEntry = {
+  mode?: string;
+  scope?: string;
+};
+
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const workflow = YAML.parse(
   fs.readFileSync(path.join(repoRoot, ".github", "workflows", "base-image.yaml"), "utf8"),
@@ -65,9 +70,31 @@ function copiedLocks(dockerfile: string): string[] {
   ].map(([, lock]) => lock);
 }
 
+function ghaCacheEntries(value: unknown): GhaCacheEntry[] {
+  return String(value ?? "")
+    .split(/\r?\n/u)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.split(",").includes("type=gha"))
+    .map((entry) =>
+      Object.fromEntries(
+        entry
+          .split(",")
+          .slice(1)
+          .map((field) => field.split("=", 2) as [string, string]),
+      ),
+    );
+}
+
 function validatePublishers(candidate: Workflow): string[] {
   const triggerPaths = candidate.on?.push?.paths ?? [];
-  return publisherJobs(candidate).flatMap(({ jobName, job, build, buildIndex, dockerfile }) => {
+  const publishers = publisherJobs(candidate);
+  const exportedScopeCounts = new Map<string, number>();
+  for (const { build } of publishers) {
+    const scope = ghaCacheEntries(build.with?.["cache-to"])[0]?.scope;
+    if (scope) exportedScopeCounts.set(scope, (exportedScopeCounts.get(scope) ?? 0) + 1);
+  }
+
+  return publishers.flatMap(({ jobName, job, build, buildIndex, dockerfile }) => {
     const steps = job.steps ?? [];
     const metadata = steps.find((step) => step.id === "meta");
     const guardIndex = steps.findIndex((step) =>
@@ -78,6 +105,10 @@ function validatePublishers(candidate: Workflow): string[] {
     const copiedLockPaths = dockerfileExists ? copiedLocks(dockerfile) : [];
     const dockerActions = steps.filter((step) => step.uses?.startsWith("docker/"));
     const tags = String(metadata?.with?.tags ?? "");
+    const cacheFrom = ghaCacheEntries(build.with?.["cache-from"]);
+    const cacheTo = ghaCacheEntries(build.with?.["cache-to"]);
+    const importedScope = cacheFrom[0]?.scope;
+    const exportedScope = cacheTo[0]?.scope;
 
     return [
       ...(!dockerfileExists ? [`${jobName} must publish from an existing Dockerfile`] : []),
@@ -116,6 +147,19 @@ function validatePublishers(candidate: Workflow): string[] {
       build.with?.labels !== "${{ steps.meta.outputs.labels }}"
         ? [`${jobName} must publish the reviewed metadata outputs`]
         : []),
+      ...(cacheFrom.length !== 1 || !importedScope
+        ? [`${jobName} cache-from must declare exactly one GHA scope`]
+        : []),
+      ...(cacheTo.length !== 1 || !exportedScope
+        ? [`${jobName} cache-to must declare exactly one GHA scope`]
+        : []),
+      ...(importedScope !== exportedScope
+        ? [`${jobName} must import and export the same GHA cache scope`]
+        : []),
+      ...(cacheTo[0]?.mode !== "max" ? [`${jobName} must export its GHA cache in max mode`] : []),
+      ...(exportedScope && exportedScopeCounts.get(exportedScope) !== 1
+        ? [`${jobName} must use a publisher-unique GHA cache scope`]
+        : []),
     ];
   });
 }
@@ -137,11 +181,18 @@ describe("base-image publication behavior", () => {
     const mutated = structuredClone(workflow);
     const mutatedPublisher = publisherJobs(mutated)[0];
     const mutatedSteps = mutatedPublisher.job.steps ?? [];
+    const otherPublisher = publisherJobs(mutated)[1];
+    const otherScope = ghaCacheEntries(otherPublisher.build.with?.["cache-to"])[0]?.scope;
     const mutatedGuard = mutatedSteps.find((step) =>
       (step.run ?? "").includes("scripts/check-production-build-args.sh"),
     );
     mutatedPublisher.build.uses = "docker/build-push-action@v7";
-    mutatedPublisher.build.with = { ...mutatedPublisher.build.with, push: false };
+    mutatedPublisher.build.with = {
+      ...mutatedPublisher.build.with,
+      push: false,
+      "cache-from": "type=gha",
+      "cache-to": `type=gha,scope=${otherScope}`,
+    };
     mutatedGuard!.run = "true";
 
     expect(validatePublishers(mutated)).toEqual(
@@ -150,6 +201,10 @@ describe("base-image publication behavior", () => {
         `${mutatedPublisher.jobName} Docker action must use a full commit SHA: docker/build-push-action@v7`,
         `${mutatedPublisher.jobName} build-push action must use a full commit SHA`,
         `${mutatedPublisher.jobName} must push the built image`,
+        `${mutatedPublisher.jobName} cache-from must declare exactly one GHA scope`,
+        `${mutatedPublisher.jobName} must import and export the same GHA cache scope`,
+        `${mutatedPublisher.jobName} must export its GHA cache in max mode`,
+        `${mutatedPublisher.jobName} must use a publisher-unique GHA cache scope`,
       ]),
     );
   });
