@@ -81,18 +81,15 @@ describe("managed gateway recovery controller", () => {
       settleSeconds: "1",
     },
     {
-      label: "transient post-settle controller race",
+      label: "transient post-settle controller contention",
       recoverResults: [successfulControl],
-      managedProbeResults: [
-        { status: 1, stdout: "", stderr: "SUPERVISOR_UNAVAILABLE" },
-        successfulProbe,
-      ],
+      managedProbeResults: [{ status: 1, stdout: "", stderr: "SUPERVISOR_BUSY" }, successfulProbe],
       expectedResult: recoveredGateway,
       expectedActions: ["recover", "probe", "probe"],
       settleSeconds: "1",
     },
     {
-      label: "persistent post-settle controller race",
+      label: "persistent post-settle controller contention",
       recoverResults: [successfulControl],
       managedProbeResults: [{ status: 1, stdout: "", stderr: "SUPERVISOR_BUSY" }],
       expectedResult: unrecoveredGateway,
@@ -100,10 +97,10 @@ describe("managed gateway recovery controller", () => {
       settleSeconds: "1",
     },
     {
-      label: "post-settle controller race followed by terminal failure",
+      label: "post-settle controller contention followed by terminal failure",
       recoverResults: [successfulControl],
       managedProbeResults: [
-        { status: 1, stdout: "", stderr: "SUPERVISOR_UNAVAILABLE" },
+        { status: 1, stdout: "", stderr: "SUPERVISOR_BUSY" },
         { status: 1, stdout: "", stderr: "GATEWAY_HEALTH_TIMEOUT" },
       ],
       expectedResult: unrecoveredGateway,
@@ -111,9 +108,9 @@ describe("managed gateway recovery controller", () => {
       settleSeconds: "1",
     },
     {
-      label: "two transient controller races followed by authenticated recovery",
+      label: "two transient controller contentions followed by authenticated recovery",
       recoverResults: [
-        { status: 1, stdout: "", stderr: "SUPERVISOR_UNAVAILABLE" },
+        { status: 1, stdout: "", stderr: "SUPERVISOR_BUSY" },
         { status: 1, stdout: "", stderr: "SUPERVISOR_BUSY" },
         successfulControl,
       ],
@@ -122,10 +119,10 @@ describe("managed gateway recovery controller", () => {
       settleSeconds: "0",
     },
     {
-      label: "persistent exact unavailable controller result",
+      label: "exact unavailable controller result",
       recoverResults: [{ status: 1, stdout: "", stderr: "SUPERVISOR_UNAVAILABLE" }],
       expectedResult: unrecoveredGateway,
-      expectedActions: ["recover", "recover", "recover"],
+      expectedActions: ["recover"],
       settleSeconds: "0",
     },
     {
@@ -144,22 +141,22 @@ describe("managed gateway recovery controller", () => {
       settleSeconds: "1",
     },
     {
-      label: "non-exact unavailable marker",
-      recoverResults: [{ status: 1, stdout: "", stderr: "prefix SUPERVISOR_UNAVAILABLE suffix" }],
+      label: "non-exact busy marker",
+      recoverResults: [{ status: 1, stdout: "", stderr: "prefix SUPERVISOR_BUSY suffix" }],
       expectedResult: unrecoveredGateway,
       expectedActions: ["recover"],
       settleSeconds: "0",
     },
     {
-      label: "unavailable marker with another error line",
-      recoverResults: [{ status: 1, stdout: "", stderr: "SUPERVISOR_UNAVAILABLE\nGATEWAY_FAILED" }],
+      label: "busy marker with another error line",
+      recoverResults: [{ status: 1, stdout: "", stderr: "SUPERVISOR_BUSY\nGATEWAY_FAILED" }],
       expectedResult: unrecoveredGateway,
       expectedActions: ["recover"],
       settleSeconds: "0",
     },
     {
-      label: "unavailable marker with a nonstandard status",
-      recoverResults: [{ status: 2, stdout: "", stderr: "SUPERVISOR_UNAVAILABLE" }],
+      label: "busy marker with a nonstandard status",
+      recoverResults: [{ status: 2, stdout: "", stderr: "SUPERVISOR_BUSY" }],
       expectedResult: unrecoveredGateway,
       expectedActions: ["recover"],
       settleSeconds: "0",

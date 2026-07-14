@@ -199,6 +199,18 @@ describe("confirmRecoveredSandboxGatewayManaged scope", () => {
       }),
     ).toBe(false);
   });
+
+  it("keeps unavailable supervisor results terminal while lease contention stays transient", () => {
+    const confirm = (stderr: string) =>
+      confirmRecoveredSandboxGatewayManaged("my-sandbox", {
+        getSandboxImpl: () => openClawEntry,
+        getSessionAgentImpl: () => null,
+        requestGatewaySupervisorActionImpl: () => ({ status: 1, stdout: "", stderr }),
+      });
+
+    expect(confirm("SUPERVISOR_UNAVAILABLE")).toBe(false);
+    expect(confirm("SUPERVISOR_BUSY")).toBeNull();
+  });
 });
 
 describe("waitForRecoveredSandboxGateway settle-window confirmation (#4710)", () => {

@@ -362,14 +362,12 @@ function hasGatewayRecoveryMarker(result: SandboxCommandResult | null): boolean 
 }
 
 // Source contract: scripts/gateway-control.sh and its installed managed helper
-// emit SUPERVISOR_UNAVAILABLE while the PID 1 supervisor identity is absent,
-// unreadable, ambiguous, or changes during discovery, and SUPERVISOR_BUSY while
-// another request owns the controller lease. The host recovery path cannot
-// make either controller-owned transition atomic, so it retries only these
-// byte-exact markers within its existing bounded window and keeps every other
-// result definitive. Removal condition: delete this classifier and its retry
-// cases once the installed controller waits through those transitions itself
-// or returns a structured retry disposition instead of either marker.
+// emit SUPERVISOR_BUSY while another request owns the controller lease or
+// publication marker. SUPERVISOR_UNAVAILABLE also covers integrity refusals,
+// ambiguous discovery, and process-identity changes, so it must remain
+// definitive. Retry only the exact lease-contention marker within the
+// existing bounded window. Removal condition: delete this classifier and its
+// retry cases once the installed controller waits through contention itself.
 function isExactlyRetryableManagedRecoveryFailure(result: SandboxCommandResult | null): boolean {
   if (result === null) return false;
   if (result.status !== 1) return false;
@@ -378,7 +376,7 @@ function isExactlyRetryableManagedRecoveryFailure(result: SandboxCommandResult |
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
-  return lines.length === 1 && ["SUPERVISOR_UNAVAILABLE", "SUPERVISOR_BUSY"].includes(lines[0]);
+  return lines.length === 1 && lines[0] === "SUPERVISOR_BUSY";
 }
 
 function isExactlyMissingManagedSupervisor(result: SandboxCommandResult | null): boolean {
