@@ -2423,6 +2423,10 @@ jobs:
           test -n "${HERMES_REBUILD_BUILDER}"
           printf 'BUILDX_BUILDER=%s\n' "${HERMES_REBUILD_BUILDER}" >> "${GITHUB_ENV}"
 
+      - &validate-hermes-rebuild-build-args
+        name: Validate Hermes rebuild production Docker build args
+        run: scripts/check-production-build-args.sh
+
       - &warm-current-hermes-base
         name: Warm current Hermes base build cache
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
@@ -2510,6 +2514,8 @@ jobs:
       - *hermes-rebuild-buildx
 
       - *route-hermes-rebuild-builds
+
+      - *validate-hermes-rebuild-build-args
 
       - *warm-current-hermes-base
 

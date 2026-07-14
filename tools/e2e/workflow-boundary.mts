@@ -1420,6 +1420,14 @@ function validateRebuildHermesJob(
   requireRunContains(errors, routeBuilds, "BUILDX_BUILDER=%s");
   requireRunContains(errors, routeBuilds, '>> "${GITHUB_ENV}"');
 
+  const validateBuildArgs = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Validate Hermes rebuild production Docker build args",
+  );
+  requireRunContains(errors, validateBuildArgs, "scripts/check-production-build-args.sh");
+
   const warmCurrentBase = requireJobStep(
     errors,
     jobName,
@@ -1494,6 +1502,7 @@ function validateRebuildHermesJob(
   const orderedSteps = [
     setupBuildx,
     routeBuilds,
+    validateBuildArgs,
     warmCurrentBase,
     warmOldBase,
     prepareWorkspace,
