@@ -230,8 +230,27 @@ describe("promptOllamaModel installed-model fit filter", () => {
       { type: "nvidia", totalMemoryMB: 131_072, availableMemoryMB: 131_072 },
       { preferredModel: "not-installed:1b" },
     );
-    expect(result).not.toBe("not-installed:1b");
-    expect(["qwen2.5:0.5b", "qwen3.6:35b"]).toContain(result);
+    expect(result).toBe("qwen3.6:35b");
+    expect(setup.promptArgs.at(-1)).toContain("[2]");
+  });
+
+  it("ignores a preferred model that is only present in the bootstrap fallback, never the installed menu", async () => {
+    // nemotron-3-nano:30b is the only installed entry but is excluded, so the
+    // menu falls back to bootstrap options [qwen3.5:9b, qwen3.6:35b]. The
+    // preference must not promote qwen3.5:9b to the default here — matching
+    // a preference against an uninstalled bootstrap option would make an
+    // unavailable model the Enter-key default and trigger an unrequested pull.
+    const setup = loadProxyWithMocks({
+      installed: ["nemotron-3-nano:30b"],
+      promptValues: [""],
+    });
+    active = setup;
+    const result = await setup.proxy.promptOllamaModel(
+      { type: "nvidia", totalMemoryMB: 131_072, availableMemoryMB: 131_072 },
+      { excludeModels: new Set(["nemotron-3-nano:30b"]), preferredModel: "qwen3.5:9b" },
+    );
+    expect(result).toBe("qwen3.6:35b");
+    expect(result).not.toBe("qwen3.5:9b");
   });
 });
 

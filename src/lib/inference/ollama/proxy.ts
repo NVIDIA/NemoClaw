@@ -516,7 +516,7 @@ async function promptOllamaModel(
     : defaultModelCandidate;
   const preferred = promptOptions.preferredModel;
   const preferredIndex =
-    preferred != null && preferred !== ""
+    usingInstalled && preferred != null && preferred !== ""
       ? options.findIndex((option: string) => ollamaModelRefsMatch(option, preferred))
       : -1;
   const defaultIndex =
