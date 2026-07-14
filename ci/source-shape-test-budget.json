@@ -287,6 +287,16 @@
       "category": "security"
     },
     {
+      "file": "test/platform-vitest-main-workflow.test.ts",
+      "test": "keeps the WSL suite unprivileged with explicit root-only contracts",
+      "category": "security"
+    },
+    {
+      "file": "test/platform-vitest-main-workflow.test.ts",
+      "test": "provisions the pinned macOS test runtime before running the full suite",
+      "category": "compatibility"
+    },
+    {
       "file": "test/plugin-vitest-project.test.ts",
       "test": "defines one canonical plugin project for root and standalone runs",
       "category": "compatibility"

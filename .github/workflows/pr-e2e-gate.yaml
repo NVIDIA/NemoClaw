@@ -12,15 +12,15 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: Exact-diff exception type to record.
+        description: Exact-diff action to perform.
         required: true
         default: resolve-fork
         type: choice
         options:
           - resolve-fork
-          - resolve-control-plane
+          - run-control-plane
       pr_number:
-        description: Pull request number to resolve.
+        description: Pull request number for the selected exact-diff action.
         required: true
         type: string
       expected_head_sha:
@@ -31,12 +31,12 @@ on:
         description: Exact 40-character PR base SHA reviewed by the maintainer.
         required: true
         type: string
-      waiver_reason:
-        description: Why credentialed E2E cannot be run safely for this revision.
+      review_reason:
+        description: Why this exact revision may skip fork E2E or run control-plane E2E.
         required: true
         type: string
       evidence_url:
-        description: Optional Actions run URL, for example https://github.com/NVIDIA/NemoClaw/actions/runs/123. Leave blank if none.
+        description: Fork exception only; optional Actions run URL. Ignored by run-control-plane, whose evidence comes from the dispatched jobs.
         required: false
         default: ""
         type: string
@@ -115,7 +115,7 @@ jobs:
           --pr "$PR_NUMBER"
 
   coordinate:
-    if: ${{ github.event_name == 'workflow_run' && github.repository == 'NVIDIA/NemoClaw' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.path == '.github/workflows/pr.yaml' && endsWith(github.event.workflow_run.display_title, ' gate true') }}
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && ((github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.path == '.github/workflows/pr.yaml' && endsWith(github.event.workflow_run.display_title, ' gate true')) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'run-control-plane' && github.run_attempt == 1)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     outputs:
@@ -129,7 +129,7 @@ jobs:
       contents: read
       pull-requests: read
     concurrency:
-      group: pr-e2e-gate-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+      group: pr-e2e-gate-${{ github.repository }}-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.expected_head_sha }}
       # Let the previous coordinator observe E2E cancellation and close its check.
       cancel-in-progress: false
     steps:
@@ -165,32 +165,54 @@ jobs:
           CI_RUN_ID: ${{ github.event.workflow_run.id }}
           GATE_RUN_ID: ${{ github.run_id }}
           GITHUB_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
           HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
           HEAD_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          MAINTAINER: ${{ github.triggering_actor }}
+          MANUAL_BASE_SHA: ${{ inputs.expected_base_sha }}
+          MANUAL_HEAD_SHA: ${{ inputs.expected_head_sha }}
+          MANUAL_PR_NUMBER: ${{ inputs.pr_number }}
           PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          REVIEW_REASON: ${{ inputs.review_reason }}
           WORKFLOW_SHA: ${{ github.workflow_sha }}
+          WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
           WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
-        run: >-
-          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
-          --mode start
-          --head "$HEAD_SHA"
-          --head-repo "$HEAD_REPOSITORY"
-          --head-branch "$HEAD_BRANCH"
-          --workflow-sha "$WORKFLOW_SHA"
-          --ci-conclusion "$CI_CONCLUSION"
-          --ci-display-title "$CI_DISPLAY_TITLE"
-          --ci-run-attempt "$CI_RUN_ATTEMPT"
-          --ci-run-id "$CI_RUN_ID"
-          --gate-run-id "$GATE_RUN_ID"
-          --pr "$PR_NUMBER"
-          --work-dir "$WORK_DIR"
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            node --experimental-strip-types tools/e2e/pr-e2e-gate.mts \
+              --mode start-control-plane \
+              --pr "$MANUAL_PR_NUMBER" \
+              --head "$MANUAL_HEAD_SHA" \
+              --base "$MANUAL_BASE_SHA" \
+              --workflow-sha "$WORKFLOW_SHA" \
+              --maintainer "$MAINTAINER" \
+              --reason "$REVIEW_REASON" \
+              --gate-run-id "$GATE_RUN_ID" \
+              --workflow-run-attempt "$WORKFLOW_RUN_ATTEMPT" \
+              --work-dir "$WORK_DIR"
+          else
+            node --experimental-strip-types tools/e2e/pr-e2e-gate.mts \
+              --mode start \
+              --head "$HEAD_SHA" \
+              --head-repo "$HEAD_REPOSITORY" \
+              --head-branch "$HEAD_BRANCH" \
+              --workflow-sha "$WORKFLOW_SHA" \
+              --ci-conclusion "$CI_CONCLUSION" \
+              --ci-display-title "$CI_DISPLAY_TITLE" \
+              --ci-run-attempt "$CI_RUN_ATTEMPT" \
+              --ci-run-id "$CI_RUN_ID" \
+              --gate-run-id "$GATE_RUN_ID" \
+              --pr "$PR_NUMBER" \
+              --work-dir "$WORK_DIR"
+          fi
 
       - name: Upload risk plan
         if: ${{ always() && steps.workspace.outputs.work_dir != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pr-e2e-risk-plan-${{ github.event.workflow_run.head_sha }}
+          name: pr-e2e-risk-plan-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.expected_head_sha }}
           path: ${{ steps.workspace.outputs.work_dir }}/risk-plan.json
           if-no-files-found: ignore
           retention-days: 14
@@ -349,7 +371,6 @@ jobs:
         env:
           APPROVAL_RUN_ATTEMPT: ${{ github.run_attempt }}
           APPROVAL_RUN_ID: ${{ github.run_id }}
-          EXCEPTION_MODE: ${{ needs.coordinate.outputs.exception_mode }}
           EXPECTED_BASE_SHA: ${{ needs.coordinate.outputs.exception_base_sha }}
           EXPECTED_HEAD_SHA: ${{ needs.coordinate.outputs.exception_head_sha }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -358,7 +379,6 @@ jobs:
         run: >-
           node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
           --mode resolve-approved
-          --exception-mode "$EXCEPTION_MODE"
           --pr "$PR_NUMBER"
           --head "$EXPECTED_HEAD_SHA"
           --base "$EXPECTED_BASE_SHA"
@@ -367,7 +387,7 @@ jobs:
           --approval-run-attempt "$APPROVAL_RUN_ATTEMPT"
 
   resolve-exception:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.operation == 'resolve-fork' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -375,7 +395,7 @@ jobs:
       contents: read
       pull-requests: read
     concurrency:
-      group: pr-e2e-gate-resolve-${{ inputs.operation }}-${{ inputs.pr_number }}
+      group: pr-e2e-gate-resolve-fork-${{ inputs.pr_number }}
       cancel-in-progress: false
     steps:
       - name: Checkout controller
@@ -399,17 +419,16 @@ jobs:
           EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
           GITHUB_TOKEN: ${{ github.token }}
           MAINTAINER: ${{ github.triggering_actor }}
-          OPERATION: ${{ inputs.operation }}
           PR_NUMBER: ${{ inputs.pr_number }}
-          WAIVER_REASON: ${{ inputs.waiver_reason }}
+          REVIEW_REASON: ${{ inputs.review_reason }}
           WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: >-
           node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
-          --mode "$OPERATION"
+          --mode resolve-fork
           --pr "$PR_NUMBER"
           --head "$EXPECTED_HEAD_SHA"
           --base "$EXPECTED_BASE_SHA"
           --workflow-sha "$WORKFLOW_SHA"
           --maintainer "$MAINTAINER"
-          --reason "$WAIVER_REASON"
+          --reason "$REVIEW_REASON"
           --evidence-url "$EVIDENCE_URL"

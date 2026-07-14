@@ -11,8 +11,8 @@ import {
   parseControllerCommand,
   prGateExternalId,
   resolveApprovedGate,
-  resolveControlPlaneGate,
   resolveForkGate,
+  startControlPlanePrGate,
   startPrGate,
 } from "../tools/e2e/pr-e2e-gate.mts";
 import {
@@ -165,6 +165,36 @@ function startCommand(workDir: string) {
   return command as Extract<ReturnType<typeof parseControllerCommand>, { mode: "start" }>;
 }
 
+function startControlPlaneCommand(workDir: string) {
+  const command = parseControllerCommand([
+    "--mode",
+    "start-control-plane",
+    "--pr",
+    "42",
+    "--head",
+    HEAD_SHA,
+    "--base",
+    BASE_SHA,
+    "--workflow-sha",
+    WORKFLOW_SHA,
+    "--maintainer",
+    "maintainer",
+    "--reason",
+    "Reviewed exact credentialed control-plane execution",
+    "--gate-run-id",
+    String(GATE_RUN_ID),
+    "--workflow-run-attempt",
+    "1",
+    "--work-dir",
+    workDir,
+  ]);
+  expect(command.mode).toBe("start-control-plane");
+  return command as Extract<
+    ReturnType<typeof parseControllerCommand>,
+    { mode: "start-control-plane" }
+  >;
+}
+
 function approvalWorkflowRun(overrides: Record<string, unknown> = {}) {
   return {
     id: APPROVAL_RUN_ID,
@@ -194,7 +224,6 @@ function approvalReview(comment: string | null = null, overrides: Record<string,
 function approvedForkCommand() {
   return {
     mode: "resolve-approved" as const,
-    exceptionMode: "resolve-fork" as const,
     prNumber: 42,
     headSha: HEAD_SHA,
     baseSha: BASE_SHA,
@@ -329,7 +358,7 @@ describe("PR E2E controller exception safety", () => {
     }
   });
 
-  it("blocks internal E2E control-plane changes without exposing repository credentials", async () => {
+  it("requires authorization before internal PR code can receive E2E credentials", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-control-"));
     const outputPath = path.join(workDir, "github-output");
     fs.writeFileSync(outputPath, "", { mode: 0o600 });
@@ -373,23 +402,16 @@ describe("PR E2E controller exception safety", () => {
         conclusion: "failure",
         details_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${GATE_RUN_ID}`,
         output: {
-          title: "Maintainer control-plane exception required",
+          title: "Maintainer authorization required to run E2E",
           summary: expect.stringContaining(
-            "No PR-controlled E2E workflow, test, support code, or evidence reporter was executed",
+            "No selected E2E job ran and no repository secret was exposed",
           ),
         },
       });
       expect(JSON.stringify(completion?.body)).toContain(
-        `[E2E / PR Gate Controller run ${GATE_RUN_ID}](https://github.com/NVIDIA/NemoClaw/actions/runs/${GATE_RUN_ID})`,
+        "run `run-control-plane` with the PR number, exact head and base SHAs",
       );
-      expect(fs.readFileSync(outputPath, "utf8")).toContain(
-        [
-          "exception_mode=resolve-control-plane",
-          "exception_pr_number=42",
-          `exception_head_sha=${HEAD_SHA}`,
-          `exception_base_sha=${BASE_SHA}`,
-        ].join("\n"),
-      );
+      expect(fs.readFileSync(outputPath, "utf8")).not.toContain("exception_mode=");
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
@@ -572,8 +594,6 @@ describe("PR E2E controller exception safety", () => {
     const args = [
       "--mode",
       "resolve-approved",
-      "--exception-mode",
-      "resolve-fork",
       "--pr",
       "42",
       "--head",
@@ -670,9 +690,13 @@ describe("PR E2E controller exception safety", () => {
     expect(JSON.stringify(completion?.body)).not.toContain("tests passed");
   });
 
-  it("records an authorized exact-SHA control-plane exception without claiming E2E ran", async () => {
+  it("dispatches an authorized exact-SHA control-plane run without clearing the gate", async () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-authorized-"));
+    const outputPath = path.join(workDir, "github-output");
+    fs.writeFileSync(outputPath, "", { mode: 0o600 });
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    vi.stubEnv("GITHUB_OUTPUT", outputPath);
     const requests: RecordedGitHubRequest[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter(
@@ -692,47 +716,94 @@ describe("PR E2E controller exception safety", () => {
           ),
           githubFetchRoute(
             ({ url }) => url.includes("/pulls/42/files?"),
-            () => githubResponse([{ filename: "tools/e2e/pr-e2e-gate.mts" }]),
+            () => githubResponse([{ filename: "test/e2e/risk-signal-reporter.ts" }]),
           ),
           existingPrGateCheckRunsRoute({
             status: "completed",
             conclusion: "failure",
-            output: { title: "Maintainer control-plane exception required" },
+            output: { title: "Maintainer authorization required to run E2E" },
           }),
           mainWorkflowRefRoute(),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
             () => githubResponse({}),
           ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.endsWith("/actions/workflows/e2e.yaml/dispatches") && method === "POST",
+            () =>
+              githubResponse({
+                workflow_run_id: 23,
+                run_url: "https://api.github.com/repos/NVIDIA/NemoClaw/actions/runs/23",
+                html_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/23",
+              }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/actions/runs/23") && method === "GET",
+            () => {
+              const dispatch = requests.find((request) => request.url.endsWith("/dispatches"));
+              const inputs = (dispatch?.body as { inputs?: Record<string, string> } | undefined)
+                ?.inputs;
+              const correlationId = inputs?.correlation_id ?? "missing";
+              return githubResponse({
+                id: 23,
+                name: `E2E PR #42 (${correlationId})`,
+                path: ".github/workflows/e2e.yaml",
+                workflow_id: 7,
+                event: "workflow_dispatch",
+                head_sha: WORKFLOW_SHA,
+                status: "queued",
+                conclusion: null,
+                display_title: `E2E PR #42 (${correlationId})`,
+                html_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/23",
+              });
+            },
+          ),
         ],
         requests,
       ),
     );
 
-    await resolveControlPlaneGate({
-      mode: "resolve-control-plane",
-      prNumber: 42,
-      headSha: HEAD_SHA,
-      baseSha: BASE_SHA,
-      workflowSha: WORKFLOW_SHA,
-      maintainer: "maintainer",
-      reason: "The control-plane change received independent non-secret validation.",
-    });
+    try {
+      await expect(
+        startControlPlanePrGate(startControlPlaneCommand(workDir)),
+      ).resolves.toBeUndefined();
 
-    const completion = requests.at(-1);
-    expect(completion?.body).toMatchObject({
-      status: "completed",
-      conclusion: "success",
-      output: {
-        title: "No E2E run — exception approved by @maintainer",
-        summary: expect.stringContaining("**Outcome: EXCEPTION — credentialed E2E did not run.**"),
-      },
-    });
-    expect(JSON.stringify(completion?.body)).toContain(
-      "Selected jobs not run because this PR controls E2E execution or evidence",
-    );
-    expect(JSON.stringify(completion?.body)).not.toContain("tests passed");
-    expect(JSON.stringify(completion?.body)).not.toContain("Supporting trusted run");
+      const dispatch = requests.find((request) => request.url.endsWith("/dispatches"));
+      expect(dispatch?.body).toMatchObject({
+        ref: "main",
+        inputs: {
+          jobs: "cloud-onboard,credential-sanitization,security-posture",
+          pr_number: "42",
+          checkout_sha: HEAD_SHA,
+          base_sha: BASE_SHA,
+          workflow_sha: WORKFLOW_SHA,
+        },
+      });
+      const checkUpdates = requests.filter(
+        (request) => request.url.endsWith("/check-runs/17") && request.method === "PATCH",
+      );
+      expect(checkUpdates).toHaveLength(2);
+      expect(checkUpdates[0]?.body).toMatchObject({
+        status: "in_progress",
+        output: { title: "E2E execution authorized by @maintainer" },
+      });
+      expect(checkUpdates[1]?.body).toMatchObject({
+        status: "in_progress",
+        output: { title: "Running 3 E2E jobs" },
+      });
+      expect(
+        checkUpdates.some(
+          (request) =>
+            (request.body as { conclusion?: unknown } | undefined)?.conclusion === "success",
+        ),
+      ).toBe(false);
+      const outputs = fs.readFileSync(outputPath, "utf8");
+      expect(outputs).toContain("dispatched=true");
+      expect(outputs).not.toContain("finalized=true");
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
   });
 
   it("rejects an E2E exception from a collaborator below maintainer role", async () => {
@@ -757,33 +828,57 @@ describe("PR E2E controller exception safety", () => {
     );
 
     await expect(
-      resolveControlPlaneGate({
-        mode: "resolve-control-plane",
+      resolveForkGate({
+        mode: "resolve-fork",
         prNumber: 42,
         headSha: HEAD_SHA,
         baseSha: BASE_SHA,
         workflowSha: WORKFLOW_SHA,
         maintainer: "contributor",
-        reason: "A write-role collaborator tried to record an exception.",
+        reason: "A write-role collaborator tried to record a fork exception.",
       }),
     ).rejects.toThrow(/maintainer or administrator/u);
     expect(requests.some((request) => request.method === "PATCH")).toBe(false);
   });
 
-  it.each([
-    {
-      name: "fork operation for an internal pull request",
-      mode: "resolve-fork" as const,
-      pull: pullRequest(),
-      error: /fork exceptions require a fork pull request/u,
-    },
-    {
-      name: "control-plane operation for a fork pull request",
-      mode: "resolve-control-plane" as const,
-      pull: forkPullRequest(),
-      error: /control-plane exceptions require an internal pull request/u,
-    },
-  ])("rejects the $name", async ({ mode, pull, error }) => {
+  it("rejects control-plane authorization from a collaborator below maintainer role", async () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-role-"));
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    const requests: RecordedGitHubRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url }) => url.endsWith("/collaborators/contributor/permission"),
+            () =>
+              githubResponse({
+                role_name: "write",
+                permission: "write",
+                user: { login: "contributor" },
+              }),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    try {
+      await expect(
+        startControlPlanePrGate({
+          ...startControlPlaneCommand(workDir),
+          maintainer: "contributor",
+        }),
+      ).rejects.toThrow(/maintainer or administrator/u);
+      expect(requests.some((request) => request.method === "PATCH")).toBe(false);
+      expect(requests.some((request) => request.url.endsWith("/dispatches"))).toBe(false);
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects control-plane authorization for a fork pull request", async () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-fork-"));
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     const requests: RecordedGitHubRequest[] = [];
@@ -796,7 +891,38 @@ describe("PR E2E controller exception safety", () => {
           ),
           githubFetchRoute(
             ({ url }) => url.endsWith("/pulls/42"),
-            () => githubResponse(pull),
+            () => githubResponse(forkPullRequest()),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    try {
+      await expect(startControlPlanePrGate(startControlPlaneCommand(workDir))).rejects.toThrow(
+        /requires an internal pull request/u,
+      );
+      expect(requests.some((request) => request.method === "PATCH")).toBe(false);
+      expect(requests.some((request) => request.url.endsWith("/dispatches"))).toBe(false);
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a fork exception for an internal pull request", async () => {
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    const requests: RecordedGitHubRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url }) => url.endsWith("/collaborators/maintainer/permission"),
+            () => githubResponse({ role_name: "maintain", user: { login: "maintainer" } }),
+          ),
+          githubFetchRoute(
+            ({ url }) => url.endsWith("/pulls/42"),
+            () => githubResponse(pullRequest()),
           ),
         ],
         requests,
@@ -811,53 +937,14 @@ describe("PR E2E controller exception safety", () => {
       maintainer: "maintainer",
       reason: "The resolver operation must match the pull request origin.",
     };
-    const resolution =
-      mode === "resolve-fork"
-        ? resolveForkGate({ mode, ...common })
-        : resolveControlPlaneGate({ mode, ...common });
-    await expect(resolution).rejects.toThrow(error);
-    expect(requests.some((request) => request.method === "PATCH")).toBe(false);
-  });
-
-  it("rejects a control-plane exception for an ordinary internal change", async () => {
-    vi.stubEnv("GITHUB_TOKEN", "token");
-    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
-    const requests: RecordedGitHubRequest[] = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(
-      createGitHubFetchRouter(
-        [
-          githubFetchRoute(
-            ({ url }) => url.endsWith("/collaborators/maintainer/permission"),
-            () => githubResponse({ role_name: "maintain", user: { login: "maintainer" } }),
-          ),
-          githubFetchRoute(
-            ({ url }) => url.endsWith("/pulls/42"),
-            () => githubResponse(pullRequest()),
-          ),
-          githubFetchRoute(
-            ({ url }) => url.includes("/pulls/42/files?"),
-            () => githubResponse([{ filename: "src/lib/onboard.ts" }]),
-          ),
-        ],
-        requests,
-      ),
+    await expect(resolveForkGate({ mode: "resolve-fork", ...common })).rejects.toThrow(
+      /fork exceptions require a fork pull request/u,
     );
-
-    await expect(
-      resolveControlPlaneGate({
-        mode: "resolve-control-plane",
-        prNumber: 42,
-        headSha: HEAD_SHA,
-        baseSha: BASE_SHA,
-        workflowSha: WORKFLOW_SHA,
-        maintainer: "maintainer",
-        reason: "The ordinary change does not qualify for this exception.",
-      }),
-    ).rejects.toThrow(/does not change the trusted E2E control plane/u);
     expect(requests.some((request) => request.method === "PATCH")).toBe(false);
   });
 
-  it("rejects a control-plane exception when the failed gate title does not match", async () => {
+  it("rejects control-plane authorization when the failed gate title does not match", async () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-title-"));
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     const requests: RecordedGitHubRequest[] = [];
@@ -874,7 +961,7 @@ describe("PR E2E controller exception safety", () => {
           ),
           githubFetchRoute(
             ({ url }) => url.includes("/pulls/42/files?"),
-            () => githubResponse([{ filename: "tools/e2e/pr-e2e-gate.mts" }]),
+            () => githubResponse([{ filename: "test/e2e/risk-signal-reporter.ts" }]),
           ),
           existingPrGateCheckRunsRoute({
             status: "completed",
@@ -886,24 +973,25 @@ describe("PR E2E controller exception safety", () => {
       ),
     );
 
-    await expect(
-      resolveControlPlaneGate({
-        mode: "resolve-control-plane",
-        prNumber: 42,
-        headSha: HEAD_SHA,
-        baseSha: BASE_SHA,
-        workflowSha: WORKFLOW_SHA,
-        maintainer: "maintainer",
-        reason: "The failed gate must match the requested exception type.",
-      }),
-    ).rejects.toThrow(/matching exception-required failure/u);
-    expect(requests.some((request) => request.method === "PATCH")).toBe(false);
+    try {
+      await expect(startControlPlanePrGate(startControlPlaneCommand(workDir))).rejects.toThrow(
+        /matching control-plane authorization failure/u,
+      );
+      expect(requests.some((request) => request.method === "PATCH")).toBe(false);
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
   });
 
-  it("rejects a manual exception after main advances through the E2E control plane", async () => {
+  it("restores a retryable authorization state after an incompatible main advance", async () => {
+    const workDirs = [
+      fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-main-")),
+      fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-main-retry-")),
+    ];
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     const requests: RecordedGitHubRequest[] = [];
+    let checkTitle = "Maintainer authorization required to run E2E";
     vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter(
         [
@@ -917,35 +1005,67 @@ describe("PR E2E controller exception safety", () => {
           ),
           githubFetchRoute(
             ({ url }) => url.includes("/pulls/42/files?"),
-            () => githubResponse([{ filename: "tools/e2e/pr-e2e-gate.mts" }]),
+            () => githubResponse([{ filename: "test/e2e/risk-signal-reporter.ts" }]),
           ),
-          existingPrGateCheckRunsRoute({
-            status: "completed",
-            conclusion: "failure",
-            output: { title: "Maintainer control-plane exception required" },
-          }),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes(`/commits/${HEAD_SHA}/check-runs?`) && method === "GET",
+            () =>
+              githubResponse({
+                total_count: 1,
+                check_runs: [
+                  exactPrGateCheck({
+                    status: "completed",
+                    conclusion: "failure",
+                    output: { title: checkTitle },
+                  }),
+                ],
+              }),
+          ),
           mainWorkflowRefRoute(ADVANCED_WORKFLOW_SHA),
           compatibleMainComparisonRoute([{ filename: ".github/workflows/e2e.yaml" }]),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
+            (request) => {
+              const body = request.body as { output?: { title?: string } } | undefined;
+              checkTitle = body?.output?.title ?? checkTitle;
+              return githubResponse({});
+            },
+          ),
         ],
         requests,
       ),
     );
 
-    await expect(
-      resolveControlPlaneGate({
-        mode: "resolve-control-plane",
-        prNumber: 42,
-        headSha: HEAD_SHA,
-        baseSha: BASE_SHA,
-        workflowSha: WORKFLOW_SHA,
-        maintainer: "maintainer",
-        reason: "The controller commit must not be followed by control-plane changes.",
-      }),
-    ).rejects.toThrow(/main advanced through trusted E2E control-plane changes/u);
-    expect(requests.some((request) => request.method === "PATCH")).toBe(false);
+    try {
+      for (const workDir of workDirs) {
+        await expect(startControlPlanePrGate(startControlPlaneCommand(workDir))).rejects.toThrow(
+          /main advanced through trusted E2E control-plane changes/u,
+        );
+      }
+      const completions = requests.filter(
+        (request) =>
+          request.url.endsWith("/check-runs/17") &&
+          request.method === "PATCH" &&
+          (request.body as { status?: string } | undefined)?.status === "completed",
+      );
+      expect(completions).toHaveLength(2);
+      expect(completions[0]?.body).toMatchObject({
+        conclusion: "failure",
+        output: {
+          title: "Maintainer authorization required to run E2E",
+          summary: expect.stringContaining("launch a fresh first-attempt `run-control-plane`"),
+        },
+      });
+      expect(checkTitle).toBe("Maintainer authorization required to run E2E");
+      expect(requests.some((request) => request.url.endsWith("/dispatches"))).toBe(false);
+    } finally {
+      for (const workDir of workDirs) fs.rmSync(workDir, { recursive: true, force: true });
+    }
   });
 
-  it("rejects a control-plane exception when the internal head changes during review", async () => {
+  it("rejects control-plane authorization when the internal head changes during review", async () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-head-"));
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     const requests: RecordedGitHubRequest[] = [];
@@ -973,25 +1093,21 @@ describe("PR E2E controller exception safety", () => {
           ),
           githubFetchRoute(
             ({ url }) => url.includes("/pulls/42/files?"),
-            () => githubResponse([{ filename: "tools/e2e/pr-e2e-gate.mts" }]),
+            () => githubResponse([{ filename: "test/e2e/risk-signal-reporter.ts" }]),
           ),
         ],
         requests,
       ),
     );
 
-    await expect(
-      resolveControlPlaneGate({
-        mode: "resolve-control-plane",
-        prNumber: 42,
-        headSha: HEAD_SHA,
-        baseSha: BASE_SHA,
-        workflowSha: WORKFLOW_SHA,
-        maintainer: "maintainer",
-        reason: "The internal head changed while the review was being recorded.",
-      }),
-    ).rejects.toThrow(/PR changed during preparation/u);
-    expect(requests.some((request) => request.method === "PATCH")).toBe(false);
+    try {
+      await expect(startControlPlanePrGate(startControlPlaneCommand(workDir))).rejects.toThrow(
+        /Superseded by PR update/u,
+      );
+      expect(requests.some((request) => request.method === "PATCH")).toBe(false);
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
   });
 
   it("rejects a stale fork exception before changing the gate", async () => {
@@ -1070,7 +1186,8 @@ describe("PR E2E controller exception safety", () => {
     expect(requests.some((request) => request.method === "PATCH")).toBe(false);
   });
 
-  it("rejects a manual exception when the base changes immediately before completion", async () => {
+  it("rejects control-plane authorization when the base changes before dispatch", async () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-base-"));
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     const requests: RecordedGitHubRequest[] = [];
@@ -1098,12 +1215,12 @@ describe("PR E2E controller exception safety", () => {
           ),
           githubFetchRoute(
             ({ url }) => url.includes("/pulls/42/files?"),
-            () => githubResponse([{ filename: "tools/e2e/pr-e2e-gate.mts" }]),
+            () => githubResponse([{ filename: "test/e2e/risk-signal-reporter.ts" }]),
           ),
           existingPrGateCheckRunsRoute({
             status: "completed",
             conclusion: "failure",
-            output: { title: "Maintainer control-plane exception required" },
+            output: { title: "Maintainer authorization required to run E2E" },
           }),
           mainWorkflowRefRoute(),
         ],
@@ -1111,18 +1228,15 @@ describe("PR E2E controller exception safety", () => {
       ),
     );
 
-    await expect(
-      resolveControlPlaneGate({
-        mode: "resolve-control-plane",
-        prNumber: 42,
-        headSha: HEAD_SHA,
-        baseSha: BASE_SHA,
-        workflowSha: WORKFLOW_SHA,
-        maintainer: "maintainer",
-        reason: "The exact base must remain current until the exception is recorded.",
-      }),
-    ).rejects.toThrow(/Superseded by PR update/u);
-    expect(pullReads).toBe(3);
-    expect(requests.some((request) => request.method === "PATCH")).toBe(false);
+    try {
+      await expect(startControlPlanePrGate(startControlPlaneCommand(workDir))).rejects.toThrow(
+        /Superseded by PR update/u,
+      );
+      expect(pullReads).toBe(3);
+      expect(requests.some((request) => request.method === "PATCH")).toBe(true);
+      expect(requests.some((request) => request.url.endsWith("/dispatches"))).toBe(false);
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
   });
 });
