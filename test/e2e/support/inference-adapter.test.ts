@@ -12,6 +12,7 @@ import type {
   ProviderJsonRequestOptions,
   TrustedProviderEndpoint,
 } from "../fixtures/clients/provider.ts";
+import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import {
   createE2EInferenceAdapter,
   type E2EInferenceAdapter,
@@ -107,12 +108,13 @@ function expectProviderRequests(
 }
 
 async function createAdapter(options: {
+  artifacts?: ArtifactSink;
   env?: NodeJS.ProcessEnv;
   provider?: Pick<ProviderClient, "requestJson">;
   secrets?: Record<string, string | undefined>;
 }): Promise<E2EInferenceAdapter> {
   const adapter = await createE2EInferenceAdapter({
-    artifacts: artifacts(),
+    artifacts: options.artifacts ?? artifacts(),
     env: options.env ?? {},
     provider: options.provider ?? provider(),
     secrets: secrets(options.secrets ?? {}),
@@ -130,7 +132,8 @@ afterEach(async () => {
 
 describe("E2E inference adapter", () => {
   it("defaults to hermetic mock mode with a fake compatible endpoint", async () => {
-    const adapter = await createAdapter({ env: {} });
+    const ambientCompatibleKey = "ambient-compatible-key-must-not-be-reused";
+    const adapter = await createAdapter({ env: { COMPATIBLE_API_KEY: ambientCompatibleKey } });
     const env = adapter.env({
       NEMOCLAW_AGENT: "hermes",
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
@@ -150,12 +153,37 @@ describe("E2E inference adapter", () => {
     });
     expect(env.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
     expect(env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE).toBeUndefined();
+    expect(env.COMPATIBLE_API_KEY).not.toBe(ambientCompatibleKey);
     expect(await adapter.probeModels("mock-models")).toMatchObject({
       data: [{ id: "nvidia/nvidia/nemotron-3-ultra" }],
     });
     expect(await adapter.directChat("Reply PONG")).toMatchObject({
       choices: [{ message: { content: "PONG" } }],
     });
+  });
+
+  it("keeps unrelated ambient secrets out of adapter and fake-server child environments", async () => {
+    const secretName = "UNRELATED_E2E_SENTINEL_SECRET";
+    const secretValue = "sentinel-value-that-must-not-propagate";
+    const previous = process.env[secretName];
+    process.env[secretName] = secretValue;
+    try {
+      const adapter = await createAdapter({
+        env: { ...process.env, NEMOCLAW_E2E_INFERENCE_MODE: "mock" },
+      });
+      expect(Object.values(adapter.env())).not.toContain(secretValue);
+
+      const fake = await startFakeOpenAiCompatibleServer();
+      try {
+        expect(fake.environmentKeys()).toContain("NEMOCLAW_FAKE_OPENAI_API_KEY");
+        expect(fake.environmentKeys()).not.toContain(secretName);
+      } finally {
+        await fake.close();
+      }
+    } finally {
+      if (previous === undefined) delete process.env[secretName];
+      else process.env[secretName] = previous;
+    }
   });
 
   it("stages internal NVIDIA hosted inference as a compatible endpoint", async () => {
@@ -255,7 +283,10 @@ describe("E2E inference adapter", () => {
   it("centralizes public NVIDIA nvapi validation", async () => {
     const requests: ProviderRequest[] = [];
     const apiKey = "nvapi-public-test-key";
+    const artifactSink = artifacts();
+    const addRedactionValues = vi.spyOn(artifactSink, "addRedactionValues");
     const adapter = await createAdapter({
+      artifacts: artifactSink,
       env: { NEMOCLAW_E2E_INFERENCE_MODE: "public-nvidia" },
       provider: provider((request) => requests.push(request)),
       secrets: { NVIDIA_INFERENCE_API_KEY: apiKey },
@@ -277,6 +308,7 @@ describe("E2E inference adapter", () => {
     expect(env.COMPATIBLE_API_KEY).toBeUndefined();
     expect(env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE).toBeUndefined();
     expect(requirePublicNvidiaInferenceKey(apiKey)).toBe(apiKey);
+    expect(addRedactionValues).toHaveBeenCalledWith([apiKey]);
 
     await adapter.probeModels("public-models");
     await adapter.directChat("public prompt", { artifactName: "public-chat", maxTokens: 64 });

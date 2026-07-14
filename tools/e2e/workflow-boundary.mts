@@ -3568,6 +3568,17 @@ function validateJetsonRunnerDispatchGuard(errors: string[], jobs: WorkflowRecor
   requireRunDoesNotContain(errors, guard, "linux-arm64-gpu-jetson-orin-latest-1");
 }
 
+export function validateJetsonRunnerDispatchBoundary(workflow: unknown): string[] {
+  const workflowRecord = asRecord(workflow);
+  const triggers = asRecord(workflowRecord.on ?? workflowRecord[true as unknown as string]);
+  const workflowDispatch = asRecord(triggers.workflow_dispatch);
+  const errors: string[] = [];
+
+  validateAllowJetsonRunnerQueueInput(errors, asRecord(workflowDispatch.inputs));
+  validateJetsonRunnerDispatchGuard(errors, asRecord(workflowRecord.jobs));
+  return errors;
+}
+
 function validateSandboxRlimitConnectJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "sandbox-rlimits-connect";
   const job = asRecord(jobs[jobName]);
@@ -3665,7 +3676,6 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
 
   const dispatchInputs = asRecord(workflowDispatch.inputs);
   requireInput(errors, dispatchInputs, "targets");
-  validateAllowJetsonRunnerQueueInput(errors, dispatchInputs);
   validateInferenceModeInput(errors, workflow, dispatchInputs);
   const jobsInput = requireInput(errors, dispatchInputs, "jobs");
   const jobsDescription = stringValue(jobsInput.description);
@@ -3687,6 +3697,7 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   if (permissions.contents !== "read") errors.push("workflow permissions.contents must be read");
 
   const jobs = asRecord(workflow.jobs);
+  errors.push(...validateJetsonRunnerDispatchBoundary(workflow));
   const { errors: inventoryErrors, inventory: freeStandingInventory } =
     deriveFreeStandingJobsInventoryFromJobs(jobs);
   errors.push(...inventoryErrors);
@@ -4130,7 +4141,6 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
 
   validateFreeStandingJobSelector(errors, jobs, "gateway-health-honest", "gateway-health-honest");
 
-  validateJetsonRunnerDispatchGuard(errors, jobs);
   validateSandboxRlimitConnectJob(errors, jobs);
 
   validateFreeStandingJobSelector(

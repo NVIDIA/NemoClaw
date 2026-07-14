@@ -405,13 +405,13 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
   expect(fs.existsSync(SESSION_FILE), `${SESSION_FILE} missing`).toBe(true);
   expect(readJsonFile(SESSION_FILE)).toMatchObject({ agent: "hermes" });
 
-  const inferenceGet = await sandbox.openshell(["inference", "get", "--json"], {
-    artifactName: "phase-3-openshell-inference-get",
+  const inferenceGet = await host.command("nemoclaw", ["inference", "get", "--json"], {
+    artifactName: "phase-3-nemoclaw-inference-get",
     env: commandEnv(),
     timeoutMs: 30_000,
   });
   expect(inferenceGet.exitCode, resultText(inferenceGet)).toBe(0);
-  const inferenceState = JSON.parse(resultText(inferenceGet)) as {
+  const inferenceState = JSON.parse(inferenceGet.stdout) as {
     provider: string | null;
     model: string | null;
   };

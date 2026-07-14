@@ -334,7 +334,10 @@ async function setupPoliciesWithSelectionInner(
       customPresetNames,
       customOwnsObservability,
     });
-    chosen = pruneUnavailablePresets(chosen);
+    // Pass the recorded tier so the pruner exempts that tier's egress defaults
+    // (e.g. `brave` on Balanced) via provenance — a reconcile-triggered reuse
+    // reapply must not narrow an applied tier default. (#6844)
+    chosen = pruneUnavailablePresets(chosen, { tierName: recordedTierName });
   }
 
   if (selectedPresets !== null) {

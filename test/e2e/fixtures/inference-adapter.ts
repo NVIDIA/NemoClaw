@@ -291,11 +291,21 @@ class PublicNvidiaInferenceAdapter implements E2EInferenceAdapter {
   readonly expectedRouteProvider = "nvidia-prod";
   readonly contractLabel = "public NVIDIA Endpoints provider keeps nvapi validation centralized";
 
-  constructor(
-    readonly model: string,
-    private readonly apiKey: string,
-    private readonly providerClient: Pick<ProviderClient, "requestJson">,
-  ) {}
+  readonly model: string;
+  private readonly apiKey: string;
+  private readonly providerClient: Pick<ProviderClient, "requestJson">;
+
+  constructor(options: {
+    readonly apiKey: string;
+    readonly artifacts: ArtifactSink;
+    readonly model: string;
+    readonly providerClient: Pick<ProviderClient, "requestJson">;
+  }) {
+    this.apiKey = options.apiKey;
+    this.model = options.model;
+    this.providerClient = options.providerClient;
+    options.artifacts.addRedactionValues([options.apiKey]);
+  }
 
   env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     const sanitizedExtra = { ...extra };
@@ -354,7 +364,7 @@ export async function createE2EInferenceAdapter(
   const mode = normalizeMode(env);
   if (mode === "mock") {
     const model = env.NEMOCLAW_MODEL || env.NEMOCLAW_COMPAT_MODEL || DEFAULT_MOCK_MODEL;
-    const apiKey = env.COMPATIBLE_API_KEY || `mock-${randomBytes(32).toString("hex")}`;
+    const apiKey = `mock-${randomBytes(32).toString("hex")}`;
     const fake = await startFakeOpenAiCompatibleServer({
       apiKey,
       chatContent: "PONG",
@@ -406,7 +416,12 @@ export async function createE2EInferenceAdapter(
   }
   const apiKey = requirePublicNvidiaInferenceKey(options.secrets.required(HOSTED_INFERENCE_SECRET));
   const model = env.NEMOCLAW_MODEL || DEFAULT_PUBLIC_NVIDIA_MODEL;
-  return new PublicNvidiaInferenceAdapter(model, apiKey, options.provider);
+  return new PublicNvidiaInferenceAdapter({
+    apiKey,
+    artifacts: options.artifacts,
+    model,
+    providerClient: options.provider,
+  });
 }
 
 export { DEFAULT_HOSTED_INFERENCE_MODEL as DEFAULT_INTERNAL_NVIDIA_MODEL };
