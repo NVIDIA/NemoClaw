@@ -354,7 +354,9 @@ describe("fixture redaction entry point", () => {
       const stdoutSuffix = `${secret}-stdout-tail`;
       const stdoutTail = `${"t".repeat(84 - stdoutSuffix.length)}${stdoutSuffix}`;
       const stdoutPayload = `${"o".repeat(64)}${boundarySecret}${stdoutTail}`;
-      const stderrPayload = `stderr-head-${"e".repeat(256)}-${secret}-stderr-tail`;
+      const stderrSuffix = `${secret}-stderr-tail`;
+      const stderrTail = `${"t".repeat(94 - stderrSuffix.length)}${stderrSuffix}`;
+      const stderrPayload = `${"e".repeat(64)}🦀${stderrTail}`;
 
       const result = await probe.run(
         trustedShellCommand({
@@ -375,7 +377,7 @@ describe("fixture redaction entry point", () => {
       expect(result.stdout).not.toContain(boundarySecret.slice(-12));
       expect(result.stderr).toContain("[shell-probe omitted ");
       expect(result.stderr).toContain("[REDACTED]-stderr-tail");
-      expect(result.stderr).not.toContain("stderr-head");
+      expect(result.stderr).not.toContain("�");
       expect(result.stdout).not.toContain(secret);
       expect(result.stderr).not.toContain(secret);
       await expect(fs.readFile(result.artifacts.stdout, "utf8")).resolves.toBe(result.stdout);

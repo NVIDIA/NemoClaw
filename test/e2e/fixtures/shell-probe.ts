@@ -120,8 +120,12 @@ function createTextCapture(limitBytes: number | undefined): TextCapture {
         return;
       }
       const overflow = combined.length - limitBytes;
-      droppedBytes += overflow;
-      tail = Buffer.from(combined.subarray(overflow));
+      let retainedStart = overflow;
+      while (retainedStart < combined.length && (combined[retainedStart]! & 0xc0) === 0x80) {
+        retainedStart += 1;
+      }
+      droppedBytes += retainedStart;
+      tail = Buffer.from(combined.subarray(retainedStart));
     },
     value() {
       return { droppedBytes, limitBytes, text: tail.toString("utf8") };
@@ -181,7 +185,7 @@ export class ShellProbe {
         droppedBytes > 0 ? redactTruncatedSecretPrefix(text, enforcedValues) : text;
       const redacted = redactProbeText(boundarySafeText);
       return droppedBytes > 0
-        ? `[shell-probe omitted ${droppedBytes} earlier bytes; showing the last ${limitBytes} bytes]\n${redacted}`
+        ? `[shell-probe omitted ${droppedBytes} earlier bytes; showing up to the last ${limitBytes} bytes]\n${redacted}`
         : redacted;
     };
     const redactedCommand = [command, ...args].map(redactProbeText);
