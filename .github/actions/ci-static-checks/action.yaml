@@ -58,10 +58,6 @@ runs:
       shell: bash
       run: npm run test-size:check
 
-    - name: Run skill frontmatter tests
-      shell: bash
-      run: npx vitest run test/skills-frontmatter.test.ts
-
     - name: Verify platform matrix is in sync
       shell: bash
       run: python3 scripts/generate-platform-docs.py --check

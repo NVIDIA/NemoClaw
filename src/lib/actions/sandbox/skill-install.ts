@@ -80,6 +80,15 @@ export function printPluginInstallHint(): void {
   );
 }
 
+function printSkillUploadFailureHint(sandboxName: string): void {
+  console.error(
+    "  Skill uploads write to the agent skills directory, which is locked while shields are up.",
+  );
+  console.error(
+    `  If shields are up, run \`${CLI_NAME} ${sandboxName} shields down\` before installing skills.`,
+  );
+}
+
 /**
  * Remove an installed skill from a live sandbox by name.
  */
@@ -308,6 +317,7 @@ export async function installSandboxSkill(
     const { uploaded, failed } = skillInstall.uploadDirectory(ctx, skillDir, paths.uploadDir);
     if (failed.length > 0) {
       console.error(`  Failed to upload ${failed.length} file(s): ${failed.join(", ")}`);
+      printSkillUploadFailureHint(sandboxName);
       process.exit(1);
     }
     console.log(`  ${G}✓${R} Uploaded ${uploaded} file(s) to sandbox`);

@@ -348,6 +348,11 @@
     },
     {
       "file": "test/pr-workflow-contract.test.ts",
+      "test": "folds hermetic E2E support and Ollama proxy coverage into existing Vitest lanes",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-workflow-contract.test.ts",
       "test": "keeps the installer verifier inside the trusted composite action",
       "category": "security"
     },

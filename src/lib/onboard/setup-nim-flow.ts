@@ -153,7 +153,10 @@ export interface SetupNimFlowDeps {
       beforeInstall?: (modelId: string) => void;
     },
   ): Promise<{ ok: boolean }>;
-  handleVllmSelection(state: SetupNimSelectionState): Promise<SetupNimSelectionResult>;
+  handleVllmSelection(
+    state: SetupNimSelectionState,
+    options?: { managedInstall?: boolean; sparkHost?: boolean },
+  ): Promise<SetupNimSelectionResult>;
   handleRoutedSelection(state: SetupNimSelectionState): Promise<SetupNimSelectionResult>;
   coerceAgentInferenceApi(
     agent: AgentDefinition | null,
@@ -554,6 +557,16 @@ export function createSetupNim(
             if (deps.isNonInteractive()) deps.exitProcess(1);
             continue selectionLoop;
           }
+          if (vllmRunning) {
+            const message =
+              `vLLM is already running on localhost:${String(deps.vllmPort)}. ` +
+              "Select Local vLLM, or stop the existing server before selecting the managed install path.";
+            deps.error(`  ${message}`);
+            if (deps.isNonInteractive()) {
+              deps.abortNonInteractive(message);
+            }
+            continue selectionLoop;
+          }
           const vllmState = createSelectionState();
           preparedVllmState = vllmState;
           const result = await deps.installVllm(vllmProfile, {
@@ -582,7 +595,10 @@ export function createSetupNim(
         if (selected.key === "vllm") {
           const state = preparedVllmState ?? createSelectionState();
           state.model = preparedVllmState?.model ?? requestedModel ?? recoveredModel;
-          const result = await deps.handleVllmSelection(state);
+          const result = await deps.handleVllmSelection(state, {
+            managedInstall: preparedVllmState !== null,
+            sparkHost: gpu?.spark === true,
+          });
           ({
             model,
             provider,
