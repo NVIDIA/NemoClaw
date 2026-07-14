@@ -100,10 +100,16 @@ export function preparePolicyPresetResumeSelection(
     supportOptions,
     customPolicyPresetNames,
   );
+  // Defaults of the recorded/active tier (e.g. `brave` on Balanced) are tier
+  // egress presets, not stale web-search leftovers — pass the recorded tier +
+  // agent so the shared predicate exempts them via provenance and re-onboard
+  // reuse preserves them. (#6844)
   const isStaleBuiltinWebSearch = (name: string) =>
     isStaleBuiltinWebSearchPolicyPreset(name, {
       webSearchConfig: options.webSearchConfig,
       customPresetNames: customPolicyPresetNames,
+      tierName: options.tierName,
+      agentName: options.agent,
     });
   const isInactiveObservability = (name: string) =>
     isInactiveObservabilityPolicyPreset(name, {
