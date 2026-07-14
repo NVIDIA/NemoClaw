@@ -20,7 +20,7 @@ BLACK_WALL is a pre-action risk gate. Before every tool the agent tries to call,
 | Verdict | What the plugin does |
 |---|---|
 | `GO` (low risk) | The tool runs normally. |
-| `CAUTION` (medium risk) | In `enforce` mode, the user gets a one-time approval prompt with the named red flags. In `observe` mode, the call is logged and proceeds. |
+| `CAUTION` (medium risk) | In `enforce` mode, the call is **blocked** by default (this runtime has no interactive approval surface), and the block reason carries the named red flags so a human can re-decide out of band. Set `cautionAction: "allow"` to let CAUTION calls proceed. In `observe` mode, the call is logged and proceeds. |
 | `STOP` (high risk + irreversible) | In `enforce` mode, the tool is **blocked**. The plugin returns `{ block: true, blockReason }`. The agent sees a `failureResult` with the reason. |
 
 Each verdict comes with a cryptographic **Decision Receipt** (Ed25519-signed) that can be verified offline against the published public key at <https://blackwalltier.com/.well-known/blackwall-signing-keys.json>. See the `/blackwall-verify` skill for offline verification.
@@ -42,13 +42,13 @@ The full catalog: <https://blackwalltier.com/failure-modes>
 ## What to tell the user
 
 - If a tool was BLOCKED: surface the block reason. Do not retry the same call without changing the parameters or escalating to the user.
-- If a CAUTION approval prompt fired: the user explicitly decides. Do not re-issue the same call after a deny.
+- If a CAUTION call was blocked: surface the reason and the named red flags; the human decides whether to proceed (e.g. by re-running with `cautionAction: "allow"` or adjusting the action). Do not silently retry the same call.
 - If observe mode is on and you see a high risk_score, mention it: "This was scored as risky but allowed because the guardrail is in observe mode."
 
 ## Modes
 
 - `observe` (default) — every call is scored and logged; nothing is blocked. Drop-in safe.
-- `enforce` — STOP blocks; CAUTION prompts the user for approval.
+- `enforce` — STOP blocks; CAUTION blocks by default (with the red flags in the reason), or proceeds if `cautionAction: "allow"`.
 
 The current mode lives in env var `BLACKWALL_MODE`.
 

@@ -66,7 +66,10 @@ export default defineConfig({
       {
         test: {
           name: "plugin",
-          include: ["nemoclaw/src/**/*.test.ts"],
+          include: [
+            "nemoclaw/src/**/*.test.ts",
+            "nemoclaw-blueprint/openclaw-plugins/**/*.test.ts",
+          ],
         },
       },
       {

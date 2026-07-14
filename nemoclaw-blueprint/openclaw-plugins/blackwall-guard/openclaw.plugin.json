@@ -1,7 +1,7 @@
 {
   "id": "nemoclaw-blackwall-guard",
   "name": "BLACK_WALL Preflight Guardrail",
-  "description": "Pre-action risk check for OpenClaw tool calls. Hooks before_tool_call to call BLACK_WALL forecast(); in enforce mode, blocks STOP verdicts and surfaces CAUTION as approval prompts. Receipts are Ed25519-signed and verifiable offline.",
+  "description": "Pre-action risk check for OpenClaw tool calls. Hooks before_tool_call to call BLACK_WALL forecast(); in enforce mode, blocks STOP verdicts and (by default) blocks CAUTION verdicts with the named red flags, since this runtime has no interactive approval surface. Receipts are Ed25519-signed and verifiable offline.",
   "version": "0.1.6",
   "enabledByDefault": false,
   "activation": {
@@ -29,7 +29,7 @@
       "cautionAction": {
         "type": "string",
         "enum": ["approve", "block", "allow"],
-        "description": "What a CAUTION verdict does in enforce mode: approve = surface OpenClaw's approval prompt; block = veto; allow = proceed. Defaults to approve."
+        "description": "What a CAUTION verdict does in enforce mode. This runtime has no interactive approval surface, so: approve = block and surface the verdict + named red flags (so a human can re-decide out of band); block = veto with a generic reason; allow = proceed. Defaults to approve (block-with-detail)."
       },
       "failClosed": {
         "type": "boolean",

@@ -6,9 +6,9 @@
  *
  * Registers `before_tool_call` + `after_tool_call` hooks with OpenClaw and calls
  * the BLACK_WALL forecast() API to score every tool call BEFORE it executes. In
- * enforce mode it blocks STOP verdicts and surfaces CAUTION as an approval
- * prompt; in observe mode it only logs. Every verdict carries an Ed25519-signed
- * receipt that can be verified offline.
+ * enforce mode it blocks STOP verdicts and (by default) blocks CAUTION verdicts —
+ * this runtime has no interactive approval surface; in observe mode it only logs.
+ * Every verdict carries an Ed25519-signed receipt that can be verified offline.
  *
  * Self-contained by design: a NemoClaw blueprint plugin is dropped in as a single
  * directory with no node_modules, so the proxy-aware HTTPS client (a raw CONNECT
@@ -22,7 +22,6 @@ import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import net from "node:net";
 import tls from "node:tls";
 import { openSync, readSync, closeSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 
 // ---------------------------------------------------------------------------
@@ -164,6 +163,31 @@ function getProxyForUrl(targetUrl: string, env: NodeJS.ProcessEnv = process.env)
   return proxy && proxy.trim() ? proxy.trim() : null;
 }
 
+// Refuse to send the API key over plaintext HTTP to a network peer. HTTPS is
+// required for any non-loopback host; loopback (localhost, 127.0.0.0/8, ::1) may
+// use http since no off-host observer sees it. Throws BEFORE any request or
+// Authorization header is emitted; returns the base URL unchanged when allowed.
+export function requireSecureBaseUrl(baseUrl: string): string {
+  let u: URL;
+  try {
+    u = new URL(baseUrl);
+  } catch {
+    throw new Error(
+      `BLACK_WALL: invalid base URL ${JSON.stringify(baseUrl)} -- expected an https:// URL.`,
+    );
+  }
+  if (u.protocol === "https:") return baseUrl;
+  const host = u.hostname.replace(/^\[|\]$/g, ""); // strip IPv6 brackets
+  const isLoopback =
+    host === "localhost" || host === "::1" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
+  if (u.protocol === "http:" && isLoopback) return baseUrl;
+  throw new Error(
+    `BLACK_WALL: refusing to send the API key over ${u.protocol}// to "${host}" -- the base ` +
+      `URL MUST be https:// (plaintext http is allowed only for loopback). ` +
+      `Set BLACKWALL_BASE_URL to an https:// endpoint.`,
+  );
+}
+
 // Strip CR/LF so a hostile header/key value can't inject extra request headers.
 const clean = (v: unknown): string => String(v).replace(/[\r\n]/g, "");
 
@@ -183,7 +207,10 @@ function dechunk(buf: Buffer): Buffer {
 }
 
 /** Build a fetch-like function that tunnels HTTPS requests through an HTTP CONNECT proxy. */
-function proxyFetch(proxyUrl: string, opts: { tls?: Record<string, unknown> } = {}): FetchLike {
+export function proxyFetch(
+  proxyUrl: string,
+  opts: { tls?: Record<string, unknown> } = {},
+): FetchLike {
   const proxy = new URL(proxyUrl);
   return function fetchViaProxy(
     targetUrl: string,
@@ -253,11 +280,25 @@ function proxyFetch(proxyUrl: string, opts: { tls?: Record<string, unknown> } = 
         req += "Connection: keep-alive\r\n\r\n";
         proxySocket!.write(req);
 
+        // The proxy is untrusted (§ proxyFetch): bound the CONNECT-response header it
+        // can accumulate so it can't grow process memory unbounded by withholding the
+        // "\r\n\r\n" terminator or streaming an enormous header.
+        const MAX_CONNECT_HEADER_BYTES = 64 * 1024;
         let buf = Buffer.alloc(0);
         const onConnectData = (chunk: Buffer) => {
           buf = Buffer.concat([buf, chunk]);
           const idx = buf.indexOf("\r\n\r\n");
-          if (idx === -1) return;
+          if (idx === -1) {
+            if (buf.length > MAX_CONNECT_HEADER_BYTES) {
+              proxySocket!.removeListener("data", onConnectData);
+              fail(
+                new Error(
+                  `proxy CONNECT response header exceeded ${MAX_CONNECT_HEADER_BYTES} bytes without terminator`,
+                ),
+              );
+            }
+            return;
+          }
           proxySocket!.removeListener("data", onConnectData);
           const statusLine = buf.slice(0, buf.indexOf("\r\n")).toString("latin1");
           const m = /^HTTP\/\d\.\d (\d{3})/.exec(statusLine);
@@ -377,9 +418,8 @@ async function forecast(
         "Free key at https://blackwalltier.com/dashboard/keys",
     );
   }
-  const baseUrl = (opts.baseUrl ?? process.env.BLACKWALL_BASE_URL ?? DEFAULT_BASE_URL).replace(
-    /\/$/,
-    "",
+  const baseUrl = requireSecureBaseUrl(
+    (opts.baseUrl ?? process.env.BLACKWALL_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/$/, ""),
   );
   const url = `${baseUrl}/api/v1/forecast`;
   const proxy = opts.fetch ? null : getProxyForUrl(url);
@@ -460,9 +500,8 @@ async function observe(
       "BLACK_WALL observe: missing apiKey (set BLACKWALL_API_KEY or pass opts.apiKey).",
     );
   }
-  const baseUrl = (opts.baseUrl ?? process.env.BLACKWALL_BASE_URL ?? DEFAULT_BASE_URL).replace(
-    /\/$/,
-    "",
+  const baseUrl = requireSecureBaseUrl(
+    (opts.baseUrl ?? process.env.BLACKWALL_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/$/, ""),
   );
   const url = `${baseUrl}/api/v1/forecast/${encodeURIComponent(forecastId)}/outcome`;
   const proxy = opts.fetch ? null : getProxyForUrl(url);
@@ -545,21 +584,10 @@ function readKeyFileBounded(path: string): string | null {
   }
 }
 
-// Env-independent fallback derived from the plugin's own location, so it resolves
-// even when the agent runtime scrubs the process env.
-function pluginRelativeKeyPath(): string | null {
-  try {
-    return fileURLToPath(new URL("../../blackwall.key", import.meta.url));
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Resolve the API key from a file. Tries, in order: `$BLACKWALL_API_KEY_FILE`,
- * `$OPENCLAW_HOME/.openclaw/blackwall.key`, `$HOME/.openclaw/blackwall.key`, and a
- * path derived from the plugin's own location. Returns the first readable,
- * non-empty, within-cap value, else undefined. Never throws.
+ * `$OPENCLAW_HOME/.openclaw/blackwall.key`, then `$HOME/.openclaw/blackwall.key`.
+ * Returns the first readable, non-empty, within-cap value, else undefined. Never throws.
  */
 function readApiKeyFile(): string | undefined {
   const home = process.env.OPENCLAW_HOME;
@@ -568,7 +596,6 @@ function readApiKeyFile(): string | undefined {
     process.env.BLACKWALL_API_KEY_FILE,
     home && join(home, ".openclaw", "blackwall.key"),
     userHome && join(userHome, ".openclaw", "blackwall.key"),
-    pluginRelativeKeyPath(),
   ];
   for (const path of candidates) {
     if (!path) continue;
@@ -585,7 +612,7 @@ function readApiKeyFile(): string | undefined {
 const DEFAULT_MAX_INPUT_BYTES = 8 * 1024;
 const DEFAULT_FORECAST_TIMEOUT_MS = 15000;
 
-function resolveConfig(config: BlackwallConfig = {}): ResolvedConfig {
+export function resolveConfig(config: BlackwallConfig = {}): ResolvedConfig {
   const mode = (config.mode ?? process.env.BLACKWALL_MODE ?? "observe").toLowerCase();
   const cautionAction = (config.cautionAction ?? "approve").toLowerCase();
   return {
@@ -748,7 +775,7 @@ function forgetForecast(k: string | null): void {
  * Handle a `before_tool_call` event. Returns the shape NemoClaw's hook contract expects:
  *   { block?, blockReason?, params? } | undefined
  */
-async function handleBeforeToolCall(
+export async function handleBeforeToolCall(
   event: any,
   cfg: ResolvedConfig,
   logger: any = console,
@@ -943,8 +970,9 @@ export function createBlackwallPlugin(config: BlackwallConfig = {}) {
     name: "BLACK_WALL Preflight Guardrail",
     description:
       "Pre-action risk check for OpenClaw tool calls. Hooks before_tool_call to call " +
-      "BLACK_WALL forecast(); in enforce mode, blocks STOP verdicts and surfaces CAUTION " +
-      "as approval prompts. Receipts are Ed25519-signed and verifiable offline.",
+      "BLACK_WALL forecast(); in enforce mode, blocks STOP verdicts and (by default) blocks " +
+      "CAUTION verdicts with the named red flags, since this runtime has no interactive " +
+      "approval surface. Receipts are Ed25519-signed and verifiable offline.",
     register(api: any) {
       const cfg = resolveConfig(config);
       const logger = api?.logger ?? console;
