@@ -17,16 +17,35 @@
  * host is left with a persistent bind conflict and no authoritative owner.
  * Externally supervised mode therefore never permits a standalone fallback: it
  * attaches and validates, or it fails.
+ *
+ * Source boundary: OpenShell exposes no gateway capability-discovery endpoint,
+ * so `requiredCapabilities` is enforced against what this NemoClaw build
+ * implements rather than interrogated from the running gateway. That still
+ * fails closed when a newer platform profile declares a capability an older
+ * NemoClaw cannot honor, which is the case this contract must not let through.
+ * Gateway-side discovery can replace this check when OpenShell reports it.
  */
 
 import type { JsonObject } from "../core/json-types";
 import { redactUrl } from "../security/redact";
-import type {
-  GatewayCapability,
-  GatewayManagementDeclaration,
-  GatewayManagementMode,
-  GatewaySupervisorDeclaration,
+import {
+  type GatewayCapability,
+  type GatewayManagementDeclaration,
+  type GatewayManagementMode,
+  type GatewaySupervisorDeclaration,
+  SUPPORTED_GATEWAY_CAPABILITIES,
 } from "./gateway-management";
+
+/**
+ * Port named by a declared endpoint, defaulting to the scheme's port when the
+ * URL omits one. Returns null when no endpoint was declared.
+ */
+function declaredEndpointPort(endpoint: string | null): number | null {
+  if (!endpoint) return null;
+  const url = new URL(endpoint);
+  if (url.port) return Number(url.port);
+  return url.protocol === "https:" ? 443 : 80;
+}
 
 /**
  * How the owner was established. `declared` means a profile or operator
@@ -62,7 +81,9 @@ export type GatewayOwnershipFailureCode =
   | "supervisor_inactive"
   | "identity_mismatch"
   | "unknown_listener"
-  | "multiple_owners";
+  | "multiple_owners"
+  | "endpoint_port_mismatch"
+  | "capability_unsupported";
 
 export class GatewayOwnershipError extends Error {
   readonly code: GatewayOwnershipFailureCode;
@@ -154,6 +175,13 @@ export function assertGatewayEffectAllowed(
 
 /** Observations about the running gateway, gathered before any effect. */
 export interface GatewayAttachmentProbe {
+  /**
+   * The port this NemoClaw process is configured to operate the gateway on.
+   * Every downstream consumer — sandbox bridge, registry, dashboard forwards —
+   * is bound to it, so a declaration naming a different port is a
+   * misconfiguration rather than a second gateway to probe.
+   */
+  gatewayPort: number;
   /** The declared endpoint answered a health check. */
   httpReady: boolean;
   /** Anything at all holds the gateway port. */
@@ -192,6 +220,36 @@ export function evaluateGatewayAttachment(
   }
 
   const supervisorName = owner.supervisor?.serviceName ?? "the declared supervisor";
+
+  // Configuration errors are reported before any runtime observation: probing
+  // is only meaningful once we know the declaration describes the gateway this
+  // process actually operates on.
+  const declaredPort = declaredEndpointPort(owner.endpoint);
+  if (declaredPort !== null && declaredPort !== probe.gatewayPort) {
+    return {
+      ok: false,
+      code: "endpoint_port_mismatch",
+      message:
+        `The declared gateway endpoint uses port ${declaredPort}, but this NemoClaw process operates ` +
+        `the gateway on port ${probe.gatewayPort}. Attaching would validate one gateway and then use ` +
+        `another. Point the declaration at port ${probe.gatewayPort}, or re-run with ` +
+        `NEMOCLAW_GATEWAY_PORT=${declaredPort}.`,
+    };
+  }
+
+  const unsupported = owner.requiredCapabilities.filter(
+    (capability) => !SUPPORTED_GATEWAY_CAPABILITIES.includes(capability),
+  );
+  if (unsupported.length > 0) {
+    return {
+      ok: false,
+      code: "capability_unsupported",
+      message:
+        `The declaration requires gateway capability ${unsupported.join(", ")}, which this NemoClaw ` +
+        `build does not provide. Onboarding stops before any effect rather than attaching to a gateway ` +
+        `it cannot drive as declared.`,
+    };
+  }
 
   if (probe.listenerPids.length > 1) {
     return {

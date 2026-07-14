@@ -1760,6 +1760,9 @@ async function startGatewayWithOptions(
     gpuPassthrough = false,
   }: { exitOnFailure?: boolean; gpuPassthrough?: boolean } = {},
 ) {
+  // #6576: shared start entrypoint for the Docker-driver and legacy paths, so
+  // neither can launch a gateway an external supervisor owns.
+  assertGatewayStartAllowed(exitOnFailure);
   step(2, 8, "Starting OpenShell gateway");
 
   if (isLinuxDockerDriverGatewayEnabled()) {
@@ -1962,11 +1965,6 @@ async function startDockerDriverGateway({
   exitOnFailure?: boolean;
   skipSandboxBridgeReachability?: boolean;
 } = {}): Promise<void> {
-  // #6576: the only path that starts a gateway process, reachable from
-  // onboarding, rebuild, and recovery. An externally supervised gateway must
-  // fail here rather than reach the standalone cutover below, which would reap
-  // the live listener that the supervisor immediately restarts.
-  assertGatewayStartAllowed(exitOnFailure);
   const gatewayBin = resolveOpenShellGatewayBinary();
   const openshellVersionOutput = runCaptureOpenshell(["--version"], { ignoreError: true });
   const gatewayEnv = getDockerDriverGatewayEnv(openshellVersionOutput);
@@ -2163,6 +2161,7 @@ async function startGateway(
 
 async function startGatewayForRecovery(options = {}): Promise<void> {
   return require("./onboard/gateway-recovery").startGatewayForRecovery(options, {
+    assertGatewayStartAllowed,
     getGatewayStartEnv,
     runCaptureOpenshell,
     runOpenshell,
@@ -2187,6 +2186,7 @@ const { assertGatewayStartAllowed, getGatewayStartEnv, machineGatewayOwnerDeps }
   });
 
 async function recoverGatewayRuntime() {
+  assertGatewayStartAllowed(false);
   if (isLinuxDockerDriverGatewayEnabled()) {
     try {
       await startDockerDriverGateway({ exitOnFailure: false });

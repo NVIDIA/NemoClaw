@@ -18,6 +18,7 @@ import { GATEWAY_PORT } from "../core/ports";
 import { getGatewayStartNetworkEnv } from "./docker-driver-gateway-env";
 import type { DockerDriverGatewayPortListenerScan } from "./docker-driver-gateway-port-listener";
 import { hasOpenShellGatewayUserService } from "./docker-driver-gateway-service";
+import { isGatewayHttpReady, waitForGatewayHttpReady } from "./gateway-http-readiness";
 import { loadGatewayManagementDeclaration } from "./gateway-management";
 import {
   assertGatewayEffectAllowed,
@@ -101,6 +102,19 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
   }
 
   /**
+   * Probe the declared endpoint rather than the process default, so a
+   * declaration is never assessed against a different local listener. A
+   * declared endpoint on a port this process does not operate is rejected by
+   * `evaluateGatewayAttachment`, which sees both values.
+   */
+  function waitForDeclaredGatewayHttpReady(owner: GatewayOwner): Promise<boolean> {
+    if (!owner.endpoint) return deps.waitForGatewayHttpReady();
+    return waitForGatewayHttpReady({
+      probe: () => isGatewayHttpReady(undefined, `${owner.endpoint}/`),
+    });
+  }
+
+  /**
    * Gather the evidence needed to decide whether NemoClaw may attach to a
    * gateway it does not own. Read-only: this runs before any effect.
    */
@@ -111,7 +125,8 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     });
     const [firstPid] = scan.pids;
     return {
-      httpReady: await deps.waitForGatewayHttpReady(),
+      gatewayPort: GATEWAY_PORT,
+      httpReady: await waitForDeclaredGatewayHttpReady(owner),
       // `ok` means the port is free; anything else means something holds it.
       portOccupied: !portCheck.ok,
       listenerPids: scan.pids,

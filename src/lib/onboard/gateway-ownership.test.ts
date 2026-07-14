@@ -34,6 +34,7 @@ const externalOwner = resolveGatewayOwner({
 
 function probe(overrides: Partial<GatewayAttachmentProbe> = {}): GatewayAttachmentProbe {
   return {
+    gatewayPort: 8080,
     httpReady: true,
     portOccupied: true,
     listenerPids: [4242],
@@ -103,6 +104,25 @@ describe("externally supervised gateway attachment", () => {
     expect(evaluateGatewayAttachment(externalOwner, probe())).toEqual({
       ok: true,
       owner: externalOwner,
+    });
+  });
+
+  it("rejects a declaration whose endpoint port is not the one this process operates (#6576)", () => {
+    const result = evaluateGatewayAttachment(externalOwner, probe({ gatewayPort: 31818 }));
+
+    expect(result).toMatchObject({ ok: false, code: "endpoint_port_mismatch" });
+    expect(result.ok === false && result.message).toMatch(/port 8080.*port 31818/s);
+  });
+
+  it("rejects a required capability this build does not provide (#6576)", () => {
+    const owner = {
+      ...externalOwner,
+      requiredCapabilities: ["gateway.teleport"],
+    } as unknown as typeof externalOwner;
+
+    expect(evaluateGatewayAttachment(owner, probe())).toMatchObject({
+      ok: false,
+      code: "capability_unsupported",
     });
   });
 

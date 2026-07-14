@@ -122,6 +122,7 @@ describe("initial onboard flow phases", () => {
         resolveGatewayOwner: () =>
           resolveGatewayOwner({ declaration: null, hasPackagedService: false }),
         probeGatewayAttachment: async () => ({
+          gatewayPort: 31818,
           httpReady: true,
           portOccupied: true,
           listenerPids: [4242],
@@ -354,6 +355,7 @@ describe("initial onboard flow phases", () => {
         resolveGatewayOwner: () =>
           resolveGatewayOwner({ declaration: null, hasPackagedService: false }),
         probeGatewayAttachment: async () => ({
+          gatewayPort: 31818,
           httpReady: true,
           portOccupied: true,
           listenerPids: [4242],

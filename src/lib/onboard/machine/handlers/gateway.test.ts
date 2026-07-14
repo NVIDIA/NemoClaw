@@ -66,6 +66,7 @@ function createDeps(overrides: Partial<GatewayStateOptions<Gpu>["deps"]> = {}) {
     ),
     probeAttachment: vi.fn(
       async (): Promise<GatewayAttachmentProbe> => ({
+        gatewayPort: 8080,
         httpReady: true,
         portOccupied: true,
         listenerPids: [4242],
@@ -453,6 +454,7 @@ describe("externally supervised gateway lifecycle authority", () => {
     const { calls, deps } = createDeps();
     calls.resolveOwner.mockReturnValue(EXTERNAL_OWNER);
     calls.probeAttachment.mockResolvedValue({
+      gatewayPort: 8080,
       httpReady: true,
       portOccupied: true,
       listenerPids: [4242],

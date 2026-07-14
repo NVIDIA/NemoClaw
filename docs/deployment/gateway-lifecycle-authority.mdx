@@ -51,10 +51,14 @@ export NEMOCLAW_GATEWAY_MANAGEMENT=/etc/nemoclaw/gateway-management.json
 |---|---|
 | `version` | Contract version. Only `1` is supported; an unrecognized version fails rather than being ignored. |
 | `mode` | `nemoclaw-managed` or `externally-supervised`. |
-| `endpoint` | Bare origin the gateway listens on. It must not embed credentials, a query string, or a path. |
+| `endpoint` | Bare origin the gateway listens on. It must not embed credentials, a query string, or a path. Its port must be the port this NemoClaw process operates the gateway on — set `NEMOCLAW_GATEWAY_PORT` to match, or onboarding fails rather than validate one gateway and then use another. |
 | `stateDir` | Absolute path of the gateway state directory. |
 | `supervisor` | Required for `externally-supervised`, and rejected for `nemoclaw-managed`. `kind` is `systemd-system`, `systemd-user`, or `external`. |
-| `requiredCapabilities` | Capabilities the gateway must provide: `gateway.health`, `sandbox.create`, `sandbox.exec`, `gpu.passthrough`. Requesting one this build does not implement fails before onboarding runs. |
+| `requiredCapabilities` | Capabilities onboarding needs: `gateway.health`, `sandbox.create`, `sandbox.exec`, `gpu.passthrough`. Requesting one this NemoClaw build does not implement fails before any effect. |
+
+<Note>
+OpenShell exposes no gateway capability-discovery endpoint, so `requiredCapabilities` is checked against what this NemoClaw build implements rather than interrogated from the running gateway. That still fails closed when a newer platform profile declares a capability an older NemoClaw cannot honor.
+</Note>
 
 <Note>
 The declaration carries no credentials, and unknown fields are rejected rather than ignored. Ownership metadata is persisted and emitted in diagnostics and machine events, so nothing secret may travel through it.
@@ -64,6 +68,8 @@ The declaration carries no credentials, and unknown fields are rejected rather t
 
 Before onboarding touches any provider, policy, sandbox, or registry state, NemoClaw checks that the declared owner still holds the gateway. Onboarding fails — rather than starting a competing gateway — when:
 
+- the declared endpoint names a port this process does not operate the gateway on;
+- the declaration requires a capability this NemoClaw build does not implement;
 - the declared supervisor is not active;
 - nothing is listening on the gateway endpoint;
 - an unrecognized process holds the gateway port;
@@ -72,7 +78,7 @@ Before onboarding touches any provider, policy, sandbox, or registry state, Nemo
 - the listener set cannot be enumerated, so a second gateway cannot be ruled out;
 - the supervised gateway is running but does not answer a health check.
 
-These checks run identically on a fresh run and on resume: a recorded `complete` gateway step is not evidence that the declared owner still holds the port. The same guard covers rebuild and recovery, which are the other paths that can start a gateway.
+These checks run identically on a fresh run and on resume: a recorded `complete` gateway step is not evidence that the declared owner still holds the port. The same guard sits on the shared gateway start entrypoint and on every recovery branch, so rebuild and recovery cannot start a gateway either — on Docker-driver and non-Docker-driver hosts alike.
 
 ## Fix a failure
 
