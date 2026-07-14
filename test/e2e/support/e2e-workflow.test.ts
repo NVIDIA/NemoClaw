@@ -44,8 +44,12 @@ describe("e2e workflow boundary", () => {
     const generate = workflow.jobs["generate-matrix"]?.steps?.find(
       (step) => step.name === "Generate E2E target matrix",
     );
-    if (!generate?.run) throw new Error("workflow missing Generate E2E target matrix script");
-    generate.run = generate.run.replace(
+    const generateRun =
+      generate?.run ??
+      (() => {
+        throw new Error("workflow missing Generate E2E target matrix script");
+      })();
+    generate!.run = generateRun.replace(
       "Invalid inference_mode: ${INFERENCE_MODE}",
       "Unsupported inference mode",
     );
