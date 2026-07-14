@@ -1,0 +1,56 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Set Up Microsoft Teams"
+sidebar-title: "Set Up Microsoft Teams"
+description: "Configure experimental Microsoft Teams Bot Framework credentials, allowlists, mention mode, and webhook forwarding."
+description-agent: "Explains the experimental Microsoft Teams Bot Framework webhook path, app credentials, user access, mention mode, and port isolation. Use before enabling Teams."
+keywords: ["nemoclaw teams", "microsoft teams bot framework", "teams webhook"]
+content:
+  type: "how_to"
+---
+import { AgentOnly } from "../_components/AgentGuide";
+
+Microsoft Teams support is experimental and uses a public Bot Framework webhook that forwards to the sandbox.
+
+## Configure the Webhook
+
+Create or configure a Teams app whose messaging endpoint is a public HTTPS URL ending in `/api/messages`.
+Point that URL at the host port NemoClaw forwards for the sandbox.
+
+The default local webhook port is `3978`.
+Set `MSTEAMS_PORT` or `TEAMS_PORT` before onboarding or `channels add teams` when you need another port.
+
+No two active Teams sandboxes can share the same local webhook port.
+
+## Configure Credentials and Access
+
+Set `MSTEAMS_APP_ID`, `MSTEAMS_APP_PASSWORD`, and `MSTEAMS_TENANT_ID`.
+NemoClaw also accepts `TEAMS_CLIENT_ID`, `TEAMS_CLIENT_SECRET`, and `TEAMS_TENANT_ID` as aliases.
+The client secret is stored as the `<sandbox>-teams-bridge` OpenShell provider and reaches the sandbox as an OpenShell placeholder instead of a raw value baked into the image.
+
+Use `TEAMS_ALLOWED_USERS` or `MSTEAMS_ALLOWED_USERS` to list comma-separated Microsoft Entra ID object IDs that may direct-message the bot.
+<AgentOnly variant="openclaw">
+This direct-message allowlist does not restrict OpenClaw group or channel senders.
+OpenClaw group and channel messages stay open by default, subject to mention mode.
+
+Operators who need group or channel sender allowlisting can configure `channels.msteams.groupPolicy="allowlist"` and `channels.msteams.groupAllowFrom`.
+If `groupPolicy="allowlist"` is set without an effective group allowlist, OpenClaw denies group messages instead of treating the group as open.
+
+`TEAMS_REQUIRE_MENTION` defaults to `1` for group and channel messages, so the bot replies only when mentioned.
+Direct messages are unaffected by mention mode.
+
+NemoClaw configures `channels.msteams.streaming.mode: "off"` so Teams uses final-message delivery while the upstream streaming path can duplicate or collapse preview and final messages.
+</AgentOnly>
+
+## Enable Microsoft Teams
+
+```bash
+export MSTEAMS_APP_ID="<your-teams-app-id>"
+export MSTEAMS_APP_PASSWORD="<your-teams-client-secret>"
+export MSTEAMS_TENANT_ID="<your-teams-tenant-id>"
+export TEAMS_ALLOWED_USERS="<your-entra-object-id>"
+export MSTEAMS_PORT=3978
+```
+
+Continue with [Enable Channels During Onboarding](enable-channels-during-onboarding) or [Add Channels After Onboarding](add-channels-after-onboarding).
