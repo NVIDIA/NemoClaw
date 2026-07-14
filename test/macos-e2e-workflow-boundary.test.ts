@@ -69,9 +69,7 @@ describe("macOS E2E workflow boundary", () => {
     const lifecycle = stepNamed("Run gateway lifecycle regressions");
 
     expect(jobNamed("macos-e2e")["runs-on"]).toBe("macos-26");
-    expect(Object.values(workflow.jobs ?? {}).map((job) => job["runs-on"])).not.toContain(
-      "macos-15-intel",
-    );
+    expect(JSON.stringify(workflow.jobs ?? {})).not.toContain("macos-15-intel");
     expect(lifecycle.run).toContain("test/tunnel-gateway-port-release-runtime.test.ts");
     expect(lifecycle.run).toContain("test/onboard-gateway-prelaunch-cutover.test.ts");
     expect(lifecycle.run).toContain("test/onboard-gateway-legacy-identity-upgrade-runtime.test.ts");
@@ -85,8 +83,15 @@ describe("macOS E2E workflow boundary", () => {
     );
 
     expect(upload?.uses).toBe("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a");
-    expect(String(upload?.with?.path)).toContain("/tmp/nemoclaw-e2e-*.log");
-    expect(String(upload?.with?.path)).toContain("${{ github.workspace }}/e2e-artifacts/live");
+    const paths = String(upload?.with?.path)
+      .split(/\r?\n/)
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    expect(paths).toHaveLength(2);
+    expect(paths).toEqual([
+      "/tmp/nemoclaw-e2e-*.log",
+      "${{ github.workspace }}/e2e-artifacts/live",
+    ]);
     expect(upload?.if).toBe("failure() && github.event_name == 'pull_request'");
   });
 });
