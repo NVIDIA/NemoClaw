@@ -13,8 +13,9 @@
 //   - Base environment entries used by Hermes inside OpenShell
 //   - Agent defaults (terminal, memory, skills, display)
 
+import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { generateHermesConfig } from "./config/generate.ts";
 
 export function main(): void {
@@ -22,7 +23,12 @@ export function main(): void {
 }
 
 function isMainModule(): boolean {
-  return process.argv[1] ? import.meta.url === pathToFileURL(resolve(process.argv[1])).href : false;
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
 }
 
 if (isMainModule()) main();

@@ -1,0 +1,172 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Run Sandboxes"
+sidebar-title: "Run Sandboxes"
+description: "Run multiple sandboxes and stop or start containers, with dashboard and tunnel guidance where supported."
+description-agent: "Explains multiple-sandbox naming and stop or start operations, plus dashboard and Cloudflare tunnel controls where the selected agent supports them. Use when operating one or more existing sandboxes."
+keywords: ["nemoclaw multiple sandboxes", "nemoclaw stop", "nemoclaw start", "sandbox operation"]
+content:
+  type: "how_to"
+skill:
+  priority: 20
+---
+import { AgentOnly } from "../_components/AgentGuide";
+
+Use these workflows to keep existing sandboxes reachable and control the resources they consume.
+
+<AgentOnly variant="openclaw,hermes">
+
+## Manage Dashboard Ports
+
+If the forward stopped, or the installer reported that no active forward was found and the URL does not load, restart the forward manually with the port from the install summary.
+
+```bash
+openshell forward start --background <dashboard-port> my-gpt-claw
+```
+
+On WSL, use `0.0.0.0:<dashboard-port>` as the forward target so the Windows host can continue to reach the dashboard.
+
+To list active forwards across all sandboxes, run the following command.
+
+```bash
+openshell forward list
+```
+
+</AgentOnly>
+
+## Run Multiple Sandboxes
+
+<AgentOnly variant="openclaw,hermes">
+Each sandbox needs its own dashboard port because `openshell forward` refuses to bind a port that another sandbox already uses.
+</AgentOnly>
+
+<AgentOnly variant="deepagents">
+Deep Agents sandboxes do not expose a dashboard port.
+The first `nemo-deepagents onboard` run can use the default sandbox name from the wizard.
+When you create another Deep Agents sandbox, choose a distinct sandbox name in the wizard or pass `--name` in scripted runs.
+</AgentOnly>
+
+<AgentOnly variant="openclaw">
+When the default port is already held by another sandbox, `$$nemoclaw onboard` scans ports `18789` through `18799` and uses the next free port.
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+When the default API port is already held by another sandbox, `$$nemoclaw onboard` scans for the next free port and records it for the sandbox.
+</AgentOnly>
+
+<AgentOnly variant="openclaw,hermes">
+If you intentionally run separate OpenShell gateways on the same host, set a different `NEMOCLAW_GATEWAY_PORT` before each onboarding run.
+NemoClaw isolates the gateway name and local state by port so one port-specific gateway does not replace another.
+
+Gateway and dashboard cleanup is scoped by sandbox name and port.
+A later onboarding run that uses a different `NEMOCLAW_GATEWAY_PORT` or `--control-ui-port` does not tear down the first sandbox's gateway or dashboard forward.
+</AgentOnly>
+
+<AgentOnly variant="deepagents">
+If you intentionally run separate OpenShell gateways on the same host, set a different `NEMOCLAW_GATEWAY_PORT` before each onboarding run.
+NemoClaw isolates the gateway name and local state by port so one port-specific gateway does not replace another.
+Gateway cleanup is scoped by sandbox name and port.
+</AgentOnly>
+
+<AgentOnly variant="openclaw,hermes">
+
+```bash
+$$nemoclaw onboard                                      # first sandbox uses 18789
+$$nemoclaw onboard                                      # second sandbox uses the next free port, such as 18790
+```
+
+To choose a specific port, pass `--control-ui-port`:
+
+```bash
+$$nemoclaw onboard --control-ui-port 19000
+```
+
+You can also set `CHAT_UI_URL` or `NEMOCLAW_DASHBOARD_PORT` before onboarding:
+
+```bash
+CHAT_UI_URL=http://127.0.0.1:19000 $$nemoclaw onboard
+NEMOCLAW_DASHBOARD_PORT=19000 $$nemoclaw onboard
+```
+
+For port conflicts and overrides, refer to [Port already in use](../../reference/troubleshooting#port-already-in-use).
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+```bash
+nemo-deepagents onboard
+# For an additional named sandbox:
+nemo-deepagents onboard --name <sandbox-name>
+```
+
+</AgentOnly>
+
+## Stop and Start a Sandbox
+
+Stop a sandbox's container to free CPU, memory, and GPU resources without losing anything:
+
+```bash
+$$nemoclaw <sandbox-name> stop
+```
+
+Workspace files, credentials, network policies, and the registry entry are preserved; only the container stops running.
+<AgentOnly variant="openclaw,hermes">
+The shared host gateway and tunnel services keep serving other sandboxes.
+</AgentOnly>
+
+Start it again later:
+
+```bash
+$$nemoclaw <sandbox-name> start
+```
+
+<AgentOnly variant="openclaw,hermes">
+NemoClaw restarts the container and repairs the in-sandbox gateway and host forwards.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+NemoClaw restarts the container so the managed terminal runtime can run again.
+</AgentOnly>
+Refer to [`$$nemoclaw <name> stop`](../../reference/commands#$$nemoclaw-name-stop) and [`$$nemoclaw <name> start`](../../reference/commands#$$nemoclaw-name-start) for details.
+Use [`$$nemoclaw <name> destroy`](../../reference/commands#$$nemoclaw-name-destroy) when you want to delete the sandbox instead.
+
+<AgentOnly variant="openclaw">
+
+## Manage the Cloudflare Tunnel
+
+When the host has `cloudflared`, `$$nemoclaw tunnel start` starts a Cloudflare tunnel.
+The tunnel can expose the dashboard with a public URL.
+Set `CLOUDFLARE_TUNNEL_TOKEN` before running the command when you want to use a Cloudflare named tunnel instead of a generated quick-tunnel URL.
+
+```bash
+$$nemoclaw tunnel start
+```
+
+`$$nemoclaw tunnel stop` stops the tunnel and asks NemoClaw to stop the in-sandbox gateway for the selected or default sandbox.
+The older `$$nemoclaw start` still works as a deprecated alias.
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+## Manage the Cloudflare Tunnel
+
+When the host has `cloudflared`, `$$nemoclaw tunnel start` starts a Cloudflare tunnel.
+The tunnel can expose the forwarded Hermes endpoint with a public URL.
+Set `CLOUDFLARE_TUNNEL_TOKEN` before running the command when you want to use a Cloudflare named tunnel instead of a generated quick-tunnel URL.
+
+```bash
+$$nemoclaw tunnel start
+```
+
+`$$nemoclaw tunnel stop` stops the tunnel but leaves the supervisor-owned in-sandbox gateway and agent-owned host forwards running for the selected or default sandbox.
+</AgentOnly>
+
+## Related Topics
+
+- [View Sandbox Status](view-sandbox-status) before changing a sandbox.
+- [Recover and Rebuild Sandboxes](recover-and-rebuild-sandboxes) when start does not restore a healthy runtime.
+<AgentOnly variant="openclaw,hermes">
+- [Troubleshooting](../../reference/troubleshooting) for port, gateway, and dashboard failures.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+- [Troubleshooting](../../reference/troubleshooting) for terminal-runtime and start or stop failures.
+</AgentOnly>

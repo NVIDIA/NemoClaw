@@ -87,6 +87,11 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     pattern: /(?:^|\/)\.github\/workflows\/e2e\.yaml$/,
     testsToRun: runTests(...E2E_WORKFLOW_CONTRACTS),
   },
+  {
+    pattern:
+      /(?:^|\/)(?:\.github\/workflows\/platform-vitest-main\.yaml|ci\/platform-vitest-macos-requirements\.lock)$/,
+    testsToRun: runTests("test/platform-vitest-main-workflow.test.ts"),
+  },
 ];
 
 export function resolveVitestWatchTests(file: string): string[] {

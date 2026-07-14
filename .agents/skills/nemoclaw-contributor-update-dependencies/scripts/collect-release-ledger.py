@@ -178,7 +178,7 @@ class LocalSemverTag:
 def compare_tagged_versions(
     left: tuple[Version, str], right: tuple[Version, str]
 ) -> int:
-    """Order tagged versions by SemVer precedence and then exact tag identity."""
+    """Order tagged versions by SemVer precedence and then tag identity."""
 
     precedence = left[0].compare_precedence(right[0])
     if precedence != 0:
@@ -1009,7 +1009,7 @@ def require_object(payload: Any, description: str) -> dict[str, Any]:
 
 
 def require_sha(value: Any, description: str) -> str:
-    """Require one exact lowercase full Git object SHA."""
+    """Require one lowercase full Git object SHA."""
 
     if not isinstance(value, str) or SHA_RE.fullmatch(value) is None:
         raise LedgerError(f"GitHub {description} omitted a full commit/object SHA")
@@ -1276,7 +1276,7 @@ def github_tag_identity_from_root(
     root_sha: Any,
     timeout_seconds: int,
 ) -> dict[str, Any]:
-    """Peel one inventoried remote tag ref to its exact commit."""
+    """Peel one inventoried remote tag ref to its commit."""
 
     repository = repository_identity["fullName"]
     api_host = repository_identity["apiHost"]
@@ -1286,7 +1286,7 @@ def github_tag_identity_from_root(
         )
     object_type = root_type
     object_sha = require_sha(root_sha, f"tag ref {tag!r}")
-    exact_root_sha = object_sha
+    root_object_sha = object_sha
     tag_objects: list[str] = []
     seen: set[str] = set()
     while object_type == "tag":
@@ -1334,7 +1334,7 @@ def github_tag_identity_from_root(
         "repositoryId": repository_identity["repositoryId"],
         "ref": f"refs/tags/{tag}",
         "rootObjectType": root_type,
-        "rootObjectSha": exact_root_sha,
+        "rootObjectSha": root_object_sha,
         "tagObjectShas": tag_objects,
         "commitSha": object_sha,
     }
@@ -1401,9 +1401,9 @@ def verify_remote_tag_inventory(
     start_sha: str,
     target_sha: str,
 ) -> None:
-    """Require every remote SemVer tag in the audit ancestry to exist exactly locally."""
+    """Require every remote SemVer tag in the audit ancestry to exist locally."""
 
-    def require_exact_local_tag(tag: str, remote: dict[str, Any]) -> None:
+    def require_local_tag(tag: str, remote: dict[str, Any]) -> None:
         local = local_inventory.get(tag)
         if local is None:
             raise LedgerError(
@@ -1443,7 +1443,7 @@ def verify_remote_tag_inventory(
             repo, commit_sha, target_sha
         ):
             continue
-        require_exact_local_tag(tag, remote)
+        require_local_tag(tag, remote)
 
     for tag, local in sorted(local_inventory.items()):
         if not is_ancestor(repo, start_sha, local.commit_sha):
@@ -1454,7 +1454,7 @@ def verify_remote_tag_inventory(
                 f"local semantic-version tag {tag!r} lies in the audit range but is absent "
                 "from the bound GitHub repository"
             )
-        require_exact_local_tag(tag, remote)
+        require_local_tag(tag, remote)
 
 
 def github_target_ref_identity(
@@ -1463,7 +1463,7 @@ def github_target_ref_identity(
     expected_commit_sha: str,
     timeout_seconds: int,
 ) -> dict[str, Any]:
-    """Bind an untagged target to one exact advertised branch ref."""
+    """Bind an untagged target to one advertised branch ref."""
 
     repository = repository_identity["fullName"]
     api_host = repository_identity["apiHost"]
@@ -1857,7 +1857,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     """Parse collector command-line arguments."""
 
     parser = argparse.ArgumentParser(
-        description="Collect adjacent semantic-version tag ranges and their exact Git evidence."
+        description="Collect adjacent semantic-version tag ranges and their Git evidence."
     )
     parser.add_argument(
         "--repo", required=True, help="Upstream dependency Git worktree"
@@ -1898,7 +1898,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--github-target-ref",
         help=(
             "Required advertised refs/heads/... ref for an untagged GitHub target; the "
-            "remote ref must resolve exactly to --to"
+            "remote ref must resolve to --to"
         ),
     )
     parser.add_argument(

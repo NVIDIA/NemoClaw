@@ -15,6 +15,6 @@ Do **not** work around access failures by:
 - rewriting remotes to bypass permissions;
 - force-pushing or bypassing branch protections/required checks.
 
-Report the exact command, the relevant error output, and the next action needed from the user, then wait.
+Report the command, the relevant error output, and the next action needed from the user, then wait.
 
 This hard stop is for access/authentication/authorization problems only. Normal Git workflow problems such as merge conflicts, stale branches, dirty worktrees, or mechanical rebase conflicts should be handled by the relevant workflow. Stop for user guidance only when conflict resolution would change behavior, alter contributor intent, or require a design decision.

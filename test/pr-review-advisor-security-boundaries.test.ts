@@ -5,6 +5,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  E2E_RENDER_LIMIT,
+  trustedE2eRecommendationInventory,
+} from "../tools/advisors/e2e-recommendations.mts";
 import { deleteBotOwnedStickyComments, upsertStickyComment } from "../tools/advisors/github.mts";
 import { buildRiskPlan } from "../tools/advisors/risk-plan.mts";
 import { runReadOnlyAdvisor } from "../tools/advisors/session.mts";
@@ -159,7 +163,7 @@ describe("PR review advisor security boundaries", () => {
     ).rejects.toThrow(/403.*Resource not accessible/);
   });
 
-  it("deletes only bot-owned comments with exact legacy advisor markers", async () => {
+  it("deletes only bot-owned comments with legacy advisor markers", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValueOnce({
@@ -277,8 +281,8 @@ describe("PR review advisor security boundaries", () => {
     expect(comment).toContain("<code>state-backup-restore</code>");
   });
 
-  it("publishes a newly added credential-free selector from trusted exact-head evidence", () => {
-    const file = "test/e2e/live/publisher-exact-head-proof.test.ts";
+  it("publishes a newly added credential-free selector from trusted changed-test evidence", () => {
+    const file = "test/e2e/live/publisher-changed-test-proof.test.ts";
     const absolute = path.join(ROOT, file);
     let result: ReturnType<typeof normalizeReviewResult>;
     fs.writeFileSync(absolute, "// @module-tag e2e/credential-free\n");
@@ -287,7 +291,7 @@ describe("PR review advisor security boundaries", () => {
         {
           e2e: {
             targets: {
-              exactHeadCredentialFreeTests: [
+              changedCredentialFreeTests: [
                 {
                   id: "model-forged-proof",
                   file: "test/e2e/live/model-forged-proof.test.ts",
@@ -306,21 +310,68 @@ describe("PR review advisor security boundaries", () => {
       fs.rmSync(absolute, { force: true });
     }
 
-    expect(result.e2e.targets.exactHeadCredentialFreeTests).toEqual([
-      { id: "publisher-exact-head-proof", file, headSha: "a".repeat(40) },
+    expect(result.e2e.targets.changedCredentialFreeTests).toEqual([
+      { id: "publisher-changed-test-proof", file, headSha: "a".repeat(40) },
     ]);
     expect(result.e2e.targets.required.map((item) => item.id)).toContain(
-      "publisher-exact-head-proof",
+      "publisher-changed-test-proof",
     );
     expect(JSON.stringify(result)).not.toContain("model-forged-proof");
 
     const comment = buildComment({ summary: renderSummary(result), result });
-    expect(comment).toContain("<code>publisher-exact-head-proof</code>");
-    expect(comment).toContain("Selected as a trusted exact-head credential-free E2E job.");
+    expect(comment).toContain("<code>publisher-changed-test-proof</code>");
+    expect(comment.match(/<code>publisher-changed-test-proof<\/code>/gu)).toHaveLength(1);
   });
 
-  it("drops malformed or mismatched exact-head selector evidence", () => {
-    const id = "publisher-exact-head-proof";
+  it("reports E2E recommendations that do not fit in the job summary", () => {
+    const trustedIds = trustedE2eRecommendationInventory().allowedJobIds.slice(
+      0,
+      2 * (E2E_RENDER_LIMIT + 1),
+    );
+    const requiredIds = trustedIds.slice(0, E2E_RENDER_LIMIT + 1);
+    const optionalIds = trustedIds.slice(E2E_RENDER_LIMIT + 1);
+    expect(requiredIds).toHaveLength(E2E_RENDER_LIMIT + 1);
+    expect(optionalIds).toHaveLength(E2E_RENDER_LIMIT + 1);
+
+    const result = normalizeReviewResult(
+      {
+        e2e: {
+          coverage: {
+            requiredTests: requiredIds.map((id) => ({
+              id,
+              reason: "Trusted E2E recommendation.",
+            })),
+            optionalTests: optionalIds.map((id) => ({
+              id,
+              reason: "Trusted optional E2E recommendation.",
+            })),
+            confidence: "high",
+          },
+          targets: { required: [], optional: [], confidence: "high" },
+        },
+      },
+      e2eReviewMetadata([]),
+    );
+
+    const summary = renderSummary(result);
+    const requiredLines = summary
+      .split("## Recommended E2E\n")[1]
+      ?.split("\n## Optional E2E\n")[0]
+      ?.trim()
+      .split("\n");
+    const optionalLines = summary.split("\n## Optional E2E\n")[1]?.trim().split("\n");
+    expect(requiredLines).toEqual([
+      ...requiredIds.slice(0, E2E_RENDER_LIMIT).map((id) => `- **${id}**`),
+      "- _1 more._",
+    ]);
+    expect(optionalLines).toEqual([
+      ...optionalIds.slice(0, E2E_RENDER_LIMIT).map((id) => `- **${id}**`),
+      "- _1 more._",
+    ]);
+  });
+
+  it("drops malformed or mismatched changed-test selector evidence", () => {
+    const id = "publisher-changed-test-proof";
     const file = `test/e2e/live/${id}.test.ts`;
     const headSha = "a".repeat(40);
     const validEvidence = { id, file, headSha };
@@ -372,7 +423,7 @@ describe("PR review advisor security boundaries", () => {
           changedFiles: testCase.changedFiles,
           e2e: {
             targets: {
-              exactHeadCredentialFreeTests: testCase.evidence,
+              changedCredentialFreeTests: testCase.evidence,
               required: [
                 {
                   id,

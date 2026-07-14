@@ -273,7 +273,7 @@
     },
     {
       "file": "test/onboard-performance-config-schema.test.ts",
-      "test": "records five independent successful exact-head samples",
+      "test": "records five independent successful samples for current main",
       "category": "compatibility"
     },
     {
@@ -285,6 +285,16 @@
       "file": "test/openclaw-lifecycle-policy.test.ts",
       "test": "cross-checks the allowlist against every production archive install boundary",
       "category": "security"
+    },
+    {
+      "file": "test/platform-vitest-main-workflow.test.ts",
+      "test": "keeps the WSL suite unprivileged with explicit root-only contracts",
+      "category": "security"
+    },
+    {
+      "file": "test/platform-vitest-main-workflow.test.ts",
+      "test": "provisions the pinned macOS test runtime before running the full suite",
+      "category": "compatibility"
     },
     {
       "file": "test/plugin-vitest-project.test.ts",

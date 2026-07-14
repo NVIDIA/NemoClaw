@@ -106,4 +106,4 @@ When writes are authorized:
 
 1. Apply field updates first.
 2. Add canonical labels.
-3. Post comments only when the authorization context covers the exact comment text or intent.
+3. Post comments only when the authorization context covers the comment text or intent.

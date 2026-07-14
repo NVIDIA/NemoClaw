@@ -905,7 +905,8 @@ Follow these steps to reconnect.
 If the sandbox remains missing after restarting the gateway, run `$$nemoclaw <name> rebuild --yes` while the local registry entry still exists.
 The rebuild path uses the recorded sandbox metadata and the snapshot flow to preserve supported workspace and agent state.
 If the sandbox was intentionally deleted and you want a clean setup instead, run `$$nemoclaw <name> destroy` to remove the stale local entry, then run `$$nemoclaw onboard`.
-Create a snapshot first when the sandbox is reachable enough to back up state. For details, refer to [Back Up and Restore](../manage-sandboxes/backup-restore).
+Create a snapshot first when the sandbox is reachable enough to back up state.
+For details, refer to [Create and Restore Snapshots](../manage-sandboxes/state-and-backups/create-and-restore-snapshots).
 </Warning>
 
 <AgentOnly variant="openclaw,hermes">
@@ -1155,16 +1156,7 @@ Register credentials with NemoClaw or OpenShell on the host so the gateway can i
 
 ### Managed MCP commands report an older Deep Agents runtime
 
-Deep Agents sandboxes with the older managed MCP v1 runtime must rebuild before `mcp add` or `mcp restart`.
-The rebuild installs the current managed MCP projection path and reconstructs `/sandbox/.deepagents/.nemoclaw-mcp.json` from the host registry.
-
-```bash
-nemo-deepagents <name> rebuild
-nemo-deepagents <name> mcp add <server-name> <url>
-```
-
-NemoClaw does not auto-load user-owned `/sandbox/.deepagents/.mcp.json` or project MCP files into the managed configuration.
-Use `nemo-deepagents <name> mcp ...` commands for managed MCP servers that need OpenShell credential replacement and egress policy.
+For the current rebuild and retry workflow, refer to [Agent MCP Capability Is Missing](troubleshoot-mcp-servers#agent-mcp-capability-is-missing).
 
 ### Tavily remains blocked after opt-in
 
@@ -1636,7 +1628,7 @@ $$nemoclaw <sandbox> channels remove <telegram|discord|slack|wechat|whatsapp>
 Both offer to rebuild the sandbox so the image reflects the new channel set.
 In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`), the commands stage the change and leave the rebuild to a follow-up `$$nemoclaw <sandbox> rebuild`.
 WeChat and WhatsApp are experimental.
-Review [Messaging Channels](../manage-sandboxes/messaging-channels) before enabling them.
+Review [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) before enabling them.
 
 WeChat captures its bot token through a host-side QR scan during `$$nemoclaw onboard` or `channels add wechat`.
 You scan the iLink QR from WeChat on your phone and NemoClaw registers the captured token with the OpenShell gateway.

@@ -997,7 +997,7 @@ export function registerLocalCredentialHelperTests(group: LocalCredentialHelperT
                 USERPROFILE: accountHome,
               }
             : { HOME: accountHome, PWD: commandCwd };
-        expect(observed.cwd).toBe(commandCwd);
+        expect(fs.realpathSync(observed.cwd)).toBe(fs.realpathSync(commandCwd));
         expect(
           Object.fromEntries(Object.entries(observed.environment).filter(([, value]) => value)),
         ).toEqual(expectedEnvironment);

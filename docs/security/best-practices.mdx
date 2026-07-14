@@ -448,7 +448,7 @@ The container runtime spawns a `$$nemoclaw connect` shell outside that tree, so 
 
 <AgentOnly variant="openclaw">
 For additional protection, pass `--cap-drop=ALL` with `docker run` or Compose.
-Refer to [Sandbox Hardening](../manage-sandboxes/sandbox-hardening).
+Refer to [Review Sandbox Hardening](../manage-sandboxes/configure-sandboxes/review-sandbox-hardening).
 </AgentOnly>
 
 | Aspect | Detail |
@@ -914,7 +914,7 @@ The following patterns weaken security without providing meaningful benefit.
 - [Network Policies](../reference/network-policies) for the full baseline policy reference.
 - [Customize the Network Policy](../network-policy/customize-network-policy) for static and dynamic policy changes.
 - [Approve or Deny Network Requests](../network-policy/approve-network-requests) for the operator approval flow.
-- [Sandbox Hardening](../manage-sandboxes/sandbox-hardening) for container-level security measures.
+- [Review Sandbox Hardening](../manage-sandboxes/configure-sandboxes/review-sandbox-hardening) for container-level security measures.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -928,8 +928,8 @@ The following patterns weaken security without providing meaningful benefit.
 
 - [Network Policies](../reference/network-policies) for the full Deep Agents baseline policy reference.
 - [Credential Storage](credential-storage) for provider and managed MCP credential handling.
-- [Workspace Files](../manage-sandboxes/workspace-files) for Deep Agents state and credential-bearing file exclusions.
-- [Set Up MCP Servers](../manage-sandboxes/set-up-mcp-servers) for managed MCP credential replacement.
+- [Understand Sandbox State](../manage-sandboxes/state-and-backups/understand-sandbox-state) for Deep Agents state and credential-bearing file exclusions.
+- [About Managed MCP Servers](../manage-sandboxes/mcp-servers/about-managed-mcp-servers) for managed MCP credential replacement.
 
 </AgentOnly>
 - [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) for provider configuration details.
