@@ -317,7 +317,7 @@ describe("PR E2E gate workflow", () => {
     const approveException = workflow.jobs["approve-exception"];
     const resolveException = workflow.jobs["resolve-exception"];
 
-    expect(workflow.name).toBe("E2E / PR Gate");
+    expect(workflow.name).toBe("E2E / PR Gate Controller");
     expect(workflow.on).toEqual({
       workflow_run: {
         workflows: ["CI / Pull Request"],
@@ -356,7 +356,8 @@ describe("PR E2E gate workflow", () => {
             type: "string",
           },
           evidence_url: {
-            description: "Optional maintainer-supplied NVIDIA/NemoClaw Actions reference.",
+            description:
+              "Optional Actions run URL, for example https://github.com/NVIDIA/NemoClaw/actions/runs/123. Leave blank if none.",
             required: false,
             default: "",
             type: "string",
@@ -449,6 +450,8 @@ describe("PR E2E gate workflow", () => {
     expect(start.env?.GATE_RUN_ID).toBe("${{ github.run_id }}");
     expect(start.run).toContain('--ci-display-title "$CI_DISPLAY_TITLE"');
     expect(start.run).toContain('--gate-run-id "$GATE_RUN_ID"');
+    const finish = step(coordinate, "Verify evidence");
+    expect(finish.run).toContain('--evidence-outcome "${{ steps.evidence.outcome }}"');
     const approval = step(approveException, "Record approved E2E exception");
     expect(approval.env).toEqual({
       APPROVAL_RUN_ATTEMPT: "${{ github.run_attempt }}",
@@ -508,7 +511,9 @@ describe("PR E2E gate workflow", () => {
     expect(nodeSetups.every((setup) => setup.with?.["node-version"] === "22")).toBe(true);
     expect(nodeSetups.every((setup) => !("cache" in (setup.with ?? {})))).toBe(true);
     expect(installs).toHaveLength(5);
-    expect(installs.every((install) => install.run === "npm ci --ignore-scripts")).toBe(true);
+    expect(
+      installs.every((install) => install.run === "npm ci --ignore-scripts --no-audit --no-fund"),
+    ).toBe(true);
     expect(
       allSteps.some((candidate) => candidate.uses?.startsWith("actions/download-artifact@")),
     ).toBe(false);
@@ -608,13 +613,13 @@ describe("PR E2E gate workflow", () => {
     ]);
   });
 
-  it("surfaces a terminal child failure", () => {
+  it("leaves terminal child failures for finalization to report", () => {
     const result = runWaitStep("failure");
 
-    expect(result.status).toBe(1);
+    expect(result.status).toBe(0);
     expect(result.stdout.match(/status=in_progress/gu)).toHaveLength(1);
-    expect(result.stderr).toContain("::error title=E2E run failed::");
-    expect(result.stderr).toContain("completed with conclusion failure");
+    expect(result.stdout).toContain("status=completed conclusion=failure");
+    expect(result.stderr).toBe("");
   });
 
   it("preserves GitHub CLI errors when status queries fail", () => {
@@ -625,12 +630,12 @@ describe("PR E2E gate workflow", () => {
     expect(result.stderr).toContain("::error title=Run status query failed::");
   });
 
-  it("labels only the bounded wait exit as a timeout", () => {
+  it("leaves bounded wait timeouts for finalization to cancel and report", () => {
     const result = runWaitStep("timeout");
 
-    expect(result.status).toBe(124);
-    expect(result.stderr).toContain("::error title=E2E run timed out::");
-    expect(result.stderr).toContain("did not complete within 105 minutes");
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("did not complete within 105 minutes");
+    expect(result.stderr).toBe("");
   });
 
   it("rejects an invalid child run ID before querying GitHub", () => {
