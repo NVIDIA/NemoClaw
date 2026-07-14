@@ -10,6 +10,7 @@ import {
   type PullRequest,
   parseControllerCommand,
   prGateExternalId,
+  resolveApprovedGate,
   resolveControlPlaneGate,
   resolveForkGate,
   startPrGate,
@@ -26,6 +27,8 @@ const WORKFLOW_SHA = "d".repeat(40);
 const ADVANCED_WORKFLOW_SHA = "e".repeat(40);
 const CI_RUN_ID = 99;
 const CI_RUN_ATTEMPT = 3;
+const GATE_RUN_ID = 77;
+const APPROVAL_RUN_ID = 123;
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -151,6 +154,8 @@ function startCommand(workDir: string) {
     String(CI_RUN_ATTEMPT),
     "--ci-run-id",
     String(CI_RUN_ID),
+    "--gate-run-id",
+    String(GATE_RUN_ID),
     "--pr",
     "42",
     "--work-dir",
@@ -158,6 +163,94 @@ function startCommand(workDir: string) {
   ]);
   expect(command.mode).toBe("start");
   return command as Extract<ReturnType<typeof parseControllerCommand>, { mode: "start" }>;
+}
+
+function approvalWorkflowRun(overrides: Record<string, unknown> = {}) {
+  return {
+    id: APPROVAL_RUN_ID,
+    name: "E2E / PR Gate",
+    path: ".github/workflows/pr-e2e-gate.yaml",
+    event: "workflow_run",
+    head_sha: WORKFLOW_SHA,
+    head_branch: "main",
+    status: "in_progress",
+    conclusion: null,
+    run_attempt: 1,
+    html_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${APPROVAL_RUN_ID}`,
+    ...overrides,
+  };
+}
+
+function approvalReview(comment: string | null = null, overrides: Record<string, unknown> = {}) {
+  return {
+    state: "approved",
+    comment,
+    environments: [{ name: "e2e-no-secret-exception" }],
+    user: { login: "maintainer" },
+    ...overrides,
+  };
+}
+
+function approvedForkCommand() {
+  return {
+    mode: "resolve-approved" as const,
+    exceptionMode: "resolve-fork" as const,
+    prNumber: 42,
+    headSha: HEAD_SHA,
+    baseSha: BASE_SHA,
+    workflowSha: WORKFLOW_SHA,
+    approvalRunId: APPROVAL_RUN_ID,
+    approvalRunAttempt: 1,
+  };
+}
+
+function approvalRunRoute(value: unknown) {
+  return githubFetchRoute(
+    ({ url, method }) => url.endsWith(`/actions/runs/${APPROVAL_RUN_ID}`) && method === "GET",
+    () => githubResponse(value),
+  );
+}
+
+function approvalHistoryRoute(value: unknown) {
+  return githubFetchRoute(
+    ({ url, method }) =>
+      url.endsWith(`/actions/runs/${APPROVAL_RUN_ID}/approvals`) && method === "GET",
+    () => githubResponse(value),
+  );
+}
+
+function successfulApprovedForkRoutes(approvals: unknown) {
+  return [
+    approvalRunRoute(approvalWorkflowRun()),
+    approvalHistoryRoute(approvals),
+    githubFetchRoute(
+      ({ url }) => url.endsWith("/collaborators/maintainer/permission"),
+      () =>
+        githubResponse({
+          role_name: "maintain",
+          permission: "write",
+          user: { login: "maintainer" },
+        }),
+    ),
+    githubFetchRoute(
+      ({ url }) => url.endsWith("/pulls/42"),
+      () => githubResponse(forkPullRequest()),
+    ),
+    githubFetchRoute(
+      ({ url }) => url.includes("/pulls/42/files?"),
+      () => githubResponse([{ filename: "src/lib/onboard.ts" }]),
+    ),
+    existingPrGateCheckRunsRoute({
+      status: "completed",
+      conclusion: "failure",
+      output: { title: "Maintainer fork exception required" },
+    }),
+    mainWorkflowRefRoute(),
+    githubFetchRoute(
+      ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
+      () => githubResponse({}),
+    ),
+  ];
 }
 
 describe("PR E2E controller exception safety", () => {
@@ -209,11 +302,24 @@ describe("PR E2E controller exception safety", () => {
       expect(completion?.body).toMatchObject({
         status: "completed",
         conclusion: "failure",
+        details_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${GATE_RUN_ID}`,
         output: {
           title: "Maintainer fork exception required",
           summary: expect.stringContaining("Fork code was not executed"),
         },
       });
+      expect(JSON.stringify(completion?.body)).toContain("Review deployments");
+      expect(JSON.stringify(completion?.body)).toContain("e2e-no-secret-exception");
+      expect(JSON.stringify(completion?.body)).toContain("unprotected environment fails closed");
+      expect(JSON.stringify(completion?.body)).toContain("manual workflow-dispatch resolver");
+      expect(fs.readFileSync(outputPath, "utf8")).toContain(
+        [
+          "exception_mode=resolve-fork",
+          "exception_pr_number=42",
+          `exception_head_sha=${HEAD_SHA}`,
+          `exception_base_sha=${BASE_SHA}`,
+        ].join("\n"),
+      );
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
@@ -262,6 +368,7 @@ describe("PR E2E controller exception safety", () => {
       expect(completion?.body).toMatchObject({
         status: "completed",
         conclusion: "failure",
+        details_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${GATE_RUN_ID}`,
         output: {
           title: "Maintainer control-plane exception required",
           summary: expect.stringContaining(
@@ -269,6 +376,14 @@ describe("PR E2E controller exception safety", () => {
           ),
         },
       });
+      expect(fs.readFileSync(outputPath, "utf8")).toContain(
+        [
+          "exception_mode=resolve-control-plane",
+          "exception_pr_number=42",
+          `exception_head_sha=${HEAD_SHA}`,
+          `exception_base_sha=${BASE_SHA}`,
+        ].join("\n"),
+      );
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
@@ -316,6 +431,154 @@ describe("PR E2E controller exception safety", () => {
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }
+  });
+
+  it.each([
+    { name: "without a comment", comment: null, expectedReason: "approval confirmed" },
+    {
+      name: "with an optional comment",
+      comment: "  Independently\nreviewed without secrets.  ",
+      expectedReason: "Reviewer comment: Independently reviewed without secrets.",
+    },
+    {
+      name: "with an overlong optional comment",
+      comment: "x".repeat(1000),
+      expectedReason: `Reviewer comment: ${"x".repeat(100)}`,
+    },
+  ])("records a validated environment approval $name", async ({ comment, expectedReason }) => {
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    const requests: RecordedGitHubRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(successfulApprovedForkRoutes([approvalReview(comment)]), requests),
+    );
+
+    await expect(resolveApprovedGate(approvedForkCommand())).resolves.toBeUndefined();
+
+    const completion = requests.filter((request) => request.method === "PATCH").at(-1);
+    expect(completion?.body).toMatchObject({
+      status: "completed",
+      conclusion: "success",
+      details_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${APPROVAL_RUN_ID}`,
+      output: {
+        title: "Fork exception recorded by @maintainer",
+        summary: expect.stringContaining("Validated environment approval run"),
+      },
+    });
+    const summary = JSON.stringify(completion?.body);
+    expect(summary).toContain(expectedReason);
+    expect(summary).not.toContain("not validated by this controller");
+    expect(summary.length).toBeLessThan(2000);
+  });
+
+  it.each([
+    { name: "an empty unconfigured history", approvals: [] },
+    { name: "a malformed history object", approvals: {} },
+    {
+      name: "a malformed review",
+      approvals: [approvalReview(null, { comment: 42 })],
+    },
+    {
+      name: "the wrong environment",
+      approvals: [approvalReview(null, { environments: [{ name: "production" }] })],
+    },
+    {
+      name: "a rejected review",
+      approvals: [approvalReview(null, { state: "rejected" })],
+    },
+    {
+      name: "an approval spanning multiple environments",
+      approvals: [
+        approvalReview(null, {
+          environments: [{ name: "e2e-no-secret-exception" }, { name: "production" }],
+        }),
+      ],
+    },
+    {
+      name: "ambiguous matching approvals",
+      approvals: [approvalReview(), approvalReview("second approval")],
+    },
+  ])("fails closed for $name", async ({ approvals }) => {
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    const requests: RecordedGitHubRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [approvalRunRoute(approvalWorkflowRun()), approvalHistoryRoute(approvals)],
+        requests,
+      ),
+    );
+
+    await expect(resolveApprovedGate(approvedForkCommand())).rejects.toThrow();
+    expect(requests.some((request) => request.method === "PATCH")).toBe(false);
+  });
+
+  it.each([
+    { name: "wrong run id", overrides: { id: APPROVAL_RUN_ID + 1 } },
+    { name: "wrong workflow name", overrides: { name: "Other workflow" } },
+    { name: "wrong event", overrides: { event: "workflow_dispatch" } },
+    {
+      name: "untrusted workflow path suffix",
+      overrides: { path: ".github/workflows/pr-e2e-gate.yaml@refs/heads/main" },
+    },
+    { name: "wrong head branch", overrides: { head_branch: "feature" } },
+    { name: "wrong workflow SHA", overrides: { head_sha: ADVANCED_WORKFLOW_SHA } },
+    { name: "completed run", overrides: { status: "completed", conclusion: "success" } },
+    { name: "second run attempt", overrides: { run_attempt: 2 } },
+    {
+      name: "noncanonical URL",
+      overrides: {
+        html_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${APPROVAL_RUN_ID}/`,
+      },
+    },
+  ])("rejects approval from a $name", async ({ overrides }) => {
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    const requests: RecordedGitHubRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter([approvalRunRoute(approvalWorkflowRun(overrides))], requests),
+    );
+
+    await expect(resolveApprovedGate(approvedForkCommand())).rejects.toThrow(
+      /trusted first-attempt gate run/u,
+    );
+    expect(requests.some((request) => request.method === "PATCH")).toBe(false);
+  });
+
+  it("parses only first-attempt protected-environment resolutions", () => {
+    const args = [
+      "--mode",
+      "resolve-approved",
+      "--exception-mode",
+      "resolve-fork",
+      "--pr",
+      "42",
+      "--head",
+      HEAD_SHA,
+      "--base",
+      BASE_SHA,
+      "--workflow-sha",
+      WORKFLOW_SHA,
+      "--approval-run-id",
+      String(APPROVAL_RUN_ID),
+      "--approval-run-attempt",
+      "1",
+    ];
+
+    expect(parseControllerCommand(args)).toEqual(approvedForkCommand());
+    expect(() => parseControllerCommand([...args.slice(0, -1), "2"])).toThrow(/must be exactly 1/u);
+  });
+
+  it("rejects a command for a rerun before reading GitHub approval state", async () => {
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    const requests: RecordedGitHubRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(createGitHubFetchRouter([], requests));
+
+    await expect(
+      resolveApprovedGate({ ...approvedForkCommand(), approvalRunAttempt: 2 }),
+    ).rejects.toThrow(/must be exactly 1/u);
+    expect(requests).toHaveLength(0);
   });
 
   it("records an authorized exact-head/base fork exception after a compatible main advance", async () => {

@@ -109,6 +109,15 @@ export interface InferenceSelectionValidationHelpers {
   ): Promise<EndpointValidationResult>;
 }
 
+function printOpenAiSurfaceGuidance(): void {
+  console.error(
+    "  This agent needs an endpoint that serves the OpenAI Chat Completions API (/v1/chat/completions).",
+  );
+  console.error("  The selected Anthropic-compatible endpoint does not serve it.");
+  console.error("  Use an OpenAI-compatible endpoint, or switch to an Anthropic-native agent:");
+  console.error("  `nemoclaw onboard --agent openclaw`.");
+}
+
 export function createInferenceSelectionValidationHelpers(
   deps: InferenceSelectionValidationDeps,
 ): InferenceSelectionValidationHelpers {
@@ -376,15 +385,14 @@ export function createInferenceSelectionValidationHelpers(
       return { ok: true, api: intendedApi, pinnedAddresses };
     }
     printValidationFailure(label, probe);
+    const recovery = getProbeRecovery(probe, { allowModelRetry: true });
+    if (intendedApi === "openai-completions" && recovery.kind === "endpoint") {
+      printOpenAiSurfaceGuidance();
+    }
     if (deps.isNonInteractive()) {
       exitNonInteractiveValidationFailure();
     }
-    const retry = await deps.promptValidationRecovery(
-      label,
-      getProbeRecovery(probe, { allowModelRetry: true }),
-      credentialEnv,
-      helpUrl,
-    );
+    const retry = await deps.promptValidationRecovery(label, recovery, credentialEnv, helpUrl);
     if (retry === "selection") {
       console.log("  Please choose a provider/model again.");
       console.log("");

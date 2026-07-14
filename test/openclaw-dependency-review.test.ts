@@ -227,6 +227,11 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("0` critical vulnerabilities across `763` total dependencies");
     expect(review).toContain("Node `v22.22.2`");
     expect(review).toContain("engine requirement of `>=22.19.0`");
+    expect(review).toContain(
+      "separate `wechat-runtime-audit` gate uses Node `22.19.0` and npm `10.9.4`",
+    );
+    expect(review).toContain("Node `22.19.0` and npm `10.9.4`");
+    expect(review).toContain("fails on any low-or-higher production advisory");
     expect(review).toContain("Default PR and main CI now rematerialize");
     expect(review).toContain("`npm audit --omit=dev --json`");
     expect(review).toContain("configured threshold in `ci/reviewed-npm-audit.json` is `high`");
@@ -250,13 +255,11 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("`@openclaw/msteams@2026.6.10`");
     expect(review).toContain("`@zed-industries/codex-acp@0.11.1` has no declared npm dependencies");
     expect(review).toContain(
-      "the existing non-OpenClaw Tencent WeChat plugin, `@tencent-weixin/openclaw-weixin@2.4.3`",
+      "only reviewed messaging plugin without a package-internal shrinkwrap was the existing non-OpenClaw Tencent WeChat plugin",
     );
-    expect(review).toContain("not introduced by the OpenClaw version change");
-    expect(review).toContain("third-party messaging plugins without package-internal shrinkwraps");
-    expect(review).toContain(
-      "The transitive npm graph warning is dispositioned by package evidence",
-    );
+    expect(review).toContain("Current NemoClaw builds close that residual");
+    expect(review).toContain("copies it into a disposable writable cache");
+    expect(review).toContain("Current NemoClaw closes the WeChat residual");
     expect(review).toContain("stale nonterminal rebuild-resume repair");
     expect(review).toContain("tracked against #4533");
     expect(review).toContain("src/lib/actions/sandbox/rebuild-resume-session.test.ts");
@@ -313,7 +316,7 @@ messaging_build_applier=${JSON.stringify(MESSAGING_BUILD_APPLIER)}
 reviewed_archive_helper=scripts/lib/reviewed-npm-archive.mts
 
 boundary_marker_count="$(grep -hF 'Reviewed-archive invariants (#5896):' Dockerfile Dockerfile.base "$messaging_build_applier" | wc -l | tr -d ' ')"
-test "$boundary_marker_count" -eq 4
+test "$boundary_marker_count" -eq 5
 
 check_contains() {
   haystack="$1"
@@ -376,6 +379,13 @@ check_contains "$(cat Dockerfile)" "stat -c '%u:%g:%a'" "runtime provenance meta
 check_contains "$(cat Dockerfile)" '0:0:444' "runtime provenance exact metadata"
 check_contains "$(cat Dockerfile)" 'rm -rf "$OPENCLAW_PROVENANCE_PATH"' "runtime provenance consumption"
 
+wechat_cache_block="$(sed -n '/# Reviewed-archive invariants (#5896): after npm materializes the exact lock/,/# Pre-install the codex-acp package/p' Dockerfile)"
+check_contains "$wechat_cache_block" '/scripts/lib/reviewed-npm-archive.mts' "WeChat cache shared helper"
+check_contains "$wechat_cache_block" '--lockfile /usr/local/lib/nemoclaw/wechat-runtime/package-lock.json' "WeChat cache reviewed lock"
+check_contains "$wechat_cache_block" '--cache /usr/local/share/nemoclaw/wechat-npm-cache' "WeChat cache boundary"
+check_contains "$wechat_cache_block" '--registry-origin https://registry.npmjs.org/' "WeChat reviewed registry"
+check_contains "$wechat_cache_block" 'NPM_CONFIG_OFFLINE=true' "WeChat cache offline verification"
+
 optional_plugin_block="$(sed -n '/# Install non-messaging OpenClaw plugins that need to match the runtime./,/^RUN OPENCLAW_VERSION=/p' Dockerfile)"
 check_contains "$optional_plugin_block" '/scripts/lib/reviewed-npm-archive.mts' "optional plugin shared helper"
 check_contains "$optional_plugin_block" '--package-spec "$plugin_spec" --integrity "$expected_integrity"' "optional plugin reviewed identity"
@@ -408,7 +418,7 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 		grep -Fq 'COPY scripts/patch-openclaw-device-self-approval.ts /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.ts' Dockerfile
 		grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.ts \\' Dockerfile
 
-	phase_count="$(grep -Ec '^RUN OPENCLAW_VERSION="[$][{]OPENCLAW_VERSION[}]" node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier\\.mts --agent openclaw --phase (runtime-setup|agent-install|post-agent-install)$' Dockerfile)"
+	phase_count="$(grep -Ec -- '--phase (runtime-setup|agent-install|post-agent-install)' Dockerfile)"
 test "$phase_count" -eq 3
 grep -Fq -- '--phase runtime-setup' Dockerfile
 grep -Fq -- '--phase agent-install' Dockerfile

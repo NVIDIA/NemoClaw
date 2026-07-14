@@ -28,6 +28,8 @@ import {
 
 const E2E_WORKFLOW = "e2e.yaml";
 const E2E_WORKFLOW_PATH = `.github/workflows/${E2E_WORKFLOW}`;
+const PR_GATE_WORKFLOW_PATH = ".github/workflows/pr-e2e-gate.yaml";
+const PR_GATE_APPROVAL_ENVIRONMENT = "e2e-no-secret-exception";
 const CHECK_NAME = "E2E / PR Gate";
 const CHECK_EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v2";
 const LEGACY_CHECK_EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v1";
@@ -50,6 +52,7 @@ const MAX_COMPATIBILITY_FILES = 300;
 const MAX_ACTIVE_RUN_PAGES_PER_STATUS = 10;
 const MAX_REPORTED_CI_JOBS = 10;
 const MAX_WAIVER_REASON_CHARS = 500;
+const MAX_APPROVAL_REVIEWS = 20;
 const MAINTAINER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u;
 const EVIDENCE_URL_PATTERN =
   /^https:\/\/github\.com\/NVIDIA\/NemoClaw\/actions\/runs\/[1-9][0-9]*$/u;
@@ -85,6 +88,24 @@ type ManualResolutionCommandBase = {
 type ManualResolutionCommand = ManualResolutionCommandBase &
   ({ mode: "resolve-fork" } | { mode: "resolve-control-plane" });
 
+type ApprovedResolutionCommand = {
+  mode: "resolve-approved";
+  exceptionMode: ManualResolutionCommand["mode"];
+  prNumber: number;
+  headSha: string;
+  baseSha: string;
+  workflowSha: string;
+  approvalRunId: number;
+  approvalRunAttempt: number;
+};
+
+type GateResolutionCommand = ManualResolutionCommand & {
+  validatedApproval?: {
+    environment: typeof PR_GATE_APPROVAL_ENVIRONMENT;
+    runUrl: string;
+  };
+};
+
 export type ControllerCommand =
   | { mode: "seed"; prNumber: number; headSha: string; baseSha: string }
   | ({
@@ -97,6 +118,7 @@ export type ControllerCommand =
       ciDisplayTitle: string;
       ciRunId: number;
       ciRunAttempt: number;
+      gateRunId: number;
       prNumber?: number;
     } & ControllerPaths)
   | ({
@@ -107,7 +129,8 @@ export type ControllerCommand =
     } & ControllerPaths)
   | { mode: "abandon"; checkRunId: number; childRunId?: number }
   | { mode: "cancel"; prNumber: number }
-  | ManualResolutionCommand;
+  | ManualResolutionCommand
+  | ApprovedResolutionCommand;
 
 type CheckConclusion = "success" | "failure";
 
@@ -328,6 +351,7 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
         requiredArgument(args.ciRunAttempt, "ci-run-attempt"),
         "--ci-run-attempt",
       ),
+      gateRunId: parsePositiveId(requiredArgument(args.gateRunId, "gate-run-id"), "--gate-run-id"),
       prNumber: args.pr ? parsePositiveId(args.pr, "--pr") : undefined,
       ...privateControllerPaths(requiredArgument(args.workDir, "work-dir")),
     };
@@ -372,8 +396,33 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
       ...(evidenceUrl ? { evidenceUrl } : {}),
     };
   }
+  if (args.mode === "resolve-approved") {
+    if (args.exceptionMode !== "resolve-fork" && args.exceptionMode !== "resolve-control-plane") {
+      throw new Error("--exception-mode must be resolve-fork or resolve-control-plane");
+    }
+    const approvalRunAttempt = parsePositiveId(
+      requiredArgument(args.approvalRunAttempt, "approval-run-attempt"),
+      "--approval-run-attempt",
+    );
+    if (approvalRunAttempt !== 1) {
+      throw new Error("--approval-run-attempt must be exactly 1");
+    }
+    return {
+      mode: "resolve-approved",
+      exceptionMode: args.exceptionMode,
+      prNumber: parsePositiveId(requiredArgument(args.pr, "pr"), "--pr"),
+      headSha: requiredArgument(args.head, "head"),
+      baseSha: requiredArgument(args.base, "base"),
+      workflowSha: requiredArgument(args.workflowSha, "workflow-sha"),
+      approvalRunId: parsePositiveId(
+        requiredArgument(args.approvalRunId, "approval-run-id"),
+        "--approval-run-id",
+      ),
+      approvalRunAttempt,
+    };
+  }
   throw new Error(
-    "--mode must be seed, start, finish, abandon, cancel, resolve-fork, or resolve-control-plane",
+    "--mode must be seed, start, finish, abandon, cancel, resolve-fork, resolve-control-plane, or resolve-approved",
   );
 }
 
@@ -578,11 +627,20 @@ export function classifyPrGateEvidence(options: {
 function appendOutput(name: string, value: string): void {
   const output = process.env.GITHUB_OUTPUT;
   if (!output) return;
-  if (!/^(?:check_id|dispatched|finalized|run_id|state_hash)$/u.test(name)) {
-    throw new Error("invalid controller output name");
-  }
-  const validValue =
-    name === "state_hash" ? HASH_PATTERN.test(value) : /^(?:true|false|[1-9][0-9]*)$/u.test(value);
+  const validators: Readonly<Record<string, (candidate: string) => boolean>> = {
+    check_id: (candidate) => /^[1-9][0-9]*$/u.test(candidate),
+    dispatched: (candidate) => /^(?:true|false)$/u.test(candidate),
+    exception_base_sha: (candidate) => SHA_PATTERN.test(candidate),
+    exception_head_sha: (candidate) => SHA_PATTERN.test(candidate),
+    exception_mode: (candidate) => /^(?:resolve-fork|resolve-control-plane)$/u.test(candidate),
+    exception_pr_number: (candidate) => /^[1-9][0-9]*$/u.test(candidate),
+    finalized: (candidate) => /^(?:true|false)$/u.test(candidate),
+    run_id: (candidate) => /^[1-9][0-9]*$/u.test(candidate),
+    state_hash: (candidate) => HASH_PATTERN.test(candidate),
+  };
+  const validator = validators[name];
+  if (!validator) throw new Error("invalid controller output name");
+  const validValue = validator(value);
   if (!validValue) throw new Error("invalid controller output value");
   const descriptor = fs.openSync(
     output,
@@ -609,6 +667,18 @@ export function prGateExternalId(prNumber: number, headSha: string, baseSha: str
     throw new Error("PR gate check identity is invalid");
   }
   return `${CHECK_EXTERNAL_ID_PREFIX}:${prNumber}:${headSha}:${baseSha}`;
+}
+
+function emitExceptionOutputs(
+  mode: ManualResolutionCommand["mode"],
+  prNumber: number,
+  headSha: string,
+  baseSha: string,
+): void {
+  appendOutput("exception_mode", mode);
+  appendOutput("exception_pr_number", String(prNumber));
+  appendOutput("exception_head_sha", headSha);
+  appendOutput("exception_base_sha", baseSha);
 }
 
 function validateCheckRunsResponse(value: unknown): CheckRunsResponse {
@@ -1458,6 +1528,9 @@ export async function startPrGate(
   const { token, repository } = tokenAndRepository();
   if (!SHA_PATTERN.test(command.headSha)) throw new Error("PR head SHA is invalid");
   if (!SHA_PATTERN.test(command.workflowSha)) throw new Error("workflow SHA is invalid");
+  if (!Number.isSafeInteger(command.gateRunId) || command.gateRunId < 1) {
+    throw new Error("gate run ID is invalid");
+  }
   assertRepository(command.headRepository, "PR head repository");
   assertBranch(command.headBranch);
   const ciIdentity = parseCiRunIdentity(command.ciDisplayTitle);
@@ -1467,6 +1540,19 @@ export async function startPrGate(
   ) {
     throw new Error("CI run identity does not match the triggering workflow run");
   }
+  const existingChecks = await matchingPrGateChecks({
+    repository,
+    token,
+    headSha: command.headSha,
+    baseSha: ciIdentity.baseSha,
+    prNumber: ciIdentity.prNumber,
+  });
+  if (existingChecks.length > 1) {
+    throw new Error("Multiple exact-diff PR gate checks already exist");
+  }
+  const existingCheckRunId =
+    existingChecks[0]?.status === "in_progress" ? existingChecks[0].id : undefined;
+  if (existingCheckRunId) appendOutput("check_id", String(existingCheckRunId));
   const pull = await requireLiveExactDiff({
     repository,
     token,
@@ -1487,7 +1573,7 @@ export async function startPrGate(
     baseSha: ciIdentity.baseSha,
     prNumber: ciIdentity.prNumber,
   });
-  appendOutput("check_id", String(checkRunId));
+  if (checkRunId !== existingCheckRunId) appendOutput("check_id", String(checkRunId));
   await markCheckInProgress(
     { repository, checkRunId },
     token,
@@ -1564,6 +1650,7 @@ export async function startPrGate(
     });
     assertPullUnchanged(pull, currentPull);
     if (command.headRepository !== repository && jobs.length > 0) {
+      const gateRunUrl = `https://github.com/${repository}/actions/runs/${command.gateRunId}`;
       await completeCheck(
         { repository, checkRunId },
         token,
@@ -1573,11 +1660,12 @@ export async function startPrGate(
           summary: [
             `This exact fork diff (head ${command.headSha}, base ${ciIdentity.baseSha}) selected credential-bearing E2E jobs: ${jobs.join(", ")}.`,
             "Fork code was not executed and no repository secret was exposed.",
-            "A maintainer must use the E2E / PR Gate workflow on main to record an explicit no-secret exception for these exact head and base SHAs, with a reason and any trusted supporting run.",
+            `Open the linked workflow run, choose Review deployments, and approve the \`${PR_GATE_APPROVAL_ENVIRONMENT}\` environment. GitHub records the reviewer and optional comment; an unprotected environment fails closed. The manual workflow-dispatch resolver remains available as fallback.`,
           ].join("\n\n"),
         },
-        `https://github.com/${repository}/pull/${pull.number}`,
+        gateRunUrl,
       );
+      emitExceptionOutputs("resolve-fork", pull.number, command.headSha, ciIdentity.baseSha);
       appendOutput("dispatched", "false");
       appendOutput("finalized", "true");
       finalized = true;
@@ -1588,6 +1676,7 @@ export async function startPrGate(
     }
     const controlPlaneFamily = plan.families.find((family) => family.id === "e2e-control-plane");
     if (controlPlaneFamily) {
+      const gateRunUrl = `https://github.com/${repository}/actions/runs/${command.gateRunId}`;
       await completeCheck(
         { repository, checkRunId },
         token,
@@ -1597,11 +1686,17 @@ export async function startPrGate(
           summary: [
             `This exact internal diff (head ${command.headSha}, base ${ciIdentity.baseSha}) changes trusted E2E execution or evidence code and selected credential-bearing E2E jobs: ${jobs.join(", ")}.`,
             "No PR-controlled E2E workflow, test, support code, or evidence reporter was executed with repository credentials.",
-            "A maintainer must use the E2E / PR Gate workflow on main with the resolve-control-plane operation to record an explicit no-secret exception for these exact head and base SHAs and explain the independent review performed.",
+            `Open the linked workflow run, choose Review deployments, and approve the \`${PR_GATE_APPROVAL_ENVIRONMENT}\` environment. GitHub records the reviewer and optional comment; an unprotected environment fails closed. The manual workflow-dispatch resolver remains available as fallback.`,
             `Deterministic plan: ${plan.planHash}.`,
           ].join("\n\n"),
         },
-        `https://github.com/${repository}/pull/${pull.number}`,
+        gateRunUrl,
+      );
+      emitExceptionOutputs(
+        "resolve-control-plane",
+        pull.number,
+        command.headSha,
+        ciIdentity.baseSha,
       );
       appendOutput("dispatched", "false");
       appendOutput("finalized", "true");
@@ -1859,7 +1954,94 @@ export async function abandonPrGate(checkRunId: number, childRunId?: number): Pr
   if (cancellationError) throw cancellationError;
 }
 
-async function resolveGateException(command: ManualResolutionCommand): Promise<void> {
+function validateApprovalWorkflowRun(
+  value: unknown,
+  options: {
+    repository: string;
+    runId: number;
+    runAttempt: number;
+    workflowSha: string;
+  },
+): string {
+  if (!isObjectRecord(value)) throw new Error("GitHub returned an invalid approval workflow run");
+  const expectedUrl = `https://github.com/${options.repository}/actions/runs/${options.runId}`;
+  const valid =
+    value.id === options.runId &&
+    value.name === CHECK_NAME &&
+    value.event === "workflow_run" &&
+    value.path === PR_GATE_WORKFLOW_PATH &&
+    value.head_branch === "main" &&
+    value.head_sha === options.workflowSha &&
+    value.status === "in_progress" &&
+    value.conclusion === null &&
+    options.runAttempt === 1 &&
+    value.run_attempt === options.runAttempt &&
+    value.html_url === expectedUrl;
+  if (!valid) {
+    throw new Error("approval workflow run does not match the trusted first-attempt gate run");
+  }
+  return expectedUrl;
+}
+
+function validateApprovalReview(value: unknown): { maintainer: string; comment: string | null } {
+  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_APPROVAL_REVIEWS) {
+    throw new Error("GitHub returned no bounded environment approval history");
+  }
+  const reviews = value.map((candidate) => {
+    if (
+      !isObjectRecord(candidate) ||
+      typeof candidate.state !== "string" ||
+      (typeof candidate.comment !== "string" && candidate.comment !== null) ||
+      !Array.isArray(candidate.environments) ||
+      candidate.environments.length < 1 ||
+      candidate.environments.length > MAX_APPROVAL_REVIEWS ||
+      !candidate.environments.every(
+        (environment) => isObjectRecord(environment) && typeof environment.name === "string",
+      ) ||
+      !isObjectRecord(candidate.user) ||
+      typeof candidate.user.login !== "string" ||
+      !MAINTAINER_PATTERN.test(candidate.user.login)
+    ) {
+      throw new Error("GitHub returned malformed environment approval history");
+    }
+    return {
+      state: candidate.state,
+      comment: candidate.comment,
+      environments: candidate.environments as Array<{ name: string }>,
+      maintainer: candidate.user.login,
+    };
+  });
+  const matching = reviews.filter((review) =>
+    review.environments.some((environment) => environment.name === PR_GATE_APPROVAL_ENVIRONMENT),
+  );
+  if (matching.length !== 1) {
+    throw new Error("expected exactly one protected-environment approval review");
+  }
+  const review = matching[0]!;
+  if (
+    review.environments.length !== 1 ||
+    review.environments[0]!.name !== PR_GATE_APPROVAL_ENVIRONMENT ||
+    review.state !== "approved"
+  ) {
+    throw new Error("protected-environment review did not approve the exact approval environment");
+  }
+  return { maintainer: review.maintainer, comment: review.comment };
+}
+
+function approvedWaiverReason(comment: string | null): string {
+  const normalizedComment = (comment ?? "")
+    .replace(/[\u0000-\u001f\u007f]+/gu, " ")
+    .replace(/\s{2,}/gu, " ")
+    .trim();
+  const baseReason = "Protected environment approval confirmed for this exact E2E exception.";
+  const commentPrefix = " Reviewer comment: ";
+  const maxCommentChars = MAX_WAIVER_REASON_CHARS - baseReason.length - commentPrefix.length;
+  const boundedComment = normalizedComment.slice(0, maxCommentChars);
+  const reason = boundedComment ? `${baseReason}${commentPrefix}${boundedComment}` : baseReason;
+  return normalizedWaiverReason(reason);
+}
+
+async function resolveGateException(command: GateResolutionCommand): Promise<void> {
   const { token, repository } = tokenAndRepository();
   if (!SHA_PATTERN.test(command.headSha)) throw new Error("PR head SHA is invalid");
   if (!SHA_PATTERN.test(command.baseSha)) throw new Error("PR base SHA is invalid");
@@ -1955,9 +2137,11 @@ async function resolveGateException(command: ManualResolutionCommand): Promise<v
   }
 
   const safeReason = reason.replace(/`/gu, "'");
-  const evidence = command.evidenceUrl
-    ? `Maintainer-supplied Actions reference (not validated by this controller): [${command.evidenceUrl}](${command.evidenceUrl}).`
-    : "No maintainer-supplied Actions reference was recorded.";
+  const evidence = command.validatedApproval
+    ? `Validated environment approval run for \`${command.validatedApproval.environment}\`: [${command.validatedApproval.runUrl}](${command.validatedApproval.runUrl}).`
+    : command.evidenceUrl
+      ? `Maintainer-supplied Actions reference (not validated by this controller): [${command.evidenceUrl}](${command.evidenceUrl}).`
+      : "No maintainer-supplied Actions reference was recorded.";
   const title =
     command.mode === "resolve-fork"
       ? `Fork exception recorded by @${command.maintainer}`
@@ -1993,7 +2177,9 @@ async function resolveGateException(command: ManualResolutionCommand): Promise<v
         `Deterministic plan: \`${plan.planHash}\`.`,
       ].join("\n\n"),
     },
-    command.evidenceUrl ?? `https://github.com/${repository}/pull/${pull.number}`,
+    command.validatedApproval?.runUrl ??
+      command.evidenceUrl ??
+      `https://github.com/${repository}/pull/${pull.number}`,
   );
   console.log(
     `E2E exception recorded: mode=${command.mode} pr=${pull.number} head=${command.headSha} base=${command.baseSha} maintainer=${command.maintainer} plan=${plan.planHash}`,
@@ -2010,6 +2196,60 @@ export async function resolveControlPlaneGate(
   command: Extract<ManualResolutionCommand, { mode: "resolve-control-plane" }>,
 ): Promise<void> {
   await resolveGateException(command);
+}
+
+export async function resolveApprovedGate(command: ApprovedResolutionCommand): Promise<void> {
+  const { token, repository } = tokenAndRepository();
+  if (
+    command.exceptionMode !== "resolve-fork" &&
+    command.exceptionMode !== "resolve-control-plane"
+  ) {
+    throw new Error("approved exception mode is invalid");
+  }
+  if (!Number.isSafeInteger(command.prNumber) || command.prNumber < 1) {
+    throw new Error("PR number is invalid");
+  }
+  if (!SHA_PATTERN.test(command.headSha)) throw new Error("PR head SHA is invalid");
+  if (!SHA_PATTERN.test(command.baseSha)) throw new Error("PR base SHA is invalid");
+  if (!SHA_PATTERN.test(command.workflowSha)) throw new Error("workflow SHA is invalid");
+  if (!Number.isSafeInteger(command.approvalRunId) || command.approvalRunId < 1) {
+    throw new Error("approval run ID is invalid");
+  }
+  if (command.approvalRunAttempt !== 1) {
+    throw new Error("approval run attempt must be exactly 1");
+  }
+
+  const runUrl = validateApprovalWorkflowRun(
+    await githubApi<unknown>(`repos/${repository}/actions/runs/${command.approvalRunId}`, token, {
+      userAgent: USER_AGENT,
+    }),
+    {
+      repository,
+      runId: command.approvalRunId,
+      runAttempt: command.approvalRunAttempt,
+      workflowSha: command.workflowSha,
+    },
+  );
+  const review = validateApprovalReview(
+    await githubApi<unknown>(
+      `repos/${repository}/actions/runs/${command.approvalRunId}/approvals`,
+      token,
+      { userAgent: USER_AGENT },
+    ),
+  );
+  await resolveGateException({
+    mode: command.exceptionMode,
+    prNumber: command.prNumber,
+    headSha: command.headSha,
+    baseSha: command.baseSha,
+    workflowSha: command.workflowSha,
+    maintainer: review.maintainer,
+    reason: approvedWaiverReason(review.comment),
+    validatedApproval: {
+      environment: PR_GATE_APPROVAL_ENVIRONMENT,
+      runUrl,
+    },
+  });
 }
 
 export async function cancelPrGate(prNumber: number): Promise<number> {
@@ -2096,6 +2336,10 @@ async function main(): Promise<void> {
   }
   if (command.mode === "resolve-fork" || command.mode === "resolve-control-plane") {
     await resolveGateException(command);
+    return;
+  }
+  if (command.mode === "resolve-approved") {
+    await resolveApprovedGate(command);
     return;
   }
   await cancelPrGate(command.prNumber);

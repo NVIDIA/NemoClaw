@@ -1,0 +1,37 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: ci-wechat-runtime-audit
+description: Audit a PR-provided WeChat runtime graph from trusted CI code.
+
+inputs:
+  target-root:
+    description: Absolute path to the checked-out target tree whose lock inputs are audited.
+    required: true
+  report-dir:
+    description: Report directory, absolute or relative to target-root.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Setup production-compatible Node.js
+      uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      with:
+        node-version: "22.19.0"
+
+    - name: Pin production npm
+      shell: bash
+      run: >-
+        cd "$RUNNER_TEMP" &&
+        npm install --global npm@10.9.4
+        --userconfig /dev/null
+        --registry https://registry.npmjs.org/
+        --ignore-scripts --no-audit --no-fund
+
+    - name: Audit locked WeChat runtime graph
+      shell: bash
+      env:
+        NEMOCLAW_WECHAT_AUDIT_TARGET_ROOT: ${{ inputs.target-root }}
+        NEMOCLAW_WECHAT_AUDIT_REPORT_DIR: ${{ inputs.report-dir }}
+      run: bash "$GITHUB_ACTION_PATH/audit.sh"

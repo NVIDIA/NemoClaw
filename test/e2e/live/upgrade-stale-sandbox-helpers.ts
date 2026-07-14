@@ -20,16 +20,10 @@ import {
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
+import { createOldBaseBuildContext } from "./rebuild-openclaw-old-base-context.ts";
 
 export { REPO_ROOT };
 
-const BLUEPRINT_RELPATH = path.join("nemoclaw-blueprint", "blueprint.yaml");
-const BLUEPRINT = path.join(REPO_ROOT, BLUEPRINT_RELPATH);
-const BASE_CONTEXT_SCRIPT_RELPATH = path.join("scripts", "lib", "sandbox-rlimits.sh");
-const MCPORTER_RUNTIME_RELPATHS = [
-  path.join("agents", "openclaw", "mcporter-runtime", "package.json"),
-  path.join("agents", "openclaw", "mcporter-runtime", "package-lock.json"),
-];
 const TEST_SANDBOX_PREFIX = "e2e-upgrade-stale";
 export const SANDBOX_NAME =
   process.env.NEMOCLAW_SANDBOX_NAME ??
@@ -71,35 +65,6 @@ async function bestEffortPreclean(run: () => Promise<unknown>): Promise<void> {
   } catch {
     // Cleanup must not mask the primary assertion failure.
   }
-}
-
-function createOldBaseBuildContext(): string {
-  const buildContext = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-upgrade-stale-base-"));
-  fs.mkdirSync(path.join(buildContext, path.dirname(BLUEPRINT_RELPATH)), { recursive: true });
-  fs.mkdirSync(path.join(buildContext, path.dirname(BASE_CONTEXT_SCRIPT_RELPATH)), {
-    recursive: true,
-  });
-  const original = fs.readFileSync(BLUEPRINT, "utf8");
-  const minOpenClawVersion = /^(\s*min_openclaw_version:\s*).*/m;
-  expect(
-    minOpenClawVersion.test(original),
-    "blueprint min_openclaw_version line was not found",
-  ).toBe(true);
-  fs.writeFileSync(
-    path.join(buildContext, BLUEPRINT_RELPATH),
-    original.replace(minOpenClawVersion, `$1"${OLD_OPENCLAW_VERSION}"`),
-    "utf8",
-  );
-  fs.copyFileSync(
-    path.join(REPO_ROOT, BASE_CONTEXT_SCRIPT_RELPATH),
-    path.join(buildContext, BASE_CONTEXT_SCRIPT_RELPATH),
-  );
-  for (const relativePath of MCPORTER_RUNTIME_RELPATHS) {
-    const target = path.join(buildContext, relativePath);
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.copyFileSync(path.join(REPO_ROOT, relativePath), target);
-  }
-  return buildContext;
 }
 
 export function writeStaleRegistryEntry(): void {
