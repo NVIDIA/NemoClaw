@@ -20,25 +20,47 @@ import {
 const ROOT = path.resolve(import.meta.dirname, "..");
 
 describe("PR review advisor comment CLI", () => {
-  it("reports required E2E recommendations that do not fit", () => {
-    const ids = trustedE2eRecommendationInventory().allowedJobIds.slice(0, E2E_RENDER_LIMIT + 1);
-    expect(ids).toHaveLength(E2E_RENDER_LIMIT + 1);
+  it("reports E2E recommendations that do not fit", () => {
+    const trustedIds = trustedE2eRecommendationInventory().allowedJobIds.slice(
+      0,
+      2 * (E2E_RENDER_LIMIT + 1),
+    );
+    const requiredIds = trustedIds.slice(0, E2E_RENDER_LIMIT + 1);
+    const optionalIds = trustedIds.slice(E2E_RENDER_LIMIT + 1);
+    expect(requiredIds).toHaveLength(E2E_RENDER_LIMIT + 1);
+    expect(optionalIds).toHaveLength(E2E_RENDER_LIMIT + 1);
 
     const comment = buildComment({
       summary: "unused",
       result: {
         e2e: {
           coverage: {
-            requiredTests: ids.map((id) => ({ id, reason: "Trusted E2E recommendation." })),
-            optionalTests: [],
+            requiredTests: requiredIds.map((id) => ({
+              id,
+              reason: "Trusted E2E recommendation.",
+            })),
+            optionalTests: optionalIds.map((id) => ({
+              id,
+              reason: "Trusted optional E2E recommendation.",
+            })),
           },
           targets: { required: [], optional: [] },
         },
       },
     });
 
+    const renderedIds = [...comment.matchAll(/<code>([^<]+)<\/code>/gu)].map((match) => match[1]);
+    expect(renderedIds).toEqual([
+      ...requiredIds.slice(0, E2E_RENDER_LIMIT),
+      ...optionalIds.slice(0, E2E_RENDER_LIMIT),
+    ]);
+    expect(renderedIds).not.toContain(requiredIds.at(-1));
+    expect(renderedIds).not.toContain(optionalIds.at(-1));
     expect(comment).toContain("(+1 more)");
-    expect(comment.match(/<code>/gu)).toHaveLength(E2E_RENDER_LIMIT);
+    expect(comment).toContain(
+      `<summary>${E2E_RENDER_LIMIT + 1} optional E2E recommendations</summary>`,
+    );
+    expect(comment).toContain("- _1 more._");
   });
 
   it("validates configurable comment CLI fields and explicit artifacts", () => {

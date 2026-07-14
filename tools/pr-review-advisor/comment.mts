@@ -525,6 +525,9 @@ function renderE2eDetails(result?: ReviewAdvisorResult): string {
     for (const id of optionalE2e.slice(0, E2E_RENDER_LIMIT)) {
       lines.push(`- <code>${escapeLocationHtml(id)}</code>`);
     }
+    if (optionalE2e.length > E2E_RENDER_LIMIT) {
+      lines.push(`- _${optionalE2e.length - E2E_RENDER_LIMIT} more._`);
+    }
     lines.push("", "</details>");
   }
 
