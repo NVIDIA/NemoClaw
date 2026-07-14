@@ -350,55 +350,6 @@ describe("PR E2E controller", () => {
         reason: "Reviewed exact control-plane revision",
       });
       expect(
-        parseControllerCommand([
-          "--mode",
-          "resolve-approved",
-          "--exception-mode",
-          "resolve-fork",
-          "--pr",
-          "42",
-          "--head",
-          HEAD_SHA,
-          "--base",
-          BASE_SHA,
-          "--workflow-sha",
-          WORKFLOW_SHA,
-          "--approval-run-id",
-          "123",
-          "--approval-run-attempt",
-          "1",
-        ]),
-      ).toEqual({
-        mode: "resolve-approved",
-        exceptionMode: "resolve-fork",
-        prNumber: 42,
-        headSha: HEAD_SHA,
-        baseSha: BASE_SHA,
-        workflowSha: WORKFLOW_SHA,
-        approvalRunId: 123,
-        approvalRunAttempt: 1,
-      });
-      expect(() =>
-        parseControllerCommand([
-          "--mode",
-          "resolve-approved",
-          "--exception-mode",
-          "resolve-fork",
-          "--pr",
-          "42",
-          "--head",
-          HEAD_SHA,
-          "--base",
-          BASE_SHA,
-          "--workflow-sha",
-          WORKFLOW_SHA,
-          "--approval-run-id",
-          "123",
-          "--approval-run-attempt",
-          "2",
-        ]),
-      ).toThrow(/must be exactly 1/u);
-      expect(
         parseControllerCommand(["--mode", "abandon", "--check-id", "17", "--run-id", "23"]),
       ).toEqual({ mode: "abandon", checkRunId: 17, childRunId: 23 });
       expect(() =>

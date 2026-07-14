@@ -545,6 +545,30 @@ describe("PR E2E controller exception safety", () => {
     expect(requests.some((request) => request.method === "PATCH")).toBe(false);
   });
 
+  it("parses only first-attempt protected-environment resolutions", () => {
+    const args = [
+      "--mode",
+      "resolve-approved",
+      "--exception-mode",
+      "resolve-fork",
+      "--pr",
+      "42",
+      "--head",
+      HEAD_SHA,
+      "--base",
+      BASE_SHA,
+      "--workflow-sha",
+      WORKFLOW_SHA,
+      "--approval-run-id",
+      String(APPROVAL_RUN_ID),
+      "--approval-run-attempt",
+      "1",
+    ];
+
+    expect(parseControllerCommand(args)).toEqual(approvedForkCommand());
+    expect(() => parseControllerCommand([...args.slice(0, -1), "2"])).toThrow(/must be exactly 1/u);
+  });
+
   it("rejects a command for a rerun before reading GitHub approval state", async () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
