@@ -40,15 +40,20 @@ function createDeps() {
       requiredInferenceApi: null,
     })),
     selectionProbe: vi.fn(),
+    canProbeResult: vi.fn(),
+    routeConstraints: vi.fn(),
     setupNim: vi.fn<Options["deps"]["setupNim"]>(
-      async (_gpu, _sandbox, _agent, _recover, _gateway, guard) => {
-        guard?.({
-          provider: fallbackSelection.provider,
-          model: fallbackSelection.model,
-          endpointUrl: fallbackSelection.endpointUrl,
-          credentialEnv: fallbackSelection.credentialEnv,
-          preferredInferenceApi: fallbackSelection.preferredInferenceApi,
-        });
+      async (_gpu, _sandbox, _agent, _recover, _gateway, guard, canProbeRoute) => {
+        calls.canProbeResult(canProbeRoute?.(fallbackSelection.provider));
+        calls.routeConstraints(
+          guard?.({
+            provider: fallbackSelection.provider,
+            model: fallbackSelection.model,
+            endpointUrl: fallbackSelection.endpointUrl,
+            credentialEnv: fallbackSelection.credentialEnv,
+            preferredInferenceApi: fallbackSelection.preferredInferenceApi,
+          }),
+        );
         calls.selectionProbe();
         return { ...fallbackSelection };
       },
@@ -153,7 +158,7 @@ function resumeOptions(
   };
 }
 
-function rejectRoute(
+function reportDifferentRoute(
   calls: ReturnType<typeof createDeps>["calls"],
   provider: string,
   model: string,
@@ -178,14 +183,18 @@ function rejectRoute(
 }
 
 describe("provider route containment", () => {
-  it("rejects a fresh selection before completing its session step or starting inference", async () => {
+  it("allows fresh selection to continue so setup can issue the mutation warning (#6315)", async () => {
     const { calls, deps } = createDeps();
-    rejectRoute(calls, "nvidia-prod", "nvidia/test");
+    reportDifferentRoute(calls, "nvidia-prod", "nvidia/test");
     const options = resumeOptions(deps, createSession());
 
     await expect(
       handleProviderInferenceState({ ...options, resume: false, sandboxName: null }),
-    ).rejects.toThrow("exit 1");
+    ).resolves.toMatchObject({
+      sandboxName: "target-sandbox",
+      provider: "nvidia-prod",
+      model: "nvidia/test",
+    });
 
     expect(calls.setupNim).toHaveBeenCalledOnce();
     expect(calls.preflightGatewayRouteDiscovery).toHaveBeenCalledWith({
@@ -199,22 +208,62 @@ describe("provider route containment", () => {
         credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       },
     });
-    expect(calls.checkGatewayRouteCompatibility).not.toHaveBeenCalled();
-    expect(calls.selectionProbe).not.toHaveBeenCalled();
-    expect(calls.recordStepComplete).not.toHaveBeenCalled();
+    expect(calls.checkGatewayRouteCompatibility).toHaveBeenCalledWith(
+      expect.objectContaining({
+        route: expect.objectContaining({ provider: "nvidia-prod", model: "nvidia/test" }),
+      }),
+    );
+    expect(calls.selectionProbe).toHaveBeenCalledOnce();
+    expect(calls.canProbeResult).toHaveBeenCalledWith(true);
+    expect(calls.routeConstraints).toHaveBeenCalledWith({
+      requiredModel: null,
+      requiredEndpointUrl: null,
+      requiredInferenceApi: null,
+    });
+    expect(calls.recordStepComplete).toHaveBeenCalled();
     expect(calls.surfaceReady).not.toHaveBeenCalled();
-    expect(calls.setupInference).not.toHaveBeenCalled();
+    expect(calls.setupInference).toHaveBeenCalledOnce();
     expect(calls.updateSandbox).not.toHaveBeenCalled();
+    expect(calls.error).not.toHaveBeenCalled();
   });
 
-  it("blocks routed-provider repair before gateway or registry mutation", async () => {
+  it("does not constrain fresh selection to a valid peer route (#6315)", async () => {
+    const { calls, deps } = createDeps();
+    calls.preflightGatewayRouteDiscovery.mockReturnValue({
+      ok: true,
+      requiredModel: "peer/model",
+      requiredEndpointUrl: "https://peer.example.test/v1",
+      requiredInferenceApi: "openai-completions",
+    });
+    const options = resumeOptions(deps, createSession());
+
+    await expect(
+      handleProviderInferenceState({ ...options, resume: false, sandboxName: null }),
+    ).resolves.toMatchObject({
+      provider: "nvidia-prod",
+      model: "nvidia/test",
+    });
+
+    expect(calls.routeConstraints).toHaveBeenCalledWith({
+      requiredModel: null,
+      requiredEndpointUrl: null,
+      requiredInferenceApi: null,
+    });
+    expect(calls.setupInference).toHaveBeenCalledOnce();
+    expect(calls.error).not.toHaveBeenCalled();
+  });
+
+  it("allows routed-provider repair across a valid peer-route difference (#6315)", async () => {
     const session = createSession({ provider: "nvidia-router", model: "router/model" });
     session.steps.provider_selection.status = "complete";
     const { calls, deps } = createDeps();
-    rejectRoute(calls, "nvidia-router", "router/model");
+    reportDifferentRoute(calls, "nvidia-router", "router/model");
 
-    await expect(handleProviderInferenceState(resumeOptions(deps, session))).rejects.toThrow(
-      "exit 1",
+    await expect(handleProviderInferenceState(resumeOptions(deps, session))).resolves.toMatchObject(
+      {
+        provider: "nvidia-router",
+        model: "router/model",
+      },
     );
 
     expect(calls.checkGatewayRouteCompatibility).toHaveBeenCalledWith({
@@ -224,17 +273,18 @@ describe("provider route containment", () => {
         provider: "nvidia-router",
         model: "router/model",
         endpointUrl: null,
+        credentialEnv: null,
         preferredInferenceApi: null,
       },
     });
-    expect(calls.reconcileRouter).not.toHaveBeenCalled();
-    expect(calls.surfaceReady).not.toHaveBeenCalled();
-    expect(calls.reupsertRoutedProvider).not.toHaveBeenCalled();
+    expect(calls.reconcileRouter).toHaveBeenCalledOnce();
+    expect(calls.surfaceReady).toHaveBeenCalledOnce();
+    expect(calls.reupsertRoutedProvider).toHaveBeenCalledOnce();
     expect(calls.updateSandbox).not.toHaveBeenCalled();
     expect(calls.setupInference).not.toHaveBeenCalled();
   });
 
-  it("rechecks routed repair after waiting for the gateway lock", async () => {
+  it("rechecks routed repair after waiting for the gateway lock (#6315)", async () => {
     const session = createSession({ provider: "nvidia-router", model: "router/model" });
     session.steps.provider_selection.status = "complete";
     const { calls, deps } = createDeps();
@@ -254,16 +304,16 @@ describe("provider route containment", () => {
 
     const repair = handleProviderInferenceState(resumeOptions(deps, session));
     await lockEntered;
-    rejectRoute(calls, "nvidia-router", "router/model");
+    reportDifferentRoute(calls, "nvidia-router", "router/model");
     releaseLock();
 
-    await expect(repair).rejects.toThrow("exit 1");
-    expect(calls.reconcileRouter).not.toHaveBeenCalled();
-    expect(calls.reupsertRoutedProvider).not.toHaveBeenCalled();
+    await expect(repair).resolves.toMatchObject({ provider: "nvidia-router" });
+    expect(calls.reconcileRouter).toHaveBeenCalledOnce();
+    expect(calls.reupsertRoutedProvider).toHaveBeenCalledOnce();
     expect(calls.updateSandbox).not.toHaveBeenCalled();
   });
 
-  it("blocks compatible-endpoint messaging refresh before endpoint or gateway work", async () => {
+  it("allows compatible-endpoint refresh to reach the final setup boundary (#6315)", async () => {
     const session = createSession({
       provider: "compatible-endpoint",
       model: "custom/model",
@@ -273,11 +323,11 @@ describe("provider route containment", () => {
     });
     session.steps.provider_selection.status = "complete";
     const { calls, deps } = createDeps();
-    rejectRoute(calls, "compatible-endpoint", "custom/model");
+    reportDifferentRoute(calls, "compatible-endpoint", "custom/model");
 
     await expect(
       handleProviderInferenceState(resumeOptions(deps, session, ["telegram"])),
-    ).rejects.toThrow("exit 1");
+    ).resolves.toMatchObject({ provider: "compatible-endpoint", model: "custom/model" });
 
     expect(calls.checkGatewayRouteCompatibility).toHaveBeenCalledWith({
       gatewayName: "nemoclaw-9090",
@@ -286,12 +336,33 @@ describe("provider route containment", () => {
         provider: "compatible-endpoint",
         model: "custom/model",
         endpointUrl: "https://example.test/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
         preferredInferenceApi: "openai-completions",
       },
     });
-    expect(calls.setupInference).not.toHaveBeenCalled();
-    expect(calls.surfaceReady).not.toHaveBeenCalled();
+    expect(calls.setupInference).toHaveBeenCalledOnce();
+    expect(calls.surfaceReady).toHaveBeenCalledOnce();
     expect(calls.updateSandbox).not.toHaveBeenCalled();
-    expect(calls.error).toHaveBeenCalledWith(expect.stringContaining("existing-sandbox"));
+    expect(calls.error).not.toHaveBeenCalled();
+  });
+
+  it("still blocks incomplete registered route metadata (#6315)", async () => {
+    const session = createSession();
+    session.steps.provider_selection.status = "complete";
+    const { calls, deps } = createDeps();
+    calls.checkGatewayRouteCompatibility.mockReturnValue({
+      ok: false,
+      gatewayName: "nemoclaw-9090",
+      sandboxName: "target-sandbox",
+      route: { provider: "nvidia-prod", model: "nvidia/test" },
+      conflicts: [{ sandboxName: "broken-sandbox", reason: "incomplete-route" }],
+    });
+
+    await expect(handleProviderInferenceState(resumeOptions(deps, session))).rejects.toThrow(
+      "exit 1",
+    );
+
+    expect(calls.error).toHaveBeenCalledWith(expect.stringContaining("broken-sandbox"));
+    expect(calls.setupInference).not.toHaveBeenCalled();
   });
 });

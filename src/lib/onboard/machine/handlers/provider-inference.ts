@@ -3,10 +3,11 @@
 
 import { clearAutoDetectedCompatibleContextWindow } from "../../../inference/compatible-endpoint-context";
 import { resolveAgentProviderInferenceApi } from "../../../inference/config";
-import type {
-  CurrentGatewayRouteCompatibilityCheck,
-  CurrentGatewayRouteDiscoveryPreflight,
-  GatewayRouteDiscoveryConstraints,
+import {
+  type CurrentGatewayRouteCompatibilityCheck,
+  type CurrentGatewayRouteDiscoveryPreflight,
+  type GatewayRouteDiscoveryConstraints,
+  isAdvisoryGatewayRouteConflict,
 } from "../../../inference/gateway-route-compatibility";
 import type { WebSearchConfig } from "../../../inference/web-search";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
@@ -375,6 +376,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         provider,
         model,
         endpointUrl,
+        credentialEnv,
         preferredInferenceApi,
       });
       const recovery = await deps.ensureResumeProviderReady(gatewayName, provider, credentialEnv);
@@ -483,8 +485,8 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             recoverRecordedProvider,
             gatewayName,
             (route) => guardProviderInferenceRouteSelection(deps, gatewayName, sandboxName, route),
-            (provider) =>
-              deps.preflightGatewayRouteDiscovery({
+            (provider) => {
+              const preflight = deps.preflightGatewayRouteDiscovery({
                 gatewayName,
                 sandboxName,
                 route: {
@@ -494,7 +496,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
                   preferredInferenceApi: null,
                   credentialEnv: null,
                 },
-              }).ok,
+              });
+              return preflight.ok || isAdvisoryGatewayRouteConflict(preflight.result);
+            },
             providerRecovery.sessionId,
           ),
       );
@@ -538,6 +542,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         provider,
         model,
         endpointUrl,
+        credentialEnv,
         preferredInferenceApi,
       });
     }
@@ -652,6 +657,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             provider: selectedProvider,
             model: selectedModel,
             endpointUrl,
+            credentialEnv,
             preferredInferenceApi,
           });
           try {
@@ -701,6 +707,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             provider: selectedProvider,
             model: selectedModel,
             endpointUrl,
+            credentialEnv,
             preferredInferenceApi,
           });
           return deps.reserveSandboxInferenceRoute(resumeReservationName, {
