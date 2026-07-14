@@ -91,4 +91,23 @@ describe("buildTelegramProbeInput", () => {
     const input = buildTelegramProbeInput("alpha", agent, deps);
     expect(input.breadcrumbs).toBeNull();
   });
+
+  it("captures timestamped OpenClaw native network-failure log lines (#6743)", () => {
+    const deps = makeDeps(() => ({
+      status: 0,
+      stdout: probeStdout(
+        [
+          "2026-07-14T18:55:23.313+00:00 [telegram] deleteWebhook failed: Network request for 'deleteWebhook' failed!",
+          "[telegram] [default] bridge did not start within 15s",
+        ],
+        ["PROC 42 node /opt/openclaw gateway"],
+      ),
+      stderr: "",
+    }));
+    const input = buildTelegramProbeInput("alpha", agent, deps);
+    expect(input.breadcrumbs).toMatchObject({
+      startupFailedNetwork: true,
+      bridgeNotStarted: true,
+    });
+  });
 });

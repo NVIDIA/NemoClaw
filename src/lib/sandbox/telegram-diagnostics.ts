@@ -50,7 +50,9 @@ export type TelegramBreadcrumbs = {
   tokenRejected: boolean;
   // "… credential placeholder … missing from runtime env" / "… mismatch"
   credentialUnresolved: boolean;
-  // "… Bot API startup probe failed: <network error>"
+  // Network failure reaching the Bot API — either the diagnostics preload's
+  // "… Bot API startup probe failed: <network error>" or OpenClaw's own
+  // "… Network request for '<method>' failed" / "recoverable network error".
   startupFailedNetwork: boolean;
   // "… Bot API startup probe returned HTTP <n>" (n>=300, not 401/404)
   startupHttpError: number | null;
@@ -264,12 +266,17 @@ function pickVerdict(signals: DiagnosticSignal[], input: TelegramProbeInput): Te
     return "policy_gap";
   }
   const bc = input.breadcrumbs;
+  // Hard failures first: a bad token or a dead gateway process won't self-heal.
   if (bc?.credentialUnresolved || bc?.tokenRejected) return "token_rejected";
-  if (bc?.startupFailedNetwork) return "unreachable";
-  if (input.gatewayProcessAlive === false || bc?.bridgeNotStarted) return "not_started";
+  if (input.gatewayProcessAlive === false) return "not_started";
+  // A confirmed `provider ready` means the bridge reached Telegram and the
+  // token works — it outranks the soft "did not start (yet)" and transient
+  // network-blip signals, which may be older log lines from a slow start.
   if (bc?.providerReady) {
     return bc.inboundReceived ? "healthy" : "idle";
   }
+  if (bc?.startupFailedNetwork) return "unreachable";
+  if (bc?.bridgeNotStarted) return "not_started";
   return "unknown";
 }
 
@@ -336,7 +343,10 @@ export function evaluateTelegramDiagnostics(input: TelegramProbeInput): Telegram
 // raw log text forward.
 
 export function parseTelegramBreadcrumbs(logLines: readonly string[]): TelegramBreadcrumbs | null {
-  const telegramLines = logLines.filter((line) => /^\[telegram\]\s+\[[^\]]+\]/.test(line.trim()));
+  // Accept both the preload's `[telegram] [default] …` lines and OpenClaw's
+  // timestamped `… [telegram] …` gateway lines (which carry native network
+  // errors), so a network-blocked channel is classified rather than left blank.
+  const telegramLines = logLines.filter((line) => /\[telegram\]/.test(line));
   if (telegramLines.length === 0) return null;
   const bc: TelegramBreadcrumbs = {
     providerReady: false,
@@ -353,7 +363,11 @@ export function parseTelegramBreadcrumbs(logLines: readonly string[]): TelegramB
     if (/credential placeholder.*(missing|mismatch|unresolved)/i.test(line)) {
       bc.credentialUnresolved = true;
     }
-    if (/startup probe failed/i.test(line)) bc.startupFailedNetwork = true;
+    if (
+      /startup probe failed|network request for .+ failed|recoverable network error/i.test(line)
+    ) {
+      bc.startupFailedNetwork = true;
+    }
     const httpErr = /startup probe returned HTTP\s+(\d{3})/i.exec(line);
     if (httpErr) bc.startupHttpError = Number(httpErr[1]);
     if (/bridge did not start within/i.test(line)) bc.bridgeNotStarted = true;

@@ -109,6 +109,29 @@ describe("evaluateTelegramDiagnostics verdict", () => {
     );
     expect(report.verdict).toBe("token_rejected");
   });
+
+  it("reports unreachable (not not_started) when the bridge failed on a network error (#6743)", () => {
+    const report = evaluateTelegramDiagnostics(
+      baseInput({
+        breadcrumbs: breadcrumbs({ startupFailedNetwork: true, bridgeNotStarted: true }),
+      }),
+    );
+    expect(report.verdict).toBe("unreachable");
+  });
+
+  it("prefers a confirmed provider-ready over a stale bridge-did-not-start (#6743)", () => {
+    const report = evaluateTelegramDiagnostics(
+      baseInput({ breadcrumbs: breadcrumbs({ bridgeNotStarted: true, providerReady: true }) }),
+    );
+    expect(report.verdict).toBe("idle");
+  });
+
+  it("prefers a confirmed provider-ready over a transient network error (#6743)", () => {
+    const report = evaluateTelegramDiagnostics(
+      baseInput({ breadcrumbs: breadcrumbs({ startupFailedNetwork: true, providerReady: true }) }),
+    );
+    expect(report.verdict).toBe("idle");
+  });
 });
 
 describe("parseTelegramBreadcrumbs", () => {
@@ -154,5 +177,13 @@ describe("parseTelegramBreadcrumbs", () => {
     expect(
       parseTelegramBreadcrumbs(["[telegram] [default] bridge did not start within 15s"]),
     ).toMatchObject({ bridgeNotStarted: true });
+  });
+
+  it("classifies OpenClaw native (timestamped) network-failure lines (#6743)", () => {
+    const bc = parseTelegramBreadcrumbs([
+      "2026-07-14T18:55:23.313+00:00 [telegram] deleteWebhook failed: Network request for 'deleteWebhook' failed!",
+      "[telegram] [default] bridge did not start within 15s; check channels.telegram.enabled",
+    ]);
+    expect(bc).toMatchObject({ startupFailedNetwork: true, bridgeNotStarted: true });
   });
 });

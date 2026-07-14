@@ -49,7 +49,11 @@ function buildTelegramProbeScript(): string {
     `set +e`,
     `printf '%s\\n' ${quotePath(TG_SHELL_OK)}`,
     `printf '%s\\n' ${quotePath(TG_LOG_BEGIN)}`,
-    `tail -n 400 ${quotePath(OPENCLAW_GATEWAY_LOG_FILE)} 2>/dev/null | grep -aE '^\\[telegram\\] ' | tail -n 40`,
+    // Match `[telegram]` anywhere on the line: the diagnostics preload writes
+    // non-timestamped `[telegram] [default] …` lines, while OpenClaw's own
+    // gateway logs carry a leading timestamp before `[telegram] …` (these hold
+    // the native network-failure evidence the evaluator classifies).
+    `tail -n 400 ${quotePath(OPENCLAW_GATEWAY_LOG_FILE)} 2>/dev/null | grep -aE '\\[telegram\\]' | tail -n 40`,
     `printf '%s\\n' ${quotePath(TG_LOG_END)}`,
     `__nemoclaw_tg_self_pid=$$`,
     `pgrep -fa 'openclaw|openclaw-gateway|node .*gateway' 2>/dev/null | awk -v self="$__nemoclaw_tg_self_pid" '$1 != self && $0 !~ /pgrep -fa/ { print "PROC " $0 }' | head -n 5`,
