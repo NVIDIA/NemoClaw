@@ -543,14 +543,14 @@ export async function verifyDeployment(
   const inferenceRouteWorking = inference.status === "ok";
   diagnostics.push({
     link: "inference",
-    status: inference.status === "ok" ? "ok" : inference.status === "unhealthy" ? "fail" : "warn",
+    status: inference.status === "ok" ? "ok" : "fail",
     detail: inference.detail,
     hint:
       inference.status === "ok"
         ? ""
         : inference.status === "unhealthy"
           ? "The inference route is reachable but the endpoint returned a server error (HTTP 5xx). If the endpoint runs on the host, confirm it is reachable from the sandbox — a loopback 127.0.0.1/localhost bind is not; bind it to 0.0.0.0 or use host.openshell.internal — then re-run: nemoclaw <sandbox> status."
-          : "The inference proxy may not be ready yet. Try: nemoclaw <sandbox> status (it may take a few seconds after creation).",
+          : "The inference proxy is unreachable. Confirm the configured endpoint is running and reachable from the sandbox, then re-run: nemoclaw <sandbox> status.",
   });
 
   // 5. Messaging bridges (providers attached AND runtime config exposes
@@ -578,7 +578,7 @@ export async function verifyDeployment(
     accessMethod,
   };
 
-  const healthy = gateway.reachable && dashboard.reachable && inference.status !== "unhealthy";
+  const healthy = gateway.reachable && dashboard.reachable && inference.status === "ok";
 
   return { healthy, verification, diagnostics };
 }

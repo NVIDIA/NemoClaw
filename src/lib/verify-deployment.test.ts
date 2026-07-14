@@ -179,7 +179,7 @@ describe("verifyDeployment", () => {
     expect(dashDiag?.hint).toContain("forward");
   });
 
-  it("inference failure is a warning, not a blocker", async () => {
+  it("reports unhealthy when the inference route is unreachable (#6849)", async () => {
     const deps = makeDeps({
       executeSandboxCommand: (_name: string, script: string) => {
         if (script.includes("inference.local")) {
@@ -190,10 +190,11 @@ describe("verifyDeployment", () => {
       },
     });
     const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
-    expect(result.healthy).toBe(true); // inference is non-blocking
+    expect(result.healthy).toBe(false);
     expect(result.verification.inferenceRouteWorking).toBe(false);
     const infDiag = result.diagnostics.find((d) => d.link === "inference");
-    expect(infDiag?.status).toBe("warn");
+    expect(infDiag?.status).toBe("fail");
+    expect(infDiag?.hint).toContain("unreachable");
   });
 
   it("reports unhealthy when the inference route is reachable but returns HTTP 5xx", async () => {
