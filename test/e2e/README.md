@@ -122,18 +122,18 @@ it as cancelled with `Superseded by PR update` or
 `PR closed — gate no longer applies` and identifies the obsolete head and base.
 The closed-PR outcome also applies when a fork repository was deleted and
 GitHub consequently returns no head-repository object.
-Control-plane selections remain hash-bound in the recorded plan, but their
-credentialed execution is waived only through the exact-diff approval below.
 Shared sandbox-boundary changes have a floor of `full-e2e`, `hermes-e2e`, and
 `security-posture`. E2E control-plane changes select `cloud-onboard`,
-`credential-sanitization`, and `security-posture`, but the controller does not
-run those jobs with credentials. This is a conservative path boundary that
-includes non-documentation files under `tools/e2e/` and `test/e2e/`, plus the
-E2E and PR-CI workflows, risk policy, dependency and test configuration, and
-preparation and upload actions. It does not attempt to classify an individual
-matching diff as harmless. Instead, the exact-diff check fails until a
-maintainer records the control-plane exception described below. If no job is
-selected, the check passes without an E2E run.
+`credential-sanitization`, and `security-posture`. The `e2e-control-plane`
+family is a conservative path boundary that includes non-documentation files
+under `tools/e2e/` and `test/e2e/`, plus the E2E and PR-CI workflows, risk
+policy, dependency and test configuration, and preparation and upload actions.
+An internal revision whose matched control-plane files are drawn only from
+`.github/workflows/pr-e2e-gate.yaml` and `tools/e2e/pr-e2e-gate.mts`
+automatically dispatches those selected jobs. Any other or mixed internal
+control-plane revision requires the exact-SHA maintainer authorization below
+before credentialed execution begins. If no job is selected, the check passes
+without an E2E run.
 
 Before dispatch, the controller verifies that the live PR still matches the CI
 run's exact head and base. It uses its own workflow commit when that commit is
@@ -154,22 +154,35 @@ waiting, evidence download, and completion, then revalidates that the PR is
 still open with the live head, base, and exact-diff check identity before
 recording a final result.
 
-Credential-bearing E2E is dispatched only for internal revisions whose plan
-does not include the `e2e-control-plane` family. A fork revision that selects
-jobs and an internal revision with that family both complete the exact-diff
-gate as failed without dispatching the selected credential-bearing jobs or
-exposing repository secrets. Non-secret PR CI remains required. The failed
-check summary embeds an explicit link to the same `E2E / PR Gate Controller`
-run; maintainers follow that link rather than relying on the custom check's
-**Details** destination. The check publishes only allowlisted exception
-metadata for its exact PR number, mode, head SHA, and base SHA. That controller
-run starts `Approve no-secret E2E exception`, which waits on the
-protected `e2e-no-secret-exception` environment with `deployment: false` and
-therefore does not create a deployment record. A maintainer opens the linked
-run, chooses **Review deployments**, selects that environment, and approves it.
-The comment is optional; the workflow reads both the reviewer and comment from
-GitHub's run approval history rather than accepting an actor supplied by the
-job.
+An internal revision whose control-plane matches include a file outside the two
+trusted controller files completes the exact-diff gate as failed with
+`Maintainer authorization required to run E2E`. No selected job runs and no
+repository secret is exposed. After reviewing the exact revision, a repository
+maintainer or administrator chooses **Run workflow** on `main`, selects
+`run-control-plane`, and supplies the PR number, current 40-character head SHA
+as `expected_head_sha`, current 40-character base SHA as `expected_base_sha`,
+and a specific 10–500-character `review_reason`. The authorization requires the
+first workflow attempt and revalidates the actor's `maintain` or `admin`
+permission, internal repository origin, open PR, exact head and base, risk
+plan, matching failed gate, compatible trusted controller commit, and final
+live revision. It then returns the same gate to in progress and dispatches the
+selected jobs. The normal wait, evidence download, and finish path is the only
+path that can record success; the authorization itself cannot make the gate
+green. A changed head or base requires a new authorization.
+
+A fork revision that selects jobs completes the exact-diff gate as failed
+without dispatching the selected credential-bearing jobs or exposing
+repository secrets. Non-secret PR CI remains required. The failed check summary
+embeds an explicit link to the same `E2E / PR Gate Controller` run; maintainers
+follow that link rather than relying on the custom check's **Details**
+destination. The check publishes only allowlisted exception metadata for its
+exact PR number, mode, head SHA, and base SHA. That controller run starts
+`Approve no-secret E2E exception`, which waits on the protected
+`e2e-no-secret-exception` environment with `deployment: false` and therefore
+does not create a deployment record. A maintainer opens the linked run, chooses
+**Review deployments**, selects that environment, and approves it. The comment
+is optional; the workflow reads both the reviewer and comment from GitHub's run
+approval history rather than accepting an actor supplied by the job.
 
 Before rollout, create `e2e-no-secret-exception` in the repository with one or
 more required reviewers whose approving members have repository `maintain` or
@@ -184,7 +197,7 @@ run. Trigger fresh upstream PR CI to create a new gate run, or use the typed
 manual fallback described below. Per-PR approval concurrency cancels an older
 waiting job when a newer exact revision reaches the gate.
 
-For the button path, the controller requires a first-attempt, in-progress run
+For the fork button path, the controller requires a first-attempt, in-progress run
 of this exact workflow on `main`, at the trusted workflow SHA and with the
 `workflow_run` event. It requires exactly one approved review that names only
 the exact environment, then verifies that the recorded reviewer still has
@@ -199,10 +212,10 @@ check is titled `No E2E run — exception approved by @<maintainer>` and begins
 with `Outcome: EXCEPTION — credentialed E2E did not run.` It never claims that
 the selected jobs passed.
 
-The typed manual dispatch on `main` remains available as a fallback. Choose
-`resolve-fork` or `resolve-control-plane` and provide the PR number, current
-`expected_head_sha`, current `expected_base_sha`, a 10–500-character reason,
-and optionally an Actions run URL in the exact form
+The typed manual fork dispatch on `main` remains available as a fallback.
+Choose `resolve-fork` and provide the PR number, current `expected_head_sha`,
+current `expected_base_sha`, a 10–500-character `review_reason`, and optionally
+an Actions run URL in the exact form
 `https://github.com/NVIDIA/NemoClaw/actions/runs/<run-id>`. Leave
 `evidence_url` blank when no supporting run exists. PR, issue, comment, job, and
 external URLs are rejected. The controller validates the optional URL's shape

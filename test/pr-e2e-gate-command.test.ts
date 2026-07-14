@@ -63,7 +63,7 @@ describe("PR E2E controller commands", () => {
     );
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("--mode must be seed, start, finish");
+    expect(result.stderr).toContain("--mode must be seed, start, start-control-plane, finish");
     expect(result.stderr).not.toContain("ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX");
   });
 
@@ -167,33 +167,50 @@ describe("PR E2E controller commands", () => {
     });
   });
 
-  it("parses a control-plane exception resolution", () => {
-    expect(
-      parseControllerCommand([
-        "--mode",
-        "resolve-control-plane",
-        "--pr",
-        "42",
-        "--head",
-        HEAD_SHA,
-        "--base",
-        BASE_SHA,
-        "--workflow-sha",
-        WORKFLOW_SHA,
-        "--maintainer",
-        "maintainer",
-        "--reason",
-        "Reviewed exact control-plane revision",
-      ]),
-    ).toEqual({
-      mode: "resolve-control-plane",
-      prNumber: 42,
-      headSha: HEAD_SHA,
-      baseSha: BASE_SHA,
-      workflowSha: WORKFLOW_SHA,
-      maintainer: "maintainer",
-      reason: "Reviewed exact control-plane revision",
+  it("parses an authorized control-plane run inside a private workspace", () => {
+    withPrivateWorkDir((workDir) => {
+      expect(
+        parseControllerCommand([
+          "--mode",
+          "start-control-plane",
+          "--pr",
+          "42",
+          "--head",
+          HEAD_SHA,
+          "--base",
+          BASE_SHA,
+          "--workflow-sha",
+          WORKFLOW_SHA,
+          "--maintainer",
+          "maintainer",
+          "--reason",
+          "Reviewed exact credentialed control-plane execution",
+          "--gate-run-id",
+          "77",
+          "--workflow-run-attempt",
+          "1",
+          "--work-dir",
+          workDir,
+        ]),
+      ).toMatchObject({
+        mode: "start-control-plane",
+        prNumber: 42,
+        headSha: HEAD_SHA,
+        baseSha: BASE_SHA,
+        workflowSha: WORKFLOW_SHA,
+        maintainer: "maintainer",
+        reason: "Reviewed exact credentialed control-plane execution",
+        gateRunId: 77,
+        workflowRunAttempt: 1,
+        planPath: path.join(workDir, "risk-plan.json"),
+      });
     });
+  });
+
+  it("rejects the removed control-plane exception mode", () => {
+    expect(() => parseControllerCommand(["--mode", "resolve-control-plane"])).toThrow(
+      /--mode must be/u,
+    );
   });
 
   it("parses an abandon command", () => {
