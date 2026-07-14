@@ -5,6 +5,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  E2E_RENDER_LIMIT,
+  trustedE2eRecommendationInventory,
+} from "../tools/advisors/e2e-recommendations.mts";
 import { deleteBotOwnedStickyComments, upsertStickyComment } from "../tools/advisors/github.mts";
 import { buildRiskPlan } from "../tools/advisors/risk-plan.mts";
 import { runReadOnlyAdvisor } from "../tools/advisors/session.mts";
@@ -317,6 +321,53 @@ describe("PR review advisor security boundaries", () => {
     const comment = buildComment({ summary: renderSummary(result), result });
     expect(comment).toContain("<code>publisher-exact-head-proof</code>");
     expect(comment.match(/<code>publisher-exact-head-proof<\/code>/gu)).toHaveLength(1);
+  });
+
+  it("reports E2E recommendations that do not fit in the job summary", () => {
+    const trustedIds = trustedE2eRecommendationInventory().allowedJobIds.slice(
+      0,
+      2 * (E2E_RENDER_LIMIT + 1),
+    );
+    const requiredIds = trustedIds.slice(0, E2E_RENDER_LIMIT + 1);
+    const optionalIds = trustedIds.slice(E2E_RENDER_LIMIT + 1);
+    expect(requiredIds).toHaveLength(E2E_RENDER_LIMIT + 1);
+    expect(optionalIds).toHaveLength(E2E_RENDER_LIMIT + 1);
+
+    const result = normalizeReviewResult(
+      {
+        e2e: {
+          coverage: {
+            requiredTests: requiredIds.map((id) => ({
+              id,
+              reason: "Trusted E2E recommendation.",
+            })),
+            optionalTests: optionalIds.map((id) => ({
+              id,
+              reason: "Trusted optional E2E recommendation.",
+            })),
+            confidence: "high",
+          },
+          targets: { required: [], optional: [], confidence: "high" },
+        },
+      },
+      e2eReviewMetadata([]),
+    );
+
+    const summary = renderSummary(result);
+    const requiredLines = summary
+      .split("## Recommended E2E\n")[1]
+      ?.split("\n## Optional E2E\n")[0]
+      ?.trim()
+      .split("\n");
+    const optionalLines = summary.split("\n## Optional E2E\n")[1]?.trim().split("\n");
+    expect(requiredLines).toEqual([
+      ...requiredIds.slice(0, E2E_RENDER_LIMIT).map((id) => `- **${id}**`),
+      "- _1 more._",
+    ]);
+    expect(optionalLines).toEqual([
+      ...optionalIds.slice(0, E2E_RENDER_LIMIT).map((id) => `- **${id}**`),
+      "- _1 more._",
+    ]);
   });
 
   it("drops malformed or mismatched exact-head selector evidence", () => {
