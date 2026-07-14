@@ -17,8 +17,11 @@ import {
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import {
+  type ColdOnboardPerformanceBudget,
+  evaluateColdOnboardPerformance,
   maximumOutputSilenceMs,
   type OnboardTraceWindow,
+  readColdOnboardPerformanceBudget,
   readOnboardTraceWindow,
 } from "../fixtures/onboard-performance.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
@@ -33,15 +36,6 @@ import { extractOpenClawAgentPayloadText } from "./agent-turn-latency-helpers.ts
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-full";
 const LIVE_TIMEOUT_MS = 50 * 60_000;
 const FIRST_TURN_TIMEOUT_MS = 240_000;
-// Cold-path acceptance budget for install + BuildKit image build + gateway
-// health + first hosted agent turn (#6002, #6265). The dominant term is the
-// cold BuildKit image build, which swings run-to-run with Docker Hub pull
-// speed and hosted-runner I/O. Observed post-#6265 onboard phase alone ranged
-// 163s (pass) to 173s (fail) on identical `main` commits — a ~10s swing — so
-// the original 180s cap left only ~7s of headroom and tipped over on slow
-// builds. Raised to 205s to absorb build-phase variance while still catching
-// gross onboard regressions (first hosted turn itself is only ~5-8s).
-const ONBOARD_BUDGET_SECS = 205;
 const MAX_SILENCE_SECS = 60;
 const EXPECTED_FIRST_REPLY = "NEMOCLAW_E2E_READY_6002";
 const MEASURE_COLD_ONBOARD = process.env.E2E_TARGET_ID === "full-e2e";
@@ -146,16 +140,37 @@ function createColdOnboardCapture(): ColdOnboardCapture | null {
     : null;
 }
 
+function readFullE2eColdPathBudget() {
+  try {
+    return readColdOnboardPerformanceBudget(
+      JSON.parse(
+        fs.readFileSync(path.join(REPO_ROOT, "ci", "onboard-performance-budget.json"), "utf8"),
+      ) as unknown,
+    );
+  } catch (error) {
+    throw new Error(
+      `Full E2E cold-path performance budget is invalid: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
+}
+
 async function assertColdOnboardPerformance(input: {
   apiKey: string;
   artifacts: ArtifactSink;
+  budget: ColdOnboardPerformanceBudget;
   install: ShellProbeResult;
+  installCompletedAtMs: number;
   outputEvents: readonly ShellProbeOutputEvent[];
   sandbox: SandboxClient;
   traceDirectory: string;
   traceFile: string;
 }): Promise<void> {
   const traceWindow = readAndDeleteTraceWindow(input.traceFile, input.traceDirectory);
+  expect(
+    input.installCompletedAtMs,
+    "install completion must not precede the onboard root end",
+  ).toBeGreaterThanOrEqual(traceWindow.finishedAtMs);
   const ansiSgr = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
   const plain = resultText(input.install).replace(ansiSgr, "");
   const heartbeatCount = (plain.match(/Still working on /g) ?? []).length;
@@ -167,7 +182,9 @@ async function assertColdOnboardPerformance(input: {
   const classicBuildSteps = (plain.match(/Step \d+\/\d+ :/gu) ?? []).length;
   const maxSilenceMs = maximumOutputSilenceMs(traceWindow, input.outputEvents);
   const maxSilenceSecs = Math.ceil(maxSilenceMs / 1_000);
+  const rootEndToInstallCompletionMs = input.installCompletedAtMs - traceWindow.finishedAtMs;
 
+  const firstTurnStartedAtMs = Date.now();
   const turn = await input.sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(
@@ -181,21 +198,41 @@ async function assertColdOnboardPerformance(input: {
       timeoutMs: FIRST_TURN_TIMEOUT_MS,
     },
   );
-  const totalMs = Date.now() - traceWindow.startedAtMs;
-  const totalSecs = Math.ceil(totalMs / 1_000);
+  const firstTurnCompletedAtMs = Date.now();
+  const firstTurnCommandMs = firstTurnCompletedAtMs - firstTurnStartedAtMs;
+  const performanceEvaluation = evaluateColdOnboardPerformance(
+    traceWindow,
+    firstTurnCompletedAtMs,
+    input.budget,
+  );
+  const rootStartToFirstTurnCompletionSecs = Math.ceil(
+    performanceEvaluation.rootStartToFirstTurnCompletionMs / 1_000,
+  );
   const turnText = resultText(turn);
   const assistantReply = extractOpenClawAgentPayloadText(turnText).trim();
   const compactAssistantReply = assistantReply.replace(/\s+/gu, "");
   const responseChars = assistantReply.length;
 
   await input.artifacts.writeJson("onboard-progress-budget.json", {
+    schemaVersion: "nemoclaw.full_e2e_cold_performance.v2",
     sandbox: SANDBOX_NAME,
     installExitCode: input.install.exitCode,
     firstTurnExitCode: turn.exitCode,
+    phaseMeasurements: {
+      onboardRootMs: traceWindow.durationMs,
+      rootStartToFirstTurnCompletionMs: performanceEvaluation.rootStartToFirstTurnCompletionMs,
+      rootEndToInstallCompletionMs,
+      firstTurnCommandMs,
+      rootEndToFirstTurnCompletionMs: performanceEvaluation.rootEndToFirstTurnCompletionMs,
+      tracePhasesMs: traceWindow.phaseDurationsMs,
+    },
     onboardSecs: Math.ceil(traceWindow.durationMs / 1_000),
-    totalMs,
-    totalSecs,
-    budgetSecs: ONBOARD_BUDGET_SECS,
+    rootStartToFirstTurnCompletionSecs,
+    budget: input.budget,
+    performance: {
+      passed: performanceEvaluation.passed,
+      violations: performanceEvaluation.violations,
+    },
     heartbeatCount,
     maxSilenceSecs,
     maxSilenceBudgetSecs: MAX_SILENCE_SECS,
@@ -219,15 +256,16 @@ async function assertColdOnboardPerformance(input: {
     `expected the sentinel first agent reply, got: ${turnText}`,
   ).toContain(EXPECTED_FIRST_REPLY);
   expect(
-    totalMs,
-    `[1/8]-to-first-response took ${totalSecs}s, over the ${ONBOARD_BUDGET_SECS}s budget`,
-  ).toBeLessThanOrEqual(ONBOARD_BUDGET_SECS * 1_000);
+    performanceEvaluation.passed,
+    `onboard-root-start-to-first-turn-completion took ${rootStartToFirstTurnCompletionSecs}s; ${performanceEvaluation.violations.join("; ")}`,
+  ).toBe(true);
 }
 
 test("full e2e: install, onboard, inference, cli operations, and cleanup", {
   timeout: LIVE_TIMEOUT_MS,
 }, async ({ artifacts, cleanup: cleanupRegistry, host, sandbox, secrets, skip }) => {
   const hosted = requireHostedInferenceConfig(secrets);
+  const coldOnboardBudget = readFullE2eColdPathBudget();
   const redactionValues = [hosted.apiKey];
   await artifacts.target.declare({
     id: "full-e2e",
@@ -298,12 +336,15 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
     redactionValues,
     timeoutMs: 25 * 60_000,
   });
+  const installCompletedAtMs = Date.now();
   expect(install.exitCode, resultText(install)).toBe(0);
   await (coldOnboard
     ? assertColdOnboardPerformance({
         apiKey: hosted.apiKey,
         artifacts,
+        budget: coldOnboardBudget,
         install,
+        installCompletedAtMs,
         outputEvents: coldOnboard.outputEvents,
         sandbox,
         traceDirectory: coldOnboard.traceDirectory,

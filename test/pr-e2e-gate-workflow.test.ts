@@ -16,6 +16,9 @@ import {
 
 const PR_GATE_PATH = ".github/workflows/pr-e2e-gate.yaml";
 const E2E_PATH = ".github/workflows/e2e.yaml";
+const HEAD_SHA = "a".repeat(40);
+const BASE_SHA = "b".repeat(40);
+const WORKFLOW_SHA = "d".repeat(40);
 
 type CoordinatorJob = WorkflowJob & {
   concurrency?: { group: string; "cancel-in-progress": boolean };
@@ -141,13 +144,14 @@ function runStartStep(headBranch: string, prNumber = "42") {
       env: {
         ...process.env,
         CI_CONCLUSION: "success",
+        CI_DISPLAY_TITLE: `CI PR #42 head ${HEAD_SHA} base ${BASE_SHA} gate true`,
         CI_RUN_ATTEMPT: "3",
         CI_RUN_ID: "99",
         FAKE_NODE_ARGUMENTS: argumentsPath,
         GITHUB_TOKEN: "token",
         HEAD_BRANCH: headBranch,
         HEAD_REPOSITORY: "NVIDIA/NemoClaw",
-        HEAD_SHA: "a".repeat(40),
+        HEAD_SHA,
         PATH: `${binDir}:${process.env.PATH ?? ""}`,
         PR_NUMBER: prNumber,
         WORKFLOW_SHA: "d".repeat(40),
@@ -198,7 +202,11 @@ function runCancelStep(prNumber: string) {
   }
 }
 
-function runChildValidation(currentPullSha: string) {
+function runChildValidation(
+  currentPullSha: string,
+  currentPullBase = BASE_SHA,
+  currentWorkflowSha = WORKFLOW_SHA,
+) {
   const workflow = readYaml<DispatchWorkflow>(E2E_PATH);
   const validation = step(workflow.jobs["generate-matrix"], "Validate controller dispatch");
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-child-"));
@@ -222,6 +230,7 @@ case "\${2:-}" in
   .state) printf 'open\\n' ;;
   .head.repo.full_name*) printf 'NVIDIA/NemoClaw\\n' ;;
   .head.sha) printf '%s\\n' "$FAKE_PR_SHA" ;;
+  .base.sha) printf '%s\\n' "$FAKE_PR_BASE_SHA" ;;
   *) exit 2 ;;
 esac
 `,
@@ -233,9 +242,12 @@ esac
       encoding: "utf8",
       env: {
         ...process.env,
-        CHECKOUT_SHA: "a".repeat(40),
+        BASE_SHA,
+        CHECKOUT_SHA: HEAD_SHA,
         CORRELATION_ID: "12345678-1234-4123-8123-123456789abc",
-        FAKE_CHECKOUT_SHA: "a".repeat(40),
+        EXPECTED_WORKFLOW_SHA: WORKFLOW_SHA,
+        FAKE_CHECKOUT_SHA: HEAD_SHA,
+        FAKE_PR_BASE_SHA: currentPullBase,
         FAKE_PR_SHA: currentPullSha,
         GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
         GITHUB_TOKEN: "token",
@@ -246,6 +258,7 @@ esac
         TARGETS: "",
         WORKFLOW_EVENT: "workflow_dispatch",
         WORKFLOW_REF: "refs/heads/main",
+        WORKFLOW_SHA: currentWorkflowSha,
       },
     });
   } finally {
@@ -269,12 +282,12 @@ describe("PR E2E gate workflow", () => {
         types: ["completed"],
       },
       pull_request_target: {
-        types: ["opened", "synchronize", "reopened", "ready_for_review", "closed"],
+        types: ["opened", "synchronize", "reopened", "ready_for_review", "edited", "closed"],
       },
       workflow_dispatch: {
         inputs: {
           operation: {
-            description: "Exact-head exception type to record.",
+            description: "Exact-diff exception type to record.",
             required: true,
             default: "resolve-fork",
             type: "choice",
@@ -287,6 +300,11 @@ describe("PR E2E gate workflow", () => {
           },
           expected_head_sha: {
             description: "Exact 40-character PR head SHA reviewed by the maintainer.",
+            required: true,
+            type: "string",
+          },
+          expected_base_sha: {
+            description: "Exact 40-character PR base SHA reviewed by the maintainer.",
             required: true,
             type: "string",
           },
@@ -307,14 +325,31 @@ describe("PR E2E gate workflow", () => {
     expect(workflow.permissions).toEqual({});
     expect(initialize.if).toContain("github.event_name == 'pull_request_target'");
     expect(initialize.if).toContain("github.event.action != 'closed'");
-    expect(initialize.permissions).toEqual({ checks: "write", contents: "read" });
+    expect(initialize.if).toContain("github.event.action != 'edited'");
+    expect(initialize.if).toContain("github.event.changes.base != null");
+    expect(initialize.permissions).toEqual({
+      checks: "write",
+      contents: "read",
+      "pull-requests": "read",
+    });
+    expect(initialize.concurrency?.group).toBe(
+      "pr-e2e-gate-${{ github.event.pull_request.head.repo.full_name }}-${{ github.event.pull_request.head.ref }}",
+    );
     expect(cancel.if).toContain("github.event_name == 'pull_request_target'");
     expect(cancel.if).toContain(
       "github.event.pull_request.head.repo.full_name == github.repository",
     );
+    expect(cancel.if).toContain("github.event.action != 'edited'");
+    expect(cancel.if).toContain("github.event.changes.base != null");
     expect(cancel.permissions).toEqual({ actions: "write", contents: "read" });
     expect(coordinate.if).toContain("github.event_name == 'workflow_run'");
     expect(coordinate.if).toContain("github.event.workflow_run.event == 'pull_request'");
+    expect(coordinate.if).toContain(
+      "github.event.workflow_run.path == '.github/workflows/pr.yaml'",
+    );
+    expect(coordinate.if).toContain(
+      "endsWith(github.event.workflow_run.display_title, ' gate true')",
+    );
     expect(coordinate.if).not.toContain("head_repository.full_name == github.repository");
     expect(coordinate.permissions).toEqual({
       actions: "write",
@@ -322,6 +357,9 @@ describe("PR E2E gate workflow", () => {
       contents: "read",
       "pull-requests": "read",
     });
+    expect(coordinate.concurrency?.group).toBe(
+      "pr-e2e-gate-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}",
+    );
     expect(resolveException.if).toContain("github.event_name == 'workflow_dispatch'");
     expect(resolveException.if).toContain("github.ref == 'refs/heads/main'");
     expect(resolveException.permissions).toEqual({
@@ -333,13 +371,22 @@ describe("PR E2E gate workflow", () => {
     expect(
       collectStrings(resolveException).some((value) => value.includes('--mode "$OPERATION"')),
     ).toBe(true);
-    expect(step(initialize, "Reserve exact-head gate").run).toContain('--head "$HEAD_SHA"');
+    expect(step(initialize, "Reserve exact-diff gate").run).toContain('--head "$HEAD_SHA"');
+    expect(step(initialize, "Reserve exact-diff gate").env?.BASE_SHA).toBe(
+      "${{ github.event.pull_request.base.sha }}",
+    );
+    expect(step(initialize, "Reserve exact-diff gate").run).toContain('--base "$BASE_SHA"');
+    const start = step(coordinate, "Start evaluation");
+    expect(start.env?.CI_DISPLAY_TITLE).toBe("${{ github.event.workflow_run.display_title }}");
+    expect(start.run).toContain('--ci-display-title "$CI_DISPLAY_TITLE"');
     const resolution = step(resolveException, "Record E2E exception");
     expect(resolution.env?.OPERATION).toBe("${{ inputs.operation }}");
     expect(resolution.env?.WORKFLOW_SHA).toBe("${{ github.workflow_sha }}");
     expect(resolution.env?.MAINTAINER).toBe("${{ github.triggering_actor }}");
     expect(resolution.env?.MAINTAINER).not.toBe("${{ github.actor }}");
+    expect(resolution.env?.EXPECTED_BASE_SHA).toBe("${{ inputs.expected_base_sha }}");
     expect(resolution.run).toContain('--head "$EXPECTED_HEAD_SHA"');
+    expect(resolution.run).toContain('--base "$EXPECTED_BASE_SHA"');
     expect(resolution.run).toContain('--workflow-sha "$WORKFLOW_SHA"');
     expect(resolution.run).toContain('--reason "$WAIVER_REASON"');
     expect(resolution.run).toContain('--evidence-url "$EVIDENCE_URL"');
@@ -418,13 +465,19 @@ describe("PR E2E gate workflow", () => {
     expect(execution.arguments[prFlag + 1]).toBe("");
   });
 
-  it("validates the E2E run against the PR head commit", () => {
-    const current = runChildValidation("a".repeat(40));
+  it("validates the E2E run against the PR head, base, and trusted workflow commits", () => {
+    const current = runChildValidation(HEAD_SHA);
     const stale = runChildValidation("c".repeat(40));
+    const retargeted = runChildValidation(HEAD_SHA, "d".repeat(40));
+    const racedWorkflow = runChildValidation(HEAD_SHA, BASE_SHA, "e".repeat(40));
 
     expect(current.status).toBe(0);
     expect(stale.status).toBe(1);
     expect(stale.stdout).toContain("checkout_sha must match the PR head commit");
+    expect(retargeted.status).toBe(1);
+    expect(retargeted.stdout).toContain("base_sha must match the PR base commit");
+    expect(racedWorkflow.status).toBe(1);
+    expect(racedWorkflow.stdout).toContain("workflow_sha must match the trusted workflow commit");
   });
 
   it("logs each child state once and exits after success", () => {

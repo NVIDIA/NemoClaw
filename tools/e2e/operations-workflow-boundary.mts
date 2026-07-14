@@ -112,7 +112,15 @@ function requireNode24GithubScript(errors: string[], step: WorkflowStep, owner: 
 
 function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow): void {
   const inputs = workflow.on?.workflow_dispatch?.inputs ?? {};
-  for (const name of ["jobs", "pr_number", "checkout_sha", "plan_hash", "correlation_id"]) {
+  for (const name of [
+    "jobs",
+    "pr_number",
+    "checkout_sha",
+    "base_sha",
+    "workflow_sha",
+    "plan_hash",
+    "correlation_id",
+  ]) {
     const input = inputs[name];
     if (input?.type !== "string" || input.default !== "") {
       errors.push(`workflow_dispatch ${name} must be an optional string with an empty default`);
@@ -156,12 +164,15 @@ function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow):
     errors.push("Controller validation must run before workspace preparation");
   }
   const expectedStepEnvironment = {
+    BASE_SHA: "${{ inputs.base_sha }}",
     CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
+    EXPECTED_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
     JOBS: "${{ inputs.jobs }}",
     PLAN_HASH: "${{ inputs.plan_hash }}",
     PR_NUMBER: "${{ inputs.pr_number }}",
     CORRELATION_ID: "${{ inputs.correlation_id }}",
     TARGETS: "${{ inputs.targets }}",
+    WORKFLOW_SHA: "${{ github.workflow_sha }}",
   };
   for (const [name, value] of Object.entries(expectedStepEnvironment)) {
     if (validation.env?.[name] !== value) {
@@ -172,6 +183,8 @@ function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow):
   for (const fragment of [
     '"$WORKFLOW_EVENT" == "workflow_dispatch"',
     '"$WORKFLOW_REF" == "refs/heads/main"',
+    '"$BASE_SHA" =~ ^[a-f0-9]{40}$',
+    '"$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA"',
     '"$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA"',
     '"$PR_NUMBER" =~ ^[1-9][0-9]*$',
     '[[ -n "$JOBS" && -z "$TARGETS" ]]',
@@ -179,6 +192,7 @@ function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow):
     "'.state'",
     "'.head.repo.full_name // \"\"'",
     "'.head.sha'",
+    `[[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]]`,
   ]) {
     if (!validationScript.includes(fragment)) {
       errors.push(`Controller validation must retain ${fragment}`);

@@ -49,7 +49,7 @@ describe("sandbox registration route transaction", () => {
     expect(calls.error).toHaveBeenCalledWith(expect.stringContaining("peer"));
   });
 
-  it("holds sandbox then gateway locks through sandbox creation and route registration", async () => {
+  it("holds sandbox, host dashboard, then gateway locks through creation and registration", async () => {
     const events: string[] = [];
     const { deps } = createDeps({
       checkGatewayRouteCompatibility: () => {
@@ -58,6 +58,10 @@ describe("sandbox registration route transaction", () => {
       },
       withSandboxMutationLock: async (_sandboxName, operation) => {
         events.push("sandbox-lock");
+        return await operation();
+      },
+      withDashboardPortReservationLock: async (operation) => {
+        events.push("dashboard-lock");
         return await operation();
       },
       withGatewayRouteMutationLock: async (_gatewayName, operation) => {
@@ -76,7 +80,14 @@ describe("sandbox registration route transaction", () => {
     await expect(handleSandboxState(baseOptions(deps))).resolves.toMatchObject({
       sandboxName: "my-assistant",
     });
-    expect(events).toEqual(["sandbox-lock", "gateway-lock", "guard", "create", "registry"]);
+    expect(events).toEqual([
+      "sandbox-lock",
+      "dashboard-lock",
+      "gateway-lock",
+      "guard",
+      "create",
+      "registry",
+    ]);
   });
 
   it("fails when a competing same-name registration changed routes", async () => {

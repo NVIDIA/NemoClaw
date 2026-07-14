@@ -17,12 +17,9 @@ const BRAVE_TARBALL =
 it("pins Brave web-search and preserves its placeholder during build-time doctor", () => {
   const dockerfile = fs.readFileSync(path.join(ROOT, "Dockerfile"), "utf-8");
   const start = dockerfile.indexOf("# Install non-messaging OpenClaw plugins");
-  const end = dockerfile.indexOf(
-    'RUN OPENCLAW_VERSION="${OPENCLAW_VERSION}" node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase agent-install',
-    start,
-  );
   const command = dockerfile
-    .slice(dockerfile.indexOf("RUN ", start) + 4, end)
+    .slice(start)
+    .split("\nRUN ", 3)[1]
     .split("\n")
     .filter((line) => !line.trimStart().startsWith("#"))
     .join("\n")
