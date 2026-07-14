@@ -41,7 +41,7 @@ Use labels for:
 
 ### PR Type
 
-Apply exactly one PR type label to a non-draft PR when there is enough evidence.
+Apply one PR type label to a non-draft PR when there is enough evidence.
 
 | Label | Applies To | Description | Positive Signals | Negative Signals |
 |---|---|---|---|---|

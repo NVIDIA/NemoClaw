@@ -169,7 +169,7 @@
           "type": "object",
           "required": [
             "relevantChangedFiles",
-            "exactHeadCredentialFreeTests",
+            "changedCredentialFreeTests",
             "required",
             "optional",
             "noTargetE2eReason",
@@ -180,9 +180,9 @@
               "type": "array",
               "items": { "type": "string" }
             },
-            "exactHeadCredentialFreeTests": {
+            "changedCredentialFreeTests": {
               "type": "array",
-              "items": { "$ref": "#/$defs/e2eExactHeadCredentialFreeTest" }
+              "items": { "$ref": "#/$defs/e2eChangedCredentialFreeTest" }
             },
             "required": {
               "type": "array",
@@ -321,7 +321,7 @@
       },
       "additionalProperties": false
     },
-    "e2eExactHeadCredentialFreeTest": {
+    "e2eChangedCredentialFreeTest": {
       "type": "object",
       "required": ["id", "file", "headSha"],
       "properties": {

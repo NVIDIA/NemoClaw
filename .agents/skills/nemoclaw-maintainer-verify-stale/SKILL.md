@@ -37,13 +37,13 @@ Verify-stale progress:
 3. **Stop for approval before cost.** In batch mode, present one issue's plan and wait for maintainer approval before provisioning Brev.
 4. **Provision and install.** If local-first does not settle the issue, read [reference/brev-provisioning.md](reference/brev-provisioning.md). Use it for Brev reuse/provisioning, reset, baseline/latest installs, dependency bootstrap, and `brev exec` footguns.
 5. **Run the verification rubric.** Read [reference/reproduction-rubrics.md](reference/reproduction-rubrics.md). Use it to validate baseline behavior, retry with a synthesized reproducer if needed, run latest, handle architectural drift, and branch for performance or rebuild-cycle bugs.
-6. **Check intentional changes.** If the symptom targets removed/deprecated behavior, read [reference/by-design.md](reference/by-design.md). Use static evidence to recommend Project Status `Won't Fix`, then request explicit approval for the exact Project/comment write set.
+6. **Check intentional changes.** If the symptom targets removed/deprecated behavior, read [reference/by-design.md](reference/by-design.md). Use static evidence to recommend Project Status `Won't Fix`, then request explicit approval for the Project/comment write set.
 7. **Score, propose, apply, and log.** Read [reference/scoring-comments-and-logging.md](reference/scoring-comments-and-logging.md). Use it for confidence scoring, redaction, concise templates, authorization, issue-state race checks, approved Project 199 movement, infra failures, and activity logging.
 
 ## Non-negotiables
 
 - Never auto-close an issue. Verdict names belong in comments and logs, not labels.
-- Never write a Project field, assignment, or public comment before the maintainer accepts that exact write set.
+- Never write a Project field, assignment, or public comment before the maintainer accepts that write set.
 - Never put API keys on a command line. Use the file-based pattern in `environment-and-reproducer.md`.
 - Never post unredacted transcripts, issue excerpts, synthesized scripts, internal hostnames, email addresses, or tokens.
 - Never post a comment with broken markdown links or tag-drifting `file:line` citations. Re-run cited commands and link-check at least one rendered link per comment section.

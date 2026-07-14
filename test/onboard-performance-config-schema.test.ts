@@ -177,7 +177,7 @@ function deriveBudgets(input: Calibration): ColdPathBudget {
 
 describe("full-E2E cold-path calibration", () => {
   // source-shape-contract: compatibility -- Exact-head provenance is durable evidence for the hosted-run budget calibration
-  it("records five independent successful exact-head samples", () => {
+  it("records five independent successful samples for current main", () => {
     expect(calibration.schemaVersion).toBe(1);
     expect(calibration.baselineMainSha).toMatch(/^[0-9a-f]{40}$/u);
     expect(calibration.measurementHeadSha).toMatch(/^[0-9a-f]{40}$/u);
