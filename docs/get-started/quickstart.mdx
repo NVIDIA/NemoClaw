@@ -11,9 +11,6 @@ content:
 skill:
   priority: 10
 ---
-import { StarterPromptFallback } from "../_components/StarterPrompt";
-import { StarterPromptButton } from "../_components/StarterPromptButton";
-
 Create a sandboxed OpenClaw agent, then send it a first prompt.
 
 ## Set Up with a Coding Agent
@@ -22,9 +19,7 @@ Copy this starter prompt into Cursor, Claude Code, Codex, Copilot, or another lo
 The prompt points the agent to [AI Agent Docs](../resources/agent-skills), this quickstart, the Markdown docs, and the optional `nemoclaw-user-guide` skill.
 It asks the agent to collect your choices before it starts interactive commands and to use the checked-in local credential helper and form only after you approve the exact command that receives credentials.
 
-<StarterPromptButton />
-
-<StarterPromptFallback />
+<Markdown src="/../docs/_build/StarterPrompt.generated.mdx" />
 
 If you prefer to control setup directly, use the interactive installer in [Create Your First Sandboxed Agent](#create-your-first-sandboxed-agent).
 

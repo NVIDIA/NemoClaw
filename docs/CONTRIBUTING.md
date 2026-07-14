@@ -109,6 +109,32 @@ Public docs publish automatically when a `v*.*.*` release tag is pushed.
 The public publish job runs in the `docs-public` environment, verifies that the tag commit is reachable from `origin/main`, regenerates agent variants, validates Fern docs, and publishes to the public Fern instance.
 If the tag does not point to a commit on `main`, the job stops before installing dependencies or running Fern.
 
+## Starter Prompt Generation
+
+The canonical coding-agent installation prompt lives in `docs/resources/starter-prompt.md`.
+Edit that Markdown file instead of placing prompt text in a React component.
+Downstream consumers can pin the source with a raw URL such as
+`https://raw.githubusercontent.com/NVIDIA/NemoClaw/<commit-sha>/docs/resources/starter-prompt.md`.
+The Markdown SPDX comment is part of that raw file but does not appear when Markdown is rendered.
+
+The `scripts/generate-starter-prompt.ts` script removes the Markdown SPDX preamble and writes `docs/_build/StarterPrompt.generated.mdx`.
+The generated snippet wraps the prompt in Fern's native hidden `Prompt` component, which supplies the copy button and Cursor action without showing the long prompt body.
+The generated file is ignored by Git and is recreated by the docs build.
+
+Run the generator directly when you need to inspect the generated snippet:
+
+```bash
+npm run docs:sync-starter-prompt
+```
+
+Run the read-only comparison after generation when you need to verify that the snippet matches the Markdown source:
+
+```bash
+npm run docs:check-starter-prompt
+```
+
+The normal `npm run docs`, `npm run docs:live`, agent-variant sync, and preview-watcher paths generate the snippet before Fern validates, serves, previews, or publishes the pages that include it.
+
 ## Agent Variant Generation
 
 Some Fern pages appear in the OpenClaw, Hermes, and Deep Agents guide variants.
