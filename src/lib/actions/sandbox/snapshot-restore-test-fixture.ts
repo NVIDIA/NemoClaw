@@ -23,6 +23,11 @@ export type SandboxRecord = {
   observabilityEnabled?: boolean;
   provider?: string | null;
   model?: string | null;
+  dashboardPort?: number | null;
+  hermesDashboardEnabled?: boolean;
+  hermesDashboardPort?: number | null;
+  hermesDashboardInternalPort?: number | null;
+  hermesDashboardTui?: boolean;
 };
 export type DcodeProbeState = "active" | "idle" | "unverifiable" | "no-runtime";
 

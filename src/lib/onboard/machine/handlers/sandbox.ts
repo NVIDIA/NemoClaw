@@ -18,6 +18,8 @@ import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/o
 import type { SandboxEntry } from "../../../state/registry";
 import { getSandboxEntryInference } from "../../../state/registry-entry-view";
 import { toolDisclosureOrDefault } from "../../../tool-disclosure";
+import { withDashboardPortReservationLock as withHostDashboardPortReservationLock } from "../../dashboard-port";
+import { type DashboardRuntimeAgent, shouldManageDashboardForAgent } from "../../dashboard-runtime";
 import {
   type DcodeAutoApprovalMode,
   DEFAULT_DCODE_AUTO_APPROVAL_MODE,
@@ -92,6 +94,7 @@ export interface SandboxStateOptions<
       gatewayName: string,
       operation: () => Promise<T> | T,
     ): Promise<T>;
+    withDashboardPortReservationLock?<T>(operation: () => Promise<T> | T): Promise<T>;
     resolvePath(value: string): string;
     agentSupportsWebSearch(
       agent: Agent,
@@ -768,9 +771,15 @@ class SandboxStateFlow<
     };
     const withGatewayLock = () =>
       this.deps.withGatewayRouteMutationLock(this.options.gatewayName, createAndRecord);
+    const withDashboardPortLock =
+      this.deps.withDashboardPortReservationLock ?? withHostDashboardPortReservationLock;
+    const withDashboardAndGatewayLocks = () =>
+      shouldManageDashboardForAgent(this.options.agent as DashboardRuntimeAgent)
+        ? withDashboardPortLock(withGatewayLock)
+        : withGatewayLock();
     return this.deps.withSandboxMutationLock
-      ? this.deps.withSandboxMutationLock(requestedSandboxName, withGatewayLock)
-      : withGatewayLock();
+      ? this.deps.withSandboxMutationLock(requestedSandboxName, withDashboardAndGatewayLocks)
+      : withDashboardAndGatewayLocks();
   }
 
   private async recreateSandbox(
