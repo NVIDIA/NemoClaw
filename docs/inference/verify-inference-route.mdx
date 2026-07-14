@@ -34,8 +34,8 @@ $$nemoclaw <name> status
 
 The `Inference` row checks the sandbox's `inference.local` path and reports the provider, model, and endpoint with the rest of the sandbox state.
 This path includes the OpenShell proxy and its authentication rewrite.
-Before dashboard-based onboarding prints its final summary, NemoClaw runs the same route-reachability probe from inside the sandbox.
-An unreachable route or an HTTP 5xx response marks the sandbox not ready and makes onboarding exit non-zero.
+Use the final dashboard-based onboarding summary to verify that NemoClaw ran the same route-reachability probe from inside the sandbox.
+Treat an unreachable route or HTTP 5xx response as a failed readiness check: onboarding marks the sandbox not ready and exits non-zero.
 Restore the configured endpoint or proxy, then rerun the status command.
 
 ## Understand Post-Ready Checks
