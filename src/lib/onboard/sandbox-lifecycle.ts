@@ -1,8 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import * as onboardSession from "../state/onboard-session";
+import type { SandboxEntry, SandboxMcpState } from "../state/registry";
 import * as registry from "../state/registry";
 import type { SelectionDrift } from "./selection-drift";
+
+export function removeSandboxUnlessSessionReservation(
+  entry: SandboxEntry | null,
+  sandboxName: string,
+): void {
+  if (!registry.isPendingReservationForSession(entry, onboardSession.loadSession()?.sessionId)) {
+    registry.removeSandbox(sandboxName);
+  }
+}
 
 export interface SandboxLifecycleDeps {
   runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string | null;
@@ -13,7 +24,11 @@ export interface SandboxLifecycleDeps {
 }
 
 export interface SandboxLifecycleHelpers {
-  sandboxExistsInGateway(sandboxName: string): boolean;
+  inspectSandboxForCreate(sandboxName: string): {
+    existingEntry: SandboxEntry | null;
+    preservedMcpState: SandboxMcpState | undefined;
+    liveExists: boolean;
+  };
   pruneStaleSandboxEntry(sandboxName: string): boolean;
   shouldRestoreLatestBackupOnRecreate(): boolean;
   confirmRecreateForSelectionDrift(
@@ -38,6 +53,23 @@ export function createSandboxLifecycleHelpers(deps: SandboxLifecycleDeps): Sandb
       registry.removeSandbox(sandboxName);
     }
     return liveExists;
+  }
+
+  function inspectSandboxForCreate(sandboxName: string) {
+    const existingEntry = registry.getSandbox(sandboxName);
+    if (existingEntry?.mcp?.destroyPreparedAt || existingEntry?.mcp?.destroyPendingAt) {
+      throw new Error(
+        `Sandbox '${sandboxName}' has an incomplete MCP destroy transaction. Re-run the sandbox destroy command to finish cleanup before recreating it.`,
+      );
+    }
+    const preservedMcpState =
+      existingEntry?.mcp && Object.keys(existingEntry.mcp.bridges).length > 0
+        ? existingEntry.mcp
+        : undefined;
+    // MCP state is the rebuild transaction manifest. Preserve it while the
+    // sandbox is absent; registration carries the validated state forward.
+    const liveExists = sandboxExistsInGateway(sandboxName);
+    return { existingEntry, preservedMcpState, liveExists };
   }
 
   function shouldRestoreLatestBackupOnRecreate(): boolean {
@@ -71,7 +103,7 @@ export function createSandboxLifecycleHelpers(deps: SandboxLifecycleDeps): Sandb
   }
 
   return {
-    sandboxExistsInGateway,
+    inspectSandboxForCreate,
     pruneStaleSandboxEntry,
     shouldRestoreLatestBackupOnRecreate,
     confirmRecreateForSelectionDrift,

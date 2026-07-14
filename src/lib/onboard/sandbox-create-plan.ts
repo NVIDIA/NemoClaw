@@ -1,23 +1,68 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { InitialSandboxPolicy } from "./initial-policy";
+import { type DockerGpuRoutePlan } from "./docker-gpu-route";
+import type { MessagingTokenDef } from "./messaging-prep";
 import type { MessagingChannel } from "./messaging-state";
-import { resolveQrSelectedChannels } from "./messaging-state";
+import {
+  resolvePrimaryMessagingCredentialEnvKeys,
+  resolveSandboxCreateIntent,
+  resolveSandboxCreateMessagingProviderRequests,
+} from "./sandbox-create-intent";
+import {
+  materializeSandboxCreatePlan,
+  type SandboxCreatePlan,
+} from "./sandbox-create-plan-materialization";
 import { buildSandboxGpuCreateArgs, type SandboxGpuCreateConfig } from "./sandbox-gpu-create";
 
-type MessagingTokenDef = {
-  envKey: string;
-  token: string | null;
-};
+export {
+  resolvePrimaryMessagingCredentialEnvKeys,
+  resolveSandboxCreateIntent,
+  resolveSandboxCreateMessagingProviderRequests,
+} from "./sandbox-create-intent";
+export type {
+  MaterializeSandboxCreatePlanInput,
+  ResolveSandboxCreateIntentInput,
+  SandboxCreateIntent,
+  SandboxCreateMessagingProviderRequest,
+  SandboxCreatePolicyRequest,
+} from "./sandbox-create-intent-types";
+export type { SandboxCreatePlan } from "./sandbox-create-plan-materialization";
+export {
+  materializeSandboxCreatePlan,
+  validateSandboxCreateIntentBindings,
+} from "./sandbox-create-plan-materialization";
 
-type ResolveDockerGpuSandboxCreatePlan =
-  typeof import("./docker-gpu-sandbox-create").resolveDockerGpuSandboxCreatePlan;
+// Known canonical policy tier names. Kept inline so the create-time path
+// validates the env value without pulling `../policy/tiers` (which transitively
+// requires `runner.ts` and breaks vitest source resolution for this module's
+// tests). The list mirrors `nemoclaw-blueprint/policies/tiers.yaml`; adding a
+// tier there requires updating this set so an explicit tier env value reaches
+// the create-time policy decision.
+const KNOWN_POLICY_TIER_NAMES = new Set(["restricted", "balanced", "open"]);
+
+export function resolveSandboxCreatePolicyTier(
+  authoritativePolicyTier?: string | null,
+): string | null {
+  if (authoritativePolicyTier !== undefined) return authoritativePolicyTier;
+  // Only trust the env value in non-interactive mode. Interactive flows let the
+  // operator override the tier via the selector after sandbox creation; if the
+  // env said balanced but the operator picks restricted, an interactive trust
+  // of the env would have already let create-time OTEL through. Fail closed:
+  // interactive mode returns null so the OTEL preset is deferred to the
+  // post-boot policy step.
+  const isNonInteractive = process.env.NEMOCLAW_NON_INTERACTIVE === "1";
+  if (!isNonInteractive) return null;
+  const raw = process.env.NEMOCLAW_POLICY_TIER;
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim().toLowerCase();
+  return KNOWN_POLICY_TIER_NAMES.has(trimmed) ? trimmed : null;
+}
+
 type PrepareInitialSandboxCreatePolicy =
   typeof import("./initial-policy").prepareInitialSandboxCreatePolicy;
 
 export type SandboxCreatePlanDeps = {
-  resolveDockerGpuSandboxCreatePlan?: ResolveDockerGpuSandboxCreatePlan;
   prepareInitialSandboxCreatePolicy?: PrepareInitialSandboxCreatePolicy;
   buildSandboxGpuCreateArgs?: typeof buildSandboxGpuCreateArgs;
 };
@@ -32,9 +77,11 @@ export type PrepareSandboxCreatePlanInput = {
   messagingTokenDefs: MessagingTokenDef[];
   reusableMessagingChannels: string[];
   reusableMessagingProviders: string[];
+  extraProviders?: readonly string[];
   hermesToolGateways: string[];
   sandboxGpuConfig: SandboxGpuCreateConfig;
-  dockerDriverGateway: boolean;
+  gpuRoutePlan: DockerGpuRoutePlan;
+  sandboxGpuLogMessage: string | null;
   appendResourceFlags(createArgs: string[]): void;
   runProviderPreDeleteCleanup(): void;
   upsertMessagingProviders(
@@ -43,76 +90,10 @@ export type PrepareSandboxCreatePlanInput = {
   ): string[];
   getMessagingChannelForEnvKey(envKey: string): string | null;
   getHermesToolGatewayProviderName(sandboxName: string): string;
+  agentName?: string | null;
+  policyTier?: string | null;
   deps?: SandboxCreatePlanDeps;
 };
-
-export type SandboxCreatePlan = {
-  activeMessagingChannels: string[];
-  initialSandboxPolicy: InitialSandboxPolicy;
-  createArgs: string[];
-  messagingProviders: string[];
-  useDockerGpuPatch: boolean;
-  sandboxGpuLogMessage: string | null;
-};
-
-function getDockerGpuSandboxCreatePlan(
-  ...args: Parameters<ResolveDockerGpuSandboxCreatePlan>
-): ReturnType<ResolveDockerGpuSandboxCreatePlan> {
-  const { resolveDockerGpuSandboxCreatePlan } =
-    require("./docker-gpu-sandbox-create") as typeof import("./docker-gpu-sandbox-create");
-  return resolveDockerGpuSandboxCreatePlan(...args);
-}
-
-function getInitialSandboxCreatePolicy(
-  ...args: Parameters<PrepareInitialSandboxCreatePolicy>
-): ReturnType<PrepareInitialSandboxCreatePolicy> {
-  const { prepareInitialSandboxCreatePolicy } =
-    require("./initial-policy") as typeof import("./initial-policy");
-  return prepareInitialSandboxCreatePolicy(...args);
-}
-
-function resolveActiveMessagingChannels({
-  channels,
-  disabledChannelNames,
-  enabledChannels,
-  getMessagingChannelForEnvKey,
-  messagingTokenDefs,
-  reusableMessagingChannels,
-}: Pick<
-  PrepareSandboxCreatePlanInput,
-  | "channels"
-  | "disabledChannelNames"
-  | "enabledChannels"
-  | "getMessagingChannelForEnvKey"
-  | "messagingTokenDefs"
-  | "reusableMessagingChannels"
->): string[] {
-  const tokensByEnvKey = Object.fromEntries(
-    messagingTokenDefs.map(({ envKey, token }) => [envKey, token]),
-  );
-  const qrSelectedChannels = resolveQrSelectedChannels(
-    channels,
-    enabledChannels,
-    disabledChannelNames,
-  );
-  return [
-    ...new Set([
-      ...messagingTokenDefs
-        .filter(({ token }) => !!token)
-        .flatMap(({ envKey }) => {
-          const channel = getMessagingChannelForEnvKey(envKey);
-          if (channel) return [channel];
-          // SLACK_APP_TOKEN alone does not enable slack; bot token is required.
-          if (envKey === "SLACK_APP_TOKEN") {
-            return tokensByEnvKey["SLACK_BOT_TOKEN"] ? ["slack"] : [];
-          }
-          return [];
-        }),
-      ...reusableMessagingChannels,
-      ...qrSelectedChannels,
-    ]),
-  ];
-}
 
 export function prepareSandboxCreatePlan({
   basePolicyPath,
@@ -124,67 +105,59 @@ export function prepareSandboxCreatePlan({
   messagingTokenDefs,
   reusableMessagingChannels,
   reusableMessagingProviders,
+  extraProviders,
   hermesToolGateways,
   sandboxGpuConfig,
-  dockerDriverGateway,
+  gpuRoutePlan,
+  sandboxGpuLogMessage,
   appendResourceFlags,
   runProviderPreDeleteCleanup,
   upsertMessagingProviders,
   getMessagingChannelForEnvKey,
   getHermesToolGatewayProviderName,
+  agentName,
+  policyTier = resolveSandboxCreatePolicyTier(),
   deps = {},
 }: PrepareSandboxCreatePlanInput): SandboxCreatePlan {
-  const activeMessagingChannels = resolveActiveMessagingChannels({
-    channels,
-    disabledChannelNames,
-    enabledChannels,
-    getMessagingChannelForEnvKey,
+  const gpuCreateArgs = (deps.buildSandboxGpuCreateArgs ?? buildSandboxGpuCreateArgs)(
+    sandboxGpuConfig,
+  );
+  const resourceCreateArgs: string[] = [];
+  appendResourceFlags(resourceCreateArgs);
+  const messagingProviderRequests = resolveSandboxCreateMessagingProviderRequests(
     messagingTokenDefs,
-    reusableMessagingChannels,
-  });
-  const { useDockerGpuPatch, logMessage: sandboxGpuLogMessage } = (
-    deps.resolveDockerGpuSandboxCreatePlan ?? getDockerGpuSandboxCreatePlan
-  )(sandboxGpuConfig, { dockerDriverGateway });
-  const initialSandboxPolicy = (
-    deps.prepareInitialSandboxCreatePolicy ?? getInitialSandboxCreatePolicy
-  )(basePolicyPath, activeMessagingChannels, {
-    directGpu: sandboxGpuConfig.sandboxGpuEnabled,
-    dockerGpuPatch: useDockerGpuPatch,
-    additionalPresets: hermesToolGateways,
-  });
-  const createArgs = [
-    "--from",
-    `${buildCtx}/Dockerfile`,
-    "--name",
+    getMessagingChannelForEnvKey,
+  );
+  const intent = resolveSandboxCreateIntent({
+    basePolicyPath,
     sandboxName,
-    "--policy",
-    initialSandboxPolicy.policyPath,
-    ...(deps.buildSandboxGpuCreateArgs ?? buildSandboxGpuCreateArgs)(sandboxGpuConfig, {
-      suppressGpuFlag: useDockerGpuPatch,
-    }),
-  ];
-
-  appendResourceFlags(createArgs);
-  runProviderPreDeleteCleanup();
-  const messagingProviders = [
-    ...new Set([
-      ...upsertMessagingProviders(messagingTokenDefs, { replaceExisting: true }),
-      ...reusableMessagingProviders,
-    ]),
-  ];
-  for (const provider of messagingProviders) {
-    createArgs.push("--provider", provider);
-  }
-  if (hermesToolGateways.length > 0) {
-    createArgs.push("--provider", getHermesToolGatewayProviderName(sandboxName));
-  }
-
-  return {
-    activeMessagingChannels,
-    initialSandboxPolicy,
-    createArgs,
-    messagingProviders,
-    useDockerGpuPatch,
+    channels,
+    enabledChannels,
+    disabledChannelNames,
+    messagingProviderRequests,
+    primaryMessagingCredentialEnvKeys: resolvePrimaryMessagingCredentialEnvKeys(),
+    reusableMessagingChannels,
+    reusableMessagingProviders,
+    extraProviders,
+    hermesToolGateways,
+    sandboxGpuConfig,
+    gpuCreateArgs,
+    resourceCreateArgs,
+    gpuRoutePlan,
     sandboxGpuLogMessage,
-  };
+    agentName,
+    policyTier,
+  });
+
+  return materializeSandboxCreatePlan({
+    intent,
+    buildCtx,
+    messagingTokenDefs,
+    runProviderPreDeleteCleanup,
+    upsertMessagingProviders,
+    getHermesToolGatewayProviderName,
+    ...(deps.prepareInitialSandboxCreatePolicy
+      ? { prepareInitialSandboxCreatePolicy: deps.prepareInitialSandboxCreatePolicy }
+      : {}),
+  });
 }

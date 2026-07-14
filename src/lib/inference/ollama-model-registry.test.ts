@@ -12,7 +12,7 @@ import {
   OLLAMA_DOWNLOAD_SIZE_FALLBACK_BYTES,
   OLLAMA_MODEL_REGISTRY,
   SMALLEST_OLLAMA_MODEL_TAG,
-} from "../../../dist/lib/inference/ollama-model-registry";
+} from "./ollama-model-registry";
 
 describe("OLLAMA_MODEL_REGISTRY", () => {
   it("is ordered largest-first by requiredMemoryMB", () => {

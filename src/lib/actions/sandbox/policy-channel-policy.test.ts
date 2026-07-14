@@ -1,31 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createRequire } from "node:module";
-
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-const requireDist = createRequire(import.meta.url);
-const D = (p: string) => requireDist(`../../../../dist/lib/${p}`);
+import * as store from "../../credentials/store";
+import * as policies from "../../policy";
+import * as onboardSession from "../../state/onboard-session";
+import * as registry from "../../state/registry";
+import { addSandboxPolicy, removeSandboxPolicy } from "./policy-channel";
 
-type PresetInfo = {
-  name: string;
-  description?: string;
-};
-
-type PolicyAddOptions = {
-  preset?: string;
-  dryRun?: boolean;
-  yes?: boolean;
-  force?: boolean;
-};
-
-type PolicyRemoveOptions = {
-  preset?: string;
-  dryRun?: boolean;
-  yes?: boolean;
-  force?: boolean;
-};
+type PresetInfo = ReturnType<typeof policies.listPresets>[number];
 
 class ExitError extends Error {
   constructor(public readonly code: number | undefined) {
@@ -33,24 +17,27 @@ class ExitError extends Error {
   }
 }
 
-const store = D("credentials/store.js");
-const registry = D("state/registry.js");
-const onboardSession = D("state/onboard-session.js");
-const policies = D("policy/index.js");
-const { addSandboxPolicy, removeSandboxPolicy } = D("actions/sandbox/policy-channel.js") as {
-  addSandboxPolicy: (sandboxName: string, options?: PolicyAddOptions) => Promise<void>;
-  removeSandboxPolicy: (sandboxName: string, options?: PolicyRemoveOptions) => Promise<void>;
-};
-
 const POLICY_PRESETS: PresetInfo[] = [
-  { name: "npm", description: "npm and Yarn registry access" },
-  { name: "pypi", description: "Python Package Index access" },
-  { name: "discord", description: "Discord API access" },
-  { name: "openclaw-pricing", description: "OpenClaw pricing lookup" },
-  { name: "nous-web", description: "Nous Portal managed web search gateway" },
-  { name: "nous-code", description: "Nous Portal managed sandboxed code gateway" },
-  { name: "telegram", description: "Telegram API access" },
-  { name: "wechat", description: "WeChat API access" },
+  { file: "npm.yaml", name: "npm", description: "npm and Yarn registry access" },
+  { file: "pypi.yaml", name: "pypi", description: "Python Package Index access" },
+  { file: "discord.yaml", name: "discord", description: "Discord API access" },
+  {
+    file: "openclaw-pricing.yaml",
+    name: "openclaw-pricing",
+    description: "OpenClaw pricing lookup",
+  },
+  {
+    file: "nous-web.yaml",
+    name: "nous-web",
+    description: "Nous Portal managed web search gateway",
+  },
+  {
+    file: "nous-code.yaml",
+    name: "nous-code",
+    description: "Nous Portal managed sandboxed code gateway",
+  },
+  { file: "telegram.yaml", name: "telegram", description: "Telegram API access" },
+  { file: "wechat.yaml", name: "wechat", description: "WeChat API access" },
 ];
 
 let logSpy: MockInstance;
@@ -61,6 +48,7 @@ let getSandboxMock: MockInstance;
 let getAppliedPresetsMock: MockInstance;
 let selectFromListMock: MockInstance;
 let selectForRemovalMock: MockInstance;
+let loadPresetForSandboxMock: MockInstance;
 let applyPresetMock: MockInstance;
 let removePresetMock: MockInstance;
 
@@ -102,7 +90,9 @@ beforeEach(() => {
   vi.spyOn(registry, "getCustomPolicies").mockReturnValue([]);
 
   vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
-  vi.spyOn(onboardSession, "updateSession").mockImplementation(() => undefined);
+  vi.spyOn(onboardSession, "updateSession").mockReturnValue(
+    undefined as unknown as onboardSession.Session,
+  );
 
   vi.spyOn(policies, "listPresets").mockReturnValue(POLICY_PRESETS);
   vi.spyOn(policies, "listCustomPresets").mockReturnValue([]);
@@ -113,6 +103,12 @@ beforeEach(() => {
     const presetName = String(name);
     return `network_policies:\n  ${presetName}:\n    host: ${presetName}.example.com\n`;
   });
+  loadPresetForSandboxMock = vi
+    .spyOn(policies, "loadPresetForSandbox")
+    .mockImplementation((_sandboxName: unknown, name: unknown) => {
+      const presetName = String(name);
+      return `network_policies:\n  ${presetName}:\n    host: ${presetName}.example.com\n`;
+    });
   applyPresetMock = vi.spyOn(policies, "applyPreset").mockReturnValue(true);
   removePresetMock = vi.spyOn(policies, "removePreset").mockReturnValue(true);
 });
@@ -225,6 +221,30 @@ describe("addSandboxPolicy", () => {
 
     expect(printedText()).toContain("Unknown preset 'openclaw-pricing'.");
     expect(printedText()).toContain("Valid presets: npm, pypi, discord, nous-web, nous-code");
+    expect(applyPresetMock).not.toHaveBeenCalled();
+  });
+
+  it("treats messaging channel policy presets unavailable to terminal-runtime agents as unknown before preview or prompt", async () => {
+    arrangeSandbox("langchain-deepagents-code");
+    vi.spyOn(policies, "listPresets").mockReturnValue([
+      { file: "npm.yaml", name: "npm", description: "npm and Yarn registry access" },
+      { file: "pypi.yaml", name: "pypi", description: "Python Package Index access" },
+      { file: "tavily.yaml", name: "tavily", description: "Tavily Search API access" },
+    ]);
+
+    await expect(
+      captureExit(() => addSandboxPolicy("test-sandbox", { preset: "telegram", yes: true })),
+    ).resolves.toBe(1);
+
+    const output = printedText();
+    expect(output).toContain("Unknown preset 'telegram'.");
+    expect(output).toContain("Valid presets: npm, pypi, tavily");
+    expect(output).not.toContain("not supported for agent");
+    expect(output).not.toContain("Channels supported by agent");
+    expect(output).not.toContain("Preset not found");
+    expect(output).not.toContain("Endpoints that would be opened");
+    expect(promptMock).not.toHaveBeenCalled();
+    expect(loadPresetForSandboxMock).not.toHaveBeenCalled();
     expect(applyPresetMock).not.toHaveBeenCalled();
   });
 

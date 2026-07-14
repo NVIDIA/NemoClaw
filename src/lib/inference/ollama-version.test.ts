@@ -8,7 +8,7 @@ import {
   getRunningOllamaDaemonVersion,
   isOllamaVersionAtLeast,
   MIN_OLLAMA_VERSION,
-} from "../../../dist/lib/inference/ollama-version";
+} from "./ollama-version";
 
 describe("Ollama version detection", () => {
   it("parses 'ollama version is X.Y.Z' output", () => {

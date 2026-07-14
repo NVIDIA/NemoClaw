@@ -10,10 +10,12 @@
  * (regression of #2020) for the original motivation.
  */
 
+import fs from "node:fs";
 import http from "node:http";
 import http2 from "node:http2";
+import path from "node:path";
 
-import { getGatewayHttpEndpoint } from "../core/gateway-address";
+import { getGatewayHttpEndpoint, getGatewayHttpsEndpoint } from "../core/gateway-address";
 import { GATEWAY_PORT } from "../core/ports";
 import { sleepSeconds, waitUntilAsync } from "../core/wait";
 import { addTraceEvent, withTraceSpan } from "../trace";
@@ -74,9 +76,10 @@ export function isGatewayHttpReady(
   timeoutMs = ISGATEWAY_HTTP_READY_DEFAULT_TIMEOUT_MS,
   url = `${getGatewayHttpEndpoint(GATEWAY_PORT)}/`,
   method: "GET" | "POST" = "GET",
+  signal?: AbortSignal,
 ): Promise<boolean> {
   return withTraceSpan("nemoclaw.gateway.http_probe", { timeout_ms: timeoutMs, url, method }, () =>
-    isGatewayHttpReadyImpl(timeoutMs, url, method),
+    isGatewayHttpReadyImpl(timeoutMs, url, method, signal),
   );
 }
 
@@ -84,6 +87,7 @@ function isGatewayHttpReadyImpl(
   timeoutMs = ISGATEWAY_HTTP_READY_DEFAULT_TIMEOUT_MS,
   url = `${getGatewayHttpEndpoint(GATEWAY_PORT)}/`,
   method: "GET" | "POST" = "GET",
+  signal?: AbortSignal,
 ): Promise<boolean> {
   const effectiveTimeout =
     Number.isFinite(timeoutMs) && timeoutMs > 0
@@ -96,13 +100,19 @@ function isGatewayHttpReadyImpl(
       settled = true;
       resolve(ready);
     };
-    const request = http
-      .request(url, { method }, (res) => {
-        res.resume();
-        const code = res.statusCode || 0;
-        settle(GATEWAY_HTTP_ALIVE_CODES.has(code));
-      })
-      .on("error", () => settle(false));
+    let request: http.ClientRequest;
+    try {
+      request = http
+        .request(url, { method, signal }, (res) => {
+          res.resume();
+          const code = res.statusCode || 0;
+          settle(GATEWAY_HTTP_ALIVE_CODES.has(code));
+        })
+        .on("error", () => settle(false));
+    } catch {
+      settle(false);
+      return;
+    }
     request.setTimeout(effectiveTimeout, () => {
       request.destroy();
       settle(false);
@@ -113,7 +123,7 @@ function isGatewayHttpReadyImpl(
 
 export function isDockerDriverGatewayHttpReady(
   timeoutMs = ISGATEWAY_HTTP_READY_DEFAULT_TIMEOUT_MS,
-  url = `${getGatewayHttpEndpoint(GATEWAY_PORT)}/openshell.v1.OpenShell/Health`,
+  url = `${getGatewayHttpsEndpoint(GATEWAY_PORT)}/openshell.v1.OpenShell/Health`,
 ): Promise<boolean> {
   return withTraceSpan(
     "nemoclaw.gateway.docker_driver_http_probe",
@@ -124,7 +134,7 @@ export function isDockerDriverGatewayHttpReady(
 
 function isDockerDriverGatewayHttpReadyImpl(
   timeoutMs = ISGATEWAY_HTTP_READY_DEFAULT_TIMEOUT_MS,
-  url = `${getGatewayHttpEndpoint(GATEWAY_PORT)}/openshell.v1.OpenShell/Health`,
+  url = `${getGatewayHttpsEndpoint(GATEWAY_PORT)}/openshell.v1.OpenShell/Health`,
 ): Promise<boolean> {
   const effectiveTimeout =
     Number.isFinite(timeoutMs) && timeoutMs > 0
@@ -177,7 +187,9 @@ function isDockerDriverGatewayHttpReadyImpl(
 
     try {
       const origin = `${parsed.protocol}//${parsed.host}`;
-      client = http2.connect(origin);
+      const connectOptions = dockerDriverGatewayHttp2ConnectOptions(parsed);
+      if (parsed.protocol === "https:" && !connectOptions) return settle(false);
+      client = http2.connect(origin, connectOptions);
       client.on("error", () => settle(false));
       stream = client.request({
         [http2.constants.HTTP2_HEADER_METHOD]: http2.constants.HTTP2_METHOD_POST,
@@ -208,6 +220,25 @@ function isDockerDriverGatewayHttpReadyImpl(
       settle(false);
     }
   });
+}
+
+function dockerDriverGatewayHttp2ConnectOptions(
+  parsed: URL,
+): http2.SecureClientSessionOptions | undefined {
+  if (parsed.protocol !== "https:") return undefined;
+  const localTlsDir = process.env.OPENSHELL_LOCAL_TLS_DIR;
+  if (!localTlsDir) return undefined;
+  try {
+    return {
+      ca: fs.readFileSync(path.join(localTlsDir, "ca.crt")),
+      cert: fs.readFileSync(path.join(localTlsDir, "client", "tls.crt")),
+      key: fs.readFileSync(path.join(localTlsDir, "client", "tls.key")),
+      rejectUnauthorized: true,
+      servername: parsed.hostname,
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 /**

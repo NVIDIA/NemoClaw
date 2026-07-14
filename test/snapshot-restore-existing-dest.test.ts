@@ -242,7 +242,7 @@ describe("snapshot restore --to existing destination (#3756)", () => {
     expect(log).not.toMatch(/sandbox delete dst/);
   });
 
-  it("refuses by default before running source-image preflight (Codex #3796 P2)", () => {
+  it("refuses by default before running source-image preflight per Codex P2 review (#3796)", () => {
     // Existing destination + unresolvable source image. The user must see the
     // precise "destination exists" error, not the "cannot resolve image"
     // misdirection that would land if the refusal came after preflight.

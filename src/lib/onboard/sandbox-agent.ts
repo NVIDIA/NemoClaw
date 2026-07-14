@@ -47,11 +47,15 @@ export function formatSandboxAgentName(agentName: string | null | undefined): st
   const normalized = normalizeSandboxAgentName(agentName);
   if (normalized === "openclaw") return "OpenClaw";
   if (normalized === "hermes") return "Hermes";
+  if (normalized === "langchain-deepagents-code") return "LangChain Deep Agents Code";
   return normalized;
 }
 
 export function getDefaultSandboxNameForAgent(agent: AgentDefinition | null | undefined): string {
-  return getRequestedSandboxAgentName(agent) === "hermes" ? "hermes" : "my-assistant";
+  const requestedAgent = getRequestedSandboxAgentName(agent);
+  if (requestedAgent === "hermes") return "hermes";
+  if (requestedAgent === "langchain-deepagents-code") return "deepagents-code";
+  return "my-assistant";
 }
 
 export function getSandboxPromptDefault(agent: AgentDefinition | null | undefined): string {

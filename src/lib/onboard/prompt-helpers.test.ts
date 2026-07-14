@@ -2,11 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-// Import from compiled dist/ so coverage is attributed correctly.
-import {
-  promptOrDefault,
-  selectFromNumberedMenuOrExit,
-} from "../../../dist/lib/onboard/prompt-helpers";
+// Import source directly so tests cannot pass against a stale build.
+import { promptOrDefault, selectFromNumberedMenuOrExit } from "./prompt-helpers";
 
 function makeDeps(promptReply: string) {
   return {

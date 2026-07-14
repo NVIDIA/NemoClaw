@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { dockerInfoFormat } from "../adapters/docker";
+import { failLine, warnLine } from "../cli/terminal-style";
 import type { GpuDetection } from "../inference/nim";
 import type { SandboxGpuProofResult } from "../state/registry";
 import { findReadableNvidiaCdiSpecFiles, getDockerCdiSpecDirs } from "./docker-cdi";
@@ -80,11 +81,14 @@ export function sandboxGpuRemediationLines(
   ];
 }
 
-export function exitOnSandboxGpuConfigErrors(config: SandboxGpuConfig): void {
+export function exitOnSandboxGpuConfigErrors(
+  config: SandboxGpuConfig,
+  exitProcess: (code: number) => never = (code) => process.exit(code),
+): void {
   if (config.errors.length > 0) {
     console.error("");
-    for (const error of config.errors) console.error(`  ✗ ${error}`);
-    process.exit(1);
+    for (const error of config.errors) console.error(failLine(error));
+    exitProcess(1);
   }
 }
 
@@ -123,10 +127,13 @@ export function dockerNvidiaRuntimeAvailable(deps: SandboxGpuPreflightDeps = {})
   }
 }
 
-function validateJetsonSandboxGpuPreflight(deps: SandboxGpuPreflightDeps): void {
+function validateJetsonSandboxGpuPreflight(
+  deps: SandboxGpuPreflightDeps,
+  exitProcess: (code: number) => never,
+): void {
   if (!dockerNvidiaRuntimeAvailable(deps)) {
     console.error("");
-    console.error("  ✗ Docker NVIDIA runtime was not detected for Jetson/Tegra sandbox GPU.");
+    console.error(failLine("Docker NVIDIA runtime was not detected for Jetson/Tegra sandbox GPU."));
     console.error("    Jetson sandbox GPU uses NVIDIA Container Runtime semantics, not CDI.");
     console.error(
       "    Install/configure NVIDIA Container Toolkit for Docker, then restart Docker:",
@@ -134,7 +141,7 @@ function validateJetsonSandboxGpuPreflight(deps: SandboxGpuPreflightDeps): void 
     console.error("      sudo nvidia-ctk runtime configure --runtime=docker");
     console.error("      sudo systemctl restart docker");
     console.error("    Or force CPU sandbox behavior with NEMOCLAW_SANDBOX_GPU=0.");
-    process.exit(1);
+    exitProcess(1);
   }
   console.log("  ✓ Docker NVIDIA runtime detected for Jetson/Tegra sandbox GPU");
 }
@@ -159,16 +166,40 @@ export interface DirectSandboxGpuVerifierDeps extends WslDockerDesktopDetectionD
   detectNvidiaPlatform?: () => GpuDetection["platform"] | null;
 }
 
-// The proof whose result decides CUDA usability. `cuInit(0)` via libcuda is the
-// authoritative usability signal (it actually initializes the CUDA driver), so
-// a clean pass means "verified" and a run that reaches the driver and fails
-// means "failed" rather than merely "unverified".
+// The proof whose result decides reported CUDA usability. `cuInit(0)` via
+// libcuda actually initializes the CUDA driver, so a clean pass means
+// "verified" and a run that reaches the driver and fails means "failed" rather
+// than merely "unverified". The image controls this process and its output, so
+// this result is status/diagnostic evidence only: it must never by itself
+// authorize a retry with a broader container-confinement envelope.
 const CUDA_USABILITY_PROOF_ID = "cuda-init";
+const NVIDIA_SMI_PROOF_ID = "nvidia-smi";
+const NVIDIA_SMI_PROOF_LABEL = "nvidia-smi when available";
+const EXPLICIT_NVIDIA_SMI_DRIVER_FAILURE_PATTERN =
+  /(?:failed to initialize NVML|(?:couldn['’]t|could not|cannot|can['’]t) communicate with the NVIDIA driver|no devices were found|unable to determine the device handle)/i;
 // Capture the cuInit(0) return code so we can require it to be 0 for a verified
 // result. Matching only the marker text is not enough: a wrapper that swallows
 // the probe's non-zero exit but still prints `cuInit(0)=<err>` would otherwise
 // read as verified for an unusable GPU (#4231).
 const CUDA_INIT_RESULT_PATTERN = /cuInit\(0\)=(-?\d+)/;
+
+/**
+ * Identify the canonical structured result for a required `nvidia-smi`
+ * driver/device failure. Keep this discriminator on existing registry fields:
+ * the verifier owns the exact label, while the detail must retain one of the
+ * narrow diagnostics that caused it to classify the command as failed.
+ */
+export function isExplicitNvidiaSmiDriverProofFailure(
+  proof: SandboxGpuProofResult | null | undefined,
+): boolean {
+  return (
+    proof?.status === "failed" &&
+    proof.cudaVerified === false &&
+    proof.label === NVIDIA_SMI_PROOF_LABEL &&
+    typeof proof.detail === "string" &&
+    EXPLICIT_NVIDIA_SMI_DRIVER_FAILURE_PATTERN.test(proof.detail)
+  );
+}
 
 export type VerifyDirectSandboxGpu = (
   sandboxName: string,
@@ -194,6 +225,7 @@ export function createDirectSandboxGpuVerifier(
     // A CUDA-usability proof that reached the driver and failed (vs one that
     // could not run at all). Records the proof that determines "failed" status.
     let cudaFailure: { label: string; detail: string } | null = null;
+    let explicitNvidiaSmiFailure: { label: string; detail: string } | null = null;
     for (const proof of buildProofCommands(sandboxName)) {
       const result = deps.runOpenshell(proof.args, {
         ignoreError: true,
@@ -204,6 +236,9 @@ export function createDirectSandboxGpuVerifier(
       // 300 chars is only for display/storage, so a verbose proof cannot push
       // the marker past the cutoff and silently downgrade the classification.
       const rawOutput = deps.redact(`${result.stderr || ""} ${result.stdout || ""}`);
+      const explicitNvidiaSmiDiagnostic = rawOutput.match(
+        EXPLICIT_NVIDIA_SMI_DRIVER_FAILURE_PATTERN,
+      )?.[0];
       const cudaInitMatch = rawOutput.match(CUDA_INIT_RESULT_PATTERN);
       const cudaInitRan = cudaInitMatch !== null;
       // Only `cuInit(0)=0` proves usability; any other return code means the
@@ -225,10 +260,31 @@ export function createDirectSandboxGpuVerifier(
         }
         continue;
       }
+      if (
+        proof.id === NVIDIA_SMI_PROOF_ID &&
+        proof.optional !== true &&
+        typeof result.status === "number" &&
+        result.status > 0 &&
+        explicitNvidiaSmiDiagnostic
+      ) {
+        // Preserve a narrow driver/device failure as structured proof so the
+        // caller can combine it with host-owned runtime evidence. Continue
+        // through the CUDA probe for diagnostics, but never let a later marker
+        // override this required-proof failure.
+        explicitNvidiaSmiFailure = {
+          label: NVIDIA_SMI_PROOF_LABEL,
+          detail: EXPLICIT_NVIDIA_SMI_DRIVER_FAILURE_PATTERN.test(diagnostic)
+            ? diagnostic
+            : explicitNvidiaSmiDiagnostic,
+        };
+        console.warn(warnLine(`GPU proof failed: ${NVIDIA_SMI_PROOF_LABEL}`));
+        if (diagnostic) console.warn(`    ${diagnostic}`);
+        continue;
+      }
       if (proof.optional !== true) {
         // Required proof (e.g. the sandbox-exec wrapper itself): keep the
         // historical hard-fail so onboarding aborts and rolls back.
-        console.error(`  ✗ GPU proof failed: ${proof.label}`);
+        console.error(failLine(`GPU proof failed: ${proof.label}`));
         if (diagnostic) console.error(`    ${diagnostic}`);
         for (const line of sandboxGpuRemediationLines({
           wslDockerDesktopStatus: detectWslDockerDesktopStatus(deps),
@@ -248,18 +304,25 @@ export function createDirectSandboxGpuVerifier(
       if (proof.id === CUDA_USABILITY_PROOF_ID && cudaInitRan) {
         cudaFailure = { label: proof.label, detail: diagnostic };
       }
-      console.warn(`  ⚠ GPU proof inconclusive: ${proof.label}`);
+      console.warn(warnLine(`GPU proof inconclusive: ${proof.label}`));
       if (diagnostic) console.warn(`    ${diagnostic}`);
     }
-    const status: SandboxGpuProofResult["status"] = cudaVerified
-      ? "verified"
-      : cudaFailure
-        ? "failed"
-        : "unverified";
+    const status: SandboxGpuProofResult["status"] = explicitNvidiaSmiFailure
+      ? "failed"
+      : cudaVerified
+        ? "verified"
+        : cudaFailure
+          ? "failed"
+          : "unverified";
+    const reportedCudaVerified = explicitNvidiaSmiFailure ? false : cudaVerified;
+    const reportedFailure = explicitNvidiaSmiFailure ?? cudaFailure;
     if (status === "verified") {
       console.log("  ✓ Sandbox CUDA usability proven (cuInit succeeded).");
     } else if (status === "failed") {
-      console.warn(`  ⚠ Sandbox CUDA proof failed: ${cudaFailure?.label}`);
+      const failureKind = explicitNvidiaSmiFailure
+        ? "Sandbox NVIDIA driver/device proof failed"
+        : "Sandbox CUDA proof failed";
+      console.warn(warnLine(`${failureKind}: ${reportedFailure?.label}`));
       const lines =
         resolvedPlatform === "jetson"
           ? jetsonGpuProofRemediationLines()
@@ -268,13 +331,15 @@ export function createDirectSandboxGpuVerifier(
             });
       for (const line of lines) console.warn(`    ${line}`);
     } else {
-      console.warn("  ⚠ Sandbox GPU enabled but CUDA usability is unverified (no CUDA proof ran).");
+      console.warn(
+        warnLine("Sandbox GPU enabled but CUDA usability is unverified (no CUDA proof ran)."),
+      );
     }
     return {
       status,
-      cudaVerified,
-      label: cudaFailure?.label ?? null,
-      detail: cudaFailure?.detail ?? null,
+      cudaVerified: reportedCudaVerified,
+      label: reportedFailure?.label ?? null,
+      detail: reportedFailure?.detail ?? null,
       at: new Date().toISOString(),
     };
   };
@@ -283,14 +348,15 @@ export function createDirectSandboxGpuVerifier(
 export function validateSandboxGpuPreflight(
   config: SandboxGpuConfig,
   deps: SandboxGpuPreflightDeps = {},
+  exitProcess: (code: number) => never = (code) => process.exit(code),
 ): void {
-  exitOnSandboxGpuConfigErrors(config);
+  exitOnSandboxGpuConfigErrors(config, exitProcess);
   if (!config.sandboxGpuEnabled) return;
   const platform = deps.platform ?? process.platform;
   if (platform !== "linux") return;
 
   if (config.hostGpuPlatform === "jetson") {
-    validateJetsonSandboxGpuPreflight(deps);
+    validateJetsonSandboxGpuPreflight(deps, exitProcess);
     return;
   }
 
@@ -308,13 +374,13 @@ export function validateSandboxGpuPreflight(
   );
   if (cdiSpecFiles.length === 0) {
     console.error("");
-    console.error("  ✗ Docker CDI GPU support was not detected.");
+    console.error(failLine("Docker CDI GPU support was not detected."));
     for (const line of sandboxGpuRemediationLines({
       wslDockerDesktopStatus,
     })) {
       console.error(`    ${line}`);
     }
-    process.exit(1);
+    exitProcess(1);
   }
   console.log(`  ✓ Docker CDI GPU support detected (${cdiSpecFiles.join(", ")})`);
 }

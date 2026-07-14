@@ -11,7 +11,7 @@
 // the rebuild.
 
 import assert from "node:assert/strict";
-import { spawnSync, type SpawnSyncReturns } from "node:child_process";
+import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -76,7 +76,8 @@ function buildPreamble({
   sandboxExecResult?: { status: number; stdout: string; stderr: string } | null;
   sshFallbackResult?: { status: number; stdout: string; stderr: string } | null;
 } = {}): string {
-  const j = (p: string) => JSON.stringify(path.join(repoRoot, "dist", "lib", p));
+  const j = (p: string) =>
+    JSON.stringify(path.join(repoRoot, "src", "lib", p.replace(/\.js$/, ".ts")));
   return String.raw`
 const resolver = require(${j("adapters/openshell/resolve.js")});
 resolver.resolveOpenshell = () => "/fake/openshell";
@@ -217,7 +218,7 @@ module.exports = {
 `;
 }
 
-describe("channels remove full teardown (issue #3998)", () => {
+describe("channels remove full teardown (#3998)", () => {
   for (const sandboxAgent of ["openclaw", "hermes"] as const) {
     it(`strips '${sandboxAgent}' session.policyPresets and clears the in-sandbox whatsapp state dir`, () => {
       const script = `${buildPreamble({ sandboxAgent })}
@@ -429,13 +430,13 @@ const ctx = module.exports;
       channelInRegistry: "telegram",
     })}
 const ctx = module.exports;
-const registryOverride = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "state/registry.js"))});
+const registryOverride = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "state/registry.ts"))});
 registryOverride.getSandbox = () => ({
   name: "test-sb",
   agent: "openclaw",
   policies: [],
 });
-const policiesOverride = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "policy/index.js"))});
+const policiesOverride = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "policy/index.ts"))});
 policiesOverride.getAppliedPresets = () => [];
 (async () => {
   try {

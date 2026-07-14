@@ -4,7 +4,29 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { classifyGatewayStartFailure } from "../validation";
-import { reportLegacyGatewayStartResultFailure } from "./gateway-start-failure";
+import {
+  createFinalGatewayStartFailureHandler,
+  normalizeGatewayStartError,
+  reportLegacyGatewayStartResultFailure,
+} from "./gateway-start-failure";
+
+describe("normalizeGatewayStartError", () => {
+  it("preserves the original deadline-aware Error instance (#3768)", () => {
+    const deadlineError = new Error("Gateway failed within 10s.");
+
+    expect(normalizeGatewayStartError(deadlineError)).toBe(deadlineError);
+  });
+
+  it.each([
+    ["string", "connection refused", "connection refused"],
+    ["number", 500, "500"],
+  ])("wraps a thrown %s without losing its message (#3768)", (_kind, thrown, message) => {
+    const normalized = normalizeGatewayStartError(thrown);
+
+    expect(normalized).toBeInstanceOf(Error);
+    expect(normalized.message).toBe(message);
+  });
+});
 
 describe("classifyGatewayStartFailure", () => {
   // Regression: NemoClaw #2347. When Colima is stopped on macOS, the
@@ -76,5 +98,31 @@ describe("reportLegacyGatewayStartResultFailure", () => {
       expect.stringContaining("Gateway start returned before healthy"),
     );
     expect(log.mock.calls[0][0]).not.toContain("\x1b");
+  });
+});
+
+describe("createFinalGatewayStartFailureHandler", () => {
+  it("normalizes diagnostics before redacting secrets split by terminal control bytes", () => {
+    const printed: string[] = [];
+    const handleFailure = createFinalGatewayStartFailureHandler({
+      getGatewayName: () => "nemoclaw-test",
+      collectDiagnostics: () => "NVIDIA_API_KEY=ghp_abcde\r\x1b[31mfghijklmno\x1b[0m",
+      cleanupGateway: vi.fn(),
+    });
+
+    expect(() =>
+      handleFailure({
+        retries: 0,
+        printError: (message = "") => printed.push(message),
+        exitProcess: (code): never => {
+          throw new Error(`exit ${code}`);
+        },
+      }),
+    ).toThrow("exit 1");
+
+    const output = printed.join("\n");
+    expect(output).not.toContain("\x1b");
+    expect(output).not.toContain("fghijklmno");
+    expect(output).toMatch(/NVIDIA_API_KEY=ghp_\*+/);
   });
 });

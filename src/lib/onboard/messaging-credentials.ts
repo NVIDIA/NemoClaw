@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { normalizeCredentialValue } from "../credentials/store";
+import { getMessagingChannelForCredentialEnvKey } from "../messaging/channels";
 import { hashCredential } from "../security/credential-hash";
 import * as registry from "../state/registry";
 
@@ -45,11 +46,7 @@ export function getRecordedMessagingChannelsForResume({
 }
 
 export function getMessagingChannelForEnvKey(envKey: string): string | null {
-  if (envKey === "DISCORD_BOT_TOKEN") return "discord";
-  if (envKey === "SLACK_BOT_TOKEN") return "slack";
-  if (envKey === "TELEGRAM_BOT_TOKEN") return "telegram";
-  if (envKey === "WECHAT_BOT_TOKEN") return "wechat";
-  return null;
+  return getMessagingChannelForCredentialEnvKey(envKey);
 }
 
 /**

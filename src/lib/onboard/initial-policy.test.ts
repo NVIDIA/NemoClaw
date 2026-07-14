@@ -10,7 +10,9 @@ import YAML from "yaml";
 
 vi.mock("../policy", () => ({
   mergePresetNamesIntoPolicy: (policy: string, presetNames: string[]) => ({
-    policy: `${policy.trimEnd()}\n  slack: {}\n`,
+    policy: `${policy.trimEnd()}\n${presetNames
+      .map((preset) => `  ${preset === "wechat" ? "wechat_bridge" : preset}: {}`)
+      .join("\n")}\n`,
     appliedPresets: presetNames,
     missingPresets: [],
   }),
@@ -205,6 +207,7 @@ network_policies:
         "  telegram: {}",
         "  discord: {}",
         "  slack: {}",
+        "  teams: {}",
         "  wechat_bridge: {}",
         "",
       ].join("\n"),
@@ -235,6 +238,7 @@ network_policies:
     expect(policyNames?.has("discord")).toBe(true);
     expect(policyNames?.has("telegram")).toBe(false);
     expect(policyNames?.has("slack")).toBe(false);
+    expect(policyNames?.has("teams")).toBe(false);
     expect(policyNames?.has("wechat_bridge")).toBe(false);
     expect(prepared.cleanup?.()).toBe(true);
     expect(fs.existsSync(prepared.policyPath)).toBe(false);
@@ -263,7 +267,36 @@ network_policies:
     expect(prepared.cleanup?.()).toBe(true);
   });
 
-  it("merges openclaw-diagnostics-otel-local at create time when OTEL is enabled", () => {
+  it("removes all temporary policies when a later materialization write fails", () => {
+    const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
+    const realWriteFileSync = fs.writeFileSync;
+    const mkdtempSpy = vi.spyOn(fs, "mkdtempSync");
+    let createdDirs: string[] = [];
+    const writeSpy = vi
+      .spyOn(fs, "writeFileSync")
+      .mockImplementationOnce((...args) => realWriteFileSync(...args))
+      .mockImplementationOnce(() => {
+        throw new Error("policy write failed");
+      });
+
+    try {
+      expect(() =>
+        prepareInitialSandboxCreatePolicy(basePolicyPath, [], {
+          directGpu: true,
+          additionalPresets: ["slack"],
+        }),
+      ).toThrow("policy write failed");
+    } finally {
+      createdDirs = mkdtempSpy.mock.results.map(({ value }) => String(value));
+      writeSpy.mockRestore();
+      mkdtempSpy.mockRestore();
+    }
+
+    expect(createdDirs).toHaveLength(2);
+    for (const dir of createdDirs) expect(fs.existsSync(dir)).toBe(false);
+  });
+
+  it("merges openclaw-diagnostics-otel-local at create time when OTEL is enabled and the tier is known non-restricted", () => {
     const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
     process.env.NEMOCLAW_OPENCLAW_OTEL = "1";
     process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT = "http://host.openshell.internal:4318";
@@ -271,10 +304,66 @@ network_policies:
     delete process.env.NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE;
     const prepared = prepareInitialSandboxCreatePolicy(basePolicyPath, [], {
       agentName: "openclaw",
+      policyTier: "balanced",
     });
 
     expect(prepared.appliedPresets).toEqual(["openclaw-diagnostics-otel-local"]);
     expect(prepared.policyPath).not.toBe(basePolicyPath);
+    expect(prepared.cleanup?.()).toBe(true);
+  });
+
+  it("defers openclaw-diagnostics-otel-local at create time when the tier is unknown (interactive flow)", () => {
+    const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
+    process.env.NEMOCLAW_OPENCLAW_OTEL = "1";
+    process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT = "http://host.openshell.internal:4318";
+
+    const prepared = prepareInitialSandboxCreatePolicy(basePolicyPath, [], {
+      agentName: "openclaw",
+    });
+
+    expect(prepared.appliedPresets).toEqual([]);
+    expect(prepared.policyPath).toBe(basePolicyPath);
+  });
+
+  it("does not merge OpenClaw OTEL policy at create time for terminal agents", () => {
+    const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
+    process.env.NEMOCLAW_OPENCLAW_OTEL = "1";
+    process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT = "http://host.openshell.internal:4318";
+
+    const prepared = prepareInitialSandboxCreatePolicy(basePolicyPath, [], {
+      agentName: "langchain-deepagents-code",
+    });
+
+    expect(prepared.appliedPresets).toEqual([]);
+    expect(prepared.policyPath).toBe(basePolicyPath);
+    expect(prepared.cleanup).toBeUndefined();
+  });
+
+  it("suppresses openclaw-diagnostics-otel-local at create time on the restricted tier (defence-in-depth)", () => {
+    const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
+    process.env.NEMOCLAW_OPENCLAW_OTEL = "1";
+    process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT = "http://host.openshell.internal:4318";
+
+    const prepared = prepareInitialSandboxCreatePolicy(basePolicyPath, [], {
+      agentName: "openclaw",
+      policyTier: "restricted",
+    });
+
+    expect(prepared.appliedPresets).toEqual([]);
+    expect(prepared.policyPath).toBe(basePolicyPath);
+  });
+
+  it("keeps openclaw-diagnostics-otel-local at create time on the balanced tier when OTEL is enabled", () => {
+    const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
+    process.env.NEMOCLAW_OPENCLAW_OTEL = "1";
+    process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT = "http://host.openshell.internal:4318";
+
+    const prepared = prepareInitialSandboxCreatePolicy(basePolicyPath, [], {
+      agentName: "openclaw",
+      policyTier: "balanced",
+    });
+
+    expect(prepared.appliedPresets).toEqual(["openclaw-diagnostics-otel-local"]);
     expect(prepared.cleanup?.()).toBe(true);
   });
 });

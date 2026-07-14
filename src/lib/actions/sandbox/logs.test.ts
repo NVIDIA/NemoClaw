@@ -219,4 +219,27 @@ describe("showSandboxLogsWithDeps", () => {
     expect(guidance).toHaveBeenCalledWith("alpha", { retryCommand: "logs" });
     expect(result.calls).toEqual([]);
   });
+
+  it("surfaces a sparse gateway breadcrumb when OpenShell output dominates the tail", () => {
+    const gatewayStdout = [
+      "[1779488800.000] [gateway] starting HTTP server",
+      "[1779488815.000] [telegram] [default] bridge did not start within 15s; check channels.telegram.enabled, plugin entries, and gateway log",
+    ].join("\n");
+    const openshellStdout = Array.from(
+      { length: 200 },
+      (_v, i) => `[${1779488900 + i}.000] [sandbox] [INFO ] line ${i}`,
+    ).join("\n");
+    const result = captureLogsRun(
+      { follow: false, lines: "200", since: null },
+      {
+        settings: { status: 0 },
+        sandbox: { status: 0, stdout: `${gatewayStdout}\n` },
+        logs: { status: 0, stdout: `${openshellStdout}\n` },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("bridge did not start within 15s");
+    expect(result.stdout).toContain("starting HTTP server");
+  });
 });

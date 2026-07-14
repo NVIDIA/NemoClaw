@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
 
-import { reportProviderSelectionFailure } from "../../../dist/lib/onboard/provider-selection-failure";
+import { reportProviderSelectionFailure } from "./provider-selection-failure";
 
 function report(overrides: Partial<Parameters<typeof reportProviderSelectionFailure>[0]>): {
   errors: string[];

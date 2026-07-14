@@ -4,6 +4,7 @@
 import { runOpenshell } from "../../adapters/openshell/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { ensureLiveSandboxOrExit } from "./gateway-state";
+import { resolveHostPathFromCwd } from "./host-path";
 
 export interface SandboxUploadOptions {
   sandboxName: string;
@@ -18,12 +19,13 @@ export interface SandboxUploadResult {
 }
 
 export async function uploadToSandbox(opts: SandboxUploadOptions): Promise<SandboxUploadResult> {
-  const hostPath = (opts.hostPath ?? "").trim();
-  if (!hostPath) {
+  const trimmedHostPath = (opts.hostPath ?? "").trim();
+  if (!trimmedHostPath) {
     throw new Error(
       `No host path provided; usage: ${CLI_NAME} ${opts.sandboxName} upload <host-path> [sandbox-dest]`,
     );
   }
+  const hostPath = resolveHostPathFromCwd(trimmedHostPath);
   const sandboxDest = (opts.sandboxDest ?? "").trim() || "/sandbox/";
 
   await ensureLiveSandboxOrExit(opts.sandboxName, {

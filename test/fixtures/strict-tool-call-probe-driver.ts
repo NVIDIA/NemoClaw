@@ -4,21 +4,20 @@
 //
 // Process-level driver for the Local Ollama strict Chat Completions
 // tool-call probe. Loaded by test/strict-tool-call-probe.test.ts via
-// `tsx <driver>`; not picked up by Vitest's discovery (lives under
+// `node --import tsx <driver>`; not picked up by Vitest's discovery (lives under
 // test/fixtures/, which is excluded from the test glob).
 //
 // Mirrors the inline `node -e` block from the retired
-// test/e2e/test-strict-tool-call-probe.sh, retained here so the
 // caller-level behavior under test stays identical to production
 // runtime conditions (subprocess curl probes, real env propagation,
 // no Vitest worker shims). Refs #4537, #4349, #5098, #5119.
 //
-// CWD must be the repo root; cli build artifacts under dist/ are required.
+// CWD must be the repo root; the test source require hook is preloaded.
 //
 // Authored as TypeScript (rather than .cjs) per the codebase-growth
 // guardrail forbidding newly added .js/.cjs/.mjs files. Body is JS-shaped
 // because the embedded `node -e` strings must remain plain CommonJS for
-// the spawned children, and the dist/lib/* targets are CJS modules.
+// the spawned children, and the source targets are loaded as CJS modules.
 // `@ts-nocheck` keeps the surface unchanged from the retired bash heredoc.
 
 import assert from "node:assert/strict";
@@ -38,9 +37,9 @@ const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
 const requireFromHere = createRequire(import.meta.url);
 const { createInferenceSelectionValidationHelpers } = requireFromHere(
-  path.join(REPO_ROOT, "dist", "lib", "onboard", "inference-selection-validation"),
+  path.join(REPO_ROOT, "src", "lib", "onboard", "inference-selection-validation.ts"),
 );
-const localInference = requireFromHere(path.join(REPO_ROOT, "dist", "lib", "inference", "local"));
+const localInference = requireFromHere(path.join(REPO_ROOT, "src", "lib", "inference", "local.ts"));
 
 function assertStrictPayload(payload) {
   assert.equal(payload.model, "mock-tool-model");
@@ -94,7 +93,8 @@ const http = require("node:http");
 
 const mode = process.env.MOCK_MODE;
 const requestsFile = process.env.REQUESTS_FILE;
-let count = 0;
+let requestCount = 0;
+let chatCount = 0;
 
 function toolCallResponse() {
   return {
@@ -122,10 +122,10 @@ function plainTextResponse() {
   return { choices: [{ message: { role: "assistant", content: "OK" } }] };
 }
 
-function responseForRequest() {
+function responseForChatRequest() {
   if (mode === "success") return { status: 200, body: toolCallResponse() };
   if (mode === "transient-502") {
-    return count === 1
+    return chatCount === 1
       ? { status: 502, body: { error: { message: "transient upstream failure" } } }
       : { status: 200, body: toolCallResponse() };
   }
@@ -137,7 +137,7 @@ const server = http.createServer((req, res) => {
   const chunks = [];
   req.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
   req.on("end", () => {
-    count += 1;
+    requestCount += 1;
     const rawBody = Buffer.concat(chunks).toString("utf8");
     let parsedBody = null;
     try {
@@ -147,9 +147,15 @@ const server = http.createServer((req, res) => {
     }
     fs.appendFileSync(
       requestsFile,
-      JSON.stringify({ count, method: req.method, url: req.url, body: parsedBody }) + "\n",
+      JSON.stringify({ count: requestCount, method: req.method, url: req.url, body: parsedBody }) + "\n",
     );
-    const response = responseForRequest();
+    if (req.method === "GET" && req.url === "/v1/models") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ data: [{ id: "mock-tool-model" }] }));
+      return;
+    }
+    chatCount += 1;
+    const response = responseForChatRequest();
     res.writeHead(response.status, { "Content-Type": "application/json" });
     res.end(JSON.stringify(response.body));
   });
@@ -237,7 +243,7 @@ process.env.NEMOCLAW_PROVIDER = "ollama";
 process.env.NEMOCLAW_MODEL = "mock-tool-model";
 process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
 
-const runner = require("./dist/lib/runner");
+const runner = require("./src/lib/runner.ts");
 runner.run = () => ({ status: 0 });
 runner.runShell = () => ({ status: 0 });
 runner.runCapture = (command) => {
@@ -263,10 +269,10 @@ runner.runCaptureEx = (command) => {
   return { stdout: "", stderr: "", exitCode: 0, timedOut: false };
 };
 
-require("./dist/lib/onboard/ollama-systemd").ensureOllamaLoopbackSystemdOverride = () => "ready";
-require("./dist/lib/onboard/local-inference-topology").shouldFrontOllamaWithProxy = () => false;
+require("./src/lib/onboard/ollama-systemd.ts").ensureOllamaLoopbackSystemdOverride = () => "ready";
+require("./src/lib/onboard/local-inference-topology.ts").shouldFrontOllamaWithProxy = () => false;
 
-const credentials = require("./dist/lib/credentials/store");
+const credentials = require("./src/lib/credentials/store.ts");
 credentials.prompt = async (message) => {
   throw new Error("Unexpected prompt during non-interactive Ollama onboarding: " + message);
 };
@@ -282,7 +288,7 @@ console.error = (...args) => lines.push(args.join(" "));
 
 (async () => {
   try {
-    const { setupNim } = require("./dist/lib/onboard");
+    const { setupNim } = require("./src/lib/onboard.ts");
     const result = await setupNim(null, null);
     originalLog(JSON.stringify({ result, lines }));
   } catch (error) {
@@ -309,25 +315,38 @@ console.error = (...args) => lines.push(args.join(" "));
   assert.equal(payload.result.preferredInferenceApi, "openai-completions");
 }
 
+function assertCalibrationRequest(request) {
+  assert.equal(request.method, "GET");
+  assert.equal(request.url, "/v1/models");
+  assert.equal(request.body, null);
+}
+
+function assertChatCompletionRequests(requests, expectedCount) {
+  assertCalibrationRequest(requests[0]);
+  const chatRequests = requests.filter((request) => request.url === "/v1/chat/completions");
+  assert.equal(chatRequests.length, expectedCount);
+  for (const request of chatRequests) {
+    assert.equal(request.method, "POST");
+    assertStrictPayload(request.body);
+  }
+  return chatRequests;
+}
+
 (async () => {
   await withMockEndpoint("success", async (endpoint, readRequests) => {
     const result = await validate(endpoint);
     assert.deepEqual(result, { ok: true, api: "openai-completions" });
     const requests = readRequests();
-    assert.equal(requests.length, 1);
-    assert.equal(requests[0].method, "POST");
-    assert.equal(requests[0].url, "/v1/chat/completions");
-    assertStrictPayload(requests[0].body);
+    assert.equal(requests.length, 2);
+    assertChatCompletionRequests(requests, 1);
     console.log("[PASS] strict validation succeeds with structured tool_calls");
   });
 
   await withMockEndpoint("success", async (endpoint, readRequests) => {
     runOnboardingCallerAgainstMock(endpoint);
     const requests = readRequests();
-    assert.equal(requests.length, 1);
-    assert.equal(requests[0].method, "POST");
-    assert.equal(requests[0].url, "/v1/chat/completions");
-    assertStrictPayload(requests[0].body);
+    assert.equal(requests.length, 2);
+    assertChatCompletionRequests(requests, 1);
     console.log(
       "[PASS] Local Ollama onboarding caller enforces strict Chat Completions validation",
     );
@@ -337,9 +356,8 @@ console.error = (...args) => lines.push(args.join(" "));
     const result = await validate(endpoint);
     assert.deepEqual(result, { ok: true, api: "openai-completions" });
     const requests = readRequests();
-    assert.equal(requests.length, 2);
-    assertStrictPayload(requests[0].body);
-    assertStrictPayload(requests[1].body);
+    assert.equal(requests.length, 3);
+    assertChatCompletionRequests(requests, 2);
     console.log("[PASS] strict validation retries a transient 502 and keeps bounded payloads");
   });
 
@@ -348,8 +366,8 @@ console.error = (...args) => lines.push(args.join(" "));
     const result = await validate(endpoint, recoveryCalls);
     assert.deepEqual(result, { ok: false, retry: "retry" });
     const requests = readRequests();
-    assert.equal(requests.length, 1);
-    assertStrictPayload(requests[0].body);
+    assert.equal(requests.length, 2);
+    assertChatCompletionRequests(requests, 1);
     assert.equal(recoveryCalls.length, 1);
     console.log("[PASS] strict validation fails closed when no structured tool_call is returned");
   });

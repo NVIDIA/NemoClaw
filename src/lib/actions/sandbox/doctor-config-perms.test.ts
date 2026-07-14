@@ -48,7 +48,7 @@ describe("buildConfigPermsCheck (#4538)", () => {
   });
 
   it("returns null when the check does not apply", () => {
-    inspect.mockReturnValue({ applies: false, reason: "shields up" });
+    inspect.mockReturnValue({ applies: false, skipReason: "locked", reason: "shields up" });
     expect(buildConfigPermsCheck("alpha", false, deps())).toBeNull();
   });
 

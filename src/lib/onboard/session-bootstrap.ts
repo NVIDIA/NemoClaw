@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session } from "../state/onboard-session";
+import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
 import type { ResumeConfigConflict } from "./resume-config";
 
 export interface OnboardSessionBootstrapInput {
@@ -11,8 +12,11 @@ export interface OnboardSessionBootstrapInput {
   requestedSandboxName: string | null;
   cannotPrompt: boolean;
   nonInteractive: boolean;
+  authoritativeResumeConfig?: boolean;
   agentFlag?: string | null;
   envAgent?: string | null;
+  requestedToolDisclosure?: ToolDisclosure | null;
+  requestedObservabilityEnabled?: boolean | null;
 }
 
 export interface OnboardSessionBootstrapDeps {
@@ -21,7 +25,7 @@ export interface OnboardSessionBootstrapDeps {
   createSession(overrides?: Partial<Session>): Session;
   saveSession(session: Session): Session;
   updateSession(mutator: (session: Session) => Session | void): Session;
-  repairResumeMachineSnapshot(session: Session): Session;
+  applySessionRecovery(session: Session): void;
   setOnboardBrandingAgent(agentName: string | null): void;
   getResumeConfigConflicts(
     session: Session | null,
@@ -30,6 +34,9 @@ export interface OnboardSessionBootstrapDeps {
       fromDockerfile?: string | null;
       sandboxName?: string | null;
       agent?: string | null;
+      toolDisclosure?: ToolDisclosure | null;
+      observabilityEnabled?: boolean | null;
+      authoritativeResumeConfig?: boolean;
     },
   ): ResumeConfigConflict[];
   recordResumeConflict(conflict: ResumeConfigConflict): Promise<unknown>;
@@ -152,13 +159,20 @@ async function prepareResumeSession(
     fromDockerfile: input.requestedFromDockerfile,
     sandboxName: input.requestedSandboxName,
     agent: input.agentFlag || null,
+    toolDisclosure: input.requestedToolDisclosure ?? null,
+    observabilityEnabled: input.requestedObservabilityEnabled ?? null,
+    authoritativeResumeConfig: input.authoritativeResumeConfig,
   });
   if (resumeConflicts.length > 0) {
     await exitForResumeConflicts(resumeConflicts, deps);
   }
 
   deps.updateSession((current: Session) => {
-    deps.repairResumeMachineSnapshot(current);
+    deps.applySessionRecovery(current);
+    if (typeof input.requestedObservabilityEnabled === "boolean") {
+      current.observabilityEnabled = input.requestedObservabilityEnabled;
+      current.observabilityRequestedExplicitly = true;
+    }
     current.mode = mode(input.nonInteractive);
     current.failure = null;
     current.status = "in_progress";
@@ -182,6 +196,9 @@ function prepareFreshSession(
   const session = deps.saveSession(
     deps.createSession({
       mode: mode(input.nonInteractive),
+      toolDisclosure: input.requestedToolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
+      observabilityEnabled: input.requestedObservabilityEnabled === true,
+      observabilityRequestedExplicitly: typeof input.requestedObservabilityEnabled === "boolean",
       metadata: { gatewayName: "nemoclaw", fromDockerfile: fromDockerfile || null },
     }),
   );

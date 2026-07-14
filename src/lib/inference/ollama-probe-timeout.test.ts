@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { validateOllamaModel } from "../../../dist/lib/inference/local";
+import { validateOllamaModel } from "./local";
 
 describe("Ollama probe timeout retry", () => {
   it("retries with extended timeout on non-Spark hosts when first probe times out", () => {

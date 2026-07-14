@@ -2,11 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { getCredential } from "../credentials/store";
-import type { WebSearchConfig } from "../inference/web-search";
+import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
+import {
+  listMessagingCredentialMetadata,
+  listMessagingPolicyPresetMetadata,
+} from "../messaging/channels";
+import { requiredObservabilityPolicyPresets } from "./observability-policy-presets";
 
 const { LOCAL_INFERENCE_PROVIDERS } = require("./providers") as {
   LOCAL_INFERENCE_PROVIDERS: string[];
 };
+
 import { isOpenclawAgent, requiredOpenclawOtelPolicyPresets } from "./openclaw-otel-policy-presets";
 
 export interface SuggestedPolicyPresetOptions {
@@ -14,6 +20,7 @@ export interface SuggestedPolicyPresetOptions {
   webSearchConfig?: WebSearchConfig | null;
   provider?: string | null;
   agent?: string | null;
+  observabilityEnabled?: boolean | null;
   isNonInteractive?: () => boolean;
   env?: NodeJS.ProcessEnv;
 }
@@ -23,6 +30,7 @@ export function getSuggestedPolicyPresets({
   webSearchConfig = null,
   provider = null,
   agent = null,
+  observabilityEnabled = false,
   isNonInteractive,
   env = process.env,
 }: SuggestedPolicyPresetOptions = {}): string[] {
@@ -35,30 +43,46 @@ export function getSuggestedPolicyPresets({
     suggestions.push("openclaw-pricing");
     suggestions.push(...requiredOpenclawOtelPolicyPresets(agent, env));
   }
+  suggestions.push(...requiredObservabilityPolicyPresets(agent, observabilityEnabled));
   const usesExplicitMessagingSelection = Array.isArray(enabledChannels);
   const nonInteractive = isNonInteractive?.() ?? process.env.NEMOCLAW_NON_INTERACTIVE === "1";
 
-  const maybeSuggestMessagingPreset = (channel: string, envKey: string | null): void => {
+  const credentialsByChannel = new Map<string, string[]>();
+  for (const credential of listMessagingCredentialMetadata()) {
+    const envKeys = credentialsByChannel.get(credential.channelId) ?? [];
+    envKeys.push(credential.providerEnvKey);
+    credentialsByChannel.set(credential.channelId, envKeys);
+  }
+
+  const maybeSuggestMessagingPreset = (
+    channel: string,
+    preset: string,
+    envKeys: readonly string[],
+  ): void => {
     if (usesExplicitMessagingSelection) {
-      if (enabledChannels.includes(channel)) suggestions.push(channel);
+      if (enabledChannels.includes(channel)) suggestions.push(preset);
       return;
     }
-    if (envKey === null) return;
-    if (getCredential(envKey) || process.env[envKey]) {
-      suggestions.push(channel);
-      if (process.stdout.isTTY && !nonInteractive && process.env.CI !== "true") {
-        console.log(`  Auto-detected: ${envKey} -> suggesting ${channel} preset`);
+    for (const envKey of envKeys) {
+      if (getCredential(envKey) || env[envKey]) {
+        if (!suggestions.includes(preset)) suggestions.push(preset);
+        if (process.stdout.isTTY && !nonInteractive && process.env.CI !== "true") {
+          console.log(`  Auto-detected: ${envKey} -> suggesting ${preset} preset`);
+        }
+        return;
       }
     }
   };
 
-  maybeSuggestMessagingPreset("telegram", "TELEGRAM_BOT_TOKEN");
-  maybeSuggestMessagingPreset("slack", "SLACK_BOT_TOKEN");
-  maybeSuggestMessagingPreset("discord", "DISCORD_BOT_TOKEN");
-  maybeSuggestMessagingPreset("wechat", "WECHAT_BOT_TOKEN");
-  maybeSuggestMessagingPreset("whatsapp", null);
+  for (const preset of listMessagingPolicyPresetMetadata()) {
+    maybeSuggestMessagingPreset(
+      preset.channelId,
+      preset.presetName,
+      credentialsByChannel.get(preset.channelId) ?? [],
+    );
+  }
 
-  if (webSearchConfig) suggestions.push("brave");
+  if (webSearchConfig) suggestions.push(webSearchProviderForConfig(webSearchConfig));
 
   return suggestions;
 }

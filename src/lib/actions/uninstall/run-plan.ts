@@ -16,10 +16,17 @@ import {
   NEMOCLAW_PROVIDERS,
   type UninstallPaths,
 } from "../../domain/uninstall/paths";
+import {
+  gatewayDestroySkipMessage,
+  OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE,
+  preservedRegistryUnrecoverableWarnings,
+  providerDeleteSkipMessage,
+} from "../../domain/uninstall/messaging";
 import { buildUninstallPlan, type UninstallPlan } from "../../domain/uninstall/plan";
-import { isModelRouterCommandLineForPort } from "../../onboard/model-router-process";
 import { stopHostGatewayProcesses } from "../../onboard/host-gateway-process";
+import { isModelRouterCommandLineForPort } from "../../onboard/model-router-process";
 import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
+import { stopOpenRouterRuntimeAdapter } from "./openrouter-runtime-adapter-cleanup";
 import { classifyShimPath, type FileSystemDeps } from "./plan";
 
 export interface RunResult {
@@ -31,6 +38,7 @@ export interface RunResult {
 export interface UninstallRunOptions {
   assumeYes: boolean;
   deleteModels: boolean;
+  destroyUserData?: boolean;
   gatewayName?: string;
   keepOpenShell: boolean;
 }
@@ -281,13 +289,23 @@ function printBye(runtime: UninstallRuntime): void {
   runtime.log(branding.uninstallGoodbye);
 }
 
+function userDataDispositionLine(options: UninstallRunOptions, runtime: UninstallRuntime): string {
+  if (options.destroyUserData) {
+    return "  · ~/.nemoclaw (removes rebuild-backups/, backups/, sandboxes.json: --destroy-user-data set)";
+  }
+  if (runtime.env.NEMOCLAW_UNINSTALL_DESTROY_USER_DATA === "1") {
+    return "  · ~/.nemoclaw (removes rebuild-backups/, backups/, sandboxes.json: NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1)";
+  }
+  return "  · ~/.nemoclaw (preserves rebuild-backups/, backups/, sandboxes.json by default)";
+}
+
 function confirm(options: UninstallRunOptions, runtime: UninstallRuntime): boolean {
   const branding = runtimeBranding(runtime);
   if (options.assumeYes) return true;
   runtime.log("What will be removed:");
   runtime.log(`  · All OpenShell sandboxes, gateway, and ${branding.display} providers`);
   runtime.log("  · Related Docker containers, images, and volumes");
-  runtime.log("  · ~/.nemoclaw (preserves rebuild-backups/, backups/, sandboxes.json by default)");
+  runtime.log(userDataDispositionLine(options, runtime));
   runtime.log("  · ~/.config/openshell  ~/.config/nemoclaw");
   runtime.log(`  · Global ${branding.display} CLI (npm package: nemoclaw)`);
   runtime.log(
@@ -590,17 +608,25 @@ function removeOpenShellResources(options: UninstallRunOptions, runtime: Uninsta
     runtime.warn("openshell not found; skipping gateway/provider/sandbox cleanup.");
     return;
   }
-  runOptional(runtime, "Deleted all OpenShell sandboxes", "openshell", [
-    "sandbox",
-    "delete",
-    "--all",
-  ]);
+  // #6520 sub-bug: a no-op delete must not print `Deleted … skipped`;
+  // wording lives in domain/uninstall/messaging.ts.
+  runOptional(
+    runtime,
+    "Deleted all OpenShell sandboxes",
+    "openshell",
+    ["sandbox", "delete", "--all"],
+    {
+      onSkip: OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE,
+    },
+  );
   for (const provider of NEMOCLAW_PROVIDERS) {
-    runOptional(runtime, `Deleted provider '${provider}'`, "openshell", [
-      "provider",
-      "delete",
-      provider,
-    ]);
+    runOptional(
+      runtime,
+      `Deleted provider '${provider}'`,
+      "openshell",
+      ["provider", "delete", provider],
+      { onSkip: providerDeleteSkipMessage(provider) },
+    );
   }
   const gatewayLabel = options.gatewayName || "nemoclaw";
   runOptional(
@@ -608,7 +634,7 @@ function removeOpenShellResources(options: UninstallRunOptions, runtime: Uninsta
     `Destroyed gateway '${gatewayLabel}'`,
     "openshell",
     ["gateway", "destroy", "-g", gatewayLabel],
-    { onSkip: `Gateway '${gatewayLabel}' already removed or unreachable` },
+    { onSkip: gatewayDestroySkipMessage(gatewayLabel) },
   );
 }
 
@@ -674,6 +700,16 @@ function removeNemoclawCli(paths: UninstallPaths, runtime: UninstallRuntime): vo
     runtime.warn(
       `Leaving ${paths.nemoclawShimPath} in place because it is not an installer-managed shim.`,
     );
+  }
+  // Also remove the sibling agent-alias shims (nemohermes, nemo-deepagents) the
+  // installer creates; uninstall previously left them resolving on PATH (#6098).
+  // The same classification guard preserves any non-managed file of that name.
+  for (const alias of paths.agentAliasShimPaths) {
+    const aliasShim = classifyShimPath(alias.path, {}, alias.binName);
+    if (aliasShim.remove) removePath(alias.path, runtime);
+    else if (aliasShim.kind === "preserve-foreign-file") {
+      runtime.warn(`Leaving ${alias.path} in place because it is not an installer-managed shim.`);
+    }
   }
   removeNvmLeftovers(paths, runtime);
   removeAliases(paths, runtime);
@@ -792,12 +828,28 @@ function detectPreservableEntries(paths: UninstallPaths, runtime: UninstallRunti
   );
 }
 
+// #6520: wording lives in domain/uninstall/messaging.ts; empty when
+// sandboxes.json is not being preserved.
+function warnPreservedRegistryUnrecoverable(
+  preservable: readonly string[],
+  runtime: UninstallRuntime,
+): void {
+  for (const line of preservedRegistryUnrecoverableWarnings(
+    preservable,
+    runtimeBranding(runtime).cli,
+  ))
+    runtime.warn(line);
+}
+
 function resolvePreserveSet(
   paths: UninstallPaths,
   options: UninstallRunOptions,
   runtime: UninstallRuntime,
 ): readonly string[] {
-  // Explicit acknowledgement env var → full purge, matches today's behaviour.
+  if (options.destroyUserData) {
+    runtime.log("--destroy-user-data set; purging user data under ~/.nemoclaw/.");
+    return [];
+  }
   if (runtime.env.NEMOCLAW_UNINSTALL_DESTROY_USER_DATA === "1") {
     runtime.log(
       "NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; purging user data under ~/.nemoclaw/.",
@@ -805,17 +857,15 @@ function resolvePreserveSet(
     return [];
   }
   const preservable = detectPreservableEntries(paths, runtime);
-  // Nothing on disk worth preserving → no message, no prompt; treat as default
-  // preserve set so a later snapshot-create still survives if the user re-runs.
   if (preservable.length === 0) return PRESERVED_USER_DATA_ENTRIES;
-  // Non-interactive (no TTY, --yes, or NEMOCLAW_NON_INTERACTIVE=1) → preserve
-  // silently with a one-line notice. Default behaviour is safe; users who want
-  // a destructive uninstall in CI must set the env var.
   const nonInteractive =
     !runtime.isTty || options.assumeYes || runtime.env.NEMOCLAW_NON_INTERACTIVE === "1";
   if (nonInteractive) {
     runtime.log(`Preserving ${preservable.join(", ")} under ${paths.nemoclawStateDir}.`);
-    runtime.log("  Set NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 to purge user data on uninstall.");
+    runtime.log(
+      "  Pass --destroy-user-data (or set NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1) to purge user data on uninstall.",
+    );
+    warnPreservedRegistryUnrecoverable(preservable, runtime);
     return PRESERVED_USER_DATA_ENTRIES;
   }
   runtime.log(`The following user data under ${paths.nemoclawStateDir} is preserved by default:`);
@@ -827,6 +877,7 @@ function resolvePreserveSet(
     return [];
   }
   runtime.log("Keeping user data.");
+  warnPreservedRegistryUnrecoverable(preservable, runtime);
   return PRESERVED_USER_DATA_ENTRIES;
 }
 
@@ -870,6 +921,7 @@ function executePlan(
         { logNoProcesses: true },
       );
       stopOllamaAuthProxy(paths, runtime);
+      stopOpenRouterRuntimeAdapter(paths, runtime);
       stopModelRouter(paths, runtime);
     } else if (step.name === "OpenShell resources") {
       removeOpenShellResources(options, runtime);

@@ -27,6 +27,20 @@ filesystem_policy:
     - /sandbox
     - /tmp
     - /dev/null
+    - /dev/pts                      # PTY multiplexer + slave devices (devpts).
+                                    # The Hermes TUI (prompt_toolkit), the web
+                                    # dashboard's interactive chat pty bridge,
+                                    # and terminal.backend: local all allocate a
+                                    # PTY via openpty()/forkpty(), opening
+                                    # /dev/ptmx (-> /dev/pts/ptmx) and a
+                                    # /dev/pts/<n> slave. Without this grant
+                                    # landlock denies the open with EACCES, which
+                                    # the dashboard surfaces as "Chat failed to
+                                    # start: out of pty devices" and which breaks
+                                    # any interactive shell tool. Grant the
+                                    # directory, not /dev/ptmx itself — it is a
+                                    # symlink the supervisor refuses to chown.
+                                    # Mirrors the OpenClaw policy grant (#4513).
     # Agent config/state root. Shields-up locks config.yaml/.env and the
     # parent directory, but intentionally leaves /sandbox/.hermes/.hermes_history
     # as sandbox:sandbox 0660 because prompt_toolkit FileHistory appends there
@@ -133,151 +147,5 @@ network_policies:
       - { path: /usr/bin/curl }
       - { path: /usr/local/bin/pip3 }
       - { path: /usr/local/bin/curl }
-      - { path: /usr/bin/python3* }
-      - { path: /opt/hermes/.venv/bin/python }
-
-  # ── Messaging policy templates ─────────────────────────────────
-  # These entries are agent-specific channel templates. During sandbox
-  # creation, NemoClaw filters out entries for messaging channels that were not
-  # selected, so a Discord-only Hermes sandbox does not retain Telegram, Slack,
-  # or WeChat egress.
-  telegram:
-    name: telegram
-    endpoints:
-      - host: api.telegram.org
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/bot*/**" }
-          - allow: { method: POST, path: "/bot*/**" }
-          - allow: { method: GET, path: "/file/bot*/**" }
-    binaries:
-      - { path: /usr/local/bin/node }
-      - { path: /usr/bin/python3* }
-      - { path: /opt/hermes/.venv/bin/python }
-
-  discord:
-    name: discord
-    endpoints:
-      - host: discord.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-          - allow: { method: GET, path: "/gateway*" }
-          - allow: { method: GET, path: "/api/v*/gateway/bot" }
-          - allow: { method: GET, path: "/api/v*/applications/@me" }
-          - allow: { method: PUT, path: "/api/v*/applications/*/commands" }
-          - allow: { method: PUT, path: "/api/v*/channels/*/messages/*/reactions/*/@me" }
-          - allow: { method: PATCH, path: "/api/v*/applications/*" }
-          - allow: { method: PATCH, path: "/api/v*/applications/*/commands/*" }
-          - allow: { method: PATCH, path: "/api/v*/channels/*/messages/*" }
-          - allow: { method: PATCH, path: "/api/v*/webhooks/*/*/messages/*" }
-          - allow: { method: DELETE, path: "/api/v*/applications/*/commands/*" }
-          - allow: { method: DELETE, path: "/api/v*/channels/*/messages/*" }
-          - allow: { method: DELETE, path: "/api/v*/channels/*/messages/*/reactions/*/*" }
-          - allow: { method: DELETE, path: "/api/v*/webhooks/*/*/messages/*" }
-      - host: gateway.discord.gg
-        port: 443
-        protocol: websocket
-        enforcement: enforce
-        websocket_credential_rewrite: true
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
-      - host: "*.discord.gg"
-        port: 443
-        protocol: websocket
-        enforcement: enforce
-        websocket_credential_rewrite: true
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
-      - host: cdn.discordapp.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-    binaries:
-      - { path: /usr/local/bin/node }
-      - { path: /usr/bin/python3* }
-      - { path: /opt/hermes/.venv/bin/python }
-
-  slack:
-    name: slack
-    endpoints:
-      - host: slack.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        request_body_credential_rewrite: true
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: api.slack.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        request_body_credential_rewrite: true
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: hooks.slack.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        request_body_credential_rewrite: true
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: wss-primary.slack.com
-        port: 443
-        protocol: websocket
-        enforcement: enforce
-        websocket_credential_rewrite: true
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
-      - host: wss-backup.slack.com
-        port: 443
-        protocol: websocket
-        enforcement: enforce
-        websocket_credential_rewrite: true
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
-    binaries:
-      - { path: /usr/local/bin/hermes }
-      - { path: /usr/bin/python3* }
-      - { path: /opt/hermes/.venv/bin/python }
-
-  # WeChat (personal) via Tencent's iLink Bot API. The Hermes adapter uses
-  # HTTP long-polling (no WebSocket). WEIXIN_TOKEN is L7-resolved at egress
-  # from WECHAT_BOT_TOKEN (same credential slot OpenClaw's bridge uses) via
-  # manifest hook render outputs. See nemoclaw-blueprint/policies/presets/wechat.yaml
-  # for the shared host set.
-  wechat_bridge:
-    name: wechat_bridge
-    endpoints:
-      - host: ilinkai.weixin.qq.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: ilinkai.wechat.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-    binaries:
-      - { path: /usr/local/bin/hermes }
       - { path: /usr/bin/python3* }
       - { path: /opt/hermes/.venv/bin/python }

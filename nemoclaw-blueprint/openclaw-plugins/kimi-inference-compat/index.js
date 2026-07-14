@@ -9,11 +9,19 @@ function normalizeBaseUrl(value) {
   return String(value || "").trim().replace(/\/+$/, "");
 }
 
+const KIMI_K26_MODEL_ID = "moonshotai/kimi-k2.6";
+const MANAGED_KIMI_K26_MODEL_REF = `inference/${KIMI_K26_MODEL_ID}`;
+
+function isKimiModelId(value) {
+  const modelId = normalize(value);
+  return modelId === KIMI_K26_MODEL_ID || modelId === MANAGED_KIMI_K26_MODEL_REF;
+}
+
 function isManagedKimi(ctx) {
   const model = ctx && ctx.model ? ctx.model : {};
   return (
     normalize(ctx && ctx.provider) === "inference" &&
-    normalize(ctx && ctx.modelId) === "moonshotai/kimi-k2.6" &&
+    [ctx && ctx.modelId, model.id, model.name].some(isKimiModelId) &&
     normalize((ctx && ctx.modelApi) || model.api) === "openai-completions" &&
     normalizeBaseUrl(model.baseUrl) === "https://inference.local/v1"
   );

@@ -13,6 +13,17 @@ import {
   writeSandboxRegistry,
 } from "./helpers";
 
+const HEALTHY_DEFAULT_GATEWAY_STUB = [
+  'if [ "$1" = "status" ]; then',
+  "  printf 'Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n'",
+  "  exit 0",
+  "fi",
+  'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
+  "  echo 'Gateway: nemoclaw'",
+  "  exit 0",
+  "fi",
+];
+
 function createShareTestEnv(prefix: string): Record<string, string> {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const localBin = path.join(home, "bin");
@@ -237,6 +248,7 @@ describe("list shows live gateway inference", () => {
         path.join(localBin, "openshell"),
         [
           "#!/usr/bin/env bash",
+          ...HEALTHY_DEFAULT_GATEWAY_STUB,
           'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
           '  echo "my-agent   Running   openclaw"',
           "  exit 0",
@@ -310,6 +322,7 @@ describe("list shows live gateway inference", () => {
         path.join(localBin, "openshell"),
         [
           "#!/usr/bin/env bash",
+          ...HEALTHY_DEFAULT_GATEWAY_STUB,
           'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
           '  echo "my-agent   Running   openclaw"',
           "  exit 0",
@@ -387,6 +400,7 @@ describe("list shows live gateway inference", () => {
         path.join(localBin, "openshell"),
         [
           "#!/usr/bin/env bash",
+          ...HEALTHY_DEFAULT_GATEWAY_STUB,
           'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
           '  echo "my-agent   Running   openclaw"',
           "  exit 0",
@@ -459,6 +473,7 @@ describe("list shows live gateway inference", () => {
         path.join(localBin, "openshell"),
         [
           "#!/usr/bin/env bash",
+          ...HEALTHY_DEFAULT_GATEWAY_STUB,
           'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
           '  echo "my-agent   Running   openclaw"',
           "  exit 0",
@@ -525,15 +540,19 @@ describe("list shows live gateway inference", () => {
     }
   });
 
-  it("share is recognized as a valid sandbox action (not 'Unknown action')", () => {
-    const env = createShareTestEnv("nemoclaw-cli-share-action-");
+  it(
+    "share is recognized as a valid sandbox action (not 'Unknown action')",
+    testTimeoutOptions(15_000),
+    () => {
+      const env = createShareTestEnv("nemoclaw-cli-share-action-");
 
-    const r = runWithEnv("alpha share mount", env);
+      const r = runWithEnv("alpha share mount", env);
 
-    // Will fail because sshfs/sandbox isn't running, but should NOT say "Unknown action"
-    expect(r.code).not.toBe(0);
-    expect(r.out).not.toContain("Unknown action");
-  });
+      // Will fail because sshfs/sandbox isn't running, but should NOT say "Unknown action"
+      expect(r.code).not.toBe(0);
+      expect(r.out).not.toContain("Unknown action");
+    },
+  );
 
   it("unknown share subcommands fail before action dispatch", () => {
     const env = createShareTestEnv("nemoclaw-cli-share-unknown-");

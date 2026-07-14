@@ -27,6 +27,7 @@ type PatternCounts = {
   nonNullAssertionCount: number;
   parserBoundaryCount: number;
   tsDirectiveCount: number;
+  nullableUnionCount: number;
 };
 
 export type FileHotspot = PatternCounts & {
@@ -61,6 +62,57 @@ export type FunctionHotspot = PatternCounts & {
   reasons: string[];
 };
 
+export type NullableUnionOccurrence = {
+  filePath: string;
+  line: number;
+  column: number;
+  kind: "property" | "parameter" | "return" | "variable" | "type-alias" | "other";
+  name: string | null;
+  containerName: string | null;
+  type: string;
+  nonNullType: string;
+};
+
+export type NullableUnionTypeHotspot = {
+  type: string;
+  nonNullType: string;
+  totalCount: number;
+  fileCount: number;
+  fanout: number;
+  files: Array<{
+    filePath: string;
+    count: number;
+    fanIn: number;
+    examples: NullableUnionOccurrence[];
+  }>;
+};
+
+export type NullableUnionFileHotspot = {
+  filePath: string;
+  count: number;
+  fanIn: number;
+  topTypes: Array<{ type: string; count: number }>;
+};
+
+export type NullableExportedTypeFanout = {
+  name: string;
+  declarationKind: "interface" | "type";
+  filePath: string;
+  line: number;
+  nullableUnionCount: number;
+  nullableTypes: Array<{ type: string; count: number }>;
+  referenceCount: number;
+  referencingFileCount: number;
+  fanout: number;
+};
+
+export type NullableUnionReport = {
+  totalCount: number;
+  byType: NullableUnionTypeHotspot[];
+  byFile: NullableUnionFileHotspot[];
+  exportedTypes: NullableExportedTypeFanout[];
+};
+
 type ThemeSummary = {
   id: string;
   title: string;
@@ -82,6 +134,7 @@ export type HotspotReport = {
   summary: ReportSummary;
   files: FileHotspot[];
   functions: FunctionHotspot[];
+  nullableUnions: NullableUnionReport;
   themes: ThemeSummary[];
   scoring: {
     description: string;
@@ -118,6 +171,26 @@ type RawFunctionData = PatternCounts & {
   noCheck: boolean;
 };
 
+type RawNullableExportedType = {
+  name: string;
+  declarationKind: "interface" | "type";
+  absPath: string;
+  filePath: string;
+  line: number;
+  nullableTypes: string[];
+};
+
+type RawImportBinding = {
+  specifier: string;
+  importedName: string;
+  localName: string;
+};
+
+type RawTypeReference = {
+  name: string;
+  qualifier: string | null;
+};
+
 type RawFileData = PatternCounts & {
   absPath: string;
   filePath: string;
@@ -126,8 +199,13 @@ type RawFileData = PatternCounts & {
   exportCount: number;
   weakExportCount: number;
   importSpecifiers: string[];
+  importBindings: RawImportBinding[];
+  reExportBindings: RawImportBinding[];
   noCheck: boolean;
   functions: RawFunctionData[];
+  nullableUnions: NullableUnionOccurrence[];
+  exportedNullableTypes: RawNullableExportedType[];
+  typeReferences: RawTypeReference[];
 };
 
 type CommentDirectiveOccurrence = {
@@ -153,6 +231,7 @@ function createPatternCounts(): PatternCounts {
     nonNullAssertionCount: 0,
     parserBoundaryCount: 0,
     tsDirectiveCount: 0,
+    nullableUnionCount: 0,
   };
 }
 
@@ -423,6 +502,136 @@ function isNodeExported(node: ReportableFunctionNode): boolean {
   }
 
   return false;
+}
+
+function isNullTypeNode(node: ts.TypeNode): boolean {
+  return (
+    node.kind === ts.SyntaxKind.NullKeyword ||
+    (ts.isLiteralTypeNode(node) && node.literal.kind === ts.SyntaxKind.NullKeyword)
+  );
+}
+
+function normalizeTypeText(node: ts.TypeNode, sourceFile: ts.SourceFile): string {
+  return node.getText(sourceFile).replace(/\s+/g, " ").trim();
+}
+
+function normalizeNullableUnionType(
+  node: ts.UnionTypeNode,
+  sourceFile: ts.SourceFile,
+): { type: string; nonNullType: string } {
+  const nonNullParts = node.types
+    .filter((part) => !isNullTypeNode(part))
+    .map((part) => normalizeTypeText(part, sourceFile))
+    .sort((left, right) => left.localeCompare(right));
+  const nonNullType = nonNullParts.join(" | ");
+  return {
+    type: [...nonNullParts, "null"].join(" | "),
+    nonNullType,
+  };
+}
+
+function nullableUnionType(node: ts.Node, sourceFile: ts.SourceFile): string | null {
+  if (!ts.isUnionTypeNode(node) || !node.types.some(isNullTypeNode)) {
+    return null;
+  }
+  return normalizeNullableUnionType(node, sourceFile).type;
+}
+
+function getContainerName(node: ts.Node): string | null {
+  let current: ts.Node | undefined = node;
+  while (current) {
+    if (ts.isInterfaceDeclaration(current) || ts.isTypeAliasDeclaration(current)) {
+      return current.name.text;
+    }
+    if (ts.isClassDeclaration(current)) {
+      return current.name?.text ?? null;
+    }
+    current = current.parent;
+  }
+  return null;
+}
+
+function getNullableUnionKindAndName(
+  node: ts.UnionTypeNode,
+): Pick<NullableUnionOccurrence, "kind" | "name" | "containerName"> {
+  const parent = node.parent;
+
+  if (ts.isPropertySignature(parent) || ts.isPropertyDeclaration(parent)) {
+    return {
+      kind: "property",
+      name: getPropertyNameText(parent.name),
+      containerName: getContainerName(parent.parent),
+    };
+  }
+
+  if (ts.isParameter(parent)) {
+    return {
+      kind: "parameter",
+      name: getPropertyNameText(parent.name),
+      containerName: isReportableFunction(parent.parent)
+        ? getFunctionDisplayName(parent.parent)
+        : null,
+    };
+  }
+
+  if (ts.isVariableDeclaration(parent)) {
+    return { kind: "variable", name: getPropertyNameText(parent.name), containerName: null };
+  }
+
+  if (ts.isTypeAliasDeclaration(parent)) {
+    return { kind: "type-alias", name: parent.name.text, containerName: null };
+  }
+
+  if (isReportableFunction(parent) && parent.type === node) {
+    return { kind: "return", name: "return", containerName: getFunctionDisplayName(parent) };
+  }
+
+  return { kind: "other", name: null, containerName: getContainerName(parent) };
+}
+
+function createNullableUnionOccurrence(
+  node: ts.UnionTypeNode,
+  sourceFile: ts.SourceFile,
+  filePath: string,
+): NullableUnionOccurrence {
+  const position = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
+  return {
+    filePath,
+    line: position.line + 1,
+    column: position.character + 1,
+    ...getNullableUnionKindAndName(node),
+    ...normalizeNullableUnionType(node, sourceFile),
+  };
+}
+
+function collectNullableUnionTypes(node: ts.Node, sourceFile: ts.SourceFile): string[] {
+  const types: string[] = [];
+
+  function visit(current: ts.Node): void {
+    const type = nullableUnionType(current, sourceFile);
+    if (type) {
+      types.push(type);
+    }
+    ts.forEachChild(current, visit);
+  }
+
+  visit(node);
+  return types;
+}
+
+function getEntityNameParts(name: ts.EntityName): string[] {
+  if (ts.isIdentifier(name)) {
+    return [name.text];
+  }
+  return [...getEntityNameParts(name.left), name.right.text];
+}
+
+function getTypeReference(node: ts.TypeReferenceNode): RawTypeReference {
+  const parts = getEntityNameParts(node.typeName);
+  return {
+    name: requireDefined(parts[parts.length - 1], "Type reference name is missing"),
+    qualifier: parts.length > 1 ? parts.slice(0, -1).join(".") : null,
+  };
 }
 
 function buildTypeAliasMap(sourceFile: ts.SourceFile): Map<string, ts.TypeNode> {
@@ -700,6 +909,110 @@ function collectImportSpecifiers(sourceFile: ts.SourceFile): string[] {
   return [...specifiers];
 }
 
+function collectImportBindings(sourceFile: ts.SourceFile): RawImportBinding[] {
+  const bindings: RawImportBinding[] = [];
+
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteralLike(statement.moduleSpecifier)) {
+      continue;
+    }
+    const specifier = statement.moduleSpecifier.text;
+    if (!specifier.startsWith(".")) {
+      continue;
+    }
+
+    const importClause = statement.importClause;
+    if (!importClause) {
+      continue;
+    }
+
+    if (importClause.name) {
+      bindings.push({
+        specifier,
+        importedName: "default",
+        localName: importClause.name.text,
+      });
+    }
+
+    const namedBindings = importClause.namedBindings;
+    if (namedBindings && ts.isNamespaceImport(namedBindings)) {
+      bindings.push({
+        specifier,
+        importedName: "*",
+        localName: namedBindings.name.text,
+      });
+    }
+
+    if (namedBindings && ts.isNamedImports(namedBindings)) {
+      for (const element of namedBindings.elements) {
+        bindings.push({
+          specifier,
+          importedName: element.propertyName?.text ?? element.name.text,
+          localName: element.name.text,
+        });
+      }
+    }
+  }
+
+  return bindings;
+}
+
+function collectReExportBindings(sourceFile: ts.SourceFile): RawImportBinding[] {
+  const bindings: RawImportBinding[] = [];
+
+  for (const statement of sourceFile.statements) {
+    if (
+      !ts.isExportDeclaration(statement) ||
+      !statement.moduleSpecifier ||
+      !ts.isStringLiteralLike(statement.moduleSpecifier)
+    ) {
+      continue;
+    }
+    const specifier = statement.moduleSpecifier.text;
+    if (!specifier.startsWith(".")) {
+      continue;
+    }
+
+    const exportClause = statement.exportClause;
+    if (!exportClause) {
+      bindings.push({ specifier, importedName: "*", localName: "*" });
+      continue;
+    }
+    if (!ts.isNamedExports(exportClause)) {
+      continue;
+    }
+
+    for (const element of exportClause.elements) {
+      bindings.push({
+        specifier,
+        importedName: element.propertyName?.text ?? element.name.text,
+        localName: element.name.text,
+      });
+    }
+  }
+
+  return bindings;
+}
+
+function collectLocalNamedExportNames(sourceFile: ts.SourceFile): Map<string, string[]> {
+  const names = new Map<string, string[]>();
+
+  for (const statement of sourceFile.statements) {
+    if (ts.isExportDeclaration(statement) && !statement.moduleSpecifier) {
+      const exportClause = statement.exportClause;
+      if (!exportClause || !ts.isNamedExports(exportClause)) {
+        continue;
+      }
+      for (const element of exportClause.elements) {
+        const localName = element.propertyName?.text ?? element.name.text;
+        names.set(localName, [...(names.get(localName) ?? []), element.name.text]);
+      }
+    }
+  }
+
+  return names;
+}
+
 function resolveLocalImport(
   project: ProjectInfo,
   fromFile: string,
@@ -829,6 +1142,12 @@ function buildFileReasons(file: RawFileData, fanIn: number): string[] {
   if (file.recordStringUnknownCount > 0) {
     appendReason(reasons, `${String(file.recordStringUnknownCount)} Record<string, unknown>`);
   }
+  if (file.nullableUnionCount > 0) {
+    appendReason(
+      reasons,
+      `${String(file.nullableUnionCount)} nullable ${pluralize(file.nullableUnionCount, "union")}`,
+    );
+  }
   if (file.typeAssertionCount > 0) {
     appendReason(
       reasons,
@@ -878,6 +1197,12 @@ function buildFunctionReasons(fn: RawFunctionData, fileFanIn: number): string[] 
   if (fn.recordStringUnknownCount > 0) {
     appendReason(reasons, `${String(fn.recordStringUnknownCount)} Record<string, unknown>`);
   }
+  if (fn.nullableUnionCount > 0) {
+    appendReason(
+      reasons,
+      `${String(fn.nullableUnionCount)} nullable ${pluralize(fn.nullableUnionCount, "union")}`,
+    );
+  }
   if (fn.typeAssertionCount > 0) {
     appendReason(
       reasons,
@@ -923,6 +1248,10 @@ function analyzeFile(absPath: string, rootDir: string, project: ProjectInfo): Ra
   const fileMetrics = createPatternCounts();
   const functions: RawFunctionData[] = [];
   const functionStack: RawFunctionData[] = [];
+  const nullableUnions: NullableUnionOccurrence[] = [];
+  const exportedNullableTypes: RawNullableExportedType[] = [];
+  const typeReferences: RawTypeReference[] = [];
+  const localNamedExportNames = collectLocalNamedExportNames(sourceFile);
 
   addPattern(fileMetrics, "tsDirectiveCount", countDirectiveComments(directiveOccurrences));
 
@@ -950,6 +1279,33 @@ function analyzeFile(absPath: string, rootDir: string, project: ProjectInfo): Ra
       return;
     }
 
+    if (ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node)) {
+      const exportedNames = new Set<string>(localNamedExportNames.get(node.name.text));
+      if (hasExportModifier(node)) {
+        exportedNames.add(node.name.text);
+      }
+      const nullableTypes = collectNullableUnionTypes(node, sourceFile);
+      if (exportedNames.size > 0 && nullableTypes.length > 0) {
+        for (const exportedName of exportedNames) {
+          exportedNullableTypes.push({
+            name: exportedName,
+            declarationKind: ts.isInterfaceDeclaration(node) ? "interface" : "type",
+            absPath,
+            filePath: toPosixRelative(rootDir, absPath),
+            line: sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1,
+            nullableTypes,
+          });
+        }
+      }
+    }
+
+    if (ts.isUnionTypeNode(node) && node.types.some(isNullTypeNode)) {
+      nullableUnions.push(
+        createNullableUnionOccurrence(node, sourceFile, toPosixRelative(rootDir, absPath)),
+      );
+      applyPattern("nullableUnionCount");
+    }
+
     if (node.kind === ts.SyntaxKind.AnyKeyword) {
       applyPattern("explicitAnyCount");
     } else if (node.kind === ts.SyntaxKind.UnknownKeyword) {
@@ -964,8 +1320,11 @@ function analyzeFile(absPath: string, rootDir: string, project: ProjectInfo): Ra
       applyPattern("nonNullAssertionCount");
     }
 
-    if (ts.isTypeReferenceNode(node) && isDirectRecordStringUnknown(node, aliases)) {
-      applyPattern("recordStringUnknownCount");
+    if (ts.isTypeReferenceNode(node)) {
+      typeReferences.push(getTypeReference(node));
+      if (isDirectRecordStringUnknown(node, aliases)) {
+        applyPattern("recordStringUnknownCount");
+      }
     }
 
     if (ts.isCallExpression(node) && isParserBoundaryCall(node)) {
@@ -997,8 +1356,224 @@ function analyzeFile(absPath: string, rootDir: string, project: ProjectInfo): Ra
     exportCount: countExports(sourceFile),
     weakExportCount,
     importSpecifiers: collectImportSpecifiers(sourceFile),
+    importBindings: collectImportBindings(sourceFile),
+    reExportBindings: collectReExportBindings(sourceFile),
     noCheck,
     functions,
+    nullableUnions,
+    exportedNullableTypes,
+    typeReferences: typeReferences.sort((left, right) => {
+      if (left.name !== right.name) return left.name.localeCompare(right.name);
+      return (left.qualifier ?? "").localeCompare(right.qualifier ?? "");
+    }),
+  };
+}
+
+function countByValue(values: readonly string[]): Array<{ type: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const value of values) {
+    counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([type, count]) => ({ type, count }))
+    .sort((left, right) => {
+      if (right.count !== left.count) return right.count - left.count;
+      return left.type.localeCompare(right.type);
+    });
+}
+
+function buildNullableUnionReport(
+  rawFiles: readonly RawFileData[],
+  fanInByFile: ReadonlyMap<string, number>,
+  importBindingsByFile: ReadonlyMap<string, ReadonlyMap<string, readonly RawImportBinding[]>>,
+  reExportBindingsByFile: ReadonlyMap<string, ReadonlyMap<string, readonly RawImportBinding[]>>,
+): NullableUnionReport {
+  const byType = new Map<
+    string,
+    {
+      nonNullType: string;
+      totalCount: number;
+      files: Map<string, { count: number; fanIn: number; examples: NullableUnionOccurrence[] }>;
+    }
+  >();
+  const byFile = new Map<string, { count: number; fanIn: number; types: string[] }>();
+
+  for (const file of rawFiles) {
+    for (const occurrence of file.nullableUnions) {
+      const typeEntry = byType.get(occurrence.type) ?? {
+        nonNullType: occurrence.nonNullType,
+        totalCount: 0,
+        files: new Map<
+          string,
+          { count: number; fanIn: number; examples: NullableUnionOccurrence[] }
+        >(),
+      };
+      typeEntry.totalCount += 1;
+      const typeFileEntry = typeEntry.files.get(file.filePath) ?? {
+        count: 0,
+        fanIn: fanInByFile.get(file.filePath) ?? 0,
+        examples: [],
+      };
+      typeFileEntry.count += 1;
+      if (typeFileEntry.examples.length < 3) {
+        typeFileEntry.examples.push(occurrence);
+      }
+      typeEntry.files.set(file.filePath, typeFileEntry);
+      byType.set(occurrence.type, typeEntry);
+
+      const fileEntry = byFile.get(file.filePath) ?? {
+        count: 0,
+        fanIn: fanInByFile.get(file.filePath) ?? 0,
+        types: [],
+      };
+      fileEntry.count += 1;
+      fileEntry.types.push(occurrence.type);
+      byFile.set(file.filePath, fileEntry);
+    }
+  }
+
+  function exportedNamesByModuleForCandidate(
+    candidateAbsPath: string,
+    candidateName: string,
+  ): Map<string, Set<string>> {
+    const namesByModule = new Map<string, Set<string>>();
+    const addName = (modulePath: string, exportedName: string): boolean => {
+      const names = namesByModule.get(modulePath) ?? new Set<string>();
+      const initialSize = names.size;
+      names.add(exportedName);
+      namesByModule.set(modulePath, names);
+      return names.size !== initialSize;
+    };
+
+    addName(candidateAbsPath, candidateName);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const [reExporterPath, reExportsBySource] of reExportBindingsByFile.entries()) {
+        for (const [sourcePath, bindings] of reExportsBySource.entries()) {
+          const sourceNames = namesByModule.get(sourcePath);
+          if (!sourceNames) {
+            continue;
+          }
+          for (const binding of bindings) {
+            if (binding.importedName === "*") {
+              for (const sourceName of sourceNames) {
+                changed = addName(reExporterPath, sourceName) || changed;
+              }
+            } else if (sourceNames.has(binding.importedName)) {
+              changed = addName(reExporterPath, binding.localName) || changed;
+            }
+          }
+        }
+      }
+    }
+
+    return namesByModule;
+  }
+
+  const exportedTypes = rawFiles
+    .flatMap((file) => file.exportedNullableTypes)
+    .map(({ absPath, ...candidate }): NullableExportedTypeFanout => {
+      let referenceCount = 0;
+      let referencingFileCount = 0;
+      const exportedNamesByModule = exportedNamesByModuleForCandidate(absPath, candidate.name);
+      for (const file of rawFiles) {
+        if (file.absPath === absPath) {
+          continue;
+        }
+        const importedBindingsByModule = importBindingsByFile.get(file.absPath);
+        if (!importedBindingsByModule) {
+          continue;
+        }
+        const localNames = new Set<string>();
+        const namespaceExports = new Map<string, ReadonlySet<string>>();
+        for (const [modulePath, importedBindings] of importedBindingsByModule.entries()) {
+          const exportedNames = exportedNamesByModule.get(modulePath);
+          if (!exportedNames) {
+            continue;
+          }
+          for (const binding of importedBindings) {
+            if (binding.importedName === "*") {
+              namespaceExports.set(binding.localName, exportedNames);
+            } else if (exportedNames.has(binding.importedName)) {
+              localNames.add(binding.localName);
+            }
+          }
+        }
+        if (localNames.size === 0 && namespaceExports.size === 0) {
+          continue;
+        }
+        const fileReferenceCount = file.typeReferences.filter((reference) => {
+          if (reference.qualifier) {
+            return namespaceExports.get(reference.qualifier)?.has(reference.name) ?? false;
+          }
+          return localNames.has(reference.name);
+        }).length;
+        if (fileReferenceCount > 0) {
+          referenceCount += fileReferenceCount;
+          referencingFileCount += 1;
+        }
+      }
+      return {
+        ...candidate,
+        nullableUnionCount: candidate.nullableTypes.length,
+        nullableTypes: countByValue(candidate.nullableTypes),
+        referenceCount,
+        referencingFileCount,
+        fanout: referencingFileCount,
+      };
+    })
+    .sort((left, right) => {
+      if (right.fanout !== left.fanout) return right.fanout - left.fanout;
+      if (right.referenceCount !== left.referenceCount)
+        return right.referenceCount - left.referenceCount;
+      if (right.nullableUnionCount !== left.nullableUnionCount) {
+        return right.nullableUnionCount - left.nullableUnionCount;
+      }
+      return left.name.localeCompare(right.name);
+    });
+
+  return {
+    totalCount: rawFiles.reduce((count, file) => count + file.nullableUnionCount, 0),
+    byType: [...byType.entries()]
+      .map(([type, entry]): NullableUnionTypeHotspot => {
+        const files = [...entry.files.entries()]
+          .map(([filePath, fileEntry]) => ({ filePath, ...fileEntry }))
+          .sort((left, right) => {
+            if (right.count !== left.count) return right.count - left.count;
+            if (right.fanIn !== left.fanIn) return right.fanIn - left.fanIn;
+            return left.filePath.localeCompare(right.filePath);
+          });
+        return {
+          type,
+          nonNullType: entry.nonNullType,
+          totalCount: entry.totalCount,
+          fileCount: entry.files.size,
+          fanout: files.reduce((sum, file) => sum + file.fanIn, 0),
+          files,
+        };
+      })
+      .sort((left, right) => {
+        if (right.totalCount !== left.totalCount) return right.totalCount - left.totalCount;
+        if (right.fileCount !== left.fileCount) return right.fileCount - left.fileCount;
+        if (right.fanout !== left.fanout) return right.fanout - left.fanout;
+        return left.type.localeCompare(right.type);
+      }),
+    byFile: [...byFile.entries()]
+      .map(
+        ([filePath, entry]): NullableUnionFileHotspot => ({
+          filePath,
+          count: entry.count,
+          fanIn: entry.fanIn,
+          topTypes: countByValue(entry.types).slice(0, 5),
+        }),
+      )
+      .sort((left, right) => {
+        if (right.count !== left.count) return right.count - left.count;
+        if (right.fanIn !== left.fanIn) return right.fanIn - left.fanIn;
+        return left.filePath.localeCompare(right.filePath);
+      }),
+    exportedTypes,
   };
 }
 
@@ -1045,6 +1620,26 @@ function buildThemes(files: FileHotspot[], summary: ReportSummary): ThemeSummary
       detail: `${String(summary.weakExportCount)} exported functions still rely on weak signatures.`,
       count: summary.weakExportCount,
       examples: exportExamples,
+    });
+  }
+
+  const nullableExamples = files
+    .filter((file) => file.nullableUnionCount > 0)
+    .sort((left, right) => {
+      if (right.nullableUnionCount !== left.nullableUnionCount) {
+        return right.nullableUnionCount - left.nullableUnionCount;
+      }
+      return left.filePath.localeCompare(right.filePath);
+    })
+    .slice(0, 3)
+    .map((file) => file.filePath);
+  if (summary.nullableUnionCount > 0) {
+    themes.push({
+      id: "nullable-unions",
+      title: "Keep nullable unions at boundaries",
+      detail: `${String(summary.nullableUnionCount)} nullable unions show where raw state can become constrained internal types.`,
+      count: summary.nullableUnionCount,
+      examples: nullableExamples,
     });
   }
 
@@ -1100,9 +1695,13 @@ export function analyzeTypeSafetyHotspots(options: AnalyzeOptions = {}): Hotspot
 
   const importersByFile = new Map<string, Set<string>>();
   const importsFromFile = new Map<string, Set<string>>();
+  const importBindingsByFile = new Map<string, Map<string, RawImportBinding[]>>();
+  const reExportBindingsByFile = new Map<string, Map<string, RawImportBinding[]>>();
   for (const file of rawFiles) {
     importersByFile.set(file.absPath, new Set());
     importsFromFile.set(file.absPath, new Set());
+    importBindingsByFile.set(file.absPath, new Map());
+    reExportBindingsByFile.set(file.absPath, new Map());
   }
 
   for (const file of rawFiles) {
@@ -1114,6 +1713,14 @@ export function analyzeTypeSafetyHotspots(options: AnalyzeOptions = {}): Hotspot
       importsFromFile.get(file.absPath),
       `Missing import set for analyzed file ${file.absPath}`,
     );
+    const resolvedBindings = requireDefined(
+      importBindingsByFile.get(file.absPath),
+      `Missing import binding map for analyzed file ${file.absPath}`,
+    );
+    const resolvedReExports = requireDefined(
+      reExportBindingsByFile.get(file.absPath),
+      `Missing re-export binding map for analyzed file ${file.absPath}`,
+    );
 
     for (const specifier of file.importSpecifiers) {
       const resolved = resolveLocalImport(project, file.absPath, specifier, analyzedFiles);
@@ -1122,6 +1729,19 @@ export function analyzeTypeSafetyHotspots(options: AnalyzeOptions = {}): Hotspot
       }
       resolvedImports.add(resolved);
       importersByFile.get(resolved)?.add(file.absPath);
+      const bindings = file.importBindings.filter((binding) => binding.specifier === specifier);
+      if (bindings.length > 0) {
+        resolvedBindings.set(resolved, [...(resolvedBindings.get(resolved) ?? []), ...bindings]);
+      }
+      const reExportBindings = file.reExportBindings.filter(
+        (binding) => binding.specifier === specifier,
+      );
+      if (reExportBindings.length > 0) {
+        resolvedReExports.set(resolved, [
+          ...(resolvedReExports.get(resolved) ?? []),
+          ...reExportBindings,
+        ]);
+      }
     }
   }
 
@@ -1154,6 +1774,12 @@ export function analyzeTypeSafetyHotspots(options: AnalyzeOptions = {}): Hotspot
     });
 
   const fanInByFile = new Map(files.map((file) => [file.filePath, file.fanIn]));
+  const nullableUnions = buildNullableUnionReport(
+    rawFiles,
+    fanInByFile,
+    importBindingsByFile,
+    reExportBindingsByFile,
+  );
   const functions: FunctionHotspot[] = rawFiles
     .flatMap((file) => file.functions)
     .map((fn) => {
@@ -1196,6 +1822,7 @@ export function analyzeTypeSafetyHotspots(options: AnalyzeOptions = {}): Hotspot
       acc.nonNullAssertionCount += file.nonNullAssertionCount;
       acc.parserBoundaryCount += file.parserBoundaryCount;
       acc.tsDirectiveCount += file.tsDirectiveCount;
+      acc.nullableUnionCount += file.nullableUnionCount;
       return acc;
     },
     {
@@ -1213,6 +1840,7 @@ export function analyzeTypeSafetyHotspots(options: AnalyzeOptions = {}): Hotspot
     summary,
     files,
     functions,
+    nullableUnions,
     themes: buildThemes(files, summary),
     scoring: {
       description:
@@ -1276,7 +1904,9 @@ export function renderTextReport(
       report.summary.noCheckFileCount === 1 ? "" : "s"
     }, ${String(report.summary.typeAssertionCount)} casts, ${String(
       report.summary.recordStringUnknownCount,
-    )} Record<string, unknown>, ${String(report.summary.parserBoundaryCount)} parse boundaries.`,
+    )} Record<string, unknown>, ${String(report.summary.parserBoundaryCount)} parse boundaries, ${String(
+      report.summary.nullableUnionCount,
+    )} nullable unions.`,
   );
   lines.push(`Heuristic: ${report.scoring.description}`);
 
@@ -1320,6 +1950,69 @@ export function renderTextReport(
         )}`,
       );
       lines.push(`   ${fn.reasons.join("; ")}`);
+    });
+  }
+
+  lines.push("");
+  lines.push("Top nullable union types");
+  const topNullableTypes = report.nullableUnions.byType.slice(0, Math.min(options.topFiles, 10));
+  if (topNullableTypes.length === 0) {
+    lines.push("- No nullable unions found.");
+  } else {
+    topNullableTypes.forEach((entry, index) => {
+      lines.push(
+        `${String(index + 1)}. ${entry.type} — ${String(entry.totalCount)} occurrence${
+          entry.totalCount === 1 ? "" : "s"
+        } in ${String(entry.fileCount)} file${entry.fileCount === 1 ? "" : "s"}, aggregate fan-in ${String(
+          entry.fanout,
+        )}`,
+      );
+      const fileSummary = entry.files
+        .slice(0, 3)
+        .map((file) => `${file.filePath} (${String(file.count)}, fan-in ${String(file.fanIn)})`)
+        .join("; ");
+      lines.push(`   ${fileSummary}`);
+    });
+  }
+
+  lines.push("");
+  lines.push("Top nullable union files");
+  const topNullableFiles = report.nullableUnions.byFile.slice(0, Math.min(options.topFiles, 10));
+  if (topNullableFiles.length === 0) {
+    lines.push("- No files contain nullable unions.");
+  } else {
+    topNullableFiles.forEach((entry, index) => {
+      lines.push(
+        `${String(index + 1)}. ${entry.filePath} — ${String(entry.count)} nullable union${
+          entry.count === 1 ? "" : "s"
+        }, fan-in ${String(entry.fanIn)}`,
+      );
+      lines.push(
+        `   ${entry.topTypes.map((type) => `${type.type} (${String(type.count)})`).join("; ")}`,
+      );
+    });
+  }
+
+  lines.push("");
+  lines.push("Exported nullable types by fanout");
+  const topExportedNullableTypes = report.nullableUnions.exportedTypes.slice(
+    0,
+    Math.min(options.topFiles, 10),
+  );
+  if (topExportedNullableTypes.length === 0) {
+    lines.push("- No exported interfaces or type aliases contain nullable unions.");
+  } else {
+    topExportedNullableTypes.forEach((entry, index) => {
+      lines.push(
+        `${String(index + 1)}. ${entry.name} (${entry.filePath}:${String(entry.line)}) — ${String(
+          entry.nullableUnionCount,
+        )} nullable union${entry.nullableUnionCount === 1 ? "" : "s"}, referenced in ${String(
+          entry.referencingFileCount,
+        )} file${entry.referencingFileCount === 1 ? "" : "s"}`,
+      );
+      lines.push(
+        `   ${entry.nullableTypes.map((type) => `${type.type} (${String(type.count)})`).join("; ")}`,
+      );
     });
   }
 

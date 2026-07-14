@@ -8,17 +8,19 @@
 // would be visible in `ps aux` output.
 
 import { createRequire } from "node:module";
-import { describe, it, expect } from "vitest";
-import { buildSubprocessEnv as buildCliSubprocessEnv } from "../src/lib/subprocess-env";
+import { describe, expect, it } from "vitest";
 import {
   buildSubprocessEnv as buildPluginSubprocessEnv,
   withLocalNoProxy as withPluginLocalNoProxy,
 } from "../nemoclaw/src/lib/subprocess-env";
-import { withLocalNoProxy as withCliLocalNoProxy } from "../src/lib/subprocess-env";
 import { getCurlTimingArgs } from "../src/lib/adapters/http/probe";
+import {
+  buildSubprocessEnv as buildCliSubprocessEnv,
+  withLocalNoProxy as withCliLocalNoProxy,
+} from "../src/lib/subprocess-env";
 
 const require = createRequire(import.meta.url);
-const { buildProviderArgs } = require("../dist/lib/onboard/providers.js") as {
+const { buildProviderArgs } = require("../src/lib/onboard/providers.js") as {
   buildProviderArgs: (
     action: "create" | "update",
     name: string,

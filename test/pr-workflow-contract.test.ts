@@ -1,22 +1,54 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
 
 import {
-  readYaml,
   type CompositeAction,
+  readYaml,
   type WorkflowJob,
   type WorkflowStep,
 } from "./helpers/e2e-workflow-contract";
 
 type CiWorkflow = {
+  "run-name"?: string;
+  on?: { pull_request?: { paths?: string[]; types?: string[] } };
+  concurrency?: { group?: string; "cancel-in-progress"?: boolean };
+  permissions?: Record<string, string>;
   jobs: Record<string, WorkflowJob & { if?: string; needs?: string | string[] }>;
+};
+
+type InstallerHashAction = CompositeAction & {
+  inputs?: Record<string, { required?: boolean }>;
 };
 
 type CodebaseGrowthGuardrailsWorkflow = {
   jobs: Record<string, WorkflowJob>;
+};
+
+type PrekConfig = {
+  default_stages?: string[];
+  repos: Array<{
+    hooks?: Array<{
+      id: string;
+      always_run?: boolean;
+      entry?: string;
+      files?: string;
+      stages?: string[];
+    }>;
+  }>;
+};
+
+type PackageJson = {
+  scripts: Record<string, string>;
+};
+
+type TypeScriptConfig = {
+  include: string[];
 };
 
 const sharedActionPaths = {
@@ -38,6 +70,11 @@ const trustedPrActionPaths = {
 } as const;
 
 const trustedCheckoutAction = "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10";
+const trustedSetupNodeAction = "actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e";
+const installerHashBootstrapCommit = "cb5e9aefab2b16fedc0995149fc3520da0d5e0c7";
+const installerHashBootstrapTree = "1fdf59efe40b78c407e222fd42043b23a61e199a";
+const installerHashBootstrapCreatedAt = "2026-07-02T19:35:41Z";
+const installerHashBootstrapExpiresAt = "2026-12-29T19:35:41Z";
 
 const trustedActionDirs = [
   ".github/actions/ci-static-checks",
@@ -48,7 +85,7 @@ const trustedActionDirs = [
   ".github/actions/ci-installer-integration",
 ] as const;
 
-const cliShardMatrix = [1, 2, 3, 4, 5] as const;
+const cliShardMatrix = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 const cliShardCount = String(cliShardMatrix.length);
 
 function stepRuns(jobOrAction: WorkflowJob | CompositeAction): string[] {
@@ -92,6 +129,60 @@ function requiredWorkflowStepIndex(job: WorkflowJob, stepName: string): number {
   return stepIndex;
 }
 
+function runWorkflowShellStep(
+  step: WorkflowStep,
+  env: Record<string, string>,
+): { status: number | null; stdout: string; stderr: string } {
+  const result = spawnSync("bash", ["-c", step.run ?? ""], {
+    encoding: "utf8",
+    env: { ...process.env, ...step.env, ...env },
+    timeout: 5_000,
+  });
+  return {
+    status: result.status,
+    stdout: String(result.stdout),
+    stderr: String(result.stderr),
+  };
+}
+
+function runLoggedPackageScript(script: string): string[][] {
+  const temp = mkdtempSync(join(tmpdir(), "nemoclaw-package-script-"));
+  const fakeBin = join(temp, "bin");
+  const commandLog = join(temp, "commands.jsonl");
+  mkdirSync(fakeBin);
+
+  for (const command of ["npm", "npx", "tsx", "vitest"]) {
+    writeFileSync(
+      join(fakeBin, command),
+      [
+        "#!/usr/bin/env node",
+        'const fs = require("node:fs");',
+        `fs.appendFileSync(process.env.COMMAND_LOG, JSON.stringify(["${command}", ...process.argv.slice(2)]) + "\\n");`,
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+  }
+
+  try {
+    const result = spawnSync("sh", ["-c", script], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        COMMAND_LOG: commandLog,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+      },
+    });
+    expect(result.status, `Package script failed: ${result.stderr}`).toBe(0);
+    return readFileSync(commandLog, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as string[]);
+  } finally {
+    rmSync(temp, { force: true, recursive: true });
+  }
+}
+
 function codeFilterMatchesChangedPaths(workflow: CiWorkflow, paths: string[]): boolean {
   const filterStep = workflow.jobs.changes.steps?.find((step) => step.id === "filter");
   const quantifier = filterStep?.with?.["predicate-quantifier"];
@@ -129,6 +220,15 @@ function codeFilterMatchesChangedPaths(workflow: CiWorkflow, paths: string[]): b
 describe("pull request and main workflow contracts", () => {
   const prWorkflow = readYaml<CiWorkflow>(".github/workflows/pr.yaml");
   const mainWorkflow = readYaml<CiWorkflow>(".github/workflows/main.yaml");
+  const installerHashWorkflow = readYaml<CiWorkflow>(".github/workflows/installer-hash-check.yaml");
+  const installerHashAction = readYaml<InstallerHashAction>(
+    ".github/actions/ci-installer-hash-check/action.yaml",
+  );
+  const prekConfig = readYaml<PrekConfig>(".pre-commit-config.yaml");
+  const packageJson = JSON.parse(readFileSync("package.json", "utf8")) as PackageJson;
+  const cliTypeScriptConfig = JSON.parse(
+    readFileSync("tsconfig.cli.json", "utf8"),
+  ) as TypeScriptConfig;
   const sharedActions = {
     staticChecks: readYaml<CompositeAction>(".github/actions/ci-static-checks/action.yaml"),
     buildTypecheck: readYaml<CompositeAction>(".github/actions/ci-build-typecheck/action.yaml"),
@@ -143,7 +243,266 @@ describe("pull request and main workflow contracts", () => {
       ".github/actions/ci-installer-integration/action.yaml",
     ),
   };
+  const resolveHermesBaseAction = readYaml<CompositeAction>(
+    ".github/actions/resolve-hermes-base-image/action.yaml",
+  );
 
+  // source-shape-contract: security -- Installer hashes must be verified by base-trusted or immutable bootstrap code
+  it("runs pull request installer verification from immutable trusted code", () => {
+    const job = installerHashWorkflow.jobs["check-hash"];
+    const parserRuntimeSetup = requiredWorkflowStep(
+      job,
+      "Set up trusted installer hash parser runtime",
+    );
+    const prCheckout = requiredWorkflowStep(job, "Checkout pull request head");
+    const baseCheckout = requiredWorkflowStep(job, "Checkout base-trusted installer hash action");
+    const trustedActionProbe = requiredWorkflowStep(
+      job,
+      "Detect base-trusted installer hash action",
+    );
+    const bootstrapCheckout = requiredWorkflowStep(
+      job,
+      "Checkout immutable installer hash bootstrap",
+    );
+    const bootstrapTreeVerification = requiredWorkflowStep(
+      job,
+      "Verify immutable installer hash bootstrap tree",
+    );
+    const bootstrapExpiry = requiredWorkflowStep(
+      job,
+      "Enforce immutable installer hash bootstrap expiry",
+    );
+    const baseVerification = requiredWorkflowStep(
+      job,
+      "Verify pull request installer hashes from base-trusted code",
+    );
+    const bootstrapVerification = requiredWorkflowStep(
+      job,
+      "Verify pull request installer hashes from immutable bootstrap",
+    );
+    const trustedEventVerification = requiredWorkflowStep(
+      job,
+      "Verify trusted event installer hashes",
+    );
+
+    expect(installerHashWorkflow.on?.pull_request?.paths).toBeUndefined();
+    expect(installerHashWorkflow.permissions).toEqual({ contents: "read" });
+    expect(parserRuntimeSetup.uses).toBe(trustedSetupNodeAction);
+    expect(parserRuntimeSetup.with?.["node-version"]).toBe("22.19.0");
+    expect(prCheckout.with?.repository).toBe(
+      "${{ github.event.pull_request.head.repo.full_name }}",
+    );
+    expect(prCheckout.with?.ref).toBe("${{ github.event.pull_request.head.sha }}");
+
+    for (const checkout of (job.steps ?? []).filter(
+      (step) => step.uses === trustedCheckoutAction,
+    )) {
+      expect(checkout.with?.["persist-credentials"], checkout.name).toBe(false);
+    }
+    expect(
+      (job.steps ?? [])
+        .filter((step) => step.uses?.startsWith("actions/checkout@"))
+        .every((step) => step.uses === trustedCheckoutAction),
+    ).toBe(true);
+
+    expect(baseCheckout.with?.ref).toBe("${{ github.event.pull_request.base.sha }}");
+    expect(baseCheckout.with?.path).toBe(".trusted-installer-hash");
+    expect(baseCheckout.with?.["sparse-checkout"]).toContain(
+      ".github/actions/ci-installer-hash-check",
+    );
+    expect(baseCheckout.with?.["sparse-checkout"]).toContain("scripts/check-installer-hash.sh");
+    expect(baseCheckout.with?.["sparse-checkout"]).toContain(
+      "scripts/checks/extract-installer-pins.mts",
+    );
+
+    expect(trustedActionProbe.id).toBe("trusted-installer-hash");
+    expect(trustedActionProbe.run).toContain(
+      ".trusted-installer-hash/.github/actions/ci-installer-hash-check/action.yaml",
+    );
+    expect(trustedActionProbe.run).not.toContain("scripts/check-installer-hash.sh");
+    expect(bootstrapCheckout.with?.ref).toBe(installerHashBootstrapCommit);
+    expect(String(bootstrapCheckout.with?.ref)).toMatch(/^[a-f0-9]{40}$/u);
+    expect(bootstrapCheckout.with?.path).toBe(".bootstrap-installer-hash");
+    expect(bootstrapCheckout.with?.["sparse-checkout"]).toContain(
+      ".github/actions/ci-installer-hash-check",
+    );
+    expect(bootstrapCheckout.with?.["sparse-checkout"]).toContain(
+      "scripts/check-installer-hash.sh",
+    );
+    expect(bootstrapCheckout.with?.["sparse-checkout"]).toContain(
+      "scripts/checks/extract-installer-pins.mts",
+    );
+    expect(bootstrapCheckout.with?.["sparse-checkout-cone-mode"]).toBe(false);
+    expect((bootstrapExpiry as WorkflowStep & { shell?: string }).shell).toBe("bash");
+    expect(bootstrapExpiry.env).toBeUndefined();
+    expect(bootstrapExpiry.run).toContain(installerHashBootstrapCommit);
+    expect(bootstrapExpiry.run).toContain(installerHashBootstrapExpiresAt);
+    expect(bootstrapExpiry.if).toBe(bootstrapCheckout.if);
+    expect(bootstrapExpiry.if).toBe(bootstrapVerification.if);
+    expect(bootstrapTreeVerification.if).toBe(bootstrapCheckout.if);
+    expect(bootstrapTreeVerification.run).toContain(installerHashBootstrapCommit);
+    expect(bootstrapTreeVerification.run).toContain(installerHashBootstrapTree);
+    expect(
+      requiredWorkflowStepIndex(job, "Enforce immutable installer hash bootstrap expiry"),
+    ).toBeLessThan(requiredWorkflowStepIndex(job, "Checkout immutable installer hash bootstrap"));
+    expect(
+      requiredWorkflowStepIndex(job, "Checkout immutable installer hash bootstrap"),
+    ).toBeLessThan(
+      requiredWorkflowStepIndex(job, "Verify immutable installer hash bootstrap tree"),
+    );
+    expect(
+      requiredWorkflowStepIndex(job, "Verify immutable installer hash bootstrap tree"),
+    ).toBeLessThan(
+      requiredWorkflowStepIndex(
+        job,
+        "Verify pull request installer hashes from immutable bootstrap",
+      ),
+    );
+    expect(
+      requiredWorkflowStepIndex(job, "Set up trusted installer hash parser runtime"),
+    ).toBeLessThan(
+      requiredWorkflowStepIndex(job, "Verify pull request installer hashes from base-trusted code"),
+    );
+    expect(
+      requiredWorkflowStepIndex(job, "Set up trusted installer hash parser runtime"),
+    ).toBeLessThan(
+      requiredWorkflowStepIndex(
+        job,
+        "Verify pull request installer hashes from immutable bootstrap",
+      ),
+    );
+    expect(
+      requiredWorkflowStepIndex(job, "Set up trusted installer hash parser runtime"),
+    ).toBeLessThan(requiredWorkflowStepIndex(job, "Verify trusted event installer hashes"));
+    expect(
+      (Date.parse(installerHashBootstrapExpiresAt) - Date.parse(installerHashBootstrapCreatedAt)) /
+        86_400_000,
+    ).toBe(180);
+    expect(bootstrapExpiry.run).toContain("Date.now() >= expiresAtMs");
+    expect(bootstrapExpiry.run).toContain("Remove the bootstrap fallback");
+
+    expect(baseVerification.uses).toBe(
+      "./.trusted-installer-hash/.github/actions/ci-installer-hash-check",
+    );
+    expect(bootstrapVerification.uses).toBe(
+      "./.bootstrap-installer-hash/.github/actions/ci-installer-hash-check",
+    );
+    expect(trustedEventVerification.uses).toBe("./.github/actions/ci-installer-hash-check");
+    expect(baseVerification.if).toBe(
+      "github.event_name == 'pull_request' && steps.trusted-installer-hash.outputs.available == 'true'",
+    );
+    expect(bootstrapVerification.if).toBe(
+      "github.event_name == 'pull_request' && steps.trusted-installer-hash.outputs.available != 'true'",
+    );
+    expect(trustedEventVerification.if).toBe("github.event_name != 'pull_request'");
+    for (const verification of [
+      baseVerification,
+      bootstrapVerification,
+      trustedEventVerification,
+    ]) {
+      expect(verification.with?.["repo-root"], verification.name).toBe("${{ github.workspace }}");
+    }
+
+    expect(job.steps?.some((step) => step.name === "Detect installer-affecting changes")).toBe(
+      false,
+    );
+    expect(stepRuns(job).join("\n")).not.toContain("bash scripts/check-installer-hash.sh");
+  });
+
+  it("fails closed when the immutable installer hash bootstrap expiry is mutated", () => {
+    const expiryStep = requiredWorkflowStep(
+      installerHashWorkflow.jobs["check-hash"],
+      "Enforce immutable installer hash bootstrap expiry",
+    );
+    const expired = runWorkflowShellStep(
+      {
+        ...expiryStep,
+        run: expiryStep.run?.replace(installerHashBootstrapExpiresAt, "2000-12-27T23:26:13Z"),
+      },
+      {},
+    );
+    const malformedExpiry = runWorkflowShellStep(
+      {
+        ...expiryStep,
+        run: expiryStep.run?.replace(installerHashBootstrapExpiresAt, "not-a-canonical-utc-date"),
+      },
+      {},
+    );
+    const mutableRef = runWorkflowShellStep(
+      {
+        ...expiryStep,
+        run: expiryStep.run?.replace(installerHashBootstrapCommit, "main"),
+      },
+      {},
+    );
+    const valid = runWorkflowShellStep(expiryStep, {});
+
+    expect(valid.status).toBe(0);
+    expect(valid.stdout).toContain("remains valid");
+    expect(expired.status).not.toBe(0);
+    expect(expired.stderr).toContain("expired at 2000-12-27T23:26:13Z");
+    expect(expired.stderr).toContain("Remove the bootstrap fallback");
+    expect(malformedExpiry.status).not.toBe(0);
+    expect(malformedExpiry.stderr).toContain("expiry configuration is invalid");
+    expect(mutableRef.status).not.toBe(0);
+    expect(mutableRef.stderr).toContain("refusing the fallback");
+  });
+
+  it("fails closed when the immutable installer hash bootstrap tree differs", () => {
+    const treeStep = requiredWorkflowStep(
+      installerHashWorkflow.jobs["check-hash"],
+      "Verify immutable installer hash bootstrap tree",
+    );
+    const fakeBin = mkdtempSync(join(tmpdir(), "nemoclaw-bootstrap-git-"));
+    const fakeGit = join(fakeBin, "git");
+    writeFileSync(
+      fakeGit,
+      [
+        "#!/bin/sh",
+        'case "$*" in',
+        '  *"HEAD^{tree}"*) printf \'%s\\n\' "${FAKE_TREE}" ;;',
+        `  *) printf '%s\\n' ${installerHashBootstrapCommit} ;;`,
+        "esac",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const env = {
+        GITHUB_WORKSPACE: tmpdir(),
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+      };
+      const valid = runWorkflowShellStep(treeStep, {
+        ...env,
+        FAKE_TREE: installerHashBootstrapTree,
+      });
+      const mismatch = runWorkflowShellStep(treeStep, {
+        ...env,
+        FAKE_TREE: "0000000000000000000000000000000000000000",
+      });
+
+      expect(valid.status).toBe(0);
+      expect(mismatch.status).not.toBe(0);
+      expect(mismatch.stderr).toContain("does not match the reviewed tree");
+    } finally {
+      rmSync(fakeBin, { recursive: true, force: true });
+    }
+  });
+
+  // source-shape-contract: security -- The trusted action must invoke its bundled verifier without PR-controlled resolution
+  it("keeps the installer verifier inside the trusted composite action", () => {
+    const verification = requiredStep(installerHashAction, "Verify installer hashes are current");
+
+    expect(installerHashAction.inputs?.["repo-root"]?.required).toBe(true);
+    expect(verification.env).toEqual({
+      NEMOCLAW_INSTALLER_HASH_REPO_ROOT: "${{ inputs.repo-root }}",
+    });
+    expect(verification.run).toBe(
+      'bash "${{ github.action_path }}/../../../scripts/check-installer-hash.sh"',
+    );
+  });
+
+  // source-shape-contract: compatibility -- Path-filter semantics keep documentation-only and code-changing PR lanes distinct
   it("routes only code-changing PRs through the code-check path", () => {
     const filterStep = prWorkflow.jobs.changes.steps?.find((step) => step.id === "filter");
 
@@ -166,7 +525,202 @@ describe("pull request and main workflow contracts", () => {
     ).toBe(true);
   });
 
+  // source-shape-contract: compatibility -- Repository checks must follow every authoritative dependency-pin input and consumer
+  it("runs repository checks for every operational dependency-pin authority and consumer", () => {
+    const hooks = prekConfig.repos.flatMap((repo) => repo.hooks ?? []);
+    const repositoryChecks = hooks.find((candidate) => candidate.id === "repository-checks");
+    const files = new RegExp(repositoryChecks?.files ?? "(?!)", "u");
+
+    for (const path of [
+      ".pre-commit-config.yaml",
+      "Dockerfile",
+      "Dockerfile.base",
+      "agents/openclaw/manifest.yaml",
+      "agents/hermes/Dockerfile",
+      "agents/hermes/Dockerfile.base",
+      "agents/hermes/manifest.yaml",
+      "agents/hermes/mcp-config-transaction.py",
+      "nemoclaw-blueprint/blueprint.yaml",
+      "nemoclaw/package.json",
+      "scripts/brev-launchable-ci-cpu.sh",
+      "scripts/check-installer-hash.sh",
+      "scripts/install-openshell.sh",
+      "scripts/update-hermes-agent.sh",
+      "src/lib/actions/sandbox/mcp-bridge-validation.ts",
+      "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.72.json",
+    ]) {
+      expect(files.test(path), path).toBe(true);
+    }
+    expect(files.test("dependency-pins.yaml")).toBe(false);
+    expect(files.test("docs/reference/commands.mdx")).toBe(false);
+  });
+
+  // source-shape-contract: compatibility -- Pre-commit routing must apply the declarative guard to every supported test location
+  it("runs the source-shape guard for root and co-located tests", () => {
+    const hooks = prekConfig.repos.flatMap((repo) => repo.hooks ?? []);
+    const sourceShape = hooks.find((candidate) => candidate.id === "source-shape-test-budget");
+    const files = new RegExp(sourceShape?.files ?? "(?!)", "u");
+
+    expect(sourceShape?.entry).toBe("npm run source-shape:check");
+    for (const path of [
+      "test/example.test.ts",
+      "src/lib/example.spec.ts",
+      "nemoclaw/src/example.test.ts",
+      "scripts/find-source-shape-tests.ts",
+      "ci/source-shape-test-budget.json",
+    ]) {
+      expect(files.test(path), path).toBe(true);
+    }
+    expect(files.test("src/lib/example.ts")).toBe(false);
+  });
+
+  // source-shape-contract: compatibility -- Changed-file routing must typecheck each project and its transitive configuration inputs
+  it("scopes pre-push typechecks to project and transitive inputs", () => {
+    const hooks = prekConfig.repos.flatMap((repo) => repo.hooks ?? []);
+    const pluginTypecheck = hooks.find((candidate) => candidate.id === "tsc-plugin");
+    const cliTypecheck = hooks.find((candidate) => candidate.id === "tsc-cli");
+    const jsTypecheck = hooks.find((candidate) => candidate.id === "tsc-js");
+    const pluginFiles = new RegExp(pluginTypecheck?.files ?? "(?!)", "u");
+    const files = new RegExp(cliTypecheck?.files ?? "(?!)", "u");
+    const jsFiles = new RegExp(jsTypecheck?.files ?? "(?!)", "u");
+
+    expect(pluginTypecheck?.entry).toBe("npm --prefix nemoclaw run typecheck");
+    expect(cliTypecheck?.entry).toBe("npm run typecheck:cli -- --incremental");
+    expect(cliTypecheck?.always_run).toBeUndefined();
+    for (const include of cliTypeScriptConfig.include) {
+      const representativeInput = include.replace("**/*", "nested/input");
+      expect(files.test(representativeInput), include).toBe(true);
+    }
+    for (const path of [
+      ".agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts",
+      ".agents/skills/nemoclaw-maintainer-day/scripts/shared.ts",
+      "agents/hermes/generate-config.ts",
+      "bin/nemoclaw.ts",
+      "scripts/check.ts",
+      "scripts/check.mts",
+      "src/lib/runner.ts",
+      "test/runner.test.ts",
+      "tools/e2e/workflow-boundary.mts",
+      "nemoclaw/src/lib/subprocess-env.ts",
+      "nemoclaw/src/blueprint/private-networks.ts",
+      "nemoclaw-blueprint/scripts/render.ts",
+      "src/lib/actions/sandbox/credentials.json",
+      "package.json",
+      "package-lock.json",
+      "tsconfig.cli.json",
+      "vitest.config.ts",
+    ]) {
+      expect(files.test(path), path).toBe(true);
+    }
+    for (const path of [
+      ".agents/skills/example/scripts/unchecked.ts",
+      "agents/hermes/start.sh",
+      "docs/get-started/quickstart.mdx",
+      "nemoclaw/src/commands/status.ts",
+      "scripts/check.js",
+    ]) {
+      expect(files.test(path), path).toBe(false);
+    }
+    for (const path of [
+      "nemoclaw/src/lib/subprocess-env.ts",
+      "nemoclaw/src/blueprint/private-networks.ts",
+      "nemoclaw/src/commands/status.ts",
+    ]) {
+      expect(pluginFiles.test(path), path).toBe(true);
+    }
+    expect(pluginFiles.test(".agents/skills/example/scripts/unchecked.ts")).toBe(false);
+    for (const path of ["bin/nemoclaw.js", "jsconfig.json", "package.json", "package-lock.json"]) {
+      expect(jsFiles.test(path), path).toBe(true);
+    }
+    expect(jsFiles.test("docs/_components/nemoclaw.js")).toBe(false);
+  });
+
+  it("executes repo-wide coverage and diff-scoped automatic hook commands", () => {
+    const scripts = packageJson.scripts;
+    const cliCoverageCalls = runLoggedPackageScript(scripts["test:coverage:cli"]);
+    const pluginCoverageCalls = runLoggedPackageScript(scripts["test:coverage:plugin"]);
+    const repoCheckCalls = runLoggedPackageScript(scripts.check);
+    const diffCheckCalls = runLoggedPackageScript(scripts["check:diff"]);
+
+    expect(cliCoverageCalls.map(([command]) => command)).toEqual([
+      "npm",
+      "npm",
+      "tsx",
+      "vitest",
+      "tsx",
+    ]);
+    expect(cliCoverageCalls[3]).toEqual(
+      expect.arrayContaining(["--project", "cli", "integration", "--coverage"]),
+    );
+    expect(cliCoverageCalls[4]).toEqual([
+      "tsx",
+      "scripts/check-coverage-ratchet.ts",
+      "coverage/cli/coverage-summary.json",
+      "ci/coverage-threshold-cli.json",
+      "CLI coverage",
+    ]);
+    expect(pluginCoverageCalls[0]).toEqual(
+      expect.arrayContaining([
+        "--project",
+        "plugin",
+        "--coverage.include=nemoclaw/src/**/*.ts",
+        "--coverage.include=nemoclaw/src/**/*.cts",
+      ]),
+    );
+    expect(pluginCoverageCalls[1]).toEqual([
+      "tsx",
+      "scripts/check-coverage-ratchet.ts",
+      "coverage/plugin/coverage-summary.json",
+      "ci/coverage-threshold-plugin.json",
+      "Plugin coverage",
+    ]);
+    expect(repoCheckCalls).toEqual([
+      ["npx", "prek", "run", "--all-files", "--stage", "pre-commit"],
+      ["npx", "prek", "run", "--all-files", "--stage", "manual"],
+    ]);
+    expect(diffCheckCalls).toEqual([
+      [
+        "npx",
+        "prek",
+        "run",
+        "--from-ref",
+        "origin/main",
+        "--to-ref",
+        "HEAD",
+        "--stage",
+        "pre-commit",
+      ],
+      ["npx", "commitlint", "--from", "origin/main", "--to", "HEAD"],
+      [
+        "npx",
+        "prek",
+        "run",
+        "--from-ref",
+        "origin/main",
+        "--to-ref",
+        "HEAD",
+        "--stage",
+        "pre-push",
+      ],
+    ]);
+  });
+
+  // source-shape-contract: security -- Pull requests must execute base-trusted actions while main uses reviewed repository actions
   it("reuses the same shared CI actions in PR and main workflows", () => {
+    expect(prWorkflow.on?.pull_request?.types).toEqual([
+      "opened",
+      "synchronize",
+      "reopened",
+      "edited",
+    ]);
+    expect(prWorkflow["run-name"]).toBe(
+      "CI PR #${{ github.event.pull_request.number }} head ${{ github.event.pull_request.head.sha }} base ${{ github.event.pull_request.base.sha }} gate ${{ github.event.action != 'edited' || github.event.changes.base != null }}",
+    );
+    expect(prWorkflow.concurrency).toEqual({
+      group:
+        "${{ github.workflow }}-${{ github.ref }}-${{ github.event.action != 'edited' || github.event.changes.base != null }}",
+      "cancel-in-progress": true,
+    });
     for (const [jobName, stepName, trustedActionPath, mainActionPath] of [
       [
         "static-checks",
@@ -349,118 +903,15 @@ describe("pull request and main workflow contracts", () => {
     }
   });
 
-  it("preserves the shared static, build, and coverage gates", () => {
-    const staticRuns = stepRuns(sharedActions.staticChecks);
-    const staticRunsJoined = staticRuns.join("\n");
-    const staticPrekRun = staticRuns.find((run) =>
-      run.includes("npx prek run --all-files --stage pre-push"),
-    );
-    const buildRuns = stepRuns(sharedActions.buildTypecheck);
-    const cliShardRuns = stepRuns(sharedActions.cliCoverageShard).join("\n");
-    const cliMergeRuns = stepRuns(sharedActions.cliCoverageMerge).join("\n");
-    const pluginRuns = stepRuns(sharedActions.pluginCoverage).join("\n");
-    const installerRuns = stepRuns(sharedActions.installerIntegration).join("\n");
+  // source-shape-contract: security -- Downloaded CI tooling must use a committed digest rather than upstream metadata
+  it("pins downloaded CI tooling to reviewed integrity", () => {
+    const staticRunsJoined = stepRuns(sharedActions.staticChecks).join("\n");
 
-    expect(staticRuns).toContain("npm install --ignore-scripts");
-    expect(staticRuns).toContain("npm run validate:configs");
-    expect(staticPrekRun).toContain("npx prek run --all-files --stage pre-push");
-    for (const skippedHook of [
-      "tsc-plugin",
-      "tsc-js",
-      "tsc-cli",
-      "version-tag-sync",
-      "test-cli",
-      "test-plugin",
-      "source-shape-test-budget",
-      "test-file-size-budget",
-      "test-skills-yaml",
-    ]) {
-      expect(staticPrekRun).toContain(`--skip ${skippedHook}`);
-    }
-    expect(staticRuns).toContain("npm run source-shape:check");
-    expect(staticRuns).toContain("npm run test-size:check");
-    expect(staticRuns).toContain("npx vitest run test/skills-frontmatter.test.ts");
-    expect(staticRuns).toContain("python3 scripts/generate-platform-docs.py --check");
     expect(staticRunsJoined).toContain(
       'HADOLINT_SHA256="6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc5a47"',
     );
     expect(staticRunsJoined).not.toContain('"${HADOLINT_URL}.sha256"');
     expect(staticRunsJoined).not.toContain("EXPECTED=$(curl");
-
-    expect(buildRuns.join("\n")).toContain("cd nemoclaw && npm install --ignore-scripts");
-    expect(buildRuns).toContain("cd nemoclaw && npm run build");
-    expect(buildRuns).toContain("npm run build:cli");
-    expect(buildRuns).toContain("npm run typecheck:cli");
-    expect(buildRuns).toContain("cd nemoclaw && npx tsc --noEmit --incremental");
-    expect(buildRuns).toContain("npx tsc -p jsconfig.json");
-    expect(buildRuns).toContain("bash scripts/check-version-tag-sync.sh");
-
-    expect(cliShardRuns).toContain("cd nemoclaw && npm run build");
-    expect(cliShardRuns).toContain("npm run build:cli");
-    expect(cliShardRuns).toContain("npx tsx scripts/check-dist-sourcemaps.ts dist");
-    expect(cliShardRuns).toContain("npx vitest run --project cli");
-    expect(cliShardRuns).toContain('--shard="${CLI_SHARD}/${CLI_SHARD_COUNT}"');
-    expect(cliShardRuns).toContain("--reporter=github-actions");
-    expect(cliShardRuns).toContain("--reporter=blob");
-    expect(cliShardRuns).toContain(
-      '--outputFile.blob=".vitest-reports/blob-${CLI_SHARD}-${CLI_SHARD_COUNT}.json"',
-    );
-    expect(cliShardRuns).toContain('--coverage.reportsDirectory="coverage/cli/shard-${CLI_SHARD}"');
-    expect(cliShardRuns).not.toContain("${{ inputs.shard");
-    expect(cliShardRuns).not.toContain("scripts/check-coverage-ratchet.ts");
-
-    expect(cliMergeRuns).toContain("npm run build:cli");
-    expect(cliMergeRuns).toContain("npx tsx scripts/check-dist-sourcemaps.ts dist");
-    expect(cliMergeRuns).toContain('blob=".vitest-reports/blob-${shard}-${CLI_SHARD_COUNT}.json"');
-    expect(cliMergeRuns).toContain(
-      'find .vitest-reports -maxdepth 1 -type f -name "blob-*-${CLI_SHARD_COUNT}.json"',
-    );
-    expect(cliMergeRuns).not.toContain("${{ inputs.shard-count");
-    expect(cliMergeRuns).toContain("npx vitest --mergeReports .vitest-reports");
-    expect(cliMergeRuns).toContain("--reporter=json");
-    expect(cliMergeRuns).toContain("--outputFile.json=coverage/cli/vitest-results.json");
-    expect(cliMergeRuns).toContain("--coverage.reportsDirectory=coverage/cli");
-    expect(cliMergeRuns).toContain(
-      'scripts/check-coverage-ratchet.ts coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json "CLI coverage"',
-    );
-
-    expect(pluginRuns).toContain("npx vitest run --project plugin");
-    expect(pluginRuns).toContain(
-      'scripts/check-coverage-ratchet.ts coverage/plugin/coverage-summary.json ci/coverage-threshold-plugin.json "Plugin coverage"',
-    );
-
-    expect(installerRuns).toContain("npm install --ignore-scripts");
-    expect(installerRuns).toContain("cd nemoclaw && npm install --ignore-scripts");
-    expect(installerRuns).toContain("npm run build:cli");
-    expect(installerRuns).toContain("cd nemoclaw && npm run build");
-    expect(installerRuns).toContain("CI=true npx vitest run --project installer-integration");
-  });
-
-  it("keeps PR coverage for non-opt-in Vitest projects after removing the self-hosted full run", () => {
-    const vitestConfig = readFileSync("vitest.config.ts", "utf8");
-    const cliShardRuns = stepRuns(sharedActions.cliCoverageShard).join("\n");
-    const installerRuns = stepRuns(sharedActions.installerIntegration).join("\n");
-    const prInstallerRuns = stepRuns(prWorkflow.jobs["installer-integration"]).join("\n");
-
-    expect(installerRuns).toContain("CI=true npx vitest run --project installer-integration");
-    expect(prInstallerRuns).toContain("CI=true npx vitest run --project installer-integration");
-    expect(stepUses(prWorkflow.jobs["installer-integration"])).toContain(
-      trustedPrActionPaths.installerIntegration,
-    );
-    expect(stepUses(mainWorkflow.jobs["installer-integration"])).toContain(
-      sharedActionPaths.installerIntegration,
-    );
-    expect(vitestConfig).toContain('name: "installer-integration"');
-
-    // E2E fixture/support tests remain part of the sharded CLI project:
-    // they live under test/e2e-scenario, while the CLI project only excludes
-    // the legacy test/e2e tree and installer-integration tests.
-    expect(cliShardRuns).toContain("npx vitest run --project cli");
-    expect(vitestConfig).toContain('name: "e2e-vitest-support"');
-    expect(vitestConfig).toContain('include: ["test/**/*.test.{js,ts}", "src/**/*.test.ts"]');
-    expect(vitestConfig).toContain('"test/e2e/**"');
-    expect(vitestConfig).toContain('"test/install-preflight.test.ts"');
-    expect(vitestConfig).toContain('"test/install-openshell-version-check.test.ts"');
   });
 
   it("validates CLI shard inputs before using them in shell commands", () => {
@@ -468,50 +919,42 @@ describe("pull request and main workflow contracts", () => {
       sharedActions.cliCoverageShard,
       "Validate shard inputs",
     );
-    const shardValidationRun = shardValidationStep.run ?? "";
-    const shardRunStep = requiredStep(sharedActions.cliCoverageShard, "Run CLI coverage shard");
     const mergeValidationStep = requiredStep(
       sharedActions.cliCoverageMerge,
       "Validate shard inputs",
     );
-    const mergeValidationRun = mergeValidationStep.run ?? "";
-    const mergeVerifyStep = requiredStep(
-      sharedActions.cliCoverageMerge,
-      "Verify CLI shard blob reports",
-    );
+    const temp = mkdtempSync(join(tmpdir(), "nemoclaw-cli-shard-validation-"));
+    const marker = join(temp, "injected");
+    const shellPayload = `$(touch ${marker})`;
 
-    expect(shardValidationStep.env).toEqual({
-      CLI_SHARD: "${{ inputs.shard }}",
-      CLI_SHARD_COUNT: "${{ inputs.shard-count }}",
-    });
-    expect(shardValidationRun).toContain("*[!0-9]*");
-    expect(shardValidationRun).toContain("Invalid CLI shard");
-    expect(shardValidationRun).toContain("Invalid CLI shard count");
-    expect(shardValidationRun).toContain("Invalid CLI shard range");
-    expect(shardRunStep.env).toEqual({
-      CLI_SHARD: "${{ inputs.shard }}",
-      CLI_SHARD_COUNT: "${{ inputs.shard-count }}",
-    });
-    expect(requiredStepIndex(sharedActions.cliCoverageShard, "Validate shard inputs")).toBeLessThan(
-      requiredStepIndex(sharedActions.cliCoverageShard, "Run CLI coverage shard"),
-    );
+    try {
+      const invalidShard = runWorkflowShellStep(shardValidationStep, {
+        CLI_SHARD: shellPayload,
+        CLI_SHARD_COUNT: "8",
+        GITHUB_OUTPUT: join(temp, "github-output"),
+      });
+      const invalidRange = runWorkflowShellStep(shardValidationStep, {
+        CLI_SHARD: "9",
+        CLI_SHARD_COUNT: "8",
+        GITHUB_OUTPUT: join(temp, "github-output"),
+      });
+      const invalidCount = runWorkflowShellStep(mergeValidationStep, {
+        CLI_SHARD_COUNT: shellPayload,
+      });
 
-    expect(mergeValidationStep.env).toEqual({
-      CLI_SHARD_COUNT: "${{ inputs.shard-count }}",
-    });
-    expect(mergeValidationRun).toContain("*[!0-9]*");
-    expect(mergeValidationRun).toContain("Invalid CLI shard count");
-    expect(mergeVerifyStep.env).toEqual({
-      CLI_SHARD_COUNT: "${{ inputs.shard-count }}",
-    });
-    expect(requiredStepIndex(sharedActions.cliCoverageMerge, "Validate shard inputs")).toBeLessThan(
-      requiredStepIndex(sharedActions.cliCoverageMerge, "Verify CLI shard blob reports"),
-    );
-    expect(requiredStepIndex(sharedActions.cliCoverageMerge, "Validate shard inputs")).toBeLessThan(
-      requiredStepIndex(sharedActions.cliCoverageMerge, "Merge CLI coverage"),
-    );
+      expect(invalidShard.status).not.toBe(0);
+      expect(invalidShard.stdout).toContain("Invalid CLI shard");
+      expect(invalidRange.status).not.toBe(0);
+      expect(invalidRange.stdout).toContain("Invalid CLI shard range");
+      expect(invalidCount.status).not.toBe(0);
+      expect(invalidCount.stdout).toContain("Invalid CLI shard count");
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      rmSync(temp, { force: true, recursive: true });
+    }
   });
 
+  // source-shape-contract: security -- Growth-budget changes must inspect trusted GitHub data without fetching PR-authored URLs
   it("keeps the trusted test-size guard closed around budget policy changes", () => {
     const growthGuardrails = readYaml<CodebaseGrowthGuardrailsWorkflow>(
       ".github/workflows/codebase-growth-guardrails.yaml",
@@ -526,116 +969,187 @@ describe("pull request and main workflow contracts", () => {
     expect(guardRun).toContain("has a legacy budget but no matching test file at the PR head");
   });
 
-  it("uploads CLI Vitest JSON results for timing analysis", () => {
-    const uploadStep = requiredStep(
-      sharedActions.cliCoverageMerge,
-      "Upload CLI Vitest timing report",
-    );
+  // source-shape-contract: security -- Coverage publication must exclude fork-authored reports and pin the publishing action
+  it("publishes coverage only from same-repository code (#6692)", () => {
+    const sameRepositoryGuard =
+      "${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}";
+    const uploadAction = "actions/upload-code-coverage@abb5995db9e0199b0e2bb9dbd136fce4cb1ec4d3";
+    const reports = [
+      {
+        action: sharedActions.cliCoverageMerge,
+        uploadStep: "Upload CLI coverage report",
+      },
+      {
+        action: sharedActions.pluginCoverage,
+        uploadStep: "Upload plugin coverage report",
+      },
+    ] as const;
 
-    expect(uploadStep.if).toBe("always()");
-    expect(uploadStep.uses).toContain("actions/upload-artifact@");
-    expect(uploadStep.with?.name).toBe("cli-vitest-results");
-    expect(uploadStep.with?.path).toBe("coverage/cli/vitest-results.json");
-    expect(uploadStep.with?.["if-no-files-found"]).toBe("warn");
-    expect(uploadStep.with?.["retention-days"]).toBe(14);
+    for (const report of reports) {
+      const uploadStep = requiredStep(report.action, report.uploadStep);
+      expect(uploadStep.if).toBe(sameRepositoryGuard);
+      expect(uploadStep.uses).toBe(uploadAction);
+    }
   });
 
-  it("runs CLI coverage in shards and merges coverage before ratcheting", () => {
-    expect(sharedActions.cliCoverageShard.inputs?.["shard-count"]?.default).toBe(cliShardCount);
-    expect(sharedActions.cliCoverageMerge.inputs?.["shard-count"]?.default).toBe(cliShardCount);
-
-    const shardUploadStep = requiredStep(
-      sharedActions.cliCoverageShard,
-      "Upload CLI shard blob report",
-    );
-    const downloadStep = requiredStep(
-      sharedActions.cliCoverageMerge,
-      "Download CLI shard blob reports",
-    );
-    const verifyRun = requiredStep(
-      sharedActions.cliCoverageMerge,
-      "Verify CLI shard blob reports",
-    ).run;
-
-    expect(shardUploadStep.if).toBe(
-      "${{ always() && steps.validate-shard-inputs.outcome == 'success' }}",
-    );
-    expect(shardUploadStep.uses).toContain("actions/upload-artifact@");
-    expect(shardUploadStep.with?.name).toBe("cli-blob-report-${{ inputs.shard }}");
-    expect(shardUploadStep.with?.path).toBe(
-      ".vitest-reports/blob-${{ inputs.shard }}-${{ inputs.shard-count }}.json",
-    );
-    expect(shardUploadStep.with?.["if-no-files-found"]).toBe("error");
-    expect(shardUploadStep.with?.["retention-days"]).toBe(1);
-
-    expect(downloadStep.uses).toContain("actions/download-artifact@");
-    expect(downloadStep.with?.pattern).toBe("cli-blob-report-*");
-    expect(downloadStep.with?.path).toBe(".vitest-reports");
-    expect(downloadStep.with?.["merge-multiple"]).toBe(true);
-
-    expect(verifyRun).toContain('seq 1 "$CLI_SHARD_COUNT"');
-    expect(verifyRun).toContain('[ ! -s "$blob" ]');
-    expect(verifyRun).toContain("Expected ${CLI_SHARD_COUNT} blob reports");
-    expect(stepRuns(sharedActions.cliCoverageMerge).join("\n")).toContain(
-      'scripts/check-coverage-ratchet.ts coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json "CLI coverage"',
-    );
-  });
-
-  it("keeps final aggregate checks for PR and main workflows", () => {
+  it("accepts successful aggregate checks and rejects failed required lanes", () => {
     const prChecks = prWorkflow.jobs.checks;
-    const prChecksRun = stepRuns(prChecks).join("\n");
     const mainChecks = mainWorkflow.jobs.checks;
-    const mainChecksRun = stepRuns(mainChecks).join("\n");
+    const prGate = requiredWorkflowStep(prChecks, "Verify required PR checks");
+    const mainGate = requiredWorkflowStep(mainChecks, "Verify required main checks");
+    const successfulCode = {
+      BUILD_TYPECHECK_RESULT: "success",
+      CHANGES_RESULT: "success",
+      CLI_TESTS_RESULT: "success",
+      CODE_CHANGED: "true",
+      DOCS_ONLY_RESULT: "skipped",
+      E2E_PROXY_RESULT: "success",
+      E2E_SUPPORT_RESULT: "success",
+      INSTALLER_INTEGRATION_RESULT: "success",
+      PLUGIN_TESTS_RESULT: "success",
+      REVIEWED_NPM_AUDIT_RESULT: "success",
+      STATIC_RESULT: "success",
+      WECHAT_RUNTIME_AUDIT_RESULT: "success",
+    };
+    const successfulMain = {
+      BUILD_TYPECHECK_RESULT: "success",
+      CLI_TESTS_RESULT: "success",
+      E2E_PROXY_RESULT: "success",
+      E2E_SUPPORT_RESULT: "success",
+      INSTALLER_INTEGRATION_RESULT: "success",
+      PLUGIN_TESTS_RESULT: "success",
+      REVIEWED_NPM_AUDIT_RESULT: "success",
+      REAL_OPENCLAW_DIST_HARNESS_RESULT: "success",
+      STATIC_RESULT: "success",
+      WECHAT_RUNTIME_AUDIT_RESULT: "success",
+    };
 
-    expect(prChecks.if).toBe("always()");
-    expect(prChecks.needs).toEqual([
-      "changes",
-      "docs-only-checks",
-      "static-checks",
-      "build-typecheck",
-      "installer-integration",
-      "cli-tests",
-      "plugin-tests",
-      "test-e2e-ollama-proxy",
-    ]);
-    expect(prWorkflow.jobs["cli-tests"].needs).toEqual(["changes", "cli-test-shards"]);
+    const codeSuccess = runWorkflowShellStep(prGate, successfulCode);
+    const codeFailure = runWorkflowShellStep(prGate, {
+      ...successfulCode,
+      STATIC_RESULT: "failure",
+    });
+    const docsOnlySuccess = runWorkflowShellStep(prGate, {
+      ...successfulCode,
+      BUILD_TYPECHECK_RESULT: "skipped",
+      CLI_TESTS_RESULT: "skipped",
+      CODE_CHANGED: "false",
+      DOCS_ONLY_RESULT: "success",
+      E2E_PROXY_RESULT: "skipped",
+      E2E_SUPPORT_RESULT: "skipped",
+      INSTALLER_INTEGRATION_RESULT: "skipped",
+      PLUGIN_TESTS_RESULT: "skipped",
+      REVIEWED_NPM_AUDIT_RESULT: "skipped",
+      STATIC_RESULT: "skipped",
+      WECHAT_RUNTIME_AUDIT_RESULT: "skipped",
+    });
+    const mainSuccess = runWorkflowShellStep(mainGate, successfulMain);
+    const mainFailure = runWorkflowShellStep(mainGate, {
+      ...successfulMain,
+      REAL_OPENCLAW_DIST_HARNESS_RESULT: "failure",
+    });
 
-    for (const jobName of [
-      "changes",
-      "static-checks",
-      "build-typecheck",
-      "installer-integration",
-      "cli-tests",
-      "plugin-tests",
-      "test-e2e-ollama-proxy",
-    ]) {
-      expect(prChecksRun).toContain(`require_success "${jobName}"`);
-    }
-    expect(prChecksRun).toContain('require_success "docs-only-checks"');
-
-    expect(mainChecks.if).toBe("always()");
-    expect(mainChecks.needs).toEqual([
-      "static-checks",
-      "build-typecheck",
-      "installer-integration",
-      "cli-tests",
-      "plugin-tests",
-      "test-e2e-ollama-proxy",
-    ]);
-    expect(mainWorkflow.jobs["cli-tests"].needs).toBe("cli-test-shards");
-    for (const jobName of [
-      "static-checks",
-      "build-typecheck",
-      "installer-integration",
-      "cli-tests",
-      "plugin-tests",
-      "test-e2e-ollama-proxy",
-    ]) {
-      expect(mainChecksRun).toContain(`require_success "${jobName}"`);
-    }
-    expect(mainWorkflow.jobs["sandbox-images-and-e2e"].needs).toBe("checks");
+    expect(codeSuccess.status).toBe(0);
+    expect(codeFailure.status).not.toBe(0);
+    expect(codeFailure.stdout).toContain("static-checks failed");
+    expect(docsOnlySuccess.status).toBe(0);
+    expect(mainSuccess.status).toBe(0);
+    expect(mainFailure.status).not.toBe(0);
+    expect(mainFailure.stdout).toContain("real-openclaw-dist-harness failed");
   });
 
+  it("rejects a pulled Hermes base without MCP HTTP imports and falls back locally", () => {
+    const temp = mkdtempSync(join(tmpdir(), "nemoclaw-hermes-base-resolver-"));
+    const fakeBin = join(temp, "bin");
+    const dockerLog = join(temp, "docker.log");
+    const githubEnv = join(temp, "github.env");
+    const remoteDigest = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"a".repeat(64)}`;
+    const resolver = requiredStep(resolveHermesBaseAction, "Resolve Hermes sandbox base image").run;
+
+    try {
+      mkdirSync(fakeBin);
+      writeFileSync(githubEnv, "");
+      writeFileSync(
+        join(fakeBin, "docker"),
+        [
+          "#!/usr/bin/env node",
+          'const fs = require("node:fs");',
+          "const args = process.argv.slice(2);",
+          'fs.appendFileSync(process.env.DOCKER_LOG, JSON.stringify(args) + "\\n");',
+          'if (args[0] === "pull" || args[0] === "build") process.exit(0);',
+          'if (args[0] === "image" && args[1] === "inspect") {',
+          '  process.stdout.write(process.env.REMOTE_DIGEST + "\\n");',
+          "  process.exit(0);",
+          "}",
+          'if (args[0] === "run") {',
+          '  const entrypointIndex = args.indexOf("--entrypoint");',
+          "  const entrypoint = args[entrypointIndex + 1];",
+          "  const image = args[entrypointIndex + 2];",
+          '  if (entrypoint === "/usr/bin/ldd") {',
+          '    process.stdout.write("ldd (Ubuntu GLIBC 2.39) 2.39\\n");',
+          "    process.exit(0);",
+          "  }",
+          '  if (entrypoint === "sh") process.exit(0);',
+          '  if (entrypoint === "/opt/hermes/.venv/bin/python") {',
+          "    process.exit(image === process.env.REMOTE_DIGEST ? 42 : 0);",
+          "  }",
+          "}",
+          "console.error(`unexpected docker invocation: ${JSON.stringify(args)}`);",
+          "process.exit(2);",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      // Keep the fake executable in a dedicated PATH directory so every other
+      // command in the composite action remains the real host utility.
+      const result = spawnSync("bash", ["-c", resolver ?? ""], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        timeout: 10_000,
+        env: {
+          ...process.env,
+          DOCKER_LOG: dockerLog,
+          GITHUB_ENV: githubEnv,
+          GITHUB_SHA: "1".repeat(40),
+          PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+          REMOTE_DIGEST: remoteDigest,
+        },
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("lacks the packaged MCP Streamable HTTP client imports");
+      expect(result.stdout).toContain("building locally");
+      expect(readFileSync(githubEnv, "utf8").trim()).toBe(
+        "HERMES_BASE_IMAGE=nemoclaw-hermes-base-local",
+      );
+
+      const calls = readFileSync(dockerLog, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as string[]);
+      const firstPull = calls.find((args) => args[0] === "pull");
+      expect(firstPull?.[0]).toBe("pull");
+      expect(firstPull?.[1]).toMatch(
+        /^ghcr\.io\/nvidia\/nemoclaw\/hermes-sandbox-base@sha256:[0-9a-f]{64}$/,
+      );
+      const remoteProbe = calls.findIndex(
+        (args) => args.includes("/opt/hermes/.venv/bin/python") && args.includes(remoteDigest),
+      );
+      const localBuild = calls.findIndex((args) => args[0] === "build");
+      const localProbe = calls.findIndex(
+        (args) =>
+          args.includes("/opt/hermes/.venv/bin/python") &&
+          args.includes("nemoclaw-hermes-base-local"),
+      );
+      expect(remoteProbe).toBeGreaterThanOrEqual(0);
+      expect(localBuild).toBeGreaterThan(remoteProbe);
+      expect(localProbe).toBeGreaterThan(localBuild);
+    } finally {
+      rmSync(temp, { force: true, recursive: true });
+    }
+  });
+
+  // source-shape-contract: security -- CI dependency installs must never execute package lifecycle scripts from fetched code
   it("does not run npm lifecycle scripts during CI dependency installs", () => {
     for (const [actionName, action] of Object.entries(sharedActions)) {
       const installRuns = stepRuns(action).filter((run) => run.includes("npm install"));
@@ -661,6 +1175,7 @@ describe("pull request and main workflow contracts", () => {
     expect(installerBootstrapInstall).toContain("cd nemoclaw && npm install --ignore-scripts");
   });
 
+  // source-shape-contract: security -- Workflow checkouts must not leave write-capable credentials available to later steps
   it("does not persist checkout credentials in PR or main jobs", () => {
     for (const [workflowName, workflow] of [
       ["pull_request", prWorkflow],

@@ -7,38 +7,156 @@ type RunResult = { status: number; stdout?: string; stderr?: string };
 type RunOptions = { env?: Record<string, string | undefined> };
 type RunOpenshell = (command: string[], opts?: RunOptions) => RunResult;
 
-const { buildProviderArgs, providerExistsInGateway, upsertProvider, upsertMessagingProviders } =
-  require("../../../dist/lib/onboard/providers") as {
-    buildProviderArgs: (
-      action: "create" | "update",
-      name: string,
-      type: string,
-      credentialEnv: string,
-      baseUrl: string | null,
-    ) => string[];
-    providerExistsInGateway: (name: string, runOpenshell: RunOpenshell) => boolean;
-    upsertProvider: (
-      name: string,
-      type: string,
-      credentialEnv: string,
-      baseUrl: string | null,
-      env: Record<string, string | undefined>,
-      runOpenshell: RunOpenshell,
-      options?: { replaceExisting?: boolean },
-    ) => { ok: boolean; status?: number; message?: string };
-    upsertMessagingProviders: (
-      tokenDefs: Array<{
-        name: string;
-        envKey: string;
-        token: string | null;
-        providerType?: string;
-      }>,
-      runOpenshell: RunOpenshell,
-      options?: { replaceExisting?: boolean; bestEffort?: boolean },
-    ) => string[];
-  };
+const {
+  HOSTED_INFERENCE_ENDPOINT_URL,
+  HOSTED_INFERENCE_MODEL,
+  NON_INTERACTIVE_PROVIDER_ALIASES,
+  NON_INTERACTIVE_PROVIDER_KEYS,
+  REMOTE_PROVIDER_CONFIG,
+  buildProviderArgs,
+  getRequestedModelHint,
+  getRequestedProviderHint,
+  isProviderKeyCredentialCandidate,
+  providerExistsInGateway,
+  stageHostedInferenceSourceSecretEnv,
+  upsertProvider,
+  upsertMessagingProviders,
+} = require("./providers") as {
+  HOSTED_INFERENCE_ENDPOINT_URL: string;
+  HOSTED_INFERENCE_MODEL: string;
+  NON_INTERACTIVE_PROVIDER_ALIASES: Record<string, string>;
+  NON_INTERACTIVE_PROVIDER_KEYS: Set<string>;
+  REMOTE_PROVIDER_CONFIG: Record<
+    string,
+    {
+      providerName: string;
+      providerType: string;
+      credentialEnv: string;
+    }
+  >;
+  buildProviderArgs: (
+    action: "create" | "update",
+    name: string,
+    type: string,
+    credentialEnv: string,
+    baseUrl: string | null,
+  ) => string[];
+  getRequestedModelHint: (
+    nonInteractive: boolean,
+    allowHostedInferenceStaging?: boolean,
+  ) => string | null;
+  getRequestedProviderHint: (
+    nonInteractive: boolean,
+    allowHostedInferenceStaging?: boolean,
+  ) => string | null;
+  isProviderKeyCredentialCandidate: (value: string | null | undefined) => boolean;
+  providerExistsInGateway: (name: string, runOpenshell: RunOpenshell) => boolean;
+  stageHostedInferenceSourceSecretEnv: () => boolean;
+  upsertProvider: (
+    name: string,
+    type: string,
+    credentialEnv: string,
+    baseUrl: string | null,
+    env: Record<string, string | undefined>,
+    runOpenshell: RunOpenshell,
+    options?: { replaceExisting?: boolean },
+  ) => { ok: boolean; status?: number; message?: string };
+  upsertMessagingProviders: (
+    tokenDefs: Array<{
+      name: string;
+      envKey: string;
+      token: string | null;
+      providerType?: string;
+    }>,
+    runOpenshell: RunOpenshell,
+    options?: { replaceExisting?: boolean; bestEffort?: boolean },
+  ) => string[];
+};
+
+function withProviderEnv(next: Record<string, string | undefined>, testBody: () => void): void {
+  const keys = new Set([
+    "NVIDIA_INFERENCE_API_KEY",
+    "NEMOCLAW_AGENT",
+    "NEMOCLAW_PROVIDER_KEY",
+    "NEMOCLAW_PROVIDER",
+    "NEMOCLAW_ENDPOINT_URL",
+    "NEMOCLAW_MODEL",
+    "NEMOCLAW_COMPAT_MODEL",
+    "NEMOCLAW_PREFERRED_API",
+    "NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL",
+    "NEMOCLAW_E2E_USE_HOSTED_INFERENCE",
+    "COMPATIBLE_API_KEY",
+    ...Object.keys(next),
+  ]);
+  const previous = new Map<string, string | undefined>();
+  for (const key of keys) {
+    previous.set(key, process.env[key]);
+    delete process.env[key];
+  }
+  for (const [key, value] of Object.entries(next)) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+  try {
+    testBody();
+  } finally {
+    for (const [key, value] of previous.entries()) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
 
 describe("onboard provider helpers", () => {
+  it("registers OpenRouter with an OpenAI-compatible provider profile and aliases (#5826)", () => {
+    const provider = REMOTE_PROVIDER_CONFIG.openrouter;
+
+    expect(provider).toMatchObject({
+      providerName: "openrouter-api",
+      providerType: "openai",
+      credentialEnv: "OPENROUTER_API_KEY",
+    });
+    expect(NON_INTERACTIVE_PROVIDER_KEYS.has("openrouter")).toBe(true);
+    expect(NON_INTERACTIVE_PROVIDER_ALIASES["open-router"]).toBe("openrouter");
+    expect(NON_INTERACTIVE_PROVIDER_ALIASES.openrouterai).toBe("openrouter");
+    expect(
+      buildProviderArgs(
+        "create",
+        provider.providerName,
+        provider.providerType,
+        provider.credentialEnv,
+        "https://openrouter.ai/api/v1",
+      ),
+    ).toContain("OPENAI_BASE_URL=https://openrouter.ai/api/v1");
+  });
+
+  it("keeps the discovery profile Anthropic before agent-specific surface selection (#6289)", () => {
+    const provider = REMOTE_PROVIDER_CONFIG.anthropicCompatible;
+
+    // Remote provider setup can replace this registration with type=openai
+    // after an agent selects and verifies the endpoint's OpenAI surface.
+    expect(provider).toMatchObject({
+      providerName: "compatible-anthropic-endpoint",
+      providerType: "anthropic",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+    });
+    expect(
+      buildProviderArgs(
+        "create",
+        provider.providerName,
+        provider.providerType,
+        provider.credentialEnv,
+        "https://inference-api.nvidia.com",
+      ),
+    ).toContain("ANTHROPIC_BASE_URL=https://inference-api.nvidia.com");
+  });
+
   it("builds create arguments for generic providers", () => {
     const args = buildProviderArgs(
       "create",
@@ -237,6 +355,182 @@ describe("onboard provider helpers", () => {
     expect(commands).toHaveLength(2);
     expect(commands[1]).toMatch(/^provider update nvidia-prod /);
     expect(commands[1]).toMatch(/--credential NVIDIA_INFERENCE_API_KEY/);
+  });
+
+  it("stages non-nvapi NVIDIA_INFERENCE_API_KEY as hosted custom inference", () => {
+    withProviderEnv(
+      {
+        NVIDIA_INFERENCE_API_KEY: "  repo-hosted-key  ",
+      },
+      () => {
+        expect(stageHostedInferenceSourceSecretEnv()).toBe(true);
+        expect(getRequestedProviderHint(true)).toBe("custom");
+        expect(getRequestedModelHint(true)).toBe(HOSTED_INFERENCE_MODEL);
+        expect(process.env.NEMOCLAW_PROVIDER).toBe("custom");
+        expect(process.env.NEMOCLAW_ENDPOINT_URL).toBe(HOSTED_INFERENCE_ENDPOINT_URL);
+        expect(process.env.NEMOCLAW_MODEL).toBe(HOSTED_INFERENCE_MODEL);
+        expect(process.env.NEMOCLAW_COMPAT_MODEL).toBe(HOSTED_INFERENCE_MODEL);
+        expect(process.env.NEMOCLAW_PREFERRED_API).toBe("openai-completions");
+        expect(process.env.COMPATIBLE_API_KEY).toBe("repo-hosted-key");
+      },
+    );
+  });
+
+  it("does not synthesize hosted selection when authoritative resume disables staging", () => {
+    withProviderEnv(
+      {
+        NVIDIA_INFERENCE_API_KEY: "repo-hosted-key",
+      },
+      () => {
+        expect(getRequestedProviderHint(true, false)).toBeNull();
+        expect(getRequestedModelHint(true, false)).toBeNull();
+        expect(process.env.NEMOCLAW_PROVIDER).toBeUndefined();
+        expect(process.env.NEMOCLAW_MODEL).toBeUndefined();
+        expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
+      },
+    );
+  });
+
+  it("stages Deep Agents NEMOCLAW_PROVIDER_KEY as hosted custom inference", () => {
+    withProviderEnv(
+      {
+        NEMOCLAW_AGENT: "langchain-deepagents-code",
+        NEMOCLAW_PROVIDER_KEY: "  repo-hosted-key  ",
+      },
+      () => {
+        expect(stageHostedInferenceSourceSecretEnv()).toBe(true);
+        expect(getRequestedProviderHint(true)).toBe("custom");
+        expect(process.env.NEMOCLAW_PROVIDER).toBe("custom");
+        expect(process.env.NEMOCLAW_ENDPOINT_URL).toBe(HOSTED_INFERENCE_ENDPOINT_URL);
+        expect(process.env.NEMOCLAW_MODEL).toBe(HOSTED_INFERENCE_MODEL);
+        expect(process.env.NEMOCLAW_COMPAT_MODEL).toBe(HOSTED_INFERENCE_MODEL);
+        expect(process.env.COMPATIBLE_API_KEY).toBe("repo-hosted-key");
+      },
+    );
+  });
+
+  it("does not stage route-like Deep Agents NEMOCLAW_PROVIDER_KEY values as credentials", () => {
+    withProviderEnv(
+      {
+        NEMOCLAW_AGENT: "langchain-deepagents-code",
+        NEMOCLAW_PROVIDER_KEY: "inference",
+      },
+      () => {
+        expect(stageHostedInferenceSourceSecretEnv()).toBe(false);
+        expect(process.env.NEMOCLAW_PROVIDER).toBeUndefined();
+        expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
+      },
+    );
+  });
+
+  it.each([
+    ["sk-fallback-key", true],
+    ["nvapi-fallback-key", true],
+    [" build ", false],
+    ["custom", false],
+    ["inference", false],
+    ["routed", false],
+  ])("classifies provider-key compatibility bridge value %s", (value, expected) => {
+    expect(isProviderKeyCredentialCandidate(value)).toBe(expected);
+  });
+
+  it("rejects every supported non-interactive provider selector and alias as a provider-key credential", () => {
+    const selectors = new Set([
+      "inference",
+      ...Object.keys(NON_INTERACTIVE_PROVIDER_ALIASES),
+      ...Array.from(NON_INTERACTIVE_PROVIDER_KEYS),
+    ]);
+
+    for (const selector of selectors) {
+      expect(isProviderKeyCredentialCandidate(selector)).toBe(false);
+    }
+  });
+
+  it.each([
+    "anthropic",
+    "build",
+    "cloud",
+    "custom",
+    "gemini",
+    "hermes-provider",
+    "inference",
+    "install-ollama",
+    "install-vllm",
+    "nim-local",
+    "ollama",
+    "openai",
+    "routed",
+    "vllm",
+  ])("keeps Deep Agents provider-key selector %s from being staged as a credential", (providerKey) => {
+    withProviderEnv(
+      {
+        NEMOCLAW_AGENT: "langchain-deepagents-code",
+        NEMOCLAW_PROVIDER_KEY: providerKey,
+      },
+      () => {
+        expect(stageHostedInferenceSourceSecretEnv()).toBe(false);
+        expect(process.env.NEMOCLAW_PROVIDER).toBeUndefined();
+        expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
+      },
+    );
+  });
+
+  it("keeps generic NEMOCLAW_PROVIDER_KEY from implying hosted custom inference", () => {
+    withProviderEnv(
+      {
+        NEMOCLAW_PROVIDER_KEY: "repo-hosted-key",
+      },
+      () => {
+        expect(stageHostedInferenceSourceSecretEnv()).toBe(false);
+        expect(process.env.NEMOCLAW_PROVIDER).toBeUndefined();
+        expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
+      },
+    );
+  });
+
+  it("does not override an explicit hosted inference API preference", () => {
+    withProviderEnv(
+      {
+        NVIDIA_INFERENCE_API_KEY: "repo-hosted-key",
+        NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+        NEMOCLAW_PREFERRED_API: "openai-responses",
+      },
+      () => {
+        expect(stageHostedInferenceSourceSecretEnv()).toBe(true);
+        expect(process.env.NEMOCLAW_PREFERRED_API).toBe("openai-responses");
+      },
+    );
+  });
+
+  it("keeps explicit cloud provider selection on the Build provider path", () => {
+    withProviderEnv(
+      {
+        NVIDIA_INFERENCE_API_KEY: "repo-hosted-key",
+        NEMOCLAW_PROVIDER: "cloud",
+      },
+      () => {
+        expect(stageHostedInferenceSourceSecretEnv()).toBe(false);
+        expect(getRequestedProviderHint(true)).toBe("build");
+        expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
+        expect(process.env.NEMOCLAW_ENDPOINT_URL).toBeUndefined();
+      },
+    );
+  });
+
+  it("preserves explicit custom provider credentials when NVIDIA_INFERENCE_API_KEY is unrelated", () => {
+    withProviderEnv(
+      {
+        COMPATIBLE_API_KEY: "custom-endpoint-key",
+        NVIDIA_INFERENCE_API_KEY: "repo-hosted-key",
+        NEMOCLAW_PROVIDER: "custom",
+      },
+      () => {
+        expect(stageHostedInferenceSourceSecretEnv()).toBe(false);
+        expect(getRequestedProviderHint(true)).toBe("custom");
+        expect(process.env.COMPATIBLE_API_KEY).toBe("custom-endpoint-key");
+        expect(process.env.NEMOCLAW_ENDPOINT_URL).toBeUndefined();
+      },
+    );
   });
 
   it("returns redacted error details when create or update fails", () => {

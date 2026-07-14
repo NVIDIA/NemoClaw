@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { CLI_NAME } from "../../lib/cli/branding";
-import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
-
 import { runOpenshellProviderCommand } from "../../lib/actions/global";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../lib/adapters/openshell/timeouts";
-import { isBridgeProviderName, recoverGatewayOrExit } from "../../lib/credentials/command-support";
+import { CLI_NAME } from "../../lib/cli/branding";
+import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
+import { recoverGatewayOrExit } from "../../lib/credentials/command-support";
+import { parseGatewayProviderNames } from "../../lib/credentials/provider-list";
 
 export default class CredentialsListCommand extends NemoClawCommand {
   static id = "credentials:list";
@@ -34,12 +34,7 @@ export default class CredentialsListCommand extends NemoClawCommand {
       return;
     }
 
-    const allNames = String(result.stdout || "")
-      .split("\n")
-      .map((name) => name.trim())
-      .filter((name) => name.length > 0);
-    const credentialNames = allNames.filter((name) => !isBridgeProviderName(name)).sort();
-    const bridgeNames = allNames.filter((name) => isBridgeProviderName(name));
+    const { bridgeNames, credentialNames } = parseGatewayProviderNames(result.stdout);
 
     if (credentialNames.length === 0) {
       this.log("  No provider credentials registered.");

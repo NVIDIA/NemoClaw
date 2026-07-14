@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+
+import { describe, expect, test as it } from "../helpers/owned-test-resources";
 
 import {
   createDebugCommandTestEnv,
@@ -23,24 +24,28 @@ describe("CLI debug command", () => {
     expect(r.out.includes("--output")).toBeTruthy();
   });
 
-  it("debug --quick exits 0 and produces diagnostic output", testTimeoutOptions(30_000), () => {
-    const r = runWithEnv(
-      "debug --quick",
-      createDebugCommandTestEnv("nemoclaw-cli-debug-quick-"),
-      30000,
-    );
-    expect(r.code).toBe(0);
-    expect(r.out.includes("Collecting diagnostics")).toBeTruthy();
-    expect(r.out.includes("System")).toBeTruthy();
-    expect(r.out.includes("Onboard Session")).toBeTruthy();
-    expect(r.out.includes("Done")).toBeTruthy();
-  });
+  it(
+    "exits with status 0 and produces diagnostic output for debug --quick",
+    testTimeoutOptions(30_000),
+    ({ resources }) => {
+      const r = runWithEnv(
+        "debug --quick",
+        createDebugCommandTestEnv(resources, "nemoclaw-cli-debug-quick-"),
+        30000,
+      );
+      expect(r.code).toBe(0);
+      expect(r.out.includes("Collecting diagnostics")).toBeTruthy();
+      expect(r.out.includes("System")).toBeTruthy();
+      expect(r.out.includes("Onboard Session")).toBeTruthy();
+      expect(r.out.includes("Done")).toBeTruthy();
+    },
+  );
 
   it.skipIf(os.platform() !== "linux")(
     "debug --quick explains restricted dmesg instead of printing raw stderr on Linux",
     testTimeoutOptions(30_000),
-    () => {
-      const env = createDebugCommandTestEnv("nemoclaw-cli-debug-dmesg-");
+    ({ resources }) => {
+      const env = createDebugCommandTestEnv(resources, "nemoclaw-cli-debug-dmesg-");
       const localBin = env.PATH?.split(path.delimiter)[0];
       if (!localBin) throw new Error("Expected debug test PATH to include a fake bin dir");
       fs.writeFileSync(
@@ -82,15 +87,21 @@ describe("CLI debug command", () => {
     expect(r.out.includes("nemoclaw debug")).toBeTruthy();
   });
 
-  it("debug --sandbox NAME targets the specified sandbox", testTimeoutOptions(30_000), () => {
-    const r = runWithEnv(
-      "debug --quick --sandbox mybox",
-      createDebugCommandTestEnv("nemoclaw-cli-debug-sandbox-", { extraSandboxNames: ["mybox"] }),
-      30000,
-    );
-    expect(r.code).toBe(0);
-    expect(r.out).toContain("Collecting diagnostics for sandbox 'mybox'");
-  });
+  it(
+    "debug --sandbox NAME targets the specified sandbox",
+    testTimeoutOptions(30_000),
+    ({ resources }) => {
+      const r = runWithEnv(
+        "debug --quick --sandbox mybox",
+        createDebugCommandTestEnv(resources, "nemoclaw-cli-debug-sandbox-", {
+          extraSandboxNames: ["mybox"],
+        }),
+        30000,
+      );
+      expect(r.code).toBe(0);
+      expect(r.out).toContain("Collecting diagnostics for sandbox 'mybox'");
+    },
+  );
 
   it("debug --sandbox NAME rejects an unregistered name and exits non-zero", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-debug-unknown-"));

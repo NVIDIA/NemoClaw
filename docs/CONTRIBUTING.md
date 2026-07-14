@@ -17,7 +17,18 @@ Update documentation when your change:
 - Fixes a bug that the docs describe incorrectly.
 - Changes an API, protocol, or policy schema.
 
-## Update Docs with Contributor Skills
+## Confirm Product Scope Before Writing Docs
+
+Canonical documentation describes behavior that NemoClaw has chosen to support and maintain.
+A documentation PR must not establish a new supported integration, solution workflow, custom image, third-party stack, or product surface by itself.
+
+Technical correctness, successful builds, and working examples are necessary evidence, but they are not product approval.
+Before documenting a new surface, confirm that an accepted issue or design decision defines ownership, compatibility and upgrade expectations, security review, lifecycle support, and validation.
+
+Route independent solutions, complete use-case examples, and third-party integrations through [Community Solutions](resources/community-contributions.mdx).
+If the correct destination is unclear, request maintainer direction before drafting the page.
+
+## Update and Refactor Docs with Agent Skills
 
 If you use an AI coding agent (Cursor, Claude Code, Codex, etc.), the repo includes the `nemoclaw-contributor-update-docs` skill that automates doc work.
 Use it before writing from scratch.
@@ -25,42 +36,24 @@ Use it before writing from scratch.
 The skill scans recent commits for user-facing changes and drafts doc updates.
 Run it after landing features, before a release, or to find doc gaps.
 For example, ask your agent to "catch up the docs for the changes I made in this PR".
-During release prep, run the skill first, regenerate user skills, then open the docs refresh PR.
+During release prep, run the skill first, make any doc version bumps, then open the docs refresh PR.
 
 The skill lives in `.agents/skills/nemoclaw-contributor-update-docs/` and follows the style guide below automatically.
 
-## Doc-to-Skills Pipeline
+Use the maintainer-owned `nemoclaw-maintainer-refactor-docs` skill when a page or section has grown too large, mixes several user tasks, or needs a nested TOC.
+Use it to inventory the existing content, organize topics around the user journey, keep foldable navigation groups non-clickable, assign one canonical owner per topic, and preserve Fern routes, redirects, and agent variants during the split.
+Find the skill in `.agents/skills/nemoclaw-maintainer-refactor-docs/`.
 
-User skills are generated agent-skill packages, prefixed with `nemoclaw-user-*`, that help AI agents guide end users through NemoClaw workflows.
+## Markdown Docs for AI Agents
+
 The `docs/` directory is the source of truth for user-facing documentation.
-The script `scripts/docs-to-skills.py` converts doc pages into user skills under `.agents/skills/`.
-These generated skills identically cover the same tasks as the doc pages they were generated from, while reformatting the doc files to match the agent-skill specification in markdown and organizing sibling pages into progressive disclosure for reference files.
+NemoClaw publishes Markdown versions of Fern pages plus `llms.txt`, so AI agents can fetch canonical documentation directly.
 
-Always make doc updates in `docs/`.
-Never edit generated skill files under `.agents/skills/nemoclaw-user-*/`. Your changes will be overwritten on the next run.
+The hand-written `nemoclaw-user-guide` skill only routes agents to the right Markdown docs.
+It must stay small and must not copy page content from `docs/`.
 
-### Generated NemoClaw User Skills
-
-The current generated skills and their source pages are:
-
-| Skill | Source docs |
-|---|---|
-| `nemoclaw-user-overview` | `docs/about/overview.mdx`, `docs/about/ecosystem.mdx`, `docs/about/how-it-works.mdx`, `docs/about/release-notes.mdx` |
-| `nemoclaw-user-agent-skills` | `docs/resources/agent-skills.mdx` |
-| `nemoclaw-user-deploy-remote` | `docs/deployment/deploy-to-remote-gpu.mdx`, `docs/deployment/brev-web-ui.mdx`, `docs/deployment/install-openclaw-plugins.mdx`, `docs/deployment/sandbox-hardening.mdx` |
-| `nemoclaw-user-get-started` | `docs/get-started/prerequisites.mdx`, `docs/get-started/quickstart.mdx`, `docs/get-started/quickstart-hermes.mdx`, `docs/get-started/windows-preparation.mdx` |
-| `nemoclaw-user-configure-inference` | `docs/inference/inference-options.mdx`, `docs/inference/use-local-inference.mdx`, `docs/inference/switch-inference-providers.mdx`, `docs/inference/set-up-sub-agent.mdx`, `docs/inference/tool-calling-reliability.mdx` |
-| `nemoclaw-user-manage-sandboxes` | `docs/manage-sandboxes/lifecycle.mdx`, `docs/manage-sandboxes/runtime-controls.mdx`, `docs/manage-sandboxes/messaging-channels.mdx`, `docs/manage-sandboxes/workspace-files.mdx`, `docs/manage-sandboxes/backup-restore.mdx` |
-| `nemoclaw-user-monitor-sandbox` | `docs/monitoring/monitor-sandbox-activity.mdx` |
-| `nemoclaw-user-manage-policy` | `docs/network-policy/customize-network-policy.mdx`, `docs/network-policy/integration-policy-examples.mdx`, `docs/network-policy/approve-network-requests.mdx` |
-| `nemoclaw-user-reference` | `docs/reference/architecture.mdx`, `docs/reference/commands.mdx`, `docs/reference/cli-selection-guide.mdx`, `docs/reference/network-policies.mdx`, `docs/reference/troubleshooting.mdx` |
-| `nemoclaw-user-configure-security` | `docs/security/best-practices.mdx`, `docs/security/credential-storage.mdx`, `docs/security/openclaw-controls.mdx` |
-
-### Regenerating NemoClaw User Skills after Doc Changes
-
-Most contributor pull requests that change docs should include only the source pages under `docs/`.
-Do not regenerate or commit generated `nemoclaw-user-*` skill output in contributor doc PRs.
-NemoClaw maintainers refresh generated user skills during release prep.
+Always make user-facing doc updates in `docs/`.
+Update `docs/resources/agent-skills.mdx` and `.agents/skills/nemoclaw-user-guide/SKILL.md` only when the AI-agent routing guidance changes.
 
 ## Building Docs Locally
 
@@ -76,7 +69,7 @@ To print the pinned Fern CLI version, run:
 npm run docs:deps
 ```
 
-To validate the Fern configuration and migrated MDX pages, run:
+To validate the Fern configuration and MDX pages, run:
 
 ```bash
 npm run docs
@@ -95,16 +88,34 @@ npm run docs:preview:watch
 ```
 
 The preview watcher uses the current Git branch name as the Fern preview ID and watches the `docs/` and `fern/` directories.
+By default, it publishes to the `nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw` Fern docs instance.
+Set `FERN_STAGING_INSTANCE` to a `<hostname>/<path>` value when you need to target a different Fern docs instance.
+The watcher rejects blank or malformed overrides before it starts Fern.
 
-Fern `.mdx` pages are the source for generated user skills. Legacy `.md` pages may remain temporarily for parity checks, but release-prep skill generation should pass `--doc-platform fern-mdx`.
+Fern `.mdx` pages are the canonical docs source.
+Fern publishes Markdown routes for AI agents from the same source pages.
+
+## Publishing Docs
+
+GitHub Actions publishes Fern docs from the same source files that `npm run docs` validates locally.
+
+Docs PRs get Fern previews when they change `docs/`, `fern/`, or docs build inputs.
+The preview workflow publishes to the staging Fern instance with a `pr-<number>` preview ID and posts the preview URL on the PR when `FERN_TOKEN` is available.
+
+After a docs PR merges, pushes to `main` publish the affected docs to the staging Fern instance.
+The staging publish job regenerates agent variants, validates Fern docs, publishes staging, and deletes the merged PR preview when it can map the merge commit back to a PR.
+
+Public docs publish automatically when a `v*.*.*` release tag is pushed.
+The public publish job runs in the `docs-public` environment, verifies that the tag commit is reachable from `origin/main`, regenerates agent variants, validates Fern docs, and publishes to the public Fern instance.
+If the tag does not point to a commit on `main`, the job stops before installing dependencies or running Fern.
 
 ## Agent Variant Generation
 
-Some Fern pages appear in both the OpenClaw and Hermes guide variants.
-The `scripts/sync-agent-variant-docs.ts` script reads `docs/index.yml` and renders variant-specific copies for every page that appears in both guide variants before Fern validates or publishes the site.
+Some Fern pages appear in the OpenClaw, Hermes, and Deep Agents guide variants.
+The `scripts/sync-agent-variant-docs.ts` script reads `docs/index.yml` and renders variant-specific copies for every page that appears in multiple guide variants before Fern validates or publishes the site.
 The source pages stay in their normal `docs/` locations, and generated pages are written under `docs/_build/agent-variants/`, which is ignored by Git.
 Navigation in `docs/index.yml` points Fern at generated pages for shared entries so Fern still renders normal fenced code blocks with copy buttons and syntax highlighting.
-OpenClaw-only or Hermes-only pages stay as source pages in navigation.
+OpenClaw-only, Hermes-only, or Deep Agents-only pages stay as source pages in navigation.
 
 When shared page content is the same except for the host CLI binary, write one source page and use `$$nemoclaw` as a build-time placeholder.
 Do not duplicate fenced code blocks or inline command examples only to switch between `nemoclaw` and `nemohermes`.
@@ -129,15 +140,18 @@ Do not convert route-style links to `.mdx` file links just to satisfy a local fi
 ## Doc-Only PR Verification
 
 Doc-only pull requests do not need the full test suite by default.
-Before opening a doc-only PR, run:
+Commit and push normally so the Git hooks run, then run:
 
 ```bash
-npx prek run --all-files
 npm run docs
 ```
 
-Leave `npm test` unchecked in the PR verification checklist unless you actually ran it.
-Run the full tests only when the change also touches code, generated behavior, or runtime behavior.
+Leave the broad-gate verification item unchecked unless you actually ran the applicable command.
+If normal `pre-commit`, `commit-msg`, or `pre-push` hooks were skipped or unavailable, run `npm run check:diff` once to reproduce those checks before opening the PR.
+The command uses `origin/main`, so refresh it with `git fetch origin main` first.
+Run targeted tests once per relevant change set only when the change also touches code, generated behavior, or runtime behavior; rerun after later edits or hook autofixes that can affect it.
+Reserve `npm test` for broad runtime or test-harness changes.
+Reserve `npm run check` for repo-wide validation or coverage-baseline changes.
 
 ## Writing Conventions
 
@@ -145,7 +159,7 @@ Run the full tests only when the change also touches code, generated behavior, o
 
 - Fern pages use MDX with YAML frontmatter. Use a flat `title`, `description`, optional `sidebar-title`, `description-agent`, `keywords`, and `position`.
 - Do not duplicate the page title as a body H1 in MDX pages because Fern renders the title from frontmatter.
-- The docs-to-skills pipeline treats Fern `description-agent` as the equivalent of legacy MyST `description.agent`.
+- Use `description-agent` as a concise routing summary for AI documentation clients and search indexes.
 - Include the SPDX license header in MDX frontmatter as comments:
 
   ```yaml
@@ -173,35 +187,6 @@ position: 1
 ---
 ```
 
-### Legacy Skill Frontmatter Template
-
-Use this nested shape only for legacy `.md` pages when running the pipeline with `--doc-platform myst-md`.
-
-```yaml
----
-title:
-  page: "NemoClaw Page Title: Subtitle with Context"
-  nav: "Short Nav Title"
-description:
-  main: "One-sentence summary for readers, SEO, and doc search snippets."
-  agent: "Third-person verb summary for agent routing. Add 'Use when...' with trigger phrases."
-keywords: ["primary keyword", "secondary keyword phrase"]
-topics: ["generative_ai", "ai_agents"]
-tags: ["openclaw", "openshell", "relevant", "tags"]
-content:
-  type: concept | how_to | get_started | tutorial | reference
-  difficulty: technical_beginner | technical_intermediate | technical_advanced
-  audience: ["developer", "engineer"]
-skill:
-  priority: 100
-status: published
----
-```
-
-Use `skill.priority` to choose the lead procedure page when multiple how-to pages generate the same skill.
-Lower numbers win.
-For example, set the OpenClaw quickstart to `10` and the Hermes quickstart to `20` so `nemoclaw-user-get-started/SKILL.md` leads with the OpenClaw procedure and folds Hermes into `references/`.
-
 ### Page Structure
 
 1. Start MDX pages with a one- or two-sentence introduction stating what the page covers.
@@ -222,7 +207,8 @@ Write like you are explaining something to a colleague. Be direct, specific, and
 
 ### Things to Avoid
 
-These patterns are common in LLM-generated text and erode trust with technical readers. Remove them during review.
+The following patterns are common in LLM-generated text and erode trust with technical readers.
+Remove them during review.
 
 | Pattern | Problem | Fix |
 |---|---|---|
@@ -246,7 +232,7 @@ These patterns are common in LLM-generated text and erode trust with technical r
   ```
 
 - Use `$$nemoclaw` as a build-time placeholder for NemoClaw host CLI command examples in shared variant pages.
-  The docs build resolves it to `nemoclaw` for OpenClaw pages and `nemohermes` for Hermes pages before Fern renders code blocks.
+  The docs build resolves it to `nemoclaw` for OpenClaw pages, `nemohermes` for Hermes pages, and `nemo-deepagents` for Deep Agents pages before Fern renders code blocks.
   This preserves Fern's native fenced-code UI while keeping one source sample.
 - Do not write duplicate `<AgentOnly>` fenced code blocks when the only difference is `nemoclaw` versus `nemohermes`.
   Use `<AgentOnly>` blocks only when the surrounding content differs between the OpenClaw and Hermes variants.
@@ -262,7 +248,6 @@ These patterns are common in LLM-generated text and erode trust with technical r
 
 - Use tables for structured comparisons. Keep tables simple (no nested formatting).
 - Use Fern callout components (`<Note>`, `<Tip>`, `<Warning>`) for callouts in MDX pages, not bold text.
-- Use MyST admonitions (`:::{tip}`, `:::{note}`, `:::{warning}`) only in legacy `.md` pages that have not migrated yet.
 - Avoid nested admonitions.
 - Do not number section titles. Write "Deploy a Gateway" not "Section 1: Deploy a Gateway" or "Step 3: Verify."
 - Do not use colons in titles. Write "Deploy and Manage Gateways" not "Gateways: Deploy and Manage."
@@ -306,6 +291,9 @@ feat(cli): add policy-add command
 
 When reviewing documentation:
 
+- Confirm that the page documents an approved and maintained NemoClaw product surface.
+- Do not approve a new integration or solution solely because its instructions work or its checks pass.
+- Route independent third-party solutions to [Community Solutions](resources/community-contributions.mdx) when no product decision establishes core ownership.
 - Check that the style guide rules above are followed.
 - Watch for LLM-generated patterns (excessive bold, em dashes, filler).
 - Verify code examples are accurate and runnable.

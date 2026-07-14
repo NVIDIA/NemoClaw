@@ -6,6 +6,10 @@
 #
 # All default rules are enabled unless listed below.
 
+# Skills require SPDX comments before YAML frontmatter. Keep the frontmatter
+# parser aware of that prefix so Markdown body rules still run normally.
+frontMatter: "^(?:<!-- SPDX-FileCopyrightText: [^\\n]+ -->\\n<!-- SPDX-License-Identifier: Apache-2\\.0 -->\\n\\n?)?---\\n[^]*?\\n---\\n?"
+
 config:
   default: true
 

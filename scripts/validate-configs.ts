@@ -9,11 +9,22 @@
 //   npx tsx scripts/validate-configs.ts              # validate all known config files
 //   npx tsx scripts/validate-configs.ts --file <config> --schema <schema>  # validate one file
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv from "ajv/dist/2020.js";
 import YAML from "yaml";
+
+import {
+  DANGEROUS_HOSTS,
+  findDangerousHosts,
+  isDangerousHost,
+  POLICY_SEMANTIC_CHECKS,
+  runSemanticChecks,
+  type SemanticCheck,
+  type SemanticFinding,
+  splitSemanticFindings,
+} from "../src/lib/policy/semantic-validation";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -55,6 +66,10 @@ function discoverTargets(): ConfigTarget[] {
     {
       schema: "schemas/router-pool-config.schema.json",
       files: ["nemoclaw-blueprint/router/pool-config.yaml"],
+    },
+    {
+      schema: "schemas/onboard-config.schema.json",
+      files: ["ci/onboard-performance-budget.json"],
     },
   ];
 
@@ -107,24 +122,46 @@ function discoverTargets(): ConfigTarget[] {
 
   // Discover all preset YAML files dynamically.
   const presetsDir = join(REPO_ROOT, "nemoclaw-blueprint/policies/presets");
+  const presetFiles: string[] = [];
   try {
-    const presetFiles = readdirSync(presetsDir)
-      .filter((f) => f.endsWith(".yaml") || f.endsWith(".yml"))
-      .map((f) => `nemoclaw-blueprint/policies/presets/${f}`);
-    if (presetFiles.length > 0) {
-      targets.push({
-        schema: "schemas/policy-preset.schema.json",
-        files: presetFiles,
-      });
-    } else {
-      console.warn(
-        "WARN: presets directory exists but contains no .yaml/.yml files — no preset validation performed",
-      );
-    }
+    presetFiles.push(
+      ...readdirSync(presetsDir)
+        .filter((f) => f.endsWith(".yaml") || f.endsWith(".yml"))
+        .map((f) => `nemoclaw-blueprint/policies/presets/${f}`),
+    );
   } catch (err) {
     const code = typeof err === "object" && err !== null && "code" in err ? err.code : undefined;
     if (code !== "ENOENT" && code !== "ENOTDIR") throw err;
     // presets directory may not exist — not an error
+  }
+
+  const channelPoliciesDir = join(REPO_ROOT, "src/lib/messaging/channels");
+  try {
+    const walkChannelPolicies = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const abs = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walkChannelPolicies(abs);
+        } else if (entry.isFile() && /\.ya?ml$/.test(entry.name)) {
+          const repoPath = pathRelativeToRepo(abs);
+          if (/(^|\/)policy\/[^/]+\.ya?ml$/.test(repoPath)) presetFiles.push(repoPath);
+        }
+      }
+    };
+    walkChannelPolicies(channelPoliciesDir);
+  } catch (err) {
+    const code = typeof err === "object" && err !== null && "code" in err ? err.code : undefined;
+    if (code !== "ENOENT" && code !== "ENOTDIR") throw err;
+    // channel policy directories may not exist — not an error
+  }
+
+  if (presetFiles.length > 0) {
+    targets.push({
+      schema: "schemas/policy-preset.schema.json",
+      files: presetFiles.sort(),
+    });
+  } else {
+    console.warn("WARN: no preset .yaml/.yml files discovered — no preset validation performed");
   }
 
   return targets;
@@ -153,6 +190,13 @@ function loadSchema(repoRelative: string): object {
   return schema;
 }
 
+function compileConfigSchema(
+  repoRelative: string,
+  ajv = new Ajv({ allErrors: true, strict: false, $data: true }),
+) {
+  return ajv.compile(loadSchema(repoRelative));
+}
+
 type ValidationParams = { additionalProperty?: string; unevaluatedProperty?: string };
 
 /**
@@ -176,73 +220,12 @@ function formatError(err: {
   return `  ${path}: ${detail}`;
 }
 
-// ────────────────────────────────────────────────────────────────────
-// Dangerous-host semantic check (ref: #1445)
-//
-// JSON Schema can enforce structure (required fields, enums, ranges) but
-// can't express "this value grants access to everywhere". A commit that
-// sets `host: "*"` or `host: "0.0.0.0/0"` on a network-policy endpoint
-// would pass the schema yet widen egress to anything. Walk the parsed
-// documents after schema validation and reject those patterns explicitly.
-// Subdomain wildcards like "*.example.com" remain allowed — they're a
-// legitimate pattern for real deployments.
-// ────────────────────────────────────────────────────────────────────
-
-const DANGEROUS_HOSTS: ReadonlySet<string> = new Set(["*", "0.0.0.0", "0.0.0.0/0", "::", "::/0"]);
-
-/**
- * Return true if `host` is a catch-all value that grants access to any destination.
- * Rejects exact members of {@link DANGEROUS_HOSTS} and bare wildcard-with-port patterns
- * like `*:443`. Subdomain wildcards such as `*.example.com` are intentionally allowed.
- */
-function isDangerousHost(host: unknown): boolean {
-  if (typeof host !== "string") return false;
-  const trimmed = host.trim();
-  if (DANGEROUS_HOSTS.has(trimmed)) return true;
-  // Bare "*" with any non-domain suffix (e.g. "*:443") is also a catch-all.
-  if (trimmed === "*" || trimmed.startsWith("*:")) return true;
-  return false;
-}
-
-interface DangerousHostFinding {
-  path: string;
-  host: string;
-}
-
 const ROUTER_API_BASE_HOST_ALLOWLIST: ReadonlySet<string> = new Set(["integrate.api.nvidia.com"]);
 
-/**
- * Walk a parsed policy document (full `network_policies` map or a preset
- * fragment with a `preset:` block) and return every endpoint whose host
- * is in DANGEROUS_HOSTS. Safe to call on any shape — unknown structures
- * just return [].
- */
-function findDangerousHosts(data: unknown): DangerousHostFinding[] {
-  const findings: DangerousHostFinding[] = [];
-  if (!data || typeof data !== "object") return findings;
-  const doc = data as Record<string, unknown>;
-  const policies = doc.network_policies;
-  if (!policies || typeof policies !== "object" || Array.isArray(policies)) return findings;
-  for (const [policyName, policy] of Object.entries(policies as Record<string, unknown>)) {
-    if (!policy || typeof policy !== "object") continue;
-    const endpoints = (policy as Record<string, unknown>).endpoints;
-    if (!Array.isArray(endpoints)) continue;
-    endpoints.forEach((ep, i) => {
-      if (!ep || typeof ep !== "object") return;
-      const host = (ep as Record<string, unknown>).host;
-      if (isDangerousHost(host)) {
-        findings.push({
-          path: `/network_policies/${policyName}/endpoints/${i}/host`,
-          host: String(host),
-        });
-      }
-    });
-  }
-  return findings;
-}
+type RouterApiBaseFinding = { path: string; host: string };
 
-function findDangerousRouterApiBases(data: unknown): DangerousHostFinding[] {
-  const findings: DangerousHostFinding[] = [];
+function findDangerousRouterApiBases(data: unknown): RouterApiBaseFinding[] {
+  const findings: RouterApiBaseFinding[] = [];
   if (!data || typeof data !== "object") return findings;
   const models = (data as Record<string, unknown>).models;
   if (!Array.isArray(models)) return findings;
@@ -273,10 +256,29 @@ function findDangerousRouterApiBases(data: unknown): DangerousHostFinding[] {
   return findings;
 }
 
+const ROUTER_API_BASE_SEMANTIC_CHECK: SemanticCheck = {
+  name: "router-api-base",
+  description: "Restricts router API bases to the NVIDIA Build endpoint.",
+  run(data) {
+    return findDangerousRouterApiBases(data).map(({ path, host }) => ({
+      path,
+      severity: "error",
+      message:
+        `host "${host}" is not allowed — use a specific public hostname ` +
+        `(subdomain wildcards like "*.example.com" are allowed for policy hosts)`,
+    }));
+  },
+};
+
+function runConfigSemanticChecks(data: unknown): SemanticFinding[] {
+  return runSemanticChecks(data, [...POLICY_SEMANTIC_CHECKS, ROUTER_API_BASE_SEMANTIC_CHECK]);
+}
+
 /**
  * Entry point: validate all config files (or a single file via --file/--schema flags)
- * against their JSON Schemas, then run the dangerous-host semantic check.
- * Exits with a non-zero code if any validation errors or dangerous hosts are found.
+ * against their JSON Schemas, then run semantic checks.
+ * Exits with a non-zero code if schema validation or semantic errors are found.
+ * Semantic warnings are reported without failing validation.
  */
 function main(): void {
   const args = process.argv.slice(2);
@@ -305,7 +307,7 @@ function main(): void {
     targets = discoverTargets();
   }
 
-  const ajv = new Ajv({ allErrors: true, strict: false });
+  const ajv = new Ajv({ allErrors: true, strict: false, $data: true });
   let totalErrors = 0;
   let totalFiles = 0;
 
@@ -314,8 +316,7 @@ function main(): void {
   for (const target of targets) {
     let validate;
     try {
-      const schema = loadSchema(target.schema);
-      validate = ajv.compile(schema);
+      validate = compileConfigSchema(target.schema, ajv);
     } catch (err) {
       console.error(`FAIL: ${target.schema}`);
       console.error(`  Could not compile schema: ${err}`);
@@ -337,27 +338,26 @@ function main(): void {
 
       const valid = validate(data);
       const schemaErrors = !valid && validate.errors ? validate.errors.length : 0;
-      // Semantic check: walk the parsed doc and reject catch-all hosts.
       // Runs regardless of schema outcome so operators see all issues at once.
-      const dangerous = [...findDangerousHosts(data), ...findDangerousRouterApiBases(data)];
+      const { errors: semanticErrors, warnings: semanticWarnings } = splitSemanticFindings(
+        runConfigSemanticChecks(data),
+      );
 
-      if (schemaErrors > 0 || dangerous.length > 0) {
+      if (schemaErrors > 0 || semanticErrors.length > 0) {
         console.error(`FAIL: ${file}`);
         if (schemaErrors > 0 && validate.errors) {
           for (const err of validate.errors) {
             console.error(formatError(err));
           }
         }
-        for (const finding of dangerous) {
-          console.error(
-            `  ${finding.path}: host "${finding.host}" is not allowed — ` +
-              `use a specific public hostname (subdomain wildcards like "*.example.com" are allowed for policy hosts)`,
-          );
-        }
-        totalErrors += schemaErrors + dangerous.length;
+        for (const finding of semanticErrors)
+          console.error(`  ${finding.path}: ${finding.message}`);
+        totalErrors += schemaErrors + semanticErrors.length;
       } else {
         console.log(`OK:   ${file}`);
       }
+      for (const finding of semanticWarnings)
+        console.warn(`WARN: ${file}\n  ${finding.path}: ${finding.message}`);
     }
   }
 
@@ -373,11 +373,13 @@ function main(): void {
 // Export for unit tests without re-running main().
 export {
   DANGEROUS_HOSTS,
-  ROUTER_API_BASE_HOST_ALLOWLIST,
-  isDangerousHost,
+  compileConfigSchema,
+  discoverTargets,
   findDangerousHosts,
   findDangerousRouterApiBases,
-  discoverTargets,
+  isDangerousHost,
+  ROUTER_API_BASE_HOST_ALLOWLIST,
+  runConfigSemanticChecks,
 };
 
 // Only run main() when invoked directly (skip on test `import`).

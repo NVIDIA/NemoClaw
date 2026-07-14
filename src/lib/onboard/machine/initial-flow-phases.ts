@@ -13,7 +13,10 @@ import {
   type PreflightSandboxGpuFlag,
   type PreflightStateOptions,
 } from "./handlers/preflight";
-import { runLiveOnboardFlowSlice } from "./live-flow-slice";
+import {
+  type InvalidatedOnboardStateResultRecorder,
+  runLiveOnboardFlowSlice,
+} from "./live-flow-slice";
 import type { OnboardStateResult } from "./result";
 import type { OnboardMachineRunnerResult, OnboardMachineRunnerRuntime } from "./runner";
 import type { OnboardSequencePhase } from "./sequence-runner";
@@ -189,19 +192,46 @@ export async function runInitialOnboardFlowSlice<Context extends OnboardFlowCont
   phases: readonly OnboardSequencePhase<Context>[];
   resume: boolean;
   recordStateResult(result: OnboardStateResult): Promise<unknown>;
+  recordInvalidatedStateResult: InvalidatedOnboardStateResultRecorder;
 }): Promise<OnboardMachineRunnerResult<Context>> {
-  // Keep resume on the compatibility path for now: resume intentionally re-runs
-  // preflight/gateway backstops even when the saved machine is already ahead.
-  // Remove this fallback only after resume repairs are modeled as strict FSM
-  // transitions that preserve these safety checks before later phases run.
+  // Recompute plan for live resume repair when durable machine snapshots
+  // are already downstream of this slice even though preflight/gateway host
+  // backstops must still re-run. Those ahead-state snapshots can come from
+  // legacy/test step mutation that explicitly opts into `updateMachine === true`
+  // or from repaired-resume replay of persisted sessions. Recomputed transition
+  // results are explicitly applied or invalidated by runLiveOnboardFlowSlice,
+  // so stale phase output cannot update context or silently advance state.
+  // This slice cannot
+  // eliminate that source locally because the host backstop checks are still
+  // modeled as imperative resume work rather than strict FSM recovery states.
+  // The tolerated downstream family is every nonterminal state after the initial
+  // slice: inference, sandbox, openclaw/agent_setup, policies, finalizing, and
+  // post_verify. Phase tests cover ahead-state resume and terminal-state
+  // rejection; remove this fallback once those repair/backstop checks are
+  // modeled as strict FSM recovery states and legacy machine step mutation is
+  // gone.
   return runLiveOnboardFlowSlice({
     context: options.context,
     runtime: options.runtime,
     phases: options.phases,
-    resume: options.resume,
     runWhenState: ["init", "preflight"],
-    compatibilityWhenState: ["gateway", "provider_selection"],
+    compatibilityWhenState: options.resume
+      ? [
+          "init",
+          "preflight",
+          "gateway",
+          "provider_selection",
+          "inference",
+          "sandbox",
+          "openclaw",
+          "agent_setup",
+          "policies",
+          "finalizing",
+          "post_verify",
+        ]
+      : ["gateway", "provider_selection"],
     runSlice: runInitialOnboardFlowSequence,
-    applyCompatibleResult: options.recordStateResult,
+    recordStateResult: options.recordStateResult,
+    recordInvalidatedStateResult: options.recordInvalidatedStateResult,
   });
 }

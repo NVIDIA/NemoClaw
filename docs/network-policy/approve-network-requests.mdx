@@ -11,61 +11,114 @@ content:
 skill:
   priority: 20
 ---
-Review and act on network requests that the agent makes to endpoints not listed in the sandbox policy.
-OpenShell intercepts these requests and presents them in the TUI for operator approval.
+Review network requests that the agent makes to endpoints that are not listed in the sandbox policy.
+OpenShell intercepts those requests and presents them in the TUI for operator approval.
+
+<Steps toc={true}>
 
 ## Prerequisites
 
 - A running NemoClaw sandbox.
 - The OpenShell CLI on your `PATH`.
+- Access to the host where the sandbox is running.
 
 ## Open the TUI
 
 Start the OpenShell terminal UI to monitor sandbox activity:
 
+<Tabs>
+<Tab title="Local Sandbox">
+
 ```bash
 openshell term
 ```
 
-For a remote sandbox, pass the instance name:
+</Tab>
+<Tab title="Remote Sandbox">
+
+Connect to the remote host first.
+Replace `<your-sandbox-host>` with the SSH host or alias where your NemoClaw sandbox is running.
+Use a host that resolves from your terminal, such as a Brev SSH alias.
 
 ```bash
-ssh my-gpu-box 'cd ~/nemoclaw && . .env && openshell term'
+ssh <your-sandbox-host>
 ```
 
-The TUI displays the sandbox state, active inference provider, and a live feed of network activity.
+Then run the TUI from the NemoClaw directory on that host.
+
+```bash
+cd ~/nemoclaw
+. .env
+openshell term
+```
+
+</Tab>
+</Tabs>
+
+The TUI shows the sandbox state, active inference provider, and live network activity.
+From the dashboard, select the running sandbox with `j` or `k`, then press `Enter` to open the sandbox view.
 
 ## Trigger a Blocked Request
 
-When the agent attempts to reach an endpoint that is not in the baseline policy, OpenShell blocks the connection and displays the request in the TUI.
+When the agent tries to reach an endpoint that is not in the baseline policy, OpenShell blocks the connection and displays the request in the TUI.
 The blocked request includes the following details:
 
-- **Host and port** of the destination.
+- **Host and port** for the destination.
 - **Binary** that initiated the request.
 - **HTTP method** and path, if available.
 
 ## Approve or Deny the Request
 
-The TUI presents an approval prompt for each blocked request.
+Blocked requests appear as pending entries in the sandbox view's `Network Rules` panel.
+After the sandbox opens, the TUI focuses the sandbox policy view.
+Press `r` to focus `Network Rules`.
+Use `j` or `k` to select a pending rule, and press `Enter` to inspect its details.
 
-- **Approve** the request to add the endpoint to the running policy for the current session.
-- **Deny** the request to keep the endpoint blocked.
+- Press `a` to approve the selected pending rule and add the endpoint to the running policy for the current session.
+- Press `x` to reject the selected pending rule and keep the endpoint blocked.
+- Press `A` to approve all pending rules, then press `y` or `Enter` at the confirmation prompt.
 
-Approved endpoints remain in the running policy until the sandbox stops.
+Approved endpoints remain in the running policy for the sandbox instance.
+They reset to the baseline when you destroy and recreate the sandbox.
 They are not persisted to the baseline policy file.
-To keep an endpoint allowed after a restart, update the policy YAML or apply a preset as described in [Customize the Sandbox Network Policy](customize-network-policy).
+To keep an endpoint allowed for future sandbox instances, update the policy YAML or apply a preset as described in [Customize the Sandbox Network Policy](customize-network-policy).
+Rejected rules stay blocked unless you later approve the same rule or add a matching endpoint to the policy.
 
-## Run the Walkthrough
+## Run the Walkthrough Script
 
-From the NemoClaw repository root, run the walkthrough script after you have onboarded at least one sandbox and it is reachable:
+The walkthrough script is available in the NemoClaw repository at [`scripts/walkthrough.sh`](https://github.com/NVIDIA/NemoClaw/blob/main/scripts/walkthrough.sh).
+It requires a cloned NemoClaw source checkout on the host where the sandbox is running.
 
-```bash
-./scripts/walkthrough.sh
-```
+<Steps>
+  <Step>
+    If the sandbox runs on a remote host, SSH to that host before you clone the repository and run the script.
+  </Step>
+  <Step>
+    Clone the NemoClaw repository on the host where the sandbox is running.
+    Do this even if you installed NemoClaw with the public installer, because the walkthrough script is a source-checkout helper.
 
-This script opens a split tmux session with the TUI on the left and the agent on the right.
-The walkthrough requires tmux and the `NVIDIA_INFERENCE_API_KEY` environment variable.
-It assumes an existing sandbox to attach to.
+    ```bash
+    git clone https://github.com/NVIDIA/NemoClaw.git ~/nemoclaw
+    cd ~/nemoclaw
+    ```
+  </Step>
+  <Step>
+    Onboard at least one sandbox and confirm that it is attached to the active gateway.
+  </Step>
+  <Step>
+    Run the walkthrough script from the NemoClaw repository root.
+
+    ```bash
+    ./scripts/walkthrough.sh
+    ```
+  </Step>
+</Steps>
+
+The script opens a split tmux session with the TUI on the left and the agent on the right.
+The walkthrough requires `tmux`, the `NVIDIA_INFERENCE_API_KEY` environment variable, and at least one onboarded sandbox attached to the active gateway.
+It attaches to an existing sandbox.
+
+</Steps>
 
 ## Related Topics
 

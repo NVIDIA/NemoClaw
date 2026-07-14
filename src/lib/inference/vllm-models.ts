@@ -35,6 +35,8 @@ export interface VllmModelDef {
   label: string;
   /** Stable identifier accepted via `NEMOCLAW_VLLM_MODEL`. */
   envValue: string;
+  /** Approximate full Hugging Face repository download size in bytes. */
+  downloadSizeBytes: number;
   /** `--max-model-len` flag value. */
   maxModelLen: number;
   /** Model-specific flags appended after the shared serving flags. */
@@ -63,6 +65,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     id: "Qwen/Qwen3.6-27B-FP8",
     label: "Qwen3.6 27B FP8",
     envValue: "qwen3.6-27b",
+    downloadSizeBytes: 30_900_000_000,
     maxModelLen: 262144,
     modelArgs: [
       "--gpu-memory-utilization",
@@ -85,6 +88,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     id: "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
     label: "DeepSeek-R1 Distill Llama 70B",
     envValue: "deepseek-r1-distill-70b",
+    downloadSizeBytes: 141_000_000_000,
     maxModelLen: 32768,
     modelArgs: [
       "--gpu-memory-utilization",
@@ -104,11 +108,29 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     id: "nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8",
     label: "NVIDIA Nemotron-3 Nano 4B FP8",
     envValue: "nemotron-3-nano-4b",
+    downloadSizeBytes: 5_280_000_000,
     // Matches the model card's `max_position_embeddings` and the vLLM
     // example NVIDIA publishes for this checkpoint. The previous value
     // (262000) was an undocumented round-down with no headroom rationale.
     maxModelLen: 262144,
-    modelArgs: ["--gpu-memory-utilization", "0.7", "--load-format", "fastsafetensors"],
+    // `--enable-auto-tool-choice` + `--tool-call-parser qwen3_coder` match
+    // the vLLM launch example on the model card at
+    // https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8. Without
+    // them a plain completion succeeds (HTTP 200) but any agent request
+    // that sends `tool_choice: "auto"` fails HTTP 400 with vLLM's
+    // "'auto' tool choice requires --enable-auto-tool-choice and
+    // --tool-call-parser to be set" (#6314) — which blocks every agent
+    // tool-call flow on the generic-Linux managed vLLM default (Spark and
+    // Station defaults already pin their own tool-call parser).
+    modelArgs: [
+      "--gpu-memory-utilization",
+      "0.7",
+      "--load-format",
+      "fastsafetensors",
+      "--enable-auto-tool-choice",
+      "--tool-call-parser",
+      "qwen3_coder",
+    ],
     gated: false,
     platforms: ["spark", "station", "linux"],
   },
@@ -116,6 +138,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     id: "deepseek-ai/DeepSeek-V4-Flash",
     label: "DeepSeek V4 Flash",
     envValue: "deepseek-v4-flash",
+    downloadSizeBytes: 160_000_000_000,
     maxModelLen: 1048576,
     modelArgs: [
       "--kv-cache-dtype",
@@ -141,7 +164,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "--max-cudagraph-capture-size",
       "128",
       "--speculative-config",
-      `'{"method":"mtp","num_speculative_tokens":3,"rejection_sample_method":"synthetic","synthetic_acceptance_length":3}'`,
+      `'{"method":"mtp","num_speculative_tokens":3}'`,
       "--max-num-batched-tokens",
       "8192",
       "--max-num-seqs",
@@ -156,7 +179,8 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     id: "nvidia/Qwen3.6-35B-A3B-NVFP4",
     label: "Qwen3.6 35B-A3B NVFP4",
     envValue: "qwen3.6-35b-a3b-nvfp4",
-    maxModelLen: 131072,
+    downloadSizeBytes: 23_500_000_000,
+    maxModelLen: 262144,
     // Additive flags on top of the shared serving defaults. The shared flags
     // already cover --tensor-parallel-size/--pipeline-parallel-size/
     // --data-parallel-size (all 1 — harmless on a single Spark node),
@@ -164,7 +188,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     // maxModelLen above.
     modelArgs: [
       "--gpu-memory-utilization",
-      "0.7",
+      "0.4",
       "--dtype",
       "auto",
       "--quantization",
@@ -183,6 +207,17 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "--async-scheduling",
       "--enable-prefix-caching",
       "--enable-auto-tool-choice",
+      // `qwen3_coder`, not `qwen3_xml` (#6457). On DGX Spark this checkpoint's
+      // tool-call frames do not round-trip through vLLM's `qwen3_xml` parser: it
+      // logs `qwen3xml_tool_parser.py:303 Error when parsing XML elements: not
+      // well-formed (invalid token)` and emits truncated/extra-`}` tool
+      // arguments, so Deep Agents Code headless (`dcode -n`) tool calls fail
+      // with `POST /v1/chat/completions 400 Bad Request`
+      // (`json.decoder.JSONDecodeError: Extra data`) and `dcode` exits 1.
+      // `qwen3_coder` matches this Qwen3.6-family checkpoint's emitted tool-call
+      // format — the parser the other Qwen3.6 recipes in this registry already
+      // use (Qwen3.6-27B-FP8, Nemotron-3-Nano-4B). Validated end-to-end on real
+      // DGX Spark (GB10); see PR verification notes for the `dcode -n` transcript.
       "--tool-call-parser",
       "qwen3_coder",
       "--reasoning-parser",
@@ -194,14 +229,6 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     ],
     gated: false,
     platforms: ["spark"],
-    // Arch- and backend-specific knobs required for the NVFP4 MoE checkpoint
-    // on DGX Spark (GB10 / sm_121a) with the FlashInfer CUTLASS FP8 path.
-    serveEnv: {
-      VLLM_USE_FLASHINFER_MOE_FP4: "0",
-      VLLM_FP8_MOE_BACKEND: "flashinfer_cutlass",
-      FLASHINFER_DISABLE_VERSION_CHECK: "1",
-      CUTE_DSL_ARCH: "sm_121a",
-    },
   },
 ] as const;
 
@@ -222,8 +249,8 @@ export const VLLM_EXTRA_ARGS_ENV = "NEMOCLAW_VLLM_EXTRA_ARGS_JSON";
 /**
  * Look up the requested express-vLLM model from `NEMOCLAW_VLLM_MODEL`.
  * Returns `null` when the env var is empty so the caller can fall back to
- * the per-platform profile default (Station prefers Qwen3.6-27B, Spark the
- * Qwen3.6-35B-A3B NVFP4 checkpoint, and the generic Linux profile prefers
+ * the per-platform profile default (Station prefers DeepSeek V4 Flash, Spark
+ * the Qwen3.6-35B-A3B NVFP4 checkpoint, and the generic Linux profile prefers
  * Nemotron-Nano-4B for VRAM headroom).
  *
  * Match is case-insensitive against either the `envValue` slug or the full

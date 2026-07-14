@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { getGatewayReuseState, shouldSelectNamedGatewayForReuse } from "../state/gateway";
 
 export type GatewayReuseSnapshot = {
@@ -11,7 +12,7 @@ export type GatewayReuseSnapshot = {
 };
 
 export interface GatewayReuseDeps {
-  gatewayName: string;
+  gatewayName: string | (() => string);
   runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string;
   runOpenshell(args: string[], opts?: Record<string, unknown>): { status: number | null };
   cliDisplayName(): string;
@@ -23,12 +24,17 @@ export interface GatewayReuseHelpers {
 }
 
 export function createGatewayReuseHelpers(deps: GatewayReuseDeps): GatewayReuseHelpers {
+  const currentGatewayName = () =>
+    typeof deps.gatewayName === "function" ? deps.gatewayName() : deps.gatewayName;
+
   function getGatewayReuseSnapshot(): GatewayReuseSnapshot {
-    const gatewayStatus = deps.runCaptureOpenshell(["status"], { ignoreError: true });
-    const gwInfo = deps.runCaptureOpenshell(["gateway", "info", "-g", deps.gatewayName], {
-      ignoreError: true,
+    const gatewayName = currentGatewayName();
+    const probeOptions = { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS };
+    const gatewayStatus = deps.runCaptureOpenshell(["status"], probeOptions);
+    const gwInfo = deps.runCaptureOpenshell(["gateway", "info", "-g", gatewayName], {
+      ...probeOptions,
     });
-    const activeGatewayInfo = deps.runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
+    const activeGatewayInfo = deps.runCaptureOpenshell(["gateway", "info"], probeOptions);
     return {
       gatewayStatus,
       gwInfo,
@@ -37,7 +43,7 @@ export function createGatewayReuseHelpers(deps: GatewayReuseDeps): GatewayReuseH
         gatewayStatus,
         gwInfo,
         activeGatewayInfo,
-        deps.gatewayName,
+        gatewayName,
       ),
     };
   }
@@ -45,18 +51,19 @@ export function createGatewayReuseHelpers(deps: GatewayReuseDeps): GatewayReuseH
   function selectNamedGatewayForReuseIfNeeded(
     snapshot: GatewayReuseSnapshot,
   ): GatewayReuseSnapshot {
+    const gatewayName = currentGatewayName();
     if (
       !shouldSelectNamedGatewayForReuse(
         snapshot.gatewayStatus,
         snapshot.gwInfo,
         snapshot.activeGatewayInfo,
-        deps.gatewayName,
+        gatewayName,
       )
     ) {
       return snapshot;
     }
 
-    const selectResult = deps.runOpenshell(["gateway", "select", deps.gatewayName], {
+    const selectResult = deps.runOpenshell(["gateway", "select", gatewayName], {
       ignoreError: true,
       suppressOutput: true,
     });
@@ -66,7 +73,7 @@ export function createGatewayReuseHelpers(deps: GatewayReuseDeps): GatewayReuseH
 
     const refreshed = getGatewayReuseSnapshot();
     if (refreshed.gatewayReuseState === "healthy") {
-      process.env.OPENSHELL_GATEWAY = deps.gatewayName;
+      process.env.OPENSHELL_GATEWAY = gatewayName;
       console.log(`  ✓ Selected existing ${deps.cliDisplayName()} gateway`);
     }
     return refreshed;

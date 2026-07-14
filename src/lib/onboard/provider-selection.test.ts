@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
 
-import { resolveRequestedProviderSelection } from "../../../dist/lib/onboard/provider-selection";
+import { resolveRequestedProviderSelection } from "./provider-selection";
 
 const option = (key: string) => ({ key, label: key });
 

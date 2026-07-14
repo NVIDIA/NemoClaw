@@ -7,6 +7,7 @@ import path from "node:path";
 export type SmokeVerifierHarnessCall = [string, ...unknown[]];
 
 type VerifyOnboardSmokeInvocation = {
+  selectedChatCapability?: boolean;
   credentialEnv?: string;
   endpointUrl?: string;
   forceOpenAiLike?: boolean;
@@ -14,9 +15,9 @@ type VerifyOnboardSmokeInvocation = {
   provider?: string;
 };
 
-export function runVerifyOnboardSmokeHarness(
+export async function runVerifyOnboardSmokeHarness(
   invocations: VerifyOnboardSmokeInvocation[],
-): SmokeVerifierHarnessCall[] {
+): Promise<SmokeVerifierHarnessCall[]> {
   const harness = String.raw`
 const Module = require("node:module");
 const originalLoad = Module._load;
@@ -49,6 +50,7 @@ Module._load = function patchedLoad(request, _parent, _isMain) {
     };
   }
   if (request === "../adapters/http/probe") {
+    const fs = require("node:fs");
     return {
       getCurlTimingArgs() {
         return [];
@@ -57,9 +59,15 @@ Module._load = function patchedLoad(request, _parent, _isMain) {
         throw new Error("unexpected streaming probe");
       },
       runCurlProbe(args) {
-        const authHeader =
-          args.find((arg) => String(arg).startsWith("Authorization: Bearer ")) || "no-auth";
-        calls.push(["runCurlProbe", args[args.length - 1], authHeader]);
+        let authConfigSummary = "no-auth";
+        const configIndex = args.indexOf("--config");
+        if (configIndex >= 0 && args[configIndex + 1]) {
+          const path = args[configIndex + 1];
+          const contents = fs.existsSync(path) ? fs.readFileSync(path, "utf8") : "";
+          const headerMatch = contents.match(/header = "([^"]+)"/);
+          authConfigSummary = headerMatch ? headerMatch[1] : "config:" + contents.trim();
+        }
+        calls.push(["runCurlProbe", args[args.length - 1], authConfigSummary]);
         return {
           ok: true,
           httpStatus: 200,
@@ -76,27 +84,55 @@ Module._load = function patchedLoad(request, _parent, _isMain) {
   return originalLoad.apply(this, arguments);
 };
 
-const { verifyOnboardInferenceSmoke } = require(process.env.PROBES_MODULE);
+const {
+  getProbeAuthMode,
+  getProbeExtraHeaders,
+  verifyOnboardInferenceSmoke,
+} = require(process.env.PROBES_MODULE);
+const { OnboardInferenceCapabilityCache } = require(process.env.CAPABILITY_CACHE_MODULE);
 const invocations = JSON.parse(process.env.SMOKE_INVOCATIONS || "[]");
 console.log = (...args) => calls.push(["log", args.join(" ")]);
 
-for (const invocation of invocations) {
-  verifyOnboardInferenceSmoke({
-    endpointUrl: "https://api.example.com/v1",
-    model: "nous/test-model",
-    provider: "hermes-provider",
-    ...invocation,
-  });
-}
-
-process.stdout.write(JSON.stringify(calls));
+(async () => {
+  for (const invocation of invocations) {
+    const { selectedChatCapability, ...input } = invocation;
+    const capabilityCache = selectedChatCapability ? new OnboardInferenceCapabilityCache() : undefined;
+    const effectiveInvocation = {
+      endpointUrl: "https://api.example.com/v1",
+      model: "nous/test-model",
+      provider: "hermes-provider",
+      ...input,
+    };
+    if (capabilityCache) {
+      const primed = capabilityCache.rememberCompletedOpenAiChat({
+        endpointUrl: effectiveInvocation.endpointUrl,
+        model: effectiveInvocation.model,
+        authMode: getProbeAuthMode(effectiveInvocation.provider),
+        extraHeaders: getProbeExtraHeaders(effectiveInvocation.provider),
+      });
+      if (!primed) throw new Error("failed to prime selected Chat Completions capability");
+    }
+    await verifyOnboardInferenceSmoke({
+      ...effectiveInvocation,
+      capabilityCache,
+    });
+  }
+  process.stdout.write(JSON.stringify(calls));
+})().catch((error) => {
+  process.stderr.write(String(error && error.stack ? error.stack : error));
+  process.exit(1);
+});
 `;
   const result = spawnSync(process.execPath, ["-e", harness], {
     cwd: process.cwd(),
     encoding: "utf8",
     env: {
       ...process.env,
-      PROBES_MODULE: path.join(process.cwd(), "dist/lib/inference/onboard-probes.js"),
+      PROBES_MODULE: path.join(process.cwd(), "src/lib/inference/onboard-probes.ts"),
+      CAPABILITY_CACHE_MODULE: path.join(
+        process.cwd(),
+        "src/lib/onboard/inference-capability-cache.ts",
+      ),
       SMOKE_INVOCATIONS: JSON.stringify(invocations),
       VITEST: "false",
     },

@@ -8,14 +8,15 @@ import {
   type MessagingConflictGuardDeps,
 } from "./messaging-conflict-guard";
 import {
-  prepareCreateSandboxMessaging as defaultPrepareCreateSandboxMessaging,
   type CreateSandboxMessagingPrepInput,
   type CreateSandboxMessagingPrepResult,
+  prepareCreateSandboxMessaging as defaultPrepareCreateSandboxMessaging,
   type NamedMessagingChannel,
 } from "./messaging-prep";
 
 export interface SandboxMessagingPreflightInput {
   sandboxName: string;
+  agentName?: string | null;
   channels: readonly NamedMessagingChannel[];
   enabledChannels: readonly string[] | null;
   webSearchConfig: WebSearchConfig | null;
@@ -25,7 +26,7 @@ export interface SandboxMessagingPreflightInput {
 export interface SandboxMessagingPreflightDeps {
   readMessagingPlanFromEnv(): SandboxMessagingPlan | null;
   resolveDisabledChannels(sandboxName: string): string[];
-  gatewayName: string;
+  gatewayName(): string;
   registry: MessagingConflictGuardDeps["registry"];
   providerExistsInGateway(name: string): boolean;
   isNonInteractive(): boolean;
@@ -68,6 +69,7 @@ export async function prepareSandboxMessagingPreflight(
 
   const result = (deps.prepareCreateSandboxMessaging ?? defaultPrepareCreateSandboxMessaging)({
     sandboxName: input.sandboxName,
+    agentName: input.agentName,
     channels: input.channels,
     enabledChannels: input.enabledChannels,
     disabledChannels,
@@ -81,11 +83,10 @@ export async function prepareSandboxMessagingPreflight(
     providerExistsInGateway: deps.providerExistsInGateway,
   });
 
-  if (result.missingBraveApiKey) {
-    deps.error("  Brave Search is enabled, but BRAVE_API_KEY is not available in this process.");
-    deps.error(
-      "  Re-run with BRAVE_API_KEY set, or disable Brave Search before recreating the sandbox.",
-    );
+  if (result.missingWebSearchCredentialEnv) {
+    const envKey = result.missingWebSearchCredentialEnv;
+    deps.error(`  Web search is enabled, but ${envKey} is not available in this process.`);
+    deps.error(`  Re-run with ${envKey} set, or disable web search before recreating the sandbox.`);
     deps.exitProcess(1);
   }
 
@@ -105,7 +106,7 @@ async function checkMessagingPlanConflicts(
     deps.enforceMessagingChannelConflicts ?? defaultEnforceMessagingChannelConflicts;
   await enforceMessagingChannelConflicts({
     sandboxName,
-    gatewayName: deps.gatewayName,
+    gatewayName: deps.gatewayName(),
     currentPlan,
     currentSandboxDisabledChannels: disabledChannels,
     registry: deps.registry,

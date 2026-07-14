@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { HERMES_OPENAI_API_PORT } from "../core/ports";
 import {
   HERMES_DASHBOARD_ENABLE_ENV,
   HERMES_DASHBOARD_INTERNAL_PORT_ENV,
@@ -9,9 +10,8 @@ import {
   type HermesDashboardConfig,
   readHermesDashboardConfig,
 } from "../hermes-dashboard";
-import { HERMES_OPENAI_API_PORT } from "../core/ports";
-import { RESERVED_HERMES_DASHBOARD_PORT_MESSAGE } from "./preflight-ports";
 import type { SandboxEntry } from "../state/registry";
+import { RESERVED_HERMES_DASHBOARD_PORT_MESSAGE } from "./preflight-ports";
 
 export interface HermesDashboardOnboardState {
   config: HermesDashboardConfig | null;
@@ -59,18 +59,15 @@ export function resolveHermesDashboardOnboardState({
   }
 
   if (config.enabled) {
-    if (config.port === effectivePort) {
-      const message = `${HERMES_DASHBOARD_PORT_ENV} must not equal the Hermes API port (${effectivePort}).`;
+    const rawHermesDashboardPort = env[HERMES_DASHBOARD_PORT_ENV]?.trim();
+    if (rawHermesDashboardPort && config.port !== effectivePort) {
+      const message = `${HERMES_DASHBOARD_PORT_ENV} must match the NemoClaw dashboard port (${effectivePort}). Set NEMOCLAW_DASHBOARD_PORT or pass --control-ui-port <N> to change the Hermes WebUI port.`;
       if (fail) return fail(message);
       throw new Error(message);
     }
+    config = { ...config, port: effectivePort };
     if (config.port === config.internalPort) {
-      const message = `${HERMES_DASHBOARD_PORT_ENV} must not equal ${HERMES_DASHBOARD_INTERNAL_PORT_ENV}.`;
-      if (fail) return fail(message);
-      throw new Error(message);
-    }
-    if (config.internalPort === effectivePort) {
-      const message = `${HERMES_DASHBOARD_INTERNAL_PORT_ENV} must not equal the Hermes API port (${effectivePort}).`;
+      const message = `${HERMES_DASHBOARD_INTERNAL_PORT_ENV} must not equal the Hermes WebUI port (${config.port}).`;
       if (fail) return fail(message);
       throw new Error(message);
     }
@@ -153,7 +150,7 @@ export function ensureHermesDashboardForwardIfEnabled({
 
 export function formatHermesDashboardForwardFailure(state: HermesDashboardOnboardState): string {
   const port = state.config?.port ?? "unknown";
-  return `Failed to start Hermes dashboard forward on port ${port}. Free the port and re-run onboarding, or set ${HERMES_DASHBOARD_PORT_ENV} to another port.`;
+  return `Failed to start Hermes dashboard forward on port ${port}. Free the port and re-run onboarding, set NEMOCLAW_DASHBOARD_PORT, or pass --control-ui-port <N> to choose another port.`;
 }
 
 export function createHermesDashboardForwardEnsurer({

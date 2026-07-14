@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import type { PluginCommandContext, OpenClawPluginApi } from "../index.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { NemoClawState } from "../blueprint/state.js";
+import type { OpenClawPluginApi, PluginCommandContext } from "../index.js";
 import type { NemoClawOnboardConfig } from "../onboard/config.js";
 
 vi.mock("../blueprint/state.js", () => ({
@@ -17,21 +17,21 @@ vi.mock("../onboard/config.js", () => ({
 }));
 
 vi.mock("./shields-status.js", () => ({
-  slashShieldsStatus: vi.fn(() => ({ text: "**Shields: UP**" })),
+  slashShieldsStatus: vi.fn(() => ({ text: "**Shields status unavailable**" })),
 }));
 
 vi.mock("./config-show.js", () => ({
   slashConfigShow: vi.fn(() => ({ text: "**NemoClaw Config**" })),
 }));
 
-import { handleSlashCommand } from "./slash.js";
 import { loadState } from "../blueprint/state.js";
 import {
-  loadOnboardConfig,
   describeOnboardEndpoint,
   describeOnboardProvider,
+  loadOnboardConfig,
 } from "../onboard/config.js";
 import { slashShieldsStatus } from "./shields-status.js";
+import { handleSlashCommand } from "./slash.js";
 
 const mockedLoadState = vi.mocked(loadState);
 const mockedLoadOnboardConfig = vi.mocked(loadOnboardConfig);
@@ -75,12 +75,6 @@ function blankState(): NemoClawState {
     updatedAt: new Date().toISOString(),
     lastRebuildAt: null,
     lastRebuildBackupPath: null,
-    shieldsDown: false,
-    shieldsDownAt: null,
-    shieldsDownTimeout: null,
-    shieldsDownReason: null,
-    shieldsDownPolicy: null,
-    shieldsPolicySnapshotPath: null,
   };
 }
 
@@ -102,6 +96,8 @@ describe("commands/slash", () => {
       expect(result.text).toContain("Subcommands:");
       expect(result.text).toContain("status");
       expect(result.text).toContain("shields");
+      expect(result.text).toContain("Show how to check shields status from the host");
+      expect(result.text).not.toContain("up/down, timeout, policy");
       expect(result.text).toContain("config");
       expect(result.text).toContain("eject");
       expect(result.text).toContain("onboard");

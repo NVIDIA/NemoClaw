@@ -29,6 +29,14 @@ export interface PlatformHints {
 
 export interface DashboardDeliveryChain {
   accessUrl: string;
+  /**
+   * Reachable URLs that are not the primary `accessUrl` but should be offered
+   * as fallbacks. On WSL2 this holds the `hostname -I` host IP: loopback is
+   * the primary URL because WSL forwards Windows' `127.0.0.1` into the VM by
+   * default, but when that forwarding is unavailable the host IP is the only
+   * address reachable from a Windows browser. (#6171)
+   */
+  fallbackUrls: string[];
   corsOrigins: string[];
   forwardTarget: string;
   healthEndpoint: string;
@@ -91,12 +99,18 @@ export function buildChain(hints?: PlatformHints): DashboardDeliveryChain {
   const hasNonLoopbackUrl = chatUiUrl !== "" && !isLoopbackUrl(chatUiUrl);
 
   let accessUrl: string;
+  const fallbackUrls: string[] = [];
   if (hasNonLoopbackUrl) {
     accessUrl = ensureScheme(chatUiUrl);
-  } else if (h.isWsl && h.wslHostAddress) {
-    accessUrl = `http://${h.wslHostAddress}:${port}`;
   } else {
+    // Loopback is the primary URL on every host, including WSL: modern WSL2
+    // forwards Windows' `127.0.0.1` into the VM, and the dashboard forward
+    // already binds `0.0.0.0` (see `forwardTarget` below). The WSL host IP is
+    // kept as a fallback for setups where that forwarding is unavailable. (#6171)
     accessUrl = `http://127.0.0.1:${port}`;
+    if (h.isWsl && h.wslHostAddress) {
+      fallbackUrls.push(`http://${h.wslHostAddress}:${port}`);
+    }
   }
 
   // #3259 — operator opt-in via NEMOCLAW_DASHBOARD_BIND=0.0.0.0 for remote-SSH-deployed
@@ -107,17 +121,17 @@ export function buildChain(hints?: PlatformHints): DashboardDeliveryChain {
     h.isWsl || hasNonLoopbackUrl || remoteBindOptIn ? `0.0.0.0:${port}` : String(port);
   const bindAddress = forwardTarget.includes(":") ? "0.0.0.0" : "127.0.0.1";
   const loopbackOrigin = `http://127.0.0.1:${port}`;
-  const accessOrigin = (() => {
+  const toOrigin = (value: string): string | null => {
     try {
-      return new URL(accessUrl).origin;
+      return new URL(value).origin;
     } catch {
       return null;
     }
-  })();
-  const corsOrigins =
-    accessOrigin && accessOrigin !== loopbackOrigin
-      ? [loopbackOrigin, accessOrigin]
-      : [loopbackOrigin];
+  };
+  const extraOrigins = [accessUrl, ...fallbackUrls]
+    .map(toOrigin)
+    .filter((origin): origin is string => origin !== null && origin !== loopbackOrigin);
+  const corsOrigins = [loopbackOrigin, ...new Set(extraOrigins)];
 
   const shouldDisableDeviceAuth = hasNonLoopbackUrl || (h.isWsl ?? false) || remoteBindOptIn;
   const dashboardHealthEndpoint = normalizeEndpointPath(h.dashboardHealthEndpoint, "/health");
@@ -132,6 +146,7 @@ export function buildChain(hints?: PlatformHints): DashboardDeliveryChain {
 
   return {
     accessUrl,
+    fallbackUrls,
     corsOrigins,
     forwardTarget,
     healthEndpoint: dashboardHealthEndpoint,
@@ -158,4 +173,22 @@ export function buildControlUiUrls(
     urls.push(`${chatUi}/${hash}`);
   }
   return [...new Set(urls)];
+}
+
+export function buildFallbackControlUiUrls(
+  token: string | null,
+  port: number,
+  fallbackUrls: string[],
+): string[] {
+  return fallbackUrls.flatMap((fallback) => {
+    let url: URL;
+    try {
+      url = new URL(fallback);
+    } catch {
+      return [];
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") return [];
+    url.port = String(port);
+    return buildControlUiUrls(token, port, url.toString()).slice(1);
+  });
 }

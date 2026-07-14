@@ -42,9 +42,9 @@ function runStartupScenario(setup: string): {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-proxy-startup-"));
   const scriptPath = path.join(tmpDir, "startup-check.js");
   const proxyPath = JSON.stringify(
-    path.join(repoRoot, "dist", "lib", "inference", "ollama", "proxy.js"),
+    path.join(repoRoot, "src", "lib", "inference", "ollama", "proxy.ts"),
   );
-  const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+  const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
 
   const script = String.raw`
 const childProcess = require("child_process");

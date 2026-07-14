@@ -4,40 +4,14 @@
 import { spawnSync } from "child_process";
 
 import { shellQuote } from "../runner.js";
-import { mergeOpenClawRestoredConfig } from "./openclaw-config-merge.js";
-
-export interface OpenClawConfigStateFileSpec {
-  path: string;
-  strategy: string;
-}
-
-/**
- * OpenClaw openclaw.json restore source-of-truth boundary.
- *
- * The OpenClaw agent manifest currently declares openclaw.json as a durable
- * state file, but it cannot yet express key-level ownership. Until that schema
- * exists, this module is the localized restore policy for reconciling the
- * sanitized backup with the freshly rebuilt runtime config.
- *
- * Invalid state: replacing fresh runtime-owned config when the current file is
- * missing, unreadable, or invalid JSON. In those cases restore must fail the
- * file explicitly instead of falling back to a wholesale sanitized backup write.
- *
- * Source-fix constraint: remove or shrink this policy when OpenClaw or the
- * agent manifest can declare key-level ownership/migration rules for
- * openclaw.json directly.
- */
-export function shouldMergeOpenClawConfigStateFile(
-  agentType: string | null | undefined,
-  dir: string,
-  spec: OpenClawConfigStateFileSpec,
-): boolean {
-  return (
-    spec.strategy === "copy" &&
-    spec.path === "openclaw.json" &&
-    (agentType === "openclaw" || dir.replace(/\/+$/, "").endsWith("/.openclaw"))
-  );
-}
+import {
+  mergeOpenClawRestoredConfig,
+  type OpenClawConfigMergeOptions,
+} from "./openclaw-config-merge.js";
+import {
+  hasCompleteOpenClawImagePluginProvenance,
+  type OpenClawImagePluginInstall,
+} from "./openclaw-plugin-restore.js";
 
 export type OpenClawConfigRestoreInputResult =
   | { ok: true; input: Buffer }
@@ -46,7 +20,9 @@ export type OpenClawConfigRestoreInputResult =
 export interface OpenClawConfigRestoreFromSandboxOptions {
   backupContents: Buffer;
   dir: string;
+  freshImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
   log?: (message: string) => void;
+  previousImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
   specPath: string;
   sshArgs: readonly string[];
 }
@@ -92,6 +68,7 @@ function readCurrentOpenClawConfig(
 export function buildOpenClawConfigRestoreInput(
   backupContents: Buffer,
   currentContents: Buffer | null,
+  options: OpenClawConfigMergeOptions = {},
 ): OpenClawConfigRestoreInputResult {
   if (!currentContents) {
     return { ok: false, error: "openclaw.json selective merge requires current rebuilt config" };
@@ -100,7 +77,7 @@ export function buildOpenClawConfigRestoreInput(
   try {
     const backedUpConfig = JSON.parse(backupContents.toString("utf-8")) as unknown;
     const currentConfig = JSON.parse(currentContents.toString("utf-8")) as unknown;
-    const merged = mergeOpenClawRestoredConfig(backedUpConfig, currentConfig);
+    const merged = mergeOpenClawRestoredConfig(backedUpConfig, currentConfig, options);
     return { ok: true, input: Buffer.from(`${JSON.stringify(merged, null, 2)}\n`) };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
@@ -114,12 +91,33 @@ export function buildOpenClawConfigRestoreInput(
 export function buildOpenClawConfigRestoreInputFromSandbox({
   backupContents,
   dir,
+  freshImagePluginInstalls,
   log = () => {},
+  previousImagePluginInstalls,
   specPath,
   sshArgs,
 }: OpenClawConfigRestoreFromSandboxOptions): OpenClawConfigRestoreInputResult {
+  if ((previousImagePluginInstalls === undefined) !== (freshImagePluginInstalls === undefined)) {
+    return {
+      ok: false,
+      error: "Complete previous and fresh OpenClaw image plugin provenance is required",
+    };
+  }
+  if (
+    freshImagePluginInstalls !== undefined &&
+    !hasCompleteOpenClawImagePluginProvenance(freshImagePluginInstalls, dir)
+  ) {
+    return { ok: false, error: "Fresh OpenClaw image plugin provenance is incomplete" };
+  }
+  if (
+    previousImagePluginInstalls !== undefined &&
+    !hasCompleteOpenClawImagePluginProvenance(previousImagePluginInstalls, dir)
+  ) {
+    return { ok: false, error: "Previous OpenClaw image plugin provenance is incomplete" };
+  }
   return buildOpenClawConfigRestoreInput(
     backupContents,
     readCurrentOpenClawConfig(sshArgs, dir, specPath, log),
+    { freshImagePluginInstalls, previousImagePluginInstalls },
   );
 }

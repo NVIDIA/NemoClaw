@@ -1,21 +1,37 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { BUILT_IN_CHANNEL_MANIFESTS, getMessagingConfigEnvAliases } from "./messaging/channels";
 import { listChannels } from "./sandbox/channels";
 
 export type MessagingChannelConfig = Record<string, string>;
 
 const channels = listChannels();
-const requireMentionKeys = new Set(
-  channels
-    .map((channel) => channel.requireMentionEnvKey)
-    .filter((key): key is string => typeof key === "string" && key.length > 0),
+const manifestConfigInputs = BUILT_IN_CHANNEL_MANIFESTS.flatMap((manifest) =>
+  manifest.inputs
+    .filter((input) => input.kind === "config")
+    .map((input) => ({
+      envKey: input.envKey,
+      validValues: "validValues" in input ? input.validValues : undefined,
+    })),
 );
+const validValuesByKey = new Map<string, ReadonlySet<string>>(
+  manifestConfigInputs.flatMap((input) => {
+    if (
+      typeof input.envKey !== "string" ||
+      input.envKey.length === 0 ||
+      !Array.isArray(input.validValues)
+    ) {
+      return [];
+    }
+    return [[input.envKey, new Set(input.validValues)] as const];
+  }),
+);
+for (const key of channels.map((channel) => channel.requireMentionEnvKey)) {
+  if (key && !validValuesByKey.has(key)) validValuesByKey.set(key, new Set(["0", "1"]));
+}
 
-const configKeyAliases: Readonly<Record<string, readonly string[]>> = {
-  DISCORD_SERVER_ID: ["DISCORD_SERVER_IDS"],
-  DISCORD_USER_ID: ["DISCORD_ALLOWED_IDS"],
-};
+const configKeyAliases = getMessagingConfigEnvAliases();
 
 const aliasToCanonical = new Map(
   Object.entries(configKeyAliases).flatMap(([canonical, aliases]) =>
@@ -25,14 +41,15 @@ const aliasToCanonical = new Map(
 
 export const MESSAGING_CHANNEL_CONFIG_ENV_KEYS: readonly string[] = [
   ...new Set(
-    channels.flatMap((channel) =>
-      [
+    [
+      ...channels.flatMap((channel) => [
         channel.serverIdEnvKey,
         channel.userIdEnvKey,
         channel.channelIdEnvKey,
         channel.requireMentionEnvKey,
-      ].filter((key): key is string => typeof key === "string" && key.length > 0),
-    ),
+      ]),
+      ...manifestConfigInputs.map((input) => input.envKey),
+    ].filter((key): key is string => typeof key === "string" && key.length > 0),
   ),
 ];
 
@@ -63,12 +80,37 @@ export function getMessagingChannelConfigEnvKeys(key: string): readonly string[]
   return [canonical, ...(configKeyAliases[canonical] ?? [])];
 }
 
+export type InvalidMessagingChannelConfigEnvEntry = {
+  key: string;
+  rawValue: string;
+  validValues: readonly string[];
+};
+
+/**
+ * Returns entries for env vars that are explicitly set to a non-blank value
+ * that is not in the manifest's validValues list. Callers (e.g. setupMessagingChannels)
+ * should fail fast on any returned entries rather than silently coercing to a default.
+ */
+export function detectInvalidMessagingChannelConfigEnvValues(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
+): InvalidMessagingChannelConfigEnvEntry[] {
+  const violations: InvalidMessagingChannelConfigEnvEntry[] = [];
+  for (const [key, validVals] of validValuesByKey) {
+    const rawValue = (env[key] ?? "").trim();
+    if (rawValue && !validVals.has(rawValue)) {
+      violations.push({ key, rawValue, validValues: [...validVals] });
+    }
+  }
+  return violations;
+}
+
 export function normalizeMessagingChannelConfigValue(key: string, value: unknown): string | null {
   const canonical = getCanonicalMessagingChannelConfigKey(key);
   if (!canonical) return null;
   const normalized = normalizeValue(value);
   if (!normalized) return null;
-  if (requireMentionKeys.has(canonical) && normalized !== "0" && normalized !== "1") {
+  const validValues = validValuesByKey.get(canonical);
+  if (validValues && !validValues.has(normalized)) {
     return null;
   }
   return normalized;

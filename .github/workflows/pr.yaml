@@ -3,15 +3,17 @@
 
 name: CI / Pull Request
 
+run-name: "CI PR #${{ github.event.pull_request.number }} head ${{ github.event.pull_request.head.sha }} base ${{ github.event.pull_request.base.sha }} gate ${{ github.event.action != 'edited' || github.event.changes.base != null }}"
+
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event.action != 'edited' || github.event.changes.base != null }}
   cancel-in-progress: true
 
 jobs:
@@ -31,7 +33,7 @@ jobs:
 
       - name: Detect changed paths
         id: filter
-        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
+        uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
         with:
           predicate-quantifier: every
           filters: |
@@ -192,6 +194,98 @@ jobs:
         shell: bash
         run: CI=true npx vitest run --project installer-integration
 
+  wechat-runtime-audit:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Checkout trusted WeChat runtime audit
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-wechat-audit
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-wechat-runtime-audit
+          sparse-checkout-cone-mode: false
+
+      - name: Detect trusted WeChat runtime audit
+        id: trusted-wechat-audit
+        shell: bash
+        run: |
+          if [ -f .trusted-wechat-audit/.github/actions/ci-wechat-runtime-audit/action.yaml ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # One-time bootstrap for this PR only. The action is pinned to a signed,
+      # immutable commit that contains only the reviewed audit implementation.
+      # Every later PR must resolve the action from its base SHA above.
+      # Removal condition: delete this checkout and its paired audit step in the
+      # first follow-up after PR #6739 merges, before the next release tag.
+      - name: Checkout pinned bootstrap WeChat runtime audit
+        if: ${{ steps.trusted-wechat-audit.outputs.available != 'true' && github.event.pull_request.number == 6739 && github.event.pull_request.head.repo.full_name == 'HOYALIM/NemoClaw' }}
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: HOYALIM/NemoClaw
+          ref: 0d2256d71d5bbba3bcaaaa4d01714fa56f22d1e2
+          path: .trusted-wechat-audit-bootstrap
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-wechat-runtime-audit
+          sparse-checkout-cone-mode: false
+
+      - name: Reject unavailable trusted WeChat runtime audit
+        if: ${{ steps.trusted-wechat-audit.outputs.available != 'true' && (github.event.pull_request.number != 6739 || github.event.pull_request.head.repo.full_name != 'HOYALIM/NemoClaw') }}
+        shell: bash
+        run: |
+          echo "::error::Trusted base SHA does not contain ci-wechat-runtime-audit"
+          exit 1
+
+      - name: Audit locked WeChat runtime graph
+        if: ${{ steps.trusted-wechat-audit.outputs.available == 'true' }}
+        uses: ./.trusted-wechat-audit/.github/actions/ci-wechat-runtime-audit
+        with:
+          target-root: ${{ github.workspace }}
+          report-dir: artifacts/wechat-runtime-audit
+
+      - name: Audit locked WeChat runtime graph (pinned bootstrap)
+        if: ${{ steps.trusted-wechat-audit.outputs.available != 'true' && github.event.pull_request.number == 6739 && github.event.pull_request.head.repo.full_name == 'HOYALIM/NemoClaw' }}
+        uses: ./.trusted-wechat-audit-bootstrap/.github/actions/ci-wechat-runtime-audit
+        with:
+          target-root: ${{ github.workspace }}
+          report-dir: artifacts/wechat-runtime-audit
+
+      - name: Upload WeChat runtime audit evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wechat-runtime-audit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/wechat-runtime-audit
+          if-no-files-found: error
+          retention-days: 14
+
+  reviewed-npm-audit:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Audit reviewed production npm graphs
+        uses: ./.github/actions/ci-reviewed-npm-audit
+
   cli-test-shards:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -200,7 +294,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -226,7 +320,7 @@ jobs:
         uses: ./.trusted-ci-actions/.github/actions/ci-cli-coverage-shard
         with:
           shard: ${{ matrix.shard }}
-          shard-count: "5"
+          shard-count: "8"
 
   cli-tests:
     needs:
@@ -273,7 +367,7 @@ jobs:
       - name: Merge CLI coverage
         uses: ./.trusted-ci-actions/.github/actions/ci-cli-coverage-merge
         with:
-          shard-count: "5"
+          shard-count: "8"
 
   plugin-tests:
     needs: changes
@@ -308,6 +402,39 @@ jobs:
       - name: Run plugin coverage
         uses: ./.trusted-ci-actions/.github/actions/ci-plugin-coverage
 
+  e2e-support:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install E2E support dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Validate changed live E2E mock parity
+        # The pull_request payload can retain an older base SHA while GitHub's
+        # checked-out merge ref already targets newer main. Diff the merge
+        # parents so base-only changes are never attributed to the PR.
+        run: npx tsx scripts/checks/e2e-mock-parity.ts --base HEAD^1 --head HEAD^2
+
+      - name: Build CLI artifacts for E2E support
+        run: npm run build:cli
+
+      - name: Run E2E support tests
+        run: npx vitest run --project e2e-support
+
   test-e2e-ollama-proxy:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -333,8 +460,11 @@ jobs:
       - static-checks
       - build-typecheck
       - installer-integration
+      - wechat-runtime-audit
+      - reviewed-npm-audit
       - cli-tests
       - plugin-tests
+      - e2e-support
       - test-e2e-ollama-proxy
     if: always()
     runs-on: ubuntu-latest
@@ -348,8 +478,11 @@ jobs:
           STATIC_RESULT: ${{ needs['static-checks'].result }}
           BUILD_TYPECHECK_RESULT: ${{ needs['build-typecheck'].result }}
           INSTALLER_INTEGRATION_RESULT: ${{ needs['installer-integration'].result }}
+          WECHAT_RUNTIME_AUDIT_RESULT: ${{ needs['wechat-runtime-audit'].result }}
+          REVIEWED_NPM_AUDIT_RESULT: ${{ needs['reviewed-npm-audit'].result }}
           CLI_TESTS_RESULT: ${{ needs['cli-tests'].result }}
           PLUGIN_TESTS_RESULT: ${{ needs['plugin-tests'].result }}
+          E2E_SUPPORT_RESULT: ${{ needs['e2e-support'].result }}
           E2E_PROXY_RESULT: ${{ needs['test-e2e-ollama-proxy'].result }}
         run: |
           set -euo pipefail
@@ -382,16 +515,22 @@ jobs:
             require_success "static-checks" "$STATIC_RESULT"
             require_success "build-typecheck" "$BUILD_TYPECHECK_RESULT"
             require_success "installer-integration" "$INSTALLER_INTEGRATION_RESULT"
+            require_success "wechat-runtime-audit" "$WECHAT_RUNTIME_AUDIT_RESULT"
+            require_success "reviewed-npm-audit" "$REVIEWED_NPM_AUDIT_RESULT"
             require_success "cli-tests" "$CLI_TESTS_RESULT"
             require_success "plugin-tests" "$PLUGIN_TESTS_RESULT"
+            require_success "e2e-support" "$E2E_SUPPORT_RESULT"
             require_success "test-e2e-ollama-proxy" "$E2E_PROXY_RESULT"
           else
             require_success "docs-only-checks" "$DOCS_ONLY_RESULT"
             allow_success_or_skipped "static-checks" "$STATIC_RESULT"
             allow_success_or_skipped "build-typecheck" "$BUILD_TYPECHECK_RESULT"
             allow_success_or_skipped "installer-integration" "$INSTALLER_INTEGRATION_RESULT"
+            allow_success_or_skipped "wechat-runtime-audit" "$WECHAT_RUNTIME_AUDIT_RESULT"
+            allow_success_or_skipped "reviewed-npm-audit" "$REVIEWED_NPM_AUDIT_RESULT"
             allow_success_or_skipped "cli-tests" "$CLI_TESTS_RESULT"
             allow_success_or_skipped "plugin-tests" "$PLUGIN_TESTS_RESULT"
+            allow_success_or_skipped "e2e-support" "$E2E_SUPPORT_RESULT"
             allow_success_or_skipped "test-e2e-ollama-proxy" "$E2E_PROXY_RESULT"
           fi
 

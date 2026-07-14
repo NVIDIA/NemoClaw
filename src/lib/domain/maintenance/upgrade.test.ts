@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   classifyUpgradeableSandboxes,
+  describeStaleUpgrade,
   isNemoclawImageStale,
   type SandboxVersionCheck,
   shouldSkipUpgradeConfirmation,
@@ -139,6 +140,50 @@ describe("upgrade sandboxes helpers", () => {
     });
   });
 
+  it("routes probe-failed sandboxes to unknown and scheme-mismatched sandboxes to stale so upgrade does not silently skip them (#6049)", () => {
+    const checks: Record<string, SandboxVersionCheck> = {
+      schemeMismatch: {
+        isStale: true,
+        sandboxVersion: "0.17.0",
+        expectedVersion: "2026.6.19",
+        detectionMethod: "registry",
+        verificationFailed: false,
+      },
+      probeFailed: {
+        isStale: false,
+        sandboxVersion: null,
+        expectedVersion: "0.17.0",
+        detectionMethod: "unknown",
+        verificationFailed: true,
+      },
+      current: {
+        isStale: false,
+        sandboxVersion: "0.17.0",
+        expectedVersion: "0.17.0",
+        detectionMethod: "registry",
+        verificationFailed: false,
+      },
+    };
+
+    const classification = classifyUpgradeableSandboxes(
+      [{ name: "schemeMismatch" }, { name: "probeFailed" }, { name: "current" }],
+      new Set(["schemeMismatch", "current"]),
+      (name) => checks[name],
+    );
+    expect(classification.stale).toEqual([
+      {
+        name: "schemeMismatch",
+        current: "0.17.0",
+        expected: "2026.6.19",
+        running: true,
+        reasons: ["agent-version"],
+      },
+    ]);
+    expect(classification.unknown).toEqual([
+      { name: "probeFailed", expected: "0.17.0", running: false },
+    ]);
+  });
+
   it("splits stale sandboxes into rebuildable and stopped groups", () => {
     expect(
       splitRebuildableSandboxes([
@@ -149,5 +194,61 @@ describe("upgrade sandboxes helpers", () => {
       rebuildable: [{ name: "alpha", running: true, expected: "2.0.0" }],
       stopped: [{ name: "beta", running: false, expected: "2.0.0" }],
     });
+  });
+});
+
+describe("describeStaleUpgrade version-change labeling (#6520)", () => {
+  it("labels a NemoClaw image downgrade explicitly instead of framing it as a routine upgrade", () => {
+    expect(
+      describeStaleUpgrade({
+        name: "my-assistant",
+        running: false,
+        current: "2026.6.10",
+        expected: "2026.6.10",
+        reasons: ["image-drift"],
+        imageCurrent: "0.0.77",
+        imageExpected: "0.0.76",
+      }),
+    ).toBe("v2026.6.10 unchanged; NemoClaw image v0.0.77 → v0.0.76 (downgrade)");
+  });
+
+  it("labels an agent-version downgrade explicitly", () => {
+    expect(
+      describeStaleUpgrade({
+        name: "my-assistant",
+        running: false,
+        current: "2026.6.10",
+        expected: "2026.5.1",
+        reasons: ["agent-version"],
+      }),
+    ).toBe("v2026.6.10 → v2026.5.1 (downgrade)");
+  });
+
+  it("keeps upgrade descriptions unchanged", () => {
+    expect(
+      describeStaleUpgrade({
+        name: "my-assistant",
+        running: false,
+        current: "2026.6.10",
+        expected: "2026.6.10",
+        reasons: ["image-drift"],
+        imageCurrent: "0.0.76",
+        imageExpected: "0.0.77",
+      }),
+    ).toBe("v2026.6.10 unchanged; NemoClaw image v0.0.76 → v0.0.77");
+  });
+
+  it("does not label a downgrade when the recorded image build is unknown", () => {
+    expect(
+      describeStaleUpgrade({
+        name: "my-assistant",
+        running: false,
+        current: "2026.6.10",
+        expected: "2026.6.10",
+        reasons: ["image-drift"],
+        imageCurrent: null,
+        imageExpected: "0.0.76",
+      }),
+    ).toBe("v2026.6.10 unchanged; NemoClaw image unknown build → v0.0.76");
   });
 });

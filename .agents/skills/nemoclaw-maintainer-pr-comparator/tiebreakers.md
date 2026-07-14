@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Tier 3 — Ranking and Degraded Mode
 
 Final decision logic. Two paths: happy mode when at least one PR passes all Tier 0 gates, degraded mode when none do.
@@ -11,6 +14,8 @@ Final decision logic. Two paths: happy mode when at least one PR passes all Tier
 ## Happy mode (≥1 PR passes Tier 0)
 
 Eliminate any PR failing Tier 0. Among survivors:
+
+- Set `winner` only to a survivor and leave `closest_to_ready` null.
 
 1. Compute weighted score across Tiers 1-2.
 2. Build the **behavior-coverage matrix** (see below). If matrix has a clear winner per criterion, that wins.
@@ -31,17 +36,21 @@ If after all five tiebreakers no PR wins: recommend "merge A, cherry-pick releva
 Don't give up — pick the closest-to-ready and recommend salvage steps.
 
 1. Classify each Tier 0 failure per PR:
-   - **Trivial** (auto-fixable): missing sign-off, missing issue link, stale base, force-pushed since last review
+   - **Trivial** (author-fixable without changing commit compliance): missing issue link, stale base, force-pushed since last review
+   - **Ineligible**: missing PR-body DCO declaration or any commit that is not GitHub Verified. Reject rather than salvage; the contributor must provide a clean compliant history.
    - **Substantive** (real work): CI red, mergeability conflicts, missing CODEOWNERS approvals, unresolved CodeRabbit threads
 2. Distance-to-ready ranking:
-   - Fewer substantive failures wins
+   - Any PR with an **Ineligible** failure ranks below every eligible PR; if all candidates are ineligible, return a rejection-only verdict
+   - Among eligible PRs, fewer substantive failures wins
    - Tie → fewer trivial failures wins
    - Tie → higher Tier 1-2 weighted score wins (correctness beneath the broken plumbing)
 3. Output:
+   - Leave `winner` null; it is reserved for a fully eligible merge recommendation
+   - Set `closest_to_ready` only to an open PR that passes contributor compliance; leave it null for a rejection-only verdict
    - Per-PR Tier 0 failure list
    - Per-PR Tier 1-2 scorecard (so the winner has objective merit beneath the gates)
    - Verdict: "Neither mergeable yet. PR A is closer — fix [substantive list]. PR B has [issues]."
-   - Salvage steps per PR (rebase command, sign-off command, CR thread links, etc.)
+   - Salvage steps per eligible PR (rebase command, CR thread links, etc.)
 
 ## Behavior-coverage matrix
 

@@ -13,21 +13,33 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, sep } from "node:path";
 
 import { execa } from "execa";
 import YAML from "yaml";
 
-import { validateEndpointUrl } from "./ssrf.js";
-import { buildSubprocessEnv } from "../lib/subprocess-env.js";
 import { DASHBOARD_PORT } from "../lib/ports.js";
+import { buildSubprocessEnv } from "../lib/subprocess-env.js";
+import { isPlainObject, type UnknownRecord } from "../shared/object-record.js";
+import * as importedOpenShellPolicyBoundary from "../shared/openshell-policy-boundary.cjs";
+import type { SnapshotCommandOptions } from "./snapshot-command.js";
+import { actionSnapshots } from "./snapshot-command.js";
+import { safeEndpointUrlForDownstream, validateEndpointUrl } from "./ssrf.js";
+
+// The compiled plugin exposes named CommonJS exports. Source-mode tsx maps the
+// .cjs specifier back to .cts and exposes that same module as its default.
+const sourceOrGeneratedOpenShellPolicyBoundary =
+  importedOpenShellPolicyBoundary as typeof importedOpenShellPolicyBoundary & {
+    default?: typeof importedOpenShellPolicyBoundary;
+  };
+const { parseOpenShellPolicy, withoutProviderComposedPolicies } =
+  sourceOrGeneratedOpenShellPolicyBoundary.default ?? sourceOrGeneratedOpenShellPolicyBoundary;
 
 type Action = "plan" | "apply" | "status" | "rollback";
 
 type RollbackPlanSource = { sandbox_name?: unknown };
-type UnknownRecord = { [key: string]: unknown };
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
 type RestProtocol = "rest";
 type EndpointEnforcement = "enforce" | "audit";
@@ -66,11 +78,27 @@ function isAction(value: string | undefined): value is Action {
   return value === "plan" || value === "apply" || value === "status" || value === "rollback";
 }
 
-function isObjectLike(value: unknown): value is UnknownRecord {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
+// Redact credential-shaped output before bounding OpenShell stderr to a compact,
+// single-line diagnostic. (#6703)
+const MAX_COMMAND_ERROR_CHARS = 500;
+const SENSITIVE_ERROR_ASSIGNMENT =
+  /(\b[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)[A-Z0-9_]*\s*)[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
+
+function boundedCommandError(stderr: string, secretValues: readonly string[] = []): string {
+  let redacted = stderr;
+  for (const secret of [...new Set(secretValues)]
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length)) {
+    redacted = redacted.split(secret).join("<REDACTED>");
   }
-  return Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null;
+  redacted = redacted
+    .replace(SENSITIVE_ERROR_ASSIGNMENT, "$1=<REDACTED>")
+    .replace(/\b(Bearer)\s+\S+/gi, "$1 <REDACTED>");
+  const collapsed = redacted.replace(/\s+/g, " ").trim();
+  if (collapsed.length === 0) return "no error output";
+  return collapsed.length > MAX_COMMAND_ERROR_CHARS
+    ? `${collapsed.slice(0, MAX_COMMAND_ERROR_CHARS)}…`
+    : collapsed;
 }
 
 function isOptionalString(value: unknown): value is string | undefined {
@@ -100,11 +128,11 @@ function hasOnlyKeys(value: UnknownRecord, allowed: readonly string[]): boolean 
 }
 
 function isPolicyRule(value: unknown): value is PolicyRule {
-  if (!isObjectLike(value) || !hasOnlyKeys(value, ["allow"])) {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["allow"])) {
     return false;
   }
   const allow = value.allow;
-  if (!isObjectLike(allow) || !hasOnlyKeys(allow, ["method", "path"])) {
+  if (!isPlainObject(allow) || !hasOnlyKeys(allow, ["method", "path"])) {
     return false;
   }
   return (
@@ -117,7 +145,7 @@ function isPolicyRule(value: unknown): value is PolicyRule {
 
 function isPolicyEndpoint(value: unknown): value is PolicyEndpoint {
   if (
-    !isObjectLike(value) ||
+    !isPlainObject(value) ||
     !hasOnlyKeys(value, ["host", "port", "protocol", "enforcement", "tls", "access", "rules"])
   ) {
     return false;
@@ -144,7 +172,7 @@ function isPolicyEndpoint(value: unknown): value is PolicyEndpoint {
 }
 
 function isPolicyAddition(value: unknown): value is PolicyAddition {
-  if (!isObjectLike(value) || !hasOnlyKeys(value, ["name", "endpoints"])) {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["name", "endpoints"])) {
     return false;
   }
   return (
@@ -156,11 +184,11 @@ function isPolicyAddition(value: unknown): value is PolicyAddition {
 }
 
 function isPolicyAdditions(value: unknown): value is PolicyAdditions {
-  return isObjectLike(value) && Object.values(value).every((entry) => isPolicyAddition(entry));
+  return isPlainObject(value) && Object.values(value).every((entry) => isPolicyAddition(entry));
 }
 
 function isInferenceProfile(value: unknown): value is InferenceProfile {
-  if (!isObjectLike(value)) {
+  if (!isPlainObject(value)) {
     return false;
   }
 
@@ -176,7 +204,7 @@ function isInferenceProfile(value: unknown): value is InferenceProfile {
 }
 
 function isBlueprint(value: unknown): value is Blueprint {
-  if (!isObjectLike(value)) {
+  if (!isPlainObject(value)) {
     return false;
   }
 
@@ -188,19 +216,19 @@ function isBlueprint(value: unknown): value is Blueprint {
   if (components === undefined) {
     return true;
   }
-  if (!isObjectLike(components)) {
+  if (!isPlainObject(components)) {
     return false;
   }
 
   const inference = components.inference;
   if (inference !== undefined) {
-    if (!isObjectLike(inference)) {
+    if (!isPlainObject(inference)) {
       return false;
     }
     const profiles = inference.profiles;
     if (profiles !== undefined) {
       if (
-        !isObjectLike(profiles) ||
+        !isPlainObject(profiles) ||
         !Object.values(profiles).every((entry) => isInferenceProfile(entry))
       ) {
         return false;
@@ -210,7 +238,7 @@ function isBlueprint(value: unknown): value is Blueprint {
 
   const sandbox = components.sandbox;
   if (sandbox !== undefined) {
-    if (!isObjectLike(sandbox)) {
+    if (!isPlainObject(sandbox)) {
       return false;
     }
     if (
@@ -224,7 +252,7 @@ function isBlueprint(value: unknown): value is Blueprint {
 
   const router = components.router;
   if (router !== undefined) {
-    if (!isObjectLike(router)) {
+    if (!isPlainObject(router)) {
       return false;
     }
     if (
@@ -238,7 +266,7 @@ function isBlueprint(value: unknown): value is Blueprint {
 
   const policy = components.policy;
   if (policy !== undefined) {
-    if (!isObjectLike(policy)) {
+    if (!isPlainObject(policy)) {
       return false;
     }
     const additions = policy.additions;
@@ -324,49 +352,30 @@ interface RouterConfig {
 
 const DEFAULT_ROUTER_PORT = 4000;
 
-function parseCurrentPolicy(raw: string): UnknownRecord {
-  const sepIndex = raw.indexOf("---");
-  const yaml = (sepIndex >= 0 ? raw.slice(sepIndex + 3) : raw).trim();
-  if (!yaml) return {};
-
-  let parsed: unknown;
-  try {
-    parsed = YAML.parse(yaml);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(`Current policy from openshell policy get --full is not valid YAML: ${detail}`);
-  }
-
-  if (!isObjectLike(parsed)) {
-    throw new Error("Current policy from openshell policy get --full must be a YAML mapping");
-  }
-  if (sepIndex < 0 && !("version" in parsed) && !("network_policies" in parsed)) {
-    throw new Error(
-      "Current policy from openshell policy get --full does not contain a policy YAML document",
-    );
-  }
-  return parsed;
-}
-
 function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditions): string {
-  const current = parseCurrentPolicy(currentPolicyRaw);
-  if (current.network_policies !== undefined && !isObjectLike(current.network_policies)) {
-    throw new Error("Current policy network_policies must be a YAML mapping");
-  }
-  const existingNetworkPolicies = isObjectLike(current.network_policies)
-    ? current.network_policies
-    : {};
+  // sourceOfTruth: nemoclaw/src/shared/openshell-policy-boundary.cts
+  const current = parseOpenShellPolicy(currentPolicyRaw).policy;
+  const existingNetworkPolicies = current.network_policies ?? {};
   const output: UnknownRecord = {};
 
+  // Stable OpenShell 0.0.72 exposes composable top-level policy sections as
+  // mappings. Preserve unknown mapping sections for forward compatibility, but
+  // fail closed on a scalar or sequence until its mutation semantics are
+  // reviewed for the next supported OpenShell contract.
   for (const [key, value] of Object.entries(current)) {
     if (key !== "version" && key !== "network_policies") {
+      if (!isPlainObject(value)) {
+        throw new Error(`Current policy top-level field "${key}" must be a YAML mapping`);
+      }
       output[key] = value;
     }
   }
 
-  output.version =
-    typeof current.version === "number" && Number.isFinite(current.version) ? current.version : 1;
-  output.network_policies = { ...existingNetworkPolicies, ...additions };
+  output.version = current.version ?? 1;
+  output.network_policies = withoutProviderComposedPolicies({
+    ...existingNetworkPolicies,
+    ...additions,
+  });
   return YAML.stringify(output);
 }
 
@@ -432,18 +441,13 @@ async function resolveRunConfig(
   let inferenceCfg = { ...inferenceProfiles[profile] };
   if (endpointUrl) {
     const validated = await validateEndpointUrl(endpointUrl);
-    // Use DNS-pinned URL for HTTP (full SSRF/rebinding protection). For HTTPS,
-    // keep the original hostname — TLS certificate validation prevents rebinding
-    // since the attacker cannot present a valid cert for the target.
-    const safe = endpointUrl.startsWith("https:") ? validated.url : validated.pinnedUrl;
-    inferenceCfg = { ...inferenceCfg, endpoint: safe };
+    inferenceCfg = { ...inferenceCfg, endpoint: safeEndpointUrlForDownstream(validated) };
   }
 
   // Validate the final endpoint (whether from CLI override or blueprint profile)
   if (inferenceCfg.endpoint) {
     const validated = await validateEndpointUrl(inferenceCfg.endpoint);
-    const safe = inferenceCfg.endpoint.startsWith("https:") ? validated.url : validated.pinnedUrl;
-    inferenceCfg = { ...inferenceCfg, endpoint: safe };
+    inferenceCfg = { ...inferenceCfg, endpoint: safeEndpointUrlForDownstream(validated) };
   }
 
   const sandboxCfg = blueprint.components?.sandbox ?? {};
@@ -516,13 +520,12 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-function buildSafeInferencePlan(source: InferenceProfile | unknown): SafeInferencePlan {
-  const record = isObjectLike(source) ? source : {};
+function buildSafeInferencePlan(source: InferenceProfile | UnknownRecord): SafeInferencePlan {
   return {
-    provider_type: optionalString(record.provider_type),
-    provider_name: optionalString(record.provider_name),
-    endpoint: optionalString(record.endpoint),
-    model: optionalString(record.model),
+    provider_type: optionalString(source.provider_type),
+    provider_name: optionalString(source.provider_name),
+    endpoint: optionalString(source.endpoint),
+    model: optionalString(source.model),
   };
 }
 
@@ -576,7 +579,7 @@ function buildPersistedRunPlan(args: {
 }
 
 function buildStatusRunPlan(source: unknown, fallbackRunId: string): StatusRunPlan | null {
-  if (!isObjectLike(source)) {
+  if (!isPlainObject(source)) {
     return null;
   }
 
@@ -589,7 +592,7 @@ function buildStatusRunPlan(source: unknown, fallbackRunId: string): StatusRunPl
     safePlan.profile = profile;
   }
 
-  if (isObjectLike(source.sandbox)) {
+  if (isPlainObject(source.sandbox)) {
     const sandbox: StatusRunPlan["sandbox"] = {};
     const image = optionalString(source.sandbox.image);
     const name = optionalString(source.sandbox.name);
@@ -619,11 +622,11 @@ function buildStatusRunPlan(source: unknown, fallbackRunId: string): StatusRunPl
     safePlan.policy_additions = source.policy_additions;
   }
 
-  if (isObjectLike(source.inference)) {
+  if (isPlainObject(source.inference)) {
     safePlan.inference = buildSafeInferencePlan(source.inference);
   }
 
-  if (isObjectLike(source.router)) {
+  if (isPlainObject(source.router)) {
     const router: StatusRunPlan["router"] = {};
     if (typeof source.router.enabled === "boolean") {
       router.enabled = source.router.enabled;
@@ -769,12 +772,27 @@ export async function actionApply(
     providerArgs.push("--config", `OPENAI_BASE_URL=${endpoint}`);
   }
 
-  await execa(providerArgs[0], providerArgs.slice(1), {
+  const providerResult = await execa(providerArgs[0], providerArgs.slice(1), {
     reject: false,
     stdout: "pipe",
     stderr: "pipe",
     env: buildSubprocessEnv(credEnv),
   });
+  // A required mutation: a silently-ignored failure would persist plan.json and
+  // report a ready sandbox that cannot perform inference. Mirror the
+  // sandbox-create contract above — tolerate an already-existing provider as a
+  // reuse (keeps re-apply idempotent) and fail on any other non-zero result.
+  // The credential is passed via env (never argv); redact it from stderr before
+  // surfacing bounded diagnostic context. (#6703)
+  if (providerResult.exitCode !== 0) {
+    if (providerResult.stderr.includes("already exists")) {
+      log(`Provider '${providerName}' already exists, reusing.`);
+    } else {
+      throw new Error(
+        `Failed to create inference provider '${providerName}': ${boundedCommandError(providerResult.stderr, [credential])}`,
+      );
+    }
+  }
 
   progress(70, "Setting inference route");
   const inferenceArgs = [
@@ -789,11 +807,18 @@ export async function actionApply(
   if (inferenceCfg.timeout_secs !== undefined) {
     inferenceArgs.push("--timeout", String(inferenceCfg.timeout_secs));
   }
-  await runCmd(inferenceArgs, { reject: false });
+  const inferenceResult = await runCmd(inferenceArgs, { reject: false });
+  // Another required mutation: without a routed provider the sandbox cannot
+  // perform inference, so a non-zero result must abort the apply. (#6703)
+  if (inferenceResult.exitCode !== 0) {
+    throw new Error(
+      `Failed to set inference route (provider '${providerName}', model '${model}'): ${boundedCommandError(inferenceResult.stderr)}`,
+    );
+  }
 
   if (Object.keys(policyAdditions).length > 0) {
     progress(78, "Applying policy additions");
-    const currentPolicy = await runCmd(["openshell", "policy", "get", "--full", sandboxName], {
+    const currentPolicy = await runCmd(["openshell", "policy", "get", "--base", sandboxName], {
       reject: false,
     });
     if (currentPolicy.exitCode !== 0) {
@@ -936,7 +961,10 @@ export async function actionRollback(rid: string): Promise<void> {
 
 // ── CLI ─────────────────────────────────────────────────────────
 
-export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
+export async function main(
+  argv: string[] = process.argv.slice(2),
+  options: { snapshotCommand?: SnapshotCommandOptions } = {},
+): Promise<void> {
   const rawAction = argv.at(0);
   const action = isAction(rawAction) ? rawAction : undefined;
   let profile = "default";
@@ -951,8 +979,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   }
 
   if (!action) {
+    if (rawAction === "snapshots") {
+      actionSnapshots(argv.slice(1), options.snapshotCommand);
+      return;
+    }
     throw new Error(
-      `Unknown action '${rawAction ?? "(missing)"}'. Use: plan, apply, status, rollback`,
+      `Unknown action '${rawAction ?? "(missing)"}'. Use: plan, apply, status, rollback, snapshots`,
     );
   }
 

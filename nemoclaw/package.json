@@ -15,7 +15,7 @@
       "minGatewayVersion": "2026.5.22"
     },
     "build": {
-      "openclawVersion": "2026.5.27"
+      "openclawVersion": "2026.6.10"
     }
   },
   "scripts": {
@@ -26,23 +26,24 @@
     "lint:fix": "biome lint --write src",
     "format": "biome format --write src",
     "format:check": "biome format src",
-    "check": "npm run lint && npm run format:check && tsc --noEmit",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
+    "check": "npm run lint && npm run format:check && npm run typecheck",
     "clean": "rm -rf dist/"
   },
   "dependencies": {
     "execa": "^9.6.1",
     "json5": "^2.2.3",
     "tar": "^7.0.0",
-    "yaml": "^2.4.0"
+    "yaml": "2.8.3"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.14",
     "@types/node": "^22.0.0",
-    "typescript": "^5.4.0",
-    "vitest": "^4.1.0"
+    "typescript": "6.0.3",
+    "vitest": "^4.1.9"
   },
   "engines": {
-    "node": ">=22.16.0"
+    "node": ">=22.19.0"
   },
   "files": [
     "dist/",

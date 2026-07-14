@@ -8,10 +8,8 @@ import { parse } from "yaml";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const docsRoot = path.join(repoRoot, "docs");
-const sourcePath = path.join(repoRoot, "docs/reference/commands.mdx");
-const targetPath = path.join(repoRoot, "docs/reference/commands-nemohermes.mdx");
 const generatedDocsRoot = path.join(repoRoot, "docs/_build/agent-variants");
-const agentVariants = ["openclaw", "hermes"] as const;
+const agentVariants = ["openclaw", "hermes", "deepagents"] as const;
 
 type AgentVariant = (typeof agentVariants)[number];
 type RenderedFile = {
@@ -45,8 +43,6 @@ type NavigationNode = {
   path?: string;
 };
 
-const GENERATED_NOTICE =
-  "{/* This file is generated from docs/reference/commands.mdx by scripts/sync-agent-variant-docs.ts. Run `npm run docs:sync-agent-variants` to regenerate it. Do not edit by hand. */}";
 const GENERATED_VARIANT_NOTICE =
   "{/* This file is generated from a shared agent-variant source by scripts/sync-agent-variant-docs.ts. Run `npm run docs:sync-agent-variants` to regenerate it. Do not edit by hand. */}";
 const CLI_SENTINEL = "$$nemoclaw";
@@ -54,45 +50,14 @@ const CLI_SENTINEL = "$$nemoclaw";
 const checkOnly = process.argv.includes("--check");
 
 function main(): void {
-  const source = readFileSync(sourcePath, "utf8");
-  const rendered = renderHermesCommandsReference(source);
-  const existing = readOptionalTarget();
   const generatedVariantPages = renderGeneratedAgentVariantPages();
 
   if (checkOnly) {
-    if (existing !== rendered) {
-      console.error(
-        "docs/reference/commands-nemohermes.mdx is out of sync. Run `npm run docs:sync-agent-variants`.",
-      );
-      process.exit(1);
-    }
     writeGeneratedFiles(generatedVariantPages);
     return;
   }
 
-  if (existing !== rendered) {
-    writeFileSync(targetPath, rendered);
-    console.log(`Wrote ${path.relative(repoRoot, targetPath)}`);
-  } else {
-    console.log(`${path.relative(repoRoot, targetPath)} is already up to date`);
-  }
   writeGeneratedFiles(generatedVariantPages);
-}
-
-export function renderHermesCommandsReference(source: string): string {
-  const { frontmatter, body } = splitFrontmatter(source);
-  const hermesFrontmatter = updateFrontmatter(frontmatter);
-  const hermesBody = transformNemoclawCliInvocations(
-    stripAgentOnlyBlocks(body).replace(
-      /^import \{ AgentOnly \} from "\.\.\/_components\/AgentGuide";\n\n?/m,
-      "",
-    ),
-  )
-    .replaceAll(CLI_SENTINEL, "nemohermes")
-    .replace(/\n{3,}/g, "\n\n")
-    .trimStart();
-
-  return `${hermesFrontmatter}${GENERATED_NOTICE}\n\n${hermesBody}`.replace(/\s*$/, "\n");
 }
 
 function splitFrontmatter(source: string): { frontmatter: string; body: string } {
@@ -101,29 +66,6 @@ function splitFrontmatter(source: string): { frontmatter: string; body: string }
     throw new Error("commands.mdx must start with YAML frontmatter");
   }
   return { frontmatter: match[1], body: match[2] };
-}
-
-function updateFrontmatter(frontmatter: string): string {
-  let next = frontmatter;
-  next = replaceFrontmatterLine(next, "title", '"NemoHermes CLI Commands Reference"');
-  next = replaceFrontmatterLine(next, "sidebar-title", '"Commands"');
-  next = replaceFrontmatterLine(
-    next,
-    "description",
-    '"Full CLI reference for standalone NemoHermes commands and Hermes-specific in-sandbox commands."',
-  );
-  next = replaceFrontmatterLine(
-    next,
-    "description-agent",
-    '"Includes the full CLI reference for standalone NemoHermes commands and Hermes-specific in-sandbox commands. Use when looking up a specific `nemohermes` subcommand, flag, argument, or exit code."',
-  );
-  next = replaceFrontmatterLine(
-    next,
-    "keywords",
-    '["nemohermes cli commands", "hermes command reference", "nemohermes command reference"]',
-  );
-  next = upsertFrontmatterLine(next, "exclude-from-skills-gen", "true");
-  return next;
 }
 
 function replaceFrontmatterLine(frontmatter: string, key: string, value: string): string {
@@ -142,18 +84,52 @@ function upsertFrontmatterLine(frontmatter: string, key: string, value: string):
   return frontmatter.replace(/\n---\n$/, `\n${key}: ${value}\n---\n`);
 }
 
-function stripAgentOnlyBlocks(body: string): string {
-  return stripAgentOnlyBlocksForVariant(body, "hermes");
+function stripAgentOnlyBlocksForVariant(body: string, activeVariant: AgentVariant): string {
+  type OpenBlock = {
+    include: boolean;
+    lines: string[];
+    openLine: string;
+  };
+
+  const renderedLines: string[] = [];
+  let openBlock: OpenBlock | undefined;
+
+  for (const line of body.split("\n")) {
+    if (openBlock) {
+      if (line.match(/^<\/AgentOnly>\s*$/)) {
+        if (openBlock.include) renderedLines.push(...openBlock.lines);
+        openBlock = undefined;
+        continue;
+      }
+      openBlock.lines.push(line);
+      continue;
+    }
+
+    const openMatch = line.match(/^<AgentOnly variant="([^"]+)">\s*$/);
+    if (openMatch) {
+      openBlock = {
+        include: agentOnlyVariantMatches(openMatch[1], activeVariant),
+        lines: [],
+        openLine: line,
+      };
+      continue;
+    }
+
+    renderedLines.push(line);
+  }
+
+  if (openBlock) {
+    renderedLines.push(openBlock.openLine, ...openBlock.lines);
+  }
+
+  return renderedLines.join("\n");
 }
 
-function stripAgentOnlyBlocksForVariant(body: string, activeVariant: AgentVariant): string {
-  return body.replace(
-    /\n?<AgentOnly variant="(openclaw|hermes)">\n([\s\S]*?)\n<\/AgentOnly>\n?/g,
-    (_match, variant: string, content: string) => {
-      if (variant !== activeVariant) return "\n";
-      return `\n${content.trim()}\n`;
-    },
-  );
+function agentOnlyVariantMatches(variant: string, activeVariant: AgentVariant): boolean {
+  return variant
+    .split(",")
+    .map((item) => item.trim())
+    .includes(activeVariant);
 }
 
 export function renderAgentVariantPage(
@@ -162,15 +138,17 @@ export function renderAgentVariantPage(
   options: RenderAgentVariantOptions = {},
 ): string {
   const { frontmatter, body } = splitFrontmatter(source);
-  const renderedFrontmatter = frontmatter.replaceAll(
-    CLI_SENTINEL,
-    variant === "hermes" ? "nemohermes" : "nemoclaw",
-  );
+  const commandsReference = isCommandsReferenceSource(options.sourcePath);
+  const renderedFrontmatter = renderFrontmatter(frontmatter, variant, commandsReference);
   let renderedBody = stripAgentOnlyBlocksForVariant(
     body.replace(/^import \{ AgentOnly \} from "\.\.\/_components\/AgentGuide";\n\n?/m, ""),
     variant,
-  )
-    .replaceAll(CLI_SENTINEL, variant === "hermes" ? "nemohermes" : "nemoclaw")
+  );
+  if (commandsReference) {
+    renderedBody = transformNemoclawCliInvocations(renderedBody, variant);
+  }
+  renderedBody = renderedBody
+    .replaceAll(CLI_SENTINEL, cliForVariant(variant))
     .replace(/\n{3,}/g, "\n\n")
     .trimStart();
 
@@ -182,6 +160,59 @@ export function renderAgentVariantPage(
     /\s*$/,
     "\n",
   );
+}
+
+function renderFrontmatter(
+  frontmatter: string,
+  variant: AgentVariant,
+  commandsReference: boolean,
+): string {
+  const rendered = frontmatter.replaceAll(CLI_SENTINEL, cliForVariant(variant));
+  return commandsReference ? updateCommandsFrontmatter(rendered, variant) : rendered;
+}
+
+function updateCommandsFrontmatter(frontmatter: string, variant: AgentVariant): string {
+  if (variant === "openclaw") return frontmatter;
+  let next = frontmatter;
+  const cli = cliForVariant(variant);
+  if (variant === "hermes") {
+    next = replaceFrontmatterLine(next, "title", '"NemoHermes CLI Commands Reference"');
+    next = replaceFrontmatterLine(
+      next,
+      "description",
+      '"Full CLI reference for standalone NemoHermes commands and Hermes-specific in-sandbox commands."',
+    );
+    next = replaceFrontmatterLine(
+      next,
+      "description-agent",
+      '"Includes the full CLI reference for standalone NemoHermes commands and Hermes-specific in-sandbox commands. Use when looking up a specific `nemohermes` subcommand, flag, argument, or exit code."',
+    );
+    next = replaceFrontmatterLine(
+      next,
+      "keywords",
+      '["nemohermes cli commands", "hermes command reference", "nemohermes command reference"]',
+    );
+  } else {
+    next = replaceFrontmatterLine(next, "title", '"NemoDeepAgents CLI Commands Reference"');
+    next = replaceFrontmatterLine(
+      next,
+      "description",
+      '"Full CLI reference for standalone NemoDeepAgents commands and Deep Agents-specific in-sandbox commands."',
+    );
+    next = replaceFrontmatterLine(
+      next,
+      "description-agent",
+      '"Includes the full CLI reference for standalone NemoDeepAgents commands and Deep Agents-specific in-sandbox commands. Use when looking up a specific `nemo-deepagents` subcommand, flag, argument, or exit code."',
+    );
+    next = replaceFrontmatterLine(
+      next,
+      "keywords",
+      '["nemo-deepagents cli commands", "deep agents command reference", "nemo-deepagents command reference"]',
+    );
+  }
+  next = replaceFrontmatterLine(next, "sidebar-title", '"Commands"');
+  next = upsertFrontmatterLine(next, "exclude-from-skills-gen", "true");
+  return next.replaceAll("`nemoclaw`", `\`${cli}\``);
 }
 
 function renderGeneratedAgentVariantPages(): RenderedFile[] {
@@ -221,9 +252,13 @@ function findGeneratedNavigationTargets(): RenderTarget[] {
     throw new Error("docs/index.yml must define navigation variants");
   }
   return userGuide.variants.flatMap((variant) => {
-    if (variant.slug !== "openclaw" && variant.slug !== "hermes") return [];
+    if (!isAgentVariant(variant.slug)) return [];
     return collectGeneratedTargets(variant.layout ?? [], variant.slug);
   });
+}
+
+function isAgentVariant(value: string | undefined): value is AgentVariant {
+  return agentVariants.some((variant) => variant === value);
 }
 
 function collectGeneratedTargets(nodes: NavigationNode[], variant: AgentVariant): RenderTarget[] {
@@ -275,13 +310,18 @@ function normalizeNavigationSourcePath(navPath: string | undefined): string | nu
 function normalizeGeneratedNavigationSourcePath(navPath: string | undefined): string | null {
   if (!navPath) return null;
   const generatedMatch = navPath.match(
-    /^_build\/agent-variants\/(.+)\.(?:openclaw|hermes)\.generated\.mdx$/,
+    /^_build\/agent-variants\/(.+)\.(?:openclaw|hermes|deepagents)\.generated\.mdx$/,
   );
   return generatedMatch?.[1] ? `${generatedMatch[1]}.mdx` : null;
 }
 
+function cliForVariant(variant: AgentVariant): string {
+  if (variant === "hermes") return "nemohermes";
+  if (variant === "deepagents") return "nemo-deepagents";
+  return "nemoclaw";
+}
+
 function normalizeLegacyVariantSource(navPath: string): string {
-  if (navPath === "reference/commands-nemohermes.mdx") return "reference/commands.mdx";
   return navPath;
 }
 
@@ -316,7 +356,7 @@ function walkDocs(directory: string, files: string[]): void {
       continue;
     }
     if (!entry.isFile() || !entry.name.endsWith(".mdx")) continue;
-    if (entry.name.endsWith(".generated.mdx") || entry.name === "commands-nemohermes.mdx") {
+    if (entry.name.endsWith(".generated.mdx")) {
       continue;
     }
     if (readFileSync(entryPath, "utf8").includes(CLI_SENTINEL)) {
@@ -415,26 +455,32 @@ function listGeneratedFiles(directory: string): string[] {
   });
 }
 
-function transformNemoclawCliInvocations(body: string): string {
+function transformNemoclawCliInvocations(body: string, variant: AgentVariant): string {
+  const cli = cliForVariant(variant);
+  if (cli === "nemoclaw") return body;
   return restoreProtectedLiterals(
     protectNonAliasableLiterals(body)
       // Inline code and headings that start with the host CLI command.
-      .replace(/`nemoclaw(?=[\s`])/g, "`nemohermes")
+      .replace(/`nemoclaw(?=[\s`])/g, `\`${cli}`)
       // Copyable shell examples, including env-prefixed invocations and
       // continuation lines indented under a previous shell command.
       .replace(
         /^(\s*(?:\$ )?(?:(?:[A-Z_][A-Z0-9_]*=[^\s\\]+|export)\s+)*)(nemoclaw)(?=\s|$)/gm,
-        "$1nemohermes",
+        `$1${cli}`,
       )
       // Shell command substitutions used in examples.
-      .replace(/\$\(nemoclaw(?=\s|\))/g, "$(nemohermes")
+      .replace(/\$\(nemoclaw(?=\s|\))/g, `$(${cli}`)
       // Same-page anchors generated from command headings.
-      .replace(/#nemoclaw(?=[-)])/g, "#nemohermes"),
+      .replace(/#nemoclaw(?=[-)])/g, `#${cli}`),
   );
 }
 
 const PROTECTED_LITERALS = [
   ["nemoclaw onboard --agent hermes", "__NEMOCLAW_ONBOARD_AGENT_HERMES__"],
+  [
+    "nemoclaw onboard --agent langchain-deepagents-code",
+    "__NEMOCLAW_ONBOARD_AGENT_LANGCHAIN_DEEPAGENTS_CODE__",
+  ],
 ] as const;
 
 function protectNonAliasableLiterals(body: string): string {
@@ -451,8 +497,12 @@ function restoreProtectedLiterals(body: string): string {
   );
 }
 
-function readOptionalTarget(): string | null {
-  return readOptionalFile(targetPath);
+function isCommandsReferenceSource(sourcePath: string | undefined): boolean {
+  if (!sourcePath) return false;
+  const normalized = sourcePath.replaceAll(path.sep, "/");
+  return (
+    normalized === "reference/commands.mdx" || normalized.endsWith("/docs/reference/commands.mdx")
+  );
 }
 
 function readOptionalFile(filePath: string): string | null {

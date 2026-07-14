@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { DASHBOARD_PORT } from "../core/ports";
 import type { AgentDefinition } from "../agent/defs";
+import { DASHBOARD_PORT } from "../core/ports";
 import type { SandboxEntry } from "../state/registry";
 import * as registry from "../state/registry";
 import { bestEffortForwardStop } from "./forward-cleanup";
@@ -40,6 +40,8 @@ export interface ReusedSandboxDashboardStateInput {
   sandboxGpuConfig: SandboxGpuConfig;
   gatewayName: string;
   gatewayPort: number;
+  manageDashboard?: boolean;
+  getSandbox?(sandboxName: string): SandboxEntry | null;
   ensureDashboardForward(sandboxName: string, chatUiUrl: string): number;
   hermesDashboardForwarding: ReusedSandboxDashboardForwarding;
   updateSandbox?(sandboxName: string, updates: Partial<SandboxEntry>): unknown;
@@ -63,11 +65,30 @@ export interface ReusedSandboxDashboardStateResult {
 export function applyReusedSandboxDashboardState(
   input: ReusedSandboxDashboardStateInput,
 ): ReusedSandboxDashboardStateResult {
-  const dashboardPort = input.ensureDashboardForward(input.sandboxName, input.chatUiUrl);
-  const chatUiUrl = `http://127.0.0.1:${dashboardPort}`;
-  input.env.CHAT_UI_URL = chatUiUrl;
-  const hermesDashboardState = input.hermesDashboardForwarding.resolveStateForPort(dashboardPort);
-  input.hermesDashboardForwarding.ensureForState(hermesDashboardState, input.sandboxName);
+  const manageDashboard = input.manageDashboard ?? true;
+  if (
+    manageDashboard &&
+    input.env.NEMOCLAW_DASHBOARD_BIND === "0.0.0.0" &&
+    (input.getSandbox ?? registry.getSandbox)(input.sandboxName)?.dashboardRemoteBindPrepared !==
+      true
+  ) {
+    throw new Error(
+      `Sandbox '${input.sandboxName}' was created without remote dashboard exposure. Re-run onboarding with NEMOCLAW_DASHBOARD_BIND=0.0.0.0 and --recreate-sandbox before opening a remote bind.`,
+    );
+  }
+  const dashboardPort = manageDashboard
+    ? input.ensureDashboardForward(input.sandboxName, input.chatUiUrl)
+    : 0;
+  const chatUiUrl = manageDashboard ? `http://127.0.0.1:${dashboardPort}` : input.chatUiUrl;
+  if (manageDashboard) {
+    input.env.CHAT_UI_URL = chatUiUrl;
+  }
+  const hermesDashboardState = manageDashboard
+    ? input.hermesDashboardForwarding.resolveStateForPort(dashboardPort)
+    : { enabled: false, config: null };
+  if (manageDashboard) {
+    input.hermesDashboardForwarding.ensureForState(hermesDashboardState, input.sandboxName);
+  }
   input.updateReusedSandboxMetadata(
     input.sandboxName,
     input.agent,

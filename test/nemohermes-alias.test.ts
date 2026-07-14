@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
 import { execSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { describe, expect, it } from "vitest";
 
 import { execTimeout } from "./helpers/timeouts";
 
@@ -21,7 +22,7 @@ function runHermes(
       timeout: execTimeout(),
       env: {
         ...process.env,
-        HOME: "/tmp/nemohermes-test-" + Date.now(),
+        HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemohermes-test-")),
         // Clear inherited markers so the launcher under test sets them itself.
         NEMOCLAW_AGENT: undefined,
         NEMOCLAW_INVOKED_AS: undefined,
@@ -49,7 +50,7 @@ function runNemoClaw(
       timeout: execTimeout(),
       env: {
         ...process.env,
-        HOME: "/tmp/nemohermes-test-" + Date.now(),
+        HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemohermes-test-")),
         // Clear inherited markers so the base nemoclaw bin has a clean slate.
         // The base launcher does not set NEMOCLAW_INVOKED_AS, so leaving an
         // inherited value would silently re-brand the CLI as the alias.
@@ -77,7 +78,7 @@ describe("nemohermes alias", () => {
     expect(stat.mode & 0o100).not.toBe(0);
   });
 
-  it("--version outputs nemohermes branding", () => {
+  it("outputs nemohermes branding for --version", () => {
     const { code, out } = runHermes("--version");
     expect(code).toBe(0);
     expect(out).toMatch(/^nemohermes v[\d.]+/);
@@ -94,6 +95,13 @@ describe("nemohermes alias", () => {
     const { code, out } = runHermes("--help");
     expect(code).toBe(0);
     expect(out).toContain("NemoHermes");
+  });
+
+  it("brands deprecated setup help with the invoked alias", () => {
+    const { code, out } = runHermes("setup --help");
+    expect(code).toBe(0);
+    expect(out).toContain("Deprecated: 'nemohermes setup' is now 'nemohermes onboard'");
+    expect(out).not.toContain("Deprecated: 'nemoclaw setup'");
   });
 
   it("routes nemohermes uninstall as a global command, not a sandbox connect command", () => {

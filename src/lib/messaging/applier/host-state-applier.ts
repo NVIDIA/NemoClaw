@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SandboxMessagingPlan } from "../manifest";
+import * as registry from "../../state/registry";
+import type { SandboxMessagingPlan, SandboxMessagingRuntimeSetupPlan } from "../manifest";
 import { hydrateDerivedSandboxMessagingPlanFields } from "../persistence";
 import { parseSandboxMessagingPlan } from "../plan-validation";
-import * as registry from "../../state/registry";
 import { MessagingSetupApplier } from "./setup-applier";
 import type { MessagingSetupEnvOptions } from "./types";
 
@@ -107,9 +107,21 @@ function mergeSandboxMessagingPlans(
     },
     agentRender: mergeByChannelId(existing.agentRender, incoming.agentRender),
     buildSteps: mergeByChannelId(existing.buildSteps, incoming.buildSteps),
+    runtimeSetup: mergeRuntimeSetup(existing.runtimeSetup, incoming.runtimeSetup),
     stateUpdates: mergeByChannelId(existing.stateUpdates, incoming.stateUpdates),
     healthChecks: mergeByChannelId(existing.healthChecks, incoming.healthChecks),
   });
+}
+
+function mergeRuntimeSetup(
+  existing: SandboxMessagingRuntimeSetupPlan | undefined,
+  incoming: SandboxMessagingRuntimeSetupPlan | undefined,
+): SandboxMessagingRuntimeSetupPlan {
+  return {
+    nodePreloads: mergeByChannelId(existing?.nodePreloads ?? [], incoming?.nodePreloads ?? []),
+    envAliases: mergeByChannelId(existing?.envAliases ?? [], incoming?.envAliases ?? []),
+    secretScans: mergeByChannelId(existing?.secretScans ?? [], incoming?.secretScans ?? []),
+  };
 }
 
 function mergeByChannelId<T extends { readonly channelId: string }>(

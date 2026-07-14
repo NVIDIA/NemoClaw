@@ -1,0 +1,57 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: discord
+  description: "Hermes Discord API, gateway, and CDN access"
+
+network_policies:
+  discord:
+    name: discord
+    endpoints:
+      - host: discord.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+          - allow: { method: GET, path: "/gateway*" }
+          - allow: { method: GET, path: "/api/v*/gateway/bot" }
+          - allow: { method: GET, path: "/api/v*/applications/@me" }
+          - allow: { method: PUT, path: "/api/v*/applications/*/commands" }
+          - allow: { method: PUT, path: "/api/v*/channels/*/messages/*/reactions/*/@me" }
+          - allow: { method: PATCH, path: "/api/v*/applications/*" }
+          - allow: { method: PATCH, path: "/api/v*/applications/*/commands/*" }
+          - allow: { method: PATCH, path: "/api/v*/channels/*/messages/*" }
+          - allow: { method: PATCH, path: "/api/v*/webhooks/*/*/messages/*" }
+          - allow: { method: DELETE, path: "/api/v*/applications/*/commands/*" }
+          - allow: { method: DELETE, path: "/api/v*/channels/*/messages/*" }
+          - allow: { method: DELETE, path: "/api/v*/channels/*/messages/*/reactions/*/*" }
+          - allow: { method: DELETE, path: "/api/v*/webhooks/*/*/messages/*" }
+      - host: gateway.discord.gg
+        port: 443
+        protocol: websocket
+        enforcement: enforce
+        websocket_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
+      - host: "*.discord.gg"
+        port: 443
+        protocol: websocket
+        enforcement: enforce
+        websocket_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
+      - host: cdn.discordapp.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/python3* }
+      - { path: /opt/hermes/.venv/bin/python }

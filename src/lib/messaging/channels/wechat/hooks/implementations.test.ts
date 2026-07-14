@@ -10,7 +10,6 @@ import { createWechatIlinkLoginHook, WECHAT_ILINK_LOGIN_HOOK_ID } from "./ilink-
 import {
   buildWechatSeedOpenClawAccountOutputs,
   createWechatSeedOpenClawAccountHook,
-  WECHAT_PLUGIN_SPEC,
   WECHAT_SEED_OPENCLAW_ACCOUNT_HOOK_ID,
 } from "./seed-openclaw-account";
 
@@ -266,7 +265,7 @@ describe("WeChat hook implementations", () => {
               plugins: {
                 installs: {
                   "openclaw-weixin": {
-                    spec: WECHAT_PLUGIN_SPEC,
+                    spec: "@tencent-weixin/openclaw-weixin@2.4.3",
                   },
                 },
               },

@@ -1,8 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isObjectRecord } from "../core/json-types";
 import type { MessagingChannelConfig } from "../messaging-channel-config";
-import type { MessagingAgentId, MessagingChannelId, SandboxMessagingPlan } from "./manifest";
+import type {
+  MessagingAgentId,
+  MessagingChannelId,
+  MessagingSerializableValue,
+  SandboxMessagingPlan,
+} from "./manifest";
+import {
+  type MaybeCompactMessagingPlan,
+  normalizePersistedSandboxMessagingPlanShape,
+} from "./persistence";
 
 export interface SandboxMessagingPlanParseOptions {
   sandboxName?: string | null;
@@ -15,19 +25,20 @@ export function parseSandboxMessagingPlan(
   options: SandboxMessagingPlanParseOptions = {},
 ): SandboxMessagingPlan | null {
   if (
-    !isObject(value) ||
+    !isObjectRecord(value) ||
     value.schemaVersion !== 1 ||
     typeof value.sandboxName !== "string" ||
     typeof value.agent !== "string" ||
     typeof value.workflow !== "string" ||
     !Array.isArray(value.channels) ||
     !Array.isArray(value.disabledChannels) ||
-    !Array.isArray(value.credentialBindings) ||
-    !isObject(value.networkPolicy) ||
-    (Object.hasOwn(value, "agentRender") && !Array.isArray(value.agentRender)) ||
-    !Array.isArray(value.buildSteps) ||
-    !Array.isArray(value.stateUpdates) ||
-    !Array.isArray(value.healthChecks)
+    !isOptionalObjectArray(value, "credentialBindings") ||
+    (Object.hasOwn(value, "networkPolicy") && !isObjectRecord(value.networkPolicy)) ||
+    !isOptionalObjectArray(value, "agentRender") ||
+    !isOptionalObjectArray(value, "buildSteps") ||
+    !isRuntimeSetup(value.runtimeSetup) ||
+    !isOptionalObjectArray(value, "stateUpdates") ||
+    !isOptionalObjectArray(value, "healthChecks")
   ) {
     return null;
   }
@@ -35,21 +46,32 @@ export function parseSandboxMessagingPlan(
   if (options.sandboxName && value.sandboxName !== options.sandboxName) return null;
   if (options.agent && value.agent !== options.agent) return null;
 
-  const supported =
-    options.supportedChannelIds && options.supportedChannelIds.length > 0
-      ? new Set(options.supportedChannelIds)
-      : null;
+  const supported = Array.isArray(options.supportedChannelIds)
+    ? new Set(options.supportedChannelIds)
+    : null;
   for (const [index, channel] of value.channels.entries()) {
-    if (!isObject(channel) || typeof channel.channelId !== "string") return null;
-    if (typeof channel.configured !== "boolean") return null;
-    if (typeof channel.active !== "boolean") return null;
-    if (typeof channel.disabled !== "boolean") return null;
-    if (!Array.isArray(channel.inputs)) return null;
+    if (!isObjectRecord(channel) || typeof channel.channelId !== "string") return null;
+    if (Object.hasOwn(channel, "configured") && typeof channel.configured !== "boolean") {
+      return null;
+    }
+    if (Object.hasOwn(channel, "active") && typeof channel.active !== "boolean") return null;
+    if (Object.hasOwn(channel, "disabled") && typeof channel.disabled !== "boolean") return null;
+    if (Object.hasOwn(channel, "inputs") && !Array.isArray(channel.inputs)) return null;
+    if (Object.hasOwn(channel, "hostForward") && !isHostForward(channel.hostForward)) return null;
     if (Object.hasOwn(channel, "hooks") && !Array.isArray(channel.hooks)) return null;
+    if (
+      Array.isArray(channel.inputs) &&
+      channel.inputs.some((input) => !isObjectRecord(input) || typeof input.inputId !== "string")
+    ) {
+      return null;
+    }
+    if (Array.isArray(channel.hooks) && channel.hooks.some((hook) => !isObjectRecord(hook))) {
+      return null;
+    }
     if (supported && !supported.has(channel.channelId)) return null;
     if (
       value.channels.findIndex(
-        (candidate) => isObject(candidate) && candidate.channelId === channel.channelId,
+        (candidate) => isObjectRecord(candidate) && candidate.channelId === channel.channelId,
       ) !== index
     ) {
       return null;
@@ -58,7 +80,7 @@ export function parseSandboxMessagingPlan(
   if (!value.disabledChannels.every((channelId) => typeof channelId === "string")) return null;
 
   return cloneSandboxMessagingPlan(
-    normalizePersistedSandboxMessagingPlanShape(value as unknown as MaybeCompactMessagingPlan),
+    normalizePersistedSandboxMessagingPlanShape(value as MaybeCompactMessagingPlan),
   );
 }
 
@@ -94,37 +116,79 @@ export function getMessagingChannelConfigFromPlan(
 ): MessagingChannelConfig | null {
   if (!plan) return null;
   const config: MessagingChannelConfig = {};
+  const stateValues = getMessagingPlanStateValues(plan);
+
+  for (const update of plan.stateUpdates) {
+    if (update.kind !== "rebuild-hydration") continue;
+    const value = stringifyPlanStateValue(stateValues[update.statePath]);
+    if (value) config[update.env] = value;
+  }
+
   for (const channel of plan.channels) {
     for (const input of channel.inputs) {
       if (input.kind !== "config" || !input.sourceEnv || input.value == null) continue;
-      config[input.sourceEnv] = String(input.value);
+      if (config[input.sourceEnv]) continue;
+      const value = stringifyPlanStateValue(input.value);
+      if (value) config[input.sourceEnv] = value;
     }
   }
   return Object.keys(config).length > 0 ? config : null;
 }
 
-type MaybeCompactMessagingChannelPlan = Omit<SandboxMessagingPlan["channels"][number], "hooks"> & {
-  readonly hooks?: SandboxMessagingPlan["channels"][number]["hooks"];
-};
-
-type MaybeCompactMessagingPlan = Omit<SandboxMessagingPlan, "agentRender" | "channels"> & {
-  readonly agentRender?: SandboxMessagingPlan["agentRender"];
-  readonly channels: readonly MaybeCompactMessagingChannelPlan[];
-};
-
-function normalizePersistedSandboxMessagingPlanShape(
-  plan: MaybeCompactMessagingPlan,
-): SandboxMessagingPlan {
-  return {
-    ...plan,
-    agentRender: Array.isArray(plan.agentRender) ? [...plan.agentRender] : [],
-    channels: plan.channels.map((channel) => ({
-      ...channel,
-      hooks: Array.isArray(channel.hooks) ? [...channel.hooks] : [],
-    })),
-  };
+export function getMessagingPlanStateValues(
+  plan: SandboxMessagingPlan | null | undefined,
+): Record<string, MessagingSerializableValue> {
+  if (!plan) return {};
+  const values: Record<string, MessagingSerializableValue> = {};
+  for (const channel of plan.channels) {
+    for (const input of channel.inputs) {
+      if (input.kind !== "config" || !input.statePath || input.value == null) continue;
+      values[input.statePath] = input.value;
+    }
+  }
+  return values;
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function stringifyPlanStateValue(value: MessagingSerializableValue | undefined): string | null {
+  if (value == null) return null;
+  if (Array.isArray(value)) {
+    const csv = value
+      .map((entry) => String(entry).trim())
+      .filter(Boolean)
+      .join(",");
+    return csv || null;
+  }
+  const text = String(value).trim();
+  return text.length > 0 ? text : null;
+}
+
+function isOptionalObjectArray(value: Record<string, unknown>, key: string): boolean {
+  if (!Object.hasOwn(value, key)) return true;
+  const entries = value[key];
+  return Array.isArray(entries) && entries.every(isObjectRecord);
+}
+
+function isHostForward(value: unknown): boolean {
+  return (
+    isObjectRecord(value) &&
+    typeof value.channelId === "string" &&
+    typeof value.port === "number" &&
+    Number.isInteger(value.port) &&
+    value.port >= 1 &&
+    value.port <= 65535 &&
+    typeof value.label === "string"
+  );
+}
+
+function isRuntimeSetup(value: unknown): boolean {
+  if (value === undefined) return true;
+  return (
+    isObjectRecord(value) &&
+    Array.isArray(value.nodePreloads) &&
+    Array.isArray(value.envAliases) &&
+    Array.isArray(value.secretScans) &&
+    value.nodePreloads.every(isObjectRecord) &&
+    value.envAliases.every(isObjectRecord) &&
+    value.secretScans.every(isObjectRecord)
+  );
 }

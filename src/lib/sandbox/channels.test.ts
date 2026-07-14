@@ -3,20 +3,28 @@
 
 import { describe, expect, it } from "vitest";
 
+import { slackManifest } from "../messaging/channels";
 import {
-  KNOWN_CHANNELS,
+  type ChannelDef,
   channelHasStaticToken,
   channelUsesInSandboxQrPairing,
   getChannelDef,
   getChannelTokenKeys,
+  KNOWN_CHANNELS,
   knownChannelNames,
   listChannels,
-  type ChannelDef,
 } from "./channels";
 
 describe("sandbox-channels KNOWN_CHANNELS", () => {
-  it("covers telegram, discord, wechat, slack, and whatsapp", () => {
-    expect(knownChannelNames()).toEqual(["telegram", "discord", "wechat", "slack", "whatsapp"]);
+  it("covers telegram, discord, wechat, slack, whatsapp, and teams", () => {
+    expect(knownChannelNames()).toEqual([
+      "telegram",
+      "discord",
+      "wechat",
+      "slack",
+      "whatsapp",
+      "teams",
+    ]);
   });
 
   it("exposes the primary bot-token env var for token-based channels", () => {
@@ -24,12 +32,13 @@ describe("sandbox-channels KNOWN_CHANNELS", () => {
     expect(getChannelDef("discord")?.envKey).toBe("DISCORD_BOT_TOKEN");
     expect(getChannelDef("slack")?.envKey).toBe("SLACK_BOT_TOKEN");
     expect(getChannelDef("wechat")?.envKey).toBe("WECHAT_BOT_TOKEN");
+    expect(getChannelDef("teams")?.envKey).toBe("MSTEAMS_APP_PASSWORD");
   });
 
   it("classifies channels by login method", () => {
     // Token-paste is the default and stays implicit (undefined). WeChat
     // captures a static token via a host-side QR handshake
-    // (src/ext/wechat/login.ts). WhatsApp pairs entirely inside the sandbox
+    // (src/lib/messaging/channels/wechat/login.ts). WhatsApp pairs entirely inside the sandbox
     // because the bot library owns the live Signal-style session — a
     // host-side capture would yield a stale blob the moment the bot mutates
     // its on-disk state. Onboarding branches on this flag, so flipping any
@@ -39,6 +48,7 @@ describe("sandbox-channels KNOWN_CHANNELS", () => {
     expect(getChannelDef("telegram")?.loginMethod).toBeUndefined();
     expect(getChannelDef("discord")?.loginMethod).toBeUndefined();
     expect(getChannelDef("slack")?.loginMethod).toBeUndefined();
+    expect(getChannelDef("teams")?.loginMethod).toBeUndefined();
   });
 
   it("declares wechat as DM-only with the WECHAT_ALLOWED_IDS env key", () => {
@@ -49,9 +59,12 @@ describe("sandbox-channels KNOWN_CHANNELS", () => {
 
   it("omits envKey for in-sandbox QR-paired channels (whatsapp)", () => {
     expect(getChannelDef("whatsapp")?.envKey).toBeUndefined();
+    expect(getChannelDef("whatsapp")?.userIdEnvKey).toBe("WHATSAPP_ALLOWED_IDS");
+    expect(getChannelDef("whatsapp")?.allowIdsMode).toBe("dm");
     expect(channelUsesInSandboxQrPairing(KNOWN_CHANNELS.whatsapp)).toBe(true);
     expect(channelUsesInSandboxQrPairing(KNOWN_CHANNELS.wechat)).toBe(false);
     expect(channelUsesInSandboxQrPairing(KNOWN_CHANNELS.slack)).toBe(false);
+    expect(channelUsesInSandboxQrPairing(KNOWN_CHANNELS.teams)).toBe(false);
   });
 
   it("declares no provider-credential metadata for WhatsApp", () => {
@@ -68,6 +81,17 @@ describe("sandbox-channels KNOWN_CHANNELS", () => {
     expect(getChannelDef("discord")?.appTokenEnvKey).toBeUndefined();
     expect(getChannelDef("slack")?.appTokenEnvKey).toBe("SLACK_APP_TOKEN");
     expect(getChannelDef("whatsapp")?.appTokenEnvKey).toBeUndefined();
+    expect(getChannelDef("teams")?.appTokenEnvKey).toBeUndefined();
+  });
+
+  it("asks for Microsoft Teams AAD object IDs as a comma-separated allowlist", () => {
+    const teams = getChannelDef("teams");
+    expect(teams?.userIdEnvKey).toBe("TEAMS_ALLOWED_USERS");
+    expect(teams?.userIdLabel).toBe("Microsoft Teams AAD Object IDs (comma-separated allowlist)");
+    expect(teams?.userIdHelp).toContain("Azure AD object IDs");
+    expect(teams?.allowIdsMode).toBe("dm");
+    expect(teams?.requireMentionEnvKey).toBe("TEAMS_REQUIRE_MENTION");
+    expect(teams?.requireMentionHelp).toContain("OpenClaw group and channel behavior");
   });
 
   it("asks for Slack human member IDs as a comma-separated allowlist", () => {
@@ -82,10 +106,29 @@ describe("sandbox-channels KNOWN_CHANNELS", () => {
     expect(slack?.channelIdHelp).toContain("Slack channel IDs");
   });
 
+  it("derives Slack credential metadata from the channel manifest", () => {
+    const slack = getChannelDef("slack");
+    const botTokenInput = slackManifest.inputs.find((input) => input.id === "botToken");
+    const appTokenInput = slackManifest.inputs.find((input) => input.id === "appToken");
+    expect(slack?.envKey).toBe(slackManifest.credentials[0]?.providerEnvKey);
+    expect(slack?.label).toBe(botTokenInput?.prompt?.label);
+    expect(slack?.help).toBe(botTokenInput?.prompt?.help);
+    expect(slack?.tokenFormatHint).toBe(botTokenInput?.formatHint);
+    expect(slack?.tokenFormat?.test("xoxb-valid_TOKEN-123")).toBe(true);
+    expect(slack?.tokenFormat?.test("xapp-invalid-token")).toBe(false);
+    expect(slack?.appTokenEnvKey).toBe(slackManifest.credentials[1]?.providerEnvKey);
+    expect(slack?.appTokenLabel).toBe(appTokenInput?.prompt?.label);
+    expect(slack?.appTokenHelp).toBe(appTokenInput?.prompt?.help);
+    expect(slack?.appTokenFormatHint).toBe(appTokenInput?.formatHint);
+    expect(slack?.appTokenFormat?.test("xapp-valid_TOKEN-123")).toBe(true);
+    expect(slack?.appTokenFormat?.test("xoxb-invalid-token")).toBe(false);
+  });
+
   it("normalises case and whitespace when resolving a channel name", () => {
     expect(getChannelDef("  Telegram  ")).toBe(KNOWN_CHANNELS.telegram);
     expect(getChannelDef("DISCORD")).toBe(KNOWN_CHANNELS.discord);
     expect(getChannelDef("  WhatsApp  ")).toBe(KNOWN_CHANNELS.whatsapp);
+    expect(getChannelDef("  Teams  ")).toBe(KNOWN_CHANNELS.teams);
   });
 
   it("returns undefined for unknown channel names", () => {
@@ -98,6 +141,7 @@ describe("sandbox-channels getChannelTokenKeys", () => {
   it("returns just the primary token key for single-token channels", () => {
     expect(getChannelTokenKeys(KNOWN_CHANNELS.telegram)).toEqual(["TELEGRAM_BOT_TOKEN"]);
     expect(getChannelTokenKeys(KNOWN_CHANNELS.discord)).toEqual(["DISCORD_BOT_TOKEN"]);
+    expect(getChannelTokenKeys(KNOWN_CHANNELS.teams)).toEqual(["MSTEAMS_APP_PASSWORD"]);
   });
 
   it("returns primary then app token for slack", () => {
@@ -125,6 +169,7 @@ describe("sandbox-channels token-shape helpers", () => {
     expect(channelUsesInSandboxQrPairing(KNOWN_CHANNELS.wechat)).toBe(false);
     expect(channelUsesInSandboxQrPairing(KNOWN_CHANNELS.telegram)).toBe(false);
     expect(channelUsesInSandboxQrPairing(KNOWN_CHANNELS.slack)).toBe(false);
+    expect(channelUsesInSandboxQrPairing(KNOWN_CHANNELS.teams)).toBe(false);
   });
 
   it("channelHasStaticToken narrows to ChannelDef with a defined envKey", () => {
@@ -142,11 +187,20 @@ describe("sandbox-channels token-shape helpers", () => {
 describe("sandbox-channels listChannels", () => {
   it("materialises an array with the name merged into each entry", () => {
     const list = listChannels();
-    expect(list.map((c) => c.name)).toEqual(["telegram", "discord", "wechat", "slack", "whatsapp"]);
+    expect(list.map((c) => c.name)).toEqual([
+      "telegram",
+      "discord",
+      "wechat",
+      "slack",
+      "whatsapp",
+      "teams",
+    ]);
     const telegram = list.find((c) => c.name === "telegram");
     expect(telegram?.envKey).toBe("TELEGRAM_BOT_TOKEN");
     expect(telegram?.allowIdsMode).toBe("dm");
     const whatsapp = list.find((c) => c.name === "whatsapp");
     expect(whatsapp?.envKey).toBeUndefined();
+    const teams = list.find((c) => c.name === "teams");
+    expect(teams?.envKey).toBe("MSTEAMS_APP_PASSWORD");
   });
 });

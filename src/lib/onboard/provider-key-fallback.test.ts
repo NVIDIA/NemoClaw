@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
 
-import { resolveProviderKeyFallback } from "../../../dist/lib/onboard/provider-key-fallback";
+import { resolveProviderKeyFallback } from "./provider-key-fallback";
 
 const option = (key: string) => ({ key, label: key });
 

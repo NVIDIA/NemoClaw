@@ -5,6 +5,7 @@
 // Provider metadata, lookup helpers, and gateway provider CRUD.
 
 const { redact } = require("../runner");
+const { normalizeCredentialValue } = require("../credentials/store");
 const {
   DEFAULT_CLOUD_MODEL,
   DEFAULT_HERMES_PROVIDER_MODEL,
@@ -12,8 +13,10 @@ const {
   VLLM_LOCAL_CREDENTIAL_ENV,
   getSandboxInferenceConfig,
 } = require("../inference/config");
+const openrouter = require("../inference/openrouter");
 const { isSafeModelId } = require("../validation");
 const { compactText } = require("../core/url-utils");
+const { readGatewayProviderMetadata } = require("./gateway-provider-metadata");
 
 // ── Constants ────────────────────────────────────────────────────
 
@@ -22,6 +25,54 @@ const OPENAI_ENDPOINT_URL = "https://api.openai.com/v1";
 const ANTHROPIC_ENDPOINT_URL = "https://api.anthropic.com";
 const GEMINI_ENDPOINT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
 const HERMES_INFERENCE_ENDPOINT_URL = "https://inference-api.nousresearch.com/v1";
+const HOSTED_INFERENCE_SOURCE_ENV = "NVIDIA_INFERENCE_API_KEY";
+const HOSTED_INFERENCE_PROVIDER_KEY_ENV = "NEMOCLAW_PROVIDER_KEY";
+const HOSTED_INFERENCE_CREDENTIAL_ENV = "COMPATIBLE_API_KEY";
+const HOSTED_INFERENCE_ENDPOINT_URL = "https://inference-api.nvidia.com/v1";
+// Private CI-compatible Inference Hub endpoint model IDs use the
+// provider/namespace/model convention. This endpoint is staged as a custom
+// OpenAI-compatible provider, not as the public build.nvidia.com provider.
+const HOSTED_INFERENCE_MODEL = "nvidia/nvidia/nemotron-3-ultra";
+const NON_INTERACTIVE_PROVIDER_ALIASES = {
+  cloud: "build",
+  nim: "nim-local",
+  vllm: "vllm",
+  "open-router": "openrouter",
+  openrouterai: "openrouter",
+  anthropiccompatible: "anthropicCompatible",
+  hermes: "hermesProvider",
+  "hermes-provider": "hermesProvider",
+  hermesprovider: "hermesProvider",
+  nous: "hermesProvider",
+  "nous-portal": "hermesProvider",
+};
+const NON_INTERACTIVE_PROVIDER_KEYS = new Set([
+  "build",
+  "openrouter",
+  "openai",
+  "anthropic",
+  "anthropicCompatible",
+  "gemini",
+  "hermesProvider",
+  "ollama",
+  "custom",
+  "nim-local",
+  "vllm",
+  "routed",
+  "install-vllm",
+  "install-ollama",
+  "install-windows-ollama",
+  "start-windows-ollama",
+]);
+const NON_INTERACTIVE_PROVIDER_VALID_VALUES =
+  "Valid values: build, openrouter, openai, anthropic, anthropicCompatible, gemini, hermes-provider, ollama, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama";
+const PROVIDER_KEY_ROUTE_VALUES = new Set(
+  [
+    "inference",
+    ...Object.keys(NON_INTERACTIVE_PROVIDER_ALIASES),
+    ...Array.from(NON_INTERACTIVE_PROVIDER_KEYS),
+  ].map((value) => value.toLowerCase()),
+);
 
 const REMOTE_PROVIDER_CONFIG = {
   build: {
@@ -31,6 +82,17 @@ const REMOTE_PROVIDER_CONFIG = {
     credentialEnv: "NVIDIA_INFERENCE_API_KEY",
     endpointUrl: BUILD_ENDPOINT_URL,
     helpUrl: "https://build.nvidia.com/settings/api-keys",
+    modelMode: "catalog",
+    defaultModel: DEFAULT_CLOUD_MODEL,
+    skipVerify: true,
+  },
+  openrouter: {
+    label: "OpenRouter",
+    providerName: openrouter.OPENROUTER_PROVIDER_NAME,
+    providerType: openrouter.OPENROUTER_PROVIDER_TYPE,
+    credentialEnv: openrouter.OPENROUTER_CREDENTIAL_ENV,
+    endpointUrl: openrouter.OPENROUTER_ENDPOINT_URL,
+    helpUrl: openrouter.OPENROUTER_HELP_URL,
     modelMode: "catalog",
     defaultModel: DEFAULT_CLOUD_MODEL,
     skipVerify: true,
@@ -166,47 +228,84 @@ function getEffectiveProviderName(providerKey) {
 
 // ── Non-interactive helpers ──────────────────────────────────────
 
-function getNonInteractiveProvider() {
+function getNonInteractiveProvider(allowHostedInferenceStaging = true) {
+  if (allowHostedInferenceStaging) stageHostedInferenceSourceSecretEnv();
   const providerKey = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
   if (!providerKey) return null;
-  const aliases = {
-    cloud: "build",
-    nim: "nim-local",
-    vllm: "vllm",
-    anthropiccompatible: "anthropicCompatible",
-    hermes: "hermesProvider",
-    "hermes-provider": "hermesProvider",
-    hermesprovider: "hermesProvider",
-    nous: "hermesProvider",
-    "nous-portal": "hermesProvider",
-  };
-  const normalized = aliases[providerKey] || providerKey;
-  const validProviders = new Set([
-    "build",
-    "openai",
-    "anthropic",
-    "anthropicCompatible",
-    "gemini",
-    "hermesProvider",
-    "ollama",
-    "custom",
-    "nim-local",
-    "vllm",
-    "routed",
-    "install-vllm",
-    "install-ollama",
-    "install-windows-ollama",
-    "start-windows-ollama",
-  ]);
-  if (!validProviders.has(normalized)) {
+  const normalized = NON_INTERACTIVE_PROVIDER_ALIASES[providerKey] || providerKey;
+  if (!NON_INTERACTIVE_PROVIDER_KEYS.has(normalized)) {
     console.error(`  Unsupported NEMOCLAW_PROVIDER: ${providerKey}`);
-    console.error(
-      "  Valid values: build, openai, anthropic, anthropicCompatible, gemini, hermes-provider, ollama, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama",
-    );
+    console.error(`  ${NON_INTERACTIVE_PROVIDER_VALID_VALUES}`);
     process.exit(1);
   }
   return normalized;
 }
+
+function stageHostedInferenceSourceSecretEnv() {
+  const agentName = (process.env.NEMOCLAW_AGENT || "").trim().toLowerCase();
+  let providerKeySource = "";
+  if (agentName === "langchain-deepagents-code") {
+    const rawProviderKeySource = normalizeCredentialValue(
+      // check-direct-credential-env-ignore -- Deep Agents provider-key alias is immediately route-filtered and restaged as COMPATIBLE_API_KEY.
+      process.env[HOSTED_INFERENCE_PROVIDER_KEY_ENV] ?? "",
+    );
+    // Deep Agents contract: NEMOCLAW_PROVIDER_KEY is a permanent
+    // hosted-compatible credential alias for langchain-deepagents-code only.
+    // It repairs the external env contract where older automation supplied
+    // the hosted credential through the provider-key slot; selector-like
+    // values remain source-of-truth provider choices and are rejected by the
+    // invariant tied to NON_INTERACTIVE_PROVIDER_* below.
+    providerKeySource = isHostedInferenceProviderKeyCredentialCandidate(rawProviderKeySource)
+      ? rawProviderKeySource
+      : "";
+  }
+  const hostedInferenceSourceKey = normalizeCredentialValue(
+    // check-direct-credential-env-ignore -- hosted inference staging migrates this source env into COMPATIBLE_API_KEY.
+    process.env[HOSTED_INFERENCE_SOURCE_ENV] ?? "",
+  );
+  const sourceKey = hostedInferenceSourceKey || providerKeySource;
+  if (!sourceKey) return false;
+
+  const rawProvider = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
+  const normalizedProvider = NON_INTERACTIVE_PROVIDER_ALIASES[rawProvider] || rawProvider;
+  const hostedFlag = (process.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE || "").trim() === "1";
+  const compatibleKey = normalizeCredentialValue(
+    // check-direct-credential-env-ignore -- read-only guard to avoid overwriting an explicit compatible endpoint key.
+    process.env[HOSTED_INFERENCE_CREDENTIAL_ENV] ?? "",
+  );
+  const explicitHostedCustom =
+    normalizedProvider === "custom" &&
+    (hostedFlag || (!compatibleKey && !sourceKey.startsWith("nvapi-")));
+  const implicitHostedCustom =
+    !normalizedProvider && (hostedFlag || !sourceKey.startsWith("nvapi-"));
+  const shouldStage = explicitHostedCustom || implicitHostedCustom;
+
+  if (!shouldStage) return false;
+
+  if (!normalizedProvider) {
+    process.env.NEMOCLAW_PROVIDER = "custom";
+  }
+  process.env.NEMOCLAW_ENDPOINT_URL =
+    (process.env.NEMOCLAW_ENDPOINT_URL || "").trim() || HOSTED_INFERENCE_ENDPOINT_URL;
+  const model =
+    (process.env.NEMOCLAW_MODEL || "").trim() ||
+    (process.env.NEMOCLAW_COMPAT_MODEL || "").trim() ||
+    (process.env.NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL || "").trim() ||
+    HOSTED_INFERENCE_MODEL;
+  process.env.NEMOCLAW_MODEL = model;
+  process.env.NEMOCLAW_COMPAT_MODEL = (process.env.NEMOCLAW_COMPAT_MODEL || "").trim() || model;
+  process.env.NEMOCLAW_PREFERRED_API =
+    (process.env.NEMOCLAW_PREFERRED_API || "").trim() || "openai-completions";
+  process.env[HOSTED_INFERENCE_CREDENTIAL_ENV] = sourceKey;
+  return true;
+}
+
+function isHostedInferenceProviderKeyCredentialCandidate(value) {
+  if (!value) return false;
+  return !PROVIDER_KEY_ROUTE_VALUES.has(value.trim().toLowerCase());
+}
+
+const isProviderKeyCredentialCandidate = isHostedInferenceProviderKeyCredentialCandidate;
 
 function getNonInteractiveModel(providerKey) {
   const model = (process.env.NEMOCLAW_MODEL || "").trim();
@@ -220,13 +319,14 @@ function getNonInteractiveModel(providerKey) {
 }
 
 // No default for nonInteractive — onboard.ts wrapper supplies isNonInteractive().
-function getRequestedProviderHint(nonInteractive) {
-  return nonInteractive ? getNonInteractiveProvider() : null;
+function getRequestedProviderHint(nonInteractive, allowHostedInferenceStaging = true) {
+  return nonInteractive ? getNonInteractiveProvider(allowHostedInferenceStaging) : null;
 }
 
-function getRequestedModelHint(nonInteractive) {
+function getRequestedModelHint(nonInteractive, allowHostedInferenceStaging = true) {
   if (!nonInteractive) return null;
-  const providerKey = getRequestedProviderHint(nonInteractive) || "cloud";
+  const providerKey =
+    getRequestedProviderHint(nonInteractive, allowHostedInferenceStaging) || "cloud";
   return getNonInteractiveModel(providerKey);
 }
 
@@ -399,15 +499,24 @@ module.exports = {
   OLLAMA_PROXY_CREDENTIAL_ENV,
   VLLM_LOCAL_CREDENTIAL_ENV,
   DISCORD_SNOWFLAKE_RE,
+  HOSTED_INFERENCE_SOURCE_ENV,
+  HOSTED_INFERENCE_CREDENTIAL_ENV,
+  HOSTED_INFERENCE_ENDPOINT_URL,
+  HOSTED_INFERENCE_MODEL,
+  NON_INTERACTIVE_PROVIDER_ALIASES,
+  NON_INTERACTIVE_PROVIDER_KEYS,
   getProviderLabel,
   getEffectiveProviderName,
+  stageHostedInferenceSourceSecretEnv,
   getNonInteractiveProvider,
   getNonInteractiveModel,
   getRequestedProviderHint,
   getRequestedModelHint,
+  isProviderKeyCredentialCandidate,
   buildProviderArgs,
   upsertProvider,
   providerExistsInGateway,
+  readGatewayProviderMetadata,
   upsertMessagingProviders,
   getSandboxInferenceConfig,
 };

@@ -23,7 +23,8 @@ import {
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
-import { SECRET_PATTERNS } from "./secret-patterns";
+import { isObjectRecord } from "../core/json-types";
+import { hasPassCredentialSegment, SECRET_PATTERNS } from "./secret-patterns";
 
 function parseJson<T>(text: string): T {
   return JSON.parse(text);
@@ -81,7 +82,11 @@ const CREDENTIAL_PLACEHOLDER = "[STRIPPED_BY_MIGRATION]";
  * File basenames that contain sensitive auth material and should be
  * excluded from backups entirely.
  */
-export const CREDENTIAL_SENSITIVE_BASENAMES = new Set(["auth-profiles.json", "auth.json"]);
+export const CREDENTIAL_SENSITIVE_BASENAMES = new Set([
+  "auth-profiles.json",
+  "auth.json",
+  "chatgpt-auth.json",
+]);
 
 /**
  * Dependency lockfiles may contain package metadata that resembles credentials
@@ -106,6 +111,8 @@ const CREDENTIAL_FIELDS = new Set([
   "token",
   "secret",
   "password",
+  "pass",
+  "passwd",
   "resolvedKey",
 ]);
 
@@ -123,12 +130,12 @@ const CREDENTIAL_FIELD_PATTERN =
  * server's `env: { GITHUB_TOKEN, BRAVE_API_KEY, TOKEN }` block. These are not
  * camelCase, so the suffix pattern above misses them. Matches an all-uppercase
  * name that is, or ends in, a secret word (`TOKEN`, `KEY`, `SECRET`,
- * `PASSWORD`, `PASSPHRASE`, `CREDENTIAL`, optionally pluralized) — covering both
+ * `PASSWORD`, `PASSWD`, `PASS`, `PASSPHRASE`, `CREDENTIAL`, optionally pluralized) — covering both
  * the prefixed (`GITHUB_TOKEN`) and bare (`TOKEN`) forms — while leaving benign
  * env vars like `NODE_ENV`, `LOG_LEVEL`, or `PATH` untouched.
  */
 const ENV_SECRET_FIELD_PATTERN =
-  /^(?:[A-Z0-9]+_)*(?:TOKEN|KEY|SECRET|PASSWORD|PASSPHRASE|CREDENTIAL)S?$/;
+  /^(?:[A-Z0-9]+_)*(?:TOKEN|KEY|SECRET|PASSWORD|PASSWD|PASS|PASSPHRASE|CREDENTIAL)S?$/;
 
 /**
  * Well-known HTTP auth header names (matched case-insensitively) whose entire
@@ -166,6 +173,7 @@ export function isCredentialField(key: string): boolean {
   return (
     CREDENTIAL_FIELDS.has(key) ||
     CREDENTIAL_FIELD_PATTERN.test(key) ||
+    hasPassCredentialSegment(key) ||
     ENV_SECRET_FIELD_PATTERN.test(key) ||
     HEADER_CREDENTIAL_PATTERN.test(key) ||
     CREDENTIAL_HEADER_NAMES.has(key.toLowerCase())
@@ -236,7 +244,7 @@ export function isSafeCredentialPlaceholder(value: ConfigValue): boolean {
  * Narrow an unknown value to a JSON-like configuration object.
  */
 export function isConfigObject(value: ConfigValue | object): value is ConfigObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return isObjectRecord(value);
 }
 
 /**
@@ -282,7 +290,6 @@ export function stripCredentials(obj: ConfigValue): ConfigValue {
     // by CLI-flag context: `["--api-key", "<opaque>"]` or `"--api-key=<opaque>"`.
     return obj.map((value, index) => scrubArrayElement(value, obj[index - 1]));
   }
-  if (!isConfigObject(obj)) return obj;
 
   const result: ConfigObject = {};
   for (const [key, value] of Object.entries(obj)) {

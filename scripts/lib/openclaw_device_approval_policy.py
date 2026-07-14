@@ -6,8 +6,22 @@
 import os
 
 
-ALLOWED_CLIENTS = {"openclaw-control-ui"}
-ALLOWED_MODES = {"webchat", "cli"}
+# SOURCE_OF_TRUTH_REVIEW (auto-pair client allowlist):
+#
+# * Invalid state: a pending request with an unknown clientId must not become
+#   auto-approvable merely by claiming the client-supplied `cli` or `webchat`
+#   mode.
+# * Source boundary: OpenClaw's pending device records expose clientId and
+#   clientMode as supplied connection metadata; this helper only decides which
+#   bounded requests the NemoClaw watcher may forward to canonical approval.
+# * Source-fix constraint: the watcher cannot authenticate that metadata, so
+#   the allowlist is defense-in-depth while OpenClaw's gateway handler and
+#   locked pairing writer remain the authorization boundary.
+# * Regression proof: openclaw-device-approval-policy.test.ts and the host-side
+#   auto-pair behavior test reject unknown identities claiming each known mode.
+# * Removal condition: retire this local policy when OpenClaw exposes a typed,
+#   authenticated client identity for bounded automatic scope approval.
+ALLOWED_CLIENTS = {"cli", "openclaw-cli", "openclaw-control-ui"}
 ALLOWED_SCOPES = {"operator.pairing", "operator.read", "operator.write"}
 
 GATEWAY_APPROVAL_ENV_KEYS = (
@@ -32,7 +46,7 @@ def requested_scopes(device):
 def approval_request_decision(device):
     client_id = str(device.get("clientId", ""))
     client_mode = str(device.get("clientMode", ""))
-    if client_id not in ALLOWED_CLIENTS and client_mode not in ALLOWED_MODES:
+    if client_id not in ALLOWED_CLIENTS:
         return {
             "allowed": False,
             "reason": "unknown-client",

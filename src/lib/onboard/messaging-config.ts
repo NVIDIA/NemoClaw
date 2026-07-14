@@ -1,24 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { getMessagingChannelConfigFromPlan } from "../messaging/plan-validation";
 import {
   type MessagingChannelConfig,
   mergeMessagingChannelConfigs,
 } from "../messaging-channel-config";
-import { getMessagingChannelConfigFromPlan } from "../messaging/plan-validation";
 import type { Session } from "../state/onboard-session";
 import * as registry from "../state/registry";
-
-// Read TELEGRAM_REQUIRE_MENTION (set either by the interactive mention prompt
-// or by the user's shell) and map it to a boolean, or null when the env var
-// is unset / invalid. Used at resume time to detect drift against the recorded
-// session state. See #1737 and the CodeRabbit follow-up on #2417.
-export function computeTelegramRequireMention(): boolean | null {
-  const raw = process.env.TELEGRAM_REQUIRE_MENTION;
-  if (raw === "1") return true;
-  if (raw === "0") return false;
-  return null;
-}
 
 export function getStoredMessagingChannelConfig(
   sandboxName: string | null,
@@ -34,7 +23,10 @@ export function getStoredMessagingChannelConfig(
   const sessionConfig = sessionMatchesSandbox
     ? getMessagingChannelConfigFromPlan(session?.messagingPlan)
     : null;
-  return mergeMessagingChannelConfigs(registryConfig, sessionConfig);
+  const legacySessionConfig = sessionMatchesSandbox
+    ? getLegacySessionMessagingChannelConfig(session)
+    : null;
+  return mergeMessagingChannelConfigs(legacySessionConfig, registryConfig, sessionConfig);
 }
 
 export function messagingChannelConfigsEqual(
@@ -45,4 +37,17 @@ export function messagingChannelConfigsEqual(
   const rightKeys = Object.keys(right || {}).sort();
   if (leftKeys.length !== rightKeys.length) return false;
   return leftKeys.every((key, index) => key === rightKeys[index] && left?.[key] === right?.[key]);
+}
+
+function getLegacySessionMessagingChannelConfig(
+  session: Session | null,
+): MessagingChannelConfig | null {
+  const config: MessagingChannelConfig = {};
+  if (typeof session?.telegramConfig?.requireMention === "boolean") {
+    config.TELEGRAM_REQUIRE_MENTION = session.telegramConfig.requireMention ? "1" : "0";
+  }
+  if (session?.wechatConfig?.accountId) config.WECHAT_ACCOUNT_ID = session.wechatConfig.accountId;
+  if (session?.wechatConfig?.baseUrl) config.WECHAT_BASE_URL = session.wechatConfig.baseUrl;
+  if (session?.wechatConfig?.userId) config.WECHAT_USER_ID = session.wechatConfig.userId;
+  return Object.keys(config).length > 0 ? config : null;
 }

@@ -2,16 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 import { describe, it } from "vitest";
 
+import { withGatewayRouteMutationLock } from "../inference/gateway-route-mutation-lock";
 import {
   findAvailableDashboardPort,
   findDashboardForwardOwner,
   getRegistryOccupiedDashboardPorts,
   preflightDashboardPortRangeAvailability,
   resolveCreateSandboxDashboardPort,
-} from "../../../dist/lib/onboard/dashboard-port";
+  withDashboardPortReservationLock,
+} from "./dashboard-port";
 
 describe("findDashboardForwardOwner", () => {
   it("parses openshell forward list column format (#2169)", () => {
@@ -184,21 +189,20 @@ describe("resolveCreateSandboxDashboardPort", () => {
     assert.equal(result.chatUiUrl, "http://remote.example.test:18790");
   });
 
-  it("preserves malformed CHAT_UI_URL failure when the env URL would be used", () => {
-    assert.throws(
-      () =>
-        resolveCreateSandboxDashboardPort({
-          sandboxName: "cursor",
-          controlUiPort: null,
-          chatUiUrlEnv: "https://example.test:abc",
-          persistedPort: 18791,
-          agentForwardPort: null,
-          defaultPort: 18789,
-          forwardListOutput: "",
-          findAvailablePort: (_sandboxName, preferredPort) => preferredPort,
-        }),
-      /Invalid URL/,
-    );
+  it("ignores malformed CHAT_UI_URL when rewriting the dashboard URL", () => {
+    const result = resolveCreateSandboxDashboardPort({
+      sandboxName: "cursor",
+      controlUiPort: null,
+      chatUiUrlEnv: "https://example.test:abc",
+      persistedPort: 18791,
+      agentForwardPort: null,
+      defaultPort: 18789,
+      forwardListOutput: "",
+      findAvailablePort: (_sandboxName, preferredPort) => preferredPort,
+    });
+
+    assert.equal(result.preferredPort, 18791);
+    assert.equal(result.chatUiUrl, "http://127.0.0.1:18791");
   });
 
   it("ignores malformed CHAT_UI_URL when --control-ui-port supplies the URL", () => {
@@ -320,6 +324,83 @@ describe("getRegistryOccupiedDashboardPorts", () => {
         }),
       /registry locked/,
     );
+  });
+});
+
+describe("dashboard port reservation lock", () => {
+  it("serializes onboard and restore ownership across different gateways", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-dashboard-port-lock-"));
+    let releaseOnboard!: () => void;
+    const onboardReleased = new Promise<void>((resolve) => {
+      releaseOnboard = resolve;
+    });
+    let reportOnboardEntered!: () => void;
+    const onboardEntered = new Promise<void>((resolve) => {
+      reportOnboardEntered = resolve;
+    });
+    const events: string[] = [];
+    const options = { stateDir, pollIntervalMs: 1, timeoutMs: 5_000 };
+    try {
+      const onboard = withDashboardPortReservationLock(
+        () =>
+          withGatewayRouteMutationLock(
+            "gateway-a",
+            async () => {
+              events.push("onboard-gateway-a-select");
+              reportOnboardEntered();
+              await onboardReleased;
+              events.push("onboard-gateway-a-register");
+            },
+            options,
+          ),
+        options,
+      );
+      await onboardEntered;
+      const restore = withDashboardPortReservationLock(
+        () =>
+          withGatewayRouteMutationLock(
+            "gateway-b",
+            () => {
+              events.push("restore-gateway-b-select");
+              events.push("restore-gateway-b-register");
+            },
+            options,
+          ),
+        options,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.deepEqual(events, ["onboard-gateway-a-select"]);
+      releaseOnboard();
+      await Promise.all([onboard, restore]);
+      assert.deepEqual(events, [
+        "onboard-gateway-a-select",
+        "onboard-gateway-a-register",
+        "restore-gateway-b-select",
+        "restore-gateway-b-register",
+      ]);
+    } finally {
+      releaseOnboard();
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("releases a failed reservation so the next allocator can proceed", async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-dashboard-port-lock-"));
+    const options = { stateDir, pollIntervalMs: 1, timeoutMs: 5_000 };
+    try {
+      await assert.rejects(
+        withDashboardPortReservationLock(() => {
+          throw new Error("onboard allocation failed");
+        }, options),
+        /onboard allocation failed/,
+      );
+      assert.equal(
+        await withDashboardPortReservationLock(() => "restore acquired", options),
+        "restore acquired",
+      );
+    } finally {
+      await fs.rm(stateDir, { recursive: true, force: true });
+    }
   });
 });
 

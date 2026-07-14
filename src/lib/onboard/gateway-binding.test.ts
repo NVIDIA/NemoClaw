@@ -5,25 +5,138 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
-import { DEFAULT_GATEWAY_PORT } from "../../../dist/lib/core/ports";
-import { buildDockerDriverGatewayLaunch } from "../../../dist/lib/onboard/docker-driver-gateway-launch";
+import { describe, expect, it, vi } from "vitest";
+import { DEFAULT_GATEWAY_PORT } from "../core/ports";
+import { buildDockerDriverGatewayLaunch } from "./docker-driver-gateway-launch";
 import {
   getDockerDriverGatewayRuntimeMarkerDriftForStateDir,
   getDockerDriverGatewayRuntimeMarkerPath,
   readDockerDriverGatewayRuntimeMarker,
   writeDockerDriverGatewayRuntimeMarkerForStateDir,
-} from "../../../dist/lib/onboard/docker-driver-gateway-runtime-marker";
+} from "./docker-driver-gateway-runtime-marker";
 import {
   BASE_GATEWAY_COMPAT_CONTAINER_NAME,
   BASE_GATEWAY_NAME,
   BASE_GATEWAY_STATE_DIR_NAME,
+  createDynamicGatewayRuntimeHelpers,
+  resolveCoreOnboardGatewayBinding,
   resolveGatewayCompatContainerName,
   resolveGatewayName,
   resolveGatewayPortFromName,
   resolveGatewayStateDirName,
   resolveSandboxGatewayName,
-} from "../../../dist/lib/onboard/gateway-binding";
+} from "./gateway-binding";
+
+describe("dynamic gateway runtime helpers", () => {
+  it("resolves every default probe from the current process-local gateway binding", async () => {
+    let gatewayName = "nemoclaw";
+    let gatewayPort = 8080;
+    const probeGatewayHttpReady = vi.fn(async () => true);
+    const probeDockerDriverGatewayHttpReady = vi.fn(async () => true);
+    const probeGatewayTcpReady = vi.fn(async () => true);
+    const getGatewayClusterImageDrift = vi.fn(() => null);
+    const helpers = createDynamicGatewayRuntimeHelpers({
+      getGatewayName: () => gatewayName,
+      getGatewayPort: () => gatewayPort,
+      getDockerDriverGatewayEndpoint: (port) => `http://127.0.0.1:${port}`,
+      getGatewayClusterImageDrift,
+      probeGatewayHttpReady,
+      probeDockerDriverGatewayHttpReady,
+      waitForGatewayHttpReadyBase: vi.fn(async () => true),
+      probeGatewayTcpReady,
+    });
+
+    expect(helpers.getDockerDriverGatewayEndpoint()).toBe("http://127.0.0.1:8080");
+    await helpers.isGatewayHttpReady();
+    await helpers.isDockerDriverGatewayHttpReady();
+    await helpers.isGatewayTcpReady(250);
+    helpers.getGatewayClusterImageDrift();
+    expect(probeGatewayHttpReady).toHaveBeenLastCalledWith(
+      undefined,
+      "http://127.0.0.1:8080/",
+      undefined,
+      undefined,
+    );
+    expect(probeDockerDriverGatewayHttpReady).toHaveBeenLastCalledWith(
+      undefined,
+      "http://127.0.0.1:8080/openshell.v1.OpenShell/Health",
+    );
+    expect(probeGatewayTcpReady).toHaveBeenLastCalledWith(8080, 250);
+    expect(getGatewayClusterImageDrift).toHaveBeenLastCalledWith({ gatewayName: "nemoclaw" });
+
+    gatewayName = "nemoclaw-8081";
+    gatewayPort = 8081;
+    expect(helpers.getDockerDriverGatewayEndpoint()).toBe("http://127.0.0.1:8081");
+    await helpers.isGatewayHttpReady();
+    helpers.getGatewayClusterImageDrift();
+    expect(probeGatewayHttpReady).toHaveBeenLastCalledWith(
+      undefined,
+      "http://127.0.0.1:8081/",
+      undefined,
+      undefined,
+    );
+    expect(getGatewayClusterImageDrift).toHaveBeenLastCalledWith({
+      gatewayName: "nemoclaw-8081",
+    });
+  });
+
+  it("preserves explicit probe URLs and injects the bound default wait probe", async () => {
+    const probeGatewayHttpReady = vi.fn(async () => true);
+    const waitForGatewayHttpReadyBase = vi.fn(async (options) => {
+      expect(options.probe).toBeTypeOf("function");
+      return options.probe?.();
+    });
+    const helpers = createDynamicGatewayRuntimeHelpers({
+      getGatewayName: () => "nemoclaw-9090",
+      getGatewayPort: () => 9090,
+      getDockerDriverGatewayEndpoint: (port) => `http://127.0.0.1:${port}`,
+      getGatewayClusterImageDrift: vi.fn(() => null),
+      probeGatewayHttpReady,
+      probeDockerDriverGatewayHttpReady: vi.fn(async () => true),
+      waitForGatewayHttpReadyBase,
+      probeGatewayTcpReady: vi.fn(async () => true),
+    });
+
+    await helpers.isGatewayHttpReady(25, "https://probe.example/health", "POST");
+    expect(probeGatewayHttpReady).toHaveBeenLastCalledWith(
+      25,
+      "https://probe.example/health",
+      "POST",
+      undefined,
+    );
+    await expect(helpers.waitForGatewayHttpReady()).resolves.toBe(true);
+    expect(probeGatewayHttpReady).toHaveBeenLastCalledWith(
+      undefined,
+      "http://127.0.0.1:9090/",
+      undefined,
+      undefined,
+    );
+  });
+
+  it("forwards explicit HTTP readiness abort signals", async () => {
+    const probeGatewayHttpReady = vi.fn(async () => true);
+    const helpers = createDynamicGatewayRuntimeHelpers({
+      getGatewayName: () => "nemoclaw-9090",
+      getGatewayPort: () => 9090,
+      getDockerDriverGatewayEndpoint: (port) => `http://127.0.0.1:${port}`,
+      getGatewayClusterImageDrift: vi.fn(() => null),
+      probeGatewayHttpReady,
+      probeDockerDriverGatewayHttpReady: vi.fn(async () => true),
+      waitForGatewayHttpReadyBase: vi.fn(async () => true),
+      probeGatewayTcpReady: vi.fn(async () => true),
+    });
+    const controller = new AbortController();
+
+    await helpers.isGatewayHttpReady(25, "https://probe.example/health", "POST", controller.signal);
+
+    expect(probeGatewayHttpReady).toHaveBeenLastCalledWith(
+      25,
+      "https://probe.example/health",
+      "POST",
+      controller.signal,
+    );
+  });
+});
 
 describe("gateway-binding resolver (#4422)", () => {
   it("keeps the bare nemoclaw names for the default gateway port", () => {
@@ -154,6 +267,61 @@ describe("resolveSandboxGatewayName", () => {
   });
 });
 
+describe("resolveCoreOnboardGatewayBinding", () => {
+  const currentGateway = { name: "nemoclaw", port: DEFAULT_GATEWAY_PORT };
+
+  it("prefers the authoritative rebuild handoff when the registry row is gone", () => {
+    expect(
+      resolveCoreOnboardGatewayBinding({
+        authoritativeGateway: { name: "nemoclaw-9090", port: 9090 },
+        currentGateway,
+        resume: true,
+        sandbox: null,
+      }),
+    ).toEqual({ name: "nemoclaw-9090", port: 9090 });
+  });
+
+  it("uses the registered sandbox binding for an ordinary resume", () => {
+    expect(
+      resolveCoreOnboardGatewayBinding({
+        currentGateway,
+        resume: true,
+        sandbox: { gatewayName: "nemoclaw-9090", gatewayPort: 9090 },
+      }),
+    ).toEqual({ name: "nemoclaw-9090", port: 9090 });
+  });
+
+  it("keeps the requested gateway for fresh or pre-registration flows", () => {
+    expect(
+      resolveCoreOnboardGatewayBinding({
+        currentGateway: { name: "nemoclaw-9191", port: 9191 },
+        resume: false,
+        sandbox: { gatewayPort: 9090 },
+      }),
+    ).toEqual({ name: "nemoclaw-9191", port: 9191 });
+    expect(
+      resolveCoreOnboardGatewayBinding({
+        currentGateway: { name: "nemoclaw-9191", port: 9191 },
+        resume: true,
+        sandbox: null,
+      }),
+    ).toEqual({ name: "nemoclaw-9191", port: 9191 });
+  });
+
+  it("uses the default for legacy rows and rejects invalid persisted bindings", () => {
+    expect(resolveCoreOnboardGatewayBinding({ currentGateway, resume: true, sandbox: {} })).toEqual(
+      { name: BASE_GATEWAY_NAME, port: DEFAULT_GATEWAY_PORT },
+    );
+    expect(() =>
+      resolveCoreOnboardGatewayBinding({
+        currentGateway,
+        resume: true,
+        sandbox: { gatewayName: "../other" },
+      }),
+    ).toThrow(/Invalid persisted sandbox gateway binding/);
+  });
+});
+
 describe("docker-driver compat container is gateway-port scoped (#4422)", () => {
   function withTempState<T>(
     fn: (paths: { gatewayBin: string; sandboxBin: string; stateDir: string }) => T,
@@ -240,7 +408,7 @@ describe("per-port gateway runtime markers stay isolated (#4422)", () => {
     return {
       pid,
       desiredEnv: { OPENSHELL_GATEWAY_PORT: String(port) },
-      endpoint: `http://127.0.0.1:${port}`,
+      endpoint: `https://127.0.0.1:${port}`,
       gatewayBin: "/usr/bin/openshell-gateway",
       openshellVersion: "0.0.44",
       dockerHost: null,
@@ -270,7 +438,7 @@ describe("per-port gateway runtime markers stay isolated (#4422)", () => {
       const firstMarker = readDockerDriverGatewayRuntimeMarker(
         getDockerDriverGatewayRuntimeMarkerPath(firstDir),
       );
-      expect(firstMarker?.endpoint).toBe("http://127.0.0.1:8080");
+      expect(firstMarker?.endpoint).toBe("https://127.0.0.1:8080");
       expect(firstMarker?.pid).toBe(1111);
 
       // And it still validates against what the first sandbox expects — no drift,
@@ -283,7 +451,7 @@ describe("per-port gateway runtime markers stay isolated (#4422)", () => {
       const secondMarker = readDockerDriverGatewayRuntimeMarker(
         getDockerDriverGatewayRuntimeMarkerPath(secondDir),
       );
-      expect(secondMarker?.endpoint).toBe("http://127.0.0.1:8081");
+      expect(secondMarker?.endpoint).toBe("https://127.0.0.1:8081");
       expect(secondMarker?.pid).toBe(2222);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });

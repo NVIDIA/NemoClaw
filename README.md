@@ -16,18 +16,31 @@ It provides guided onboarding, a hardened blueprint, routed inference, network p
 
 - [OpenClaw](https://openclaw.ai) (default)
 - [Hermes](https://get-hermes.ai/)
+- [LangChain Deep Agents Code](https://docs.langchain.com/oss/python/deepagents/code/overview)
 
 For capabilities, architecture, security controls, and the full feature list, see the [NemoClaw documentation](https://docs.nvidia.com/nemoclaw/latest/).
 
 ## Get Started
 
+### Start with Your Coding Agent
+
+Use the starter prompt when you want Cursor, Claude Code, Codex, Copilot, or another local coding agent to install NemoClaw with you.
+
+**[Copy the NemoClaw starter prompt](https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/home.html#from-your-coding-agent)**.
+
+The prompt tells your agent to use NemoClaw docs and skills, ask one question at a time, run commands only with your approval, and keep secrets out of chat.
+
+### Install Using the Interactive Installer in Your Terminal
+
 Review [Prerequisites](https://docs.nvidia.com/nemoclaw/latest/get-started/prerequisites.html) before installing.
 For Hermes, set `NEMOCLAW_AGENT=hermes` before running the installer, or use the `nemohermes` alias after install.
+When connecting to a Hermes sandbox from a light terminal, NemoClaw may install a managed `nemoclaw-light` Hermes skin for readable assistant text; it removes that managed skin state again when the terminal no longer needs it and preserves any user-selected Hermes skin.
 
 | Agent | Guide |
 |-------|-------|
 | OpenClaw (default) | [Quickstart with OpenClaw](https://docs.nvidia.com/nemoclaw/latest/get-started/quickstart.html) |
 | Hermes | [Quickstart with Hermes](https://docs.nvidia.com/nemoclaw/latest/get-started/quickstart-hermes.html) |
+| LangChain Deep Agents Code | [Quickstart with LangChain Deep Agents Code](https://docs.nvidia.com/nemoclaw/latest/user-guide/deepagents/get-started/quickstart.html) |
 
 ## Documentation
 
@@ -40,7 +53,7 @@ Refer to the following pages on the official documentation website for more info
 | [Ecosystem](https://docs.nvidia.com/nemoclaw/latest/about/ecosystem.html) | How OpenClaw, OpenShell, and NemoClaw form a stack and when to use NemoClaw versus OpenShell alone. |
 | [Architecture Details](https://docs.nvidia.com/nemoclaw/latest/reference/architecture.html) | Detailed description of Plugin structure, blueprint lifecycle, sandbox environment, and host-side state. |
 | [Prerequisites](https://docs.nvidia.com/nemoclaw/latest/get-started/prerequisites.html) | Hardware, software, and supported platforms, with any platform-specific pre-setup. |
-| [Inference Options](https://docs.nvidia.com/nemoclaw/latest/inference/inference-options.html) | Supported providers, validation, and routed inference configuration. |
+| [Choose an Inference Provider](https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/inference/learn-and-choose/choose-inference-provider) | Supported providers, validation, and routed inference configuration. |
 | [Network Policies](https://docs.nvidia.com/nemoclaw/latest/reference/network-policies.html) | Baseline rules, operator approval flow, and egress control. |
 | [Customize Network Policy](https://docs.nvidia.com/nemoclaw/latest/network-policy/customize-network-policy.html) | Static and dynamic policy changes, presets. |
 | [Security Best Practices](https://docs.nvidia.com/nemoclaw/latest/security/best-practices.html) | Controls reference, risk framework, and posture profiles for sandbox security. |
@@ -65,6 +78,21 @@ NemoClaw is an alpha project, so maintainers review issues, discussions, and pul
 ## Contributing
 
 We welcome contributions. See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, coding standards, and the PR process.
+
+Prepare a source checkout without creating a runtime sandbox:
+
+```bash
+./scripts/dev-setup.sh
+```
+
+Or ask a compatible coding agent to use the repository's contributor-onboarding skill:
+
+> Set up this machine as a NemoClaw contributor and prepare it for a first PR.
+
+The contributor path is separate from the end-user installer above.
+The default and `--repair` modes change only repository-local dependencies, builds, and hooks.
+Use `./scripts/dev-setup.sh --expose-cli` only when you explicitly want a host-visible development CLI.
+Use `./scripts/dev-setup.sh --with-runtime` only when your change needs sandbox validation; that approved flow also opts into CLI exposure.
 
 ## Security
 

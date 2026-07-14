@@ -1,0 +1,53 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "About Inference Routing"
+sidebar-title: "About Inference Routing"
+description: "Understand how NemoClaw routes sandbox inference through OpenShell without exposing provider credentials."
+description-agent: "Explains the NemoClaw inference route and credential boundary. Use when tracing inference traffic or determining where provider credentials reside."
+keywords: ["nemoclaw inference routing", "inference.local", "openshell inference proxy"]
+content:
+  type: "concept"
+---
+import { AgentOnly } from "../_components/AgentGuide";
+
+NemoClaw gives agents one managed inference route while OpenShell handles the selected upstream provider on the host.
+This design keeps provider selection and credentials outside the sandbox.
+
+## Request Path
+
+The agent sends inference requests to `inference.local` inside the sandbox.
+It does not connect to the upstream provider directly.
+OpenShell intercepts the request on the host and forwards it to the provider and model selected during onboarding.
+
+```text
+Sandbox agent -> inference.local -> OpenShell -> selected provider and model
+```
+
+Host-side services such as Model Router and the OpenRouter runtime adapter remain behind the OpenShell route.
+The sandbox continues to use `inference.local` instead of calling their host ports directly.
+
+## Credential Boundary
+
+Provider credentials stay on the host and flow through the OpenShell provider system.
+The sandbox does not receive the raw upstream API key.
+
+Local Ollama and local vLLM routes do not require the host `OPENAI_API_KEY`.
+NemoClaw uses provider-specific local tokens for those routes.
+Rebuilds of legacy local-inference sandboxes migrate away from stale OpenAI credential requirements.
+When a rebuild reuses an automatically bridged compatible-endpoint route without a host API key, NemoClaw reapplies the config-only bridge rewrite without reading or passing the credential stored in OpenShell.
+
+<AgentOnly variant="deepagents">
+
+## Deep Agents Configuration
+
+For Deep Agents, NemoClaw writes `/sandbox/.deepagents/config.toml` with the managed OpenAI-compatible `https://inference.local/v1` route, a scoped placeholder API key, and `use_responses_api = false`.
+The managed `dcode` runtime uses Chat Completions through OpenShell even when a compatible endpoint also supports the Responses API.
+
+</AgentOnly>
+
+## Related Topics
+
+- [Choose an Inference Provider](learn-and-choose/choose-inference-provider) compares the upstream routes that OpenShell can use.
+- [View the Active Inference Route](manage-inference/view-active-inference-route) shows the provider and model currently selected.
+- [Verify the Sandbox Inference Route](validate-inference/verify-inference-route) tests the configured path.

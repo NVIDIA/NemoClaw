@@ -12,9 +12,6 @@ import {
   type SessionUpdates,
 } from "../../state/onboard-session";
 import type { OnboardFlowContext } from "./flow-context";
-import { advanceTo, branchTo, completeOnboardMachine } from "./result";
-import { OnboardRuntime, type OnboardRuntimeDeps } from "./runtime";
-import type { OnboardSequencePhase } from "./sequence-runner";
 import {
   coreOnboardFlowPhases,
   finalOnboardFlowPhases,
@@ -23,6 +20,9 @@ import {
   runFinalOnboardFlowSequence,
   runInitialOnboardFlowSequence,
 } from "./flow-slices";
+import { advanceTo, branchTo, completeOnboardMachine } from "./result";
+import { OnboardRuntime, type OnboardRuntimeDeps } from "./runtime";
+import type { OnboardSequencePhase } from "./sequence-runner";
 
 function cloneSession(session: Session): Session {
   return normalizeSession(JSON.parse(JSON.stringify(session))) ?? session;
@@ -75,6 +75,7 @@ function context(): OnboardFlowContext {
     hermesAuthMethod: null,
     hermesToolGateways: [],
     preferredInferenceApi: null,
+    compatibleEndpointReasoning: null,
     nimContainer: null,
     webSearchConfig: null,
     webSearchSupported: false,

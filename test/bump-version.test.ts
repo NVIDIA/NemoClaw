@@ -3,7 +3,32 @@
 
 import { describe, expect, it } from "vitest";
 
-import { collectDocsVersionSegments, rewriteDocsPublicUrls } from "../scripts/bump-version";
+import {
+  buildReleasePushArgs,
+  collectDocsVersionSegments,
+  parseArgs,
+  rewriteDocsPublicUrls,
+} from "../scripts/bump-version";
+
+describe("bump-version release contract", () => {
+  it("rejects removed release PR flags", () => {
+    for (const flag of ["--create-pr", "--no-create-pr", "--branch=release/1.2.3"]) {
+      expect(() => parseArgs(["1.2.3", flag])).toThrow(`Unknown flag: ${flag}`);
+    }
+  });
+
+  it("builds semver-tag-only push args without latest", () => {
+    expect(buildReleasePushArgs("v1.2.3", true)).toEqual([
+      "push",
+      "--atomic",
+      "origin",
+      "HEAD",
+      "refs/tags/v1.2.3:refs/tags/v1.2.3",
+    ]);
+    expect(buildReleasePushArgs("v1.2.3", false)).toEqual(["push", "--atomic", "origin", "HEAD"]);
+    expect(buildReleasePushArgs("v1.2.3", true).join(" ")).not.toContain("latest");
+  });
+});
 
 describe("bump-version docs URL helpers", () => {
   it("rewrites latest and versioned docs URL segments while preserving suffix delimiters", () => {

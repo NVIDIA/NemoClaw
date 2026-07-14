@@ -7,20 +7,26 @@ import {
   enforceDockerGpuPatchPreserveNetwork,
   getSandboxRuntimeInferenceEndpoint,
   printDockerGpuSandboxInferenceVerificationFailure,
+  shouldSkipGpuBridgeProbe,
   shouldUseDockerGpuPatchHostNetwork,
   verifyDockerGpuSandboxLocalInference,
   verifyGpuSandboxAfterReady,
-} from "../../../dist/lib/onboard/docker-gpu-local-inference";
+} from "./docker-gpu-local-inference";
 
-const HOST_NETWORK_ENV = { NEMOCLAW_DOCKER_GPU_PATCH_NETWORK: "host" } as NodeJS.ProcessEnv;
+const HOST_NETWORK_ENV = {
+  NEMOCLAW_DOCKER_GPU_PATCH: "1",
+  NEMOCLAW_DOCKER_GPU_PATCH_NETWORK: "host",
+} as NodeJS.ProcessEnv;
+const LEGACY_PATCH_ENV = { NEMOCLAW_DOCKER_GPU_PATCH: "1" } as NodeJS.ProcessEnv;
 const GPU_CONFIG = { sandboxGpuEnabled: true };
 
 function gpuPatchOptions(extra: Record<string, unknown> = {}) {
   return {
     sandboxName: "alpha",
     dockerDriverGateway: true,
+    selectedRoute: "compatibility" as const,
     platform: "linux" as NodeJS.Platform,
-    env: {} as NodeJS.ProcessEnv,
+    env: { ...LEGACY_PATCH_ENV },
     ...extra,
   };
 }
@@ -37,6 +43,7 @@ describe("shouldUseDockerGpuPatchHostNetwork", () => {
     expect(
       shouldUseDockerGpuPatchHostNetwork(GPU_CONFIG, {
         dockerDriverGateway: true,
+        selectedRoute: "compatibility",
         platform: "linux",
         env: HOST_NETWORK_ENV,
       }),
@@ -45,6 +52,7 @@ describe("shouldUseDockerGpuPatchHostNetwork", () => {
     expect(
       shouldUseDockerGpuPatchHostNetwork(GPU_CONFIG, {
         dockerDriverGateway: true,
+        selectedRoute: "compatibility",
         platform: "linux",
         env: {},
       }),
@@ -53,8 +61,27 @@ describe("shouldUseDockerGpuPatchHostNetwork", () => {
     expect(
       shouldUseDockerGpuPatchHostNetwork(GPU_CONFIG, {
         dockerDriverGateway: true,
+        selectedRoute: "compatibility",
         platform: "darwin",
         env: HOST_NETWORK_ENV,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("shouldSkipGpuBridgeProbe", () => {
+  it("forces the gateway context and skips only for an active legacy host-network patch", () => {
+    expect(
+      shouldSkipGpuBridgeProbe(true, "linux", "compatibility", {
+        dockerDriverGateway: false,
+        env: HOST_NETWORK_ENV,
+        platform: "linux",
+      }),
+    ).toBe(true);
+    expect(
+      shouldSkipGpuBridgeProbe(false, "linux", "compatibility", {
+        env: HOST_NETWORK_ENV,
+        platform: "linux",
       }),
     ).toBe(false);
   });
@@ -67,6 +94,7 @@ describe("enforceDockerGpuPatchPreserveNetwork", () => {
     const reverifyBridgeReachability = vi.fn();
     const downgraded = await enforceDockerGpuPatchPreserveNetwork("ollama-local", GPU_CONFIG, {
       dockerDriverGateway: true,
+      selectedRoute: "compatibility",
       platform: "linux",
       env,
       log,
@@ -85,6 +113,7 @@ describe("enforceDockerGpuPatchPreserveNetwork", () => {
     expect(
       await enforceDockerGpuPatchPreserveNetwork("nvidia", GPU_CONFIG, {
         dockerDriverGateway: true,
+        selectedRoute: "compatibility",
         platform: "linux",
         env,
         reverifyBridgeReachability,
@@ -99,6 +128,7 @@ describe("enforceDockerGpuPatchPreserveNetwork", () => {
     expect(
       await enforceDockerGpuPatchPreserveNetwork("ollama-local", GPU_CONFIG, {
         dockerDriverGateway: true,
+        selectedRoute: "compatibility",
         platform: "linux",
         env,
         reverifyBridgeReachability: vi.fn(),
@@ -115,6 +145,7 @@ describe("enforceDockerGpuPatchPreserveNetwork", () => {
         { sandboxGpuEnabled: false },
         {
           dockerDriverGateway: true,
+          selectedRoute: "compatibility",
           platform: "linux",
           env,
           reverifyBridgeReachability: vi.fn(),
@@ -138,18 +169,21 @@ describe("getSandboxRuntimeInferenceEndpoint", () => {
 });
 
 describe("verifyDockerGpuSandboxLocalInference", () => {
-  it("skips when the Docker GPU patch is not active", () => {
-    const result = verifyDockerGpuSandboxLocalInference(
-      GPU_CONFIG,
-      "ollama-local",
-      gpuPatchOptions({ env: { NEMOCLAW_DOCKER_GPU_PATCH: "0" } }),
-    );
-    expect(result).toEqual({ status: "skipped", reason: "not-docker-gpu-patch" });
-  });
-
   it("skips for non-local providers", () => {
     const result = verifyDockerGpuSandboxLocalInference(GPU_CONFIG, "build", gpuPatchOptions());
     expect(result).toEqual({ status: "skipped", reason: "not-local-provider" });
+  });
+
+  it("skips the compatibility-only inference gate on the native route", () => {
+    const execInSandbox = vi.fn();
+    const result = verifyDockerGpuSandboxLocalInference(
+      GPU_CONFIG,
+      "ollama-local",
+      gpuPatchOptions({ selectedRoute: "native", deps: { execInSandbox } }),
+    );
+
+    expect(result).toEqual({ status: "skipped", reason: "not-docker-gpu-patch" });
+    expect(execInSandbox).not.toHaveBeenCalled();
   });
 
   it("probes inference.local from the runtime context, never a loopback or docker exec", () => {
@@ -173,7 +207,7 @@ describe("verifyDockerGpuSandboxLocalInference", () => {
     expect(script).not.toContain("docker exec");
   });
 
-  it("fails on a 4xx — route reached but not usable (auth/route misconfig), not the #4509 proof", () => {
+  it("fails on a 4xx because the route is reached but unusable instead of satisfying the proof (#4509)", () => {
     const result = verifyDockerGpuSandboxLocalInference(
       GPU_CONFIG,
       "ollama-local",
@@ -186,7 +220,7 @@ describe("verifyDockerGpuSandboxLocalInference", () => {
     }
   });
 
-  it("fails (unreachable) and retries on HTTP 000 — the #4509 regression", () => {
+  it("fails as unreachable and retries on HTTP 000 (#4509)", () => {
     const execInSandbox = execEmitting("HTTP_000");
     const sleep = vi.fn();
     const result = verifyDockerGpuSandboxLocalInference(
@@ -266,9 +300,9 @@ describe("verifyGpuSandboxAfterReady", () => {
     return {
       sandboxName: "alpha",
       dockerDriverGateway: true,
+      selectedRoute: "compatibility" as const,
       platform: "linux" as NodeJS.Platform,
-      env: {} as NodeJS.ProcessEnv,
-      useDockerGpuPatch: true,
+      env: { ...LEGACY_PATCH_ENV },
       verifyDirectSandboxGpu: vi.fn(),
       selectedMode: () => null,
       runCaptureOpenshell: vi.fn(() => ""),
@@ -348,22 +382,6 @@ describe("verifyGpuSandboxAfterReady", () => {
     } finally {
       exitSpy.mockRestore();
     }
-  });
-
-  it("skips the inference gate when the Docker GPU patch did not run", () => {
-    const execInSandbox = vi.fn();
-    const verifyDirectSandboxGpu = vi.fn();
-    verifyGpuSandboxAfterReady(
-      GPU_CONFIG,
-      "ollama-local",
-      baseOptions({
-        useDockerGpuPatch: false,
-        verifyDirectSandboxGpu,
-        deps: { execInSandbox, sleep: vi.fn() },
-      }),
-    );
-    expect(verifyDirectSandboxGpu).toHaveBeenCalledWith("alpha");
-    expect(execInSandbox).not.toHaveBeenCalled();
   });
 });
 

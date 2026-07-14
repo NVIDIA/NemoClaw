@@ -43,6 +43,7 @@ export const discordManifest = {
       statePath: "discordGuilds.requireMention",
       promptWhenInput: "serverId",
       validValues: ["0", "1"],
+      defaultValue: "1",
       prompt: {
         label: "Discord mention mode",
         help: "Choose whether the bot should reply only when @mentioned or to all messages in this server.",
@@ -71,7 +72,19 @@ export const discordManifest = {
       placeholder: "openshell:resolve:env:DISCORD_BOT_TOKEN",
     },
   ],
-  policyPresets: ["discord"],
+  policyPresets: [
+    {
+      name: "discord",
+      validationWarningLines: [
+        "For Discord preset validation, do not use curl as the success signal:",
+        "curl is not in the preset binary allowlist, so curl probes can fail even",
+        "when the policy is working. Use Node HTTPS against",
+        "https://discord.com/api/v10/gateway or validate the configured",
+        'messaging bridge/gateway path. DNS-only checks such as dns.resolve("gateway.discord.gg")',
+        "can also be inconclusive behind a proxy.",
+      ],
+    },
+  ],
   render: [
     {
       id: "discord-openclaw-channel",
@@ -165,43 +178,38 @@ export const discordManifest = {
       },
     },
   ],
-  state: {
-    persist: {
-      discordGuilds: ["serverId", "requireMention", "userId"],
+  runtime: {
+    openclaw: {
+      channelName: "discord",
+      visibility: {
+        configKeys: ["discord"],
+        logPatterns: ["discord"],
+      },
     },
-    rebuildHydration: [
-      {
-        statePath: "discordGuilds.serverId",
-        env: "DISCORD_SERVER_ID",
-      },
-      {
-        statePath: "discordGuilds.requireMention",
-        env: "DISCORD_REQUIRE_MENTION",
-      },
-      {
-        statePath: "discordGuilds.userIds",
-        env: "DISCORD_USER_ID",
-      },
-    ],
   },
+  agentPackages: [
+    {
+      id: "openclawPluginPackage",
+      agent: "openclaw",
+      manager: "openclaw-plugin",
+      spec: "npm:@openclaw/discord@{{openclaw.version}}",
+      pin: true,
+      integrityByVersion: {
+        "2026.6.10":
+          "sha512-NKp/j00l+rk5PC0Lv/0fOIiiQJ1c/OpG9471zqXUDKQie6pQ1Fi9KUZUouyoTMmfLh/n4S0CkEMqrON40eBKXA==",
+      },
+      tarballUrlByVersion: {
+        "2026.6.10": "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.6.10.tgz",
+      },
+      required: true,
+    },
+  ],
   hooks: [
     {
-      id: "discord-openclaw-package-install",
-      phase: "agent-install",
-      handler: "common.staticOutputs",
+      id: "discord-openclaw-bridge-health",
+      phase: "health-check",
+      handler: "discord.openclawBridgeHealth",
       agents: ["openclaw"],
-      outputs: [
-        {
-          id: "openclawPluginPackage",
-          kind: "package-install",
-          required: true,
-          value: {
-            manager: "openclaw-plugin",
-            spec: "npm:@openclaw/discord@{{openclaw.version}}",
-            pin: true,
-          },
-        },
-      ],
       onFailure: "abort",
     },
     {

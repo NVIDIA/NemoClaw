@@ -21,7 +21,6 @@
       "scripts/**/*.js",
       "scripts/**/*.mjs",
       "test/**/*.js",
-      "docs/_ext/**/*.js",
       "!dist",
       "!nemoclaw/dist",
       "!node_modules",
@@ -82,6 +81,14 @@
     "enabled": true,
     "rules": {
       "recommended": false,
+      "complexity": {
+        "noExcessiveCognitiveComplexity": {
+          "level": "error",
+          "options": {
+            "maxAllowedComplexity": 149
+          }
+        }
+      },
       "correctness": {
         "noUndeclaredVariables": "error"
       }
@@ -96,8 +103,7 @@
         "scripts/**/*.mjs",
         "test/**/*.js",
         "test/credentials-shim.test.ts",
-        "test/runner-basic.test.ts",
-        "docs/_ext/**/*.js"
+        "test/runner-basic.test.ts"
       ],
       "linter": {
         "rules": {
@@ -108,14 +114,77 @@
       }
     },
     {
-      "includes": ["docs/_ext/**/*.js"],
-      "formatter": {
-        "enabled": false
-      },
+      "includes": ["src/lib/actions/sandbox/status.ts", "src/lib/actions/sandbox/status-text.ts"],
       "linter": {
         "rules": {
-          "correctness": {
-            "noUnusedVariables": "off"
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "error",
+              "options": {
+                "maxAllowedComplexity": 10
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "src/lib/actions/sandbox/doctor.ts",
+        "src/lib/actions/sandbox/doctor-messaging.ts",
+        "src/lib/actions/sandbox/doctor-report.ts",
+        "src/lib/actions/sandbox/doctor-system-checks.ts"
+      ],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "error",
+              "options": {
+                "maxAllowedComplexity": 10
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "src/lib/onboard/machine/handlers/sandbox.ts",
+        "src/lib/onboard/machine/handlers/sandbox-messaging.ts",
+        "src/lib/onboard/machine/handlers/sandbox-resume.ts"
+      ],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "error",
+              "options": {
+                "maxAllowedComplexity": 10
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "src/commands/onboard.ts",
+        "src/commands/setup.ts",
+        "src/commands/setup-spark.ts",
+        "src/lib/actions/onboard.ts",
+        "src/lib/onboard/command.ts",
+        "src/lib/onboard/command-support.ts"
+      ],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "error",
+              "options": {
+                "maxAllowedComplexity": 10
+              }
+            }
           }
         }
       }

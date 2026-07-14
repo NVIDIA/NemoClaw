@@ -7,6 +7,7 @@ import type {
   ChannelHookOutputSpec,
   ChannelManifest,
   MessagingAgentId,
+  MessagingSerializableObject,
   MessagingSerializableValue,
   SandboxMessagingBuildStepPlan,
   SandboxMessagingChannelPlan,
@@ -21,6 +22,22 @@ export async function planBuildSteps(
   hooks: MessagingHookRegistry,
 ): Promise<SandboxMessagingBuildStepPlan[]> {
   const steps: SandboxMessagingBuildStepPlan[] = [];
+  for (const agentPackage of manifest.agentPackages ?? []) {
+    if (agentPackage.agent !== agent) continue;
+    const value: MessagingSerializableObject = {
+      manager: agentPackage.manager,
+      spec: agentPackage.spec,
+      ...(typeof agentPackage.pin === "boolean" ? { pin: agentPackage.pin } : {}),
+    };
+    steps.push({
+      channelId: manifest.id,
+      kind: "package-install",
+      outputId: agentPackage.id,
+      required: agentPackage.required !== false,
+      ...(channel?.active ? { value } : {}),
+    });
+  }
+
   for (const hook of manifest.hooks) {
     if (hook.agents && !hook.agents.includes(agent)) continue;
     const buildOutputs = (hook.outputs ?? []).filter(isBuildStepOutput);

@@ -13,7 +13,7 @@ import {
   isValidProxyHost,
   isValidProxyPort,
   patchStagedDockerfile,
-} from "../../../dist/lib/onboard/dockerfile-patch";
+} from "./dockerfile-patch";
 
 const tmpRoots: string[] = [];
 
@@ -102,6 +102,71 @@ describe("dockerfile patch helpers", () => {
     expect(isValidProxyPort("70000")).toBe(false);
   });
 
+  it("records WSL dashboard exposure in managed OpenClaw build input (#6024)", () => {
+    const dockerfilePath = dockerfileWith("ARG NEMOCLAW_WSL_DASHBOARD_EXPOSURE=0\n");
+
+    patchStagedDockerfile(
+      dockerfilePath,
+      "custom-model",
+      "http://127.0.0.1:18789",
+      "build-1",
+      null,
+      null,
+      null,
+      null,
+      false,
+      null,
+      [],
+      { wslDashboardExposure: true },
+    );
+
+    expect(fs.readFileSync(dockerfilePath, "utf-8")).toContain(
+      "ARG NEMOCLAW_WSL_DASHBOARD_EXPOSURE=1",
+    );
+  });
+
+  it("keeps legacy non-WSL Dockerfiles compatible without the exposure arg (#6024)", () => {
+    const dockerfilePath = dockerfileWith("ARG CHAT_UI_URL=http://127.0.0.1:18789\n");
+
+    expect(() =>
+      patchStagedDockerfile(
+        dockerfilePath,
+        "custom-model",
+        "http://127.0.0.1:18789",
+        "build-1",
+        null,
+        null,
+        null,
+        null,
+        false,
+        null,
+        [],
+        { wslDashboardExposure: false },
+      ),
+    ).not.toThrow();
+  });
+
+  it("fails closed when a WSL managed Dockerfile cannot record exposure (#6024)", () => {
+    const dockerfilePath = dockerfileWith("ARG CHAT_UI_URL=http://127.0.0.1:18789\n");
+
+    expect(() =>
+      patchStagedDockerfile(
+        dockerfilePath,
+        "custom-model",
+        "http://127.0.0.1:18789",
+        "build-1",
+        null,
+        null,
+        null,
+        null,
+        false,
+        null,
+        [],
+        { wslDashboardExposure: true },
+      ),
+    ).toThrow(/cannot record WSL dashboard exposure/);
+  });
+
   it("fails when an OTEL env value has no matching Dockerfile ARG", () => {
     process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT = "http://host.openshell.internal:4318";
     const dockerfilePath = dockerfileWith(
@@ -171,6 +236,7 @@ describe("dockerfile patch helpers", () => {
         "ARG NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME=old",
         "ARG NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE=old",
         "ARG NEMOCLAW_DISABLE_DEVICE_AUTH=0",
+        "ARG NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE=operator",
         "ARG NEMOCLAW_MESSAGING_PLAN_B64=old",
       ].join("\n"),
     );
@@ -208,7 +274,28 @@ describe("dockerfile patch helpers", () => {
     expect(patched).toContain("ARG NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME=nemoclaw-local");
     expect(patched).toContain("ARG NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE=0.5");
     expect(patched).toContain("ARG NEMOCLAW_DISABLE_DEVICE_AUTH=1");
-    assert.deepEqual(readMessagingPlanArg(patched), messagingPlan);
+    expect(patched).toContain("ARG NEMOCLAW_DEVICE_AUTH_OPT_OUT_SOURCE=managed-onboard");
+    const patchedMessagingPlan = readMessagingPlanArg(patched) as {
+      channels?: Array<{ channelId?: string; active?: boolean }>;
+      buildSteps?: unknown;
+      runtimeSetup?: {
+        nodePreloads?: Array<{ channelId?: string; module?: string }>;
+      };
+    };
+    assert.deepEqual(patchedMessagingPlan.buildSteps, messagingPlan.buildSteps);
+    assert.deepEqual(
+      patchedMessagingPlan.channels?.map((channel) => ({
+        channelId: channel.channelId,
+        active: channel.active,
+      })),
+      [{ channelId: "telegram", active: true }],
+    );
+    assert.ok(
+      patchedMessagingPlan.runtimeSetup?.nodePreloads?.some(
+        (entry) => entry.channelId === "telegram" && entry.module === "telegram-diagnostics",
+      ),
+      "expected hydrated Telegram diagnostics preload in Dockerfile messaging plan",
+    );
   });
 
   it("uses the shared sandbox inference mapping", () => {
@@ -275,6 +362,168 @@ describe("dockerfile patch helpers", () => {
     // arg, so the Hermes config's _nemoclaw_upstream annotation can record
     // what the operator actually picked.
     expect(patched).toContain("ARG NEMOCLAW_UPSTREAM_PROVIDER=nvidia-prod");
+  });
+
+  it("writes the user-selected upstream endpoint into NEMOCLAW_UPSTREAM_ENDPOINT_URL", () => {
+    const dockerfilePath = dockerfileWith(
+      [
+        "ARG NEMOCLAW_MODEL=old",
+        "ARG NEMOCLAW_PROVIDER_KEY=old",
+        "ARG NEMOCLAW_UPSTREAM_PROVIDER=old",
+        "ARG NEMOCLAW_UPSTREAM_ENDPOINT_URL=old",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=old",
+        "ARG CHAT_UI_URL=old",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=old",
+        "ARG NEMOCLAW_INFERENCE_API=old",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=old",
+        "ARG NEMOCLAW_BUILD_ID=old",
+        "ARG NEMOCLAW_DARWIN_VM_COMPAT=0",
+      ].join("\n"),
+    );
+
+    patchStagedDockerfile(
+      dockerfilePath,
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "https://chat.example",
+      "build-1",
+      "compatible-endpoint",
+      null,
+      null,
+      null,
+      false,
+      null,
+      [],
+      { upstreamEndpointUrl: "https://openrouter.ai/api/v1" },
+    );
+
+    const patched = fs.readFileSync(dockerfilePath, "utf-8");
+    expect(patched).toContain("ARG NEMOCLAW_UPSTREAM_PROVIDER=compatible-endpoint");
+    expect(patched).toContain("ARG NEMOCLAW_UPSTREAM_ENDPOINT_URL=https://openrouter.ai/api/v1");
+  });
+
+  it("clears a stale upstream endpoint when no upstream endpoint is selected", () => {
+    const dockerfilePath = dockerfileWith(
+      [
+        "ARG NEMOCLAW_MODEL=old",
+        "ARG NEMOCLAW_PROVIDER_KEY=old",
+        "ARG NEMOCLAW_UPSTREAM_PROVIDER=old",
+        "ARG NEMOCLAW_UPSTREAM_ENDPOINT_URL=https://stale.example/v1",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=old",
+        "ARG CHAT_UI_URL=old",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=old",
+        "ARG NEMOCLAW_INFERENCE_API=old",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=old",
+        "ARG NEMOCLAW_BUILD_ID=old",
+        "ARG NEMOCLAW_DARWIN_VM_COMPAT=0",
+      ].join("\n"),
+    );
+
+    patchStagedDockerfile(
+      dockerfilePath,
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "https://chat.example",
+      "build-1",
+      "nvidia-prod",
+    );
+
+    const patched = fs.readFileSync(dockerfilePath, "utf-8");
+    expect(patched).toContain("ARG NEMOCLAW_UPSTREAM_ENDPOINT_URL=");
+    expect(patched).not.toContain("https://stale.example/v1");
+  });
+
+  it("canonicalizes upstream endpoint URLs before writing Dockerfile ARGs", () => {
+    const dockerfilePath = dockerfileWith(
+      [
+        "ARG NEMOCLAW_MODEL=old",
+        "ARG NEMOCLAW_PROVIDER_KEY=old",
+        "ARG NEMOCLAW_UPSTREAM_PROVIDER=old",
+        "ARG NEMOCLAW_UPSTREAM_ENDPOINT_URL=old",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=old",
+        "ARG CHAT_UI_URL=old",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=old",
+        "ARG NEMOCLAW_INFERENCE_API=old",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=old",
+        "ARG NEMOCLAW_BUILD_ID=old",
+        "ARG NEMOCLAW_DARWIN_VM_COMPAT=0",
+      ].join("\n"),
+    );
+
+    patchStagedDockerfile(
+      dockerfilePath,
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "https://chat.example",
+      "build-1",
+      "compatible-endpoint",
+      null,
+      null,
+      null,
+      false,
+      null,
+      [],
+      { upstreamEndpointUrl: "https://example.test/path\\name" },
+    );
+
+    const patched = fs.readFileSync(dockerfilePath, "utf-8");
+    expect(patched).toContain("ARG NEMOCLAW_UPSTREAM_ENDPOINT_URL=https://example.test/path/name");
+    expect(patched).not.toContain("\\");
+  });
+
+  it.each([
+    [
+      "credentials",
+      "https://user:pass@example.test/v1",
+      "NEMOCLAW_UPSTREAM_ENDPOINT_URL must not include credentials.",
+      "user:pass",
+    ],
+    [
+      "query string",
+      "https://example.test/v1?api_key=sk-test-secret",
+      "NEMOCLAW_UPSTREAM_ENDPOINT_URL must not include query strings or fragments.",
+      "sk-test-secret",
+    ],
+    [
+      "control character",
+      "https://example.test/v1\t[update]",
+      "NEMOCLAW_UPSTREAM_ENDPOINT_URL must not contain control characters.",
+      "[update]",
+    ],
+  ])("rejects unsafe upstream endpoint URLs with %s before Dockerfile write", (_label, upstreamEndpointUrl, error, leakedValue) => {
+    const dockerfilePath = dockerfileWith(
+      [
+        "ARG NEMOCLAW_MODEL=old",
+        "ARG NEMOCLAW_PROVIDER_KEY=old",
+        "ARG NEMOCLAW_UPSTREAM_PROVIDER=old",
+        "ARG NEMOCLAW_UPSTREAM_ENDPOINT_URL=old",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=old",
+        "ARG CHAT_UI_URL=old",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=old",
+        "ARG NEMOCLAW_INFERENCE_API=old",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=old",
+        "ARG NEMOCLAW_BUILD_ID=old",
+        "ARG NEMOCLAW_DARWIN_VM_COMPAT=0",
+      ].join("\n"),
+    );
+
+    expect(() =>
+      patchStagedDockerfile(
+        dockerfilePath,
+        "nvidia/nemotron-3-ultra-550b-a55b",
+        "https://chat.example",
+        "build-1",
+        "compatible-endpoint",
+        null,
+        null,
+        null,
+        false,
+        null,
+        [],
+        { upstreamEndpointUrl },
+      ),
+    ).toThrow(error);
+
+    const dockerfile = fs.readFileSync(dockerfilePath, "utf-8");
+    expect(dockerfile).toContain("ARG NEMOCLAW_UPSTREAM_ENDPOINT_URL=old");
+    expect(dockerfile).not.toContain(leakedValue);
   });
 
   it("falls back to the provider key when no upstream provider is supplied", () => {
@@ -489,7 +738,30 @@ describe("dockerfile patch helpers", () => {
         null,
       );
       const patched = fs.readFileSync(dockerfilePath, "utf8");
-      assert.deepEqual(readMessagingPlanArg(patched), messagingPlan);
+      const patchedMessagingPlan = readMessagingPlanArg(patched) as {
+        channels?: Array<{ channelId?: string; active?: boolean }>;
+        agentRender?: unknown;
+        runtimeSetup?: {
+          nodePreloads?: Array<{ channelId?: string; module?: string }>;
+        };
+      };
+      assert.deepEqual(patchedMessagingPlan.agentRender, messagingPlan.agentRender);
+      assert.deepEqual(
+        patchedMessagingPlan.channels?.map((channel) => ({
+          channelId: channel.channelId,
+          active: channel.active,
+        })),
+        [
+          { channelId: "discord", active: true },
+          { channelId: "telegram", active: true },
+        ],
+      );
+      assert.ok(
+        patchedMessagingPlan.runtimeSetup?.nodePreloads?.some(
+          (entry) => entry.channelId === "telegram" && entry.module === "telegram-diagnostics",
+        ),
+        "expected hydrated Telegram diagnostics preload in Dockerfile messaging plan",
+      );
       assert.doesNotMatch(patched, /NEMOCLAW_MESSAGING_CHANNELS_B64/);
       assert.doesNotMatch(patched, /NEMOCLAW_DISCORD_GUILDS_B64/);
       assert.doesNotMatch(patched, /NEMOCLAW_TELEGRAM_CONFIG_B64/);
@@ -646,7 +918,7 @@ describe("dockerfile patch helpers", () => {
     }
   });
 
-  it("regression #1904: BASE_IMAGE must reference sandbox-base, not openshell-community", () => {
+  it("requires BASE_IMAGE to reference sandbox-base instead of openshell-community (#1904)", () => {
     // This is the exact bug that broke all e2e tests in PR #1937:
     // the code read a digest from blueprint.yaml (openshell-community registry)
     // and applied it to nemoclaw/sandbox-base (different registry).
@@ -780,7 +1052,7 @@ describe("dockerfile patch helpers", () => {
     }
   });
 
-  it("regression #1409: bakes NEMOCLAW_PROXY_HOST/PORT env into the staged Dockerfile", () => {
+  it("bakes NEMOCLAW_PROXY_HOST/PORT env into the staged Dockerfile (#1409)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-proxy-"));
     const dockerfilePath = path.join(tmpDir, "Dockerfile");
     fs.writeFileSync(
@@ -830,7 +1102,7 @@ describe("dockerfile patch helpers", () => {
     }
   });
 
-  it("regression #1409: leaves Dockerfile defaults when proxy env is unset", () => {
+  it("leaves Dockerfile defaults when proxy env is unset (#1409)", () => {
     const tmpDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-proxy-default-"),
     );
@@ -875,7 +1147,7 @@ describe("dockerfile patch helpers", () => {
     }
   });
 
-  it("regression #2421: bakes NEMOCLAW_INFERENCE_INPUTS into the staged Dockerfile when env is set", () => {
+  it("bakes NEMOCLAW_INFERENCE_INPUTS into the staged Dockerfile when env is set (#2421)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-inputs-"));
     const dockerfilePath = path.join(tmpDir, "Dockerfile");
     fs.writeFileSync(
@@ -916,7 +1188,7 @@ describe("dockerfile patch helpers", () => {
     }
   });
 
-  it("regression #2421: rejects malformed NEMOCLAW_INFERENCE_INPUTS and keeps default", () => {
+  it("rejects malformed NEMOCLAW_INFERENCE_INPUTS and keeps the default (#2421)", () => {
     const tmpDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-inputs-bad-"),
     );
@@ -975,7 +1247,7 @@ describe("dockerfile patch helpers", () => {
     }
   });
 
-  it("regression #1409: rejects malformed NEMOCLAW_PROXY_HOST/PORT and keeps defaults", () => {
+  it("rejects malformed NEMOCLAW_PROXY_HOST/PORT and keeps defaults (#1409)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-proxy-bad-"));
     const dockerfilePath = path.join(tmpDir, "Dockerfile");
     fs.writeFileSync(
@@ -1027,7 +1299,7 @@ describe("dockerfile patch helpers", () => {
     }
   });
 
-  it("#2281: bakes NEMOCLAW_AGENT_TIMEOUT env into the staged Dockerfile", () => {
+  it("bakes NEMOCLAW_AGENT_TIMEOUT env into the staged Dockerfile (#2281)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-timeout-"));
     const dockerfilePath = path.join(tmpDir, "Dockerfile");
     fs.writeFileSync(
@@ -1068,7 +1340,7 @@ describe("dockerfile patch helpers", () => {
     }
   });
 
-  it("#2880: bakes NEMOCLAW_AGENT_HEARTBEAT_EVERY env into the staged Dockerfile", () => {
+  it("bakes NEMOCLAW_AGENT_HEARTBEAT_EVERY env into the staged Dockerfile (#2880)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-heartbeat-"));
     const dockerfilePath = path.join(tmpDir, "Dockerfile");
     const baseDockerfile = [
@@ -1151,6 +1423,7 @@ describe("dockerfile patch helpers", () => {
         "ARG NEMOCLAW_INFERENCE_API=openai-completions",
         "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
         "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_WEB_SEARCH_PROVIDER=brave",
         "ARG NEMOCLAW_BUILD_ID=default",
       ].join("\n"),
     );
@@ -1169,6 +1442,7 @@ describe("dockerfile patch helpers", () => {
       );
       const patched = fs.readFileSync(dockerfilePath, "utf8");
       assert.match(patched, /^ARG NEMOCLAW_WEB_SEARCH_ENABLED=1$/m);
+      assert.match(patched, /^ARG NEMOCLAW_WEB_SEARCH_PROVIDER=brave$/m);
       // Regression guard: the old secret-bearing build arg must not reappear.
       assert.doesNotMatch(patched, /NEMOCLAW_WEB_CONFIG_B64/);
     } finally {
@@ -1177,6 +1451,44 @@ describe("dockerfile patch helpers", () => {
       } else {
         process.env.BRAVE_API_KEY = priorBraveKey;
       }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("patches the staged Dockerfile with Tavily as the selected web-search provider", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dockerfile-tavily-"));
+    const dockerfilePath = path.join(tmpDir, "Dockerfile");
+    fs.writeFileSync(
+      dockerfilePath,
+      [
+        "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+        "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+        "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
+        "ARG NEMOCLAW_INFERENCE_API=openai-completions",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+        "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0",
+        "ARG NEMOCLAW_WEB_SEARCH_PROVIDER=brave",
+        "ARG NEMOCLAW_BUILD_ID=default",
+      ].join("\n"),
+    );
+
+    try {
+      patchStagedDockerfile(
+        dockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:18789",
+        "build-web",
+        "openai-api",
+        null,
+        { fetchEnabled: true, provider: "tavily" },
+      );
+      const patched = fs.readFileSync(dockerfilePath, "utf8");
+      assert.match(patched, /^ARG NEMOCLAW_WEB_SEARCH_ENABLED=1$/m);
+      assert.match(patched, /^ARG NEMOCLAW_WEB_SEARCH_PROVIDER=tavily$/m);
+      assert.doesNotMatch(patched, /TAVILY_API_KEY/);
+    } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });

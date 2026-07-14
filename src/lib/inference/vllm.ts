@@ -5,20 +5,44 @@
 // offer vLLM at all" lives in onboard.ts; this module owns picking the
 // right profile per platform and running the install.
 
-import { dockerCapture, dockerPullWithProgressWatchdog, dockerSpawn } from "../adapters/docker";
+import os from "node:os";
+import path from "node:path";
+import {
+  dockerCapture,
+  dockerForceRm,
+  dockerImageInspectFormat,
+  dockerPullWithProgressWatchdog,
+  dockerRunDetached,
+  dockerSpawn,
+  dockerStop,
+} from "../adapters/docker";
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { VLLM_PORT } from "../core/ports";
-import { runCapture, runShell } from "../runner";
+import { isAffirmativeAnswer } from "../onboard/prompt-helpers";
+import { runCapture } from "../runner";
+import { isSafeModelId } from "../validation";
 import { getGpuIndicesByName } from "./nim";
+import { buildVllmDockerEnv } from "./vllm-docker-env";
 import {
-  VLLM_EXTRA_ARGS_ENV,
-  VLLM_MODELS,
   buildVllmServeCommand,
   parseVllmExtraServeArgs,
+  VLLM_EXTRA_ARGS_ENV,
+  VLLM_MODELS,
   type VllmModelDef,
   type VllmPlatform,
 } from "./vllm-models";
 import { resolveVllmInstallModel } from "./vllm-prompt";
+import {
+  formatStorageBytes,
+  imageStorageRequirementBytes,
+  modelStorageRequirementBytes,
+  probeDockerBindIdentity,
+  probeDockerHostLocality,
+  probeDockerStorage,
+  probeModelCacheStorage,
+  type StorageProbeResult,
+  VLLM_STORAGE_OVERRIDE_ENV,
+} from "./vllm-storage";
 
 // Per-platform install recipe. Add new platforms by appending an entry to
 // the profile table at the bottom of this file. The menu key in onboard.ts
@@ -29,7 +53,10 @@ export interface VllmProfile {
   // filters the registry. Decoupled from `name` so future user-facing label
   // tweaks don't change which models are offered.
   platform: VllmPlatform;
-  image: string; // container image
+  image: string; // platform-specific image pinned by digest
+  // Compressed size of that exact platform manifest. The storage preflight
+  // adds unpacking and pull-staging headroom.
+  imageDownloadSizeBytes: number;
   // Default model when NEMOCLAW_VLLM_MODEL is unset. Per-platform default
   // because Spark/Station can host larger recipes, but generic discrete-GPU
   // Linux falls back to the small Nemotron-Nano-4B that fits on consumer
@@ -51,9 +78,28 @@ export interface VllmProfile {
   loadTimeoutSec: number;
 }
 
-const VLLM_IMAGES = {
-  ngc2603Post1: "nvcr.io/nvidia/vllm:26.03.post1-py3",
-  ngc2605Post1: "nvcr.io/nvidia/vllm:26.05.post1-py3",
+// Platform manifests and decimal compressed sizes published by NGC for the
+// named release tags. Pinning the digest makes a cache hit authoritative: an
+// explicit pull cannot begin downloading different same-tag layers.
+export const VLLM_IMAGES = {
+  ngc2603Post1: {
+    tag: "nvcr.io/nvidia/vllm:26.03.post1-py3",
+    amd64: {
+      ref: "nvcr.io/nvidia/vllm@sha256:7be6c2f676c36059a494fe17254e69ae5c677535ba6191044e5fc8e42a91c773",
+      downloadSizeBytes: 8_928_665_752,
+    },
+    arm64: {
+      ref: "nvcr.io/nvidia/vllm@sha256:447995cbb57e6c7cf792cab95e9852e5f62b5fb6d2f39e030fa4eda9a54eadb4",
+      downloadSizeBytes: 9_278_081_698,
+    },
+  },
+  ngc2605Post1: {
+    tag: "nvcr.io/nvidia/vllm:26.05.post1-py3",
+    arm64: {
+      ref: "nvcr.io/nvidia/vllm@sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2",
+      downloadSizeBytes: 9_603_085_145,
+    },
+  },
 } as const;
 
 function nemotronNanoModel(): VllmModelDef {
@@ -62,9 +108,9 @@ function nemotronNanoModel(): VllmModelDef {
   return match;
 }
 
-function qwen27bFP8Model(): VllmModelDef {
-  const match = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-27b");
-  if (!match) throw new Error("vllm-models registry is missing the qwen3.6-27b entry");
+function deepseekV4FlashModel(): VllmModelDef {
+  const match = VLLM_MODELS.find((m) => m.envValue === "deepseek-v4-flash");
+  if (!match) throw new Error("vllm-models registry is missing the deepseek-v4-flash entry");
   return match;
 }
 
@@ -77,6 +123,27 @@ function qwen35bNvfp4Model(): VllmModelDef {
 const HF_TOKEN_ENV_KEYS = ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"] as const;
 const MODEL_DOWNLOAD_HEARTBEAT_MS = 30_000;
 const VLLM_LAUNCH_HEARTBEAT_MS = 30_000;
+const HF_CACHE_CONTAINER_DIR = "/root/.cache/huggingface";
+
+function hostHfCacheDir(): string {
+  return path.join(os.homedir(), ".cache", "huggingface");
+}
+
+function hfCacheMount(): string {
+  return `${hostHfCacheDir()}:${HF_CACHE_CONTAINER_DIR}`;
+}
+
+function vllmDockerRunFlags(gpuFlag = "all"): string[] {
+  return [
+    "--gpus",
+    gpuFlag,
+    "--ipc=host",
+    "-v",
+    hfCacheMount(),
+    "-e",
+    `HF_HOME=${HF_CACHE_CONTAINER_DIR}`,
+  ];
+}
 
 function pickHfTokenEntry(
   env: NodeJS.ProcessEnv = process.env,
@@ -108,10 +175,9 @@ export function buildHfTokenDockerArgs(env: NodeJS.ProcessEnv = process.env): st
 /**
  * Companion to `buildHfTokenDockerArgs`: returns the `{ KEY: value }` map
  * that has to be merged into the subprocess env so docker can see the
- * token when `-e KEY` (key-only) tells it to forward by name. The CLI's
- * `runShell` strips non-allowlisted env names by default (see
- * subprocess-env.ts), so callers that go through that path must pass
- * this map via the runner's `env` option.
+ * token when `-e KEY` (key-only) tells it to forward by name. The CLI runner
+ * strips non-allowlisted env names by default (see subprocess-env.ts), so
+ * Docker callers must pass this map via the runner's `env` option.
  */
 export function buildHfTokenForwardEnv(
   env: NodeJS.ProcessEnv = process.env,
@@ -123,18 +189,11 @@ export function buildHfTokenForwardEnv(
 const SPARK_PROFILE: VllmProfile = {
   name: "DGX Spark",
   platform: "spark",
-  image: VLLM_IMAGES.ngc2605Post1,
+  image: VLLM_IMAGES.ngc2605Post1.arm64.ref,
+  imageDownloadSizeBytes: VLLM_IMAGES.ngc2605Post1.arm64.downloadSizeBytes,
   defaultModel: qwen35bNvfp4Model(),
   containerName: "nemoclaw-vllm",
-  dockerRunFlags: [
-    "--gpus",
-    "all",
-    "--ipc=host",
-    "-v",
-    `${process.env.HOME}/.cache/huggingface:/root/.cache/huggingface`,
-    "-e",
-    "HF_HOME=/root/.cache/huggingface",
-  ],
+  dockerRunFlags: vllmDockerRunFlags(),
   pullTimeoutSec: 12 * 60 * 60,
   loadTimeoutSec: 1800,
 };
@@ -143,27 +202,22 @@ const SPARK_PROFILE: VllmProfile = {
 const STATION_PROFILE: VllmProfile = {
   name: "DGX Station",
   platform: "station",
-  image: VLLM_IMAGES.ngc2605Post1,
-  defaultModel: qwen27bFP8Model(),
+  image: VLLM_IMAGES.ngc2605Post1.arm64.ref,
+  imageDownloadSizeBytes: VLLM_IMAGES.ngc2605Post1.arm64.downloadSizeBytes,
+  defaultModel: deepseekV4FlashModel(),
   containerName: "nemoclaw-vllm",
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
   buildDockerRunFlags: () => {
     const indices = getGpuIndicesByName(/GB300/i);
+    // Docker parses --gpus as CSV, so multi-device values must retain
+    // double quotes inside the argv token to keep the comma in one field.
     const gpuFlag =
       indices.length === 0
         ? "all"
         : indices.length === 1
           ? `device=${indices[0]}`
-          : `'"device=${indices.join(",")}"'`;
-    return [
-      "--gpus",
-      gpuFlag,
-      "--ipc=host",
-      "-v",
-      `${process.env.HOME}/.cache/huggingface:/root/.cache/huggingface`,
-      "-e",
-      "HF_HOME=/root/.cache/huggingface",
-    ];
+          : `"device=${indices.join(",")}"`;
+    return vllmDockerRunFlags(gpuFlag);
   },
   pullTimeoutSec: SPARK_PROFILE.pullTimeoutSec,
   loadTimeoutSec: SPARK_PROFILE.loadTimeoutSec,
@@ -171,16 +225,26 @@ const STATION_PROFILE: VllmProfile = {
 
 // Generic discrete-GPU Linux. Uses a small nemotron model that fits on
 // most GPUs.
-const GENERIC_LINUX_PROFILE: VllmProfile = {
-  name: "Linux + NVIDIA GPU",
-  platform: "linux",
-  image: VLLM_IMAGES.ngc2603Post1,
-  defaultModel: nemotronNanoModel(),
-  containerName: "nemoclaw-vllm",
-  dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
-  pullTimeoutSec: SPARK_PROFILE.pullTimeoutSec,
-  loadTimeoutSec: SPARK_PROFILE.loadTimeoutSec,
-};
+const genericLinuxImage =
+  process.arch === "arm64"
+    ? VLLM_IMAGES.ngc2603Post1.arm64
+    : process.arch === "x64"
+      ? VLLM_IMAGES.ngc2603Post1.amd64
+      : null;
+
+const GENERIC_LINUX_PROFILE: VllmProfile | null = genericLinuxImage
+  ? {
+      name: "Linux + NVIDIA GPU",
+      platform: "linux",
+      image: genericLinuxImage.ref,
+      imageDownloadSizeBytes: genericLinuxImage.downloadSizeBytes,
+      defaultModel: nemotronNanoModel(),
+      containerName: "nemoclaw-vllm",
+      dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
+      pullTimeoutSec: SPARK_PROFILE.pullTimeoutSec,
+      loadTimeoutSec: SPARK_PROFILE.loadTimeoutSec,
+    }
+  : null;
 
 export function detectVllmProfile(
   gpu:
@@ -226,7 +290,11 @@ function dockerPrereqsOk(): { ok: boolean; reason?: string } {
 
 export async function pullImage(profile: VllmProfile): Promise<{ ok: boolean; reason?: string }> {
   emit(`Pulling vLLM image: ${profile.image}`);
+  // Docker can be quiet while finalizing large layers on every supported vLLM
+  // profile, so all profiles intentionally share the 15-minute stall default.
+  // The profile-specific maximum still bounds the complete pull operation.
   const result = await dockerPullWithProgressWatchdog(profile.image, {
+    env: buildVllmDockerEnv(),
     maxTimeoutMs: profile.pullTimeoutSec * 1000,
     logLine: emit,
   });
@@ -257,18 +325,22 @@ function downloadModel(
         "run",
         "-t",
         "--rm",
+        "--pull=never",
         "--entrypoint",
         "hf",
         "-v",
-        `${process.env.HOME}/.cache/huggingface:/root/.cache/huggingface`,
+        hfCacheMount(),
         "-e",
-        "HF_HOME=/root/.cache/huggingface",
+        `HF_HOME=${HF_CACHE_CONTAINER_DIR}`,
         ...buildHfTokenDockerArgs(),
         profile.image,
         "download",
         model.id,
       ],
-      { stdio: ["ignore", "pipe", "pipe"] },
+      {
+        env: buildVllmDockerEnv(buildHfTokenForwardEnv()),
+        stdio: ["ignore", "pipe", "pipe"],
+      },
     );
 
     const tail: string[] = [];
@@ -336,21 +408,52 @@ function downloadModel(
   });
 }
 
-// Build the `docker run` command for the long-lived vLLM inference container.
+function validateDockerArg(value: string, label: string): string {
+  if (value.length === 0) {
+    throw new Error(`${label} must not be empty`);
+  }
+  if (value.includes("\0")) {
+    throw new Error(`${label} must not contain NUL bytes`);
+  }
+  return value;
+}
+
+function validateDockerArgs(args: readonly string[], label: string): string[] {
+  return args.map((arg, index) => validateDockerArg(String(arg), `${label}[${String(index)}]`));
+}
+
+// Build the `docker run` argv for the long-lived vLLM inference container.
 // Exported for testing. `--restart unless-stopped` makes the container come
 // back after a host reboot or Docker daemon restart (#4886); without a restart
 // policy the container stays down after a reboot and `nemoclaw inference get`
 // fails until a full `nemoclaw onboard --fresh --gpu` recreates it.
-export function buildVllmRunCommand(
+export function buildVllmRunArgs(
   profile: VllmProfile,
   model: VllmModelDef,
-  runFlags: string,
-): string {
-  const extra = runFlags ? ` ${runFlags}` : "";
-  return (
-    `docker run -d --restart unless-stopped${extra} -p ${String(VLLM_PORT)}:8000 ` +
-    `--name ${profile.containerName} --entrypoint /bin/bash ${profile.image} -lc ${JSON.stringify(buildVllmServeCommand(model))}`
+  runFlags: readonly string[],
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const image = validateDockerArg(profile.image, "vLLM image");
+  const containerName = validateDockerArg(profile.containerName, "vLLM container name");
+  const safeRunFlags = validateDockerArgs(
+    [...runFlags, ...buildHfTokenDockerArgs(env)],
+    "vLLM docker run flags",
   );
+  return [
+    "--pull=never",
+    "--restart",
+    "unless-stopped",
+    ...safeRunFlags,
+    "-p",
+    `${String(VLLM_PORT)}:8000`,
+    "--name",
+    containerName,
+    "--entrypoint",
+    "/bin/bash",
+    image,
+    "-lc",
+    buildVllmServeCommand(model, env),
+  ];
 }
 
 function startContainer(
@@ -358,11 +461,6 @@ function startContainer(
   model: VllmModelDef,
 ): { ok: boolean; reason?: string } {
   emit(`Starting vLLM container (${profile.containerName})`);
-  // Idempotent: tear down any prior container by the same name first.
-  runShell(`docker rm -f ${profile.containerName}`, {
-    ignoreError: true,
-    suppressOutput: true,
-  });
   const resolvedFlags = profile.buildDockerRunFlags
     ? profile.buildDockerRunFlags()
     : profile.dockerRunFlags;
@@ -372,13 +470,23 @@ function startContainer(
   // token from the docker subprocess env by default, so we have to put it
   // back via the `env:` option; the docker argv only carries `-e KEY` so
   // the value stays out of /proc/<pid>/cmdline.
-  const hfTokenFlags = buildHfTokenDockerArgs().join(" ");
-  const flags = [resolvedFlags.join(" "), hfTokenFlags].filter(Boolean).join(" ");
-  const cmd = buildVllmRunCommand(profile, model, flags);
-  const result = runShell(cmd, {
+  let runArgs: string[];
+  try {
+    runArgs = buildVllmRunArgs(profile, model, resolvedFlags);
+  } catch (err) {
+    return { ok: false, reason: (err as Error).message };
+  }
+  // Validate every launch input before replacing a potentially healthy
+  // existing container. Once validated, teardown keeps startup idempotent.
+  dockerForceRm(profile.containerName, {
+    env: buildVllmDockerEnv(),
     ignoreError: true,
     suppressOutput: true,
-    env: buildHfTokenForwardEnv(),
+  });
+  const result = dockerRunDetached(runArgs, {
+    env: buildVllmDockerEnv(buildHfTokenForwardEnv()),
+    ignoreError: true,
+    suppressOutput: true,
   });
   if (result.status !== 0) {
     return { ok: false, reason: `docker run failed (exit ${String(result.status)})` };
@@ -416,6 +524,7 @@ function vllmEndpointReady(): boolean {
 
 function readContainerLogTail(profile: VllmProfile, lineCount = 80): string[] {
   const output = dockerCapture(["logs", "--tail", String(lineCount), profile.containerName], {
+    env: buildVllmDockerEnv(),
     ignoreError: true,
   }).trim();
   if (!output) return [];
@@ -484,15 +593,155 @@ function waitForVllmReady(profile: VllmProfile): Promise<{ ok: boolean; reason?:
 function containerStillRunning(profile: VllmProfile): boolean {
   const out = dockerCapture(
     ["ps", "--filter", `name=${profile.containerName}`, "--format", "{{.Names}}"],
-    { ignoreError: true },
+    { env: buildVllmDockerEnv(), ignoreError: true },
   ).trim();
   return out === profile.containerName;
+}
+
+interface StorageWarning {
+  item: string;
+  itemLabel: "Image" | "Model";
+  probe: StorageProbeResult;
+  question: string;
+  remediation: readonly string[];
+  requiredBytes: bigint;
+  subject: string;
+}
+
+function printStorageWarning(warning: StorageWarning): void {
+  const insufficient =
+    warning.probe.ok && warning.probe.capacity.availableBytes < warning.requiredBytes;
+  console.error("");
+  console.error(`  ${insufficient ? "Insufficient" : "Unable to verify"} ${warning.subject}.`);
+  console.error("");
+  console.error(`  ${warning.itemLabel}:     ${warning.item}`);
+  console.error(
+    `  Available: ${
+      warning.probe.ok
+        ? formatStorageBytes(warning.probe.capacity.availableBytes)
+        : `unknown (${warning.probe.reason})`
+    }`,
+  );
+  console.error(`  Required:  approximately ${formatStorageBytes(warning.requiredBytes)}`);
+  if (warning.probe.ok) {
+    console.error(`  Storage:   ${warning.probe.capacity.source} (${warning.probe.capacity.path})`);
+  } else if (warning.probe.path) {
+    console.error(`  Storage:   ${warning.probe.source ?? "filesystem"} (${warning.probe.path})`);
+  }
+  console.error("");
+  for (const line of warning.remediation) console.error(`  ${line}`);
+}
+
+async function storageWarningAccepted(
+  warning: StorageWarning,
+  opts: InstallVllmOptions,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<boolean> {
+  if (warning.probe.ok && warning.probe.capacity.availableBytes >= warning.requiredBytes) {
+    return true;
+  }
+  printStorageWarning(warning);
+  if (env[VLLM_STORAGE_OVERRIDE_ENV] === "1") {
+    console.error(`  Continuing because ${VLLM_STORAGE_OVERRIDE_ENV}=1.`);
+    return true;
+  }
+  if (opts.nonInteractive) {
+    console.error(
+      `  Non-interactive setup stops before the guarded download. Set ${VLLM_STORAGE_OVERRIDE_ENV}=1 to override.`,
+    );
+    return false;
+  }
+  return isAffirmativeAnswer(await opts.promptFn(warning.question));
+}
+
+async function imageStorageAccepted(
+  profile: VllmProfile,
+  opts: InstallVllmOptions,
+): Promise<boolean> {
+  return storageWarningAccepted(
+    {
+      item: profile.image,
+      itemLabel: "Image",
+      probe: probeDockerStorage(),
+      question: "  Continue with the pull anyway? [y/N]: ",
+      remediation: [
+        "Free or expand Docker storage before continuing.",
+        "Useful diagnostics:",
+        "  docker system df",
+        "  docker info --format '{{.DockerRootDir}}'",
+      ],
+      requiredBytes: imageStorageRequirementBytes(profile.imageDownloadSizeBytes),
+      subject: "Docker storage for the managed vLLM image",
+    },
+    opts,
+  );
+}
+
+async function modelStorageAccepted(
+  model: VllmModelDef,
+  opts: InstallVllmOptions,
+  bindProbeImage?: string,
+): Promise<boolean> {
+  const cacheDir = hostHfCacheDir();
+  const dockerHost = bindProbeImage
+    ? probeDockerBindIdentity(cacheDir, bindProbeImage)
+    : probeDockerHostLocality();
+  const probe: StorageProbeResult = dockerHost.ok ? probeModelCacheStorage(cacheDir) : dockerHost;
+  return storageWarningAccepted(
+    {
+      item: model.id,
+      itemLabel: "Model",
+      probe,
+      question: "  Continue with the model download anyway? [y/N]: ",
+      remediation: [
+        `Free or expand storage for ${cacheDir} before continuing.`,
+        "Useful diagnostic:",
+        '  df -h "$HOME/.cache/huggingface"',
+      ],
+      requiredBytes: modelStorageRequirementBytes(model.downloadSizeBytes),
+      subject: "model-cache storage for managed vLLM",
+    },
+    opts,
+  );
 }
 
 interface InstallVllmOptions {
   hasImage: boolean;
   nonInteractive: boolean;
   promptFn: (q: string) => Promise<string>;
+  beforeInstall?: (modelId: string) => void;
+}
+
+function imageIsCached(profile: VllmProfile): boolean {
+  return Boolean(
+    dockerImageInspectFormat("{{.Id}}", profile.image, {
+      env: buildVllmDockerEnv(),
+      ignoreError: true,
+      timeout: 10_000,
+    }).trim(),
+  );
+}
+
+export function resolveVllmServedModelId(modelId: string, extraServeArgs: string[]): string {
+  let override: string | null = null;
+  for (let index = 0; index < extraServeArgs.length; index += 1) {
+    const arg = extraServeArgs[index];
+    let values: string[] | null = null;
+    if (arg === "--served-model-name") {
+      values = [];
+      while (index + 1 < extraServeArgs.length && !extraServeArgs[index + 1].startsWith("-")) {
+        values.push(extraServeArgs[(index += 1)]);
+      }
+    } else if (arg.startsWith("--served-model-name=")) {
+      values = [arg.slice("--served-model-name=".length)];
+    }
+    if (!values) continue;
+    if (override || values.length !== 1 || !isSafeModelId(values[0])) {
+      throw new Error("--served-model-name must specify exactly one safe model ID");
+    }
+    override = values[0];
+  }
+  return override ?? modelId;
 }
 
 // Public entry point. Returns ok=false on any prereq, pull, run, or load
@@ -512,12 +761,15 @@ export async function installVllm(
   const { model, source: modelSource } = resolved;
 
   let extraServeArgs: string[];
+  let servedModelId: string;
   try {
     extraServeArgs = parseVllmExtraServeArgs();
+    servedModelId = resolveVllmServedModelId(model.id, extraServeArgs);
   } catch (err) {
     console.error(`  vLLM install failed: ${(err as Error).message}`);
     return { ok: false };
   }
+  opts.beforeInstall?.(servedModelId);
 
   console.log("");
   console.log(`  vLLM (${profile.name}):`);
@@ -536,7 +788,7 @@ export async function installVllm(
 
   const proceed = opts.nonInteractive
     ? true
-    : (await opts.promptFn("  Continue? [y/N]: ")).trim().toLowerCase().startsWith("y");
+    : isAffirmativeAnswer(await opts.promptFn("  Continue? [y/N]: "));
   if (!proceed) return { ok: false };
 
   console.log("");
@@ -548,9 +800,23 @@ export async function installVllm(
     return { ok: false };
   }
 
+  const hasImage = imageIsCached(profile);
+  if (!hasImage && !(await imageStorageAccepted(profile, opts))) {
+    return { ok: false };
+  }
+  if (!(await modelStorageAccepted(model, opts, hasImage ? profile.image : undefined))) {
+    return { ok: false };
+  }
+
   const pull = await pullImage(profile);
   if (!pull.ok) {
     console.error(`  vLLM install failed: ${String(pull.reason)}`);
+    return { ok: false };
+  }
+
+  // The image now exists, so this re-probe also proves daemon/client bind
+  // identity before their individually valid estimates can overcommit storage.
+  if (!(await modelStorageAccepted(model, opts, profile.image))) {
     return { ok: false };
   }
 
@@ -572,7 +838,8 @@ export async function installVllm(
   const ready = await waitForVllmReady(profile);
   if (!ready.ok) {
     printContainerLogTail(profile);
-    runShell(`docker stop ${profile.containerName}`, {
+    dockerStop(profile.containerName, {
+      env: buildVllmDockerEnv(),
       ignoreError: true,
       suppressOutput: true,
     });

@@ -20,11 +20,11 @@ describe("onboard provider selection vLLM UX", {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-running-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "vllm-running-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
     const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(
@@ -147,13 +147,13 @@ const { setupNim } = require(${onboardPath});
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-validation-"));
     const scriptPath = path.join(tmpDir, "vllm-validation-context-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
     const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
     const validationPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "onboard", "inference-selection-validation.js"),
+      path.join(repoRoot, "src", "lib", "onboard", "inference-selection-validation.ts"),
     );
 
     const script = String.raw`
@@ -265,12 +265,12 @@ const { setupNim } = require(${onboardPath});
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-no-install-"));
     const scriptPath = path.join(tmpDir, "vllm-no-install-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
     const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const vllmPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "vllm.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const vllmPath = JSON.stringify(path.join(repoRoot, "src", "lib", "inference", "vllm.ts"));
 
     const script = String.raw`
 const credentials = require(${credentialsPath});
@@ -329,13 +329,13 @@ const { setupNim } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-platform-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "vllm-platform-menu-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
     const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
     const dockerRunPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "adapters", "docker", "run.js"),
+      path.join(repoRoot, "src", "lib", "adapters", "docker", "run.ts"),
     );
     type VllmPlatformScenario =
       | {
@@ -503,12 +503,12 @@ async function runScenario(scenario) {
       path.join(os.tmpdir(), "nemoclaw-onboard-install-vllm-no-profile-"),
     );
     const scriptPath = path.join(tmpDir, "install-vllm-no-profile-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
     const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const vllmPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "vllm.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const vllmPath = JSON.stringify(path.join(repoRoot, "src", "lib", "inference", "vllm.ts"));
 
     const script = String.raw`
 const credentials = require(${credentialsPath});
@@ -572,11 +572,11 @@ const { setupNim } = require(${onboardPath});
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-install-vllm-running-"));
     const scriptPath = path.join(tmpDir, "install-vllm-running-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
     const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
 
     const script = String.raw`
 const credentials = require(${credentialsPath});

@@ -173,7 +173,6 @@ JSON
   # shellcheck disable=SC2016
   # log text: backticks are documentation markers, not command substitution
   log '[cli] phase 2/2: extract ### `nemoclaw …` / `$$nemoclaw …` headings from commands reference'
-  # Allow optional MyST suffix on the same line, e.g. ### `nemoclaw onboard` {#anchor}.
   # Preserve placeholders that are part of the canonical help signature, but
   # keep accepting docs-only suffixes such as `snapshot restore [selector]`.
   grep -E '^### `(\$\$)?nemoclaw ' "$COMMANDS_MD" | LC_ALL=C perl -CS -ne '
@@ -186,7 +185,7 @@ JSON
       }
       close $help_fh;
     }
-    if (/^### `([^`]+)`\s*(?:\{[^}]+\})?\s*$/) {
+    if (/^### `([^`]+)`\s*$/) {
       my $c = $1;
       $c =~ s/^\$\$nemoclaw\b/nemoclaw/;
       $c =~ s/\s+$//;
@@ -240,7 +239,7 @@ JSON
   # Awk extractor: print lines belonging to the section whose heading
   # canonicalizes to <cmd> after the same trailing-placeholder strip phase 2
   # applies (`### \`nemoclaw foo <ARG>\`` → `nemoclaw foo`). Stops at the
-  # next ### heading. MyST anchors after the closing backtick are tolerated.
+  # next ### heading.
   extract_md_section() {
     local cmd="$1"
     local md="$2"
@@ -299,8 +298,14 @@ JSON
         $mode = "flags";
         next;
       }
-      if (/^\s*(ARGUMENTS|DESCRIPTION|EXAMPLES)\s*$/i || /^\s*$/) {
+      if (/^\s*(ARGUMENTS|DESCRIPTION|EXAMPLES)\s*$/i) {
         $mode = "";
+        next;
+      }
+      if (/^\s*$/) {
+        # Oclif separates flag entries with blank lines, while the custom
+        # one-line Usage format uses one to end its usage synopsis.
+        $mode = "" if $mode eq "usage";
         next;
       }
       emit_flags($_) if $mode;
@@ -754,7 +759,7 @@ function maybeEmit(item) {
 }
 
 function agentVariantSourcePath(navPath) {
-  const match = navPath.match(/^_build\/agent-variants\/(.+)\.(?:openclaw|hermes)\.generated\.mdx$/);
+  const match = navPath.match(/^_build\/agent-variants\/(.+)\.(?:openclaw|hermes|deepagents)\.generated\.mdx$/);
   return match ? `${match[1]}.mdx` : null;
 }
 

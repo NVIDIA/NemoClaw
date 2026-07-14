@@ -6,6 +6,7 @@ import { OLLAMA_PORT, VLLM_PORT } from "../core/ports";
 import { findReachableOllamaHost, OLLAMA_HOST_DOCKER_INTERNAL } from "../inference/local";
 import type { NvidiaPlatform } from "../inference/nim";
 import { detectVllmProfile, type VllmProfile } from "../inference/vllm";
+import { buildVllmDockerEnv } from "../inference/vllm-docker-env";
 import {
   type ContainerRuntime,
   isWsl as defaultIsWsl,
@@ -17,12 +18,16 @@ import {
   getWindowsHostOllamaDockerRequirement,
   type WindowsHostOllamaDockerRequirement,
 } from "./local-inference-topology";
-import { resolveOllamaInstallMenuEntry, type OllamaInstallMenuResult } from "./ollama-install-menu";
+import { warnAboutArm64NimImageCompatibility } from "./nim-image-compat-warning";
+import { type OllamaInstallMenuResult, resolveOllamaInstallMenuEntry } from "./ollama-install-menu";
 import { buildVllmMenuEntries, type VllmMenuEntry } from "./vllm-menu";
 import { detectWindowsHostOllama, type WindowsHostOllamaState } from "./windows-host-ollama";
 
 type RunCapture = (args: string[], options?: { ignoreError?: boolean }) => string;
-type DockerCapture = (args: string[], options?: { ignoreError?: boolean }) => string;
+type DockerCapture = (
+  args: string[],
+  options?: { env?: NodeJS.ProcessEnv; ignoreError?: boolean; timeout?: number },
+) => string;
 
 export interface InferenceProviderHostGpu {
   nimCapable?: boolean;
@@ -53,6 +58,8 @@ export interface InferenceProviderHostState {
 export interface DetectInferenceProviderHostStateInput {
   gpu: InferenceProviderHostGpu | null | undefined;
   experimental: boolean;
+  probeOllama?: boolean;
+  probeVllm?: boolean;
   platform?: NodeJS.Platform;
   env?: NodeJS.ProcessEnv;
   log?: (message?: string) => void;
@@ -156,31 +163,43 @@ export function detectInferenceProviderHostState(
   const platform = input.platform ?? process.platform;
   const isWsl = deps.isWsl({ platform, env: input.env });
   const hasOllama = deps.hostCommandExists("ollama");
-  const ollamaHost = deps.findReachableOllamaHost();
+  const ollamaHost = input.probeOllama === false ? null : deps.findReachableOllamaHost();
   const ollamaRunning = ollamaHost !== null;
   const isWindowsHostOllama = ollamaHost === OLLAMA_HOST_DOCKER_INTERNAL;
-  const vllmRunning = probeVllmRunning(deps.runCapture);
+  const vllmRunning = input.probeVllm === false ? false : probeVllmRunning(deps.runCapture);
   const vllmProfile = deps.detectVllmProfile(input.gpu);
   const hasVllmImage = !!(
     vllmProfile &&
-    deps.dockerCapture(["images", "-q", vllmProfile.image], { ignoreError: true }).trim()
+    deps
+      .dockerCapture(["image", "inspect", "--format", "{{.Id}}", vllmProfile.image], {
+        env: buildVllmDockerEnv({}, input.env),
+        ignoreError: true,
+        timeout: 10_000,
+      })
+      .trim()
   );
   const windowsHostOllamaDockerRequirement = deps.getWindowsHostOllamaDockerRequirement(
     isWsl ? deps.getContainerRuntime() : null,
   );
   const winOllamaState = deps.detectWindowsHostOllama();
   const hasWindowsOllama = winOllamaState.installed;
-  const windowsOllamaReachable = probeWindowsOllamaReachable({
-    isWsl,
-    isWindowsHostOllama,
-    runCapture: deps.runCapture,
-  });
+  const windowsOllamaReachable =
+    input.probeOllama === false
+      ? false
+      : probeWindowsOllamaReachable({ isWsl, isWindowsHostOllama, runCapture: deps.runCapture });
 
   maybeWarnAboutDuplicateOllamaDaemons({
     isWsl,
     ollamaHost,
     windowsOllamaReachable,
     runCapture: deps.runCapture,
+    log,
+  });
+  const gpuNimCapable = Boolean(input.gpu?.nimCapable);
+  warnAboutArm64NimImageCompatibility({
+    gpu: input.gpu,
+    nimLocalAvailable: input.experimental && gpuNimCapable,
+    platform,
     log,
   });
 
@@ -219,6 +238,6 @@ export function detectInferenceProviderHostState(
       log: (message) => log(message),
     }),
     ollamaInstallMenu,
-    gpuNimCapable: Boolean(input.gpu?.nimCapable),
+    gpuNimCapable,
   };
 }
