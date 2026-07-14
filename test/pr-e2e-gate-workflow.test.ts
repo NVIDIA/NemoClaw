@@ -213,9 +213,12 @@ function runControlPlaneStartStep(reviewReason: string) {
   }
 }
 
-function runApprovedExceptionStep() {
+function runApprovedForkSkipStep() {
   const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
-  const approve = step(workflow.jobs["approve-exception"], "Record approved E2E exception");
+  const approve = step(
+    workflow.jobs["approve-fork-e2e-skip"],
+    "Record approved credentialed E2E skip",
+  );
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-approve-"));
   const binDir = path.join(tempDir, "bin");
   const argumentsPath = path.join(tempDir, "node-arguments");
@@ -357,8 +360,8 @@ describe("PR E2E gate workflow", () => {
     const initialize = workflow.jobs.initialize;
     const cancel = workflow.jobs["cancel-superseded"];
     const coordinate = workflow.jobs.coordinate;
-    const approveException = workflow.jobs["approve-exception"];
-    const resolveException = workflow.jobs["resolve-exception"];
+    const approveForkSkip = workflow.jobs["approve-fork-e2e-skip"];
+    const recordForkSkip = workflow.jobs["record-fork-e2e-skip"];
 
     expect(workflow.name).toBe("E2E / PR Gate Controller");
     expect(workflow.on).toEqual({
@@ -372,35 +375,36 @@ describe("PR E2E gate workflow", () => {
       workflow_dispatch: {
         inputs: {
           operation: {
-            description: "Exact-diff action to perform.",
+            description: "E2E gate action to perform.",
             required: true,
-            default: "resolve-fork",
+            default: "approve-fork-e2e-skip",
             type: "choice",
-            options: ["resolve-fork", "run-control-plane"],
+            options: ["approve-fork-e2e-skip", "run-control-plane"],
           },
           pr_number: {
-            description: "Pull request number for the selected exact-diff action.",
+            description: "Pull request number for the selected E2E gate action.",
             required: true,
             type: "string",
           },
           expected_head_sha: {
-            description: "Exact 40-character PR head SHA reviewed by the maintainer.",
+            description: "Current 40-character PR head SHA reviewed by the maintainer.",
             required: true,
             type: "string",
           },
           expected_base_sha: {
-            description: "Exact 40-character PR base SHA reviewed by the maintainer.",
+            description: "Current 40-character PR base SHA reviewed by the maintainer.",
             required: true,
             type: "string",
           },
           review_reason: {
-            description: "Why this exact revision may skip fork E2E or run control-plane E2E.",
+            description:
+              "Why this fork PR may skip credentialed E2E or this internal PR may run control-plane E2E.",
             required: true,
             type: "string",
           },
           evidence_url: {
             description:
-              "Fork exception only; optional Actions run URL. Ignored by run-control-plane, whose evidence comes from the dispatched jobs.",
+              "Fork credentialed-E2E skip only; optional Actions run URL. Ignored by run-control-plane, whose evidence comes from the dispatched jobs.",
             required: false,
             default: "",
             type: "string",
@@ -450,42 +454,43 @@ describe("PR E2E gate workflow", () => {
       "pr-e2e-gate-${{ github.repository }}-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.expected_head_sha }}",
     );
     expect(coordinate.outputs).toEqual({
-      exception_mode: "${{ steps.start.outputs.exception_mode }}",
-      exception_pr_number: "${{ steps.start.outputs.exception_pr_number }}",
-      exception_head_sha: "${{ steps.start.outputs.exception_head_sha }}",
-      exception_base_sha: "${{ steps.start.outputs.exception_base_sha }}",
+      fork_skip_mode: "${{ steps.start.outputs.fork_skip_mode }}",
+      fork_skip_pr_number: "${{ steps.start.outputs.fork_skip_pr_number }}",
+      fork_skip_head_sha: "${{ steps.start.outputs.fork_skip_head_sha }}",
+      fork_skip_base_sha: "${{ steps.start.outputs.fork_skip_base_sha }}",
     });
-    expect(approveException.name).toBe("Approve no-secret E2E exception");
-    expect(approveException.needs).toBe("coordinate");
-    expect(approveException.if).toBe(
-      "${{ needs.coordinate.result == 'success' && needs.coordinate.outputs.exception_mode != '' && github.run_attempt == 1 }}",
+    expect(approveForkSkip.name).toBe("Approve credentialed E2E skip for fork PR");
+    expect(approveForkSkip.needs).toBe("coordinate");
+    expect(approveForkSkip.if).toBe(
+      "${{ needs.coordinate.result == 'success' && needs.coordinate.outputs.fork_skip_mode != '' && github.run_attempt == 1 }}",
     );
-    expect(approveException.environment).toEqual({
-      name: "e2e-no-secret-exception",
+    expect(approveForkSkip.environment).toEqual({
+      name: "approve-credentialed-e2e-skip-for-fork-pr",
       deployment: false,
     });
-    expect(approveException.permissions).toEqual({
+    expect(approveForkSkip.permissions).toEqual({
       actions: "read",
       checks: "write",
       contents: "read",
       "pull-requests": "read",
     });
-    expect(approveException.concurrency).toEqual({
-      group: "pr-e2e-gate-approve-${{ needs.coordinate.outputs.exception_pr_number }}",
+    expect(approveForkSkip.concurrency).toEqual({
+      group: "pr-e2e-gate-approve-fork-skip-${{ needs.coordinate.outputs.fork_skip_pr_number }}",
       "cancel-in-progress": true,
     });
-    expect(approveException.secrets).toBeUndefined();
-    expect(resolveException.if).toContain("github.event_name == 'workflow_dispatch'");
-    expect(resolveException.if).toContain("github.ref == 'refs/heads/main'");
-    expect(resolveException.if).toContain("inputs.operation == 'resolve-fork'");
-    expect(resolveException.permissions).toEqual({
+    expect(approveForkSkip.secrets).toBeUndefined();
+    expect(recordForkSkip.if).toContain("github.event_name == 'workflow_dispatch'");
+    expect(recordForkSkip.if).toContain("github.ref == 'refs/heads/main'");
+    expect(recordForkSkip.name).toBe("Record credentialed E2E skip for fork PR");
+    expect(recordForkSkip.if).toContain("inputs.operation == 'approve-fork-e2e-skip'");
+    expect(recordForkSkip.permissions).toEqual({
       checks: "write",
       contents: "read",
       "pull-requests": "read",
     });
     expect(collectStrings(initialize).some((value) => value.includes("--mode seed"))).toBe(true);
     expect(
-      collectStrings(resolveException).some((value) => value.includes("--mode resolve-fork")),
+      collectStrings(recordForkSkip).some((value) => value.includes("--mode record-fork-e2e-skip")),
     ).toBe(true);
     expect(step(initialize, "Reserve exact-diff gate").run).toContain('--head "$HEAD_SHA"');
     expect(step(initialize, "Reserve exact-diff gate").env?.BASE_SHA).toBe(
@@ -503,31 +508,31 @@ describe("PR E2E gate workflow", () => {
     expect(start.run).toContain('--gate-run-id "$GATE_RUN_ID"');
     const finish = step(coordinate, "Verify evidence");
     expect(finish.run).toContain('--evidence-outcome "${{ steps.evidence.outcome }}"');
-    const approval = step(approveException, "Record approved E2E exception");
+    const approval = step(approveForkSkip, "Record approved credentialed E2E skip");
     expect(approval.env).toEqual({
       APPROVAL_RUN_ATTEMPT: "${{ github.run_attempt }}",
       APPROVAL_RUN_ID: "${{ github.run_id }}",
-      EXPECTED_BASE_SHA: "${{ needs.coordinate.outputs.exception_base_sha }}",
-      EXPECTED_HEAD_SHA: "${{ needs.coordinate.outputs.exception_head_sha }}",
+      EXPECTED_BASE_SHA: "${{ needs.coordinate.outputs.fork_skip_base_sha }}",
+      EXPECTED_HEAD_SHA: "${{ needs.coordinate.outputs.fork_skip_head_sha }}",
       GITHUB_TOKEN: "${{ github.token }}",
-      PR_NUMBER: "${{ needs.coordinate.outputs.exception_pr_number }}",
+      PR_NUMBER: "${{ needs.coordinate.outputs.fork_skip_pr_number }}",
       WORKFLOW_SHA: "${{ github.workflow_sha }}",
     });
-    expect(approval.run).toContain("--mode resolve-approved");
-    expect(approval.run).not.toContain("--exception-mode");
+    expect(approval.run).toContain("--mode record-approved-fork-e2e-skip");
+    expect(approval.run).not.toContain("--fork-skip-mode");
     expect(approval.run).toContain('--pr "$PR_NUMBER"');
     expect(approval.run).toContain('--head "$EXPECTED_HEAD_SHA"');
     expect(approval.run).toContain('--base "$EXPECTED_BASE_SHA"');
     expect(approval.run).toContain('--workflow-sha "$WORKFLOW_SHA"');
     expect(approval.run).toContain('--approval-run-id "$APPROVAL_RUN_ID"');
     expect(approval.run).toContain('--approval-run-attempt "$APPROVAL_RUN_ATTEMPT"');
-    const resolution = step(resolveException, "Record E2E exception");
+    const resolution = step(recordForkSkip, "Record credentialed E2E skip");
     expect(resolution.env?.WORKFLOW_SHA).toBe("${{ github.workflow_sha }}");
     expect(resolution.env?.MAINTAINER).toBe("${{ github.triggering_actor }}");
     expect(resolution.env?.MAINTAINER).not.toBe("${{ github.actor }}");
     expect(resolution.env?.EXPECTED_BASE_SHA).toBe("${{ inputs.expected_base_sha }}");
     expect(resolution.env?.REVIEW_REASON).toBe("${{ inputs.review_reason }}");
-    expect(resolution.run).toContain("--mode resolve-fork");
+    expect(resolution.run).toContain("--mode record-fork-e2e-skip");
     expect(resolution.run).toContain('--head "$EXPECTED_HEAD_SHA"');
     expect(resolution.run).toContain('--base "$EXPECTED_BASE_SHA"');
     expect(resolution.run).toContain('--workflow-sha "$WORKFLOW_SHA"');
@@ -610,8 +615,8 @@ describe("PR E2E gate workflow", () => {
     expect(execution.arguments[prFlag + 1]).toBe("");
   });
 
-  it("passes the approved exception identity as inert exact arguments", () => {
-    const execution = runApprovedExceptionStep();
+  it("passes the approved fork skip identity as inert arguments", () => {
+    const execution = runApprovedForkSkipStep();
 
     expect(execution.result.status).toBe(0);
     expect(execution.result.stderr).toBe("");
@@ -619,7 +624,7 @@ describe("PR E2E gate workflow", () => {
       "--experimental-strip-types",
       "tools/e2e/pr-e2e-gate.mts",
       "--mode",
-      "resolve-approved",
+      "record-approved-fork-e2e-skip",
       "--pr",
       "42",
       "--head",

@@ -175,27 +175,30 @@ without dispatching the selected credential-bearing jobs or exposing
 repository secrets. Non-secret PR CI remains required. The failed check summary
 embeds an explicit link to the same `E2E / PR Gate Controller` run; maintainers
 follow that link rather than relying on the custom check's **Details**
-destination. The check publishes only allowlisted exception metadata for its
-exact PR number, mode, head SHA, and base SHA. That controller run starts
-`Approve no-secret E2E exception`, which waits on the protected
-`e2e-no-secret-exception` environment with `deployment: false` and therefore
-does not create a deployment record. A maintainer opens the linked run, chooses
-**Review deployments**, selects that environment, and approves it. The comment
-is optional; the workflow reads both the reviewer and comment from GitHub's run
-approval history rather than accepting an actor supplied by the job.
+destination. The check publishes only allowlisted skip-approval metadata for
+its PR number, mode, head SHA, and base SHA. That controller run starts
+`Approve credentialed E2E skip for fork PR`, which waits on the protected
+`approve-credentialed-e2e-skip-for-fork-pr` environment. With
+`deployment: false`, the job does not create a deployment record. A maintainer
+opens the linked run, chooses **Review deployments**, selects that environment,
+and approves it. The approval records that the selected credential-bearing
+jobs will not run; it does not authorize fork code to run with repository
+secrets. The comment is optional, and the workflow reads both the reviewer and
+comment from GitHub's run approval history rather than accepting an actor
+supplied by the job.
 
-Before rollout, create `e2e-no-secret-exception` in the repository with one or
-more required reviewers whose approving members have repository `maintain` or
-`admin` permission. Do not add environment secrets, variables, or custom
-protection apps; this job records a no-secret review decision and runs no
-PR-controlled code. Prefer disabling administrator bypass so every decision
-appears in the approval history. A missing or unprotected
-environment does not produce the one exact approval record the controller
-requires, so resolution fails closed. GitHub approval history is not bound to
-a run attempt, and the controller consequently rejects reruns of an approval
-run. Trigger fresh upstream PR CI to create a new gate run, or use the typed
-manual fallback described below. Per-PR approval concurrency cancels an older
-waiting job when a newer exact revision reaches the gate.
+Before rollout, create `approve-credentialed-e2e-skip-for-fork-pr` in the
+repository with one or more required reviewers whose approving members have
+repository `maintain` or `admin` permission. Do not add environment secrets,
+variables, or custom protection apps; this job records the skip approval and
+runs no PR-controlled code. Prefer disabling administrator bypass so every
+decision appears in the approval history. If **Review deployments** is absent,
+the environment may be missing or unprotected, or the run may no longer be
+waiting. Configure the environment and trigger fresh upstream PR CI to create
+a new gate run, or use the manual fallback described below. GitHub approval
+history is not bound to a run attempt, so the controller rejects reruns of an
+approval run. Per-PR approval concurrency cancels an older waiting job when a
+newer revision reaches the gate.
 
 For the fork button path, the controller requires a first-attempt, in-progress run
 of this exact workflow on `main`, at the trusted workflow SHA and with the
@@ -207,13 +210,13 @@ matching failed gate, and that the controller commit is either still `main` or
 has only a compatible safe descendant as described above. Immediately before
 recording success, it reads the live PR again and requires the same exact head
 and base. The result records the reviewer, bounded optional comment, validated
-approval-run URL, plan hash, and jobs that did not run. The successful exception
-check is titled `No E2E run — exception approved by @<maintainer>` and begins
-with `Outcome: EXCEPTION — credentialed E2E did not run.` It never claims that
-the selected jobs passed.
+approval-run URL, plan hash, and jobs that did not run. The successful skip
+check is titled `Credentialed E2E skipped for fork PR — approved by
+@<maintainer>` and begins with `Outcome: APPROVED SKIP — credentialed E2E did
+not run.` It never claims that the selected jobs passed.
 
-The typed manual fork dispatch on `main` remains available as a fallback.
-Choose `resolve-fork` and provide the PR number, current `expected_head_sha`,
+The manual fork skip approval on `main` remains available as a fallback. Choose
+`approve-fork-e2e-skip` and provide the PR number, current `expected_head_sha`,
 current `expected_base_sha`, a 10–500-character `review_reason`, and optionally
 an Actions run URL in the exact form
 `https://github.com/NVIDIA/NemoClaw/actions/runs/<run-id>`. Leave

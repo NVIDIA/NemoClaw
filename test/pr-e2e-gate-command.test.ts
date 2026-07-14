@@ -135,11 +135,11 @@ describe("PR E2E controller commands", () => {
     });
   });
 
-  it("parses a fork-exception resolution", () => {
+  it("parses a fork credentialed E2E skip resolution", () => {
     expect(
       parseControllerCommand([
         "--mode",
-        "resolve-fork",
+        "record-fork-e2e-skip",
         "--pr",
         "42",
         "--head",
@@ -156,7 +156,7 @@ describe("PR E2E controller commands", () => {
         "https://github.com/NVIDIA/NemoClaw/actions/runs/123",
       ]),
     ).toEqual({
-      mode: "resolve-fork",
+      mode: "record-fork-e2e-skip",
       prNumber: 42,
       headSha: HEAD_SHA,
       baseSha: BASE_SHA,
@@ -207,7 +207,7 @@ describe("PR E2E controller commands", () => {
     });
   });
 
-  it("rejects the removed control-plane exception mode", () => {
+  it("rejects the removed control-plane bypass mode", () => {
     expect(() => parseControllerCommand(["--mode", "resolve-control-plane"])).toThrow(
       /--mode must be/u,
     );
