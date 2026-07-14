@@ -90,8 +90,8 @@ function validatePublishers(candidate: Workflow): string[] {
   const publishers = publisherJobs(candidate);
   const exportedScopeCounts = new Map<string, number>();
   for (const { build } of publishers) {
-    const scope = ghaCacheEntries(build.with?.["cache-to"])[0]?.scope;
-    if (scope) exportedScopeCounts.set(scope, (exportedScopeCounts.get(scope) ?? 0) + 1);
+    const scope = ghaCacheEntries(build.with?.["cache-to"])[0]?.scope ?? "";
+    exportedScopeCounts.set(scope, (exportedScopeCounts.get(scope) ?? 0) + 1);
   }
 
   return publishers.flatMap(({ jobName, job, build, buildIndex, dockerfile }) => {
