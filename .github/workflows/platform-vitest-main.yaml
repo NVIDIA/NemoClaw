@@ -33,7 +33,7 @@ jobs:
         run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            ca-certificates git python3
+            binutils ca-certificates docker.io git python3
           rm -rf /var/lib/apt/lists/*
 
       - name: Checkout
@@ -54,6 +54,9 @@ jobs:
           . /etc/os-release
           test "$ID" = "ubuntu"
           test "$VERSION_ID" = "26.04"
+          command -v docker
+          docker info --format 'server={{.ServerVersion}} os={{.OperatingSystem}}'
+          command -v strings
           printf 'os=%s version=%s arch=%s\n' "$ID" "$VERSION_ID" "$(uname -m)"
           node --version
           npm --version
