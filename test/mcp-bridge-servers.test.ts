@@ -116,6 +116,8 @@ describe("authenticated MCP live fixtures", () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockResolvedValueOnce({ body: null, status: 502 } as Response)
+      .mockResolvedValueOnce({ body: null, status: 405 } as Response)
+      .mockResolvedValueOnce({ body: null, status: 502 } as Response)
       .mockResolvedValue({ body: null, status: 405 } as Response);
     let cleanupName = "";
     let cleanupProcess: (() => Promise<void>) | undefined;
@@ -139,7 +141,7 @@ describe("authenticated MCP live fixtures", () => {
         origin: "https://fixture-cleanup-123.trycloudflare.com",
         url: "https://fixture-cleanup-123.trycloudflare.com/mcp",
       });
-      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock).toHaveBeenCalledTimes(6);
       expect(cleanupName).toBe("stop unit MCP fixture cloudflared quick tunnel");
       expect(cleanupProcess).toBeTypeOf("function");
     } finally {

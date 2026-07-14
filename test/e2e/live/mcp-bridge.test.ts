@@ -19,9 +19,10 @@ import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts
 import { assertExitZero as expectExitZero, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
-import { expect, test } from "../fixtures/e2e-test.ts";
+import { test as e2eTest, expect } from "../fixtures/e2e-test.ts";
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { type McpBridgeShard, resolveMcpBridgeShard } from "./mcp-bridge-agent-selection.ts";
 import {
   assertHermesConfig,
   assertHermesInspectionRejectsUnmanagedFields,
@@ -62,7 +63,12 @@ const COMPATIBLE_KEY = MCP_BRIDGE_TEST_CREDENTIALS.compatibleEndpoint;
 const COMPATIBLE_MODEL = "mock/mcp-bridge";
 const TOOL_CHALLENGE = "nemoclaw-authenticated-mcp-proof";
 const REGISTRY_FILE = path.join(process.env.HOME ?? os.homedir(), ".nemoclaw", "sandboxes.json");
-const liveAgentMatrixTest = process.env.NEMOCLAW_MCP_BRIDGE_AGENT_MATRIX === "1" ? test : test.skip;
+const selectedMcpBridgeShard = resolveMcpBridgeShard();
+
+function mcpBridgeShardTest(shard: McpBridgeShard) {
+  return selectedMcpBridgeShard === shard ? e2eTest : e2eTest.skip;
+}
+const test = mcpBridgeShardTest("openclaw");
 
 type McpAgent = "openclaw" | "hermes" | "langchain-deepagents-code";
 type McpAdapter = "mcporter" | "hermes-config" | "deepagents-config";
@@ -1185,7 +1191,7 @@ req.end(body);
   });
 });
 
-liveAgentMatrixTest(
+mcpBridgeShardTest("hermes")(
   "mcp-bridge-hermes",
   { timeout: 45 * 60_000 },
   async ({ artifacts, cleanup, host, sandbox }) => {
@@ -1343,7 +1349,7 @@ liveAgentMatrixTest(
   },
 );
 
-liveAgentMatrixTest(
+mcpBridgeShardTest("deepagents")(
   "mcp-bridge-deepagents",
   { timeout: 45 * 60_000 },
   async ({ artifacts, cleanup, host, sandbox }) => {
