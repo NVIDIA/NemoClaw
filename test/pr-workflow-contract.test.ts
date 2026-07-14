@@ -13,6 +13,7 @@ import {
   type WorkflowJob,
   type WorkflowStep,
 } from "./helpers/e2e-workflow-contract";
+import { execTimeout } from "./helpers/timeouts";
 
 type CiWorkflow = {
   "run-name"?: string;
@@ -1105,7 +1106,7 @@ describe("pull request and main workflow contracts", () => {
       const result = spawnSync("bash", ["-c", resolver ?? ""], {
         cwd: process.cwd(),
         encoding: "utf8",
-        timeout: 10_000,
+        timeout: execTimeout(),
         env: {
           ...process.env,
           DOCKER_LOG: dockerLog,

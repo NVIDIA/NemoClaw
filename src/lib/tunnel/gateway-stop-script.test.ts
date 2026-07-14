@@ -94,6 +94,23 @@ ${script}`;
     return stat.replace(/^[^)]*\) /, "").split(" ")[19];
   }
 
+  async function waitForArgv0(pid: number, expected: string): Promise<void> {
+    const deadline = Date.now() + 5_000;
+    let observed = "";
+    while (Date.now() < deadline) {
+      try {
+        observed = readFileSync(`/proc/${pid}/cmdline`, "utf-8").split("\0")[0] ?? "";
+        if (observed === expected) return;
+      } catch {
+        // The process may still be transitioning from bash to the target executable.
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.fail(
+      `process ${pid} did not expose argv0 ${expected}; observed ${observed || "<empty>"}`,
+    );
+  }
+
   function identityFixture(
     pid: number,
     mode = 0o600,
@@ -143,6 +160,7 @@ ${script}`;
     "finds and kills a gateway whose argv was rewritten to bare 'openclaw' (#4951)",
     async () => {
       const pid = spawnWithArgv0("openclaw");
+      await waitForArgv0(pid, "openclaw");
       expect(runStopScript(stopScriptWithGatewayIdentity(pid))).toBe(0);
       await new Promise((r) => setTimeout(r, 300));
       expect(isAlive(pid)).toBe(false);

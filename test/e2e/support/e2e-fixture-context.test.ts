@@ -77,7 +77,9 @@ describe("E2E fixture primitives", () => {
       const artifacts = createArtifactSink(targetId, tmp);
       await artifacts.ensureRoot();
 
-      expect(artifacts.rootDir).toBe(path.resolve(artifactParent, targetId));
+      expect(fs.realpathSync(artifacts.rootDir)).toBe(
+        fs.realpathSync(path.resolve(artifactParent, targetId)),
+      );
       for (const file of allowlistedFiles) {
         await artifacts.writeJson(file, { targetId, file });
       }

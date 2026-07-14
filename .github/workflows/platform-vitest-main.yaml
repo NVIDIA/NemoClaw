@@ -90,14 +90,42 @@ jobs:
           node-version: "22"
           cache: npm
 
+      - name: Setup Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: ci/platform-vitest-macos-requirements.lock
+
+      - name: Install macOS test dependencies
+        run: |
+          set -euo pipefail
+          brew install bash coreutils gawk ripgrep
+          printf '%s\n' \
+            "$(brew --prefix bash)/bin" \
+            "$(brew --prefix coreutils)/libexec/gnubin" \
+            "$(brew --prefix gawk)/libexec/gnubin" \
+            >>"$GITHUB_PATH"
+          python -m pip install \
+            --only-binary=:all: \
+            --require-hashes \
+            --requirement ci/platform-vitest-macos-requirements.lock
+
       - name: Show environment
         run: |
           set -euo pipefail
           echo "Runner: $(uname -a)"
           echo "Arch:   $(uname -m)"
           sw_vers
+          bash --version | head -n 1
           node --version
           npm --version
+          python --version
+          python -c 'import setuptools, yaml; print(f"setuptools={setuptools.__version__} pyyaml={yaml.__version__}")'
+          rg --version | head -n 1
+          timeout --version | head -n 1
+          stat --version | head -n 1
+          awk --version | head -n 1
 
       - name: Install dependencies
         run: |
@@ -194,7 +222,7 @@ jobs:
             'Acquire::Retries "5";' \
             >/etc/apt/apt.conf.d/99github-actions-network
           apt-get update
-          apt-get install -y bash ca-certificates curl git jq lsb-release make python3 python3-pip python3-venv rsync tar unzip xz-utils
+          apt-get install -y bash ca-certificates curl git jq lsb-release make python3 python3-pip python3-venv ripgrep rsync tar unzip xz-utils
           if ! id -u "$test_user" >/dev/null 2>&1; then
             useradd --create-home --shell /bin/bash "$test_user"
           fi

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -702,7 +703,7 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
 
   it("skips symlinked changed test files in static test inventory", () => {
     const tmp = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-symlink-"));
-    const outside = fs.mkdtempSync(path.join(ROOT, "..", ".tmp-pr-advisor-outside-"));
+    const outside = fs.mkdtempSync(path.join(tmpdir(), "nemoclaw-pr-advisor-outside-"));
     const outsideFile = path.join(outside, "secret.test.ts");
     const linkPath = path.join(tmp, "linked.test.ts");
     fs.writeFileSync(outsideFile, 'describe("secret outside test", () => {});\n');
