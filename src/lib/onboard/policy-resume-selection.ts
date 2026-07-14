@@ -46,6 +46,7 @@ type PoliciesApi = {
 };
 
 type TiersApi = {
+  getTier(tierName: string): unknown;
   resolveTierPresets(tierName: string): Preset[];
 };
 
@@ -108,7 +109,7 @@ export function preparePolicyPresetResumeSelection(
   // egress presets, not stale web-search leftovers — exempt them from the
   // web-search staleness prune so re-onboard reuse preserves them. (#6844)
   const tierDefaultPresetNames =
-    options.tierName && deps.tiers
+    options.tierName && deps.tiers?.getTier(options.tierName)
       ? new Set(deps.tiers.resolveTierPresets(options.tierName).map((preset) => preset.name))
       : null;
   const isStaleBuiltinWebSearch = (name: string) =>

@@ -89,6 +89,7 @@ describe("preparePolicyPresetResumeSelection web search reconciliation", () => {
 
 function tiers(defaults: Record<string, string[]>) {
   return {
+    getTier: (tierName: string) => (tierName in defaults ? { name: tierName } : null),
     resolveTierPresets: (tierName: string) => (defaults[tierName] ?? []).map((name) => ({ name })),
   };
 }
