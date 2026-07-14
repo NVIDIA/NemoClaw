@@ -312,6 +312,26 @@ describe("E2E recommendation normalizer", () => {
     expect(normalized.confidence).toBe("medium");
   });
 
+  it("does not report an empty coverage decision when optional coverage was selected", () => {
+    const normalized = normalizeE2eCoverageResult(
+      {
+        requiredTests: [],
+        optionalTests: [
+          {
+            id: "docs-validation",
+            reason: "Documentation routing changed.",
+          },
+        ],
+        confidence: "high",
+      },
+      metadata({ changedFiles: [] }),
+    );
+
+    expect(normalized.requiredTests).toEqual([]);
+    expect(normalized.optionalTests.map((item) => item.id)).toEqual(["docs-validation"]);
+    expect(normalized.noE2eReason).toBeNull();
+  });
+
   it("does not let a model downgrade a deterministic risk-plan job", () => {
     const normalized = normalizeE2eTargetAdvisorResult(
       {
