@@ -12,12 +12,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
 // sandbox-state computes its backup root from HOME at module load time.
-const ORIGINAL_HOME = process.env.HOME;
+// vi.stubEnv records and restores the prior value (including unset) on teardown.
 const TMP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-auth-home-"));
-process.env.HOME = TMP_HOME;
+vi.stubEnv("HOME", TMP_HOME);
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const sandboxState = (await import(
@@ -25,11 +25,7 @@ const sandboxState = (await import(
 )) as typeof import("../src/lib/state/sandbox.js");
 
 afterAll(() => {
-  if (ORIGINAL_HOME === undefined) {
-    delete process.env.HOME;
-  } else {
-    process.env.HOME = ORIGINAL_HOME;
-  }
+  vi.unstubAllEnvs();
   fs.rmSync(TMP_HOME, { recursive: true, force: true });
 });
 
@@ -179,8 +175,6 @@ const LIVE_PAIRED_DEVICE = JSON.stringify({
 describe("runtime auth state across snapshot backup/restore (#6852)", () => {
   it("never captures or restores device identity and pairing state", async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-auth-"));
-    const oldPath = process.env.PATH;
-    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
     try {
       const binDir = path.join(fixture, "bin");
       const fakeRoot = path.join(fixture, "sandbox-root");
@@ -200,8 +194,8 @@ describe("runtime auth state across snapshot backup/restore (#6852)", () => {
 
       writeFakeSandboxBins(binDir, fakeRoot);
       writeOpenClawRegistry("alpha");
-      process.env.NEMOCLAW_OPENSHELL_BIN = path.join(binDir, "openshell");
-      process.env.PATH = `${binDir}:${oldPath || ""}`;
+      vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", path.join(binDir, "openshell"));
+      vi.stubEnv("PATH", `${binDir}:${process.env.PATH || ""}`);
 
       // ── Backup: runtime auth dirs are not captured at all ──────────
       const backup = sandboxState.backupSandboxState("alpha");
@@ -261,12 +255,7 @@ describe("runtime auth state across snapshot backup/restore (#6852)", () => {
         LIVE_PAIRED_DEVICE,
       );
     } finally {
-      process.env.PATH = oldPath;
-      if (oldOpenshell === undefined) {
-        delete process.env.NEMOCLAW_OPENSHELL_BIN;
-      } else {
-        process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell;
-      }
+      vi.unstubAllEnvs();
       fs.rmSync(fixture, { recursive: true, force: true });
     }
   });
