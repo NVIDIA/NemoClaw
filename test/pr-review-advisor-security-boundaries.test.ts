@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { upsertStickyComment } from "../tools/advisors/github.mts";
+import { deleteBotOwnedStickyComments, upsertStickyComment } from "../tools/advisors/github.mts";
 import { buildRiskPlan } from "../tools/advisors/risk-plan.mts";
 import { runReadOnlyAdvisor } from "../tools/advisors/session.mts";
 import { normalizeReviewResult, renderSummary } from "../tools/pr-review-advisor/analyze.mts";
@@ -157,6 +157,76 @@ describe("PR review advisor security boundaries", () => {
         label: "test",
       }),
     ).rejects.toThrow(/403.*Resource not accessible/);
+  });
+
+  it("deletes only bot-owned comments with exact legacy advisor markers", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () =>
+          JSON.stringify([
+            {
+              id: 10,
+              body: "<!-- nemoclaw-e2e-advisor -->\nlegacy coverage",
+              user: { login: "github-actions[bot]" },
+            },
+            {
+              id: 11,
+              body: "<!-- nemoclaw-e2e-target-advisor -->\nlegacy targets",
+              user: { login: "github-actions[bot]" },
+            },
+            {
+              id: 12,
+              body: "<!-- nemoclaw-e2e-advisor -->\ncontributor text",
+              user: { login: "contributor" },
+            },
+            {
+              id: 13,
+              body: "prefix <!-- nemoclaw-e2e-advisor -->",
+              user: { login: "github-actions[bot]" },
+            },
+          ]),
+      } as Response)
+      .mockResolvedValue({ ok: true, text: async () => "" } as Response);
+
+    await expect(
+      deleteBotOwnedStickyComments({
+        repo: "NVIDIA/NemoClaw",
+        pr: "1",
+        token: "token",
+        markers: ["<!-- nemoclaw-e2e-advisor -->", "<!-- nemoclaw-e2e-target-advisor -->"],
+        label: "legacy E2E advisor",
+      }),
+    ).resolves.toBe(2);
+
+    const deletes = fetchMock.mock.calls.filter(
+      ([, options]) => (options as RequestInit | undefined)?.method === "DELETE",
+    );
+    expect(deletes.map(([input]) => String(input))).toEqual([
+      expect.stringContaining("issues/comments/10"),
+      expect.stringContaining("issues/comments/11"),
+    ]);
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("comments/12"))).toBe(
+      false,
+    );
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("comments/13"))).toBe(
+      false,
+    );
+  });
+
+  it("does not query comments when no retirement markers are provided", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    await expect(
+      deleteBotOwnedStickyComments({
+        repo: "NVIDIA/NemoClaw",
+        pr: "1",
+        token: "token",
+        markers: [],
+        label: "legacy E2E advisor",
+      }),
+    ).resolves.toBe(0);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("rejects command-shaped E2E guidance without weakening deterministic coverage", () => {

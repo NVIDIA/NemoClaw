@@ -163,7 +163,14 @@ export function createDeps(
       throw new Error(`exit ${code}`);
     }),
     withGatewayRouteMutationLock: vi.fn(),
+    withDashboardPortReservationLock: vi.fn(),
   };
+  const runWithDashboardPortReservationLock =
+    overrides.withDashboardPortReservationLock ??
+    (async <T>(operation: () => Promise<T> | T): Promise<T> => {
+      calls.withDashboardPortReservationLock(operation);
+      return await operation();
+    });
   const runWithGatewayRouteMutationLock = async <T>(
     gatewayName: string,
     operation: () => Promise<T> | T,
@@ -234,6 +241,7 @@ export function createDeps(
       ...overrides,
       checkGatewayRouteCompatibility:
         overrides.checkGatewayRouteCompatibility ?? calls.checkGatewayRouteCompatibility,
+      withDashboardPortReservationLock: runWithDashboardPortReservationLock,
       withGatewayRouteMutationLock: runWithGatewayRouteMutationLock,
     },
     getSession: () => session,

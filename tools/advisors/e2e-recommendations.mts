@@ -179,7 +179,7 @@ export function normalizeE2eCoverageResult(
     // authority boundary.
     newE2eRecommendations: [],
     noE2eReason:
-      requiredTests.length > 0
+      requiredTests.length > 0 || optionalTests.length > 0
         ? null
         : "No deterministic or trusted-inventory E2E coverage was selected.",
     confidence:
