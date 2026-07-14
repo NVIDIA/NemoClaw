@@ -10,15 +10,30 @@ import {
   discoverCredentialFreeTests,
   SHARED_E2E_JOB_ID,
 } from "./credential-free-tests.mts";
-import { validateHermesDashboardWorkflowBoundary } from "./hermes-dashboard-workflow-boundary.mts";
-import { validateHermesGpuStartupWorkflowBoundary } from "./hermes-gpu-startup-workflow-boundary.mts";
-import { validateInferenceSwitchWorkflowBoundary } from "./inference-switch-workflow-boundary.mts";
-import { validateOpenClawPluginRuntimeExdevWorkflowBoundary } from "./openclaw-plugin-runtime-exdev-workflow-boundary.mts";
-import { validateOpenShellGatewayAuthContractWorkflowBoundary } from "./openshell-gateway-auth-contract-workflow-boundary.mts";
-import { validateE2eOperationsWorkflowBoundary } from "./operations-workflow-boundary.mts";
+import {
+  type HermesDashboardWorkflow,
+  validateHermesDashboardWorkflow,
+} from "./hermes-dashboard-workflow-boundary.mts";
+import { validateHermesGpuStartupWorkflow } from "./hermes-gpu-startup-workflow-boundary.mts";
+import {
+  type InferenceSwitchWorkflow,
+  validateInferenceSwitchWorkflow,
+} from "./inference-switch-workflow-boundary.mts";
+import {
+  type OpenClawPluginRuntimeExdevWorkflow,
+  validateOpenClawPluginRuntimeExdevWorkflow,
+} from "./openclaw-plugin-runtime-exdev-workflow-boundary.mts";
+import {
+  type OpenShellGatewayAuthContractWorkflow,
+  validateOpenShellGatewayAuthContractWorkflow,
+} from "./openshell-gateway-auth-contract-workflow-boundary.mts";
+import {
+  type OperationsWorkflow,
+  validateE2eOperationsWorkflow,
+} from "./operations-workflow-boundary.mts";
 import { validatePrepareE2eWorkflowBoundary } from "./prepare-e2e-workflow-boundary.mts";
 import { validateSandboxOperationsWorkflow } from "./sandbox-operations-workflow-boundary.mts";
-import { validateSecurityPostureWorkflowBoundary } from "./security-posture-workflow-boundary.mts";
+import { validateSecurityPostureWorkflow } from "./security-posture-workflow-boundary.mts";
 import { validateUploadE2eArtifactsWorkflowBoundary } from "./upload-e2e-artifacts-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -3615,18 +3630,26 @@ function validateSandboxRlimitConnectJob(errors: string[], jobs: WorkflowRecord)
   }
 }
 
-export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_PATH): string[] {
-  const workflow = readWorkflowRecord(workflowPath);
+export function validateE2eWorkflow(workflowValue: unknown): string[] {
+  const workflow = asRecord(workflowValue);
   const errors: string[] = [];
   errors.push(...validatePrepareE2eWorkflowBoundary(workflow));
   errors.push(...validateUploadE2eArtifactsWorkflowBoundary(workflow));
-  errors.push(...validateHermesDashboardWorkflowBoundary(workflowPath));
-  errors.push(...validateHermesGpuStartupWorkflowBoundary(workflowPath));
-  errors.push(...validateInferenceSwitchWorkflowBoundary(workflowPath));
-  errors.push(...validateOpenClawPluginRuntimeExdevWorkflowBoundary(workflowPath));
-  errors.push(...validateOpenShellGatewayAuthContractWorkflowBoundary(workflowPath));
-  errors.push(...validateE2eOperationsWorkflowBoundary(workflowPath));
-  errors.push(...validateSecurityPostureWorkflowBoundary(workflowPath));
+  errors.push(...validateHermesDashboardWorkflow(workflow as unknown as HermesDashboardWorkflow));
+  errors.push(...validateHermesGpuStartupWorkflow(workflow));
+  errors.push(...validateInferenceSwitchWorkflow(workflow as unknown as InferenceSwitchWorkflow));
+  errors.push(
+    ...validateOpenClawPluginRuntimeExdevWorkflow(
+      workflow as unknown as OpenClawPluginRuntimeExdevWorkflow,
+    ),
+  );
+  errors.push(
+    ...validateOpenShellGatewayAuthContractWorkflow(
+      workflow as unknown as OpenShellGatewayAuthContractWorkflow,
+    ),
+  );
+  errors.push(...validateE2eOperationsWorkflow(workflow as unknown as OperationsWorkflow));
+  errors.push(...validateSecurityPostureWorkflow(workflow));
   const triggers = asRecord(workflow.on ?? workflow[true as unknown as string]);
 
   const workflowDispatch = requireWorkflowDispatch(errors, triggers);
@@ -4279,4 +4302,8 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   }
 
   return errors;
+}
+
+export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_PATH): string[] {
+  return validateE2eWorkflow(readWorkflowRecord(workflowPath));
 }
