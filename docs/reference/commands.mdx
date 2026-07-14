@@ -819,10 +819,12 @@ If another terminal is already connected to the sandbox, `connect` prints a note
 An unknown model slug, malformed extra-args JSON, or a gated model (for example `deepseek-r1-distill-70b`) with no `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` exits non-zero with the same error the installer would emit, before any sandbox readiness probe or SSH attach.
 Unset the managed-vLLM variable, or fix the value, before retrying.
 
-When the live OpenShell gateway inference route differs from the route recorded in the NemoClaw registry, `connect` checks every registered sandbox on that gateway before attempting a repair.
-It realigns the route only when those registry entries are compatible with the requested provider and model.
-If another sandbox records a conflicting route, `connect` exits non-zero without changing the gateway and names the affected sandboxes.
-Use `$$nemoclaw inference set --provider <provider> --model <model>` to make an intentional compatible route change.
+Before reading or changing the live OpenShell gateway inference route, `connect` verifies that every same-name provider has matching custom endpoint and API-family metadata when applicable, plus a matching credential environment-variable name.
+When the live route differs from the route recorded for the target sandbox, `connect` then warns and re-points the shared route to that sandbox's recorded provider and model.
+This switch lets registered sandboxes with different valid routes time-share the gateway.
+Different custom endpoints, API families, or credential environment-variable names, incomplete route metadata, and invalid gateway bindings remain hard errors because a provider/model-only connect-time change cannot reconstruct or prove that identity.
+Remove or re-onboard the conflicting sandbox before applying a different provider-global identity.
+Use `$$nemoclaw inference set --provider <provider> --model <model>` to make an intentional compatible route change outside the connect flow.
 Before it opens SSH, `connect` probes `https://inference.local/v1/models` from inside the sandbox with the selected agent's trusted CA and proxy context.
 HTTP `200` through `499` confirms that the route is reachable.
 When the probe returns a recognized broken result, `connect` attempts DNS or route repair and verifies the route again.
@@ -1160,7 +1162,11 @@ Use this form when you care about a specific sandbox's live OpenShell state, age
 Do not pass a sandbox name to `$$nemoclaw status`; that command is the global all-sandbox/service overview.
 
 Pass `--json` to emit a structured per-sandbox report instead of the text renderer.
-The JSON output includes at least `schemaVersion`, `name`, `found`, `agent`, `agentDisplayName`, `agentRuntime`, `dcodeAutoApprovalMode`, `model`, `provider`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `failureLayer`, `terminalRuntimeHealth`, and `dockerPaused`.
+The JSON output includes at least `schemaVersion`, `name`, `found`, `agent`, `agentDisplayName`, `agentRuntime`, `dcodeAutoApprovalMode`, `model`, `provider`, `recordedRoute`, `liveRoute`, `routeDrift`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `failureLayer`, `terminalRuntimeHealth`, and `dockerPaused`.
+The schema-version `1` `model` and `provider` fields keep their established live-route meaning when the gateway route is readable.
+Use `recordedRoute` for the sandbox's durable provider and model and `liveRoute` for the gateway-global route.
+When the live shared route differs, text output prints both routes and JSON output sets `routeDrift.live`, `routeDrift.recorded`, and `routeDrift.canConnect`.
+When `routeDrift.canConnect` is `false`, `connect` cannot safely restore the recorded route because provider-global identity differs or required route or gateway metadata is incomplete.
 `openshellDriver` and `openshellVersion` are always strings (falling back to `"unknown"` when the registry has no value), so consumers can rely on `typeof` checks.
 `failureLayer` is `null` when no preflight failure was detected and otherwise one of `docker_unreachable`, `sandbox_container_stopped`, or `sandbox_dashboard_port_conflict`; when set, `inferenceHealth` is suppressed to `null` so automation does not see a stale remote-provider healthy status during a local outage.
 `dockerPaused` is `true` when NemoClaw detects that the Docker-driver sandbox container is paused.
@@ -2860,8 +2866,17 @@ Run `$$nemoclaw <name> shields down`, apply the inference change, then run `$$ne
 Each OpenShell gateway exposes one inference route to every sandbox registered on that gateway.
 Before changing the route, NemoClaw compares the requested provider and model with every same-gateway registry entry, including stopped sandboxes.
 Custom compatible routes must also have matching normalized endpoint URLs and API families.
+Provider-global credential environment-variable names must also match for the same provider name.
 If a route conflicts or a legacy custom route lacks enough endpoint or API-family metadata to prove compatibility, the command exits non-zero before changing the OpenShell route, agent config, or host registry and names the conflicting sandboxes.
-Align those sandboxes to the same route, remove the conflicting sandbox, or onboard it with another `NEMOCLAW_GATEWAY_PORT`.
+Align those sandboxes to the same route or remove a conflicting sandbox that you no longer need.
+
+Onboarding allows provider/model time-sharing but does not replace provider-global configuration used by another registered sandbox.
+When another sandbox records a different provider or model, NemoClaw warns immediately before re-pointing the shared route.
+For the same provider name, any custom endpoint, API family, and credential environment-variable name must match.
+When those provider-global fields differ, onboarding exits before updating the provider or inference route.
+The warning names each affected sandbox and its recorded provider and model.
+Connecting to a sandbox warns before re-pointing the route to that sandbox's recorded provider and model.
+`$$nemoclaw <name> status` shows the recorded route and reports any live-route drift explicitly.
 
 ```bash
 $$nemoclaw inference set --provider <provider> --model <model> [--sandbox <name>] [--no-verify] [--endpoint-url <url>] [--credential-env <ENV>] [--inference-api <api>]

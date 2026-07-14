@@ -6,7 +6,7 @@ import { handleSandboxState } from "./sandbox";
 import { baseOptions, createDeps } from "./sandbox-test-fixtures";
 
 describe("sandbox registration route transaction", () => {
-  it("rechecks compatibility after waiting for the gateway lock and before create", async () => {
+  it("allows valid peer-route drift after waiting for the gateway lock", async () => {
     let releaseGateway!: () => void;
     const gatewayReleased = new Promise<void>((resolve) => {
       releaseGateway = resolve;
@@ -37,16 +37,16 @@ describe("sandbox registration route transaction", () => {
     expect(checkGatewayRouteCompatibility).not.toHaveBeenCalled();
     releaseGateway();
 
-    await expect(onboard).rejects.toThrow("exit 1");
+    await expect(onboard).resolves.toMatchObject({ sandboxName: "my-assistant" });
     expect(checkGatewayRouteCompatibility).toHaveBeenCalledWith(
       expect.objectContaining({ gatewayName: "nemoclaw", sandboxName: null }),
     );
-    expect(calls.createSandbox).not.toHaveBeenCalled();
-    expect(calls.updateSandbox).not.toHaveBeenCalled();
+    expect(calls.createSandbox).toHaveBeenCalledOnce();
+    expect(calls.updateSandbox).toHaveBeenCalled();
     expect(calls.removeSandbox).not.toHaveBeenCalled();
-    expect(calls.startStep).not.toHaveBeenCalled();
-    expect(calls.updateSession).not.toHaveBeenCalled();
-    expect(calls.error).toHaveBeenCalledWith(expect.stringContaining("peer"));
+    expect(calls.startStep).toHaveBeenCalled();
+    expect(calls.updateSession).toHaveBeenCalled();
+    expect(calls.error).not.toHaveBeenCalled();
   });
 
   it("holds sandbox, host dashboard, then gateway locks through creation and registration", async () => {

@@ -65,7 +65,11 @@ Run the sandbox status command when you also need service, messaging, and infere
 $$nemoclaw <name> status
 ```
 
-The status output includes the configured provider, model, and endpoint with the rest of the sandbox state.
+The status output shows the provider and model recorded for that sandbox.
+When the gateway's live shared route differs, status also prints an explicit warning with both the live and recorded routes.
+The JSON report exposes them separately as `recordedRoute` and `liveRoute` and repeats both under `routeDrift` when they differ.
+The existing schema-version `1` `provider` and `model` fields remain live-first when the gateway route is readable and fall back to the recorded route otherwise.
+When `routeDrift.canConnect` is `false`, incomplete route metadata, an invalid gateway binding, or a provider-global identity conflict prevents `connect` from restoring the recorded route safely.
 Use the route verification workflow when you need to prove that an inference request succeeds through the sandbox path.
 
 ## Related Topics
