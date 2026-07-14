@@ -196,6 +196,23 @@ describe("verifyDeployment", () => {
     expect(infDiag?.status).toBe("warn");
   });
 
+  it("reports unhealthy when the inference route is reachable but returns HTTP 5xx", async () => {
+    const deps = makeDeps({
+      executeSandboxCommand: (_name: string, script: string) => {
+        if (script.includes("inference.local")) {
+          return { status: 0, stdout: "503", stderr: "" };
+        }
+        return { status: 0, stdout: "200", stderr: "" };
+      },
+    });
+    const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
+    expect(result.healthy).toBe(false);
+    expect(result.verification.inferenceRouteWorking).toBe(false);
+    const infDiag = result.diagnostics.find((d) => d.link === "inference");
+    expect(infDiag?.status).toBe("fail");
+    expect(infDiag?.detail).toContain("503");
+  });
+
   it("messaging failure is a warning, not a blocker", async () => {
     const deps = makeDeps({
       getMessagingChannels: () => ["slack", "discord"],

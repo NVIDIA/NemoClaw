@@ -55,6 +55,8 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
     buildVerifyChain(chatUiUrl: string): VerifyChain;
     verifyDeployment(sandboxName: string, chain: VerifyChain): Promise<VerificationResult>;
     formatVerificationDiagnostics(result: VerificationResult): string[];
+    isDeploymentHealthy(result: VerificationResult): boolean;
+    reportDeploymentReadiness(healthy: boolean): void;
     /**
      * Best-effort probe that confirms the agent runtime actually accepted the
      * web-search config and (for Brave) that the L7 proxy rewrites the
@@ -68,6 +70,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
       provider: string,
       nimContainer: string | null,
       agent: Agent,
+      ready: boolean,
     ): void;
     error(message?: string): void;
     log(message?: string): void;
@@ -78,6 +81,7 @@ export interface FinalizationStateResult {
   stateResult: OnboardStateCompleteResult;
   unmigratedLegacyKeys: string[];
   verificationDiagnostics: string[];
+  deploymentHealthy: boolean;
 }
 
 type TerminalReadyAgent = {
@@ -178,13 +182,16 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   await deps.recordPostVerifyStarted();
 
   let verificationDiagnostics: string[] = [];
+  let deploymentHealthy = true;
   if (manageDashboard) {
     // Confirm the delivered sandbox is reachable before printing the live dashboard (#2342).
     const verifyChain = deps.buildVerifyChain(deps.getChatUiUrl());
     const verificationResult = await deps.verifyDeployment(sandboxName, verifyChain);
+    deploymentHealthy = deps.isDeploymentHealthy(verificationResult);
     verificationDiagnostics = deps.formatVerificationDiagnostics(verificationResult);
     for (const line of verificationDiagnostics) deps.log(line);
-    deps.printDashboard(sandboxName, model, provider, nimContainer, agent);
+    deps.printDashboard(sandboxName, model, provider, nimContainer, agent, deploymentHealthy);
+    deps.reportDeploymentReadiness(deploymentHealthy);
   } else {
     logTerminalReadyBlock(sandboxName, agent, deps.log);
   }
@@ -194,5 +201,5 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
     { state: "finalizing" },
   );
 
-  return { stateResult, unmigratedLegacyKeys, verificationDiagnostics };
+  return { stateResult, unmigratedLegacyKeys, verificationDiagnostics, deploymentHealthy };
 }

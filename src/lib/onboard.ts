@@ -3116,13 +3116,7 @@ async function handleRoutedSelection(
 
   state.provider = bp.provider_name || "nvidia-router";
   state.model = bp.model;
-  const { HOST_GATEWAY_URL } = require("./inference/local");
-  const routerEndpointUrl = bp.endpoint || "";
-  state.endpointUrl = routerEndpointUrl;
-  if (routerEndpointUrl.match(/localhost|127\.0\.0\.1/)) {
-    const u = new URL(routerEndpointUrl);
-    state.endpointUrl = `${HOST_GATEWAY_URL}:${u.port}${u.pathname}`;
-  }
+  state.endpointUrl = localInference.rewriteHostLoopbackForSandbox(bp.endpoint || "");
   state.preferredInferenceApi = "openai-completions";
   state.assertRouteCompatible?.();
 
@@ -3331,7 +3325,9 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
     if (navigation === "exit") {
       exitOnboardFromPrompt();
     }
-    state.endpointUrl = normalizeProviderBaseUrl(endpointInput, kind);
+    state.endpointUrl = localInference.rewriteHostLoopbackForSandbox(
+      normalizeProviderBaseUrl(endpointInput, kind),
+    );
     if (!state.endpointUrl) {
       console.error(
         selected.key === "custom"
