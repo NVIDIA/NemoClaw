@@ -207,6 +207,9 @@ describe("verifyDeployment", () => {
     const infDiag = result.diagnostics.find((d) => d.link === "inference");
     expect(infDiag?.status).toBe("fail");
     expect(infDiag?.detail).toContain("503");
+    expect(infDiag?.hint).toContain("host.openshell.internal");
+    expect(infDiag?.hint).toContain("firewall");
+    expect(infDiag?.hint).not.toContain("0.0.0.0");
   });
 
   it("messaging failure is a warning, not a blocker", async () => {
@@ -513,6 +516,58 @@ describe("verifyDeployment", () => {
     expect(result.healthy).toBe(true);
     expect(result.verification.dashboardReachable).toBe(true);
     expect(dashboardCalls).toBe(2);
+  });
+
+  it("retries the inference probe and recovers when the route comes up late (#6849)", async () => {
+    let inferenceCalls = 0;
+    const deps = makeDeps({
+      executeSandboxCommand: (_name: string, script: string) => {
+        if (script.includes("inference.local")) {
+          inferenceCalls += 1;
+          return { status: 0, stdout: inferenceCalls === 1 ? "000" : "200", stderr: "" };
+        }
+        return { status: 0, stdout: "200", stderr: "" };
+      },
+    });
+    const sleepCalls: number[] = [];
+    const result = await verifyDeployment("my-sandbox", chain, deps, {
+      retryDelaysMs: [10, 20],
+      sleep: async (ms: number) => {
+        sleepCalls.push(ms);
+      },
+    });
+    expect(result.healthy).toBe(true);
+    expect(result.verification.inferenceRouteWorking).toBe(true);
+    expect(inferenceCalls).toBe(2);
+    expect(sleepCalls).toEqual([10]);
+  });
+
+  it("does not retry inference after the gateway retry budget is exhausted (#6849)", async () => {
+    let gatewayCalls = 0;
+    let inferenceCalls = 0;
+    const deps = makeDeps({
+      executeSandboxCommand: (_name: string, script: string) => {
+        if (script.includes("inference.local")) {
+          inferenceCalls += 1;
+        } else if (!script.includes("openclaw --version")) {
+          gatewayCalls += 1;
+        }
+        return { status: 0, stdout: "000", stderr: "" };
+      },
+    });
+    const sleepCalls: number[] = [];
+    const result = await verifyDeployment("my-sandbox", chain, deps, {
+      retryDelaysMs: [10, 20],
+      sleep: async (ms: number) => {
+        sleepCalls.push(ms);
+      },
+    });
+    expect(result.healthy).toBe(false);
+    expect(result.verification.gatewayReachable).toBe(false);
+    expect(result.verification.inferenceRouteWorking).toBe(false);
+    expect(gatewayCalls).toBe(3);
+    expect(inferenceCalls).toBe(1);
+    expect(sleepCalls).toEqual([10, 20]);
   });
 
   it("gives up after retry budget is exhausted and surfaces the last failure detail", async () => {
