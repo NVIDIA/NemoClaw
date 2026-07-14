@@ -77,6 +77,16 @@
       "category": "security"
     },
     {
+      "file": "test/corporate-ca-build-tls-anchor.test.ts",
+      "test": "declares exactly one corporate CA build arg so onboard patching stays unambiguous",
+      "category": "security"
+    },
+    {
+      "file": "test/corporate-ca-build-tls-anchor.test.ts",
+      "test": "decodes the CA and exports NODE_EXTRA_CA_CERTS before the reinstall audit-signatures step",
+      "category": "security"
+    },
+    {
       "file": "test/dcode-base-image-workflow.test.ts",
       "test": "accepts every discovered publisher and rejects supply-chain mutations",
       "category": "security"
