@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  allowRestartFixturePeerTraversal,
   createRestartFixture,
   mode,
   overwriteThroughOldFd,
@@ -26,6 +27,7 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
       spawnSync("setpriv", ["--version"], { encoding: "utf-8" }).status === 0,
   )("keeps the locked Hermes entry sticky-protected while allowing ordinary home writes", () => {
     const fixture = createRestartFixture();
+    const restoreTempRootMode = allowRestartFixturePeerTraversal(fixture);
 
     try {
       const locked = runShieldsTransition(fixture, "locked");
@@ -55,7 +57,16 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
       expect(fs.existsSync(fixture.hermesDir)).toBe(true);
       expect(fs.existsSync(path.join(fixture.sandboxDir, ".hermes-moved"))).toBe(false);
     } finally {
-      fs.rmSync(fixture.root, { recursive: true, force: true });
+      try {
+        const mutable = runShieldsTransition(fixture, "mutable");
+        expect(mutable.status, mutable.stderr).toBe(0);
+      } finally {
+        try {
+          fs.rmSync(fixture.root, { recursive: true, force: true });
+        } finally {
+          restoreTempRootMode();
+        }
+      }
     }
   });
 
@@ -316,6 +327,7 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
       spawnSync("setpriv", ["--version"], { encoding: "utf-8" }).status === 0,
   )("lets a sandbox-group peer create state but not unlink sealed config names", () => {
     const fixture = createRestartFixture();
+    const restoreTempRootMode = allowRestartFixturePeerTraversal(fixture);
 
     try {
       const sealed = runGuard("seal-restart", fixture);
@@ -344,7 +356,11 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
       const unsealed = runGuard("unseal-restart", fixture);
       expect(unsealed.status, unsealed.stderr).toBe(0);
     } finally {
-      fs.rmSync(fixture.root, { recursive: true, force: true });
+      try {
+        fs.rmSync(fixture.root, { recursive: true, force: true });
+      } finally {
+        restoreTempRootMode();
+      }
     }
   });
 });

@@ -95,6 +95,14 @@ export function createRestartFixture(): RestartFixture {
   };
 }
 
+export function allowRestartFixturePeerTraversal(fixture: RestartFixture): () => void {
+  const testTempRoot = path.dirname(fixture.root);
+  const testTempRootMode = mode(testTempRoot);
+  fs.chmodSync(testTempRoot, testTempRootMode | 0o001);
+  fs.chmodSync(fixture.root, mode(fixture.root) | 0o001);
+  return () => fs.chmodSync(testTempRoot, testTempRootMode);
+}
+
 export function runWriteConfig(fixture: RestartFixture, expectedDigest: string, content: string) {
   return spawnSync(
     "python3",
