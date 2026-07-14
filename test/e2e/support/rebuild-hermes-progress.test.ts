@@ -46,9 +46,12 @@ describe("Hermes rebuild live progress", () => {
     state.timerCallback?.();
     progress.phase("cleanup");
     progress.stop();
+    const linesAfterStop = state.lines.length;
     progress.stop();
+    progress.phase("after stop");
 
     expect(state.clearCalls).toBe(1);
+    expect(state.lines).toHaveLength(linesAfterStop);
     expect(state.lines).toEqual([
       "[rebuild-hermes] phase 6 nemoclaw rebuild started (0s elapsed; no child output observed; memory free 8.0 GiB/16.0 GiB; test RSS 0.5 GiB; workspace free 6.0 GiB; load 1m 2.50)",
       "[rebuild-hermes] phase 6 nemoclaw rebuild running (60s elapsed; last child output 40s ago; memory free 8.0 GiB/16.0 GiB; test RSS 0.5 GiB; workspace free 6.0 GiB; load 1m 2.50)",

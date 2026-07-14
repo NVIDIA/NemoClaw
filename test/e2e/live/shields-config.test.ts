@@ -437,9 +437,12 @@ test("shields-config: live shields up/down locks config and detects drift", {
   // Keep fixture teardown out of an artificial mutable window if a later
   // assertion aborts before the explicit final restore below.
   cleanup.trackDisposable(`restore shields for ${SANDBOX_NAME} before destroy`, async () => {
-    await runNemoclaw(host, [SANDBOX_NAME, "shields", "up"], {
+    const restore = await runNemoclaw(host, [SANDBOX_NAME, "shields", "up"], {
       artifactName: "cleanup-shields-up-before-destroy",
-    }).catch(() => undefined);
+    });
+    if (restore.exitCode !== 0 || !resultText(restore).includes("Lockdown active")) {
+      throw new Error(`failed to restore shields before destroy: ${resultText(restore)}`);
+    }
   });
 
   const configUp = await statPath(sandbox, CONFIG_PATH, "phase-3-config-perms-up");
