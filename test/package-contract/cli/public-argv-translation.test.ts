@@ -85,9 +85,6 @@ describe("public route/display separation", () => {
   it("keeps explicit compatibility route overrides limited to non-derivable public spellings", () => {
     expect(Object.keys(SANDBOX_ROUTE_OVERRIDES).sort()).toEqual([
       "sandbox:gateway:token",
-      "sandbox:hosts:add",
-      "sandbox:hosts:list",
-      "sandbox:hosts:remove",
       "sandbox:policy:add",
       "sandbox:policy:explain",
       "sandbox:policy:get",
@@ -168,23 +165,6 @@ describe("translatePublicSandboxArgv", () => {
       translatePublicSandboxArgv("alpha", "gateway-token", ["--quiet"]),
       "sandbox:gateway:token",
       ["alpha", "--quiet"],
-    );
-    expectNative(
-      translatePublicSandboxArgv("alpha", "hosts-add", [
-        "searxng.local",
-        "192.168.1.105",
-        "--dry-run",
-      ]),
-      "sandbox:hosts:add",
-      ["alpha", "searxng.local", "192.168.1.105", "--dry-run"],
-    );
-    expectNative(translatePublicSandboxArgv("alpha", "hosts-list", []), "sandbox:hosts:list", [
-      "alpha",
-    ]);
-    expectNative(
-      translatePublicSandboxArgv("alpha", "hosts-remove", ["searxng.local", "--dry-run"]),
-      "sandbox:hosts:remove",
-      ["alpha", "searxng.local", "--dry-run"],
     );
   });
 

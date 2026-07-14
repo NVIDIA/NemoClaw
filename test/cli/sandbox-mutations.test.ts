@@ -77,10 +77,6 @@ describe("CLI dispatch", () => {
       expect(policy.code).toBe(0);
       expect(policy.out).toContain("$ nemoclaw sandbox policy add <name>");
 
-      const hosts = runWithEnv("alpha hosts-add --help", testHome.environment());
-      expect(hosts.code).toBe(0);
-      expect(hosts.out).toContain("$ nemoclaw sandbox hosts add <name>");
-
       const channels = runWithEnv("alpha channels add --help", testHome.environment());
       expect(channels.code).toBe(0);
       expect(channels.out).toContain("$ nemoclaw sandbox channels add <name>");

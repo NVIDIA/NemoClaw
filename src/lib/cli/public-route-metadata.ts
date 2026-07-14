@@ -22,9 +22,6 @@ const GLOBAL_ROUTE_ALIASES: Record<string, readonly (readonly string[])[]> = {
 // mechanically from oclif command IDs.
 export const SANDBOX_ROUTE_OVERRIDES: Record<string, readonly string[]> = {
   "sandbox:gateway:token": ["gateway-token"],
-  "sandbox:hosts:add": ["hosts-add"],
-  "sandbox:hosts:list": ["hosts-list"],
-  "sandbox:hosts:remove": ["hosts-remove"],
   "sandbox:policy:add": ["policy-add"],
   "sandbox:policy:explain": ["policy-explain"],
   "sandbox:policy:get": ["policy-get"],

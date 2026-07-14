@@ -304,26 +304,6 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "[--quiet|-q]",
     },
   ],
-  "sandbox:hosts:add": [
-    {
-      group: "Policy Presets",
-      order: 19.1,
-      flags: "<hostname> <ip> [--dry-run]",
-    },
-  ],
-  "sandbox:hosts:list": [
-    {
-      group: "Policy Presets",
-      order: 19.2,
-    },
-  ],
-  "sandbox:hosts:remove": [
-    {
-      group: "Policy Presets",
-      order: 19.3,
-      flags: "(--dry-run)",
-    },
-  ],
   "sandbox:inference:get": [
     {
       group: "Services",

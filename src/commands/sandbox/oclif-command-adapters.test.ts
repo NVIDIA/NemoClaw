@@ -30,9 +30,6 @@ const mocks = vi.hoisted(() => {
     shieldsUp: vi.fn(),
     showSandboxLogs: vi.fn(),
     showSandboxStatus: vi.fn().mockResolvedValue(undefined),
-    addSandboxHostAlias: vi.fn(),
-    listSandboxHostAliases: vi.fn(),
-    removeSandboxHostAlias: vi.fn(),
     SandboxConfigError,
   };
 });
@@ -66,12 +63,6 @@ vi.mock("../../lib/actions/sandbox/policy-channel", () => ({
   listSandboxPolicies: mocks.listSandboxPolicies,
 }));
 
-vi.mock("../../lib/actions/sandbox/host-aliases", () => ({
-  addSandboxHostAlias: mocks.addSandboxHostAlias,
-  listSandboxHostAliases: mocks.listSandboxHostAliases,
-  removeSandboxHostAlias: mocks.removeSandboxHostAlias,
-}));
-
 vi.mock("../../lib/sandbox/config", () => ({
   configGet: mocks.configGet,
   SandboxConfigError: mocks.SandboxConfigError,
@@ -93,9 +84,6 @@ import ConnectCliCommand from "./connect";
 import DestroyCliCommand from "./destroy";
 import SandboxDoctorCliCommand from "./doctor";
 import GatewayRestartCliCommand from "./gateway/restart";
-import HostsAddCommand from "./hosts/add";
-import HostsListCommand from "./hosts/list";
-import HostsRemoveCommand from "./hosts/remove";
 import SandboxLogsCommand from "./logs";
 import SandboxPolicyListCommand from "./policy/list";
 import RebuildCliCommand from "./rebuild";
@@ -256,10 +244,6 @@ describe("sandbox oclif command adapters", () => {
     expect(usage(SandboxConfigGetCommand)).toContain("[--format json|yaml]");
     expect(GatewayRestartCliCommand.id).toBe("sandbox:gateway:restart");
     expect(usage(GatewayRestartCliCommand)).toContain("<name> [--quiet|-q]");
-    expect(HostsAddCommand.id).toBe("sandbox:hosts:add");
-    expect(usage(HostsAddCommand)).toContain("<name> <hostname> <ip> [--dry-run]");
-    expect(HostsListCommand.id).toBe("sandbox:hosts:list");
-    expect(HostsRemoveCommand.id).toBe("sandbox:hosts:remove");
   });
 
   it("rejects invalid diagnostic parser-owned flags before dispatch", async () => {

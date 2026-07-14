@@ -1738,44 +1738,6 @@ The classifications are `blocked-by-policy`, `missing-approval`, `unsupported`, 
 | `--write` | Refresh `/sandbox/.openclaw/workspace/POLICY.md` inside the sandbox in addition to printing |
 </AgentOnly>
 
-### `$$nemoclaw <name> hosts-add`
-
-Add a host alias to the sandbox pod template.
-Use this when a sandbox needs a stable LAN-only name, such as a local SearXNG or internal model endpoint, without dropping to `docker exec` and `kubectl patch`.
-Host alias commands use the legacy Kubernetes gateway `Sandbox` resource path.
-In that older topology, the `openshell-cluster-nemoclaw` container runs an embedded k3s cluster with a `sandboxes.agents.x-k8s.io` custom resource definition, and an `agent-sandbox-controller` reconciles each `Sandbox` resource into the agent pod.
-They are not supported on Docker-driver or VM-driver sandboxes because those drivers do not run the gateway cluster container that owns this resource.
-
-```bash
-$$nemoclaw my-assistant hosts-add searxng.local 192.168.1.105
-```
-
-The command validates the hostname and IP address, rejects duplicate hostnames, and patches `spec.podTemplate.spec.hostAliases` on the sandbox resource.
-
-| Flag | Description |
-|------|-------------|
-| `--dry-run` | Print the JSON patch for the resulting `hostAliases` list without applying it |
-
-### `$$nemoclaw <name> hosts-list`
-
-List host aliases configured on the sandbox resource.
-
-```bash
-$$nemoclaw my-assistant hosts-list
-```
-
-### `$$nemoclaw <name> hosts-remove`
-
-Remove a hostname from the sandbox `hostAliases` list.
-
-```bash
-$$nemoclaw my-assistant hosts-remove searxng.local
-```
-
-| Flag | Description |
-|------|-------------|
-| `--dry-run` | Print the JSON patch for the resulting `hostAliases` list without applying it |
-
 <AgentOnly variant="openclaw,hermes">
 
 ### `$$nemoclaw <name> channels list`
