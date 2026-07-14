@@ -486,6 +486,7 @@ describe("policy tier setup", () => {
   it("preserves a recorded Balanced tier default during resumed reapply (#6844)", async () => {
     const result = await runPolicySetup(
       {
+        tierName: "restricted",
         currentApplied: ["npm", "brave"],
         recordedPolicyTier: "balanced",
       },
