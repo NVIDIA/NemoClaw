@@ -67,5 +67,5 @@ Use these pages first for common onboarding flows:
 
 - Cite the Markdown documentation pages you used.
 - Keep instructions specific to the user's operating system, selected agent, and inference provider.
-- Explain assumptions when the docs do not cover the exact environment.
+- Explain assumptions when the docs do not cover the user's environment.
 - Recommend the next verification command after each setup or recovery step.

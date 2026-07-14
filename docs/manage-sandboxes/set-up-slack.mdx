@@ -1,0 +1,64 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Set Up Slack"
+sidebar-title: "Set Up Slack"
+description: "Prepare Slack Socket Mode credentials and user or channel allowlists for NemoClaw."
+description-agent: "Explains Slack bot and app token validation, allowlists, mention behavior, rich Hermes rendering, and duplicate Socket Mode detection. Use before enabling Slack."
+keywords: ["nemoclaw slack", "slack socket mode", "slack app token", "slack allowlist"]
+content:
+  type: "how_to"
+---
+import { AgentOnly } from "../_components/AgentGuide";
+
+Slack uses Socket Mode and requires both a bot token and an app-level token.
+
+## Prepare and Validate Tokens
+
+Use `SLACK_BOT_TOKEN` for the bot user OAuth token that begins with `xoxb-`.
+Use `SLACK_APP_TOKEN` for the app-level Socket Mode token that begins with `xapp-`.
+
+NemoClaw validates both tokens before it saves Slack credentials or enables the channel.
+This validation calls the live Slack APIs `auth.test` and `apps.connections.open`, so the tokens must belong to a real Slack app.
+
+If Slack rejects the tokens, NemoClaw skips the Slack channel and does not apply the `slack` network policy preset.
+When Slack is skipped, the preset does not appear as applied in `$$nemoclaw <name> policy-list`.
+
+To exercise channel setup with placeholder tokens in a restricted network or hermetic test environment, set `NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION=1`.
+Slack token format checks still apply.
+
+## Configure Allowlists
+
+Set `SLACK_ALLOWED_USERS` to comma-separated Slack member IDs to authorize those users for DMs and channel `@mention` events.
+Set `SLACK_ALLOWED_CHANNELS` to comma-separated Slack channel IDs to restrict channel `@mention` handling.
+
+When both allowlists are set, NemoClaw requires the mention to come from an allowed channel and an allowed member.
+Channel messages still require an explicit bot mention.
+
+When an allowlist denies a Slack channel mention, NemoClaw sends a denial notice to the sender instead of dropping the message silently.
+
+During sandbox startup, NemoClaw normalizes OpenShell credential placeholders into the environment shape expected by the Slack runtime, so post-rebuild Slack starts use the gateway-managed tokens instead of literal placeholder strings.
+
+<AgentOnly variant="hermes">
+NemoClaw enables rich Slack rendering for Hermes.
+Final responses can use Slack Block Kit, including native table blocks for Markdown tables.
+This uses the existing Slack credentials and does not require additional scopes or reinstalling the Slack app.
+</AgentOnly>
+
+## Avoid Duplicate Socket Mode Sessions
+
+Slack Socket Mode allows one active connection per app-level token.
+If another sandbox on the same gateway already uses the same Slack app token, onboarding and `channels add slack` warn before continuing in interactive mode and abort in non-interactive mode.
+
+Use `--force` only when you intentionally want to move the Slack Socket Mode session to the new sandbox.
+
+## Enable Slack
+
+```bash
+export SLACK_BOT_TOKEN="<your-slack-bot-token>"
+export SLACK_APP_TOKEN="<your-slack-app-token>"
+export SLACK_ALLOWED_USERS="<your-slack-member-id>"
+export SLACK_ALLOWED_CHANNELS="<your-slack-channel-id>"
+```
+
+Continue with [Enable Channels During Onboarding](enable-channels-during-onboarding) or [Add Channels After Onboarding](add-channels-after-onboarding).

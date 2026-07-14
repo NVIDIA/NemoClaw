@@ -94,8 +94,11 @@ function stripAgentOnlyBlocksForVariant(body: string, activeVariant: AgentVarian
   const renderedLines: string[] = [];
   let openBlock: OpenBlock | undefined;
 
-  for (const line of body.split("\n")) {
+  for (const [index, line] of body.split("\n").entries()) {
     if (openBlock) {
+      if (line.match(/^<AgentOnly variant="([^"]+)">\s*$/)) {
+        throw new Error(`nested AgentOnly block at body line ${index + 1}`);
+      }
       if (line.match(/^<\/AgentOnly>\s*$/)) {
         if (openBlock.include) renderedLines.push(...openBlock.lines);
         openBlock = undefined;
@@ -115,11 +118,15 @@ function stripAgentOnlyBlocksForVariant(body: string, activeVariant: AgentVarian
       continue;
     }
 
+    if (line.match(/^<\/AgentOnly>\s*$/)) {
+      throw new Error(`unexpected AgentOnly closing tag at body line ${index + 1}`);
+    }
+
     renderedLines.push(line);
   }
 
   if (openBlock) {
-    renderedLines.push(openBlock.openLine, ...openBlock.lines);
+    throw new Error(`unclosed AgentOnly block: ${openBlock.openLine}`);
   }
 
   return renderedLines.join("\n");

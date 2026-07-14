@@ -274,17 +274,12 @@ describe("PR review advisor", () => {
 
     const comment = buildComment({ summary: renderSummary(result), result });
     expect(comment).toContain("### E2E guidance");
-    expect(comment).toContain(
-      "Advisory only: coverage and selector recommendations are non-authoritative",
-    );
-    expect(comment).toContain(
-      "E2E / PR Gate independently computes and dispatches trusted jobs without consuming this output",
-    );
+    expect(comment).toContain("Advisory only. E2E / PR Gate selects and runs jobs independently.");
     expect(comment).toContain("<code>upgrade-stale-sandbox</code>");
-    expect(comment).toContain("**Recommended coverage:**");
-    expect(comment).toContain("**Recommended selectors:**");
-    expect(comment).not.toContain("**Required coverage:**");
-    expect(comment).not.toContain("**Required selectors:**");
+    expect(comment).toContain("**Recommended E2E:**");
+    expect(comment.match(/<code>upgrade-stale-sandbox<\/code>/gu)).toHaveLength(1);
+    expect(comment).not.toContain("Recommended coverage");
+    expect(comment).not.toContain("Recommended selectors");
     expect(comment).not.toContain("rm -rf");
   });
 
@@ -323,7 +318,7 @@ describe("PR review advisor", () => {
     expect([required.coverage.optionalTests, required.targets.optional]).toEqual([[], []]);
   });
 
-  it("renders the reasons for recommended E2E coverage", () => {
+  it("renders each E2E recommendation once", () => {
     const result = normalizeReviewResult(
       validResult({
         e2e: {
@@ -353,26 +348,16 @@ describe("PR review advisor", () => {
     );
 
     const comment = buildComment({ summary: renderSummary(result), result });
-    expect(comment).toContain("**Recommended coverage:** <code>security-posture</code>");
-    expect(comment).toContain(
-      "- <code>security-posture</code> — Selected from the trusted checked-in E2E coverage inventory.",
-    );
-    expect(comment).toContain("**Recommended selectors:** <code>security-posture</code>");
-    expect(comment).not.toContain("Why no selector is recommended");
+    expect(comment).toContain("**Recommended E2E:** <code>security-posture</code>");
+    expect(comment.match(/<code>security-posture<\/code>/gu)).toHaveLength(1);
 
     const noE2eResult = normalizeReviewResult(validResult(), metadata());
     const noE2eComment = buildComment({
       summary: renderSummary(noE2eResult),
       result: noE2eResult,
     });
-    expect(noE2eComment).toContain(
-      "**Why no E2E coverage is recommended:** No deterministic or trusted-inventory E2E coverage was selected.",
-    );
-    expect(noE2eComment).toContain(
-      "**Why no selector is recommended:** No trusted E2E selector was selected.",
-    );
-    expect(noE2eComment).not.toContain("Why no E2E is required");
-    expect(noE2eComment).not.toContain("Why no selector is required");
+    expect(noE2eComment).toContain("**Recommended E2E:** _None_");
+    expect(noE2eComment).not.toContain("Why no");
   });
 
   it("sanitizes malformed enum values and preserves deterministic fallback gates", () => {
@@ -445,12 +430,12 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     expect(skill).toContain("# Security Code Review");
     expect(skill).toContain("Category 1: Secrets and Credentials");
     expect(prompt).toContain("Trusted security review skill from main checkout");
-    expect(prompt).toContain("For NemoClaw PRs, pay special attention to sandbox escape vectors");
+    expect(prompt).toContain("For NemoClaw PRs, check sandbox escape vectors");
     expect(prompt).toContain(
       "Do not report GitHub mergeability, branch protection, CI status, reviewer state, CodeRabbit state, or external E2E job status",
     );
     expect(prompt).toContain(
-      "compare it with the current diff and explicitly decide whether prior code-review findings were addressed",
+      "compare it with the current diff and decide whether prior code-review findings were addressed",
     );
     expect(prompt).toContain(
       "any unmet binding acceptance clause or security fail/warning must be represented as a finding",
@@ -467,7 +452,7 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     expect(prompt).toContain("Simplification review");
     expect(prompt).toContain("Deterministic regression risks");
     expect(prompt).toContain("E2E guidance");
-    expect(prompt).toContain("non-finding advisory output");
+    expect(prompt).toContain("E2E guidance is not a finding");
     expect(prompt).toContain("A required validation job is not a finding unless");
     expect(prompt).toContain("Prior-advisor availability, failure, or incompleteness");
     expect(prompt).toContain("one flat atomic commit object");
@@ -479,15 +464,13 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     expect(prompt).toContain(
       "Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding",
     );
-    expect(prompt).toContain(
-      "Finding severity mapping: blocker renders as 'Blocker for maintainer adjudication'",
-    );
+    expect(prompt).toContain("Finding severity mapping: blocker renders as 'Blocker'");
     expect(prompt).toContain("Proposed designs, implementation ideas, investigation notes");
     expect(prompt).toContain("author_association is OWNER, MEMBER, or COLLABORATOR");
     expect(prompt).toContain("A Refs, Related, or Follow-up link does not commit the PR");
     expect(prompt).toContain("PR-description or template compliance");
     expect(prompt).toContain("When several symptoms or locations share one root cause and remedy");
-    expect(prompt).toContain("suggestion renders as 'Suggestion (optional)'");
+    expect(prompt).toContain("suggestion renders as 'Suggestion'");
     expect(prompt).toContain("multi-turn conversation");
     expect(prompt).toContain(
       "The immediately following validation turn stays in the same agent session",
@@ -580,9 +563,9 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
       "Required-job execution status, E2E recommendations, overlap metadata, advisor state, and positive observations",
     );
     expect(synthesisTurn?.prompt).toContain("<pr_review_advisor_json>");
-    expect(synthesisTurn?.prompt).toContain("Set the fields exactly as specified");
+    expect(synthesisTurn?.prompt).toContain("Set the metadata fields from");
     expect(synthesisTurn?.prompt).toContain(
-      "Set e2e.targets.exactHeadCredentialFreeTests to an empty array",
+      "Set e2e.targets.changedCredentialFreeTests to an empty array",
     );
     expect(validationTurn?.prompt).toContain("same agent session");
     const correctnessContext = JSON.parse(
@@ -647,9 +630,9 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     expect(
       evidence.find((result) => result.toolName === "pr_review_response_schema")?.content,
     ).toBe(JSON.stringify(schema));
-    expect(
-      evidence.find((result) => result.toolName === "pr_review_exact_metadata")?.content,
-    ).toContain(`- changedFiles: ${JSON.stringify(metadata().changedFiles)}`);
+    expect(evidence.find((result) => result.toolName === "pr_review_metadata")?.content).toContain(
+      `- changedFiles: ${JSON.stringify(metadata().changedFiles)}`,
+    );
   });
 
   it("collects static test inventory from changed test files", () => {
@@ -1064,7 +1047,7 @@ diff --git a/test/example.test.ts b/test/example.test.ts
         expect.objectContaining({
           category: "Holistic Security Posture",
           verdict: "warning",
-          justification: expect.stringContaining("human review required"),
+          justification: expect.stringContaining("maintainer review required"),
         }),
       ]),
     );
@@ -1117,7 +1100,7 @@ diff --git a/test/example.test.ts b/test/example.test.ts
     errorSpy.mockRestore();
   });
 
-  it("renders summaries and sticky comments with human-review framing", () => {
+  it("renders summaries and sticky comments with maintainer-review framing", () => {
     const result = normalizeReviewResult(validResult(), metadata());
     const summary = renderSummary(result);
     const detailed = renderDetailedReview(result);
@@ -1125,9 +1108,13 @@ diff --git a/test/example.test.ts b/test/example.test.ts
 
     expect(summary).toContain("# PR Review Advisor");
     expect(summary).toContain("trusted-code boundary");
-    expect(summary).toContain("Blocking findings for maintainer adjudication");
+    expect(summary).toContain("## Blockers");
     expect(summary).toContain("## Warnings");
-    expect(summary).toContain("## Suggestions (optional)");
+    expect(summary).toContain("## Suggestions");
+    expect(summary).toContain("## Recommended E2E");
+    expect(summary).toContain("## Optional E2E");
+    expect(summary).not.toContain("E2E coverage");
+    expect(summary).not.toContain("E2E selectors");
     expect(summary).not.toContain("Test follow-ups");
     expect(summary).not.toContain("comment builder test");
     expect(summary).not.toContain("🛠️");
@@ -1178,11 +1165,9 @@ diff --git a/test/example.test.ts b/test/example.test.ts
         title: "PR Review Advisor",
       }),
     ).toThrow(/marker must be a safe/);
-    expect(comment).toContain(
-      "**Advisor assessment:** Blocking findings require maintainer adjudication",
-    );
-    expect(comment).toContain("**Primary next action:** Review the blocking findings below.");
-    expect(comment).toContain("### Blocking findings for maintainer adjudication");
+    expect(comment).toContain("**Advisor assessment:** Blockers require maintainer review");
+    expect(comment).toContain("**Next action:** Review the blockers below.");
+    expect(comment).toContain("### Blockers");
     expect(comment).toContain("#### `PRA-1` Blocker — trusted-code boundary");
     expect(comment).toContain(
       "- **Impact:** A PR-controlled workflow could run advisor code with repository secrets.",
@@ -1193,8 +1178,8 @@ diff --git a/test/example.test.ts b/test/example.test.ts
     expect(comment).not.toContain("Missing regression test");
     expect(comment).not.toContain("Expected follow-up");
     expect(comment).not.toContain("Done when");
-    expect(comment).toContain("automated, non-authoritative review");
-    expect(comment).toContain("Warnings and optional suggestions do not require a response");
+    expect(comment).toContain("This automated review informs maintainers");
+    expect(comment).toContain("Warnings and suggestions do not require a response");
     expect(comment).not.toContain("Full advisor summary");
     expect(comment).not.toContain("## Acceptance coverage");
     expect(comment).not.toContain("## Security review");
@@ -1203,10 +1188,10 @@ diff --git a/test/example.test.ts b/test/example.test.ts
     expect(summary).not.toContain("Recommendation: **merge after fixes**");
     expect(summary).not.toContain("Confidence: **high**");
     expect(comment).toContain("<!-- nemoclaw-pr-review-advisor -->");
-    expect(comment).toContain("A human maintainer makes the final merge decision");
+    expect(comment).toContain("A maintainer decides whether to merge");
     expect(summary).not.toContain("## Review completeness");
-    expect(summary).not.toContain("Human maintainer review required");
-    expect(comment).toContain("**Findings:** 1 blocker · 0 warnings · 0 optional suggestions");
+    expect(summary).not.toContain("Maintainer review required");
+    expect(comment).toContain("**Findings:** 1 blocker · 0 warnings · 0 suggestions");
     expect(comment).not.toContain("**Top item:**");
     expect(comment.match(/`PRA-1`/g)).toHaveLength(1);
     expect(summary).not.toContain("Base: `origin/main`");
@@ -1299,7 +1284,7 @@ diff --git a/test/example.test.ts b/test/example.test.ts
     const comment = buildComment({ summary: renderSummary(result), result });
     expect(comment).toContain("## PR Review Advisor — No blocking findings reported");
     expect(comment).toContain("**Advisor assessment:** No blocking advisor findings reported");
-    expect(comment).toContain("**Primary next action:** Review the warnings below.");
+    expect(comment).toContain("**Next action:** Review the warnings below.");
     expect(comment).toContain("### Warnings");
     expect(comment).toContain("#### `PRA-1` Warning — Resolve the warning first");
     expect(comment).not.toContain("PRA-T");
@@ -1307,7 +1292,7 @@ diff --git a/test/example.test.ts b/test/example.test.ts
     expect(comment.match(/`PRA-1`/g)).toHaveLength(1);
   });
 
-  it("renders suggestions as optional with no required response", () => {
+  it("renders suggestions with no required response", () => {
     const result = normalizeReviewResult(
       validResult({
         findings: [
@@ -1332,12 +1317,12 @@ diff --git a/test/example.test.ts b/test/example.test.ts
 
     const comment = buildComment({ summary: renderSummary(result), result });
 
-    expect(comment).toContain("**Findings:** 0 blockers · 0 warnings · 1 optional suggestion");
-    expect(comment).toContain("**Primary next action:** Optional suggestions are listed below.");
-    expect(comment).toContain("### Suggestions (optional)");
-    expect(comment).toContain("No response or follow-up is expected for these suggestions");
-    expect(comment).toContain("#### `PRA-1` Optional — Simplify changed branch");
-    expect(comment).toContain("- **Optional change:** Refactor the changed branch");
+    expect(comment).toContain("**Findings:** 0 blockers · 0 warnings · 1 suggestion");
+    expect(comment).toContain("**Next action:** Consider the suggestions below.");
+    expect(comment).toContain("### Suggestions");
+    expect(comment).toContain("No response is required");
+    expect(comment).toContain("#### `PRA-1` Suggestion — Simplify changed branch");
+    expect(comment).toContain("- **Suggestion:** Refactor the changed branch");
     expect(comment).not.toContain("- [ ]");
     expect(comment).not.toContain("Expected follow-up");
     expect(comment).not.toContain("Done when");
@@ -1365,7 +1350,7 @@ diff --git a/test/example.test.ts b/test/example.test.ts
     const comment = buildComment({ summary, result });
 
     expect(result.summary.recommendation).toBe("info_only");
-    expect(comment).toContain("No advisor follow-up required beyond maintainer review");
+    expect(comment).toContain("No advisor follow-up needed");
     expect(comment).not.toContain("PRA-T");
     expect(comment).not.toContain("probe");
     expect(comment).not.toContain("check &lt;/details&gt;");

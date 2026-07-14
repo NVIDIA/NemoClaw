@@ -8,12 +8,17 @@ import { describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const HELPER = path.join(REPO_ROOT, "scripts", "managed-gateway-control.py");
-const RUNTIME_DOCS = path.join(REPO_ROOT, "docs", "manage-sandboxes", "runtime-controls.mdx");
+const GATEWAY_LIFECYCLE_DOCS = path.join(
+  REPO_ROOT,
+  "docs",
+  "manage-sandboxes",
+  "gateway-lifecycle-control.mdx",
+);
 
 describe("managed gateway control trust contract", () => {
   it("keeps the shared-UID and mutable-config limits explicit in code and docs", () => {
     const helper = fs.readFileSync(HELPER, "utf8");
-    const docs = fs.readFileSync(RUNTIME_DOCS, "utf8");
+    const docs = fs.readFileSync(GATEWAY_LIFECYCLE_DOCS, "utf8");
 
     expect(helper).toContain("malicious same-UID agent");
     expect(helper).toContain("mutable config retains the same trust/TOCTOU limitations");

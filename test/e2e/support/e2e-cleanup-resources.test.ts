@@ -154,6 +154,25 @@ describe("cleanup resources", () => {
     });
   });
 
+  it("reports failed shields restoration before continuing sandbox cleanup", async () => {
+    const calls: string[] = [];
+    const cleanup = new CleanupRegistry();
+    cleanup.trackDisposable("destroy shields sandbox", () => {
+      calls.push("destroy");
+    });
+    cleanup.trackDisposable("restore shields before destroy", () => {
+      calls.push("restore");
+      throw new Error("shields up exited 1");
+    });
+
+    const result = await cleanup.runAll();
+    expect(calls).toEqual(["restore", "destroy"]);
+    expect(result).toEqual({
+      passed: ["destroy shields sandbox"],
+      failures: [{ name: "restore shields before destroy", message: "shields up exited 1" }],
+    });
+  });
+
   it("accepts successful or explicitly absent cleanup results and rejects other failures (#6352)", () => {
     expect(() =>
       assertCleanupSucceededOrAbsent(

@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# PR CI and Automated Review Follow-Up
+# PR CI and Review Follow-Up
 
 Use this workflow after creating a PR and after every push to an open PR.
 
@@ -18,7 +18,7 @@ Then inspect the settled check state:
 gh pr view "$PR_NUMBER" --json url,statusCheckRollup,comments,reviews,reviewDecision
 ```
 
-## Inspect automated feedback
+## Review feedback
 
 Check sticky PR comments and inline review comments from CodeRabbit and the PR Review Advisor:
 
@@ -32,7 +32,7 @@ gh api "repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}/comments" --paginate \
 
 ## Triage
 
-- Before acting on automated feedback, state the concrete problem and intended outcome.
+- Before acting on feedback, state the concrete problem and intended outcome.
 - Do not add a generalized helper, configuration switch, fallback, migration, or compatibility path solely to satisfy reviewer wording.
 - If feedback cannot be tied to a concrete defect, demonstrated security or data-safety risk, supported contract, or needless complexity in changed code, treat it as a suggestion rather than implementation work.
 - **CI failure:** inspect the failing job logs, fix the root cause, rerun relevant local checks, commit, push, and monitor again.

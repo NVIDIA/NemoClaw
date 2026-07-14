@@ -122,7 +122,7 @@ test/e2e/
   matches are drawn only from the trusted controller workflow and script.
   Other or mixed internal control-plane revisions require a maintainer-authorized
   exact-SHA run; only its verified evidence can pass the gate. Risky forks
-  retain the audited no-secret exception. See
+  retain the audited credentialed-E2E skip approval. See
   [NemoClaw E2E CI](../README.md) for the full lifecycle.
 
 - `.github/workflows/e2e.yaml` runs selected or all supported

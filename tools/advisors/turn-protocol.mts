@@ -41,7 +41,7 @@ export type AdvisorPromptTurn = {
   /** Fail the turn when it completes without non-whitespace assistant analysis. */
   requireAssistantText?: boolean;
   /**
-   * Atomic tool that must produce exactly one successful terminal commit.
+   * Atomic tool that must produce one successful terminal commit.
    * Failed, non-mutating attempts may precede that commit; nothing may follow it.
    */
   atomicTerminalToolName?: string;
@@ -171,7 +171,7 @@ function atomicTerminalToolErrors(
   }
   if (counts.successfulCompletions !== 1) {
     errors.push(
-      `${turnName} must commit ${toolName} successfully exactly once ` +
+      `${turnName} must commit ${toolName} successfully once ` +
         `(observed ${counts.successfulCompletions} successful and ${counts.failedCompletions} failed completions)`,
     );
   }

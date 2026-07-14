@@ -4,8 +4,8 @@
 # PR Review Advisor
 
 The PR Review Advisor is an SDK-powered, NemoClaw-specific pull request reviewer. It runs as a
-trusted GitHub Actions job, inspects PRs as read-only data, and posts a sticky advisory comment with
-model-identified blockers, non-blocking warnings, and optional suggestions. Detailed artifacts retain
+trusted GitHub Actions job, inspects PRs as read-only data, and posts a sticky comment with blockers,
+warnings, and suggestions. Artifacts retain
 acceptance coverage, security notes, and other review context.
 
 It complements the existing PR surfaces by keeping a NemoClaw maintainer code-review lens focused on the patch itself and by including E2E coverage and target guidance in the same model session:
@@ -31,17 +31,17 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 
 1. Runs on `pull_request_target` for internal and fork PRs, plus `workflow_dispatch`.
 2. Checks out advisor implementation code at the immutable trusted `github.workflow_sha` into `advisor/`.
-3. Fetches the event's exact PR base and head SHAs into an isolated analysis workspace without running PR-controlled actions, hooks, submodules, LFS filters, package setup, scripts, or tests.
-4. Installs and verifies exact pinned `ripgrep` and `fd-find` packages on a pinned Ubuntu runner, then installs a pinned Pi SDK package with lifecycle scripts disabled.
+3. Fetches the event's PR base and head SHAs into an isolated analysis workspace without running PR-controlled actions, hooks, submodules, LFS filters, package setup, scripts, or tests.
+4. Installs and verifies pinned `ripgrep` and `fd-find` packages on a pinned Ubuntu runner, then installs a pinned Pi SDK package with lifecycle scripts disabled.
 5. Builds the deterministic regression risk plan and E2E inventory in trusted code and injects them into the review contexts.
 6. Runs `tools/pr-review-advisor/analyze.mts` from the trusted checkout.
 7. Runs the same advisor conversation in parallel for the primary GPT-5.6 Terra lane and an artifact-only Nemotron Ultra evaluation lane.
 8. Opens one Pi session per model variant and reviews the PR in 14 bounded turns: six small analysis/commit pairs for scope/risk, correctness/state, security/trust, tests/regressions, CI/operations, and reconciliation, followed by draft and validation JSON synthesis turns in that same session. The tests/regressions turn analyzes E2E coverage and new-test gaps, while the CI/operations turn selects supported E2E jobs, targets, or fan-out. Only trusted identifiers from these receipts reach normalized E2E output; free-form model E2E prose is discarded. No second advisor session is opened, including for synthesis repair.
-9. Gives each commit turn one job: apply exactly one successful atomic ledger commit for the preceding analysis. The model-facing commit is one flat object with homogeneous additions, updates, resolutions, and supersessions arrays plus an explicit no-change reason; legacy nested operation unions and stringified arrays are rejected. Additions require a structured observed-versus-expected basis, a concrete file and line, and eligibility for the active stage. Positives, advisor/provider state, prior-review process state, open-PR overlap, merge coordination, and live CI/E2E status stay in prose receipts rather than becoming findings. The ledger mutation tool is the turn's only active tool, and the runner rejects prose, other tool calls, or activity after the successful commit. Rejected attempts do not mutate the ledger and may be corrected before one success. If a commit turn ends with no successful call and every attempt settled without mutating state, the runner permits one tool-only retry and then fails closed. Ledger findings receive stable `F-...` IDs, and conclusion changes require a reason plus new evidence; final synthesis can only read the ledger.
+9. Gives each commit turn one job: apply one successful atomic ledger commit for the preceding analysis. The model-facing commit is one flat object with homogeneous additions, updates, resolutions, and supersessions arrays plus a no-change reason; legacy nested operation unions and stringified arrays are rejected. Additions require a structured observed-versus-expected basis, a file and line, and eligibility for the active stage. Positives, advisor/provider state, prior-review process state, open-PR overlap, merge coordination, and live CI/E2E status stay in prose receipts rather than becoming findings. The ledger mutation tool is the turn's only active tool, and the runner rejects prose, other tool calls, or activity after the successful commit. Rejected attempts do not mutate the ledger and may be corrected before one success. If a commit turn ends with no successful call and every attempt settled without mutating state, the runner permits one tool-only retry and then fails closed. Ledger findings receive stable `F-...` IDs, and conclusion changes require a reason plus new evidence; final synthesis can only read the ledger.
 10. Treats open ledger records as the canonical finding set. Final synthesis cannot silently add, drop, merge, reword, or reclassify those findings. Unresolved source-of-truth review entries must reference their covering open ledger ID structurally rather than relying on prose matching.
 11. Logs each turn start and settled status and writes the assistant response immediately, preserving partial failed/timed-out turn evidence and the raw transcript. If a later stage fails, already-committed canonical findings remain in the low-confidence incomplete result instead of being replaced by a generic unavailable finding.
 12. Retries transient provider failures such as HTTP 429 within the same session using one bounded exponential-backoff layer. GPT waits 6s, 12s, 24s, and 48s; Nemotron waits 9s, 18s, 36s, and 72s so parallel lanes do not retry in lockstep. The workflow still publishes the primary comment and lane artifacts after an incomplete analysis. An incomplete primary review fails its outcome step; the artifact-only evaluation lane does not affect the workflow result.
-13. Validates and repairs the draft synthesis in the final turn of the same session. If that turn fails or emits malformed output, the runner preserves a schema-valid canonical draft with an explicit limitation; a post-validation ledger mismatch still fails closed.
+13. Validates and repairs the draft synthesis in the final turn of the same session. If that turn fails or emits malformed output, the runner preserves a schema-valid canonical draft with a limitation; a post-validation ledger mismatch still fails closed.
 14. Writes artifacts under the model-specific artifact directory, for example `artifacts/pr-review-advisor/` and `artifacts/pr-review-advisor-nemotron-ultra/`.
 15. Uploads each lane's artifacts from the read-only analysis job. A separate publisher job receives no model credential or untrusted worktree, validates the primary artifact and live PR head/base, then posts or updates one combined sticky PR comment marked by `<!-- nemoclaw-pr-review-advisor -->`. The evaluation lane does not publish another review. Previous sticky-comment ingestion is disabled for both lanes.
 
@@ -56,8 +56,8 @@ visibly incomplete, but their final-result artifact preserves any open canonical
 before the failure so later runs and reviewers do not lose substantive review history.
 
 The workflow is advisory and must not be configured as an E2E-required status check. Its combined
-comment includes deterministic-plan-backed E2E guidance and trusted-code-authored reasons for recommended coverage, but
-does not dispatch or report pass/fail for E2E jobs. Model availability must not become the authority
+comment lists trusted E2E recommendations, but does not dispatch or report pass/fail for E2E jobs.
+Model availability must not become the authority
 for whether a pull request can merge.
 For PRs from this repository, the PR E2E controller separately rebuilds the plan from GitHub's
 changed-file list and dispatches every selected job after `CI / Pull Request` completes. `E2E / PR
@@ -69,7 +69,7 @@ behavior must be implemented and tested before the workflow claims to provide it
 
 ## Author and agent follow-up
 
-Authors and coding agents should follow the shared [PR CI and Automated Review Follow-Up](../../.agents/skills/_shared/pr-follow-up.md) workflow after opening a PR or pushing follow-up commits. If SSH, authentication, remote access, authorization, or permission problems prevent reading comments or pushing fixes, follow [Git and GitHub Access Hard Stop](../../.agents/skills/_shared/git-github-hard-stop.md).
+Authors and coding agents should follow the shared [PR CI and Review Follow-Up](../../.agents/skills/_shared/pr-follow-up.md) workflow after opening a PR or pushing follow-up commits. If SSH, authentication, remote access, authorization, or permission problems prevent reading comments or pushing fixes, follow [Git and GitHub Access Hard Stop](../../.agents/skills/_shared/git-github-hard-stop.md).
 
 ## Safety model
 
@@ -82,7 +82,7 @@ Authors and coding agents should follow the shared [PR CI and Automated Review F
 - The analysis job is limited to `NVIDIA/NemoClaw`, has read-only GitHub permissions, and is the only job that receives the model secret.
 - The analyzer collects deterministic GitHub context before model work, then removes GitHub tokens from the process environment.
   After registering the model credential in the in-memory SDK auth store, it also removes that credential from the process environment before model turns begin.
-- The separate publisher has pull-request write permission, but receives neither the model secret nor the untrusted PR worktree. It accepts only the bounded primary artifact from the same workflow run and rechecks the live PR head and base before commenting. Before rendering E2E guidance, it independently allowlists coverage IDs and exact selector tuples, ignores artifact-authored E2E prose, and supplies canonical reasons. A newly added credential-free test can extend the job allowlist only through trusted-normalizer evidence bound to the same head SHA, changed-file path, and basename-derived selector ID.
+- The separate publisher has pull-request write permission, but receives neither the model secret nor the untrusted PR worktree. It accepts only the bounded primary artifact from the same workflow run and rechecks the live PR head and base before commenting. Before rendering E2E guidance, it independently allowlists coverage IDs and selector tuples and ignores artifact-authored E2E prose. A newly added credential-free test can extend the job allowlist only through trusted-normalizer evidence bound to the same head SHA, changed-file path, and basename-derived selector ID.
 - Sticky publication updates only a marker-bearing comment owned by `github-actions[bot]`; a user-authored marker cannot claim the update target.
   The rendered comment preserves its hidden identity metadata while enforcing a 60 KiB UTF-8 limit, and publication errors remain visible in the publisher logs.
 - The workflow posts advisory comments only; it does not approve, request changes, merge, push, label, or dispatch E2E.
@@ -154,15 +154,17 @@ comment and future reporting work. Findings include probe-shaped fields for impa
 hints, and missing regression-test guidance so agents know what to check rather than treating findings
 as generic commentary. Every source-of-truth review item includes a `findingId`: unresolved items
 reference their covering open ledger finding, while satisfied and not-applicable items use `null`.
-Every result also includes nested `e2e.coverage` and `e2e.targets` guidance. The trusted normalizer
+Every result also includes nested `e2e.coverage` and `e2e.targets` guidance. The fields stay
+separate in JSON, but comments and summaries combine their IDs into one `Recommended E2E` list and
+one optional list. Duplicate IDs appear once. If a list is longer than the display limit, the output
+reports how many more IDs exist. The trusted normalizer
 restores deterministic requirements before model selections, retains only allowlisted coverage IDs
-and exact supported selector tuples, and replaces model-authored reasons with canonical trusted
+and supported selector tuples, and replaces model-authored reasons with trusted
 reasons. It discards free-form E2E domains, new-test recommendations, and no-selection explanations.
-For a changed credential-free test, the normalizer also records structured exact-head evidence only
+For a changed credential-free test, the normalizer also records structured head evidence only
 after the trusted module-tag parser accepts the source; model-provided evidence is overwritten. The
 trusted publisher independently repeats the ID and tuple checks, verifies that evidence against the
-result head and changed-file identity, and derives its own reasons instead of rendering E2E prose
-from the artifact.
+result head and changed-file identity, and renders only trusted IDs.
 The compatibility schema retains `requiredTests` and `targets.required`, but those names describe
 the normalized advisory tier, not merge requirements. Rendered comments label them as recommended;
 the independent PR E2E controller does not consume advisor output.
@@ -170,6 +172,5 @@ Findings can also include safe simplification metadata with delete, stdlib,
 native, YAGNI, or shrink tags; those suggestions must keep validation, security, data-loss prevention,
 and required tests intact. Only blockers set a blocking advisory recommendation; results without
 blockers are info-only unless superseded. That recommendation is review input, never merge
-authorization. Warnings merit maintainer attention but do not block by themselves, and suggestions
-are optional with no required response or follow-up. Every result includes limitations and requires
-human maintainer review.
+authorization. Warnings do not block. Suggestions do not require a response. Every result includes
+limitations and requires maintainer review.

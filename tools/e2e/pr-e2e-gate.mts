@@ -30,7 +30,7 @@ import {
 const E2E_WORKFLOW = "e2e.yaml";
 const E2E_WORKFLOW_PATH = `.github/workflows/${E2E_WORKFLOW}`;
 const PR_GATE_WORKFLOW_PATH = ".github/workflows/pr-e2e-gate.yaml";
-const PR_GATE_APPROVAL_ENVIRONMENT = "e2e-no-secret-exception";
+const PR_GATE_APPROVAL_ENVIRONMENT = "approve-credentialed-e2e-skip-for-fork-pr";
 const CHECK_NAME = "E2E / PR Gate";
 const WORKFLOW_NAME = "E2E / PR Gate Controller";
 const CHECK_EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v2";
@@ -80,7 +80,7 @@ type ControllerPaths = {
 
 type EvidenceStepOutcome = "success" | "failure" | "cancelled" | "skipped";
 
-type ManualResolutionCommandBase = {
+type ManualForkSkipCommandBase = {
   prNumber: number;
   headSha: string;
   baseSha: string;
@@ -90,10 +90,10 @@ type ManualResolutionCommandBase = {
   evidenceUrl?: string;
 };
 
-type ManualResolutionCommand = ManualResolutionCommandBase & { mode: "resolve-fork" };
+type ManualForkSkipCommand = ManualForkSkipCommandBase & { mode: "record-fork-e2e-skip" };
 
-type ApprovedResolutionCommand = {
-  mode: "resolve-approved";
+type ApprovedForkSkipCommand = {
+  mode: "record-approved-fork-e2e-skip";
   prNumber: number;
   headSha: string;
   baseSha: string;
@@ -114,7 +114,7 @@ type ControlPlaneDispatchCommand = {
   workflowRunAttempt: number;
 } & ControllerPaths;
 
-type GateResolutionCommand = ManualResolutionCommand & {
+type ForkSkipCommand = ManualForkSkipCommand & {
   validatedApproval?: {
     environment: typeof PR_GATE_APPROVAL_ENVIRONMENT;
     runUrl: string;
@@ -146,8 +146,8 @@ export type ControllerCommand =
   | { mode: "abandon"; checkRunId: number; childRunId?: number }
   | { mode: "cancel"; prNumber: number }
   | ControlPlaneDispatchCommand
-  | ManualResolutionCommand
-  | ApprovedResolutionCommand;
+  | ManualForkSkipCommand
+  | ApprovedForkSkipCommand;
 
 type CheckConclusion = "success" | "failure" | "cancelled";
 
@@ -435,7 +435,7 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
       ...privateControllerPaths(requiredArgument(args.workDir, "work-dir")),
     };
   }
-  if (args.mode === "resolve-fork") {
+  if (args.mode === "record-fork-e2e-skip") {
     const maintainer = requiredArgument(args.maintainer, "maintainer");
     if (!MAINTAINER_PATTERN.test(maintainer)) throw new Error("--maintainer is invalid");
     const evidenceUrl = args.evidenceUrl?.trim();
@@ -455,7 +455,7 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
       ...(evidenceUrl ? { evidenceUrl } : {}),
     };
   }
-  if (args.mode === "resolve-approved") {
+  if (args.mode === "record-approved-fork-e2e-skip") {
     const approvalRunAttempt = parsePositiveId(
       requiredArgument(args.approvalRunAttempt, "approval-run-attempt"),
       "--approval-run-attempt",
@@ -464,7 +464,7 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
       throw new Error("--approval-run-attempt must be exactly 1");
     }
     return {
-      mode: "resolve-approved",
+      mode: "record-approved-fork-e2e-skip",
       prNumber: parsePositiveId(requiredArgument(args.pr, "pr"), "--pr"),
       headSha: requiredArgument(args.head, "head"),
       baseSha: requiredArgument(args.base, "base"),
@@ -477,7 +477,7 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
     };
   }
   throw new Error(
-    "--mode must be seed, start, start-control-plane, finish, abandon, cancel, resolve-fork, or resolve-approved",
+    "--mode must be seed, start, start-control-plane, finish, abandon, cancel, record-fork-e2e-skip, or record-approved-fork-e2e-skip",
   );
 }
 
@@ -685,10 +685,10 @@ function appendOutput(name: string, value: string): void {
   const validators: Readonly<Record<string, (candidate: string) => boolean>> = {
     check_id: (candidate) => /^[1-9][0-9]*$/u.test(candidate),
     dispatched: (candidate) => /^(?:true|false)$/u.test(candidate),
-    exception_base_sha: (candidate) => SHA_PATTERN.test(candidate),
-    exception_head_sha: (candidate) => SHA_PATTERN.test(candidate),
-    exception_mode: (candidate) => candidate === "resolve-fork",
-    exception_pr_number: (candidate) => /^[1-9][0-9]*$/u.test(candidate),
+    fork_skip_base_sha: (candidate) => SHA_PATTERN.test(candidate),
+    fork_skip_head_sha: (candidate) => SHA_PATTERN.test(candidate),
+    fork_skip_mode: (candidate) => candidate === "record-fork-e2e-skip",
+    fork_skip_pr_number: (candidate) => /^[1-9][0-9]*$/u.test(candidate),
     finalized: (candidate) => /^(?:true|false)$/u.test(candidate),
     run_id: (candidate) => /^[1-9][0-9]*$/u.test(candidate),
     state_hash: (candidate) => HASH_PATTERN.test(candidate),
@@ -724,16 +724,16 @@ export function prGateExternalId(prNumber: number, headSha: string, baseSha: str
   return `${CHECK_EXTERNAL_ID_PREFIX}:${prNumber}:${headSha}:${baseSha}`;
 }
 
-function emitExceptionOutputs(
-  mode: ManualResolutionCommand["mode"],
+function emitForkSkipOutputs(
+  mode: ManualForkSkipCommand["mode"],
   prNumber: number,
   headSha: string,
   baseSha: string,
 ): void {
-  appendOutput("exception_mode", mode);
-  appendOutput("exception_pr_number", String(prNumber));
-  appendOutput("exception_head_sha", headSha);
-  appendOutput("exception_base_sha", baseSha);
+  appendOutput("fork_skip_mode", mode);
+  appendOutput("fork_skip_pr_number", String(prNumber));
+  appendOutput("fork_skip_head_sha", headSha);
+  appendOutput("fork_skip_base_sha", baseSha);
 }
 
 function validateCheckRunsResponse(value: unknown): CheckRunsResponse {
@@ -1886,16 +1886,16 @@ export async function startPrGate(
         token,
         {
           conclusion: "failure",
-          title: "Maintainer fork exception required",
+          title: "Maintainer approval required to skip credentialed E2E",
           summary: [
-            `This exact fork diff (head ${command.headSha}, base ${ciIdentity.baseSha}) selected credential-bearing E2E jobs: ${jobs.join(", ")}.`,
-            "Fork code was not executed and no repository secret was exposed.",
-            `Open ${gateRunLink}, choose Review deployments, and approve the \`${PR_GATE_APPROVAL_ENVIRONMENT}\` environment. GitHub records the reviewer and optional comment; an unprotected environment fails closed. The manual workflow-dispatch resolver remains available as fallback.`,
+            `This fork PR diff (head ${command.headSha}, base ${ciIdentity.baseSha}) selected credential-bearing E2E jobs: ${jobs.join(", ")}.`,
+            "The selected jobs were not run. No fork code received repository secrets.",
+            `Open ${gateRunLink}, choose Review deployments, and approve the \`${PR_GATE_APPROVAL_ENVIRONMENT}\` environment to record this skip. If Review deployments is absent, the environment is unprotected or the run is no longer waiting; configure it and trigger fresh PR CI. GitHub records the reviewer and optional comment. The manual \`approve-fork-e2e-skip\` workflow operation remains available as fallback.`,
           ].join("\n\n"),
         },
         gateRunUrl,
       );
-      emitExceptionOutputs("resolve-fork", pull.number, command.headSha, ciIdentity.baseSha);
+      emitForkSkipOutputs("record-fork-e2e-skip", pull.number, command.headSha, ciIdentity.baseSha);
       appendOutput("dispatched", "false");
       appendOutput("finalized", "true");
       finalized = true;
@@ -2344,7 +2344,7 @@ function validateApprovalReview(value: unknown): { maintainer: string; comment: 
   }
   if (value.length === 0) {
     throw new Error(
-      `No protected-environment approval was recorded for ${PR_GATE_APPROVAL_ENVIRONMENT}. The environment may be missing or lack required reviewers; configure it, then trigger fresh PR CI, or use the typed manual fallback.`,
+      `No required-reviewer approval was recorded for ${PR_GATE_APPROVAL_ENVIRONMENT}. If Review deployments was absent, the environment may be missing or unprotected, or the run may no longer be waiting; configure it, then trigger fresh PR CI, or use the manual approve-fork-e2e-skip fallback.`,
     );
   }
   if (value.length > MAX_APPROVAL_REVIEWS) {
@@ -2388,7 +2388,7 @@ function validateApprovalReview(value: unknown): { maintainer: string; comment: 
     review.environments[0]!.name !== PR_GATE_APPROVAL_ENVIRONMENT ||
     review.state !== "approved"
   ) {
-    throw new Error("protected-environment review did not approve the exact approval environment");
+    throw new Error("protected-environment review did not approve only the skip environment");
   }
   return { maintainer: review.maintainer, comment: review.comment };
 }
@@ -2398,7 +2398,7 @@ function approvedWaiverReason(comment: string | null): string {
     .replace(/[\u0000-\u001f\u007f]+/gu, " ")
     .replace(/\s{2,}/gu, " ")
     .trim();
-  const baseReason = "Protected environment approval confirmed for this exact E2E exception.";
+  const baseReason = "Protected environment approval confirmed for this credentialed E2E skip.";
   const commentPrefix = " Reviewer comment: ";
   const maxCommentChars = MAX_WAIVER_REASON_CHARS - baseReason.length - commentPrefix.length;
   const boundedComment = normalizedComment.slice(0, maxCommentChars);
@@ -2426,7 +2426,7 @@ async function requireMaintainerPermission(
   }
 }
 
-async function resolveGateException(command: GateResolutionCommand): Promise<void> {
+async function completeForkE2ESkip(command: ForkSkipCommand): Promise<void> {
   const { token, repository } = tokenAndRepository();
   if (!SHA_PATTERN.test(command.headSha)) throw new Error("PR head SHA is invalid");
   if (!SHA_PATTERN.test(command.baseSha)) throw new Error("PR base SHA is invalid");
@@ -2437,7 +2437,12 @@ async function resolveGateException(command: GateResolutionCommand): Promise<voi
     throw new Error("evidence URL must name an NVIDIA/NemoClaw Actions run");
   }
 
-  await requireMaintainerPermission(repository, token, command.maintainer, "E2E exceptions");
+  await requireMaintainerPermission(
+    repository,
+    token,
+    command.maintainer,
+    "credentialed E2E skip approvals",
+  );
 
   const pull = validatePullRequest(
     await githubApi<unknown>(`repos/${repository}/pulls/${command.prNumber}`, token, {
@@ -2455,7 +2460,7 @@ async function resolveGateException(command: GateResolutionCommand): Promise<voi
   }
   const isFork = pull.head.repo.full_name !== repository;
   if (!isFork) {
-    throw new Error("fork exceptions require a fork pull request");
+    throw new Error("credentialed E2E skips require a fork pull request");
   }
 
   const changedFiles = await pullChangedFiles(repository, pull, token);
@@ -2471,7 +2476,7 @@ async function resolveGateException(command: GateResolutionCommand): Promise<voi
   );
   const jobs = riskPlanRequiredJobIds(plan);
   if (jobs.length === 0) {
-    throw new Error("pull request does not require an E2E exception");
+    throw new Error("pull request does not require a credentialed E2E skip");
   }
   const currentPull = validatePullRequest(
     await githubApi<unknown>(`repos/${repository}/pulls/${command.prNumber}`, token, {
@@ -2494,9 +2499,9 @@ async function resolveGateException(command: GateResolutionCommand): Promise<voi
   if (
     check.status !== "completed" ||
     check.conclusion !== "failure" ||
-    check.output?.title !== "Maintainer fork exception required"
+    check.output?.title !== "Maintainer approval required to skip credentialed E2E"
   ) {
-    throw new Error("PR gate must first complete with the matching exception-required failure");
+    throw new Error("PR gate must first complete with the matching skip-approval failure");
   }
 
   const safeReason = reason.replace(/`/gu, "'");
@@ -2505,8 +2510,8 @@ async function resolveGateException(command: GateResolutionCommand): Promise<voi
     : command.evidenceUrl
       ? `Maintainer-supplied Actions reference (not validated by this controller): [${command.evidenceUrl}](${command.evidenceUrl}).`
       : "Approval source: manual fallback; no supporting Actions run was supplied.";
-  const title = `No E2E run — exception approved by @${command.maintainer}`;
-  const approval = `Maintainer @${command.maintainer} approved a no-secret exception for exact fork head \`${command.headSha}\` on base \`${command.baseSha}\`.`;
+  const title = `Credentialed E2E skipped for fork PR — approved by @${command.maintainer}`;
+  const approval = `Maintainer @${command.maintainer} approved skipping credentialed E2E for fork head \`${command.headSha}\` on base \`${command.baseSha}\`.`;
   const nonExecution = `Selected jobs not run: ${jobs.join(", ")}.`;
   await compatibleMainWorkflowCommit(repository, token, command.workflowSha);
   const finalPull = await requireLiveExactDiff({
@@ -2524,7 +2529,7 @@ async function resolveGateException(command: GateResolutionCommand): Promise<voi
       conclusion: "success",
       title,
       summary: [
-        "**Outcome: EXCEPTION — credentialed E2E did not run.**",
+        "**Outcome: APPROVED SKIP — credentialed E2E did not run.**",
         approval,
         nonExecution,
         `Reason: ${safeReason}`,
@@ -2537,17 +2542,17 @@ async function resolveGateException(command: GateResolutionCommand): Promise<voi
       `https://github.com/${repository}/pull/${pull.number}`,
   );
   console.log(
-    `E2E exception recorded: mode=${command.mode} pr=${pull.number} head=${command.headSha} base=${command.baseSha} maintainer=${command.maintainer} plan=${plan.planHash}`,
+    `Credentialed E2E skip recorded: mode=${command.mode} pr=${pull.number} head=${command.headSha} base=${command.baseSha} maintainer=${command.maintainer} plan=${plan.planHash}`,
   );
 }
 
-export async function resolveForkGate(
-  command: Extract<ManualResolutionCommand, { mode: "resolve-fork" }>,
+export async function recordManualForkE2ESkip(
+  command: Extract<ManualForkSkipCommand, { mode: "record-fork-e2e-skip" }>,
 ): Promise<void> {
-  await resolveGateException(command);
+  await completeForkE2ESkip(command);
 }
 
-export async function resolveApprovedGate(command: ApprovedResolutionCommand): Promise<void> {
+export async function recordApprovedForkE2ESkip(command: ApprovedForkSkipCommand): Promise<void> {
   const { token, repository } = tokenAndRepository();
   if (!Number.isSafeInteger(command.prNumber) || command.prNumber < 1) {
     throw new Error("PR number is invalid");
@@ -2580,8 +2585,8 @@ export async function resolveApprovedGate(command: ApprovedResolutionCommand): P
       { userAgent: USER_AGENT },
     ),
   );
-  await resolveGateException({
-    mode: "resolve-fork",
+  await completeForkE2ESkip({
+    mode: "record-fork-e2e-skip",
     prNumber: command.prNumber,
     headSha: command.headSha,
     baseSha: command.baseSha,
@@ -2678,12 +2683,12 @@ async function main(): Promise<void> {
     await abandonPrGate(command.checkRunId, command.childRunId);
     return;
   }
-  if (command.mode === "resolve-fork") {
-    await resolveGateException(command);
+  if (command.mode === "record-fork-e2e-skip") {
+    await completeForkE2ESkip(command);
     return;
   }
-  if (command.mode === "resolve-approved") {
-    await resolveApprovedGate(command);
+  if (command.mode === "record-approved-fork-e2e-skip") {
+    await recordApprovedForkE2ESkip(command);
     return;
   }
   await cancelPrGate(command.prNumber);

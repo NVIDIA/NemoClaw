@@ -53,7 +53,7 @@ For each upstream change:
    reported version constant.
 10. For proof workflows, identify the first checked-out-code execution, every credential lifetime,
     how tools are resolved, and whether producer workflow/event/attempt/conclusion are machine-bound.
-11. For configuration that controls security or topology, enumerate every input layer and the exact
+11. For configuration that controls security or topology, enumerate every input layer and the
     merge order, then identify when the value is first consumed. Require prevention before that
     point and bind any final-artifact inspection to the immutable artifact actually launched.
 12. Materialize and compare expected-versus-observed manifests for the final artifact, driver
@@ -62,12 +62,12 @@ For each upstream change:
     explicitly secured, inventory engine-scheduled healthchecks, hooks, and auxiliary execs, and
     compare `Config.Volumes` with realized mount destinations. Reject equal or normalized
     ancestor/descendant overlaps that can shadow trusted mounts. Verify executable identity,
-    ancestry, namespaces, security settings, and exact driver-owned replacements and mount sources;
+    ancestry, namespaces, security settings, driver-owned replacements, and mount sources;
     never select a workload as the first or sole child.
-13. Keep upstream required-fix SHAs, audit target and producer identity, and downstream PR-head
+13. Keep upstream required-fix SHAs, audit target and producer identity, and downstream PR head
     proof identity in separate fields. Prove ancestry and manifest bindings between domains rather
     than comparing unrelated repository SHAs for equality.
-14. For an untagged GitHub target, bind the exact canonical repository and an advertised branch ref
+14. For an untagged GitHub target, bind the canonical repository and an advertised branch ref
     that equals the audit target. Inventory remote semantic-version tag refs before trusting local
     adjacent ranges. Raw object lookup does not prove upstream-ref membership because fork and pull
     request objects can be visible through the base repository object network.
@@ -110,10 +110,10 @@ A concern can need several dispositions. List the primary disposition and every 
 
 Strong evidence directly exercises or defines the contract:
 
-- exact-tag source and upstream tests;
+- tagged source and upstream tests;
 - downstream tests that fail on the old assumption;
-- immutable runtime artifacts with exact process/image identities;
-- exact resolved dependency graph entries tied to notices, SBOM, advisory, and provenance review;
+- immutable runtime artifacts with process/image identities;
+- resolved dependency graph entries tied to notices, SBOM, advisory, and provenance review;
 - cache invalidation proofs that vary one material input while holding the dependency version fixed;
 - wire-level behavior for network and credential boundaries;
 - affected-platform proof for platform-specific migrations.

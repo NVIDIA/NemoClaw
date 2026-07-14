@@ -114,7 +114,7 @@ jobs:
           submodules: false
 
       # A dispatch without target_repo is maintainer-triggered and analyzes the
-      # exact commit that supplied the trusted workflow. It is still treated as
+      # commit that supplied the trusted workflow. It is still treated as
       # read-only data and never supplies executable advisor code.
       - name: Checkout dispatch workspace (read-only data)
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.target_repo == '' && inputs.target_pr == '' }}
@@ -158,11 +158,11 @@ jobs:
             exit 1
           fi
           if [ -n "$PR_BASE_SHA" ] && [[ ! "$PR_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::event base SHA must be exactly 40 lowercase hexadecimal characters"
+            echo "::error::event base SHA must be 40 lowercase hexadecimal characters"
             exit 1
           fi
           if [ -n "$EXPECTED_HEAD_SHA" ] && [[ ! "$EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::event head SHA must be exactly 40 lowercase hexadecimal characters"
+            echo "::error::event head SHA must be 40 lowercase hexadecimal characters"
             exit 1
           fi
 
@@ -304,7 +304,7 @@ jobs:
               },
               targets: {
                 relevantChangedFiles: [],
-                exactHeadCredentialFreeTests: [],
+                changedCredentialFreeTests: [],
                 required: [],
                 optional: [],
                 noTargetE2eReason: reason,
@@ -525,7 +525,7 @@ jobs:
               analysisResult.skipped === true,
             ].filter(Boolean).length;
             if (statusCount !== 1) {
-              throw new Error(`${label} must report exactly one analysis status`);
+              throw new Error(`${label} must report one analysis status`);
             }
             if (analysisResult.version === 1) {
               if (!isDeepStrictEqual(analysisResult, finalResult)) {
