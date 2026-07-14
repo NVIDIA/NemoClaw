@@ -12,6 +12,13 @@ export interface RebuildHermesRegistryImageState {
   fromDockerfile: null;
 }
 
+export async function cleanupTrackedRebuildHermesImage(
+  imageTag: string | null,
+  remove: (imageTag: string) => Promise<void>,
+): Promise<void> {
+  if (imageTag !== null) await remove(imageTag);
+}
+
 export function requireRebuildHermesInitialImageTag(value: unknown, sandboxName: string): string {
   const prefix = `${LOCAL_SANDBOX_IMAGE_REPO}:${sandboxName}-`;
   const imageTag = typeof value === "string" ? value : "";

@@ -24,6 +24,7 @@ import { listCredentialLeakPaths } from "../fixtures/phases/state-validation.ts"
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { buildRebuildHermesChildEnv } from "./rebuild-hermes-env.ts";
 import {
+  cleanupTrackedRebuildHermesImage,
   type RebuildHermesRegistryImageState,
   rebuildHermesRegistryImageState,
   requireRebuildHermesInitialImageTag,
@@ -505,20 +506,22 @@ test(STALE_BASE_REBUILD
   });
   // Cleanup is LIFO: remove the sandbox before reclaiming its exact image tags,
   // while the gateway/provider/forward remain available for sandbox teardown.
-  cleanup.trackDisposable("remove initial Hermes fixture image", async () => {
-    if (!phase1ImageTag) return;
-    await removeHermesFixtureImage(host, apiKey, phase1ImageTag, {
-      artifactName: "cleanup-hermes-rebuild-resources-docker-rmi-initial-image",
-      label: `cleanup initial Hermes fixture image ${phase1ImageTag}`,
-    });
-  });
-  cleanup.trackDisposable("remove old derived Hermes fixture image", async () => {
-    if (!oldSandboxImageState) return;
-    await removeHermesFixtureImage(host, apiKey, oldSandboxImageState.imageTag, {
-      artifactName: "cleanup-hermes-rebuild-resources-docker-rmi-old-derived-image",
-      label: `cleanup old derived Hermes fixture image ${oldSandboxImageState.imageTag}`,
-    });
-  });
+  cleanup.trackDisposable("remove initial Hermes fixture image", () =>
+    cleanupTrackedRebuildHermesImage(phase1ImageTag, (imageTag) =>
+      removeHermesFixtureImage(host, apiKey, imageTag, {
+        artifactName: "cleanup-hermes-rebuild-resources-docker-rmi-initial-image",
+        label: `cleanup initial Hermes fixture image ${imageTag}`,
+      }),
+    ),
+  );
+  cleanup.trackDisposable("remove old derived Hermes fixture image", () =>
+    cleanupTrackedRebuildHermesImage(oldSandboxImageState?.imageTag ?? null, (imageTag) =>
+      removeHermesFixtureImage(host, apiKey, imageTag, {
+        artifactName: "cleanup-hermes-rebuild-resources-docker-rmi-old-derived-image",
+        label: `cleanup old derived Hermes fixture image ${imageTag}`,
+      }),
+    ),
+  );
   cleanup.trackDisposable(`delete Hermes rebuild OpenShell sandbox ${SANDBOX_NAME}`, () =>
     sandbox.cleanupSandbox(SANDBOX_NAME, {
       artifactName: "cleanup-hermes-rebuild-resources-openshell-sandbox-delete",
