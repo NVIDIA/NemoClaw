@@ -45,8 +45,12 @@ type PoliciesApi = {
   ): string[];
 };
 
+type TiersApi = {
+  resolveTierPresets(tierName: string): Preset[];
+};
+
 export function preparePolicyPresetResumeSelection(
-  deps: { policies: PoliciesApi },
+  deps: { policies: PoliciesApi; tiers?: TiersApi },
   sandboxName: string,
   options: {
     recordedPolicyPresets: string[] | null;
@@ -100,10 +104,18 @@ export function preparePolicyPresetResumeSelection(
     supportOptions,
     customPolicyPresetNames,
   );
+  // Defaults of the recorded/active tier (e.g. `brave` on Balanced) are tier
+  // egress presets, not stale web-search leftovers — exempt them from the
+  // web-search staleness prune so re-onboard reuse preserves them. (#6844)
+  const tierDefaultPresetNames =
+    options.tierName && deps.tiers
+      ? new Set(deps.tiers.resolveTierPresets(options.tierName).map((preset) => preset.name))
+      : null;
   const isStaleBuiltinWebSearch = (name: string) =>
     isStaleBuiltinWebSearchPolicyPreset(name, {
       webSearchConfig: options.webSearchConfig,
       customPresetNames: customPolicyPresetNames,
+      tierDefaultPresetNames,
     });
   const isInactiveObservability = (name: string) =>
     isInactiveObservabilityPolicyPreset(name, {

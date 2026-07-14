@@ -4597,7 +4597,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
         verifyCompatibleEndpointSandboxSmoke: (options) => verifyCompatibleEndpointSandboxSmoke({ ...options, runOpenshell: runCoreGatewayOpenshell, redact }),
         preparePolicyPresetResumeSelection: (name, options) =>
-          preparePolicyPresetResumeSelection({ policies }, name, options),
+          preparePolicyPresetResumeSelection({ policies, tiers }, name, options),
         arePolicyPresetsApplied,
         skippedStepMessage,
         recordStateSkipped,
