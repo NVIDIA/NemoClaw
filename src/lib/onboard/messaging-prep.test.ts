@@ -37,6 +37,7 @@ function createInput(
       return null;
     },
     providerExistsInGateway: () => false,
+    providerMatchesGatewayCredential: () => false,
     ...overrides,
   };
 }
@@ -90,6 +91,30 @@ describe("prepareCreateSandboxMessaging", () => {
       false,
     );
     expect(registerExtraPlaceholderProviders).not.toHaveBeenCalled();
+  });
+
+  it("reuses an exact Brave gateway provider when the raw key is unavailable (#6743)", () => {
+    const providerMatchesGatewayCredential = vi.fn(
+      (name: string, type: string, credentialEnv: string) =>
+        name === "demo-brave-search" && type === "brave" && credentialEnv === BRAVE_API_KEY_ENV,
+    );
+
+    const result = prepareCreateSandboxMessaging(
+      createInput({
+        webSearchConfig: { fetchEnabled: true },
+        requireExactProviderBinding: true,
+        providerMatchesGatewayCredential,
+      }),
+    );
+
+    expect(result.missingWebSearchCredentialEnv).toBeNull();
+    expect(result.messagingTokenDefs).toContainEqual({
+      name: "demo-brave-search",
+      envKey: BRAVE_API_KEY_ENV,
+      token: null,
+      providerType: "brave",
+    });
+    expect(result.reusableMessagingProviders).toEqual(["demo-brave-search"]);
   });
 
   it("reports a missing Tavily key using the selected provider credential", () => {
@@ -182,12 +207,12 @@ describe("prepareCreateSandboxMessaging", () => {
   });
 
   it("includes all static token-backed channels by default without probing reusable providers", () => {
-    const providerExistsInGateway = vi.fn(() => true);
+    const providerMatchesGatewayCredential = vi.fn(() => true);
 
     const result = prepareCreateSandboxMessaging(
       createInput({
         enabledChannels: null,
-        providerExistsInGateway,
+        providerMatchesGatewayCredential,
       }),
     );
 
@@ -201,7 +226,7 @@ describe("prepareCreateSandboxMessaging", () => {
     ]);
     expect(result.reusableMessagingProviders).toEqual([]);
     expect(result.reusableMessagingChannels).toEqual([]);
-    expect(providerExistsInGateway).not.toHaveBeenCalled();
+    expect(providerMatchesGatewayCredential).not.toHaveBeenCalled();
   });
 
   it("uses BRAVE_API_KEY from host env when the credential store has no value", () => {

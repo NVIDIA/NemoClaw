@@ -7,7 +7,7 @@ import type { FSWatcher } from "node:fs";
 import { existsSync, readdirSync, readFileSync, statSync, watch } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildFernPreviewArgs, resolveFernPreviewInstance } from "./fern-preview-config";
+import { buildFernPreviewArgs, resolveFernPreviewInstance } from "./fern-preview-config.mts";
 
 type FernConfig = {
   version?: unknown;
