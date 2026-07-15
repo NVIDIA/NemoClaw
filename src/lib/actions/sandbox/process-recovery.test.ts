@@ -44,6 +44,14 @@ describe("read-only sandbox gateway status probe", () => {
     });
   });
 
+  it("reports a stopped gateway from a successful read-only probe", async () => {
+    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null);
+    vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha", gatewayPort: 9090 });
+    readOnlyExecMock.mockResolvedValue({ status: 0, stdout: "STOPPED\n", stderr: "" });
+
+    await expect(isSandboxGatewayRunningForStatus("alpha")).resolves.toBe(false);
+  });
+
   it("keeps gateway status indeterminate when the read-only route rejects", async () => {
     vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null);
     vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha", gatewayPort: 9090 });
