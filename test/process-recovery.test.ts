@@ -523,8 +523,6 @@ hermes-box  127.0.0.1  18789  12345  running`;
       stderr,
     }));
 
-    // Preserve managed recovery retries without sleeping between mocked supervisor attempts.
-    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS", "0");
     vi.spyOn(childProcess, "spawnSync").mockImplementation(
       (_command: unknown, rawArgs: unknown) => {
         const shellCommand = getSandboxExecShellCommand(rawArgs);
@@ -569,8 +567,7 @@ hermes-box  127.0.0.1  18789  12345  running`;
       recovered: false,
       forwardRecovered: false,
     });
-    const transientFailure = stdout === "" && stderr === "SUPERVISOR_UNAVAILABLE";
-    expect(requestGatewaySupervisorAction).toHaveBeenCalledTimes(transientFailure ? 3 : 1);
+    expect(requestGatewaySupervisorAction).toHaveBeenCalledOnce();
     expect(requestGatewaySupervisorAction).toHaveBeenCalledWith("hermes-box", "recover");
   });
 

@@ -199,6 +199,18 @@ describe("confirmRecoveredSandboxGatewayManaged scope", () => {
       }),
     ).toBe(false);
   });
+
+  it("keeps unavailable supervisor results terminal while lease contention stays transient", () => {
+    const confirm = (stderr: string) =>
+      confirmRecoveredSandboxGatewayManaged("my-sandbox", {
+        getSandboxImpl: () => openClawEntry,
+        getSessionAgentImpl: () => null,
+        requestGatewaySupervisorActionImpl: () => ({ status: 1, stdout: "", stderr }),
+      });
+
+    expect(confirm("SUPERVISOR_UNAVAILABLE")).toBe(false);
+    expect(confirm("SUPERVISOR_BUSY")).toBeNull();
+  });
 });
 
 describe("waitForRecoveredSandboxGateway settle-window confirmation (#4710)", () => {
@@ -234,7 +246,7 @@ describe("waitForRecoveredSandboxGateway settle-window confirmation (#4710)", ()
     expect(sleeps).toEqual([25]);
   });
 
-  it("uses one authenticated managed probe after the settle window", () => {
+  it("uses authenticated managed probes inside and at the settle deadline", () => {
     const sleeps: number[] = [];
     const managedProbe = vi.fn(() => true);
     const ordinaryProbe = vi.fn(() => false);
@@ -245,9 +257,39 @@ describe("waitForRecoveredSandboxGateway settle-window confirmation (#4710)", ()
       sleepImpl: (seconds: number) => sleeps.push(seconds),
     });
     expect(ok).toBe(true);
-    expect(managedProbe).toHaveBeenCalledOnce();
+    expect(managedProbe).toHaveBeenCalledTimes(2);
     expect(ordinaryProbe).not.toHaveBeenCalled();
-    expect(sleeps).toEqual([25]);
+    expect(sleeps).toEqual([22, 3]);
+  });
+
+  it("retries one transient managed result without extending the settle window", () => {
+    process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = "5";
+    process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS = "2";
+    const sleeps: number[] = [];
+    const managedProbe = vi.fn(makeProbe([null, true]));
+    const ok = waitForRecoveredSandboxGateway("my-sandbox", {
+      initialManagedHealthPassed: true,
+      managedProbeImpl: managedProbe,
+      sleepImpl: (seconds: number) => sleeps.push(seconds),
+    });
+    expect(ok).toBe(true);
+    expect(managedProbe).toHaveBeenCalledTimes(2);
+    expect(sleeps).toEqual([3, 2]);
+  });
+
+  it("keeps a recent authenticated result when only the deadline probe is transient", () => {
+    process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = "5";
+    process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS = "2";
+    const sleeps: number[] = [];
+    const managedProbe = vi.fn(makeProbe([true, null]));
+    const ok = waitForRecoveredSandboxGateway("my-sandbox", {
+      initialManagedHealthPassed: true,
+      managedProbeImpl: managedProbe,
+      sleepImpl: (seconds: number) => sleeps.push(seconds),
+    });
+    expect(ok).toBe(true);
+    expect(managedProbe).toHaveBeenCalledTimes(2);
+    expect(sleeps).toEqual([3, 2]);
   });
 
   it("does not let ordinary outer-namespace health override a managed probe failure", () => {
@@ -263,7 +305,7 @@ describe("waitForRecoveredSandboxGateway settle-window confirmation (#4710)", ()
     expect(ok).toBe(false);
     expect(managedProbe).toHaveBeenCalledOnce();
     expect(ordinaryProbe).not.toHaveBeenCalled();
-    expect(sleeps).toEqual([25]);
+    expect(sleeps).toEqual([22]);
   });
 
   it("accepts the initial managed proof without another probe when settling is disabled", () => {
@@ -326,7 +368,7 @@ describe("waitForRecoveredSandboxGateway settle-window confirmation (#4710)", ()
       sleepImpl: (seconds: number) => sleeps.push(seconds),
     });
     expect(ok).toBe(false);
-    expect(sleeps).toEqual([25]);
+    expect(sleeps).toEqual([22]);
   });
 
   it("skips the settle confirm when NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS=0", () => {
