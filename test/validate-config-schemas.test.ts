@@ -4,7 +4,7 @@
 /**
  * Exercise config JSON Schemas with focused synthetic fixtures.
  *
- * Checked-in config files are validated by scripts/validate-configs.ts. This
+ * Checked-in config files are validated by scripts/validate-configs.mts. This
  * suite protects schema behavior without coupling it to those config values.
  */
 
@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import Ajv, { type ValidateFunction } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 
-import { discoverTargets } from "../scripts/validate-configs";
+import { discoverTargets } from "../scripts/validate-configs.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 

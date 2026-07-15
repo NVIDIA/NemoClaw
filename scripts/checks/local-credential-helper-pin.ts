@@ -20,7 +20,7 @@ import ts from "typescript";
 import {
   extractStarterPromptMarkdown,
   STARTER_PROMPT_SOURCE_PATH,
-} from "../generate-starter-prompt";
+} from "../generate-starter-prompt.mts";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const HELPER_PATH = "scripts/local-credential-helper.mts";

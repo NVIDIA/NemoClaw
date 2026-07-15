@@ -49,9 +49,13 @@ describe("sandbox registration route transaction", () => {
     expect(calls.error).not.toHaveBeenCalled();
   });
 
-  it("holds sandbox, host dashboard, then gateway locks through creation and registration", async () => {
+  it("stages credentials, then holds sandbox, host dashboard, and gateway locks through creation", async () => {
     const events: string[] = [];
     const { deps } = createDeps({
+      configureWebSearch: vi.fn(async () => ({
+        fetchEnabled: true as const,
+        provider: "brave" as const,
+      })),
       checkGatewayRouteCompatibility: () => {
         events.push("guard");
         return { ok: true };
@@ -68,6 +72,10 @@ describe("sandbox registration route transaction", () => {
         events.push("gateway-lock");
         return await operation();
       },
+      stageSandboxCredentialProviders: async () => {
+        events.push("stage");
+        return [];
+      },
       createSandbox: async () => {
         events.push("create");
         return "my-assistant";
@@ -81,6 +89,8 @@ describe("sandbox registration route transaction", () => {
       sandboxName: "my-assistant",
     });
     expect(events).toEqual([
+      "gateway-lock",
+      "stage",
       "sandbox-lock",
       "dashboard-lock",
       "gateway-lock",

@@ -93,6 +93,7 @@ function validateJob(errors: string[], spec: JobSpec, job: WorkflowJob): void {
   const requiredEnv: Record<string, unknown> = {
     E2E_ARTIFACT_DIR: `\${{ github.workspace }}/e2e-artifacts/live/${spec.scenario}/\${{ matrix.mode }}`,
     NEMOCLAW_AGENT: spec.agent,
+    NEMOCLAW_E2E_SHARD: "${{ matrix.mode }}",
     NEMOCLAW_SANDBOX_NAME: "${{ matrix.sandbox_name }}",
     NEMOCLAW_SWITCH_PROVIDER: "${{ matrix.switch_provider }}",
     NEMOCLAW_SWITCH_MODEL: "${{ matrix.switch_model }}",

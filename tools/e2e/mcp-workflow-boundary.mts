@@ -8,6 +8,8 @@ import { UPLOAD_E2E_ARTIFACTS_ACTION } from "./upload-e2e-artifacts-workflow-bou
 
 const DEFAULT_WORKFLOW_PATH = ".github/workflows/e2e.yaml";
 const MCP_JOBS = ["mcp-bridge", "mcp-bridge-dev"] as const;
+const MCP_AGENT_SHARDS = ["openclaw", "hermes", "deepagents"] as const;
+const MATRIX_AGENT_EXPRESSION = "${{ matrix.agent }}";
 const TERMINAL_JOBS = ["report-to-pr", "scorecard"] as const;
 const DOCKER_CLEANUP_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
 const DEV_DOCKER_CLEANUP_NAME = "Revoke Docker auth before unverified dev tooling";
@@ -95,6 +97,8 @@ function validateJobIdentity(
   job: UnknownRecord,
 ): void {
   const env = asRecord(job.env);
+  const strategy = asRecord(job.strategy);
+  const matrix = asRecord(strategy.matrix);
   requireEqual(errors, env.E2E_JOB, "1", `${jobName} must declare E2E_JOB=1`);
   requireEqual(
     errors,
@@ -104,10 +108,29 @@ function validateJobIdentity(
   );
   requireEqual(
     errors,
-    env.NEMOCLAW_MCP_BRIDGE_AGENT_MATRIX,
-    "1",
-    `${jobName} must exercise all three MCP adapters`,
+    job["timeout-minutes"],
+    90,
+    `${jobName} must bound each shard to 90 minutes`,
   );
+  requireEqual(errors, strategy["fail-fast"], false, `${jobName} shards must not fail fast`);
+  if (JSON.stringify(matrix.agent) !== JSON.stringify(MCP_AGENT_SHARDS)) {
+    errors.push(`${jobName} must exercise the reviewed OpenClaw, Hermes, and Deep Agents shards`);
+  }
+  requireEqual(
+    errors,
+    env.NEMOCLAW_MCP_BRIDGE_AGENT,
+    MATRIX_AGENT_EXPRESSION,
+    `${jobName} must select exactly its current MCP agent shard`,
+  );
+  requireEqual(
+    errors,
+    env.NEMOCLAW_E2E_SHARD,
+    MATRIX_AGENT_EXPRESSION,
+    `${jobName} must publish agent-scoped risk evidence`,
+  );
+  if (Object.hasOwn(env, "NEMOCLAW_MCP_BRIDGE_AGENT_MATRIX")) {
+    errors.push(`${jobName} must not enable the retired in-process agent matrix`);
+  }
   requireEqual(
     errors,
     env.NEMOCLAW_RUN_LIVE_E2E,
@@ -117,7 +140,7 @@ function validateJobIdentity(
   requireContains(
     errors,
     env.E2E_ARTIFACT_DIR,
-    `e2e-artifacts/live/${jobName}`,
+    `e2e-artifacts/live/${jobName}/${MATRIX_AGENT_EXPRESSION}`,
     `${jobName} must isolate its artifact directory`,
   );
   if (jobName === "mcp-bridge") {
@@ -372,6 +395,12 @@ function validateJobExecution(
   for (const required of ["--project e2e-live", "test/e2e/live/mcp-bridge.test.ts"]) {
     requireContains(errors, run.run, required, `${jobName} must run the unified MCP live test`);
   }
+  requireContains(
+    errors,
+    run.run,
+    "--reporter=test/e2e/risk-signal-reporter.ts",
+    `${jobName} must publish canonical risk-signal evidence`,
+  );
   requireEqual(
     errors,
     scan.id,
@@ -386,7 +415,7 @@ function validateJobExecution(
   );
   for (const required of [
     "tools/e2e/assert-mcp-artifact-secrets-absent.mts",
-    `e2e-artifacts/live/${jobName}`,
+    `e2e-artifacts/live/${jobName}/${MATRIX_AGENT_EXPRESSION}`,
   ]) {
     requireContains(errors, scan.run, required, `${jobName} artifact secret scan is incomplete`);
   }
@@ -406,13 +435,13 @@ function validateJobExecution(
   requireEqual(
     errors,
     uploadOptions.path,
-    `e2e-artifacts/live/${jobName}/`,
+    `e2e-artifacts/live/${jobName}/${MATRIX_AGENT_EXPRESSION}/`,
     `${jobName} artifact upload must use exactly the scanned directory`,
   );
   requireEqual(
     errors,
     uploadOptions.name,
-    `e2e-${jobName}`,
+    `e2e-${jobName}-${MATRIX_AGENT_EXPRESSION}`,
     `${jobName} artifact upload must use its isolated artifact name`,
   );
   if (Object.keys(uploadOptions).sort().join(",") !== "name,path") {

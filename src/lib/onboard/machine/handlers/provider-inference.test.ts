@@ -481,7 +481,12 @@ describe("handleProviderInferenceState", () => {
       state: "provider_selection",
       metadata: { repair: "ollama-systemd-loopback" },
     });
-    expect(calls.repair).toHaveBeenCalledWith("ollama-local", deps.isNonInteractive);
+    expect(calls.repair).toHaveBeenCalledWith({
+      provider: "ollama-local",
+      model: "llama3.1",
+      contextWindowFloor: 16_384,
+      isNonInteractive: deps.isNonInteractive,
+    });
     expect(calls.repairEvent).toHaveBeenCalledWith("state.repair.completed", {
       state: "provider_selection",
       metadata: { repair: "ollama-systemd-loopback" },

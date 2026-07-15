@@ -29,6 +29,7 @@ import http.client
 import importlib.util
 import ipaddress
 import json
+import logging
 import os
 import grp
 import pwd
@@ -665,10 +666,12 @@ def apply_transaction_and_reload(
     )
 
     changed = apply_transaction(action, payload)
+    reload_completed = False
     try:
         reloaded = reload_gateway()
         if not reloaded:
             raise RuntimeError("Hermes gateway stopped before managed MCP reload")
+        reload_completed = True
         current_text, _current_snapshot = guard._read_text(CONFIG_PATH)
         if current_text != expected_text:
             raise RuntimeError(
@@ -680,6 +683,27 @@ def apply_transaction_and_reload(
             raise RuntimeError(
                 f"Hermes MCP runtime reload failed with unchanged config ({reload_error})"
             ) from reload_error
+        # After a completed reload, check whether the gateway committed the
+        # apply-state hash advance concurrently with the transaction helper's
+        # verify step. A failed reload cannot use anchor state as runtime proof.
+        # If the config still matches the intended text and both integrity
+        # anchors are current, rolling it back would undo a live configuration.
+        if reload_completed:
+            try:
+                compatibility_hash_path = os.path.join(HERMES_DIR, ".config-hash")
+                integrity = guard.inspect_mcp_integrity_snapshot(
+                    HERMES_DIR,
+                    STRICT_HASH_PATH if privileged else compatibility_hash_path,
+                    compatibility_hash_path if privileged else None,
+                )
+                if integrity.config_text == expected_text and integrity.state == "current":
+                    guard.assert_mcp_integrity_snapshot_current(integrity)
+                    return {"ok": True, "changed": True, "reloaded": True}
+            except Exception as recovery_error:
+                logging.getLogger(__name__).warning(
+                    "Hermes MCP race-recovery verification failed (%s); proceeding to rollback",
+                    type(recovery_error).__name__,
+                )
         rollback_errors: list[str] = []
         try:
             current_text, current_snapshot = guard._read_text(CONFIG_PATH)

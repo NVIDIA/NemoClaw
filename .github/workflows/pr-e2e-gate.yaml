@@ -83,6 +83,43 @@ jobs:
           --head "$HEAD_SHA"
           --base "$BASE_SHA"
 
+  required:
+    name: E2E / PR Gate
+    if: ${{ github.event_name == 'pull_request_target' && github.repository == 'NVIDIA/NemoClaw' && github.event.action != 'closed' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 170
+    permissions:
+      checks: read
+      contents: read
+      pull-requests: read
+    concurrency:
+      group: pr-e2e-required-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout observer
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: "22"
+
+      - name: Wait for trusted exact-diff verdict
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: >-
+          node --experimental-strip-types tools/e2e/pr-e2e-required.mts
+          --pr "$PR_NUMBER"
+          --head "$HEAD_SHA"
+          --base "$BASE_SHA"
+          --timeout-seconds 9900
+
   cancel-superseded:
     if: ${{ github.event_name == 'pull_request_target' && github.repository == 'NVIDIA/NemoClaw' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.action != 'edited' || github.event.changes.base != null) }}
     runs-on: ubuntu-latest

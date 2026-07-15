@@ -14,7 +14,7 @@ const VITEST = path.join(REPO_ROOT, "node_modules", "vitest", "vitest.mjs");
 const SPECIAL_GATE_ENV = [
   "NEMOCLAW_E2E_CONNECT_RLIMITS",
   "NEMOCLAW_ISSUE_4434_LIVE",
-  "NEMOCLAW_MCP_BRIDGE_AGENT_MATRIX",
+  "NEMOCLAW_MCP_BRIDGE_AGENT",
 ] as const;
 
 function liveTestFiles(root = LIVE_E2E_ROOT): string[] {
@@ -87,7 +87,6 @@ describe("live E2E target gating", () => {
     () => {
       const gatedFiles = [
         ["sandbox-rlimits-connect.test.ts", "NEMOCLAW_E2E_CONNECT_RLIMITS"],
-        ["mcp-bridge.test.ts", "NEMOCLAW_MCP_BRIDGE_AGENT_MATRIX"],
         ["issue-4434-tui-unreachable-inference.test.ts", "NEMOCLAW_ISSUE_4434_LIVE"],
       ] as const;
       const files = gatedFiles.map(([file]) => file);
@@ -105,6 +104,36 @@ describe("live E2E target gating", () => {
       }
     },
   );
+
+  it("collects exactly one reviewed MCP bridge agent shard", testTimeoutOptions(30_000), () => {
+    const file = "mcp-bridge.test.ts";
+    const expectedTestByShard = {
+      deepagents: "mcp-bridge-deepagents",
+      hermes: "mcp-bridge-hermes",
+      openclaw: "mcp-bridge",
+    } as const;
+
+    for (const [shard, expectedTest] of Object.entries(expectedTestByShard)) {
+      const result = listLiveTests({
+        enabled: true,
+        env: { NEMOCLAW_MCP_BRIDGE_AGENT: shard },
+        files: [file],
+      });
+
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(linesForFile(result.lines, file)).toEqual([
+        `[e2e-live] test/e2e/live/${file} > ${expectedTest}`,
+      ]);
+    }
+
+    const invalid = listLiveTests({
+      enabled: true,
+      env: { NEMOCLAW_MCP_BRIDGE_AGENT: "all" },
+      files: [file],
+    });
+    expect(invalid.status).not.toBe(0);
+    expect(invalid.stderr).toContain("Unsupported NEMOCLAW_MCP_BRIDGE_AGENT: all");
+  });
 
   it("applies Linux gates at real Vitest collection", () => {
     const linuxTests = [

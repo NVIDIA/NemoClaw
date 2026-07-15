@@ -134,4 +134,16 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
     expect(result.calls).toEqual(["restore=1 confirmed= argv=onboard"]);
     expect(result.output).not.toContain("Existing sandbox sessions detected");
   });
+
+  it("stops before onboarding when the existing registry cannot be inspected", () => {
+    const result = runRecoveryBeforeOnboard(0, 0, {
+      registryJson: '{"sandboxes":{"broken":null}}',
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.calls).toEqual([]);
+    expect(result.output).toContain(
+      "Could not inspect the existing sandbox registry. Onboarding was not started.",
+    );
+  });
 });
