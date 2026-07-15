@@ -40,6 +40,7 @@ import {
   managedVllmStorageEstimateBytes,
   probeDockerStorage,
   probeModelCacheStorage,
+  type StorageCapacity,
   type StorageProbeResult,
 } from "./vllm-storage";
 
@@ -688,99 +689,138 @@ function containerStillRunning(profile: VllmProfile): boolean {
 }
 
 function printStorageProbeDetails(label: string, probe: StorageProbeResult, indent = "  "): void {
+  console.error(`${indent}${label}: ${storageProbeAvailability(probe)}`);
+}
+
+function storageProbeAvailability(probe: StorageProbeResult): string {
   if (probe.ok) {
-    console.error(
-      `${indent}${label}: ${formatStorageBytes(probe.capacity.availableBytes)} available at ${probe.capacity.source} (${probe.capacity.path})`,
-    );
-    return;
+    return `${formatStorageBytes(probe.capacity.availableBytes)} available at ${probe.capacity.source} (${probe.capacity.path})`;
   }
-  console.error(`${indent}${label}: unknown (${probe.reason})`);
+  return `unknown (${probe.reason})`;
 }
 
-function printImageStorageWarning(
-  profile: VllmProfile,
-  probe: StorageProbeResult,
-  requiredBytes: bigint,
-): void {
-  const insufficient = probe.ok && probe.capacity.availableBytes < requiredBytes;
-  console.error("");
-  console.error(
-    warnLine(
-      `${insufficient ? "Insufficient" : "Unable to verify"} Docker storage for the managed vLLM image.`,
-    ),
+interface ManagedStorageRequirement {
+  label: string;
+  probe: StorageProbeResult;
+  requiredBytes: bigint;
+}
+
+interface ManagedStorageCheck {
+  label: string;
+  probe: Extract<StorageProbeResult, { ok: true }>;
+  requiredBytes: bigint;
+  requirements: ManagedStorageRequirement[];
+}
+
+type ManagedStorageProblem =
+  | { check: ManagedStorageCheck; kind: "insufficient" }
+  | { check: ManagedStorageRequirement; kind: "unknown" };
+
+function managedImageUnpackedRequirementBytes(profile: VllmProfile): number {
+  if (profile.imageUnpackedSizeBytes !== undefined) return profile.imageUnpackedSizeBytes;
+  return Number(
+    imageStorageRequirementBytes(profile.imageDownloadSizeBytes) -
+      BigInt(profile.imageDownloadSizeBytes),
   );
-  console.error("");
-  console.error(`  Image:     ${profile.image}`);
-  console.error(
-    `  Available: ${
-      probe.ok ? formatStorageBytes(probe.capacity.availableBytes) : `unknown (${probe.reason})`
-    }`,
-  );
-  console.error(`  Required:  approximately ${formatStorageBytes(requiredBytes)}`);
-  if (probe.ok) {
-    console.error(`  Storage:   ${probe.capacity.source} (${probe.capacity.path})`);
-  } else if (probe.path) {
-    console.error(`  Storage:   ${probe.source ?? "filesystem"} (${probe.path})`);
-  }
-  console.error("");
-  if (insufficient) console.error("  Free or expand Docker storage before continuing.");
-  console.error("  Useful diagnostics:");
-  console.error("    docker system df");
-  console.error("    docker info --format '{{.DockerRootDir}}'");
 }
 
-async function imageStorageAccepted(
-  profile: VllmProfile,
-  opts: InstallVllmOptions,
-): Promise<boolean> {
-  const probe = probeDockerStorage();
-  const requiredBytes = imageStorageRequirementBytes(profile.imageDownloadSizeBytes);
-  if (probe.ok && probe.capacity.availableBytes >= requiredBytes) {
-    return true;
-  }
-  printImageStorageWarning(profile, probe, requiredBytes);
-  if (!probe.ok) {
-    console.error("  Continuing because Docker storage capacity could not be verified.");
-    return true;
-  }
-  if (opts.nonInteractive) {
-    console.error(
-      "  Continuing because managed vLLM storage estimates are advisory in non-interactive setup.",
-    );
-    return true;
-  }
-  return isAffirmativeAnswer(await opts.promptFn("  Continue with the pull anyway? [y/N]: "));
-}
-
-function limitingStorageProbe(probes: readonly StorageProbeResult[]): StorageProbeResult {
-  let limiting: Extract<StorageProbeResult, { ok: true }> | null = null;
-  for (const probe of probes) {
-    if (!probe.ok) return probe;
-    if (!limiting || probe.capacity.availableBytes < limiting.capacity.availableBytes) {
-      limiting = probe;
-    }
-  }
-  return limiting ?? { ok: false, reason: "managed vLLM storage path could not be determined" };
-}
-
-function printManagedStorageWarning({
+function managedStorageRequirements({
   dockerProbe,
   estimate,
   includeImage,
-  model,
   modelProbe,
-  profile,
-  probe,
 }: {
   dockerProbe: StorageProbeResult | null;
   estimate: ReturnType<typeof managedVllmStorageEstimateBytes>;
   includeImage: boolean;
-  model: VllmModelDef;
   modelProbe: StorageProbeResult;
+}): ManagedStorageRequirement[] {
+  const requirements: ManagedStorageRequirement[] = [];
+  if (includeImage && dockerProbe) {
+    requirements.push({
+      label: "Docker image storage",
+      probe: dockerProbe,
+      requiredBytes: estimate.imageCompressedBytes + estimate.imageUnpackedBytes,
+    });
+  }
+  requirements.push({
+    label: "Model cache storage",
+    probe: modelProbe,
+    requiredBytes: estimate.modelBytes + estimate.writableAllowanceBytes,
+  });
+  return requirements;
+}
+
+function storageCapacityKey(capacity: StorageCapacity): string {
+  if (capacity.filesystemId) return `filesystem:${capacity.filesystemId}`;
+  return `path:${path.resolve(capacity.path)}`;
+}
+
+function managedStorageCheckLabel(requirements: readonly ManagedStorageRequirement[]): string {
+  return requirements.map((requirement) => requirement.label).join(" + ");
+}
+
+function managedStorageChecks(
+  requirements: readonly ManagedStorageRequirement[],
+): ManagedStorageCheck[] {
+  const checks = new Map<string, ManagedStorageCheck>();
+  for (const requirement of requirements) {
+    if (!requirement.probe.ok) continue;
+    const key = storageCapacityKey(requirement.probe.capacity);
+    const existing = checks.get(key);
+    if (existing) {
+      existing.requiredBytes += requirement.requiredBytes;
+      existing.requirements.push(requirement);
+      existing.label = managedStorageCheckLabel(existing.requirements);
+      if (requirement.probe.capacity.availableBytes < existing.probe.capacity.availableBytes) {
+        existing.probe = requirement.probe;
+      }
+      continue;
+    }
+    checks.set(key, {
+      label: requirement.label,
+      probe: requirement.probe,
+      requiredBytes: requirement.requiredBytes,
+      requirements: [requirement],
+    });
+  }
+  return Array.from(checks.values());
+}
+
+function managedStorageProblem(
+  requirements: readonly ManagedStorageRequirement[],
+): ManagedStorageProblem | null {
+  let insufficient: { check: ManagedStorageCheck; availableBytes: bigint } | null = null;
+  for (const check of managedStorageChecks(requirements)) {
+    const availableBytes = check.probe.capacity.availableBytes;
+    if (availableBytes >= check.requiredBytes) continue;
+    if (!insufficient || availableBytes < insufficient.availableBytes) {
+      insufficient = { check, availableBytes };
+    }
+  }
+  if (insufficient) return { check: insufficient.check, kind: "insufficient" };
+  const unknown = requirements.find((requirement) => !requirement.probe.ok);
+  if (unknown) return { check: unknown, kind: "unknown" };
+  return null;
+}
+
+function printManagedStorageWarning({
+  estimate,
+  includeImage,
+  model,
+  problem,
+  profile,
+  requirements,
+}: {
+  estimate: ReturnType<typeof managedVllmStorageEstimateBytes>;
+  includeImage: boolean;
+  model: VllmModelDef;
+  problem: ManagedStorageProblem;
   profile: VllmProfile;
-  probe: StorageProbeResult;
+  requirements: readonly ManagedStorageRequirement[];
 }): void {
-  const insufficient = probe.ok && probe.capacity.availableBytes < estimate.totalBytes;
+  const insufficient = problem.kind === "insufficient";
+  const { check } = problem;
   const subject = includeImage ? "managed vLLM cold install" : "managed vLLM model download";
   console.error("");
   console.error(
@@ -802,21 +842,24 @@ function printManagedStorageWarning({
     `  Writable allowance: ${formatStorageDecimalBytes(estimate.writableAllowanceBytes)}`,
   );
   console.error(
-    `  Required:  approximately ${formatStorageDecimalBytes(estimate.totalBytes)} (${formatStorageBytes(estimate.totalBytes)})`,
+    `  Required:  approximately ${formatStorageDecimalBytes(check.requiredBytes)} (${formatStorageBytes(check.requiredBytes)}) for ${check.label}`,
   );
   console.error(
-    `  Available: ${
-      probe.ok ? formatStorageBytes(probe.capacity.availableBytes) : `unknown (${probe.reason})`
-    }`,
+    `  Total estimate: approximately ${formatStorageDecimalBytes(estimate.totalBytes)} (${formatStorageBytes(estimate.totalBytes)})`,
   );
-  if (probe.ok) {
-    console.error(`  Storage:   ${probe.capacity.source} (${probe.capacity.path})`);
-  } else if (probe.path) {
-    console.error(`  Storage:   ${probe.source ?? "filesystem"} (${probe.path})`);
+  console.error(`  Available: ${storageProbeAvailability(check.probe)}`);
+  if (check.probe.ok) {
+    console.error(`  Storage:   ${check.probe.capacity.source} (${check.probe.capacity.path})`);
+  } else if (check.probe.path) {
+    console.error(`  Storage:   ${check.probe.source ?? "filesystem"} (${check.probe.path})`);
   }
   console.error("");
-  if (dockerProbe) printStorageProbeDetails("Docker image storage", dockerProbe);
-  printStorageProbeDetails("Model cache storage", modelProbe);
+  for (const storageRequirement of requirements) {
+    printStorageProbeDetails(storageRequirement.label, storageRequirement.probe);
+    console.error(
+      `    Required here: approximately ${formatStorageDecimalBytes(storageRequirement.requiredBytes)} (${formatStorageBytes(storageRequirement.requiredBytes)})`,
+    );
+  }
   console.error("");
   if (insufficient) {
     console.error("  Free or expand local storage before continuing.");
@@ -836,34 +879,32 @@ async function managedStorageAccepted(
   opts: InstallVllmOptions,
 ): Promise<boolean> {
   const includeImage = !hasImage;
-  if (includeImage && profile.imageUnpackedSizeBytes === undefined) {
-    if (!(await imageStorageAccepted(profile, opts))) return false;
-    return managedStorageAccepted(profile, model, true, opts);
-  }
-
   const estimate = managedVllmStorageEstimateBytes({
     imageCompressedBytes: profile.imageDownloadSizeBytes,
-    imageUnpackedBytes: profile.imageUnpackedSizeBytes ?? 0,
+    imageUnpackedBytes: managedImageUnpackedRequirementBytes(profile),
     includeImage,
     modelBytes: model.downloadSizeBytes,
     writableAllowanceBytes: VLLM_WRITABLE_ALLOWANCE_BYTES,
   });
   const dockerProbe = includeImage ? probeDockerStorage() : null;
   const modelProbe = probeModelCacheStorage(hostHfCacheDir());
-  const probe = limitingStorageProbe(dockerProbe ? [dockerProbe, modelProbe] : [modelProbe]);
-  if (probe.ok && probe.capacity.availableBytes >= estimate.totalBytes) {
-    return true;
-  }
-  printManagedStorageWarning({
+  const requirements = managedStorageRequirements({
     dockerProbe,
     estimate,
     includeImage,
-    model,
     modelProbe,
-    profile,
-    probe,
   });
-  if (!probe.ok) {
+  const problem = managedStorageProblem(requirements);
+  if (!problem) return true;
+  printManagedStorageWarning({
+    estimate,
+    includeImage,
+    model,
+    problem,
+    profile,
+    requirements,
+  });
+  if (problem.kind === "unknown") {
     console.error("  Continuing because managed vLLM storage capacity could not be verified.");
     return true;
   }

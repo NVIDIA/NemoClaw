@@ -87,6 +87,7 @@ describe("Docker image-storage detection", () => {
       ok: true,
       capacity: {
         availableBytes: 7n * GIB,
+        filesystemId: expect.any(String),
         path: "/var/lib/docker",
         source: "Docker root directory",
       },
@@ -116,6 +117,7 @@ describe("Docker image-storage detection", () => {
       ok: true,
       capacity: {
         availableBytes: 2n * GIB,
+        filesystemId: expect.any(String),
         path: "/var/lib/docker",
         source: "Docker pull staging",
       },
@@ -161,6 +163,7 @@ describe("Docker image-storage detection", () => {
       ok: true,
       capacity: {
         availableBytes: 9n * GIB,
+        filesystemId: expect.any(String),
         path: "/var/lib/docker",
         source: "Docker root directory",
       },
@@ -339,6 +342,7 @@ describe("Hugging Face model-cache storage", () => {
       ok: true,
       capacity: {
         availableBytes: 7n * GIB,
+        filesystemId: expect.any(String),
         path: root,
         source: "model cache filesystem",
       },

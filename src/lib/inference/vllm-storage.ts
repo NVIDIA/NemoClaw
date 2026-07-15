@@ -21,6 +21,7 @@ interface StorageProbeDeps {
   exists: (target: string) => boolean;
   platform: NodeJS.Platform;
   readFile: (target: string) => string;
+  stat: (target: string) => { dev: bigint | number };
   statfs: (target: string) => { bavail: bigint; bsize: bigint };
 }
 
@@ -38,12 +39,14 @@ function defaultStorageProbeDeps(): StorageProbeDeps {
     exists: fs.existsSync,
     platform: process.platform,
     readFile: (target) => fs.readFileSync(target, "utf8"),
+    stat: (target) => fs.statSync(target, { bigint: true }),
     statfs: (target) => fs.statfsSync(target, { bigint: true }),
   };
 }
 
 export interface StorageCapacity {
   availableBytes: bigint;
+  filesystemId?: string;
   path: string;
   source: string;
 }
@@ -298,13 +301,27 @@ export function resolveDockerStorageLocations(
 
 function capacityForLocation(
   location: DockerStorageLocation,
+  stat: StorageProbeDeps["stat"],
   statfs: StorageProbeDeps["statfs"],
 ): StorageProbeResult {
   try {
     const stats = statfs(location.path);
     const availableBytes = stats.bavail * stats.bsize;
     if (availableBytes < 0n) throw new Error("filesystem reported negative available space");
-    return { ok: true, capacity: { ...location, availableBytes } };
+    let filesystemId: string | undefined;
+    try {
+      filesystemId = String(stat(location.path).dev);
+    } catch {
+      filesystemId = undefined;
+    }
+    return {
+      ok: true,
+      capacity: {
+        ...location,
+        availableBytes,
+        ...(filesystemId ? { filesystemId } : {}),
+      },
+    };
   } catch (err) {
     return {
       ok: false,
@@ -322,7 +339,7 @@ export function probeDockerStorage(overrides: Partial<StorageProbeDeps> = {}): S
 
   let limiting: StorageCapacity | null = null;
   for (const location of resolved.locations) {
-    const result = capacityForLocation(location, deps.statfs);
+    const result = capacityForLocation(location, deps.stat, deps.statfs);
     if (!result.ok) return result;
     if (!limiting || result.capacity.availableBytes < limiting.availableBytes) {
       limiting = result.capacity;
@@ -354,6 +371,7 @@ export function probeModelCacheStorage(
       path: target,
       source: target === path.resolve(cacheDir) ? "model cache" : "model cache filesystem",
     },
+    deps.stat,
     deps.statfs,
   );
 }
