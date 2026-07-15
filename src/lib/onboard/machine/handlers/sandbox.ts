@@ -26,7 +26,6 @@ import type {
 import type { SandboxEntry } from "../../../state/registry";
 import { getSandboxEntryInference } from "../../../state/registry-entry-view";
 import { toolDisclosureOrDefault } from "../../../tool-disclosure";
-import { HERMES_TAVILY_PROVIDER_PROFILE_ID } from "../../brave-provider-profile";
 import { withDashboardPortReservationLock as withHostDashboardPortReservationLock } from "../../dashboard-port";
 import { type DashboardRuntimeAgent, shouldManageDashboardForAgent } from "../../dashboard-runtime";
 import {
@@ -199,6 +198,7 @@ export interface SandboxStateOptions<
       extraProviders: readonly string[];
       staleExtraProviders: readonly string[];
       policyTier?: string | null;
+      reuseRegisteredCredentials?: boolean;
     }): Promise<ResolvedSandboxCreateIntent>;
     createSandbox(
       gpu: Gpu,
@@ -362,6 +362,11 @@ class SandboxStateFlow<
     ResourceProfile
   >["deps"] {
     return this.options.deps;
+  }
+
+  private get resumesSandboxPrompts(): boolean {
+    const agentName = (this.options.agent as { name?: string } | null)?.name;
+    return !agentName || agentName === "openclaw";
   }
 
   private prepareWebSearchSupport(): SandboxStepState<WebSearchConfig> {
@@ -653,12 +658,8 @@ class SandboxStateFlow<
     const label = webSearchLabelFor(provider);
     const credentialEnv = webSearchEnvFor(provider);
     const localCredential = this.options.env[credentialEnv]?.trim();
-    const providerType =
-      provider === "tavily" &&
-      (this.options.agent as { name?: string } | null)?.name?.trim().toLowerCase() === "hermes"
-        ? HERMES_TAVILY_PROVIDER_PROFILE_ID
-        : provider;
     if (
+      this.resumesSandboxPrompts &&
       this.options.resume &&
       state.sandboxName &&
       !localCredential &&
@@ -667,7 +668,7 @@ class SandboxStateFlow<
       ) &&
       this.deps.providerMatchesGatewayCredential(
         `${state.sandboxName}-${provider}-search`,
-        providerType,
+        provider,
         credentialEnv,
       )
     ) {
@@ -688,7 +689,9 @@ class SandboxStateFlow<
       this.options.env[WEB_SEARCH_PROVIDER_ENV],
     ).specified;
     const completedSelection =
-      this.options.resume && state.session?.sandboxPromptProgress?.webSearch === true;
+      this.resumesSandboxPrompts &&
+      this.options.resume &&
+      state.session?.sandboxPromptProgress?.webSearch === true;
     if (!this.options.authoritativeResumeConfig && !explicitlyConfigured && !completedSelection) {
       return this.deps.configureWebSearch(
         null,
@@ -706,6 +709,7 @@ class SandboxStateFlow<
     state: SandboxStepState<WebSearchConfig>,
     webSearchConfig: WebSearchConfig | null,
   ): SandboxStepState<WebSearchConfig> {
+    if (!this.resumesSandboxPrompts) return { ...state, webSearchConfig };
     const session = this.deps.updateSession((current) => {
       current.webSearchConfig = webSearchConfig as unknown as Session["webSearchConfig"];
       current.sandboxPromptProgress.webSearch = true;
@@ -718,6 +722,7 @@ class SandboxStateFlow<
     state: SandboxStepState<WebSearchConfig>,
     sandboxName: string,
   ): SandboxStepState<WebSearchConfig> {
+    if (!this.resumesSandboxPrompts) return { ...state, sandboxName };
     let messagingInvalidated = false;
     const session = this.deps.updateSession((current) => {
       const recordedNameChanged =
@@ -741,6 +746,9 @@ class SandboxStateFlow<
     state: SandboxStepState<WebSearchConfig>,
     messaging: { plan: SandboxMessagingPlan | null; selectedChannels: string[] },
   ): SandboxStepState<WebSearchConfig> {
+    if (!this.resumesSandboxPrompts) {
+      return { ...state, selectedMessagingChannels: messaging.selectedChannels };
+    }
     const session = this.deps.updateSession((current) => {
       current.messagingPlan = messaging.plan;
       current.sandboxPromptProgress.messaging = true;
@@ -753,11 +761,33 @@ class SandboxStateFlow<
     };
   }
 
+  private async registerCompletedCredentialProviders(
+    sandboxName: string,
+    enabledChannels: readonly string[],
+    webSearchConfig: WebSearchConfig | null,
+  ): Promise<void> {
+    if (!this.resumesSandboxPrompts || (!webSearchConfig && enabledChannels.length === 0)) return;
+    const registeredProviders = await this.deps.withGatewayRouteMutationLock(
+      this.options.gatewayName,
+      () =>
+        this.deps.stageSandboxCredentialProviders({
+          sandboxName,
+          enabledChannels,
+          webSearchConfig,
+          agent: this.options.agent,
+        }),
+    );
+    if (registeredProviders.length > 0) {
+      this.deps.note("  ✓ Registered selected credentials with OpenShell for resume.");
+    }
+  }
+
   private async resolveResourceProfile(state: SandboxStepState<WebSearchConfig>): Promise<{
     state: SandboxStepState<WebSearchConfig>;
     resourceProfile: ResourceProfile | null;
   }> {
     if (
+      this.resumesSandboxPrompts &&
       this.options.resume &&
       state.session?.sandboxPromptProgress?.resourceProfile === true &&
       !hasResourceProfileEnvOverride(this.options.env)
@@ -772,6 +802,7 @@ class SandboxStateFlow<
     }
 
     const resourceProfile = await this.deps.selectResourceProfileForSandbox();
+    if (!this.resumesSandboxPrompts) return { state, resourceProfile };
     const session = this.deps.updateSession((current) => {
       current.resourceProfile = resourceProfile as SessionResourceProfile | null;
       current.sandboxPromptProgress.resourceProfile = true;
@@ -789,6 +820,7 @@ class SandboxStateFlow<
     resourceProfile: ResourceProfile | null,
     hermesToolGateways: readonly string[],
   ): Promise<CompleteSandboxCreateIntent> {
+    const reuseRegisteredCredentials = this.resumesSandboxPrompts && this.options.resume;
     const resolved = await this.deps.resolveSandboxCreateIntent({
       sandboxName,
       enabledChannels: state.selectedMessagingChannels,
@@ -799,6 +831,7 @@ class SandboxStateFlow<
       hermesToolGateways,
       extraProviders,
       staleExtraProviders,
+      ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
       ...(this.options.authoritativePolicyTier !== undefined
         ? { policyTier: this.options.authoritativePolicyTier }
         : {}),
@@ -808,6 +841,7 @@ class SandboxStateFlow<
       recreate: decision.kind !== "create",
       toolDisclosure: toolDisclosureOrDefault(state.session?.toolDisclosure),
       observabilityEnabled: state.session?.observabilityEnabled === true,
+      ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true as const } : {}),
       ...(this.options.endpointUrl ? { endpointUrl: this.options.endpointUrl } : {}),
       ...(state.session?.observabilityRequestedExplicitly === true
         ? { observabilityRequestedExplicitly: true as const }
@@ -969,6 +1003,11 @@ class SandboxStateFlow<
     if (!nextState.sandboxName) {
       nextState = this.checkpointSandboxName(nextState, requestedSandboxName);
     }
+    await this.registerCompletedCredentialProviders(
+      requestedSandboxName,
+      [],
+      nextState.webSearchConfig,
+    );
     const messaging = await reconcileSandboxMessaging({
       resume: this.options.resume,
       session: nextState.session,
@@ -977,19 +1016,11 @@ class SandboxStateFlow<
       deps: this.deps,
     });
     nextState = this.checkpointMessaging(nextState, messaging);
-    const stagedProviders = await this.deps.withGatewayRouteMutationLock(
-      this.options.gatewayName,
-      () =>
-        this.deps.stageSandboxCredentialProviders({
-          sandboxName: requestedSandboxName,
-          enabledChannels: nextState.selectedMessagingChannels,
-          webSearchConfig: nextState.webSearchConfig,
-          agent: this.options.agent,
-        }),
+    await this.registerCompletedCredentialProviders(
+      requestedSandboxName,
+      nextState.selectedMessagingChannels,
+      null,
     );
-    if (stagedProviders.length > 0) {
-      this.deps.note("  ✓ Registered selected credentials with OpenShell for resume.");
-    }
     return this.createAndRecordSandbox(nextState, requestedSandboxName, messaging.plan, decision);
   }
 

@@ -18,6 +18,25 @@ describe("sandbox name prompt", () => {
     });
 
     await expect(promptValidatedSandboxName()).resolves.toBe("tm");
-    expect(checkpointSandboxName).toHaveBeenCalledWith("tm");
+    expect(checkpointSandboxName).toHaveBeenCalledWith("tm", null);
+  });
+
+  it("propagates a checkpoint failure without treating the name as invalid (#6743)", async () => {
+    const checkpointError = new Error("session write failed");
+    const promptOrDefault = vi.fn(async () => "tm");
+    const promptValidatedSandboxName = createPromptValidatedSandboxName({
+      promptOrDefault,
+      cliDisplayName: () => "NemoClaw",
+      isNonInteractive: () => false,
+      checkpointSandboxName: () => {
+        throw checkpointError;
+      },
+      exit: (code) => {
+        throw new Error(`unexpected exit ${code}`);
+      },
+    });
+
+    await expect(promptValidatedSandboxName()).rejects.toBe(checkpointError);
+    expect(promptOrDefault).toHaveBeenCalledTimes(1);
   });
 });

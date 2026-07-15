@@ -110,6 +110,7 @@ function createDeps(
     registry: {
       listSandboxes: vi.fn(() => ({ sandboxes: [] })),
     },
+    providerExistsInGateway: vi.fn(() => false),
     providerMatchesGatewayCredential: vi.fn(() => false),
     isNonInteractive: vi.fn(() => false),
     promptYesNoOrDefault: vi.fn(async () => true),

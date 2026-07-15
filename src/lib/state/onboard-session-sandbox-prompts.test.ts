@@ -6,7 +6,6 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const originalHome = process.env.HOME;
 type OnboardSessionModule = typeof import("./onboard-session");
 type LoadedSession = NonNullable<ReturnType<OnboardSessionModule["loadSession"]>>;
 type MessagingPlan = NonNullable<LoadedSession["messagingPlan"]>;
@@ -15,8 +14,7 @@ let tmpDir: string;
 
 function requireLoadedSession(loaded: LoadedSession | null): LoadedSession {
   expect(loaded).not.toBeNull();
-  if (!loaded) throw new Error("Expected onboard session to be present");
-  return loaded;
+  return loaded as LoadedSession;
 }
 
 function makeTelegramPlan(sandboxName: string): MessagingPlan {
@@ -50,7 +48,7 @@ function makeTelegramPlan(sandboxName: string): MessagingPlan {
 
 beforeEach(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-prompt-session-"));
-  process.env.HOME = tmpDir;
+  vi.stubEnv("HOME", tmpDir);
   vi.resetModules();
   session = await import("./onboard-session");
   session.clearSession();
@@ -59,8 +57,7 @@ beforeEach(async () => {
 afterEach(() => {
   session.clearSession();
   fs.rmSync(tmpDir, { recursive: true, force: true });
-  if (originalHome === undefined) delete process.env.HOME;
-  else process.env.HOME = originalHome;
+  vi.unstubAllEnvs();
 });
 
 describe("onboard session sandbox prompt checkpoints", () => {
@@ -183,5 +180,21 @@ describe("onboard session sandbox prompt checkpoints", () => {
 
     expect(normalized.resourceProfile).toEqual({ cpu: "", memory: "75%" });
     expect(normalized.sandboxPromptProgress.resourceProfile).toBe(true);
+  });
+
+  it("rejects completed messaging state for a different sandbox (#6743)", () => {
+    const normalized = session.createSession({
+      sandboxName: "tm",
+      messagingPlan: makeTelegramPlan("other-sandbox"),
+      sandboxPromptProgress: {
+        sandboxName: true,
+        webSearch: false,
+        messaging: true,
+        resourceProfile: false,
+      },
+    });
+
+    expect(normalized.messagingPlan?.sandboxName).toBe("other-sandbox");
+    expect(normalized.sandboxPromptProgress.messaging).toBe(false);
   });
 });

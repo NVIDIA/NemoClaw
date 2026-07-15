@@ -783,6 +783,7 @@ describe("handleSandboxState", () => {
         toolDisclosure: "progressive",
         observabilityEnabled: false,
         extraProviders: [],
+        reuseRegisteredCredentials: true,
       },
     );
     expect(result.webSearchConfigChanged).toBe(true);
@@ -903,6 +904,7 @@ describe("handleSandboxState", () => {
         toolDisclosure: "progressive",
         observabilityEnabled: false,
         extraProviders: [],
+        reuseRegisteredCredentials: true,
       },
     );
     expect(result.webSearchConfig).toBeNull();

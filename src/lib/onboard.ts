@@ -253,7 +253,7 @@ const inferenceConfig: typeof import("./inference/config") = require("./inferenc
 const { DEFAULT_CLOUD_MODEL, getProviderSelectionConfig, parseGatewayInference } = inferenceConfig;
 
 const onboardProviders = require("./onboard/providers");
-const gatewayProviderMetadata: typeof import("./onboard/gateway-provider-metadata") = require("./onboard/gateway-provider-metadata");
+const credentialProviderRegistration: typeof import("./onboard/credential-provider-registration") = require("./onboard/credential-provider-registration");
 const inferenceProviders: typeof import("./onboard/inference-providers") = require("./onboard/inference-providers");
 const setupInferenceFactory: typeof import("./onboard/setup-inference") =
   require("./onboard/setup-inference");
@@ -449,13 +449,8 @@ const promptValidatedSandboxName = sandboxAgent.createPromptValidatedSandboxName
   promptOrDefault,
   cliDisplayName,
   isNonInteractive,
-  checkpointSandboxName: (sandboxName) => {
-    onboardSession.updateSession((current: Session) => {
-      current.sandboxName = sandboxName;
-      current.sandboxPromptProgress.sandboxName = true;
-      return current;
-    });
-  },
+  checkpointSandboxName: (sandboxName, agent) =>
+    onboardSessionBootstrap.checkpointSandboxName(sandboxName, agent, onboardSession.updateSession),
   exit: process.exit,
 });
 const modelRouter: typeof import("./onboard/model-router") = require("./onboard/model-router");
@@ -975,59 +970,22 @@ const verifyDirectSandboxGpu = sandboxGpuPreflight.createDirectSandboxGpuVerifie
   redact,
 });
 
-function upsertMessagingProviders(
-  tokenDefs: MessagingTokenDef[],
-  options: { replaceExisting?: boolean } = {},
-) {
-  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  braveProviderProfile.ensureWebSearchProviderProfiles(tokenDefs, { root: ROOT, runOpenshell, redact });
-  const upserted = onboardProviders.upsertMessagingProviders(tokenDefs, runOpenshell, options);
-  // upsertMessagingProviders process.exits on failure, so reaching this
-  // point means every entry in tokenDefs that had a token was registered.
-  // Mark migrated only when the registered token equals the staged legacy
-  // value — a token rotated since staging (or a fresh prompt) is not a
-  // legacy migration even if it happens to use the same env-key name.
-  // Mirror upsertProvider's withdrawal logic so a later messaging upsert
-  // that replaces the legacy value with something else cannot leave the
-  // mark stuck on.
-  recordMigratedLegacyMessagingCredentials(tokenDefs, upserted);
-  return upserted;
-}
-
-function recordMigratedLegacyMessagingCredentials(
-  tokenDefs: MessagingTokenDef[],
-  registeredProviderNames: readonly string[],
-): void {
-  const registeredProviders = new Set(registeredProviderNames);
-  let mutated = false;
-  for (const def of tokenDefs) {
-    if (!registeredProviders.has(def.name) || !def.token || !def.envKey) continue;
-    const stagedValue = stagedLegacyValues.get(def.envKey);
-    if (stagedValue === undefined) continue;
-    if (def.token === stagedValue) {
-      migratedLegacyKeys.add(def.envKey);
-      mutated = true;
-    } else {
-      migratedLegacyKeys.delete(def.envKey);
-      mutated = true;
-    }
-  }
-  if (mutated) persistMigratedLegacyKeys();
-}
-
-function setStagedCredentialProviderReceipt(name: string, staged: boolean): void {
-  onboardSession.updateSession((current: Session) => {
-    const providers = new Set(current.stagedCredentialProviders);
-    if (staged) providers.add(name);
-    else providers.delete(name);
-    current.stagedCredentialProviders = [...providers];
-    return current;
+const registeredCredentialProviders =
+  credentialProviderRegistration.createCredentialProviderRegistration({
+    root: ROOT,
+    runOpenshell,
+    redact,
+    getGatewayName: () => GATEWAY_NAME,
+    normalizeCredentialValue,
+    updateSession: onboardSession.updateSession,
+    stagedLegacyValues,
+    migratedLegacyKeys,
+    persistMigratedLegacyKeys,
   });
-}
+const { upsertMessagingProviders, providerMatchesGatewayCredential } =
+  registeredCredentialProviders;
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
 const providerExistsInGateway = (name: string, gatewayName: string = GATEWAY_NAME) => onboardProviders.providerExistsInGateway(name, setupInferenceFactory.createGatewayScopedOpenshellRunner(runOpenshell, gatewayName));
-// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-const providerMatchesGatewayCredential = (name: string, type: string, credentialEnv: string, gatewayName: string = GATEWAY_NAME) => gatewayProviderMetadata.matchesGatewayCredentialOnlyProviderBinding(onboardProviders.readGatewayProviderMetadata(name, runOpenshell, gatewayName), { name, type, credentialKey: credentialEnv });
 
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
 const { verifyInferenceRoute, isInferenceRouteReady, checkGatewayRouteCompatibility, preflightGatewayRouteDiscovery } = inferenceRouteHelpers.createInferenceRouteHelpers(runCaptureOpenshell);
@@ -2337,6 +2295,7 @@ async function createSandboxWithBaseImageResolution(
       hermesToolGateways,
       extraProviders: extraProviderPlan.extraProviders,
       staleExtraProviders: extraProviderPlan.staleExtraProviders,
+      ...(createIntent?.reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
       ...(createIntent?.policyTier !== undefined ? { policyTier: createIntent.policyTier } : {}),
     }));
   const messagingCapabilities = await sandboxCreateIntentResolver.rebind(
@@ -2345,6 +2304,7 @@ async function createSandboxWithBaseImageResolution(
       enabledChannels,
       webSearchConfig,
       agent,
+      ...(createIntent?.reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
     },
     resolvedCreateIntent,
   );
@@ -2735,6 +2695,7 @@ async function createSandboxWithBaseImageResolution(
       enabledChannels,
       webSearchConfig,
       agent,
+      ...(createIntent?.reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
     },
     resolvedCreateIntent,
   );
@@ -3773,7 +3734,7 @@ const sandboxCreateIntentResolver = sandboxCreateIntentResolution.createSandboxC
 >({
   channels: MESSAGING_CHANNELS,
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  messagingPreflightDeps: { readMessagingPlanFromEnv, resolveDisabledChannels: channelState.resolveDisabledChannels, gatewayName: () => GATEWAY_NAME, registry, providerMatchesGatewayCredential, isNonInteractive, promptYesNoOrDefault, cliName, log: (message) => console.log(message), error: (message) => console.error(message), exitProcess: (code) => process.exit(code), getValidatedMessagingTokenByEnvKey, getCredential, normalizeCredentialValue, registerExtraPlaceholderProviders: extraPlaceholderKeysModule.registerExtraPlaceholderProviders, getMessagingChannelForEnvKey },
+  messagingPreflightDeps: { readMessagingPlanFromEnv, resolveDisabledChannels: channelState.resolveDisabledChannels, gatewayName: () => GATEWAY_NAME, registry, providerExistsInGateway, providerMatchesGatewayCredential, isNonInteractive, promptYesNoOrDefault, cliName, log: (message) => console.log(message), error: (message) => console.error(message), exitProcess: (code) => process.exit(code), getValidatedMessagingTokenByEnvKey, getCredential, normalizeCredentialValue, registerExtraPlaceholderProviders: extraPlaceholderKeysModule.registerExtraPlaceholderProviders, getMessagingChannelForEnvKey },
   filterEnabledChannelsByAgent,
   defaultPolicyPath: path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
   getAgentPolicyPath: (agent) => (agent ? agentOnboard.getAgentPolicyPath(agent) : null),
@@ -3790,35 +3751,8 @@ const sandboxCreateIntentResolver = sandboxCreateIntentResolution.createSandboxC
     }),
 });
 
-async function stageSandboxCredentialProviders(input: {
-  sandboxName: string;
-  enabledChannels: readonly string[];
-  webSearchConfig: import("./inference/web-search").WebSearchConfig | null;
-  agent: AgentDefinition | null;
-}): Promise<readonly string[]> {
-  const messaging = await sandboxCreateIntentResolver.prepareCredentialProviders(input);
-  for (const tokenDef of messaging.messagingTokenDefs) {
-    if (normalizeCredentialValue(tokenDef.token)) {
-      setStagedCredentialProviderReceipt(tokenDef.name, false);
-    }
-  }
-  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  braveProviderProfile.ensureWebSearchProviderProfiles(messaging.messagingTokenDefs, { root: ROOT, runOpenshell, redact });
-  const created: string[] = [];
-  for (const tokenDef of messaging.messagingTokenDefs) {
-    if (!normalizeCredentialValue(tokenDef.token)) continue;
-    const staged = onboardProviders.stageMessagingProvidersCreateMissingOnly(
-      [tokenDef],
-      runOpenshell,
-      { gatewayName: GATEWAY_NAME },
-    );
-    if (staged.created.length === 0) continue;
-    setStagedCredentialProviderReceipt(tokenDef.name, true);
-    recordMigratedLegacyMessagingCredentials([tokenDef], staged.created);
-    created.push(...staged.created);
-  }
-  return created;
-}
+// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+const stageSandboxCredentialProviders = (input: import("./onboard/credential-provider-registration").StageSandboxCredentialProvidersInput<AgentDefinition | null>) => registeredCredentialProviders.stageSandboxCredentialProviders(input, sandboxCreateIntentResolver.prepareCredentialProviders);
 
 function getRecordedMessagingChannelsForResume(
   resume: boolean,
@@ -4277,8 +4211,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
 
     const recordedSandboxName =
       session?.steps?.sandbox?.status === "complete" ? session?.sandboxName || null : null;
-    const checkpointedSandboxName =
-      resume && session?.sandboxPromptProgress?.sandboxName === true ? session.sandboxName : null;
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    const checkpointedSandboxName = onboardSessionBootstrap.getCheckpointedSandboxName(resume, agent, session);
     const gatewaySandboxName = resume
       ? (recordedSandboxName ?? requestedSandboxName ?? checkpointedSandboxName)
       : null;
@@ -4411,11 +4345,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     const { gpuPassthrough } = initialContext;
     const gpu = initialContext.gpu ?? null;
 
-    // #2753: prefer requestedSandboxName over an unconfirmed session name.
-    // A pre-fix session may carry sandboxName even though sandbox creation
-    // never completed; users supplying `--name` / NEMOCLAW_SANDBOX_NAME on
-    // the resume run must win, otherwise the stale name silently overrides
-    // their explicit recovery input.
+    // #2753: for an unfinished sandbox, an explicit requested name precedes
+    // the checkpointed name from the interrupted session.
     let sandboxName =
       recordedSandboxName || requestedSandboxName || checkpointedSandboxName || null;
     if (sandboxName && RESERVED_SANDBOX_NAMES.has(sandboxName)) {

@@ -52,6 +52,10 @@ describe("sandbox registration route transaction", () => {
   it("stages credentials, then holds sandbox, host dashboard, and gateway locks through creation", async () => {
     const events: string[] = [];
     const { deps } = createDeps({
+      configureWebSearch: vi.fn(async () => ({
+        fetchEnabled: true as const,
+        provider: "brave" as const,
+      })),
       checkGatewayRouteCompatibility: () => {
         events.push("guard");
         return { ok: true };

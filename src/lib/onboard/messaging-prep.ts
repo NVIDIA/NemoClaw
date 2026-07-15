@@ -19,6 +19,7 @@ export interface MessagingTokenDef {
 export interface CreateSandboxMessagingPrepInput {
   sandboxName: string;
   agentName?: string | null;
+  requireExactProviderBinding?: boolean;
   channels: readonly NamedMessagingChannel[];
   enabledChannels: readonly string[] | null;
   disabledChannels: readonly string[];
@@ -35,6 +36,7 @@ export interface CreateSandboxMessagingPrepInput {
     messagingTokenDefs: MessagingTokenDef[],
   ): string[];
   getMessagingChannelForEnvKey(envKey: string): string | null;
+  providerExistsInGateway(name: string): boolean;
   providerMatchesGatewayCredential(name: string, type: string, credentialEnv: string): boolean;
 }
 
@@ -51,6 +53,9 @@ export interface CreateSandboxMessagingPrepResult {
 export function prepareCreateSandboxMessaging(
   input: CreateSandboxMessagingPrepInput,
 ): CreateSandboxMessagingPrepResult {
+  const requiresExactOpenClawProviderBinding =
+    input.requireExactProviderBinding === true &&
+    (!input.agentName || input.agentName.trim().toLowerCase() === "openclaw");
   const enabledEnvKeys =
     input.enabledChannels != null
       ? new Set(
@@ -90,6 +95,7 @@ export function prepareCreateSandboxMessaging(
       null
     : null;
   const reusableWebSearchProvider =
+    requiresExactOpenClawProviderBinding &&
     webSearchEnabled &&
     !webSearchApiKey &&
     input.providerMatchesGatewayCredential(
@@ -137,7 +143,10 @@ export function prepareCreateSandboxMessaging(
       if (token) continue;
       const channel = input.getMessagingChannelForEnvKey(envKey);
       if (!channel || !input.enabledChannels.includes(channel)) continue;
-      if (!input.providerMatchesGatewayCredential(name, "generic", envKey)) continue;
+      const providerReusable = requiresExactOpenClawProviderBinding
+        ? input.providerMatchesGatewayCredential(name, "generic", envKey)
+        : input.providerExistsInGateway(name);
+      if (!providerReusable) continue;
       reusableMessagingProviders.push(name);
       if (!reusableMessagingChannels.includes(channel)) {
         reusableMessagingChannels.push(channel);

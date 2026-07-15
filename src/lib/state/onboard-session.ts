@@ -173,7 +173,7 @@ export interface Session {
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
   messagingPlan: SandboxMessagingPlan | null;
-  /** Non-secret names of credential providers created before sandbox setup completed. */
+  /** Non-secret names of credential providers registered before sandbox setup completed. */
   stagedCredentialProviders: string[];
   // SHA-256 hex digest of every legacy credential value successfully
   // written to the OpenShell gateway during this onboard session, keyed by
@@ -378,8 +378,11 @@ function isValidNullableWebSearchChoice(value: unknown): boolean {
   return value === null || parseWebSearchConfig(value as SessionJsonValue | undefined) !== null;
 }
 
-function isValidNullableMessagingChoice(value: unknown): boolean {
-  return value === null || parseSandboxMessagingPlan(value) !== null;
+function isValidNullableMessagingChoice(value: unknown, sandboxName: unknown): boolean {
+  return (
+    value === null ||
+    (typeof sandboxName === "string" && parseSandboxMessagingPlan(value, { sandboxName }) !== null)
+  );
 }
 
 function isValidNullableResourceChoice(value: unknown): boolean {
@@ -403,7 +406,7 @@ function parseSandboxPromptProgress(
     messaging:
       progress.messaging === true &&
       hasOwn(choices, "messagingPlan") &&
-      isValidNullableMessagingChoice(choices.messagingPlan),
+      isValidNullableMessagingChoice(choices.messagingPlan, choices.sandboxName),
     resourceProfile:
       progress.resourceProfile === true &&
       hasOwn(choices, "resourceProfile") &&

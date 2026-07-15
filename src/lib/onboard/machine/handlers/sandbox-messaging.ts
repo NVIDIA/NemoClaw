@@ -311,6 +311,7 @@ async function selectionFromCompletedMessagingCheckpoint<Agent>(
     );
   });
   if (credentialNeedsValidation) {
+    options.deps.writePlanToEnv(durablePlan);
     return selectionFromMessagingSetup(selectedChannels, options, true);
   }
 
@@ -336,7 +337,12 @@ export async function reconcileSandboxMessaging<Agent>(
     options.sandboxName,
   );
   const envPlan = options.deps.readMessagingPlanFromEnv();
-  if (options.resume && options.session?.sandboxPromptProgress?.messaging === true) {
+  const agentName = (options.agent as MessagingAgentLike | null)?.name;
+  if (
+    (!agentName || agentName === "openclaw") &&
+    options.resume &&
+    options.session?.sandboxPromptProgress?.messaging === true
+  ) {
     return selectionFromCompletedMessagingCheckpoint(envPlan, options);
   }
   const registryPlan = options.deps.getRegistrySandboxMessagingPlan(options.sandboxName);

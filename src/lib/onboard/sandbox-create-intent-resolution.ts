@@ -29,6 +29,8 @@ export type CompleteSandboxCreateIntentInput<Agent, ResourceProfile> = {
   extraProviders: readonly string[];
   staleExtraProviders: readonly string[];
   policyTier?: string | null;
+  /** Internal OpenClaw resume authority for exact registered provider reuse. */
+  reuseRegisteredCredentials?: boolean;
 };
 
 export interface SandboxCreateIntentResolverDeps<Agent, ResourceProfile> {
@@ -55,10 +57,10 @@ export function createSandboxCreateIntentResolver<
   async function prepareMessagingCapabilities(
     input: Pick<
       CompleteSandboxCreateIntentInput<Agent, ResourceProfile>,
-      "sandboxName" | "enabledChannels" | "webSearchConfig" | "agent"
+      "sandboxName" | "enabledChannels" | "webSearchConfig" | "agent" | "reuseRegisteredCredentials"
     >,
     expectedIntent?: SandboxCreateIntent,
-    skipPlanConflictCheck = false,
+    credentialRegistration = false,
   ) {
     const preflightDeps = expectedIntent
       ? {
@@ -66,8 +68,12 @@ export function createSandboxCreateIntentResolver<
           readMessagingPlanFromEnv: () => null,
           resolveDisabledChannels: () => [...expectedIntent.disabledChannelNames],
         }
-      : skipPlanConflictCheck
-        ? { ...deps.messagingPreflightDeps, readMessagingPlanFromEnv: () => null }
+      : credentialRegistration
+        ? {
+            ...deps.messagingPreflightDeps,
+            readMessagingPlanFromEnv: () => null,
+            registerExtraPlaceholderProviders: () => [],
+          }
         : deps.messagingPreflightDeps;
     const result = await prepareSandboxMessagingPreflight(
       {
@@ -75,6 +81,8 @@ export function createSandboxCreateIntentResolver<
         enabledChannels: filterEnabledChannels(input.enabledChannels, input.agent),
         sandboxName: input.sandboxName,
         agentName: input.agent?.name ?? "openclaw",
+        requireExactProviderBinding:
+          credentialRegistration || input.reuseRegisteredCredentials === true,
         webSearchConfig: input.webSearchConfig,
         env: process.env,
       },

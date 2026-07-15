@@ -254,6 +254,9 @@ describe("sandbox create intent machine boundary", () => {
       agent: null,
     });
     expect(stageSandboxCredentialProviders.mock.invocationCallOrder[0]).toBeLessThan(
+      setupMessagingChannels.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
+    expect(stageSandboxCredentialProviders.mock.invocationCallOrder[0]).toBeLessThan(
       calls.selectResourceProfile.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
 

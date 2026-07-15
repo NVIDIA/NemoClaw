@@ -36,6 +36,7 @@ function createInput(
       if (envKey === "WECHAT_BOT_TOKEN") return "wechat";
       return null;
     },
+    providerExistsInGateway: () => false,
     providerMatchesGatewayCredential: () => false,
     ...overrides,
   };
@@ -44,7 +45,7 @@ function createInput(
 describe("prepareCreateSandboxMessaging", () => {
   it("filters token definitions by selected and disabled channels and reuses attached missing-token providers", () => {
     const registerExtraPlaceholderProviders = vi.fn(() => ["SLACK_BOT_TOKEN_AGENT_A"]);
-    const providerMatchesGatewayCredential = vi.fn((name: string) => name === "demo-slack-bridge");
+    const providerExistsInGateway = vi.fn((name: string) => name === "demo-slack-bridge");
 
     const result = prepareCreateSandboxMessaging(
       createInput({
@@ -53,7 +54,7 @@ describe("prepareCreateSandboxMessaging", () => {
         getValidatedMessagingTokenByEnvKey: (_channels, envKey) =>
           envKey === "SLACK_APP_TOKEN" ? "xapp-valid" : null,
         registerExtraPlaceholderProviders,
-        providerMatchesGatewayCredential,
+        providerExistsInGateway,
       }),
     );
 
@@ -66,11 +67,7 @@ describe("prepareCreateSandboxMessaging", () => {
     expect(result.hasMessagingTokens).toBe(true);
     expect(result.reusableMessagingProviders).toEqual(["demo-slack-bridge"]);
     expect(result.reusableMessagingChannels).toEqual(["slack"]);
-    expect(providerMatchesGatewayCredential).toHaveBeenCalledWith(
-      "demo-slack-bridge",
-      "generic",
-      "SLACK_BOT_TOKEN",
-    );
+    expect(providerExistsInGateway).toHaveBeenCalledWith("demo-slack-bridge");
     expect(registerExtraPlaceholderProviders).toHaveBeenCalledWith(
       "demo",
       result.messagingTokenDefs,
@@ -105,6 +102,7 @@ describe("prepareCreateSandboxMessaging", () => {
     const result = prepareCreateSandboxMessaging(
       createInput({
         webSearchConfig: { fetchEnabled: true },
+        requireExactProviderBinding: true,
         providerMatchesGatewayCredential,
       }),
     );

@@ -266,7 +266,7 @@ describe("reconcileSandboxMessaging completed checkpoint credentials", () => {
       "alpha",
       { selectionCompleted: true },
     );
-    expect(deps.writePlanToEnv).not.toHaveBeenCalled();
+    expect(deps.writePlanToEnv).toHaveBeenCalledWith(persistedPlan);
     expect(result).toEqual({ plan: validatedPlan, selectedChannels: ["telegram"] });
   });
 
@@ -296,7 +296,7 @@ describe("reconcileSandboxMessaging completed checkpoint credentials", () => {
       "alpha",
       { selectionCompleted: true },
     );
-    expect(deps.writePlanToEnv).not.toHaveBeenCalled();
+    expect(deps.writePlanToEnv).toHaveBeenCalledWith(persistedPlan);
     expect(persistedPlan.credentialBindings[0]?.credentialHash).toBe(hashCredential(previousToken));
   });
 

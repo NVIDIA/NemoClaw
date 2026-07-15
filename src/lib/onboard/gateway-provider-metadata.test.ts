@@ -75,6 +75,9 @@ describe("gateway provider metadata", () => {
       ),
     ).toBe(false);
     expect(
+      matchesGatewayCredentialOnlyProviderBinding({ ...metadata, credentialKeys: [] }, expected),
+    ).toBe(false);
+    expect(
       matchesGatewayCredentialOnlyProviderBinding(
         { ...metadata, credentialKeys: ["TELEGRAM_BOT_TOKEN", "OTHER_TOKEN"] },
         expected,
