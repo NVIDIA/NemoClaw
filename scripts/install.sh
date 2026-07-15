@@ -2889,6 +2889,12 @@ validate_station_deepseek_override() {
   esac
 }
 
+preflight_explicit_express_flags() {
+  local platform
+  platform="$(detect_express_platform)"
+  validate_station_deepseek_override "$platform"
+}
+
 configure_station_express_model() {
   local selected_model
   selected_model="$(normalize_station_vllm_model "${NEMOCLAW_VLLM_MODEL:-}")"
@@ -3127,6 +3133,12 @@ main() {
   # Validate the gateway port before the banner, notice acceptance, downloads,
   # or any other installer side effect.
   resolve_nemoclaw_gateway_port >/dev/null
+
+  # Explicit express-only flags must fail before license state, Docker, build
+  # dependencies, or any other host mutation. maybe_offer_express_install
+  # repeats the same authoritative validation at the prompt boundary because
+  # it is also exercised directly by sourced-installer callers and tests.
+  preflight_explicit_express_flags
 
   print_banner
 

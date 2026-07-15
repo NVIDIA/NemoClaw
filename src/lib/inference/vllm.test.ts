@@ -92,6 +92,15 @@ function currentHostIdentity(): string | null {
   return uid === undefined || gid === undefined ? null : `${String(uid)}:${String(gid)}`;
 }
 
+function inconclusiveModelStorage(reason = "statfs unavailable") {
+  return {
+    ok: false as const,
+    reason,
+    path: path.join(os.homedir(), ".cache", "huggingface"),
+    source: "Hugging Face cache",
+  };
+}
+
 function mockDockerSpawnSuccess(): EventEmitter & {
   stdout: EventEmitter;
   stderr: EventEmitter;
@@ -875,6 +884,83 @@ describe("installVllm model resolution", () => {
     expect(errors).toContain("Non-interactive setup stops before the guarded download");
   });
 
+  it("fails closed before downloads when non-interactive model-cache capacity is inconclusive", async () => {
+    process.env.NEMOCLAW_VLLM_MODEL = "nemotron-3-ultra-550b-a55b";
+    const profile = detectVllmProfile({ platform: "station", type: "nvidia" })!;
+    mockSuccessfulVllmInstall(profile.containerName);
+    mocks.probeHostStorage.mockReturnValue(inconclusiveModelStorage());
+    const result = await installVllm(profile, {
+      hasImage: false,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+    expect(result).toEqual({ ok: false });
+    expect(mocks.probeHostStorage).toHaveBeenCalledTimes(1);
+    expect(mocks.dockerImageInspectFormat).not.toHaveBeenCalled();
+    expect(mocks.probeDockerStorage).not.toHaveBeenCalled();
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(mocks.dockerSpawn).not.toHaveBeenCalled();
+    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
+    expect(mkdirSpy).not.toHaveBeenCalled();
+    const errors = errSpy.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
+    expect(errors).toContain("Unable to verify storage for the managed vLLM model cache");
+    expect(errors).toContain("statfs unavailable");
+    expect(errors).toContain("Non-interactive setup stops before the guarded download");
+    expect(errors).toContain("NEMOCLAW_IGNORE_VLLM_DISK_SPACE=1");
+  });
+
+  it.each([
+    { reply: "y", expected: { ok: true }, pulls: 1, downloads: 1 },
+    { reply: "n", expected: { ok: false }, pulls: 0, downloads: 0 },
+    { reply: "", expected: { ok: false }, pulls: 0, downloads: 0 },
+  ])("requires an explicit interactive '$reply' for an inconclusive model-cache probe", async ({
+    reply,
+    expected,
+    pulls,
+    downloads,
+  }) => {
+    process.env.NEMOCLAW_VLLM_MODEL = "nemotron-3-ultra-550b-a55b";
+    const profile = detectVllmProfile({ platform: "station", type: "nvidia" })!;
+    mockSuccessfulVllmInstall(profile.containerName);
+    mocks.dockerImageInspectFormat.mockReturnValue("sha256:cached-image");
+    mocks.probeHostStorage.mockReturnValue(inconclusiveModelStorage());
+    const replies = ["y", reply];
+    const promptFn = vi.fn(async () => replies.shift() ?? "");
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: false,
+      promptFn,
+    });
+
+    expect(result).toEqual(expected);
+    expect(promptFn).toHaveBeenCalledTimes(2);
+    expect(promptFn).toHaveBeenLastCalledWith("  Continue with the model download anyway? [y/N]: ");
+    expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalledTimes(pulls);
+    expect(mocks.dockerSpawn).toHaveBeenCalledTimes(downloads);
+  });
+
+  it("allows an inconclusive model-cache probe only with the exact disk-space override", async () => {
+    process.env.NEMOCLAW_VLLM_MODEL = "nemotron-3-ultra-550b-a55b";
+    process.env.NEMOCLAW_IGNORE_VLLM_DISK_SPACE = "1";
+    const profile = detectVllmProfile({ platform: "station", type: "nvidia" })!;
+    mockSuccessfulVllmInstall(profile.containerName);
+    mocks.dockerImageInspectFormat.mockReturnValue("sha256:cached-image");
+    mocks.probeHostStorage.mockReturnValue(inconclusiveModelStorage());
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+    expect(result).toEqual({ ok: true });
+    expect(mocks.probeHostStorage).toHaveBeenCalledTimes(1);
+    expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalledTimes(1);
+    expect(mocks.dockerSpawn).toHaveBeenCalledTimes(1);
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Continuing because NEMOCLAW_IGNORE_VLLM_DISK_SPACE=1"),
+    );
+  });
+
   it("re-probes after a cold image pull to prevent shared-filesystem overcommit", async () => {
     process.env.NEMOCLAW_VLLM_MODEL = "nemotron-3-ultra-550b-a55b";
     const profile = detectVllmProfile({ platform: "station", type: "nvidia" })!;
@@ -913,6 +999,37 @@ describe("installVllm model resolution", () => {
     expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
     expect(errSpy).toHaveBeenCalledWith(
       expect.stringContaining("Insufficient storage for the managed vLLM model cache"),
+    );
+  });
+
+  it("stops when the post-pull model-cache capacity re-probe is inconclusive", async () => {
+    process.env.NEMOCLAW_VLLM_MODEL = "nemotron-3-ultra-550b-a55b";
+    const profile = detectVllmProfile({ platform: "station", type: "nvidia" })!;
+    mockSuccessfulVllmInstall(profile.containerName);
+    mocks.probeHostStorage
+      .mockReturnValueOnce({
+        ok: true,
+        capacity: {
+          availableBytes: 1_000_000_000_000n,
+          path: path.join(os.homedir(), ".cache", "huggingface"),
+          source: "Hugging Face cache",
+        },
+      })
+      .mockReturnValueOnce(inconclusiveModelStorage("statfs unavailable after image pull"));
+
+    const result = await installVllm(profile, {
+      hasImage: false,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(mocks.probeHostStorage).toHaveBeenCalledTimes(2);
+    expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalledTimes(1);
+    expect(mocks.dockerSpawn).not.toHaveBeenCalled();
+    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Unable to verify storage for the managed vLLM model cache"),
     );
   });
 

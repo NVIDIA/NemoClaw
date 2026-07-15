@@ -886,10 +886,6 @@ async function modelStorageAccepted(
   const requiredBytes = modelStorageRequirementBytes(Number(remainingBytes));
   if (probe.ok && probe.capacity.availableBytes >= requiredBytes) return true;
   printModelStorageWarning(model, probe, requiredBytes, cachedBytes, snapshotBytes);
-  if (!probe.ok) {
-    console.error("  Continuing because model-cache capacity could not be verified.");
-    return true;
-  }
   if (env[VLLM_STORAGE_OVERRIDE_ENV] === "1") {
     console.error(`  Continuing because ${VLLM_STORAGE_OVERRIDE_ENV}=1.`);
     return true;

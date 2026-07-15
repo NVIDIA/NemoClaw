@@ -288,6 +288,75 @@ detect_express_platform
   });
 
   it.each([
+    {
+      name: "a Station-only flag on DGX Spark",
+      args: ["--station-deepseek"],
+      platform: "DGX Spark",
+      env: {},
+      message: /--station-deepseek requires a detected DGX Station \(detected: DGX Spark\)/,
+    },
+    {
+      name: "a conflicting non-interactive flag",
+      args: ["--station-deepseek", "--non-interactive"],
+      platform: "DGX Station",
+      env: {},
+      message:
+        /--station-deepseek selects the DGX Station express prompt and cannot be combined with --non-interactive/,
+    },
+    {
+      name: "a conflicting Station model",
+      args: ["--station-deepseek"],
+      platform: "DGX Station",
+      env: { NEMOCLAW_VLLM_MODEL: "nemotron-3-ultra-550b-a55b" },
+      message: /--station-deepseek conflicts with NEMOCLAW_VLLM_MODEL='nemotron-3-ultra-550b-a55b'/,
+    },
+  ])("rejects $name before Docker or build-dependency mutation", ({
+    args,
+    platform,
+    env,
+    message,
+  }) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-flag-preflight-"));
+    const mutationLog = path.join(tmp, "host-mutations.log");
+    const result = spawnSync(
+      "bash",
+      [
+        "--noprofile",
+        "--norc",
+        "-c",
+        `
+source "$INSTALLER_UNDER_TEST" >/dev/null
+detect_express_platform() { printf "%s" "$EXPRESS_PLATFORM"; }
+ensure_docker() { printf "ensure_docker\\n" >>"$MUTATION_LOG"; }
+ensure_openshell_build_deps() { printf "ensure_openshell_build_deps\\n" >>"$MUTATION_LOG"; }
+main "$@"
+`,
+        "_",
+        ...args,
+      ],
+      {
+        cwd: tmp,
+        encoding: "utf-8",
+        env: {
+          HOME: tmp,
+          PATH: TEST_SYSTEM_PATH,
+          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+          MUTATION_LOG: mutationLog,
+          EXPRESS_PLATFORM: platform,
+          ...env,
+        },
+      },
+    );
+    const output = `${result.stdout}${result.stderr}`;
+    const mutations = fs.existsSync(mutationLog) ? fs.readFileSync(mutationLog, "utf-8") : "";
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toMatch(message);
+    expect(mutations).toBe("");
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it.each([
     ["NEMOCLAW_NO_EXPRESS", "1", /cannot be combined with NEMOCLAW_NO_EXPRESS=1/],
     ["NON_INTERACTIVE", "1", /cannot be combined with --non-interactive/],
     ["NEMOCLAW_PROVIDER", "install-vllm", /conflicts with NEMOCLAW_PROVIDER=install-vllm/],

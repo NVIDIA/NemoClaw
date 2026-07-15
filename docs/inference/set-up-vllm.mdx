@@ -111,7 +111,8 @@ NemoClaw treats `/var/run/docker.sock` and `/run/docker.sock` as the local defau
 It cannot inspect daemon storage through a remote endpoint, a named non-default Docker context, or another Unix socket.
 When both `DOCKER_CONTEXT` and `DOCKER_HOST` are set, NemoClaw follows Docker CLI precedence and uses `DOCKER_CONTEXT`.
 Before a registered model with pinned size metadata is downloaded, NemoClaw also checks the filesystem that contains the host Hugging Face cache.
-When either check is inconclusive, NemoClaw prints the reason, approximate requirement, and diagnostic commands, then continues without claiming that capacity is sufficient.
+When a Docker image-storage check is inconclusive, NemoClaw prints the reason, approximate requirement, and diagnostic commands, then continues without claiming that capacity is sufficient.
+An inconclusive model-cache check is guarded like an insufficient result because a registered model download can be hundreds of gigabytes: interactive setup requires explicit confirmation, and non-interactive setup stops unless the disk-space override is set.
 
 When verified capacity is insufficient, the warning identifies the image, available capacity, approximate requirement, checked path and source, remediation, and diagnostic commands.
 Interactive setup continues only when you enter `y` or `yes` explicitly.
@@ -119,10 +120,11 @@ Pressing **Enter**, entering `n` or `no`, or entering any other response stops b
 
 <Warning>
 `--yes` and `NEMOCLAW_YES=1` do not accept a verified insufficient-storage warning.
-Non-interactive setup stops unless you set `NEMOCLAW_IGNORE_VLLM_DISK_SPACE=1` exactly.
-The override applies only when NemoClaw verifies that Docker image storage or model-cache storage is insufficient.
+They also do not accept an inconclusive model-cache warning.
+Non-interactive setup stops for verified insufficient capacity or inconclusive model-cache capacity unless you set `NEMOCLAW_IGNORE_VLLM_DISK_SPACE=1` exactly.
+The override applies when NemoClaw verifies that Docker image storage or model-cache storage is insufficient and when model-cache capacity cannot be verified.
 Use it only after you independently verify that the relevant filesystem can complete the download.
-Inconclusive checks continue automatically and do not require the override.
+An inconclusive Docker image-storage check retains its existing automatic-continue behavior and does not require the override.
 </Warning>
 
 <Note>
