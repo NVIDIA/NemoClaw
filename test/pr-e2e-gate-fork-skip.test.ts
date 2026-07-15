@@ -854,11 +854,11 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
             (request) => {
               const body = request.body as Record<string, unknown>;
               const title = (body.output as { title?: string } | undefined)?.title;
-              if (title === "Running 3 E2E jobs") {
-                return githubResponse({ message: "simulated update failure" }, 500);
-              }
-              check = { ...check, ...body };
-              return githubResponse({});
+              const updateFails = title === "Running 3 E2E jobs";
+              check = updateFails ? check : { ...check, ...body };
+              return updateFails
+                ? githubResponse({ message: "simulated update failure" }, 500)
+                : githubResponse({});
             },
           ),
           githubFetchRoute(
