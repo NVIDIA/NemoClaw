@@ -84,17 +84,17 @@ describe("native PR E2E required job", () => {
     expect(result.stderr).not.toContain("ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX");
   });
 
-  it("classifies authorization-required failures as pending", () => {
+  it("classifies fork-skip approval failures as pending", () => {
     expect(
       classifyCoordinationCheck(
         check("E2E / PR Gate", {
           conclusion: "failure",
-          output: { title: "Maintainer authorization required to run E2E" },
+          output: { title: "Maintainer approval required to skip credentialed E2E" },
         }),
       ),
     ).toEqual({
       state: "waiting",
-      description: "Maintainer authorization required to run E2E",
+      description: "Maintainer approval required to skip credentialed E2E",
     });
   });
 
@@ -147,8 +147,8 @@ describe("native PR E2E required job", () => {
     await expect(findCoordinationCheck(identity)).rejects.toThrow("unexpected GitHub App");
   });
 
-  it("waits through authorization and revalidates the exact PR before passing", async () => {
-    let legacyQueries = 0;
+  it("waits through pending authorization and running states before passing", async () => {
+    let coordinationQueries = 0;
     let clock = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter([
@@ -158,20 +158,23 @@ describe("native PR E2E required job", () => {
         ),
         githubFetchRoute(
           ({ url }) => url.includes("Coordination"),
-          () => githubResponse(listing([])),
-        ),
-        githubFetchRoute(
-          ({ url }) => url.includes("/check-runs") && !url.includes("Coordination"),
           () => {
-            legacyQueries += 1;
+            coordinationQueries += 1;
             return githubResponse(
               listing([
-                legacyQueries === 1
-                  ? check("E2E / PR Gate", {
-                      conclusion: "failure",
+                coordinationQueries === 1
+                  ? check(undefined, {
+                      status: "in_progress",
+                      conclusion: null,
                       output: { title: "Maintainer authorization required to run E2E" },
                     })
-                  : check("E2E / PR Gate"),
+                  : coordinationQueries === 2
+                    ? check(undefined, {
+                        status: "in_progress",
+                        conclusion: null,
+                        output: { title: "Running 3 E2E jobs" },
+                      })
+                    : check(),
               ]),
             );
           },
@@ -189,7 +192,7 @@ describe("native PR E2E required job", () => {
         },
       }),
     ).resolves.toMatchObject({ conclusion: "success" });
-    expect(legacyQueries).toBe(2);
+    expect(coordinationQueries).toBe(3);
   });
 
   it("fails closed when the PR head changes before a terminal verdict is accepted", async () => {
