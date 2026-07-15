@@ -628,4 +628,82 @@ const { setupNim } = require(${onboardPath});
       /NEMOCLAW_PROVIDER=install-vllm requested, but vLLM is already running on localhost:8000 — selecting the running instance\./,
     );
   });
+
+  it("rejects an existing DeepSeek server when Station express requires Ultra", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-ultra-mismatch-"));
+    const scriptPath = path.join(tmpDir, "station-ultra-mismatch-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
+    );
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+credentials.prompt = async () => {
+  throw new Error("Unexpected prompt in non-interactive Station express test");
+};
+credentials.ensureApiKey = async () => {
+  throw new Error("Unexpected ensureApiKey call in non-interactive Station express test");
+};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) {
+    return JSON.stringify({ data: [{ id: "deepseek-ai/DeepSeek-V4-Flash" }] });
+  }
+  if (cmd.includes("docker images")) return "";
+  return "";
+};
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  await setupNim({ type: "nvidia", platform: "station" }, null);
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "install-vllm",
+        NEMOCLAW_VLLM_MODEL: "nemotron-3-ultra-550b-a55b",
+        NEMOCLAW_MODEL: "nvidia/nemotron-3-ultra-550b-a55b",
+      },
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(
+      result.stdout,
+      /NEMOCLAW_PROVIDER=install-vllm requested, but vLLM is already running on localhost:8000 — selecting the running instance\./,
+    );
+    assert.match(
+      result.stderr,
+      /Detected vLLM model 'deepseek-ai\/DeepSeek-V4-Flash' does not match the shared gateway route 'nvidia\/nemotron-3-ultra-550b-a55b'\./,
+    );
+    assert.match(
+      result.stderr,
+      /To install 'nvidia\/nemotron-3-ultra-550b-a55b', stop the existing vLLM server on localhost:8000, then rerun the original install\/onboard command\./,
+    );
+    assert.match(
+      result.stderr,
+      /To keep 'deepseek-ai\/DeepSeek-V4-Flash' instead, start detailed setup:/,
+    );
+    assert.match(
+      result.stderr,
+      /unset NEMOCLAW_PROVIDER NEMOCLAW_MODEL NEMOCLAW_VLLM_MODEL\s+nemoclaw onboard --fresh\s+Then select Local vLLM when prompted\./,
+    );
+  });
 });

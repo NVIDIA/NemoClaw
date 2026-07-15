@@ -88,6 +88,20 @@ describe("setupNim vLLM route containment", () => {
 
     await expect(handler(selection)).rejects.toThrow("exit 1");
     expect(validate).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(
+      "  Detected vLLM model 'served/model' does not match the shared gateway route 'required/model'.",
+    );
+    expect(console.error).toHaveBeenCalledWith(
+      "  To install 'required/model', stop the existing vLLM server on localhost:8000, then rerun the original install/onboard command.",
+    );
+    expect(console.error).toHaveBeenCalledWith(
+      "  To keep 'served/model' instead, start detailed setup:",
+    );
+    expect(console.error).toHaveBeenCalledWith(
+      "    unset NEMOCLAW_PROVIDER NEMOCLAW_MODEL NEMOCLAW_VLLM_MODEL",
+    );
+    expect(console.error).toHaveBeenCalledWith("    nemoclaw onboard --fresh");
+    expect(console.error).toHaveBeenCalledWith("  Then select Local vLLM when prompted.");
   });
 
   it("warns on DGX Spark identified via GPU name (firmware-unknown GB10 host)", async () => {

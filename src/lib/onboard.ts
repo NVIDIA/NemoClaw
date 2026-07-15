@@ -4663,7 +4663,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       },
     });
 
-    await runFinalOnboardFlowSlice({
+    const finalFlowResult = await runFinalOnboardFlowSlice({
       context: finalFlowContext,
       runtime: onboardRuntimeBoundary.getRuntime(),
       phases: [branchSetupPhase, policiesPhase, finalizationPhase],
@@ -4678,7 +4678,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       },
     });
     completed = true;
-    traceCompleted = true;
+    traceCompleted = finalFlowResult.session.machine.state === "complete";
   } finally {
     releaseOnboardLock();
     onboardRuntimeBoundary.clear();
