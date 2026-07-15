@@ -26,7 +26,11 @@ describe("MCP workflow artifact boundary", () => {
         (step) => step.name === "Run MCP OpenShell provider live test",
       );
       requireFixture(run?.run, `${jobName} MCP live-test fixture is missing`);
-      run.run = run.run.replace(" --reporter=test/e2e/risk-signal-reporter.ts", "");
+      const reporter = "--reporter=test/e2e/risk-signal-reporter.ts";
+      requireFixture(run.run.includes(reporter), `${jobName} reporter fixture is missing`);
+      const updatedRun = run.run.replace(` ${reporter}`, "");
+      requireFixture(updatedRun !== run.run, `${jobName} reporter could not be removed`);
+      run.run = updatedRun;
       fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
       expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(

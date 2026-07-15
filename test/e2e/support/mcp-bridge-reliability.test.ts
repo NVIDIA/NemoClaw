@@ -8,12 +8,15 @@ import {
   retryAfterHermesRestartTransportFailure,
 } from "../live/mcp-bridge-reliability.ts";
 
-const HERMES_BROKEN_PIPE = `Error: code: 'Unknown error', message: "h2 protocol error: error reading a body
-from connection", source: hyper::Error(Body, Error { kind: Io(Custom
-{ kind: BrokenPipe, error: "stream closed because of a broken pipe" }) })`;
+const HERMES_BROKEN_PIPE = `\u001b[1m\u001b[32m✓\u001b[39m\u001b[0m Policy version 4 loaded
+  Error:   \u00d7 code: 'Unknown error', message: "h2 protocol error: error reading a body
+  \u2502 from connection", source: hyper::Error(Body, Error { kind: Io(Custom
+  \u2502 { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) })
+  \u251c\u2500\u25b6 error reading a body from connection
+  \u2570\u2500\u25b6 stream closed because of a broken pipe`;
 
 describe("MCP bridge transient classification", () => {
-  it("accepts only the Hermes managed-restart broken-pipe signature", () => {
+  it("accepts only the Hermes managed-restart broken-pipe signature (#6692)", () => {
     expect(isHermesRestartTransportFailure("hermes-config", HERMES_BROKEN_PIPE)).toBe(true);
     expect(isHermesRestartTransportFailure("mcporter", HERMES_BROKEN_PIPE)).toBe(false);
     expect(isHermesRestartTransportFailure("deepagents-config", HERMES_BROKEN_PIPE)).toBe(false);
@@ -21,6 +24,18 @@ describe("MCP bridge transient classification", () => {
     expect(isHermesRestartTransportFailure("hermes-config", "stream closed: broken pipe")).toBe(
       false,
     );
+    expect(
+      isHermesRestartTransportFailure(
+        "hermes-config",
+        HERMES_BROKEN_PIPE.replace("error reading a body from connection", "unrelated failure"),
+      ),
+    ).toBe(false);
+    expect(
+      isHermesRestartTransportFailure(
+        "hermes-config",
+        `${HERMES_BROKEN_PIPE}\nadditional failure after transport closed`,
+      ),
+    ).toBe(false);
   });
 
   it("keeps the original duplicate rejection without retrying", async () => {

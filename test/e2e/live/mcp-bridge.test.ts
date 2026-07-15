@@ -487,7 +487,7 @@ async function assertConcurrentAddSerialized(
         artifactName: `${options.artifactPrefix}-mcp-concurrent-add-after-restart-transport-failure`,
         env,
         redactionValues: [HOST_SECRET],
-        timeoutMs: 90_000,
+        timeoutMs: MCP_MUTATION_TIMEOUT_MS[options.expectedAdapter],
       }),
   });
   expectExitNonZero(

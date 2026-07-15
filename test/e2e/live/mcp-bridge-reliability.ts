@@ -1,11 +1,40 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const HERMES_RESTART_TRANSPORT_FAILURE =
-  /h2 protocol error: error reading a body[\s\S]*stream closed because of a broken pipe/iu;
+const ANSI_ESCAPE = /\u001b\[[0-9;]*m/gu;
+const HERMES_RESTART_TRANSPORT_FAILURE_SUFFIX = [
+  `Error: x code: 'Unknown error', message: "h2 protocol error: error reading a body`,
+  `| from connection", source: hyper::Error(Body, Error { kind: Io(Custom`,
+  `| { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) })`,
+  `|-> error reading a body from connection`,
+  `|-> stream closed because of a broken pipe`,
+].join("\n");
+
+function normalizeHermesTransportDiagnostic(diagnostic: string): string {
+  return diagnostic
+    .replace(ANSI_ESCAPE, "")
+    .replaceAll("\u00d7", "x")
+    .replaceAll("\u2502", "|")
+    .replaceAll("\u251c\u2500\u25b6", "|->")
+    .replaceAll("\u2570\u2500\u25b6", "|->")
+    .split(/\r?\n/u)
+    .map((line) => line.trim().replace(/\s+/gu, " "))
+    .filter(Boolean)
+    .join("\n");
+}
 
 export function isHermesRestartTransportFailure(adapter: string, diagnostic: string): boolean {
-  return adapter === "hermes-config" && HERMES_RESTART_TRANSPORT_FAILURE.test(diagnostic);
+  // The producer is OpenShell's sandbox-exec HTTP/2 stream while the packaged
+  // Hermes transaction helper performs its acknowledged SIGUSR1 gateway reload.
+  // NemoClaw cannot repair that transport from this E2E boundary. The live
+  // caller first proves one coherent committed bridge, then retries only the
+  // serialized loser and still requires the canonical duplicate rejection.
+  // Remove this classifier when OpenShell preserves command completion across
+  // that managed reload or returns a structured post-commit outcome (#6692).
+  return (
+    adapter === "hermes-config" &&
+    normalizeHermesTransportDiagnostic(diagnostic).endsWith(HERMES_RESTART_TRANSPORT_FAILURE_SUFFIX)
+  );
 }
 
 export async function retryAfterHermesRestartTransportFailure<T>(options: {
