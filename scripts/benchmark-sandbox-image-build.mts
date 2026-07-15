@@ -12,7 +12,7 @@ import {
   stageLegacySandboxBuildContext,
   stageOptimizedSandboxBuildContext,
   type StagedBuildContext,
-} from "../dist/lib/sandbox/build-context";
+} from "../dist/lib/sandbox/build-context.js";
 
 type Args = {
   currentRepo: string;

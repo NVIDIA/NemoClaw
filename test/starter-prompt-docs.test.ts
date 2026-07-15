@@ -14,7 +14,7 @@ import {
   renderStarterPromptSnippet,
   runStarterPromptGenerator,
   STARTER_PROMPT_GENERATED_PATH,
-} from "../scripts/generate-starter-prompt";
+} from "../scripts/generate-starter-prompt.mts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -473,9 +473,9 @@ describe("starter prompt docs CTA", () => {
     const scripts = (JSON.parse(read("package.json")) as { scripts: Record<string, string> })
       .scripts;
 
-    expect(scripts["docs:sync-starter-prompt"]).toBe("tsx scripts/generate-starter-prompt.ts");
+    expect(scripts["docs:sync-starter-prompt"]).toBe("tsx scripts/generate-starter-prompt.mts");
     expect(scripts["docs:prepare"]).toBe(
-      "npm run docs:sync-starter-prompt && tsx scripts/sync-agent-variant-docs.ts",
+      "npm run docs:sync-starter-prompt && tsx scripts/sync-agent-variant-docs.mts",
     );
     expect(scripts["docs:sync-agent-variants"]).toBe("npm run docs:prepare");
     expect(scripts["docs:validate"]).toContain("npm run docs:check-starter-prompt");
@@ -500,7 +500,7 @@ describe("starter prompt docs CTA", () => {
       ".github/workflows/docs-publish-staging.yaml",
     ]) {
       expect(read(workflowPath), `${workflowPath} runs when the generator changes`).toContain(
-        '- "scripts/generate-starter-prompt.ts"',
+        '- "scripts/generate-starter-prompt.mts"',
       );
     }
   });

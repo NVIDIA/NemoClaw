@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { spawnSyncMock } = vi.hoisted(() => ({
   spawnSyncMock: vi.fn(),
@@ -59,6 +59,8 @@ describe("share-command helpers", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    vi.resetModules();
   });
 
   it("builds the default mount directory under ~/.nemoclaw/mounts", () => {
@@ -73,6 +75,20 @@ describe("share-command helpers", () => {
         process.env.HOME = previousHome;
       }
     }
+  });
+
+  it("builds the default mount directory under the selected nondefault gateway root", async () => {
+    vi.stubEnv("HOME", "/home/tester");
+    vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "9123");
+    vi.resetModules();
+    const freshShareCommand = await import("./share-command");
+
+    expect(freshShareCommand.defaultShareMountDir("alpha")).toBe(
+      "/home/tester/.nemoclaw/gateways/9123/mounts/alpha",
+    );
+    expect(freshShareCommand.defaultShareMountDir("alpha")).not.toBe(
+      "/home/tester/.nemoclaw/mounts/alpha",
+    );
   });
 
   it("falls back to mount output when mountpoint is unavailable", () => {

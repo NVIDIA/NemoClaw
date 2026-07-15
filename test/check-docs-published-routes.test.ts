@@ -17,7 +17,7 @@ import {
   findMissingDirectLegacyManageSandboxRedirects,
   findMissingDirectLegacyReleaseNotesRedirects,
   resolvePublishedRoute,
-} from "../scripts/check-docs-published-routes.ts";
+} from "../scripts/check-docs-published-routes.mts";
 
 const navYaml = `
 navigation:

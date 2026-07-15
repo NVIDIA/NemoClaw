@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentDefinition } from "../agent/defs";
+import { MIN_HERMES_OLLAMA_CONTEXT_WINDOW } from "../inference/ollama-runtime-context";
 import type { VllmProfile } from "../inference/vllm";
 import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import { getWindowsHostOllamaDockerRequirement } from "./local-inference-topology";
@@ -410,6 +411,35 @@ describe("createSetupNim", () => {
       expect.objectContaining({ provider: "ollama-local", model: "conflict/model" }),
     );
     expect(detectInferenceProviderHostState).not.toHaveBeenCalled();
+  });
+
+  it("passes the Hermes Ollama context floor into local Ollama selection state (#6760)", async () => {
+    const handleRunningOllamaSelection = vi.fn<SetupNimFlowDeps["handleRunningOllamaSelection"]>(
+      async (_gpu, _requestedModel, _recoveredModel, _ollamaRunning, state) => {
+        expect(state.ollamaContextWindowFloor).toBe(MIN_HERMES_OLLAMA_CONTEXT_WINDOW);
+        state.model = "llama3.2:1b";
+        state.provider = "ollama-local";
+        state.endpointUrl = "http://127.0.0.1:11434/v1";
+        state.credentialEnv = null;
+        state.preferredInferenceApi = "openai-completions";
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "ollama",
+        getNonInteractiveModel: () => "llama3.2:1b",
+        detectInferenceProviderHostState: () =>
+          makeHostState({ hasOllama: true, ollamaHost: "127.0.0.1", ollamaRunning: true }),
+        handleRunningOllamaSelection,
+      }),
+    );
+
+    const result = await setupNim(null, null, { name: "hermes" } as AgentDefinition);
+
+    expect(result.provider).toBe("ollama-local");
+    expect(handleRunningOllamaSelection).toHaveBeenCalledTimes(1);
   });
 
   it("applies same-gateway discovery constraints before a provider probe (#6315)", async () => {

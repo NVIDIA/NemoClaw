@@ -11,6 +11,7 @@ import {
   evaluateE2eWorkflowDispatchSelectors,
   focusedE2eJobsForChangedFiles,
   readFreeStandingJobsInventory,
+  validateE2eWorkflow,
   validateE2eWorkflowBoundary,
   validateFreeStandingWorkflowInventory,
 } from "../../../tools/e2e/workflow-boundary.mts";
@@ -34,6 +35,28 @@ describe("e2e workflow boundary", () => {
 
   it("keeps the live E2E target workflow scheduled, dispatchable, pinned, and artifact-safe", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
+  });
+
+  it("requires unknown inference modes to be rejected before planning", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { steps?: Array<{ name?: string; run?: string }> }>;
+    };
+    const generate = workflow.jobs["generate-matrix"]?.steps?.find(
+      (step) => step.name === "Generate E2E target matrix",
+    );
+    const generateRun =
+      generate?.run ??
+      (() => {
+        throw new Error("workflow missing Generate E2E target matrix script");
+      })();
+    generate!.run = generateRun.replace(
+      "Invalid inference_mode: ${INFERENCE_MODE}",
+      "Unsupported inference mode",
+    );
+
+    expect(validateE2eWorkflow(workflow)).toContain(
+      "step 'Generate E2E target matrix' run script must include Invalid inference_mode: ${INFERENCE_MODE}",
+    );
   });
 
   type RebuildWorkflowStep = {

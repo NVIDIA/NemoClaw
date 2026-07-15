@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildPublishedRouteIndex,
   resolvePageLinksByText,
-} from "../scripts/check-docs-published-routes.ts";
+} from "../scripts/check-docs-published-routes.mts";
 import { loadAgent, resolveAgentNameAlias } from "../src/lib/agent/defs";
 
 const SCRIPT_PATH = path.join(import.meta.dirname, "..", "scripts", "generate-platform-docs.py");

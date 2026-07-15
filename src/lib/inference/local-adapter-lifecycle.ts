@@ -1,14 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 
+import { GATEWAY_PORT } from "../core/ports";
 import { waitUntilAsync } from "../core/wait";
+import { rejectSymlinksOnPath } from "../state/config-io";
+import { nemoclawStateRoot } from "../state/state-root";
 
 export type JsonObject = Record<string, unknown>;
 
@@ -22,20 +25,21 @@ export type RunFn = (
   options?: { ignoreError?: boolean; suppressOutput?: boolean },
 ) => unknown;
 
-export const DEFAULT_LOCAL_ADAPTER_STATE_DIR = path.join(os.homedir(), ".nemoclaw");
+export const DEFAULT_LOCAL_ADAPTER_STATE_DIR = nemoclawStateRoot(os.homedir(), GATEWAY_PORT);
 
 export function ensureLocalAdapterStateDir(stateDir = DEFAULT_LOCAL_ADAPTER_STATE_DIR): void {
+  rejectSymlinksOnPath(stateDir);
   if (!fs.existsSync(stateDir)) {
     fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   }
+  rejectSymlinksOnPath(stateDir);
   // Tighten permissions in case the directory was created with a lax umask.
-  try {
-    const stat = fs.statSync(stateDir);
-    if ((stat.mode & 0o077) !== 0) {
-      fs.chmodSync(stateDir, 0o700);
-    }
-  } catch {
-    // Best effort — stat/chmod may fail on non-POSIX or read-only fs.
+  const stat = fs.lstatSync(stateDir);
+  if (!stat.isDirectory()) {
+    throw new Error(`Refusing to use local adapter state path: ${stateDir} is not a directory`);
+  }
+  if ((stat.mode & 0o077) !== 0) {
+    fs.chmodSync(stateDir, 0o700);
   }
 }
 
@@ -43,10 +47,41 @@ function ensureParentDir(filePath: string): void {
   ensureLocalAdapterStateDir(path.dirname(filePath));
 }
 
-export function writeLocalAdapterSecretFile(filePath: string, value: string): void {
+function writePrivateLocalAdapterFile(filePath: string, value: string, append = false): void {
   ensureParentDir(filePath);
-  fs.writeFileSync(filePath, `${value}\n`, { mode: 0o600 });
-  fs.chmodSync(filePath, 0o600);
+
+  const noFollow = fs.constants.O_NOFOLLOW ?? 0;
+  if (noFollow === 0) {
+    try {
+      if (fs.lstatSync(filePath).isSymbolicLink()) {
+        throw new Error(`Refusing to write local adapter state through symbolic link: ${filePath}`);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+
+  const flags =
+    fs.constants.O_WRONLY |
+    fs.constants.O_CREAT |
+    (append ? fs.constants.O_APPEND : fs.constants.O_TRUNC) |
+    noFollow |
+    (fs.constants.O_NONBLOCK ?? 0);
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(filePath, flags, 0o600);
+    if (!fs.fstatSync(fd).isFile()) {
+      throw new Error(`Refusing to write local adapter state to non-file path: ${filePath}`);
+    }
+    fs.fchmodSync(fd, 0o600);
+    fs.writeFileSync(fd, value, "utf8");
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
+export function writeLocalAdapterSecretFile(filePath: string, value: string): void {
+  writePrivateLocalAdapterFile(filePath, `${value}\n`);
 }
 
 export function readLocalAdapterTextFile(filePath: string): string | null {
@@ -59,15 +94,11 @@ export function readLocalAdapterTextFile(filePath: string): string | null {
 }
 
 export function writeLocalAdapterJsonFile(filePath: string, value: unknown): void {
-  ensureParentDir(filePath);
-  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
-  fs.chmodSync(filePath, 0o600);
+  writePrivateLocalAdapterFile(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 export function appendLocalAdapterJsonLine(filePath: string, value: unknown): void {
-  ensureParentDir(filePath);
-  fs.appendFileSync(filePath, `${JSON.stringify(value)}\n`, { mode: 0o600 });
-  fs.chmodSync(filePath, 0o600);
+  writePrivateLocalAdapterFile(filePath, `${JSON.stringify(value)}\n`, true);
 }
 
 export function readLocalAdapterJsonFile(filePath: string): JsonObject | null {

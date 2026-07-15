@@ -135,7 +135,7 @@ Downstream consumers can pin the source with a raw URL such as
 `https://raw.githubusercontent.com/NVIDIA/NemoClaw/<commit-sha>/docs/resources/starter-prompt.md`.
 The Markdown SPDX comment is part of that raw file but does not appear when Markdown is rendered.
 
-The `scripts/generate-starter-prompt.ts` script removes the Markdown SPDX preamble and writes `docs/_build/StarterPrompt.generated.mdx`.
+The `scripts/generate-starter-prompt.mts` script removes the Markdown SPDX preamble and writes `docs/_build/StarterPrompt.generated.mdx`.
 The generated snippet wraps the prompt in Fern's native visible `Prompt` component, which displays the prompt body and supplies the copy button.
 The generated file is ignored by Git and is recreated by the docs build.
 
@@ -157,7 +157,7 @@ The normal `npm run docs`, `npm run docs:live`, agent-variant sync, preview-watc
 ## Agent Variant Generation
 
 Some Fern pages appear in the OpenClaw, Hermes, and Deep Agents guide variants.
-The `scripts/sync-agent-variant-docs.ts` script reads `docs/index.yml` and renders variant-specific copies for every page that appears in multiple guide variants before Fern validates or publishes the site.
+The `scripts/sync-agent-variant-docs.mts` script reads `docs/index.yml` and renders variant-specific copies for every page that appears in multiple guide variants before Fern validates or publishes the site.
 The source pages stay in their normal `docs/` locations, and generated pages are written under `docs/_build/agent-variants/`, which is ignored by Git.
 Navigation in `docs/index.yml` points Fern at generated pages for shared entries so Fern still renders normal fenced code blocks with copy buttons and syntax highlighting.
 OpenClaw-only, Hermes-only, or Deep Agents-only pages stay as source pages in navigation.

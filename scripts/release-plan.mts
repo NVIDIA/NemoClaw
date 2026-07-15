@@ -92,7 +92,7 @@ function parseArgs(argv: string[]): Options {
 
 function printHelp(): void {
   console.log(
-    `Usage: tsx scripts/release-plan.ts [--bump patch|minor|major] [--output PATH]\n\nCreates a deterministic tag-only release plan for origin/main.`,
+    `Usage: tsx scripts/release-plan.mts [--bump patch|minor|major] [--output PATH]\n\nCreates a deterministic tag-only release plan for origin/main.`,
   );
 }
 

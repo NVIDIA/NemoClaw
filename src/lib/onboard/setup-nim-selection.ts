@@ -12,6 +12,17 @@ export { createNvidiaFeaturedModelSession } from "./nvidia-featured-model-select
 
 export type SetupNimSelectionBackNavigation = Readonly<{ kind: "NEMOCLAW_BACK_TO_SELECTION" }>;
 
+/** Defaults passed into Ollama model selection and runtime context adoption. */
+export type OllamaModelSelectionDefaults = {
+  requestedModel: string | null;
+  recoveredModel: string | null;
+  lockedModel?: string | null;
+  /** Minimum runtime context window required by the selected agent. */
+  contextWindowFloor?: number;
+  /** Interactive prompt default from provider/model environment variables. */
+  promptDefaultModel?: string | null;
+};
+
 export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
   model: string | SetupNimSelectionBackNavigation | null;
   provider: string;
@@ -23,6 +34,8 @@ export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
   compatibleEndpointReasoning?: string | null;
   nimContainer: string | null;
   allowToolsIncompatible: boolean;
+  /** Minimum Ollama daemon context length to request for this agent. */
+  ollamaContextWindowFloor?: number;
   skipHostInferenceSmoke?: boolean;
   /** Public addresses approved for the selected custom endpoint. */
   endpointPinnedAddresses?: string[];

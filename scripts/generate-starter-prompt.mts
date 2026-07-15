@@ -13,7 +13,7 @@ export const STARTER_PROMPT_GENERATED_PATH = "docs/_build/StarterPrompt.generate
 const MARKDOWN_SPDX_HEADER =
   /^<!--\n  SPDX-FileCopyrightText: [^\n]+\n  SPDX-License-Identifier: Apache-2\.0\n-->\n\n/;
 const GENERATED_NOTICE =
-  "Generated from docs/resources/starter-prompt.md by scripts/generate-starter-prompt.ts. Do not edit.";
+  "Generated from docs/resources/starter-prompt.md by scripts/generate-starter-prompt.mts. Do not edit.";
 
 export function extractStarterPromptMarkdown(source: string, relativePath: string): string {
   if (source.includes("\r")) {

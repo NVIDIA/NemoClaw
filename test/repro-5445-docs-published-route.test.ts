@@ -19,7 +19,7 @@ import {
   findBrokenPublishedRoutes,
   resolvePageLinkByText,
   resolvePublishedRoute,
-} from "../scripts/check-docs-published-routes.ts";
+} from "../scripts/check-docs-published-routes.mts";
 
 const COMMANDS_SOURCE = "reference/commands.mdx";
 const CORRECT_ROUTE = "/user-guide/openclaw/manage-sandboxes/install-openclaw-plugins";
