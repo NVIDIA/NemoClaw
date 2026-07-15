@@ -363,7 +363,7 @@ export function registerRebuildFlowRecoveryTests(): void {
         },
       );
       expect(harness.errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining("onboard --resume --tool-disclosure direct"),
+        expect.stringContaining("onboard --resume --name alpha --tool-disclosure direct"),
       );
     });
 

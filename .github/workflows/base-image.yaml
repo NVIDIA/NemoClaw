@@ -27,8 +27,12 @@ on:
       - "agents/langchain-deepagents-code/Dockerfile.base"
       - "agents/langchain-deepagents-code/manifest.yaml"
       - "agents/langchain-deepagents-code/requirements.lock"
+      - "agents/openclaw/mcporter-runtime/package.json"
+      - "agents/openclaw/mcporter-runtime/package-lock.json"
       # Dockerfile.base validates min_openclaw_version from this file at build time.
       - "nemoclaw-blueprint/blueprint.yaml"
+      - "scripts/lib/reviewed-npm-archive.mts"
+      - "scripts/lib/sandbox-rlimits.sh"
   workflow_dispatch:
     inputs:
       openclaw_version:
@@ -123,8 +127,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
           build-args: ${{ steps.production-build-args.outputs.openclaw_build_arg }}
 
   build-and-push-hermes:
@@ -172,8 +176,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/nvidia/nemoclaw/hermes-sandbox-base:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/nvidia/nemoclaw/hermes-sandbox-base:buildcache,mode=max
 
   build-and-push-langchain-deepagents-code:
     if: github.repository == 'NVIDIA/NemoClaw'
@@ -220,5 +224,5 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:buildcache,mode=max

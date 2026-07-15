@@ -172,6 +172,7 @@ The following settings control non-interactive selection:
 |---|---|
 | `NEMOCLAW_PROVIDER` | Set to `ollama`. |
 | `NEMOCLAW_MODEL` | Optional Ollama model tag. |
+| `NEMOCLAW_PROVIDER_MODEL` | Compatibility fallback for the NVIDIA QA non-interactive Ollama invocation tracked in [#6869](https://github.com/NVIDIA/NemoClaw/issues/6869). Ignored when `NEMOCLAW_MODEL` is set; remove after that workflow migrates to `NEMOCLAW_MODEL`. |
 | `NEMOCLAW_YES` | Optional model download authorization when set to `1`. |
 
 Under `--non-interactive`, include `--yes` or set `NEMOCLAW_YES=1` to authorize a model download.
@@ -179,7 +180,9 @@ Onboarding exits when a download requires confirmation and the run cannot prompt
 
 ## Understand Model Selection
 
-When `NEMOCLAW_MODEL` is unset, NemoClaw selects a starter model based on currently available memory.
+When `NEMOCLAW_MODEL` and the `NEMOCLAW_PROVIDER_MODEL` compatibility fallback are unset, NemoClaw selects a starter model based on currently available memory.
+During interactive onboarding, if the requested model env contains a safe model tag that appears in the current Ollama menu, NemoClaw uses that menu entry as the default.
+If the tag is absent from the rendered installed or starter list, the normal memory-based default remains.
 If a known bootstrap model does not fit, NemoClaw warns and falls back to the largest known model that does fit.
 Unknown or custom tags pass through to the Ollama runner for validation.
 

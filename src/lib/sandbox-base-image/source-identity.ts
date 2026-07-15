@@ -7,7 +7,14 @@ import path from "node:path";
 
 import { ROOT } from "../runner";
 
-export const BASE_IMAGE_INPUT_PATHS = ["Dockerfile.base", "nemoclaw-blueprint/blueprint.yaml"];
+export const BASE_IMAGE_INPUT_PATHS = [
+  "Dockerfile.base",
+  "nemoclaw-blueprint/blueprint.yaml",
+  "scripts/lib/sandbox-rlimits.sh",
+  "agents/openclaw/mcporter-runtime/package.json",
+  "agents/openclaw/mcporter-runtime/package-lock.json",
+  "scripts/lib/reviewed-npm-archive.mts",
+];
 
 export function normalizeBaseImageInputPaths(rootDir: string, paths: string[] = []): string[] {
   const absoluteRootDir = path.resolve(rootDir);

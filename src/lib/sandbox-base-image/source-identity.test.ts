@@ -135,7 +135,15 @@ describe("sandbox base-image source identity", () => {
         "Dockerfile.base",
         "../outside/Dockerfile.base",
       ]),
-    ).toEqual(["Dockerfile.base", "nemoclaw-blueprint/blueprint.yaml", agentDockerfile]);
+    ).toEqual([
+      "Dockerfile.base",
+      "nemoclaw-blueprint/blueprint.yaml",
+      "scripts/lib/sandbox-rlimits.sh",
+      "agents/openclaw/mcporter-runtime/package.json",
+      "agents/openclaw/mcporter-runtime/package-lock.json",
+      "scripts/lib/reviewed-npm-archive.mts",
+      agentDockerfile,
+    ]);
   });
 
   it("builds deterministic local tags from a source SHA and falls back without one", () => {

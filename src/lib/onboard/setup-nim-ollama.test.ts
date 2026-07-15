@@ -80,6 +80,7 @@ describe("createSetupNimOllamaHandlers", () => {
         },
         selectAndValidateOllamaModel: async (_gpu, _provider, args, onModelSelected) => {
           expect(args.lockedModel).toBe("required/model");
+          expect(args.promptDefaultModel).toBeNull();
           events.push("prepare-model");
           onModelSelected?.("required/model");
           return { outcome: "selected", model: "required/model", allowToolsIncompatible: false };
@@ -95,6 +96,60 @@ describe("createSetupNimOllamaHandlers", () => {
       "prepare-model",
       "guard:required/model",
     ]);
+  });
+
+  it("passes NEMOCLAW_MODEL as the interactive Ollama prompt default", async () => {
+    const state = makeState();
+    const selectModel = vi.fn(async (_gpu, _provider, args) => {
+      expect(args.requestedModel).toBeNull();
+      expect(args.lockedModel).toBeNull();
+      expect(args.promptDefaultModel).toBe("qwen3.6:35b");
+      return { outcome: "selected" as const, model: "qwen3.6:35b", allowToolsIncompatible: false };
+    });
+    const { handleRunningOllamaSelection } = createSetupNimOllamaHandlers(
+      makeDeps({
+        isNonInteractive: () => false,
+        process: {
+          ...process,
+          env: { ...process.env, NEMOCLAW_MODEL: "qwen3.6:35b" },
+        } as NodeJS.Process,
+        selectAndValidateOllamaModel: selectModel,
+      }),
+    );
+
+    const result = await handleRunningOllamaSelection(null, null, null, true, state);
+
+    expect(result).toBe("selected");
+    expect(selectModel).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes NEMOCLAW_PROVIDER_MODEL as the interactive Ollama prompt default fallback", async () => {
+    const state = makeState();
+    const selectModel = vi.fn(async (_gpu, _provider, args) => {
+      expect(args.requestedModel).toBeNull();
+      expect(args.lockedModel).toBeNull();
+      expect(args.promptDefaultModel).toBe("qwen3.6:35b");
+      return { outcome: "selected" as const, model: "qwen3.6:35b", allowToolsIncompatible: false };
+    });
+    const { handleRunningOllamaSelection } = createSetupNimOllamaHandlers(
+      makeDeps({
+        isNonInteractive: () => false,
+        process: {
+          ...process,
+          env: {
+            ...process.env,
+            NEMOCLAW_MODEL: undefined,
+            NEMOCLAW_PROVIDER_MODEL: "qwen3.6:35b",
+          },
+        } as NodeJS.Process,
+        selectAndValidateOllamaModel: selectModel,
+      }),
+    );
+
+    const result = await handleRunningOllamaSelection(null, null, null, true, state);
+
+    expect(result).toBe("selected");
+    expect(selectModel).toHaveBeenCalledTimes(1);
   });
 
   it("does not install Ollama when shared-gateway preflight rejects", async () => {
