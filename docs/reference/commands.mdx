@@ -477,23 +477,6 @@ For scripted installer runs, pass explicit acceptance to the `bash` side of the 
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash
 ```
 
-On a detected DGX Station, the installer also accepts these mutually exclusive express-install selections:
-
-| Installer flag | Effect |
-|---|---|
-| `--station-deepseek` | Select DeepSeek V4 Flash while retaining the Station express flow. |
-| `--station-experimental-single-user` | Explicitly opt in to the reclaimed-v1/offload90 Nemotron Ultra profile. The canonical Station recipe remains the default when this flag is absent. |
-
-Pass installer arguments after `bash -s --`:
-
-```bash
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --station-experimental-single-user
-```
-
-The experimental flag requires the exact qualified local Docker image ID `sha256:e44830d3f0197850e5a63ca895b13a047f358ff4aea15b1655abf61391bb883e` to be preloaded.
-No pullable repository manifest is currently proven for that image, so fresh installs fail closed instead of substituting another vLLM runtime.
-Refer to [Set Up vLLM](../inference/local-inference/set-up-vllm#opt-in-to-the-experimental-single-user-station-profile) for the exact runtime contract and image check.
-
 If the installer cannot prompt for the notice in a terminal and no explicit acceptance is set, it exits before installing Node.js or the NemoClaw CLI.
 
 <AgentOnly variant="openclaw">
