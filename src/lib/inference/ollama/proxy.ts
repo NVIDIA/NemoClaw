@@ -16,6 +16,7 @@ const { isNonInteractiveEnv }: typeof import("../../core/non-interactive") =
 const { waitForPort } = require("../../core/wait");
 const { ensurePulledOllamaModel }: typeof import("./model-discovery") =
   require("./model-discovery");
+const { ollamaModelRefsMatch }: typeof import("./model-discovery") = require("./model-discovery");
 const {
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
@@ -491,7 +492,7 @@ function probeOllamaAuthProxyHealth(): { ok: boolean; endpoint: string; detail: 
 
 async function promptOllamaModel(
   gpu: GpuInfo | null = null,
-  promptOptions: { excludeModels?: ReadonlySet<string> } = {},
+  promptOptions: { defaultModel?: string | null; excludeModels?: ReadonlySet<string> } = {},
 ) {
   const excludeModels = promptOptions.excludeModels;
   const isExcluded = (tag: string): boolean =>
@@ -510,11 +511,21 @@ async function promptOllamaModel(
   const usingInstalled = installedFitting.length > 0;
   const bootstrap = getBootstrapOllamaModelOptions(gpu).filter((tag: string) => !isExcluded(tag));
   const options = usingInstalled ? installedFitting : bootstrap;
+  const requestedDefaultModel =
+    typeof promptOptions.defaultModel === "string" ? promptOptions.defaultModel.trim() : "";
+  const requestedDefaultOption = requestedDefaultModel
+    ? options.find((option: string) => ollamaModelRefsMatch(option, requestedDefaultModel))
+    : undefined;
   const defaultModelCandidate = getDefaultOllamaModel(gpu);
-  const defaultModel = isExcluded(defaultModelCandidate)
-    ? (options[0] ?? defaultModelCandidate)
-    : defaultModelCandidate;
-  const defaultIndex = Math.max(0, options.indexOf(defaultModel));
+  const defaultModel =
+    requestedDefaultOption ??
+    (isExcluded(defaultModelCandidate)
+      ? (options[0] ?? defaultModelCandidate)
+      : defaultModelCandidate);
+  const defaultIndex = Math.max(
+    0,
+    options.findIndex((option: string) => ollamaModelRefsMatch(option, defaultModel)),
+  );
 
   console.log("");
   console.log(usingInstalled ? "  Ollama models:" : "  Ollama starter models:");

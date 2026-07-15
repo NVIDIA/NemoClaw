@@ -194,6 +194,7 @@ describe("hosted inference E2E config", () => {
     const env = buildAvailabilityProbeEnv({
       HOME: "/tmp/home",
       PATH: "/usr/bin",
+      BUILDX_BUILDER: "external-builder",
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
       NEMOCLAW_OPENSHELL_CHANNEL: "dev",
       NVIDIA_INFERENCE_API_KEY: "repo-hosted-key",
@@ -204,20 +205,7 @@ describe("hosted inference E2E config", () => {
     expect(env.NEMOCLAW_OPENSHELL_CHANNEL).toBe("dev");
     expect(env).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
     expect(env).not.toHaveProperty("RANDOM_NON_SECRET");
-  });
-
-  it("preserves a selected Buildx builder without widening the fixture environment", () => {
-    const env = buildAvailabilityProbeEnv({
-      HOME: "/tmp/home",
-      PATH: "/usr/bin",
-      BUILDX_BUILDER: "e2e-cache-builder",
-      GITHUB_TOKEN: "must-not-reach-child",
-      RANDOM_NON_SECRET: "not-allowlisted",
-    });
-
-    expect(env.BUILDX_BUILDER).toBe("e2e-cache-builder");
-    expect(env).not.toHaveProperty("GITHUB_TOKEN");
-    expect(env).not.toHaveProperty("RANDOM_NON_SECRET");
+    expect(env).not.toHaveProperty("BUILDX_BUILDER");
   });
 
   it("builds provider reachability probes only from trusted endpoints", async () => {

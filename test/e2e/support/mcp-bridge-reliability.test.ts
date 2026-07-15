@@ -8,7 +8,15 @@ import {
   retryAfterHermesRestartTransportFailure,
 } from "../live/mcp-bridge-reliability.ts";
 
-const HERMES_BROKEN_PIPE = `\u001b[1m\u001b[32m✓\u001b[39m\u001b[0m Policy version 4 loaded
+const HERMES_BROKEN_PIPE = `  Widening sandbox egress — adding: fixture.trycloudflare.com
+  Applied preset: mcp-bridge-concurrent
+  Narrowing sandbox egress — removing: fixture.trycloudflare.com
+  Removed preset: mcp-bridge-concurrent
+\u001b[1m\u001b[32m✓\u001b[39m\u001b[0m Policy version 3 submitted (hash: abcdef0123)
+\u001b[1m\u001b[32m✓\u001b[39m\u001b[0m Policy version 3 loaded (active version: 3)
+  Preset not found: mcp-bridge-concurrent
+\u001b[1m\u001b[32m✓\u001b[39m\u001b[0m Policy version 4 submitted (hash: 0123abcdef)
+\u001b[1m\u001b[32m✓\u001b[39m\u001b[0m Policy version 4 loaded (active version: 4)
   Error:   \u00d7 code: 'Unknown error', message: "h2 protocol error: error reading a body
   \u2502 from connection", source: hyper::Error(Body, Error { kind: Io(Custom
   \u2502 { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) })
@@ -28,6 +36,12 @@ describe("MCP bridge transient classification", () => {
       isHermesRestartTransportFailure(
         "hermes-config",
         HERMES_BROKEN_PIPE.replace("error reading a body from connection", "unrelated failure"),
+      ),
+    ).toBe(false);
+    expect(
+      isHermesRestartTransportFailure(
+        "hermes-config",
+        `unexpected diagnostic before retry evidence\n${HERMES_BROKEN_PIPE}`,
       ),
     ).toBe(false);
     expect(

@@ -2,9 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { lookup as dnsLookup } from "node:dns/promises";
-import { isIP } from "node:net";
-
-import { isLoopbackHostname, isPrivateHostname, isPrivateIp } from "../private-networks";
+import { BlockList, isIP } from "node:net";
 
 /** Injectable DNS resolver, shaped like `dns/promises` `lookup(host, {all:true})`. */
 export type EndpointDnsLookupFn = (
@@ -31,6 +29,56 @@ const OPENSHELL_MANAGED_HOSTS = new Set([
   "host.containers.internal",
 ]);
 
+// An explicit operator allowlist may admit routable enterprise/private address
+// space, but never link-local metadata, multicast, documentation, translation,
+// or other reserved ranges covered by the broader SSRF denylist.
+const OPERATOR_TRUSTABLE_PRIVATE_NETWORKS = new BlockList();
+OPERATOR_TRUSTABLE_PRIVATE_NETWORKS.addSubnet("10.0.0.0", 8, "ipv4");
+OPERATOR_TRUSTABLE_PRIVATE_NETWORKS.addSubnet("100.64.0.0", 10, "ipv4");
+OPERATOR_TRUSTABLE_PRIVATE_NETWORKS.addSubnet("172.16.0.0", 12, "ipv4");
+OPERATOR_TRUSTABLE_PRIVATE_NETWORKS.addSubnet("192.168.0.0", 16, "ipv4");
+OPERATOR_TRUSTABLE_PRIVATE_NETWORKS.addSubnet("fc00::", 7, "ipv6");
+
+declare const trustedPrivateEndpointCapabilityBrand: unique symbol;
+
+/**
+ * Ephemeral proof that the shared SSRF preflight admitted an exact set of
+ * operator-trusted private addresses. Callers can carry this value, but only
+ * this module can issue one and the curl boundary validates its provenance.
+ */
+export interface TrustedPrivateEndpointCapability {
+  readonly addresses: readonly string[];
+  readonly [trustedPrivateEndpointCapabilityBrand]: true;
+}
+
+const TRUSTED_PRIVATE_ENDPOINT_CAPABILITIES = new WeakSet<object>();
+
+function issueTrustedPrivateEndpointCapability(
+  addresses: readonly string[],
+): TrustedPrivateEndpointCapability {
+  const capability = Object.freeze({
+    addresses: Object.freeze([...new Set(addresses)]),
+  }) as unknown as TrustedPrivateEndpointCapability;
+  TRUSTED_PRIVATE_ENDPOINT_CAPABILITIES.add(capability);
+  return capability;
+}
+
+/** True only for a capability issued by this module in the current process. */
+export function isTrustedPrivateEndpointCapability(
+  value: unknown,
+): value is TrustedPrivateEndpointCapability {
+  return (
+    typeof value === "object" && value !== null && TRUSTED_PRIVATE_ENDPOINT_CAPABILITIES.has(value)
+  );
+}
+export function isOperatorTrustablePrivateIp(address: string): boolean {
+  const family = isIP(address);
+  return (
+    family !== 0 &&
+    OPERATOR_TRUSTABLE_PRIVATE_NETWORKS.check(address, family === 6 ? "ipv6" : "ipv4")
+  );
+}
+
 /** True when `hostname` is a NemoClaw OpenShell-managed infrastructure alias. */
 export function isOpenShellManagedHost(hostname: string): boolean {
   const normalised = (
@@ -56,6 +104,33 @@ export interface EndpointSsrfPreflightResult {
    * curl `--resolve` argument is needed.
    */
   addresses?: string[];
+  /** Non-forgeable proof of the exact private addresses admitted by the operator allowlist. */
+  trustedPrivateCapability?: TrustedPrivateEndpointCapability;
+  /** True only when an exact operator allowlist entry admitted a private address. */
+  trustedPrivateEndpoint?: true;
+}
+
+export interface EndpointSsrfPreflightOptions {
+  /** Exact hostnames or IP literals the operator explicitly trusts on a private network. */
+  trustedPrivateHosts?: readonly string[];
+}
+
+function normalizeEndpointHost(hostname: string): string {
+  return (hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname)
+    .replace(/\.$/, "")
+    .toLowerCase();
+}
+
+/** Parse the explicit private-inference hostname allowlist. Wildcards are not supported. */
+export function parseTrustedPrivateInferenceHosts(value: string | undefined): string[] {
+  return [
+    ...new Set(
+      String(value ?? "")
+        .split(",")
+        .map((entry) => normalizeEndpointHost(entry.trim()))
+        .filter(Boolean),
+    ),
+  ];
 }
 
 /**
@@ -82,6 +157,7 @@ export interface EndpointSsrfPreflightResult {
 export async function assertEndpointResolvesPublic(
   endpointUrl: string,
   lookup: EndpointDnsLookupFn = dnsLookup as unknown as EndpointDnsLookupFn,
+  options: EndpointSsrfPreflightOptions = {},
 ): Promise<EndpointSsrfPreflightResult> {
   let hostname: string;
   try {
@@ -89,6 +165,17 @@ export async function assertEndpointResolvesPublic(
   } catch {
     return { ok: false, reason: `"${String(endpointUrl)}" is not a valid URL` };
   }
+
+  // Keep the capability and range helpers import-light for generic curl
+  // validation. The YAML-backed private-network classifier is needed only
+  // when a caller actually runs the endpoint preflight.
+  const { isLoopbackHostname, isPrivateHostname, isPrivateIp } =
+    require("../private-networks") as typeof import("../private-networks");
+
+  const normalizedHostname = normalizeEndpointHost(hostname);
+  const trustedPrivateHost = (options.trustedPrivateHosts ?? []).some(
+    (candidate) => normalizeEndpointHost(candidate.trim()) === normalizedHostname,
+  );
 
   // An explicit loopback host is a legitimate local inference server.
   if (isLoopbackHostname(hostname)) return { ok: true, addresses: [] };
@@ -101,15 +188,24 @@ export async function assertEndpointResolvesPublic(
   if (isOpenShellManagedHost(hostname)) return { ok: true, addresses: [] };
 
   // A literal private IP or reserved private name is refused without resolving.
-  if (isPrivateHostname(hostname)) {
+  if (isPrivateHostname(hostname) && !trustedPrivateHost) {
     return { ok: false, reason: `endpoint host "${hostname}" is a private/internal address` };
   }
 
   // A public IP literal needs neither DNS resolution nor connection pinning:
   // the URL already contains the address curl will connect to.
-  const bare =
-    hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
-  if (isIP(bare)) return { ok: true, addresses: [] };
+  const bare = normalizedHostname;
+  if (isIP(bare)) {
+    if (!isPrivateIp(bare)) return { ok: true, addresses: [] };
+    return trustedPrivateHost && isOperatorTrustablePrivateIp(bare)
+      ? {
+          ok: true,
+          addresses: [],
+          trustedPrivateCapability: issueTrustedPrivateEndpointCapability([bare]),
+          trustedPrivateEndpoint: true,
+        }
+      : { ok: false, reason: `endpoint host "${hostname}" is a private/internal address` };
+  }
 
   let addresses: Array<{ address: string; family?: number }>;
   try {
@@ -124,14 +220,23 @@ export async function assertEndpointResolvesPublic(
   for (const { address } of addresses) {
     // A resolved private address — including loopback reached via a public name
     // (DNS rebinding) — is refused; the explicit-loopback case returned above.
-    if (isPrivateIp(address)) {
+    if (isPrivateIp(address) && (!trustedPrivateHost || !isOperatorTrustablePrivateIp(address))) {
       return {
         ok: false,
         reason: `endpoint host "${hostname}" resolves to private/internal address "${address}"`,
       };
     }
   }
-  return { ok: true, addresses: addresses.map(({ address }) => address) };
+  const resolvedAddresses = addresses.map(({ address }) => address);
+  const trustedPrivateAddresses = resolvedAddresses.filter((address) => isPrivateIp(address));
+  return trustedPrivateHost && trustedPrivateAddresses.length > 0
+    ? {
+        ok: true,
+        addresses: resolvedAddresses,
+        trustedPrivateCapability: issueTrustedPrivateEndpointCapability(trustedPrivateAddresses),
+        trustedPrivateEndpoint: true,
+      }
+    : { ok: true, addresses: resolvedAddresses };
 }
 
 /**

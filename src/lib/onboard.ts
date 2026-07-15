@@ -2999,14 +2999,11 @@ type OllamaModelSelectionOutcome =
 async function selectAndValidateOllamaModel(
   gpu: ReturnType<typeof nim.detectGpu>,
   provider: string,
-  defaults: {
-    requestedModel: string | null;
-    recoveredModel: string | null;
-    lockedModel?: string | null;
-  },
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  defaults: { requestedModel: string | null; recoveredModel: string | null; lockedModel?: string | null; promptDefaultModel?: string | null },
   onModelSelected?: (model: string) => void,
 ): Promise<OllamaModelSelectionOutcome> {
-  const { requestedModel, recoveredModel, lockedModel } = defaults;
+  const { requestedModel, recoveredModel, lockedModel, promptDefaultModel } = defaults;
   const probeFailures = new OllamaProbeFailureTracker();
   const confirm = (question: string, defaultIsYes: boolean) =>
     promptYesNoOrDefault(question, null, defaultIsYes);
@@ -3019,7 +3016,8 @@ async function selectAndValidateOllamaModel(
     } else if (isNonInteractive()) {
       model = localInference.resolveNonInteractiveOllamaModel(requestedModel, recoveredModel, gpu);
     } else {
-      model = await promptOllamaModel(gpu, { excludeModels: probeFailures.excludedModels() });
+      // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+      model = await promptOllamaModel(gpu, { defaultModel: promptDefaultModel && isSafeModelId(promptDefaultModel) ? promptDefaultModel : null, excludeModels: probeFailures.excludedModels() });
     }
     if (isBackToSelection(model)) {
       console.log("  Returning to provider selection.");

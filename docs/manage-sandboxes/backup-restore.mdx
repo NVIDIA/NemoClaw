@@ -126,6 +126,10 @@ Snapshots also preserve user-owned `openclaw.json` settings.
 
 During rebuild or restore, NemoClaw merges those settings with the freshly generated runtime config so current provider placeholders, messaging enablement, and gateway state win over stale snapshot values.
 If the restored config cannot be parsed or applied safely, NemoClaw stops the restore instead of replacing the generated config with an unsafe fallback.
+
+OpenClaw's device identity keys and paired-device tokens are intentionally excluded from snapshots because backup sanitization scrubs them beyond use.
+Restore never touches the sandbox's current gateway pairing state, even when an older snapshot still contains those files.
+OpenClaw regenerates its device identity on demand, and NemoClaw auto-pair re-pairs CLI clients on connect.
 </AgentOnly>
 <AgentOnly variant="hermes">
 Credential-bearing Hermes files such as `auth.json` are intentionally excluded from snapshots.
