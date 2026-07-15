@@ -7,6 +7,7 @@ import {
   resolveAgentProviderInferenceApi,
 } from "../inference/config";
 import type { GatewayRouteDiscoveryConstraints } from "../inference/gateway-route-compatibility";
+import type { TrustedPrivateEndpointCapability } from "../inference/endpoint-ssrf-preflight";
 import type { VllmProfile } from "../inference/vllm";
 import { isBackToSelection } from "../navigation";
 import type { HermesAuthMethod } from "./hermes-auth";
@@ -253,6 +254,7 @@ export function createSetupNim(
     let allowToolsIncompatible = false;
     let reuseGatewayCredential = false;
     let endpointPinnedAddresses: string[] | undefined;
+    let endpointTrustedPrivateCapability: TrustedPrivateEndpointCapability | undefined;
     const inferenceCapabilityCache = new OnboardInferenceCapabilityCache();
     const nvidiaFeaturedModels = deps.createNvidiaFeaturedModelSession({
       defaultModel: resolveAgentDefaultCloudModel(agent),
@@ -272,6 +274,7 @@ export function createSetupNim(
         nimContainer,
         allowToolsIncompatible,
         ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
+        ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
         inferenceCapabilityCache,
         nvidiaFeaturedModels,
         openRouterFeaturedModels,
@@ -462,6 +465,7 @@ export function createSetupNim(
             preferredInferenceApi,
             allowToolsIncompatible,
             endpointPinnedAddresses,
+            endpointTrustedPrivateCapability,
           } = state);
           compatibleEndpointReasoning = state.compatibleEndpointReasoning ?? null;
           reuseGatewayCredential = state.reuseGatewayCredentialWithoutLocalKey === true;
@@ -654,6 +658,7 @@ export function createSetupNim(
       reuseGatewayCredentialWithoutLocalKey: reuseGatewayCredential,
       ...(recoveredFromSandbox ? { recoveredFromSandbox: true } : {}),
       ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
+      ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
       inferenceCapabilityCache,
     };
   };

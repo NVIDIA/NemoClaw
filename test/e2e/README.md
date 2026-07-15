@@ -179,23 +179,36 @@ recording a final result. The native observer revalidates the live revision
 before mirroring that terminal result.
 
 An internal revision whose control-plane matches include a file outside the
-trusted controller and observer boundaries completes coordination as failed
+trusted controller and observer boundaries leaves coordination in progress
 with `Maintainer authorization required to run E2E`. The native required job
-keeps waiting for the authorization flow. No selected job runs and no repository
-secret is exposed. After reviewing the exact revision, a repository
+keeps waiting for the authorization flow. No selected job runs and no
+repository secret is exposed. After reviewing the exact revision, a repository
 maintainer or administrator chooses **Run workflow** on `main`, selects
 `run-control-plane`, and supplies the PR number, current 40-character head SHA
 as `expected_head_sha`, current 40-character base SHA as `expected_base_sha`,
 and a specific 10–500-character `review_reason`. The authorization requires the
 first workflow attempt and revalidates the actor's `maintain` or `admin`
 permission, internal repository origin, open PR, exact head and base, risk
-plan, matching failed coordination check, compatible trusted controller commit,
-and final live revision. It then returns coordination to in progress and
-dispatches the selected jobs. The native required job treats this authorization
-title as an intermediate waiting state instead of mirroring the temporary
-failure. The normal wait, evidence download, and finish path is the only path
-that can record success; the authorization itself cannot make the gate green.
-A changed head or base requires a new authorization.
+plan, matching pending coordination state, compatible trusted controller
+commit, and final live revision. It then updates coordination to
+`Running <count> E2E job(s)` and dispatches the selected jobs. If authorization
+fails before a child run is dispatched, the controller restores the
+authorization title and leaves coordination in progress so a maintainer can
+correct the problem and launch a fresh first-attempt authorization. After a
+child is dispatched, a startup failure requests cancellation. Whether or not
+cancellation is confirmed, the controller completes coordination as
+`Authorized E2E run requires reconciliation`; that exact-diff authorization
+cannot be retried because the child may still execute and a retry could start
+duplicate credential-bearing work. Inspect the linked run, then update the PR
+and run fresh CI before authorizing again.
+The native required job treats authorization and running titles as intermediate
+waiting states only while coordination remains in progress. A completed failure
+is terminal; neither manual authorization nor the native observer reinterprets
+it. Older builds whose authorization check already completed as failed also
+require a fresh exact-diff revision and PR CI run before a maintainer can
+authorize them. The normal wait, evidence download, and finish path is the only
+path that can record success; the authorization itself cannot make the gate
+green. A changed head or base requires a new authorization.
 
 A fork revision that selects jobs completes coordination as failed while the
 native required job waits for the skip-approval flow. The controller does not

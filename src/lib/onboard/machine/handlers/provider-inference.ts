@@ -3,6 +3,7 @@
 
 import { clearAutoDetectedCompatibleContextWindow } from "../../../inference/compatible-endpoint-context";
 import { resolveAgentProviderInferenceApi } from "../../../inference/config";
+import type { TrustedPrivateEndpointCapability } from "../../../inference/endpoint-ssrf-preflight";
 import {
   type CurrentGatewayRouteCompatibilityCheck,
   type CurrentGatewayRouteDiscoveryPreflight,
@@ -41,6 +42,8 @@ export interface ProviderInferenceSetupOptions {
   preferredInferenceApi?: string | null;
   /** Public addresses approved for custom endpoint host probes. */
   endpointPinnedAddresses?: readonly string[];
+  /** Non-forgeable proof of the exact private subset admitted by the custom preflight. */
+  endpointTrustedPrivateCapability?: TrustedPrivateEndpointCapability;
   /** One-shot host capability cache carried only through this onboarding run. */
   inferenceCapabilityCache?: OnboardInferenceCapabilityCache;
   /** Onboard session that owns the route reservation this setup creates. */
@@ -64,6 +67,7 @@ export interface ProviderSelectionResult {
   reuseGatewayCredentialWithoutLocalKey?: boolean;
   recoveredFromSandbox?: boolean;
   endpointPinnedAddresses?: string[];
+  endpointTrustedPrivateCapability?: TrustedPrivateEndpointCapability;
   inferenceCapabilityCache?: OnboardInferenceCapabilityCache;
 }
 
@@ -344,6 +348,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let skipHostInferenceSmoke = false;
   let reuseGatewayCredentialWithoutLocalKey = false;
   let endpointPinnedAddresses: string[] | undefined;
+  let endpointTrustedPrivateCapability: TrustedPrivateEndpointCapability | undefined;
   let inferenceCapabilityCache: OnboardInferenceCapabilityCache | undefined;
   const effectiveResume = resume && !fresh;
   const stateResults: OnboardStateTransitionResult[] = [];
@@ -518,6 +523,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       recoveredRecordedProvider = selection.recoveredFromSandbox === true;
       forceInferenceSetup ||= recoveredRecordedProvider;
       endpointPinnedAddresses = selection.endpointPinnedAddresses;
+      endpointTrustedPrivateCapability = selection.endpointTrustedPrivateCapability;
       inferenceCapabilityCache = selection.inferenceCapabilityCache;
       shouldRecordProviderSelection = true;
     }
@@ -595,6 +601,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
               : {}),
             ...(preferredInferenceApi ? { preferredInferenceApi } : {}),
             ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
+            ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
             ...(inferenceCapabilityCache ? { inferenceCapabilityCache } : {}),
             reservationSessionId: session?.sessionId,
           };
@@ -784,6 +791,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         ...(reuseGatewayCredentialWithoutLocalKey ? { reuseGatewayCredentialWithoutLocalKey } : {}),
         ...(preferredInferenceApi ? { preferredInferenceApi } : {}),
         ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
+        ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
         ...(inferenceCapabilityCache ? { inferenceCapabilityCache } : {}),
         ...providerRecovery.setupOptions(
           recoveredRecordedProvider,

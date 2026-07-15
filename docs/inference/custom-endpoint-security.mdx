@@ -31,6 +31,11 @@ It also rejects public hostnames that resolve to a private address.
 
 Managed provider defaults that do not provide an explicit custom endpoint through these paths are unaffected.
 
+Custom endpoint onboarding has one narrower operator-controlled exception for corporate inference gateways.
+Set `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS` to a comma-separated list of exact hostnames or IP literals to admit an endpoint on RFC1918, CGNAT, or IPv6 ULA space.
+NemoClaw still resolves DNS, pins the validation connection, and rejects wildcard or suffix matches, link-local metadata, reserved destinations, and resolver failures.
+This allowlist does not relax direct blueprint, `config set`, or unrelated persisted-URL validation.
+
 ## Use a Public Endpoint
 
 For a public HTTP URL, NemoClaw stores the validated IP address so the downstream runtime cannot resolve the hostname again and reach another address.
