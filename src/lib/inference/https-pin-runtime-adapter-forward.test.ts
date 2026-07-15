@@ -6,13 +6,13 @@ import http from "node:http";
 import https from "node:https";
 import type { AddressInfo } from "node:net";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 
 import {
+  type CaMaterial,
   cleanupCaSetup,
   resolveCaSetup,
   startTlsServer,
-  type CaSetup,
 } from "../../../test/helpers/corporate-ca-support";
 import {
   HTTPS_PIN_RUNTIME_ADAPTER_MAX_BODY_BYTES,
@@ -201,18 +201,14 @@ describe("forwardHttpsPinnedRequest redirect fail-closed (#6141)", () => {
   });
 });
 
-describe("forwardHttpsPinnedRequest TLS SNI pinning (#6141)", () => {
-  let ca: CaSetup | undefined;
+const sniPinSetup = resolveCaSetup("https-pin-runtime-adapter-forward SNI pinning");
 
-  afterEach(() => {
-    if (ca) cleanupCaSetup(ca);
-    ca = undefined;
-  });
+afterAll(() => cleanupCaSetup(sniPinSetup));
+
+describe.skipIf(!sniPinSetup.ok)("forwardHttpsPinnedRequest TLS SNI pinning (#6141)", () => {
+  const ca = sniPinSetup as CaMaterial;
 
   it("validates the certificate against the real target hostname while connecting to the pinned address", async () => {
-    ca = resolveCaSetup("https-pin-runtime-adapter-forward SNI pin");
-    if (!ca.ok) return;
-
     const tlsServer = await startTlsServer(ca.serverKey, ca.serverCert);
     tlsServers.push(tlsServer);
 
@@ -241,9 +237,6 @@ describe("forwardHttpsPinnedRequest TLS SNI pinning (#6141)", () => {
   });
 
   it("fails closed when the pinned target hostname is not covered by the upstream certificate", async () => {
-    ca = resolveCaSetup("https-pin-runtime-adapter-forward SNI mismatch");
-    if (!ca.ok) return;
-
     const tlsServer = await startTlsServer(ca.serverKey, ca.serverCert);
     tlsServers.push(tlsServer);
 
