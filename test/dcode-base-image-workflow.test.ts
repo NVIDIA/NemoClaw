@@ -15,6 +15,7 @@ type WorkflowStep = {
   id?: string;
   uses?: string;
   run?: string;
+  env?: Record<string, unknown>;
   with?: Record<string, unknown>;
 };
 
@@ -57,6 +58,8 @@ const workflow = YAML.parse(
   fs.readFileSync(path.join(repoRoot, ".github", "workflows", "base-image.yaml"), "utf8"),
 ) as Workflow;
 const FULL_SHA_ACTION = /^[^@]+@[0-9a-f]{40}$/i;
+const OPENCLAW_AGENT_GATE =
+  'if [ "$AGENT" = "openclaw" ] && [ -n "${OPENCLAW_VERSION_INPUT}" ]; then';
 
 function renderMatrixValue(value: unknown, matrix: PublisherMatrixEntry): string {
   return String(value ?? "").replace(
@@ -115,6 +118,17 @@ function registryCacheEntries(value: unknown): RegistryCacheEntry[] {
     );
 }
 
+function hasAgentScopedOpenClawVersion(step: WorkflowStep | undefined): boolean {
+  const segments = (step?.run ?? "").split(OPENCLAW_AGENT_GATE);
+  return (
+    step?.env?.AGENT === "${{ matrix.agent }}" &&
+    segments.length === 3 &&
+    segments[0].includes('openclaw_build_arg=""') &&
+    segments[1].includes('openclaw_build_arg="OPENCLAW_VERSION=${OPENCLAW_VERSION_INPUT}"') &&
+    segments[2].includes('if [[ "$OPENCLAW_VERSION_INPUT"')
+  );
+}
+
 function validatePublishers(candidate: Workflow): string[] {
   const triggerPaths = candidate.on?.push?.paths ?? [];
   const publishers = publisherJobs(candidate);
@@ -131,6 +145,7 @@ function validatePublishers(candidate: Workflow): string[] {
     const guardIndex = steps.findIndex((step) =>
       (step.run ?? "").includes("scripts/check-production-build-args.sh"),
     );
+    const guard = steps[guardIndex];
     const dockerfileExists =
       dockerfile.length > 0 && fs.existsSync(path.join(repoRoot, dockerfile));
     const copiedInputPaths = dockerfileExists ? copiedInputs(dockerfile) : [];
@@ -153,6 +168,9 @@ function validatePublishers(candidate: Workflow): string[] {
         .map((input) => `${jobName} copied input must trigger the publisher workflow: ${input}`),
       ...(guardIndex < 0 || guardIndex >= buildIndex
         ? [`${jobName} must validate production build args before publishing`]
+        : []),
+      ...(!hasAgentScopedOpenClawVersion(guard)
+        ? [`${jobName} must scope OpenClaw version handling to the OpenClaw matrix entry`]
         : []),
       ...(!metadata?.uses?.startsWith("docker/metadata-action@")
         ? [`${jobName} must derive publication metadata with docker/metadata-action`]
@@ -269,6 +287,20 @@ describe("base-image publication behavior", () => {
         `${mutatedPublisher.jobName} registry cache must use its publication image buildcache tag`,
         `${mutatedPublisher.jobName} must use a publisher-unique registry cache ref`,
       ]),
+    );
+
+    const invertedGate = structuredClone(workflow);
+    const invertedPublisher = publisherJobs(invertedGate)[0];
+    const invertedGuard = (invertedPublisher.job.steps ?? []).find((step) =>
+      (step.run ?? "").includes("scripts/check-production-build-args.sh"),
+    );
+    invertedGuard!.run = invertedGuard!.run!.replaceAll(
+      OPENCLAW_AGENT_GATE,
+      OPENCLAW_AGENT_GATE.replace("openclaw", "hermes"),
+    );
+
+    expect(validatePublishers(invertedGate)).toContain(
+      `${invertedPublisher.jobName} must scope OpenClaw version handling to the OpenClaw matrix entry`,
     );
   });
 
