@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +10,7 @@ import vm from "node:vm";
 import { describe, expect, it } from "vitest";
 import {
   extractStarterPromptMarkdown,
+  generateStarterPromptSnippet,
   renderStarterPromptSnippet,
   STARTER_PROMPT_GENERATED_PATH,
 } from "../scripts/generate-starter-prompt";
@@ -431,6 +433,44 @@ describe("starter prompt docs CTA", () => {
     expect(() =>
       extractStarterPromptMarkdown(source.replaceAll("\n", "\r\n"), "fixture.md"),
     ).toThrow("use LF line endings");
+  });
+
+  it("rejects missing or stale generated snippets and accepts the current output (#5048)", () => {
+    const generatedPath = path.join(repoRoot, STARTER_PROMPT_GENERATED_PATH);
+    const original = fs.existsSync(generatedPath) ? fs.readFileSync(generatedPath, "utf8") : null;
+    const runCheck = () =>
+      spawnSync(
+        process.execPath,
+        ["--import", "tsx", "scripts/generate-starter-prompt.ts", "--check"],
+        {
+          cwd: repoRoot,
+          encoding: "utf8",
+        },
+      );
+
+    try {
+      fs.rmSync(generatedPath, { force: true });
+      const missing = runCheck();
+      expect(missing.status).toBe(1);
+      expect(missing.stderr).toContain("is missing or stale");
+
+      fs.mkdirSync(path.dirname(generatedPath), { recursive: true });
+      fs.writeFileSync(generatedPath, "stale\n");
+      const stale = runCheck();
+      expect(stale.status).toBe(1);
+      expect(stale.stderr).toContain("is missing or stale");
+
+      fs.writeFileSync(generatedPath, generateStarterPromptSnippet());
+      const current = runCheck();
+      expect(current.status).toBe(0);
+      expect(current.stdout).toContain("Generated Starter Prompt snippet is current.");
+    } finally {
+      if (original === null) {
+        fs.rmSync(generatedPath, { force: true });
+      } else {
+        fs.writeFileSync(generatedPath, original);
+      }
+    }
   });
 
   it("prepares the Starter Prompt in every docs build entry point (#5048)", () => {
