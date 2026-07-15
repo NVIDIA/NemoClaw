@@ -190,37 +190,53 @@ export function buildCloudflaredQuickTunnelArgs(port: number): string[] {
   ];
 }
 
-async function probePublicTunnel(origin: string): Promise<{
+async function probePublicTunnel(
+  origin: string,
+  readinessPath: string,
+  readinessStatus: number,
+): Promise<{
   ready: boolean;
   diagnostic: string;
 }> {
   try {
-    const response = await fetch(`${origin}/mcp`, {
+    const response = await fetch(`${origin}${readinessPath}`, {
       method: "HEAD",
       redirect: "manual",
       signal: AbortSignal.timeout(5_000),
     });
     await response.body?.cancel();
     return {
-      ready: response.status === 405,
-      diagnostic: `public HEAD /mcp returned HTTP ${response.status}`,
+      ready: response.status === readinessStatus,
+      diagnostic: `public HEAD ${readinessPath} returned HTTP ${response.status}`,
     };
   } catch (error) {
     return {
       ready: false,
       // Avoid reflecting request URLs or child output here. The error class is
       // enough to distinguish DNS/transport failure without risking headers.
-      diagnostic: `public HEAD /mcp failed (${error instanceof Error ? error.name : "unknown error"})`,
+      diagnostic: `public HEAD ${readinessPath} failed (${error instanceof Error ? error.name : "unknown error"})`,
     };
   }
 }
 
+/**
+ * Publishes a local HTTPS origin behind a real `trycloudflare.com` quick
+ * tunnel: a genuinely public, DNS-resolvable, publicly-trusted-certificate
+ * endpoint. Named for its original MCP-bridge fixture caller; reused as-is
+ * (via the optional readiness override below) for the HTTPS-pin runtime
+ * adapter's live coverage, since both need the identical real-tunnel proof
+ * and only differ in which local path/status means "ready".
+ */
 export async function startPublicMcpHttpsTunnel(options: {
   cleanup: TunnelCleanupRegistry;
   label: string;
   server: StartedHttpServer;
   cloudflaredBin?: string;
+  readinessPath?: string;
+  readinessStatus?: number;
 }): Promise<StartedPublicMcpTunnel> {
+  const readinessPath = options.readinessPath ?? "/mcp";
+  const readinessStatus = options.readinessStatus ?? 405;
   const args = buildCloudflaredQuickTunnelArgs(options.server.port);
   let lastFailure = "cloudflared did not publish a quick-tunnel URL";
 
@@ -269,7 +285,7 @@ export async function startPublicMcpHttpsTunnel(options: {
         break;
       }
       if (origin) {
-        const probe = await probePublicTunnel(origin);
+        const probe = await probePublicTunnel(origin, readinessPath, readinessStatus);
         if (probe.ready) {
           consecutiveReadyProbes += 1;
           if (consecutiveReadyProbes >= QUICK_TUNNEL_CONSECUTIVE_READY_PROBES) {

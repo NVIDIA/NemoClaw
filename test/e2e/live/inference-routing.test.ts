@@ -5,11 +5,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { HTTPS_PIN_RUNTIME_ADAPTER_BASE_ORIGIN } from "../../../src/lib/inference/https-pin-runtime.ts";
+import { REGISTRY_FILE, type SandboxEntry } from "../../../src/lib/state/registry.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import { startFakeHttpsCompatibleServer } from "./https-pin-compatible-server.ts";
 import {
   CREDENTIAL_CLASSIFICATION_PATTERN,
   cleanupSandbox,
@@ -27,6 +30,7 @@ import {
   TRANSPORT_CLASSIFICATION_PATTERN,
   writeFakeOpenShellForBlueprintFailClosed,
 } from "./inference-routing-helpers.ts";
+import { startPublicMcpHttpsTunnel } from "./mcp-bridge-servers.ts";
 
 // This is the PR-required inference-routing lane. Credential-backed provider
 // smokes live in inference-routing-provider-smoke.test.ts and are never selected
@@ -318,6 +322,131 @@ test("TC-INF-09 Deep Agents Code uses a local compatible endpoint through infere
       hostHeader: "host.openshell.internal:8000",
       method: "POST",
       model,
+      path: "/v1/chat/completions",
+    }),
+  );
+});
+
+test("TC-INF-11 DNS-backed HTTPS custom endpoint routes through the local pinning adapter (#6141)", {
+  timeout: 20 * 60_000,
+}, async ({ artifacts, cleanup, host, sandbox, skip }) => {
+  await requireLivePrerequisites(host, skip);
+  const model = "nemoclaw-e2e-https-pin";
+  const apiKey = "sk-https-pin-TEST-NOT-A-REAL-VALUE";
+  const sandboxName = inferenceSandboxName("e2e-https-pin");
+  cleanup.add(`best-effort inference-routing https-pin cleanup for ${sandboxName}`, () =>
+    cleanupSandbox(host, sandbox, sandboxName),
+  );
+  await cleanupSandbox(host, sandbox, sandboxName);
+
+  const fake = await startFakeHttpsCompatibleServer({ apiKey, chatContent: "PONG", model });
+  cleanup.add("close https-pin fake HTTPS compatible server", async () => {
+    try {
+      await artifacts.writeJson("tc-inf-11-https-pin-endpoint-requests.json", fake.requests());
+    } finally {
+      await fake.close();
+    }
+  });
+
+  // A genuinely public, DNS-resolvable, publicly-trusted-certificate origin
+  // is required: the adapter's SSRF preflight rejects loopback/private
+  // addresses, and only a real TLS trust chain exercises its SNI-pinned
+  // certificate validation. This reuses the same trycloudflare.com quick
+  // tunnel mechanism as the MCP-bridge DNS-rebinding coverage.
+  const tunnel = await startPublicMcpHttpsTunnel({
+    cleanup,
+    label: "https-pin inference routing",
+    readinessPath: "/v1/models",
+    readinessStatus: 401,
+    server: fake,
+  });
+  const endpointUrl = `${tunnel.origin}/v1`;
+  const endpointHostname = new URL(tunnel.origin).hostname;
+
+  await artifacts.target.declare({
+    id: "https-pin-runtime-adapter-dns-backed-endpoint",
+    issue: 6141,
+    contract: [
+      "inference set routes a DNS-backed HTTPS endpoint through the local pinning adapter",
+      "the real upstream hostname is never persisted to the NemoClaw sandbox registry",
+      "OpenShell's own policy view never references the real upstream hostname",
+      "a real chat completion round-trips through the pinned TLS connection to the public endpoint",
+    ],
+    endpointUrl,
+    model,
+  });
+
+  const onboard = await onboardSandbox(
+    artifacts,
+    sandboxName,
+    {
+      COMPATIBLE_API_KEY: apiKey,
+      NEMOCLAW_ENDPOINT_URL: endpointUrl,
+      NEMOCLAW_MODEL: model,
+      NEMOCLAW_PREFERRED_API: "openai-completions",
+      NEMOCLAW_PROVIDER: "custom",
+    },
+    [apiKey],
+    "tc-inf-11-onboard-https-pin-endpoint",
+    15 * 60_000,
+  );
+  expectOnboardSuccess(onboard, "TC-INF-11 https-pin-endpoint onboard");
+  cleanup.add(`strict inference-routing https-pin cleanup for ${sandboxName}`, () =>
+    cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
+  );
+
+  // The real hostname must never reach the NemoClaw sandbox registry on
+  // disk: only the local adapter's host.openshell.internal route is
+  // persisted (#6141 requirement: hostname hidden from the runtime
+  // boundary; credential-bearing URL state is never persisted in plaintext).
+  const registry = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as {
+    sandboxes?: Record<string, SandboxEntry>;
+  };
+  const registryEntry = registry.sandboxes?.[sandboxName];
+  expect(registryEntry?.endpointUrl ?? "").toContain(
+    `${HTTPS_PIN_RUNTIME_ADAPTER_BASE_ORIGIN}/route/`,
+  );
+  expect(registryEntry?.endpointUrl ?? "").not.toContain(endpointHostname);
+
+  const provider = await sandbox.openshell(
+    ["provider", "get", "-g", "nemoclaw", "compatible-endpoint"],
+    {
+      artifactName: "tc-inf-11-provider-get-compatible-endpoint",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  const providerText = resultText(provider).replace(/\u001b\[[0-9;]*m/g, "");
+  expect(provider.exitCode, providerText).toBe(0);
+  expect(providerText).toContain("Type: openai");
+  expect(providerText).toContain("Credential keys: COMPATIBLE_API_KEY");
+  expect(providerText).toContain("Config keys: OPENAI_BASE_URL");
+
+  // OpenShell's own network-policy view is a second, independent witness:
+  // it must never learn the real upstream hostname either, only the local
+  // adapter's host.openshell.internal boundary that everything else here
+  // already resolves through.
+  const policy = await sandbox.openshell(["policy", "get", "--full", sandboxName], {
+    artifactName: "tc-inf-11-policy-get-https-pin",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
+  });
+  const policyText = resultText(policy).replace(/\u001b\[[0-9;]*m/g, "");
+  expect(policy.exitCode, policyText).toBe(0);
+  expect(policyText).not.toContain(endpointHostname);
+
+  const sandboxRequestOffset = fake.requests().length;
+  await expectOpenAiChatThroughSandbox(
+    sandbox,
+    sandboxName,
+    model,
+    [apiKey],
+    "https-pin-endpoint-inference-local-chat",
+  );
+  expect(fake.requests().slice(sandboxRequestOffset)).toContainEqual(
+    expect.objectContaining({
+      auth: "ok",
+      method: "POST",
       path: "/v1/chat/completions",
     }),
   );

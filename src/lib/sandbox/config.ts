@@ -953,9 +953,11 @@ async function rewriteConfigUrlsWithDnsPinning(
       // OpenShell runtime boundary.
       if (validated.protocol === "https:" && validated.pinnedUrl !== validated.originalUrl) {
         throw new Error(
-          "DNS-backed HTTPS URLs are not supported for persisted sandbox config yet. " +
-            "Use an HTTPS IP-literal endpoint, an HTTP endpoint that can be DNS-pinned, " +
-            "or wait for the runtime-aware HTTPS pinning transport.",
+          "DNS-backed HTTPS URLs are not supported for arbitrary persisted sandbox config " +
+            "values. Use an HTTPS IP-literal endpoint or an HTTP endpoint that can be " +
+            "DNS-pinned. For a DNS-backed HTTPS inference endpoint on an already-onboarded " +
+            "sandbox, use `inference set --endpoint-url`, which routes the connection " +
+            "through the HTTPS Pin Runtime adapter instead of persisting the raw URL.",
         );
       }
       return validated.protocol === "http:" ? validated.pinnedUrl : validated.originalUrl;

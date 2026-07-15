@@ -1922,7 +1922,8 @@ After the upgrade, recreate the sandbox with `$$nemoclaw onboard`.
 NemoClaw rejects an explicit custom endpoint when it resolves a public HTTPS hostname but cannot pin the same peer address across the downstream OpenShell runtime boundary while preserving TLS SNI and host validation.
 This can appear during a direct blueprint run, custom-endpoint onboarding, or a host-side `config set` write.
 <AgentOnly variant="openclaw,hermes">
-It can also appear during a runtime `$$nemoclaw inference set` switch.
+It does not appear during a runtime `$$nemoclaw inference set` switch on an already-onboarded sandbox; that command routes a DNS-backed HTTPS endpoint through a local HTTPS Pin Runtime adapter instead of rejecting it.
+Refer to [Commands](commands) for details.
 </AgentOnly>
 
 Use an HTTPS IP-literal endpoint whose certificate is valid for that address.

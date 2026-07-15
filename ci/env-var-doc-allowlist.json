@@ -28,6 +28,14 @@
     "reason": "Internal child-process setting used only to pass the resolved Bedrock Runtime region to the hidden local adapter. Users should rely on the endpoint URL or standard AWS region environment variables."
   },
   {
+    "name": "NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT",
+    "reason": "Internal child-process setting used only when launching the hidden HTTPS Pin Runtime adapter. The port is a fixed internal constant, not a public user-facing configuration knob."
+  },
+  {
+    "name": "NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_BOOTSTRAP_ROUTE",
+    "reason": "Internal child-process setting carrying a JSON-encoded route (including a credential value) used only to seed the hidden HTTPS Pin Runtime adapter at startup. Never user-set."
+  },
+  {
     "name": "NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE",
     "reason": "Internal installer sentinel exported only during OpenShell gateway replacement so onboard restores the pre-upgrade sandbox backup. Not user-facing."
   },

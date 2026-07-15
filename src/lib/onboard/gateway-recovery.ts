@@ -12,6 +12,7 @@ import {
   DASHBOARD_PORT_RANGE_END,
   DASHBOARD_PORT_RANGE_START,
   GATEWAY_PORT,
+  HTTPS_PIN_RUNTIME_ADAPTER_PORT,
   OLLAMA_PORT,
   OLLAMA_PROXY_PORT,
   OPENROUTER_RUNTIME_ADAPTER_PORT,
@@ -104,6 +105,7 @@ function resolveGatewayRecoveryTarget(options: StartGatewayForRecoveryOptions = 
     ollamaProxyPort: OLLAMA_PROXY_PORT,
     bedrockRuntimeAdapterPort: BEDROCK_RUNTIME_ADAPTER_PORT,
     openrouterRuntimeAdapterPort: OPENROUTER_RUNTIME_ADAPTER_PORT,
+    httpsPinRuntimeAdapterPort: HTTPS_PIN_RUNTIME_ADAPTER_PORT,
   });
   return { gatewayName, gatewayPort };
 }

@@ -7,6 +7,7 @@ import { CLI_NAME } from "../cli/branding";
 import { shellQuote } from "../core/shell-quote";
 import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../hermes-proxy-api-key";
 import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
+import { ensureHttpsPinRuntimeAdapter } from "../inference/https-pin-runtime-adapter";
 import {
   getProviderSelectionConfig,
   getSandboxInferenceConfig,
@@ -63,6 +64,7 @@ import {
   readOpenClawPrimaryReplyBudget,
 } from "./inference-set-reply-budget";
 import {
+  type EnsureHttpsPinRuntimeAdapterFn,
   finalizeInferenceSetRoute,
   prepareInferenceSetRoute,
   type RegistryInferenceMetadata,
@@ -136,6 +138,7 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   resolveContextWindowForModel: (provider: string, model: string) => number | null;
   isSandboxConfigMutable: (sandboxName: string) => boolean;
   rewriteConfigUrlsWithDnsPinning: (value: ConfigValue) => Promise<ConfigValue>;
+  ensureHttpsPinRuntimeAdapter: EnsureHttpsPinRuntimeAdapterFn;
   withGatewayRouteMutationLock: typeof withGatewayRouteMutationLock;
 }
 
@@ -237,6 +240,7 @@ function defaultDeps(): InferenceSetDeps {
     ensureLocalProviderReachable,
     resolveContextWindowForModel,
     rewriteConfigUrlsWithDnsPinning,
+    ensureHttpsPinRuntimeAdapter,
     withGatewayRouteMutationLock,
     restartSandboxGateway: defaultInferenceGatewayRestart,
     isSandboxConfigMutable: (sandboxName) => {
@@ -742,6 +746,7 @@ async function runInferenceSetWithoutHostLock(
         : null,
     getSandboxes: () => deps.listSandboxes().sandboxes,
     rewriteUrlWithDnsPinning: deps.rewriteConfigUrlsWithDnsPinning,
+    ensureHttpsPinRuntimeAdapter: deps.ensureHttpsPinRuntimeAdapter,
   });
 
   // Local providers (ollama-local, vllm-local) route through the sandbox-facing

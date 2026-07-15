@@ -213,7 +213,7 @@ describe("runtime shared gateway route containment", () => {
     const peer = entry("late-peer", {
       provider: "compatible-endpoint",
       model: "custom/model",
-      endpointUrl: "https://peer.example.test/v1",
+      endpointUrl: "http://peer.example.test/v1",
       credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai-completions",
     });
@@ -224,13 +224,16 @@ describe("runtime shared gateway route containment", () => {
       .mockReturnValue({ sandboxes: [alpha, peer], defaultSandbox: "alpha" });
     deps.listSandboxes = listSandboxes;
 
+    // HTTP (not HTTPS) so this test exercises rewriteUrlWithDnsPinning directly
+    // to create the async validation gap; DNS-backed HTTPS endpoints route
+    // through the HTTPS-pin runtime adapter instead.
     await expect(
       runInferenceSet(
         {
           provider: "compatible-endpoint",
           model: "custom/model",
           sandboxName: "alpha",
-          endpointUrl: "https://alpha.example.test/v1",
+          endpointUrl: "http://alpha.example.test/v1",
           credentialEnv: "COMPATIBLE_API_KEY",
           inferenceApi: "openai-completions",
         },
@@ -279,8 +282,11 @@ describe("runtime shared gateway route containment", () => {
   });
 
   it("catches a DNS change between the preliminary and finalized gateway route checks", async () => {
-    const firstEndpoint = "https://first.example.test/v1";
-    const secondEndpoint = "https://second.example.test/v1";
+    // HTTP (not HTTPS) so this test exercises rewriteUrlWithDnsPinning directly;
+    // DNS-backed HTTPS endpoints route through the HTTPS-pin runtime adapter
+    // instead (see inference-set-https-pin-runtime.test.ts).
+    const firstEndpoint = "http://first.example.test/v1";
+    const secondEndpoint = "http://second.example.test/v1";
     const customRoute = {
       provider: "compatible-endpoint",
       model: "custom/model",
@@ -304,6 +310,7 @@ describe("runtime shared gateway route containment", () => {
       sandboxes: [alpha, peer],
     });
     const rewriteUrlWithDnsPinning = vi.fn().mockResolvedValueOnce(secondEndpoint);
+    const ensureHttpsPinRuntimeAdapter = vi.fn();
 
     await expect(
       finalizeInferenceSetRoute({
@@ -315,11 +322,13 @@ describe("runtime shared gateway route containment", () => {
         onboardEndpointUrl: null,
         getSandboxes: () => [alpha, peer],
         rewriteUrlWithDnsPinning,
+        ensureHttpsPinRuntimeAdapter,
       }),
     ).rejects.toThrow("custom-peer");
 
     expect(rewriteUrlWithDnsPinning).toHaveBeenCalledOnce();
     expect(rewriteUrlWithDnsPinning).toHaveBeenCalledWith(firstEndpoint);
+    expect(ensureHttpsPinRuntimeAdapter).not.toHaveBeenCalled();
   });
 
   it("blocks an incomplete legacy custom target even without a peer (#6315)", async () => {

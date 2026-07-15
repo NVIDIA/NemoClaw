@@ -8,6 +8,7 @@ import type { ConfigObject, ConfigValue } from "../security/credential-filter";
 import type { Session } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
 import type { InferenceSetDeps } from "./inference-set";
+import type { EnsureHttpsPinRuntimeAdapterFn } from "./inference-set-route-containment";
 
 export const OPENCLAW_TARGET: AgentConfigTarget = {
   agentName: "openclaw",
@@ -85,6 +86,7 @@ export function createDeps(options: {
   shieldsMutable?: boolean;
   prepareRunOpenshell?: () => void;
   rewriteConfigUrlsWithDnsPinning?: (value: ConfigValue) => Promise<ConfigValue>;
+  ensureHttpsPinRuntimeAdapter?: EnsureHttpsPinRuntimeAdapterFn;
   restartSandboxGateway?: InferenceSetDeps["restartSandboxGateway"];
   seedHermesDashboardConfigResult?: "converged" | "absent" | "failed";
   withGatewayRouteMutationLock?: InferenceSetDeps["withGatewayRouteMutationLock"];
@@ -104,6 +106,7 @@ export function createDeps(options: {
     resolveContextWindowForModel: ReturnType<typeof vi.fn>;
     prepareRunOpenshell: ReturnType<typeof vi.fn>;
     rewriteConfigUrlsWithDnsPinning: ReturnType<typeof vi.fn>;
+    ensureHttpsPinRuntimeAdapter: ReturnType<typeof vi.fn>;
     restartSandboxGateway: ReturnType<typeof vi.fn>;
     withGatewayRouteMutationLock: ReturnType<typeof vi.fn>;
   };
@@ -145,6 +148,10 @@ export function createDeps(options: {
     rewriteConfigUrlsWithDnsPinning: vi.fn(
       options.rewriteConfigUrlsWithDnsPinning ?? (async (value: ConfigValue) => value),
     ),
+    ensureHttpsPinRuntimeAdapter: vi.fn(
+      options.ensureHttpsPinRuntimeAdapter ??
+        (async () => ({ baseUrl: "http://host.openshell.internal:11438/route/test-route" })),
+    ),
     restartSandboxGateway: vi.fn(
       options.restartSandboxGateway ??
         ((): ReturnType<InferenceSetDeps["restartSandboxGateway"]> => ({
@@ -184,6 +191,8 @@ export function createDeps(options: {
     resolveContextWindowForModel: calls.resolveContextWindowForModel,
     isSandboxConfigMutable: () => options.shieldsMutable ?? true,
     rewriteConfigUrlsWithDnsPinning: calls.rewriteConfigUrlsWithDnsPinning,
+    ensureHttpsPinRuntimeAdapter:
+      calls.ensureHttpsPinRuntimeAdapter as unknown as EnsureHttpsPinRuntimeAdapterFn,
     withGatewayRouteMutationLock:
       calls.withGatewayRouteMutationLock as InferenceSetDeps["withGatewayRouteMutationLock"],
     restartSandboxGateway: calls.restartSandboxGateway,
