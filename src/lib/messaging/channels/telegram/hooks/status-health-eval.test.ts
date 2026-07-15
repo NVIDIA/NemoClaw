@@ -301,4 +301,20 @@ describe("evaluateTelegramDiagnostics over real gateway-log windows (#6743)", ()
     expect(bc).toMatchObject({ providerReady: true, inboundReceived: true });
     expect(evaluateTelegramDiagnostics(baseInput({ breadcrumbs: bc })).verdict).toBe("healthy");
   });
+
+  it("honors a later HTTP 5xx over an earlier network failure (#6888)", () => {
+    const bc = parseTelegramBreadcrumbs([
+      "[telegram] [default] Bot API startup probe failed: ETIMEDOUT",
+      "[telegram] [default] Bot API startup probe returned HTTP 502",
+    ]);
+    expect(bc).toMatchObject({ startupHttpError: 502, startupFailedNetwork: false });
+  });
+
+  it("honors a later HTTP 5xx over an earlier token rejection (#6888)", () => {
+    const bc = parseTelegramBreadcrumbs([
+      "[telegram] [default] Bot API rejected startup probe with HTTP 401; token invalid",
+      "[telegram] [default] Bot API startup probe returned HTTP 502",
+    ]);
+    expect(bc).toMatchObject({ startupHttpError: 502, tokenRejected: false });
+  });
 });

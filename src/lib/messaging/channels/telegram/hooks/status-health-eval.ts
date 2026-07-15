@@ -392,29 +392,36 @@ export function parseTelegramBreadcrumbs(logLines: readonly string[]): TelegramB
   // before a currently working bridge is not reported as token_rejected. Among
   // failures, a token/network cause outranks the bridge-did-not-start timeout it
   // produces; the latest of token vs network wins.
-  const lastCause = Math.max(lastTokenRejected, lastCredentialUnresolved, lastNetworkFail);
-  const lastEvidence = Math.max(lastReached, lastCause, lastBridgeNotStarted, lastHttpError);
+  // The single latest cause wins: token/credential rejection, a network
+  // failure, and a non-auth HTTP 5xx are peers ranked purely by recency, so a
+  // later 502 supersedes an earlier 401/timeout (#6888). Each of these outranks
+  // the bridge-did-not-start timeout they produce, so bridge is reported only
+  // when it is the sole cause. A later `reached` line still supersedes all of
+  // them (a stale cause before a currently working bridge is not reported).
+  const lastCause = Math.max(
+    lastTokenRejected,
+    lastCredentialUnresolved,
+    lastNetworkFail,
+    lastHttpError,
+  );
+  const lastEvidence = Math.max(lastReached, lastCause, lastBridgeNotStarted);
   if (lastReached !== -1 && lastReached >= lastEvidence) {
     bc.providerReady = true;
-  } else if (
-    Math.max(lastTokenRejected, lastCredentialUnresolved) !== -1 &&
-    Math.max(lastTokenRejected, lastCredentialUnresolved) >= lastNetworkFail
-  ) {
-    // A 401 line also carries "token invalid or credential placeholder
-    // unresolved", so on a tie prefer tokenRejected; credentialUnresolved wins
-    // only when its own line (TELEGRAM_BOT_TOKEN missing from env) is strictly
-    // later.
-    if (lastCredentialUnresolved > lastTokenRejected) bc.credentialUnresolved = true;
-    else bc.tokenRejected = true;
-  } else if (lastNetworkFail !== -1) {
-    bc.startupFailedNetwork = true;
+  } else if (lastCause !== -1) {
+    if (lastHttpError === lastCause) {
+      bc.startupHttpError = lastHttpErrorCode;
+    } else if (lastNetworkFail === lastCause) {
+      bc.startupFailedNetwork = true;
+    } else if (lastCredentialUnresolved > lastTokenRejected) {
+      // A 401 line also carries "credential placeholder unresolved", so on a tie
+      // prefer tokenRejected; credentialUnresolved wins only when its own line
+      // (TELEGRAM_BOT_TOKEN missing from env) is strictly later.
+      bc.credentialUnresolved = true;
+    } else {
+      bc.tokenRejected = true;
+    }
   } else if (lastBridgeNotStarted !== -1) {
     bc.bridgeNotStarted = true;
-  } else if (lastHttpError !== -1) {
-    // A non-auth HTTP error (5xx) is honored only when it is the latest
-    // evidence; a later `reached` line supersedes it so reachabilitySignal does
-    // not warn about a stale code while the verdict reads healthy (#6743).
-    bc.startupHttpError = lastHttpErrorCode;
   }
   // Inbound delivery counts as "current" only when the latest inbound is newer
   // than the latest outage boundary. A stale inbound from before a later
