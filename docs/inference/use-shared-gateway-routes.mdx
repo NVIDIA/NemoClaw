@@ -57,8 +57,8 @@ When `routeDrift.canConnect` is `false`, `connect` cannot safely restore the rec
 NemoClaw fails closed when it cannot prove that a route change preserves the provider and sandbox contracts.
 
 - For a provider-global identity conflict, align the endpoint, API family, and credential environment-variable name, or remove a sandbox you no longer need.
-- For incomplete legacy custom-route metadata, back up and re-onboard the affected sandbox with an explicit endpoint and API family.
-- For an invalid gateway binding, restore known-good `gatewayName` and `gatewayPort` metadata from a trusted backup, or back up and re-onboard the sandbox.
+- For incomplete legacy custom-route metadata, back up and remove the affected sandbox, then re-onboard it with an explicit endpoint and API family.
+- For an invalid gateway binding, restore known-good `gatewayName` and `gatewayPort` metadata from a trusted backup, or back up and remove the sandbox before re-onboarding it.
 - For a runtime `inference set` conflict, align the registered sandbox routes or remove the conflicting sandbox before retrying.
 
 Refer to [Troubleshooting a Shared Inference Route Conflict](../../reference/troubleshooting#a-shared-inference-route-conflicts-with-another-sandbox) for the recovery commands.
