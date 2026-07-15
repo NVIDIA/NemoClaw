@@ -63,16 +63,8 @@ To validate a new model before replacing the current sandbox, onboard it under a
 
 ## Account for Shared Gateways
 
-OpenShell exposes one inference route per gateway.
-NemoClaw records each sandbox's intended model, but only one recorded route is live at a time.
-Onboarding a sandbox with another valid model warns immediately before it re-points the shared route.
-The warning names each affected sandbox and its recorded provider and model.
-When another registered sandbox uses the same provider name, `connect` verifies the custom endpoint and API family when applicable, plus the credential environment-variable name.
-It then warns and re-points the route to that sandbox's recorded provider and model.
-A different custom endpoint, API family, or credential environment-variable name remains fail-closed because `connect` cannot restore that provider metadata with a provider/model-only route change.
-Remove or re-onboard the conflicting sandbox before applying a different provider-global identity.
-
-`$$nemoclaw <name> status` shows the recorded model and adds an explicit drift warning when another sandbox's route is live.
+One gateway has one live route even when NemoClaw records different intended routes for its sandboxes.
+Review [Use Shared Gateway Routes](use-shared-gateway-routes) before changing a model that another registered sandbox shares.
 Runtime `inference set` remains fail-closed when the requested change conflicts with another registered sandbox or when route metadata is incomplete.
 
 ## Verify the Change
@@ -88,5 +80,6 @@ Use a sandbox-route verification when you also need to prove that the agent can 
 ## Related Topics
 
 - [View the Active Inference Route](view-active-inference-route) to inspect the current provider and model.
+- [Use Shared Gateway Routes](use-shared-gateway-routes) when multiple sandboxes use one gateway.
 - [Switch Providers](switch-providers) to move to another provider family.
 - [Verify the Sandbox Inference Route](../validate-inference/verify-inference-route) to test the agent path.

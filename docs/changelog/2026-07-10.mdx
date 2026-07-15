@@ -17,7 +17,7 @@ NemoClaw v0.0.80 upgrades Hermes to the v0.18 line with richer Slack rendering, 
 - NemoClaw can import a host corporate proxy root CA into the sandbox trust bundle so external channel endpoints such as `api.telegram.org` verify TLS behind a corporate MITM proxy.
   Set `NEMOCLAW_CORPORATE_CA_BUNDLE` before onboarding, or rely on detection of the conventional CA variables and host administrator anchor directories.
   NemoClaw appends the validated CA and never replaces the OpenShell root, and you can opt out with `NEMOCLAW_CORPORATE_CA_IMPORT=0`.
-  For more information, refer to [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+  For more information, refer to [Configure Corporate CA Trust](/user-guide/openclaw/security/configure-corporate-ca-trust).
 - Sandbox base-image resolution now prefers release-matched image tags before mutable `:latest` for release installs and stale source checkouts, validates explicit base-image overrides exactly, and fails closed when a requested image cannot be pulled or fails compatibility checks.
   Failed cluster-image builds now surface captured, redacted Docker diagnostics instead of an opaque exit code, and the LangChain Deep Agents Code image build preserves the native OpenRouter Nemotron profile registration.
   For more information, refer to [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands) and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).

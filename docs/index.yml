@@ -117,6 +117,9 @@ navigation:
               - section: "Manage Inference"
                 slug: manage-inference
                 contents:
+                  - page: "Use Shared Gateway Routes"
+                    path: _build/agent-variants/inference/use-shared-gateway-routes.openclaw.generated.mdx
+                    slug: use-shared-gateway-routes
                   - page: "View the Active Inference Route"
                     path: _build/agent-variants/inference/view-active-inference-route.openclaw.generated.mdx
                     slug: view-active-inference-route
@@ -297,6 +300,9 @@ navigation:
               - page: "Security Best Practices"
                 path: _build/agent-variants/security/best-practices.openclaw.generated.mdx
                 slug: best-practices
+              - page: "Configure Corporate CA Trust"
+                path: _build/agent-variants/security/configure-corporate-ca-trust.openclaw.generated.mdx
+                slug: configure-corporate-ca-trust
               - page: "Credential Storage"
                 path: _build/agent-variants/security/credential-storage.openclaw.generated.mdx
                 slug: credential-storage
@@ -470,6 +476,9 @@ navigation:
               - section: "Manage Inference"
                 slug: manage-inference
                 contents:
+                  - page: "Use Shared Gateway Routes"
+                    path: _build/agent-variants/inference/use-shared-gateway-routes.deepagents.generated.mdx
+                    slug: use-shared-gateway-routes
                   - page: "View the Active Inference Route"
                     path: _build/agent-variants/inference/view-active-inference-route.deepagents.generated.mdx
                     slug: view-active-inference-route
@@ -721,6 +730,9 @@ navigation:
               - section: "Manage Inference"
                 slug: manage-inference
                 contents:
+                  - page: "Use Shared Gateway Routes"
+                    path: _build/agent-variants/inference/use-shared-gateway-routes.hermes.generated.mdx
+                    slug: use-shared-gateway-routes
                   - page: "View the Active Inference Route"
                     path: _build/agent-variants/inference/view-active-inference-route.hermes.generated.mdx
                     slug: view-active-inference-route
@@ -873,6 +885,9 @@ navigation:
               - page: "Security Best Practices"
                 path: _build/agent-variants/security/best-practices.hermes.generated.mdx
                 slug: best-practices
+              - page: "Configure Corporate CA Trust"
+                path: _build/agent-variants/security/configure-corporate-ca-trust.hermes.generated.mdx
+                slug: configure-corporate-ca-trust
               - page: "Credential Storage"
                 path: _build/agent-variants/security/credential-storage.hermes.generated.mdx
                 slug: credential-storage
