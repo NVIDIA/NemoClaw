@@ -280,6 +280,38 @@ it("reports the total wall clock time for a selected E2E job", async () => {
   expect(body).toContain("| rebuild-openclaw | ✅ success | 11m 10s |");
 });
 
+it("reports one total wall clock span for a matrix E2E job", async () => {
+  const { body, setFailed } = await executeReport({
+    apiJobs: [
+      {
+        completed_at: "2026-07-15T00:05:00Z",
+        conclusion: "success",
+        name: "OpenShell gateway upgrade (v0.1.0)",
+        started_at: "2026-07-15T00:00:00Z",
+        status: "completed",
+      },
+      {
+        completed_at: "2026-07-15T00:11:00Z",
+        conclusion: "success",
+        name: "OpenShell gateway upgrade (v0.2.0)",
+        started_at: "2026-07-15T00:02:00Z",
+        status: "completed",
+      },
+    ],
+    testMatrix: [],
+    jobs: "openshell-gateway-upgrade",
+    needs: {
+      "generate-matrix": { result: "success" },
+      "openshell-gateway-upgrade": { result: "success" },
+    },
+  });
+
+  expect(setFailed).not.toHaveBeenCalled();
+  expect(body).toContain("| openshell-gateway-upgrade | ✅ success | 11m 0s |");
+  expect(body).not.toContain("OpenShell gateway upgrade (v0.1.0)");
+  expect(body).not.toContain("OpenShell gateway upgrade (v0.2.0)");
+});
+
 it("reports API lookup failures as unknown rather than copying the aggregate result", async () => {
   const { body, setFailed, warning } = await executeReport({
     testMatrix: DEFAULT_TEST_MATRIX.slice(0, 1),
