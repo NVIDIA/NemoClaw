@@ -18,7 +18,18 @@ type WorkflowStep = {
   with?: Record<string, unknown>;
 };
 
+type PublisherMatrixEntry = {
+  agent?: string;
+  display_name?: string;
+  dockerfile?: string;
+  image?: string;
+};
+
 type WorkflowJob = {
+  strategy?: {
+    "fail-fast"?: boolean;
+    matrix?: { include?: PublisherMatrixEntry[] };
+  };
   steps?: WorkflowStep[];
 };
 
@@ -33,6 +44,7 @@ type Publisher = {
   build: WorkflowStep;
   buildIndex: number;
   dockerfile: string;
+  matrix: PublisherMatrixEntry;
 };
 
 type RegistryCacheEntry = {
@@ -46,20 +58,34 @@ const workflow = YAML.parse(
 ) as Workflow;
 const FULL_SHA_ACTION = /^[^@]+@[0-9a-f]{40}$/i;
 
-function publisherJobs(candidate: Workflow): Publisher[] {
+function renderMatrixValue(value: unknown, matrix: PublisherMatrixEntry): string {
+  return String(value ?? "").replace(
+    /\$\{\{\s*matrix\.([a-z_]+)\s*\}\}/gu,
+    (_match, key: keyof PublisherMatrixEntry) => String(matrix[key] ?? ""),
+  );
+}
+
+function publisherBuildSteps(candidate: Workflow): Omit<Publisher, "dockerfile" | "matrix">[] {
   return Object.entries(candidate.jobs ?? {}).flatMap(([jobName, job]) => {
     const steps = job.steps ?? [];
     return steps
       .map((build, buildIndex) => ({ build, buildIndex }))
       .filter(({ build }) => build.uses?.startsWith("docker/build-push-action@"))
-      .map(({ build, buildIndex }) => ({
-        jobName,
-        job,
-        build,
-        buildIndex,
-        dockerfile: String(build.with?.file ?? ""),
-      }));
+      .map(({ build, buildIndex }) => ({ jobName, job, build, buildIndex }));
   });
+}
+
+function publisherJobs(candidate: Workflow): Publisher[] {
+  return publisherBuildSteps(candidate).flatMap(({ jobName, job, build, buildIndex }) =>
+    (job.strategy?.matrix?.include ?? []).map((matrix) => ({
+      jobName: `${jobName} (${matrix.display_name ?? matrix.agent ?? "unnamed"})`,
+      job,
+      build,
+      buildIndex,
+      dockerfile: renderMatrixValue(build.with?.file, matrix),
+      matrix,
+    })),
+  );
 }
 
 function copiedInputs(dockerfile: string): string[] {
@@ -93,12 +119,13 @@ function validatePublishers(candidate: Workflow): string[] {
   const triggerPaths = candidate.on?.push?.paths ?? [];
   const publishers = publisherJobs(candidate);
   const exportedCacheRefCounts = new Map<string, number>();
-  for (const { build } of publishers) {
-    const cacheRef = registryCacheEntries(build.with?.["cache-to"])[0]?.ref ?? "";
+  for (const { build, matrix } of publishers) {
+    const cacheRef =
+      registryCacheEntries(renderMatrixValue(build.with?.["cache-to"], matrix))[0]?.ref ?? "";
     exportedCacheRefCounts.set(cacheRef, (exportedCacheRefCounts.get(cacheRef) ?? 0) + 1);
   }
 
-  return publishers.flatMap(({ jobName, job, build, buildIndex, dockerfile }) => {
+  return publishers.flatMap(({ jobName, job, build, buildIndex, dockerfile, matrix }) => {
     const steps = job.steps ?? [];
     const metadata = steps.find((step) => step.id === "meta");
     const guardIndex = steps.findIndex((step) =>
@@ -109,10 +136,10 @@ function validatePublishers(candidate: Workflow): string[] {
     const copiedInputPaths = dockerfileExists ? copiedInputs(dockerfile) : [];
     const dockerActions = steps.filter((step) => step.uses?.startsWith("docker/"));
     const tags = String(metadata?.with?.tags ?? "");
-    const metadataImage = String(metadata?.with?.images ?? "");
+    const metadataImage = renderMatrixValue(metadata?.with?.images, matrix);
     const expectedCacheRef = `${metadataImage}:buildcache`;
-    const cacheFrom = registryCacheEntries(build.with?.["cache-from"]);
-    const cacheTo = registryCacheEntries(build.with?.["cache-to"]);
+    const cacheFrom = registryCacheEntries(renderMatrixValue(build.with?.["cache-from"], matrix));
+    const cacheTo = registryCacheEntries(renderMatrixValue(build.with?.["cache-to"], matrix));
     const importedCacheRef = cacheFrom[0]?.ref;
     const exportedCacheRef = cacheTo[0]?.ref;
 
@@ -184,14 +211,40 @@ describe("base-image publication behavior", () => {
   // source-shape-contract: security -- Publisher mutations must preserve immutable actions, guarded arguments, and trusted registry cache ownership
   it("accepts every discovered publisher and rejects supply-chain mutations", () => {
     const publishers = publisherJobs(workflow);
-    expect(publishers.length).toBeGreaterThan(0);
+    expect(publisherBuildSteps(workflow)).toHaveLength(1);
+    expect(
+      publishers.map(({ dockerfile, matrix }) => ({
+        agent: matrix.agent,
+        dockerfile,
+        image: matrix.image,
+      })),
+    ).toEqual([
+      {
+        agent: "openclaw",
+        dockerfile: "Dockerfile.base",
+        image: "nvidia/nemoclaw/sandbox-base",
+      },
+      {
+        agent: "hermes",
+        dockerfile: "agents/hermes/Dockerfile.base",
+        image: "nvidia/nemoclaw/hermes-sandbox-base",
+      },
+      {
+        agent: "langchain-deepagents-code",
+        dockerfile: "agents/langchain-deepagents-code/Dockerfile.base",
+        image: "nvidia/nemoclaw/langchain-deepagents-code-sandbox-base",
+      },
+    ]);
+    expect(publishers[0].job.strategy?.["fail-fast"]).toBe(false);
     expect(validatePublishers(workflow)).toEqual([]);
 
     const mutated = structuredClone(workflow);
     const mutatedPublisher = publisherJobs(mutated)[0];
     const mutatedSteps = mutatedPublisher.job.steps ?? [];
     const otherPublisher = publisherJobs(mutated)[1];
-    const otherCacheRef = registryCacheEntries(otherPublisher.build.with?.["cache-to"])[0]?.ref;
+    const otherCacheRef = registryCacheEntries(
+      renderMatrixValue(otherPublisher.build.with?.["cache-to"], otherPublisher.matrix),
+    )[0]?.ref;
     const mutatedGuard = mutatedSteps.find((step) =>
       (step.run ?? "").includes("scripts/check-production-build-args.sh"),
     );
