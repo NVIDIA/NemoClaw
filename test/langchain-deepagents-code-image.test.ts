@@ -619,7 +619,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "lacked denial evidence",
       "python_probe_source",
       'DCODE_MANAGED_EXEC="/usr/local/lib/nemoclaw/dcode-managed-exec"',
-      'local -a command_prefix=("${@:3}")',
       "sandbox_exec_argv",
       'source="$(python_probe_source)"',
       '"$python_bin" -c "$source" "$url"',
