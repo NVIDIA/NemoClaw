@@ -444,6 +444,15 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         deps.log("  [resume] Refreshing compatible-endpoint inference route for messaging.");
       }
       deps.skippedStepMessage("provider_selection", `${provider} / ${model}`);
+      const agentName = (agent as { name?: string } | null)?.name;
+      if (
+        (!agentName || agentName === "openclaw") &&
+        sandboxName &&
+        session?.sandboxPromptProgress?.sandboxName === true &&
+        session.sandboxName === sandboxName
+      ) {
+        deps.log(`  [resume] Reusing sandbox name: ${sandboxName}.`);
+      }
       await deps.recordStateSkipped("provider_selection", {
         reason: "resume",
         provider,
