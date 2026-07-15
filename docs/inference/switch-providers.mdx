@@ -50,7 +50,10 @@ Changes within the current API family hot-reload without replacing the gateway p
 When the API family changes, NemoClaw commits the route and configuration, then restarts only the OpenClaw gateway and verifies its health.
 
 For Hermes, NemoClaw updates `/sandbox/.hermes/config.yaml`, including the model, base URL, API-family mode, and OpenShell proxy API-key placeholder.
-Hermes does not rebuild or restart for this runtime route change.
+When the dashboard profile exists, NemoClaw also mirrors the route into `/sandbox/.hermes/dashboard-home/config.yaml`; a normal runtime route change does not rebuild or restart Hermes.
+If that dashboard mirror cannot be confirmed, the route and main config remain committed but the command exits nonzero.
+Follow [Hermes dashboard config did not converge](../../reference/troubleshooting#hermes-dashboard-config-did-not-converge) before using Dashboard Chat.
+A missing dashboard profile is treated as disabled and does not fail the switch.
 
 If the in-sandbox configuration sync fails after the gateway route changes, NemoClaw keeps the gateway and host registry aligned and prints a rebuild hint.
 Run the rebuild before relying on the running agent.

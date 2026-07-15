@@ -248,7 +248,8 @@
       "live": "test/e2e/live/hermes-e2e.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/inference-adapter.test.ts"
       ]
     },
     {

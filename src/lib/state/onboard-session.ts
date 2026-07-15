@@ -17,6 +17,7 @@ import { normalizeWebSearchConfig, type WebSearchConfig } from "../inference/web
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import { compactSandboxMessagingPlanForPersistence } from "../messaging/persistence";
 import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
+import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
 import {
   createOnboardMachineEvent,
   emitOnboardMachineEvent,
@@ -123,6 +124,18 @@ export interface OnboardMachineSnapshot {
   recoveryReceipt?: SessionRecoveryReceipt;
 }
 
+export interface SandboxPromptProgress {
+  sandboxName: boolean;
+  webSearch: boolean;
+  messaging: boolean;
+  resourceProfile: boolean;
+}
+
+export interface SessionResourceProfile {
+  cpu: string;
+  memory: string;
+}
+
 export interface Session {
   version: number;
   sessionId: string;
@@ -147,6 +160,10 @@ export interface Session {
   routerPid: number | null;
   routerCredentialHash: string | null;
   webSearchConfig: WebSearchConfig | null;
+  /** Completed secret-free choices that can be reused by an interrupted sandbox setup. */
+  sandboxPromptProgress: SandboxPromptProgress;
+  /** The selected sandbox resource values; null is an explicit OpenShell-default choice. */
+  resourceProfile: SessionResourceProfile | null;
   /** Selected preference, retained even when a model-specific safeguard downgrades it. */
   toolDisclosure: ToolDisclosure;
   /** Enables credential-free OTLP trace export to NemoClaw's fixed local collector boundary. */
@@ -156,6 +173,8 @@ export interface Session {
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
   messagingPlan: SandboxMessagingPlan | null;
+  /** Non-secret names of credential providers registered before sandbox setup completed. */
+  stagedCredentialProviders: string[];
   // SHA-256 hex digest of every legacy credential value successfully
   // written to the OpenShell gateway during this onboard session, keyed by
   // env-name. Persisted across process restarts so a `--resume` run that
@@ -343,6 +362,63 @@ function readStepStatus(value: SessionJsonValue | undefined): StepStatus | null 
 function parseWebSearchConfig(value: SessionJsonValue | undefined): WebSearchConfig | null {
   if (!isObject(value) || value.fetchEnabled !== true) return null;
   return normalizeWebSearchConfig(value as Partial<WebSearchConfig>);
+}
+
+function hasOwn(value: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function isValidCheckpointedSandboxName(value: unknown): boolean {
+  return (
+    typeof value === "string" && value.length <= NAME_MAX_LENGTH && NAME_VALID_PATTERN.test(value)
+  );
+}
+
+function isValidNullableWebSearchChoice(value: unknown): boolean {
+  return value === null || parseWebSearchConfig(value as SessionJsonValue | undefined) !== null;
+}
+
+function isValidNullableMessagingChoice(value: unknown, sandboxName: unknown): boolean {
+  return (
+    value === null ||
+    (typeof sandboxName === "string" && parseSandboxMessagingPlan(value, { sandboxName }) !== null)
+  );
+}
+
+function isValidNullableResourceChoice(value: unknown): boolean {
+  return value === null || parseSessionResourceProfile(value) !== null;
+}
+
+function parseSandboxPromptProgress(
+  value: unknown,
+  choices: Record<string, unknown>,
+): SandboxPromptProgress {
+  const progress = isObject(value) ? value : {};
+  return {
+    sandboxName:
+      progress.sandboxName === true &&
+      hasOwn(choices, "sandboxName") &&
+      isValidCheckpointedSandboxName(choices.sandboxName),
+    webSearch:
+      progress.webSearch === true &&
+      hasOwn(choices, "webSearchConfig") &&
+      isValidNullableWebSearchChoice(choices.webSearchConfig),
+    messaging:
+      progress.messaging === true &&
+      hasOwn(choices, "messagingPlan") &&
+      isValidNullableMessagingChoice(choices.messagingPlan, choices.sandboxName),
+    resourceProfile:
+      progress.resourceProfile === true &&
+      hasOwn(choices, "resourceProfile") &&
+      isValidNullableResourceChoice(choices.resourceProfile),
+  };
+}
+
+function parseSessionResourceProfile(value: unknown): SessionResourceProfile | null {
+  if (!isObject(value)) return null;
+  const cpu = readString(value.cpu);
+  const memory = readString(value.memory);
+  return cpu !== null && memory !== null ? { cpu, memory } : null;
 }
 
 function parseTelegramConfig(value: unknown): TelegramConfig | null {
@@ -562,12 +638,18 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     routerPid: readPositiveInteger(overrides.routerPid),
     routerCredentialHash: overrides.routerCredentialHash ?? null,
     webSearchConfig: normalizeWebSearchConfig(overrides.webSearchConfig),
+    sandboxPromptProgress: parseSandboxPromptProgress(
+      overrides.sandboxPromptProgress,
+      overrides as Record<string, unknown>,
+    ),
+    resourceProfile: parseSessionResourceProfile(overrides.resourceProfile),
     toolDisclosure: normalizeSessionToolDisclosure(overrides.toolDisclosure),
     observabilityEnabled: overrides.observabilityEnabled === true,
     observabilityRequestedExplicitly: overrides.observabilityRequestedExplicitly === true,
     hermesToolGateways: readStringArray(overrides.hermesToolGateways),
     policyPresets: readStringArray(overrides.policyPresets),
     messagingPlan: parseSandboxMessagingPlan(overrides.messagingPlan),
+    stagedCredentialProviders: readStringArray(overrides.stagedCredentialProviders) ?? [],
     migratedLegacyValueHashes: overrides.migratedLegacyValueHashes
       ? readStringRecord(overrides.migratedLegacyValueHashes)
       : null,
@@ -608,12 +690,15 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     routerPid: readPositiveInteger(data.routerPid),
     routerCredentialHash: readString(data.routerCredentialHash),
     webSearchConfig: parseWebSearchConfig(data.webSearchConfig),
+    sandboxPromptProgress: parseSandboxPromptProgress(data.sandboxPromptProgress, data),
+    resourceProfile: parseSessionResourceProfile(data.resourceProfile),
     toolDisclosure: normalizeSessionToolDisclosure(data.toolDisclosure),
     observabilityEnabled: data.observabilityEnabled === true,
     observabilityRequestedExplicitly: data.observabilityRequestedExplicitly === true,
     hermesToolGateways: readStringArray(data.hermesToolGateways),
     policyPresets: readStringArray(data.policyPresets),
     messagingPlan: parseSandboxMessagingPlan(data.messagingPlan),
+    stagedCredentialProviders: readStringArray(data.stagedCredentialProviders) ?? [],
     migratedLegacyValueHashes: readStringRecord(data.migratedLegacyValueHashes),
     gpuPassthrough: data.gpuPassthrough === true,
     telegramConfig: parseTelegramConfig(data.telegramConfig),
