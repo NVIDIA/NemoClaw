@@ -3632,6 +3632,14 @@ jobs:
             sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6"
             openshell_version: 0.0.44
             openclaw_version: 2026.5.22
+          - id: v0.0.74
+            shard: v0-0-74
+            nemoclaw_ref: v0.0.74
+            nemoclaw_commit: "3a05b54e8ec3e1d5550ec5c728de54af872bffe3"
+            installer_sha256: "a0cd3feca488d247e53d59d7d8246d2b86e75e95acb5e7d78504b3c0c60fd7db"
+            sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6"
+            openshell_version: 0.0.72
+            openclaw_version: 2026.5.27
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "openshell-gateway-upgrade"
@@ -3662,8 +3670,9 @@ jobs:
 
       - name: Run OpenShell gateway upgrade live Vitest test
         # This preserves the legacy ubuntu-latest + Docker/OpenShell runner
-        # lane while covering both the original v0.0.36 fixture and the exact
-        # v0.0.55/OpenShell 0.0.44 source shape from upgrade regression #6114.
+        # lane while covering the original v0.0.36 fixture, the exact
+        # v0.0.55/OpenShell 0.0.44 source shape from upgrade regression #6114,
+        # and the immediate v0.0.74/OpenShell 0.0.72 predecessor to this bump.
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |

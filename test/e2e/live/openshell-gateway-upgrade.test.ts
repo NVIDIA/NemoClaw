@@ -161,8 +161,8 @@ async function bash(
 
 // The frozen release installers are the source of truth, but their embedded
 // Dockerfiles predate the fixture pins needed for a deterministic upgrade test.
-// Keep this adapter scoped to the v0.0.36/v0.0.55 lanes and retire it with
-// those historical lanes; changing the tagged release payloads is not viable.
+// Keep this adapter scoped to the frozen historical lanes and retire it with
+// them; changing the tagged release payloads is not viable.
 function patchOldInstallerFixture(installer: string): void {
   const needle = '  legacy_script="${source_root}/install.sh"\n';
   const hook =
