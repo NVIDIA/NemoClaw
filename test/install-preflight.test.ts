@@ -1013,6 +1013,10 @@ fi`,
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toMatch(/Previous onboarding session failed/);
     expect(`${result.stdout}${result.stderr}`).toMatch(/--fresh/);
+    // The non-interactive branch is reachable through a piped curl|bash
+    // install, which passes flags only via `bash -s --`, so the refusal must
+    // also name the env var form the installer documents and honors (#6912).
+    expect(`${result.stdout}${result.stderr}`).toMatch(/NEMOCLAW_FRESH=1/);
     // The installer must have bailed out before invoking nemoclaw onboard.
     expect(fs.existsSync(onboardLog)).toBe(false);
   });
@@ -2654,6 +2658,25 @@ exit 1
     const r = callInstallerFn('NEMOCLAW_VERSION="0.0.21"; installer_version_for_display');
     expect(r.status).toBe(0);
     expect(r.stdout).toBe("  v0.0.21");
+  });
+
+  it("onboard_failed_session_remediation: names the env var alongside the flag (#6912)", () => {
+    const r = callInstallerFn("onboard_failed_session_remediation");
+    expect(r.status).toBe(0);
+    // A piped `curl … | bash` install takes flags only via `bash -s --`, so
+    // the env var is the form that pipe can apply directly. Naming only the
+    // flag left curl|bash users without an actionable remediation (#6912).
+    expect(r.stdout).toContain("NEMOCLAW_FRESH=1");
+    expect(r.stdout).toContain("--fresh");
+    expect(r.stdout).toContain("nemoclaw onboard --resume");
+  });
+
+  it("onboard_failed_session_remediation: uses the active CLI alias", () => {
+    const r = callInstallerFn("onboard_failed_session_remediation", {
+      NEMOCLAW_AGENT: "hermes",
+    });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("nemohermes onboard --resume");
   });
 
   it("agent_display_name: formats Hermes and NemoClaw names", () => {
