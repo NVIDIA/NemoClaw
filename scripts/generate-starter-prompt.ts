@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -58,30 +58,53 @@ export function generateStarterPromptSnippet(): string {
   return renderStarterPromptSnippet(prompt);
 }
 
-function main(): void {
-  const unexpectedArgs = process.argv.slice(2).filter((arg) => arg !== "--check");
+type StarterPromptGeneratorOptions = {
+  args?: string[];
+  generatedPath?: string;
+  log?: (message: string) => void;
+  reportError?: (message: string) => void;
+};
+
+function readGeneratedSnippet(generatedPath: string): string {
+  try {
+    return readFileSync(generatedPath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    return "";
+  }
+}
+
+export function runStarterPromptGenerator({
+  args = process.argv.slice(2),
+  generatedPath = path.join(REPO_ROOT, STARTER_PROMPT_GENERATED_PATH),
+  log = console.log,
+  reportError = console.error,
+}: StarterPromptGeneratorOptions = {}): number {
+  const unexpectedArgs = args.filter((arg) => arg !== "--check");
   if (unexpectedArgs.length > 0) {
     throw new Error(`Unknown arguments: ${unexpectedArgs.join(", ")}`);
   }
 
-  const generatedPath = path.join(REPO_ROOT, STARTER_PROMPT_GENERATED_PATH);
   const expected = generateStarterPromptSnippet();
 
-  if (process.argv.includes("--check")) {
-    const actual = existsSync(generatedPath) ? readFileSync(generatedPath, "utf8") : "";
+  if (args.includes("--check")) {
+    const actual = readGeneratedSnippet(generatedPath);
     if (actual !== expected) {
-      console.error(
+      reportError(
         `${STARTER_PROMPT_GENERATED_PATH} is missing or stale. Run npm run docs:sync-starter-prompt.`,
       );
-      process.exit(1);
+      return 1;
     }
-    console.log("Generated Starter Prompt snippet is current.");
-    return;
+    log("Generated Starter Prompt snippet is current.");
+    return 0;
   }
 
   mkdirSync(path.dirname(generatedPath), { recursive: true });
   writeFileSync(generatedPath, expected);
-  console.log(`Generated ${STARTER_PROMPT_GENERATED_PATH}.`);
+  log(`Generated ${STARTER_PROMPT_GENERATED_PATH}.`);
+  return 0;
 }
 
-if (fileURLToPath(import.meta.url) === path.resolve(process.argv[1] ?? "")) main();
+if (fileURLToPath(import.meta.url) === path.resolve(process.argv[1] ?? "")) {
+  process.exitCode = runStarterPromptGenerator();
+}

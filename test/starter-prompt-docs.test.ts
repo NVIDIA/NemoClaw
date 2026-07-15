@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
@@ -12,6 +12,7 @@ import {
   extractStarterPromptMarkdown,
   generateStarterPromptSnippet,
   renderStarterPromptSnippet,
+  runStarterPromptGenerator,
   STARTER_PROMPT_GENERATED_PATH,
 } from "../scripts/generate-starter-prompt";
 
@@ -436,45 +437,41 @@ describe("starter prompt docs CTA", () => {
   });
 
   it("rejects missing or stale generated snippets and accepts the current output (#5048)", () => {
-    const generatedPath = path.join(repoRoot, STARTER_PROMPT_GENERATED_PATH);
-    const original = fs.existsSync(generatedPath) ? fs.readFileSync(generatedPath, "utf8") : null;
-    const restoreGeneratedSnippet =
-      original === null
-        ? () => fs.rmSync(generatedPath, { force: true })
-        : () => fs.writeFileSync(generatedPath, original);
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-starter-prompt-"));
+    const generatedPath = path.join(tempDir, "StarterPrompt.generated.mdx");
+    const stdout: string[] = [];
+    const stderr: string[] = [];
     const runCheck = () =>
-      spawnSync(
-        process.execPath,
-        ["--import", "tsx", "scripts/generate-starter-prompt.ts", "--check"],
-        {
-          cwd: repoRoot,
-          encoding: "utf8",
-        },
-      );
+      runStarterPromptGenerator({
+        args: ["--check"],
+        generatedPath,
+        log: (message) => stdout.push(message),
+        reportError: (message) => stderr.push(message),
+      });
 
     try {
-      fs.rmSync(generatedPath, { force: true });
       const missing = runCheck();
-      expect(missing.status).toBe(1);
-      expect(missing.stderr).toContain("is missing or stale");
+      expect(missing).toBe(1);
+      expect(stderr.at(-1)).toContain("is missing or stale");
 
-      fs.mkdirSync(path.dirname(generatedPath), { recursive: true });
       fs.writeFileSync(generatedPath, "stale\n");
       const stale = runCheck();
-      expect(stale.status).toBe(1);
-      expect(stale.stderr).toContain("is missing or stale");
+      expect(stale).toBe(1);
+      expect(stderr.at(-1)).toContain("is missing or stale");
 
       fs.writeFileSync(generatedPath, generateStarterPromptSnippet());
       const current = runCheck();
-      expect(current.status).toBe(0);
-      expect(current.stdout).toContain("Generated Starter Prompt snippet is current.");
+      expect(current).toBe(0);
+      expect(stdout.at(-1)).toBe("Generated Starter Prompt snippet is current.");
     } finally {
-      restoreGeneratedSnippet();
+      fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
 
+  // source-shape-contract: compatibility -- Docs entry points must generate the Starter Prompt before Fern validation and rendering
   it("prepares the Starter Prompt in every docs build entry point (#5048)", () => {
-    const scripts = (JSON.parse(read("package.json")) as { scripts: Record<string, string> }).scripts;
+    const scripts = (JSON.parse(read("package.json")) as { scripts: Record<string, string> })
+      .scripts;
 
     expect(scripts["docs:sync-starter-prompt"]).toBe("tsx scripts/generate-starter-prompt.ts");
     expect(scripts["docs:prepare"]).toBe(
