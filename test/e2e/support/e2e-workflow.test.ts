@@ -65,6 +65,13 @@ describe("e2e workflow boundary", () => {
         run: "docker buildx use external",
       },
     ],
+    [
+      "a multiline environment-file builder selection",
+      {
+        name: "Persist rebuild Buildx through the environment file",
+        run: "printf '%s\\n' 'BUILDX_BUILDER<<EOF' 'external' 'EOF' >> \"$GITHUB_ENV\"",
+      },
+    ],
   ])("rejects %s in rebuild E2E jobs", (_case, injectedStep) => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-cache-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");

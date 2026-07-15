@@ -453,7 +453,7 @@ function requireDockerEngineRebuilds(
     const run = stringValue(step.run);
     return (
       Object.hasOwn(asRecord(step.env), "BUILDX_BUILDER") ||
-      run.includes("BUILDX_BUILDER=") ||
+      /BUILDX_BUILDER(?:=|<<)/u.test(run) ||
       /docker\s+buildx\s+use(?:\s|$)/u.test(run)
     );
   });
