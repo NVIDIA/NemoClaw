@@ -144,6 +144,7 @@ export interface PromptSandboxNameDeps {
   promptOrDefault(question: string, envVar: string, defaultValue: string): Promise<string>;
   cliDisplayName(): string;
   isNonInteractive(): boolean;
+  checkpointSandboxName(sandboxName: string): void;
   exit(code: number): never;
 }
 
@@ -174,6 +175,7 @@ export function createPromptValidatedSandboxName(deps: PromptSandboxNameDeps) {
           }
           continue;
         }
+        deps.checkpointSandboxName(validatedSandboxName);
         return validatedSandboxName;
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);

@@ -774,7 +774,9 @@ Silent retry would loop on the same failure if your original choice, such as an 
   curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_FRESH=1 bash
   ```
 
-  Retry the same session without re-prompting.
+  Retry the same session without repeating completed non-secret choices.
+  Interactive resume can request a web search or messaging credential again when it was available only to the interrupted process because raw credentials are not stored in the onboarding session.
+  Non-interactive resume cannot prompt for a missing messaging credential: it preserves the completed channel choice, exits, and asks you to export the missing messaging credential environment variables before running `$$nemoclaw onboard --resume` again.
   This is only useful if the original failure was transient, for example a network blip or a stopped Docker daemon, and not a wrong provider choice:
 
   ```bash

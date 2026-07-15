@@ -153,7 +153,7 @@ describe("onboard helpers", () => {
       expect(updateSandbox).toHaveBeenCalledWith("test-box", { model: "anthropic.claude-3-5-sonnet-20240620-v1:0", provider: "compatible-anthropic-endpoint", endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com", credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY", preferredInferenceApi: null, gatewayName: "nemoclaw" });
     });
   });
-  it("resolves a sandbox name before reconciling Hermes Provider on resume", {
+  it("resolves a missing name but reuses a completed name before resume inference (#6743)", {
     timeout: 60_000,
   }, () => {
     const repoRoot = path.join(import.meta.dirname, "..");
@@ -204,6 +204,7 @@ const prompts = [];
 const registryUpdates = [];
 const done = new Error("INFERENCE_STEP_DONE");
 let inferenceSessionSnapshot = null;
+const useCheckpointedName = process.argv[2] === "checkpointed";
 
 delete process.env.NEMOCLAW_NON_INTERACTIVE;
 delete process.env.NEMOCLAW_SANDBOX_NAME;
@@ -287,7 +288,7 @@ onboardSession.saveSession(
   onboardSession.createSession({
     mode: "interactive",
     agent: "hermes",
-    sandboxName: null,
+    sandboxName: useCheckpointedName ? "hermes-resume" : null,
     provider: "hermes-provider",
     model: "moonshotai/kimi-k2.6",
     endpointUrl: "https://8.8.8.8/v1",
@@ -295,6 +296,12 @@ onboardSession.saveSession(
     hermesAuthMethod: "api_key",
     hermesToolGateways: [],
     policyPresets: ["nous-web"],
+    sandboxPromptProgress: {
+      sandboxName: useCheckpointedName,
+      webSearch: false,
+      messaging: false,
+      resourceProfile: false,
+    },
     metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
     steps: {
       preflight: complete(),
@@ -347,11 +354,14 @@ const { onboard } = require(${onboardPath});
     delete env.NEMOCLAW_SANDBOX_NAME;
     delete env.NOUS_API_KEY;
 
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env,
-    });
+    const runScenario = (scenario: "missing" | "checkpointed") =>
+      spawnSync(process.execPath, [scriptPath, scenario], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env,
+      });
+
+    const result = runScenario("missing");
 
     assert.equal(result.status, 0, result.stderr);
     assert.doesNotMatch(
@@ -378,8 +388,8 @@ const { onboard } = require(${onboardPath});
     assert.ok(!payload.commands.some((entry) => /provider (create|update)/.test(entry.command)));
     assert.equal(
       payload.inferenceSessionSandboxName,
-      null,
-      "resume inference must not persist sandboxName before sandbox creation",
+      "hermes-resume",
+      "resume inference should checkpoint the validated sandbox name before reconciliation",
     );
     assert.ok(
       payload.registryUpdates.some(
@@ -390,6 +400,23 @@ const { onboard } = require(${onboardPath});
       ),
       "Hermes setup should reconcile inference against the resolved sandbox name",
     );
+
+    const checkpointedResult = runScenario("checkpointed");
+    assert.equal(checkpointedResult.status, 0, checkpointedResult.stderr);
+    assert.match(
+      checkpointedResult.stdout,
+      /\[resume\] Reusing sandbox name: hermes-resume\./,
+      "resume should report the completed sandbox-name choice under inference configuration",
+    );
+    const checkpointedPayload = parseStdoutJson<{
+      prompts: string[];
+      inferenceSessionSandboxName: string | null;
+    }>(checkpointedResult.stdout);
+    assert.ok(
+      !checkpointedPayload.prompts.some((question) => question.includes("Sandbox name")),
+      "resume must not repeat a completed sandbox-name prompt",
+    );
+    assert.equal(checkpointedPayload.inferenceSessionSandboxName, "hermes-resume");
   });
 
   it("reconciles a registered Hermes Provider when a fresh shell Nous key is selected", async () => {

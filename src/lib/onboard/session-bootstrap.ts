@@ -125,8 +125,10 @@ function assertRecoverableResumeSandboxName(
   deps: OnboardSessionBootstrapDeps,
 ): void {
   const sandboxStepCompleted = session?.steps?.sandbox?.status === "complete";
+  const sandboxNameCheckpointed = session?.sandboxPromptProgress?.sandboxName === true;
   const recoveredSandboxName =
-    input.requestedSandboxName || (sandboxStepCompleted ? session?.sandboxName || null : null);
+    input.requestedSandboxName ||
+    (sandboxStepCompleted || sandboxNameCheckpointed ? session?.sandboxName || null : null);
   if (input.cannotPrompt && !recoveredSandboxName) {
     deps.error(
       "  Cannot resume non-interactive onboard: the previous run was interrupted before sandbox creation completed,",

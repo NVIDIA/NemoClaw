@@ -439,6 +439,13 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         deps.log("  [resume] Refreshing compatible-endpoint inference route for messaging.");
       }
       deps.skippedStepMessage("provider_selection", `${provider} / ${model}`);
+      if (
+        sandboxName &&
+        session?.sandboxPromptProgress?.sandboxName === true &&
+        session.sandboxName === sandboxName
+      ) {
+        deps.log(`  [resume] Reusing sandbox name: ${sandboxName}.`);
+      }
       await deps.recordStateSkipped("provider_selection", {
         reason: "resume",
         provider,

@@ -227,7 +227,11 @@ For example, `nemohermes` resolves to `hermes`, while `dcode`, `deepagents`, `de
 #### `--resume` and `--fresh`
 
 NemoClaw records onboarding progress so interrupted runs can continue.
-Use `--resume` to continue a resumable onboarding session with the provider, model, sandbox name, agent, observability choice, and custom Dockerfile path recorded by the original run.
+Use `--resume` to continue a resumable onboarding session with the provider, model, sandbox name, agent, observability choice, web search selection, messaging selection and non-secret settings, resource profile, and custom Dockerfile path recorded by the original run.
+When the saved session includes prompt checkpoints, resume skips each completed group and continues at the first incomplete choice.
+Legacy sessions without those checkpoints may repeat choices whose completion cannot be proven.
+Raw web search and messaging credentials are never written to the onboarding session, so interactive resume can request a missing credential again while preserving the completed non-secret choices.
+If a completed messaging choice lacks its credential during non-interactive resume, NemoClaw preserves the choice and exits; export the missing messaging credential environment variables, then run `$$nemoclaw onboard --resume` again.
 Completed onboarding sessions are not resumable.
 Use `--resume` only for interrupted `in_progress` sessions, not to change provider, model, agent, or sandbox recreation settings after onboarding has completed.
 During resume, NemoClaw reruns preflight, gateway, provider, and sandbox repair checks even when the saved session has already reached a later nonterminal onboarding phase.

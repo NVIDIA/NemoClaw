@@ -448,6 +448,13 @@ const promptValidatedSandboxName = sandboxAgent.createPromptValidatedSandboxName
   promptOrDefault,
   cliDisplayName,
   isNonInteractive,
+  checkpointSandboxName: (sandboxName) => {
+    onboardSession.updateSession((current: Session) => {
+      current.sandboxName = sandboxName;
+      current.sandboxPromptProgress.sandboxName = true;
+      return current;
+    });
+  },
   exit: process.exit,
 });
 const modelRouter: typeof import("./onboard/model-router") = require("./onboard/model-router");
@@ -3782,12 +3789,14 @@ async function setupMessagingChannels(
   agent: AgentDefinition | null = null,
   existingChannels: string[] | null = null,
   sandboxName: string | null = null,
+  options: { readonly selectionCompleted?: boolean } = {},
 ): Promise<string[]> {
   return setupMessagingChannelsImpl(agent, existingChannels, {
     step,
     note,
     isNonInteractive,
     sandboxName,
+    selectionCompleted: options.selectionCompleted,
   });
 }
 
@@ -4217,7 +4226,11 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
 
     const recordedSandboxName =
       session?.steps?.sandbox?.status === "complete" ? session?.sandboxName || null : null;
-    const gatewaySandboxName = resume ? (recordedSandboxName ?? requestedSandboxName) : null;
+    const checkpointedSandboxName =
+      resume && session?.sandboxPromptProgress?.sandboxName === true ? session.sandboxName : null;
+    const gatewaySandboxName = resume
+      ? (recordedSandboxName ?? requestedSandboxName ?? checkpointedSandboxName)
+      : null;
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     const onboardGateway = gatewayBinding.resolveCoreOnboardGatewayBinding({ authoritativeGateway, currentGateway: { name: GATEWAY_NAME, port: GATEWAY_PORT }, resume, sandbox: gatewaySandboxName ? registry.getSandbox(gatewaySandboxName) : null });
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
@@ -4243,7 +4256,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       agent,
       recordedSandboxName,
       requestedSandboxName,
-      sandboxName: recordedSandboxName || requestedSandboxName || null,
+      sandboxName: recordedSandboxName || requestedSandboxName || checkpointedSandboxName || null,
       fromDockerfile,
       model: session?.model || null,
       provider: session?.provider || null,
@@ -4352,7 +4365,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     // never completed; users supplying `--name` / NEMOCLAW_SANDBOX_NAME on
     // the resume run must win, otherwise the stale name silently overrides
     // their explicit recovery input.
-    let sandboxName = recordedSandboxName || requestedSandboxName || null;
+    let sandboxName =
+      recordedSandboxName || requestedSandboxName || checkpointedSandboxName || null;
     if (sandboxName && RESERVED_SANDBOX_NAMES.has(sandboxName)) {
       console.error(
         `  Reserved name in resumed session: '${sandboxName}' is a ${cliDisplayName()} CLI command.`,
@@ -4481,6 +4495,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         configureWebSearch,
         startRecordedStep,
         getRecordedMessagingChannelsForResume,
+        showMessagingStage: () => step(5, 8, "Messaging channels"),
         setupMessagingChannels,
         readMessagingPlanFromEnv,
         writePlanToEnv,
