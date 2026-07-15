@@ -694,7 +694,7 @@ function vllmEndpointReady(model: VllmModelDef): boolean {
     return (
       parsed.data.length === 1 &&
       parsed.data[0]?.id === readiness.servedModelId &&
-      Number(parsed.data[0]?.max_model_len) === readiness.maxModelLen
+      parsed.data[0]?.max_model_len === readiness.maxModelLen
     );
   } catch {
     return false;

@@ -389,6 +389,7 @@ describe("experimental single-user vLLM install (#6883)", () => {
       '{"data":[{"id":"nemotron-ultra","max_model_len":262144},{"id":"other","max_model_len":262144}]}',
     ],
     ["wrong context", "200", '{"data":[{"id":"nemotron-ultra","max_model_len":131072}]}'],
+    ["string context", "200", '{"data":[{"id":"nemotron-ultra","max_model_len":"262144"}]}'],
     ["missing context", "200", '{"data":[{"id":"nemotron-ultra"}]}'],
     ["malformed catalog", "200", "not-json"],
   ])("does not accept readiness with %s", async (_name, healthStatus, modelsResponse) => {
