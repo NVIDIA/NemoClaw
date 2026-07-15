@@ -96,6 +96,7 @@ describe("Fern changelog documentation", () => {
       .filter((name) => /^\d{4}-\d{2}-\d{2}\.mdx$/.test(name))
       .sort();
     const versions: string[] = [];
+    const releaseBlocks = new Map<string, string>();
 
     for (const fileName of datedFiles) {
       const source = fs.readFileSync(path.join(changelogDir, fileName), "utf8");
@@ -120,19 +121,7 @@ describe("Fern changelog documentation", () => {
       for (const [index, match] of versionMatches.entries()) {
         const version = match[1];
         const block = source.slice(match.index, versionMatches[index + 1]?.index ?? source.length);
-        const expectedBullets = expectedMigratedBulletCounts[version];
-        if (expectedBullets !== undefined) {
-          expect(
-            block.match(/^- /gm)?.length ?? 0,
-            `${version} must retain its complete detailed list`,
-          ).toBe(expectedBullets);
-        }
-        if (version === "v0.0.34") {
-          expect(
-            block.match(/^```bash$/gm)?.length ?? 0,
-            `${version} must retain its examples`,
-          ).toBe(3);
-        }
+        releaseBlocks.set(version, block);
       }
 
       const relativeLinks = extractMarkdownLinks(source).filter(
@@ -145,12 +134,28 @@ describe("Fern changelog documentation", () => {
       expect(relativeLinks, `${fileName} must use root-absolute internal routes`).toEqual([]);
     }
 
+    for (const [version, expectedBullets] of Object.entries(expectedMigratedBulletCounts)) {
+      const block = releaseBlocks.get(version);
+      expect(block, `${version} must remain in the migrated history`).toBeDefined();
+      expect(
+        block?.match(/^- /gm)?.length ?? 0,
+        `${version} must retain its complete detailed list`,
+      ).toBe(expectedBullets);
+    }
+
     const migratedVersions = [
       ...Array.from({ length: 83 - 38 + 1 }, (_, index) => `v0.0.${83 - index}`),
       "v0.0.34",
     ];
     expect(new Set(versions).size, "release versions must be unique").toBe(versions.length);
     expect(versions).toEqual(expect.arrayContaining(migratedVersions));
+  });
+
+  it("keeps the initial release examples", () => {
+    const source = fs.readFileSync(path.join(changelogDir, "2026-05-05.mdx"), "utf8");
+
+    expect(source).toContain("## v0.0.34");
+    expect(source.match(/^```bash$/gm)?.length ?? 0, "v0.0.34 must retain its examples").toBe(3);
   });
 
   it("keeps the changelog overview focused on releases", () => {
