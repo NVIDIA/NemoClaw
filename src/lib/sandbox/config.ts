@@ -33,10 +33,12 @@ const {
 }: typeof import("../state/mcp-lifecycle-lock") = require("../state/mcp-lifecycle-lock");
 const {
   runOpenClawConfigGuard,
+  validateOpenClawConfigCandidate,
 }: typeof import("../shields/openclaw-config-lock") = require("../shields/openclaw-config-lock");
 const { isPrivateHostname, isPrivateIp } = require("../private-networks");
 const {
   privilegedSandboxExecArgv,
+  resolveDirectSandboxContainer,
 }: typeof import("./privileged-exec") = require("./privileged-exec");
 const {
   buildHermesUpstreamHeader,
@@ -182,18 +184,33 @@ function privilegedSandboxExec(
   });
 }
 
-function openClawConfigGuardExec(sandboxName: string) {
+function openClawConfigGuardExec(sandboxName: string, expectedContainerId?: string) {
   return {
     run: (cmd: string[], input?: string) => {
-      const result = dockerSpawnSync(
-        privilegedSandboxExecArgv(sandboxName, cmd, input !== undefined, true),
-        {
-          encoding: "utf-8",
-          input,
-          timeout: OPENCLAW_CONFIG_GUARD_TIMEOUT_MS,
-          maxBuffer: 2 * 1024 * 1024,
-        },
-      );
+      let argv: string[];
+      try {
+        argv = privilegedSandboxExecArgv(
+          sandboxName,
+          cmd,
+          input !== undefined,
+          true,
+          expectedContainerId,
+        );
+      } catch (error) {
+        return {
+          status: null,
+          signal: null,
+          stdout: "",
+          stderr: "",
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+      const result = dockerSpawnSync(argv, {
+        encoding: "utf-8",
+        input,
+        timeout: OPENCLAW_CONFIG_GUARD_TIMEOUT_MS,
+        maxBuffer: 2 * 1024 * 1024,
+      });
       return {
         status: result.status,
         signal: result.signal,
@@ -485,12 +502,20 @@ function readSandboxConfig(sandboxName: string, target: AgentConfigTarget): Conf
   }
 }
 
+type ValidatedOpenClawCandidate = {
+  content: string;
+  privileged: import("../shields/state-dir-lock").PrivilegedExec;
+};
+
 function writeSandboxConfig(
   sandboxName: string,
   target: AgentConfigTarget,
   config: ConfigObject,
+  // Interactive config set supplies this after validating outside the mutation locks.
+  // Other callers retain the existing digest-bound write behavior.
+  validatedOpenClawCandidate?: ValidatedOpenClawCandidate,
 ): void {
-  const content = composeSandboxConfigBody(config, target);
+  const content = validatedOpenClawCandidate?.content ?? composeSandboxConfigBody(config, target);
   if (target.agentName === "hermes") {
     const expectedConfigSha256 = (config as ConfigObject & { [CONFIG_SOURCE_SHA256]?: string })[
       CONFIG_SOURCE_SHA256
@@ -533,12 +558,16 @@ function writeSandboxConfig(
         "Refusing OpenClaw config write without the digest from the matching sandbox read.",
       );
     }
-    const result = runOpenClawConfigGuard(openClawConfigGuardExec(sandboxName), "write-config", {
-      expectedConfigSha256,
-      input: content,
-    });
+    const result = runOpenClawConfigGuard(
+      validatedOpenClawCandidate?.privileged ?? openClawConfigGuardExec(sandboxName),
+      "write-config",
+      {
+        expectedConfigSha256,
+        input: content,
+      },
+    );
     if (result.issues.length > 0) {
-      throw new Error(`OpenClaw config write refused: ${result.issues.join(", ")}`);
+      configFail(result.issues.map((issue) => `  ${issue}`));
     }
     const expectedNewDigest = createHash("sha256").update(content).digest("hex");
     if (result.configSha256 !== expectedNewDigest) {
@@ -951,10 +980,8 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
     );
   }
 
-  // First-time writes go through a confirmation gate so users get a
-  // signal when they are creating a brand-new key (which may be a typo)
-  // without coupling the validator to OpenClaw's evolving config schema
-  // (see #2400).
+  // First-time writes require explicit consent before agent-specific validation.
+  // Keep this cross-agent typo guard independent of any one agent's schema (#2400).
   if (oldValue === undefined) {
     const gate = classifyNewKeyGate({
       acceptNewPath: opts.acceptNewPath,
@@ -989,10 +1016,26 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
     configFail(`  URL validation failed${suffix}: ${message}`);
   }
 
-  // Serialize only the authoritative re-read/CAS write under the shared
-  // sandbox lock and then the shields transition lock. Interactive approval
-  // and DNS validation above must not hold either lock across the auto-restore
-  // deadline. If anything changed while the user was deciding, fail closed.
+  // Validation can take up to 30 seconds, so keep it outside both mutation locks.
+  let validatedOpenClawCandidate: ValidatedOpenClawCandidate | undefined;
+  if (target.agentName === "openclaw") {
+    setDotpath(config, opts.key, safeValue);
+    const content = composeSandboxConfigBody(config, target);
+    try {
+      const containerId = resolveDirectSandboxContainer(sandboxName, null);
+      const privileged = openClawConfigGuardExec(sandboxName, containerId);
+      const issues = validateOpenClawConfigCandidate(privileged, content);
+      if (issues.length > 0) configFail(issues.map((issue) => `  ${issue}`));
+      validatedOpenClawCandidate = { content, privileged };
+    } catch (error) {
+      if (error instanceof SandboxConfigError) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      configFail(`  OpenClaw schema validation could not start: ${message}`);
+    }
+  }
+
+  // Re-read under both mutation locks and enforce the source digest. For
+  // OpenClaw, also require the exact serialized bytes validated above.
   await withSandboxMutationLock(sandboxName, () =>
     withTimerBoundShieldsMutationLock(sandboxName, "config set write", () => {
       const { isShieldsDown }: typeof import("../shields") = require("../shields");
@@ -1015,8 +1058,20 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
       }
       setDotpath(currentConfig, opts.key!, safeValue);
 
+      if (target.agentName === "openclaw") {
+        const currentCandidateContent = composeSandboxConfigBody(currentConfig, target);
+        if (
+          !validatedOpenClawCandidate ||
+          currentCandidateContent !== validatedOpenClawCandidate.content
+        ) {
+          configFail(
+            "  OpenClaw config candidate changed after schema validation. Re-run config set against the current value.",
+          );
+        }
+      }
+
       console.log(`  Writing config to sandbox (${target.configPath})...`);
-      writeSandboxConfig(sandboxName, target, currentConfig);
+      writeSandboxConfig(sandboxName, target, currentConfig, validatedOpenClawCandidate);
       recomputeSandboxConfigHash(sandboxName, target);
 
       appendAuditEntry({

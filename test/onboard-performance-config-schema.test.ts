@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { compileConfigSchema } from "../scripts/validate-configs";
+import { compileConfigSchema } from "../scripts/validate-configs.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PHASE_NAMES = [
