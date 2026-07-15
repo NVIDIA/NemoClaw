@@ -598,6 +598,11 @@ function recomputeSandboxConfigHash(sandboxName: string, target: AgentConfigTarg
 // (installed by the agents/hermes image build). The python resolution order
 // mirrors start.sh's trusted `_HERMES_PYTHON` list.
 const HERMES_DASHBOARD_SEEDER_PATH = "/usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py";
+// Printed by the re-seed script when the Dashboard profile directory is absent
+// (Dashboard disabled) so the caller treats it as a clean no-op, not a failure.
+const HERMES_DASHBOARD_ABSENT_MARKER = "__nemoclaw_hermes_dashboard_absent__";
+
+export type HermesDashboardReseedResult = "converged" | "absent" | "failed";
 
 /**
  * Re-run the Hermes dashboard config seeder inside the sandbox so the isolated
@@ -612,13 +617,19 @@ const HERMES_DASHBOARD_SEEDER_PATH = "/usr/local/lib/nemoclaw/seed-hermes-dashbo
  * no-follow atomic writes and refuses symlinked paths. Best-effort: returns false
  * on failure so the caller can warn without aborting the route switch.
  */
-function seedHermesDashboardConfig(sandboxName: string, target: AgentConfigTarget): boolean {
+function seedHermesDashboardConfig(
+  sandboxName: string,
+  target: AgentConfigTarget,
+): HermesDashboardReseedResult {
   const dashboardHome = `${target.configDir}/dashboard-home`;
   const seed =
     `exec "$py" ${shellQuote(HERMES_DASHBOARD_SEEDER_PATH)} ` +
     `${shellQuote(target.configPath)} ${shellQuote(`${dashboardHome}/config.yaml`)} ` +
     `${shellQuote(`${target.configDir}/.env`)} ${shellQuote(`${dashboardHome}/.env`)}`;
   const script =
+    // A missing Dashboard profile means the Dashboard is disabled — a clean no-op,
+    // not a failure. Signal it with a marker on stdout and exit 0.
+    `[ -d ${shellQuote(dashboardHome)} ] || { echo ${HERMES_DASHBOARD_ABSENT_MARKER}; exit 0; }; ` +
     `for py in /opt/hermes/.venv/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do ` +
     `[ -x "$py" ] && ${seed}; done; ` +
     `echo "no trusted python3 available to seed the Hermes dashboard config" >&2; exit 1`;
@@ -628,7 +639,10 @@ function seedHermesDashboardConfig(sandboxName: string, target: AgentConfigTarge
     ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", script],
     { ignoreError: true, includeStreams: true, maxBuffer: CONFIG_CAPTURE_MAX_BUFFER },
   );
-  return !(result.error || result.signal || result.status !== 0);
+  if (`${result.stdout ?? ""}${result.output ?? ""}`.includes(HERMES_DASHBOARD_ABSENT_MARKER)) {
+    return "absent";
+  }
+  return result.error || result.signal || result.status !== 0 ? "failed" : "converged";
 }
 
 // ---------------------------------------------------------------------------

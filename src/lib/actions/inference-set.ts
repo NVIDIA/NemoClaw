@@ -29,6 +29,7 @@ import {
 } from "../openshell-gateway-endpoint-guard";
 import {
   type AgentConfigTarget,
+  type HermesDashboardReseedResult,
   readSandboxConfig,
   recomputeSandboxConfigHash,
   resolveAgentConfig,
@@ -111,7 +112,10 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
     config: ConfigObject,
   ) => void;
   recomputeSandboxConfigHash: (sandboxName: string, target: AgentConfigTarget) => void;
-  seedHermesDashboardConfig: (sandboxName: string, target: AgentConfigTarget) => boolean;
+  seedHermesDashboardConfig: (
+    sandboxName: string,
+    target: AgentConfigTarget,
+  ) => HermesDashboardReseedResult;
   prepareRunOpenshell: () => void;
   captureOpenshell: (
     args: string[],
@@ -873,8 +877,15 @@ async function runInferenceSetWithoutHostLock(
   // config's model routing at sandbox startup. Re-seed it after an in-place
   // switch so Dashboard Chat (and /api/model/info) converge on the new model
   // instead of silently staying on the previous one (#6893).
+  //   - "converged": dashboard now matches the switch.
+  //   - "absent":    Dashboard disabled — nothing to converge, still a success.
+  //   - "failed":    warn and, below, withhold the "synced" success line so the
+  //                  command does not claim a route it did not fully apply.
+  let dashboardConverged: boolean | undefined;
   if (agentName === "hermes" && inSandboxConfigSynced) {
-    if (!deps.seedHermesDashboardConfig(sandboxName, target)) {
+    const reseed = deps.seedHermesDashboardConfig(sandboxName, target);
+    dashboardConverged = reseed !== "failed";
+    if (reseed === "failed") {
       deps.log(
         `  Warning: updated the Hermes model route but could not refresh the dashboard ` +
           `config for '${sandboxName}'. Restart the sandbox to converge Dashboard Chat.`,
@@ -905,6 +916,7 @@ async function runInferenceSetWithoutHostLock(
         configChanged: patched.changed,
         sessionUpdated,
         inSandboxConfigSynced,
+        dashboardConverged,
       },
     },
     deps,

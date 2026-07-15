@@ -180,6 +180,84 @@ describe("runInferenceSet Hermes routing", () => {
     expect(deps.calls.seedHermesDashboardConfig).not.toHaveBeenCalled();
   });
 
+  it("withholds the synced line when the dashboard fails to converge (#6893)", async () => {
+    const config: ConfigObject = {
+      model: {
+        default: "moonshotai/kimi-k2.6",
+        provider: "custom",
+        base_url: "https://inference.local/v1",
+      },
+    };
+    const deps = createDeps({
+      config,
+      entry: {
+        name: "hermes",
+        agent: "hermes",
+        provider: "hermes-provider",
+        model: "moonshotai/kimi-k2.6",
+      },
+      defaultSandbox: "hermes",
+      target: HERMES_TARGET,
+      session: baseSession({ agent: "hermes", sandboxName: "hermes" }),
+      seedHermesDashboardConfigResult: "failed",
+    });
+
+    await runInferenceSet(
+      {
+        provider: "hermes-provider",
+        model: "openai/gpt-5.4-mini",
+        sandboxName: "hermes",
+        noVerify: true,
+      },
+      deps,
+    );
+
+    // Not fully applied — the command must not claim `Inference route synced`, and
+    // it must tell the user why (the reporter's "converge or fail without synced").
+    const logs = deps.calls.log.mock.calls.map((c) => String(c[0]));
+    expect(logs.some((l) => l.includes("Inference route synced"))).toBe(false);
+    expect(logs.some((l) => l.includes("could not refresh the dashboard"))).toBe(true);
+  });
+
+  it("still reports synced when the dashboard profile is absent (Dashboard disabled) (#6893)", async () => {
+    const config: ConfigObject = {
+      model: {
+        default: "moonshotai/kimi-k2.6",
+        provider: "custom",
+        base_url: "https://inference.local/v1",
+      },
+    };
+    const deps = createDeps({
+      config,
+      entry: {
+        name: "hermes",
+        agent: "hermes",
+        provider: "hermes-provider",
+        model: "moonshotai/kimi-k2.6",
+      },
+      defaultSandbox: "hermes",
+      target: HERMES_TARGET,
+      session: baseSession({ agent: "hermes", sandboxName: "hermes" }),
+      seedHermesDashboardConfigResult: "absent",
+    });
+
+    await runInferenceSet(
+      {
+        provider: "hermes-provider",
+        model: "openai/gpt-5.4-mini",
+        sandboxName: "hermes",
+        noVerify: true,
+      },
+      deps,
+    );
+
+    // Nothing to converge — the switch is fully applied, so it still reports synced
+    // and does not warn.
+    const logs = deps.calls.log.mock.calls.map((c) => String(c[0]));
+    expect(logs.some((l) => l.includes("Inference route synced"))).toBe(true);
+    expect(logs.some((l) => l.includes("could not refresh the dashboard"))).toBe(false);
+  });
+
   it("keeps Hermes custom Anthropic switches off the managed Anthropic SSE frontend (#6289)", async () => {
     const config: ConfigObject = {
       model: {
