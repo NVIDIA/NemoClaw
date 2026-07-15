@@ -372,6 +372,10 @@ describe("PR E2E controller", () => {
     expect(expectedSignalShards(["docs-validation"])).toEqual({
       "docs-validation": ["default"],
     });
+    expect(expectedSignalShards(["hermes-inference-switch", "openclaw-inference-switch"])).toEqual({
+      "hermes-inference-switch": ["hosted", "anthropic"],
+      "openclaw-inference-switch": ["hosted", "anthropic"],
+    });
     const broadPlan = buildRiskPlan({ headSha: HEAD_SHA, changedFiles: BROAD_FILES });
     const broadShards = expectedSignalShards(riskPlanRequiredJobIds(broadPlan));
     expect(Object.keys(broadShards)).toHaveLength(13);

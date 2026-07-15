@@ -1175,6 +1175,7 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: "hermes"
+      NEMOCLAW_E2E_SHARD: ${{ matrix.mode }}
       NEMOCLAW_SANDBOX_NAME: ${{ matrix.sandbox_name }}
       NEMOCLAW_SWITCH_PROVIDER: ${{ matrix.switch_provider }}
       NEMOCLAW_SWITCH_MODEL: ${{ matrix.switch_model }}
@@ -4262,6 +4263,7 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: "openclaw"
+      NEMOCLAW_E2E_SHARD: ${{ matrix.mode }}
       NEMOCLAW_SANDBOX_NAME: ${{ matrix.sandbox_name }}
       NEMOCLAW_SWITCH_PROVIDER: ${{ matrix.switch_provider }}
       NEMOCLAW_SWITCH_MODEL: ${{ matrix.switch_model }}
