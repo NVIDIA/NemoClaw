@@ -104,6 +104,7 @@ function tryStopOpenRouterRuntimeAdapterPid(
 export function stopOpenRouterRuntimeAdapter(
   paths: Pick<UninstallPaths, "nemoclawStateDir">,
   runtime: OpenRouterRuntimeAdapterCleanupRuntime,
+  options: { scanOrphans?: boolean } = {},
 ): void {
   const stopped = new Set<number>();
 
@@ -118,6 +119,11 @@ export function stopOpenRouterRuntimeAdapter(
     } catch {
       /* ignore - the State step deletes the file shortly anyway */
     }
+  }
+
+  if (options.scanOrphans === false) {
+    if (stopped.size === 0) runtime.log("No selected-gateway OpenRouter Runtime adapter found");
+    return;
   }
 
   if (!runtime.commandExists("lsof")) {

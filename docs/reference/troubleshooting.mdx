@@ -761,26 +761,66 @@ Silent retry would loop on the same failure if your original choice, such as an 
 - In non-interactive mode (piped `curl | bash` with `NEMOCLAW_NON_INTERACTIVE=1`, CI, scripts), the installer refuses and exits with a non-zero status so a scripted re-run cannot loop.
   You must opt in to one of two paths explicitly:
 
-  Start over with new choices (discards the recorded session and provider/model selection):
+Start over with new choices to discard the recorded session and provider/model selection.
 
-  ```bash
-  curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --fresh
-  ```
+<AgentOnly variant="openclaw">
 
-  Or equivalently, via env var.
-  The variable must be set on the `bash` side of the pipe, not on `curl`, since only the right-hand process inherits it:
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --fresh
+```
 
-  ```bash
-  curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_FRESH=1 bash
-  ```
+</AgentOnly>
 
-  Retry the same session.
+<AgentOnly variant="hermes">
 
-  This is only useful if the original failure was transient, for example a network blip or a stopped Docker daemon, and not a wrong provider choice:
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=hermes bash -s -- --fresh
+```
 
-  ```bash
-  $$nemoclaw onboard --resume
-  ```
+</AgentOnly>
+
+<AgentOnly variant="deepagents">
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=langchain-deepagents-code bash -s -- --fresh
+```
+
+</AgentOnly>
+
+Or use environment variables instead.
+Set them on the `bash` side of the pipe because only the right-hand process inherits them.
+
+<AgentOnly variant="openclaw">
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_FRESH=1 bash
+```
+
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=hermes NEMOCLAW_FRESH=1 bash
+```
+
+</AgentOnly>
+
+<AgentOnly variant="deepagents">
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=langchain-deepagents-code NEMOCLAW_FRESH=1 bash
+```
+
+</AgentOnly>
+
+Retry the same session.
+
+This is only useful if the original failure was transient, for example a network blip or a stopped Docker daemon, and not a wrong provider choice:
+
+```bash
+$$nemoclaw onboard --resume
+```
 
 <AgentOnly variant="openclaw">
 
@@ -2444,6 +2484,9 @@ If the process exists but the endpoint is unreachable, use the restart action wh
 ### Ollama inference fails or hangs in WSL
 
 Ollama configures context length based on your hardware.
+
+<AgentOnly variant="openclaw">
+
 On some GPUs (for example RTX 3500), the default context length is not sufficient for OpenClaw.
 During onboarding, NemoClaw raises loaded-model context lengths below `16384` to `16384` when `NEMOCLAW_CONTEXT_WINDOW` is unset.
 Set the variable manually when you need a different value or when you run Ollama outside the managed onboarding path.
@@ -2453,6 +2496,26 @@ Force a larger context length:
 pkill -f 'ollama serve'
 OLLAMA_CONTEXT_LENGTH=16384 ollama serve
 ```
+
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+
+Hermes requires at least `64000` tokens.
+During onboarding, NemoClaw verifies the loaded model's actual `context_length` through Ollama's `/api/ps` endpoint.
+Resumed onboarding and sandbox rebuilds warm the exact recorded Ollama model and repeat this check before reusing its route.
+Resume stops when that recorded model is missing, Ollama is unreachable, model warm-up fails, or the runtime context cannot be verified.
+If you set `NEMOCLAW_CONTEXT_WINDOW` above `64000`, the loaded model must provide at least that larger value.
+If the runtime value is too small, missing, or malformed, onboarding stops before sandbox creation and asks you to restart the host daemon with the required context length.
+`NEMOCLAW_CONTEXT_WINDOW` controls Hermes prompt budgeting; it does not change the Ollama daemon or bypass this runtime check.
+Force a larger context length:
+
+```bash
+pkill -f 'ollama serve'
+OLLAMA_CONTEXT_LENGTH=64000 ollama serve
+```
+
+</AgentOnly>
 
 Verify that Ollama inference works:
 
@@ -2470,10 +2533,23 @@ sudo systemctl status ollama
 
 If it is active, stop it first, then start with the custom context length:
 
+<AgentOnly variant="openclaw">
+
 ```bash
 sudo systemctl stop ollama
 OLLAMA_CONTEXT_LENGTH=16384 ollama serve
 ```
+
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+
+```bash
+sudo systemctl stop ollama
+OLLAMA_CONTEXT_LENGTH=64000 ollama serve
+```
+
+</AgentOnly>
 
 For additional troubleshooting, refer to the [Windows Setup](../get-started/prerequisites/windows-preparation) page.
 <AgentOnly variant="openclaw">

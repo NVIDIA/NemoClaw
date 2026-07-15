@@ -520,6 +520,45 @@ describe("local inference helpers", () => {
     });
   });
 
+  it("loads the Ollama proxy token only from the selected nondefault gateway root", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-port-token-"));
+    const defaultRoot = path.join(home, ".nemoclaw");
+    const selectedRoot = path.join(defaultRoot, "gateways", "9123");
+    fs.mkdirSync(selectedRoot, { recursive: true });
+    fs.writeFileSync(path.join(defaultRoot, "ollama-proxy-token"), "default-root-token\n");
+    fs.writeFileSync(path.join(selectedRoot, "ollama-proxy-token"), "selected-port-token\n");
+    vi.stubEnv("HOME", home);
+    vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "9123");
+    vi.resetModules();
+
+    try {
+      const freshLocal = await import("./local");
+      let authConfig = "";
+      const result = freshLocal.probeOllamaAuthProxyHealth({
+        runCurlProbeImpl: (_argv, options) => {
+          const configPath = options?.trustedConfigFiles?.[0] ?? "";
+          authConfig = fs.readFileSync(configPath, "utf8");
+          return {
+            ok: true,
+            httpStatus: 200,
+            curlStatus: 0,
+            body: '{"models":[]}',
+            stderr: "",
+            message: "HTTP 200",
+          };
+        },
+      });
+
+      expect(result?.ok).toBe(true);
+      expect(authConfig).toContain("selected-port-token");
+      expect(authConfig).not.toContain("default-root-token");
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("surfaces 401 on the auth-proxy subprobe even when backend is healthy", () => {
     const result = probeLocalProviderHealth("ollama-local", {
       loadOllamaProxyTokenImpl: () => "stale-token",

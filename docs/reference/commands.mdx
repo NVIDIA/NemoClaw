@@ -3061,15 +3061,21 @@ On Linux, uninstall removes `~/.local/state/nemoclaw`, which contains Docker-dri
 | `--keep-openshell` | Leave OpenShell binaries installed |
 | `--delete-models` | Also remove NemoClaw-pulled Ollama models |
 | `--destroy-user-data` | Also remove preserved user data (`rebuild-backups/`, `backups/`, `sandboxes.json`) |
-| `--gateway <name>` | Override the gateway name to remove (default: `$$nemoclaw`) |
+| `--gateway <name>` | Optional consistency check; must match the name derived from `NEMOCLAW_GATEWAY_PORT` |
 
 ```bash
 $$nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models] [--destroy-user-data] [--gateway <name>]
 ```
 
+`NEMOCLAW_GATEWAY_PORT` selects the gateway instance and state root to uninstall.
+Port `8080` selects `nemoclaw` and the shared `~/.nemoclaw/` root; a non-default port selects `nemoclaw-<port>` and `~/.nemoclaw/gateways/<port>/`.
+For example, `NEMOCLAW_GATEWAY_PORT=9123 $$nemoclaw uninstall` selects `nemoclaw-9123`.
+The compatibility `--gateway` flag cannot select another instance: when present, it must match the name derived from `NEMOCLAW_GATEWAY_PORT`, or uninstall exits before cleanup.
+
 ##### User-data preservation under `~/.nemoclaw/`
 
-To avoid uninstall destroying host-side user data, uninstall preserves the following entries under `~/.nemoclaw/` by default:
+To avoid uninstall destroying host-side user data, uninstall preserves the following entries in the selected gateway's state root by default.
+The default gateway uses `~/.nemoclaw/`; a non-default gateway uses `~/.nemoclaw/gateways/<port>/`.
 
 | Entry | What it holds |
 |---|---|
@@ -3077,7 +3083,8 @@ To avoid uninstall destroying host-side user data, uninstall preserves the follo
 | `backups/` | Host-side workspace backups that `scripts/backup-workspace.sh` writes. Refer to [Transfer State Manually](../manage-sandboxes/state-and-backups/transfer-state-manually). |
 | `sandboxes.json` | Host-side sandbox registry. NemoClaw uses it to map sandbox names back to their persistence directories when you reinstall. |
 
-Uninstall removes every other entry under `~/.nemoclaw/` (gateway source, runtime state, the Ollama auth proxy PID file, etc.).
+When no sibling gateways remain, uninstall also removes shared host resources such as the gateway source clone, runtime state, and the Ollama auth proxy PID file.
+When sibling gateways remain, it removes only the selected gateway's resources and port-scoped state while preserving those shared host resources.
 
 `--yes` deliberately remains non-destructive for user data.
 It only acknowledges the global `Proceed?` confirmation prompt and still preserves the listed entries.
@@ -3089,9 +3096,9 @@ Decision matrix:
 | Context | Behaviour |
 |---|---|
 | Interactive TTY, preserved entries present, no env override | Prompts `Also remove them? [y/N]`. Default `N` keeps the entries. |
-| Interactive TTY, user answers `y` | Removes everything under `~/.nemoclaw/` (the previous full-removal behaviour). |
+| Interactive TTY, user answers `y` | Removes the preserved entries in the selected gateway's state root; a single-gateway uninstall also removes the remaining shared state. |
 | Non-interactive (`--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or non-TTY shell) | Preserves the entries and prints a one-line notice. |
-| `--destroy-user-data` | Skips the secondary user-data prompt and removes the preserved entries under `~/.nemoclaw/`. The global `Proceed?` confirmation still applies unless `--yes` is also passed. |
+| `--destroy-user-data` | Skips the secondary user-data prompt and removes the preserved entries in the selected gateway's state root. The global `Proceed?` confirmation still applies unless `--yes` is also passed. |
 | `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` | Skips the secondary user-data prompt and removes the preserved entries. The global `Proceed?` confirmation still applies unless `--yes` is also passed. |
 
 The preserved entries survive uninstall as inert files on disk.
@@ -3279,9 +3286,9 @@ Set them before running `$$nemoclaw onboard`.
 | `SANDBOX_NAME` | sandbox name | Compatibility spelling used after `NEMOCLAW_SANDBOX_NAME` and `NEMOCLAW_SANDBOX`. |
 | `NEMOCLAW_INSTALL_REF` | git ref | For internal installer commands: the git ref to install from. Overridden by the `--install-ref` flag. |
 | `NEMOCLAW_INSTALL_TAG` | release tag | For internal installer commands: the release tag to install. Defaults to the admin-promoted `lkg` tag when unset. Overridden by the `--install-tag` flag. |
-| `NEMOCLAW_VLLM_MODEL` | registry slug or Hugging Face model id | Selects the model the managed-vLLM install path serves. Recognised slugs: `qwen3.6-27b`, `qwen3.6-35b-a3b-nvfp4`, `nemotron-3-nano-4b`, `deepseek-v4-flash`, `deepseek-r1-distill-70b`. Unset uses the per-platform profile default. Gated models (e.g. `deepseek-r1-distill-70b`) require `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`. |
+| `NEMOCLAW_VLLM_MODEL` | registry slug or Hugging Face model id | Selects the model the managed-vLLM install path serves. Recognised slugs: `qwen3.6-27b`, `qwen3.6-35b-a3b-nvfp4`, `nemotron-3-nano-4b`, `deepseek-v4-flash`, `nemotron-3-ultra-550b-a55b`, `deepseek-r1-distill-70b`. Unset uses the per-platform profile default. The DGX Station express installer sets `nemotron-3-ultra-550b-a55b` explicitly. Gated models (e.g. `deepseek-r1-distill-70b`) require `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`. |
 | `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` | JSON array of non-blank strings | Appends advanced operator-owned tokens to the managed `vllm serve` command after NemoClaw's registry defaults. Example: `["--max-num-seqs","2"]`. Malformed JSON, non-string tokens, or blank tokens fail before Docker work starts. |
-| `NEMOCLAW_IGNORE_VLLM_DISK_SPACE` | exactly `1` | Allows managed vLLM to continue when verified Docker image-storage capacity is insufficient; other values do not bypass the check. Inconclusive image-storage checks report diagnostics and continue automatically. The check does not cover Hugging Face model-cache capacity. |
+| `NEMOCLAW_IGNORE_VLLM_DISK_SPACE` | exactly `1` | Allows managed vLLM to continue when verified Docker image-storage or registered model-cache capacity is insufficient, or when registered model-cache capacity cannot be measured; other values do not bypass either check. An inconclusive Docker image-storage check reports diagnostics and retains its existing automatic-continue behavior. |
 <AgentOnly variant="openclaw">
 | `NEMOCLAW_MINIMAL_BOOTSTRAP` | `1` to enable | Skips default OpenClaw workspace-template seeding for new pristine workspaces. Existing files are not deleted; refer to [Understand Runtime Changes](../manage-sandboxes/configure-sandboxes/understand-runtime-changes). |
 </AgentOnly>
@@ -3320,6 +3327,7 @@ Hermes-specific onboarding configuration:
 | `NEMOCLAW_NOUS_AUTH_METHOD` | same as `NEMOCLAW_HERMES_AUTH_METHOD` | Nous-specific alias for Hermes Provider authentication selection. |
 | `NEMOCLAW_HERMES_TOOL_GATEWAYS` | comma-separated list | Selects managed Hermes tool gateways in non-interactive onboarding. Valid values are `nous-web`, `nous-image`, `nous-audio`, `nous-browser`, and `nous-code`; the `nous-` prefix is optional. Unknown values fail before sandbox creation. |
 | `NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS` | comma-separated list | Back-compatible alias for `NEMOCLAW_HERMES_TOOL_GATEWAYS`. |
+| `NEMOCLAW_CONTEXT_WINDOW` | positive integer, at least `64000` tokens | Overrides `model.context_length` in the built Hermes config. Fresh and resumed Local Ollama onboarding, including sandbox rebuilds, must verify a loaded runtime context at least as large as this value. |
 | `NEMOCLAW_EXTRA_PLACEHOLDER_KEYS` | whitespace- or comma-separated list of upper-snake env keys | Adds operator-supplied OpenShell provider rows so per-profile credentials such as `TELEGRAM_BOT_TOKEN_AGENT_A` flow through the same out-of-process placeholder injection that the canonical channel tokens use, instead of being baked into each Hermes profile `.env` as raw text. Refer to [Extra placeholder keys](#extra-placeholder-keys) for the entry shape and validation rules. |
 
 </AgentOnly>
@@ -3432,7 +3440,7 @@ Set them before running `$$nemoclaw onboard`.
 | Variable | Format | Effect |
 |----------|--------|--------|
 | `NEMOCLAW_YES` | `1` to enable | Auto-accepts confirmation prompts (`--yes` equivalent) including in helpers like the Ollama proxy auth setup, but does not accept managed-vLLM storage warnings. |
-| `NEMOCLAW_OLLAMA_NO_AUTOSTART` | `1` to enable | Skips the wizard's eager Ollama auto-start during inference-provider selection (equivalent to passing `--no-ollama-autostart`). When set and Ollama is not running on `localhost:11434`, the `$$nemoclaw onboard` Local Ollama path prints a warning and selects the default fallback model instead of spawning `ollama serve`. The flag covers only the provider-selection step; later setup steps (auth proxy, validation, model warm) still expect a reachable Ollama. On Linux hosts with a systemd Ollama unit, the loopback-override path may still restart the daemon before this gate runs. |
+| `NEMOCLAW_OLLAMA_NO_AUTOSTART` | `1` to enable | Skips the wizard's eager Ollama auto-start during inference-provider selection (equivalent to passing `--no-ollama-autostart`). When set and Ollama is not running on `localhost:11434`, an agent that uses the legacy `16384`-token context floor, currently OpenClaw, prints a warning and selects the default fallback model instead of spawning `ollama serve`. An agent that requires a larger verified runtime context, currently Hermes at `64000` tokens, returns to interactive provider selection or exits when the Ollama provider is pinned or onboarding is non-interactive. The flag covers only the provider-selection step; later setup steps (auth proxy, validation, model warm) still expect a reachable Ollama. On Linux hosts with a systemd Ollama unit, the loopback-override path may still restart the daemon before this gate runs. |
 | `NEMOCLAW_NON_INTERACTIVE_SUDO_MODE` | `prompt` or empty/unset | When set to `prompt`, allows non-interactive onboarding to use prompt-capable `sudo` for host setup steps that require elevation, which can ask for a password. Empty/unset is the default and uses `sudo -n`, which fails instead of asking for a password. Any other value is rejected. |
 | `NEMOCLAW_NO_EXPRESS` | `1` to enable | Installer-only. Skips the DGX Spark, DGX Station, and Windows WSL express install prompt and continues with the normal interactive onboarding flow. |
 | `NEMOCLAW_EXPERIMENTAL` | `1` to enable | Surfaces experimental providers and flows in onboarding. |
