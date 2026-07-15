@@ -438,6 +438,10 @@ describe("starter prompt docs CTA", () => {
   it("rejects missing or stale generated snippets and accepts the current output (#5048)", () => {
     const generatedPath = path.join(repoRoot, STARTER_PROMPT_GENERATED_PATH);
     const original = fs.existsSync(generatedPath) ? fs.readFileSync(generatedPath, "utf8") : null;
+    const restoreGeneratedSnippet =
+      original === null
+        ? () => fs.rmSync(generatedPath, { force: true })
+        : () => fs.writeFileSync(generatedPath, original);
     const runCheck = () =>
       spawnSync(
         process.execPath,
@@ -465,11 +469,7 @@ describe("starter prompt docs CTA", () => {
       expect(current.status).toBe(0);
       expect(current.stdout).toContain("Generated Starter Prompt snippet is current.");
     } finally {
-      if (original === null) {
-        fs.rmSync(generatedPath, { force: true });
-      } else {
-        fs.writeFileSync(generatedPath, original);
-      }
+      restoreGeneratedSnippet();
     }
   });
 
