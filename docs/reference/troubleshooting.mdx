@@ -2587,6 +2587,22 @@ After the rebuild completes, return to the Skills page to confirm the skill is r
 The issues below are common problems you may encounter when running Hermes through `nemohermes`.
 For setup, refer to [Quickstart with Hermes](../../hermes/get-started/quickstart).
 
+### Hermes dashboard config did not converge
+
+`nemohermes inference set` updates the OpenShell route, registry, and `/sandbox/.hermes/config.yaml` before it refreshes the separate dashboard profile.
+If the dashboard profile exists but NemoClaw cannot confirm that `/sandbox/.hermes/dashboard-home/config.yaml` was updated, the command exits nonzero without printing `Inference route synced`.
+The committed route and main Hermes config are not rolled back.
+
+Restart the sandbox so startup mirrors the committed model route into the dashboard profile:
+
+```bash
+nemohermes <name> stop
+nemohermes <name> start
+```
+
+Then run `nemohermes inference get` and verify Dashboard Chat uses the selected model.
+If the command succeeds because the dashboard profile is missing, the dashboard is disabled and no dashboard recovery is required.
+
 ### Hermes restart reports `config hash mismatch`
 
 A Hermes restart reports `config hash mismatch` when a strict root-owned hash is available and `/sandbox/.hermes/config.yaml` or `/sandbox/.hermes/.env` does not match it.
