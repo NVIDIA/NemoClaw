@@ -680,6 +680,23 @@ def apply_transaction_and_reload(
             raise RuntimeError(
                 f"Hermes MCP runtime reload failed with unchanged config ({reload_error})"
             ) from reload_error
+        # Before rolling back, check whether the gateway committed the
+        # apply-state hash advance concurrently with the transaction helper's
+        # verify step. If the config still matches the intended text and the
+        # integrity anchor is already current/current, the operation succeeded;
+        # rolling it back would undo a live gateway configuration.
+        try:
+            integrity_path = (
+                STRICT_HASH_PATH if privileged else os.path.join(HERMES_DIR, ".config-hash")
+            )
+            committed_text, _ = guard._read_text(CONFIG_PATH)
+            if (
+                committed_text == expected_text
+                and guard.inspect_mcp_integrity(HERMES_DIR, integrity_path) == "current"
+            ):
+                return {"ok": True, "changed": True, "reloaded": True}
+        except Exception:
+            pass
         rollback_errors: list[str] = []
         try:
             current_text, current_snapshot = guard._read_text(CONFIG_PATH)
