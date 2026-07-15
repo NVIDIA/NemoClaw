@@ -46,8 +46,11 @@ const {
   readTimerMarker,
   clearTimerMarker,
   isProcessAlive,
+  readProcessState,
   readProcessStartIdentity,
   listDescendantProcessIdentities,
+  processInspectionDeadlineAfter,
+  processInspectionDeadlineReached,
   verifyTimerMarkerIdentity,
   killTimer,
 } = require("./timer-control");
@@ -195,6 +198,30 @@ function clearShieldsDownTransition(sandboxName: string, processToken: string): 
   }
 }
 
+type ExactProcessStatus = "current" | "gone" | "unknown";
+
+function processCanBeSignaled(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function readExactProcessStatus(
+  pid: number,
+  startIdentity: string,
+  deadline: number,
+): ExactProcessStatus {
+  const alive = processCanBeSignaled(pid);
+  const observedStartIdentity = readProcessStartIdentity(pid, deadline);
+  if (observedStartIdentity === null) return alive ? "unknown" : "gone";
+  if (observedStartIdentity !== startIdentity) return "gone";
+  return alive ? "current" : "gone";
+}
+
 function waitForShieldsDownForwardCommit(
   sandboxName: string,
   processToken: string,
@@ -202,11 +229,15 @@ function waitForShieldsDownForwardCommit(
   let observed = readShieldsDownTransition(sandboxName, processToken);
   if (!observed) return null;
 
-  const ownerIsCurrent = () =>
-    isProcessAlive(observed!.ownerPid) &&
-    readProcessStartIdentity(observed!.ownerPid) === observed!.ownerStartIdentity;
-  const handoffDeadline = Date.now() + SHIELDS_TRANSITION_HANDOFF_GRACE_MS;
-  while (observed.phase === "preparing" && ownerIsCurrent() && Date.now() < handoffDeadline) {
+  const handoffDeadline = processInspectionDeadlineAfter(SHIELDS_TRANSITION_HANDOFF_GRACE_MS);
+  const ownerMayBeCurrent = () =>
+    readExactProcessStatus(observed!.ownerPid, observed!.ownerStartIdentity, handoffDeadline) !==
+    "gone";
+  while (
+    observed.phase === "preparing" &&
+    !processInspectionDeadlineReached(handoffDeadline) &&
+    ownerMayBeCurrent()
+  ) {
     Atomics.wait(transitionPollBuffer, 0, 0, SHIELDS_TRANSITION_POLL_MS);
     const next = readShieldsDownTransition(sandboxName, processToken);
     if (!next) return null;
@@ -221,7 +252,7 @@ function waitForShieldsDownForwardCommit(
     observed = next;
   }
 
-  if (observed.phase === "preparing" && ownerIsCurrent()) {
+  if (observed.phase === "preparing") {
     // The absolute shields-down deadline has expired while the forward owner
     // is still able to weaken policy/config. Preempt that exact process
     // instance, then restore from the captured snapshot. Waiting forever would
@@ -233,18 +264,38 @@ function waitForShieldsDownForwardCommit(
 
 function excludeRecoveryProcessTree(
   descendants: ProcessIdentity[],
-  recoveryPid: number,
+  recovery: Pick<ProcessIdentity, "pid" | "startIdentity">,
   recoveryDescendants: ProcessIdentity[],
 ): ProcessIdentity[] {
-  const excludedPids = new Set<number>([recoveryPid, ...recoveryDescendants.map(({ pid }) => pid)]);
-  return descendants.filter(({ pid }) => !excludedPids.has(pid));
+  const identityKey = ({ pid, startIdentity }: Pick<ProcessIdentity, "pid" | "startIdentity">) =>
+    `${String(pid)}\0${startIdentity}`;
+  const excludedIdentities = new Set<string>([recovery, ...recoveryDescendants].map(identityKey));
+  return descendants.filter((descendant) => !excludedIdentities.has(identityKey(descendant)));
 }
 
 function stopTimedOutShieldsDownTree(ownerPid: number, ownerStartIdentity: string): void {
-  const identityIsCurrent = (pid: number, startIdentity: string) =>
-    isProcessAlive(pid) && readProcessStartIdentity(pid) === startIdentity;
-  const signalExact = (pid: number, startIdentity: string, signal: NodeJS.Signals): void => {
-    if (!identityIsCurrent(pid, startIdentity)) return;
+  let freezeDeadline = processInspectionDeadlineAfter(SHIELDS_TRANSITION_TERMINATE_GRACE_MS);
+  const waitForKnownExactProcess = (
+    pid: number,
+    startIdentity: string,
+    deadline: number,
+  ): Exclude<ExactProcessStatus, "unknown"> => {
+    while (true) {
+      const status = readExactProcessStatus(pid, startIdentity, deadline);
+      if (status !== "unknown") return status;
+      if (processInspectionDeadlineReached(deadline)) {
+        throw new Error("Timed-out shields-down process identity could not be verified safely");
+      }
+      Atomics.wait(transitionPollBuffer, 0, 0, SHIELDS_TRANSITION_POLL_MS);
+    }
+  };
+  const signalExact = (
+    pid: number,
+    startIdentity: string,
+    signal: NodeJS.Signals,
+    deadline: number,
+  ): void => {
+    if (waitForKnownExactProcess(pid, startIdentity, deadline) === "gone") return;
     try {
       process.kill(pid, signal);
     } catch (error) {
@@ -252,18 +303,39 @@ function stopTimedOutShieldsDownTree(ownerPid: number, ownerStartIdentity: strin
       if (errno.code !== "ESRCH") throw error;
     }
   };
-  if (!identityIsCurrent(ownerPid, ownerStartIdentity)) return;
-
-  const recoveryTree = listDescendantProcessIdentities(process.pid);
+  const waitForExactStop = (pid: number, startIdentity: string): "gone" | "stopped" => {
+    while (true) {
+      const state = readProcessState(pid, freezeDeadline);
+      const status = readExactProcessStatus(pid, startIdentity, freezeDeadline);
+      if (status === "gone" || state?.startsWith("Z")) return "gone";
+      if (status === "current" && /^[Tt]/.test(state ?? "")) return "stopped";
+      if (processInspectionDeadlineReached(freezeDeadline)) {
+        throw new Error("Timed-out shields-down process tree could not be frozen safely");
+      }
+      Atomics.wait(transitionPollBuffer, 0, 0, SHIELDS_TRANSITION_POLL_MS);
+    }
+  };
+  if (waitForKnownExactProcess(ownerPid, ownerStartIdentity, freezeDeadline) === "gone") return;
+  // Stop the exact owner before enumerating its descendants so it cannot launch
+  // another weakening subprocess while takeover is being established.
+  signalExact(ownerPid, ownerStartIdentity, "SIGSTOP", freezeDeadline);
+  if (waitForExactStop(ownerPid, ownerStartIdentity) === "gone") return;
+  freezeDeadline = processInspectionDeadlineAfter(SHIELDS_TRANSITION_TERMINATE_GRACE_MS);
+  const recoveryStartIdentity = readProcessStartIdentity(process.pid, freezeDeadline);
+  if (recoveryStartIdentity === null) {
+    throw new Error("Cannot identify the auto-restore recovery process safely");
+  }
+  const recoveryTree = listDescendantProcessIdentities(process.pid, freezeDeadline);
   if (recoveryTree === null) {
     throw new Error("Cannot identify the auto-restore recovery process tree safely");
   }
-  // Stop the exact owner before enumerating its descendants so it cannot launch
-  // another weakening subprocess while takeover is being established.
-  signalExact(ownerPid, ownerStartIdentity, "SIGSTOP");
   const tracked = new Map<number, { startIdentity: string; depth: number }>();
+  let observedQuiescentPass = false;
   for (let pass = 0; pass < 8; pass += 1) {
-    const descendants = listDescendantProcessIdentities(ownerPid);
+    if (waitForExactStop(ownerPid, ownerStartIdentity) === "gone") {
+      throw new Error("Timed-out shields-down process tree could not be frozen safely");
+    }
+    const descendants = listDescendantProcessIdentities(ownerPid, freezeDeadline);
     if (descendants === null) {
       throw new Error("Cannot enumerate timed-out shields-down subprocesses safely");
     }
@@ -271,34 +343,54 @@ function stopTimedOutShieldsDownTree(ownerPid: number, ownerStartIdentity: strin
     const recoveryIsInsideOwnerTree = descendants.some(
       ({ pid }: { pid: number }) => pid === process.pid,
     );
-    for (const descendant of excludeRecoveryProcessTree(
+    const passDescendants = excludeRecoveryProcessTree(
       descendants,
-      process.pid,
+      { pid: process.pid, startIdentity: recoveryStartIdentity },
       recoveryIsInsideOwnerTree ? recoveryTree : [],
-    )) {
-      if (!tracked.has(descendant.pid)) added = true;
+    );
+    for (const descendant of passDescendants) {
+      const previous = tracked.get(descendant.pid);
+      if (!previous || previous.startIdentity !== descendant.startIdentity) added = true;
       tracked.set(descendant.pid, {
         startIdentity: descendant.startIdentity,
         depth: descendant.depth,
       });
-      signalExact(descendant.pid, descendant.startIdentity, "SIGSTOP");
+      signalExact(descendant.pid, descendant.startIdentity, "SIGSTOP", freezeDeadline);
     }
-    if (!added) break;
+    for (const descendant of passDescendants) {
+      waitForExactStop(descendant.pid, descendant.startIdentity);
+    }
+    if (!added) {
+      observedQuiescentPass = true;
+      break;
+    }
     Atomics.wait(transitionPollBuffer, 0, 0, SHIELDS_TRANSITION_POLL_MS);
+  }
+  if (!observedQuiescentPass) {
+    throw new Error("Timed-out shields-down process tree could not be frozen safely");
   }
 
   const deepestFirst = [...tracked.entries()].sort((a, b) => b[1].depth - a[1].depth);
+  const killDeadline = processInspectionDeadlineAfter(SHIELDS_TRANSITION_TERMINATE_GRACE_MS);
   for (const [pid, identity] of deepestFirst) {
-    signalExact(pid, identity.startIdentity, "SIGKILL");
+    signalExact(pid, identity.startIdentity, "SIGKILL", killDeadline);
   }
-  signalExact(ownerPid, ownerStartIdentity, "SIGKILL");
+  signalExact(ownerPid, ownerStartIdentity, "SIGKILL", killDeadline);
 
-  const killDeadline = Date.now() + SHIELDS_TRANSITION_TERMINATE_GRACE_MS;
-  while (Date.now() < killDeadline) {
-    const survivor = deepestFirst.some(([pid, identity]) =>
-      identityIsCurrent(pid, identity.startIdentity),
+  const exactProcessIsGone = (pid: number, startIdentity: string): boolean => {
+    const state = readProcessState(pid, killDeadline);
+    return (
+      state?.startsWith("Z") === true ||
+      readExactProcessStatus(pid, startIdentity, killDeadline) === "gone"
     );
-    if (!survivor && !identityIsCurrent(ownerPid, ownerStartIdentity)) return;
+  };
+  while (!processInspectionDeadlineReached(killDeadline)) {
+    const survivor = deepestFirst.some(
+      ([pid, identity]) => !exactProcessIsGone(pid, identity.startIdentity),
+    );
+    if (!survivor && exactProcessIsGone(ownerPid, ownerStartIdentity)) {
+      return;
+    }
     Atomics.wait(transitionPollBuffer, 0, 0, SHIELDS_TRANSITION_POLL_MS);
   }
   throw new Error("Timed-out shields-down process tree could not be stopped safely");
@@ -2158,15 +2250,11 @@ function prepareAutoRestoreTransitionTakeover(
 
   const owner = inspectShieldsTransitionLockOwner(sandboxName, processToken);
   if (!owner) return;
-  if (
-    isProcessAlive(owner.pid) &&
-    readProcessStartIdentity(owner.pid) === owner.processStartIdentity
-  ) {
-    // The same timer token is also propagated to config/inference/restart
-    // mutations made during the mutable window. At expiry those operations
-    // are weaker than restoring lockdown and may be preempted safely.
-    stopTimedOutShieldsDownTree(owner.pid, owner.processStartIdentity);
-  }
+  // The same timer token is also propagated to config/inference/restart
+  // mutations made during the mutable window. At expiry those operations
+  // are weaker than restoring lockdown and may be preempted safely. The stop
+  // helper pins the exact identity and fails closed if it cannot be read.
+  stopTimedOutShieldsDownTree(owner.pid, owner.processStartIdentity);
   const takeover = takeoverShieldsTransitionLock(
     sandboxName,
     owner.pid,
