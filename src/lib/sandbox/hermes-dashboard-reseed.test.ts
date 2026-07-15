@@ -79,6 +79,7 @@ describe("seedHermesDashboardConfig", () => {
         ignoreError: true,
         includeStreams: true,
         maxBuffer: 17 * 1024 * 1024,
+        timeout: 30_000,
       });
     }
     expect(sandboxCommand(capture.mock.calls[0][1])).toEqual([PYTHON, "-c", ""]);

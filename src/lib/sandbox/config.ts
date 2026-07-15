@@ -45,6 +45,9 @@ const {
   parseConfig,
   serializeConfig,
 }: typeof import("./config-format") = require("./config-format");
+const {
+  OPENSHELL_OPERATION_TIMEOUT_MS,
+}: typeof import("../adapters/openshell/timeouts") = require("../adapters/openshell/timeouts");
 
 type ConfigObject = import("../security/credential-filter").ConfigObject;
 type ConfigValue = import("../security/credential-filter").ConfigValue;
@@ -657,6 +660,7 @@ function seedHermesDashboardConfig(
         ignoreError: true,
         includeStreams: true,
         maxBuffer: CONFIG_CAPTURE_MAX_BUFFER,
+        timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
       },
     );
   const failed = (result: import("../adapters/openshell/client").CaptureOpenshellResult) =>
