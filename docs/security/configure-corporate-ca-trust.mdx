@@ -1,7 +1,7 @@
 ---
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-title: "Configure Corporate CA Trust"
+title: "Configure Corporate Certificate Authority Trust"
 sidebar-title: "Configure Corporate CA Trust"
 description: "Import a bounded corporate proxy CA chain into NemoClaw sandbox runtime trust and supported build-time flows."
 description-agent: "Configures corporate proxy CA trust for runtime TLS and supported build-time operations. Use when a corporate MITM proxy re-signs external TLS or certificate verification fails behind an enterprise proxy."
@@ -10,7 +10,7 @@ content:
   type: "how_to"
 ---
 
-Configure a corporate CA before onboarding when an enterprise proxy re-signs external TLS with a root that OpenShell does not provide.
+Configure a corporate Certificate Authority (CA) before onboarding when an enterprise proxy re-signs external TLS with a root that OpenShell does not provide.
 NemoClaw imports a bounded corporate CA chain without replacing the OpenShell trust bundle.
 
 ## Provide the Corporate CA Explicitly
