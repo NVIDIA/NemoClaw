@@ -195,6 +195,14 @@ describe("GatewayClient recovery helpers (#2701)", () => {
       await expect(gateway.resolveGatewayPid(fakeInstance())).resolves.toBe(1234);
     });
 
+    it("returns null when the PID probe fails despite valid-looking output", async () => {
+      const runner = new ScriptedRunner();
+      runner.queue({ exitCode: 1, stdout: "1234 987654 987654 S\n" });
+      const gateway = buildGateway(runner);
+
+      await expect(gateway.resolveGatewayPid(fakeInstance())).resolves.toBeNull();
+    });
+
     it("rejects a reused PID whose process start identity no longer matches", async () => {
       const runner = new ScriptedRunner();
       runner.queue({ stdout: "1234 987654 123456 S\n" });
