@@ -1,0 +1,25 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.68
+
+NemoClaw v0.0.68 improves onboarding recovery, messaging setup, agent-specific CLI behavior, local inference defaults, and release validation:
+
+- Installer and onboarding paths now stop on real setup failures and recover more cleanly after interrupted runs.
+  Scripted installs propagate onboarding exit codes, interrupted installer runs start fresh when no sandbox exists to resume, and resume behavior stays tied to onboarding sessions with a real sandbox.
+  For more information, refer to [NemoClaw Quickstart with OpenClaw](/user-guide/openclaw/get-started/quickstart) and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- Messaging setup adds experimental Microsoft Teams channel onboarding for OpenClaw and Hermes, including Bot Framework credentials, webhook forwarding, the `teams` network policy preset, and local webhook port conflict checks.
+  NemoClaw also derives channel availability from each channel manifest's `supportedAgents` declaration and rejects `channels add` before policy, provider, registry, credential, or rebuild mutations when no channel manifest supports the selected agent.
+  LangChain Deep Agents Code therefore fails closed for messaging until a real channel bridge and matching manifest support land.
+  For more information, refer to [Choose Messaging Channels](/user-guide/openclaw/manage-sandboxes/messaging-channels/choose-messaging-channels) and [Platform Support and Launch Claims](/user-guide/openclaw/reference/platform-support).
+- Agent-specific CLI commands now route more accurately and fail earlier with clearer local guidance.
+  `sessions export` routes by sandbox agent kind, Hermes `gateway-token` points users to `dashboard-url`, bare OpenClaw `agent` invocations print wrapper help locally, and omitted extra-agent `workspace` and `agentDir` fields use canonical OpenClaw paths.
+  For more information, refer to [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- LangChain Deep Agents Code sandboxes now stay alive with a stable entrypoint, use their own product branding, reject unsupported messaging mutations, and preserve the hosted-compatible default model ID without doubling the provider namespace.
+  For more information, refer to [Quickstart with LangChain Deep Agents Code](/user-guide/deepagents/get-started/quickstart), [Choose an Inference Provider](/user-guide/openclaw/inference/learn-and-choose/choose-inference-provider), and [Platform Support and Launch Claims](/user-guide/openclaw/reference/platform-support).
+- DGX Spark express install now selects managed local vLLM by default, while hosted NVIDIA inference setup preserves the provider, namespace, and model ID shape used by the compatible endpoint path.
+  For more information, refer to [NemoClaw Quickstart with OpenClaw](/user-guide/openclaw/get-started/quickstart), [Choose an Inference Provider](/user-guide/openclaw/inference/learn-and-choose/choose-inference-provider), and [Platform Support and Launch Claims](/user-guide/openclaw/reference/platform-support).
+- Platform-support docs now rely on the canonical support matrix, so users and agents see one source of truth for supported platforms, inference providers, agents, messaging integrations, deployment paths, capabilities, and out-of-scope items.
+  For more information, refer to [Platform Support and Launch Claims](/user-guide/openclaw/reference/platform-support).

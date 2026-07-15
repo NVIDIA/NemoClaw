@@ -115,16 +115,26 @@ test/e2e/
   ledger. The advisor uses it as recommendation context, while the controller
   applies it independently without model output.
 
-- `.github/workflows/pr-e2e-gate.yaml` reserves `E2E / PR Gate` on every exact
-  PR head, including forks, before `CI / Pull Request` completes. The trusted
+- `.github/workflows/pr-e2e-gate.yaml` reserves the internal
+  `E2E / PR Gate Coordination` check on every exact PR head, including forks,
+  before `CI / Pull Request` completes. Its default-branch
+  `pull_request_target` path also publishes the native GitHub Actions job named
+  `E2E / PR Gate`. The read-only observer runs from `github.workflow_sha`,
+  validates the live PR head and base, waits for the matching trusted
+  coordination identity, and mirrors the terminal verdict into the required
+  job. Its summary is static, while the job log includes the validated trusted
+  controller-run link. Authorization states remain pending while the maintainer
+  decision is recorded. During rollout, the observer also accepts the former
+  `E2E / PR Gate` custom-check name for the same exact-diff identity. The
   controller builds the risk plan from GitHub's complete file list. Internal
   revisions normally dispatch every selected job and verify each expected
   `risk-signal.json`; this remains automatic when their `e2e-control-plane`
-  matches are drawn only from the trusted controller workflow and script.
-  Other or mixed internal control-plane revisions require a maintainer-authorized
-  exact-SHA run; only its verified evidence can pass the gate. Risky forks
-  retain the audited credentialed-E2E skip approval. See
-  [NemoClaw E2E CI](../README.md) for the full lifecycle.
+  matches are drawn only from the trusted controller workflow and scripts.
+  Other or mixed internal
+  control-plane revisions require a maintainer-authorized exact-SHA run; only
+  its verified evidence can pass coordination. Risky forks retain the audited
+  credentialed-E2E skip approval. See [NemoClaw E2E CI](../README.md) for the
+  full lifecycle.
 
 - `.github/workflows/e2e.yaml` runs selected or all supported
   live E2E targets and uploads an explicit artifact allowlist with

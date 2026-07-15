@@ -95,6 +95,24 @@ The watcher rejects blank or malformed overrides before it starts Fern.
 Fern `.mdx` pages are the canonical docs source.
 Fern publishes Markdown routes for AI agents from the same source pages.
 
+## Updating the Changelog
+
+The native Fern changelog under `docs/changelog/` is the canonical release history.
+One source directory is shared across the OpenClaw, Hermes, and Deep Agents user-guide variants.
+Create the planned release entry in the pre-tag release-note docs PR so it lands on `main` before the release plan captures the tag commit.
+
+For each release:
+
+- Add the complete release entry to `docs/changelog/YYYY-MM-DD.mdx`, using the release date as the filename.
+- Start the entry with an H2 version heading such as `## v0.0.83`.
+- If more than one release ships on the same date, put each version in the same file with the newest version first.
+- Include the summary and detailed bullets in the dated file; do not create separate variant-specific Release Notes pages.
+- Use literal CLI names instead of the `$$nemoclaw` variant placeholder because native changelog files do not pass through agent-variant generation.
+- Use root-absolute published routes for internal links in dated entries.
+  Generic links should target the OpenClaw route under `/user-guide/openclaw/`; agent-specific links should target the corresponding Hermes or Deep Agents route.
+- Use MDX comment syntax (`{/* ... */}`) for the SPDX header; HTML comments do not parse in Fern changelog entries.
+- Keep every dated entry directly under `docs/changelog/`; Fern does not support subdirectories there.
+
 ## Publishing Docs
 
 GitHub Actions publishes Fern docs from the same source files that `npm run docs` validates locally.

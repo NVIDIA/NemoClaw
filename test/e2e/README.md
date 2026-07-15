@@ -11,7 +11,9 @@ before those targets run; local runners must provide it themselves.
 - `.github/workflows/e2e.yaml` is the scheduled, manually dispatchable, and
   selectively dispatched live target workflow.
 - `.github/workflows/pr-e2e-gate.yaml` runs as `E2E / PR Gate Controller` and
-  publishes the exact-diff `E2E / PR Gate` check.
+  publishes the trusted exact-diff `E2E / PR Gate Coordination` check and the
+  native `E2E / PR Gate` job that mirrors coordination into the PR's required
+  GitHub Actions check suite.
 - `.github/workflows/e2e-branch-validation.yaml` provisions Brev instances and
   runs focused E2E targets from source on a clean machine.
 - Platform workflows such as macOS, WSL, sandbox image, and regression E2E
@@ -83,21 +85,37 @@ artifact so baseline aggregation stays stable.
 Older issue references to Vitest target artifacts under `e2e-artifacts/vitest/`
 map to this consolidated `e2e-artifacts/live/` registry-target artifact layout.
 
-## PR E2E check
+## PR E2E gate
 
-The workflow and custom check deliberately use different names and report
-different results. `E2E / PR Gate Controller` reports whether the trusted
-controller ran and published a terminal result. `E2E / PR Gate` is the
-exact-diff merge verdict. A handled prerequisite-CI failure, selected E2E
-failure or timeout, stale revision, or closed PR can leave the controller green
-while the custom check is failed or cancelled. Only a successful `E2E / PR Gate`
-for the current head and base satisfies the gate. An unexpected controller
-error still fails the controller workflow and fails the custom check closed.
+The controller, coordination check, and required job deliberately use
+different names and report different parts of the lifecycle.
+`E2E / PR Gate Controller` reports whether the trusted controller handled its
+event. The controller publishes the internal custom check
+`E2E / PR Gate Coordination` as its exact-diff verdict.
+The default-branch `pull_request_target` path publishes the native GitHub
+Actions job named `E2E / PR Gate`. It checks out the controller at
+`github.workflow_sha`, validates that the PR still has the observed head and
+base, waits for the matching trusted coordination identity, and exits with its
+terminal verdict. It also writes that verdict and the trusted run link to the
+job log and keeps the job summary free of network-derived content. During
+rollout, the observer accepts the former custom-check name
+`E2E / PR Gate` for the same exact-diff external identity so in-flight PRs do
+not lose their gate.
+
+A handled prerequisite-CI failure, selected E2E failure or timeout, stale
+revision, or closed PR can leave the controller green while coordination is
+failed or cancelled and the native job is non-passing. Only a successful native
+`E2E / PR Gate` for the current head and base satisfies the required check. An
+unexpected controller error still fails the controller workflow and fails
+coordination closed, which prevents the native job from passing.
 
 On open, synchronization, reopen, transition out of draft, or base retarget,
-`.github/workflows/pr-e2e-gate.yaml` reserves `E2E / PR Gate` for the exact PR
-head and base commits, including fork heads. A base retarget fails any earlier
-gate in that head's lineage before reserving the new exact-diff gate. The
+`.github/workflows/pr-e2e-gate.yaml` reserves `E2E / PR Gate Coordination` for
+the exact PR head and base commits, including fork heads. The read-only native
+observer starts for every configured non-closed PR event; metadata-only edits
+mirror the existing exact-diff coordination result instead of publishing a
+skipped success. A base retarget fails any earlier coordination result in that
+head's lineage before reserving the new exact-diff identity. The
 `CI / Pull Request` run name binds its PR number, head SHA, base SHA, and gate
 eligibility so the trusted controller can authenticate the completed run even
 when a fork `workflow_run` payload omits pull-request metadata. The controller
@@ -112,14 +130,16 @@ Runtime families and changes to workflow-wired live tests select
 canonical selectors from the trusted `e2e.yaml` inventory independently of
 advisor output. Ordinary internal changes execute those focused selections.
 Gate initialization and CI coordination share one non-cancelling concurrency
-group for the head repository and branch. Before either path creates a check or
-applies a result to the current revision, it reads the live PR and requires the
-event's exact head and base, including when PR CI failed. This keeps a stale seed
-or completed CI run from being applied to a newer exact diff. A completed CI
+group for the head repository and branch. Before the controller creates or
+updates coordination for the current revision, it reads the live PR and
+requires the event's exact head and base, including when PR CI failed. The
+native observer performs the same live exact-revision check before waiting and
+again before accepting a terminal verdict. This keeps a stale seed, completed
+CI run, or observer from being applied to a newer exact diff. A completed CI
 event for an older revision is handled without creating or updating the current
-revision's check.
-If the older revision still has an in-progress check, the controller completes
-it as cancelled with `Superseded by PR update` or
+revision's coordination check.
+If the older revision still has an in-progress coordination check, the
+controller completes it as cancelled with `Superseded by PR update` or
 `PR closed — gate no longer applies` and identifies the obsolete head and base.
 The closed-PR outcome also applies when a fork repository was deleted and
 GitHub consequently returns no head-repository object.
@@ -129,12 +149,14 @@ Shared sandbox-boundary changes have a floor of `full-e2e`, `hermes-e2e`, and
 family is a conservative path boundary that includes non-documentation files
 under `tools/e2e/` and `test/e2e/`, plus the E2E and PR-CI workflows, risk
 policy, dependency and test configuration, and preparation and upload actions.
-An internal revision whose matched control-plane files are drawn only from
-`.github/workflows/pr-e2e-gate.yaml` and `tools/e2e/pr-e2e-gate.mts`
-automatically dispatches those selected jobs. Any other or mixed internal
-control-plane revision requires the exact-SHA maintainer authorization below
-before credentialed execution begins. If no job is selected, the check passes
-without an E2E run.
+An internal revision whose matched control-plane files are drawn only from the
+trusted controller and observer boundaries—`.github/workflows/pr-e2e-gate.yaml`,
+`tools/e2e/pr-e2e-gate.mts`, and `tools/e2e/pr-e2e-required.mts`—automatically
+dispatches those selected jobs.
+Any other or mixed internal control-plane revision requires the exact-SHA
+maintainer authorization below before credentialed execution begins. If no job
+is selected, coordination passes without an E2E run and the native required job
+mirrors that success.
 
 Before dispatch, the controller verifies that the live PR still matches the CI
 run's exact head and base. It uses its own workflow commit when that commit is
@@ -152,32 +174,39 @@ belongs to `NVIDIA/NemoClaw`, and still has both the dispatched head and base
 commits. The dispatch includes selected jobs and valid plan and correlation
 metadata, but not `targets`. The controller uses GitHub's returned run ID for
 waiting, evidence download, and completion, then revalidates that the PR is
-still open with the live head, base, and exact-diff check identity before
-recording a final result.
+still open with the live head, base, and exact-diff coordination identity before
+recording a final result. The native observer revalidates the live revision
+before mirroring that terminal result.
 
-An internal revision whose control-plane matches include a file outside the two
-trusted controller files completes the exact-diff gate as failed with
-`Maintainer authorization required to run E2E`. No selected job runs and no
-repository secret is exposed. After reviewing the exact revision, a repository
+An internal revision whose control-plane matches include a file outside the
+trusted controller and observer boundaries completes coordination as failed
+with `Maintainer authorization required to run E2E`. The native required job
+keeps waiting for the authorization flow. No selected job runs and no repository
+secret is exposed. After reviewing the exact revision, a repository
 maintainer or administrator chooses **Run workflow** on `main`, selects
 `run-control-plane`, and supplies the PR number, current 40-character head SHA
 as `expected_head_sha`, current 40-character base SHA as `expected_base_sha`,
 and a specific 10–500-character `review_reason`. The authorization requires the
 first workflow attempt and revalidates the actor's `maintain` or `admin`
 permission, internal repository origin, open PR, exact head and base, risk
-plan, matching failed gate, compatible trusted controller commit, and final
-live revision. It then returns the same gate to in progress and dispatches the
-selected jobs. The normal wait, evidence download, and finish path is the only
-path that can record success; the authorization itself cannot make the gate
-green. A changed head or base requires a new authorization.
+plan, matching failed coordination check, compatible trusted controller commit,
+and final live revision. It then returns coordination to in progress and
+dispatches the selected jobs. The native required job treats this authorization
+title as an intermediate waiting state instead of mirroring the temporary
+failure. The normal wait, evidence download, and finish path is the only path
+that can record success; the authorization itself cannot make the gate green.
+A changed head or base requires a new authorization.
 
-A fork revision that selects jobs completes the exact-diff gate as failed
-without dispatching the selected credential-bearing jobs or exposing
-repository secrets. Non-secret PR CI remains required. The failed check summary
+A fork revision that selects jobs completes coordination as failed while the
+native required job waits for the skip-approval flow. The controller does not
+dispatch the selected credential-bearing jobs or expose repository secrets.
+Non-secret PR CI remains required. The failed coordination summary
 embeds an explicit link to the same `E2E / PR Gate Controller` run; maintainers
-follow that link rather than relying on the custom check's **Details**
-destination. The check publishes only allowlisted skip-approval metadata for
-its PR number, mode, head SHA, and base SHA. That controller run starts
+follow that link rather than relying on the coordination check's **Details**
+destination. The coordination check publishes only allowlisted skip-approval
+metadata for its PR number, mode, head SHA, and base SHA. The native required
+job recognizes the approval-required title as an intermediate waiting state.
+That controller run starts
 `Approve credentialed E2E skip for fork PR`, which waits on the protected
 `approve-credentialed-e2e-skip-for-fork-pr` environment. With
 `deployment: false`, the job does not create a deployment record. A maintainer
@@ -207,14 +236,16 @@ of this exact workflow on `main`, at the trusted workflow SHA and with the
 the exact environment, then verifies that the recorded reviewer still has
 repository `maintain` or `admin` permission. The shared resolver revalidates
 the open PR, repository origin, exact head and base SHAs, deterministic plan,
-matching failed gate, and that the controller commit is either still `main` or
+matching failed coordination check, and that the controller commit is either
+still `main` or
 has only a compatible safe descendant as described above. Immediately before
 recording success, it reads the live PR again and requires the same exact head
 and base. The result records the reviewer, bounded optional comment, validated
 approval-run URL, plan hash, and jobs that did not run. The successful skip
-check is titled `Credentialed E2E skipped for fork PR — approved by
+coordination check is titled `Credentialed E2E skipped for fork PR — approved by
 @<maintainer>` and begins with `Outcome: APPROVED SKIP — credentialed E2E did
-not run.` It never claims that the selected jobs passed.
+not run.` It never claims that the selected jobs passed. The native required
+job mirrors this approved-skip success.
 
 The manual fork skip approval on `main` remains available as a fallback. Choose
 `approve-fork-e2e-skip` and provide the PR number, current `expected_head_sha`,
@@ -240,33 +271,41 @@ signal travels in the selected job's existing E2E artifact.
 Its private dispatch state is protected by a SHA-256 digest that is verified
 before downloaded evidence is classified.
 
-When the plan selects jobs, the check passes only when the E2E run succeeds and
-every expected job shard uploads one complete passing signal with no skips or
-pending tests. For the current exact diff, every other dispatched outcome
-fails. A failed result links the selected E2E run and up to 10 non-passing jobs,
-including up to three failed step names per job. If GitHub truncates the job
-listing or the controller cannot load it, the check directs the maintainer to
-the complete run.
+When the plan selects jobs, coordination passes only when the E2E run succeeds
+and every expected job shard uploads one complete passing signal with no skips
+or pending tests. The native required job passes only after observing that
+trusted success. For the current exact diff, every other dispatched outcome
+fails. A failed coordination result links the selected E2E run and up to 10
+non-passing jobs, including up to three failed step names per job. If GitHub
+truncates the job listing or the controller cannot load it, the coordination
+check directs the maintainer to the complete run.
 The coordinator has a 180-minute job budget and gives the selected E2E run 105
 minutes to finish. When that limit expires, finalization cancels the child and
-records the non-passing result in the custom check. Evidence download has its
-own 10-minute limit. If the selected child succeeds but the `Download evidence`
-step fails, is cancelled, or is skipped, the controller cannot authenticate the
-child's artifacts. It fails the custom check closed as
+records the non-passing result in the coordination check. The native observer
+has a 170-minute job budget and waits up to 165 minutes for a trusted terminal
+verdict. Evidence download has its own 10-minute limit. If the selected child
+succeeds but the `Download evidence` step fails, is cancelled, or is skipped,
+the controller cannot authenticate the child's artifacts. It fails
+coordination closed as
 `Evidence could not be verified` and leaves `E2E / PR Gate Controller` red so
 maintainers inspect that infrastructure failure and rerun the gate. If the
 download step succeeds but signals are missing, duplicated, skipped, pending,
 or report a test failure, the controller has completed its work: it publishes
 the handled red PR verdict and remains green. Malformed or unsafe evidence,
 schema or exact-identity mismatches, and traversal-limit violations remain
-controller verification errors, so both the check and controller fail closed.
+controller verification errors, so coordination, the native required job, and
+the controller fail closed.
 These dispatches suppress PR comments and the scheduled or manual
 scorecard, including scorecard Slack reporting.
 
 Synchronizing, reopening, or closing an internal PR cancels its active E2E
 runs. A new dispatch also cancels the previous run. The previous controller
-then completes the old exact-diff check as cancelled when the PR revision moved
-or closed, or as failed when the current revision's selected E2E did not pass.
+then completes the old exact-diff coordination check as cancelled when the PR
+revision moved or closed, or as failed when the current revision's selected E2E
+did not pass. Native observer concurrency cancels the old required-job run and
+starts a new one when a configured non-closed PR event identifies the current
+revision. Metadata-only edits restart the observer against the unchanged
+exact-diff identity.
 The controller does not read PR Review Advisor output, so model availability
 and recommendations are not part of merge authority.
 

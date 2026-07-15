@@ -1,0 +1,24 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.58
+
+NemoClaw v0.0.58 improves GPU proof reporting, local-inference metadata, policy failure handling, Hermes messaging reliability, OpenClaw diagnostics, and release-prep documentation:
+
+- GPU and local-inference setup report more accurate state.
+  WSL Docker Desktop on ARM64 can accept a reported NVIDIA GPU only after a bounded Docker CUDA proof succeeds, `nemoclaw <name> status` shows whether sandbox CUDA usability is verified, unverified, or failed, managed vLLM uses runtime `max_model_len` metadata for the baked context window when available, and DeepSeek managed-vLLM startup receives the runtime keyword arguments it expects.
+  For more information, refer to [Choose a Local Inference Server](/user-guide/openclaw/inference/local-inference/choose-local-inference-server).
+- Onboarding and installer failures stop earlier with clearer recovery guidance.
+  The installer checks for `strings` from `binutils` before clone, build, or OpenShell download work; Docker-driver gateway startup fails fast when Docker is unreachable; WSL Docker Desktop diagnostics explain unsupported native Docker-in-WSL routes; Windows-host Ollama detection also checks the installed Windows process when the daemon is stopped; and custom proxy host and port settings are forwarded into the runtime container.
+  For more information, refer to [Prerequisites](/user-guide/openclaw/get-started/prerequisites).
+- Policy and sandbox hardening paths avoid misleading success.
+  `policy-add` refuses to merge a preset when the live policy read returns unparseable output, custom preset application reports when the gateway accepted a preset but the sandbox registry could not record it, and `NEMOCLAW_REQUIRE_CAP_DROP=1` lets operators make entrypoint capability dropping fail closed.
+  For more information, refer to [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- OpenClaw runtime diagnostics can export conversation traces through the `diagnostics-otel` plugin.
+  Set `NEMOCLAW_OPENCLAW_OTEL=1` before onboarding or rebuilding an OpenClaw sandbox to bake the plugin config and apply the local OTLP policy preset.
+  For more information, refer to [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Hermes sandboxes are more reliable across messaging, inference, and startup repair paths.
+  Slack channel rebuilds enable the Hermes Slack platform block, `inference.local` routes include the placeholder API key LiteLLM expects, Telegram pseudo-tool text is normalized only for the active chat platform, the messaging response patch preserves Hermes method binding, retry markers are cleared before explicit command dispatch, and Hermes state repair preserves writable history and background dispatcher behavior in locked runtime state.
+  For more information, refer to [Choose Messaging Channels](/user-guide/hermes/manage-sandboxes/messaging-channels/choose-messaging-channels).

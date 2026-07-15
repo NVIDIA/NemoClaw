@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-evening
-description: Runs the end-of-day maintainer handoff for NemoClaw. Checks version target progress, records stragglers for an automatic post-tag bump, generates a QA handoff summary, and cuts the release tag. Use at the end of the workday. Trigger keywords - evening, end of day, EOD, wrap up, ship it, cut tag, handoff, done for the day.
+description: Runs the end-of-day NemoClaw release handoff, including the pre-tag dated changelog PR, version progress, straggler planning, QA summary, tag cut, and announcement draft. Use at the end of the workday. Trigger keywords - evening, end of day, EOD, wrap up, ship it, cut tag, handoff, done for the day, pre-tag release notes.
 user_invocable: true
 ---
 
@@ -43,7 +43,9 @@ This lists commits since the last tag, identifies risky areas touched, and sugge
 ## Pre-Tag Docs
 
 Run `/nemoclaw-contributor-update-docs for <version>` before loading `cut-release-tag`.
-The release-prep docs PR must be merged, or explicitly waived with a reason, before `release:plan` captures the release commit.
+Confirm that the release-prep docs PR creates or updates one direct child of `docs/changelog/` for the planned date and contains the exact `## <version>` heading, a parser-safe MDX SPDX comment, the summary, and the detailed release bullets.
+An ordinary docs refresh or a post-tag Discussion draft does not satisfy this step.
+The release-prep docs PR, including the dated changelog entry, must be merged, or explicitly waived with a reason that names the missing changelog entry, before `release:plan` captures the release commit.
 If a docs PR or any other intended PR merges after `release:plan`, regenerate the plan before cutting the tag.
 
 ## Step 4: Cut the Tag and Publish Release Notes

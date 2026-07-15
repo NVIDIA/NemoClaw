@@ -1251,11 +1251,7 @@ $$nemoclaw my-assistant status
 
 #### Checking the OpenClaw version
 
-NemoClaw pins the OpenClaw version inside the sandbox at build time, not at runtime.
-The NemoClaw runtime build target is declared by `OPENCLAW_VERSION` in the NemoClaw Dockerfiles.
-The `min_openclaw_version` field in `nemoclaw-blueprint/blueprint.yaml` remains the compatibility floor for direct blueprint consumers, so it can be lower than the Dockerfile target.
-Existing sandboxes do not auto-upgrade when a newer NemoClaw release ships a newer pin.
-Upgrade by rebuilding the sandbox.
+Refer to [Update Sandboxes](../manage-sandboxes/operate-sandboxes/update-sandboxes#understand-agent-version-pins) for the OpenClaw version pin and rebuild policy.
 
 `$$nemoclaw <name> status` prints the running OpenClaw version on the `Agent` line:
 
@@ -1279,9 +1275,7 @@ The rebuild reuses the existing sandbox name and persisted credentials, so messa
 
 #### Checking the Hermes version
 
-NemoClaw pins the Hermes version inside the sandbox image at build time, not at runtime.
-The Hermes agent manifest declares the expected version and the `hermes --version` probe command.
-Existing sandboxes do not auto-upgrade when a newer NemoClaw release ships a newer Hermes pin; you upgrade by rebuilding the sandbox.
+Refer to [Update Sandboxes](../manage-sandboxes/operate-sandboxes/update-sandboxes#understand-agent-version-pins) for the Hermes version pin and rebuild policy.
 
 `nemohermes <name> status` prints the running Hermes version on the `Agent` line:
 
@@ -1305,9 +1299,7 @@ The rebuild reuses the existing sandbox name and persisted credentials, so messa
 
 #### Checking the Deep Agents version
 
-NemoClaw pins the Deep Agents Code version inside the sandbox image at build time, not at runtime.
-The `langchain-deepagents-code` agent manifest declares the expected version and the `dcode --version` probe command.
-Existing sandboxes do not auto-upgrade when a newer NemoClaw release ships a newer Deep Agents Code pin; you upgrade by rebuilding the sandbox.
+Refer to [Update Sandboxes](../manage-sandboxes/operate-sandboxes/update-sandboxes#understand-agent-version-pins) for the Deep Agents Code version pin and rebuild policy.
 
 `nemo-deepagents <name> status` prints the running Deep Agents Code version on the `Agent` line:
 
