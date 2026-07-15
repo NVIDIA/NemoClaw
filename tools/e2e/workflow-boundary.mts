@@ -3453,6 +3453,11 @@ function validateBedrockRuntimeCompatibleAnthropicJob(
   if (jobEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
     errors.push("bedrock-runtime-compatible-anthropic job must set NEMOCLAW_RUN_LIVE_E2E=1");
   }
+  if (jobEnv.NEMOCLAW_E2E_SHARD !== "${{ matrix.agent }}") {
+    errors.push(
+      "bedrock-runtime-compatible-anthropic job must derive NEMOCLAW_E2E_SHARD from matrix.agent",
+    );
+  }
   if (jobEnv.NEMOCLAW_NON_INTERACTIVE !== "1") {
     errors.push("bedrock-runtime-compatible-anthropic job must set NEMOCLAW_NON_INTERACTIVE=1");
   }
