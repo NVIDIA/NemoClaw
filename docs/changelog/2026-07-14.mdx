@@ -11,7 +11,7 @@ NemoClaw v0.0.83 makes shared inference route changes explicit and safe, restore
   When multiple sandboxes share a gateway, onboarding warns immediately before re-pointing the live route and fails closed before replacing a provider-global identity used by another sandbox.
   Status output shows each sandbox's recorded route, the live route, and whether `connect` can safely restore a drifted route.
   For more information, refer to [View Active Inference Route](/user-guide/openclaw/inference/manage-inference/view-active-inference-route), [Switch Models](/user-guide/openclaw/inference/manage-inference/switch-models), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
-- DGX Station GB300 systems enter the express-install path, and managed vLLM storage preflight blocks only for a verified shortage rather than inconclusive capacity.
+- DGX Station GB300 systems enter the express-install path, and managed vLLM storage preflight warns on a verified shortage or inconclusive capacity instead of blocking express setup.
   For more information, refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm) and [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
 - Onboarding warns when a bring-your-own vLLM server on DGX Spark appears to serve a large unquantized model that may exhaust GPU memory under agent tool-call load.
   The warning is suppressed for the managed Spark vLLM recipe.
@@ -37,7 +37,8 @@ NemoClaw v0.0.82 adds non-destructive sandbox stop and start commands, protects 
   Installer upgrades also ignore route-only placeholders left by interrupted onboarding instead of treating them as backupable sandboxes.
   For more information, refer to [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots) and [Run Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/run-sandboxes).
 - Managed vLLM setup checks storage before large downloads begin.
-  NemoClaw verifies Docker image storage and the Hugging Face model cache before an uncached image pull or model download, rechecks model capacity after the image pull, and stops when capacity or filesystem identity cannot be established unless the operator explicitly accepts the warning.
+  NemoClaw verifies Docker image storage and the Hugging Face model cache before an uncached image pull or model download, rechecks model capacity after the image pull, and treats low verified capacity as an advisory warning in express and other non-interactive setup paths.
+  Interactive setup still stops unless the operator explicitly accepts the warning.
   Managed profiles use immutable platform digests, and the model download and serving containers use `--pull=never` so an implicit pull cannot bypass the storage gate.
   For more information, refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm) and [Choose an Inference Provider](/user-guide/openclaw/inference/learn-and-choose/choose-inference-provider).
 - Onboarding reports local inference and gateway conflicts more accurately.

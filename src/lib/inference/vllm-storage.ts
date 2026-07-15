@@ -7,9 +7,8 @@ import { parse as parseToml } from "smol-toml";
 import { dockerCapture } from "../adapters/docker";
 import { buildVllmDockerEnv } from "./vllm-docker-env";
 
-export const VLLM_STORAGE_OVERRIDE_ENV = "NEMOCLAW_IGNORE_VLLM_DISK_SPACE";
-
 const GIB_BYTES = 1024n ** 3n;
+const GB_BYTES = 1000n ** 3n;
 const IMAGE_PULL_TEMP_HEADROOM_BYTES = 3n * GIB_BYTES;
 const DEFAULT_CONTAINERD_ROOT = "/var/lib/containerd";
 const DEFAULT_CONTAINERD_CONFIG = "/etc/containerd/config.toml";
@@ -92,6 +91,53 @@ export function formatStorageBytes(bytes: bigint): string {
   const whole = roundedTenths / 10n;
   const fraction = roundedTenths % 10n;
   return fraction === 0n ? `${String(whole)} GiB` : `${String(whole)}.${String(fraction)} GiB`;
+}
+
+export function formatStorageDecimalBytes(bytes: bigint): string {
+  const roundedThousandths = (bytes * 1000n + GB_BYTES / 2n) / GB_BYTES;
+  const whole = roundedThousandths / 1000n;
+  const fraction = String(roundedThousandths % 1000n)
+    .padStart(3, "0")
+    .replace(/0+$/, "");
+  return fraction ? `${String(whole)}.${fraction} GB` : `${String(whole)} GB`;
+}
+
+export interface ManagedVllmStorageEstimate {
+  imageCompressedBytes: bigint;
+  imageUnpackedBytes: bigint;
+  modelBytes: bigint;
+  totalBytes: bigint;
+  writableAllowanceBytes: bigint;
+}
+
+export function managedVllmStorageEstimateBytes({
+  imageCompressedBytes,
+  imageUnpackedBytes,
+  includeImage,
+  modelBytes,
+  writableAllowanceBytes,
+}: {
+  imageCompressedBytes: number;
+  imageUnpackedBytes: number;
+  includeImage: boolean;
+  modelBytes: number;
+  writableAllowanceBytes: number;
+}): ManagedVllmStorageEstimate {
+  const imageCompressed = includeImage
+    ? positiveBytes(imageCompressedBytes, "vLLM image compressed size")
+    : 0n;
+  const imageUnpacked = includeImage
+    ? positiveBytes(imageUnpackedBytes, "vLLM image unpacked size")
+    : 0n;
+  const model = positiveBytes(modelBytes, "vLLM model file size");
+  const writable = positiveBytes(writableAllowanceBytes, "vLLM writable allowance");
+  return {
+    imageCompressedBytes: imageCompressed,
+    imageUnpackedBytes: imageUnpacked,
+    modelBytes: model,
+    totalBytes: imageCompressed + imageUnpacked + model + writable,
+    writableAllowanceBytes: writable,
+  };
 }
 
 function parseDockerInfo(raw: string): DockerInfoShape | null {
@@ -285,4 +331,29 @@ export function probeDockerStorage(overrides: Partial<StorageProbeDeps> = {}): S
   return limiting
     ? { ok: true, capacity: limiting }
     : { ok: false, reason: "docker info did not report a usable image-storage path" };
+}
+
+function nearestExistingPath(target: string, exists: (candidate: string) => boolean): string {
+  let candidate = path.resolve(target);
+  while (!exists(candidate)) {
+    const parent = path.dirname(candidate);
+    if (parent === candidate) return candidate;
+    candidate = parent;
+  }
+  return candidate;
+}
+
+export function probeModelCacheStorage(
+  cacheDir: string,
+  overrides: Partial<StorageProbeDeps> = {},
+): StorageProbeResult {
+  const deps = { ...defaultStorageProbeDeps(), ...overrides };
+  const target = nearestExistingPath(cacheDir, deps.exists);
+  return capacityForLocation(
+    {
+      path: target,
+      source: target === path.resolve(cacheDir) ? "model cache" : "model cache filesystem",
+    },
+    deps.statfs,
+  );
 }

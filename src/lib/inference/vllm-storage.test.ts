@@ -1,15 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  formatStorageDecimalBytes,
   formatStorageBytes,
   imageStorageRequirementBytes,
+  managedVllmStorageEstimateBytes,
   probeDockerStorage,
+  probeModelCacheStorage,
   resolveDockerStorageLocations,
 } from "./vllm-storage";
 
 const GIB = 1024n ** 3n;
+const tempDirs: string[] = [];
 
 function nativeDockerInfo(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
@@ -32,6 +39,7 @@ const nativeHost = {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+  for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { force: true, recursive: true });
 });
 
 describe("managed vLLM image-storage requirements", () => {
@@ -45,6 +53,23 @@ describe("managed vLLM image-storage requirements", () => {
   it("formats available and required bytes as rounded GiB values", () => {
     expect(formatStorageBytes(2n * GIB)).toBe("2 GiB");
     expect(formatStorageBytes((23n * GIB) / 10n)).toBe("2.3 GiB");
+  });
+
+  it("formats catalog estimates as decimal GB values", () => {
+    expect(formatStorageDecimalBytes(391_525_574_555n)).toBe("391.526 GB");
+    expect(formatStorageDecimalBytes(816_000_000n)).toBe("0.816 GB");
+  });
+
+  it("adds image, model, and writable bytes for a cold managed-vLLM estimate (#6858)", () => {
+    expect(
+      managedVllmStorageEstimateBytes({
+        imageCompressedBytes: 10_670_047_835,
+        imageUnpackedBytes: 27_658_526_720,
+        includeImage: true,
+        modelBytes: 352_381_000_000,
+        writableAllowanceBytes: 816_000_000,
+      }).totalBytes,
+    ).toBe(391_525_574_555n);
   });
 });
 
@@ -300,5 +325,24 @@ describe("Docker image-storage detection", () => {
       reason:
         "Docker uses a named context (remote-builder) whose host filesystem cannot be inspected",
     });
+  });
+});
+
+describe("Hugging Face model-cache storage", () => {
+  it("checks the nearest existing filesystem before creating the cache directory (#6858)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-vllm-storage-"));
+    tempDirs.push(root);
+    const cacheDir = path.join(root, ".cache", "huggingface");
+    const statfs = vi.fn(() => ({ bavail: 7n, bsize: GIB }));
+
+    expect(probeModelCacheStorage(cacheDir, { statfs })).toEqual({
+      ok: true,
+      capacity: {
+        availableBytes: 7n * GIB,
+        path: root,
+        source: "model cache filesystem",
+      },
+    });
+    expect(statfs).toHaveBeenCalledWith(root);
   });
 });
