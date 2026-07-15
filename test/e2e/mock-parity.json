@@ -67,14 +67,6 @@
       ]
     },
     {
-      "live": "test/e2e/live/openshell-version-pin.test.ts",
-      "fast": [
-        "test/install-openshell-version-check.test.ts",
-        "test/installer-hash-check.test.ts",
-        "test/e2e/support/e2e-workflow.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/openclaw-tui-chat-correlation.test.ts",
       "fast": [
         "test/e2e/support/openclaw-tui-ref-fidelity.test.ts",
@@ -390,6 +382,9 @@
     {
       "live": "test/e2e/live/openshell-version-pin.test.ts",
       "fast": [
+        "test/e2e/support/e2e-workflow.test.ts",
+        "test/install-openshell-version-check.test.ts",
+        "test/installer-hash-check.test.ts",
         "test/onboard-openshell-version.test.ts",
         "test/runner.test.ts"
       ]
