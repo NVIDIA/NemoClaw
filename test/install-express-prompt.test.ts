@@ -35,9 +35,9 @@ platform = sys.argv[4]
 script = r'''
 source "$INSTALLER_UNDER_TEST" >/dev/null
 detect_express_platform() { printf "$EXPRESS_PLATFORM"; }
-NON_INTERACTIVE=""
-NEMOCLAW_PROVIDER=""
-NEMOCLAW_NO_EXPRESS=""
+NON_INTERACTIVE="\${NON_INTERACTIVE:-}"
+NEMOCLAW_PROVIDER="\${NEMOCLAW_PROVIDER:-}"
+NEMOCLAW_NO_EXPRESS="\${NEMOCLAW_NO_EXPRESS:-}"
 maybe_offer_express_install
 printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s POLICY=%s YES=%s SANDBOX=%s\\n" \\
   "\${NON_INTERACTIVE:-}" "\${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}" "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_MODEL:-}" \\
@@ -145,6 +145,19 @@ detect_express_platform
     );
   }
 
+  it("parses and documents the DGX Station DeepSeek override", () => {
+    const result = spawnSync("bash", [INSTALLER_PAYLOAD, "--station-deepseek", "--help"], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+    });
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(
+      /--station-deepseek\s+Use DeepSeek V4 Flash for DGX Station express install/,
+    );
+  });
+
   it("offers express install when curl-piped stdin still has a controlling TTY", () => {
     const result = runExpressPromptWithTty("y\n", "pipe");
     const output = `${result.stdout}${result.stderr}`;
@@ -207,8 +220,75 @@ detect_express_platform
     expect(output).toMatch(/approximately 352 GB model/);
     expect(output).toMatch(/Using express install for DGX Station/);
     expect(output).toMatch(
-      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL= VLLM_MODEL=nemotron-3-ultra-550b-a55b POLICY=suggested YES=1 SANDBOX=my-assistant/,
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=nvidia\/nemotron-3-ultra-550b-a55b VLLM_MODEL=nemotron-3-ultra-550b-a55b POLICY=suggested YES=1 SANDBOX=my-assistant/,
     );
+  });
+
+  it("uses DeepSeek V4 Flash for the Station demo override with one confirmation", () => {
+    const result = runExpressPromptWithTty("\n", "pipe", "DGX Station", {
+      STATION_DEEPSEEK: "1",
+    });
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(
+      /Express install will configure managed local vLLM with DeepSeek V4 Flash/,
+    );
+    expect(output.match(/Run express install with these settings\?/g)).toHaveLength(1);
+    expect(output).toMatch(/Using express install for DGX Station/);
+    expect(output).toMatch(
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=deepseek-ai\/DeepSeek-V4-Flash VLLM_MODEL=deepseek-v4-flash POLICY=suggested YES=1 SANDBOX=my-assistant/,
+    );
+  });
+
+  it("allows a matching explicit DeepSeek model with the Station demo override", () => {
+    const result = runExpressPromptWithTty("\n", "pipe", "DGX Station", {
+      STATION_DEEPSEEK: "1",
+      NEMOCLAW_VLLM_MODEL: "deepseek-ai/DeepSeek-V4-Flash",
+    });
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/managed local vLLM with DeepSeek V4 Flash/);
+    expect(output).toMatch(/MODEL=deepseek-ai\/DeepSeek-V4-Flash VLLM_MODEL=deepseek-v4-flash/);
+  });
+
+  it("rejects a conflicting explicit model with the Station demo override", () => {
+    const result = runExpressPromptWithTty("\n", "pipe", "DGX Station", {
+      STATION_DEEPSEEK: "1",
+      NEMOCLAW_VLLM_MODEL: "nemotron-3-ultra-550b-a55b",
+    });
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).not.toBe(0);
+    expect(output).toMatch(
+      /--station-deepseek conflicts with NEMOCLAW_VLLM_MODEL='nemotron-3-ultra-550b-a55b'/,
+    );
+    expect(output).not.toMatch(/Run express install/);
+  });
+
+  it("rejects the Station demo override on non-Station platforms", () => {
+    const result = runExpressPromptWithTty("\n", "pipe", "DGX Spark", {
+      STATION_DEEPSEEK: "1",
+    });
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).not.toBe(0);
+    expect(output).toMatch(
+      /--station-deepseek requires a detected DGX Station \(detected: DGX Spark\)/,
+    );
+    expect(output).not.toMatch(/Run express install/);
+  });
+
+  it.each([
+    ["NEMOCLAW_NO_EXPRESS", "1", /cannot be combined with NEMOCLAW_NO_EXPRESS=1/],
+    ["NON_INTERACTIVE", "1", /cannot be combined with --non-interactive/],
+    ["NEMOCLAW_PROVIDER", "install-vllm", /conflicts with NEMOCLAW_PROVIDER=install-vllm/],
+  ])("rejects %s when the Station demo override would otherwise be ignored", (name, value, message) => {
+    const result = runExpressPromptWithTty("\n", "pipe", "DGX Station", {
+      STATION_DEEPSEEK: "1",
+      [name]: value,
+    });
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).not.toBe(0);
+    expect(output).toMatch(message);
+    expect(output).not.toMatch(/Run express install/);
   });
 
   it("describes and preserves an explicit DGX Station model override", () => {
@@ -234,7 +314,7 @@ detect_express_platform
     expect(output).toMatch(/managed local vLLM with NVIDIA Nemotron 3 Ultra 550B/);
     expect(output).toMatch(/approximately 352 GB model/);
     expect(output).toMatch(
-      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL= VLLM_MODEL=nemotron-3-ultra-550b-a55b POLICY=suggested YES=1 SANDBOX=my-assistant/,
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=nvidia\/nemotron-3-ultra-550b-a55b VLLM_MODEL=nemotron-3-ultra-550b-a55b POLICY=suggested YES=1 SANDBOX=my-assistant/,
     );
   });
 

@@ -635,6 +635,7 @@ usage() {
   printf "    --non-interactive    Skip prompts (uses env vars / defaults)\n"
   printf "    --yes-i-accept-third-party-software Accept the third-party software notice without prompting\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
+  printf "    --station-deepseek   Use DeepSeek V4 Flash for DGX Station express install\n"
   printf "    --version, -v        Print installer version and exit\n"
   printf "    --help, -h           Show this help message and exit\n\n"
   printf "  ${C_DIM}Environment:${C_RESET}\n"
@@ -2660,6 +2661,68 @@ detect_express_platform() {
   esac
 }
 
+STATION_ULTRA_VLLM_MODEL="nemotron-3-ultra-550b-a55b"
+STATION_ULTRA_SERVED_MODEL="nvidia/nemotron-3-ultra-550b-a55b"
+STATION_DEEPSEEK_VLLM_MODEL="deepseek-v4-flash"
+STATION_DEEPSEEK_SERVED_MODEL="deepseek-ai/DeepSeek-V4-Flash"
+
+normalize_station_vllm_model() {
+  printf "%s" "${1:-}" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
+}
+
+validate_station_deepseek_override() {
+  local platform="$1"
+  if [ "${STATION_DEEPSEEK:-}" != "1" ]; then
+    return 0
+  fi
+  if [ "$platform" != "DGX Station" ]; then
+    error "--station-deepseek requires a detected DGX Station (detected: ${platform:-unsupported platform})."
+  fi
+  if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ]; then
+    error "--station-deepseek cannot be combined with NEMOCLAW_NO_EXPRESS=1. Remove one override."
+  fi
+  if [ "${NON_INTERACTIVE:-}" = "1" ]; then
+    error "--station-deepseek selects the DGX Station express prompt and cannot be combined with --non-interactive."
+  fi
+  if [ -n "${NEMOCLAW_PROVIDER:-}" ]; then
+    error "--station-deepseek conflicts with NEMOCLAW_PROVIDER=${NEMOCLAW_PROVIDER}. Remove the provider override to use Station express install."
+  fi
+
+  local requested_model
+  requested_model="$(normalize_station_vllm_model "${NEMOCLAW_VLLM_MODEL:-}")"
+  case "$requested_model" in
+    "" | "$STATION_DEEPSEEK_VLLM_MODEL" | "deepseek-ai/deepseek-v4-flash") ;;
+    *)
+      error "--station-deepseek conflicts with NEMOCLAW_VLLM_MODEL='${NEMOCLAW_VLLM_MODEL}'. Remove one override or set NEMOCLAW_VLLM_MODEL=${STATION_DEEPSEEK_VLLM_MODEL}."
+      ;;
+  esac
+}
+
+configure_station_express_model() {
+  local selected_model
+  selected_model="$(normalize_station_vllm_model "${NEMOCLAW_VLLM_MODEL:-}")"
+  if [ "${STATION_DEEPSEEK:-}" = "1" ]; then
+    NEMOCLAW_VLLM_MODEL="$STATION_DEEPSEEK_VLLM_MODEL"
+    NEMOCLAW_MODEL="$STATION_DEEPSEEK_SERVED_MODEL"
+  elif [ -z "$selected_model" ]; then
+    NEMOCLAW_VLLM_MODEL="$STATION_ULTRA_VLLM_MODEL"
+    NEMOCLAW_MODEL="$STATION_ULTRA_SERVED_MODEL"
+  else
+    case "$selected_model" in
+      "$STATION_ULTRA_VLLM_MODEL" | "nvidia/nvidia-nemotron-3-ultra-550b-a55b-nvfp4")
+        NEMOCLAW_MODEL="$STATION_ULTRA_SERVED_MODEL"
+        ;;
+      "$STATION_DEEPSEEK_VLLM_MODEL" | "deepseek-ai/deepseek-v4-flash")
+        NEMOCLAW_MODEL="$STATION_DEEPSEEK_SERVED_MODEL"
+        ;;
+    esac
+  fi
+  export NEMOCLAW_VLLM_MODEL
+  if [ -n "${NEMOCLAW_MODEL:-}" ]; then
+    export NEMOCLAW_MODEL
+  fi
+}
+
 # Prompt the user to opt into express install on supported platforms. Sets the
 # non-interactive + provider/model env vars when accepted. Skipped when
 # the user already passed --non-interactive, set NEMOCLAW_PROVIDER, or has
@@ -2683,7 +2746,10 @@ describe_express_install() {
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     "DGX Station")
-      if [ -n "$(printf "%s" "${NEMOCLAW_VLLM_MODEL:-}" | tr -d '[:space:]')" ]; then
+      if [ "${STATION_DEEPSEEK:-}" = "1" ]; then
+        inference_summary="managed local vLLM with DeepSeek V4 Flash"
+        inference_disclosure="Managed vLLM pulls the configured Station image/model and runs a local inference container."
+      elif [ -n "$(printf "%s" "${NEMOCLAW_VLLM_MODEL:-}" | tr -d '[:space:]')" ]; then
         inference_summary="managed local vLLM with model ${NEMOCLAW_VLLM_MODEL}"
         inference_disclosure="Managed vLLM pulls the configured vLLM image/model and runs a local inference container."
       else
@@ -2732,6 +2798,7 @@ describe_express_install() {
 maybe_offer_express_install() {
   local platform
   platform="$(detect_express_platform)"
+  validate_station_deepseek_override "$platform"
   # Not on a platform we have an express recipe for — say nothing.
   if [ -z "$platform" ]; then
     return 0
@@ -2793,10 +2860,7 @@ maybe_offer_express_install() {
         "DGX Station")
           export NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
           export NEMOCLAW_PROVIDER=install-vllm
-          if [ -z "$(printf "%s" "${NEMOCLAW_VLLM_MODEL:-}" | tr -d '[:space:]')" ]; then
-            NEMOCLAW_VLLM_MODEL="nemotron-3-ultra-550b-a55b"
-          fi
-          export NEMOCLAW_VLLM_MODEL
+          configure_station_express_model
           ;;
         "Windows WSL")
           export NEMOCLAW_PROVIDER=install-windows-ollama
@@ -2821,11 +2885,13 @@ main() {
   NON_INTERACTIVE=""
   ACCEPT_THIRD_PARTY_SOFTWARE=""
   FRESH=""
+  STATION_DEEPSEEK=""
   for arg in "$@"; do
     case "$arg" in
       --non-interactive) NON_INTERACTIVE=1 ;;
       --yes-i-accept-third-party-software) ACCEPT_THIRD_PARTY_SOFTWARE=1 ;;
       --fresh) FRESH=1 ;;
+      --station-deepseek) STATION_DEEPSEEK=1 ;;
       --version | -v)
         local version_suffix
         version_suffix="$(installer_version_for_display)"

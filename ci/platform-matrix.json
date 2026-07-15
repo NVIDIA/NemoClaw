@@ -1,7 +1,7 @@
 {
   "$comment": "Single source of truth for NemoClaw launch claims and platform support. Covers platforms, inference providers, supported agents, messaging integrations, and deployment paths. Scripts read this to generate README and docs tables. QA/CI update platform/provider rows; the engineering owner reviews other rows. Docs are derived.",
   "version": "1.1",
-  "updated": "2026-07-14",
+  "updated": "2026-07-15",
 
   "project_status": {
     "stage": "alpha",
@@ -64,7 +64,7 @@
       "status": "deferred",
       "prd_priority": "P1",
       "ci_tested": false,
-      "notes": "The PRD marks this platform as P1. Workstation form-factor with NVIDIA GPUs and the same Docker + NVIDIA Container Toolkit + CDI requirements as DGX Spark. The installer detects DGX Station and offers express install with the pinned `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4` recipe, including an approximately 352 GB model download, without follow-up provider, model, policy, or sandbox-name choices. Direct managed-vLLM onboarding still defaults to `deepseek-ai/DeepSeek-V4-Flash` when no model override is set. The full NemoClaw onboarding path, including the express recipe, has not been validated end-to-end on physical DGX Station hardware and remains `deferred` until that run is signed off."
+      "notes": "The PRD marks this platform as P1. Workstation form-factor with NVIDIA GPUs and the same Docker + NVIDIA Container Toolkit + CDI requirements as DGX Spark. The installer detects DGX Station and offers express install with the pinned `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4` recipe, including an approximately 352 GB model download, without follow-up provider, model, policy, or sandbox-name choices. Pass `--station-deepseek` to use `deepseek-ai/DeepSeek-V4-Flash` for a Station demo while retaining the one-confirmation express flow. Direct managed-vLLM onboarding still defaults to `deepseek-ai/DeepSeek-V4-Flash` when no model override is set. The full NemoClaw onboarding path, including the express recipe, has not been validated end-to-end on physical DGX Station hardware and remains `deferred` until that run is signed off."
     },
     {
       "name": "NVIDIA RTX (consumer and Pro workstation GPUs)",

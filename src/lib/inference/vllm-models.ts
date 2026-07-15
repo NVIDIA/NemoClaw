@@ -34,6 +34,10 @@ export interface VllmRuntimeOverride {
   image: string;
   /** Compressed size of the selected platform manifest. */
   imageDownloadSizeBytes: number;
+  /** Size of the pinned Hugging Face snapshot used for cache preflight. */
+  modelDownloadSizeBytes?: number;
+  /** Maximum time to wait for this model to become ready after launch. */
+  loadTimeoutSec?: number;
   /** Additional `docker run` arguments required by this recipe. */
   dockerRunArgs?: readonly string[];
 }
@@ -214,6 +218,8 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "experts",
       "--kernel_config",
       `'{"enable_flashinfer_autotune": false}'`,
+      "--speculative-config",
+      `'{"method":"nemotron_h_mtp","num_speculative_tokens":3}'`,
       "--max-num-seqs",
       "256",
       "--gpu-memory-utilization",
@@ -235,9 +241,11 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     runtime: {
       image: NEMOTRON_ULTRA_STATION_IMAGE.arm64.ref,
       imageDownloadSizeBytes: NEMOTRON_ULTRA_STATION_IMAGE.arm64.downloadSizeBytes,
+      modelDownloadSizeBytes: 352_381_245_521,
+      loadTimeoutSec: 3600,
       // Keep NemoClaw's bridge-networked local-inference boundary instead of
       // importing the playbook's host-network setting.
-      dockerRunArgs: ["--shm-size", "16g"],
+      dockerRunArgs: ["--shm-size", "16g", "--ulimit", "memlock=-1", "--ulimit", "stack=67108864"],
     },
     // The digest-pinned vLLM image already contains the serving package, and
     // this recipe does not use the fastsafetensors load format. Avoid mutating

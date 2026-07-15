@@ -126,6 +126,7 @@ Use these details when your first-run path needs more control.
 
     DGX Spark, DGX Station, and Windows WSL offer an interactive express-install path that chooses a managed local inference option for the platform.
     On DGX Station, accepting the express prompt selects the pinned `nemotron-3-ultra-550b-a55b` managed-vLLM recipe and completes onboarding without more provider, model, policy, or sandbox-name choices.
+    Pass `--station-deepseek` to use DeepSeek V4 Flash for a Station demo instead.
     Refer to [Platform Support](../reference/platform-support) and [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) for the current platform behavior.
 
     If `nemoclaw` is not found after installation and you use nvm or fnm, open a new terminal or reload your shell profile.
@@ -194,6 +195,7 @@ Use these details when your first-run path needs more control.
     Express install switches onboarding to non-interactive mode, allows `sudo` password prompts for required host changes, and selects the managed local inference path for that platform.
     DGX Spark uses managed vLLM with `qwen3.6-35b-a3b-nvfp4` by default.
     DGX Station express install explicitly selects `nemotron-3-ultra-550b-a55b` instead of the Station managed-vLLM profile default, `deepseek-v4-flash`, and discloses the approximately `352 GB` model download before confirmation.
+    To select DeepSeek V4 Flash while retaining the one-confirmation Station express flow, run `curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --station-deepseek`.
     Unless `NEMOCLAW_POLICY_TIER` is set, express install applies policy in `suggested` mode with the `balanced` tier, including the base sandbox policy and supported package, model, web-search, and local-inference presets.
     Express install uses `my-assistant` as the sandbox name across all platforms unless `NEMOCLAW_SANDBOX_NAME` is set.
     Windows WSL selects the Windows-host Ollama setup path.

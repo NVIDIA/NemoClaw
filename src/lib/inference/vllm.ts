@@ -5,6 +5,7 @@
 // offer vLLM at all" lives in onboard.ts; this module owns picking the
 // right profile per platform and running the install.
 
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -18,6 +19,7 @@ import {
 } from "../adapters/docker";
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { VLLM_PORT } from "../core/ports";
+import { shellQuote } from "../core/shell-quote";
 import { isAffirmativeAnswer } from "../onboard/prompt-helpers";
 import { runCapture } from "../runner";
 import { isSafeModelId } from "../validation";
@@ -34,9 +36,13 @@ import {
 } from "./vllm-models";
 import { resolveVllmInstallModel } from "./vllm-prompt";
 import {
+  findUnwritableTreePath,
   formatStorageBytes,
   imageStorageRequirementBytes,
+  measureDirectorySizeBytes,
+  modelStorageRequirementBytes,
   probeDockerStorage,
+  probeHostStorage,
   type StorageProbeResult,
   VLLM_STORAGE_OVERRIDE_ENV,
 } from "./vllm-storage";
@@ -73,6 +79,9 @@ export interface VllmProfile {
   pullTimeoutSec: number;
   // Wall-clock budget for the load phase (after pull, before ready).
   loadTimeoutSec: number;
+  // Optional pinned model snapshot size. Model-specific runtime overrides use
+  // this to guard the host Hugging Face cache before a cold download.
+  modelDownloadSizeBytes?: number;
 }
 
 // Platform manifests and decimal compressed sizes published by NGC for the
@@ -122,6 +131,8 @@ const HF_TOKEN_ENV_KEYS = ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"] as const;
 const MODEL_DOWNLOAD_HEARTBEAT_MS = 30_000;
 const VLLM_LAUNCH_HEARTBEAT_MS = 30_000;
 const HF_CACHE_CONTAINER_DIR = "/root/.cache/huggingface";
+const HF_DOWNLOAD_CACHE_CONTAINER_DIR = "/tmp/nemoclaw-huggingface";
+const HF_CACHE_COMPONENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 export const NEMOCLAW_VLLM_CONTAINER_NAME = "nemoclaw-vllm";
 export const NEMOCLAW_VLLM_MANAGED_LABEL = "com.nvidia.nemoclaw.managed-vllm";
 const DOCKER_CONTAINER_ID_PATTERN = /^[a-f0-9]{12,64}$/;
@@ -132,6 +143,39 @@ function hostHfCacheDir(): string {
 
 function hfCacheMount(): string {
   return `${hostHfCacheDir()}:${HF_CACHE_CONTAINER_DIR}`;
+}
+
+function hfDownloadCacheMount(): string {
+  return `${hostHfCacheDir()}:${HF_DOWNLOAD_CACHE_CONTAINER_DIR}`;
+}
+
+function hfModelSnapshotDir(model: VllmModelDef): string | null {
+  const revision = model.revision;
+  const modelParts = model.id.split("/");
+  if (
+    !revision ||
+    !HF_CACHE_COMPONENT_PATTERN.test(revision) ||
+    modelParts.some((part) => !HF_CACHE_COMPONENT_PATTERN.test(part))
+  ) {
+    return null;
+  }
+  return path.join(
+    hostHfCacheDir(),
+    "hub",
+    `models--${modelParts.join("--")}`,
+    "snapshots",
+    revision,
+  );
+}
+
+function hostUserIdentity(): string | null {
+  if (typeof process.getuid !== "function" || typeof process.getgid !== "function") return null;
+  return `${String(process.getuid())}:${String(process.getgid())}`;
+}
+
+function hostUserDockerArgs(): string[] {
+  const identity = hostUserIdentity();
+  return identity ? ["--user", identity] : [];
 }
 
 function vllmDockerRunFlags(gpuFlag = "all"): string[] {
@@ -157,16 +201,15 @@ function pickHfTokenEntry(
 }
 
 /**
- * Forward a Hugging Face token from the host into the vLLM/hf container so
- * `hf download` and `vllm serve` can pull weights for gated models.
+ * Forward a Hugging Face token from the host into the one-shot `hf download`
+ * container so gated model weights can be fetched.
  *
  * Returns the bare `-e KEY` form (no `=value`) so the token never lands in
  * the host process list. Docker reads the actual value from its own
  * environment, which the caller is responsible for populating via
  * `buildHfTokenForwardEnv` when spawning through the runner allowlist.
- * The `hf download` container can live for several minutes during a cold
- * pull and `vllm serve` runs for the lifetime of the sandbox; argv-embedded
- * secrets would be visible via `ps` for that whole window.
+ * The download container can live for several minutes during a cold pull;
+ * argv-embedded secrets would be visible via `ps` for that whole window.
  */
 export function buildHfTokenDockerArgs(env: NodeJS.ProcessEnv = process.env): string[] {
   const entry = pickHfTokenEntry(env);
@@ -327,12 +370,13 @@ function downloadModel(
         "-t",
         "--rm",
         "--pull=never",
+        ...hostUserDockerArgs(),
         "--entrypoint",
         "hf",
         "-v",
-        hfCacheMount(),
+        hfDownloadCacheMount(),
         "-e",
-        `HF_HOME=${HF_CACHE_CONTAINER_DIR}`,
+        `HF_HOME=${HF_DOWNLOAD_CACHE_CONTAINER_DIR}`,
         ...buildHfTokenDockerArgs(),
         profile.image,
         "download",
@@ -437,10 +481,7 @@ export function buildVllmRunArgs(
 ): string[] {
   const image = validateDockerArg(profile.image, "vLLM image");
   const containerName = validateDockerArg(profile.containerName, "vLLM container name");
-  const safeRunFlags = validateDockerArgs(
-    [...runFlags, ...buildHfTokenDockerArgs(env)],
-    "vLLM docker run flags",
-  );
+  const safeRunFlags = validateDockerArgs(runFlags, "vLLM docker run flags");
   return [
     "--pull=never",
     "--restart",
@@ -468,6 +509,8 @@ export function resolveVllmRuntimeProfile(profile: VllmProfile, model: VllmModel
     ...profile,
     image: runtime.image,
     imageDownloadSizeBytes: runtime.imageDownloadSizeBytes,
+    modelDownloadSizeBytes: runtime.modelDownloadSizeBytes ?? profile.modelDownloadSizeBytes,
+    loadTimeoutSec: runtime.loadTimeoutSec ?? profile.loadTimeoutSec,
     dockerRunFlags: [...profile.dockerRunFlags, ...extraRunArgs],
     buildDockerRunFlags: profile.buildDockerRunFlags
       ? () => [...profile.buildDockerRunFlags!(), ...extraRunArgs]
@@ -548,12 +591,8 @@ function startContainer(
   const resolvedFlags = profile.buildDockerRunFlags
     ? profile.buildDockerRunFlags()
     : profile.dockerRunFlags;
-  // Forward HF_TOKEN/HUGGING_FACE_HUB_TOKEN so the long-lived `vllm serve`
-  // pull can authenticate against gated repos when the model weights are
-  // not already in the mounted cache. The runner allowlist strips the
-  // token from the docker subprocess env by default, so we have to put it
-  // back via the `env:` option; the docker argv only carries `-e KEY` so
-  // the value stays out of /proc/<pid>/cmdline.
+  // The explicit download completed before this long-lived container starts,
+  // so do not retain the host Hugging Face token in the serving process.
   let runArgs: string[];
   try {
     runArgs = buildVllmRunArgs(profile, model, resolvedFlags);
@@ -572,7 +611,7 @@ function startContainer(
     });
   }
   const result = dockerRunDetached(runArgs, {
-    env: buildVllmDockerEnv(buildHfTokenForwardEnv()),
+    env: buildVllmDockerEnv(),
     ignoreError: true,
     suppressOutput: true,
   });
@@ -716,6 +755,43 @@ function printImageStorageWarning(
   console.error("    docker info --format '{{.DockerRootDir}}'");
 }
 
+function printModelStorageWarning(
+  model: VllmModelDef,
+  probe: StorageProbeResult,
+  requiredBytes: bigint,
+  cachedBytes: bigint,
+  snapshotBytes: bigint,
+): void {
+  const insufficient = probe.ok && probe.capacity.availableBytes < requiredBytes;
+  console.error("");
+  console.error(
+    `  ${insufficient ? "Insufficient" : "Unable to verify"} storage for the managed vLLM model cache.`,
+  );
+  console.error("");
+  console.error(`  Model:     ${model.id}`);
+  if (cachedBytes > 0n) {
+    console.error(
+      `  Cached:    ${formatStorageBytes(cachedBytes)} of ${formatStorageBytes(snapshotBytes)}`,
+    );
+  }
+  console.error(
+    `  Available: ${
+      probe.ok ? formatStorageBytes(probe.capacity.availableBytes) : `unknown (${probe.reason})`
+    }`,
+  );
+  console.error(`  Required:  approximately ${formatStorageBytes(requiredBytes)}`);
+  if (probe.ok) {
+    console.error(`  Storage:   ${probe.capacity.source} (${probe.capacity.path})`);
+  } else if (probe.path) {
+    console.error(`  Storage:   ${probe.source ?? "filesystem"} (${probe.path})`);
+  }
+  console.error("");
+  if (insufficient) console.error("  Free or expand the model-cache storage before continuing.");
+  console.error("  Useful diagnostics:");
+  console.error(`    df -h ${hostHfCacheDir()}`);
+  console.error(`    du -sh ${hostHfCacheDir()} 2>/dev/null`);
+}
+
 async function imageStorageAccepted(
   profile: VllmProfile,
   opts: InstallVllmOptions,
@@ -742,6 +818,68 @@ async function imageStorageAccepted(
     return false;
   }
   return isAffirmativeAnswer(await opts.promptFn("  Continue with the pull anyway? [y/N]: "));
+}
+
+async function modelStorageAccepted(
+  profile: VllmProfile,
+  model: VllmModelDef,
+  opts: InstallVllmOptions,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<boolean> {
+  if (profile.modelDownloadSizeBytes === undefined) return true;
+  if (!Number.isFinite(profile.modelDownloadSizeBytes) || profile.modelDownloadSizeBytes <= 0) {
+    throw new Error("vLLM model download size must be a positive finite byte count");
+  }
+  const snapshotBytes = BigInt(Math.ceil(profile.modelDownloadSizeBytes));
+  const snapshotDir = hfModelSnapshotDir(model);
+  const cachedBytes = snapshotDir ? measureDirectorySizeBytes(snapshotDir) : 0n;
+  if (cachedBytes >= snapshotBytes) return true;
+  const remainingBytes = snapshotBytes - cachedBytes;
+  const probe = probeHostStorage(hostHfCacheDir(), "Hugging Face cache");
+  const requiredBytes = modelStorageRequirementBytes(Number(remainingBytes));
+  if (probe.ok && probe.capacity.availableBytes >= requiredBytes) return true;
+  printModelStorageWarning(model, probe, requiredBytes, cachedBytes, snapshotBytes);
+  if (!probe.ok) {
+    console.error("  Continuing because model-cache capacity could not be verified.");
+    return true;
+  }
+  if (env[VLLM_STORAGE_OVERRIDE_ENV] === "1") {
+    console.error(`  Continuing because ${VLLM_STORAGE_OVERRIDE_ENV}=1.`);
+    return true;
+  }
+  if (opts.nonInteractive) {
+    console.error(
+      `  Non-interactive setup stops before the guarded download. Set ${VLLM_STORAGE_OVERRIDE_ENV}=1 to override.`,
+    );
+    return false;
+  }
+  return isAffirmativeAnswer(
+    await opts.promptFn("  Continue with the model download anyway? [y/N]: "),
+  );
+}
+
+function ensureHfCacheDir(): { ok: true } | { ok: false; reason: string } {
+  const cacheDir = hostHfCacheDir();
+  try {
+    fs.mkdirSync(cacheDir, { recursive: true });
+  } catch (err) {
+    return {
+      ok: false,
+      reason: `could not create Hugging Face cache directory ${cacheDir}: ${(err as Error).message}`,
+    };
+  }
+  const unwritablePath = findUnwritableTreePath(cacheDir);
+  if (unwritablePath) {
+    const identity = hostUserIdentity() ?? "$(id -u):$(id -g)";
+    return {
+      ok: false,
+      reason:
+        `Hugging Face cache path ${unwritablePath} is not writable by host user ${identity}. ` +
+        "It may have been created by an earlier root-run downloader; NemoClaw did not modify it. " +
+        `Repair ownership, then retry: sudo chown -R ${identity} ${shellQuote(cacheDir)}`,
+    };
+  }
+  return { ok: true };
 }
 
 interface InstallVllmOptions {
@@ -852,14 +990,34 @@ export async function installVllm(
     return { ok: false };
   }
 
+  // Guard the host filesystem before an image pull or model-download
+  // container can start. The cache path itself is created only after both
+  // storage decisions pass, so Docker never creates it as root.
+  if (!(await modelStorageAccepted(runtimeProfile, model, opts))) {
+    return { ok: false };
+  }
+
   const hasImage = imageIsCached(runtimeProfile);
   if (!hasImage && !(await imageStorageAccepted(runtimeProfile, opts))) {
+    return { ok: false };
+  }
+
+  const cacheDir = ensureHfCacheDir();
+  if (!cacheDir.ok) {
+    console.error(`  vLLM install failed: ${cacheDir.reason}`);
     return { ok: false };
   }
 
   const pull = await pullImage(runtimeProfile);
   if (!pull.ok) {
     console.error(`  vLLM install failed: ${String(pull.reason)}`);
+    return { ok: false };
+  }
+
+  // A cold image pull can consume the same host filesystem that backs the
+  // Hugging Face cache. Re-probe after the pull so two independently passing
+  // capacity checks cannot overcommit shared storage before `hf download`.
+  if (!hasImage && !(await modelStorageAccepted(runtimeProfile, model, opts))) {
     return { ok: false };
   }
 

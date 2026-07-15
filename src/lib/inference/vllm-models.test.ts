@@ -67,7 +67,9 @@ describe("vllm model registry", () => {
       image:
         "vllm/vllm-openai@sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416",
       imageDownloadSizeBytes: 10_670_087_425,
-      dockerRunArgs: ["--shm-size", "16g"],
+      modelDownloadSizeBytes: 352_381_245_521,
+      loadTimeoutSec: 3600,
+      dockerRunArgs: ["--shm-size", "16g", "--ulimit", "memlock=-1", "--ulimit", "stack=67108864"],
     });
 
     const cmd = buildVllmServeCommand(ultra!);
@@ -77,6 +79,9 @@ describe("vllm model registry", () => {
     expect(cmd).toContain("--served-model-name nvidia/nemotron-3-ultra-550b-a55b");
     expect(cmd).toContain("--cpu-offload-gb 150 --cpu-offload-params experts");
     expect(cmd).toContain(`--kernel_config '{"enable_flashinfer_autotune": false}'`);
+    expect(cmd).toContain(
+      `--speculative-config '{"method":"nemotron_h_mtp","num_speculative_tokens":3}'`,
+    );
     expect(cmd).toContain("--max-num-seqs 256 --gpu-memory-utilization 0.9");
     expect(cmd).toContain("--reasoning-parser nemotron_v3");
     expect(cmd).toContain("--enable-auto-tool-choice --tool-call-parser qwen3_coder");

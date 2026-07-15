@@ -324,6 +324,16 @@ describe("inference setup navigation", () => {
     }
   });
 
+  it("documents the canonical Station Ultra recipe and DeepSeek demo override", () => {
+    const markdown = fs.readFileSync(vllmSetupPath, "utf8");
+
+    expect(markdown).toContain("--station-deepseek");
+    expect(markdown).toContain("memory/stack ulimits");
+    expect(markdown).toContain("MTP speculative decoding");
+    expect(markdown).toContain("model-cache storage is insufficient");
+    expect(markdown).toContain("not retained by the long-lived vLLM container");
+  });
+
   it("keeps tool-calling remediation canonical in troubleshooting", () => {
     const markdown = fs.readFileSync(troubleshootingPath, "utf8");
     const start = markdown.indexOf("### Tool calls appear as assistant text");

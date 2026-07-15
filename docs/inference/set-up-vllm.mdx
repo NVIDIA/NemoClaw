@@ -110,24 +110,26 @@ The model-download helper and the long-lived vLLM container use `--pull=never`, 
 NemoClaw treats `/var/run/docker.sock` and `/run/docker.sock` as the local default Docker socket paths.
 It cannot inspect daemon storage through a remote endpoint, a named non-default Docker context, or another Unix socket.
 When both `DOCKER_CONTEXT` and `DOCKER_HOST` are set, NemoClaw follows Docker CLI precedence and uses `DOCKER_CONTEXT`.
-When the check is inconclusive, NemoClaw prints the reason, approximate image requirement, and diagnostic commands, then continues with the pull without claiming that capacity is sufficient.
+Before a registered model with pinned size metadata is downloaded, NemoClaw also checks the filesystem that contains the host Hugging Face cache.
+When either check is inconclusive, NemoClaw prints the reason, approximate requirement, and diagnostic commands, then continues without claiming that capacity is sufficient.
 
 When verified capacity is insufficient, the warning identifies the image, available capacity, approximate requirement, checked path and source, remediation, and diagnostic commands.
 Interactive setup continues only when you enter `y` or `yes` explicitly.
-Pressing **Enter**, entering `n` or `no`, or entering any other response stops before the guarded image pull starts.
+Pressing **Enter**, entering `n` or `no`, or entering any other response stops before the guarded image or model download starts.
 
 <Warning>
 `--yes` and `NEMOCLAW_YES=1` do not accept a verified insufficient-storage warning.
 Non-interactive setup stops unless you set `NEMOCLAW_IGNORE_VLLM_DISK_SPACE=1` exactly.
-The override applies only when NemoClaw verifies that Docker image storage is insufficient.
-Use it only after you independently verify that Docker storage can complete the image pull.
+The override applies only when NemoClaw verifies that Docker image storage or model-cache storage is insufficient.
+Use it only after you independently verify that the relevant filesystem can complete the download.
 Inconclusive checks continue automatically and do not require the override.
 </Warning>
 
 <Note>
-This preflight checks only the pinned vLLM container image.
-It does not estimate or gate the Hugging Face model-weight download into `~/.cache/huggingface`.
-Before the first managed-vLLM run, verify that the filesystem backing your model cache has enough free space for the selected model.
+The model-cache guard applies when the selected registered recipe declares a pinned snapshot size.
+NemoClaw creates `~/.cache/huggingface` as the host user and runs the one-shot download container with the host UID and GID, avoiding root-owned cache paths.
+Hugging Face credentials are forwarded only to that temporary downloader, not retained by the long-lived vLLM container.
+A legacy root-owned or otherwise unwritable cache stops before the image pull and prints a safe ownership-repair command; NemoClaw never changes its ownership automatically.
 </Note>
 
 If image pull output stops making progress, a watchdog stops the stalled pull without imposing a fixed wall-clock limit on slow but active downloads.
@@ -142,7 +144,8 @@ When you start managed vLLM outside the installer express flow, NemoClaw uses th
 | Linux with an NVIDIA GPU | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` |
 
 On DGX Station, accepting the installer express prompt sets `NEMOCLAW_VLLM_MODEL=nemotron-3-ultra-550b-a55b` and overrides the profile default.
-The registered recipe configures the pinned model revision, CPU offload, `16 GB` of shared memory, and the Nemotron reasoning and tool-call parsers.
+Pass `--station-deepseek` to select the existing `deepseek-v4-flash` recipe while retaining the same one-confirmation express flow.
+The registered Ultra recipe tracks the [official DGX Station deployment guide](https://github.com/NVIDIA-NeMo/Nemotron/blob/287ae845639d2ce998998cb8fd1f70a3fa943c0b/usage-cookbook/Nemotron-3-Ultra/StationDeploymentGuide/README.md) and configures the pinned model revision, CPU offload, `16 GB` of shared memory, memory/stack ulimits, MTP speculative decoding, and the Nemotron reasoning and tool-call parsers.
 NemoClaw intentionally keeps its existing bridge-networked managed-inference topology instead of importing the playbook's host-network setting.
 The container publishes port `8000` through Docker, so apply the firewall guidance at the top of this page.
 
@@ -189,7 +192,8 @@ Slugs are case-insensitive, and NemoClaw also accepts the full Hugging Face mode
 An unrecognized value fails before image or model downloads and prints the valid slugs.
 
 Gated models require a Hugging Face token.
-Export `HF_TOKEN` before onboarding so NemoClaw can forward it to the managed container.
+Export `HF_TOKEN` before onboarding so NemoClaw can forward it temporarily to the one-shot model downloader.
+The token is not retained in the long-lived managed vLLM container after the explicit download completes.
 
 ```bash
 export HF_TOKEN="<your-hf-token>"
