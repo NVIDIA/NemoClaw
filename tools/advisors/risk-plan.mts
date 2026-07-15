@@ -71,9 +71,10 @@ const E2E_CONTROL_PLANE_FILES = new Set([
   "tools/advisors/risk-plan.mts",
   "vitest.config.ts",
 ]);
-const CONTROLLER_ONLY_E2E_FILES = new Set([
+const TRUSTED_CONTROL_PLANE_ONLY_FILES = new Set([
   ".github/workflows/pr-e2e-gate.yaml",
   "tools/e2e/pr-e2e-gate.mts",
+  "tools/e2e/pr-e2e-required.mts",
 ]);
 // These checked-in paths and directories are the source boundary for private-network,
 // policy, and shields enforcement but are not all covered by the token heuristics above.
@@ -407,5 +408,7 @@ export function riskPlanRequiredJobIds(plan: RiskPlan): string[] {
 
 export function requiresCredentialedE2eAuthorization(plan: RiskPlan): boolean {
   const controlPlane = plan.families.find((family) => family.id === "e2e-control-plane");
-  return controlPlane?.matchedFiles.some((file) => !CONTROLLER_ONLY_E2E_FILES.has(file)) ?? false;
+  return (
+    controlPlane?.matchedFiles.some((file) => !TRUSTED_CONTROL_PLANE_ONLY_FILES.has(file)) ?? false
+  );
 }
