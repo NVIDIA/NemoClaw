@@ -36,7 +36,13 @@ describe("e2e workflow boundary", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
   });
 
-  it.each([
+  type RebuildWorkflowStep = {
+    env?: Record<string, string>;
+    name?: string;
+    run?: string;
+    uses?: string;
+  };
+  const rebuildCacheMutations = [
     [
       "an isolated builder",
       {
@@ -47,7 +53,7 @@ describe("e2e workflow boundary", () => {
     [
       "a separate cache warm",
       {
-        name: "Warm current OpenClaw base build cache",
+        name: "Warm current base build cache",
         uses: "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a",
       },
     ],
@@ -55,7 +61,7 @@ describe("e2e workflow boundary", () => {
       "a step-level builder selection",
       {
         env: { BUILDX_BUILDER: "external" },
-        name: "Run OpenClaw rebuild live test",
+        name: "Run rebuild live test",
       },
     ],
     [
@@ -72,28 +78,29 @@ describe("e2e workflow boundary", () => {
         run: "printf '%s\\n' 'BUILDX_BUILDER<<EOF' 'external' 'EOF' >> \"$GITHUB_ENV\"",
       },
     ],
-  ])("rejects %s in rebuild E2E jobs", (_case, injectedStep) => {
+  ] satisfies ReadonlyArray<readonly [string, RebuildWorkflowStep]>;
+  const rebuildCacheCases = [
+    "rebuild-openclaw",
+    "rebuild-hermes",
+    "rebuild-hermes-stale-base",
+  ].flatMap((jobName) =>
+    rebuildCacheMutations.map(
+      ([caseName, injectedStep]) => [jobName, caseName, injectedStep] as const,
+    ),
+  );
+
+  it.each(rebuildCacheCases)("rejects %s with %s", (jobName, _case, injectedStep) => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-cache-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
     const workflow = readWorkflow() as {
-      jobs: Record<
-        string,
-        {
-          steps: Array<{
-            env?: Record<string, string>;
-            name?: string;
-            run?: string;
-            uses?: string;
-          }>;
-        }
-      >;
+      jobs: Record<string, { steps: RebuildWorkflowStep[] }>;
     };
-    workflow.jobs["rebuild-openclaw"].steps.splice(2, 0, injectedStep);
+    workflow.jobs[jobName].steps.splice(2, 0, injectedStep);
     fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
     try {
       expect(validateE2eWorkflowBoundary(workflowPath)).toContain(
-        "rebuild-openclaw must keep rebuild builds on the Docker engine cache",
+        `${jobName} must keep rebuild builds on the Docker engine cache`,
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
