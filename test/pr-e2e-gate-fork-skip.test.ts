@@ -951,7 +951,7 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
     expect(requests.some((request) => request.method === "PATCH")).toBe(false);
   });
 
-  it("rejects control-plane authorization when the failed gate title does not match", async () => {
+  it("rejects control-plane authorization when the gate is already completed", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-title-"));
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
@@ -974,7 +974,7 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
           existingPrGateCheckRunsRoute({
             status: "completed",
             conclusion: "failure",
-            output: { title: "Maintainer approval required to skip credentialed E2E" },
+            output: { title: "Maintainer authorization required to run E2E" },
           }),
         ],
         requests,

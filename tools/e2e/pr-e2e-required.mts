@@ -14,11 +14,7 @@ const GITHUB_ACTIONS_APP_ID = 15368;
 const USER_AGENT = "nemoclaw-pr-e2e-required";
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
-const AUTHORIZATION_TITLES = new Set([
-  "Maintainer approval required to skip credentialed E2E",
-  "Maintainer authorization required to run E2E",
-]);
-const LEGACY_RUNNING_TITLE_PATTERN = /^Running [1-9][0-9]* E2E jobs?$/u;
+const AUTHORIZATION_TITLES = new Set(["Maintainer approval required to skip credentialed E2E"]);
 
 type CheckConclusion = "success" | "failure" | "cancelled";
 
@@ -191,12 +187,7 @@ export function classifyCoordinationCheck(
   if (check.status !== "completed") {
     return { state: "waiting", description: title };
   }
-  // Migration bridge for authorization checks completed before the controller
-  // kept them pending. GitHub can update their title but cannot reopen them.
-  if (
-    check.conclusion === "failure" &&
-    (AUTHORIZATION_TITLES.has(title) || LEGACY_RUNNING_TITLE_PATTERN.test(title))
-  ) {
+  if (check.conclusion === "failure" && AUTHORIZATION_TITLES.has(title)) {
     return { state: "waiting", description: title };
   }
   if (

@@ -196,17 +196,13 @@ or dispatch fails before a terminal E2E result, the controller restores the
 authorization title and leaves a current coordination check in progress so a
 maintainer can correct the problem and launch a fresh first-attempt
 authorization. The native required job treats these authorization and running
-titles as intermediate waiting states. The normal wait, evidence download, and
-finish path is the only path that can record success; the authorization itself
-cannot make the gate green. A changed head or base requires a new
-authorization.
-
-During rollout, manual authorization also accepts the older exact-diff state
-that already completed as failed with the authorization title. GitHub cannot
-reopen a completed check, so the native observer also treats a legacy completed
-failure titled `Running <count> E2E job(s)` as transitional. Only the
-authorization titles and this bounded legacy running-title shape receive that
-treatment; other completed failures fail the native required job.
+titles as intermediate waiting states only while coordination remains in
+progress. A completed failure is terminal; neither manual authorization nor the
+native observer reinterprets it. Older builds whose authorization check already
+completed as failed require a fresh exact-diff revision and PR CI run before a
+maintainer can authorize them. The normal wait, evidence download, and finish
+path is the only path that can record success; the authorization itself cannot
+make the gate green. A changed head or base requires a new authorization.
 
 A fork revision that selects jobs completes coordination as failed while the
 native required job waits for the skip-approval flow. The controller does not

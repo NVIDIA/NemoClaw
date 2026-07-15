@@ -2035,13 +2035,7 @@ export async function startControlPlanePrGate(command: ControlPlaneDispatchComma
     }
     const check = matchingChecks[0]!;
     const pendingAuthorization = check.status === "in_progress" && check.conclusion === null;
-    // Migration bridge for PRs whose authorization check completed before this
-    // fix. GitHub lets later updates change its output but cannot reopen it.
-    const legacyAuthorization = check.status === "completed" && check.conclusion === "failure";
-    if (
-      (!pendingAuthorization && !legacyAuthorization) ||
-      check.output?.title !== CONTROL_PLANE_AUTHORIZATION_TITLE
-    ) {
+    if (!pendingAuthorization || check.output?.title !== CONTROL_PLANE_AUTHORIZATION_TITLE) {
       throw new Error("PR gate must have the matching pending control-plane authorization state");
     }
     checkRunId = check.id;
