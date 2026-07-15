@@ -24,7 +24,7 @@ const VALID_REPORT = {
   hints: [],
 };
 
-describe("readChannelHealthOutputs", () => {
+describe("readChannelHealthOutputs (#6888)", () => {
   it("returns a well-formed messaging-channel-health report", () => {
     const out = readChannelHealthOutputs(
       runResult({
