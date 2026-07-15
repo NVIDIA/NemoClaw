@@ -29,12 +29,13 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
     fs.chmodSync(isolatedParent, 0o700);
     const isolatedFixture = { ...fixture, root: isolatedRoot };
     const realChmodSync = fs.chmodSync.bind(fs);
-    let chmodCalls = 0;
-    const chmod = vi.spyOn(fs, "chmodSync").mockImplementation((pathname, permissions) => {
-      chmodCalls += 1;
-      if (chmodCalls === 2) throw new Error("fixture chmod failed");
-      realChmodSync(pathname, permissions);
-    });
+    const chmod = vi
+      .spyOn(fs, "chmodSync")
+      .mockImplementationOnce(realChmodSync)
+      .mockImplementationOnce(() => {
+        throw new Error("fixture chmod failed");
+      })
+      .mockImplementation(realChmodSync);
 
     try {
       expect(() => allowRestartFixturePeerTraversal(isolatedFixture)).toThrow(
