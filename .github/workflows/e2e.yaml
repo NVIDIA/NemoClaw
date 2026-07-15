@@ -5213,6 +5213,30 @@ jobs:
             }
 
             const testResults = new Map();
+            const wallClockRanges = new Map();
+            const recordWallClockRange = (name, job) => {
+              if (job.conclusion === 'skipped') return;
+              const startedAt = Date.parse(job.started_at || '');
+              const completedAt = Date.parse(job.completed_at || '');
+              if (!Number.isFinite(startedAt) || !Number.isFinite(completedAt) || completedAt < startedAt) {
+                return;
+              }
+              const current = wallClockRanges.get(name);
+              wallClockRanges.set(name, {
+                startedAt: current ? Math.min(current.startedAt, startedAt) : startedAt,
+                completedAt: current ? Math.max(current.completedAt, completedAt) : completedAt,
+              });
+            };
+            const formatWallClockTime = (range) => {
+              if (!range) return '—';
+              const totalSeconds = Math.round((range.completedAt - range.startedAt) / 1000);
+              const hours = Math.floor(totalSeconds / 3600);
+              const minutes = Math.floor((totalSeconds % 3600) / 60);
+              const seconds = totalSeconds % 60;
+              return [hours ? `${hours}h` : '', minutes ? `${minutes}m` : '', `${seconds}s`]
+                .filter(Boolean)
+                .join(' ');
+            };
             let sharedJobResultsLoaded = false;
             try {
               const apiJobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
@@ -5223,8 +5247,20 @@ jobs:
                 per_page: 100,
               });
               const selectedTestIds = new Set(testIds);
+              const aggregateJobNames = Object.keys(needs);
               for (const job of apiJobs) {
-                const match = /^Shared E2E \(([A-Za-z0-9_-]+)\)$/.exec(job.name || '');
+                const jobName = job.name || '';
+                const match = /^Shared E2E \(([A-Za-z0-9_-]+)\)$/.exec(jobName);
+                const aggregateJobName = aggregateJobNames.find((name) =>
+                  jobName.startsWith(`${name} (`),
+                );
+                const reportEntryName =
+                  match?.[1] ??
+                  aggregateJobName ??
+                  (/^OpenShell gateway upgrade \(.+\)$/.test(jobName)
+                    ? 'openshell-gateway-upgrade'
+                    : jobName);
+                recordWallClockRange(reportEntryName, job);
                 if (!match || !selectedTestIds.has(match[1])) continue;
                 const result =
                   job.status === 'completed' &&
@@ -5268,10 +5304,21 @@ jobs:
               for (const id of testIds) testResults.set(id, { result: 'unknown' });
             }
 
-            const allEntries = Object.entries(needs).filter(([name]) => name !== 'shared-e2e');
+            const allEntries = Object.entries(needs)
+              .filter(([name]) => name !== 'shared-e2e')
+              .map(([name, value]) => [
+                name,
+                { ...value, wallClockRange: wallClockRanges.get(name) },
+              ]);
             if (needs['shared-e2e']) {
               allEntries.push(
-                ...testIds.map((id) => [id, testResults.get(id) ?? { result: 'unknown' }]),
+                ...testIds.map((id) => [
+                  id,
+                  {
+                    ...(testResults.get(id) ?? { result: 'unknown' }),
+                    wallClockRange: wallClockRanges.get(id),
+                  },
+                ]),
               );
             }
             allEntries.sort(([a], [b]) => a.localeCompare(b));
@@ -5291,10 +5338,11 @@ jobs:
                 ? allEntries.filter(([, { result }]) => result !== 'skipped')
                 : allEntries;
             const rows = reportedEntries.map(
-              ([name, { result }]) => `| ${name} | ${emoji[result] || '❓'} ${result} |`,
+              ([name, { result, wallClockRange }]) =>
+                `| ${name} | ${emoji[result] || '❓'} ${result} | ${formatWallClockTime(wallClockRange)} |`,
             );
             for (const name of missingRequestedTestIds) {
-              rows.push(`| ${name} | ❓ not reported |`);
+              rows.push(`| ${name} | ❓ not reported | — |`);
             }
 
             const ran = reportedEntries.filter(([, v]) => v.result !== 'skipped');
@@ -5340,8 +5388,8 @@ jobs:
                   : '**Requested test IDs:** _(default — all default-enabled tests; explicit-only tests `openshell-gateway-auth-contract`, `mcp-bridge-dev`, `hermes-gpu-startup`, `sandbox-rlimits-connect`, and `jetson-nvmap-gpu` are skipped unless selected)_',
               `**Summary:** ${passed.length} passed, ${failed.length} failed, ${cancelled.length} cancelled, ${skipped.length} skipped, ${unknown.length} unknown`,
               '',
-              '| Test | Result |',
-              '|-----|--------|',
+              '| Test | Result | Total wall clock time |',
+              '|-----|--------|-----------------------|',
               ...rows,
             ];
             if (!selectiveDispatch) {

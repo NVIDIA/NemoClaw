@@ -1,0 +1,23 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.70
+
+NemoClaw v0.0.70 completes the E2E migration and improves day-two operation, inference setup, messaging repair, Windows bootstrap guidance, and documentation.
+
+- Day-two CLI operations are easier to steer from the host.
+  `nemoclaw use <name>` selects the default registered sandbox, and mistyped sandbox names now receive the closest registered-sandbox suggestion.
+  For more information, refer to [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Onboarding and inference validation handle more common setup drift.
+  Docker Desktop gateway bridge checks retry through the short first-start race, OpenAI-compatible endpoints can opt into reasoning-mode validation with `NEMOCLAW_REASONING`, and Windows bootstrap failures preserve WSL recovery guidance.
+  For more information, refer to [Choose an Inference Provider](/user-guide/openclaw/inference/learn-and-choose/choose-inference-provider), [Prepare Windows for NemoClaw](/user-guide/openclaw/get-started/prerequisites/windows-preparation), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- Messaging and Hermes repair paths carry less stale state forward.
+  Rebuilds write the effective policy preset set back to the sandbox registry, `channels start` reapplies the matching network policy preset before rebuilding, and Hermes image repair removes inherited OpenClaw state from older base layers.
+  For more information, refer to [Choose Messaging Channels](/user-guide/openclaw/manage-sandboxes/messaging-channels/choose-messaging-channels), [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- Documentation now covers the operator workflows added during this release.
+  The OpenClaw quickstart explains the two-terminal network approval workflow, and the messaging guide separates Teams direct-message allowlists from OpenClaw group and channel policy.
+  For more information, refer to [NemoClaw Quickstart with OpenClaw](/user-guide/openclaw/get-started/quickstart), [Approve or Deny Agent Network Requests](/user-guide/openclaw/network-policy/approve-network-requests), and [Choose Messaging Channels](/user-guide/openclaw/manage-sandboxes/messaging-channels/choose-messaging-channels).
+- Release validation now runs through one Vitest scenario system.
+  GitHub Actions owns orchestration and reporting, while the scenario runner keeps scheduled failure routing, scorecards, trace-timing summaries, docs validation, and two-agent security-posture coverage in the same selection model.

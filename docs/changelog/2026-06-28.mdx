@@ -1,0 +1,30 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.69
+
+NemoClaw v0.0.69 improves sandbox recovery, Deep Agents Code workflows, Hermes messaging, inference setup, policy approval guidance, and release validation.
+
+- Sandbox lifecycle and onboarding flows now preserve state more predictably across destroy, recreate, rebuild, recovery, and validation failures.
+  Destroy wipes persistent workspace and state directories, GPU recreate rolls back failed pre-patch sandboxes, recovery can rediscover live sandboxes when the local registry is empty, and hosted endpoint validation failures keep a nonzero exit status.
+  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- Deep Agents Code workflows now have clearer terminal and CLI behavior.
+  Session export reports actionable guidance for dash-prefixed arguments, warm-up sessions stay out of normal history, `nemo-deepagents` aliases share a consistent command surface, terminal runtime dispatch and version probes are more accurate, and status reports out-of-memory degradation with useful context.
+  For more information, refer to [Quickstart with LangChain Deep Agents Code](/user-guide/deepagents/get-started/quickstart) and [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Deep Agents Code rebuild and snapshot operations now protect more user state.
+  Skills created with `skill-creator` persist across rebuilds, the managed Python environment stays on `PATH`, rebuild warns before dropping user-managed files, and snapshot creation refuses to capture an active Deep Agents Code session.
+  For more information, refer to [Understand Sandbox State](/user-guide/openclaw/manage-sandboxes/state-and-backups/understand-sandbox-state), [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots), and [Security Best Practices](/user-guide/openclaw/security/best-practices).
+- Hermes, messaging, and provider switching now use more explicit runtime state.
+  Hermes moves to the 2026.6.19 release line, supported messaging channels come from manifests, invalid channel values fail fast, reused sandboxes refresh stale messaging plans, Hermes preserves Slack-compatible aliases after upgrades, and provider switches retain endpoint, credential, and inference API metadata.
+  For more information, refer to [Choose Messaging Channels](/user-guide/hermes/manage-sandboxes/messaging-channels/choose-messaging-channels), [NemoClaw Quickstart with Hermes](/user-guide/hermes/get-started/quickstart), and [Switch Inference Providers](/user-guide/openclaw/inference/manage-inference/switch-providers).
+- Inference setup now handles local and compatible endpoints with tighter validation.
+  DGX Station managed vLLM defaults to DeepSeek V4 Flash, Ollama setup records explicit interaction state, compatible endpoint smoke checks retry only recognized transient failures, and validation redacts sensitive error details.
+  For more information, refer to [Choose an Inference Provider](/user-guide/openclaw/inference/learn-and-choose/choose-inference-provider) and [Choose a Local Inference Server](/user-guide/openclaw/inference/local-inference/choose-local-inference-server).
+- Security, policy, and observability paths now report safer runtime state.
+  Auto-restore seals the expected configuration hash, sandbox connect and login apply process and file-descriptor limits quietly, JSON agent failures keep parseable output with provenance warnings, log collection preserves per-source breadcrumbs, and in-sandbox Shields status no longer claims host posture it cannot verify.
+  For more information, refer to [Security Best Practices](/user-guide/openclaw/security/best-practices), [Credential Storage](/user-guide/openclaw/security/credential-storage), [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands), and [Monitor Sandbox Activity](/user-guide/openclaw/monitoring/monitor-sandbox-activity).
+- Documentation and release gates now cover more policy, approval, and live validation paths.
+  The docs include clearer policy round-trip and network-request approval examples, while the live release gates distinguish public NVIDIA API keys from hosted inference keys and exercise Deep Agents Code terminal behavior more directly.
+  For more information, refer to [Network Policies](/user-guide/openclaw/reference/network-policies), [Customize the Network Policy](/user-guide/openclaw/network-policy/customize-network-policy), and [Approve or Deny Agent Network Requests](/user-guide/openclaw/network-policy/approve-network-requests).

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -15,52 +14,10 @@ import {
   validateE2eWorkflowBoundary,
   validateFreeStandingWorkflowInventory,
 } from "../../../tools/e2e/workflow-boundary.mts";
+import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 import { readWorkflow, removeJobNeed } from "../../helpers/e2e-workflow-contract";
 import { testTimeoutOptions } from "../../helpers/timeouts";
 import { assertChannelsStopStartSandboxName } from "../live/channels-stop-start-safety.ts";
-
-function generateMatrixScript(): string {
-  const workflow = readWorkflow();
-  const jobs = workflow.jobs as Record<string, { steps?: Array<Record<string, unknown>> }>;
-  const generateStep = jobs["generate-matrix"]?.steps?.find(
-    (step) => step.name === "Generate E2E target matrix",
-  );
-  expect(generateStep?.run).toEqual(expect.any(String));
-  return generateStep?.run as string;
-}
-
-function generateMatrixForDispatch(env: { JOBS: string; TARGETS: string }): Record<string, string> {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-matrix-"));
-  const outputPath = path.join(tmp, "github-output");
-  const summaryPath = path.join(tmp, "github-summary");
-  try {
-    const result = spawnSync("bash", ["-c", generateMatrixScript()], {
-      cwd: process.cwd(),
-      encoding: "utf-8",
-      timeout: 120_000,
-      killSignal: "SIGKILL",
-      env: {
-        ...process.env,
-        GITHUB_OUTPUT: outputPath,
-        GITHUB_STEP_SUMMARY: summaryPath,
-        JOBS: env.JOBS,
-        TARGETS: env.TARGETS,
-      },
-    });
-    expect(result.signal).toBeNull();
-    expect(result.stderr).toBe("");
-    expect(result.status).toBe(0);
-    return Object.fromEntries(
-      fs
-        .readFileSync(outputPath, "utf-8")
-        .trim()
-        .split("\n")
-        .map((line) => line.split(/=(.*)/s).slice(0, 2)),
-    );
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
-  }
-}
 
 describe("e2e workflow boundary", () => {
   it("guards channels-stop-start destructive cleanup to test-owned sandboxes", () => {
@@ -77,6 +34,77 @@ describe("e2e workflow boundary", () => {
 
   it("keeps the live E2E target workflow scheduled, dispatchable, pinned, and artifact-safe", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
+  });
+
+  type RebuildWorkflowStep = {
+    env?: Record<string, string>;
+    name?: string;
+    run?: string;
+    uses?: string;
+  };
+  const rebuildCacheMutations = [
+    [
+      "an isolated builder",
+      {
+        name: "Set up rebuild Buildx",
+        uses: "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c",
+      },
+    ],
+    [
+      "a separate cache warm",
+      {
+        name: "Warm current base build cache",
+        uses: "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a",
+      },
+    ],
+    [
+      "a step-level builder selection",
+      {
+        env: { BUILDX_BUILDER: "external" },
+        name: "Run rebuild live test",
+      },
+    ],
+    [
+      "a persistent builder selection",
+      {
+        name: "Select rebuild Buildx",
+        run: "docker buildx use external",
+      },
+    ],
+    [
+      "a multiline environment-file builder selection",
+      {
+        name: "Persist rebuild Buildx through the environment file",
+        run: "printf '%s\\n' 'BUILDX_BUILDER<<EOF' 'external' 'EOF' >> \"$GITHUB_ENV\"",
+      },
+    ],
+  ] satisfies ReadonlyArray<readonly [string, RebuildWorkflowStep]>;
+  const rebuildCacheCases = [
+    "rebuild-openclaw",
+    "rebuild-hermes",
+    "rebuild-hermes-stale-base",
+  ].flatMap((jobName) =>
+    rebuildCacheMutations.map(
+      ([caseName, injectedStep]) => [jobName, caseName, injectedStep] as const,
+    ),
+  );
+
+  it.each(rebuildCacheCases)("rejects %s with %s", (jobName, _case, injectedStep) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-cache-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { steps: RebuildWorkflowStep[] }>;
+    };
+    workflow.jobs[jobName].steps.splice(2, 0, injectedStep);
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      expect(validateE2eWorkflowBoundary(workflowPath)).toContain(
+        `${jobName} must keep rebuild builds on the Docker engine cache`,
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   // source-shape-contract: security -- Mutates the shipped workflow to prove PR-safe routing rejects credential-backed smokes
@@ -346,25 +374,21 @@ jobs:
         inventory.allowedJobs.filter((job) => !inventory.explicitOnlyJobs.includes(job)).sort(),
       );
 
-      expect(
-        generateMatrixForDispatch({ JOBS: nonHermesJobs.join(","), TARGETS: "" }),
-      ).toMatchObject({
-        hermes_selected: "false",
-        matrix: "[]",
+      expect(buildE2eWorkflowPlan({ jobs: nonHermesJobs.join(",") })).toMatchObject({
+        hermesSelected: false,
+        matrix: [],
       });
-      expect(generateMatrixForDispatch({ JOBS: hermesSelector, TARGETS: "" })).toMatchObject({
-        hermes_selected: "true",
-        matrix: "[]",
+      expect(buildE2eWorkflowPlan({ jobs: hermesSelector })).toMatchObject({
+        hermesSelected: true,
+        matrix: [],
       });
-      expect(
-        generateMatrixForDispatch({ JOBS: "", TARGETS: nonHermesTargets.join(",") }),
-      ).toMatchObject({
-        hermes_selected: "false",
-        matrix: "[]",
+      expect(buildE2eWorkflowPlan({ targets: nonHermesTargets.join(",") })).toMatchObject({
+        hermesSelected: false,
+        matrix: [],
       });
-      expect(generateMatrixForDispatch({ JOBS: "", TARGETS: hermesSelector })).toMatchObject({
-        hermes_selected: "true",
-        matrix: "[]",
+      expect(buildE2eWorkflowPlan({ targets: hermesSelector })).toMatchObject({
+        hermesSelected: true,
+        matrix: [],
       });
 
       for (const job of inventory.allowedJobs) {

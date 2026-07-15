@@ -5,7 +5,7 @@ description: Create GitHub pull requests that follow the NemoClaw PR template, t
 
 # Create GitHub Pull Request
 
-Create pull requests on the NemoClaw GitHub repository using the `gh` CLI. This skill ensures every PR follows the project's PR template exactly.
+Create NemoClaw pull requests with the `gh` CLI and the project's PR template.
 
 ## Prerequisites
 
@@ -192,7 +192,7 @@ git show main:.github/PULL_REQUEST_TEMPLATE.md > /tmp/nemoclaw-pr-body.md
 git diff main...HEAD
 ```
 
-Then edit `/tmp/nemoclaw-pr-body.md` for the specific PR, including the required DCO sign-off line. If the PR intentionally changes `.github/PULL_REQUEST_TEMPLATE.md`, compare the branch version against the trusted base template and preserve or strengthen the hard requirements above before using the branch version in the PR body.
+Then edit `/tmp/nemoclaw-pr-body.md` for the PR, including a `Signed-off-by:` line. If the PR intentionally changes `.github/PULL_REQUEST_TEMPLATE.md`, compare the branch version against the trusted base template and preserve or strengthen the hard requirements above before using the branch version in the PR body.
 
 ### Populating the Template
 
@@ -201,8 +201,8 @@ Follow these rules when filling in the template:
 - **Summary:** Write 1-3 plain sentences describing what changes and why. Describe before-and-after behavior when it applies. Use existing repository terms instead of inventing a label for the PR. Derive this from the commit messages and diff.
 - **Related Issue:** Include `Fixes #NNN` or `Closes #NNN` if an issue exists. Remove the section entirely if there is no related issue.
 - **Changes:** List concrete changes. If the PR adds an abstraction, configuration, fallback, migration, or compatibility path, name its current requirement and consumer, explain why a direct change is insufficient, and identify the test that protects it.
-- **Type of Change:** Check exactly one box. Use `[x]` for checked, `[ ]` for unchecked.
-- **Quality Gates:** Check exactly one tests line and one docs line, then check every other line that applies to the diff. If tests/docs are not needed or existing coverage is sufficient, include the justification. If sensitive paths changed or a non-success CI check is accepted, record the authorized reviewer, maintainer-approved waiver, approval link, or follow-up issue.
+- **Type of Change:** Check one box. Use `[x]` for checked, `[ ]` for unchecked.
+- **Quality Gates:** Check one tests line and one docs line, then check every other line that applies to the diff. If tests/docs are not needed or existing coverage is sufficient, include the justification. If sensitive paths changed or a non-success CI check is accepted, record the authorized reviewer, maintainer-approved waiver, approval link, or follow-up issue.
 - **Verification:** Check only the boxes backed by the requested command/result, justification, normal hook evidence, or fallback evidence. Do not check boxes for steps you skipped or did not verify. The DCO declaration and GitHub verification checkbox is mandatory before PR creation because Step 4 must pass first. For focused changes, leave the broad-gate line unchecked unless you actually ran the applicable command.
 - **DCO Sign-Off:** Replace `{name}` and `{email}` with values from `git config user.name` and `git config user.email`.
 
@@ -223,7 +223,7 @@ gh pr create \
 Add labels when applicable:
 
 ```bash
---label "documentation"   # for doc-only or doc-inclusive PRs
+--label "area: docs"      # for doc-only or doc-inclusive PRs
 --label "topic:security"  # for security-related changes
 ```
 
@@ -237,7 +237,7 @@ gh pr create --draft --title "..." --assignee "@me" --body "..."
 
 ## Step 8: Monitor CI and Review Feedback
 
-After creating the PR, do not stop at the URL. Follow the shared [PR CI and Automated Review Follow-Up](../_shared/pr-follow-up.md) workflow: watch required CI, inspect CodeRabbit and PR Review Advisor feedback, address valid findings, and consult the user when feedback is ambiguous or design-changing.
+After creating the PR, do not stop at the URL. Follow the shared [PR CI and Review Follow-Up](../_shared/pr-follow-up.md) workflow: watch required CI, inspect CodeRabbit and PR Review Advisor feedback, address valid findings, and consult the user when feedback is ambiguous or design-changing.
 
 ## Step 9: Report the Result
 
@@ -251,17 +251,17 @@ Automated review: no actionable findings / addressed findings / waiting on user
 
 ## Common Mistakes to Avoid
 
-- **Do not invent your own PR body format.** Use `.github/PULL_REQUEST_TEMPLATE.md` exactly.
+- **Do not invent your own PR body format.** Use `.github/PULL_REQUEST_TEMPLATE.md` from the base branch.
 - **Do not omit template sections.** Preserve every section except `Related Issue` when no issue exists.
 - **Do not check boxes for steps you did not run.** If you did not run `npm run docs`, leave that box unchecked.
 - **Do not rerun hook-covered checks by default.** Normal `pre-commit`, `commit-msg`, and `pre-push` hooks are valid verification. Use `npm run check:diff` once as the fallback when hooks were skipped, missing, or uncertain.
 - **Do not run targeted tests more than once per unchanged relevant change set.** Record the passing command and result; rerun when subsequent edits or hook autofixes can affect that behavior.
 - **Do not run broad gates for doc-only changes by default.** Run the docs build instead, and leave the broad-gate verification item unchecked unless you actually ran the applicable command.
-- **Do not forget the DCO sign-off declaration in the PR body.** CI will reject the PR without it.
+- **Do not omit the `Signed-off-by:` line from the PR body.** CI will reject the PR without it.
 - **Do not create PRs with unverified commits.** GitHub must report every PR commit as `Verified` before the PR is opened.
 - **Do not rely on maintainers to repair contributor signature history.** If force-push is not allowed and the branch contains an unverified commit, use a fresh branch and fresh PR.
 - **Do not forget `--assignee @me`.** Every PR must be assigned to its creator.
 - **Do not narrate the analysis process.** Report the decision, concrete changes, and verification evidence.
 - **Do not create PRs from main.** Always use a feature branch.
 - **Do not troubleshoot Git/GitHub access in-agent.** If SSH, `gh`, authentication, remote access, authorization, or push permissions fail, stop and ask the user to fix access. Do resolve ordinary merge conflicts and dirty-worktree state when the workflow calls for it.
-- **Do not abandon the PR immediately after creation.** Watch CI and automated feedback from CodeRabbit and the PR Review Advisor, address valid findings, and consult the user when feedback is ambiguous.
+- **Do not abandon the PR after creation.** Watch CI and feedback from CodeRabbit and the PR Review Advisor, address valid findings, and consult the user when feedback is ambiguous.

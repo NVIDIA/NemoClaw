@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-cut-release-tag
-description: Creates deterministic NemoClaw semver release tags on origin/main, handles release housekeeping, drafts release notes, and verifies the maintainer-published Announcement. Use when cutting a release, tagging a version, shipping a build, creating vX.Y.Z tags, publishing release announcements, or completing release communication.
+description: Creates deterministic NemoClaw semver release tags on origin/main after verifying the pre-tag dated changelog entry, handles release housekeeping, drafts announcement release notes, and verifies the maintainer-published Announcement. Use when cutting a release, tagging a version, shipping a build, creating vX.Y.Z tags, publishing release announcements, or completing release communication.
 user_invocable: true
 ---
 
@@ -15,7 +15,7 @@ The release is one annotated semver tag on an already-merged `origin/main` commi
 
 ## LKG Production Image Dispatch
 
-When a release admin creates or moves `lkg` to a commit carrying an exact `vX.Y.Z` tag, the `Release / LKG Brev Image` workflow dispatches the `Release Production Image` workflow in `brevdev/nemoclaw-image` on its `main` branch.
+When a release admin creates or moves `lkg` to a commit carrying a `vX.Y.Z` tag, the `Release / LKG Brev Image` workflow dispatches the `Release Production Image` workflow in `brevdev/nemoclaw-image` on its `main` branch.
 The dispatch passes the immutable semver tag instead of the mutable `lkg` tag.
 The source workflow requires the `NEMOCLAW_IMAGE_DISPATCH_TOKEN` Actions secret with Actions read/write access to `brevdev/nemoclaw-image`; a missing secret fails before the API request, and the workflow summary never includes its value.
 The trigger summary records the selected release tag, full commit SHA, target workflow, and dispatch result.
@@ -26,10 +26,11 @@ The downstream scheduled reconciliation remains available if the event-driven di
 ## Hard Rules
 
 - Tag only the commit captured in a generated release plan.
-- Do not generate the release plan until release-prep docs are merged or explicitly waived.
+- Do not generate the release plan until the release-prep docs PR containing `docs/changelog/YYYY-MM-DD.mdx` and the exact planned `## vX.Y.Z` heading is merged or explicitly waived.
+- Treat the dated MDX entry as the canonical release history. A conventional Release Notes page or post-tag Announcement draft cannot replace it.
 - If `origin/main` changes after plan generation, regenerate the plan before cutting the tag.
-- Before asking for release confirmation, satisfy the canonical [pre-tag E2E evidence policy](../nemoclaw-maintainer-policies/references/release-train.md#pre-tag-e2e-evidence) for that exact commit.
-- Ask the maintainer to paste the exact confirmation phrase from the plan before cutting the tag.
+- Before asking for release confirmation, satisfy the canonical [pre-tag E2E evidence policy](../nemoclaw-maintainer-policies/references/release-train.md#pre-tag-e2e-evidence) for that commit.
+- Ask the maintainer to paste the confirmation phrase from the plan before cutting the tag.
 - Push only the semver tag (`vX.Y.Z`) from the agent-controlled step.
 - Never push `latest` or `lkg` from this skill.
 - Never move, delete, or force-push an existing remote semver tag unless the maintainer explicitly starts protected-tag remediation.
@@ -44,7 +45,7 @@ Copy this checklist and update it as you proceed:
 ```text
 Release Progress:
 - [ ] Step 1: Generate release plan
-- [ ] Step 2: Show plan, E2E evidence, and exact confirmation phrase
+- [ ] Step 2: Show plan, E2E evidence, and confirmation phrase
 - [ ] Step 3: Cut the semver tag from the confirmed plan
 - [ ] Step 4: Wait for workflow-managed latest
 - [ ] Step 5: Bump remaining open issues/PRs
@@ -58,7 +59,18 @@ Release Progress:
 Before this step, confirm release-prep docs are merged or explicitly waived.
 Return to `nemoclaw-maintainer-evening` if docs are still pending.
 
-Run exactly one of:
+For the planned version, inspect `origin/main` before generating the plan:
+
+```bash
+git grep -n '^## vX\.Y\.Z$' origin/main -- 'docs/changelog/*.mdx'
+```
+
+Require exactly one match in a dated file directly under `docs/changelog/`.
+Confirm that a newly created file begins with the parser-safe MDX SPDX comment and that the entry contains its summary and detailed bullets.
+If the entry is missing or malformed, return to `nemoclaw-contributor-update-docs`; do not substitute the post-tag announcement workflow.
+If the maintainer explicitly waives the entry, preserve the reason in the release-plan presentation and confirmation handoff.
+
+Run one of:
 
 ```bash
 npm run release:plan -- --bump patch
@@ -74,7 +86,7 @@ The script writes a plan outside the checkout root, for example:
 ../nemoclaw-release-v0.0.58/plan.json
 ```
 
-### Step 2: Show Plan, E2E Evidence, and Ask for Exact Confirmation
+### Step 2: Show Plan, E2E Evidence, and Ask for Confirmation
 
 Read the generated `plan.json` and show the maintainer:
 
@@ -83,21 +95,24 @@ Read the generated `plan.json` and show the maintainer:
 - target `origin/main` commit and headline,
 - plan hash,
 - forbidden operations,
-- exact confirmation phrase,
+- confirmation phrase,
 - open issue/PR housekeeping plan for the release label.
+
+Unless Step 1 records an explicit waiver, verify that the plan's next tag matches the H2 version heading in the dated changelog entry at the candidate SHA.
+When the entry is waived, show the recorded waiver reason in the plan presentation and confirmation handoff instead.
 
 For the plan's full `origin/main` SHA, review `.github/workflows/e2e.yaml` at that commit and build the evidence ledger required by the canonical [pre-tag E2E evidence policy](../nemoclaw-maintainer-policies/references/release-train.md#pre-tag-e2e-evidence). The workflow is the sole source of truth; do not substitute or maintain a separate release-gating test list.
 
 Before showing the confirmation prompt, present:
 
-- the exact candidate SHA;
+- the candidate SHA;
 - the number of tests with green evidence out of the number required by the workflow;
 - each required test mapped to a successful run or job URL and attempt; and
 - an itemized maintainer exception for every test without green evidence, including its current result or failure summary and the rationale for proceeding.
 
-Do not ask for the exact phrase until every test has green evidence or an explicit itemized maintainer exception. If `origin/main` moves or the candidate SHA otherwise changes, regenerate the plan and rebuild the ledger for the new SHA.
+Do not ask for the phrase until every test has green evidence or an explicit itemized maintainer exception. If `origin/main` moves or the candidate SHA otherwise changes, regenerate the plan and rebuild the ledger for the new SHA.
 
-Ask the maintainer to paste the exact phrase:
+Ask the maintainer to paste this phrase:
 
 ```text
 CONFIRM RELEASE vX.Y.Z <full-origin-main-sha>
@@ -107,7 +122,7 @@ Do not proceed on a generic "yes" at this step.
 
 ### Step 3: Cut the Semver Tag
 
-Run the cut script with the plan and the maintainer's exact phrase:
+Run the cut script with the plan and the maintainer's phrase:
 
 ```bash
 npm run release:cut -- --plan <plan.json> --confirm "CONFIRM RELEASE vX.Y.Z <full-origin-main-sha>"
@@ -145,7 +160,7 @@ Move every remaining open issue or PR carrying the released version to the next 
 node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/bump-stragglers.ts <released-version> <next-version>
 ```
 
-This is automatic post-tag housekeeping covered by the release plan and exact confirmation in Step 2. The script creates the next patch label when needed, removes the released-version label, and adds the next-version label to every open straggler. Do not run it before Step 4 verifies both the semver tag and workflow-managed `latest`.
+This is automatic post-tag housekeeping covered by the release plan and confirmation in Step 2. The script creates the next patch label when needed, removes the released-version label, and adds the next-version label to every open straggler. Do not run it before Step 4 verifies both the semver tag and workflow-managed `latest`.
 
 Then verify the released version has no open stragglers:
 
@@ -181,9 +196,10 @@ Load and follow `nemoclaw-maintainer-release-notes`, then use its output as the 
 <release-dir>/release-note-draft.md
 ```
 
-Before continuing to Step 7, verify the draft has exactly three lead paragraphs, categorized shipped changes, one what-changed-and-why-it-matters bullet with a visible `#NNNN` link for every included change, and thanks for external contributors only.
+Before continuing to Step 7, verify the draft has three lead paragraphs, categorized shipped changes, one what-changed-and-why-it-matters bullet with a visible `#NNNN` link for every included change, and thanks for external contributors only.
 
 Do not create or update a GitHub Discussion.
+Do not edit `docs/changelog/` in this post-tag step; the canonical entry must already be present in the tagged commit.
 
 ### Step 7: Wait for Maintainer-Published Announcement
 
@@ -201,7 +217,7 @@ Ask the maintainer to publish the draft in the `Announcements` Discussion catego
 
 ### Step 8: Verify Announcement and Hand Off Sharing
 
-Before making any network request, reject the maintainer-provided URL unless it exactly matches `https://github.com/NVIDIA/NemoClaw/discussions/<positive-integer>` with no query string or fragment. Only then open it using a read-only GitHub or web capability and verify:
+Before making any network request, reject the maintainer-provided URL unless it matches `https://github.com/NVIDIA/NemoClaw/discussions/<positive-integer>` with no query string or fragment. Only then open it using a read-only GitHub or web capability and verify:
 
 - the title is `NemoClaw <new-version> is out`;
 - the category is `Announcements`;
@@ -213,7 +229,8 @@ If the Announcement is valid, return its URL with the release artifacts and mark
 ## Recovery
 
 - Plan generation fails: fix the named precondition, then regenerate the plan.
-- `origin/main` moved after plan generation: regenerate the plan and ask for the new exact confirmation phrase.
+- Planned changelog entry is missing or malformed: stop before plan generation and run the pre-tag `nemoclaw-contributor-update-docs` workflow. Use post-release recovery only when the tag already exists.
+- `origin/main` moved after plan generation: regenerate the plan and ask for the new confirmation phrase.
 - Remote semver tag already exists: stop; do not retag unless the maintainer explicitly starts protected-tag remediation.
 - `latest` workflow fails or times out: report the workflow/status; do not move `latest` manually.
 - `latest` workflow rejects a rollback: keep `latest` unchanged, inspect the plan target commit, and regenerate the plan for the current `origin/main` tip if appropriate.

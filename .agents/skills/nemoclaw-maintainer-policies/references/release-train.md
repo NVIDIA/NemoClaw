@@ -23,7 +23,9 @@ Daily release labels coordinate release work. They do not classify issues and th
 ## Release-Prep Docs
 
 Run `/nemoclaw-contributor-update-docs for vX.Y.Z` before generating the final release plan for `vX.Y.Z`.
-Release-prep docs must be merged or explicitly waived before `release:plan` captures the release commit.
+The pre-tag release-note docs PR must create or update `docs/changelog/YYYY-MM-DD.mdx` with the exact `## vX.Y.Z` heading, parser-safe MDX SPDX comment, summary, and detailed bullets.
+This dated file is the canonical release history shared by all documentation variants; ordinary doc pages and the post-tag Announcement do not replace it.
+Release-prep docs, including that entry, must be merged or explicitly waived before `release:plan` captures the release commit.
 If any merge lands after `release:plan`, generate a fresh plan before cutting the tag.
 
 ## Cutoff
@@ -35,17 +37,18 @@ At cutoff:
 1. List merged PRs carrying the target version label.
 2. Confirm each is intended for the release.
 3. List open PRs and issues still carrying the target label as post-tag stragglers.
-4. Generate QA handoff from merged PRs.
-5. Generate the release plan to freeze the exact candidate commit.
-6. Review the candidate commit's pre-tag E2E evidence.
-7. Cut the release tag only with explicit maintainer confirmation.
-8. After the tag and workflow-managed `latest` are verified, automatically move every open straggler to the next patch label.
+4. Confirm the merged release-note docs PR contains the dated changelog entry for the target version, or record an explicit waiver that names the missing entry.
+5. Generate QA handoff from merged PRs.
+6. Generate the release plan to freeze the candidate commit.
+7. Review the candidate commit's pre-tag E2E evidence.
+8. Cut the release tag only with explicit maintainer confirmation.
+9. After the tag and workflow-managed `latest` are verified, automatically move every open straggler to the next patch label.
 
 ## Pre-Tag E2E Evidence
 
-The release candidate is the exact full `origin/main` commit SHA captured by the generated release plan. At that commit, `.github/workflows/e2e.yaml` is the sole source of truth for the release E2E test set. Do not maintain a separate release-gating test list.
+The release candidate is the full `origin/main` commit SHA captured by the generated release plan. At that commit, `.github/workflows/e2e.yaml` is the sole source of truth for the release E2E test set. Do not maintain a separate release-gating test list.
 
-Before asking for the exact release confirmation phrase, build and show an evidence ledger for that SHA:
+Before asking for the release confirmation phrase, build and show an evidence ledger for that SHA:
 
 - Every E2E test execution declared by the workflow must have at least one completed, successful execution for the candidate SHA. This includes tests that require explicit selection and every expanded matrix execution.
 - Treat each expanded matrix execution as a separate ledger entry. Use its matrix `id`, or all distinguishing matrix dimensions when no single ID exists, in the test identifier so results for distinct expansions are never collapsed under the parent job.

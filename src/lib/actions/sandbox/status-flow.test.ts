@@ -26,11 +26,12 @@ describe("showSandboxStatus flow", () => {
 
   it("warns when the live gateway route differs from the sandbox's recorded route (#6315)", async () => {
     const harness = createStatusFlowHarness({
-      currentProvider: "openai",
-      currentModel: "gpt-5.2",
+      currentProvider: "nvidia",
+      currentModel: "nvidia/nemotron",
       routeDrift: {
         live: { provider: "openai", model: "gpt-5.2" },
         recorded: { provider: "nvidia", model: "nvidia/nemotron" },
+        canConnect: true,
       },
     });
 
@@ -46,6 +47,8 @@ describe("showSandboxStatus flow", () => {
     expect(output).toContain(
       "inference set --provider 'openai' --model 'gpt-5.2' --sandbox 'alpha'",
     );
+    expect(output).toContain("Model:    nvidia/nemotron");
+    expect(output).toContain("Provider: nvidia");
   });
 
   it("shell-quotes hostile route values in drift recovery commands (#6315)", async () => {
@@ -56,6 +59,7 @@ describe("showSandboxStatus flow", () => {
       routeDrift: {
         live: { provider: "openai; touch /tmp/pwn", model: "$(id) model" },
         recorded: { provider: "nvidia", model: "nvidia/nemotron" },
+        canConnect: true,
       },
       sandboxEntry: { name: sandboxName },
     });
@@ -67,6 +71,22 @@ describe("showSandboxStatus flow", () => {
     expect(output).toContain(
       "nemoclaw inference set --provider 'openai; touch /tmp/pwn' --model '$(id) model' --sandbox 'alpha'\\''s box'",
     );
+  });
+
+  it("does not recommend connect when provider-global identity makes it fail (#6315)", async () => {
+    const harness = createStatusFlowHarness({
+      routeDrift: {
+        live: { provider: "compatible-endpoint", model: "live/model" },
+        recorded: { provider: "compatible-endpoint", model: "recorded/model" },
+        canConnect: false,
+      },
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("cannot be restored with nemoclaw connect");
+    expect(output).not.toContain("connect realigns the gateway");
   });
 
   it("prints no route drift warning when the live route matches the recorded route (#6315)", async () => {
@@ -86,7 +106,7 @@ describe("showSandboxStatus flow", () => {
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(output).toContain("Sandbox-scoped status for 'alpha'");
     expect(output).toContain("Sandbox: alpha");
-    expect(output).toContain("Model:    nvidia/nemotron-live");
+    expect(output).toContain("Model:    nvidia/nemotron");
     expect(output).toContain("Inference: healthy");
     expect(output).toContain("Inference (ollama backend):");
     expect(output).toContain("Host GPU: yes");

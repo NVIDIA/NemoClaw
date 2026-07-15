@@ -889,11 +889,13 @@ describe("pull request and main workflow contracts", () => {
       ["pull_request", prWorkflow],
       ["main", mainWorkflow],
     ] as const) {
+      const checkoutStep = requiredWorkflowStep(workflow.jobs["cli-test-shards"], "Checkout");
       const shardStep = requiredWorkflowStep(
         workflow.jobs["cli-test-shards"],
         "Run CLI coverage shard",
       );
       const mergeStep = requiredWorkflowStep(workflow.jobs["cli-tests"], "Merge CLI coverage");
+      expect(checkoutStep.with?.["fetch-depth"], `${workflowName} checkout depth`).toBe(0);
       expect(shardStep.with?.shard, `${workflowName} shard input`).toBe("${{ matrix.shard }}");
       expect(shardStep.with?.["shard-count"], `${workflowName} shard-count input`).toBe(
         cliShardCount,
@@ -902,6 +904,68 @@ describe("pull request and main workflow contracts", () => {
         cliShardCount,
       );
     }
+  });
+
+  // source-shape-contract: security -- Base-trusted PR sharding must retain hermetic coverage while retired duplicate lanes stay absent
+  it("folds hermetic E2E support and Ollama proxy coverage into existing Vitest lanes", () => {
+    const shardRun = requiredStep(
+      sharedActions.cliCoverageShard,
+      "Run CLI coverage and E2E support shard",
+    );
+    expect(shardRun.run).toContain("--project cli --project integration --project e2e-support");
+
+    const parityStep = requiredStep(
+      sharedActions.cliCoverageShard,
+      "Validate changed live E2E mock parity",
+    );
+    expect(parityStep.if).toBe("${{ inputs.shard == '1' }}");
+    expect(parityStep.run).toContain("base=HEAD^1");
+    expect(parityStep.run).toContain("head=HEAD^2");
+    expect(parityStep.run).toContain('base="$PUSH_BASE_SHA"');
+    expect(parityStep.run).toContain(
+      'npx tsx scripts/checks/e2e-mock-parity.ts --base "$base" --head "$head"',
+    );
+
+    const trustedCapabilityProbe = requiredWorkflowStep(
+      prWorkflow.jobs["cli-test-shards"],
+      "Detect trusted E2E support sharding",
+    );
+    expect(trustedCapabilityProbe.id).toBe("trusted-shard-capabilities");
+    expect(trustedCapabilityProbe.run).toContain("--project e2e-support");
+    expect(trustedCapabilityProbe.run).toContain("e2e-support=true");
+    expect(trustedCapabilityProbe.run).toContain("e2e-support=false");
+
+    const bootstrapParity = requiredWorkflowStep(
+      prWorkflow.jobs["cli-test-shards"],
+      "Validate changed live E2E mock parity (bootstrap)",
+    );
+    expect(bootstrapParity.if).toBe(
+      "${{ steps.trusted-shard-capabilities.outputs.e2e-support != 'true' && matrix.shard == 1 }}",
+    );
+    expect(bootstrapParity.run).toContain("--base HEAD^1 --head HEAD^2");
+
+    const bootstrapShard = requiredWorkflowStep(
+      prWorkflow.jobs["cli-test-shards"],
+      "Run E2E support shard (bootstrap)",
+    );
+    expect(bootstrapShard.if).toBe(
+      "${{ steps.trusted-shard-capabilities.outputs.e2e-support != 'true' }}",
+    );
+    expect(bootstrapShard.run).toContain("--project e2e-support");
+    expect(bootstrapShard.run).toContain(
+      '--shard="${E2E_SUPPORT_SHARD}/${E2E_SUPPORT_SHARD_COUNT}"',
+    );
+
+    for (const workflow of [prWorkflow, mainWorkflow]) {
+      expect(workflow.jobs["e2e-support"]).toBeUndefined();
+      expect(workflow.jobs["test-e2e-ollama-proxy"]).toBeUndefined();
+      expect(workflow.jobs.checks.needs).not.toContain("e2e-support");
+      expect(workflow.jobs.checks.needs).not.toContain("test-e2e-ollama-proxy");
+    }
+
+    expect(stepRuns(sharedActions.staticChecks).join("\n")).not.toContain(
+      "skills-frontmatter.test.ts",
+    );
   });
 
   // source-shape-contract: security -- Downloaded CI tooling must use a committed digest rather than upstream metadata
@@ -1004,8 +1068,6 @@ describe("pull request and main workflow contracts", () => {
       CLI_TESTS_RESULT: "success",
       CODE_CHANGED: "true",
       DOCS_ONLY_RESULT: "skipped",
-      E2E_PROXY_RESULT: "success",
-      E2E_SUPPORT_RESULT: "success",
       INSTALLER_INTEGRATION_RESULT: "success",
       PLUGIN_TESTS_RESULT: "success",
       REVIEWED_NPM_AUDIT_RESULT: "success",
@@ -1015,8 +1077,6 @@ describe("pull request and main workflow contracts", () => {
     const successfulMain = {
       BUILD_TYPECHECK_RESULT: "success",
       CLI_TESTS_RESULT: "success",
-      E2E_PROXY_RESULT: "success",
-      E2E_SUPPORT_RESULT: "success",
       INSTALLER_INTEGRATION_RESULT: "success",
       PLUGIN_TESTS_RESULT: "success",
       REVIEWED_NPM_AUDIT_RESULT: "success",
@@ -1036,8 +1096,6 @@ describe("pull request and main workflow contracts", () => {
       CLI_TESTS_RESULT: "skipped",
       CODE_CHANGED: "false",
       DOCS_ONLY_RESULT: "success",
-      E2E_PROXY_RESULT: "skipped",
-      E2E_SUPPORT_RESULT: "skipped",
       INSTALLER_INTEGRATION_RESULT: "skipped",
       PLUGIN_TESTS_RESULT: "skipped",
       REVIEWED_NPM_AUDIT_RESULT: "skipped",
