@@ -36,7 +36,9 @@ type ReviewedSiteTuple = readonly [string, LegacySandboxTransportKind, number];
 
 const REVIEWED_SITE_TUPLES = [
   ["src/lib/actions/sandbox/sessions/passthrough.ts", "grpc-cli-read-only-fallback", 1],
+  ["src/lib/actions/sandbox/process-recovery.ts", "grpc-cli-read-only-fallback", 1],
   ["src/lib/actions/sandbox/process-recovery.ts", "privileged-sandbox-exec", 2],
+  ["src/lib/actions/sandbox/snapshot.ts", "grpc-cli-read-only-fallback", 1],
   ["src/lib/diagnostics/debug.ts", "grpc-cli-read-only-fallback", 1],
   ["src/lib/sandbox/config.ts", "privileged-sandbox-exec", 2],
   ["src/lib/sandbox/version.ts", "grpc-cli-read-only-fallback", 1],

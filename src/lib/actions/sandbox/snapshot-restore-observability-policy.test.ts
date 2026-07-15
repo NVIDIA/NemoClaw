@@ -35,7 +35,6 @@ describe("runSandboxSnapshot restore: observability policy replay", () => {
     );
     f.captureOpenshellMock.mockImplementation((args) =>
       f.openshellResponses(args, {
-        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("idle") },
         "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
       }),
     );

@@ -114,7 +114,6 @@ describe("runSandboxSnapshot restore: clone dashboard port identity", () => {
     );
     f.captureOpenshellMock.mockImplementation((args) =>
       f.openshellResponses(args, {
-        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("idle") },
         "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
       }),
     );
@@ -171,7 +170,6 @@ describe("runSandboxSnapshot restore: clone dashboard port identity", () => {
     );
     f.captureOpenshellMock.mockImplementation((args) =>
       f.openshellResponses(args, {
-        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
         "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
       }),
     );
@@ -237,7 +235,6 @@ describe("runSandboxSnapshot restore: clone dashboard port identity", () => {
     f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
     f.captureOpenshellMock.mockImplementation((args) =>
       f.openshellResponses(args, {
-        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
         "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
       }),
     );
@@ -274,7 +271,6 @@ describe("runSandboxSnapshot restore: clone dashboard port identity", () => {
     );
     f.captureOpenshellMock.mockImplementation((args) =>
       f.openshellResponses(args, {
-        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("idle") },
         "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
       }),
     );

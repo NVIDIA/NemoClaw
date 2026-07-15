@@ -7,15 +7,16 @@ import { dockerSpawnSync } from "../../adapters/docker";
 import { stripAnsi } from "../../adapters/openshell/client";
 import {
   captureOpenshell,
-  captureOpenshellForStatus,
   getOpenshellBinary,
-  isCommandTimeout,
+  getStatusProbeTimeoutMs,
 } from "../../adapters/openshell/runtime";
+import { execSandboxReadOnlyWithGrpcFallback } from "../../adapters/openshell/sandbox-control-routing";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
 import { sleepSeconds, waitUntil } from "../../core/wait";
 import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
+import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { ROOT, shellQuote } from "../../runner";
 import {
   isDirectSandboxFallbackUnavailableError,
@@ -259,19 +260,20 @@ async function executeSandboxExecCommandForStatus(
   sandboxName: string,
   command: string,
 ): Promise<SandboxCommandResult | null> {
-  const markedCommand = buildSandboxExecMarkedCommand(command);
-  const result = await captureOpenshellForStatus(
-    ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", markedCommand],
-    { ignoreError: true },
-  );
-  if (isCommandTimeout(result) || result.error) return null;
-  const commandStdout = extractSandboxExecCommandStdout(result.output || "");
-  if (commandStdout === null) return null;
-  return {
-    status: result.status ?? 1,
-    stdout: commandStdout,
-    stderr: "",
-  };
+  try {
+    const result = await execSandboxReadOnlyWithGrpcFallback(
+      resolveSandboxGatewayName(registry.getSandbox(sandboxName)),
+      {
+        sandboxName,
+        command: ["sh", "-c", command],
+        timeoutMs: getStatusProbeTimeoutMs(),
+      },
+    );
+    if (result.error || result.signal || result.status === null) return null;
+    return { status: result.status, stdout: result.stdout.trim(), stderr: result.stderr.trim() };
+  } catch {
+    return null;
+  }
 }
 
 function parseSandboxGatewayProbe(result: SandboxCommandResult | null): boolean | null {

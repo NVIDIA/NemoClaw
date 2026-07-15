@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { vi } from "vitest";
-import { SANDBOX_EXEC_STARTED_MARKER } from "./sandbox-exec-output";
 import type { SnapshotStreamSandboxCreateMock } from "./snapshot-create-stream-test-types";
 
 export type OpenshellCaptureResult = {
@@ -29,24 +28,6 @@ export type SandboxRecord = {
   hermesDashboardInternalPort?: number | null;
   hermesDashboardTui?: boolean;
 };
-export type DcodeProbeState = "active" | "idle" | "unverifiable" | "no-runtime";
-
-export function dcodeProbeOutput(state: DcodeProbeState, extra = ""): string {
-  return `${SANDBOX_EXEC_STARTED_MARKER}\nNEMOCLAW_DCODE_PROBE=${state}\n${extra}`;
-}
-
-export function captureOpenshellStreams(
-  args: string[],
-  result: OpenshellCaptureResult,
-): OpenshellCaptureResult {
-  const command = String(args.at(-1) ?? "");
-  const marker = command.match(/printf '%s\\n' '([^']+)'/)?.[1] ?? SANDBOX_EXEC_STARTED_MARKER;
-  const replaceMarker = (value: string) => value.replaceAll(SANDBOX_EXEC_STARTED_MARKER, marker);
-  const stdout = replaceMarker(result.stdout ?? result.output);
-  const stderr = replaceMarker(result.stderr ?? "");
-  return { ...result, output: stdout, stdout, stderr };
-}
-
 export function openshellResponses(
   args: string[],
   responses: Record<string, OpenshellCaptureResult>,
@@ -55,12 +36,13 @@ export function openshellResponses(
     status: 0,
     output: "",
   };
-  return captureOpenshellStreams(args, result);
+  const stdout = result.stdout ?? result.output;
+  const stderr = result.stderr ?? "";
+  return { ...result, output: stdout, stdout, stderr };
 }
 
 export function defaultOpenshellResponses(args: string[]): OpenshellCaptureResult {
   return openshellResponses(args, {
-    "sandbox exec": { status: 0, output: dcodeProbeOutput("no-runtime") },
     "sandbox list": {
       status: 0,
       output: "alpha Ready\n",

@@ -5,7 +5,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SANDBOX_EXEC_STARTED_MARKER } from "./sandbox-exec-output";
+import type {
+  SandboxExecRequest,
+  SandboxExecResult,
+} from "../../adapters/openshell/sandbox-control";
 import type { SnapshotStreamSandboxCreateMock } from "./snapshot-create-stream-test-types";
 
 type OpenshellCaptureResult = {
@@ -20,22 +23,12 @@ type SandboxRecord = { name: string; observabilityEnabled?: boolean } & Record<s
 type DcodeProbeState = "active" | "idle" | "unverifiable" | "no-runtime";
 
 function dcodeProbeOutput(state: DcodeProbeState, extra = ""): string {
-  return `${SANDBOX_EXEC_STARTED_MARKER}\nNEMOCLAW_DCODE_PROBE=${state}\n${extra}`;
+  return `NEMOCLAW_DCODE_PROBE=${state}\n${extra}`;
 }
 
-function framedDcodeProbeOutput(state: DcodeProbeState, framePrefix = "stdout: "): string {
-  return `${framePrefix}${SANDBOX_EXEC_STARTED_MARKER}\n${framePrefix}NEMOCLAW_DCODE_PROBE=${state}\n`;
-}
-
-function captureOpenshellStreams(
-  args: string[],
-  result: OpenshellCaptureResult,
-): OpenshellCaptureResult {
-  const command = String(args.at(-1) ?? "");
-  const marker = command.match(/printf '%s\\n' '([^']+)'/)?.[1] ?? SANDBOX_EXEC_STARTED_MARKER;
-  const replaceMarker = (value: string) => value.replaceAll(SANDBOX_EXEC_STARTED_MARKER, marker);
-  const stdout = replaceMarker(result.stdout ?? result.output);
-  const stderr = replaceMarker(result.stderr ?? "");
+function captureOpenshellStreams(result: OpenshellCaptureResult): OpenshellCaptureResult {
+  const stdout = result.stdout ?? result.output;
+  const stderr = result.stderr ?? "";
   return { ...result, output: stdout, stdout, stderr };
 }
 
@@ -47,12 +40,11 @@ function openshellResponses(
     status: 0,
     output: "",
   };
-  return captureOpenshellStreams(args, result);
+  return captureOpenshellStreams(result);
 }
 
 function defaultOpenshellResponses(args: string[]): OpenshellCaptureResult {
   return openshellResponses(args, {
-    "sandbox exec": { status: 0, output: dcodeProbeOutput("no-runtime") },
     "sandbox list": {
       status: 0,
       output: "alpha Ready\n",
@@ -113,6 +105,9 @@ const getOpenShellSandboxDescriptorMock = vi.fn(
     image: `nemoclaw-${sandboxName}:live`,
   }),
 );
+const execSandboxReadOnlyMock = vi.fn<
+  (_gatewayName: string, request: SandboxExecRequest) => Promise<SandboxExecResult>
+>(async () => ({ status: 0, stdout: dcodeProbeOutput("no-runtime"), stderr: "" }));
 const applyPresetMock = vi.fn((_sandbox: string, _preset: string) => true);
 const applyPresetContentMock = vi.fn(
   (_sandbox: string, _name: string, _content: string, _options?: unknown) => true,
@@ -163,6 +158,7 @@ vi.mock("../../adapters/openshell/runtime", () => ({
 }));
 
 vi.mock("../../adapters/openshell/sandbox-control-routing", () => ({
+  execSandboxReadOnlyWithGrpcFallback: execSandboxReadOnlyMock,
   getOpenShellSandboxDescriptor: getOpenShellSandboxDescriptorMock,
 }));
 
@@ -271,6 +267,11 @@ describe("runSandboxSnapshot", () => {
       name: sandboxName,
       image: `nemoclaw-${sandboxName}:live`,
     }));
+    execSandboxReadOnlyMock.mockResolvedValue({
+      status: 0,
+      stdout: dcodeProbeOutput("no-runtime"),
+      stderr: "",
+    });
     applyPresetMock.mockReturnValue(true);
     applyPresetContentMock.mockReturnValue(true);
     removePresetMock.mockReturnValue(true);
@@ -303,23 +304,17 @@ describe("runSandboxSnapshot", () => {
   }
 
   function mockDcodeProbeResult(result: OpenshellCaptureResult) {
-    captureOpenshellMock.mockImplementation((args: string[]) => {
-      return openshellResponses(args, {
-        "sandbox exec": result,
-        "sandbox list": {
-          status: 0,
-          output: "alpha Ready\n",
-        },
-      });
+    execSandboxReadOnlyMock.mockResolvedValue({
+      status: result.status,
+      stdout: result.stdout ?? result.output,
+      stderr: result.stderr ?? "",
+      ...(result.error ? { error: result.error } : {}),
+      ...(result.signal ? { signal: result.signal } : {}),
     });
   }
 
   function capturedDcodeProbeScript(): string {
-    const execArgs =
-      captureOpenshellMock.mock.calls
-        .map(([args]) => args)
-        .find((args) => args[0] === "sandbox" && args[1] === "exec") ?? [];
-    return String(execArgs.at(-1) ?? "");
+    return String(execSandboxReadOnlyMock.mock.calls.at(-1)?.[1].command.at(-1) ?? "");
   }
 
   function runProbeScriptWithProcesses(
@@ -408,15 +403,11 @@ describe("runSandboxSnapshot", () => {
     });
 
     expect(backupSandboxStateMock).not.toHaveBeenCalled();
-    expect(
-      captureOpenshellMock.mock.calls.some(
-        ([args]) =>
-          args[0] === "sandbox" &&
-          args[1] === "exec" &&
-          args.includes("--name") &&
-          args.includes("alpha"),
-      ),
-    ).toBe(true);
+    expect(execSandboxReadOnlyMock).toHaveBeenCalledWith("nemoclaw", {
+      sandboxName: "alpha",
+      command: ["sh", "-c", expect.any(String)],
+      timeoutMs: 15_000,
+    });
     expect(consoleError.mock.calls.flat().join("\n")).toContain(
       "Sandbox is actively running a dcode task. Please retry after the task completes.",
     );
@@ -467,115 +458,11 @@ describe("runSandboxSnapshot", () => {
     expect(consoleLog.mock.calls.flat().join("\n")).toContain("Snapshot v8 name=idle created");
   });
 
-  it("allows dcode snapshot creation when OpenShell frames the probe stdout", async () => {
-    getSandboxMock.mockReturnValue(dcodeSandboxEntry);
-    mockDcodeProbeResult({ status: 0, output: framedDcodeProbeOutput("idle") });
-    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
-    const manifest = {
-      timestamp: "2026-06-15T00:00:00.000Z",
-      backupPath: "/tmp/backup-alpha",
-      name: "framed-idle",
-    };
-    backupSandboxStateMock.mockReturnValue({
-      success: true,
-      backedUpDirs: ["workspace"],
-      backedUpFiles: ["config.toml"],
-      failedDirs: [],
-      failedFiles: [],
-      manifest,
-    });
-    findBackupMock.mockReturnValue({
-      match: { ...manifest, snapshotVersion: 9, name: "framed-idle" },
-    });
-    const { runSandboxSnapshot } = await import("./snapshot");
-
-    await runSandboxSnapshot("alpha", { kind: "create", name: "framed-idle" });
-
-    expect(backupSandboxStateMock).toHaveBeenCalledWith("alpha", { name: "framed-idle" });
-    expect(consoleLog.mock.calls.flat().join("\n")).toContain(
-      "Snapshot v9 name=framed-idle created",
-    );
-    const execCall = captureOpenshellMock.mock.calls.find(
-      ([args]) => args[0] === "sandbox" && args[1] === "exec",
-    );
-    expect(execCall?.[1]).toMatchObject({ ignoreError: true, includeStreams: true });
-    expect(execCall?.[0]).toContain("-c");
-    expect(execCall?.[0]).not.toContain("-lc");
-    expect(String(execCall?.[0].at(-1) ?? "")).toMatch(
-      new RegExp(`${SANDBOX_EXEC_STARTED_MARKER}_[0-9a-f]{32}`),
-    );
-  });
-
-  it("refuses an active dcode task when OpenShell frames the probe stdout", async () => {
-    getSandboxMock.mockReturnValue(dcodeSandboxEntry);
-    mockDcodeProbeResult({ status: 0, output: framedDcodeProbeOutput("active", "[stdout] ") });
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    const { runSandboxSnapshot } = await import("./snapshot");
-
-    await expect(runSandboxSnapshot("alpha", { kind: "create" })).rejects.toMatchObject({
-      exitCode: 1,
-    });
-
-    expect(backupSandboxStateMock).not.toHaveBeenCalled();
-    expect(consoleError.mock.calls.flat().join("\n")).toContain(
-      "Sandbox is actively running a dcode task. Please retry after the task completes.",
-    );
-  });
-
-  it("refuses a probe that repeats its marker after an active state", async () => {
+  it("refuses conflicting probe states", async () => {
     getSandboxMock.mockReturnValue(dcodeSandboxEntry);
     mockDcodeProbeResult({
       status: 0,
-      output: [
-        SANDBOX_EXEC_STARTED_MARKER,
-        "NEMOCLAW_DCODE_PROBE=active",
-        SANDBOX_EXEC_STARTED_MARKER,
-        "NEMOCLAW_DCODE_PROBE=idle",
-      ].join("\n"),
-    });
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    const { runSandboxSnapshot } = await import("./snapshot");
-
-    await expect(runSandboxSnapshot("alpha", { kind: "create" })).rejects.toMatchObject({
-      exitCode: 1,
-    });
-
-    expect(backupSandboxStateMock).not.toHaveBeenCalled();
-    expect(consoleError.mock.calls.flat().join("\n")).toContain(
-      "Cannot verify whether sandbox 'alpha' is actively running a dcode task.",
-    );
-  });
-
-  it("refuses conflicting probe states after one valid marker", async () => {
-    getSandboxMock.mockReturnValue(dcodeSandboxEntry);
-    mockDcodeProbeResult({
-      status: 0,
-      output: [
-        SANDBOX_EXEC_STARTED_MARKER,
-        "NEMOCLAW_DCODE_PROBE=idle",
-        "NEMOCLAW_DCODE_PROBE=active",
-      ].join("\n"),
-    });
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    const { runSandboxSnapshot } = await import("./snapshot");
-
-    await expect(runSandboxSnapshot("alpha", { kind: "create" })).rejects.toMatchObject({
-      exitCode: 1,
-    });
-
-    expect(backupSandboxStateMock).not.toHaveBeenCalled();
-    expect(consoleError.mock.calls.flat().join("\n")).toContain(
-      "Cannot verify whether sandbox 'alpha' is actively running a dcode task.",
-    );
-  });
-
-  it("refuses conflicting probe markers split across stdout and stderr", async () => {
-    getSandboxMock.mockReturnValue(dcodeSandboxEntry);
-    mockDcodeProbeResult({
-      status: 0,
-      output: "",
-      stdout: dcodeProbeOutput("active"),
-      stderr: framedDcodeProbeOutput("idle"),
+      output: ["NEMOCLAW_DCODE_PROBE=idle", "NEMOCLAW_DCODE_PROBE=active"].join("\n"),
     });
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const { runSandboxSnapshot } = await import("./snapshot");
@@ -697,9 +584,7 @@ describe("runSandboxSnapshot", () => {
 
     await runSandboxSnapshot("alpha", { kind: "create" });
 
-    expect(
-      captureOpenshellMock.mock.calls.some(([args]) => args[0] === "sandbox" && args[1] === "exec"),
-    ).toBe(false);
+    expect(execSandboxReadOnlyMock).not.toHaveBeenCalled();
     expect(backupSandboxStateMock).toHaveBeenCalledWith("alpha", {
       name: null,
     });

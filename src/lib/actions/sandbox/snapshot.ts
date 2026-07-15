@@ -8,7 +8,10 @@ import {
   getOpenshellBinary,
   runOpenshell,
 } from "../../adapters/openshell/runtime";
-import { getOpenShellSandboxDescriptor } from "../../adapters/openshell/sandbox-control-routing";
+import {
+  execSandboxReadOnlyWithGrpcFallback,
+  getOpenShellSandboxDescriptor,
+} from "../../adapters/openshell/sandbox-control-routing";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt } from "../../credentials/store";
@@ -64,11 +67,6 @@ import {
   parseDcodeProbeState,
 } from "./dcode-activity-probe";
 import { cleanupShieldsDestroyArtifacts, removeSandboxRegistryEntry } from "./destroy";
-import {
-  buildSandboxExecMarkedCommand,
-  createSandboxExecMarker,
-  extractSandboxExecCommandStdoutFromStreams,
-} from "./sandbox-exec-output";
 import { probeGatewayRunning, selectSandboxGatewayIfRegistered } from "./sandbox-gateway-routing";
 import {
   runSnapshotRestoreMutationAfterSourceRecheck,
@@ -465,7 +463,7 @@ function shouldCheckDcodeActivity(sandboxName: string): boolean {
   return !entry || entry.agent === DCODE_AGENT_NAME;
 }
 
-function isSnapshotCreationAllowedByDcodeActivity(sandboxName: string): boolean {
+async function isSnapshotCreationAllowedByDcodeActivity(sandboxName: string): Promise<boolean> {
   // Invalid state: backing up .deepagents while dcode is actively mutating it can
   // produce a snapshot that later restores inconsistent agent state. The source
   // boundary available today is the live sandbox process table plus runtime
@@ -475,31 +473,21 @@ function isSnapshotCreationAllowedByDcodeActivity(sandboxName: string): boolean 
   // timeouts, and any detected-but-unverifiable runtime. Remove this workaround
   // when dcode exposes a wrapper-owned idle/active lock or equivalent snapshot
   // quiescence signal and the backup path checks that source directly.
-  const execMarker = createSandboxExecMarker();
-  const probe = captureOpenshell(
-    [
-      "sandbox",
-      "exec",
-      "--name",
-      sandboxName,
-      "--",
-      "sh",
-      "-c",
-      buildSandboxExecMarkedCommand(DCODE_BUSY_PROBE_SCRIPT, execMarker),
-    ],
-    {
-      ignoreError: true,
-      includeStreams: true,
-      timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-    },
-  );
-  const probeCompleted = probe.status === 0 && !probe.error && !probe.signal;
-  const commandStdout = probeCompleted
-    ? extractSandboxExecCommandStdoutFromStreams(
-        { stdout: probe.stdout, stderr: probe.stderr },
-        execMarker,
-      )
-    : null;
+  let probe;
+  try {
+    probe = await execSandboxReadOnlyWithGrpcFallback(
+      resolveSandboxGatewayName(registry.getSandbox(sandboxName)),
+      {
+        sandboxName,
+        command: ["sh", "-c", DCODE_BUSY_PROBE_SCRIPT],
+        timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
+      },
+    );
+  } catch {
+    probe = null;
+  }
+  const commandStdout =
+    probe && probe.status === 0 && !probe.error && !probe.signal ? probe.stdout.trim() : null;
   const probeState = commandStdout === null ? null : parseDcodeProbeState(commandStdout);
   if (
     probeState === DCODE_PROBE_STATE.idleDcodeRuntime ||
@@ -546,7 +534,7 @@ async function runSnapshotCreate(
       }
       if (
         shouldCheckDcodeActivity(sandboxName) &&
-        !isSnapshotCreationAllowedByDcodeActivity(sandboxName)
+        !(await isSnapshotCreationAllowedByDcodeActivity(sandboxName))
       ) {
         snapshotExit(1);
       }

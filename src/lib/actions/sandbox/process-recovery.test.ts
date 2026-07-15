@@ -3,9 +3,20 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const readOnlyExecMock = vi.hoisted(() => vi.fn());
+
+vi.mock("../../adapters/openshell/sandbox-control-routing", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../adapters/openshell/sandbox-control-routing")>()),
+  execSandboxReadOnlyWithGrpcFallback: readOnlyExecMock,
+}));
+
+import * as agentRuntime from "../../agent/runtime";
+import * as registry from "../../state/registry";
+
 // Import source directly so this test cannot pass against a stale build.
 import {
   confirmRecoveredSandboxGatewayManaged,
+  isSandboxGatewayRunningForStatus,
   waitForRecoveredSandboxGateway,
   waitForRecreatedSandboxOpenShellReady,
 } from "./process-recovery";
@@ -13,6 +24,26 @@ import {
 const OPENSHELL_SANDBOX_NOT_READY_STDERR = `Error:   × code: 'The system is not in a state required for the operation's
   │ execution', message: "sandbox is not ready"
 `;
+
+describe("read-only sandbox gateway status probe", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    readOnlyExecMock.mockReset();
+  });
+
+  it("routes through direct gRPC on the sandbox's registered gateway", async () => {
+    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null);
+    vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha", gatewayPort: 9090 });
+    readOnlyExecMock.mockResolvedValue({ status: 0, stdout: "RUNNING\n", stderr: "" });
+
+    await expect(isSandboxGatewayRunningForStatus("alpha")).resolves.toBe(true);
+    expect(readOnlyExecMock).toHaveBeenCalledWith("nemoclaw-9090", {
+      sandboxName: "alpha",
+      command: ["sh", "-c", expect.stringContaining("HTTP_CODE=")],
+      timeoutMs: 15_000,
+    });
+  });
+});
 
 describe("recreated sandbox OpenShell readiness", () => {
   it("retries only the structured not-ready state until OpenShell accepts the sandbox", () => {
