@@ -1,0 +1,18 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.67
+
+NemoClaw v0.0.67 improves onboarding recovery, messaging reliability, OpenClaw agent workflows, and AI-agent documentation routing:
+
+- Onboarding and OpenClaw agent operations recover more reliably after interrupted or scripted runs.
+  NemoClaw keeps repair backstops active when `onboard --resume` continues from later nonterminal onboarding phases, and `agents apply` removes orphan OpenClaw agents without forwarding a delete flag that the OpenClaw CLI rejects.
+  For more information, refer to [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Discord messaging now uses the managed proxy path that OpenClaw accepts.
+  NemoClaw no longer writes a non-loopback per-account Discord proxy, while Telegram keeps its per-account proxy behavior, and WhatsApp policy E2E checks avoid brittle shell-pipeline failures on large policy output.
+  For more information, refer to [Choose Messaging Channels](/user-guide/openclaw/manage-sandboxes/messaging-channels/choose-messaging-channels).
+- AI-agent documentation now uses one compact routing skill instead of generated page-copy skills.
+  The `nemoclaw-user-guide` skill points agents to the docs MCP server, `llms.txt`, and canonical Markdown routes so the docs site remains the source of truth.
+  For more information, refer to [Use NemoClaw Docs with Your Coding Agents](/user-guide/openclaw/resources/agent-skills).

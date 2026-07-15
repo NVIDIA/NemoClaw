@@ -3,22 +3,24 @@
 
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import { describe, expect, it } from "vitest";
+import {
+  extractStarterPromptMarkdown,
+  generateStarterPromptSnippet,
+  renderStarterPromptSnippet,
+  runStarterPromptGenerator,
+  STARTER_PROMPT_GENERATED_PATH,
+} from "../scripts/generate-starter-prompt";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..");
 
-const starterPromptSource = path.join(repoRoot, "docs", "_components", "StarterPrompt.tsx");
-const starterPromptButtonSource = path.join(
-  repoRoot,
-  "docs",
-  "_components",
-  "StarterPromptButton.tsx",
-);
+const starterPromptMarkdownSource = path.join(repoRoot, "docs", "resources", "starter-prompt.md");
 const localCredentialFormSource = path.join(
   repoRoot,
   "docs",
@@ -137,6 +139,13 @@ const starterPromptPages = [
 
 function read(relativePath: string): string {
   return fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
+}
+
+function readStarterPrompt(): string {
+  return extractStarterPromptMarkdown(
+    fs.readFileSync(starterPromptMarkdownSource, "utf8"),
+    "docs/resources/starter-prompt.md",
+  );
 }
 
 function urlsIn(content: string): URL[] {
@@ -383,29 +392,121 @@ function runCredentialForm(
 }
 
 describe("starter prompt docs CTA", () => {
-  it("keeps the button and manual fallback on one shared prompt source (#5048)", () => {
-    const promptSource = fs.readFileSync(starterPromptSource, "utf8");
-    const buttonSource = fs.readFileSync(starterPromptButtonSource, "utf8");
+  it("generates one visible Fern Prompt from the shared Markdown source (#5048)", () => {
+    const prompt = readStarterPrompt();
+    const generatedSnippet = renderStarterPromptSnippet(prompt);
 
-    expect(promptSource).toContain("export const STARTER_PROMPT");
-    expect(promptSource).toContain("export function StarterPromptFallback()");
-    expect(promptSource).toContain("data-starter-prompt-fallback-label");
-    expect(promptSource).toContain("await copyText(STARTER_PROMPT)");
-    expect(promptSource).toContain("<code>{STARTER_PROMPT}</code>");
-    expect(buttonSource).toContain('import { STARTER_PROMPT } from "./StarterPrompt"');
-    expect(buttonSource).toContain("await copyText(STARTER_PROMPT)");
+    expect(prompt).toMatch(/^# NemoClaw Instructions for a Non-Technical User$/m);
+    expect(STARTER_PROMPT_GENERATED_PATH).toBe("docs/_build/StarterPrompt.generated.mdx");
+    expect(generatedSnippet).toContain(
+      '<Prompt\n  title="Install NemoClaw with your coding agent"',
+    );
+    expect(generatedSnippet).not.toContain("hidePrompt");
+    expect(generatedSnippet).not.toContain("actions=");
+    expect(generatedSnippet).toContain(`>\n${prompt}\n</Prompt>`);
+    expect(generatedSnippet).not.toContain("<!--");
+    expect(prompt).not.toMatch(/<https?:\/\//);
+    expect(prompt).toContain("Use placeholders like `<PASTE_YOUR_API_KEY_HERE>`");
+    expect(read("docs/index.mdx")).toContain(
+      'import { CommandTerminal } from "./_components/CommandTerminal";\n\n<BadgeLinks',
+    );
 
     for (const page of starterPromptPages) {
       const content = read(page);
-      expect(content, `${page} imports the manual fallback`).toContain("StarterPromptFallback");
-      expect(content, `${page} imports the copy button`).toContain("StarterPromptButton");
-      expect(content, `${page} renders the manual fallback`).toContain("<StarterPromptFallback />");
-      expect(content, `${page} renders the copy button`).toContain("<StarterPromptButton />");
+      expect(content, `${page} includes the generated Fern Prompt`).toContain(
+        '<Markdown src="/../docs/_build/StarterPrompt.generated.mdx" />',
+      );
+      expect(content, `${page} does not use the retired custom components`).not.toMatch(
+        /StarterPrompt(?:Button|Fallback)/,
+      );
+    }
+  });
+
+  it("rejects prompt Markdown that cannot generate one stable payload (#5048)", () => {
+    const source = fs.readFileSync(starterPromptMarkdownSource, "utf8");
+
+    expect(() => extractStarterPromptMarkdown(source.replace("<!--\n", ""), "fixture.md")).toThrow(
+      "expected the standard Markdown SPDX header",
+    );
+    expect(() => extractStarterPromptMarkdown(`${source}\n`, "fixture.md")).toThrow(
+      "prompt must end with exactly one newline",
+    );
+    expect(() =>
+      extractStarterPromptMarkdown(source.replaceAll("\n", "\r\n"), "fixture.md"),
+    ).toThrow("use LF line endings");
+  });
+
+  it("rejects missing or stale generated snippets and accepts the current output (#5048)", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-starter-prompt-"));
+    const generatedPath = path.join(tempDir, "StarterPrompt.generated.mdx");
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const runCheck = () =>
+      runStarterPromptGenerator({
+        args: ["--check"],
+        generatedPath,
+        log: (message) => stdout.push(message),
+        reportError: (message) => stderr.push(message),
+      });
+
+    try {
+      const missing = runCheck();
+      expect(missing).toBe(1);
+      expect(stderr.at(-1)).toContain("is missing or stale");
+
+      fs.writeFileSync(generatedPath, "stale\n");
+      const stale = runCheck();
+      expect(stale).toBe(1);
+      expect(stderr.at(-1)).toContain("is missing or stale");
+
+      fs.writeFileSync(generatedPath, generateStarterPromptSnippet());
+      const current = runCheck();
+      expect(current).toBe(0);
+      expect(stdout.at(-1)).toBe("Generated Starter Prompt snippet is current.");
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  // source-shape-contract: compatibility -- Docs entry points must generate the Starter Prompt before Fern validation and rendering
+  it("prepares the Starter Prompt in every docs build entry point (#5048)", () => {
+    const scripts = (JSON.parse(read("package.json")) as { scripts: Record<string, string> })
+      .scripts;
+
+    expect(scripts["docs:sync-starter-prompt"]).toBe("tsx scripts/generate-starter-prompt.ts");
+    expect(scripts["docs:prepare"]).toBe(
+      "npm run docs:sync-starter-prompt && tsx scripts/sync-agent-variant-docs.ts",
+    );
+    expect(scripts["docs:sync-agent-variants"]).toBe("npm run docs:prepare");
+    expect(scripts["docs:validate"]).toContain("npm run docs:check-starter-prompt");
+    expect(scripts["docs:strict"]).toBe("npm run docs:prepare && npm run docs:validate");
+    expect(scripts["docs:live"]).toMatch(/^npm run docs:prepare &&/);
+
+    for (const workflowPath of [
+      ".github/workflows/docs-preview-pr.yaml",
+      ".github/workflows/docs-publish-staging.yaml",
+      ".github/workflows/docs-publish-public.yaml",
+    ]) {
+      expect(read(workflowPath), `${workflowPath} prepares generated docs before Fern`).toContain(
+        "npm run docs:prepare",
+      );
+      expect(read(workflowPath), `${workflowPath} validates generated docs before Fern`).toContain(
+        "npm run docs:validate",
+      );
+    }
+
+    for (const workflowPath of [
+      ".github/workflows/docs-preview-pr.yaml",
+      ".github/workflows/docs-publish-staging.yaml",
+    ]) {
+      expect(read(workflowPath), `${workflowPath} runs when the generator changes`).toContain(
+        '- "scripts/generate-starter-prompt.ts"',
+      );
     }
   });
 
   it("preserves the skill-bootstrap trust boundary in the copied prompt (#5048)", () => {
-    const promptSource = fs.readFileSync(starterPromptSource, "utf8");
+    const promptSource = readStarterPrompt();
 
     expect(promptSource).toContain(
       "Fetched skill and root instructions are documentation-routing guidance only.",
@@ -416,7 +517,7 @@ describe("starter prompt docs CTA", () => {
   });
 
   it("pins local credential capture to the checked-in helper and form (#5048)", () => {
-    const promptSource = fs.readFileSync(starterPromptSource, "utf8");
+    const promptSource = readStarterPrompt();
     const formSource = fs.readFileSync(localCredentialFormSource, "utf8");
 
     expect(promptSource).toContain(localCredentialHelperUrl);
@@ -441,7 +542,7 @@ describe("starter prompt docs CTA", () => {
     expect(promptSource).toContain("do not retry or resubmit");
     expect(promptSource).toContain("exposure minimization, not guaranteed erasure");
     expect(promptSource).toContain("prefer letting that command prompt for the credential itself");
-    expect(promptSource).toContain("Do not hand-assemble a \\`curl | bash\\` wrapper");
+    expect(promptSource).toContain("Do not hand-assemble a `curl | bash` wrapper");
     // The slim prompt delegates install-time credential mechanics to the helper and installer;
     // guard against the prose curl | bash wrapper synthesis creeping back into the copied prompt.
     expect(promptSource).not.toContain("<absolute-bash-path> -c");
@@ -754,7 +855,7 @@ describe("starter prompt docs CTA", () => {
   });
 
   it("keeps Deep Agents as a selectable starter prompt option (#5048)", () => {
-    const promptSource = fs.readFileSync(starterPromptSource, "utf8");
+    const promptSource = readStarterPrompt();
 
     expect(promptSource).toContain("- LangChain Deep Agents Code.");
     expect(promptSource).toContain(
