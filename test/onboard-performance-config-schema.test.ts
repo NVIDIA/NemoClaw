@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -61,6 +62,7 @@ interface Calibration {
     validatedAt: string;
     imageChangeSha: string;
     imageInputsVerifiedThroughSha: string;
+    imageInputPaths: string[];
     adjustedMetrics: string[];
     derivation: {
       statistic: string;
@@ -232,6 +234,72 @@ function effectiveBudgets(input: Calibration): ColdPathBudget {
   };
 }
 
+function gitIsAncestor(ancestor: string, descendant: string): boolean {
+  const result = spawnSync("git", ["merge-base", "--is-ancestor", ancestor, descendant], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+  });
+  switch (result.status) {
+    case 0:
+      return true;
+    case 1:
+      return false;
+    default:
+      throw new Error(
+        `git merge-base could not verify calibration ancestry; ensure the checkout has full history (status ${String(result.status)}): ${result.error?.message ?? result.stderr.trim()}`,
+      );
+  }
+}
+
+function gitRevision(revision: string): string {
+  return execFileSync("git", ["rev-parse", "--verify", revision], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+  }).trim();
+}
+
+function changedImageInputs(
+  fromSha: string,
+  throughSha: string,
+  imageInputPaths: string[],
+): string[] {
+  const output = execFileSync(
+    "git",
+    ["diff", "--name-only", fromSha, throughSha, "--", ...imageInputPaths],
+    { cwd: REPO_ROOT, encoding: "utf8" },
+  ).trim();
+  return output === "" ? [] : output.split(/\r?\n/u);
+}
+
+function validationProvenanceViolations(
+  validation: NonNullable<Calibration["validationAdjustment"]>,
+) {
+  const runHeadsWithChangedImageInputs = validation.runs
+    .map((run) => ({
+      headSha: run.headSha,
+      changedPaths: changedImageInputs(
+        validation.imageChangeSha,
+        run.headSha,
+        validation.imageInputPaths,
+      ),
+    }))
+    .filter((run) => run.changedPaths.length > 0);
+  return {
+    nonDescendantRunHeads: validation.runs
+      .map((run) => run.headSha)
+      .filter((headSha) => !gitIsAncestor(validation.imageChangeSha, headSha)),
+    runHeadsBeyondVerifiedInputs: validation.runs
+      .map((run) => run.headSha)
+      .filter((headSha) => !gitIsAncestor(headSha, validation.imageInputsVerifiedThroughSha)),
+    runHeadsWithChangedImageInputs,
+    changedImageInputsThroughBoundary: changedImageInputs(
+      validation.imageChangeSha,
+      validation.imageInputsVerifiedThroughSha,
+      validation.imageInputPaths,
+    ),
+  };
+}
+
 describe("full-E2E cold-path calibration", () => {
   // source-shape-contract: compatibility -- Exact-head provenance is durable evidence for the hosted-run budget calibration
   it("records five independent successful samples for current main", () => {
@@ -281,6 +349,39 @@ describe("full-E2E cold-path calibration", () => {
     expect(validation.validatedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/u);
     expect(validation.imageChangeSha).toMatch(/^[0-9a-f]{40}$/u);
     expect(validation.imageInputsVerifiedThroughSha).toMatch(/^[0-9a-f]{40}$/u);
+    expect(validation.imageInputPaths.length).toBeGreaterThan(0);
+    expect(validationProvenanceViolations(validation)).toEqual({
+      nonDescendantRunHeads: [],
+      runHeadsBeyondVerifiedInputs: [],
+      runHeadsWithChangedImageInputs: [],
+      changedImageInputsThroughBoundary: [],
+    });
+    expect(
+      validationProvenanceViolations({
+        ...validation,
+        runs: [{ ...validation.runs[0], headSha: calibration.baselineMainSha }],
+      }).nonDescendantRunHeads,
+    ).toEqual([calibration.baselineMainSha]);
+    const currentHeadSha = gitRevision("HEAD");
+    expect(
+      validationProvenanceViolations({
+        ...validation,
+        runs: [{ ...validation.runs[0], headSha: currentHeadSha }],
+      }).runHeadsBeyondVerifiedInputs,
+    ).toEqual([currentHeadSha]);
+    const staleImageReference = validationProvenanceViolations({
+      ...validation,
+      imageChangeSha: calibration.baselineMainSha,
+    });
+    expect(staleImageReference.runHeadsWithChangedImageInputs.map((run) => run.headSha)).toEqual(
+      validation.runs.map((run) => run.headSha),
+    );
+    expect(
+      staleImageReference.runHeadsWithChangedImageInputs.flatMap((run) => run.changedPaths),
+    ).toContain("agents/openclaw/wechat-runtime/package.json");
+    expect(staleImageReference.changedImageInputsThroughBoundary).toContain(
+      "agents/openclaw/wechat-runtime/package.json",
+    );
     expect(validation.adjustedMetrics).toEqual([
       "rootStartToFirstTurnCompletion",
       "nemoclaw.onboard.phase.sandbox",
