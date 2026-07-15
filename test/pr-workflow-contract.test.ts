@@ -133,8 +133,10 @@ function requiredWorkflowStepIndex(job: WorkflowJob, stepName: string): number {
 function runWorkflowShellStep(
   step: WorkflowStep,
   env: Record<string, string>,
+  cwd = process.cwd(),
 ): { status: number | null; stdout: string; stderr: string } {
   const result = spawnSync("bash", ["-c", step.run ?? ""], {
+    cwd,
     encoding: "utf8",
     env: { ...process.env, ...step.env, ...env },
     timeout: 5_000,
@@ -1016,6 +1018,82 @@ describe("pull request and main workflow contracts", () => {
       expect(existsSync(marker)).toBe(false);
     } finally {
       rmSync(temp, { force: true, recursive: true });
+    }
+  });
+
+  it("keeps trusted coverage actions compatible across the .ts to .mts migration (#6935)", () => {
+    const cases = [
+      {
+        action: sharedActions.cliCoverageShard,
+        step: "Build CLI for coverage shard",
+        stem: "scripts/check-dist-sourcemaps",
+      },
+      {
+        action: sharedActions.cliCoverageMerge,
+        step: "Verify compiled CLI artifact",
+        stem: "scripts/check-dist-sourcemaps",
+      },
+      {
+        action: sharedActions.cliCoverageMerge,
+        step: "Merge CLI coverage",
+        stem: "scripts/check-coverage-ratchet",
+      },
+      {
+        action: sharedActions.pluginCoverage,
+        step: "Run plugin coverage",
+        stem: "scripts/check-coverage-ratchet",
+      },
+    ] as const;
+    const variants = ["mts", "ts", "missing"] as const;
+
+    for (const testCase of cases) {
+      for (const variant of variants) {
+        const temp = mkdtempSync(join(tmpdir(), "nemoclaw-coverage-entrypoint-"));
+        const fakeBin = join(temp, "bin");
+        mkdirSync(fakeBin);
+        mkdirSync(join(temp, "dist"));
+        mkdirSync(join(temp, "scripts"));
+        writeFileSync(join(temp, "dist", ["nemoclaw", "js"].join(".")), "built\n");
+        for (const command of ["node", "npm"]) {
+          writeFileSync(join(fakeBin, command), "#!/usr/bin/env bash\nexit 0\n", {
+            mode: 0o755,
+          });
+        }
+        writeFileSync(
+          join(fakeBin, "npx"),
+          [
+            "#!/usr/bin/env bash",
+            "set -euo pipefail",
+            'if [ "${1:-}" = "tsx" ] && [[ "${2:-}" == scripts/check-* ]]; then',
+            '  test "${2}" = "${EXPECTED_ENTRYPOINT}"',
+            '  test -f "${2}"',
+            "fi",
+          ].join("\n"),
+          { mode: 0o755 },
+        );
+        if (variant !== "missing") {
+          writeFileSync(join(temp, `${testCase.stem}.${variant}`), "// fixture\n");
+        }
+
+        try {
+          const result = runWorkflowShellStep(
+            requiredStep(testCase.action, testCase.step),
+            {
+              EXPECTED_ENTRYPOINT: `${testCase.stem}.${variant === "missing" ? "ts" : variant}`,
+              PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+            },
+            temp,
+          );
+
+          if (variant === "missing") {
+            expect(result.status).not.toBe(0);
+          } else {
+            expect(result.status, result.stderr).toBe(0);
+          }
+        } finally {
+          rmSync(temp, { force: true, recursive: true });
+        }
+      }
     }
   });
 
