@@ -6,7 +6,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { findLayerImportBoundaryViolations } from "../scripts/checks/layer-import-boundaries";
+import { findLayerImportBoundaryViolations } from "../scripts/checks/layer-import-boundaries.mts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 let fixtureCounter = 0;

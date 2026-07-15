@@ -6,7 +6,7 @@ import {
   isMockParityRelevantSourceChange,
   type MockParityManifest,
   validateMockParity,
-} from "../scripts/checks/e2e-mock-parity";
+} from "../scripts/checks/e2e-mock-parity.mts";
 
 const live = "test/e2e/live/example.test.ts";
 const fast = "test/e2e/support/example.test.ts";

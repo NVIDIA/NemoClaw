@@ -5,7 +5,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { NEMOCLAW_HERMES_LIGHT_SKIN_REVIEWED_HERMES_VERSIONS } from "../../src/lib/domain/sandbox/connect-env";
+const { NEMOCLAW_HERMES_LIGHT_SKIN_REVIEWED_HERMES_VERSIONS } = await import(
+  "../../src/lib/domain/sandbox/connect-env"
+);
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const HERMES_DOCKERFILE_BASE = "agents/hermes/Dockerfile.base";

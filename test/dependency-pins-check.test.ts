@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { verifyDependencyPins } from "../scripts/checks/dependency-pins";
+import { verifyDependencyPins } from "../scripts/checks/dependency-pins.mts";
 
 const OPENSHELL_MIN = "1.2.3";
 const OPENSHELL_MAX = "1.2.4";

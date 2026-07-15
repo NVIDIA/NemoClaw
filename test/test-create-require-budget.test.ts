@@ -12,7 +12,7 @@ import {
   collectTestSupportCreateRequireSources,
   containsCreateRequireIdentifier,
   createRequireBudgetFailure,
-} from "../scripts/checks/test-create-require-budget";
+} from "../scripts/checks/test-create-require-budget.mts";
 
 const tempDirs = new Set<string>();
 

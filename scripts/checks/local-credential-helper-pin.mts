@@ -17,10 +17,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import ts from "typescript";
-import {
-  extractStarterPromptMarkdown,
-  STARTER_PROMPT_SOURCE_PATH,
-} from "../generate-starter-prompt";
+
+const { extractStarterPromptMarkdown, STARTER_PROMPT_SOURCE_PATH } = await import(
+  "../generate-starter-prompt"
+);
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const HELPER_PATH = "scripts/local-credential-helper.mts";

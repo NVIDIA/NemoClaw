@@ -339,7 +339,7 @@ jobs:
       # covered without executing a mutable replacement action.
       - name: Validate changed live E2E mock parity (bootstrap)
         if: ${{ steps.trusted-shard-capabilities.outputs.e2e-support != 'true' && matrix.shard == 1 }}
-        run: npx tsx scripts/checks/e2e-mock-parity.ts --base HEAD^1 --head HEAD^2
+        run: npx tsx scripts/checks/e2e-mock-parity.mts --base HEAD^1 --head HEAD^2
 
       - name: Run E2E support shard (bootstrap)
         if: ${{ steps.trusted-shard-capabilities.outputs.e2e-support != 'true' }}

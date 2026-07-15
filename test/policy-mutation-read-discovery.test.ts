@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
   auditOpenShellPolicyMutationReads,
   discoverPolicyReadSites,
-} from "../scripts/checks/openshell-policy-mutation-read";
+} from "../scripts/checks/openshell-policy-mutation-read.mts";
 
 describe("OpenShell policy mutation read discovery", () => {
   it("discovers builder and direct policy reads in new production files", () => {

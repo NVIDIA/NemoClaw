@@ -12,7 +12,7 @@ import {
   findFastProjectTransitiveViolations,
   isFastProjectTestPath,
   isScannedTestPath,
-} from "../scripts/checks/no-test-dist-imports";
+} from "../scripts/checks/no-test-dist-imports.mts";
 import {
   discoverVitestCandidates,
   EXPECTED_VITEST_PROJECTS,
@@ -22,7 +22,7 @@ import {
   parseProjectListing,
   parseProjectRoster,
   resolveVitestInvocation,
-} from "../scripts/checks/vitest-project-overlap";
+} from "../scripts/checks/vitest-project-overlap.mts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const SOURCE_RUNTIME = path.join(REPO_ROOT, "test", "helpers", "onboard-script-mocks.cjs");

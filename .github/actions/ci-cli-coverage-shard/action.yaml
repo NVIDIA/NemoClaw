@@ -91,7 +91,7 @@ runs:
             exit 0
             ;;
         esac
-        npx tsx scripts/checks/e2e-mock-parity.ts --base "$base" --head "$head"
+        npx tsx scripts/checks/e2e-mock-parity.mts --base "$base" --head "$head"
 
     - name: Build TypeScript plugin
       shell: bash

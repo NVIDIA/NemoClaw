@@ -3,7 +3,10 @@
 
 import { describe, expect, it } from "vitest";
 
-import { findLiveUnitBlocks, formatViolations } from "../scripts/checks/no-unit-blocks-in-live-e2e";
+import {
+  findLiveUnitBlocks,
+  formatViolations,
+} from "../scripts/checks/no-unit-blocks-in-live-e2e.mts";
 
 const FILE = "test/e2e/live/example.test.ts";
 

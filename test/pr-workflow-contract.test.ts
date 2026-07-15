@@ -923,7 +923,7 @@ describe("pull request and main workflow contracts", () => {
     expect(parityStep.run).toContain("head=HEAD^2");
     expect(parityStep.run).toContain('base="$PUSH_BASE_SHA"');
     expect(parityStep.run).toContain(
-      'npx tsx scripts/checks/e2e-mock-parity.ts --base "$base" --head "$head"',
+      'npx tsx scripts/checks/e2e-mock-parity.mts --base "$base" --head "$head"',
     );
 
     const trustedCapabilityProbe = requiredWorkflowStep(

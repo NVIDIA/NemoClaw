@@ -32,7 +32,7 @@ export const CHECKS: readonly CheckCommand[] = [
     name: "direct-credential-env",
     command: TSX,
     args: [
-      "scripts/checks/direct-credential-env.ts",
+      "scripts/checks/direct-credential-env.mts",
       "src/lib/onboard.ts",
       "src/lib/onboard/provider-key-bridge.ts",
       "src/lib/onboard/providers.ts",
@@ -41,57 +41,57 @@ export const CHECKS: readonly CheckCommand[] = [
   {
     name: "local-credential-helper-pin",
     command: TSX,
-    args: ["scripts/checks/local-credential-helper-pin.ts"],
+    args: ["scripts/checks/local-credential-helper-pin.mts"],
   },
   {
     name: "hermes-light-skin-boundary",
     command: TSX,
-    args: ["scripts/checks/hermes-light-skin-boundary.ts"],
+    args: ["scripts/checks/hermes-light-skin-boundary.mts"],
   },
   {
     name: "dependency-pins",
     command: TSX,
-    args: ["scripts/checks/dependency-pins.ts"],
+    args: ["scripts/checks/dependency-pins.mts"],
   },
   {
     name: "no-coverage-ignore",
     command: TSX,
-    args: ["scripts/checks/no-coverage-ignore.ts"],
+    args: ["scripts/checks/no-coverage-ignore.mts"],
   },
   {
     name: "openshell-policy-mutation-read",
     command: TSX,
-    args: ["scripts/checks/openshell-policy-mutation-read.ts"],
+    args: ["scripts/checks/openshell-policy-mutation-read.mts"],
   },
   {
     name: "layer-import-boundaries",
     command: TSX,
-    args: ["scripts/checks/layer-import-boundaries.ts"],
+    args: ["scripts/checks/layer-import-boundaries.mts"],
   },
   {
     name: "no-test-dist-imports",
     command: TSX,
-    args: ["scripts/checks/no-test-dist-imports.ts"],
+    args: ["scripts/checks/no-test-dist-imports.mts"],
   },
   {
     name: "test-create-require-budget",
     command: TSX,
-    args: ["scripts/checks/test-create-require-budget.ts"],
+    args: ["scripts/checks/test-create-require-budget.mts"],
   },
   {
     name: "vitest-project-overlap",
     command: TSX,
-    args: ["scripts/checks/vitest-project-overlap.ts"],
+    args: ["scripts/checks/vitest-project-overlap.mts"],
   },
   {
     name: "test-title-style",
     command: TSX,
-    args: ["scripts/checks/test-title-style.ts"],
+    args: ["scripts/checks/test-title-style.mts"],
   },
   {
     name: "no-unit-blocks-in-live-e2e",
     command: TSX,
-    args: ["scripts/checks/no-unit-blocks-in-live-e2e.ts"],
+    args: ["scripts/checks/no-unit-blocks-in-live-e2e.mts"],
   },
 ];
 
