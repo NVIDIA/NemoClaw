@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import fs from "node:fs/promises";
+import fs from "node:fs";
+import fsPromises from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, it } from "vitest";
+import { describe, it, vi } from "vitest";
 
 import { withGatewayRouteMutationLock } from "../inference/gateway-route-mutation-lock";
 import {
@@ -287,6 +288,54 @@ describe("findAvailableDashboardPort multi-gateway registry occupancy", () => {
 });
 
 describe("getRegistryOccupiedDashboardPorts", () => {
+  it("aggregates a sibling gateway registry when host bind probes report the port free", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dashboard-host-index-"));
+    try {
+      vi.stubEnv("HOME", home);
+      const defaultRoot = path.join(home, ".nemoclaw");
+      const siblingRoot = path.join(defaultRoot, "gateways", "9123");
+      fs.mkdirSync(siblingRoot, { recursive: true });
+      fs.writeFileSync(
+        path.join(defaultRoot, "sandboxes.json"),
+        JSON.stringify({
+          defaultSandbox: "instance-b",
+          sandboxes: {
+            "instance-b": {
+              name: "instance-b",
+              gatewayName: "nemoclaw",
+              gatewayPort: 8080,
+              dashboardPort: 18790,
+            },
+          },
+        }),
+      );
+      fs.writeFileSync(
+        path.join(siblingRoot, "sandboxes.json"),
+        JSON.stringify({
+          defaultSandbox: "instance-a",
+          sandboxes: {
+            "instance-a": {
+              name: "instance-a",
+              gatewayName: "nemoclaw-9123",
+              gatewayPort: 9123,
+              dashboardPort: 18789,
+            },
+          },
+        }),
+      );
+
+      const occupied = getRegistryOccupiedDashboardPorts("instance-b");
+      assert.equal(occupied.get("18789"), "instance-a (gateway 9123)");
+      assert.equal(
+        findAvailableDashboardPort("instance-b", 18789, "", () => false, occupied),
+        18790,
+      );
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("returns a port→sandbox map for every sibling sandbox with a persisted dashboard port", () => {
     const occupied = getRegistryOccupiedDashboardPorts("current", () => ({
       sandboxes: [
@@ -329,7 +378,9 @@ describe("getRegistryOccupiedDashboardPorts", () => {
 
 describe("dashboard port reservation lock", () => {
   it("serializes onboard and restore ownership across different gateways", async () => {
-    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-dashboard-port-lock-"));
+    const stateDir = await fsPromises.mkdtemp(
+      path.join(os.tmpdir(), "nemoclaw-dashboard-port-lock-"),
+    );
     let releaseOnboard!: () => void;
     const onboardReleased = new Promise<void>((resolve) => {
       releaseOnboard = resolve;
@@ -380,12 +431,14 @@ describe("dashboard port reservation lock", () => {
       ]);
     } finally {
       releaseOnboard();
-      await fs.rm(stateDir, { recursive: true, force: true });
+      await fsPromises.rm(stateDir, { recursive: true, force: true });
     }
   });
 
   it("releases a failed reservation so the next allocator can proceed", async () => {
-    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-dashboard-port-lock-"));
+    const stateDir = await fsPromises.mkdtemp(
+      path.join(os.tmpdir(), "nemoclaw-dashboard-port-lock-"),
+    );
     const options = { stateDir, pollIntervalMs: 1, timeoutMs: 5_000 };
     try {
       await assert.rejects(
@@ -399,7 +452,7 @@ describe("dashboard port reservation lock", () => {
         "restore acquired",
       );
     } finally {
-      await fs.rm(stateDir, { recursive: true, force: true });
+      await fsPromises.rm(stateDir, { recursive: true, force: true });
     }
   });
 });
