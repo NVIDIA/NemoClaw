@@ -13,7 +13,7 @@
 | **How to run** | **[README-gpu.md](README-gpu.md)** | **[README-cpu.md](README-cpu.md)** |
 | **Chart** | [helm/nemoclaw-gpu/](helm/nemoclaw-gpu/) | [helm/nemoclaw-cpu/](helm/nemoclaw-cpu/) |
 | **Namespace** | `nemoclaw-gpu` | `nemoclaw` |
-| **Port** | 8081 | 8080 |
+| **Port** | 8081 | 8080 | 9000
 | **Default model** | **Llama 3.2 3B** — `llama3.2:3b` | **Nemotron Ultra 253B** — `nvidia/nvidia/llama-3.1-nemotron-ultra-253b-v1` |
 | **Inference backend** | Local **Ollama** on pod GPU (`127.0.0.1:11434`) | Remote **NVIDIA Inference Hub** (`inference-api.nvidia.com`) |
 | **Where weights run** | In cluster (1× GPU per pod) | In NVIDIA cloud (no cluster GPU) |
