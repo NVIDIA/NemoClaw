@@ -588,15 +588,20 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    # Three destructive agent scenarios each have a 45-minute Vitest budget,
-    # plus pinned OpenShell installation and cold image setup.
-    timeout-minutes: 180
+    # Keep each destructive agent lifecycle on a fresh runner. This bounds the
+    # blast radius of runner loss and gives every adapter independent evidence.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [openclaw, hermes, deepagents]
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "mcp-bridge"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/mcp-bridge
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/mcp-bridge/${{ matrix.agent }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_MCP_BRIDGE_AGENT_MATRIX: "1"
+      NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
+      NEMOCLAW_MCP_BRIDGE_AGENT: ${{ matrix.agent }}
       NEMOCLAW_OPENSHELL_CHANNEL: stable
       NEMOCLAW_RUN_LIVE_E2E: "1"
     steps:
@@ -666,14 +671,14 @@ jobs:
         if: always()
         run: >-
           npx tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts
-          e2e-artifacts/live/mcp-bridge
+          e2e-artifacts/live/mcp-bridge/${{ matrix.agent }}
 
       - name: Upload MCP server artifacts
         if: ${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
-          name: e2e-mcp-bridge
-          path: e2e-artifacts/live/mcp-bridge/
+          name: e2e-mcp-bridge-${{ matrix.agent }}
+          path: e2e-artifacts/live/mcp-bridge/${{ matrix.agent }}/
 
       - name: Clean up Docker auth
         if: always()
@@ -688,14 +693,19 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    timeout-minutes: 180
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [openclaw, hermes, deepagents]
     env:
       E2E_JOB: "1"
       E2E_DEFAULT_ENABLED: "0"
       E2E_TARGET_ID: "mcp-bridge-dev"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/mcp-bridge-dev
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_MCP_BRIDGE_AGENT_MATRIX: "1"
+      NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
+      NEMOCLAW_MCP_BRIDGE_AGENT: ${{ matrix.agent }}
       NEMOCLAW_OPENSHELL_CHANNEL: dev
       NEMOCLAW_RUN_LIVE_E2E: "1"
     steps:
@@ -777,14 +787,14 @@ jobs:
         if: always()
         run: >-
           npx tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts
-          e2e-artifacts/live/mcp-bridge-dev
+          e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}
 
       - name: Upload MCP server artifacts
         if: ${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
-          name: e2e-mcp-bridge-dev
-          path: e2e-artifacts/live/mcp-bridge-dev/
+          name: e2e-mcp-bridge-dev-${{ matrix.agent }}
+          path: e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}/
 
       - name: Clean up Docker auth
         if: always()
