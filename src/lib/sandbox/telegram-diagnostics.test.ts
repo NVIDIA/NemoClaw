@@ -260,4 +260,22 @@ describe("evaluateTelegramDiagnostics over real gateway-log windows (#6743)", ()
       "token_rejected",
     );
   });
+
+  it("clears a stale HTTP 5xx error once a later provider-ready follows (#6887)", () => {
+    const bc = parseTelegramBreadcrumbs([
+      "[telegram] [default] Bot API startup probe returned HTTP 502",
+      "[telegram] [default] provider ready (Bot API reachable; agent replies use inference.local)",
+      "[telegram] [default] inbound update received (update_id=present; message_id=present)",
+    ]);
+    expect(bc).toMatchObject({
+      startupHttpError: null,
+      providerReady: true,
+      inboundReceived: true,
+    });
+    const report = evaluateTelegramDiagnostics(baseInput({ breadcrumbs: bc }));
+    expect(report.verdict).toBe("healthy");
+    // A stale 5xx must not surface as a warn while the verdict reads healthy.
+    const reach = report.signals.find((s) => s.label === "Bot API reachability");
+    expect(reach?.severity).toBe("ok");
+  });
 });

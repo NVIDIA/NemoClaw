@@ -376,9 +376,14 @@ export function parseTelegramBreadcrumbs(logLines: readonly string[]): TelegramB
   let lastBridgeNotStarted = -1;
   let lastTokenRejected = -1;
   let lastCredentialUnresolved = -1;
+  let lastHttpError = -1;
+  let lastHttpErrorCode: number | null = null;
   telegramLines.forEach((line, index) => {
     const httpErr = /startup probe returned HTTP\s+(\d{3})/i.exec(line);
-    if (httpErr) bc.startupHttpError = Number(httpErr[1]);
+    if (httpErr) {
+      lastHttpError = index;
+      lastHttpErrorCode = Number(httpErr[1]);
+    }
     if (/inbound update received|inbound message telegram/i.test(line)) bc.inboundReceived = true;
     if (REACHED.test(line)) lastReached = index;
     if (NETWORK_FAIL.test(line)) lastNetworkFail = index;
@@ -395,7 +400,7 @@ export function parseTelegramBreadcrumbs(logLines: readonly string[]): TelegramB
   // failures, a token/network cause outranks the bridge-did-not-start timeout it
   // produces; the latest of token vs network wins.
   const lastCause = Math.max(lastTokenRejected, lastCredentialUnresolved, lastNetworkFail);
-  const lastEvidence = Math.max(lastReached, lastCause, lastBridgeNotStarted);
+  const lastEvidence = Math.max(lastReached, lastCause, lastBridgeNotStarted, lastHttpError);
   if (lastReached !== -1 && lastReached >= lastEvidence) {
     bc.providerReady = true;
   } else if (
@@ -412,6 +417,11 @@ export function parseTelegramBreadcrumbs(logLines: readonly string[]): TelegramB
     bc.startupFailedNetwork = true;
   } else if (lastBridgeNotStarted !== -1) {
     bc.bridgeNotStarted = true;
+  } else if (lastHttpError !== -1) {
+    // A non-auth HTTP error (5xx) is honored only when it is the latest
+    // evidence; a later `reached` line supersedes it so reachabilitySignal does
+    // not warn about a stale code while the verdict reads healthy (#6743).
+    bc.startupHttpError = lastHttpErrorCode;
   }
   return bc;
 }
