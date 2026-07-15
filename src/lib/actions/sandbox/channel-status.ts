@@ -20,14 +20,19 @@ import {
   getMessagingManifestAvailabilityContext,
 } from "../../messaging";
 import {
+  type ChannelHealthReport,
+  channelHealthProbeInputs,
+} from "../../messaging/channels/channel-health";
+import {
   collectBuiltInMessagingChannelDiagnostics,
   type MessagingChannelDiagnosticSpec,
 } from "../../messaging/diagnostics";
-import * as policies from "../../policy";
+import { createBuiltInMessagingHookRegistry } from "../../messaging/hooks";
 import {
-  evaluateTelegramDiagnostics,
-  type TelegramDiagnosticReport,
-} from "../../sandbox/telegram-diagnostics";
+  readChannelHealthOutputs,
+  runMessagingStatusHooks,
+} from "../../messaging/hooks/status-runner";
+import * as policies from "../../policy";
 import {
   type DiagnosticSeverity,
   type DiagnosticSignal,
@@ -40,7 +45,6 @@ import {
 } from "../../sandbox/whatsapp-diagnostics";
 import * as registry from "../../state/registry";
 import { buildConfigStatusSignals } from "./channel-status-config";
-import { buildTelegramProbeInput } from "./telegram-probe";
 
 // runner.ts (which process-recovery transitively depends on) uses a few CJS
 // `require()` calls that vitest's CLI-test project cannot resolve at import
@@ -86,7 +90,7 @@ type ChannelStatusSingleReport =
       schemaVersion: 1;
       sandbox: string;
       channel: string;
-      report: WhatsappDiagnosticReport | TelegramDiagnosticReport;
+      report: WhatsappDiagnosticReport | ChannelHealthReport;
     }
   | {
       schemaVersion: 1;
@@ -603,32 +607,57 @@ function channelSupportedByAgent(channelName: string, agent: AgentDefinition): b
     .some((manifest) => manifest.id === channelName);
 }
 
-// Per-channel evaluators for the "log-tail" deep probe: run an in-sandbox
-// probe and classify its output. Adding a log-tail channel is one map entry
-// (plus its own probe + evaluator module); a log-tail channel absent from
-// this map falls back to the basic report.
-type LogTailEvaluator = (
+// Runs a `log-tail` deep-probe channel's `phase:"status"` health hook through
+// the generic status-hook runner and returns its channel-health report. All
+// channel-specific probing + classification lives in the channel's own hook
+// (e.g. channels/telegram/hooks/status-health.ts); this stays channel-agnostic.
+// The hook's own `agents` gate skips channels with no breadcrumb producer for
+// the requested agent (e.g. Hermes), so the caller falls back to the basic
+// report when no health output is returned.
+function runChannelHealthHook(
   sandboxName: string,
+  channelName: string,
   agent: AgentDefinition,
   deps: Required<StatusDeps>,
-) => WhatsappDiagnosticReport | TelegramDiagnosticReport;
+  diagnostic: MessagingChannelDiagnosticSpec,
+): ChannelHealthReport | undefined {
+  const entry = deps.getSandbox(sandboxName);
+  const channelEnabledInRegistry = registry
+    .getConfiguredMessagingChannelsFromEntry(entry)
+    .includes(channelName);
+  const policyPresets =
+    diagnostic.policyPresets.length > 0 ? diagnostic.policyPresets : [channelName];
+  const appliedPresets = deps.getAppliedPresets(sandboxName);
+  const presetInRegistry = policyPresets.some((preset) => appliedPresets.includes(preset));
+  let presetOnGateway: boolean | null = null;
+  try {
+    const gatewayPresets = deps.getGatewayPresets(sandboxName);
+    presetOnGateway =
+      gatewayPresets === null
+        ? null
+        : policyPresets.some((preset) => gatewayPresets.includes(preset));
+  } catch {
+    presetOnGateway = null;
+  }
 
-const LOG_TAIL_EVALUATORS: Record<string, LogTailEvaluator> = {
-  telegram: (sandboxName, agent, deps) => {
-    // Keep the config-value signals (#5691/#5695: group policy, mention mode,
-    // allowed IDs) the basic report used to show, then append the live health
-    // signals so `--channel telegram` reports both config and health.
-    const health = evaluateTelegramDiagnostics(buildTelegramProbeInput(sandboxName, agent, deps));
-    const configSignals = buildConfigStatusSignals(
-      sandboxName,
-      "telegram",
-      deps.getSandbox(sandboxName),
-      agent,
-      deps,
-    );
-    return { ...health, signals: [...health.signals, ...configSignals] };
-  },
-};
+  const results = runMessagingStatusHooks({
+    agent: agent.name === "hermes" ? "hermes" : "openclaw",
+    channels: new Set([channelName]),
+    currentSandbox: sandboxName,
+    hookRegistry: createBuiltInMessagingHookRegistry({
+      statusHealth: { executeSandboxCommand: deps.execSandbox },
+    }),
+    extraInputs: channelHealthProbeInputs({
+      currentSandbox: sandboxName,
+      agent: agent.name,
+      probedAt: deps.now().toISOString(),
+      channelEnabledInRegistry,
+      presetInRegistry,
+      presetOnGateway,
+    }),
+  });
+  return results.flatMap(readChannelHealthOutputs)[0];
+}
 
 /**
  * Run the WhatsApp diagnostic or a thin per-channel summary for the named
@@ -704,15 +733,13 @@ export async function showSandboxChannelStatus(
   const disabledChannels = new Set(registry.getDisabledMessagingChannelsFromEntry(entry));
   const channelIsPaused = disabledChannels.has(channelName);
 
-  // The log-tail breadcrumb producer (the telegram runtime preload writing
-  // `[telegram] …` to /tmp/gateway.log) and the gateway process pattern only
-  // exist for OpenClaw — the telegram manifest declares `runtime.openclaw`
-  // only. A Hermes telegram sandbox has no producer for this probe, so it
-  // falls back to the basic config report instead of a misleading health
-  // verdict. Extend the gate when a non-OpenClaw producer/evaluator is added.
-  const logTailEvaluator =
-    diagnostic.deepProbe === "log-tail" && agent.name === "openclaw"
-      ? LOG_TAIL_EVALUATORS[channelName]
+  // A `log-tail` deep-probe channel runs its `phase:"status"` health hook via
+  // the generic status-hook runner (the hook lives in the channel folder). The
+  // hook's `agents` gate skips channels with no breadcrumb producer for this
+  // agent (e.g. Hermes telegram), so those fall back to the basic config report.
+  const healthReport =
+    diagnostic.deepProbe === "log-tail" && !channelIsPaused
+      ? runChannelHealthHook(sandboxName, channelName, agent, deps, diagnostic)
       : undefined;
   let report: ChannelStatusReport;
   if (diagnostic.deepProbe === "in-sandbox-qr" && !channelIsPaused) {
@@ -724,12 +751,22 @@ export async function showSandboxChannelStatus(
       channel: channelName,
       report: whatsappReport,
     };
-  } else if (logTailEvaluator && !channelIsPaused) {
+  } else if (healthReport) {
+    // Append the config-value signals (#5691/#5695: group policy, mention mode,
+    // allowed IDs) the basic report shows, so `--channel <ch>` reports both the
+    // channel config and live runtime health.
+    const configSignals = buildConfigStatusSignals(
+      sandboxName,
+      channelName,
+      deps.getSandbox(sandboxName),
+      agent,
+      deps,
+    );
     report = {
       schemaVersion: 1,
       sandbox: sandboxName,
       channel: channelName,
-      report: logTailEvaluator(sandboxName, agent, deps),
+      report: { ...healthReport, signals: [...healthReport.signals, ...configSignals] },
     };
   } else {
     report = buildBasicChannelReport(sandboxName, channelName, agent, deps, diagnostic, {

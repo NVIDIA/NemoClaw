@@ -3,29 +3,26 @@
 
 /**
  * Pure helpers that translate raw probe evidence collected from inside a
- * sandbox into a structured Telegram channel diagnostic.
+ * sandbox into a structured Telegram channel-health report.
  *
- * Sibling of `whatsapp-diagnostics.ts`. The probes themselves live in
- * `actions/sandbox/channel-status.ts`; this module never touches the
- * filesystem, child processes, or the clock so the evaluation can be
- * exercised hermetically from fixtures.
+ * Consumed by the `telegram.statusHealth` status hook (see `status-health.ts`);
+ * this module never touches the filesystem, child processes, or the clock so
+ * the evaluation can be exercised hermetically from fixtures.
  *
- * Telegram's bridge is an in-process poller inside the OpenClaw gateway, not
- * a separate process with a heartbeat file (unlike WhatsApp's Baileys
- * bridge). So "liveness" is inferred from two places the gateway already
- * produces:
+ * Telegram's bridge is an in-process poller inside the OpenClaw gateway, not a
+ * separate process with a heartbeat file (unlike WhatsApp's Baileys bridge). So
+ * "liveness" is inferred from two places the gateway already produces:
  *   1. the gateway process being alive (pgrep), and
- *   2. the `[telegram] [default] …` breadcrumbs the runtime diagnostics
- *      preload writes to /tmp/gateway.log (see
- *      channels/telegram/runtime/telegram-diagnostics.ts).
- * We deliberately do NOT run our own getMe from the probe: the resolved bot
- * token lives only in the gateway process env (openshell:resolve:env
- * placeholder), so a side probe could not read it without breaking the
- * credential boundary. The gateway already performs getMe/getUpdates and logs
- * the outcome — we read that outcome instead.
+ *   2. the `[telegram] [default] …` breadcrumbs the runtime diagnostics preload
+ *      writes to /tmp/gateway.log (see ../runtime/telegram-diagnostics.ts).
+ * We deliberately do NOT run our own getMe from the probe: verified live, the
+ * egress MITM proxy refuses a raw `curl` at CONNECT (HTTP 403) while authorizing
+ * only the gateway's instrumented Node egress, and the resolved token never
+ * leaves that path. The gateway already performs getMe/getUpdates and logs the
+ * outcome — we read that outcome instead.
  */
 
-import type { DiagnosticSignal } from "./diagnostic-signal";
+import type { ChannelHealthReport, DiagnosticSignal } from "../../channel-health";
 
 export type TelegramVerdict =
   | "healthy"
@@ -84,14 +81,9 @@ export type TelegramProbeInput = {
   channelEnabledInRegistry: boolean;
 };
 
-export type TelegramDiagnosticReport = {
-  schemaVersion: 1;
+export type TelegramDiagnosticReport = ChannelHealthReport & {
   channel: "telegram";
-  agent: string;
   verdict: TelegramVerdict;
-  probedAt: string;
-  signals: DiagnosticSignal[];
-  hints: string[];
 };
 
 function configCoverageSignal(input: TelegramProbeInput): DiagnosticSignal {

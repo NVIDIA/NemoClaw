@@ -40,7 +40,7 @@ vi.mock("./process-recovery", () => ({
 
 import type { AgentDefinition } from "../../agent/defs";
 import type { SandboxMessagingInputReference } from "../../messaging/manifest";
-import type { DiagnosticSignal } from "../../sandbox/diagnostic-signal";
+import type { DiagnosticSignal } from "../../messaging/channels/channel-health";
 import type { SandboxEntry } from "../../state/registry";
 
 type ShowSandboxChannelStatus = typeof import("./channel-status").showSandboxChannelStatus;

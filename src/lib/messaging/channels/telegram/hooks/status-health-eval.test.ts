@@ -7,7 +7,7 @@ import {
   parseTelegramBreadcrumbs,
   type TelegramBreadcrumbs,
   type TelegramProbeInput,
-} from "./telegram-diagnostics";
+} from "./status-health-eval";
 
 function baseInput(overrides: Partial<TelegramProbeInput> = {}): TelegramProbeInput {
   return {

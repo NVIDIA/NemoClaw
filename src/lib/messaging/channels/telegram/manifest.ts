@@ -265,5 +265,17 @@ export const telegramManifest = {
         },
       ],
     },
+    {
+      id: "telegram-status-health",
+      phase: "status",
+      handler: "telegram.statusHealth",
+      agents: ["openclaw"],
+      outputs: [
+        {
+          id: "channelHealth",
+          kind: "status",
+        },
+      ],
+    },
   ],
 } as const satisfies ChannelManifest;
