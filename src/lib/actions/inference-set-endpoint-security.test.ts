@@ -66,7 +66,7 @@ describe("custom inference endpoint DNS pinning", () => {
     // to know the field it's validating is an inference endpoint.
     await expect(
       rewriteConfigUrlsWithDnsPinning("https://public-endpoint.example/v1/", lookup),
-    ).rejects.toThrow(/^(?!.*(inference set|HTTPS Pin Runtime adapter)).*$/s);
+    ).rejects.toThrow(/^(?!.*(?:inference set|HTTPS Pin Runtime adapter)).*$/is);
 
     // normalizeCustomEndpointUrl is only ever called for `inference set
     // --endpoint-url`, so it appends the adapter-specific hint itself.

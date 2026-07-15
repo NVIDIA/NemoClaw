@@ -5,8 +5,10 @@ import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import os from "node:os";
+import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { EndpointDnsLookupFn } from "./endpoint-ssrf-preflight";
 import {
@@ -433,35 +435,50 @@ describe("createHttpsPinRuntimeAdapterServer route forwarding private-network re
 });
 
 describe("adapter recovery lock (#6141)", () => {
+  // The statically-imported `__test.LOCK_PATH` above is derived from this
+  // machine's real os.homedir() at module-evaluation time, same as a real,
+  // possibly-concurrently-running adapter's lock. Acquiring/deleting it here
+  // could steal or wedge that live adapter's lock. Give each test its own
+  // HOME (and therefore its own LOCK_PATH under a fresh temp `.nemoclaw`) via
+  // vi.resetModules() plus a fresh dynamic import, since STATE_DIR is only
+  // ever read once, at import time.
+  let tempHome: string;
+  let lockModule: typeof import("./https-pin-runtime-adapter");
+
+  beforeEach(async () => {
+    tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-adapter-lock-test-"));
+    vi.stubEnv("HOME", tempHome);
+    vi.resetModules();
+    lockModule = await import("./https-pin-runtime-adapter");
+  });
+
   afterEach(() => {
-    // Defensive: a failed assertion inside a test can leave the real
-    // `~/.nemoclaw` lock file behind, which would wedge every later
-    // `ensureHttpsPinRuntimeAdapter` recovery attempt on this machine.
     try {
-      fs.unlinkSync(__test.LOCK_PATH);
+      fs.unlinkSync(lockModule.__test.LOCK_PATH);
     } catch {
       /* nothing to clean up */
     }
+    fs.rmSync(tempHome, { recursive: true, force: true });
   });
 
   it("blocks a second acquire while the first holder has not released", () => {
-    const release = __test.tryAcquireAdapterLock();
+    const release = lockModule.__test.tryAcquireAdapterLock();
     expect(release).not.toBeNull();
-    expect(__test.tryAcquireAdapterLock()).toBeNull();
+    expect(lockModule.__test.tryAcquireAdapterLock()).toBeNull();
     release?.();
-    expect(__test.tryAcquireAdapterLock()).not.toBeNull();
+    expect(lockModule.__test.tryAcquireAdapterLock()).not.toBeNull();
   });
 
   it("serializes concurrent withAdapterLock operations instead of interleaving them", async () => {
     const order: string[] = [];
-    const slow = __test.withAdapterLock(async () => {
+    const slow = lockModule.__test.withAdapterLock(async () => {
       order.push("slow:start");
       await new Promise((resolve) => setTimeout(resolve, 50));
       order.push("slow:end");
     });
     // Give `slow` a head start so it wins the lock first.
     await new Promise((resolve) => setTimeout(resolve, 5));
-    const fast = __test.withAdapterLock(async () => {
+    const fast = lockModule.__test.withAdapterLock(async () => {
       order.push("fast:start");
       order.push("fast:end");
     });
