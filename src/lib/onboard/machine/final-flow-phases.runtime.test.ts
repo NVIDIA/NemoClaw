@@ -9,7 +9,25 @@ import {
   sessionAt,
 } from "../../../../test/helpers/onboard-final-flow-phases";
 import { createSession } from "../../state/onboard-session";
+import type { VerifyDeploymentResult } from "../../verify-deployment";
 import { runFinalOnboardFlowSlice } from "./final-flow-phases";
+
+function deploymentResult(healthy: boolean): VerifyDeploymentResult {
+  return {
+    healthy,
+    verification: {
+      gatewayReachable: true,
+      gatewayVersion: "test",
+      inferenceRouteWorking: healthy,
+      dashboardReachable: true,
+      messagingBridgesHealthy: true,
+      messagingRuntimeChannelsMissing: null,
+      messagingConfigChannelsMissing: null,
+      accessMethod: "localhost",
+    },
+    diagnostics: [],
+  };
+}
 
 describe("final onboard flow runtime boundary", () => {
   it("uses the strict final runner for fresh OpenClaw sessions with a real runtime boundary", async () => {
@@ -286,33 +304,14 @@ describe("final onboard flow runtime boundary", () => {
     });
   });
 
-  it("keeps an unhealthy final verification retryable and completes after a later resume", async () => {
+  it("keeps an unhealthy final verification retryable and completes after a later resume (#6849)", async () => {
     const order: string[] = [];
     const harness = createRuntimeHarness(sessionAt("openclaw"));
     const recorders = harness.boundary.recorders();
-    const unhealthy = {
-      healthy: false,
-      verification: {
-        gatewayReachable: true,
-        gatewayVersion: "test",
-        inferenceRouteWorking: false,
-        dashboardReachable: true,
-        messagingBridgesHealthy: true,
-        messagingRuntimeChannelsMissing: null,
-        messagingConfigChannelsMissing: null,
-        accessMethod: "localhost" as const,
-      },
-      diagnostics: [],
-    };
-    const healthy = {
-      ...unhealthy,
-      healthy: true,
-      verification: { ...unhealthy.verification, inferenceRouteWorking: true },
-    };
     const verifyDeployment = vi
       .fn()
-      .mockResolvedValueOnce(unhealthy)
-      .mockResolvedValueOnce(healthy);
+      .mockResolvedValueOnce(deploymentResult(false))
+      .mockResolvedValueOnce(deploymentResult(true));
     const phases = createPhases("openclaw", order, {
       loadSession: harness.getSession,
       recordStepSkipped: recorders.recordStepSkipped,

@@ -36,7 +36,7 @@ The `Inference` row checks the sandbox's `inference.local` path and reports the 
 This path includes the OpenShell proxy and its authentication rewrite.
 When onboarding prints a dashboard summary, use it to verify that NemoClaw ran the same route-reachability probe from inside the sandbox.
 Treat an unreachable route or HTTP 5xx response as a failed readiness check: onboarding marks the sandbox not ready and exits non-zero.
-Restore the configured endpoint or proxy, then rerun `$$nemoclaw onboard --resume` to complete onboarding.
+Restore the configured endpoint or proxy, run `$$nemoclaw onboard --resume` to complete the retained onboarding session, then rerun the status command.
 
 ## Understand Final Route Checks
 

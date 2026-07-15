@@ -197,7 +197,7 @@ describe("verifyDeployment", () => {
     expect(infDiag?.hint).toContain("unreachable");
   });
 
-  it("reports unhealthy when the inference route is reachable but returns HTTP 5xx", async () => {
+  it("reports unhealthy when only the inference route returns HTTP 5xx (#6849)", async () => {
     const deps = makeDeps({
       executeSandboxCommand: (_name: string, script: string) => ({
         status: 0,
