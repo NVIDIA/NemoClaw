@@ -140,7 +140,7 @@
   // `nemoclaw/src/index.ts:WRITE_TOOL_NAMES` so this allowlist stays
   // aligned with the same write-capable surface OpenClaw scans for
   // secrets. `tool_call` is the OpenClaw compact-catalog wrapper from
-  // `scripts/patch-openclaw-tool-catalog.js` — when it's present we
+  // `scripts/patch-openclaw-tool-catalog.mts` — when it's present we
   // can't tell from the request alone which underlying tool will be
   // dispatched, so treat it as execution-capable and skip the nudge.
   var EXECUTION_TOOL_NAMES = new Set([
