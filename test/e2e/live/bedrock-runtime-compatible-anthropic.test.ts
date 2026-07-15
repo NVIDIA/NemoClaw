@@ -582,7 +582,7 @@ function stopBedrockAdapter(home: string): void {
 }
 
 function isBedrockAdapterProcess(pid: number): boolean {
-  const expectedScript = "bedrock-runtime-adapter.js";
+  const expectedScript = "bedrock-runtime-adapter";
   try {
     const cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").replaceAll("\0", " ");
     if (cmdline.includes(expectedScript)) return true;
