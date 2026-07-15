@@ -197,12 +197,17 @@ describe("verifyDeployment", () => {
     expect(infDiag?.hint).toContain("unreachable");
   });
 
-  it("reports unhealthy when the inference route is reachable but returns HTTP 5xx", async () => {
+  it("reports unhealthy when only the inference route returns HTTP 5xx (#6849)", async () => {
     const deps = makeDeps({
-      executeSandboxCommand: () => ({ status: 0, stdout: "503", stderr: "" }),
+      executeSandboxCommand: (_name: string, script: string) => ({
+        status: 0,
+        stdout: script.includes("inference.local") ? "503" : "200",
+        stderr: "",
+      }),
     });
     const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
     expect(result.healthy).toBe(false);
+    expect(result.verification.gatewayReachable).toBe(true);
     expect(result.verification.inferenceRouteWorking).toBe(false);
     const infDiag = result.diagnostics.find((d) => d.link === "inference");
     expect(infDiag?.status).toBe("fail");

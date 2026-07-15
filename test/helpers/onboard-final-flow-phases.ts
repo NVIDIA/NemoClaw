@@ -50,6 +50,7 @@ export type RecorderOverrides = {
     sandboxName: string,
     chain: DashboardDeliveryChain,
   ) => Promise<VerifyDeploymentResult>;
+  isDeploymentHealthy?: (result: VerifyDeploymentResult) => boolean;
   printDashboard?: (
     sandboxName: string,
     model: string,
@@ -250,7 +251,8 @@ export function createPhases(
       checkAndRecoverSandboxProcesses: vi.fn(),
       warmupScopeUpgrade: vi.fn(),
       autoPairScopeApproval: vi.fn(),
-      isDeploymentHealthy: () => true,
+      isDeploymentHealthy:
+        recorders.isDeploymentHealthy ?? ((result: VerifyDeploymentResult) => result.healthy),
       reportDeploymentReadiness: vi.fn(),
       getChatUiUrl: () => "http://127.0.0.1:45123",
       buildVerifyChain: (): DashboardDeliveryChain => ({

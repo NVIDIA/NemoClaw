@@ -9,7 +9,26 @@ import {
   sessionAt,
 } from "../../../../test/helpers/onboard-final-flow-phases";
 import { createSession } from "../../state/onboard-session";
+import type { VerifyDeploymentResult } from "../../verify-deployment";
+import { applySessionRecovery } from "../session-recovery";
 import { runFinalOnboardFlowSlice } from "./final-flow-phases";
+
+function deploymentResult(healthy: boolean): VerifyDeploymentResult {
+  return {
+    healthy,
+    verification: {
+      gatewayReachable: true,
+      gatewayVersion: "test",
+      inferenceRouteWorking: healthy,
+      dashboardReachable: true,
+      messagingBridgesHealthy: true,
+      messagingRuntimeChannelsMissing: null,
+      messagingConfigChannelsMissing: null,
+      accessMethod: "localhost",
+    },
+    diagnostics: [],
+  };
+}
 
 describe("final onboard flow runtime boundary", () => {
   it("uses the strict final runner for fresh OpenClaw sessions with a real runtime boundary", async () => {
@@ -283,6 +302,73 @@ describe("final onboard flow runtime boundary", () => {
     expect(harness.getSession()).toMatchObject({
       status: "in_progress",
       machine: { state: "post_verify" },
+    });
+  });
+
+  it("retries an unhealthy deployment after session recovery and completes when repaired (#6849)", async () => {
+    const verifyDeployment = vi
+      .fn()
+      .mockResolvedValueOnce(deploymentResult(false))
+      .mockResolvedValueOnce(deploymentResult(true));
+
+    async function run(
+      harness: ReturnType<typeof createRuntimeHarness>,
+      resume: boolean,
+    ): Promise<void> {
+      const recorders = harness.boundary.recorders();
+      const phases = createPhases("openclaw", [], {
+        loadSession: harness.getSession,
+        recordStepSkipped: recorders.recordStepSkipped,
+        recordStateSkipped: recorders.recordStateSkipped,
+        startRecordedStep: recorders.startRecordedStep,
+        recordStepComplete: recorders.recordStepComplete,
+        recordPostVerifyStarted: recorders.recordPostVerifyStarted,
+        verifyDeployment,
+      });
+      await runFinalOnboardFlowSlice({
+        context: context({ resume, session: harness.getSession() }),
+        runtime: harness.boundary.getRuntime(),
+        phases,
+        resume,
+        recordStateResult: harness.boundary.recordStateResultWithStepCompatibility.bind(
+          harness.boundary,
+        ),
+        recordInvalidatedStateResult: harness.boundary.recordInvalidatedStateResult.bind(
+          harness.boundary,
+        ),
+      });
+    }
+
+    const firstHarness = createRuntimeHarness(sessionAt("openclaw"));
+    await run(firstHarness, false);
+
+    expect(firstHarness.getSession()).toMatchObject({
+      status: "failed",
+      resumable: true,
+      failure: { message: "Sandbox 'my-sandbox' failed deployment verification." },
+      machine: { state: "failed" },
+    });
+
+    const recovered = firstHarness.getSession();
+    // Production step compatibility records the completed policy phase; the
+    // focused FSM harness intentionally tracks only machine transitions.
+    recovered.steps.policies.status = "complete";
+    recovered.lastCompletedStep = "policies";
+    expect(applySessionRecovery(recovered, "2026-06-10T00:01:00.000Z")).toMatchObject({
+      action: "recover",
+      entry: "finalizing",
+    });
+    expect(recovered.machine.state).toBe("finalizing");
+
+    const resumedHarness = createRuntimeHarness(recovered);
+    await run(resumedHarness, true);
+
+    expect(verifyDeployment).toHaveBeenCalledTimes(2);
+    expect(resumedHarness.getSession()).toMatchObject({
+      status: "complete",
+      resumable: false,
+      failure: null,
+      machine: { state: "complete" },
     });
   });
 });

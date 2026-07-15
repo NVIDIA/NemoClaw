@@ -3,7 +3,12 @@
 
 import type { Session } from "../../../state/onboard-session";
 import { type DashboardRuntimeAgent, shouldManageDashboardForAgent } from "../../dashboard-runtime";
-import { completeOnboardMachine, type OnboardStateCompleteResult } from "../result";
+import {
+  completeOnboardMachine,
+  failOnboardMachine,
+  type OnboardStateCompleteResult,
+  type OnboardStateResult,
+} from "../result";
 
 export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult> {
   sandboxName: string;
@@ -78,7 +83,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
 }
 
 export interface FinalizationStateResult {
-  stateResult: OnboardStateCompleteResult;
+  stateResult: OnboardStateResult;
   unmigratedLegacyKeys: string[];
   verificationDiagnostics: string[];
   deploymentHealthy: boolean;
@@ -196,10 +201,20 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
     logTerminalReadyBlock(sandboxName, agent, deps.log);
   }
 
-  const stateResult = completeOnboardMachine(
-    deps.toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
-    { state: "finalizing" },
-  );
+  const stateResult = deploymentHealthy
+    ? completeOnboardMachine(
+        deps.toSessionUpdates({
+          sandboxName,
+          provider,
+          model,
+          hermesAuthMethod,
+          hermesToolGateways,
+        }),
+        { state: "finalizing" },
+      )
+    : failOnboardMachine(`Sandbox '${sandboxName}' failed deployment verification.`, {
+        metadata: { state: "finalizing" },
+      });
 
   return { stateResult, unmigratedLegacyKeys, verificationDiagnostics, deploymentHealthy };
 }

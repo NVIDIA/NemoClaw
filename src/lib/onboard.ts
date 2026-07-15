@@ -4676,8 +4676,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         liveFinalFlowContext = context;
       },
     });
-    completed = true;
-    traceCompleted = true;
+    completed = (await onboardRuntimeBoundary.getRuntime().session()).machine.state === "complete";
+    traceCompleted = completed;
   } finally {
     releaseOnboardLock();
     onboardRuntimeBoundary.clear();

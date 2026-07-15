@@ -131,7 +131,7 @@ describe("handleFinalizationState", () => {
     expect(result.verificationDiagnostics).toEqual(["  ✓ verified"]);
   });
 
-  it("prints a not-ready dashboard and signals not-ready when verification is unhealthy", async () => {
+  it("prints a not-ready dashboard and returns a resumable failure when verification is unhealthy", async () => {
     const { deps, calls } = createDeps({ isDeploymentHealthy: vi.fn(() => false) });
 
     const result = await handleFinalizationState(baseOptions(deps));
@@ -145,7 +145,14 @@ describe("handleFinalizationState", () => {
       false,
     );
     expect(calls.reportReadiness).toHaveBeenCalledWith(false);
+    expect(calls.postVerify).toHaveBeenCalledOnce();
     expect(result.deploymentHealthy).toBe(false);
+    expect(result.stateResult).toEqual({
+      type: "failed",
+      error: "Sandbox 'my-assistant' failed deployment verification.",
+      step: undefined,
+      metadata: { state: "finalizing" },
+    });
   });
 
   it("ensures agent dashboard forwarding before completion for non-OpenClaw agents", async () => {
