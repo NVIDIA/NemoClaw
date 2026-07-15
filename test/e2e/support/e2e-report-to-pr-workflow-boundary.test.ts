@@ -88,8 +88,10 @@ function executeGenerateMatrixWithPlannerOutput(plan: unknown) {
 }
 
 type ApiJob = {
+  completed_at?: string;
   conclusion: string | null;
   name: string;
+  started_at?: string;
   status: string;
 };
 
@@ -248,10 +250,34 @@ it("reports matrix children by test ID without fabricating a missing child resul
   expect(warning).toHaveBeenCalledWith(
     "Missing per-test results for beta; reporting them as unknown.",
   );
-  expect(body).toContain("| alpha | ✅ success |");
-  expect(body).toContain("| beta | ❓ unknown |");
+  expect(body).toContain("| alpha | ✅ success | — |");
+  expect(body).toContain("| beta | ❓ unknown | — |");
   expect(body).toContain("Some tests failed");
   expect(body).toContain("Shared E2E job aggregate: failure");
+});
+
+it("reports the total wall clock time for a selected E2E job", async () => {
+  const { body, setFailed } = await executeReport({
+    apiJobs: [
+      {
+        completed_at: "2026-07-15T00:27:58Z",
+        conclusion: "success",
+        name: "rebuild-openclaw",
+        started_at: "2026-07-15T00:16:48Z",
+        status: "completed",
+      },
+    ],
+    testMatrix: [],
+    jobs: "rebuild-openclaw",
+    needs: {
+      "generate-matrix": { result: "success" },
+      "rebuild-openclaw": { result: "success" },
+    },
+  });
+
+  expect(setFailed).not.toHaveBeenCalled();
+  expect(body).toContain("| Test | Result | Total wall clock time |");
+  expect(body).toContain("| rebuild-openclaw | ✅ success | 11m 10s |");
 });
 
 it("reports API lookup failures as unknown rather than copying the aggregate result", async () => {
