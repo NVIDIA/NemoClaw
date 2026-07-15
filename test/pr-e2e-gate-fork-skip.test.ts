@@ -814,6 +814,94 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
     }
   });
 
+  it("fails authorization closed when child cancellation cannot be confirmed", async () => {
+    const workDirs = [
+      fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-cancel-failed-")),
+      fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-cancel-retry-")),
+    ];
+    const outputPath = path.join(workDirs[0]!, "github-output");
+    fs.writeFileSync(outputPath, "", { mode: 0o600 });
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    vi.stubEnv("GITHUB_OUTPUT", outputPath);
+    const requests: RecordedGitHubRequest[] = [];
+    let check = exactPrGateCheck({
+      output: { title: "Maintainer authorization required to run E2E" },
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url }) => url.endsWith("/collaborators/maintainer/permission"),
+            () => githubResponse({ role_name: "maintain", user: { login: "maintainer" } }),
+          ),
+          githubFetchRoute(
+            ({ url }) => url.endsWith("/pulls/42"),
+            () => githubResponse(pullRequest()),
+          ),
+          githubFetchRoute(
+            ({ url }) => url.includes("/pulls/42/files?"),
+            () => githubResponse([{ filename: "test/e2e/risk-signal-reporter.ts" }]),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes(`/commits/${HEAD_SHA}/check-runs?`) && method === "GET",
+            () => githubResponse({ total_count: 1, check_runs: [check] }),
+          ),
+          mainWorkflowRefRoute(),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
+            (request) => {
+              const body = request.body as Record<string, unknown>;
+              const title = (body.output as { title?: string } | undefined)?.title;
+              if (title === "Running 3 E2E jobs") {
+                return githubResponse({ message: "simulated update failure" }, 500);
+              }
+              check = { ...check, ...body };
+              return githubResponse({});
+            },
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.endsWith("/actions/workflows/e2e.yaml/dispatches") && method === "POST",
+            () =>
+              githubResponse({
+                workflow_run_id: 23,
+                run_url: "https://api.github.com/repos/NVIDIA/NemoClaw/actions/runs/23",
+                html_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/23",
+              }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/actions/runs/23/cancel") && method === "POST",
+            () => githubResponse({ message: "simulated cancellation failure" }, 500),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    try {
+      await expect(startControlPlanePrGate(startControlPlaneCommand(workDirs[0]!))).rejects.toThrow(
+        /child cancellation failed/u,
+      );
+      expect(check).toMatchObject({
+        status: "completed",
+        conclusion: "failure",
+        output: {
+          title: "Authorized E2E run requires reconciliation",
+          summary: expect.stringContaining("this exact-diff authorization cannot be retried"),
+        },
+      });
+      await expect(startControlPlanePrGate(startControlPlaneCommand(workDirs[1]!))).rejects.toThrow(
+        /matching pending control-plane authorization state/u,
+      );
+      expect(requests.filter((request) => request.url.endsWith("/dispatches"))).toHaveLength(1);
+      expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
+    } finally {
+      for (const workDir of workDirs) fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects a credentialed E2E skip from a collaborator below maintainer role", async () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");

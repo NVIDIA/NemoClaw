@@ -192,17 +192,23 @@ permission, internal repository origin, open PR, exact head and base, risk
 plan, matching pending coordination state, compatible trusted controller
 commit, and final live revision. It then updates coordination to
 `Running <count> E2E job(s)` and dispatches the selected jobs. If authorization
-or dispatch fails before a terminal E2E result, the controller restores the
-authorization title and leaves a current coordination check in progress so a
-maintainer can correct the problem and launch a fresh first-attempt
-authorization. The native required job treats these authorization and running
-titles as intermediate waiting states only while coordination remains in
-progress. A completed failure is terminal; neither manual authorization nor the
-native observer reinterprets it. Older builds whose authorization check already
-completed as failed require a fresh exact-diff revision and PR CI run before a
-maintainer can authorize them. The normal wait, evidence download, and finish
-path is the only path that can record success; the authorization itself cannot
-make the gate green. A changed head or base requires a new authorization.
+fails before a child run is dispatched, the controller restores the
+authorization title and leaves coordination in progress so a maintainer can
+correct the problem and launch a fresh first-attempt authorization. After a
+child is dispatched, a startup failure requests cancellation. Whether or not
+cancellation is confirmed, the controller completes coordination as
+`Authorized E2E run requires reconciliation`; that exact-diff authorization
+cannot be retried because the child may still execute and a retry could start
+duplicate credential-bearing work. Inspect the linked run, then update the PR
+and run fresh CI before authorizing again.
+The native required job treats authorization and running titles as intermediate
+waiting states only while coordination remains in progress. A completed failure
+is terminal; neither manual authorization nor the native observer reinterprets
+it. Older builds whose authorization check already completed as failed also
+require a fresh exact-diff revision and PR CI run before a maintainer can
+authorize them. The normal wait, evidence download, and finish path is the only
+path that can record success; the authorization itself cannot make the gate
+green. A changed head or base requires a new authorization.
 
 A fork revision that selects jobs completes coordination as failed while the
 native required job waits for the skip-approval flow. The controller does not

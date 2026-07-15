@@ -244,6 +244,16 @@ class ObsoleteExactDiffError extends Error {
   }
 }
 
+class DispatchedChildRunError extends Error {
+  readonly childRunId: number;
+
+  constructor(message: string, childRunId: number) {
+    super(message);
+    this.name = "DispatchedChildRunError";
+    this.childRunId = childRunId;
+  }
+}
+
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
@@ -1730,11 +1740,15 @@ async function dispatchSelectedPrGate(options: {
     try {
       await cancelChildRun(options.repository, options.token, childRunId);
     } catch (cancelError) {
-      throw new Error(
+      throw new DispatchedChildRunError(
         `${controllerErrorMessage(error)}; child cancellation failed: ${controllerErrorMessage(cancelError)}`,
+        childRunId,
       );
     }
-    throw error;
+    throw new DispatchedChildRunError(
+      `${controllerErrorMessage(error)}; child cancellation requested`,
+      childRunId,
+    );
   }
 }
 
@@ -2068,22 +2082,37 @@ export async function startControlPlanePrGate(command: ControlPlaneDispatchComma
     });
   } catch (error) {
     if (checkRunId) {
-      const reason = controllerErrorMessage(error).replace(/`/gu, "'");
-      try {
-        await markCheckInProgress(
+      if (error instanceof DispatchedChildRunError) {
+        const closed = await completeFailureAfterControllerError(
           { repository, checkRunId },
           token,
-          CONTROL_PLANE_AUTHORIZATION_TITLE,
-          [
-            `The authorized E2E attempt did not produce an accepted result: \`${reason}\`.`,
-            "Review the controller error and any linked child run, then launch a fresh first-attempt `run-control-plane` workflow for this exact revision.",
-          ].join("\n\n"),
+          "Authorized E2E run requires reconciliation",
+          {
+            error,
+            detailsUrl: `https://github.com/${repository}/actions/runs/${error.childRunId}`,
+            recovery:
+              "A credential-bearing child run was dispatched, so this exact-diff authorization cannot be retried. Inspect the linked run, then update the PR and run fresh CI before authorizing again.",
+          },
         );
-        appendOutput("finalized", "true");
-      } catch (restoreError) {
-        console.error(
-          `Failed to restore control-plane authorization after controller error: ${controllerErrorMessage(restoreError)}`,
-        );
+        if (closed) appendOutput("finalized", "true");
+      } else {
+        const reason = controllerErrorMessage(error).replace(/`/gu, "'");
+        try {
+          await markCheckInProgress(
+            { repository, checkRunId },
+            token,
+            CONTROL_PLANE_AUTHORIZATION_TITLE,
+            [
+              `The authorized E2E attempt did not produce an accepted result: \`${reason}\`.`,
+              "Review the controller error and any linked child run, then launch a fresh first-attempt `run-control-plane` workflow for this exact revision.",
+            ].join("\n\n"),
+          );
+          appendOutput("finalized", "true");
+        } catch (restoreError) {
+          console.error(
+            `Failed to restore control-plane authorization after controller error: ${controllerErrorMessage(restoreError)}`,
+          );
+        }
       }
     }
     throw error;
