@@ -180,7 +180,7 @@ describe("sandbox create intent machine boundary", () => {
     const braveCredential = "brave-secret-value";
     const telegramCredential = "telegram-secret-value";
     const messagingPlan = withTelegramCredentialHash(
-      makeMinimalPlan("tm", "openclaw", ["telegram"], ["telegram"]),
+      makeMinimalPlan("tm", "openclaw", ["telegram"]),
       "a".repeat(64),
     );
     const credentialEnv = {
@@ -197,16 +197,23 @@ describe("sandbox create intent machine boundary", () => {
       return durableSession;
     });
     const configureWebSearch = vi.fn(async () => braveConfig);
-    const setupMessagingChannels = vi.fn(async () => []);
+    const setupMessagingChannels = vi.fn(async () => ["telegram"]);
     const providerMatchesGatewayCredential = vi.fn(
       (name: string, type: string, credentialEnvName: string) =>
-        name === "tm-brave-search" && type === "brave" && credentialEnvName === "BRAVE_API_KEY",
+        (name === "tm-brave-search" && type === "brave" && credentialEnvName === "BRAVE_API_KEY") ||
+        (name === "tm-telegram-bridge" &&
+          type === "generic" &&
+          credentialEnvName === "TELEGRAM_BOT_TOKEN"),
     );
     const stageSandboxCredentialProviders = vi
       .fn<() => Promise<string[]>>()
       .mockImplementationOnce(async () => {
         durableSession.stagedCredentialProviders = ["tm-brave-search"];
         return ["tm-brave-search"];
+      })
+      .mockImplementationOnce(async () => {
+        durableSession.stagedCredentialProviders.push("tm-telegram-bridge");
+        return ["tm-telegram-bridge"];
       })
       .mockResolvedValue([]);
     const readMessagingPlanFromEnv = vi
@@ -237,6 +244,7 @@ describe("sandbox create intent machine boundary", () => {
       sandboxName: "tm",
       webSearchConfig: braveConfig,
       messagingPlan,
+      stagedCredentialProviders: ["tm-brave-search", "tm-telegram-bridge"],
       resourceProfile: null,
       sandboxPromptProgress: {
         sandboxName: true,
@@ -259,6 +267,18 @@ describe("sandbox create intent machine boundary", () => {
     expect(stageSandboxCredentialProviders.mock.invocationCallOrder[0]).toBeLessThan(
       calls.selectResourceProfile.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
+    expect(stageSandboxCredentialProviders).toHaveBeenNthCalledWith(2, {
+      sandboxName: "tm",
+      enabledChannels: ["telegram"],
+      webSearchConfig: null,
+      agent: null,
+    });
+    expect(stageSandboxCredentialProviders.mock.invocationCallOrder[1]).toBeGreaterThan(
+      setupMessagingChannels.mock.invocationCallOrder[0] ?? Number.NEGATIVE_INFINITY,
+    );
+    expect(stageSandboxCredentialProviders.mock.invocationCallOrder[1]).toBeLessThan(
+      calls.selectResourceProfile.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
 
     calls.selectResourceProfile.mockResolvedValueOnce({ cpu: "75%", memory: "75%" });
     await handleSandboxState({
@@ -276,6 +296,11 @@ describe("sandbox create intent machine boundary", () => {
       "tm-brave-search",
       "brave",
       "BRAVE_API_KEY",
+    );
+    expect(providerMatchesGatewayCredential).toHaveBeenCalledWith(
+      "tm-telegram-bridge",
+      "generic",
+      "TELEGRAM_BOT_TOKEN",
     );
     expect(calls.promptName).not.toHaveBeenCalled();
     expect(calls.selectResourceProfile).toHaveBeenCalledTimes(2);
