@@ -1,10 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
-
-import { GatewayClient, HostCliClient, SandboxClient } from "../fixtures/clients/index.ts";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CommandRunner } from "../fixtures/clients/index.ts";
+import { GatewayClient, HostCliClient, SandboxClient } from "../fixtures/clients/index.ts";
 import type { NemoClawInstance } from "../fixtures/phases/onboarding.ts";
 import type {
   ShellProbeResult,
@@ -206,6 +205,9 @@ describe("GatewayClient recovery helpers (#2701)", () => {
   });
 
   describe("expectPidStable", () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
     it("returns the PID when it is stable across all samples", async () => {
       const runner = new ScriptedRunner();
       // initial sample + 3 stable samples
@@ -217,11 +219,12 @@ describe("GatewayClient recovery helpers (#2701)", () => {
       );
       const gateway = buildGateway(runner);
 
-      const pid = await gateway.expectPidStable(fakeInstance(), {
+      const observation = gateway.expectPidStable(fakeInstance(), {
         durationSeconds: 3,
         pollIntervalSeconds: 1,
       });
-      expect(pid).toBe(100);
+      await vi.runAllTimersAsync();
+      await expect(observation).resolves.toBe(100);
     });
 
     it("throws when the PID changes (crash-loop)", async () => {
@@ -229,12 +232,14 @@ describe("GatewayClient recovery helpers (#2701)", () => {
       runner.queue({ stdout: "100\n" }, { stdout: "201\n" });
       const gateway = buildGateway(runner);
 
-      await expect(
+      const observation = expect(
         gateway.expectPidStable(fakeInstance(), {
           durationSeconds: 2,
           pollIntervalSeconds: 1,
         }),
       ).rejects.toThrow(/PID changed 100→201.*crash-loop/);
+      await vi.runAllTimersAsync();
+      await observation;
     });
 
     it("throws when the gateway disappears mid-window", async () => {
@@ -242,12 +247,14 @@ describe("GatewayClient recovery helpers (#2701)", () => {
       runner.queue({ stdout: "100\n" }, { stdout: "" });
       const gateway = buildGateway(runner);
 
-      await expect(
+      const observation = expect(
         gateway.expectPidStable(fakeInstance(), {
           durationSeconds: 2,
           pollIntervalSeconds: 1,
         }),
       ).rejects.toThrow(/gateway disappeared/);
+      await vi.runAllTimersAsync();
+      await observation;
     });
 
     it("throws when no gateway exists at the start of the window", async () => {

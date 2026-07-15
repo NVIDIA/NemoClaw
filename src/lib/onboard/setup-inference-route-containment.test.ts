@@ -1,18 +1,49 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { checkGatewayRouteCompatibility } from "../inference/gateway-route-compatibility";
 import type { SandboxEntry } from "../state/registry";
 import { createSetupInference, type SetupInferenceDeps } from "./setup-inference";
 
 describe("onboard shared gateway route containment", () => {
-  it("preflights a resumed custom endpoint and pins the final host smoke (#6293)", async () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it.each([
+    {
+      scenario: "public",
+      endpointUrl: "https://public-name.example/v1",
+      resolvedAddress: "93.184.216.34",
+      trustedHosts: "",
+      expectedError: null,
+      expectedPinnedAddresses: ["93.184.216.34"],
+      expectedTrustedPrivateAddresses: [],
+    },
+    {
+      scenario: "operator-trusted private",
+      endpointUrl: "https://llm.corp.example/v1",
+      resolvedAddress: "10.0.0.8",
+      trustedHosts: "llm.corp.example",
+      expectedError: null,
+      expectedPinnedAddresses: ["10.0.0.8"],
+      expectedTrustedPrivateAddresses: ["10.0.0.8"],
+    },
+    {
+      scenario: "unlisted private",
+      endpointUrl: "https://unlisted.corp.example/v1",
+      resolvedAddress: "10.0.0.8",
+      trustedHosts: "",
+      expectedError: "exit 1",
+      expectedPinnedAddresses: [],
+      expectedTrustedPrivateAddresses: [],
+    },
+  ])("handles a resumed $scenario endpoint at the shared preflight", async (scenario) => {
+    vi.stubEnv("NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS", scenario.trustedHosts);
     let lookupCount = 0;
     const resolveEndpointHost = vi.fn(async () => {
       lookupCount += 1;
       return lookupCount === 1
-        ? [{ address: "93.184.216.34", family: 4 }]
+        ? [{ address: scenario.resolvedAddress, family: 4 }]
         : [{ address: "10.0.0.8", family: 4 }];
     });
     const verifyOnboardInferenceSmoke = vi.fn();
@@ -38,7 +69,7 @@ describe("onboard shared gateway route containment", () => {
           providerName: "compatible-endpoint",
           providerType: "openai",
           credentialEnv: "COMPATIBLE_API_KEY",
-          endpointUrl: "https://public-name.example/v1",
+          endpointUrl: scenario.endpointUrl,
           helpUrl: null,
           modelMode: "input",
           defaultModel: "model-a",
@@ -63,24 +94,30 @@ describe("onboard shared gateway route containment", () => {
       }),
     } as unknown as SetupInferenceDeps);
 
-    await expect(
-      setupInference(
-        "sandbox-a",
-        "model-a",
-        "compatible-endpoint",
-        "https://public-name.example/v1",
-        "COMPATIBLE_API_KEY",
-      ),
-    ).resolves.toEqual({ ok: true });
-
-    expect(resolveEndpointHost).toHaveBeenCalledOnce();
-    expect(verifyOnboardInferenceSmoke).toHaveBeenCalledWith(
-      expect.objectContaining({ pinnedAddresses: ["93.184.216.34"] }),
+    const errorMessage = await setupInference(
+      "sandbox-a",
+      "model-a",
+      "compatible-endpoint",
+      scenario.endpointUrl,
+      "COMPATIBLE_API_KEY",
+    ).then(
+      () => null,
+      (error: Error) => error.message,
     );
-    expect(JSON.stringify(verifyOnboardInferenceSmoke.mock.calls)).not.toContain("10.0.0.8");
+
+    expect(errorMessage).toBe(scenario.expectedError);
+    expect(resolveEndpointHost).toHaveBeenCalledOnce();
+    expect(
+      verifyOnboardInferenceSmoke.mock.calls.flatMap(([request]) => request.pinnedAddresses ?? []),
+    ).toEqual(scenario.expectedPinnedAddresses);
+    expect(
+      verifyOnboardInferenceSmoke.mock.calls.flatMap(
+        ([request]) => request.trustedPrivateCapability?.addresses ?? [],
+      ),
+    ).toEqual(scenario.expectedTrustedPrivateAddresses);
   });
 
-  it("rejects a conflict before selecting the gateway or mutating provider state (#6315)", async () => {
+  it("warns once inside the gateway lock before applying a valid conflicting route (#6315)", async () => {
     const events: string[] = [];
     const runOpenshell = vi.fn(() => {
       events.push("openshell");
@@ -91,6 +128,7 @@ describe("onboard shared gateway route containment", () => {
     const verifyInferenceRoute = vi.fn();
     const verifyOnboardInferenceSmoke = vi.fn();
     const getGatewayName = vi.fn(() => "nemoclaw-9090");
+    const log = vi.fn((message: string) => events.push(`log:${message}`));
     const error = vi.fn((message: string) => events.push(`error:${message}`));
     const exitProcess = vi.fn((code: number): never => {
       events.push(`exit:${code}`);
@@ -102,8 +140,14 @@ describe("onboard shared gateway route containment", () => {
         ok: false as const,
         gatewayName: "nemoclaw-9090",
         sandboxName: "new-sandbox",
-        route: { provider: "anthropic-prod", model: "claude-new" },
-        conflicts: [{ sandboxName: "stopped-sandbox", reason: "provider-model" as const }],
+        route: { provider: "router-b", model: "model-b" },
+        conflicts: [
+          {
+            sandboxName: "stopped-sandbox",
+            reason: "provider-model" as const,
+            recordedRoute: { provider: "router-a", model: "model-a" },
+          },
+        ],
       };
     });
     const setupInference = createSetupInference({
@@ -124,32 +168,100 @@ describe("onboard shared gateway route containment", () => {
       upsertProvider,
       verifyInferenceRoute,
       verifyOnboardInferenceSmoke,
+      isNonInteractive: () => true,
+      hermesProviderAuth: { HERMES_PROVIDER_NAME: "hermes-provider" },
+      isRoutedInferenceProvider: () => true,
+      reconcileModelRouter: vi.fn(async () => undefined),
+      routedInference: {
+        upsertRoutedProvider: vi.fn(() => ({
+          ok: true,
+          endpointUrl: "http://router-b.test/v1",
+          result: { ok: true },
+        })),
+      },
+      hydrateCredentialEnv: vi.fn(() => "secret"),
+      redact: (value: string) => value,
+      compactText: (value: string) => value,
+      log,
+      error,
+      exitProcess,
+    } as unknown as SetupInferenceDeps);
+
+    await expect(
+      setupInference("new-sandbox", "model-b", "router-b", "http://router-b.test/v1", "ROUTER_KEY"),
+    ).resolves.toEqual({ ok: true });
+
+    expect(events.slice(0, 4)).toEqual([
+      "lock",
+      "guard",
+      expect.stringContaining("error:  Warning: Onboarding 'new-sandbox' will re-point"),
+      "step",
+    ]);
+    expect(getGatewayName).toHaveBeenCalledOnce();
+    expect(checkGatewayRouteCompatibility).toHaveBeenCalledWith(
+      expect.objectContaining({ gatewayName: "nemoclaw-9090" }),
+    );
+    expect(runOpenshell).toHaveBeenCalledWith(
+      expect.arrayContaining(["inference", "set", "--provider", "router-b", "--model", "model-b"]),
+      { ignoreError: true },
+    );
+    expect(verifyInferenceRoute).toHaveBeenCalledWith("nemoclaw-9090", "router-b", "model-b");
+    expect(verifyOnboardInferenceSmoke).toHaveBeenCalledOnce();
+    expect(updateSandbox).toHaveBeenCalledOnce();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("stopped-sandbox"));
+    expect(exitProcess).not.toHaveBeenCalled();
+  });
+
+  it("fails before provider mutation when endpoint or credential identity differs (#6315)", async () => {
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const updateSandbox = vi.fn(() => true);
+    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const error = vi.fn();
+    const exitProcess = vi.fn((code: number): never => {
+      throw new Error(`exit ${code}`);
+    });
+    const peer: SandboxEntry = {
+      name: "existing-custom",
+      gatewayName: "nemoclaw",
+      provider: "compatible-endpoint",
+      model: "model-a",
+      endpointUrl: "https://endpoint-a.example/v1",
+      credentialEnv: "KEY_A",
+      preferredInferenceApi: "openai-completions",
+    };
+    const setupInference = createSetupInference({
+      checkGatewayRouteCompatibility: (
+        request: Parameters<SetupInferenceDeps["checkGatewayRouteCompatibility"]>[0],
+      ) => checkGatewayRouteCompatibility({ ...request, sandboxes: [peer] }),
+      withSandboxMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      withGatewayRouteMutationLock: async <T>(_name: string, operation: () => Promise<T> | T) =>
+        await operation(),
+      getGatewayName: () => "nemoclaw",
+      runOpenshell,
+      updateSandbox,
+      upsertProvider,
       error,
       exitProcess,
     } as unknown as SetupInferenceDeps);
 
     await expect(
       setupInference(
-        "new-sandbox",
-        "claude-new",
-        "anthropic-prod",
-        "https://api.anthropic.com",
-        "ANTHROPIC_API_KEY",
+        "new-custom",
+        "model-b",
+        "compatible-endpoint",
+        "https://endpoint-b.example/v1",
+        "KEY_B",
+        null,
+        [],
+        { preferredInferenceApi: "openai-completions" },
       ),
     ).rejects.toThrow("exit 1");
 
-    expect(events.slice(0, 2)).toEqual(["lock", "guard"]);
-    expect(getGatewayName).toHaveBeenCalledOnce();
-    expect(checkGatewayRouteCompatibility).toHaveBeenCalledWith(
-      expect.objectContaining({ gatewayName: "nemoclaw-9090" }),
-    );
-    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("provider-global configuration"));
     expect(upsertProvider).not.toHaveBeenCalled();
-    expect(verifyInferenceRoute).not.toHaveBeenCalled();
-    expect(verifyOnboardInferenceSmoke).not.toHaveBeenCalled();
+    expect(runOpenshell).not.toHaveBeenCalled();
     expect(updateSandbox).not.toHaveBeenCalled();
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("stopped-sandbox"));
-    expect(exitProcess).toHaveBeenCalledWith(1);
   });
 
   it("rechecks recovered-route ownership inside both mutation locks before setup (#6630)", async () => {
@@ -205,7 +317,7 @@ describe("onboard shared gateway route containment", () => {
     expect(exitProcess).toHaveBeenCalledWith(1);
   });
 
-  it("keeps a pending reservation while async smoke failure blocks another setup (#6315)", async () => {
+  it("serializes pending setup, then warns and applies the next valid route (#6315)", async () => {
     const reservations: SandboxEntry[] = [];
     let rejectSmoke!: (reason?: unknown) => void;
     const smokePending = new Promise<void>((_resolve, reject) => {
@@ -235,8 +347,12 @@ describe("onboard shared gateway route containment", () => {
       },
     );
     const runOpenshell = vi.fn(() => ({ status: 0 }));
-    const verifyOnboardInferenceSmoke = vi.fn(() => smokePending);
+    const verifyOnboardInferenceSmoke = vi
+      .fn()
+      .mockImplementationOnce(() => smokePending)
+      .mockResolvedValueOnce(undefined);
     const log = vi.fn();
+    const error = vi.fn();
     const exitProcess = vi.fn((code: number): never => {
       throw new Error(`exit ${code}`);
     });
@@ -275,7 +391,7 @@ describe("onboard shared gateway route containment", () => {
       redact: (value: string) => value,
       compactText: (value: string) => value,
       log,
-      error: vi.fn(),
+      error,
       exitProcess,
     } as unknown as SetupInferenceDeps);
 
@@ -311,9 +427,9 @@ describe("onboard shared gateway route containment", () => {
 
     expect(results).toEqual([
       { status: "rejected", reason: expect.objectContaining({ message: "smoke failed" }) },
-      { status: "rejected", reason: expect.objectContaining({ message: "exit 1" }) },
+      { status: "fulfilled", value: { ok: true } },
     ]);
-    expect(runOpenshell).toHaveBeenCalledTimes(1);
+    expect(runOpenshell).toHaveBeenCalledTimes(2);
     expect(updateSandbox).toHaveBeenCalledWith("alpha", {
       provider: "router-a",
       model: "model-a",
@@ -322,10 +438,15 @@ describe("onboard shared gateway route containment", () => {
       preferredInferenceApi: null,
       gatewayName: "nemoclaw",
     });
-    expect(reservations).toHaveLength(1);
-    expect(updateSandbox).toHaveBeenCalledOnce();
-    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("Inference route set"));
-    expect(exitProcess).toHaveBeenCalledWith(1);
+    expect(reservations).toHaveLength(2);
+    expect(updateSandbox).toHaveBeenCalledTimes(2);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("Affected registered sandboxes: 'alpha'"),
+    );
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining("Inference route set: router-b / model-b"),
+    );
+    expect(exitProcess).not.toHaveBeenCalled();
   });
 
   it("stamps the owning onboard session on the initial route reservation (#6562)", async () => {

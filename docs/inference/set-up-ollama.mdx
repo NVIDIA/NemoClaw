@@ -85,6 +85,15 @@ If the validation probe times out, NemoClaw retries with a larger timeout before
 Each Ollama-backed OpenClaw passthrough checks whether the selected model is still loaded and sends a bounded warm-up request when necessary.
 </AgentOnly>
 
+<AgentOnly variant="hermes">
+Hermes requires at least `64000` tokens, so NemoClaw requests that host-side context length when it starts Ollama on macOS or Linux.
+Fresh onboarding verifies after model warm-up that `/api/ps` reports at least `64000` for the loaded model.
+Resumed onboarding and sandbox rebuilds warm the exact recorded Ollama model and repeat this verification before reusing its route.
+When `NEMOCLAW_CONTEXT_WINDOW` is unset, NemoClaw writes the verified runtime value as `model.context_length` in `/sandbox/.hermes/config.yaml`.
+An explicit `NEMOCLAW_CONTEXT_WINDOW` must be at least `64000`; NemoClaw writes that value only when the loaded model reports at least the same context length.
+If an existing or unmanaged daemon reports less, omits the value, or returns a malformed value, onboarding stops before building the sandbox and shows the required `OLLAMA_CONTEXT_LENGTH` value for restarting Ollama.
+</AgentOnly>
+
 ## Use Windows-Host Ollama from WSL
 
 When NemoClaw runs in WSL, the provider menu can offer these Windows-host actions:
@@ -172,6 +181,7 @@ The following settings control non-interactive selection:
 |---|---|
 | `NEMOCLAW_PROVIDER` | Set to `ollama`. |
 | `NEMOCLAW_MODEL` | Optional Ollama model tag. |
+| `NEMOCLAW_PROVIDER_MODEL` | Compatibility fallback for the NVIDIA QA non-interactive Ollama invocation tracked in [#6869](https://github.com/NVIDIA/NemoClaw/issues/6869). Ignored when `NEMOCLAW_MODEL` is set; remove after that workflow migrates to `NEMOCLAW_MODEL`. |
 | `NEMOCLAW_YES` | Optional model download authorization when set to `1`. |
 
 Under `--non-interactive`, include `--yes` or set `NEMOCLAW_YES=1` to authorize a model download.
@@ -179,7 +189,9 @@ Onboarding exits when a download requires confirmation and the run cannot prompt
 
 ## Understand Model Selection
 
-When `NEMOCLAW_MODEL` is unset, NemoClaw selects a starter model based on currently available memory.
+When `NEMOCLAW_MODEL` and the `NEMOCLAW_PROVIDER_MODEL` compatibility fallback are unset, NemoClaw selects a starter model based on currently available memory.
+During interactive onboarding, if the requested model env contains a safe model tag that appears in the current Ollama menu, NemoClaw uses that menu entry as the default.
+If the tag is absent from the rendered installed or starter list, the normal memory-based default remains.
 If a known bootstrap model does not fit, NemoClaw warns and falls back to the largest known model that does fit.
 Unknown or custom tags pass through to the Ollama runner for validation.
 
@@ -196,6 +208,12 @@ It does not make the larger models usable on N1X, reject an explicitly selected 
 
 <AgentOnly variant="openclaw">
 When Ollama reports a context length below `16384` and `NEMOCLAW_CONTEXT_WINDOW` is unset, NemoClaw writes a `contextWindow` of `16384` so the agent prompt and tool definitions fit better than the stock daemon default.
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+When `NEMOCLAW_CONTEXT_WINDOW` is unset, NemoClaw writes a valid loaded-model context length of at least `64000` as `model.context_length`.
+When you set a larger value explicitly, the loaded model must report at least that value before NemoClaw writes the explicit value.
+When the runtime value is lower or cannot be verified, onboarding stops and tells you which `OLLAMA_CONTEXT_LENGTH` value to use when restarting the host daemon before retrying.
 </AgentOnly>
 
 If the initial validation times out during a cold load, NemoClaw retries once with a 300-second probe budget.

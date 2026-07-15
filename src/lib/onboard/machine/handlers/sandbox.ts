@@ -4,17 +4,25 @@
 import {
   type CurrentGatewayRouteCompatibilityCheck,
   formatGatewayRouteConflict,
+  type GatewayRouteCompatibilityResult,
+  isAdvisoryGatewayRouteConflict,
 } from "../../../inference/gateway-route-compatibility";
 import {
   parseExplicitWebSearchProvider,
   type WebSearchConfig as SharedWebSearchConfig,
   WEB_SEARCH_PROVIDER_ENV,
   webSearchConfigsEqual,
+  webSearchEnvFor,
   webSearchLabelFor,
   webSearchProviderForConfig,
 } from "../../../inference/web-search";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
-import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
+import type {
+  HermesAuthMethod,
+  Session,
+  SessionResourceProfile,
+  SessionUpdates,
+} from "../../../state/onboard-session";
 import type { SandboxEntry } from "../../../state/registry";
 import { getSandboxEntryInference } from "../../../state/registry-entry-view";
 import { toolDisclosureOrDefault } from "../../../tool-disclosure";
@@ -49,6 +57,16 @@ import {
   resolveToolDisclosureResumeSignals,
   type SandboxResumeDecision,
 } from "./sandbox-resume";
+
+function isAdvisoryPeerRouteDifference(
+  result: Exclude<GatewayRouteCompatibilityResult, { ok: true }>,
+  sandboxName: string,
+): boolean {
+  return (
+    isAdvisoryGatewayRouteConflict(result) &&
+    !result.conflicts.some((conflict) => conflict.sandboxName === sandboxName)
+  );
+}
 
 export interface SandboxStateOptions<
   Gpu,
@@ -144,15 +162,24 @@ export interface SandboxStateOptions<
       session: Session | null,
       sandboxName: string | null,
     ): string[] | null;
+    showMessagingStage?(): void;
     setupMessagingChannels(
       agent: Agent,
       existingChannels: string[] | null,
       sandboxName: string,
+      options?: { readonly selectionCompleted?: boolean },
     ): Promise<string[]>;
     readMessagingPlanFromEnv(): SandboxMessagingPlan | null;
     writePlanToEnv(plan: SandboxMessagingPlan): void;
     clearPlanEnv(): void;
     getRegistrySandboxMessagingPlan(sandboxName: string): SandboxMessagingPlan | null;
+    providerMatchesGatewayCredential(name: string, type: string, credentialEnv: string): boolean;
+    stageSandboxCredentialProviders(input: {
+      sandboxName: string;
+      enabledChannels: readonly string[];
+      webSearchConfig: WebSearchConfig | null;
+      agent: Agent;
+    }): Promise<readonly string[]>;
     promptValidatedSandboxName(agent: Agent): Promise<string>;
     selectResourceProfileForSandbox(): Promise<ResourceProfile | null>;
     stopStaleDashboardListenersForSandbox(sandboxes: unknown[], sandboxName: string): void;
@@ -171,6 +198,7 @@ export interface SandboxStateOptions<
       extraProviders: readonly string[];
       staleExtraProviders: readonly string[];
       policyTier?: string | null;
+      reuseRegisteredCredentials?: boolean;
     }): Promise<ResolvedSandboxCreateIntent>;
     createSandbox(
       gpu: Gpu,
@@ -283,6 +311,10 @@ function effectiveHermesToolGatewaysForWebSearch(
     : [...gateways];
 }
 
+function hasResourceProfileEnvOverride(env: NodeJS.ProcessEnv): boolean {
+  return Boolean(env.NEMOCLAW_RESOURCE_PROFILE || env.NEMOCLAW_CPU || env.NEMOCLAW_RAM);
+}
+
 type SandboxCreationDecision = Exclude<SandboxResumeDecision, { readonly kind: "reuse" }>;
 type CompleteSandboxCreateIntent = SandboxCreateIntent & {
   readonly resolved: ResolvedSandboxCreateIntent;
@@ -330,6 +362,11 @@ class SandboxStateFlow<
     ResourceProfile
   >["deps"] {
     return this.options.deps;
+  }
+
+  private get resumesSandboxPrompts(): boolean {
+    const agentName = (this.options.agent as { name?: string } | null)?.name;
+    return !agentName || agentName === "openclaw";
   }
 
   private prepareWebSearchSupport(): SandboxStepState<WebSearchConfig> {
@@ -534,9 +571,10 @@ class SandboxStateFlow<
         credentialEnv: this.options.credentialEnv,
       },
     });
-    if (!compatibility.ok) {
-      this.failGatewayRouteCheck(`  Error: ${formatGatewayRouteConflict(compatibility)}`);
-    }
+    if (compatibility.ok || isAdvisoryPeerRouteDifference(compatibility, sandboxName)) return;
+    // The target registry row is the route reservation this transaction owns.
+    // A changed target is a lost-reservation race, not an advisory peer drift.
+    this.failGatewayRouteCheck(`  Error: ${formatGatewayRouteConflict(compatibility)}`);
   }
 
   private failGatewayRouteCheck(message: string): never {
@@ -613,23 +651,164 @@ class SandboxStateFlow<
   private async resolveWebSearchForCreation(
     state: SandboxStepState<WebSearchConfig>,
   ): Promise<WebSearchConfig | null> {
-    if (!state.webSearchConfig) {
-      if (this.options.authoritativeResumeConfig) return null;
+    if (!state.webSearchConfig) return this.resolveAbsentWebSearchForCreation(state);
+    const provider = webSearchProviderForConfig(
+      state.webSearchConfig as unknown as SharedWebSearchConfig,
+    );
+    const label = webSearchLabelFor(provider);
+    const credentialEnv = webSearchEnvFor(provider);
+    const localCredential = this.options.env[credentialEnv]?.trim();
+    if (
+      this.resumesSandboxPrompts &&
+      this.options.resume &&
+      state.sandboxName &&
+      !localCredential &&
+      state.session?.stagedCredentialProviders.includes(
+        `${state.sandboxName}-${provider}-search`,
+      ) &&
+      this.deps.providerMatchesGatewayCredential(
+        `${state.sandboxName}-${provider}-search`,
+        provider,
+        credentialEnv,
+      )
+    ) {
+      this.deps.note(`  [resume] Reusing ${label} credential registered with OpenShell.`);
+      return state.webSearchConfig;
+    }
+    this.deps.note(`  [resume] Revalidating ${label} configuration for sandbox recreation.`);
+    const credential = await this.deps.ensureValidatedWebSearchCredential(state.webSearchConfig);
+    if (this.deps.isBackToSelection(credential) || !credential) return null;
+    this.deps.note(`  [resume] Reusing ${label} configuration.`);
+    return state.webSearchConfig;
+  }
+
+  private resolveAbsentWebSearchForCreation(
+    state: SandboxStepState<WebSearchConfig>,
+  ): Promise<WebSearchConfig | null> | null {
+    const explicitlyConfigured = parseExplicitWebSearchProvider(
+      this.options.env[WEB_SEARCH_PROVIDER_ENV],
+    ).specified;
+    const completedSelection =
+      this.resumesSandboxPrompts &&
+      this.options.resume &&
+      state.session?.sandboxPromptProgress?.webSearch === true;
+    if (!this.options.authoritativeResumeConfig && !explicitlyConfigured && !completedSelection) {
       return this.deps.configureWebSearch(
         null,
         this.options.agent,
         state.webSearchSupportProbePath,
       );
     }
-    const provider = webSearchProviderForConfig(
-      state.webSearchConfig as unknown as SharedWebSearchConfig,
+    if (completedSelection && !explicitlyConfigured && !state.webSearchSupportDropped) {
+      this.deps.note("  [resume] Reusing web search selection: disabled.");
+    }
+    return null;
+  }
+
+  private checkpointWebSearch(
+    state: SandboxStepState<WebSearchConfig>,
+    webSearchConfig: WebSearchConfig | null,
+  ): SandboxStepState<WebSearchConfig> {
+    if (!this.resumesSandboxPrompts) return { ...state, webSearchConfig };
+    const session = this.deps.updateSession((current) => {
+      current.webSearchConfig = webSearchConfig as unknown as Session["webSearchConfig"];
+      current.sandboxPromptProgress.webSearch = true;
+      return current;
+    });
+    return { ...state, session, webSearchConfig };
+  }
+
+  private checkpointSandboxName(
+    state: SandboxStepState<WebSearchConfig>,
+    sandboxName: string,
+  ): SandboxStepState<WebSearchConfig> {
+    if (!this.resumesSandboxPrompts) return { ...state, sandboxName };
+    let messagingInvalidated = false;
+    const session = this.deps.updateSession((current) => {
+      const recordedNameChanged =
+        current.sandboxName !== null && current.sandboxName !== sandboxName;
+      const messagingPlanTargetsAnotherName =
+        current.messagingPlan !== null && current.messagingPlan.sandboxName !== sandboxName;
+      if (recordedNameChanged || messagingPlanTargetsAnotherName) {
+        current.messagingPlan = null;
+        current.sandboxPromptProgress.messaging = false;
+        messagingInvalidated = true;
+      }
+      current.sandboxName = sandboxName;
+      current.sandboxPromptProgress.sandboxName = true;
+      return current;
+    });
+    if (messagingInvalidated) this.deps.clearPlanEnv();
+    return { ...state, session, sandboxName };
+  }
+
+  private checkpointMessaging(
+    state: SandboxStepState<WebSearchConfig>,
+    messaging: { plan: SandboxMessagingPlan | null; selectedChannels: string[] },
+  ): SandboxStepState<WebSearchConfig> {
+    if (!this.resumesSandboxPrompts) {
+      return { ...state, selectedMessagingChannels: messaging.selectedChannels };
+    }
+    const session = this.deps.updateSession((current) => {
+      current.messagingPlan = messaging.plan;
+      current.sandboxPromptProgress.messaging = true;
+      return current;
+    });
+    return {
+      ...state,
+      session,
+      selectedMessagingChannels: messaging.selectedChannels,
+    };
+  }
+
+  private async registerCompletedCredentialProviders(
+    sandboxName: string,
+    enabledChannels: readonly string[],
+    webSearchConfig: WebSearchConfig | null,
+  ): Promise<void> {
+    if (!this.resumesSandboxPrompts || (!webSearchConfig && enabledChannels.length === 0)) return;
+    const registeredProviders = await this.deps.withGatewayRouteMutationLock(
+      this.options.gatewayName,
+      () =>
+        this.deps.stageSandboxCredentialProviders({
+          sandboxName,
+          enabledChannels,
+          webSearchConfig,
+          agent: this.options.agent,
+        }),
     );
-    const label = webSearchLabelFor(provider);
-    this.deps.note(`  [resume] Revalidating ${label} configuration for sandbox recreation.`);
-    const credential = await this.deps.ensureValidatedWebSearchCredential(state.webSearchConfig);
-    if (this.deps.isBackToSelection(credential) || !credential) return null;
-    this.deps.note(`  [resume] Reusing ${label} configuration.`);
-    return state.webSearchConfig;
+    if (registeredProviders.length > 0) {
+      this.deps.note("  ✓ Registered selected credentials with OpenShell for resume.");
+    }
+  }
+
+  private async resolveResourceProfile(state: SandboxStepState<WebSearchConfig>): Promise<{
+    state: SandboxStepState<WebSearchConfig>;
+    resourceProfile: ResourceProfile | null;
+  }> {
+    if (
+      this.resumesSandboxPrompts &&
+      this.options.resume &&
+      state.session?.sandboxPromptProgress?.resourceProfile === true &&
+      !hasResourceProfileEnvOverride(this.options.env)
+    ) {
+      const resourceProfile = state.session.resourceProfile as ResourceProfile | null;
+      this.deps.note(
+        resourceProfile
+          ? "  [resume] Reusing resource profile selection."
+          : "  [resume] Reusing OpenShell default resources.",
+      );
+      return { state, resourceProfile };
+    }
+
+    const resourceProfile = await this.deps.selectResourceProfileForSandbox();
+    if (!this.resumesSandboxPrompts) return { state, resourceProfile };
+    const session = this.deps.updateSession((current) => {
+      current.resourceProfile = resourceProfile as SessionResourceProfile | null;
+      current.sandboxPromptProgress.resourceProfile = true;
+      return current;
+    });
+    return { state: { ...state, session }, resourceProfile };
   }
 
   private async buildSandboxCreateIntent(
@@ -641,6 +820,7 @@ class SandboxStateFlow<
     resourceProfile: ResourceProfile | null,
     hermesToolGateways: readonly string[],
   ): Promise<CompleteSandboxCreateIntent> {
+    const reuseRegisteredCredentials = this.resumesSandboxPrompts && this.options.resume;
     const resolved = await this.deps.resolveSandboxCreateIntent({
       sandboxName,
       enabledChannels: state.selectedMessagingChannels,
@@ -651,6 +831,7 @@ class SandboxStateFlow<
       hermesToolGateways,
       extraProviders,
       staleExtraProviders,
+      ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
       ...(this.options.authoritativePolicyTier !== undefined
         ? { policyTier: this.options.authoritativePolicyTier }
         : {}),
@@ -660,6 +841,7 @@ class SandboxStateFlow<
       recreate: decision.kind !== "create",
       toolDisclosure: toolDisclosureOrDefault(state.session?.toolDisclosure),
       observabilityEnabled: state.session?.observabilityEnabled === true,
+      ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true as const } : {}),
       ...(this.options.endpointUrl ? { endpointUrl: this.options.endpointUrl } : {}),
       ...(state.session?.observabilityRequestedExplicitly === true
         ? { observabilityRequestedExplicitly: true as const }
@@ -676,18 +858,20 @@ class SandboxStateFlow<
   }
 
   private async createAndRecordSandbox(
-    state: SandboxStepState<WebSearchConfig>,
+    initialState: SandboxStepState<WebSearchConfig>,
     requestedSandboxName: string,
     messagingPlan: SandboxMessagingPlan | null,
     decision: SandboxCreationDecision,
   ): Promise<SandboxStepState<WebSearchConfig>> {
+    const resourceSelection = await this.resolveResourceProfile(initialState);
+    const state = resourceSelection.state;
+    const resourceProfile = resourceSelection.resourceProfile;
     const effectiveHermesToolGateways = effectiveHermesToolGatewaysForWebSearch(
       this.options.agent as { name?: string } | null,
       state.webSearchConfig as unknown as SharedWebSearchConfig | null,
       this.options.hermesToolGateways,
     );
     const extraProviderPlan = this.deps.planRegisteredExtraProviders(this.options.gatewayName);
-    const resourceProfile = await this.deps.selectResourceProfileForSandbox();
     const createIntent = await this.buildSandboxCreateIntent(
       state,
       requestedSandboxName,
@@ -796,34 +980,48 @@ class SandboxStateFlow<
       this.deps.error(mcpBlockReason);
       return this.deps.exitProcess(1);
     }
-    const webSearchConfig = await this.resolveWebSearchForCreation(state);
+    let nextState = state.sandboxName
+      ? this.checkpointSandboxName(state, state.sandboxName)
+      : state;
+    const requestedSandboxName =
+      nextState.sandboxName ?? (await this.deps.promptValidatedSandboxName(this.options.agent));
+    if (!nextState.sandboxName) {
+      nextState = this.checkpointSandboxName(nextState, requestedSandboxName);
+    }
+    const webSearchConfig = await this.resolveWebSearchForCreation(nextState);
     const webSearchConfigChanged =
-      state.webSearchConfigChanged ||
+      nextState.webSearchConfigChanged ||
       !webSearchConfigsEqual(
-        state.webSearchConfig as unknown as SharedWebSearchConfig | null,
+        nextState.webSearchConfig as unknown as SharedWebSearchConfig | null,
         webSearchConfig as unknown as SharedWebSearchConfig | null,
       );
-    const requestedSandboxName =
-      state.sandboxName ?? (await this.deps.promptValidatedSandboxName(this.options.agent));
+    nextState = this.checkpointWebSearch(
+      {
+        ...nextState,
+        webSearchConfig,
+        webSearchConfigChanged,
+      },
+      webSearchConfig,
+    );
+    await this.registerCompletedCredentialProviders(
+      requestedSandboxName,
+      [],
+      nextState.webSearchConfig,
+    );
     const messaging = await reconcileSandboxMessaging({
       resume: this.options.resume,
-      session: state.session,
+      session: nextState.session,
       sandboxName: requestedSandboxName,
       agent: this.options.agent,
       deps: this.deps,
     });
-    return this.createAndRecordSandbox(
-      {
-        ...state,
-        sandboxName: requestedSandboxName,
-        webSearchConfig,
-        webSearchConfigChanged,
-        selectedMessagingChannels: messaging.selectedChannels,
-      },
+    nextState = this.checkpointMessaging(nextState, messaging);
+    await this.registerCompletedCredentialProviders(
       requestedSandboxName,
-      messaging.plan,
-      decision,
+      nextState.selectedMessagingChannels,
+      null,
     );
+    return this.createAndRecordSandbox(nextState, requestedSandboxName, messaging.plan, decision);
   }
 
   private complete(state: SandboxStepState<WebSearchConfig>): SandboxStateResult<WebSearchConfig> {

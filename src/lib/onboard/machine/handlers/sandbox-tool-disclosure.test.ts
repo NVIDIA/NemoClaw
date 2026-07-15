@@ -126,6 +126,7 @@ describe("handleSandboxState tool disclosure", () => {
         toolDisclosure: requestedMode,
         observabilityEnabled: false,
         extraProviders: [],
+        reuseRegisteredCredentials: true,
       },
     );
   });

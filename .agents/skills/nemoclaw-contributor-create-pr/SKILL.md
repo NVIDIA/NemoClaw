@@ -223,7 +223,7 @@ gh pr create \
 Add labels when applicable:
 
 ```bash
---label "documentation"   # for doc-only or doc-inclusive PRs
+--label "area: docs"      # for doc-only or doc-inclusive PRs
 --label "topic:security"  # for security-related changes
 ```
 

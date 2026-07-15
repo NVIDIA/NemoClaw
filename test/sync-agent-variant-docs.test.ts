@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { renderAgentVariantPage } from "../scripts/sync-agent-variant-docs";
+import { renderAgentVariantPage } from "../scripts/sync-agent-variant-docs.mts";
 
 const FRONTMATTER = `---
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.

@@ -95,6 +95,24 @@ The watcher rejects blank or malformed overrides before it starts Fern.
 Fern `.mdx` pages are the canonical docs source.
 Fern publishes Markdown routes for AI agents from the same source pages.
 
+## Updating the Changelog
+
+The native Fern changelog under `docs/changelog/` is the canonical release history.
+One source directory is shared across the OpenClaw, Hermes, and Deep Agents user-guide variants.
+Create the planned release entry in the pre-tag release-note docs PR so it lands on `main` before the release plan captures the tag commit.
+
+For each release:
+
+- Add the complete release entry to `docs/changelog/YYYY-MM-DD.mdx`, using the release date as the filename.
+- Start the entry with an H2 version heading such as `## v0.0.83`.
+- If more than one release ships on the same date, put each version in the same file with the newest version first.
+- Include the summary and detailed bullets in the dated file; do not create separate variant-specific Release Notes pages.
+- Use literal CLI names instead of the `$$nemoclaw` variant placeholder because native changelog files do not pass through agent-variant generation.
+- Use root-absolute published routes for internal links in dated entries.
+  Generic links should target the OpenClaw route under `/user-guide/openclaw/`; agent-specific links should target the corresponding Hermes or Deep Agents route.
+- Use MDX comment syntax (`{/* ... */}`) for the SPDX header; HTML comments do not parse in Fern changelog entries.
+- Keep every dated entry directly under `docs/changelog/`; Fern does not support subdirectories there.
+
 ## Publishing Docs
 
 GitHub Actions publishes Fern docs from the same source files that `npm run docs` validates locally.
@@ -109,10 +127,37 @@ Public docs publish automatically when a `v*.*.*` release tag is pushed.
 The public publish job runs in the `docs-public` environment, verifies that the tag commit is reachable from `origin/main`, regenerates agent variants, validates Fern docs, and publishes to the public Fern instance.
 If the tag does not point to a commit on `main`, the job stops before installing dependencies or running Fern.
 
+## Starter Prompt Generation
+
+The canonical coding-agent installation prompt lives in `docs/resources/starter-prompt.md`.
+Edit that Markdown file instead of placing prompt text in a React component.
+Downstream consumers can pin the source with a raw URL such as
+`https://raw.githubusercontent.com/NVIDIA/NemoClaw/<commit-sha>/docs/resources/starter-prompt.md`.
+The Markdown SPDX comment is part of that raw file but does not appear when Markdown is rendered.
+
+The `scripts/generate-starter-prompt.mts` script removes the Markdown SPDX preamble and writes `docs/_build/StarterPrompt.generated.mdx`.
+The generated snippet wraps the prompt in Fern's native visible `Prompt` component, which displays the prompt body and supplies the copy button.
+The generated file is ignored by Git and is recreated by the docs build.
+
+Run the generator directly when you need to inspect the generated snippet:
+
+```bash
+npm run docs:sync-starter-prompt
+```
+
+Run the read-only comparison after generation when you need to verify that the snippet matches the Markdown source:
+
+```bash
+npm run docs:check-starter-prompt
+```
+
+The shared `npm run docs:prepare` step generates the Starter Prompt and agent variants.
+The normal `npm run docs`, `npm run docs:live`, agent-variant sync, preview-watcher, and docs publish workflows run that step before Fern validates, serves, previews, or publishes the pages that include the prompt.
+
 ## Agent Variant Generation
 
 Some Fern pages appear in the OpenClaw, Hermes, and Deep Agents guide variants.
-The `scripts/sync-agent-variant-docs.ts` script reads `docs/index.yml` and renders variant-specific copies for every page that appears in multiple guide variants before Fern validates or publishes the site.
+The `scripts/sync-agent-variant-docs.mts` script reads `docs/index.yml` and renders variant-specific copies for every page that appears in multiple guide variants before Fern validates or publishes the site.
 The source pages stay in their normal `docs/` locations, and generated pages are written under `docs/_build/agent-variants/`, which is ignored by Git.
 Navigation in `docs/index.yml` points Fern at generated pages for shared entries so Fern still renders normal fenced code blocks with copy buttons and syntax highlighting.
 OpenClaw-only, Hermes-only, or Deep Agents-only pages stay as source pages in navigation.

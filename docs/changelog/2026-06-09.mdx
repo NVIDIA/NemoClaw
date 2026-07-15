@@ -1,0 +1,23 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.62
+
+NemoClaw v0.0.62 improves onboarding reliability for GPU sandboxes, local inference, gateway pairing, Hermes configuration, and release validation:
+
+- GPU sandbox creation and local inference checks now match the runtime paths agents use.
+  Docker-driver recreation prefers NVIDIA CDI when the host advertises a CDI spec, Jetson/Tegra sandboxes inherit the device-node group needed for CUDA, and local GPU inference is verified through `inference.local` from inside the sandbox runtime before onboarding reports success.
+  For more information, refer to [Choose a Local Inference Server](/user-guide/openclaw/inference/local-inference/choose-local-inference-server).
+- Onboarding and recovery fail earlier and stay quieter on common host drift.
+  NemoClaw no longer requires `nc` for port readiness checks, clears pending gateway scope approvals after onboard and recover, preserves install-version fingerprints in package installs without `.git`, and suppresses fresh-sandbox provider cleanup probe noise.
+  For more information, refer to [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Sandbox state and OpenClaw operations recover better after direct in-sandbox changes.
+  Startup restores mutable OpenClaw config permissions after a raw in-sandbox `openclaw doctor --fix`, and the host CLI can now run `nemoclaw <name> agents list` alongside the existing agent add and delete passthrough commands.
+  For more information, refer to [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- WhatsApp pairing uses the compact QR renderer used by the real pairing flow.
+  For more information, refer to [Set Up WhatsApp](/user-guide/openclaw/manage-sandboxes/messaging-channels/set-up-whatsapp).
+- Hermes setup exposes clearer operator state.
+  Generated Hermes config records the upstream NemoClaw provider and model while still presenting Hermes as a custom proxy route, the provider menu labels Hermes choices more clearly, and NemoClaw rejects the reserved Hermes API port as a dashboard port before sandbox creation.
+  For more information, refer to [Run Sandboxes](/user-guide/hermes/manage-sandboxes/operate-sandboxes/run-sandboxes).
