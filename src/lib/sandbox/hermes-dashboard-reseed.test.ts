@@ -36,12 +36,10 @@ function sandboxCommand(args: string[]): string[] {
 }
 
 function mockReseedFlow(options: { inspection?: CaptureResult; seed?: CaptureResult } = {}): void {
-  capture.mockImplementation((_binary, args) => {
-    const command = sandboxCommand(args);
-    if (command[1] === "-c" && command[2] === "") return result();
-    if (command[1] === "-c") return options.inspection ?? result();
-    return options.seed ?? result();
-  });
+  capture
+    .mockReturnValueOnce(result())
+    .mockReturnValueOnce(options.inspection ?? result())
+    .mockReturnValueOnce(options.seed ?? result());
 }
 
 describe("seedHermesDashboardConfig", () => {
