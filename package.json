@@ -38,7 +38,7 @@
     "test:imports:check": "tsx scripts/checks/no-test-dist-imports.ts",
     "test:projects:check": "tsx scripts/checks/vitest-project-overlap.ts",
     "test:titles:check": "tsx scripts/checks/test-title-style.ts",
-    "bench": "tsx scripts/bench/run.ts",
+    "bench": "tsx scripts/bench/run.mts",
     "check": "npx prek run --all-files --stage pre-commit && npx prek run --all-files --stage manual",
     "check:diff": "npx prek run --from-ref origin/main --to-ref HEAD --stage pre-commit && npx commitlint --from origin/main --to HEAD && npx prek run --from-ref origin/main --to-ref HEAD --stage pre-push",
     "checks": "tsx scripts/checks/run.ts",
