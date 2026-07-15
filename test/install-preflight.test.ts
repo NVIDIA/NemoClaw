@@ -963,7 +963,7 @@ fi`,
 
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toMatch(/Previous onboarding session failed/);
-    expect(`${result.stdout}${result.stderr}`).toMatch(/--fresh/);
+    expect(`${result.stdout}${result.stderr}`).toMatch(/NEMOCLAW_FRESH=1/);
     // The installer must have bailed out before invoking nemoclaw onboard.
     expect(fs.existsSync(onboardLog)).toBe(false);
   });

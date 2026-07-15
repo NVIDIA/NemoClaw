@@ -2404,19 +2404,19 @@ run_onboard() {
         # Refuse in non-interactive mode (no safe default); prompt in
         # interactive mode so the user can pick resume vs. fresh.
         if [ "${NON_INTERACTIVE:-}" = "1" ]; then
-          error "Previous onboarding session failed. Re-run with --fresh to discard it, or run '${_CLI_BIN} onboard --resume' to retry the same session."
+          error "Previous onboarding session failed. Re-run with NEMOCLAW_FRESH=1 to discard it, or run '${_CLI_BIN} onboard --resume' to retry the same session."
         fi
         local _prompt_stdin="/dev/tty"
         if [ -t 0 ]; then _prompt_stdin="/dev/stdin"; fi
         if [ ! -r "$_prompt_stdin" ]; then
-          error "Previous onboarding session failed, and no TTY is available to prompt. Re-run with --fresh or run '${_CLI_BIN} onboard --resume'."
+          error "Previous onboarding session failed, and no TTY is available to prompt. Re-run with NEMOCLAW_FRESH=1 or run '${_CLI_BIN} onboard --resume'."
         fi
         info "Previous onboarding session failed."
         local _resume_answer=""
         while :; do
           printf "  Resume the failed session, or start fresh? [R/f]: " >&2
           if ! IFS= read -r _resume_answer <"$_prompt_stdin"; then
-            error "Could not read response from TTY. Re-run with --fresh or run '${_CLI_BIN} onboard --resume'."
+            error "Could not read response from TTY. Re-run with NEMOCLAW_FRESH=1 or run '${_CLI_BIN} onboard --resume'."
           fi
           # Use tr to lowercase the answer rather than the bash 4 case
           # expansion form (lowercase via the comma-comma operator), which
