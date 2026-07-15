@@ -34,7 +34,7 @@ async function runScript(args: string[]): Promise<RunResult> {
 }
 
 describe("sandbox image build benchmark", () => {
-  it("loads the compiled build-context import and rejects an unknown flag before any build", async () => {
+  it("loads the compiled build-context import and rejects an unknown flag before any build (#6923)", async () => {
     const result = await runScript(["--not-a-real-flag"]);
     expect(result.code).not.toBe(0);
     expect(result.stderr).toContain("Unknown argument: --not-a-real-flag");
