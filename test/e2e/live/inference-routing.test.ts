@@ -12,6 +12,11 @@ import { resultText } from "../fixtures/clients/command.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import {
+  remapDnsRebindingHostname,
+  restoreDnsRebindingHostsFixture,
+  setupDnsRebindingHostsFixture,
+} from "./dns-rebinding-hosts-fixture.ts";
 import { startFakeHttpsCompatibleServer } from "./https-pin-compatible-server.ts";
 import {
   CREDENTIAL_CLASSIFICATION_PATTERN,
@@ -371,6 +376,7 @@ test("TC-INF-11 DNS-backed HTTPS custom endpoint routes through the local pinnin
       "the real upstream hostname is never persisted to the NemoClaw sandbox registry",
       "OpenShell's own policy view never references the real upstream hostname",
       "a real chat completion round-trips through the pinned TLS connection to the public endpoint",
+      "a DNS rebind of the upstream hostname after inference set does not redirect adapter traffic",
     ],
     endpointUrl,
     model,
@@ -500,4 +506,43 @@ test("TC-INF-11 DNS-backed HTTPS custom endpoint routes through the local pinnin
       path: "/v1/chat/completions",
     }),
   );
+
+  // The assertions above only prove the *initial* `inference set` reached
+  // the real target. They do not prove the adapter is resistant to a DNS
+  // record changing after the route is already pinned -- the exact
+  // SSRF/DNS-rebinding vulnerability the pinning mechanism exists to close.
+  // Rebind the tunnel hostname to a reserved, unreachable documentation
+  // address (RFC 5737 TEST-NET-1) now that the route is registered: if the
+  // adapter re-resolved DNS per request instead of using the addresses it
+  // already pinned, this chat call would fail to connect instead of
+  // succeeding.
+  const hostsFixture = await setupDnsRebindingHostsFixture(host, sandboxName, endpointHostname);
+  cleanup.add(`restore https-pin DNS rebinding hosts fixture for ${sandboxName}`, () =>
+    restoreDnsRebindingHostsFixture(host, sandboxName, hostsFixture),
+  );
+  await remapDnsRebindingHostname(
+    host,
+    sandboxName,
+    hostsFixture,
+    "192.0.2.1",
+    "tc-inf-11-dns-rebind-after-inference-set",
+  );
+
+  const rebindRequestOffset = fake.requests().length;
+  await expectOpenAiChatThroughSandbox(
+    sandbox,
+    sandboxName,
+    model,
+    [apiKey],
+    "https-pin-endpoint-dns-rebinding-chat",
+  );
+  expect(fake.requests().slice(rebindRequestOffset)).toContainEqual(
+    expect.objectContaining({
+      auth: "ok",
+      method: "POST",
+      path: "/v1/chat/completions",
+    }),
+  );
+
+  await restoreDnsRebindingHostsFixture(host, sandboxName, hostsFixture);
 });

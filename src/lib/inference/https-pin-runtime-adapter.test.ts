@@ -381,6 +381,57 @@ describe("createHttpsPinRuntimeAdapterServer control-plane loopback restriction 
   });
 });
 
+describe("createHttpsPinRuntimeAdapterServer route forwarding private-network restriction (#6141)", () => {
+  // These drive the gate itself, so an unregistered route ID is enough: a
+  // request that passes the private-network gate falls through to the
+  // "route_not_found" lookup (which never pipes a real upstream response),
+  // while a request blocked by the gate never reaches that lookup at all and
+  // instead gets the gate's own "not_found" code.
+
+  it("rejects a route-forward request whose connection arrives from a public address", async () => {
+    const adapter = createHttpsPinRuntimeAdapterServer({ token: TEST_TOKEN });
+
+    // A peer that reached this 0.0.0.0-bound port from outside the intended
+    // Docker-bridge sandbox boundary -- an address the adapter should never
+    // trust a replayed bearer token from. 203.0.113.0/24 is the reserved
+    // TEST-NET-3 documentation range (RFC 5737), never a real bridge subnet.
+    const response = await dispatchFakeRequest(adapter, {
+      method: "GET",
+      url: "/route/never-registered",
+      remoteAddress: "203.0.113.5",
+      authorization: `Bearer ${TEST_TOKEN}`,
+    });
+    expect(response.status).toBe(404);
+    expect(response.body).toMatchObject({ error: { code: "not_found" } });
+  });
+
+  it("still passes a route-forward request from the Docker-bridge sandbox address through to route lookup", async () => {
+    const adapter = createHttpsPinRuntimeAdapterServer({ token: TEST_TOKEN });
+
+    const response = await dispatchFakeRequest(adapter, {
+      method: "GET",
+      url: "/route/never-registered",
+      remoteAddress: "172.17.0.2",
+      authorization: `Bearer ${TEST_TOKEN}`,
+    });
+    expect(response.status).toBe(404);
+    expect(response.body).toMatchObject({ error: { code: "route_not_found" } });
+  });
+
+  it("still passes a route-forward request over loopback through to route lookup", async () => {
+    const adapter = createHttpsPinRuntimeAdapterServer({ token: TEST_TOKEN });
+
+    const response = await dispatchFakeRequest(adapter, {
+      method: "GET",
+      url: "/route/never-registered",
+      remoteAddress: "127.0.0.1",
+      authorization: `Bearer ${TEST_TOKEN}`,
+    });
+    expect(response.status).toBe(404);
+    expect(response.body).toMatchObject({ error: { code: "route_not_found" } });
+  });
+});
+
 describe("adapter recovery lock (#6141)", () => {
   afterEach(() => {
     // Defensive: a failed assertion inside a test can leave the real

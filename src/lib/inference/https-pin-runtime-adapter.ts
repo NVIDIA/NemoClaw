@@ -173,6 +173,35 @@ function isLoopbackRemoteAddress(remoteAddress: string | undefined): boolean {
   return normalized === "127.0.0.1" || normalized === "::1";
 }
 
+/**
+ * Loopback plus the RFC1918 / unique-local ranges that cover the Docker
+ * bridge network a sandbox actually connects from when it reaches the
+ * adapter through `host.openshell.internal` (see the module doc comment on
+ * `HTTPS_PIN_RUNTIME_ADAPTER_BIND_HOST` for why the listener itself stays on
+ * `0.0.0.0`). This does not attempt to discover the real bridge subnet --
+ * that varies by Docker/Colima/Podman setup -- it just excludes the case a
+ * `0.0.0.0` bind actually widens: a peer that reaches this host port over a
+ * public or otherwise routable address that was never the intended
+ * sandbox-to-host boundary.
+ */
+function isPrivateNetworkRemoteAddress(remoteAddress: string | undefined): boolean {
+  if (!remoteAddress) return false;
+  const normalized = remoteAddress.replace(/^::ffff:/, "");
+  if (isLoopbackRemoteAddress(normalized)) return true;
+  const ipv4 = normalized.match(/^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/);
+  if (ipv4) {
+    const a = Number(ipv4[1]);
+    const b = Number(ipv4[2]);
+    if (a === 10) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    return false;
+  }
+  const lower = normalized.toLowerCase();
+  // fc00::/7 (unique local) and fe80::/10 (link-local)
+  return /^f[cd][0-9a-f]{2}:/.test(lower) || /^fe[89ab][0-9a-f]:/.test(lower);
+}
+
 function adapterTokenHash(token: string): string {
   return localAdapterTokenHash(token);
 }
@@ -356,6 +385,22 @@ export function createHttpsPinRuntimeAdapterServer(options: {
       const routeMatch = url.pathname.match(/^\/route\/([^/]+)(\/.*)?$/);
       if (routeMatch) {
         routeId = routeMatch[1];
+        if (!isPrivateNetworkRemoteAddress(req.socket.remoteAddress)) {
+          // The bearer token is a single value shared by every route on this
+          // adapter, so a peer that reaches this port from outside the
+          // intended sandbox-to-host boundary must not be able to replay it
+          // against a real, already-registered route.
+          sendJson(res, 404, {
+            error: { message: "Not found", type: "not_found", code: "not_found" },
+          });
+          logAdapterEvent(logger, "request_rejected", {
+            routeId,
+            status: 404,
+            reason: "route_non_private_network",
+            durationMs: Date.now() - started,
+          });
+          return;
+        }
         const route = routes.get(routeId);
         if (!route) {
           sendJson(res, 404, {
