@@ -150,7 +150,11 @@ export function createDeps(options: {
     ),
     ensureHttpsPinRuntimeAdapter: vi.fn(
       options.ensureHttpsPinRuntimeAdapter ??
-        (async () => ({ baseUrl: "http://host.openshell.internal:11438/route/test-route" })),
+        (async () => ({
+          baseUrl: "http://host.openshell.internal:11438/route/test-route",
+          credentialEnv: "NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_TOKEN",
+          token: "test-adapter-token",
+        })),
     ),
     restartSandboxGateway: vi.fn(
       options.restartSandboxGateway ??

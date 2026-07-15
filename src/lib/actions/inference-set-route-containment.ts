@@ -56,7 +56,7 @@ export interface EnsureHttpsPinRuntimeAdapterOptions {
 }
 export type EnsureHttpsPinRuntimeAdapterFn = (
   options: EnsureHttpsPinRuntimeAdapterOptions,
-) => Promise<{ baseUrl: string }>;
+) => Promise<{ baseUrl: string; credentialEnv: string; token: string }>;
 
 type EnsureHttpsPinAdapterRoute = (endpointUrl: string) => Promise<string>;
 
@@ -392,6 +392,11 @@ export async function finalizeInferenceSetRoute(options: {
   // real credential value is read directly from the host process environment
   // at invocation time, never persisted, and never returned to the caller.
   const httpsPinCredentialEnv = CUSTOM_COMPATIBLE_CREDENTIAL_ENV[options.provider];
+  // Set only when the adapter route is actually used, so the sandbox-facing
+  // credential env name gets swapped to the adapter's own bearer token below.
+  // Left null for every other endpoint shape, which keeps the operator's real
+  // credential env name as the sandbox-facing identity, unchanged.
+  let adapterCredentialEnv: string | null = null;
   const ensureHttpsPinAdapterRoute: EnsureHttpsPinAdapterRoute = async (endpointUrl) => {
     // The credential env var's value, if any, is read directly from the host
     // process environment at invocation time and handed straight to the
@@ -407,6 +412,14 @@ export async function finalizeInferenceSetRoute(options: {
       providerType: options.provider === "compatible-anthropic-endpoint" ? "anthropic" : "openai",
       credentialValue,
     });
+    // The real upstream credential above authenticates the adapter's own
+    // outbound leg to the real provider. Requests reaching the adapter's
+    // sandbox-facing route must instead carry the adapter's own bearer
+    // token — the adapter rejects anything else with 401 — so the env var
+    // that ends up registered as this route's credential must hold that
+    // token, not the operator's real secret.
+    process.env[adapter.credentialEnv] = adapter.token;
+    adapterCredentialEnv = adapter.credentialEnv;
     return adapter.baseUrl;
   };
   let endpointUrl: string;
@@ -457,6 +470,7 @@ export async function finalizeInferenceSetRoute(options: {
     ...prepared.preliminaryExplicitMetadata,
     endpointUrl,
     endpointSource,
+    credentialEnv: adapterCredentialEnv ?? prepared.preliminaryExplicitMetadata.credentialEnv,
   };
   assertGatewayRouteCompatibility({
     gatewayName: prepared.gatewayName,

@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { ensureHttpsPinRuntimeAdapter as realEnsureHttpsPinRuntimeAdapter } from "../inference/https-pin-runtime-adapter";
+import { HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV } from "../inference/https-pin-runtime";
 import type { ConfigObject } from "../security/credential-filter";
 import { runInferenceSet } from "./inference-set";
 import { baseSession, createDeps } from "./inference-set.test-support";
@@ -222,14 +223,18 @@ describe("runInferenceSet compatible providers", () => {
     // The DNS-backed HTTPS endpoint is pinned via the HTTPS-pin runtime
     // adapter, so the persisted endpointUrl is the adapter's local route base
     // URL, not the raw operator-supplied hostname — mirroring the existing
-    // HTTP precedent of persisting the validated/pinned address.
+    // HTTP precedent of persisting the validated/pinned address. The
+    // persisted credentialEnv is the adapter's own bearer-token env var, not
+    // the real upstream secret: the sandbox only ever authenticates to the
+    // local adapter, which injects the real credential on the outbound leg
+    // (PRA-1, #6141).
     expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
       "alpha",
       expect.objectContaining({
         provider: "compatible-endpoint",
         model: "mock-responses-model",
         endpointUrl: "http://host.openshell.internal:11438/route/test-route",
-        credentialEnv: "COMPATIBLE_API_KEY",
+        credentialEnv: HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV,
         preferredInferenceApi: "openai-responses",
       }),
     ]);
@@ -237,7 +242,7 @@ describe("runInferenceSet compatible providers", () => {
       provider: "compatible-endpoint",
       model: "mock-responses-model",
       endpointUrl: "http://host.openshell.internal:11438/route/test-route",
-      credentialEnv: "COMPATIBLE_API_KEY",
+      credentialEnv: HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV,
       preferredInferenceApi: "openai-responses",
     });
     expect(deps.calls.restartSandboxGateway).toHaveBeenCalledWith("alpha");

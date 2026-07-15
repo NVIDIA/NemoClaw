@@ -294,7 +294,11 @@ describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
               `URL hostname "${host}" resolves to private/internal address "10.48.203.205". This could expose internal services to the sandbox.`,
             ),
           )
-        : Promise.resolve({ baseUrl: "http://host.openshell.internal:11438/route/test-route" });
+        : Promise.resolve({
+            baseUrl: "http://host.openshell.internal:11438/route/test-route",
+            credentialEnv: "NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_TOKEN",
+            token: "test-adapter-token",
+          });
     });
   }
 
