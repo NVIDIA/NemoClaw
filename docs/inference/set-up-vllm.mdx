@@ -166,6 +166,7 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --station-experimenta
 ```
 
 The installer maps this flag to `NEMOCLAW_VLLM_PROFILE=experimental-single-user` and rejects conflicting model, profile, extra-argument, DeepSeek, and non-Station selections.
+An inherited profile selector cannot silently change the ordinary Station express prompt: use the flag for installer express, or pair the profile and model selectors with `NEMOCLAW_PROVIDER=install-vllm` for advanced direct onboarding.
 It also rejects ambient `NEMOCLAW_VLLM_PORT` values other than `8000`, `NEMOCLAW_CONTEXT_WINDOW` values other than `262144`, and `NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL` routes other than `http://host.openshell.internal`, so host readiness, gateway routing, and the dashboard cannot drift from the qualified contract.
 An existing server on port `8000` is not reused for this profile; stop it before opting in so the existing managed-vLLM lifecycle can prove the qualified image, arguments, environment, and hardware limits.
 

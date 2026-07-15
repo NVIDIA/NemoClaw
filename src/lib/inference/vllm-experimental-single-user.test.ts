@@ -349,16 +349,18 @@ describe("experimental single-user vLLM install (#6883)", () => {
     const telemetryCalls = mocks.runCapture.mock.calls
       .map((call) => call[0] as string[])
       .filter((args) => args[0] === "nvidia-smi");
-    expect(telemetryCalls).toHaveLength(2);
+    expect(telemetryCalls).toHaveLength(3);
     expect(telemetryCalls[0]).toEqual([
       "nvidia-smi",
       "--id=0",
       "--query-gpu=memory.used,ecc.errors.uncorrected.aggregate.total,ecc.errors.uncorrected.volatile.total",
       "--format=csv,noheader,nounits",
     ]);
+    expect(mocks.getGpuIndicesByName).toHaveBeenCalledTimes(2);
 
     const [runArgs] = mocks.dockerRunDetached.mock.calls[0] as [string[]];
     expect(runArgs).not.toContain("-p");
+    expect(runArgs).toEqual(expect.arrayContaining(["--gpus", "device=0"]));
     expect(runArgs).toEqual(
       expect.arrayContaining([
         "--network",
@@ -378,6 +380,27 @@ describe("experimental single-user vLLM install (#6883)", () => {
     expect(serveCommand).toContain("--served-model-name nemotron-ultra");
     expect(serveCommand).not.toContain("--enable-prefix-caching");
     expect(serveCommand).not.toContain("--speculative-config");
+  });
+
+  it("fails closed when the qualified GPU selection changes before launch", async () => {
+    mocks.getGpuIndicesByName.mockReturnValueOnce([0]).mockReturnValueOnce([]);
+    const profile = detectVllmProfile({ platform: "station", type: "nvidia" })!;
+    mockSuccessfulVllmInstall(profile.containerName);
+    mocks.dockerImageInspectFormat.mockReturnValue(
+      NEMOTRON_ULTRA_EXPERIMENTAL_SINGLE_USER_IMAGE.localImageId,
+    );
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining("qualified GPU selection changed before launch"),
+    );
   });
 
   it.each([
@@ -489,7 +512,7 @@ describe("experimental single-user vLLM install (#6883)", () => {
     mockSuccessfulVllmInstall(profile.containerName, {
       healthStatus: "200",
       modelsResponse: '{"data":[{"id":"nemotron-ultra","max_model_len":262144}]}',
-      qualificationSamples: ["1000, 0, 0", "245000, 0, 0"],
+      qualificationSamples: ["1000, 0, 0", "1000, 0, 0", "245000, 0, 0"],
     });
     mocks.dockerImageInspectFormat.mockReturnValue(
       NEMOTRON_ULTRA_EXPERIMENTAL_SINGLE_USER_IMAGE.localImageId,

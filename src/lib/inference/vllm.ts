@@ -73,8 +73,10 @@ export interface VllmProfile {
   dockerRunFlags: string[];
   // Optional dynamic flag builder. When present, its return value replaces
   // dockerRunFlags at install time. Used by Station to pick the GB300 GPU
-  // out of a mixed-GPU host instead of using `--gpus all`.
-  buildDockerRunFlags?: () => string[];
+  // out of a mixed-GPU host instead of using `--gpus all`; a qualified profile
+  // passes its frozen, revalidated GPU index so launch cannot rediscover a
+  // different device.
+  buildDockerRunFlags?: (qualifiedGpuIndex?: number) => string[];
   // Maximum wall-clock safety budget for image pulls. The Docker adapter uses
   // a shorter progress watchdog for stalls, so slow-but-moving pulls can keep
   // going until this last-ditch cap.
@@ -261,8 +263,9 @@ const STATION_PROFILE: VllmProfile = {
   defaultModel: deepseekV4FlashModel(),
   containerName: NEMOCLAW_VLLM_CONTAINER_NAME,
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
-  buildDockerRunFlags: () => {
-    const indices = getGpuIndicesByName(/GB300/i);
+  buildDockerRunFlags: (qualifiedGpuIndex) => {
+    const indices =
+      qualifiedGpuIndex === undefined ? getGpuIndicesByName(/GB300/i) : [qualifiedGpuIndex];
     // Docker parses --gpus as CSV, so multi-device values must retain
     // double quotes inside the argv token to keep the comma in one field.
     const gpuFlag =
@@ -533,7 +536,7 @@ export function resolveVllmRuntimeProfile(profile: VllmProfile, model: VllmModel
     qualification: runtime.qualification ?? profile.qualification,
     dockerRunFlags: [...profile.dockerRunFlags, ...extraRunArgs],
     buildDockerRunFlags: profile.buildDockerRunFlags
-      ? () => [...profile.buildDockerRunFlags!(), ...extraRunArgs]
+      ? (qualifiedGpuIndex) => [...profile.buildDockerRunFlags!(qualifiedGpuIndex), ...extraRunArgs]
       : undefined,
   };
 }
@@ -606,10 +609,11 @@ export function isNemoClawManagedVllmRunning(): boolean {
 function startContainer(
   profile: VllmProfile,
   model: VllmModelDef,
+  qualificationMonitor: VllmQualificationMonitor | null,
 ): { ok: boolean; reason?: string } {
   emit(`Starting vLLM container (${profile.containerName})`);
   const resolvedFlags = profile.buildDockerRunFlags
-    ? profile.buildDockerRunFlags()
+    ? profile.buildDockerRunFlags(qualificationMonitor?.gpuIndex)
     : profile.dockerRunFlags;
   // The explicit download completed before this long-lived container starts,
   // so do not retain the host Hugging Face token in the serving process.
@@ -772,6 +776,25 @@ function initializeVllmQualification(profile: VllmProfile): VllmQualificationRes
     };
   }
   return sampleVllmQualification(profile, { gpuIndex: indices[0], peakHbmMiB: 0 });
+}
+
+function revalidateVllmQualification(
+  profile: VllmProfile,
+  monitor: VllmQualificationMonitor,
+): VllmQualificationResult {
+  const qualification = profile.qualification;
+  if (!qualification) return { ok: true, monitor };
+  const indices = getGpuIndicesByName(literalCaseInsensitivePattern(qualification.gpuNameIncludes));
+  if (indices.length !== qualification.gpuCount || indices[0] !== monitor.gpuIndex) {
+    return {
+      ok: false,
+      reason:
+        `qualified GPU selection changed before launch: expected GPU ${String(monitor.gpuIndex)} ` +
+        `matching '${qualification.gpuNameIncludes}', detected matching indices ` +
+        `[${indices.map(String).join(", ")}]`,
+    };
+  }
+  return sampleVllmQualification(profile, monitor);
 }
 
 function readContainerLogTail(profile: VllmProfile, lineCount = 80): string[] {
@@ -1243,7 +1266,18 @@ export async function installVllm(
     return { ok: false };
   }
 
-  const start = startContainer(runtimeProfile, model);
+  if (qualificationMonitor) {
+    const preLaunchQualification = revalidateVllmQualification(
+      runtimeProfile,
+      qualificationMonitor,
+    );
+    if (!preLaunchQualification.ok) {
+      console.error(`  vLLM install failed: ${preLaunchQualification.reason}`);
+      return { ok: false };
+    }
+  }
+
+  const start = startContainer(runtimeProfile, model, qualificationMonitor);
   if (!start.ok) {
     console.error(`  vLLM install failed: ${String(start.reason)}`);
     return { ok: false };

@@ -287,6 +287,37 @@ detect_express_platform
     );
   });
 
+  it("rejects an inherited experimental profile from ordinary Station express", () => {
+    const result = runExpressPromptWithTty("\n", "pipe", "DGX Station", {
+      NEMOCLAW_VLLM_PROFILE: "experimental-single-user",
+    });
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toMatch(
+      /NEMOCLAW_VLLM_PROFILE='experimental-single-user' cannot select a DGX Station express profile by itself/,
+    );
+    expect(output).toMatch(/Use --station-experimental-single-user/);
+    expect(output).not.toMatch(/Run express install/);
+  });
+
+  it("preserves the experimental selector for advanced direct onboarding", () => {
+    const result = runExpressPromptWithTty("\n", "pipe", "DGX Station", {
+      NEMOCLAW_PROVIDER: "install-vllm",
+      NEMOCLAW_VLLM_MODEL: "nemotron-3-ultra-550b-a55b",
+      NEMOCLAW_VLLM_PROFILE: "experimental-single-user",
+    });
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(
+      /Skipping express prompt \(NEMOCLAW_PROVIDER=install-vllm already set\)/,
+    );
+    expect(output).toMatch(
+      /PROVIDER=install-vllm .*VLLM_MODEL=nemotron-3-ultra-550b-a55b VLLM_PROFILE=experimental-single-user/,
+    );
+  });
+
   it("rejects combining the experimental Station profile with the DeepSeek override", () => {
     const result = runExpressPromptWithTty("\n", "pipe", "DGX Station", {
       STATION_EXPERIMENTAL_SINGLE_USER: "1",

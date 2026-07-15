@@ -2788,6 +2788,19 @@ validate_station_experimental_single_user_override() {
   fi
 }
 
+validate_station_express_profile_selector() {
+  local platform="$1"
+  if [ "$platform" != "DGX Station" ] || [ "${STATION_EXPERIMENTAL_SINGLE_USER:-}" = "1" ]; then
+    return 0
+  fi
+  local requested_profile
+  requested_profile="$(normalize_station_vllm_model "${NEMOCLAW_VLLM_PROFILE:-}")"
+  if [ -z "$requested_profile" ]; then
+    return 0
+  fi
+  error "NEMOCLAW_VLLM_PROFILE='${NEMOCLAW_VLLM_PROFILE}' cannot select a DGX Station express profile by itself. Use --station-experimental-single-user for the opt-in recipe, or set NEMOCLAW_PROVIDER=install-vllm for advanced direct onboarding."
+}
+
 configure_station_express_model() {
   local selected_model
   selected_model="$(normalize_station_vllm_model "${NEMOCLAW_VLLM_MODEL:-}")"
@@ -2925,6 +2938,7 @@ maybe_offer_express_install() {
     info "Detected ${platform}. Skipping express prompt (NEMOCLAW_PROVIDER=${NEMOCLAW_PROVIDER} already set)."
     return 0
   fi
+  validate_station_express_profile_selector "$platform"
   local reply=""
   if [ -t 0 ]; then
     info "Detected ${platform}."
