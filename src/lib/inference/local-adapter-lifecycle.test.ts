@@ -6,7 +6,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   ensureLocalAdapterStateDir,
@@ -39,6 +39,7 @@ afterEach(async () => {
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+  vi.unstubAllEnvs();
 });
 
 function tempDir(): string {
@@ -150,6 +151,43 @@ describe("ensureLocalAdapterStateDir", () => {
     ensureLocalAdapterStateDir(stateDir);
     const stat = fs.statSync(stateDir);
     expect(stat.mode & 0o777).toBe(0o700);
+  });
+
+  describe.skipIf(process.platform === "win32")("symlink-safe adapter state", () => {
+    it.each([
+      "gateways",
+      "selected port",
+    ])("rejects a symlink at the %s ancestor before writing adapter secrets (#3053)", (symlinkAt) => {
+      const home = tempDir();
+      vi.stubEnv("HOME", home);
+      const controlled = path.join(home, "controlled");
+      const sharedRoot = path.join(home, ".nemoclaw");
+      const gatewaysDir = path.join(sharedRoot, "gateways");
+      const selectedDir = path.join(gatewaysDir, "9123");
+      fs.mkdirSync(controlled, { recursive: true });
+      fs.mkdirSync(symlinkAt === "gateways" ? sharedRoot : gatewaysDir, { recursive: true });
+      fs.symlinkSync(controlled, symlinkAt === "gateways" ? gatewaysDir : selectedDir);
+
+      expect(() =>
+        writeLocalAdapterSecretFile(path.join(selectedDir, "adapter-token"), "secret"),
+      ).toThrow(/symbolic link/);
+      expect(fs.existsSync(path.join(controlled, "adapter-token"))).toBe(false);
+    });
+
+    it("refuses to overwrite an adapter secret through a final-component symlink", () => {
+      const home = tempDir();
+      vi.stubEnv("HOME", home);
+      const selectedDir = path.join(home, ".nemoclaw", "gateways", "9123");
+      const controlled = path.join(home, "controlled-token");
+      fs.mkdirSync(selectedDir, { recursive: true });
+      fs.writeFileSync(controlled, "unchanged\n", { mode: 0o600 });
+      fs.symlinkSync(controlled, path.join(selectedDir, "adapter-token"));
+
+      expect(() =>
+        writeLocalAdapterSecretFile(path.join(selectedDir, "adapter-token"), "secret"),
+      ).toThrow();
+      expect(fs.readFileSync(controlled, "utf8")).toBe("unchanged\n");
+    });
   });
 });
 

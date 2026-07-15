@@ -193,6 +193,109 @@ error() {
 }
 ok() { printf "  ${C_GREEN}✓${C_RESET}  %s\n" "$*"; }
 
+resolve_nemoclaw_gateway_port() {
+  local port="${NEMOCLAW_GATEWAY_PORT:-8080}"
+  port="${port#"${port%%[![:space:]]*}"}"
+  port="${port%"${port##*[![:space:]]}"}"
+  if [[ ! "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1024 ] || [ "$port" -gt 65535 ]; then
+    error "NEMOCLAW_GATEWAY_PORT must be an integer between 1024 and 65535."
+  fi
+  if [ "$port" -ge 18789 ] && [ "$port" -le 18799 ]; then
+    error "NEMOCLAW_GATEWAY_PORT must not overlap the 18789-18799 dashboard port range."
+  fi
+  case "$port" in
+    8000 | 11434 | 11435 | 11436 | 11437)
+      error "NEMOCLAW_GATEWAY_PORT must not overlap a reserved inference or runtime-adapter port ($port)."
+      ;;
+  esac
+  local -a configured_names=(
+    NEMOCLAW_DASHBOARD_PORT
+    NEMOCLAW_VLLM_PORT
+    NEMOCLAW_OLLAMA_PORT
+    NEMOCLAW_OLLAMA_PROXY_PORT
+    NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT
+    NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT
+  )
+  local -a configured_ports=(
+    "${NEMOCLAW_DASHBOARD_PORT:-18789}"
+    "${NEMOCLAW_VLLM_PORT:-8000}"
+    "${NEMOCLAW_OLLAMA_PORT:-11434}"
+    "${NEMOCLAW_OLLAMA_PROXY_PORT:-11435}"
+    "${NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT:-11436}"
+    "${NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT:-11437}"
+  )
+  local i configured_port
+  for i in "${!configured_ports[@]}"; do
+    configured_port="${configured_ports[$i]}"
+    configured_port="${configured_port#"${configured_port%%[![:space:]]*}"}"
+    configured_port="${configured_port%"${configured_port##*[![:space:]]}"}"
+    if [[ "$configured_port" =~ ^[0-9]+$ ]] && [ "$port" -eq "$configured_port" ]; then
+      error "NEMOCLAW_GATEWAY_PORT conflicts with ${configured_names[$i]} ($configured_port)."
+    fi
+  done
+  printf "%s" "$port"
+}
+
+nemoclaw_state_dir() {
+  local port
+  port="$(resolve_nemoclaw_gateway_port)" || return 1
+  if [ "$port" -eq 8080 ]; then
+    printf "%s/.nemoclaw" "$HOME"
+  else
+    printf "%s/.nemoclaw/gateways/%s" "$HOME" "$port"
+  fi
+}
+
+assert_nemoclaw_state_path_safe() {
+  local target="$1" root="${HOME}/.nemoclaw" current relative component
+  case "$target" in
+    "$root" | "$root"/*) ;;
+    *) error "Refusing NemoClaw state path outside ${root}: ${target}" ;;
+  esac
+
+  current="$root"
+  if [ -L "$current" ]; then
+    error "Refusing symbolic link in NemoClaw state path: ${current}"
+  fi
+  relative="${target#"$root"}"
+  relative="${relative#/}"
+  while [ -n "$relative" ]; do
+    component="${relative%%/*}"
+    current="${current}/${component}"
+    if [ -L "$current" ]; then
+      error "Refusing symbolic link in NemoClaw state path: ${current}"
+    fi
+    if [ "$relative" = "$component" ]; then break; fi
+    relative="${relative#*/}"
+  done
+}
+
+ensure_nemoclaw_state_dir() {
+  local state_dir root gateways_dir
+  state_dir="$(nemoclaw_state_dir)" || return 1
+  root="${HOME}/.nemoclaw"
+  gateways_dir="${root}/gateways"
+  assert_nemoclaw_state_path_safe "$state_dir"
+  (umask 077 && mkdir -p "$state_dir") || error "Could not create NemoClaw state directory: ${state_dir}"
+  assert_nemoclaw_state_path_safe "$state_dir"
+  chmod 700 "$root" || error "Could not secure NemoClaw state directory: ${root}"
+  if [ "$state_dir" != "$root" ]; then
+    chmod 700 "$gateways_dir" "$state_dir" \
+      || error "Could not secure gateway-scoped NemoClaw state directory: ${state_dir}"
+  fi
+  printf "%s" "$state_dir"
+}
+
+nemoclaw_gateway_name() {
+  local port
+  port="$(resolve_nemoclaw_gateway_port)" || return 1
+  if [ "$port" -eq 8080 ]; then
+    printf "nemoclaw"
+  else
+    printf "nemoclaw-%s" "$port"
+  fi
+}
+
 # Common TTY-required error message for the third-party software notice.
 # Used by both show_usage_notice() and preflight_usage_notice_prompt() so
 # the recovery hint stays in sync (#3058).
@@ -243,13 +346,15 @@ verify_downloaded_script() {
 }
 
 resolve_default_sandbox_name() {
-  local registry_file="${HOME}/.nemoclaw/sandboxes.json"
+  local state_dir registry_file
+  state_dir="$(nemoclaw_state_dir)"
+  registry_file="${state_dir}/sandboxes.json"
   local sandbox_name=""
 
   # Prefer the sandbox name from the current onboard session — it reflects
   # the sandbox just created, whereas sandboxes.json may hold a stale default
   # from a previous gateway that no longer exists (#1839).
-  local session_file="${HOME}/.nemoclaw/onboard-session.json"
+  local session_file="${state_dir}/onboard-session.json"
   if [[ -f "$session_file" ]] && command_exists node; then
     sandbox_name="$(
       node -e '
@@ -302,7 +407,8 @@ resolve_default_sandbox_name() {
 }
 
 resolve_onboarded_agent() {
-  local session_file="${HOME}/.nemoclaw/onboard-session.json"
+  local session_file
+  session_file="$(nemoclaw_state_dir)/onboard-session.json"
   if [[ -f "$session_file" ]] && command_exists node; then
     node -e '
       const fs = require("fs");
@@ -317,7 +423,7 @@ resolve_onboarded_agent() {
 }
 
 restore_onboard_forward_after_post_checks() {
-  local sandbox_name agent_name agent_display port openshell_bin attempt state_dir pid_file watcher_script watcher_pid
+  local sandbox_name agent_name agent_display port openshell_bin attempt selected_state_dir state_dir pid_file watcher_script watcher_pid
   sandbox_name="$(resolve_default_sandbox_name)"
   agent_name="$(resolve_onboarded_agent)"
   agent_display="$(agent_display_name "$agent_name")"
@@ -335,8 +441,14 @@ restore_onboard_forward_after_post_checks() {
     return 0
   fi
 
-  state_dir="${HOME}/.nemoclaw/state"
-  mkdir -p "$state_dir" 2>/dev/null || true
+  selected_state_dir="$(ensure_nemoclaw_state_dir)" || return 1
+  state_dir="${selected_state_dir}/state"
+  assert_nemoclaw_state_path_safe "$state_dir"
+  (umask 077 && mkdir -p "$state_dir") \
+    || error "Could not create gateway-scoped runtime state directory: ${state_dir}"
+  assert_nemoclaw_state_path_safe "$state_dir"
+  chmod 700 "$state_dir" \
+    || error "Could not secure gateway-scoped runtime state directory: ${state_dir}"
   pid_file="${state_dir}/${agent_name}-${sandbox_name}-${port}.forward.pid"
   if [[ -f "$pid_file" ]]; then
     local old_pid expected_watcher_script current_uid old_uid old_args
@@ -725,26 +837,43 @@ json_string_field() {
 }
 
 usage_notice_state_file() {
-  printf "%s/.nemoclaw/usage-notice.json" "${HOME}"
+  local state_dir
+  state_dir="$(nemoclaw_state_dir)" || return 1
+  printf "%s/usage-notice.json" "$state_dir"
 }
 
 usage_notice_accepted_shell() {
   local version="$1" state_file saved_version
-  state_file="$(usage_notice_state_file)"
+  state_file="$(usage_notice_state_file)" || return 1
+  assert_nemoclaw_state_path_safe "$state_file"
   [[ -n "$version" && -f "$state_file" ]] || return 1
   saved_version="$(sed -nE 's/.*"acceptedVersion"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$state_file" | head -n 1)"
   [[ "$saved_version" == "$version" ]]
 }
 
 save_usage_notice_acceptance_shell() {
-  local version="$1" state_file state_dir accepted_at
-  state_file="$(usage_notice_state_file)"
-  state_dir="$(dirname "$state_file")"
+  local version="$1" state_file state_dir accepted_at temp_file
+  state_file="$(usage_notice_state_file)" || return 1
+  state_dir="$(ensure_nemoclaw_state_dir)" || return 1
+  assert_nemoclaw_state_path_safe "$state_file"
   accepted_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date)"
-  mkdir -p "$state_dir"
-  chmod 700 "$state_dir" 2>/dev/null || true
-  printf '{\n  "acceptedVersion": "%s",\n  "acceptedAt": "%s"\n}\n' "$version" "$accepted_at" >"$state_file"
-  chmod 600 "$state_file" 2>/dev/null || true
+  temp_file="$(mktemp "${state_file}.tmp.XXXXXX")" \
+    || error "Could not create temporary usage-notice state under ${state_dir}."
+  chmod 600 "$temp_file" || {
+    rm -f "$temp_file"
+    error "Could not secure temporary usage-notice state under ${state_dir}."
+  }
+  if ! printf '{\n  "acceptedVersion": "%s",\n  "acceptedAt": "%s"\n}\n' \
+    "$version" "$accepted_at" >"$temp_file"; then
+    rm -f "$temp_file"
+    error "Could not write usage-notice state under ${state_dir}."
+  fi
+  assert_nemoclaw_state_path_safe "$state_file"
+  if ! mv -f "$temp_file" "$state_file"; then
+    rm -f "$temp_file"
+    error "Could not publish usage-notice state under ${state_dir}."
+  fi
+  assert_nemoclaw_state_path_safe "$state_file"
 }
 
 print_usage_notice_body_shell() {
@@ -1703,8 +1832,9 @@ verify_nemoclaw() {
 }
 
 inspect_sandbox_registry_for_upgrade() {
-  local reg_file="$1" field="$2"
-  node - "$reg_file" "$field" <<'NODE'
+  local reg_file="$1" field="$2" scope="${3:-legacy}" gateway_port
+  gateway_port="$(resolve_nemoclaw_gateway_port)"
+  node - "$reg_file" "$field" "$gateway_port" "$scope" <<'NODE'
 const fs = require("node:fs");
 
 function isObjectRecord(value) {
@@ -1719,10 +1849,43 @@ try {
 }
 if (!isObjectRecord(registry) || !isObjectRecord(registry.sandboxes)) process.exit(1);
 
-const entries = Object.entries(registry.sandboxes);
-if (entries.some(([name, entry]) => !name.trim() || !isObjectRecord(entry) || entry.name !== name)) {
+const allEntries = Object.entries(registry.sandboxes);
+if (allEntries.some(([name, entry]) => !name.trim() || !isObjectRecord(entry) || entry.name !== name)) {
   process.exit(1);
 }
+const selectedPort = Number(process.argv[4]);
+const canonicalName = (port) => port === 8080 ? "nemoclaw" : `nemoclaw-${port}`;
+const portFromName = (name) => {
+  if (name === "nemoclaw") return 8080;
+  const match = /^nemoclaw-([0-9]+)$/.exec(name);
+  if (!match) return null;
+  const port = Number(match[1]);
+  return Number.isInteger(port) && port >= 1 && port <= 65535 && canonicalName(port) === name
+    ? port
+    : null;
+};
+const entryPort = (entry) => {
+  const hasPort = entry.gatewayPort !== undefined && entry.gatewayPort !== null;
+  const hasName = entry.gatewayName !== undefined && entry.gatewayName !== null;
+  if (hasPort && (!Number.isInteger(entry.gatewayPort) || entry.gatewayPort < 1 || entry.gatewayPort > 65535)) {
+    throw new Error("invalid gatewayPort");
+  }
+  if (hasName && typeof entry.gatewayName !== "string") throw new Error("invalid gatewayName");
+  const namedPort = hasName ? portFromName(entry.gatewayName) : null;
+  if (hasName && namedPort === null) throw new Error("invalid gatewayName");
+  if (hasPort && hasName && canonicalName(entry.gatewayPort) !== entry.gatewayName) {
+    throw new Error("conflicting gateway identity");
+  }
+  return hasPort ? entry.gatewayPort : namedPort ?? 8080;
+};
+
+let entries;
+try {
+  entries = allEntries.filter(([, entry]) => entryPort(entry) === selectedPort);
+} catch {
+  process.exit(1);
+}
+if (process.argv[5] === "selected" && entries.length !== allEntries.length) process.exit(1);
 // Keep this raw-registry predicate in sync with isRouteOnlySandboxReservation()
 // in src/lib/state/registry.ts.
 const sandboxes = entries.filter(
@@ -1750,12 +1913,19 @@ NODE
 }
 
 registered_sandbox_count() {
-  local reg_file="${HOME}/.nemoclaw/sandboxes.json"
+  local reg_file scope="selected"
+  reg_file="$(nemoclaw_state_dir)/sandboxes.json"
+  if [ "$(resolve_nemoclaw_gateway_port)" -eq 8080 ]; then scope="legacy"; fi
+  if [ ! -f "$reg_file" ] && [ "$(resolve_nemoclaw_gateway_port)" -ne 8080 ]; then
+    # Pre-segregation releases stored every gateway's rows in the shared file.
+    reg_file="${HOME}/.nemoclaw/sandboxes.json"
+    scope="legacy"
+  fi
   if [ ! -f "$reg_file" ]; then
     printf "0"
     return
   fi
-  inspect_sandbox_registry_for_upgrade "$reg_file" count
+  inspect_sandbox_registry_for_upgrade "$reg_file" count "$scope"
 }
 
 resolve_existing_cli_runner() {
@@ -1839,7 +2009,12 @@ installer_non_interactive() {
 
 legacy_ambiguous_sandbox_names_json() {
   local reg_file="$1"
-  inspect_sandbox_registry_for_upgrade "$reg_file" ambiguous-names
+  local scope="legacy"
+  if [ "$(resolve_nemoclaw_gateway_port)" -ne 8080 ] \
+    && [ "$reg_file" = "$(nemoclaw_state_dir)/sandboxes.json" ]; then
+    scope="selected"
+  fi
+  inspect_sandbox_registry_for_upgrade "$reg_file" ambiguous-names "$scope"
 }
 
 normalize_legacy_managed_confirmation_json() {
@@ -1930,13 +2105,18 @@ EOF
 }
 
 print_openshell_upgrade_manual_commands() {
+  local gateway_port gateway_name gateway_port_env=""
+  gateway_port="$(resolve_nemoclaw_gateway_port)" || return 1
+  gateway_name="$(nemoclaw_gateway_name)" || return 1
+  if [ "$gateway_port" -ne 8080 ]; then
+    gateway_port_env="NEMOCLAW_GATEWAY_PORT=${gateway_port} "
+  fi
   cat <<EOF
   Manual upgrade path (after installing the current CLI with OpenShell deferred):
-    NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 ${_CLI_BIN} backup-all
-    openshell gateway remove nemoclaw || openshell gateway destroy -g nemoclaw || openshell gateway destroy
-    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains
-    curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash
-    ${_CLI_BIN} upgrade-sandboxes --check
+    ${gateway_port_env}NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 ${_CLI_BIN} backup-all
+    openshell gateway remove ${gateway_name} || openshell gateway destroy -g ${gateway_name}
+    curl -fsSL https://www.nvidia.com/nemoclaw.sh | ${gateway_port_env}NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash
+    ${gateway_port_env}${_CLI_BIN} upgrade-sandboxes --check
 
   The prepared installer rerun lists pre-fingerprint sandboxes and asks you to
   confirm their managed-image provenance. For a non-interactive rerun, set
@@ -2006,8 +2186,13 @@ EOF
 }
 
 preinstall_backup_and_retire_legacy_gateway() {
-  local reg_file="${HOME}/.nemoclaw/sandboxes.json"
+  local reg_file gateway_name
+  reg_file="$(nemoclaw_state_dir)/sandboxes.json"
+  if [ ! -f "$reg_file" ] && [ "$(resolve_nemoclaw_gateway_port)" -ne 8080 ]; then
+    reg_file="${HOME}/.nemoclaw/sandboxes.json"
+  fi
   [ -f "$reg_file" ] || return 0
+  gateway_name="$(nemoclaw_gateway_name)"
 
   local sandbox_count
   if ! sandbox_count="$(registered_sandbox_count)"; then
@@ -2051,9 +2236,14 @@ preinstall_backup_and_retire_legacy_gateway() {
   # Retire the old gateway while the old CLI can still do it, after backup.
   if [[ -n "$old_openshell_version" ]] && ! version_gte "$old_openshell_version" "0.0.37"; then
     info "Retiring OpenShell ${old_openshell_version} gateway before installing current OpenShell…"
-    openshell gateway destroy -g nemoclaw >/dev/null 2>&1 \
-      || openshell gateway destroy >/dev/null 2>&1 \
-      || warn "Could not destroy the legacy OpenShell gateway before upgrade; onboarding will clean up stale runtime state."
+    if [ "$gateway_name" = "nemoclaw" ]; then
+      openshell gateway destroy -g "$gateway_name" >/dev/null 2>&1 \
+        || openshell gateway destroy >/dev/null 2>&1 \
+        || warn "Could not destroy the legacy OpenShell gateway before upgrade; onboarding will clean up stale runtime state."
+    else
+      openshell gateway destroy -g "$gateway_name" >/dev/null 2>&1 \
+        || warn "Could not destroy legacy gateway ${gateway_name} before upgrade; onboarding will clean up only that gateway's stale runtime state."
+    fi
   fi
 }
 
@@ -2339,7 +2529,8 @@ run_onboard() {
   show_usage_notice
   info "Running ${_CLI_BIN} onboard…"
   local -a onboard_cmd=(onboard)
-  local session_file="${HOME}/.nemoclaw/onboard-session.json"
+  local session_file
+  session_file="$(nemoclaw_state_dir)/onboard-session.json"
   # --fresh takes precedence over any session state. We forward --fresh to
   # the active CLI's onboard command so it clears the existing session file before
   # creating a new one — the install.sh classifier is bypassed entirely.
@@ -2850,6 +3041,10 @@ main() {
   export NEMOCLAW_NON_INTERACTIVE="${NON_INTERACTIVE}"
   export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE}"
 
+  # Validate the gateway port before the banner, notice acceptance, downloads,
+  # or any other installer side effect.
+  resolve_nemoclaw_gateway_port >/dev/null
+
   print_banner
 
   # Fail-fast license-acceptance check (#2671). Headless curl|bash still exits
@@ -2897,9 +3092,10 @@ main() {
   step 3 "Onboarding"
   if [ -n "$_cli_runner" ]; then
     local _registered_sandbox_count=""
-    if [[ -f "${HOME}/.nemoclaw/sandboxes.json" ]] \
-      && _registered_sandbox_count="$(registered_sandbox_count)" \
-      && [[ "$_registered_sandbox_count" -gt 0 ]]; then
+    if ! _registered_sandbox_count="$(registered_sandbox_count)"; then
+      error "Could not inspect the existing sandbox registry. Onboarding was not started."
+    fi
+    if [[ "$_registered_sandbox_count" -gt 0 ]]; then
       warn "Existing sandbox sessions detected. Onboarding may disrupt running agents."
       if [[ "${NEMOCLAW_SINGLE_SESSION:-}" == "1" ]]; then
         error "Aborting — NEMOCLAW_SINGLE_SESSION is set. Destroy existing sessions with '${_CLI_BIN} <name> destroy' before reinstalling."

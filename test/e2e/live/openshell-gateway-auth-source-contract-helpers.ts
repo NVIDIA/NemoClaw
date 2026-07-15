@@ -147,12 +147,13 @@ export async function withOpenShellGatewayAuthArtifactSafety<T>(
 
 function resolveGatewayBin(): string | null {
   for (const candidate of [
+    process.env.OPENSHELL_GATEWAY_BIN,
     path.join(os.homedir(), ".local", "bin", "openshell-gateway"),
     "/opt/homebrew/bin/openshell-gateway",
     "/usr/local/bin/openshell-gateway",
     "/usr/bin/openshell-gateway",
   ]) {
-    if (fs.existsSync(candidate)) return candidate;
+    if (candidate && fs.existsSync(candidate)) return candidate;
   }
   const which = run("sh", ["-c", "command -v openshell-gateway"]);
   return which.status === 0 && which.stdout.trim() ? which.stdout.trim() : null;
@@ -646,7 +647,7 @@ async function runOpenShellGatewayAuthSourceContractScenarioUnchecked(
 
   const version = run(gatewayBin, ["--version"]);
   expect(version.status, commandOutput(version)).toBe(0);
-  expect(commandOutput(version)).toContain("0.0.72");
+  expect(commandOutput(version)).toContain(process.env.NEMOCLAW_CANDIDATE_VERSION ?? "0.0.72");
 
   await requireDockerDaemon({ dockerBin, host, skip });
 
