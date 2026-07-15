@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   entry,
   makeDeps,
@@ -110,5 +110,40 @@ describe("showSandboxChannelStatus Telegram group policy", () => {
       severity: "ok",
       detail: "disabled",
     });
+  });
+});
+
+describe("showSandboxChannelStatus Telegram health exit propagation", () => {
+  it("exits non-zero in text mode for an unhealthy (unreachable) telegram probe (#6743)", async () => {
+    // The whole point of the probe is a non-zero exit on an unhealthy channel so
+    // automation cannot treat a failed health check as success. Drive an
+    // `unreachable` verdict end-to-end and assert the command exits 1.
+    const unreachableProbe = [
+      "NEMOCLAW_TG_DIAG_OK",
+      "NEMOCLAW_TG_LOG_BEGIN",
+      "[telegram] [default] Bot API startup probe failed: ETIMEDOUT",
+      "NEMOCLAW_TG_LOG_END",
+      "PROC 42 node /opt/openclaw gateway",
+      "NEMOCLAW_TG_PROC_DONE",
+    ].join("\n");
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+    const { deps, out_lines } = makeDeps({
+      exec: withTelegramProbe(() => ({ status: 0, stdout: "{}", stderr: "" }), unreachableProbe),
+      sandbox: entry(["telegram"]),
+      appliedPresets: ["telegram"],
+      gatewayPresets: ["telegram"],
+    });
+    let threw: Error | null = null;
+    try {
+      await showSandboxChannelStatus("alpha", { deps, channel: "telegram" });
+    } catch (err) {
+      threw = err as Error;
+    } finally {
+      exitSpy.mockRestore();
+    }
+    expect(threw?.message).toBe("process.exit(1)");
+    expect(out_lines.join("\n")).toMatch(/Verdict:.*unreachable/);
   });
 });
