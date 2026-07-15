@@ -94,6 +94,11 @@ export interface InferenceSetResult {
   inSandboxConfigSynced: boolean;
 }
 
+interface InferenceSetMutationResult extends InferenceSetResult {
+  /** Internal post-commit convergence state used before returning to the CLI caller. */
+  dashboardConverged?: boolean;
+}
+
 export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   getDefaultSandbox: () => string | null;
   getSandbox: (name: string) => SandboxEntry | null;
@@ -572,7 +577,7 @@ async function runInferenceSetWithoutHostLock(
   options: InferenceSetOptions,
   deps: InferenceSetDeps,
   expectedGatewayName: string,
-): Promise<InferenceMutation<InferenceSetResult>> {
+): Promise<InferenceMutation<InferenceSetMutationResult>> {
   // #6321: accept the installer-style provider name onboard uses (e.g.
   // `anthropicCompatible`) as well as the OpenShell provider name, by
   // normalizing to the OpenShell name before validation and all downstream use.
@@ -879,8 +884,8 @@ async function runInferenceSetWithoutHostLock(
   // instead of silently staying on the previous one (#6893).
   //   - "converged": dashboard now matches the switch.
   //   - "absent":    Dashboard disabled — nothing to converge, still a success.
-  //   - "failed":    warn and, below, withhold the "synced" success line so the
-  //                  command does not claim a route it did not fully apply.
+  //   - "failed":    warn and fail after the committed mutation is finalized so
+  //                  callers cannot accept a partially converged switch.
   let dashboardConverged: boolean | undefined;
   if (agentName === "hermes" && inSandboxConfigSynced) {
     const reseed = deps.seedHermesDashboardConfig(sandboxName, target);
@@ -958,6 +963,13 @@ export async function runInferenceSet(
     // it, but retain the outer sandbox lifecycle lock so another process cannot
     // destroy/recreate this name between the committed write and restart.
     completeInferenceGatewayRestart(mutation, deps);
+    if (mutation.result.dashboardConverged === false) {
+      throw new InferenceSetError(
+        `Inference route and main Hermes config were updated for '${mutation.result.sandboxName}', ` +
+          `but the Dashboard config did not converge. The committed route was not rolled back. ` +
+          `Restart the sandbox to converge Dashboard Chat.`,
+      );
+    }
     return mutation.result;
   });
 }

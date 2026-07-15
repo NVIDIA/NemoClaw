@@ -24,8 +24,8 @@ interface InferenceResultForGateway {
    * Hermes only: whether the isolated Web Dashboard profile converged onto the
    * switched model (#6893). `undefined` for agents/switches with no Dashboard to
    * converge (treated as converged). When explicitly `false` the "Inference route
-   * synced" line is withheld so the command does not claim a route it did not
-   * fully apply.
+   * synced" line is withheld and the caller raises a post-commit failure so the
+   * command cannot claim a route it did not fully apply.
    */
   dashboardConverged?: boolean;
 }

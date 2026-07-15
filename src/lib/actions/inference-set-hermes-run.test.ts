@@ -218,7 +218,7 @@ describe("runInferenceSet Hermes routing", () => {
     expect(logs.some((line) => line.includes("Inference route synced"))).toBe(false);
   });
 
-  it("withholds the synced line when the dashboard fails to converge (#6893)", async () => {
+  it("fails after commit when the dashboard does not converge (#6893)", async () => {
     const config: ConfigObject = {
       model: {
         default: "moonshotai/kimi-k2.6",
@@ -240,18 +240,26 @@ describe("runInferenceSet Hermes routing", () => {
       seedHermesDashboardConfigResult: "failed",
     });
 
-    await runInferenceSet(
-      {
-        provider: "hermes-provider",
-        model: "openai/gpt-5.4-mini",
-        sandboxName: "hermes",
-        noVerify: true,
-      },
-      deps,
-    );
+    await expect(
+      runInferenceSet(
+        {
+          provider: "hermes-provider",
+          model: "openai/gpt-5.4-mini",
+          sandboxName: "hermes",
+          noVerify: true,
+        },
+        deps,
+      ),
+    ).rejects.toMatchObject({
+      name: "InferenceSetError",
+      exitCode: 1,
+      message: expect.stringMatching(/committed route was not rolled back.*Restart the sandbox/u),
+    });
 
-    // Not fully applied — the command must not claim `Inference route synced`, and
-    // it must tell the user why (the reporter's "converge or fail without synced").
+    // The route, main config, durable session, and audit are already committed,
+    // but the command must fail instead of claiming complete convergence.
+    expect(deps.getSession()?.model).toBe("openai/gpt-5.4-mini");
+    expect(deps.calls.appendAuditEntry).toHaveBeenCalledOnce();
     const logs = deps.calls.log.mock.calls.map((c) => String(c[0]));
     expect(logs.some((l) => l.includes("Inference route synced"))).toBe(false);
     expect(logs.some((l) => l.includes("could not refresh the dashboard"))).toBe(true);
