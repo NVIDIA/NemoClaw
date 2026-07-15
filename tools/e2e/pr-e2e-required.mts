@@ -18,6 +18,7 @@ const AUTHORIZATION_TITLES = new Set([
   "Maintainer approval required to skip credentialed E2E",
   "Maintainer authorization required to run E2E",
 ]);
+const LEGACY_RUNNING_TITLE_PATTERN = /^Running [1-9][0-9]* E2E jobs?$/u;
 
 type CheckConclusion = "success" | "failure" | "cancelled";
 
@@ -190,7 +191,12 @@ export function classifyCoordinationCheck(
   if (check.status !== "completed") {
     return { state: "waiting", description: title };
   }
-  if (check.conclusion === "failure" && AUTHORIZATION_TITLES.has(title)) {
+  // Migration bridge for authorization checks completed before the controller
+  // kept them pending. GitHub can update their title but cannot reopen them.
+  if (
+    check.conclusion === "failure" &&
+    (AUTHORIZATION_TITLES.has(title) || LEGACY_RUNNING_TITLE_PATTERN.test(title))
+  ) {
     return { state: "waiting", description: title };
   }
   if (

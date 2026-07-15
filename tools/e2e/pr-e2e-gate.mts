@@ -33,6 +33,7 @@ const PR_GATE_WORKFLOW_PATH = ".github/workflows/pr-e2e-gate.yaml";
 const PR_GATE_APPROVAL_ENVIRONMENT = "approve-credentialed-e2e-skip-for-fork-pr";
 const CHECK_NAME = "E2E / PR Gate Coordination";
 const WORKFLOW_NAME = "E2E / PR Gate Controller";
+const CONTROL_PLANE_AUTHORIZATION_TITLE = "Maintainer authorization required to run E2E";
 const CHECK_EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v2";
 const LEGACY_CHECK_EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v1";
 const GITHUB_ACTIONS_APP_ID = 15368;
@@ -1906,22 +1907,17 @@ export async function startPrGate(
     }
     const controlPlaneFamily = plan.families.find((family) => family.id === "e2e-control-plane");
     if (controlPlaneFamily && requiresCredentialedE2eAuthorization(plan)) {
-      const gateRunUrl = `https://github.com/${repository}/actions/runs/${command.gateRunId}`;
       const workflowUrl = `https://github.com/${repository}/actions/workflows/${PR_GATE_WORKFLOW_PATH}`;
-      await completeCheck(
+      await markCheckInProgress(
         { repository, checkRunId },
         token,
-        {
-          conclusion: "failure",
-          title: "Maintainer authorization required to run E2E",
-          summary: [
-            `This exact internal diff (head \`${command.headSha}\`, base \`${ciIdentity.baseSha}\`) changes code that the selected credential-bearing E2E jobs execute or trust: ${jobs.join(", ")}.`,
-            "No selected E2E job ran and no repository secret was exposed.",
-            `A repository maintainer or administrator must review this exact revision, then open the [${WORKFLOW_NAME}](${workflowUrl}) workflow and run \`run-control-plane\` with the PR number, exact head and base SHAs, and a review reason. That authorized run dispatches the selected jobs and this gate passes only if their exact-SHA evidence verifies successfully.`,
-            `Deterministic plan: \`${plan.planHash}\`.`,
-          ].join("\n\n"),
-        },
-        gateRunUrl,
+        CONTROL_PLANE_AUTHORIZATION_TITLE,
+        [
+          `This exact internal diff (head \`${command.headSha}\`, base \`${ciIdentity.baseSha}\`) changes code that the selected credential-bearing E2E jobs execute or trust: ${jobs.join(", ")}.`,
+          "No selected E2E job ran and no repository secret was exposed.",
+          `A repository maintainer or administrator must review this exact revision, then open the [${WORKFLOW_NAME}](${workflowUrl}) workflow and run \`run-control-plane\` with the PR number, exact head and base SHAs, and a review reason. That authorized run dispatches the selected jobs and this gate passes only if their exact-SHA evidence verifies successfully.`,
+          `Deterministic plan: \`${plan.planHash}\`.`,
+        ].join("\n\n"),
       );
       appendOutput("dispatched", "false");
       appendOutput("finalized", "true");
@@ -2038,14 +2034,15 @@ export async function startControlPlanePrGate(command: ControlPlaneDispatchComma
       throw new Error(`Expected one exact-diff PR gate check; found ${matchingChecks.length}`);
     }
     const check = matchingChecks[0]!;
+    const pendingAuthorization = check.status === "in_progress" && check.conclusion === null;
+    // Migration bridge for PRs whose authorization check completed before this
+    // fix. GitHub lets later updates change its output but cannot reopen it.
+    const legacyAuthorization = check.status === "completed" && check.conclusion === "failure";
     if (
-      check.status !== "completed" ||
-      check.conclusion !== "failure" ||
-      check.output?.title !== "Maintainer authorization required to run E2E"
+      (!pendingAuthorization && !legacyAuthorization) ||
+      check.output?.title !== CONTROL_PLANE_AUTHORIZATION_TITLE
     ) {
-      throw new Error(
-        "PR gate must first complete with the matching control-plane authorization failure",
-      );
+      throw new Error("PR gate must have the matching pending control-plane authorization state");
     }
     checkRunId = check.id;
     appendOutput("check_id", String(checkRunId));
@@ -2077,18 +2074,23 @@ export async function startControlPlanePrGate(command: ControlPlaneDispatchComma
     });
   } catch (error) {
     if (checkRunId) {
-      const closed = await completeFailureAfterControllerError(
-        { repository, checkRunId },
-        token,
-        "Maintainer authorization required to run E2E",
-        {
-          error,
-          detailsUrl: `https://github.com/${repository}/actions/runs/${command.gateRunId}`,
-          recovery:
-            "The authorized E2E attempt did not produce an accepted result. Review the controller error and any linked child run, then launch a fresh first-attempt `run-control-plane` workflow for this exact revision.",
-        },
-      );
-      if (closed) appendOutput("finalized", "true");
+      const reason = controllerErrorMessage(error).replace(/`/gu, "'");
+      try {
+        await markCheckInProgress(
+          { repository, checkRunId },
+          token,
+          CONTROL_PLANE_AUTHORIZATION_TITLE,
+          [
+            `The authorized E2E attempt did not produce an accepted result: \`${reason}\`.`,
+            "Review the controller error and any linked child run, then launch a fresh first-attempt `run-control-plane` workflow for this exact revision.",
+          ].join("\n\n"),
+        );
+        appendOutput("finalized", "true");
+      } catch (restoreError) {
+        console.error(
+          `Failed to restore control-plane authorization after controller error: ${controllerErrorMessage(restoreError)}`,
+        );
+      }
     }
     throw error;
   }

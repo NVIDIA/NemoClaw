@@ -147,7 +147,7 @@ describe("native PR E2E required job", () => {
     await expect(findCoordinationCheck(identity)).rejects.toThrow("unexpected GitHub App");
   });
 
-  it("waits through authorization and revalidates the exact PR before passing", async () => {
+  it("waits through legacy authorization and running states before passing", async () => {
     let legacyQueries = 0;
     let clock = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation(
@@ -171,7 +171,12 @@ describe("native PR E2E required job", () => {
                       conclusion: "failure",
                       output: { title: "Maintainer authorization required to run E2E" },
                     })
-                  : check("E2E / PR Gate"),
+                  : legacyQueries === 2
+                    ? check("E2E / PR Gate", {
+                        conclusion: "failure",
+                        output: { title: "Running 3 E2E jobs" },
+                      })
+                    : check("E2E / PR Gate"),
               ]),
             );
           },
@@ -189,7 +194,7 @@ describe("native PR E2E required job", () => {
         },
       }),
     ).resolves.toMatchObject({ conclusion: "success" });
-    expect(legacyQueries).toBe(2);
+    expect(legacyQueries).toBe(3);
   });
 
   it("fails closed when the PR head changes before a terminal verdict is accepted", async () => {

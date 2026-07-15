@@ -400,9 +400,7 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
         .filter((request) => request.url.endsWith("/check-runs/17"))
         .at(-1);
       expect(completion?.body).toMatchObject({
-        status: "completed",
-        conclusion: "failure",
-        details_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${GATE_RUN_ID}`,
+        status: "in_progress",
         output: {
           title: "Maintainer authorization required to run E2E",
           summary: expect.stringContaining(
@@ -410,6 +408,7 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
           ),
         },
       });
+      expect(JSON.stringify(completion?.body)).not.toContain("conclusion");
       expect(JSON.stringify(completion?.body)).toContain(
         "run `run-control-plane` with the PR number, exact head and base SHAs",
       );
@@ -728,8 +727,8 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
             () => githubResponse([{ filename: "test/e2e/risk-signal-reporter.ts" }]),
           ),
           existingPrGateCheckRunsRoute({
-            status: "completed",
-            conclusion: "failure",
+            status: "in_progress",
+            conclusion: null,
             output: { title: "Maintainer authorization required to run E2E" },
           }),
           mainWorkflowRefRoute(),
@@ -984,7 +983,7 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
 
     try {
       await expect(startControlPlanePrGate(startControlPlaneCommand(workDir))).rejects.toThrow(
-        /matching control-plane authorization failure/u,
+        /matching pending control-plane authorization state/u,
       );
       expect(requests.some((request) => request.method === "PATCH")).toBe(false);
     } finally {
@@ -1024,8 +1023,8 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
                 total_count: 1,
                 check_runs: [
                   exactPrGateCheck({
-                    status: "completed",
-                    conclusion: "failure",
+                    status: "in_progress",
+                    conclusion: null,
                     output: { title: checkTitle },
                   }),
                 ],
@@ -1052,20 +1051,22 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
           /main advanced through trusted E2E control-plane changes/u,
         );
       }
-      const completions = requests.filter(
+      const restoredAuthorizations = requests.filter(
         (request) =>
           request.url.endsWith("/check-runs/17") &&
           request.method === "PATCH" &&
-          (request.body as { status?: string } | undefined)?.status === "completed",
+          (request.body as { output?: { title?: string } } | undefined)?.output?.title ===
+            "Maintainer authorization required to run E2E",
       );
-      expect(completions).toHaveLength(2);
-      expect(completions[0]?.body).toMatchObject({
-        conclusion: "failure",
+      expect(restoredAuthorizations).toHaveLength(2);
+      expect(restoredAuthorizations[0]?.body).toMatchObject({
+        status: "in_progress",
         output: {
           title: "Maintainer authorization required to run E2E",
           summary: expect.stringContaining("launch a fresh first-attempt `run-control-plane`"),
         },
       });
+      expect(JSON.stringify(restoredAuthorizations[0]?.body)).not.toContain("conclusion");
       expect(checkTitle).toBe("Maintainer authorization required to run E2E");
       expect(requests.some((request) => request.url.endsWith("/dispatches"))).toBe(false);
     } finally {
@@ -1227,8 +1228,8 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
             () => githubResponse([{ filename: "test/e2e/risk-signal-reporter.ts" }]),
           ),
           existingPrGateCheckRunsRoute({
-            status: "completed",
-            conclusion: "failure",
+            status: "in_progress",
+            conclusion: null,
             output: { title: "Maintainer authorization required to run E2E" },
           }),
           mainWorkflowRefRoute(),

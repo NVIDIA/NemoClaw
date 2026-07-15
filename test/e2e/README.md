@@ -179,23 +179,34 @@ recording a final result. The native observer revalidates the live revision
 before mirroring that terminal result.
 
 An internal revision whose control-plane matches include a file outside the
-trusted controller and observer boundaries completes coordination as failed
+trusted controller and observer boundaries leaves coordination in progress
 with `Maintainer authorization required to run E2E`. The native required job
-keeps waiting for the authorization flow. No selected job runs and no repository
-secret is exposed. After reviewing the exact revision, a repository
+keeps waiting for the authorization flow. No selected job runs and no
+repository secret is exposed. After reviewing the exact revision, a repository
 maintainer or administrator chooses **Run workflow** on `main`, selects
 `run-control-plane`, and supplies the PR number, current 40-character head SHA
 as `expected_head_sha`, current 40-character base SHA as `expected_base_sha`,
 and a specific 10–500-character `review_reason`. The authorization requires the
 first workflow attempt and revalidates the actor's `maintain` or `admin`
 permission, internal repository origin, open PR, exact head and base, risk
-plan, matching failed coordination check, compatible trusted controller commit,
-and final live revision. It then returns coordination to in progress and
-dispatches the selected jobs. The native required job treats this authorization
-title as an intermediate waiting state instead of mirroring the temporary
-failure. The normal wait, evidence download, and finish path is the only path
-that can record success; the authorization itself cannot make the gate green.
-A changed head or base requires a new authorization.
+plan, matching pending coordination state, compatible trusted controller
+commit, and final live revision. It then updates coordination to
+`Running <count> E2E job(s)` and dispatches the selected jobs. If authorization
+or dispatch fails before a terminal E2E result, the controller restores the
+authorization title and leaves a current coordination check in progress so a
+maintainer can correct the problem and launch a fresh first-attempt
+authorization. The native required job treats these authorization and running
+titles as intermediate waiting states. The normal wait, evidence download, and
+finish path is the only path that can record success; the authorization itself
+cannot make the gate green. A changed head or base requires a new
+authorization.
+
+During rollout, manual authorization also accepts the older exact-diff state
+that already completed as failed with the authorization title. GitHub cannot
+reopen a completed check, so the native observer also treats a legacy completed
+failure titled `Running <count> E2E job(s)` as transitional. Only the
+authorization titles and this bounded legacy running-title shape receive that
+treatment; other completed failures fail the native required job.
 
 A fork revision that selects jobs completes coordination as failed while the
 native required job waits for the skip-approval flow. The controller does not
