@@ -392,6 +392,19 @@ detect_express_platform
     expect(output).not.toMatch(/Run express install/);
   });
 
+  it("rejects an inherited vLLM profile with the Station demo override", () => {
+    const result = runExpressPromptWithTty("\n", "pipe", "DGX Station", {
+      STATION_DEEPSEEK: "1",
+      NEMOCLAW_VLLM_PROFILE: "experimental-single-user",
+    });
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).not.toBe(0);
+    expect(output).toMatch(
+      /--station-deepseek conflicts with NEMOCLAW_VLLM_PROFILE='experimental-single-user'/,
+    );
+    expect(output).not.toMatch(/Run express install/);
+  });
+
   it("rejects the Station demo override on non-Station platforms", () => {
     const result = runExpressPromptWithTty("\n", "pipe", "DGX Spark", {
       STATION_DEEPSEEK: "1",

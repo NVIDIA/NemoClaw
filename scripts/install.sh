@@ -2691,6 +2691,9 @@ validate_station_deepseek_override() {
   if [ -n "${NEMOCLAW_PROVIDER:-}" ]; then
     error "--station-deepseek conflicts with NEMOCLAW_PROVIDER=${NEMOCLAW_PROVIDER}. Remove the provider override to use Station express install."
   fi
+  if [ -n "$(printf "%s" "${NEMOCLAW_VLLM_PROFILE:-}" | tr -d '[:space:]')" ]; then
+    error "--station-deepseek conflicts with NEMOCLAW_VLLM_PROFILE='${NEMOCLAW_VLLM_PROFILE}'. Remove the profile override to use the DeepSeek Station recipe."
+  fi
 
   local requested_model
   requested_model="$(normalize_station_vllm_model "${NEMOCLAW_VLLM_MODEL:-}")"
