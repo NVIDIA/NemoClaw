@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { redactFull } from "../../src/lib/security/redact";
+import type { BenchMetric, BenchMetricContext, LatencyStats, MetricId } from "./lib.mts";
 
-import type { BenchMetric, BenchMetricContext, LatencyStats, MetricId } from "./lib";
+const { redactFull } = await import("../../src/lib/security/redact.ts");
 
 // Span names emitted by src/lib/onboard/tracing.ts into the nemoclaw.trace_timing
 // artifact. The benchmark reads canonical emitted spans rather than adding
