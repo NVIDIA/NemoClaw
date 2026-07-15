@@ -608,21 +608,22 @@ function convergeHermesDashboardModel(
   model: string,
 ): HermesDashboardConvergeResult {
   const dashboardHome = `${configDir.replace(/\/+$/, "")}/${HERMES_DASHBOARD_HOME_SUBDIR}`;
+  // Presence probe as a pure argv `test -d` (this security-boundary file prefers
+  // argv over shell construction). `dockerSpawnSync` returns the exit status
+  // rather than throwing, so an absent profile (`test` exits 1) is a clean skip
+  // and only a genuine exec error (spawn failure, signal, or a non-0/1 status
+  // such as Docker's 125 for a missing container) is a convergence failure.
+  const probe = dockerSpawnSync(
+    privilegedSandboxExecArgv(sandboxName, ["test", "-d", dashboardHome], false, true),
+    { encoding: "utf-8", timeout: HERMES_DASHBOARD_CONVERGE_TIMEOUT_MS },
+  );
+  if (probe.error) return { status: "failed", detail: probe.error.message };
+  if (probe.signal) return { status: "failed", detail: `probe terminated by ${probe.signal}` };
+  if (probe.status === 1) return { status: "absent" };
+  if (probe.status !== 0) {
+    return { status: "failed", detail: `dashboard probe exited ${String(probe.status)}` };
+  }
   try {
-    // Probe via an always-exit-0 shell so an absent profile is a clean "skip"
-    // rather than an exec that throws and reads as a failure.
-    const probe = privilegedSandboxExec(
-      sandboxName,
-      [
-        "sh",
-        "-c",
-        `if [ -d ${shellQuote(dashboardHome)} ]; then echo present; else echo absent; fi`,
-      ],
-      { timeout: HERMES_DASHBOARD_CONVERGE_TIMEOUT_MS },
-    );
-    if (!probe.trim().endsWith("present")) {
-      return { status: "absent" };
-    }
     for (const key of ["model.default", `providers.${provider}.default_model`]) {
       privilegedSandboxExec(
         sandboxName,

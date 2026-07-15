@@ -92,7 +92,12 @@ export interface InferenceSetResult {
   configChanged: boolean;
   sessionUpdated: boolean;
   inSandboxConfigSynced: boolean;
-  dashboardConverged: boolean;
+  /**
+   * Hermes only: whether the isolated Web Dashboard profile converged onto the
+   * switched model (#6893). Undefined when convergence was not attempted — a
+   * non-Hermes agent, or a Hermes switch whose main config never synced.
+   */
+  dashboardConverged?: boolean;
 }
 
 export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
@@ -884,7 +889,11 @@ async function runInferenceSetWithoutHostLock(
   // the main config having synced first: a Dashboard that was never enabled
   // resolves to "absent" (no-op), and only a real convergence failure downgrades
   // the success message.
-  let dashboardConverged = true;
+  // Undefined when convergence was not attempted (non-Hermes agent, or the main
+  // config never synced), true when the Dashboard converged or was absent, and
+  // false only on a real convergence failure — so the result never claims a
+  // Dashboard state it did not establish.
+  let dashboardConverged: boolean | undefined;
   if (agentName === "hermes" && inSandboxConfigSynced) {
     const dashboardResult = deps.convergeHermesDashboardModel(
       sandboxName,
@@ -892,8 +901,8 @@ async function runInferenceSetWithoutHostLock(
       provider,
       model,
     );
+    dashboardConverged = dashboardResult.status !== "failed";
     if (dashboardResult.status === "failed") {
-      dashboardConverged = false;
       deps.log(
         `  Warning: updated the Hermes config for '${sandboxName}', but the Web Dashboard ` +
           `profile did not converge onto '${model}': ${dashboardResult.detail}`,
