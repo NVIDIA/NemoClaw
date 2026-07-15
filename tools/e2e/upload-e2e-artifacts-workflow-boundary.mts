@@ -135,7 +135,7 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
   [
     "openshell-gateway-upgrade",
     {
-      name: "e2e-openshell-gateway-upgrade-${{ matrix.legacy.id }}",
+      name: "e2e-openshell-gateway-upgrade-${{ matrix.id }}",
     },
   ],
   [
