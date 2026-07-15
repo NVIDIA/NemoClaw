@@ -8,7 +8,7 @@ import {
   collectDocsVersionSegments,
   parseArgs,
   rewriteDocsPublicUrls,
-} from "../scripts/bump-version";
+} from "../scripts/bump-version.mts";
 
 describe("bump-version release contract", () => {
   it("rejects removed release PR flags", () => {
