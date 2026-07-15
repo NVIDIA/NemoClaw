@@ -1059,8 +1059,11 @@ When the root-owned managed controller attests two unchanged zero-supervisor pro
 The recreation uses a credential-free managed startup command, pins the registered container identity, retains the previous container for rollback, and commits only after managed gateway health and the settle check pass.
 The recreation preserves mounted sandbox state, but a committed swap does not retain changes stored only in the previous container's writable layer.
 It is idempotent.
-When `recover` repairs a stopped built-in OpenClaw or Hermes gateway, it retries only when stdout is empty and stderr is exactly one `SUPERVISOR_BUSY` or `SUPERVISOR_UNAVAILABLE` line, with at most three controller attempts.
-Other controller failures stop immediately.
+When `recover` repairs a stopped built-in OpenClaw or Hermes gateway, it repeats the recovery action only for an exit status of `1` with blank stdout and a sole nonblank stderr line equal to `SUPERVISOR_BUSY`, with at most three controller attempts.
+The same result is inconclusive during managed settle confirmation and can be probed again only within the configured settle window.
+NemoClaw treats `SUPERVISOR_UNAVAILABLE` as terminal because the managed controller uses it for integrity refusals, ambiguous discovery, and process-identity changes.
+It does not repeat the recovery action or treat the settle probe as inconclusive, and instead prints host-side restart and rebuild guidance.
+Other controller failures also stop immediately.
 If the gateway is already running, the command exits zero without force-restarting it; it can still re-evaluate supported safety checks and check or recover host-side forwards.
 Use [`$$nemoclaw <name> gateway restart`](#$$nemoclaw-name-gateway-restart) when you deliberately need a running gateway to reload runtime configuration or plugins.
 
