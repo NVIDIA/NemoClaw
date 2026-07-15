@@ -608,19 +608,23 @@ const HERMES_TRUSTED_PYTHON3 = [
   "/usr/bin/python3",
 ] as const;
 const HERMES_DASHBOARD_PATH_ABSENT_STATUS = 3;
-const HERMES_DASHBOARD_PATH_INSPECTION = [
-  "import os",
-  "import stat",
-  "import sys",
-  "try:",
-  "    mode = os.lstat(sys.argv[1]).st_mode",
-  "except FileNotFoundError:",
-  `    raise SystemExit(${HERMES_DASHBOARD_PATH_ABSENT_STATUS})`,
-  "except OSError as exc:",
-  '    print(f"unable to inspect Hermes dashboard path: {exc}", file=sys.stderr)',
-  "    raise SystemExit(2)",
-  "raise SystemExit(0 if stat.S_ISDIR(mode) else 2)",
-].join("\n");
+// OpenShell rejects CR/LF in argv, so encode the multiline program inside a
+// single-line Python expression.
+const HERMES_DASHBOARD_PATH_INSPECTION = `exec(${JSON.stringify(
+  [
+    "import os",
+    "import stat",
+    "import sys",
+    "try:",
+    "    mode = os.lstat(sys.argv[1]).st_mode",
+    "except FileNotFoundError:",
+    `    raise SystemExit(${HERMES_DASHBOARD_PATH_ABSENT_STATUS})`,
+    "except OSError as exc:",
+    '    print(f"unable to inspect Hermes dashboard path: {exc}", file=sys.stderr)',
+    "    raise SystemExit(2)",
+    "raise SystemExit(0 if stat.S_ISDIR(mode) else 2)",
+  ].join("\n"),
+)})`;
 
 export type HermesDashboardReseedResult = "converged" | "absent" | "failed";
 
@@ -1375,8 +1379,8 @@ export {
   recomputeSandboxConfigHash,
   resolveAgentConfig,
   restartSandboxAgentAfterConfigSet,
-  seedHermesDashboardConfig,
   rewriteConfigUrlsWithDnsPinning,
+  seedHermesDashboardConfig,
   setDotpath,
   validateConfigDotpath,
   validateUrlValue,
