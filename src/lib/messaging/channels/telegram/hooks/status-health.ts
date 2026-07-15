@@ -56,7 +56,10 @@ export function createTelegramStatusHealthHook(
     const timeoutMs = normalizeTimeoutMs(options.timeoutMs);
     const exec = execute(sandboxName, buildTelegramProbeScript(), timeoutMs);
     const lines = String(exec?.stdout ?? "").split(/\r?\n/);
-    const reachable = lines.includes(TG_SHELL_OK);
+    // A non-zero exec (timeout/kill/unhealthy sandbox) can still carry partial
+    // stdout with a stale `provider ready` line; require a clean exit so a failed
+    // probe classifies as probe_failed rather than a false healthy.
+    const reachable = exec?.status === 0 && lines.includes(TG_SHELL_OK);
 
     const logStart = lines.indexOf(TG_LOG_BEGIN);
     const logEnd = lines.indexOf(TG_LOG_END);

@@ -109,6 +109,23 @@ describe("telegram.statusHealth hook", () => {
     expect(reportOf(result)?.verdict).toBe("probe_failed");
   });
 
+  it("treats a non-zero exec as a failed probe even with healthy-looking stdout (#6887)", () => {
+    // A timed-out/killed exec can still carry partial stdout with a stale
+    // provider-ready line — a non-zero status must not read as healthy.
+    const exec = makeExec({
+      status: 1,
+      stdout: probeStdout(
+        [
+          "[telegram] [default] provider ready (Bot API reachable; agent replies use inference.local)",
+        ],
+        ["PROC 42 node /opt/openclaw gateway"],
+      ),
+      stderr: "sandbox exec timed out",
+    });
+    const result = createTelegramStatusHealthHook({ executeSandboxCommand: exec })(context());
+    expect(reportOf(result)?.verdict).toBe("probe_failed");
+  });
+
   it("derives config_gap / policy_gap from the host-fact inputs", () => {
     const exec = makeExec({ status: 0, stdout: probeStdout([], []), stderr: "" });
     const hook = createTelegramStatusHealthHook({ executeSandboxCommand: exec });

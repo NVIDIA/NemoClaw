@@ -109,8 +109,23 @@ export function readChannelHealthOutputs(
   return Object.values(result.outputs).flatMap((output) => {
     if (output.kind !== "status" || !isObjectRecord(output.value)) return [];
     if (output.value.type !== MESSAGING_CHANNEL_HEALTH_OUTPUT_TYPE) return [];
+    // The runner only validates output kind + JSON-serializability, so
+    // field-check the nested report here. A malformed report is dropped (the
+    // caller falls back to the basic status report) rather than being cast and
+    // crashing the renderer downstream.
     const report = output.value.report;
-    if (!isObjectRecord(report)) return [];
-    return [report as unknown as ChannelHealthReport];
+    return isChannelHealthReport(report) ? [report] : [];
   });
+}
+
+function isChannelHealthReport(value: unknown): value is ChannelHealthReport {
+  return (
+    isObjectRecord(value) &&
+    typeof value.channel === "string" &&
+    typeof value.agent === "string" &&
+    typeof value.verdict === "string" &&
+    typeof value.probedAt === "string" &&
+    Array.isArray(value.signals) &&
+    Array.isArray(value.hints)
+  );
 }
