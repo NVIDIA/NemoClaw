@@ -337,12 +337,15 @@ function appendJobSummary(result: RequiredGateResult): void {
     }
     const links = result.logUrls ?? (result.detailsUrl ? [result.detailsUrl] : []);
     const logLinks = links.map((url, index) => `- [E2E log ${index + 1}](${url})`).join("\n");
+    // lgtm[js/network-data-to-file] The conclusion is allowlisted and links are restricted to
+    // same-repository Actions targets; the runner-owned summary is opened without following symlinks.
+    // lgtm[js/http-to-file-access]
     fs.writeFileSync(
       descriptor,
       [
         "## E2E / PR Gate",
         "",
-        `Result: ${result.conclusion} — ${result.title}`,
+        `Result: ${result.conclusion}`,
         ...(logLinks ? ["", logLinks] : []),
         "",
       ].join("\n"),
