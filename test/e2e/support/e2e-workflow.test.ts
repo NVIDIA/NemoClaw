@@ -108,6 +108,32 @@ describe("e2e workflow boundary", () => {
     }
   });
 
+  it("rejects a second persistent rebuild Buildx setup", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-builder-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { steps: Array<{ name?: string; uses?: string }> }>;
+    };
+    const steps = workflow.jobs["rebuild-openclaw"].steps;
+    const warmIndex = steps.findIndex(
+      (step) => step.name === "Warm current OpenClaw base build cache",
+    );
+    if (warmIndex === -1) throw new Error("Missing OpenClaw cache warm step");
+    steps.splice(warmIndex + 1, 0, {
+      name: "Set up another rebuild Buildx",
+      uses: "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c",
+    });
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      expect(validateE2eWorkflowBoundary(workflowPath)).toContain(
+        "rebuild-openclaw must keep live Docker builds on the Docker engine",
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   // source-shape-contract: security -- Mutates the shipped workflow to prove PR-safe routing rejects credential-backed smokes
   it("rejects credential-backed provider smokes in the PR-safe inference-routing job", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-inference-routing-workflow-"));

@@ -481,8 +481,15 @@ function validateRebuildBaseCache(
   if (setupInputs.use !== false) {
     errors.push(`${jobName} Buildx setup must leave the Docker engine selected`);
   }
+  const selectsAnotherPersistentBuildx = steps.some(
+    (step) =>
+      step !== setupBuildx &&
+      stringValue(step.uses).startsWith("docker/setup-buildx-action@") &&
+      asRecord(step.with).use !== false,
+  );
   if (
     Object.hasOwn(jobEnv, "BUILDX_BUILDER") ||
+    selectsAnotherPersistentBuildx ||
     steps.some((step) => {
       const run = stringValue(step.run);
       return run.includes("BUILDX_BUILDER=") || /docker\s+buildx\s+use(?:\s|$)/u.test(run);
