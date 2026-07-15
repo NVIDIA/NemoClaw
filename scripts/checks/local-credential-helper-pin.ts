@@ -17,9 +17,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import ts from "typescript";
+import {
+  extractStarterPromptMarkdown,
+  STARTER_PROMPT_SOURCE_PATH,
+} from "../generate-starter-prompt";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const STARTER_PROMPT_PATH = "docs/_components/StarterPrompt.tsx";
 const HELPER_PATH = "scripts/local-credential-helper.mts";
 const FORM_PATH = "docs/resources/local-credential-form.html";
 const CREDENTIAL_ENV_PATH = "src/lib/security/credential-env.ts";
@@ -165,14 +168,6 @@ export function extractEmbeddedFormDigest(source: string, relativePath: string):
   );
   if (!ts.isStringLiteral(initializer) || !/^[a-f0-9]{64}$/.test(initializer.text)) {
     throw new Error(`${relativePath}: embedded form digest must be a lowercase SHA-256 literal`);
-  }
-  return initializer.text;
-}
-
-export function extractStarterPrompt(source: string, relativePath: string): string {
-  const initializer = namedVariableInitializer(source, "STARTER_PROMPT", relativePath);
-  if (!ts.isStringLiteral(initializer) && !ts.isNoSubstitutionTemplateLiteral(initializer)) {
-    throw new Error(`${relativePath}: STARTER_PROMPT must be one static string literal`);
   }
   return initializer.text;
 }
@@ -397,8 +392,11 @@ function verifyFieldSafetyRules(): string[] {
 }
 
 function main(): void {
-  const starterPromptSource = fs.readFileSync(path.join(REPO_ROOT, STARTER_PROMPT_PATH), "utf8");
-  const prompt = extractStarterPrompt(starterPromptSource, STARTER_PROMPT_PATH);
+  const starterPromptSource = fs.readFileSync(
+    path.join(REPO_ROOT, STARTER_PROMPT_SOURCE_PATH),
+    "utf8",
+  );
+  const prompt = extractStarterPromptMarkdown(starterPromptSource, STARTER_PROMPT_SOURCE_PATH);
   const section = findCredentialSection(prompt);
   const sectionDigests = [...section.matchAll(/\b[a-f0-9]{64}\b/g)].map(([digest]) => digest);
   const expectedDigests = REVIEWED_ARTIFACTS.map(({ relativePath }) =>

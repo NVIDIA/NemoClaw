@@ -157,18 +157,42 @@ describe("maintainer skills follow canonical workflow policy", () => {
 
   it("runs release-prep docs before generating the final release plan", () => {
     const updateDocs = read(".agents/skills/nemoclaw-contributor-update-docs/SKILL.md");
+    const createPr = read(".agents/skills/nemoclaw-contributor-create-pr/SKILL.md");
     const evening = read(".agents/skills/nemoclaw-maintainer-evening/SKILL.md");
     const release = read(".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md");
+    const releaseNotes = read(".agents/skills/nemoclaw-maintainer-release-notes/SKILL.md");
     const policy = read(".agents/skills/nemoclaw-maintainer-policies/references/release-train.md");
+    const priorities = read(".agents/skills/nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md");
+    const skillsGuide = read(".agents/skills/nemoclaw-skills-guide/SKILL.md");
+    const agents = read("AGENTS.md");
+    const docsAgents = read("docs/AGENTS.md");
+    const docsContributing = read("docs/CONTRIBUTING.md");
 
     expect(updateDocs).toContain("/nemoclaw-contributor-update-docs for vX.Y.Z");
+    expect(updateDocs).toContain("Every pre-tag release-note docs PR must add");
+    expect(updateDocs).toContain("docs/changelog/YYYY-MM-DD.mdx");
+    expect(updateDocs).toContain("parser-safe MDX SPDX comment");
+    expect(updateDocs).toContain("scan `<previous-tag>..origin/main`");
+    expect(updateDocs).toContain("planned release date");
+    expect(updateDocs).toContain("stop before PR creation");
+    expect(createPr).toContain('--label "area: docs"');
+    expect(createPr).not.toContain('--label "documentation"');
     expect(evening.indexOf("/nemoclaw-contributor-update-docs for <version>")).toBeLessThan(
       evening.indexOf("Load `cut-release-tag`"),
     );
-    expect(release).toContain(
-      "Do not generate the release plan until release-prep docs are merged or explicitly waived.",
-    );
+    expect(evening).toContain("contains the exact `## <version>` heading");
+    expect(release).toContain("git grep -n '^## vX\\.Y\\.Z$'");
+    expect(release).toContain("Unless Step 1 records an explicit waiver");
+    expect(release).toContain("show the recorded waiver reason");
+    expect(release).toContain("A conventional Release Notes page or post-tag Announcement draft");
+    expect(releaseNotes).toContain("does not replace or create that canonical entry");
     expect(policy).toContain("Run `/nemoclaw-contributor-update-docs for vX.Y.Z`");
+    expect(policy).toContain("The pre-tag release-note docs PR must create or update");
+    expect(priorities).toContain("pre-tag release-note docs PR containing");
+    expect(skillsGuide).toContain("create the canonical `docs/changelog/YYYY-MM-DD.mdx` entry");
+    expect(agents).toContain("a PR that updates ordinary pages without the dated changelog entry");
+    expect(docsAgents).toContain("Every pre-tag release-note docs PR must create or update");
+    expect(docsContributing).toContain("Create the planned release entry in the pre-tag");
     expect(policy).toContain("If any merge lands after `release:plan`, generate a fresh plan");
   });
 

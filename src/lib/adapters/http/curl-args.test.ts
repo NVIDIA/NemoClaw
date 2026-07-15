@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { assertEndpointResolvesPublic } from "../../inference/endpoint-ssrf-preflight";
 import { validateCurlProbeArgs } from "./curl-args";
 
 describe("validateCurlProbeArgs — credential-leak defence", () => {
@@ -135,6 +136,80 @@ describe("validateCurlProbeArgs — credential-leak defence", () => {
         { pinnedAddresses: ["93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946"] },
       ),
     ).not.toThrow();
+  });
+
+  it("accepts an exact preflight-authorized private --resolve mapping (#6861)", async () => {
+    const preflight = await assertEndpointResolvesPublic(
+      "https://llm.corp.example/v1/models",
+      async () => [{ address: "10.0.0.8", family: 4 }],
+      { trustedPrivateHosts: ["llm.corp.example"] },
+    );
+    expect(() =>
+      validateCurlProbeArgs(
+        ["-sS", "--resolve", "llm.corp.example:443:10.0.0.8", "https://llm.corp.example/v1/models"],
+        {
+          pinnedAddresses: ["10.0.0.8"],
+          trustedPrivateCapability: preflight.trustedPrivateCapability,
+        },
+      ),
+    ).not.toThrow();
+  });
+
+  it("rejects a forged private authorization even when the address is otherwise trustable (#6861)", () => {
+    expect(() =>
+      validateCurlProbeArgs(
+        ["-sS", "--resolve", "llm.corp.example:443:10.0.0.8", "https://llm.corp.example/v1/models"],
+        {
+          pinnedAddresses: ["10.0.0.8"],
+          trustedPrivateCapability: { addresses: ["10.0.0.8"] } as never,
+        },
+      ),
+    ).toThrow(/not issued by the SSRF preflight/);
+  });
+
+  it("does not trust a process-global mutable capability registry (#6861)", () => {
+    const forged = { addresses: ["10.0.0.8"] } as never;
+    const registryKey = Symbol.for("nemoclaw.trusted-private-endpoint-capability-registry");
+    const previousRegistry = Object.getOwnPropertyDescriptor(globalThis, registryKey);
+    Object.defineProperty(globalThis, registryKey, {
+      configurable: true,
+      value: new WeakSet([forged]),
+    });
+    try {
+      expect(() =>
+        validateCurlProbeArgs(
+          [
+            "-sS",
+            "--resolve",
+            "llm.corp.example:443:10.0.0.8",
+            "https://llm.corp.example/v1/models",
+          ],
+          { pinnedAddresses: ["10.0.0.8"], trustedPrivateCapability: forged },
+        ),
+      ).toThrow(/not issued by the SSRF preflight/);
+    } finally {
+      previousRegistry === undefined
+        ? Reflect.deleteProperty(globalThis, registryKey)
+        : Object.defineProperty(globalThis, registryKey, previousRegistry);
+    }
+  });
+
+  it("requires a valid capability to match an exact private IP URL when no DNS pin is needed (#6861)", async () => {
+    const preflight = await assertEndpointResolvesPublic(
+      "http://10.0.0.8/v1/models",
+      async () => [],
+      { trustedPrivateHosts: ["10.0.0.8"] },
+    );
+    const options = {
+      pinnedAddresses: [],
+      trustedPrivateCapability: preflight.trustedPrivateCapability,
+    };
+    expect(() =>
+      validateCurlProbeArgs(["-sS", "http://10.0.0.8/v1/models"], options),
+    ).not.toThrow();
+    expect(() => validateCurlProbeArgs(["-sS", "http://10.0.0.9/v1/models"], options)).toThrow(
+      /match the exact private IP URL/,
+    );
   });
 
   it.each([
