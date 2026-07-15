@@ -105,17 +105,21 @@ export function loadLocalAdapterPid(filePath: string): number | null {
 
 export function isLocalAdapterProcess(
   pid: number | null | undefined,
-  processNeedle: string,
+  processNeedle: string | RegExp,
   runCapture: RunCaptureFn,
 ): boolean {
   if (!Number.isInteger(pid) || !pid || pid <= 0) return false;
-  const cmdline = runCapture(["ps", "-p", String(pid), "-o", "args="], { ignoreError: true });
-  return Boolean(String(cmdline || "").includes(processNeedle));
+  const cmdline = String(
+    runCapture(["ps", "-p", String(pid), "-o", "args="], { ignoreError: true }) || "",
+  );
+  return typeof processNeedle === "string"
+    ? cmdline.includes(processNeedle)
+    : processNeedle.test(cmdline);
 }
 
 export function killLocalAdapterPid(options: {
   pidPath: string;
-  processNeedle: string;
+  processNeedle: string | RegExp;
   run: RunFn;
   runCapture: RunCaptureFn;
 }): void {

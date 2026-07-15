@@ -410,6 +410,13 @@ describe("Bedrock Runtime OpenAI adapter", () => {
         () => "node /opt/nemoclaw/scripts/openrouter-runtime-adapter-entry.js",
       ),
     ).toBe(false);
+    expect(
+      isLocalAdapterProcess(
+        4321,
+        needle,
+        () => "node /opt/nemoclaw/scripts/my-bedrock-runtime-adapter.mts",
+      ),
+    ).toBe(false);
   });
 
   it("includes forwarded AWS environment in the adapter reuse hash", () => {

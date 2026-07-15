@@ -316,7 +316,12 @@ function loadPersistedPid(): number | null {
   return loadLocalAdapterPid(PID_PATH);
 }
 
-const ADAPTER_PROCESS_NEEDLE = "bedrock-runtime-adapter";
+const ADAPTER_LAUNCHER_BASENAMES = ["bedrock-runtime-adapter.mts", "bedrock-runtime-adapter.js"];
+const ADAPTER_PROCESS_NEEDLE = new RegExp(
+  `(?:^|[^A-Za-z0-9_.-])(?:${ADAPTER_LAUNCHER_BASENAMES.map((name) =>
+    name.replaceAll(".", "\\."),
+  ).join("|")})(?:$|[^A-Za-z0-9_.-])`,
+);
 
 function isAdapterProcess(pid: number | null | undefined): boolean {
   return isLocalAdapterProcess(pid, ADAPTER_PROCESS_NEEDLE, runCapture);
