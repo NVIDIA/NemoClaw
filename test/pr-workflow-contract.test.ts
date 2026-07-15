@@ -1044,7 +1044,23 @@ describe("pull request and main workflow contracts", () => {
         stem: "scripts/check-coverage-ratchet",
       },
     ] as const;
-    const variants = ["mts", "ts", "missing"] as const;
+    const variants = [
+      {
+        fixtureExtension: "mts",
+        expectedEntrypointExtension: "mts",
+        expectedStatus: 0,
+      },
+      {
+        fixtureExtension: "ts",
+        expectedEntrypointExtension: "ts",
+        expectedStatus: 0,
+      },
+      {
+        fixtureExtension: "missing",
+        expectedEntrypointExtension: "ts",
+        expectedStatus: 1,
+      },
+    ] as const;
 
     for (const testCase of cases) {
       for (const variant of variants) {
@@ -1071,25 +1087,19 @@ describe("pull request and main workflow contracts", () => {
           ].join("\n"),
           { mode: 0o755 },
         );
-        if (variant !== "missing") {
-          writeFileSync(join(temp, `${testCase.stem}.${variant}`), "// fixture\n");
-        }
+        writeFileSync(join(temp, `${testCase.stem}.${variant.fixtureExtension}`), "// fixture\n");
 
         try {
           const result = runWorkflowShellStep(
             requiredStep(testCase.action, testCase.step),
             {
-              EXPECTED_ENTRYPOINT: `${testCase.stem}.${variant === "missing" ? "ts" : variant}`,
+              EXPECTED_ENTRYPOINT: `${testCase.stem}.${variant.expectedEntrypointExtension}`,
               PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
             },
             temp,
           );
 
-          if (variant === "missing") {
-            expect(result.status).not.toBe(0);
-          } else {
-            expect(result.status, result.stderr).toBe(0);
-          }
+          expect(result.status, result.stderr).toBe(variant.expectedStatus);
         } finally {
           rmSync(temp, { force: true, recursive: true });
         }
