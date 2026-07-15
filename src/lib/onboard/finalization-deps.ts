@@ -29,4 +29,10 @@ export const finalizationHandlerDeps = {
       require("../actions/sandbox/auto-pair-warmup");
     warmup.runSandboxScopeWarmupRun(name);
   },
+  isDeploymentHealthy(result: import("../verify-deployment").VerifyDeploymentResult): boolean {
+    return result.healthy;
+  },
+  reportDeploymentReadiness(healthy: boolean): void {
+    if (!healthy) process.exitCode = 1;
+  },
 };

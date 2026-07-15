@@ -317,9 +317,11 @@ Use these details when your first-run path needs more control.
     The selector can include destinations such as GitHub, Jira, Slack, Telegram, or local inference.
     Press `r` to switch a selected preset between read-only and read-write when it supports both modes.
 
-    Before it prints the ready summary, NemoClaw checks that the sandbox gateway and dashboard port forward are reachable.
+    Use the final onboarding summary to verify that the sandbox gateway, dashboard port forward, and `inference.local` route are reachable.
     When web search is enabled, it also checks the selected provider configuration and sends a real search request through sandbox egress.
-    Web search, inference-route, and messaging-bridge checks report warnings instead of aborting onboarding when they need more time or configuration.
+    Treat an unreachable route or HTTP 5xx response as a failed readiness check: onboarding marks the sandbox not ready and exits non-zero.
+    Restore the configured endpoint or proxy, run `nemoclaw onboard --resume` to complete the retained onboarding session, then rerun `nemoclaw <sandbox-name> status` to verify the route.
+    Web search and messaging-bridge checks remain warnings when they need more time or configuration.
 
     ```text
     ──────────────────────────────────────────────────
