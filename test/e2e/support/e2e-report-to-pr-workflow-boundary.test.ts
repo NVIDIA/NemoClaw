@@ -333,6 +333,38 @@ it("reports one total wall clock span from valid matrix E2E jobs", async () => {
   expect(body).not.toContain("OpenShell gateway upgrade (v0.2.0)");
 });
 
+it("reports one total wall clock span when matrix job names start with their job ID", async () => {
+  const { body, setFailed } = await executeReport({
+    apiJobs: [
+      {
+        completed_at: "2026-07-15T04:56:38Z",
+        conclusion: "success",
+        name: "hermes-inference-switch (anthropic, e2e-hermes-anthropic-inference-switch, compatible-anthropic-e...",
+        started_at: "2026-07-15T04:49:26Z",
+        status: "completed",
+      },
+      {
+        completed_at: "2026-07-15T05:06:51Z",
+        conclusion: "success",
+        name: "hermes-inference-switch (hosted, e2e-hermes-inference-switch, nvidia-prod, nvidia/nemotron-3-supe...",
+        started_at: "2026-07-15T04:49:26Z",
+        status: "completed",
+      },
+    ],
+    testMatrix: [],
+    jobs: "hermes-inference-switch",
+    needs: {
+      "generate-matrix": { result: "success" },
+      "hermes-inference-switch": { result: "success" },
+    },
+  });
+
+  expect(setFailed).not.toHaveBeenCalled();
+  expect(body).toContain("| hermes-inference-switch | ✅ success | 17m 25s |");
+  expect(body).not.toContain("hermes-inference-switch (anthropic");
+  expect(body).not.toContain("hermes-inference-switch (hosted");
+});
+
 it("reports API lookup failures as unknown rather than copying the aggregate result", async () => {
   const { body, setFailed, warning } = await executeReport({
     testMatrix: DEFAULT_TEST_MATRIX.slice(0, 1),

@@ -5247,13 +5247,19 @@ jobs:
                 per_page: 100,
               });
               const selectedTestIds = new Set(testIds);
+              const aggregateJobNames = Object.keys(needs);
               for (const job of apiJobs) {
-                const match = /^Shared E2E \(([A-Za-z0-9_-]+)\)$/.exec(job.name || '');
-                const reportEntryName = match
-                  ? match[1]
-                  : /^OpenShell gateway upgrade \(.+\)$/.test(job.name || '')
+                const jobName = job.name || '';
+                const match = /^Shared E2E \(([A-Za-z0-9_-]+)\)$/.exec(jobName);
+                const aggregateJobName = aggregateJobNames.find((name) =>
+                  jobName.startsWith(`${name} (`),
+                );
+                const reportEntryName =
+                  match?.[1] ??
+                  aggregateJobName ??
+                  (/^OpenShell gateway upgrade \(.+\)$/.test(jobName)
                     ? 'openshell-gateway-upgrade'
-                    : job.name;
+                    : jobName);
                 recordWallClockRange(reportEntryName, job);
                 if (!match || !selectedTestIds.has(match[1])) continue;
                 const result =
