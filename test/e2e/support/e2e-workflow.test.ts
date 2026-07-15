@@ -51,11 +51,35 @@ describe("e2e workflow boundary", () => {
         uses: "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a",
       },
     ],
+    [
+      "a step-level builder selection",
+      {
+        env: { BUILDX_BUILDER: "external" },
+        name: "Run OpenClaw rebuild live test",
+      },
+    ],
+    [
+      "a persistent builder selection",
+      {
+        name: "Select rebuild Buildx",
+        run: "docker buildx use external",
+      },
+    ],
   ])("rejects %s in rebuild E2E jobs", (_case, injectedStep) => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-cache-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
     const workflow = readWorkflow() as {
-      jobs: Record<string, { steps: Array<{ name?: string; uses?: string }> }>;
+      jobs: Record<
+        string,
+        {
+          steps: Array<{
+            env?: Record<string, string>;
+            name?: string;
+            run?: string;
+            uses?: string;
+          }>;
+        }
+      >;
     };
     workflow.jobs["rebuild-openclaw"].steps.splice(2, 0, injectedStep);
     fs.writeFileSync(workflowPath, YAML.stringify(workflow));

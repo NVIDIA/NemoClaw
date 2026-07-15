@@ -451,7 +451,11 @@ function requireDockerEngineRebuilds(
   });
   const routesBuildsAwayFromDocker = steps.some((step) => {
     const run = stringValue(step.run);
-    return run.includes("BUILDX_BUILDER=") || /docker\s+buildx\s+use(?:\s|$)/u.test(run);
+    return (
+      Object.hasOwn(asRecord(step.env), "BUILDX_BUILDER") ||
+      run.includes("BUILDX_BUILDER=") ||
+      /docker\s+buildx\s+use(?:\s|$)/u.test(run)
+    );
   });
   if (
     Object.hasOwn(jobEnv, "BUILDX_BUILDER") ||
