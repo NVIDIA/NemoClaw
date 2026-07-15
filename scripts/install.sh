@@ -2669,6 +2669,8 @@ STATION_DEEPSEEK_VLLM_MODEL="deepseek-v4-flash"
 STATION_DEEPSEEK_SERVED_MODEL="deepseek-ai/DeepSeek-V4-Flash"
 STATION_EXPERIMENTAL_SINGLE_USER_PROFILE="experimental-single-user"
 STATION_EXPERIMENTAL_SINGLE_USER_SERVED_MODEL="nemotron-ultra"
+STATION_EXPERIMENTAL_SINGLE_USER_PORT="8000"
+STATION_EXPERIMENTAL_SINGLE_USER_CONTEXT_WINDOW="262144"
 
 normalize_station_vllm_model() {
   printf "%s" "${1:-}" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
@@ -2750,6 +2752,24 @@ validate_station_experimental_single_user_override() {
     "" | "$STATION_EXPERIMENTAL_SINGLE_USER_PROFILE") ;;
     *)
       error "--station-experimental-single-user conflicts with NEMOCLAW_VLLM_PROFILE='${NEMOCLAW_VLLM_PROFILE}'. Remove one override or set NEMOCLAW_VLLM_PROFILE=${STATION_EXPERIMENTAL_SINGLE_USER_PROFILE}."
+      ;;
+  esac
+
+  local requested_port
+  requested_port="$(normalize_station_vllm_model "${NEMOCLAW_VLLM_PORT:-}")"
+  case "$requested_port" in
+    "" | "$STATION_EXPERIMENTAL_SINGLE_USER_PORT") ;;
+    *)
+      error "--station-experimental-single-user conflicts with NEMOCLAW_VLLM_PORT='${NEMOCLAW_VLLM_PORT}'. Remove the override or set NEMOCLAW_VLLM_PORT=${STATION_EXPERIMENTAL_SINGLE_USER_PORT}."
+      ;;
+  esac
+
+  local requested_context_window
+  requested_context_window="$(normalize_station_vllm_model "${NEMOCLAW_CONTEXT_WINDOW:-}")"
+  case "$requested_context_window" in
+    "" | "$STATION_EXPERIMENTAL_SINGLE_USER_CONTEXT_WINDOW") ;;
+    *)
+      error "--station-experimental-single-user conflicts with NEMOCLAW_CONTEXT_WINDOW='${NEMOCLAW_CONTEXT_WINDOW}'. Remove the override or set NEMOCLAW_CONTEXT_WINDOW=${STATION_EXPERIMENTAL_SINGLE_USER_CONTEXT_WINDOW}."
       ;;
   esac
 

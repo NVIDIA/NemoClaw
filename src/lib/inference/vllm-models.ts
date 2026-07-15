@@ -90,6 +90,8 @@ export interface VllmModelProfileOverride {
   servedModelId: string;
   /** Immutable Hugging Face revision owned by this profile. */
   revision: string;
+  /** Host port that must stay aligned with this profile's exact serve arguments. */
+  requiredVllmPort: number;
   /** Complete ordered vLLM arguments after the model ID. Replaces shared/default args. */
   exactServeArgs: readonly string[];
   /** Required runtime/container replacement for this profile. */
@@ -328,6 +330,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
         platforms: ["station"],
         servedModelId: "nemotron-ultra",
         revision: "183968f87ae4cedce3039313cac1fd43d112c578",
+        requiredVllmPort: 8000,
         exactServeArgs: [
           "--served-model-name",
           "nemotron-ultra",
@@ -498,6 +501,37 @@ function huggingFaceSnapshotContainerPath(modelId: string, revision: string): st
   );
 }
 
+function assertVllmModelProfileRuntimeInputs(
+  profile: VllmModelProfileOverride,
+  env: NodeJS.ProcessEnv,
+): void {
+  const requestedPort = String(env.NEMOCLAW_VLLM_PORT ?? "").trim();
+  if (
+    requestedPort &&
+    (!/^[0-9]+$/.test(requestedPort) || Number(requestedPort) !== profile.requiredVllmPort)
+  ) {
+    throw new Error(
+      `${VLLM_PROFILE_ENV}='${profile.id}' requires ` +
+        `NEMOCLAW_VLLM_PORT=${String(profile.requiredVllmPort)}; remove the override or set it to ` +
+        `${String(profile.requiredVllmPort)}.`,
+    );
+  }
+
+  const requiredContextWindow = profile.readiness.maxModelLen;
+  const requestedContextWindow = String(env.NEMOCLAW_CONTEXT_WINDOW ?? "").trim();
+  if (
+    requestedContextWindow &&
+    (!/^[0-9]+$/.test(requestedContextWindow) ||
+      Number(requestedContextWindow) !== requiredContextWindow)
+  ) {
+    throw new Error(
+      `${VLLM_PROFILE_ENV}='${profile.id}' requires ` +
+        `NEMOCLAW_CONTEXT_WINDOW=${String(requiredContextWindow)}; remove the override or set it to ` +
+        `${String(requiredContextWindow)}.`,
+    );
+  }
+}
+
 /**
  * Resolve an explicit model-scoped profile into the effective recipe consumed
  * by the existing managed-vLLM lifecycle. With no selector this returns the
@@ -535,6 +569,7 @@ export function resolveVllmModelProfile(
         "; extra arguments would invalidate the qualified runtime contract.",
     );
   }
+  assertVllmModelProfileRuntimeInputs(profile, env);
 
   return {
     profile,
@@ -650,7 +685,8 @@ export function preflightVllmModelEnv(
       }
       return { ok: true };
     }
-    if (profileId && !model.profiles?.[profileId]) {
+    const modelProfile = profileId ? model.profiles?.[profileId] : undefined;
+    if (profileId && !modelProfile) {
       throw new Error(
         VLLM_PROFILE_ENV +
           "='" +
@@ -658,6 +694,7 @@ export function preflightVllmModelEnv(
           "' requires NEMOCLAW_VLLM_MODEL='nemotron-3-ultra-550b-a55b'.",
       );
     }
+    if (modelProfile) assertVllmModelProfileRuntimeInputs(modelProfile, env);
     assertGatedModelAccess(model, env);
     return { ok: true };
   } catch (err) {

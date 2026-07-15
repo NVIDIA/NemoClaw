@@ -276,6 +276,8 @@ detect_express_platform
       NEMOCLAW_VLLM_MODEL: "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
       NEMOCLAW_MODEL: "nemotron-ultra",
       NEMOCLAW_VLLM_PROFILE: "experimental-single-user",
+      NEMOCLAW_VLLM_PORT: "8000",
+      NEMOCLAW_CONTEXT_WINDOW: "262144",
     });
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status, output).toBe(0);
@@ -341,6 +343,8 @@ detect_express_platform
       '["--enable-prefix-caching"]',
       /cannot be combined with NEMOCLAW_VLLM_EXTRA_ARGS_JSON/,
     ],
+    ["NEMOCLAW_VLLM_PORT", "9000", /conflicts with NEMOCLAW_VLLM_PORT='9000'/],
+    ["NEMOCLAW_CONTEXT_WINDOW", "8192", /conflicts with NEMOCLAW_CONTEXT_WINDOW='8192'/],
   ])("rejects conflicting %s for the qualified experimental Station profile", (name, value, message) => {
     const result = runExpressPromptWithTty("\n", "pipe", "DGX Station", {
       STATION_EXPERIMENTAL_SINGLE_USER: "1",

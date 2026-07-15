@@ -245,6 +245,8 @@ describe("experimental single-user vLLM install (#6883)", () => {
     process.env.NEMOCLAW_VLLM_MODEL = "nemotron-3-ultra-550b-a55b";
     process.env.NEMOCLAW_VLLM_PROFILE = EXPERIMENTAL_SINGLE_USER_PROFILE;
     delete process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON;
+    delete process.env.NEMOCLAW_VLLM_PORT;
+    delete process.env.NEMOCLAW_CONTEXT_WINDOW;
     delete process.env.NEMOCLAW_IGNORE_VLLM_DISK_SPACE;
     delete process.env.HF_TOKEN;
     delete process.env.HUGGING_FACE_HUB_TOKEN;
@@ -255,6 +257,29 @@ describe("experimental single-user vLLM install (#6883)", () => {
     mkdirSpy.mockRestore();
     stdoutWrite.mockRestore();
     process.env = { ...originalEnv };
+  });
+
+  it.each([
+    ["NEMOCLAW_VLLM_PORT", "9000", "requires NEMOCLAW_VLLM_PORT=8000"],
+    ["NEMOCLAW_CONTEXT_WINDOW", "8192", "requires NEMOCLAW_CONTEXT_WINDOW=262144"],
+  ])("rejects conflicting %s before managed-vLLM side effects", async (name, value, message) => {
+    process.env[name] = value;
+    const profile = detectVllmProfile({ platform: "station", type: "nvidia" })!;
+    const beforeInstall = vi.fn();
+    mockSuccessfulVllmInstall(profile.containerName);
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      beforeInstall,
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(beforeInstall).not.toHaveBeenCalled();
+    expect(mocks.probeHostStorage).not.toHaveBeenCalled();
+    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
+    expect(errSpy.mock.calls.flat().join("\n")).toContain(message);
   });
 
   it("fails closed before downloads when the qualified image is absent", async () => {

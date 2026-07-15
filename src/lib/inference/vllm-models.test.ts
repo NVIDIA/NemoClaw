@@ -127,6 +127,7 @@ describe("vllm model registry", () => {
       platforms: ["station"],
       servedModelId: "nemotron-ultra",
       revision: "183968f87ae4cedce3039313cac1fd43d112c578",
+      requiredVllmPort: 8000,
       exactServeArgs: [
         "--served-model-name",
         "nemotron-ultra",
@@ -562,6 +563,8 @@ describe("preflightVllmModelEnv", () => {
       preflightVllmModelEnv({
         NEMOCLAW_VLLM_MODEL: "nemotron-3-ultra-550b-a55b",
         [VLLM_PROFILE_ENV]: EXPERIMENTAL_SINGLE_USER_PROFILE,
+        NEMOCLAW_VLLM_PORT: "8000",
+        NEMOCLAW_CONTEXT_WINDOW: "262144",
       } as NodeJS.ProcessEnv),
     ).toEqual({ ok: true });
   });
@@ -608,6 +611,22 @@ describe("preflightVllmModelEnv", () => {
         "NEMOCLAW_VLLM_PROFILE='experimental-single-user' cannot be combined with " +
         "NEMOCLAW_VLLM_EXTRA_ARGS_JSON; extra arguments would invalidate the qualified " +
         "runtime contract.",
+    });
+  });
+
+  it.each([
+    ["NEMOCLAW_VLLM_PORT", "9000", /requires NEMOCLAW_VLLM_PORT=8000/],
+    ["NEMOCLAW_CONTEXT_WINDOW", "8192", /requires NEMOCLAW_CONTEXT_WINDOW=262144/],
+  ])("rejects conflicting qualified-profile runtime input %s", (name, value, message) => {
+    expect(
+      preflightVllmModelEnv({
+        NEMOCLAW_VLLM_MODEL: "nemotron-3-ultra-550b-a55b",
+        [VLLM_PROFILE_ENV]: EXPERIMENTAL_SINGLE_USER_PROFILE,
+        [name]: value,
+      } as NodeJS.ProcessEnv),
+    ).toEqual({
+      ok: false,
+      message: expect.stringMatching(message),
     });
   });
 
