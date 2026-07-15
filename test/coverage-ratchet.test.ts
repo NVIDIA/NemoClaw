@@ -51,7 +51,7 @@ describe("coverage ratchet", () => {
         [
           "--import",
           "tsx",
-          "scripts/check-coverage-ratchet.ts",
+          "scripts/check-coverage-ratchet.mts",
           relative(process.cwd(), summaryPath),
           relative(process.cwd(), thresholdPath),
           "Test coverage",
