@@ -448,6 +448,9 @@ function requireReadOnlyBuildCacheImports(
     if (Object.hasOwn(inputs, "cache-to") || inputs.push === true) {
       errors.push(`${boundary} must keep PR-controlled cache layers job-local`);
     }
+    if (inputs.provenance !== false) {
+      errors.push(`${boundary} must disable provenance for Docker-loaded cache warm builds`);
+    }
   }
 }
 
