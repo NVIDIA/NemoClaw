@@ -1,0 +1,12 @@
+[Unit]
+Description=OpenShell Docker-driver gateway (NemoClaw-managed)
+After=network.target
+
+[Service]
+EnvironmentFile=%h/.local/state/nemoclaw/openshell-docker-gateway/gateway.env
+ExecStart=/usr/local/bin/openshell-gateway
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

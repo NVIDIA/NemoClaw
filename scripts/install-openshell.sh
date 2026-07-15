@@ -786,6 +786,25 @@ if [[ -n "$ACTIVE_OPENSHELL_BIN" && "$ACTIVE_OPENSHELL_BIN" = /* ]]; then
   fi
 fi
 
+stage_nemoclaw_gateway_service() {
+  local gateway_bin="$1"
+  if [ "$OS" != "Linux" ]; then return 0; fi
+  if ! command -v systemctl >/dev/null 2>&1; then return 0; fi
+  if systemctl --user list-unit-files openshell-gateway.service --no-legend 2>/dev/null | grep -q .; then
+    info "Upstream openshell-gateway.service already present; skipping NemoClaw-owned unit."
+    return 0
+  fi
+  local unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+  local env_dir="${XDG_STATE_HOME:-$HOME/.local/state}/nemoclaw/openshell-docker-gateway"
+  mkdir -p "$unit_dir" "$env_dir"
+  chmod 0700 "$env_dir"
+  sed "s|ExecStart=.*|ExecStart=$gateway_bin|" \
+    "$(dirname "$0")/nemoclaw-openshell-gateway.service" \
+    > "$unit_dir/nemoclaw-openshell-gateway.service"
+  systemctl --user daemon-reload 2>/dev/null || true
+  info "Staged NemoClaw-owned gateway service unit (not yet enabled). Onboarding will enable it."
+}
+
 install_bins() {
   local dir="$1"
   install -m 755 "$tmpdir/openshell" "$dir/openshell"
@@ -827,5 +846,7 @@ fi
 required_driver_bins_installed_in_dir "$target_dir" \
   || fail "OpenShell release '$RELEASE_TAG' did not install the required Docker-driver binaries."
 require_openshell_messaging_features "$target_dir/openshell"
+
+stage_nemoclaw_gateway_service "$target_dir/openshell-gateway"
 
 info "$("$target_dir/openshell" --version 2>&1 || echo openshell) installed"

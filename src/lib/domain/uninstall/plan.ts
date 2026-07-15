@@ -38,6 +38,8 @@ export type UninstallPlanAction =
   | { kind: "stop-ollama-auth-proxy" }
   | { kind: "stop-openshell-forward-processes" }
   | { kind: "stop-orphaned-openshell-processes" }
+  | { kind: "uninstall-nemoclaw-gateway-service" }
+  | { kind: "preserve-nemoclaw-gateway-service" }
   | { kind: "uninstall-npm-package"; name: "nemoclaw" };
 
 export interface UninstallPlanStep {
@@ -125,11 +127,19 @@ export function buildUninstallPlan(
                   kind: "preserve-openshell-install-paths" as const,
                   paths: paths.openshellInstallPaths,
                 },
+                {
+                  kind: "preserve-nemoclaw-gateway-service" as const,
+                },
               ]
-            : paths.openshellInstallPaths.map((path) => ({
-                kind: "delete-openshell-install-path" as const,
-                path,
-              }))),
+            : [
+                ...paths.openshellInstallPaths.map((path) => ({
+                  kind: "delete-openshell-install-path" as const,
+                  path,
+                })),
+                {
+                  kind: "uninstall-nemoclaw-gateway-service" as const,
+                },
+              ]),
           ...uninstallStatePaths(paths).map((path) => ({ kind: "delete-path" as const, path })),
         ],
       },

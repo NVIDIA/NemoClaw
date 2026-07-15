@@ -8,13 +8,12 @@ import path from "node:path";
 import { sleepSeconds, waitUntilAsync } from "../core/wait";
 import { isGatewayHealthy } from "../state/gateway";
 import { envInt } from "./env";
-import {
-  createGatewayHealthWaitOptions,
-  formatGatewayHealthWaitLimit,
-} from "./gateway-health-wait";
+import { createGatewayHealthWaitOptions, formatGatewayHealthWaitLimit } from "./gateway-health-wait";
 import { isDockerDriverGatewayHttpReady } from "./gateway-http-readiness";
+import os from "node:os";
 
 export const OPENSHELL_GATEWAY_USER_SERVICE = "openshell-gateway";
+export const NEMOCLAW_GATEWAY_USER_SERVICE = "nemoclaw-openshell-gateway";
 
 export interface OpenShellGatewayUserServiceOptions {
   commandExists?: (command: string) => boolean;
@@ -91,6 +90,44 @@ export function hasOpenShellGatewayUserService(
   if ((opts.platform ?? process.platform) !== "linux") return false;
   const existsSync = opts.existsSync ?? fs.existsSync;
   return getOpenShellGatewayUserServicePaths().some((candidate) => existsSync(candidate));
+}
+
+export function getNemoclawGatewayUserServicePath(opts: Pick<OpenShellGatewayUserServiceOptions, "env"> = {}): string {
+  const home = os.homedir();
+  const configHome = (opts.env ?? process.env).XDG_CONFIG_HOME ?? path.join(home, ".config");
+  return path.join(configHome, "systemd", "user", `${NEMOCLAW_GATEWAY_USER_SERVICE}.service`);
+}
+
+export function getNemoclawGatewayEnvFilePath(opts: Pick<OpenShellGatewayUserServiceOptions, "env"> = {}): string {
+  const home = os.homedir();
+  const stateHome = (opts.env ?? process.env).XDG_STATE_HOME ?? path.join(home, ".local", "state");
+  return path.join(stateHome, "nemoclaw", "openshell-docker-gateway", "gateway.env");
+}
+
+export function hasNemoclawGatewayUserService(
+  opts: Pick<OpenShellGatewayUserServiceOptions, "existsSync" | "platform" | "env"> = {},
+): boolean {
+  if ((opts.platform ?? process.platform) !== "linux") return false;
+  const existsSync = opts.existsSync ?? fs.existsSync;
+  return existsSync(getNemoclawGatewayUserServicePath(opts));
+}
+
+export function uninstallNemoclawGatewayUserService(
+  opts: Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl" | "existsSync" | "platform"> = {},
+): void {
+  if (!hasNemoclawGatewayUserService(opts)) return;
+  const env = opts.env ?? process.env;
+  const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
+  
+  runSystemctlUser(["disable", "--now", NEMOCLAW_GATEWAY_USER_SERVICE], { env, spawnSyncImpl });
+  runSystemctlUser(["daemon-reload"], { env, spawnSyncImpl });
+  
+  try {
+    fs.rmSync(getNemoclawGatewayUserServicePath(opts), { force: true });
+  } catch {}
+  try {
+    fs.rmSync(getNemoclawGatewayEnvFilePath(opts), { force: true });
+  } catch {}
 }
 
 function defaultCommandExists(command: string, env: NodeJS.ProcessEnv): boolean {
@@ -287,6 +324,79 @@ export function startOpenShellGatewayUserService(
   return { attempted: true, fallbackAllowed: false, started: true };
 }
 
+export function startNemoclawGatewayUserService(
+  opts: OpenShellGatewayUserServiceOptions = {},
+): OpenShellGatewayUserServiceStartResult {
+  const platform = opts.platform ?? process.platform;
+  if (platform !== "linux") {
+    return { attempted: false, fallbackAllowed: true, started: false, reason: "not a Linux host" };
+  }
+  const existsSync = opts.existsSync ?? fs.existsSync;
+  if (!hasNemoclawGatewayUserService({ existsSync, platform, env: opts.env })) {
+    return {
+      attempted: false,
+      fallbackAllowed: true,
+      started: false,
+      reason: "NemoClaw-managed service unit not installed",
+    };
+  }
+
+  const env = opts.env ?? process.env;
+  const commandExists = opts.commandExists ?? ((command) => defaultCommandExists(command, env));
+  if (!commandExists("systemctl")) {
+    return {
+      attempted: true,
+      fallbackAllowed: true,
+      started: false,
+      reason: "systemctl is not available",
+    };
+  }
+
+  const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
+  for (const args of [["daemon-reload"]]) {
+    const result = runSystemctlUser(args, { env, spawnSyncImpl });
+    if (!result.ok) {
+      const reason = `systemctl --user ${args.join(" ")} failed: ${result.reason}`;
+      return {
+        attempted: true,
+        fallbackAllowed: userManagerLooksUnavailable(result.reason ?? ""),
+        reason,
+        started: false,
+      };
+    }
+  }
+
+  try {
+    opts.prepareServiceEnv?.();
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return {
+      attempted: true,
+      fallbackAllowed: false,
+      reason: `failed to prepare NemoClaw OpenShell gateway service environment: ${detail}`,
+      started: false,
+    };
+  }
+
+  for (const args of [
+    ["enable", NEMOCLAW_GATEWAY_USER_SERVICE],
+    ["restart", NEMOCLAW_GATEWAY_USER_SERVICE],
+  ]) {
+    const result = runSystemctlUser(args, { env, spawnSyncImpl });
+    if (!result.ok) {
+      const reason = `systemctl --user ${args.join(" ")} failed: ${result.reason}`;
+      return {
+        attempted: true,
+        fallbackAllowed: userManagerLooksUnavailable(result.reason ?? ""),
+        reason,
+        started: false,
+      };
+    }
+  }
+
+  return { attempted: true, fallbackAllowed: false, started: true };
+}
+
 export async function startPackageManagedDockerDriverGateway({
   clearDockerDriverGatewayRuntimeFiles,
   exitOnFailure,
@@ -306,12 +416,25 @@ export async function startPackageManagedDockerDriverGateway({
     startOpenShellGatewayUserServiceImpl = startOpenShellGatewayUserService,
   verifySandboxBridgeGatewayReachableOrExit,
 }: PackageManagedDockerDriverGatewayOptions): Promise<boolean> {
-  if (!hasOpenShellGatewayUserServiceImpl()) return false;
+  const hasUpstream = hasOpenShellGatewayUserServiceImpl();
+  const hasNemoclaw = hasNemoclawGatewayUserService();
+  
+  if (!hasUpstream && !hasNemoclaw) return false;
 
-  console.log("  Starting OpenShell Docker-driver gateway via upstream user service...");
-  const serviceStart = startOpenShellGatewayUserServiceImpl({
-    prepareServiceEnv: prepareOpenShellGatewayUserServiceEnv,
-  });
+  console.log(
+    hasUpstream 
+      ? "  Starting OpenShell Docker-driver gateway via upstream user service..." 
+      : "  Starting OpenShell Docker-driver gateway via NemoClaw-managed user service..."
+  );
+
+  const serviceStart = hasUpstream
+    ? startOpenShellGatewayUserServiceImpl({
+        prepareServiceEnv: prepareOpenShellGatewayUserServiceEnv,
+      })
+    : startNemoclawGatewayUserService({
+        prepareServiceEnv: prepareOpenShellGatewayUserServiceEnv,
+      });
+
   if (!serviceStart.started) {
     const detail = serviceStart.reason ? ` (${serviceStart.reason})` : "";
     if (serviceStart.fallbackAllowed) {
@@ -322,7 +445,7 @@ export async function startPackageManagedDockerDriverGateway({
     }
     const message = `OpenShell gateway user service failed to start${detail}.`;
     console.error(`  ${message}`);
-    console.error("  Check: systemctl --user status openshell-gateway");
+    console.error(`  Check: systemctl --user status ${hasUpstream ? OPENSHELL_GATEWAY_USER_SERVICE : NEMOCLAW_GATEWAY_USER_SERVICE}`);
     if (exitOnFailure) process.exit(1);
     throw new Error(message);
   }
@@ -359,7 +482,7 @@ export async function startPackageManagedDockerDriverGateway({
     pollInterval,
   )}.`;
   console.error(`  ${message}`);
-  console.error("  Check: systemctl --user status openshell-gateway");
+  console.error(`  Check: systemctl --user status ${hasUpstream ? OPENSHELL_GATEWAY_USER_SERVICE : NEMOCLAW_GATEWAY_USER_SERVICE}`);
   if (exitOnFailure) process.exit(1);
   throw new Error(message);
 }

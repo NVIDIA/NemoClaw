@@ -8,6 +8,8 @@ import {
   getOpenShellGatewayUserServiceBinaryPaths,
   getOpenShellGatewayUserServicePaths,
   hasOpenShellGatewayUserService,
+  hasNemoclawGatewayUserService,
+  uninstallNemoclawGatewayUserService,
   type SpawnSyncLikeResult,
   startOpenShellGatewayUserService,
   startPackageManagedDockerDriverGateway,
@@ -75,6 +77,48 @@ describe("docker-driver-gateway-service", () => {
     expect(existsSync.mock.calls.flat()).not.toContain(
       "/home/nvidia/.config/systemd/user/openshell-gateway.service",
     );
+  });
+
+  describe("nemoclaw-managed gateway service", () => {
+    it("detects the NemoClaw-managed service correctly on Linux", () => {
+      const existsSync = vi.fn((candidate: string) => candidate.includes("nemoclaw-openshell-gateway.service"));
+      expect(hasNemoclawGatewayUserService({ existsSync, platform: "linux", env: {} })).toBe(true);
+      expect(hasNemoclawGatewayUserService({ existsSync, platform: "darwin", env: {} })).toBe(false);
+    });
+
+    it("uninstalls the NemoClaw-managed service correctly", () => {
+      const events: string[] = [];
+      const spawnSyncImpl = vi.fn((_command: string, args: string[]) => {
+        events.push(args[1] ?? args[0] ?? "");
+        return spawnResult();
+      });
+
+      uninstallNemoclawGatewayUserService({
+        env: {},
+        existsSync: () => true,
+        platform: "linux",
+        spawnSyncImpl,
+      });
+
+      expect(events).toEqual(["disable", "daemon-reload"]);
+    });
+
+    it("does not run systemctl commands if NemoClaw-managed service does not exist", () => {
+      const events: string[] = [];
+      const spawnSyncImpl = vi.fn((_command: string, args: string[]) => {
+        events.push(args[1] ?? args[0] ?? "");
+        return spawnResult();
+      });
+
+      uninstallNemoclawGatewayUserService({
+        env: {},
+        existsSync: () => false,
+        platform: "linux",
+        spawnSyncImpl,
+      });
+
+      expect(events).toEqual([]);
+    });
   });
 
   it("restarts the upstream user service with systemctl --user after validating identity", () => {

@@ -19,6 +19,8 @@ import {
 import { buildDockerDriverGatewayLocalTlsEnv } from "./docker-driver-gateway-local-tls";
 import {
   hasOpenShellGatewayUserService,
+  hasNemoclawGatewayUserService,
+  getNemoclawGatewayEnvFilePath,
   type PackageManagedDockerDriverGatewayOptions,
   startPackageManagedDockerDriverGateway,
 } from "./docker-driver-gateway-service";
@@ -272,6 +274,23 @@ function writeDockerGatewayDebEnvOverrideFile(getOverride: () => Record<string, 
   fs.chmodSync(envFile, 0o600);
 }
 
+export function writeNemoclawGatewayEnvFile(
+  getOverride: () => Record<string, string>,
+  opts: Parameters<typeof hasNemoclawGatewayUserService>[0] = {},
+): void {
+  const override = getOverride();
+  const envFile = getNemoclawGatewayEnvFilePath(opts);
+  const envDir = path.dirname(envFile);
+  fs.mkdirSync(envDir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(envDir, 0o700);
+  const existing = readTextFileIfPresent(envFile);
+  fs.writeFileSync(envFile, buildDockerGatewayDebEnvFile(existing, override), {
+    encoding: "utf-8",
+    mode: 0o600,
+  });
+  fs.chmodSync(envFile, 0o600);
+}
+
 export function writeDockerGatewayDebEnvOverride(
   getOverride: () => Record<string, string>,
   opts: Parameters<typeof hasOpenShellGatewayUserService>[0] = {},
@@ -297,7 +316,12 @@ export function startPackageManagedDockerDriverGatewayWithEnvOverride({
   assertDockerDriverGatewayAuthConfigSafe(gatewayEnv);
   return startPackageManagedDockerDriverGateway({
     ...options,
-    prepareOpenShellGatewayUserServiceEnv: () =>
-      writeDockerGatewayDebEnvOverrideFile(() => gatewayEnv),
+    prepareOpenShellGatewayUserServiceEnv: () => {
+      if (hasOpenShellGatewayUserService()) {
+        writeDockerGatewayDebEnvOverrideFile(() => gatewayEnv);
+      } else if (hasNemoclawGatewayUserService()) {
+        writeNemoclawGatewayEnvFile(() => gatewayEnv);
+      }
+    },
   });
 }

@@ -28,6 +28,7 @@ import { isModelRouterCommandLineForPort } from "../../onboard/model-router-proc
 import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
 import { stopOpenRouterRuntimeAdapter } from "./openrouter-runtime-adapter-cleanup";
 import { classifyShimPath, type FileSystemDeps } from "./plan";
+import { uninstallNemoclawGatewayUserService } from "../../onboard/docker-driver-gateway-service";
 
 export interface RunResult {
   status: number | null;
@@ -939,10 +940,15 @@ function executePlan(
     } else if (step.name === "State and binaries") {
       removeManagedSwap(paths, runtime);
       for (const pattern of paths.runtimeTempGlobs) removeGlob(pattern, runtime);
-      if (options.keepOpenShell) runtime.log("Keeping OpenShell binaries as requested.");
-      else
-        for (const target of paths.openshellInstallPaths)
+      if (options.keepOpenShell) {
+        runtime.log("Keeping OpenShell binaries as requested.");
+        runtime.log("Keeping NemoClaw-managed gateway service as requested.");
+      } else {
+        uninstallNemoclawGatewayUserService({ env: runtime.env });
+        for (const target of paths.openshellInstallPaths) {
           removeFileWithOptionalSudo(target, runtime);
+        }
+      }
       if (!removePathExcept(paths.nemoclawStateDir, preserveUnderStateDir, runtime)) ok = false;
       removePath(paths.gatewayLocalStateDir, runtime);
       removePath(paths.openshellConfigDir, runtime);
