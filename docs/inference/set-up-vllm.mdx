@@ -189,6 +189,7 @@ The profile uses the reclaimed-v1/offload90 configuration with this model identi
 | Maximum context | `262144` |
 
 Its container runs with host networking and host IPC, `16 GiB` shared memory, a `650 GiB` container memory limit, tensor parallel size `1`, and a `1200`-second startup timeout.
+Because the qualified contract binds the unauthenticated vLLM API to `0.0.0.0:8000` on the host network, apply the default-deny firewall rules at the top of this page before opting in; this profile does not install or modify host firewall rules.
 The installer fails closed unless exactly one GB300 is available, HBM is below `245000 MiB`, and aggregate and volatile uncorrected ECC are zero before launch; it samples the same exclusive HBM ceiling and ECC contract throughout startup.
 Full workload-level HBM/ECC qualification through chat and tool calls remains part of the blocked current-PR physical Station acceptance run.
 
