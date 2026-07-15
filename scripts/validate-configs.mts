@@ -15,16 +15,16 @@ import { fileURLToPath } from "node:url";
 import Ajv from "ajv/dist/2020.js";
 import YAML from "yaml";
 
-import {
+import type { SemanticCheck, SemanticFinding } from "../src/lib/policy/semantic-validation";
+
+const {
   DANGEROUS_HOSTS,
   findDangerousHosts,
   isDangerousHost,
   POLICY_SEMANTIC_CHECKS,
   runSemanticChecks,
-  type SemanticCheck,
-  type SemanticFinding,
   splitSemanticFindings,
-} from "../src/lib/policy/semantic-validation";
+} = await import("../src/lib/policy/semantic-validation");
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
