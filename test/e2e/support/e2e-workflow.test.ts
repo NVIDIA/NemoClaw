@@ -36,98 +36,33 @@ describe("e2e workflow boundary", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
   });
 
-  it("rejects rebuild cache wiring drift", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-build-cache-workflow-"));
-    const workflowPath = path.join(tmp, "workflow.yaml");
-    const workflow = readWorkflow() as {
-      jobs: Record<
-        string,
-        {
-          steps: Array<{
-            env?: Record<string, unknown>;
-            name?: string;
-            run?: string;
-            uses?: string;
-            with?: Record<string, unknown>;
-          }>;
-        }
-      >;
-    };
-    type Step = (typeof workflow.jobs)[string]["steps"][number];
-    const missingStep = (job: string, name: string): never => {
-      throw new Error(`Missing workflow step in ${job}: ${name}`);
-    };
-    const cloneStep = (job: string, name: string): Step => {
-      const steps = workflow.jobs[job].steps;
-      const index = steps.findIndex((step) => step.name === name);
-      const clone = structuredClone(steps[index] ?? missingStep(job, name));
-      steps[index] = clone;
-      return clone;
-    };
-
-    const openClawSetup = cloneStep("rebuild-openclaw", "Set up rebuild Buildx");
-    const openClawWarm = cloneStep("rebuild-openclaw", "Warm current OpenClaw base build cache");
-    openClawSetup.with!["driver-opts"] = "network=host";
-    openClawSetup.with!.use = true;
-    const openClawSteps = workflow.jobs["rebuild-openclaw"].steps;
-    openClawSteps.splice(openClawSteps.indexOf(openClawSetup) + 1, 0, {
-      name: "Route rebuild Docker builds through Buildx",
-      run: "docker buildx use external",
-    });
-    openClawWarm.with!["cache-from"] = "type=gha,scope=buildkit";
-    openClawWarm.with!["cache-to"] = "type=registry,ref=example.invalid/cache";
-    openClawWarm.with!.tags = "example.invalid/openclaw:latest";
-    delete openClawWarm.with!.provenance;
-
-    const hermesWarm = cloneStep("rebuild-hermes", "Warm current Hermes base build cache");
-    hermesWarm.with!["cache-from"] = "type=gha,scope=buildkit";
-    hermesWarm.with!["cache-to"] = "type=registry,ref=example.invalid/cache";
-    hermesWarm.with!.provenance = true;
-    hermesWarm.with!.tags = "example.invalid/hermes:latest";
-
-    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
-
-    try {
-      expect(validateE2eWorkflowBoundary(workflowPath)).toEqual(
-        expect.arrayContaining([
-          "rebuild-openclaw Buildx must enable default-load for the cache warm",
-          "rebuild-openclaw Buildx setup must leave the Docker engine selected",
-          "rebuild-openclaw must keep live Docker builds on the Docker engine",
-          "rebuild-openclaw base cache must import the trusted publisher cache",
-          "rebuild-openclaw base cache must load the current base image tag",
-          "rebuild-openclaw must keep PR-controlled cache layers job-local",
-          "rebuild-openclaw must disable provenance for Docker-loaded cache warm builds",
-          "rebuild-hermes base cache must import the trusted publisher cache",
-          "rebuild-hermes base cache must load the current base image tag",
-          "rebuild-hermes must keep PR-controlled cache layers job-local",
-          "rebuild-hermes must disable provenance for Docker-loaded cache warm builds",
-        ]),
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects a second persistent rebuild Buildx setup", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-builder-workflow-"));
+  it.each([
+    [
+      "an isolated builder",
+      {
+        name: "Set up rebuild Buildx",
+        uses: "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c",
+      },
+    ],
+    [
+      "a separate cache warm",
+      {
+        name: "Warm current OpenClaw base build cache",
+        uses: "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a",
+      },
+    ],
+  ])("rejects %s in rebuild E2E jobs", (_case, injectedStep) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-cache-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
     const workflow = readWorkflow() as {
       jobs: Record<string, { steps: Array<{ name?: string; uses?: string }> }>;
     };
-    const steps = workflow.jobs["rebuild-openclaw"].steps;
-    const warmIndex = steps.findIndex(
-      (step) => step.name === "Warm current OpenClaw base build cache",
-    );
-    if (warmIndex === -1) throw new Error("Missing OpenClaw cache warm step");
-    steps.splice(warmIndex + 1, 0, {
-      name: "Set up another rebuild Buildx",
-      uses: "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c",
-    });
+    workflow.jobs["rebuild-openclaw"].steps.splice(2, 0, injectedStep);
     fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
     try {
       expect(validateE2eWorkflowBoundary(workflowPath)).toContain(
-        "rebuild-openclaw must keep live Docker builds on the Docker engine",
+        "rebuild-openclaw must keep rebuild builds on the Docker engine cache",
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

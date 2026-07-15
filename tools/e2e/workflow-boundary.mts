@@ -436,101 +436,30 @@ function requireJobStep(
   return step;
 }
 
-function requireReadOnlyBuildCacheImports(
-  errors: string[],
-  steps: readonly WorkflowStep[],
-  boundary: string,
-): void {
-  for (const step of steps.filter((candidate) =>
-    stringValue(candidate.uses).startsWith("docker/build-push-action@"),
-  )) {
-    const inputs = asRecord(step.with);
-    if (Object.hasOwn(inputs, "cache-to") || inputs.push === true) {
-      errors.push(`${boundary} must keep PR-controlled cache layers job-local`);
-    }
-    if (inputs.provenance !== false) {
-      errors.push(`${boundary} must disable provenance for Docker-loaded cache warm builds`);
-    }
-  }
-}
-
-function validateRebuildBaseCache(
+function requireDockerEngineRebuilds(
   errors: string[],
   jobName: string,
   jobEnv: WorkflowRecord,
   steps: readonly WorkflowStep[],
-  options: {
-    agentName: "Hermes" | "OpenClaw";
-    cacheRef: string;
-    dockerfile: string;
-    imageTag: string;
-  },
-): Array<WorkflowStep | undefined> {
-  requireReadOnlyBuildCacheImports(errors, steps, jobName);
-  const setupBuildx = requireJobStep(errors, jobName, steps, "Set up rebuild Buildx");
-  if (setupBuildx?.uses !== "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c") {
-    errors.push(`${jobName} must use the reviewed rebuild Buildx action`);
-  }
-  if (setupBuildx?.id !== "rebuild-buildx") {
-    errors.push(`${jobName} Buildx setup must expose the rebuild-buildx step id`);
-  }
-  const setupInputs = asRecord(setupBuildx?.with);
-  if (setupInputs["driver-opts"] !== "default-load=true") {
-    errors.push(`${jobName} Buildx must enable default-load for the cache warm`);
-  }
-  if (setupInputs.use !== false) {
-    errors.push(`${jobName} Buildx setup must leave the Docker engine selected`);
-  }
-  const selectsAnotherPersistentBuildx = steps.some(
-    (step) =>
-      step !== setupBuildx &&
-      stringValue(step.uses).startsWith("docker/setup-buildx-action@") &&
-      asRecord(step.with).use !== false,
-  );
+): void {
+  const hasSeparateCacheBuilder = steps.some((step) => {
+    const uses = stringValue(step.uses);
+    return (
+      uses.startsWith("docker/setup-buildx-action@") ||
+      uses.startsWith("docker/build-push-action@")
+    );
+  });
+  const routesBuildsAwayFromDocker = steps.some((step) => {
+    const run = stringValue(step.run);
+    return run.includes("BUILDX_BUILDER=") || /docker\s+buildx\s+use(?:\s|$)/u.test(run);
+  });
   if (
     Object.hasOwn(jobEnv, "BUILDX_BUILDER") ||
-    selectsAnotherPersistentBuildx ||
-    steps.some((step) => {
-      const run = stringValue(step.run);
-      return run.includes("BUILDX_BUILDER=") || /docker\s+buildx\s+use(?:\s|$)/u.test(run);
-    })
+    hasSeparateCacheBuilder ||
+    routesBuildsAwayFromDocker
   ) {
-    errors.push(`${jobName} must keep live Docker builds on the Docker engine`);
+    errors.push(`${jobName} must keep rebuild builds on the Docker engine cache`);
   }
-
-  const validateBuildArgs = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    `Validate ${options.agentName} rebuild production Docker build args`,
-  );
-  requireRunContains(errors, validateBuildArgs, "scripts/check-production-build-args.sh");
-
-  const warmCurrentBase = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    `Warm current ${options.agentName} base build cache`,
-  );
-  if (
-    warmCurrentBase?.uses !== "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a"
-  ) {
-    errors.push(`${jobName} must warm the current base with the reviewed action`);
-  }
-  const warmInputs = asRecord(warmCurrentBase?.with);
-  if (warmInputs.builder !== "${{ steps.rebuild-buildx.outputs.name }}") {
-    errors.push(`${jobName} base cache must use the isolated Buildx builder`);
-  }
-  if (warmInputs.context !== "." || warmInputs.file !== options.dockerfile) {
-    errors.push(`${jobName} base cache must build the reviewed ${options.agentName} Dockerfile`);
-  }
-  if (warmInputs["cache-from"] !== options.cacheRef) {
-    errors.push(`${jobName} base cache must import the trusted publisher cache`);
-  }
-  if (warmInputs.tags !== options.imageTag) {
-    errors.push(`${jobName} base cache must load the current base image tag`);
-  }
-  return [setupBuildx, validateBuildArgs, warmCurrentBase];
 }
 
 function requireRunContains(
@@ -1358,6 +1287,7 @@ function validateRebuildOpenClawJob(errors: string[], jobs: WorkflowRecord): voi
 
   const steps = asSteps(job.steps);
   requireNoDispatchInputInterpolation(errors, steps);
+  requireDockerEngineRebuilds(errors, jobName, jobEnv, steps);
   for (const step of steps) {
     if (step.name !== "Run OpenClaw rebuild live test") {
       requireEnvDoesNotExposeSecret(
@@ -1375,13 +1305,6 @@ function validateRebuildOpenClawJob(errors: string[], jobs: WorkflowRecord): voi
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push("rebuild-openclaw checkout step must set persist-credentials=false");
   }
-
-  const cacheSteps = validateRebuildBaseCache(errors, jobName, jobEnv, steps, {
-    agentName: "OpenClaw",
-    cacheRef: "type=registry,ref=ghcr.io/nvidia/nemoclaw/sandbox-base:buildcache",
-    dockerfile: "Dockerfile.base",
-    imageTag: "ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
-  });
 
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
   requireEnvDoesNotExposeSecret(
@@ -1406,21 +1329,6 @@ function validateRebuildOpenClawJob(errors: string[], jobs: WorkflowRecord): voi
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/rebuild-openclaw.test.ts");
 
-  const prepareWorkspace = requireJobStep(errors, jobName, steps, "Prepare E2E workspace");
-  const orderedSteps = [...cacheSteps, prepareWorkspace, installOpenShell, runVitest];
-  if (
-    orderedSteps.every((step) => step !== undefined) &&
-    orderedSteps.some(
-      (step, index) =>
-        index > 0 &&
-        steps.indexOf(orderedSteps[index - 1] as WorkflowStep) >=
-          steps.indexOf(step as WorkflowStep),
-    )
-  ) {
-    errors.push(
-      "rebuild-openclaw Buildx setup, cache warming, workspace prep, and test must stay in order",
-    );
-  }
 }
 
 function validateRebuildHermesJob(
@@ -1492,6 +1400,7 @@ function validateRebuildHermesJob(
 
   const steps = asSteps(job.steps);
   requireNoDispatchInputInterpolation(errors, steps);
+  requireDockerEngineRebuilds(errors, jobName, jobEnv, steps);
   for (const step of steps) {
     const stepName = `${jobName} step '${step.name ?? step.uses ?? "<unnamed>"}'`;
     const stepEnv = asRecord(step.env);
@@ -1513,13 +1422,6 @@ function validateRebuildHermesJob(
     errors.push(`${jobName} checkout step must set persist-credentials=false`);
   }
 
-  const cacheSteps = validateRebuildBaseCache(errors, jobName, jobEnv, steps, {
-    agentName: "Hermes",
-    cacheRef: "type=registry,ref=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:buildcache",
-    dockerfile: "agents/hermes/Dockerfile.base",
-    imageTag: "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest",
-  });
-
   const runVitest = requireJobStep(
     errors,
     jobName,
@@ -1533,21 +1435,6 @@ function validateRebuildHermesJob(
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/rebuild-hermes.test.ts");
 
-  const prepareWorkspace = requireJobStep(errors, jobName, steps, "Prepare E2E workspace");
-  const orderedSteps = [...cacheSteps, prepareWorkspace, runVitest];
-  if (
-    orderedSteps.every((step) => step !== undefined) &&
-    orderedSteps.some(
-      (step, index) =>
-        index > 0 &&
-        steps.indexOf(orderedSteps[index - 1] as WorkflowStep) >=
-          steps.indexOf(step as WorkflowStep),
-    )
-  ) {
-    errors.push(
-      `${jobName} Buildx setup, cache warming, workspace prep, and test must stay in order`,
-    );
-  }
 }
 
 function validateSandboxRebuildJob(errors: string[], jobs: WorkflowRecord): void {
