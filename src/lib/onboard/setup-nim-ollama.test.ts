@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { MIN_HERMES_OLLAMA_CONTEXT_WINDOW } from "../inference/ollama-runtime-context";
 import { createSetupNimOllamaHandlers } from "./setup-nim-ollama";
 import type { SetupNimSelectionState } from "./setup-nim-selection";
 
@@ -212,6 +213,40 @@ describe("createSetupNimOllamaHandlers", () => {
     assert.equal(state.model, "llama3.1:8b");
     assert.equal(state.provider, "ollama-local");
     assert.equal(state.allowToolsIncompatible, true);
+  });
+
+  it("passes the Hermes Ollama context floor to systemd repair and model validation", async () => {
+    const state = makeState();
+    state.ollamaContextWindowFloor = MIN_HERMES_OLLAMA_CONTEXT_WINDOW;
+    const ensureOverride = vi.fn(() => "unchanged");
+    const runStartup = vi.fn(() => ({ kind: "ready" as const }));
+    const selectModel = vi.fn(async (_gpu, _provider, args) => {
+      expect(args.contextWindowFloor).toBe(MIN_HERMES_OLLAMA_CONTEXT_WINDOW);
+      return { outcome: "selected" as const, model: "llama3.2:1b", allowToolsIncompatible: false };
+    });
+    const { handleRunningOllamaSelection } = createSetupNimOllamaHandlers(
+      makeDeps({
+        ensureOllamaLoopbackSystemdOverride: ensureOverride,
+        runOllamaStartupOrGate: runStartup,
+        selectAndValidateOllamaModel: selectModel,
+      }),
+    );
+
+    const result = await handleRunningOllamaSelection(null, "llama3.2:1b", null, true, state);
+
+    expect(result).toBe("selected");
+    expect(ensureOverride).toHaveBeenCalledWith({
+      isNonInteractive: expect.any(Function),
+      contextWindowFloor: MIN_HERMES_OLLAMA_CONTEXT_WINDOW,
+    });
+    expect(runStartup).toHaveBeenCalledWith({
+      ollamaReady: true,
+      ollamaPort: 11434,
+      getLocalProviderBaseUrl: expect.any(Function),
+      isNonInteractive: expect.any(Function),
+      contextWindowFloor: MIN_HERMES_OLLAMA_CONTEXT_WINDOW,
+    });
+    expect(selectModel).toHaveBeenCalledTimes(1);
   });
 
   it("preserves accepted tools-incompatible state for Windows-host Ollama", async () => {

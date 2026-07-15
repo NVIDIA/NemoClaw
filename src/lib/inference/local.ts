@@ -14,10 +14,11 @@ import { createBearerAuthConfig } from "../adapters/http/auth-config";
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import type { CurlProbeOptions, CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
-import { OLLAMA_PORT, OLLAMA_PROXY_PORT, VLLM_PORT } from "../core/ports";
+import { GATEWAY_PORT, OLLAMA_PORT, OLLAMA_PROXY_PORT, VLLM_PORT } from "../core/ports";
 import { sleepSeconds } from "../core/wait";
 import { containerCanReachHostLoopback, isWsl } from "../platform";
 import { type CaptureResult, runCapture, runCaptureEx, shellQuote } from "../runner";
+import { nemoclawStateRoot } from "../state/state-root";
 import { buildSubprocessEnv } from "../subprocess-env";
 import { detectNvidiaPlatform } from "./nim";
 import {
@@ -29,10 +30,16 @@ import {
   OLLAMA_MODEL_REGISTRY,
   SMALLEST_OLLAMA_MODEL_TAG,
 } from "./ollama-model-registry";
-import type { OllamaRuntimeModelStatus } from "./ollama-runtime-context";
+import type {
+  ApplyOllamaRuntimeContextWindowOptions,
+  ApplyOllamaRuntimeContextWindowResult,
+  OllamaRuntimeModelStatus,
+} from "./ollama-runtime-context";
 import {
   applyOllamaRuntimeContextWindow as applyOllamaRuntimeContextWindowWithHost,
+  getOllamaContextWindowFloorForAgent,
   MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
+  MIN_HERMES_OLLAMA_CONTEXT_WINDOW,
   parsePositiveInteger,
   probeOllamaRuntimeModelStatus as probeOllamaRuntimeModelStatusWithHost,
   resetOllamaRuntimeContextWindowAutoState,
@@ -239,14 +246,17 @@ export interface LocalProviderHealthProbeOptions {
   skipOllamaAuthProxySubprobe?: boolean;
   /**
    * Reads the persisted Ollama auth-proxy bearer token. Injectable for tests.
-   * Default reads from `~/.nemoclaw/ollama-proxy-token` (written by
-   * inference/ollama/proxy.ts during onboard).
+   * Default reads from `ollama-proxy-token` in the selected gateway's host
+   * state root (written by inference/ollama/proxy.ts during onboard).
    */
   loadOllamaProxyTokenImpl?: () => string | null;
 }
 
 function defaultLoadOllamaProxyToken(): string | null {
-  const tokenPath = nodePath.join(os.homedir(), ".nemoclaw", "ollama-proxy-token");
+  const tokenPath = nodePath.join(
+    nemoclawStateRoot(os.homedir(), GATEWAY_PORT),
+    "ollama-proxy-token",
+  );
   try {
     if (fs.existsSync(tokenPath)) {
       const token = fs.readFileSync(tokenPath, "utf-8").trim();
@@ -876,7 +886,12 @@ export function parseOllamaTags(output: string | null | undefined): string[] {
   }
 }
 
-export { MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW, parsePositiveInteger };
+export {
+  getOllamaContextWindowFloorForAgent,
+  MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
+  MIN_HERMES_OLLAMA_CONTEXT_WINDOW,
+  parsePositiveInteger,
+};
 
 export function probeOllamaRuntimeModelStatus(
   model: string,
@@ -900,8 +915,12 @@ export function resolveOllamaRuntimeContextWindow(
 
 export { resetOllamaRuntimeContextWindowAutoState };
 
-export function applyOllamaRuntimeContextWindow(selectedModel: string): void {
-  applyOllamaRuntimeContextWindowWithHost(selectedModel, getResolvedOllamaHost);
+/** Apply Ollama runtime context-window adoption using the resolved local host. */
+export function applyOllamaRuntimeContextWindow(
+  selectedModel: string,
+  options: Pick<ApplyOllamaRuntimeContextWindowOptions, "contextWindowFloor"> = {},
+): ApplyOllamaRuntimeContextWindowResult {
+  return applyOllamaRuntimeContextWindowWithHost(selectedModel, getResolvedOllamaHost, options);
 }
 
 export function applyVllmRuntimeContextWindow(

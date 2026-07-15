@@ -307,7 +307,8 @@ NemoClaw keeps non-secret operator-facing state on the host rather than inside t
 
 | Path | Purpose |
 |---|---|
-| `~/.nemoclaw/sandboxes.json` | Registered sandbox metadata, including the default sandbox selection. |
+| `~/.nemoclaw/sandboxes.json` | Registered sandbox metadata for the default gateway port, including the default sandbox selection. |
+| `~/.nemoclaw/gateways/<port>/` | Segregated host state root (its own registry, snapshots, and legacy credential-migration files) for a non-default `NEMOCLAW_GATEWAY_PORT`. On upgrade, rows and related state move out of the legacy shared root only when their recorded gateway identity matches the selected port. Provider credentials remain in the OpenShell gateway store. The default gateway port uses the top-level `~/.nemoclaw/` location, so existing single-gateway hosts are unchanged. |
 <AgentOnly variant="openclaw">
 | `~/.openclaw/openclaw.json` | Host OpenClaw configuration that NemoClaw snapshots or restores during migration flows. |
 </AgentOnly>
@@ -316,6 +317,7 @@ The following environment variables configure optional services and local access
 
 | Variable | Purpose |
 |---|---|
+| `NEMOCLAW_GATEWAY_PORT` | Optional host-side gateway port override for an independent OpenShell gateway and port-scoped NemoClaw state root. Supported for OpenClaw, Hermes, and Deep Agents. |
 <AgentOnly variant="openclaw">
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token you provide before `$$nemoclaw onboard`. OpenShell stores it in a provider; the sandbox receives placeholders, not the raw secret. |
 | `TELEGRAM_ALLOWED_IDS` | Comma-separated Telegram user or chat IDs for allowlists when onboarding applies channel restrictions. |
@@ -338,7 +340,6 @@ The following environment variables configure optional services and local access
 <AgentOnly variant="deepagents">
 | `NEMOCLAW_POLICY_TIER` | Optional non-interactive policy tier selection during onboarding. |
 | `TAVILY_API_KEY` | Host-side input for the optional managed Tavily provider. Register it with `$$nemoclaw credentials add tavily-search --type tavily --credential TAVILY_API_KEY` before attaching the provider to Deep Agents. |
-| `NEMOCLAW_GATEWAY_PORT` | Optional host-side gateway port override when running multiple independent OpenShell gateways. |
 </AgentOnly>
 
 For normal setup and reconfiguration, prefer `$$nemoclaw onboard` over editing these files by hand.

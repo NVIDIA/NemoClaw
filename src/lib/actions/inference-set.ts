@@ -29,10 +29,12 @@ import {
 } from "../openshell-gateway-endpoint-guard";
 import {
   type AgentConfigTarget,
+  type HermesDashboardReseedResult,
   readSandboxConfig,
   recomputeSandboxConfigHash,
   resolveAgentConfig,
   rewriteConfigUrlsWithDnsPinning,
+  seedHermesDashboardConfig,
   writeSandboxConfig,
 } from "../sandbox/config";
 import type { ConfigObject, ConfigValue } from "../security/credential-filter";
@@ -92,6 +94,11 @@ export interface InferenceSetResult {
   inSandboxConfigSynced: boolean;
 }
 
+interface InferenceSetMutationResult extends InferenceSetResult {
+  /** Internal post-commit convergence state used before returning to the CLI caller. */
+  dashboardConverged?: boolean;
+}
+
 export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   getDefaultSandbox: () => string | null;
   getSandbox: (name: string) => SandboxEntry | null;
@@ -110,6 +117,10 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
     config: ConfigObject,
   ) => void;
   recomputeSandboxConfigHash: (sandboxName: string, target: AgentConfigTarget) => void;
+  seedHermesDashboardConfig: (
+    sandboxName: string,
+    target: AgentConfigTarget,
+  ) => HermesDashboardReseedResult;
   prepareRunOpenshell: () => void;
   captureOpenshell: (
     args: string[],
@@ -212,6 +223,7 @@ function defaultDeps(): InferenceSetDeps {
     readSandboxConfig,
     writeSandboxConfig,
     recomputeSandboxConfigHash,
+    seedHermesDashboardConfig,
     prepareRunOpenshell: () => {
       getOpenshellBinary();
     },
@@ -565,7 +577,7 @@ async function runInferenceSetWithoutHostLock(
   options: InferenceSetOptions,
   deps: InferenceSetDeps,
   expectedGatewayName: string,
-): Promise<InferenceMutation<InferenceSetResult>> {
+): Promise<InferenceMutation<InferenceSetMutationResult>> {
   // #6321: accept the installer-style provider name onboard uses (e.g.
   // `anthropicCompatible`) as well as the OpenShell provider name, by
   // normalizing to the OpenShell name before validation and all downstream use.
@@ -866,6 +878,25 @@ async function runInferenceSetWithoutHostLock(
       `  Run '${CLI_NAME} ${sandboxName} rebuild' to finish applying the model inside the sandbox.`,
     );
   }
+  // Hermes keeps an isolated dashboard-home config that only mirrors the gateway
+  // config's model routing at sandbox startup. Re-seed it after an in-place
+  // switch so Dashboard Chat (and /api/model/info) converge on the new model
+  // instead of silently staying on the previous one (#6893).
+  //   - "converged": dashboard now matches the switch.
+  //   - "absent":    Dashboard disabled — nothing to converge, still a success.
+  //   - "failed":    warn and fail after the committed mutation is finalized so
+  //                  callers cannot accept a partially converged switch.
+  let dashboardConverged: boolean | undefined;
+  if (agentName === "hermes" && inSandboxConfigSynced) {
+    const reseed = deps.seedHermesDashboardConfig(sandboxName, target);
+    dashboardConverged = reseed !== "failed";
+    if (reseed === "failed") {
+      deps.log(
+        `  Warning: updated the Hermes model route but could not refresh the dashboard ` +
+          `config for '${sandboxName}'. Restart the sandbox to converge Dashboard Chat.`,
+      );
+    }
+  }
   const sessionUpdated = updateMatchingOnboardSession(
     sandboxName,
     provider,
@@ -890,6 +921,7 @@ async function runInferenceSetWithoutHostLock(
         configChanged: patched.changed,
         sessionUpdated,
         inSandboxConfigSynced,
+        dashboardConverged,
       },
     },
     deps,
@@ -931,6 +963,13 @@ export async function runInferenceSet(
     // it, but retain the outer sandbox lifecycle lock so another process cannot
     // destroy/recreate this name between the committed write and restart.
     completeInferenceGatewayRestart(mutation, deps);
+    if (mutation.result.dashboardConverged === false) {
+      throw new InferenceSetError(
+        `Inference route and main Hermes config were updated for '${mutation.result.sandboxName}', ` +
+          `but the Dashboard config did not converge. The committed route was not rolled back. ` +
+          `Restart the sandbox to converge Dashboard Chat.`,
+      );
+    }
     return mutation.result;
   });
 }
