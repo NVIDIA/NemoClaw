@@ -26,7 +26,7 @@ import path from "node:path";
 
 import { HTTPS_PIN_RUNTIME_ADAPTER_PORT } from "../core/ports";
 import { compactText } from "../core/url-utils";
-import { run, runCapture, SCRIPTS } from "../runner";
+import { ROOT, run, runCapture } from "../runner";
 import { buildSubprocessEnv } from "../subprocess-env";
 import { type EndpointDnsLookupFn, assertEndpointResolvesPublic } from "./endpoint-ssrf-preflight";
 import {
@@ -418,9 +418,13 @@ function killStaleAdapter(): void {
   killLocalAdapterPid({ pidPath: PID_PATH, processNeedle: PROCESS_NEEDLE, run, runCapture });
 }
 
+/**
+ * Unlike the Bedrock/OpenRouter adapters' hand-maintained `scripts/*.js`
+ * wrappers, this adapter is spawned directly from its own compiled output so
+ * the entrypoint stays TypeScript-only (see the `require.main` guard below).
+ */
 function getAdapterScriptPath(): string {
-  const scriptsDir = typeof SCRIPTS === "string" ? SCRIPTS : path.join(process.cwd(), "scripts");
-  return path.join(scriptsDir, "https-pin-runtime-adapter.js");
+  return path.join(ROOT, "dist", "lib", "inference", "https-pin-runtime-adapter.js");
 }
 
 function probeAdapterHealth(
@@ -668,3 +672,16 @@ export const __test = {
   getAdapterScriptPath,
   probeAdapterHealth,
 };
+
+// Detached-process entrypoint: `spawnDetachedNodeAdapter` runs this compiled
+// file directly with plain `node` (see `getAdapterScriptPath`), so this guard
+// is the only thing that distinguishes that invocation from the normal
+// `require()` used by the rest of the CLI.
+if (require.main === module) {
+  try {
+    startHttpsPinRuntimeAdapterFromEnv();
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+}
