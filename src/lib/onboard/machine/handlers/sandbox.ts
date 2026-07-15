@@ -983,6 +983,11 @@ class SandboxStateFlow<
     let nextState = state.sandboxName
       ? this.checkpointSandboxName(state, state.sandboxName)
       : state;
+    const requestedSandboxName =
+      nextState.sandboxName ?? (await this.deps.promptValidatedSandboxName(this.options.agent));
+    if (!nextState.sandboxName) {
+      nextState = this.checkpointSandboxName(nextState, requestedSandboxName);
+    }
     const webSearchConfig = await this.resolveWebSearchForCreation(nextState);
     const webSearchConfigChanged =
       nextState.webSearchConfigChanged ||
@@ -998,11 +1003,6 @@ class SandboxStateFlow<
       },
       webSearchConfig,
     );
-    const requestedSandboxName =
-      nextState.sandboxName ?? (await this.deps.promptValidatedSandboxName(this.options.agent));
-    if (!nextState.sandboxName) {
-      nextState = this.checkpointSandboxName(nextState, requestedSandboxName);
-    }
     await this.registerCompletedCredentialProviders(
       requestedSandboxName,
       [],

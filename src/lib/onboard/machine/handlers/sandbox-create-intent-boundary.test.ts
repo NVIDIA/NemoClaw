@@ -141,6 +141,39 @@ describe("sandbox create intent machine boundary", () => {
     expect(calls.selectResourceProfile).not.toHaveBeenCalled();
   });
 
+  it("prompts and checkpoints a missing sandbox name before web-search selection (#6743)", async () => {
+    const durableSession = createSession();
+    const updateSession = vi.fn((mutator: (value: typeof durableSession) => void) => {
+      mutator(durableSession);
+      return durableSession;
+    });
+    const events: string[] = [];
+    const configureWebSearch = vi.fn(async () => {
+      events.push("web-search");
+      throw new Error("web-search prompt interrupted");
+    });
+    const { deps, calls } = createDeps({ updateSession, configureWebSearch });
+    calls.promptName.mockImplementationOnce(async () => {
+      events.push("sandbox-name");
+      return "tm";
+    });
+
+    await expect(handleSandboxState(baseOptions(deps, durableSession))).rejects.toThrow(
+      "web-search prompt interrupted",
+    );
+
+    expect(events).toEqual(["sandbox-name", "web-search"]);
+    expect(durableSession.sandboxName).toBe("tm");
+    expect(durableSession.sandboxPromptProgress).toMatchObject({
+      sandboxName: true,
+      webSearch: false,
+      messaging: false,
+      resourceProfile: false,
+    });
+    expect(calls.setupMessaging).not.toHaveBeenCalled();
+    expect(calls.selectResourceProfile).not.toHaveBeenCalled();
+  });
+
   it("invalidates sandbox-bound messaging when an explicit resume name changes (#6743)", async () => {
     const durableSession = createSession({
       sandboxName: "old-name",
