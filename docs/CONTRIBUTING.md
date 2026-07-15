@@ -118,7 +118,7 @@ Downstream consumers can pin the source with a raw URL such as
 The Markdown SPDX comment is part of that raw file but does not appear when Markdown is rendered.
 
 The `scripts/generate-starter-prompt.ts` script removes the Markdown SPDX preamble and writes `docs/_build/StarterPrompt.generated.mdx`.
-The generated snippet wraps the prompt in Fern's native hidden `Prompt` component, which supplies the copy button and Cursor action without showing the long prompt body.
+The generated snippet wraps the prompt in Fern's native visible `Prompt` component, which displays the prompt body and supplies the copy button.
 The generated file is ignored by Git and is recreated by the docs build.
 
 Run the generator directly when you need to inspect the generated snippet:
@@ -133,7 +133,8 @@ Run the read-only comparison after generation when you need to verify that the s
 npm run docs:check-starter-prompt
 ```
 
-The normal `npm run docs`, `npm run docs:live`, agent-variant sync, and preview-watcher paths generate the snippet before Fern validates, serves, previews, or publishes the pages that include it.
+The shared `npm run docs:prepare` step generates the Starter Prompt and agent variants.
+The normal `npm run docs`, `npm run docs:live`, agent-variant sync, preview-watcher, and docs publish workflows run that step before Fern validates, serves, previews, or publishes the pages that include the prompt.
 
 ## Agent Variant Generation
 

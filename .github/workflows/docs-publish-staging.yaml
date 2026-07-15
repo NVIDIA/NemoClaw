@@ -11,6 +11,7 @@ on:
       - "fern/**"
       - "package.json"
       - "package-lock.json"
+      - "scripts/generate-starter-prompt.ts"
       - "scripts/sync-agent-variant-docs.ts"
       - ".github/workflows/docs-publish-staging.yaml"
 
@@ -43,10 +44,10 @@ jobs:
       - name: Install docs dependencies
         run: npm ci --ignore-scripts
 
-      - name: Generate doc variants and validate Fern docs
+      - name: Prepare and validate Fern docs
         run: |
-          npm run docs:sync-agent-variants
-          npm run docs
+          npm run docs:prepare
+          npm run docs:validate
 
       - name: Publish staging docs
         env:

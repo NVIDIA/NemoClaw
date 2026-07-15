@@ -389,7 +389,7 @@ function runCredentialForm(
 }
 
 describe("starter prompt docs CTA", () => {
-  it("generates one hidden Fern Prompt from the shared Markdown source (#5048)", () => {
+  it("generates one visible Fern Prompt from the shared Markdown source (#5048)", () => {
     const prompt = readStarterPrompt();
     const generatedSnippet = renderStarterPromptSnippet(prompt);
 
@@ -431,6 +431,41 @@ describe("starter prompt docs CTA", () => {
     expect(() =>
       extractStarterPromptMarkdown(source.replaceAll("\n", "\r\n"), "fixture.md"),
     ).toThrow("use LF line endings");
+  });
+
+  it("prepares the Starter Prompt in every docs build entry point (#5048)", () => {
+    const scripts = (JSON.parse(read("package.json")) as { scripts: Record<string, string> }).scripts;
+
+    expect(scripts["docs:sync-starter-prompt"]).toBe("tsx scripts/generate-starter-prompt.ts");
+    expect(scripts["docs:prepare"]).toBe(
+      "npm run docs:sync-starter-prompt && tsx scripts/sync-agent-variant-docs.ts",
+    );
+    expect(scripts["docs:sync-agent-variants"]).toBe("npm run docs:prepare");
+    expect(scripts["docs:validate"]).toContain("npm run docs:check-starter-prompt");
+    expect(scripts["docs:strict"]).toBe("npm run docs:prepare && npm run docs:validate");
+    expect(scripts["docs:live"]).toMatch(/^npm run docs:prepare &&/);
+
+    for (const workflowPath of [
+      ".github/workflows/docs-preview-pr.yaml",
+      ".github/workflows/docs-publish-staging.yaml",
+      ".github/workflows/docs-publish-public.yaml",
+    ]) {
+      expect(read(workflowPath), `${workflowPath} prepares generated docs before Fern`).toContain(
+        "npm run docs:prepare",
+      );
+      expect(read(workflowPath), `${workflowPath} validates generated docs before Fern`).toContain(
+        "npm run docs:validate",
+      );
+    }
+
+    for (const workflowPath of [
+      ".github/workflows/docs-preview-pr.yaml",
+      ".github/workflows/docs-publish-staging.yaml",
+    ]) {
+      expect(read(workflowPath), `${workflowPath} runs when the generator changes`).toContain(
+        '- "scripts/generate-starter-prompt.ts"',
+      );
+    }
   });
 
   it("preserves the skill-bootstrap trust boundary in the copied prompt (#5048)", () => {
