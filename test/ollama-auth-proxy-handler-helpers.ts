@@ -60,6 +60,11 @@ export function startBackend(): Promise<{
   });
 }
 
+export function closeServer(server: http.Server | undefined): Promise<void> {
+  if (!server) return Promise.resolve();
+  return new Promise((resolve) => server.close(() => resolve()));
+}
+
 /** Grab an ephemeral free TCP port, then release it for the proxy to bind. */
 export function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {

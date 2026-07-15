@@ -23,6 +23,7 @@ import { afterEach, beforeEach, describe, expect, vi } from "vitest";
 import { test as it } from "./helpers/owned-test-resources";
 
 import {
+  closeServer,
   forceKill,
   freePort,
   PROXY_SCRIPT,
@@ -49,11 +50,8 @@ describe("ollama-auth-proxy request handler", () => {
   afterEach(async () => {
     await terminate(proxy);
     proxy = undefined;
-    const activeBackend = backend;
+    await closeServer(backend?.server);
     backend = undefined;
-    if (activeBackend) {
-      await new Promise<void>((resolve) => activeBackend.server.close(() => resolve()));
-    }
   });
 
   it("returns 401 when the Authorization header is missing", async () => {
@@ -133,7 +131,7 @@ describe("ollama-auth-proxy request handler", () => {
   it("stays alive when the backend disconnects after a partial response", async ({ resources }) => {
     await terminate(proxy);
     proxy = undefined;
-    await new Promise<void>((resolve) => backend?.server.close(() => resolve()));
+    await closeServer(backend?.server);
     backend = undefined;
 
     const disconnectingBackend = resources.ownServer(
