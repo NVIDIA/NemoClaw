@@ -3924,7 +3924,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     return (
       stepCanRunForDcode &&
       (stringValue(step.uses).startsWith("docker/setup-buildx-action@") ||
-        run.includes("BUILDX_BUILDER=") ||
+        /BUILDX_BUILDER(?:=|<<)/u.test(run) ||
         /docker\s+buildx\s+use(?:\s|$)/u.test(run))
     );
   });
