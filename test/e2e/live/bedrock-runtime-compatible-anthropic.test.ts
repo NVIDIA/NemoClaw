@@ -1307,6 +1307,11 @@ test("bedrock runtime compatible Anthropic endpoint routes through managed infer
   timeout: TEST_TIMEOUT_MS,
 }, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
   assertAgent(AGENT);
+  const shard =
+    process.env.GITHUB_ACTIONS === "true"
+      ? process.env.NEMOCLAW_E2E_SHARD
+      : (process.env.NEMOCLAW_E2E_SHARD ?? AGENT);
+  expect(shard).toBe(AGENT);
   validateSandboxName(SANDBOX_NAME);
 
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bedrock-runtime-home-"));
