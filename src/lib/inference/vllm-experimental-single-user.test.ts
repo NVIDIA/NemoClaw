@@ -111,17 +111,23 @@ function mockSuccessfulVllmInstall(
   const qualificationSamples = [...(endpoints.qualificationSamples ?? ["1000, 0, 0"])];
   let lastQualificationSample = qualificationSamples.at(-1) ?? "";
   mocks.runCapture.mockImplementation((cmd: readonly string[]) => {
-    if (cmd[0] === "sh") return "/usr/bin/tool\n";
-    if (cmd[0] === "nvidia-smi") {
-      const sample = qualificationSamples.shift() ?? lastQualificationSample;
-      lastQualificationSample = sample;
-      return sample;
+    switch (cmd[0]) {
+      case "sh":
+        return "/usr/bin/tool\n";
+      case "nvidia-smi": {
+        const sample = qualificationSamples.shift() ?? lastQualificationSample;
+        lastQualificationSample = sample;
+        return sample;
+      }
+      case "curl": {
+        const url = cmd.at(-1) ?? "";
+        return url.endsWith("/health")
+          ? (endpoints.healthStatus ?? "")
+          : (endpoints.modelsResponse ?? '{"data":[]}');
+      }
+      default:
+        return "";
     }
-    if (cmd[0] !== "curl") return "";
-    const url = cmd.at(-1) ?? "";
-    return url.endsWith("/health")
-      ? (endpoints.healthStatus ?? "")
-      : (endpoints.modelsResponse ?? '{"data":[]}');
   });
   mocks.dockerPullWithProgressWatchdog.mockResolvedValue({
     status: 0,
@@ -134,9 +140,14 @@ function mockSuccessfulVllmInstall(
   mocks.dockerRunDetached.mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
   const ownershipResponses: (() => string)[] = [() => "", () => ""];
   mocks.dockerCapture.mockImplementation((args: readonly string[]) => {
-    if (args[0] === "container") return (ownershipResponses.shift() ?? (() => ""))();
-    if (args[0] === "ps") return `${containerName}\n`;
-    return "";
+    switch (args[0]) {
+      case "container":
+        return (ownershipResponses.shift() ?? (() => ""))();
+      case "ps":
+        return `${containerName}\n`;
+      default:
+        return "";
+    }
   });
 }
 

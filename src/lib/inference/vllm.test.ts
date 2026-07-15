@@ -121,12 +121,18 @@ function mockSuccessfulVllmInstall(
   } = {},
 ): void {
   mocks.runCapture.mockImplementation((cmd: readonly string[]) => {
-    if (cmd[0] === "sh") return "/usr/bin/tool\n";
-    if (cmd[0] !== "curl") return "";
-    const url = cmd.at(-1) ?? "";
-    return url.endsWith("/health")
-      ? (endpoints.healthStatus ?? "")
-      : (endpoints.modelsResponse ?? '{"data":[]}');
+    switch (cmd[0]) {
+      case "sh":
+        return "/usr/bin/tool\n";
+      case "curl": {
+        const url = cmd.at(-1) ?? "";
+        return url.endsWith("/health")
+          ? (endpoints.healthStatus ?? "")
+          : (endpoints.modelsResponse ?? '{"data":[]}');
+      }
+      default:
+        return "";
+    }
   });
   mocks.dockerPullWithProgressWatchdog.mockResolvedValue({
     status: 0,
