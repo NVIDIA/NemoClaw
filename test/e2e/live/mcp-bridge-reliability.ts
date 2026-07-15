@@ -9,6 +9,20 @@ const HERMES_RESTART_TRANSPORT_FAILURE_SUFFIX = [
   `|-> error reading a body from connection`,
   `|-> stream closed because of a broken pipe`,
 ].join("\n");
+const HERMES_RESTART_SUCCESS_PREFIX = new RegExp(
+  `^${[
+    String.raw`Widening sandbox egress — adding: (?<host>[a-z0-9-]+\.trycloudflare\.com)`,
+    String.raw`Applied preset: mcp-bridge-concurrent`,
+    String.raw`Narrowing sandbox egress — removing: \k<host>`,
+    String.raw`Removed preset: mcp-bridge-concurrent`,
+    String.raw`✓ Policy version (?<cleanupVersion>\d+) submitted \(hash: [0-9a-f]+\)`,
+    String.raw`✓ Policy version \k<cleanupVersion> loaded \(active version: \k<cleanupVersion>\)`,
+    String.raw`Preset not found: mcp-bridge-concurrent`,
+    String.raw`✓ Policy version (?<commitVersion>\d+) submitted \(hash: [0-9a-f]+\)`,
+    String.raw`✓ Policy version \k<commitVersion> loaded \(active version: \k<commitVersion>\)`,
+  ].join("\n")}$`,
+  "u",
+);
 
 function normalizeHermesTransportDiagnostic(diagnostic: string): string {
   return diagnostic
@@ -31,10 +45,12 @@ export function isHermesRestartTransportFailure(adapter: string, diagnostic: str
   // serialized loser and still requires the canonical duplicate rejection.
   // Remove this classifier when OpenShell preserves command completion across
   // that managed reload or returns a structured post-commit outcome (#6692).
-  return (
-    adapter === "hermes-config" &&
-    normalizeHermesTransportDiagnostic(diagnostic).endsWith(HERMES_RESTART_TRANSPORT_FAILURE_SUFFIX)
-  );
+  if (adapter !== "hermes-config") return false;
+  const normalized = normalizeHermesTransportDiagnostic(diagnostic);
+  const suffix = `\n${HERMES_RESTART_TRANSPORT_FAILURE_SUFFIX}`;
+  if (!normalized.endsWith(suffix)) return false;
+
+  return HERMES_RESTART_SUCCESS_PREFIX.test(normalized.slice(0, -suffix.length));
 }
 
 export async function retryAfterHermesRestartTransportFailure<T>(options: {
