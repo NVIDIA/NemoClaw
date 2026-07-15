@@ -248,8 +248,8 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "patch-openclaw-issue-4434-diagnostics.ts"),
   );
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "patch-openclaw-device-self-approval.ts"),
-    path.join(stagedScriptsDir, "patch-openclaw-device-self-approval.ts"),
+    path.join(rootDir, "scripts", "patch-openclaw-device-self-approval.mts"),
+    path.join(stagedScriptsDir, "patch-openclaw-device-self-approval.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "verify-wechat-runtime-lock.mts"),

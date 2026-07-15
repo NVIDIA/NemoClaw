@@ -22,10 +22,8 @@
  * durable restart recovery.
  */
 
-"use strict";
-
-const fs = require("node:fs");
-const path = require("node:path");
+import fs from "node:fs";
+import path from "node:path";
 
 const AUDIT_FLAG = "--audit";
 const EXIT_APPLY_FAILURE = 1;
@@ -89,7 +87,7 @@ const positional = args.filter((value) => value !== AUDIT_FLAG);
 const distDir = positional[0];
 
 if (!distDir || positional.length !== 1) {
-  console.error("Usage: patch-openclaw-device-self-approval.ts [--audit] <openclaw-dist-dir>");
+  console.error("Usage: patch-openclaw-device-self-approval.mts [--audit] <openclaw-dist-dir>");
   process.exit(EXIT_USAGE);
 }
 

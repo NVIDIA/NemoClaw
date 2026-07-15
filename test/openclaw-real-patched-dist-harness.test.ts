@@ -443,7 +443,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
         // scan so dependency materialization cannot perturb their timing.
         await runRealOpenClawDeviceSelfApprovalProof({
           dist,
-          patchScript: path.join(REPO_ROOT, "scripts", "patch-openclaw-device-self-approval.ts"),
+          patchScript: path.join(REPO_ROOT, "scripts", "patch-openclaw-device-self-approval.mts"),
           timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
           tmp,
         });

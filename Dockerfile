@@ -214,13 +214,13 @@ COPY scripts/patch-openclaw-tool-catalog.js /usr/local/lib/nemoclaw/patch-opencl
 COPY scripts/patch-openclaw-chat-send.mts /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts
 COPY scripts/patch-openclaw-mcp-npx.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts
 COPY scripts/patch-openclaw-issue-4434-diagnostics.ts /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.ts
-COPY scripts/patch-openclaw-device-self-approval.ts /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.ts
+COPY scripts/patch-openclaw-device-self-approval.mts /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts
 COPY scripts/verify-wechat-runtime-lock.mts /usr/local/lib/nemoclaw/verify-wechat-runtime-lock.mts
 RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js \
         /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.ts \
-        /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.ts \
+        /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts \
         /usr/local/lib/nemoclaw/verify-wechat-runtime-lock.mts
 
 # Pre-install the codex-acp package so the embedded ACPx runtime can
@@ -744,7 +744,7 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-chat-
 # Removal criteria: drop when upstream OpenClaw can approve the same bounded
 # self-upgrade through the gateway using only operator.pairing.
 # hadolint ignore=DL3059
-RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.ts \
+RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts \
     /usr/local/lib/node_modules/openclaw/dist
 
 # Patch OpenClaw TUI unreachable-inference diagnostics for #4434.
