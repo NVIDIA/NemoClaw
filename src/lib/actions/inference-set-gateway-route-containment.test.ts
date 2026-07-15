@@ -374,8 +374,11 @@ describe("runtime shared gateway route containment", () => {
       releaseA = resolve;
     });
     const callOrder: string[] = [];
-    const ensureHttpsPinRuntimeAdapter = vi.fn(async (options: { endpointUrl: string }) => {
-      if (options.endpointUrl === firstEndpoint) {
+    const adapterBehaviorByEndpoint: Record<
+      string,
+      () => Promise<{ baseUrl: string; credentialEnv: string; token: string }>
+    > = {
+      [firstEndpoint]: async () => {
         callOrder.push("a-start");
         await aGate;
         callOrder.push("a-end");
@@ -384,14 +387,19 @@ describe("runtime shared gateway route containment", () => {
           credentialEnv: HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV,
           token: "token-a",
         };
-      }
-      callOrder.push("b-start");
-      return {
-        baseUrl: "http://host.openshell.internal:1/route/b",
-        credentialEnv: HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV,
-        token: "token-b",
-      };
-    });
+      },
+      [secondEndpoint]: async () => {
+        callOrder.push("b-start");
+        return {
+          baseUrl: "http://host.openshell.internal:1/route/b",
+          credentialEnv: HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV,
+          token: "token-b",
+        };
+      },
+    };
+    const ensureHttpsPinRuntimeAdapter = vi.fn(async (options: { endpointUrl: string }) =>
+      adapterBehaviorByEndpoint[options.endpointUrl](),
+    );
     const rewriteUrlWithDnsPinning = vi.fn(async (value: unknown) => value as string);
 
     const finalize = (target: SandboxEntry, endpointUrl: string) =>

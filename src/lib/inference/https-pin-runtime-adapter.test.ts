@@ -325,9 +325,8 @@ function dispatchFakeRequest(
 
     void listener(req, res);
     queueMicrotask(() => {
-      if (options.body !== undefined) {
-        (req as unknown as EventEmitter).emit("data", Buffer.from(JSON.stringify(options.body)));
-      }
+      const chunks = options.body === undefined ? [] : [Buffer.from(JSON.stringify(options.body))];
+      for (const chunk of chunks) (req as unknown as EventEmitter).emit("data", chunk);
       (req as unknown as EventEmitter).emit("end");
     });
   });
