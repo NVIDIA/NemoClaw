@@ -177,7 +177,7 @@ export function parseArgs(args: string[]): Options {
     printUsageAndExit(1);
   }
 
-  if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version)) {
+  if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
     throw new Error(`Invalid semver: ${version}`);
   }
 
@@ -276,10 +276,22 @@ function updatePackageJson(filePath: string, version: string): void {
   writeFileSync(filePath, `${JSON.stringify(pkg, null, 2)}\n`, "utf8");
 }
 
+export function updateBlueprintVersionYaml(content: string, version: string): string {
+  const document = YAML.parseDocument(content);
+  const versionNode = document.get("version", true);
+  if (!YAML.isScalar(versionNode)) {
+    throw new Error("Expected blueprint.yaml version to be a scalar node");
+  }
+  versionNode.value = version;
+  return document.toString();
+}
+
 function updateBlueprintVersion(version: string): void {
-  const manifest = parseYaml<BlueprintManifest>(readText(BLUEPRINT_YAML));
-  manifest.version = version;
-  writeFileSync(BLUEPRINT_YAML, YAML.stringify(manifest), "utf8");
+  writeFileSync(
+    BLUEPRINT_YAML,
+    updateBlueprintVersionYaml(readText(BLUEPRINT_YAML), version),
+    "utf8",
+  );
 }
 
 function updateInstallScriptDefaultVersion(previousVersion: string, nextVersion: string): void {

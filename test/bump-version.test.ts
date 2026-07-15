@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -8,6 +10,7 @@ import {
   collectDocsVersionSegments,
   parseArgs,
   rewriteDocsPublicUrls,
+  updateBlueprintVersionYaml,
 } from "../scripts/bump-version.mts";
 
 describe("bump-version release contract", () => {
@@ -15,6 +18,22 @@ describe("bump-version release contract", () => {
     for (const flag of ["--create-pr", "--no-create-pr", "--branch=release/1.2.3"]) {
       expect(() => parseArgs(["1.2.3", flag])).toThrow(`Unknown flag: ${flag}`);
     }
+  });
+
+  it("accepts a stable x.y.z version", () => {
+    expect(parseArgs(["1.2.3"]).version).toBe("1.2.3");
+  });
+
+  it("rejects prerelease, build metadata, and leading-zero versions", () => {
+    for (const version of ["1.2.3-rc.1", "1.2.3+build.1", "1.2.3-rc.1+build.1", "01.2.3"]) {
+      expect(() => parseArgs([version])).toThrow(`Invalid semver: ${version}`);
+    }
+  });
+
+  it("has no reachable scripts/bump-version.ts entrypoint left behind by the .mts migration", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    expect(existsSync(path.join(repoRoot, "scripts", "bump-version.ts"))).toBe(false);
+    expect(existsSync(path.join(repoRoot, "scripts", "bump-version.mts"))).toBe(true);
   });
 
   it("builds semver-tag-only push args without latest", () => {
@@ -67,5 +86,27 @@ describe("bump-version docs URL helpers", () => {
     ].join("\n");
 
     expect(collectDocsVersionSegments(content)).toEqual(["latest", "0.0.60", "api"]);
+  });
+});
+
+describe("bump-version blueprint YAML update", () => {
+  it("updates the version field in place and preserves comments", () => {
+    const content = [
+      "# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.",
+      "# SPDX-License-Identifier: Apache-2.0",
+      "",
+      'version: "0.1.0"',
+      "# Requires OpenShell MCP/JSON-RPC L7 policy support from NVIDIA/OpenShell#1865.",
+      'min_openshell_version: "0.0.72"',
+      "",
+    ].join("\n");
+
+    const updated = updateBlueprintVersionYaml(content, "0.2.0");
+
+    expect(updated).toContain('version: "0.2.0"');
+    expect(updated).toContain("# SPDX-License-Identifier: Apache-2.0");
+    expect(updated).toContain(
+      "# Requires OpenShell MCP/JSON-RPC L7 policy support from NVIDIA/OpenShell#1865.",
+    );
   });
 });
