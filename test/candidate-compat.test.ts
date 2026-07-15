@@ -160,10 +160,10 @@ describe("OpenShell candidate compatibility contract", () => {
     const enforce = workflow.jobs.evidence.steps.find(
       (step) => step.name === "Enforce aggregate result",
     );
-    const renderer = finalize?.run?.match(
-      /node <<'NODE' >> "\$GITHUB_STEP_SUMMARY"\n([\s\S]*?)\nNODE(?:\n|$)/u,
-    )?.[1];
-    if (!renderer) throw new Error("candidate evidence renderer is missing");
+    const renderer =
+      finalize?.run?.match(
+        /node <<'NODE' >> "\$GITHUB_STEP_SUMMARY"\n([\s\S]*?)\nNODE(?:\n|$)/u,
+      )?.[1] ?? "";
 
     const directory = mkdtempSync(join(tmpdir(), "nemoclaw-candidate-links-"));
     const runUrl = "https://github.com/NVIDIA/NemoClaw/actions/runs/123";

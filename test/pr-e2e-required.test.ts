@@ -12,6 +12,7 @@ import {
   findCoordinationCheck,
   formatRequiredGateOutcome,
   type RequiredGateIdentity,
+  type RequiredGateResult,
   waitForRequiredGate,
 } from "../tools/e2e/pr-e2e-required.mts";
 import { createGitHubFetchRouter, githubFetchRoute } from "./support/github-fetch-router.ts";
@@ -151,8 +152,8 @@ describe("native PR E2E required job", () => {
         title: "hermes-e2e failed",
       },
     });
-    if (classified.state !== "complete") throw new Error("expected a terminal result");
-    expect(formatRequiredGateOutcome(classified.result)).toBe(
+    const result = classified as { state: "complete"; result: RequiredGateResult };
+    expect(formatRequiredGateOutcome(result.result)).toBe(
       `conclusion=failure title=hermes-e2e failed logs=${jobUrl}`,
     );
   });

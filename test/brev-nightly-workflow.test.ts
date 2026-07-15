@@ -214,8 +214,7 @@ describe("Brev nightly workflow contract", () => {
     const reporter = branchValidation.jobs?.["report-pr"]?.steps?.find(
       (step) => step.name === "Publish completed check and PR comment",
     );
-    const script = reporter?.run;
-    if (!script) throw new Error("Brev reporter script is missing");
+    const script = reporter?.run ?? "";
 
     const direct = runReporter(script, {
       jobs: [
