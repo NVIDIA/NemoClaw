@@ -91,7 +91,7 @@ function emptyPrGateCheckRunsRoute() {
 function exactPrGateCheck(overrides: Record<string, unknown> = {}) {
   return {
     id: 17,
-    name: "E2E / PR Gate",
+    name: "E2E / PR Gate Coordination",
     head_sha: HEAD_SHA,
     external_id: prGateExternalId(42, HEAD_SHA, BASE_SHA),
     status: "in_progress",
@@ -1349,7 +1349,7 @@ describe("PR E2E controller", () => {
         (request) => request.url.endsWith("/check-runs") && request.method === "POST",
       );
       expect(checkCreation?.body).toMatchObject({
-        name: "E2E / PR Gate",
+        name: "E2E / PR Gate Coordination",
         head_sha: HEAD_SHA,
         external_id: prGateExternalId(42, HEAD_SHA, BASE_SHA),
         status: "in_progress",

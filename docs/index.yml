@@ -30,9 +30,9 @@ navigation:
               - page: "Ecosystem"
                 path: about/ecosystem.mdx
                 slug: ecosystem
-              - page: "Release Notes"
-                path: _build/agent-variants/about/release-notes.openclaw.generated.mdx
-                slug: release-notes
+          - changelog: ./changelog
+            title: Release Notes
+            slug: release-notes
           - section: "Get Started"
             slug: get-started
             collapsed: open-by-default
@@ -353,7 +353,7 @@ navigation:
             slug: resources
             collapsed: open-by-default
             contents:
-              - page: "AI Agent Docs"
+              - page: "Use Docs with Agents"
                 path: _build/agent-variants/resources/agent-skills.openclaw.generated.mdx
                 slug: agent-skills
               - page: "Community Solutions"
@@ -386,9 +386,9 @@ navigation:
               - page: "Ecosystem"
                 path: about/ecosystem-deepagents.mdx
                 slug: ecosystem
-              - page: "Release Notes"
-                path: _build/agent-variants/about/release-notes.deepagents.generated.mdx
-                slug: release-notes
+          - changelog: ./changelog
+            title: Release Notes
+            slug: release-notes
           - section: "Get Started"
             slug: get-started
             collapsed: open-by-default
@@ -598,7 +598,7 @@ navigation:
             slug: resources
             collapsed: open-by-default
             contents:
-              - page: "AI Agent Docs"
+              - page: "Use Docs with Agents"
                 path: _build/agent-variants/resources/agent-skills.deepagents.generated.mdx
                 slug: agent-skills
               - page: "Community Solutions"
@@ -631,9 +631,9 @@ navigation:
               - page: "Ecosystem"
                 path: about/ecosystem-hermes.mdx
                 slug: ecosystem
-              - page: "Release Notes"
-                path: _build/agent-variants/about/release-notes.hermes.generated.mdx
-                slug: release-notes
+          - changelog: ./changelog
+            title: Release Notes
+            slug: release-notes
           - section: "Get Started"
             slug: get-started
             collapsed: open-by-default
@@ -926,7 +926,7 @@ navigation:
             slug: resources
             collapsed: open-by-default
             contents:
-              - page: "AI Agent Docs"
+              - page: "Use Docs with Agents"
                 path: _build/agent-variants/resources/agent-skills.hermes.generated.mdx
                 slug: agent-skills
               - page: "Community Solutions"

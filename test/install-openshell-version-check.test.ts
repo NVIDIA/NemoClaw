@@ -1090,6 +1090,7 @@ exit 0`,
       {
         HOME: process.env.HOME,
         PATH: process.env.PATH,
+        BUILDX_BUILDER: "external-builder",
         NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
         NEMOCLAW_OPENSHELL_CHANNEL: "dev",
         NVIDIA_API_KEY: "must-not-reach-child",
@@ -1101,6 +1102,7 @@ exit 0`,
     expect(childEnv.NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL).toBe("1");
     expect(childEnv.NEMOCLAW_OPENSHELL_CHANNEL).toBe("dev");
     expect(childEnv.NVIDIA_API_KEY).toBeUndefined();
+    expect(childEnv.BUILDX_BUILDER).toBeUndefined();
     expect(result.status).not.toBe(0);
     expect(result.stdout).toContain("Installing OpenShell from release 'dev'");
     expect(result.stdout).not.toContain(

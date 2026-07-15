@@ -36,6 +36,77 @@ describe("e2e workflow boundary", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
   });
 
+  type RebuildWorkflowStep = {
+    env?: Record<string, string>;
+    name?: string;
+    run?: string;
+    uses?: string;
+  };
+  const rebuildCacheMutations = [
+    [
+      "an isolated builder",
+      {
+        name: "Set up rebuild Buildx",
+        uses: "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c",
+      },
+    ],
+    [
+      "a separate cache warm",
+      {
+        name: "Warm current base build cache",
+        uses: "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a",
+      },
+    ],
+    [
+      "a step-level builder selection",
+      {
+        env: { BUILDX_BUILDER: "external" },
+        name: "Run rebuild live test",
+      },
+    ],
+    [
+      "a persistent builder selection",
+      {
+        name: "Select rebuild Buildx",
+        run: "docker buildx use external",
+      },
+    ],
+    [
+      "a multiline environment-file builder selection",
+      {
+        name: "Persist rebuild Buildx through the environment file",
+        run: "printf '%s\\n' 'BUILDX_BUILDER<<EOF' 'external' 'EOF' >> \"$GITHUB_ENV\"",
+      },
+    ],
+  ] satisfies ReadonlyArray<readonly [string, RebuildWorkflowStep]>;
+  const rebuildCacheCases = [
+    "rebuild-openclaw",
+    "rebuild-hermes",
+    "rebuild-hermes-stale-base",
+  ].flatMap((jobName) =>
+    rebuildCacheMutations.map(
+      ([caseName, injectedStep]) => [jobName, caseName, injectedStep] as const,
+    ),
+  );
+
+  it.each(rebuildCacheCases)("rejects %s with %s", (jobName, _case, injectedStep) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-cache-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { steps: RebuildWorkflowStep[] }>;
+    };
+    workflow.jobs[jobName].steps.splice(2, 0, injectedStep);
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      expect(validateE2eWorkflowBoundary(workflowPath)).toContain(
+        `${jobName} must keep rebuild builds on the Docker engine cache`,
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   // source-shape-contract: security -- Mutates the shipped workflow to prove PR-safe routing rejects credential-backed smokes
   it("rejects credential-backed provider smokes in the PR-safe inference-routing job", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-inference-routing-workflow-"));
