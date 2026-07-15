@@ -40,7 +40,7 @@ import {
 } from "../core/ports";
 import { compactText } from "../core/url-utils";
 import { ROOT, run, runCapture } from "../runner";
-import { buildSubprocessEnv } from "../subprocess-env";
+import { buildMinimalCredentialAdapterEnv } from "../subprocess-env";
 import { assertEndpointResolvesPublic, type EndpointDnsLookupFn } from "./endpoint-ssrf-preflight";
 import {
   buildHttpsPinRouteBaseUrl,
@@ -765,7 +765,12 @@ async function ensureAdapterProcessLocked(bootstrap: {
         credentialValue: bootstrap.credentialValue,
       }),
     },
-    buildEnv: buildSubprocessEnv,
+    // This is a long-lived, credential-bearing process, so it gets a
+    // purpose-built minimal environment rather than the general subprocess
+    // allowlist -- it must not inherit DOCKER_HOST/KUBECONFIG/SSH_AUTH_SOCK/
+    // proxy capabilities that an ordinary short-lived CLI subprocess might
+    // legitimately need. See #6141.
+    buildEnv: buildMinimalCredentialAdapterEnv,
   });
   try {
     persistLocalAdapterPid(PID_PATH, child.pid);
