@@ -151,7 +151,7 @@ function mockSuccessfulVllmInstall(
   });
 }
 
-describe("experimental single-user vLLM runtime profile", () => {
+describe("experimental single-user vLLM runtime profile (#6883)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -230,7 +230,7 @@ describe("experimental single-user vLLM runtime profile", () => {
   });
 });
 
-describe("experimental single-user vLLM install", () => {
+describe("experimental single-user vLLM install (#6883)", () => {
   let errSpy: ReturnType<typeof vi.spyOn>;
   let mkdirSpy: ReturnType<typeof vi.spyOn>;
   let stdoutWrite: ReturnType<typeof vi.spyOn>;
