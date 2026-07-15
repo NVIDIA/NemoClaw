@@ -480,6 +480,7 @@ async function assertConcurrentAddSerialized(
   });
   const duplicateRejection = await retryAfterHermesRestartTransportFailure({
     adapter: options.expectedAdapter,
+    committedBridgeVerified: true,
     diagnostic: resultText(rejected[0]!),
     originalResult: rejected[0]!,
     retry: () =>

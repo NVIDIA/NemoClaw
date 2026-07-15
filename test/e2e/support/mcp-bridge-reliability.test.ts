@@ -45,6 +45,7 @@ describe("MCP bridge transient classification", () => {
     await expect(
       retryAfterHermesRestartTransportFailure({
         adapter: "hermes-config",
+        committedBridgeVerified: true,
         diagnostic: "server already exists",
         originalResult,
         retry,
@@ -60,6 +61,7 @@ describe("MCP bridge transient classification", () => {
     await expect(
       retryAfterHermesRestartTransportFailure({
         adapter: "hermes-config",
+        committedBridgeVerified: true,
         diagnostic: HERMES_BROKEN_PIPE,
         originalResult: { exitCode: 1 },
         retry,
@@ -74,11 +76,27 @@ describe("MCP bridge transient classification", () => {
     await expect(
       retryAfterHermesRestartTransportFailure({
         adapter: "hermes-config",
+        committedBridgeVerified: true,
         diagnostic: "unexpected transport error",
         originalResult: { exitCode: 1 },
         retry,
       }),
     ).rejects.toThrow("not a known Hermes restart transport failure");
+    expect(retry).not.toHaveBeenCalled();
+  });
+
+  it("refuses retry before the committed bridge is verified", async () => {
+    const retry = vi.fn(async () => ({ exitCode: 1 }));
+
+    await expect(
+      retryAfterHermesRestartTransportFailure({
+        adapter: "hermes-config",
+        committedBridgeVerified: false,
+        diagnostic: HERMES_BROKEN_PIPE,
+        originalResult: { exitCode: 1 },
+        retry,
+      }),
+    ).rejects.toThrow("requires a verified committed bridge");
     expect(retry).not.toHaveBeenCalled();
   });
 });

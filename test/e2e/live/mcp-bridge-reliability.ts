@@ -39,10 +39,14 @@ export function isHermesRestartTransportFailure(adapter: string, diagnostic: str
 
 export async function retryAfterHermesRestartTransportFailure<T>(options: {
   adapter: string;
+  committedBridgeVerified: boolean;
   diagnostic: string;
   originalResult: T;
   retry: () => Promise<T>;
 }): Promise<T> {
+  if (!options.committedBridgeVerified) {
+    throw new Error("Hermes restart retry requires a verified committed bridge");
+  }
   if (/already exists/iu.test(options.diagnostic)) return options.originalResult;
   if (!isHermesRestartTransportFailure(options.adapter, options.diagnostic)) {
     throw new Error("rejected concurrent add was not a known Hermes restart transport failure");
