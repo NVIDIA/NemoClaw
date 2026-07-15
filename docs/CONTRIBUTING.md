@@ -99,6 +99,7 @@ Fern publishes Markdown routes for AI agents from the same source pages.
 
 The native Fern changelog under `docs/changelog/` is the canonical release history.
 One source directory is shared across the OpenClaw, Hermes, and Deep Agents user-guide variants.
+Create the planned release entry in the pre-tag release-note docs PR so it lands on `main` before the release plan captures the tag commit.
 
 For each release:
 
