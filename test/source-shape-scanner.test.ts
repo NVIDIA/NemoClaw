@@ -8,7 +8,7 @@ import {
   scanTextForTest,
   scanTextForTestReport,
   sourceShapeSummary,
-} from "../scripts/find-source-shape-tests";
+} from "../scripts/find-source-shape-tests.mts";
 
 function detectedCaseNames(source: string): string[] {
   return scanTextForTest("test/virtual-source-shape.test.ts", source).map((entry) => entry.name);

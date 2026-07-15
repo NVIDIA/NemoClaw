@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { findCoverageFailures } from "../scripts/check-coverage-ratchet";
+import { findCoverageFailures } from "../scripts/check-coverage-ratchet.mts";
 
 const thresholds = {
   lines: 71.2,

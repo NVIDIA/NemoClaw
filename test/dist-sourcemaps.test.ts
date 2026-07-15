@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { findMissingDistSourcemapSources } from "../scripts/check-dist-sourcemaps";
+import { findMissingDistSourcemapSources } from "../scripts/check-dist-sourcemaps.mts";
 
 describe("dist sourcemap checks", () => {
   it("reports JavaScript sourcemaps pointing at missing source files", () => {
