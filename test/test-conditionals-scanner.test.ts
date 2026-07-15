@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { scanTextForTestConditionals } from "../scripts/find-test-conditionals";
+import { scanTextForTestConditionals } from "../scripts/find-test-conditionals.mts";
 
 describe("test conditional scanner", () => {
   it("detects real if statements without matching strings or comments", () => {

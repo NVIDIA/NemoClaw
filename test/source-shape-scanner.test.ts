@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -8,7 +12,7 @@ import {
   scanTextForTest,
   scanTextForTestReport,
   sourceShapeSummary,
-} from "../scripts/find-source-shape-tests";
+} from "../scripts/find-source-shape-tests.mts";
 
 function detectedCaseNames(source: string): string[] {
   return scanTextForTest("test/virtual-source-shape.test.ts", source).map((entry) => entry.name);
@@ -664,5 +668,50 @@ describe("source-shape scanner", () => {
         allowed,
       ),
     ).toEqual([expect.stringContaining("duplicate source-shape exception identity")]);
+  });
+});
+
+describe("source-shape scanner CLI entrypoint", () => {
+  function runCli(...args: string[]): { status: number | null; stdout: string; stderr: string } {
+    const result = spawnSync(
+      process.execPath,
+      ["--import", "tsx", "scripts/find-source-shape-tests.mts", ...args],
+      { cwd: process.cwd(), encoding: "utf8" },
+    );
+    return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+  }
+
+  it("invoking the .mts entrypoint with --check prints the human report, metrics, and preserves the budget exit status", () => {
+    const { status, stdout } = runCli("--check");
+    expect(status).toBe(0);
+    expect(stdout).toMatch(
+      /No source-shape tests detected\.|Detected \d+ source-shape test cases:/,
+    );
+    expect(stdout).toContain("METRIC source_shape_cases=");
+  }, 90_000);
+
+  it("invoking the .mts entrypoint with --json prints a parsable report and exits 0", () => {
+    const { status, stdout } = runCli("--json");
+    expect(status).toBe(0);
+    const report = JSON.parse(stdout) as { summary: { source_shape_cases: number } };
+    expect(typeof report.summary.source_shape_cases).toBe("number");
+  }, 90_000);
+
+  it("importing the .mts entrypoint does not run its CLI main", () => {
+    const scriptUrl = pathToFileURL(path.resolve("scripts/find-source-shape-tests.mts")).href;
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "-e",
+        `import(${JSON.stringify(scriptUrl)}).then(() => { console.log("IMPORT_ONLY_OK"); });`,
+      ],
+      { cwd: process.cwd(), encoding: "utf8" },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe("IMPORT_ONLY_OK");
+    expect(result.stdout).not.toContain("METRIC source_shape_cases=");
   });
 });
