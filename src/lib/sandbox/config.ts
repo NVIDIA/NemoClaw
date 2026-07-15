@@ -734,15 +734,25 @@ function seedHermesDashboardConfig(
     return "failed";
   }
 
+  const dashboardConfigPath = `${dashboardHome}/config.yaml`;
   const seed = capture([
     python,
     HERMES_DASHBOARD_SEEDER_PATH,
     target.configPath,
-    `${dashboardHome}/config.yaml`,
+    dashboardConfigPath,
     `${target.configDir}/.env`,
     `${dashboardHome}/.env`,
   ]);
   if (failed(seed)) {
+    reportFailure("seed", seed);
+    return "failed";
+  }
+  const seededMarker = `[dashboard] seeded model routing into ${dashboardConfigPath}`;
+  if (
+    !String(seed.stderr ?? "")
+      .split(/\r?\n/u)
+      .includes(seededMarker)
+  ) {
     reportFailure("seed", seed);
     return "failed";
   }

@@ -23,6 +23,7 @@ const TARGET: AgentConfigTarget = {
 };
 const PYTHON = "/opt/hermes/.venv/bin/python3";
 const SEEDER = "/usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py";
+const DASHBOARD_CONFIG = "/sandbox/.hermes/dashboard-home/config.yaml";
 const capture = vi.fn<(binary: string, args: string[], options: unknown) => CaptureResult>();
 const reportFailure = vi.fn<(stage: "python" | "inspection" | "seed", detail: string) => void>();
 
@@ -36,11 +37,15 @@ function sandboxCommand(args: string[]): string[] {
   return args.slice(separator + 1);
 }
 
+function successfulSeed(configPath = DASHBOARD_CONFIG): CaptureResult {
+  return result({ stderr: `[dashboard] seeded model routing into ${configPath}\n` });
+}
+
 function mockReseedFlow(options: { inspection?: CaptureResult; seed?: CaptureResult } = {}): void {
   capture
     .mockReturnValueOnce(result())
     .mockReturnValueOnce(options.inspection ?? result())
-    .mockReturnValueOnce(options.seed ?? result());
+    .mockReturnValueOnce(options.seed ?? successfulSeed());
 }
 
 describe("seedHermesDashboardConfig", () => {
@@ -56,7 +61,9 @@ describe("seedHermesDashboardConfig", () => {
   };
 
   it("passes adversarial paths as discrete argv without invoking a shell (#6893)", () => {
-    mockReseedFlow();
+    mockReseedFlow({
+      seed: successfulSeed("/sandbox/Hermes home;$(touch dir-pwned)/dashboard-home/config.yaml"),
+    });
     const target: AgentConfigTarget = {
       ...TARGET,
       configPath: "/sandbox/Hermes config;$(touch source-pwned)/config'quote.yaml",
@@ -140,6 +147,41 @@ describe("seedHermesDashboardConfig", () => {
     expect(capture).toHaveBeenCalledTimes(3);
     expect(capture.mock.calls[2][2]).toMatchObject({ includeStreams: true });
     expect(reportFailure).toHaveBeenCalledWith("seed", expect.stringMatching(/^status=/u));
+  });
+
+  it.each([
+    [
+      "PyYAML is unavailable",
+      "[dashboard] PyYAML unavailable (No module named yaml); skipping model seed",
+    ],
+    [
+      "the gateway config is missing",
+      `[dashboard] gateway config ${TARGET.configPath} missing; skipping model seed`,
+    ],
+    [
+      "the gateway config is unreadable",
+      `[dashboard] gateway config ${TARGET.configPath} unreadable (permission denied); skipping model seed`,
+    ],
+    [
+      "the gateway config has no model routing",
+      "[dashboard] gateway config has no model routing; nothing to seed",
+    ],
+  ])("fails closed when %s despite a zero exit (#6893)", (_case, stderr) => {
+    mockReseedFlow({ seed: result({ stderr: `${stderr}\n` }) });
+
+    expect(seedHermesDashboardConfig("hermes", TARGET, deps)).toBe("failed");
+    expect(capture).toHaveBeenCalledTimes(3);
+    expect(reportFailure).toHaveBeenCalledWith(
+      "seed",
+      expect.stringContaining(`status=0 detail=${stderr}`),
+    );
+  });
+
+  it("requires the success marker for the requested dashboard config path (#6893)", () => {
+    mockReseedFlow({ seed: successfulSeed("/sandbox/.hermes/other/config.yaml") });
+
+    expect(seedHermesDashboardConfig("hermes", TARGET, deps)).toBe("failed");
+    expect(reportFailure).toHaveBeenCalledWith("seed", expect.stringMatching(/^status=0 detail=/u));
   });
 
   it("fails when none of the fixed trusted Python candidates can run (#6893)", () => {
