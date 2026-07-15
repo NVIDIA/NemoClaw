@@ -390,13 +390,25 @@ describe("Bedrock Runtime OpenAI adapter", () => {
   it("recognizes adapter processes launched from the old and new launcher filenames", () => {
     const needle = __test.adapterProcessNeedle;
     expect(
-      isLocalAdapterProcess(4321, needle, () => "node /opt/nemoclaw/scripts/bedrock-runtime-adapter.mts"),
+      isLocalAdapterProcess(
+        4321,
+        needle,
+        () => "node /opt/nemoclaw/scripts/bedrock-runtime-adapter.mts",
+      ),
     ).toBe(true);
     expect(
-      isLocalAdapterProcess(4321, needle, () => "node /opt/nemoclaw/scripts/bedrock-runtime-adapter.js"),
+      isLocalAdapterProcess(
+        4321,
+        needle,
+        () => "node /opt/nemoclaw/scripts/bedrock-runtime-adapter.js",
+      ),
     ).toBe(true);
     expect(
-      isLocalAdapterProcess(4321, needle, () => "node /opt/nemoclaw/scripts/openrouter-runtime-adapter-entry.js"),
+      isLocalAdapterProcess(
+        4321,
+        needle,
+        () => "node /opt/nemoclaw/scripts/openrouter-runtime-adapter-entry.js",
+      ),
     ).toBe(false);
   });
 
