@@ -48,7 +48,7 @@ describe("platform Vitest main workflow", () => {
       cache: "pip",
       "cache-dependency-path": MACOS_REQUIREMENTS_PATH,
     });
-    for (const dependency of ["bash", "coreutils", "gawk", "ripgrep"]) {
+    for (const dependency of ["bash", "coreutils", "fd", "gawk", "ripgrep"]) {
       expect(run).toMatch(new RegExp(`brew install[^\\n]*\\b${dependency}\\b`, "u"));
     }
     expect(run).toContain("$(brew --prefix bash)/bin");

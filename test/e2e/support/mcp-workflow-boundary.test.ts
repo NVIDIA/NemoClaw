@@ -12,31 +12,90 @@ import { validateMcpOpenShellWorkflowBoundary } from "../../../tools/e2e/mcp-wor
 import { requireFixture } from "./require-fixture";
 
 describe("MCP workflow artifact boundary", () => {
-  it("rejects a false-green stable release proof that runs only one MCP agent", () => {
+  it.each([
+    "mcp-bridge",
+    "mcp-bridge-dev",
+  ])("rejects missing canonical risk-signal evidence in %s", (jobName) => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
     const workflowPath = path.join(directory, "e2e.yaml");
     try {
       const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
         jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
       };
-      const lifecycle = workflow.jobs["mcp-bridge"].steps.find(
+      const run = workflow.jobs[jobName].steps.find(
         (step) => step.name === "Run MCP OpenShell provider live test",
       );
-      requireFixture(lifecycle?.run, "MCP stable lifecycle fixture is missing");
-      lifecycle.run = [
-        "npx vitest run --project e2e-live",
-        "test/e2e/live/mcp-bridge.test.ts",
-        "-t '^mcp-bridge-deepagents$'",
-        "",
-      ].join("\n");
+      requireFixture(run?.run, `${jobName} MCP live-test fixture is missing`);
+      const reporter = "--reporter=test/e2e/risk-signal-reporter.ts";
+      requireFixture(run.run.includes(reporter), `${jobName} reporter fixture is missing`);
+      const updatedRun = run.run.replace(` ${reporter}`, "");
+      requireFixture(updatedRun !== run.run, `${jobName} reporter could not be removed`);
+      run.run = updatedRun;
+      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
+        `${jobName} must publish canonical risk-signal evidence`,
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects missing, fail-fast, or in-process MCP agent shards", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+    const workflowPath = path.join(directory, "e2e.yaml");
+    try {
+      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+        jobs: Record<
+          string,
+          {
+            env: Record<string, unknown>;
+            strategy: { "fail-fast": boolean; matrix: { agent: string[] } };
+          }
+        >;
+      };
+      const stable = workflow.jobs["mcp-bridge"];
+      stable.strategy["fail-fast"] = true;
+      stable.strategy.matrix.agent = ["openclaw", "hermes"];
+      stable.env.NEMOCLAW_MCP_BRIDGE_AGENT = "all";
+      stable.env.NEMOCLAW_MCP_BRIDGE_AGENT_MATRIX = "1";
       fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
       expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toEqual(
         expect.arrayContaining([
-          "mcp-bridge must select its exact stable release matrix",
+          "mcp-bridge shards must not fail fast",
+          "mcp-bridge must exercise the reviewed OpenClaw, Hermes, and Deep Agents shards",
+          "mcp-bridge must select exactly its current MCP agent shard",
+          "mcp-bridge must not enable the retired in-process agent matrix",
+        ]),
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects a credential generation-window proof that is missing or runs on every shard", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+    const workflowPath = path.join(directory, "e2e.yaml");
+    try {
+      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+        jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+      };
+      const run = workflow.jobs["mcp-bridge"].steps.find(
+        (step) => step.name === "Run MCP OpenShell provider live test",
+      );
+      requireFixture(run?.run, "MCP stable lifecycle fixture is missing");
+      run.run = run.run.replace(
+        'if [[ "$NEMOCLAW_MCP_BRIDGE_AGENT" == "deepagents" ]]; then',
+        "if true; then",
+      );
+      run.run = run.run.replace("test/e2e/live/openshell-credential-generation-window.test.ts", "");
+      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toEqual(
+        expect.arrayContaining([
+          "mcp-bridge must isolate the credential generation-window proof to one shard",
           "mcp-bridge must run the credential generation-window lifecycle",
-          "mcp-bridge must serialize the stateful release lifecycle files",
-          "mcp-bridge must record proof that every stable MCP agent lifecycle produced artifacts",
         ]),
       );
     } finally {
@@ -51,13 +110,7 @@ describe("MCP workflow artifact boundary", () => {
       const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
         jobs: Record<
           string,
-          {
-            steps: Array<{
-              name?: string;
-              uses?: string;
-              with?: Record<string, unknown>;
-            }>;
-          }
+          { steps: Array<{ name?: string; uses?: string; with?: Record<string, unknown> }> }
         >;
       };
       const upload = workflow.jobs["mcp-bridge"].steps.find(
@@ -175,70 +228,6 @@ describe("MCP workflow artifact boundary", () => {
 
       expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
         "mcp-bridge-dev must use exactly one reviewed MCP artifact upload step",
-      );
-    } finally {
-      fs.rmSync(directory, { force: true, recursive: true });
-    }
-  });
-
-  it("rejects stable release provenance or supervisor identity drift", () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
-    const workflowPath = path.join(directory, "e2e.yaml");
-    try {
-      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
-        jobs: Record<
-          string,
-          {
-            env: Record<string, string>;
-            steps: Array<{ name?: string; run?: string }>;
-          }
-        >;
-      };
-      const stable = workflow.jobs["mcp-bridge"];
-      const install = stable.steps.find((step) => step.name === "Install OpenShell CLI");
-      requireFixture(install?.run, "stable OpenShell install fixture is missing");
-      install.run = install.run.replace("94cdd697c55aedb571f177ec13cfa54a8e213919", "a".repeat(40));
-      stable.env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE = `ghcr.io/nvidia/openshell/supervisor@sha256:${"b".repeat(64)}`;
-      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
-
-      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toEqual(
-        expect.arrayContaining([
-          "mcp-bridge must pin the reviewed stable supervisor index",
-          "mcp-bridge stable release provenance is missing reviewed identity: 94cdd697c55aedb571f177ec13cfa54a8e213919",
-        ]),
-      );
-    } finally {
-      fs.rmSync(directory, { force: true, recursive: true });
-    }
-  });
-
-  it("rejects omission of the stable credential generation-window proof", () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
-    const workflowPath = path.join(directory, "e2e.yaml");
-    try {
-      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
-        jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
-      };
-      const run = workflow.jobs["mcp-bridge"].steps.find(
-        (step) => step.name === "Run MCP OpenShell provider live test",
-      );
-      requireFixture(run?.run, "MCP stable release execution fixture is missing");
-      run.run = [
-        "npx vitest run --project e2e-live",
-        "test/e2e/live/mcp-bridge.test.ts",
-        "-t '^(mcp-bridge|mcp-bridge-hermes|mcp-bridge-deepagents)$'",
-        "--no-file-parallelism",
-        'npx tsx tools/e2e/assert-mcp-agent-matrix-artifacts.mts "$E2E_ARTIFACT_DIR"',
-        "",
-      ].join("\n");
-      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
-
-      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toEqual(
-        expect.arrayContaining([
-          "mcp-bridge must run the credential generation-window lifecycle",
-          "mcp-bridge must select its exact stable release matrix",
-          "mcp-bridge must record proof that every stable MCP agent lifecycle produced artifacts",
-        ]),
       );
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });

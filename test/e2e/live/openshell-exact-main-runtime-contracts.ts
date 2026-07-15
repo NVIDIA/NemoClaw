@@ -891,7 +891,14 @@ export async function assertExactMainMcpLogPrivacy(options: {
     },
   );
   expectExitZero(logs, "read exact-main MCP policy logs");
-  const jsonRpcLines = logs.stdout
+  const fullLogs = logs.stdout;
+  for (const canary of options.argumentCanaries) {
+    expect(fullLogs).not.toContain(canary);
+  }
+  expect(fullLogs).not.toContain("[REDACTED]");
+  expect(fullLogs).not.toMatch(/\barguments\b["']?\s*[:=]/iu);
+
+  const jsonRpcLines = fullLogs
     .split(/\r?\n/u)
     .filter((line) => line.includes("JSONRPC_L7_REQUEST"));
   const toolLines = jsonRpcLines.filter(
@@ -901,12 +908,6 @@ export async function assertExactMainMcpLogPrivacy(options: {
       line.includes(`tools=${options.expectedTool}`),
   );
   expect(toolLines, jsonRpcLines.join("\n")).not.toHaveLength(0);
-  const scopedLogs = jsonRpcLines.join("\n");
-  for (const canary of options.argumentCanaries) {
-    expect(scopedLogs).not.toContain(canary);
-  }
-  expect(scopedLogs).not.toContain("[REDACTED]");
-  expect(scopedLogs).not.toMatch(/\barguments\b["']?\s*[:=]/iu);
   await options.artifacts.writeText(
     "exact-main-mcp-tool-name-policy-logs.txt",
     `${jsonRpcLines.join("\n")}\n`,

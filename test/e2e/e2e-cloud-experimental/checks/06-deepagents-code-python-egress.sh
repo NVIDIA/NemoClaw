@@ -99,14 +99,14 @@ PY
 python_probe() {
   local python_bin="$1"
   local url="$2"
-  local -a command_prefix=("${@:3}")
   local source
+  shift 2
   if [ -n "${NEMOCLAW_E2E_PYTHON_PROBE_FIXTURE+x}" ]; then
     printf '%s\n' "$NEMOCLAW_E2E_PYTHON_PROBE_FIXTURE"
     return 0
   fi
   source="$(python_probe_source)"
-  sandbox_exec_argv "${command_prefix[@]}" "$python_bin" -c "$source" "$url"
+  sandbox_exec_argv "$@" "$python_bin" -c "$source" "$url"
 }
 
 expect_reached() {
@@ -127,10 +127,14 @@ expect_blocked() {
   local actor="$1"
   local label="$2"
   local url="$3"
-  local python_bin="${4:-python3}"
-  local -a command_prefix=("${@:5}")
+  local python_bin="python3"
   local output
-  output="$(python_probe "$python_bin" "$url" "${command_prefix[@]}" || true)"
+  shift 3
+  if [ "$#" -gt 0 ]; then
+    python_bin="$1"
+    shift
+  fi
+  output="$(python_probe "$python_bin" "$url" "$@" || true)"
   if echo "$output" | grep -q "BLOCKED:" && ! echo "$output" | grep -q "REACHED:"; then
     pass "${actor} cannot reach ${label} without explicit policy"
   elif echo "$output" | grep -q "REACHED:"; then

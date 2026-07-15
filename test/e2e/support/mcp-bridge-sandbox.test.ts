@@ -179,7 +179,10 @@ describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
       `${sourcePath}:4340-4342`,
     ];
 
-    for (const docsPath of ["docs/deployment/set-up-mcp-bridge.mdx"]) {
+    for (const docsPath of [
+      "docs/deployment/set-up-mcp-bridge.mdx",
+      "docs/security/openshell-0.0.82-migration-review.md",
+    ]) {
       const docs = fs.readFileSync(docsPath, "utf8");
       expect(docs, docsPath).toContain(commit);
       for (const citation of citations) expect(docs, docsPath).toContain(citation);

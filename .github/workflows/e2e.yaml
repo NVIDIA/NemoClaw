@@ -19,6 +19,15 @@ on:
         required: false
         default: ""
         type: string
+      inference_mode:
+        description: "Inference adapter mode for compatible Vitest E2E jobs: mock, internal-nvidia, or public-nvidia."
+        required: false
+        default: "mock"
+        type: choice
+        options:
+          - mock
+          - internal-nvidia
+          - public-nvidia
       allow_jetson_runner_queue:
         description: "Repository administrators only: before setting true for jetson-nvmap-gpu, confirm an online Jetson runner in the authoritative NVIDIA/NemoClaw Settings -> Actions -> Runners inventory; queued jobs do not honor timeout-minutes before assignment."
         required: false
@@ -134,10 +143,15 @@ jobs:
       - id: matrix
         name: Generate E2E target matrix
         env:
+          INFERENCE_MODE: ${{ inputs.inference_mode || 'mock' }}
           JOBS: ${{ inputs.jobs }}
           TARGETS: ${{ inputs.targets }}
         run: |
           set -euo pipefail
+          case "${INFERENCE_MODE}" in
+            mock|internal-nvidia|public-nvidia) ;;
+            *) echo "::error::Invalid inference_mode: ${INFERENCE_MODE}" >&2; exit 1 ;;
+          esac
           if [ -n "${JOBS}" ] && [ -n "${TARGETS}" ]; then
             echo "::error::Use either targets or jobs, not both." >&2
             exit 1
@@ -574,15 +588,20 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    # Three destructive agent scenarios plus the credential-generation window
-    # run serially against one stable release installation.
-    timeout-minutes: 300
+    # Keep each destructive agent lifecycle on a fresh runner. This bounds the
+    # blast radius of runner loss and gives every adapter independent evidence.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [openclaw, hermes, deepagents]
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "mcp-bridge"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/mcp-bridge
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/mcp-bridge/${{ matrix.agent }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_MCP_BRIDGE_AGENT_MATRIX: "1"
+      NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
+      NEMOCLAW_MCP_BRIDGE_AGENT: ${{ matrix.agent }}
       NEMOCLAW_OPENSHELL_CHANNEL: stable
       NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
@@ -630,18 +649,20 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/install-openshell.sh
-          mkdir -p "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents"
-          jq -n '{
-            schemaVersion: 1,
-            sourceRepository: "NVIDIA/OpenShell",
-            releaseTag: "v0.0.82",
-            sourceSha: "94cdd697c55aedb571f177ec13cfa54a8e213919",
-            artifacts: {
-              cli: {binarySha256: "9375f54f809f8b4301f1da562d64d509851be5889ef3a1bcf50c64e1280399e9"},
-              gateway: {binarySha256: "31adba5b7608db538ab4f72808f0dddcfa97ede8e357a7674a454427b31886bc"},
-              standaloneSandbox: {binarySha256: "145246049bd73c60452ac3c2b4b1801663196c8e2f80575af820289c78c1cf09"}
-            }
-          }' > "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents/openshell-exact-main-provenance.json"
+          if [[ "$NEMOCLAW_MCP_BRIDGE_AGENT" == "deepagents" ]]; then
+            mkdir -p "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents"
+            jq -n '{
+              schemaVersion: 1,
+              sourceRepository: "NVIDIA/OpenShell",
+              releaseTag: "v0.0.82",
+              sourceSha: "94cdd697c55aedb571f177ec13cfa54a8e213919",
+              artifacts: {
+                cli: {binarySha256: "9375f54f809f8b4301f1da562d64d509851be5889ef3a1bcf50c64e1280399e9"},
+                gateway: {binarySha256: "31adba5b7608db538ab4f72808f0dddcfa97ede8e357a7674a454427b31886bc"},
+                standaloneSandbox: {binarySha256: "145246049bd73c60452ac3c2b4b1801663196c8e2f80575af820289c78c1cf09"}
+              }
+            }' > "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents/openshell-exact-main-provenance.json"
+          fi
 
       - name: Run MCP OpenShell provider live test
         run: |
@@ -659,25 +680,28 @@ jobs:
           "$OPENSHELL_BIN" --version
           npx vitest run --project e2e-live \
             test/e2e/live/mcp-bridge.test.ts \
-            test/e2e/live/openshell-credential-generation-window.test.ts \
-            -t '^(mcp-bridge|mcp-bridge-hermes|mcp-bridge-deepagents|openshell-credential-generation-window)$' \
-            --no-file-parallelism \
             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
-          npx tsx tools/e2e/assert-mcp-agent-matrix-artifacts.mts "$E2E_ARTIFACT_DIR" openshell-credential-generation-window
+          if [[ "$NEMOCLAW_MCP_BRIDGE_AGENT" == "deepagents" ]]; then
+            npx vitest run --project e2e-live \
+              test/e2e/live/openshell-credential-generation-window.test.ts \
+              -t '^openshell-credential-generation-window$' \
+              --no-file-parallelism \
+              --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          fi
 
       - id: mcp_artifact_secret_scan
         name: Scan MCP artifacts for fixture credentials
         if: always()
         run: >-
           npx tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts
-          e2e-artifacts/live/mcp-bridge
+          e2e-artifacts/live/mcp-bridge/${{ matrix.agent }}
 
       - name: Upload MCP server artifacts
         if: ${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
-          name: e2e-mcp-bridge
-          path: e2e-artifacts/live/mcp-bridge/
+          name: e2e-mcp-bridge-${{ matrix.agent }}
+          path: e2e-artifacts/live/mcp-bridge/${{ matrix.agent }}/
 
       - name: Clean up Docker auth
         if: always()
@@ -692,14 +716,19 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    timeout-minutes: 180
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [openclaw, hermes, deepagents]
     env:
       E2E_JOB: "1"
       E2E_DEFAULT_ENABLED: "0"
       E2E_TARGET_ID: "mcp-bridge-dev"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/mcp-bridge-dev
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_MCP_BRIDGE_AGENT_MATRIX: "1"
+      NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
+      NEMOCLAW_MCP_BRIDGE_AGENT: ${{ matrix.agent }}
       NEMOCLAW_OPENSHELL_CHANNEL: dev
       NEMOCLAW_RUN_LIVE_E2E: "1"
     steps:
@@ -781,14 +810,14 @@ jobs:
         if: always()
         run: >-
           npx tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts
-          e2e-artifacts/live/mcp-bridge-dev
+          e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}
 
       - name: Upload MCP server artifacts
         if: ${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
-          name: e2e-mcp-bridge-dev
-          path: e2e-artifacts/live/mcp-bridge-dev/
+          name: e2e-mcp-bridge-dev-${{ matrix.agent }}
+          path: e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}/
 
       - name: Clean up Docker auth
         if: always()
@@ -1692,7 +1721,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-e2e
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
+      NEMOCLAW_E2E_INFERENCE_MODE: ${{ inputs.inference_mode || 'mock' }}
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: hermes
       NEMOCLAW_NON_INTERACTIVE: "1"
@@ -1712,7 +1741,7 @@ jobs:
 
       - name: Run Hermes live Vitest test
         env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && (inputs.inference_mode || 'mock') != 'mock' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
         run: |
           set -euo pipefail
           npx vitest run --project e2e-live \
@@ -3578,7 +3607,7 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   openshell-gateway-upgrade:
-    name: OpenShell gateway upgrade (${{ matrix.id }})
+    name: OpenShell gateway upgrade (${{ matrix.legacy.id }})
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openshell-gateway-upgrade,') || contains(format(',{0},', inputs.targets), ',openshell-gateway-upgrade,') }}
     runs-on: ubuntu-latest
@@ -3586,7 +3615,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
+        legacy:
           - id: v0.0.36
             shard: v0-0-36
             nemoclaw_ref: v0.0.36
@@ -3608,17 +3637,17 @@ jobs:
       E2E_TARGET_ID: "openshell-gateway-upgrade"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-upgrade
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_E2E_SHARD: ${{ matrix.shard }}
+      NEMOCLAW_E2E_SHARD: ${{ matrix.legacy.shard }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME: "e2e-gateway-upgrade-survivor"
-      NEMOCLAW_OLD_NEMOCLAW_REF: ${{ matrix.nemoclaw_ref }}
-      NEMOCLAW_OLD_NEMOCLAW_COMMIT: ${{ matrix.nemoclaw_commit }}
-      NEMOCLAW_OLD_INSTALLER_SHA256: ${{ matrix.installer_sha256 }}
-      NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF: ${{ matrix.sandbox_base_image_ref }}
-      NEMOCLAW_OLD_OPENSHELL_VERSION: ${{ matrix.openshell_version }}
-      NEMOCLAW_OLD_OPENCLAW_VERSION: ${{ matrix.openclaw_version }}
+      NEMOCLAW_OLD_NEMOCLAW_REF: ${{ matrix.legacy.nemoclaw_ref }}
+      NEMOCLAW_OLD_NEMOCLAW_COMMIT: ${{ matrix.legacy.nemoclaw_commit }}
+      NEMOCLAW_OLD_INSTALLER_SHA256: ${{ matrix.legacy.installer_sha256 }}
+      NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF: ${{ matrix.legacy.sandbox_base_image_ref }}
+      NEMOCLAW_OLD_OPENSHELL_VERSION: ${{ matrix.legacy.openshell_version }}
+      NEMOCLAW_OLD_OPENCLAW_VERSION: ${{ matrix.legacy.openclaw_version }}
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -3648,7 +3677,7 @@ jobs:
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
-          name: e2e-openshell-gateway-upgrade-${{ matrix.id }}
+          name: e2e-openshell-gateway-upgrade-${{ matrix.legacy.id }}
 
       - name: Clean up Docker auth
         if: always()

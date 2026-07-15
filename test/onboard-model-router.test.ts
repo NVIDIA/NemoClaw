@@ -60,6 +60,7 @@ const tempDirs = new Set<string>();
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+  vi.resetModules();
   for (const tmpDir of tempDirs) {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
@@ -376,6 +377,131 @@ describe("onboard Model Router setup", () => {
         }
       },
     );
+  });
+
+  it("writes router state beneath the selected nondefault gateway root", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-port-"));
+    tempDirs.add(tmpDir);
+    const rootDir = path.join(tmpDir, "repo");
+    const homeDir = path.join(tmpDir, "home");
+    const expectedStateDir = path.join(homeDir, ".nemoclaw", "gateways", "9123", "state");
+    const expectedConfig = path.join(expectedStateDir, "litellm-proxy.yaml");
+    const mkdirSync = vi.fn();
+    const proxyConfigArgs: string[][] = [];
+    const proxyArgs: string[][] = [];
+    let healthProbe = 0;
+    vi.stubEnv("HOME", homeDir);
+    vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "9123");
+    vi.resetModules();
+    const freshModelRouter = await import("../src/lib/onboard/model-router");
+
+    const pid = await freshModelRouter.startModelRouter(
+      { port: 45_679, pool_config_path: "router/test-pool.yaml" },
+      {
+        rootDir,
+        homeDir,
+        ensureModelRouterCommand: () => "/test/model-router",
+        mkdirSync,
+        runProxyConfig: (_command, args) => {
+          proxyConfigArgs.push(args);
+          return { status: 0 };
+        },
+        spawnProxy: (_command, args) => {
+          proxyArgs.push(args);
+          return {
+            pid: 12_345,
+            onError: () => undefined,
+            onExit: () => undefined,
+            unref: () => undefined,
+          };
+        },
+        resolveProviderCredential: () => null,
+        buildSubprocessEnv: () => ({}),
+        isRouterHealthy: async () => {
+          healthProbe += 1;
+          return healthProbe > 1;
+        },
+        sleep: async () => undefined,
+        isProcessAlive: () => true,
+        terminateProcess: () => undefined,
+        getProviderKey: () => "",
+      },
+    );
+
+    assert.equal(pid, 12_345);
+    assert.deepEqual(mkdirSync.mock.calls, [[expectedStateDir]]);
+    assert.equal(proxyConfigArgs[0]?.at(-1), expectedConfig);
+    assert.equal(proxyArgs[0]?.[2], expectedConfig);
+  });
+
+  it.each([
+    ["gateways", [".nemoclaw", "gateways"]],
+    ["selected port", [".nemoclaw", "gateways", "9123"]],
+    ["state", [".nemoclaw", "gateways", "9123", "state"]],
+  ] as const)("rejects a symlinked %s path before generating router config", async (_label, parts) => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-symlink-"));
+    tempDirs.add(tmpDir);
+    const homeDir = path.join(tmpDir, "home");
+    const controlled = path.join(tmpDir, "controlled");
+    const symlinkPath = path.join(homeDir, ...parts);
+    fs.mkdirSync(path.dirname(symlinkPath), { recursive: true });
+    fs.mkdirSync(controlled);
+    fs.symlinkSync(controlled, symlinkPath, "dir");
+    vi.stubEnv("HOME", homeDir);
+    vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "9123");
+    vi.resetModules();
+    const freshModelRouter = await import("../src/lib/onboard/model-router");
+    const runProxyConfig = vi.fn(() => ({ status: 0 }));
+
+    await assert.rejects(
+      freshModelRouter.startModelRouter(
+        { port: 45_680, pool_config_path: "router/test-pool.yaml" },
+        {
+          rootDir: path.join(tmpDir, "repo"),
+          homeDir,
+          ensureModelRouterCommand: () => "/test/model-router",
+          runProxyConfig,
+        },
+      ),
+      /symbolic link/i,
+    );
+
+    assert.equal(runProxyConfig.mock.calls.length, 0);
+    assert.deepEqual(fs.readdirSync(controlled), []);
+  });
+
+  it("revalidates the state directory after creation before generating router config", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-race-"));
+    tempDirs.add(tmpDir);
+    const homeDir = path.join(tmpDir, "home");
+    const controlled = path.join(tmpDir, "controlled");
+    const stateDir = path.join(homeDir, ".nemoclaw", "gateways", "9123", "state");
+    fs.mkdirSync(controlled, { recursive: true });
+    vi.stubEnv("HOME", homeDir);
+    vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "9123");
+    vi.resetModules();
+    const freshModelRouter = await import("../src/lib/onboard/model-router");
+    const runProxyConfig = vi.fn(() => ({ status: 0 }));
+
+    await assert.rejects(
+      freshModelRouter.startModelRouter(
+        { port: 45_681, pool_config_path: "router/test-pool.yaml" },
+        {
+          rootDir: path.join(tmpDir, "repo"),
+          homeDir,
+          ensureModelRouterCommand: () => "/test/model-router",
+          mkdirSync: () => {
+            fs.mkdirSync(path.dirname(stateDir), { recursive: true });
+            fs.symlinkSync(controlled, stateDir, "dir");
+          },
+          runProxyConfig,
+        },
+      ),
+      /symbolic link/i,
+    );
+
+    assert.equal(runProxyConfig.mock.calls.length, 0);
+    assert.deepEqual(fs.readdirSync(controlled), []);
   });
 
   it("prepares managed Model Router dependencies instead of using PATH when managed command is absent", () => {

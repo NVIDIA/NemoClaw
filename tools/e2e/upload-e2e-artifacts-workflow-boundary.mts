@@ -135,7 +135,7 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
   [
     "openshell-gateway-upgrade",
     {
-      name: "e2e-openshell-gateway-upgrade-${{ matrix.id }}",
+      name: "e2e-openshell-gateway-upgrade-${{ matrix.legacy.id }}",
     },
   ],
   [
@@ -155,15 +155,15 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
   [
     "mcp-bridge",
     {
-      name: "e2e-mcp-bridge",
-      path: "e2e-artifacts/live/mcp-bridge/",
+      name: "e2e-mcp-bridge-${{ matrix.agent }}",
+      path: "e2e-artifacts/live/mcp-bridge/${{ matrix.agent }}/",
     },
   ],
   [
     "mcp-bridge-dev",
     {
-      name: "e2e-mcp-bridge-dev",
-      path: "e2e-artifacts/live/mcp-bridge-dev/",
+      name: "e2e-mcp-bridge-dev-${{ matrix.agent }}",
+      path: "e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}/",
     },
   ],
 ]);

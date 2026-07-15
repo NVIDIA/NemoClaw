@@ -37,6 +37,16 @@ range. Release notes were treated as leads rather than proof. The resulting boun
 contains 10 adjacent ranges, 47 commits, and 175 distinct changed paths in the
 aggregate `v0.0.72..v0.0.82` comparison.
 
+The authenticated-MCP network review pins the resolve-validate-connect path to
+`crates/openshell-supervisor-network/src/proxy.rs:2648-2674`,
+`crates/openshell-supervisor-network/src/proxy.rs:2699-2739`,
+`crates/openshell-supervisor-network/src/proxy.rs:2794-2803`,
+`crates/openshell-supervisor-network/src/proxy.rs:1079-1081`,
+`crates/openshell-supervisor-network/src/proxy.rs:4093-4100`, and
+`crates/openshell-supervisor-network/src/proxy.rs:4340-4342` at the verified
+stable commit. These citations bind the migration decision to the reviewed
+address-resolution, validation, and connection paths.
+
 The ledger was produced with:
 
 ```bash
@@ -514,6 +524,10 @@ usable. The target then reattaches through `mcp restart`, rebuilds without the
 host MCP secret, and removes the bridge. Every request is identified independently
 of its credential, and the upstream ledger is required to contain no literal
 resolve placeholder.
+The stable workflow keeps the OpenClaw, Hermes, and Deep Agents MCP lifecycles
+on three fresh-runner shards with separate artifacts. It runs the
+`openshell-credential-generation-window` live target once, after the Deep Agents
+case, rather than repeating that proof in every shard.
 The workflow first ran this bounded target against the exact reviewed development
 artifacts and scanned its artifacts for the whole generated-secret prefix. The
 stable-source review retains the upstream

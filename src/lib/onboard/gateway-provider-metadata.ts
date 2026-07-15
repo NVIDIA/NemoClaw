@@ -27,6 +27,12 @@ export type GatewayProviderBinding = {
   configKey: string;
 };
 
+export type GatewayCredentialOnlyProviderBinding = {
+  name: string;
+  type: string;
+  credentialKey: string;
+};
+
 /** Match the complete non-secret provider identity used for route decisions. */
 export function matchesGatewayProviderBinding(
   metadata: GatewayProviderMetadata | null,
@@ -40,6 +46,21 @@ export function matchesGatewayProviderBinding(
       metadata.credentialKeys[0] === expected.credentialKey &&
       metadata.configKeys.length === 1 &&
       metadata.configKeys[0] === expected.configKey,
+  );
+}
+
+/** Match a provider that exposes exactly one credential and no configuration. */
+export function matchesGatewayCredentialOnlyProviderBinding(
+  metadata: GatewayProviderMetadata | null,
+  expected: GatewayCredentialOnlyProviderBinding,
+): boolean {
+  return Boolean(
+    metadata &&
+      metadata.name === expected.name &&
+      metadata.type === expected.type &&
+      metadata.credentialKeys.length === 1 &&
+      metadata.credentialKeys[0] === expected.credentialKey &&
+      metadata.configKeys.length === 0,
   );
 }
 

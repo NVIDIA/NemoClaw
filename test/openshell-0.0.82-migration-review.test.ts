@@ -163,12 +163,12 @@ describe("OpenShell 0.0.82 migration review", () => {
     expect(helper).not.toContain("iptables -F");
     expect(helper).not.toContain("nft flush ruleset");
 
-    const mcpBridge = fs.readFileSync(
-      path.join(repoRoot, "test", "e2e", "live", "mcp-bridge.test.ts"),
+    const mcpProof = fs.readFileSync(
+      path.join(repoRoot, "test", "e2e", "live", "openshell-exact-main-mcp-proof.ts"),
       "utf8",
     );
-    expect(mcpBridge).toContain("assertExactMainPolicyNftAndIdentityContracts({");
-    expect(mcpBridge).toContain("assertExactMainMcpLogPrivacy({");
+    expect(mcpProof).toContain("assertExactMainPolicyNftAndIdentityContracts({");
+    expect(mcpProof).toContain("assertExactMainMcpLogPrivacy({");
     expect(review).toContain("capctl 0.2.4");
     expect(review).toContain("4a6e71767585f51c2a33fed6d67147ec0343725fc3c03bf4b89fe67fede56aa5");
     expect(review).toContain("THIRD-PARTY-NOTICES");
@@ -201,13 +201,13 @@ describe("OpenShell 0.0.82 migration review", () => {
     expect(helper).toContain('tmpfsMarker: "present"');
     expect(helper).toContain('tmpfsMarker: "absent"');
 
-    const mcpBridge = fs.readFileSync(
-      path.join(repoRoot, "test/e2e/live/mcp-bridge.test.ts"),
+    const mcpProof = fs.readFileSync(
+      path.join(repoRoot, "test/e2e/live/openshell-exact-main-mcp-proof.ts"),
       "utf8",
     );
-    expect(mcpBridge).toContain("prepareExactMainDriverConfigProof(");
-    expect(mcpBridge).toContain("exactMainDriverConfigProof.assertAfterOnboard()");
-    expect(mcpBridge).toContain("exactMainDriverConfigProof.assertAfterRebuild()");
+    expect(mcpProof).toContain("prepareExactMainDriverConfigProof(");
+    expect(mcpProof).toContain("driverConfig.assertAfterOnboard()");
+    expect(mcpProof).toContain("driverConfig.assertAfterRebuild()");
   });
 
   it("binds stable selectors while keeping the physical Spark proof separate", () => {

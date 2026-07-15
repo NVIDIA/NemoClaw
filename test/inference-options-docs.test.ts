@@ -349,8 +349,8 @@ describe("inference setup navigation", () => {
 
   it("scopes post-ready sandbox route verification to local inference providers", () => {
     const markdown = fs.readFileSync(verifyInferenceRoutePath, "utf8");
-    const start = markdown.indexOf("## Understand Post-Ready Checks");
-    const end = markdown.indexOf("## Send a Short Agent Request", start);
+    const start = markdown.indexOf("## Understand Local Provider Post-Ready Checks");
+    const end = markdown.indexOf("## Understand Final Route Checks", start);
     expect(start).toBeGreaterThanOrEqual(0);
     expect(end).toBeGreaterThan(start);
     const section = markdown.slice(start, end);
@@ -363,8 +363,23 @@ describe("inference setup navigation", () => {
     );
     expect(getSandboxRuntimeInferenceEndpoint("nvidia-nim")).toBeNull();
     expect(getSandboxRuntimeInferenceEndpoint("compatible-endpoint")).toBeNull();
-    expect(section).toContain("For local Ollama and vLLM");
+    expect(section).toContain(
+      "For local Ollama and vLLM on Docker GPU sandboxes using the compatibility route",
+    );
     expect(section).toContain("NVIDIA NIM and other compatible endpoints");
+  });
+
+  it("documents universal final route verification separately from local warmup", () => {
+    const markdown = fs.readFileSync(verifyInferenceRoutePath, "utf8");
+    const start = markdown.indexOf("## Understand Final Route Checks");
+    const end = markdown.indexOf("## Send a Short Agent Request", start);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const section = markdown.slice(start, end);
+
+    expect(section).toContain("`https://inference.local/v1/models`");
+    expect(section).toContain("retryable at final verification");
+    expect(section).toContain("Provider setup still performs its own");
   });
 
   it("explains the host-side validation limit of the containerized gateway alias", () => {

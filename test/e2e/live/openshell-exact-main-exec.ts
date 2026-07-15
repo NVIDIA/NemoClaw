@@ -289,7 +289,7 @@ export async function assertExactMainOpenShellContracts(
   expect(heredocResult.stdout).toBe(expectedHeredoc);
 
   const invalidWorkdir = await host.command(
-    "openshell",
+    host.openshellCommandPath,
     [
       "sandbox",
       "exec",
@@ -313,7 +313,7 @@ export async function assertExactMainOpenShellContracts(
   );
 
   const invalidEnvironment = await host.command(
-    "openshell",
+    host.openshellCommandPath,
     [
       "sandbox",
       "exec",

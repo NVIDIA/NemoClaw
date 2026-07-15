@@ -36,8 +36,9 @@ sandbox_exec() {
 
 dcode_secret_probe_runtime_env() {
   # Keep secret injection, output capture, cleanup, and status reporting atomic.
-  local remote_cmd
-  remote_cmd="tmp=\$(mktemp /tmp/dcode-secret-boundary.XXXXXX); env OPENAI_API_KEY=${FAKE_SECRET@Q} dcode -n 'Reply with the single word PING' >\"\$tmp\" 2>&1; status=\$?; cat \"\$tmp\"; rm -f \"\$tmp\"; printf 'DCODE_EXIT:%s\\n' \"\$status\"; exit 0"
+  local fake_secret_q remote_cmd
+  printf -v fake_secret_q '%q' "$FAKE_SECRET"
+  remote_cmd="tmp=\$(mktemp /tmp/dcode-secret-boundary.XXXXXX); env OPENAI_API_KEY=${fake_secret_q} dcode -n 'Reply with the single word PING' >\"\$tmp\" 2>&1; status=\$?; cat \"\$tmp\"; rm -f \"\$tmp\"; printf 'DCODE_EXIT:%s\\n' \"\$status\"; exit 0"
   sandbox_exec "$remote_cmd"
 }
 

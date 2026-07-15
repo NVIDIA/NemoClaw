@@ -5,7 +5,7 @@
  * Protect the blueprint image trust anchor and the effective sandbox policies
  * that NemoClaw submits after its production create/merge path consumes the
  * checked-in policy sources. Structural validation belongs to
- * scripts/validate-configs.ts.
+ * scripts/validate-configs.mts.
  */
 
 import { readFileSync } from "node:fs";

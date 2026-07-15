@@ -58,7 +58,7 @@ function parseArgs(argv: string[]): Options {
 }
 
 function printHelp(): void {
-  console.log("Usage: tsx scripts/release-notes-data.ts --plan PATH [--output PATH]");
+  console.log("Usage: tsx scripts/release-notes-data.mts --plan PATH [--output PATH]");
 }
 
 function validatePlan(value: unknown): ReleasePlan {

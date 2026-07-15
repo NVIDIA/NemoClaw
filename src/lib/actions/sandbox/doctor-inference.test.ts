@@ -175,4 +175,20 @@ describe("doctor inference checks", () => {
     expect(providerHealth).not.toHaveProperty("subprobes");
     expect(providerHealth).not.toHaveProperty("probeLabel");
   });
+
+  it("passes the live route model to direct provider diagnostics", async () => {
+    const probe = vi.fn(() => upstream());
+
+    await collectInferenceChecks(
+      "alpha",
+      { provider: "ollama-local", model: "nemotron-mini:latest" },
+      true,
+      {
+        probeProviderHealthImpl: probe,
+        probeSandboxInferenceGatewayHealthImpl: async () => gateway(true),
+      },
+    );
+
+    expect(probe).toHaveBeenCalledWith("ollama-local", { model: "nemotron-mini:latest" });
+  });
 });
