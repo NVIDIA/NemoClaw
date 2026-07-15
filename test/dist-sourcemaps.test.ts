@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 
 import { findMissingDistSourcemapSources } from "../scripts/check-dist-sourcemaps.mts";
 
-function writeFixtureDist(root: string, { includeMissing }: { includeMissing: boolean }): string {
+function writeCleanFixtureDist(root: string): string {
   const distLib = path.join(root, "dist", "lib");
   const srcLib = path.join(root, "src", "lib");
   fs.mkdirSync(distLib, { recursive: true });
@@ -21,19 +21,22 @@ function writeFixtureDist(root: string, { includeMissing }: { includeMissing: bo
     path.join(distLib, "present.js.map"),
     JSON.stringify({ version: 3, sources: ["../../src/lib/present.ts"], mappings: "" }),
   );
-  if (includeMissing) {
-    fs.writeFileSync(
-      path.join(distLib, "missing.js.map"),
-      JSON.stringify({ version: 3, sources: ["../../src/lib/missing.ts"], mappings: "" }),
-    );
-  }
   return path.join(root, "dist");
+}
+
+function writeStaleFixtureDist(root: string): string {
+  const distDir = writeCleanFixtureDist(root);
+  fs.writeFileSync(
+    path.join(distDir, "lib", "missing.js.map"),
+    JSON.stringify({ version: 3, sources: ["../../src/lib/missing.ts"], mappings: "" }),
+  );
+  return distDir;
 }
 
 describe("dist sourcemap checks", () => {
   it("reports JavaScript sourcemaps pointing at missing source files", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sourcemap-check-"));
-    const distDir = writeFixtureDist(root, { includeMissing: true });
+    const distDir = writeStaleFixtureDist(root);
 
     expect(findMissingDistSourcemapSources(distDir)).toEqual([
       `${path.join(distDir, "lib", "missing.js.map")} -> ../../src/lib/missing.ts`,
@@ -44,7 +47,7 @@ describe("dist sourcemap checks", () => {
 
   it("invoking the .mts entrypoint directly exits 0 for a clean dist directory", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sourcemap-cli-clean-"));
-    const distDir = writeFixtureDist(root, { includeMissing: false });
+    const distDir = writeCleanFixtureDist(root);
 
     const result = spawnSync(
       process.execPath,
@@ -62,7 +65,7 @@ describe("dist sourcemap checks", () => {
 
   it("invoking the .mts entrypoint directly exits 1 and reports stale sources", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sourcemap-cli-stale-"));
-    const distDir = writeFixtureDist(root, { includeMissing: true });
+    const distDir = writeStaleFixtureDist(root);
 
     const result = spawnSync(
       process.execPath,
