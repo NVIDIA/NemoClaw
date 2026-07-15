@@ -83,6 +83,7 @@ export function createDeps(options: {
   localReachable?: boolean;
   contextWindow?: number | null;
   shieldsMutable?: boolean;
+  dashboardConverge?: ReturnType<InferenceSetDeps["convergeHermesDashboardModel"]>;
   prepareRunOpenshell?: () => void;
   rewriteConfigUrlsWithDnsPinning?: (value: ConfigValue) => Promise<ConfigValue>;
   restartSandboxGateway?: InferenceSetDeps["restartSandboxGateway"];
@@ -92,6 +93,7 @@ export function createDeps(options: {
     captureOpenshell: ReturnType<typeof vi.fn>;
     writeSandboxConfig: ReturnType<typeof vi.fn>;
     recomputeSandboxConfigHash: ReturnType<typeof vi.fn>;
+    convergeHermesDashboardModel: ReturnType<typeof vi.fn>;
     updateSandbox: ReturnType<typeof vi.fn>;
     readSandboxConfig: ReturnType<typeof vi.fn>;
     updateSession: ReturnType<typeof vi.fn>;
@@ -124,6 +126,9 @@ export function createDeps(options: {
     })),
     writeSandboxConfig: vi.fn(),
     recomputeSandboxConfigHash: vi.fn(),
+    convergeHermesDashboardModel: vi.fn(
+      () => options.dashboardConverge ?? { status: "converged" as const },
+    ),
     updateSandbox: vi.fn(() => true),
     readSandboxConfig: vi.fn(() => options.config),
     updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
@@ -169,6 +174,7 @@ export function createDeps(options: {
     readSandboxConfig: calls.readSandboxConfig,
     writeSandboxConfig: calls.writeSandboxConfig,
     recomputeSandboxConfigHash: calls.recomputeSandboxConfigHash,
+    convergeHermesDashboardModel: calls.convergeHermesDashboardModel,
     prepareRunOpenshell: calls.prepareRunOpenshell,
     captureOpenshell: calls.captureOpenshell,
     appendAuditEntry: calls.appendAuditEntry,

@@ -2598,6 +2598,23 @@ The Hermes entrypoint supervisor remains responsible for the gateway, dashboard,
 In the OpenShell-managed topology, that nonroot supervisor repairs failed auxiliaries continuously, recovers a gateway after four consecutive failed listener or HTTP health checks, and quarantines relaunch after five exits within 60 seconds until the sandbox is recreated.
 The host only repairs the host-side OpenShell forwards after the supervised processes pass health checks.
 
+### Dashboard Chat keeps serving the previous model after a model switch
+
+The Hermes Web Dashboard runs from an isolated profile under `/sandbox/.hermes/dashboard-home/`, seeded at container startup and kept separate from the main Hermes config.
+`nemohermes inference set` converges this Dashboard profile onto the new model along with the main config, so Dashboard Chat and its `/api/model/info` endpoint report the switched model.
+If the Dashboard profile is absent because the Dashboard is disabled, the convergence is a no-op.
+
+When convergence fails, `inference set` prints a warning, withholds the `Inference route synced` success line, and Dashboard Chat may keep using the previous model.
+Re-run the switch or restart the gateway to converge the Dashboard profile:
+
+```bash
+nemohermes inference set --provider <provider> --model <model> --sandbox <name>
+```
+
+```bash
+nemohermes <name> hermes gateway restart
+```
+
 ### Port 8642 in a browser shows a blank page or `Cannot GET /`
 
 `nemohermes onboard` forwards port `8642`, but Hermes serves an OpenAI-compatible API at that port, not a chat dashboard.

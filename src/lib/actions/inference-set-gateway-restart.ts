@@ -20,6 +20,13 @@ interface InferenceResultForGateway {
   model: string;
   primaryModelRef: string;
   inSandboxConfigSynced: boolean;
+  /**
+   * Hermes only: whether the isolated Web Dashboard profile converged onto the
+   * switched model (#6893). Undefined for agents without a Dashboard profile,
+   * treated as converged. When explicitly false the success line is withheld so
+   * `inference set` does not claim a route it did not fully apply.
+   */
+  dashboardConverged?: boolean;
 }
 
 export interface InferenceMutation<T extends InferenceResultForGateway> {
@@ -101,7 +108,10 @@ export function finalizeInferenceMutation<T extends InferenceResultForGateway>(
     deps.appendAuditEntry(auditEntry);
   }
 
-  if (result.inSandboxConfigSynced && !openClawGatewayRestartRequired) {
+  // A Hermes switch whose Web Dashboard profile did not converge is not fully
+  // applied, so withhold the success line (the caller already warned) (#6893).
+  const hermesDashboardStale = agentName === "hermes" && result.dashboardConverged === false;
+  if (result.inSandboxConfigSynced && !openClawGatewayRestartRequired && !hermesDashboardStale) {
     deps.log(
       agentName === "hermes"
         ? `  Inference route synced for '${result.sandboxName}': ${result.model}`

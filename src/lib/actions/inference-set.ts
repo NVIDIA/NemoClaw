@@ -29,6 +29,8 @@ import {
 } from "../openshell-gateway-endpoint-guard";
 import {
   type AgentConfigTarget,
+  convergeHermesDashboardModel,
+  type HermesDashboardConvergeResult,
   readSandboxConfig,
   recomputeSandboxConfigHash,
   resolveAgentConfig,
@@ -90,6 +92,7 @@ export interface InferenceSetResult {
   configChanged: boolean;
   sessionUpdated: boolean;
   inSandboxConfigSynced: boolean;
+  dashboardConverged: boolean;
 }
 
 export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
@@ -110,6 +113,12 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
     config: ConfigObject,
   ) => void;
   recomputeSandboxConfigHash: (sandboxName: string, target: AgentConfigTarget) => void;
+  convergeHermesDashboardModel: (
+    sandboxName: string,
+    configDir: string,
+    provider: string,
+    model: string,
+  ) => HermesDashboardConvergeResult;
   prepareRunOpenshell: () => void;
   captureOpenshell: (
     args: string[],
@@ -212,6 +221,7 @@ function defaultDeps(): InferenceSetDeps {
     readSandboxConfig,
     writeSandboxConfig,
     recomputeSandboxConfigHash,
+    convergeHermesDashboardModel,
     prepareRunOpenshell: () => {
       getOpenshellBinary();
     },
@@ -866,6 +876,35 @@ async function runInferenceSetWithoutHostLock(
       `  Run '${CLI_NAME} ${sandboxName} rebuild' to finish applying the model inside the sandbox.`,
     );
   }
+
+  // #6893: the Hermes Web Dashboard runs from an isolated HERMES_HOME and does
+  // not pick up an in-place model switch, so Dashboard Chat keeps serving the
+  // previous model even though every other status surface reports the new one.
+  // Converge that profile too before claiming success. Best-effort and gated on
+  // the main config having synced first: a Dashboard that was never enabled
+  // resolves to "absent" (no-op), and only a real convergence failure downgrades
+  // the success message.
+  let dashboardConverged = true;
+  if (agentName === "hermes" && inSandboxConfigSynced) {
+    const dashboardResult = deps.convergeHermesDashboardModel(
+      sandboxName,
+      target.configDir,
+      provider,
+      model,
+    );
+    if (dashboardResult.status === "failed") {
+      dashboardConverged = false;
+      deps.log(
+        `  Warning: updated the Hermes config for '${sandboxName}', but the Web Dashboard ` +
+          `profile did not converge onto '${model}': ${dashboardResult.detail}`,
+      );
+      deps.log(
+        `  Dashboard Chat may keep using the previous model. Re-run '${CLI_NAME} inference set' ` +
+          `or run '${CLI_NAME} ${sandboxName} hermes gateway restart'.`,
+      );
+    }
+  }
+
   const sessionUpdated = updateMatchingOnboardSession(
     sandboxName,
     provider,
@@ -890,6 +929,7 @@ async function runInferenceSetWithoutHostLock(
         configChanged: patched.changed,
         sessionUpdated,
         inSandboxConfigSynced,
+        dashboardConverged,
       },
     },
     deps,

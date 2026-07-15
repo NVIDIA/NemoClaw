@@ -163,6 +163,12 @@ const HERMES_STRICT_HASH_FILE = "/etc/nemoclaw/hermes.config-hash";
 const HERMES_RUNTIME_CONFIG_GUARD = "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py";
 const HERMES_PYTHON = "/opt/hermes/.venv/bin/python";
 const HERMES_RESTART_SEAL_STATE = "/run/nemoclaw/hermes-restart-seal.json";
+// The Hermes Web Dashboard runs from an isolated HERMES_HOME under this subdir of
+// the main config dir, seeded at container startup. An in-place `inference set`
+// updates only the main config, so the Dashboard profile must be converged
+// separately (#6893).
+const HERMES_DASHBOARD_HOME_SUBDIR = "dashboard-home";
+const HERMES_DASHBOARD_CONVERGE_TIMEOUT_MS = 30_000;
 const MAX_OPENCLAW_CONFIG_BYTES = 16 * 1024 * 1024;
 const CONFIG_CAPTURE_MAX_BUFFER = MAX_OPENCLAW_CONFIG_BYTES + 1024 * 1024;
 const OPENCLAW_CONFIG_GUARD_TIMEOUT_MS = 6 * 60 * 1000;
@@ -571,6 +577,65 @@ function writeSandboxConfig(
     } catch {
       // Best effort.
     }
+  }
+}
+
+export type HermesDashboardConvergeResult =
+  | { status: "converged" }
+  | { status: "absent" }
+  | { status: "failed"; detail: string };
+
+/**
+ * Converge the isolated Hermes Web Dashboard profile onto a switched model.
+ *
+ * `nemoclaw inference set` writes only the main Hermes config; the Dashboard runs
+ * from a separate HERMES_HOME under `<configDir>/dashboard-home`, seeded at
+ * container startup. An in-place switch therefore leaves Dashboard Chat and its
+ * `/api/model/info` endpoint on the previous model (#6893). This mirrors the
+ * reporter-verified recovery — `hermes config set model.default` and
+ * `providers.<provider>.default_model` under the Dashboard HERMES_HOME — and
+ * no-ops when the Dashboard profile is absent (Dashboard disabled).
+ *
+ * `provider` and `model` are pre-validated by the `inference set` caller
+ * (`assertSupportedProvider` allowlist + `isSafeModelId`), so they are safe as a
+ * config dotpath segment and value; they are still passed as distinct argv
+ * elements, never interpolated into a shell string.
+ */
+function convergeHermesDashboardModel(
+  sandboxName: string,
+  configDir: string,
+  provider: string,
+  model: string,
+): HermesDashboardConvergeResult {
+  const dashboardHome = `${configDir.replace(/\/+$/, "")}/${HERMES_DASHBOARD_HOME_SUBDIR}`;
+  try {
+    // Probe via an always-exit-0 shell so an absent profile is a clean "skip"
+    // rather than an exec that throws and reads as a failure.
+    const probe = privilegedSandboxExec(
+      sandboxName,
+      [
+        "sh",
+        "-c",
+        `if [ -d ${shellQuote(dashboardHome)} ]; then echo present; else echo absent; fi`,
+      ],
+      { timeout: HERMES_DASHBOARD_CONVERGE_TIMEOUT_MS },
+    );
+    if (!probe.trim().endsWith("present")) {
+      return { status: "absent" };
+    }
+    for (const key of ["model.default", `providers.${provider}.default_model`]) {
+      privilegedSandboxExec(
+        sandboxName,
+        ["env", `HERMES_HOME=${dashboardHome}`, "hermes", "config", "set", key, model],
+        { timeout: HERMES_DASHBOARD_CONVERGE_TIMEOUT_MS },
+      );
+    }
+    return { status: "converged" };
+  } catch (error) {
+    return {
+      status: "failed",
+      detail: error instanceof Error && error.message ? error.message : String(error),
+    };
   }
 }
 
@@ -1212,6 +1277,7 @@ export {
   configGet,
   configRotateToken,
   configSet,
+  convergeHermesDashboardModel,
   DEFAULT_AGENT_CONFIG,
   extractDotpath,
   findClobberingAncestor,

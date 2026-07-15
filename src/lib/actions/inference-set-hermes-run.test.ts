@@ -380,3 +380,88 @@ describe("runInferenceSet Hermes routing", () => {
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
   });
 });
+
+describe("runInferenceSet Hermes Web Dashboard convergence (#6893)", () => {
+  function hermesDeps(
+    overrides: Partial<Parameters<typeof createDeps>[0]> = {},
+  ): ReturnType<typeof createDeps> {
+    return createDeps({
+      config: {
+        model: { default: "old-model", provider: "custom", base_url: "https://inference.local/v1" },
+      },
+      entry: { name: "hermes", agent: "hermes", provider: "vllm-local", model: "old-model" },
+      defaultSandbox: "hermes",
+      target: HERMES_TARGET,
+      session: baseSession({ agent: "hermes", sandboxName: "hermes" }),
+      ...overrides,
+    });
+  }
+
+  const syncedLine = (deps: ReturnType<typeof createDeps>): boolean =>
+    deps.calls.log.mock.calls.some((c) => String(c[0]).includes("Inference route synced"));
+
+  it("converges the isolated Dashboard profile after a successful switch", async () => {
+    const deps = hermesDeps();
+
+    const result = await runInferenceSet(
+      { provider: "vllm-local", model: "nemotron-ultra", sandboxName: "hermes", noVerify: true },
+      deps,
+    );
+
+    // The regression on main: this call never happens, so Dashboard Chat stays
+    // on the previous model while every other surface reports the new one.
+    expect(deps.calls.convergeHermesDashboardModel).toHaveBeenCalledWith(
+      "hermes",
+      "/sandbox/.hermes",
+      "vllm-local",
+      "nemotron-ultra",
+    );
+    expect(result.dashboardConverged).toBe(true);
+    expect(syncedLine(deps)).toBe(true);
+  });
+
+  it("still reports synced when no Dashboard profile is present", async () => {
+    const deps = hermesDeps({ dashboardConverge: { status: "absent" } });
+
+    const result = await runInferenceSet(
+      { provider: "vllm-local", model: "nemotron-ultra", sandboxName: "hermes", noVerify: true },
+      deps,
+    );
+
+    expect(deps.calls.convergeHermesDashboardModel).toHaveBeenCalledTimes(1);
+    expect(result.dashboardConverged).toBe(true);
+    expect(syncedLine(deps)).toBe(true);
+  });
+
+  it("withholds the success line and warns when Dashboard convergence fails", async () => {
+    const deps = hermesDeps({
+      dashboardConverge: { status: "failed", detail: "exec exited 1" },
+    });
+
+    const result = await runInferenceSet(
+      { provider: "vllm-local", model: "nemotron-ultra", sandboxName: "hermes", noVerify: true },
+      deps,
+    );
+
+    expect(result.dashboardConverged).toBe(false);
+    expect(syncedLine(deps)).toBe(false);
+    expect(
+      deps.calls.log.mock.calls.some((c) => String(c[0]).includes("did not converge onto")),
+    ).toBe(true);
+  });
+
+  it("does not touch the Dashboard path for OpenClaw switches", async () => {
+    const deps = createDeps({
+      config: { models: { mode: "merge", providers: {} } },
+      entry: { name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "old" },
+      defaultSandbox: "alpha",
+    });
+
+    await runInferenceSet(
+      { provider: "nvidia-prod", model: "nvidia/nemotron-3-super-v3", sandboxName: "alpha" },
+      deps,
+    );
+
+    expect(deps.calls.convergeHermesDashboardModel).not.toHaveBeenCalled();
+  });
+});
