@@ -2109,7 +2109,7 @@ function isDirectInvocation(): boolean {
   const invoked = process.argv[1];
   return Boolean(
     invoked &&
-      (import.meta.url === `file://${invoked}` || invoked.endsWith("find-source-shape-tests.ts")),
+      (import.meta.url === `file://${invoked}` || invoked.endsWith("find-source-shape-tests.mts")),
   );
 }
 
