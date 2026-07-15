@@ -8,11 +8,11 @@
  * so the git operation is never blocked by this check.
  */
 
-import path from "path";
 import { fileURLToPath } from "node:url";
-import { warnIfStale } from "../src/lib/stale-dist-check.ts";
+import path from "path";
 
 try {
+  const { warnIfStale } = await import("../src/lib/stale-dist-check.ts");
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   warnIfStale(repoRoot);
 } catch {
