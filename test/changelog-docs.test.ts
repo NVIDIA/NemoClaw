@@ -6,7 +6,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
-import { extractMarkdownLinks } from "../scripts/check-docs-published-routes.ts";
+import { extractMarkdownLinks } from "../scripts/check-docs-published-routes.mts";
 
 const docsDir = path.join(import.meta.dirname, "..", "docs");
 const changelogDir = path.join(docsDir, "changelog");

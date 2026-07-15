@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Core, side-effect-free building blocks for the NemoClaw value benchmark harness
-// (issue #5604). The CLI entry point lives in run.ts; everything here is pure or
+// (issue #5604). The CLI entry point lives in run.mts; everything here is pure or
 // dependency-injected so it can be unit tested without a live sandbox or network.
 
 import { isIP } from "node:net";
 import os from "node:os";
 
-import { redactFull } from "../../src/lib/security/redact";
+const { redactFull } = await import("../../src/lib/security/redact.ts");
 
 export {
   ingestPolicyOverhead,
@@ -16,7 +16,7 @@ export {
   POLICY_APPLICATION_SPAN,
   SANDBOX_PHASE_SPAN,
   SANDBOX_READINESS_SPAN,
-} from "./trace-ingest";
+} from "./trace-ingest.mts";
 
 export const BENCH_SCHEMA_VERSION = "nemoclaw.bench.v1" as const;
 

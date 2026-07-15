@@ -291,6 +291,7 @@ export function probeProviderHealth(
   options: ProviderHealthProbeOptions = {},
 ): ProviderHealthStatus | null {
   const localOptions: LocalProviderHealthProbeOptions = {
+    model: options.model,
     runCurlProbeImpl: options.runCurlProbeImpl,
   };
   const local = probeLocalProviderHealth(provider, localOptions);

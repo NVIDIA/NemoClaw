@@ -40,6 +40,7 @@ vi.mock("./process-recovery", () => ({
 
 import type { AgentDefinition } from "../../agent/defs";
 import type { SandboxMessagingInputReference } from "../../messaging/manifest";
+import type { DiagnosticSignal } from "../../messaging/channels/channel-health";
 import type { SandboxEntry } from "../../state/registry";
 
 type ShowSandboxChannelStatus = typeof import("./channel-status").showSandboxChannelStatus;
@@ -189,4 +190,40 @@ export function makeDeps(opts: {
     },
     out_lines: calls,
   };
+}
+
+// A telegram log-tail probe stdout that yields the "unknown" verdict
+// (reachable + gateway process alive + no conclusive breadcrumbs) so a
+// config-focused telegram test does not trip the health exit code. Pair it
+// with `gatewayPresets: ["telegram"]` so the policy signal is not a gap.
+export const TELEGRAM_PROBE_UNKNOWN_STDOUT = [
+  "NEMOCLAW_TG_DIAG_OK",
+  "NEMOCLAW_TG_LOG_BEGIN",
+  "NEMOCLAW_TG_LOG_END",
+  "PROC 42 node /opt/openclaw gateway",
+  "NEMOCLAW_TG_PROC_DONE",
+].join("\n");
+
+// Wrap a config-read exec so the telegram log-tail probe command (which tails
+// /tmp/gateway.log) returns a benign probe response instead of the config
+// payload. Everything else falls through to the provided config exec.
+export function withTelegramProbe(
+  configExec: (sandboxName: string, command: string, timeoutMs?: number) => ExecResult | null,
+  probeStdout: string = TELEGRAM_PROBE_UNKNOWN_STDOUT,
+): (sandboxName: string, command: string, timeoutMs?: number) => ExecResult | null {
+  return (sandboxName, command, timeoutMs) =>
+    command.includes("/tmp/gateway.log")
+      ? { status: 0, stdout: probeStdout, stderr: "" }
+      : configExec(sandboxName, command, timeoutMs);
+}
+
+// Read signals from either channel-status report shape: the basic
+// `{ verdict, signals }` report or the deep `{ report: { signals } }` report.
+export function reportSignals(
+  result: Awaited<ReturnType<ShowSandboxChannelStatus>>,
+): DiagnosticSignal[] {
+  if (!result) return [];
+  if ("signals" in result) return result.signals;
+  if ("report" in result) return result.report.signals;
+  return [];
 }
