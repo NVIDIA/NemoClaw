@@ -19,6 +19,15 @@ on:
         required: false
         default: ""
         type: string
+      inference_mode:
+        description: "Inference adapter mode for compatible Vitest E2E jobs: mock, internal-nvidia, or public-nvidia."
+        required: false
+        default: "mock"
+        type: choice
+        options:
+          - mock
+          - internal-nvidia
+          - public-nvidia
       allow_jetson_runner_queue:
         description: "Repository administrators only: before setting true for jetson-nvmap-gpu, confirm an online Jetson runner in the authoritative NVIDIA/NemoClaw Settings -> Actions -> Runners inventory; queued jobs do not honor timeout-minutes before assignment."
         required: false
@@ -134,10 +143,15 @@ jobs:
       - id: matrix
         name: Generate E2E target matrix
         env:
+          INFERENCE_MODE: ${{ inputs.inference_mode || 'mock' }}
           JOBS: ${{ inputs.jobs }}
           TARGETS: ${{ inputs.targets }}
         run: |
           set -euo pipefail
+          case "${INFERENCE_MODE}" in
+            mock|internal-nvidia|public-nvidia) ;;
+            *) echo "::error::Invalid inference_mode: ${INFERENCE_MODE}" >&2; exit 1 ;;
+          esac
           if [ -n "${JOBS}" ] && [ -n "${TARGETS}" ]; then
             echo "::error::Use either targets or jobs, not both." >&2
             exit 1
@@ -1674,7 +1688,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-e2e
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
+      NEMOCLAW_E2E_INFERENCE_MODE: ${{ inputs.inference_mode || 'mock' }}
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: hermes
       NEMOCLAW_NON_INTERACTIVE: "1"
@@ -1694,7 +1708,7 @@ jobs:
 
       - name: Run Hermes live Vitest test
         env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && (inputs.inference_mode || 'mock') != 'mock' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
         run: |
           set -euo pipefail
           npx vitest run --project e2e-live \
