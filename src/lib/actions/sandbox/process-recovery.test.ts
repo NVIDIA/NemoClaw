@@ -43,6 +43,14 @@ describe("read-only sandbox gateway status probe", () => {
       timeoutMs: 15_000,
     });
   });
+
+  it("keeps gateway status indeterminate when the read-only route rejects", async () => {
+    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null);
+    vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha", gatewayPort: 9090 });
+    readOnlyExecMock.mockRejectedValue(new Error("read-only route unavailable"));
+
+    await expect(isSandboxGatewayRunningForStatus("alpha")).resolves.toBeNull();
+  });
 });
 
 describe("recreated sandbox OpenShell readiness", () => {
