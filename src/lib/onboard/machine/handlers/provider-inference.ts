@@ -10,9 +10,11 @@ import {
   type GatewayRouteDiscoveryConstraints,
   isAdvisoryGatewayRouteConflict,
 } from "../../../inference/gateway-route-compatibility";
+import { getOllamaContextWindowFloorForAgent } from "../../../inference/ollama-runtime-context";
 import type { WebSearchConfig } from "../../../inference/web-search";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
 import type { OnboardInferenceCapabilityCache } from "../../inference-capability-cache";
+import type { RepairLocalInferenceSystemdOverrideOptions } from "../../local-inference-topology";
 import type {
   createProviderRecoveryReceiptLedger,
   ProviderRecoveryReceipt,
@@ -175,8 +177,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     configureCompatibleEndpointReasoning(storedValue?: string | null): Promise<"true" | "false">;
     clearCompatibleEndpointReasoning(): null;
     repairLocalInferenceSystemdOverrideOrExit(
-      provider: string | null,
-      isNonInteractive: () => boolean,
+      options: RepairLocalInferenceSystemdOverrideOptions,
     ): void;
     isNonInteractive(): boolean;
     getOpenshellBinary(): string;
@@ -444,9 +445,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         deps.log("  [resume] Refreshing compatible-endpoint inference route for messaging.");
       }
       deps.skippedStepMessage("provider_selection", `${provider} / ${model}`);
-      const agentName = (agent as { name?: string } | null)?.name;
+      const selectedAgentName = (agent as { name?: string } | null)?.name;
       if (
-        (!agentName || agentName === "openclaw") &&
+        (!selectedAgentName || selectedAgentName === "openclaw") &&
         sandboxName &&
         session?.sandboxPromptProgress?.sandboxName === true &&
         session.sandboxName === sandboxName
@@ -462,6 +463,12 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         provider === "compatible-endpoint"
           ? await deps.configureCompatibleEndpointReasoning(compatibleEndpointReasoning)
           : deps.clearCompatibleEndpointReasoning();
+      const localInferenceRepairOptions = {
+        provider,
+        model,
+        contextWindowFloor: getOllamaContextWindowFloorForAgent(agentName(agent)),
+        isNonInteractive: deps.isNonInteractive,
+      };
       if (provider === "ollama-local") {
         const repairMetadata = { repair: "ollama-systemd-loopback" };
         await deps.recordRepairEvent("state.repair.started", {
@@ -469,7 +476,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           metadata: repairMetadata,
         });
         try {
-          deps.repairLocalInferenceSystemdOverrideOrExit(provider, deps.isNonInteractive);
+          deps.repairLocalInferenceSystemdOverrideOrExit(localInferenceRepairOptions);
         } catch (err) {
           await deps.recordRepairEvent("state.repair.failed", {
             state: "provider_selection",
@@ -483,7 +490,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           metadata: repairMetadata,
         });
       } else {
-        deps.repairLocalInferenceSystemdOverrideOrExit(provider, deps.isNonInteractive);
+        deps.repairLocalInferenceSystemdOverrideOrExit(localInferenceRepairOptions);
       }
     } else {
       await deps.startRecordedStep("provider_selection");

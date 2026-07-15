@@ -588,7 +588,7 @@ import {
 import { mergePolicyMessagingChannels } from "./onboard/messaging-policy-presets";
 import { filterEnabledChannelsByAgent } from "./onboard/messaging-state";
 import { getValidatedMessagingTokenByEnvKey } from "./onboard/messaging-token";
-import { handleOllamaProbeFailure } from "./onboard/ollama-probe-failure";
+import * as ollamaFlow from "./onboard/ollama-probe-failure";
 import { runOllamaStartupOrGate } from "./onboard/ollama-startup";
 import type {
   DockerDriverBinaryOverrides,
@@ -2982,16 +2982,12 @@ type RebuildRouteHandoff = import("./onboard/rebuild-route-handoff").RebuildRout
 const { readRecordedProvider, readRecordedNimContainer, readRecordedModel, readRecordedEndpointUrl,
   readRecordedInferenceRoute, readRecordedProviderEndpoints } = providerRecovery.createProviderRecoveryHelpers({ parseGatewayInference, runCaptureOpenshell, warn: (message) => console.warn(message) });
 
-type OllamaModelSelectionOutcome =
-  | { outcome: "selected"; model: string; allowToolsIncompatible: boolean }
-  | { outcome: "back-to-selection" };
 async function selectAndValidateOllamaModel(
   gpu: ReturnType<typeof nim.detectGpu>,
   provider: string,
-  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  defaults: { requestedModel: string | null; recoveredModel: string | null; lockedModel?: string | null; promptDefaultModel?: string | null },
+  defaults: OllamaModelSelectionDefaults,
   onModelSelected?: (model: string) => void,
-): Promise<OllamaModelSelectionOutcome> {
+): Promise<ollamaFlow.OllamaModelSelectionOutcome> {
   const { requestedModel, recoveredModel, lockedModel, promptDefaultModel } = defaults;
   const probeFailures = new OllamaProbeFailureTracker();
   const confirm = (question: string, defaultIsYes: boolean) =>
@@ -3046,7 +3042,7 @@ async function selectAndValidateOllamaModel(
     const probe = await prepareOllamaModel(selectedModel, installedModels, interaction);
     if (!probe.ok) {
       const probeFailureLimitReached = probeFailures.recordFailure(selectedModel);
-      const action = handleOllamaProbeFailure(probe, selectedModel, isNonInteractive);
+      const action = ollamaFlow.handleOllamaProbeFailure(probe, selectedModel, isNonInteractive);
       if (action === "back-to-selection") return { outcome: "back-to-selection" };
       if (probeFailureLimitReached) {
         console.error(probeFailures.formatLimitMessage(selectedModel));
@@ -3079,13 +3075,15 @@ async function selectAndValidateOllamaModel(
         "  ℹ Using chat completions API (Ollama tool calls require /v1/chat/completions)",
       );
     }
-    localInference.applyOllamaRuntimeContextWindow(selectedModel);
-    return { outcome: "selected", model: selectedModel, allowToolsIncompatible };
+    // biome-ignore format: keep src/lib/onboard.ts under the growth guardrail.
+    return ollamaFlow.completeOllamaRuntimeContextSelection(localInference.applyOllamaRuntimeContextWindow(selectedModel, defaults), { outcome: "selected", model: selectedModel, allowToolsIncompatible }, isNonInteractive);
   }
 }
 
 type SetupNimSelectionState =
   import("./onboard/setup-nim-selection").SetupNimSelectionState<HermesAuthMethod>;
+type OllamaModelSelectionDefaults =
+  import("./onboard/setup-nim-selection").OllamaModelSelectionDefaults;
 type SetupNimSelectionResult = "selected" | "retry-selection";
 
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
