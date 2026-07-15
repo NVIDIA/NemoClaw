@@ -73,6 +73,7 @@ function createDeps(overrides: Partial<GatewayStateOptions<Gpu>["deps"]> = {}) {
         listenerScanComplete: true,
         supervisorActive: true,
         listenerExecPath: "/usr/local/bin/openshell-gateway",
+        listenerSupervisorMatch: true,
       }),
     ),
   };
@@ -461,6 +462,7 @@ describe("externally supervised gateway lifecycle authority", () => {
       listenerScanComplete: true,
       supervisorActive: true,
       listenerExecPath: "/usr/local/bin/openshell-gateway",
+      listenerSupervisorMatch: true,
       ...probe,
     });
     return { calls, deps };

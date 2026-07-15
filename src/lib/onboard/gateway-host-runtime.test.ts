@@ -46,6 +46,11 @@ function createDeps(overrides: Partial<GatewayHostRuntimeDeps> = {}): GatewayHos
     resolveOpenShellGatewayBinary: () => SYSTEMD_GATEWAY_EXEC,
     spawnSyncImpl: (() => ({ status: 0, stdout: "active\n", stderr: "" })) as never,
     probeGatewayHttpReady: async () => true,
+    // Realistic /proc content for the declared systemd listener, so the probe
+    // produces listenerExecPath and listenerSupervisorMatch itself rather than a
+    // test overwriting them.
+    readProcExe: () => SYSTEMD_GATEWAY_EXEC,
+    readProcCgroup: () => `0::/system.slice/${DECLARATION.supervisor.serviceName}\n`,
     waitForGatewayHttpReady: async () => true,
     ...overrides,
   };
@@ -105,7 +110,8 @@ describe("gateway host runtime attachment probe", () => {
     const probe = await runtime.probeGatewayAttachment(owner);
 
     // The declared systemd process carries no Docker-driver markers, so it must
-    // still be enumerated and matched by its declared executable.
+    // still be enumerated, resolved to its executable, and bound to the unit's
+    // cgroup — all produced by the probe, then evaluated without overwriting.
     expect(probe).toMatchObject({
       gatewayPort: 8080,
       httpReady: true,
@@ -113,10 +119,46 @@ describe("gateway host runtime attachment probe", () => {
       listenerPids: [SYSTEMD_GATEWAY_PID],
       listenerScanComplete: true,
       supervisorActive: true,
+      listenerExecPath: SYSTEMD_GATEWAY_EXEC,
+      listenerSupervisorMatch: true,
     });
-    expect(
-      evaluateGatewayAttachment(owner, { ...probe, listenerExecPath: SYSTEMD_GATEWAY_EXEC }),
-    ).toMatchObject({ ok: true });
+    expect(evaluateGatewayAttachment(owner, probe)).toMatchObject({ ok: true });
+  });
+
+  it("rejects a same-binary listener outside the declared unit's cgroup (#6576)", async () => {
+    declareExternalSupervision();
+    // Same executable, answering health, supervisor active — but the PID lives
+    // in a login session scope, not the unit. Exec-path match alone would accept
+    // it; cgroup binding must not.
+    const runtime = createGatewayHostRuntime(
+      createDeps({
+        readProcCgroup: () => "0::/user.slice/user-1000.slice/session-7.scope\n",
+      }),
+    );
+    const owner = runtime.getGatewayOwner();
+
+    const probe = await runtime.probeGatewayAttachment(owner);
+
+    expect(probe.listenerExecPath).toBe(SYSTEMD_GATEWAY_EXEC);
+    expect(probe.listenerSupervisorMatch).toBe(false);
+    expect(evaluateGatewayAttachment(owner, probe)).toMatchObject({
+      ok: false,
+      code: "identity_mismatch",
+    });
+  });
+
+  it("fails closed when the listener cgroup cannot be read (#6576)", async () => {
+    declareExternalSupervision();
+    const runtime = createGatewayHostRuntime(createDeps({ readProcCgroup: () => null }));
+    const owner = runtime.getGatewayOwner();
+
+    const probe = await runtime.probeGatewayAttachment(owner);
+
+    expect(probe.listenerSupervisorMatch).toBeNull();
+    expect(evaluateGatewayAttachment(owner, probe)).toMatchObject({
+      ok: false,
+      code: "unknown_listener",
+    });
   });
 
   it("reports an unprobeable supervisor rather than guessing (#6576)", async () => {

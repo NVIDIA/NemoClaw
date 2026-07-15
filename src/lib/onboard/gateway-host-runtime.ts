@@ -20,6 +20,7 @@ import { isGatewayHttpReady, waitForGatewayHttpReady } from "./gateway-http-read
 import { loadGatewayManagementDeclaration } from "./gateway-management";
 import {
   assertGatewayEffectAllowed,
+  cgroupBelongsToUnit,
   type GatewayAttachmentProbe,
   type GatewayOwner,
   resolveGatewayOwner,
@@ -51,6 +52,10 @@ export interface GatewayHostRuntimeDeps {
   spawnSyncImpl?: typeof import("node:child_process").spawnSync;
   /** Overrides the readiness request; defaults to a real probe of `endpoint`. */
   probeGatewayHttpReady?(endpoint: string | null): Promise<boolean>;
+  /** Overrides `/proc/<pid>/exe` resolution; defaults to the real symlink. */
+  readProcExe?(pid: number): string | null;
+  /** Overrides `/proc/<pid>/cgroup` reads; defaults to the real file. */
+  readProcCgroup?(pid: number): string | null;
   waitForGatewayHttpReady(): Promise<boolean>;
 }
 
@@ -115,11 +120,39 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
   }
 
   function readListenerExecPath(pid: number): string | null {
+    if (deps.readProcExe) return deps.readProcExe(pid);
     try {
       return fs.realpathSync.native(`/proc/${pid}/exe`);
     } catch {
       return null;
     }
+  }
+
+  function readProcCgroup(pid: number): string | null {
+    if (deps.readProcCgroup) return deps.readProcCgroup(pid);
+    try {
+      return fs.readFileSync(`/proc/${pid}/cgroup`, "utf-8");
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Bind a listening PID to the declared supervisor unit via cgroup membership
+   * — the authoritative evidence that the process is the unit's, not merely a
+   * same-binary impostor holding the port. Returns null when the relationship
+   * cannot be established (no PID, non-systemd supervisor, unreadable cgroup),
+   * and the caller then fails closed.
+   */
+  function readListenerSupervisorMatch(
+    owner: GatewayOwner,
+    pid: number | undefined,
+  ): boolean | null {
+    const supervisor = owner.supervisor;
+    if (!supervisor || supervisor.kind === "external" || typeof pid !== "number") return null;
+    const cgroupText = readProcCgroup(pid);
+    if (cgroupText === null) return null;
+    return cgroupBelongsToUnit(cgroupText, supervisor.serviceName);
   }
 
   /**
@@ -158,6 +191,7 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
       listenerScanComplete: scan.complete,
       supervisorActive: isSupervisorUnitActive(owner),
       listenerExecPath: typeof firstPid === "number" ? readListenerExecPath(firstPid) : null,
+      listenerSupervisorMatch: readListenerSupervisorMatch(owner, firstPid),
     };
   }
 

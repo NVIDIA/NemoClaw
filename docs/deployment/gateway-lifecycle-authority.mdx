@@ -53,7 +53,7 @@ export NEMOCLAW_GATEWAY_MANAGEMENT=/etc/nemoclaw/gateway-management.json
 | `mode` | `nemoclaw-managed` or `externally-supervised`. |
 | `endpoint` | Bare origin the gateway listens on. It must not embed credentials, a query string, or a path. Its port must be the port this NemoClaw process operates the gateway on — set `NEMOCLAW_GATEWAY_PORT` to match, or onboarding fails rather than validate one gateway and then use another. |
 | `stateDir` | Absolute path of the gateway state directory. |
-| `supervisor` | Required for `externally-supervised`, and rejected for `nemoclaw-managed`. `kind` is `systemd-system`, `systemd-user`, or `external`. |
+| `supervisor` | Required for `externally-supervised`, and rejected for `nemoclaw-managed`. `kind` is `systemd-system`, `systemd-user`, or `external`. `serviceName` and an absolute `execPath` are both required — the listening process is checked against them. |
 | `requiredCapabilities` | Capabilities onboarding needs: `gateway.health`, `sandbox.create`, `sandbox.exec`, `gpu.passthrough`. Requesting one this NemoClaw build does not implement fails before any effect. |
 
 <Note>
@@ -74,6 +74,8 @@ Before onboarding touches any provider, policy, sandbox, or registry state, Nemo
 - nothing is listening on the gateway endpoint;
 - an unrecognized process holds the gateway port;
 - more than one process holds the port, so ownership is ambiguous;
+- the listening process is not part of the declared supervisor unit — for systemd, its cgroup does not name the unit, so a same-binary process started outside the unit is rejected even though its executable matches;
+- the listening process cannot be bound to the declared unit at all;
 - the running gateway is not the declared executable;
 - the listener set cannot be enumerated, so a second gateway cannot be ruled out;
 - the supervised gateway is running but does not answer a health check.

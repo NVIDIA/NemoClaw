@@ -129,6 +129,7 @@ describe("initial onboard flow phases", () => {
           listenerScanComplete: true,
           supervisorActive: null,
           listenerExecPath: null,
+          listenerSupervisorMatch: null,
         }),
         refreshDockerDriverGatewayReuseState: async (state) => state,
         gatewayCliSupportsLifecycleCommands: () => false,
@@ -362,6 +363,7 @@ describe("initial onboard flow phases", () => {
           listenerScanComplete: true,
           supervisorActive: null,
           listenerExecPath: null,
+          listenerSupervisorMatch: null,
         }),
         refreshDockerDriverGatewayReuseState: vi.fn(async (state) => {
           calls.push("refresh-gateway-reuse");

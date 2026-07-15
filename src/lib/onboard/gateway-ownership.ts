@@ -198,6 +198,40 @@ export interface GatewayAttachmentProbe {
    * port.
    */
   listenerExecPath: string | null;
+  /**
+   * Whether the listening process is authoritatively bound to the declared
+   * supervisor unit (for systemd, via cgroup membership).
+   *
+   * `true` proves the PID belongs to the declared unit; `false` proves it does
+   * not (a foreign process, possibly the same binary launched outside the
+   * unit); `null` means the relationship could not be established. A matching
+   * executable path is not a substitute — a second process running the same
+   * binary would pass an exec check while the named unit is merely active.
+   */
+  listenerSupervisorMatch: boolean | null;
+}
+
+/**
+ * Whether a process cgroup path names the given systemd unit.
+ *
+ * `/proc/<pid>/cgroup` lists the process's cgroup path; a process managed by a
+ * systemd unit sits under a slice segment named for the unit (for example
+ * `/system.slice/openshell-gateway.service` or a `.../<unit>/...` subpath). A
+ * same-binary process started outside the unit lands in a different cgroup
+ * (a login session scope, the user slice), so this distinguishes the unit's
+ * own process from an impostor holding the same port.
+ */
+export function cgroupBelongsToUnit(cgroupText: string, serviceName: string): boolean {
+  const unit = serviceName.trim();
+  if (!unit) return false;
+  for (const line of cgroupText.split(/\r?\n/)) {
+    // cgroup v2: "0::/system.slice/unit.service"; v1: "N:controller:/path".
+    const cgroupPath = line.slice(line.lastIndexOf(":") + 1).trim();
+    if (!cgroupPath) continue;
+    const segments = cgroupPath.split("/").filter(Boolean);
+    if (segments.includes(unit)) return true;
+  }
+  return false;
 }
 
 export type GatewayAttachmentResult =
@@ -299,6 +333,32 @@ export function evaluateGatewayAttachment(
       message:
         `The set of processes holding the gateway port could not be enumerated, so a second gateway ` +
         `cannot be ruled out. NemoClaw fails closed rather than attach to an unproven single owner.`,
+    };
+  }
+
+  // Authoritative identity: the listening PID must belong to the declared
+  // supervisor unit. This is the check the executable path alone cannot make —
+  // a second process running the same binary would pass an exec comparison
+  // while the named unit is only active. Fail closed unless the relationship is
+  // positively established.
+  if (probe.listenerSupervisorMatch === false) {
+    return {
+      ok: false,
+      code: "identity_mismatch",
+      message:
+        `The process holding the gateway port is not part of ${supervisorName}. ` +
+        `A different process — possibly the same binary started outside the unit — holds the port. ` +
+        `NemoClaw will not attach to it. Stop it and let ${supervisorName} own the gateway.`,
+    };
+  }
+
+  if (probe.listenerSupervisorMatch === null) {
+    return {
+      ok: false,
+      code: "unknown_listener",
+      message:
+        `NemoClaw could not confirm that the process holding the gateway port belongs to ${supervisorName}. ` +
+        `It attaches only to a listener authoritatively bound to the declared supervisor, and fails closed otherwise.`,
     };
   }
 

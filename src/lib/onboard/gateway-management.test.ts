@@ -81,6 +81,18 @@ describe("gateway management declaration", () => {
     expect(result.ok === false && result.reason).toMatch(/supervisor is required/);
   });
 
+  it("requires supervisor.execPath so a listener can be checked against it (#6576)", () => {
+    const result = parseGatewayManagementDeclaration(
+      externalDeclaration({
+        supervisor: { kind: "systemd-system", serviceName: "openshell-gateway.service" },
+      }),
+    );
+
+    expect(result.ok === false && result.reason).toMatch(
+      /supervisor\.execPath must be a non-empty/,
+    );
+  });
+
   it("rejects unknown fields so credentials cannot ride the contract (#6576)", () => {
     const result = parseGatewayManagementDeclaration(
       externalDeclaration({ apiToken: "sk-live-not-a-real-token" }),

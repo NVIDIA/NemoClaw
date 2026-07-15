@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import type { GatewayManagementDeclaration } from "./gateway-management";
 import {
   assertGatewayEffectAllowed,
+  cgroupBelongsToUnit,
   describeGatewayOwner,
   evaluateGatewayAttachment,
   type GatewayAttachmentProbe,
@@ -41,6 +42,7 @@ function probe(overrides: Partial<GatewayAttachmentProbe> = {}): GatewayAttachme
     listenerScanComplete: true,
     supervisorActive: true,
     listenerExecPath: "/usr/local/bin/openshell-gateway",
+    listenerSupervisorMatch: true,
     ...overrides,
   };
 }
@@ -166,6 +168,29 @@ describe("externally supervised gateway attachment", () => {
     expect(result).toMatchObject({ ok: false, code: "unknown_listener" });
   });
 
+  it("rejects a same-binary process that is not part of the declared unit (#6576)", () => {
+    // The impostor answers the health probe and runs the declared executable,
+    // but its PID is not in the unit's cgroup — the exact gap an exec-path match
+    // alone would miss.
+    const result = evaluateGatewayAttachment(
+      externalOwner,
+      probe({ listenerSupervisorMatch: false }),
+    );
+
+    expect(result).toMatchObject({ ok: false, code: "identity_mismatch" });
+    expect(result.ok === false && result.message).toMatch(/not part of openshell-gateway\.service/);
+  });
+
+  it("fails closed when the listener cannot be bound to the declared unit (#6576)", () => {
+    const result = evaluateGatewayAttachment(
+      externalOwner,
+      probe({ listenerSupervisorMatch: null }),
+    );
+
+    expect(result).toMatchObject({ ok: false, code: "unknown_listener" });
+    expect(result.ok === false && result.message).toMatch(/could not confirm/);
+  });
+
   it("fails when the running gateway is not the declared executable (#6576)", () => {
     const result = evaluateGatewayAttachment(
       externalOwner,
@@ -221,5 +246,42 @@ describe("gateway owner diagnostics", () => {
       endpoint: null,
       supervisor: null,
     });
+  });
+});
+
+describe("cgroupBelongsToUnit", () => {
+  const UNIT = "openshell-gateway.service";
+
+  it("matches a cgroup v2 process in the unit's system slice (#6576)", () => {
+    expect(cgroupBelongsToUnit(`0::/system.slice/${UNIT}\n`, UNIT)).toBe(true);
+  });
+
+  it("matches a cgroup v1 process listed under the unit (#6576)", () => {
+    const v1 = [
+      "12:pids:/system.slice/openshell-gateway.service",
+      "0:name=systemd:/system.slice/openshell-gateway.service",
+    ].join("\n");
+    expect(cgroupBelongsToUnit(v1, UNIT)).toBe(true);
+  });
+
+  it("matches a user-manager unit path (#6576)", () => {
+    expect(
+      cgroupBelongsToUnit(
+        `0::/user.slice/user-1000.slice/user@1000.service/app.slice/${UNIT}`,
+        UNIT,
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects a same-binary process in a login session scope (#6576)", () => {
+    expect(cgroupBelongsToUnit("0::/user.slice/user-1000.slice/session-3.scope", UNIT)).toBe(false);
+  });
+
+  it("rejects a different unit that merely shares a prefix (#6576)", () => {
+    expect(cgroupBelongsToUnit("0::/system.slice/openshell-gateway.service.d", UNIT)).toBe(false);
+  });
+
+  it("rejects empty or unreadable cgroup text (#6576)", () => {
+    expect(cgroupBelongsToUnit("", UNIT)).toBe(false);
   });
 });

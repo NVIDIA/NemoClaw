@@ -53,8 +53,8 @@ export interface GatewaySupervisorDeclaration {
   kind: GatewaySupervisorKind;
   /** Unit (or equivalent) name the platform supervisor manages. */
   serviceName: string;
-  /** Absolute path of the gateway executable the supervisor runs, when known. */
-  execPath: string | null;
+  /** Absolute path of the gateway executable the supervisor runs. Required. */
+  execPath: string;
 }
 
 export interface GatewayManagementDeclaration {
@@ -218,14 +218,13 @@ function parseSupervisor(
   const serviceName = requireNonEmptyString(value.serviceName, "supervisor.serviceName");
   if (typeof serviceName !== "string") return serviceName;
 
-  let execPath: string | null = null;
-  if (value.execPath !== undefined && value.execPath !== null) {
-    const parsed = requireNonEmptyString(value.execPath, "supervisor.execPath");
-    if (typeof parsed !== "string") return parsed;
-    if (!path.isAbsolute(parsed)) {
-      return { error: `supervisor.execPath must be an absolute path, got ${parsed}` };
-    }
-    execPath = parsed;
+  // execPath is required, not optional: without a declared executable there is
+  // nothing to check the listening process against, and attachment would accept
+  // any live local listener that answers the health probe.
+  const execPath = requireNonEmptyString(value.execPath, "supervisor.execPath");
+  if (typeof execPath !== "string") return execPath;
+  if (!path.isAbsolute(execPath)) {
+    return { error: `supervisor.execPath must be an absolute path, got ${execPath}` };
   }
 
   return { kind: kind as GatewaySupervisorKind, serviceName, execPath };
