@@ -8,7 +8,7 @@
 import { isIP } from "node:net";
 import os from "node:os";
 
-import { redactFull } from "../../src/lib/security/redact.ts";
+const { redactFull } = await import("../../src/lib/security/redact.ts");
 
 export {
   ingestPolicyOverhead,
