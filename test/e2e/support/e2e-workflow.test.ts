@@ -46,6 +46,7 @@ describe("e2e workflow boundary", () => {
           steps: Array<{
             env?: Record<string, unknown>;
             name?: string;
+            run?: string;
             uses?: string;
             with?: Record<string, unknown>;
           }>;
@@ -65,33 +66,39 @@ describe("e2e workflow boundary", () => {
     };
 
     const openClawSetup = cloneStep("rebuild-openclaw", "Set up rebuild Buildx");
-    const openClawRoute = cloneStep(
-      "rebuild-openclaw",
-      "Route rebuild Docker builds through Buildx",
-    );
     const openClawWarm = cloneStep("rebuild-openclaw", "Warm current OpenClaw base build cache");
     openClawSetup.with!["driver-opts"] = "network=host";
-    openClawRoute.env!.REBUILD_BUILDER = "default";
+    openClawSetup.with!.use = true;
+    const openClawSteps = workflow.jobs["rebuild-openclaw"].steps;
+    openClawSteps.splice(openClawSteps.indexOf(openClawSetup) + 1, 0, {
+      name: "Route rebuild Docker builds through Buildx",
+      run: "docker buildx use external",
+    });
     openClawWarm.with!["cache-from"] = "type=gha,scope=buildkit";
     openClawWarm.with!["cache-to"] = "type=registry,ref=example.invalid/cache";
+    openClawWarm.with!.tags = "example.invalid/openclaw:latest";
     delete openClawWarm.with!.provenance;
 
     const hermesWarm = cloneStep("rebuild-hermes", "Warm current Hermes base build cache");
     hermesWarm.with!["cache-from"] = "type=gha,scope=buildkit";
     hermesWarm.with!["cache-to"] = "type=registry,ref=example.invalid/cache";
     hermesWarm.with!.provenance = true;
+    hermesWarm.with!.tags = "example.invalid/hermes:latest";
 
     fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
     try {
       expect(validateE2eWorkflowBoundary(workflowPath)).toEqual(
         expect.arrayContaining([
-          "rebuild-openclaw Buildx must enable default-load for the live Docker builds",
-          "rebuild-openclaw must route Docker builds to the configured Buildx builder",
+          "rebuild-openclaw Buildx must enable default-load for the cache warm",
+          "rebuild-openclaw Buildx setup must leave the Docker engine selected",
+          "rebuild-openclaw must keep live Docker builds on the Docker engine",
           "rebuild-openclaw base cache must import the trusted publisher cache",
+          "rebuild-openclaw base cache must load the current base image tag",
           "rebuild-openclaw must keep PR-controlled cache layers job-local",
           "rebuild-openclaw must disable provenance for Docker-loaded cache warm builds",
           "rebuild-hermes base cache must import the trusted publisher cache",
+          "rebuild-hermes base cache must load the current base image tag",
           "rebuild-hermes must keep PR-controlled cache layers job-local",
           "rebuild-hermes must disable provenance for Docker-loaded cache warm builds",
         ]),

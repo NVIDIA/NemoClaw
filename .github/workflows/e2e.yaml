@@ -2341,24 +2341,14 @@ jobs:
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
         with:
           driver-opts: default-load=true
-
-      - &route-rebuild-builds
-        name: Route rebuild Docker builds through Buildx
-        env:
-          REBUILD_BUILDER: ${{ steps.rebuild-buildx.outputs.name }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -n "${REBUILD_BUILDER}"
-          printf 'BUILDX_BUILDER=%s\n' "${REBUILD_BUILDER}" >> "${GITHUB_ENV}"
+          use: false
 
       - name: Validate OpenClaw rebuild production Docker build args
         run: scripts/check-production-build-args.sh
 
-      # This job may build PR-controlled source, so it imports the trusted
-      # publisher cache read-only and keeps any new layers job-local. Disable
-      # provenance because default-load uses the Docker exporter, which cannot
-      # load the resulting manifest list.
+      # Import the trusted publisher cache read-only and load the current base
+      # into Docker. Keep the Docker engine selected so the rebuild also reuses
+      # the production-image cache seeded during onboarding.
       - name: Warm current OpenClaw base build cache
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
@@ -2367,6 +2357,7 @@ jobs:
           file: Dockerfile.base
           cache-from: type=registry,ref=ghcr.io/nvidia/nemoclaw/sandbox-base:buildcache
           provenance: false
+          tags: ghcr.io/nvidia/nemoclaw/sandbox-base:latest
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
@@ -2441,8 +2432,6 @@ jobs:
 
       - *rebuild-buildx
 
-      - *route-rebuild-builds
-
       - &validate-hermes-rebuild-build-args
         name: Validate Hermes rebuild production Docker build args
         run: scripts/check-production-build-args.sh
@@ -2458,6 +2447,7 @@ jobs:
           # default-load uses the Docker exporter, which cannot load a
           # provenance manifest list.
           provenance: false
+          tags: ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
@@ -2516,8 +2506,6 @@ jobs:
       - *dockerhub-auth
 
       - *rebuild-buildx
-
-      - *route-rebuild-builds
 
       - *validate-hermes-rebuild-build-args
 
