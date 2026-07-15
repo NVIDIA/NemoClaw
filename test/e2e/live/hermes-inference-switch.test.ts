@@ -242,7 +242,7 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   expect(dashboardConfig.exitCode, resultText(dashboardConfig)).toBe(0);
   const dashboardModel = parseHermesModelBlock(dashboardConfig.stdout);
   expect(dashboardModel.default).toBe(SWITCH_MODEL);
-  expect(dashboardModel.provider).toBe("custom");
+  expect(dashboardModel.provider).toBe(SWITCH_PROVIDER);
   expect(dashboardModel.base_url).toBe(expectedBaseUrl());
   expect(dashboardModel.api_mode).toBe(expectedApiMode());
 
