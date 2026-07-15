@@ -12,7 +12,13 @@ export const PREFLIGHT_DEFERRED_RECREATE_MESSAGE =
 export function preflightGatewayCleanupDecision(opts: {
   gatewayReuseState: GatewayReuseState;
   isDockerDriverGatewayEnabled: boolean;
+  externallySupervised?: boolean;
 }): PreflightGatewayCleanupAction {
+  // An externally supervised gateway is never cleaned up by NemoClaw, even from
+  // preflight: stale metadata or an interrupted prior run must not let this
+  // destroy a gateway whose declared supervisor is the sole lifecycle authority
+  // (#6576). The FSM attach path is the only thing that touches it.
+  if (opts.externallySupervised) return "noop";
   if (opts.gatewayReuseState !== "stale" && opts.gatewayReuseState !== "active-unnamed") {
     return "noop";
   }
@@ -22,6 +28,7 @@ export function preflightGatewayCleanupDecision(opts: {
 export interface PreflightGatewayCleanupDeps {
   gatewayReuseState: GatewayReuseState;
   isDockerDriverGatewayEnabled: boolean;
+  externallySupervised?: boolean;
   cliDisplayName: string;
   dashboardPort: number;
   log: (line: string) => void;
@@ -39,6 +46,7 @@ export function applyPreflightGatewayCleanup(deps: PreflightGatewayCleanupDeps):
   const action = preflightGatewayCleanupDecision({
     gatewayReuseState: deps.gatewayReuseState,
     isDockerDriverGatewayEnabled: deps.isDockerDriverGatewayEnabled,
+    externallySupervised: deps.externallySupervised,
   });
   if (action === "defer") {
     deps.warn(warnLine(PREFLIGHT_DEFERRED_RECREATE_MESSAGE));

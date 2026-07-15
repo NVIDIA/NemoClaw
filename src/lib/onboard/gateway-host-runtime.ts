@@ -23,6 +23,7 @@ import {
   cgroupBelongsToUnit,
   type GatewayAttachmentProbe,
   type GatewayOwner,
+  isExternallySupervised,
   resolveGatewayOwner,
 } from "./gateway-ownership";
 import type { PortProbeResult } from "./preflight";
@@ -68,6 +69,8 @@ export interface GatewayHostRuntime {
   /** HTTPS endpoint of the gateway this process operates. */
   getGatewayLocalEndpoint(): string;
   getGatewayOwner(): GatewayOwner;
+  /** Whether an external supervisor owns the gateway lifecycle this run (#6576). */
+  isGatewayExternallySupervised(): boolean;
   getGatewayStartEnv(): Record<string, string>;
   /** Gateway-ownership dependencies consumed by the onboarding FSM handler. */
   machineGatewayOwnerDeps: {
@@ -239,6 +242,7 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     getGatewayLocalEndpoint,
     getGatewayOwner,
     getGatewayStartEnv,
+    isGatewayExternallySupervised: () => isExternallySupervised(getGatewayOwner()),
     machineGatewayOwnerDeps: { probeGatewayAttachment, resolveGatewayOwner: getGatewayOwner },
     probeGatewayAttachment,
   };

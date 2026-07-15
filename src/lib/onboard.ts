@@ -1510,11 +1510,8 @@ async function preflight(
     exitProcess: (code) => process.exit(code),
   });
 
-  // Classify gateway state before port checks. Legacy non-Docker-driver
-  // path destroys stale/unnamed gateways here so the port frees up for
-  // checks below; Docker-driver path defers the destructive recreate to
-  // step [2/8] (see applyPreflightGatewayCleanup). If another gateway is
-  // active but the named one exists, select it to avoid false conflicts.
+  // Classify gateway state before port checks; the legacy path destroys
+  // stale/unnamed gateways here while the Docker-driver path defers (#2020).
   const gatewaySnapshot = selectNamedGatewayForReuseIfNeeded(getGatewayReuseSnapshot());
   let gatewayReuseState = gatewaySnapshot.gatewayReuseState;
   gatewayReuseState = await refreshDockerDriverGatewayReuseState(gatewayReuseState);
@@ -1526,6 +1523,7 @@ async function preflight(
   gatewayReuseState = await reconcilePreflightGatewayReuseState({
     gatewayReuseState,
     supportsLifecycleCommands: gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
+    externallySupervised: isGatewayExternallySupervised(),
     gatewayName: GATEWAY_NAME,
     verifyGatewayContainerRunning,
     recoverGatewayRuntime,
@@ -1545,6 +1543,7 @@ async function preflight(
   gatewayReuseState = applyPreflightGatewayCleanup({
     gatewayReuseState,
     isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled(),
+    externallySupervised: isGatewayExternallySupervised(),
     cliDisplayName: cliDisplayName(),
     dashboardPort: getOnboardDashboardPort(),
     log: console.log,
@@ -2174,6 +2173,7 @@ const {
   assertGatewayStartAllowed,
   getGatewayLocalEndpoint,
   getGatewayStartEnv,
+  isGatewayExternallySupervised,
   machineGatewayOwnerDeps,
 } = createGatewayHostRuntime({
   applyOverlayfsAutoFix,
