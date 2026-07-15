@@ -278,4 +278,27 @@ describe("evaluateTelegramDiagnostics over real gateway-log windows (#6743)", ()
     const reach = report.signals.find((s) => s.label === "Bot API reachability");
     expect(reach?.severity).toBe("ok");
   });
+
+  it("does not carry a pre-outage inbound across a later failure into healthy (#6888)", () => {
+    // inbound → network failure → provider ready: the bridge recovered but no
+    // inbound has arrived since, so delivery is idle, not healthy.
+    const bc = parseTelegramBreadcrumbs([
+      "[telegram] [default] inbound update received (update_id=present; message_id=present)",
+      "[telegram] [default] Bot API startup probe failed: ETIMEDOUT",
+      "[telegram] [default] provider ready (Bot API reachable; agent replies use inference.local)",
+    ]);
+    expect(bc).toMatchObject({ providerReady: true, inboundReceived: false });
+    expect(evaluateTelegramDiagnostics(baseInput({ breadcrumbs: bc })).verdict).toBe("idle");
+  });
+
+  it("reports healthy again once an inbound arrives after the recovery (#6888)", () => {
+    const bc = parseTelegramBreadcrumbs([
+      "[telegram] [default] inbound update received (update_id=present; message_id=present)",
+      "[telegram] [default] Bot API startup probe failed: ETIMEDOUT",
+      "[telegram] [default] provider ready (Bot API reachable; agent replies use inference.local)",
+      "[telegram] Inbound message telegram:5209865443 -> @bot (direct, 3 chars)",
+    ]);
+    expect(bc).toMatchObject({ providerReady: true, inboundReceived: true });
+    expect(evaluateTelegramDiagnostics(baseInput({ breadcrumbs: bc })).verdict).toBe("healthy");
+  });
 });

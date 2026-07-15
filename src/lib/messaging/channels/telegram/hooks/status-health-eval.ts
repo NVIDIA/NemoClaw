@@ -370,13 +370,14 @@ export function parseTelegramBreadcrumbs(logLines: readonly string[]): TelegramB
   let lastCredentialUnresolved = -1;
   let lastHttpError = -1;
   let lastHttpErrorCode: number | null = null;
+  let lastInbound = -1;
   telegramLines.forEach((line, index) => {
     const httpErr = /startup probe returned HTTP\s+(\d{3})/i.exec(line);
     if (httpErr) {
       lastHttpError = index;
       lastHttpErrorCode = Number(httpErr[1]);
     }
-    if (/inbound update received|inbound message telegram/i.test(line)) bc.inboundReceived = true;
+    if (/inbound update received|inbound message telegram/i.test(line)) lastInbound = index;
     if (REACHED.test(line)) lastReached = index;
     if (NETWORK_FAIL.test(line)) lastNetworkFail = index;
     if (/bridge did not start within/i.test(line)) lastBridgeNotStarted = index;
@@ -415,5 +416,17 @@ export function parseTelegramBreadcrumbs(logLines: readonly string[]): TelegramB
     // not warn about a stale code while the verdict reads healthy (#6743).
     bc.startupHttpError = lastHttpErrorCode;
   }
+  // Inbound delivery counts as "current" only when the latest inbound is newer
+  // than the latest outage boundary. A stale inbound from before a later
+  // failure/recovery must not read as healthy delivery — a recovered bridge
+  // with no inbound since recovery is idle, not healthy (#6888).
+  const lastOutage = Math.max(
+    lastNetworkFail,
+    lastBridgeNotStarted,
+    lastTokenRejected,
+    lastCredentialUnresolved,
+    lastHttpError,
+  );
+  bc.inboundReceived = lastInbound !== -1 && lastInbound > lastOutage;
   return bc;
 }
