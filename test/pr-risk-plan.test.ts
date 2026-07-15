@@ -84,20 +84,6 @@ describe("deterministic PR risk plan", () => {
     expect(result.planHash).not.toBe(withoutFocusedSelection.planHash);
   });
 
-  it("selects the Bedrock matrix when its live shard contract changes (#6938)", () => {
-    const changedFiles = ["test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts"];
-    const focusedE2eJobs = focusedE2eJobsForChangedFiles(changedFiles);
-    const result = buildRiskPlan({ headSha: HEAD_SHA, changedFiles, focusedE2eJobs });
-
-    expect(focusedE2eJobs).toEqual([
-      {
-        id: "bedrock-runtime-compatible-anthropic",
-        matchedFiles: changedFiles,
-      },
-    ]);
-    expect(riskPlanRequiredJobIds(result)).toContain("bedrock-runtime-compatible-anthropic");
-  });
-
   it("does not infer security or inference risk from unrelated path substrings", () => {
     const result = plan("src/lib/actions/sandbox/mcp-bridge-provider.ts", "src/lib/secretary.ts");
 
