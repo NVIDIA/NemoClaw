@@ -39,9 +39,9 @@ NON_INTERACTIVE="\${NON_INTERACTIVE:-}"
 NEMOCLAW_PROVIDER="\${NEMOCLAW_PROVIDER:-}"
 NEMOCLAW_NO_EXPRESS="\${NEMOCLAW_NO_EXPRESS:-}"
 maybe_offer_express_install
-printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s VLLM_PROFILE=%s POLICY=%s YES=%s SANDBOX=%s\\n" \\
+printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s POLICY=%s YES=%s SANDBOX=%s\\n" \\
   "\${NON_INTERACTIVE:-}" "\${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}" "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_MODEL:-}" \\
-  "\${NEMOCLAW_VLLM_MODEL:-}" "\${NEMOCLAW_VLLM_PROFILE:-}" "\${NEMOCLAW_POLICY_MODE:-}" "\${NEMOCLAW_YES:-}" "\${NEMOCLAW_SANDBOX_NAME:-}"
+  "\${NEMOCLAW_VLLM_MODEL:-}" "\${NEMOCLAW_POLICY_MODE:-}" "\${NEMOCLAW_YES:-}" "\${NEMOCLAW_SANDBOX_NAME:-}"
 '''
 env = dict(os.environ)
 env["INSTALLER_UNDER_TEST"] = installer
@@ -158,23 +158,6 @@ detect_express_platform
     );
   });
 
-  it("parses and documents the experimental single-user Station profile", () => {
-    const result = spawnSync(
-      "bash",
-      [INSTALLER_PAYLOAD, "--station-experimental-single-user", "--help"],
-      {
-        cwd: path.join(import.meta.dirname, ".."),
-        encoding: "utf-8",
-      },
-    );
-    const output = `${result.stdout}${result.stderr}`;
-
-    expect(result.status, output).toBe(0);
-    expect(output).toMatch(
-      /--station-experimental-single-user\s+Use the experimental single-user DGX Station profile/,
-    );
-  });
-
   it("offers express install when curl-piped stdin still has a controlling TTY", () => {
     const result = runExpressPromptWithTty("y\n", "pipe");
     const output = `${result.stdout}${result.stderr}`;
@@ -191,7 +174,7 @@ detect_express_platform
     expect(output).toMatch(/Run express install/);
     expect(output).toMatch(/Using express install for DGX Spark/);
     expect(output).toMatch(
-      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL= VLLM_MODEL= VLLM_PROFILE= POLICY=suggested YES=1 SANDBOX=my-assistant/,
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=my-assistant/,
     );
   });
 
@@ -209,7 +192,7 @@ detect_express_platform
       /Managed vLLM pulls the configured vLLM image\/model and runs a local vLLM inference container/,
     );
     expect(output).toMatch(
-      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL= VLLM_MODEL=custom-qwen3\.6 VLLM_PROFILE= POLICY=suggested YES=1 SANDBOX=my-assistant/,
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL= VLLM_MODEL=custom-qwen3\.6 POLICY=suggested YES=1 SANDBOX=my-assistant/,
     );
   });
 
@@ -222,7 +205,7 @@ detect_express_platform
     expect(output).toMatch(/Detected DGX Spark/);
     expect(output).toMatch(/Sandbox name: custom-spark/);
     expect(output).toMatch(
-      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL= VLLM_MODEL= VLLM_PROFILE= POLICY=suggested YES=1 SANDBOX=custom-spark/,
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=custom-spark/,
     );
   });
 
@@ -237,7 +220,7 @@ detect_express_platform
     expect(output).toMatch(/approximately 352 GB model/);
     expect(output).toMatch(/Using express install for DGX Station/);
     expect(output).toMatch(
-      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=nvidia\/nemotron-3-ultra-550b-a55b VLLM_MODEL=nemotron-3-ultra-550b-a55b VLLM_PROFILE= POLICY=suggested YES=1 SANDBOX=my-assistant/,
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=nvidia\/nemotron-3-ultra-550b-a55b VLLM_MODEL=nemotron-3-ultra-550b-a55b POLICY=suggested YES=1 SANDBOX=my-assistant/,
     );
   });
 
@@ -246,153 +229,10 @@ detect_express_platform
       NEMOCLAW_VLLM_MODEL: "nvidia/nemotron-3-ultra-550b-a55b",
     });
     const output = `${result.stdout}${result.stderr}`;
-
     expect(result.status, output).toBe(0);
     expect(output).toMatch(
-      /MODEL=nvidia\/nemotron-3-ultra-550b-a55b VLLM_MODEL=nemotron-3-ultra-550b-a55b VLLM_PROFILE=/,
+      /MODEL=nvidia\/nemotron-3-ultra-550b-a55b VLLM_MODEL=nemotron-3-ultra-550b-a55b POLICY=/,
     );
-  });
-
-  it("uses the opt-in experimental single-user Station profile with one confirmation", () => {
-    const result = runExpressPromptWithTty("\n", "pipe", "DGX Station", {
-      STATION_EXPERIMENTAL_SINGLE_USER: "1",
-    });
-    const output = `${result.stdout}${result.stderr}`;
-    expect(result.status, output).toBe(0);
-    expect(output).toMatch(
-      /managed local vLLM with the experimental single-user Nemotron Ultra profile/,
-    );
-    expect(output).toMatch(/This opt-in profile uses the qualified single-user Station runtime/);
-    expect(output.match(/Run express install with these settings\?/g)).toHaveLength(1);
-    expect(output).toMatch(/Using express install for DGX Station/);
-    expect(output).toMatch(
-      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=nemotron-ultra VLLM_MODEL=nemotron-3-ultra-550b-a55b VLLM_PROFILE=experimental-single-user POLICY=suggested YES=1 SANDBOX=my-assistant/,
-    );
-  });
-
-  it("accepts matching experimental Station model and profile selectors", () => {
-    const result = runExpressPromptWithTty("\n", "pipe", "DGX Station", {
-      STATION_EXPERIMENTAL_SINGLE_USER: "1",
-      NEMOCLAW_VLLM_MODEL: "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
-      NEMOCLAW_MODEL: "nemotron-ultra",
-      NEMOCLAW_VLLM_PROFILE: "experimental-single-user",
-      NEMOCLAW_VLLM_PORT: "8000",
-      NEMOCLAW_CONTEXT_WINDOW: "262144",
-      NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL: "http://host.openshell.internal/",
-    });
-    const output = `${result.stdout}${result.stderr}`;
-    expect(result.status, output).toBe(0);
-    expect(output).toMatch(
-      /MODEL=nemotron-ultra VLLM_MODEL=nemotron-3-ultra-550b-a55b VLLM_PROFILE=experimental-single-user/,
-    );
-  });
-
-  it("rejects an inherited experimental profile from ordinary Station express", () => {
-    const result = runExpressPromptWithTty("\n", "pipe", "DGX Station", {
-      NEMOCLAW_VLLM_PROFILE: "experimental-single-user",
-    });
-    const output = `${result.stdout}${result.stderr}`;
-
-    expect(result.status, output).not.toBe(0);
-    expect(output).toMatch(
-      /NEMOCLAW_VLLM_PROFILE='experimental-single-user' cannot select a DGX Station express profile by itself/,
-    );
-    expect(output).toMatch(/Use --station-experimental-single-user/);
-    expect(output).not.toMatch(/Run express install/);
-  });
-
-  it("preserves the experimental selector for advanced direct onboarding", () => {
-    const result = runExpressPromptWithTty("\n", "pipe", "DGX Station", {
-      NEMOCLAW_PROVIDER: "install-vllm",
-      NEMOCLAW_VLLM_MODEL: "nemotron-3-ultra-550b-a55b",
-      NEMOCLAW_VLLM_PROFILE: "experimental-single-user",
-    });
-    const output = `${result.stdout}${result.stderr}`;
-
-    expect(result.status, output).toBe(0);
-    expect(output).toMatch(
-      /Skipping express prompt \(NEMOCLAW_PROVIDER=install-vllm already set\)/,
-    );
-    expect(output).toMatch(
-      /PROVIDER=install-vllm .*VLLM_MODEL=nemotron-3-ultra-550b-a55b VLLM_PROFILE=experimental-single-user/,
-    );
-  });
-
-  it("rejects combining the experimental Station profile with the DeepSeek override", () => {
-    const result = runExpressPromptWithTty("\n", "pipe", "DGX Station", {
-      STATION_EXPERIMENTAL_SINGLE_USER: "1",
-      STATION_DEEPSEEK: "1",
-    });
-    const output = `${result.stdout}${result.stderr}`;
-    expect(result.status, output).not.toBe(0);
-    expect(output).toMatch(
-      /--station-experimental-single-user cannot be combined with --station-deepseek/,
-    );
-    expect(output).not.toMatch(/Run express install/);
-  });
-
-  it("rejects the experimental single-user profile on non-Station platforms", () => {
-    const result = runExpressPromptWithTty("\n", "pipe", "DGX Spark", {
-      STATION_EXPERIMENTAL_SINGLE_USER: "1",
-    });
-    const output = `${result.stdout}${result.stderr}`;
-    expect(result.status, output).not.toBe(0);
-    expect(output).toMatch(
-      /--station-experimental-single-user requires a detected DGX Station \(detected: DGX Spark\)/,
-    );
-    expect(output).not.toMatch(/Run express install/);
-  });
-
-  it.each([
-    ["NEMOCLAW_NO_EXPRESS", "1", /cannot be combined with NEMOCLAW_NO_EXPRESS=1/],
-    ["NON_INTERACTIVE", "1", /cannot be combined with --non-interactive/],
-    ["NEMOCLAW_PROVIDER", "install-vllm", /conflicts with NEMOCLAW_PROVIDER=install-vllm/],
-  ])("rejects %s when the experimental Station profile would otherwise be ignored", (name, value, message) => {
-    const result = runExpressPromptWithTty("\n", "pipe", "DGX Station", {
-      STATION_EXPERIMENTAL_SINGLE_USER: "1",
-      [name]: value,
-    });
-    const output = `${result.stdout}${result.stderr}`;
-    expect(result.status, output).not.toBe(0);
-    expect(output).toMatch(message);
-    expect(output).not.toMatch(/Run express install/);
-  });
-
-  it.each([
-    [
-      "NEMOCLAW_VLLM_MODEL",
-      "deepseek-v4-flash",
-      /conflicts with NEMOCLAW_VLLM_MODEL='deepseek-v4-flash'/,
-    ],
-    ["NEMOCLAW_MODEL", "other-served-model", /conflicts with NEMOCLAW_MODEL='other-served-model'/],
-    [
-      "NEMOCLAW_VLLM_PROFILE",
-      "another-profile",
-      /conflicts with NEMOCLAW_VLLM_PROFILE='another-profile'/,
-    ],
-    [
-      "NEMOCLAW_VLLM_EXTRA_ARGS_JSON",
-      '["--enable-prefix-caching"]',
-      /cannot be combined with NEMOCLAW_VLLM_EXTRA_ARGS_JSON/,
-    ],
-    ["NEMOCLAW_VLLM_PORT", "9000", /conflicts with NEMOCLAW_VLLM_PORT='9000'/],
-    ["NEMOCLAW_VLLM_PORT", "08000", /conflicts with NEMOCLAW_VLLM_PORT='08000'/],
-    ["NEMOCLAW_CONTEXT_WINDOW", "8192", /conflicts with NEMOCLAW_CONTEXT_WINDOW='8192'/],
-    ["NEMOCLAW_CONTEXT_WINDOW", "0262144", /conflicts with NEMOCLAW_CONTEXT_WINDOW='0262144'/],
-    [
-      "NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL",
-      "http://127.0.0.1",
-      /conflicts with NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL='http:\/\/127\.0\.0\.1'/,
-    ],
-  ])("rejects conflicting %s for the qualified experimental Station profile", (name, value, message) => {
-    const result = runExpressPromptWithTty("\n", "pipe", "DGX Station", {
-      STATION_EXPERIMENTAL_SINGLE_USER: "1",
-      [name]: value,
-    });
-    const output = `${result.stdout}${result.stderr}`;
-    expect(result.status, output).not.toBe(0);
-    expect(output).toMatch(message);
-    expect(output).not.toMatch(/Run express install/);
   });
 
   it("uses DeepSeek V4 Flash for the Station demo override with one confirmation", () => {
@@ -407,7 +247,7 @@ detect_express_platform
     expect(output.match(/Run express install with these settings\?/g)).toHaveLength(1);
     expect(output).toMatch(/Using express install for DGX Station/);
     expect(output).toMatch(
-      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=deepseek-ai\/DeepSeek-V4-Flash VLLM_MODEL=deepseek-v4-flash VLLM_PROFILE= POLICY=suggested YES=1 SANDBOX=my-assistant/,
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=deepseek-ai\/DeepSeek-V4-Flash VLLM_MODEL=deepseek-v4-flash POLICY=suggested YES=1 SANDBOX=my-assistant/,
     );
   });
 
@@ -431,19 +271,6 @@ detect_express_platform
     expect(result.status, output).not.toBe(0);
     expect(output).toMatch(
       /--station-deepseek conflicts with NEMOCLAW_VLLM_MODEL='nemotron-3-ultra-550b-a55b'/,
-    );
-    expect(output).not.toMatch(/Run express install/);
-  });
-
-  it("rejects an inherited vLLM profile with the Station demo override", () => {
-    const result = runExpressPromptWithTty("\n", "pipe", "DGX Station", {
-      STATION_DEEPSEEK: "1",
-      NEMOCLAW_VLLM_PROFILE: "experimental-single-user",
-    });
-    const output = `${result.stdout}${result.stderr}`;
-    expect(result.status, output).not.toBe(0);
-    expect(output).toMatch(
-      /--station-deepseek conflicts with NEMOCLAW_VLLM_PROFILE='experimental-single-user'/,
     );
     expect(output).not.toMatch(/Run express install/);
   });
@@ -485,7 +312,7 @@ detect_express_platform
     expect(output).toMatch(/pulls the configured vLLM image\/model/);
     expect(output).not.toMatch(/approximately 352 GB model/);
     expect(output).toMatch(
-      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL= VLLM_MODEL=custom-station-model VLLM_PROFILE= POLICY=suggested YES=1 SANDBOX=my-assistant/,
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL= VLLM_MODEL=custom-station-model POLICY=suggested YES=1 SANDBOX=my-assistant/,
     );
   });
 
@@ -498,7 +325,7 @@ detect_express_platform
     expect(output).toMatch(/managed local vLLM with NVIDIA Nemotron 3 Ultra 550B/);
     expect(output).toMatch(/approximately 352 GB model/);
     expect(output).toMatch(
-      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=nvidia\/nemotron-3-ultra-550b-a55b VLLM_MODEL=nemotron-3-ultra-550b-a55b VLLM_PROFILE= POLICY=suggested YES=1 SANDBOX=my-assistant/,
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=nvidia\/nemotron-3-ultra-550b-a55b VLLM_MODEL=nemotron-3-ultra-550b-a55b POLICY=suggested YES=1 SANDBOX=my-assistant/,
     );
   });
 
@@ -556,7 +383,7 @@ detect_express_platform
     expect(output).toMatch(/Run express install/);
     expect(output).toMatch(/Using express install for Windows WSL/);
     expect(output).toMatch(
-      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-windows-ollama MODEL= VLLM_MODEL= VLLM_PROFILE= POLICY=suggested YES=1 SANDBOX=/,
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-windows-ollama MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=/,
     );
   });
 
@@ -576,9 +403,9 @@ NON_INTERACTIVE=""
 NEMOCLAW_PROVIDER=""
 NEMOCLAW_NO_EXPRESS=""
 maybe_offer_express_install
-printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s VLLM_PROFILE=%s POLICY=%s YES=%s SANDBOX=%s\\n" \\
+printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s POLICY=%s YES=%s SANDBOX=%s\\n" \\
   "\${NON_INTERACTIVE:-}" "\${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}" "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_MODEL:-}" \\
-  "\${NEMOCLAW_VLLM_MODEL:-}" "\${NEMOCLAW_VLLM_PROFILE:-}" "\${NEMOCLAW_POLICY_MODE:-}" "\${NEMOCLAW_YES:-}" "\${NEMOCLAW_SANDBOX_NAME:-}"
+  "\${NEMOCLAW_VLLM_MODEL:-}" "\${NEMOCLAW_POLICY_MODE:-}" "\${NEMOCLAW_YES:-}" "\${NEMOCLAW_SANDBOX_NAME:-}"
 `,
         ],
         {
@@ -598,7 +425,7 @@ printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%
       expect(output).toMatch(/Skipping express prompt \(no TTY\)/);
       expect(output).not.toMatch(/Run express install/);
       expect(output).toMatch(
-        /RESULT NON_INTERACTIVE= SUDO_MODE= PROVIDER= MODEL= VLLM_MODEL= VLLM_PROFILE= POLICY= YES= SANDBOX=/,
+        /RESULT NON_INTERACTIVE= SUDO_MODE= PROVIDER= MODEL= VLLM_MODEL= POLICY= YES= SANDBOX=/,
       );
     },
   );

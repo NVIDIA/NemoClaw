@@ -20,7 +20,6 @@ import { containerCanReachHostLoopback, isWsl } from "../platform";
 import { type CaptureResult, runCapture, runCaptureEx, shellQuote } from "../runner";
 import { nemoclawStateRoot } from "../state/state-root";
 import { buildSubprocessEnv } from "../subprocess-env";
-import { HOST_GATEWAY_URL, LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV } from "./local-host-url";
 import { detectNvidiaPlatform } from "./nim";
 import {
   anyRegistryModelFits,
@@ -67,7 +66,8 @@ export function resetOllamaContainerPortCache(): void {
   _ollamaContainerPort = null;
 }
 
-export { HOST_GATEWAY_URL, LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV } from "./local-host-url";
+export const HOST_GATEWAY_URL = "http://host.openshell.internal";
+export const LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV = "NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL";
 export const CONTAINER_REACHABILITY_IMAGE = "curlimages/curl:8.10.1";
 // These tags are convenience aliases for callers that want to refer to a
 // specific bootstrap model by role rather than by string. The canonical

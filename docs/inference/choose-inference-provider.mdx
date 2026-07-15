@@ -35,13 +35,6 @@ Use this status table to distinguish validated provider integrations from adapte
 | Local vLLM (managed install/start) | Tested with limitations | Local OpenAI-compatible | Appears by default on DGX Spark and DGX Station. DGX Station remains deferred until its managed-vLLM onboarding path is validated end-to-end on physical hardware. Generic Linux NVIDIA GPU hosts require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm`. Host must have the NVIDIA Container Toolkit installed and a CDI spec present (`onboard` asserts CDI presence). NemoClaw pins runtime images to immutable digests. DGX Spark and DGX Station models without a model-specific runtime use the `linux/arm64` digest published under `nvcr.io/nvidia/vllm:26.05.post1-py3`; generic Linux NVIDIA GPU hosts use the matching `linux/arm64` or `linux/amd64` digest published under `nvcr.io/nvidia/vllm:26.03.post1-py3`. The DGX Station express installer selects `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4` with a pinned Hugging Face revision and the multi-platform index digest published under `vllm/vllm-openai:v0.22.0`; that index resolves to the `linux/arm64` manifest on Station. Direct managed-vLLM profile defaults are listed in `src/lib/inference/vllm-models.ts`: DGX Spark uses `nvidia/Qwen3.6-35B-A3B-NVFP4`, DGX Station uses `deepseek-ai/DeepSeek-V4-Flash`, and Linux NVIDIA GPU uses `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8`. Image pulls from `nvcr.io` require NGC registry login (`docker login nvcr.io`); onboard prompts for the NGC API key when authentication is missing. |
 {/* provider-status:end */}
 
-<Note>
-DGX Station also has an explicitly opt-in managed-vLLM profile selected by the installer flag `--station-experimental-single-user`.
-It serves `nemotron-ultra` through `vllm-local` with a `262144` context window and leaves the canonical Station recipe unchanged when the flag is absent.
-This profile is experimental and currently requires the exact qualified local Docker image ID to be preloaded; a fresh pull is blocked until a repository-qualified manifest is published and proven.
-Refer to [Set Up vLLM](../local-inference/set-up-vllm#opt-in-to-the-experimental-single-user-station-profile) for the runtime contract and current qualification boundary.
-</Note>
-
 ## Hosted Providers
 
 Hosted providers use provider-managed endpoints and curated model choices.

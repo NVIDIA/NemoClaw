@@ -529,31 +529,6 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.model.context_window).toBeUndefined();
   });
 
-  it("routes the experimental Station Ultra profile through vllm-local at 262144 context", () => {
-    const { config } = runConfigScript({
-      NEMOCLAW_PROVIDER_KEY: "vllm-local",
-      NEMOCLAW_MODEL: "nemotron-ultra",
-      NEMOCLAW_CONTEXT_WINDOW: "262144",
-    });
-
-    expect(config._nemoclaw_upstream).toEqual({
-      provider: "vllm-local",
-      model: "nemotron-ultra",
-    });
-    expect(config.model).toMatchObject({
-      default: "nemotron-ultra",
-      provider: "custom",
-      base_url: "https://inference.local/v1",
-      context_length: 262144,
-    });
-    expect(config.model.context_window).toBeUndefined();
-    expect(config.providers["vllm-local"]).toMatchObject({
-      name: "vllm-local",
-      default_model: "nemotron-ultra",
-      discover_models: true,
-    });
-  });
-
   it("accepts Hermes' minimum context window as model.context_length (#6760)", () => {
     const settings = readHermesBuildSettings(
       buildHermesTestEnv({ NEMOCLAW_CONTEXT_WINDOW: String(MIN_HERMES_CONTEXT_WINDOW) }),

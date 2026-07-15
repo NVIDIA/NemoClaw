@@ -748,8 +748,6 @@ usage() {
   printf "    --yes-i-accept-third-party-software Accept the third-party software notice without prompting\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
   printf "    --station-deepseek   Use DeepSeek V4 Flash for DGX Station express install\n"
-  printf "    --station-experimental-single-user\n"
-  printf "                         Use the experimental single-user DGX Station profile\n"
   printf "    --version, -v        Print installer version and exit\n"
   printf "    --help, -h           Show this help message and exit\n\n"
   printf "  ${C_DIM}Environment:${C_RESET}\n"
@@ -2858,11 +2856,6 @@ STATION_ULTRA_VLLM_MODEL="nemotron-3-ultra-550b-a55b"
 STATION_ULTRA_SERVED_MODEL="nvidia/nemotron-3-ultra-550b-a55b"
 STATION_DEEPSEEK_VLLM_MODEL="deepseek-v4-flash"
 STATION_DEEPSEEK_SERVED_MODEL="deepseek-ai/DeepSeek-V4-Flash"
-STATION_EXPERIMENTAL_SINGLE_USER_PROFILE="experimental-single-user"
-STATION_EXPERIMENTAL_SINGLE_USER_SERVED_MODEL="nemotron-ultra"
-STATION_EXPERIMENTAL_SINGLE_USER_PORT="8000"
-STATION_EXPERIMENTAL_SINGLE_USER_CONTEXT_WINDOW="262144"
-STATION_EXPERIMENTAL_SINGLE_USER_SANDBOX_HOST_URL="http://host.openshell.internal"
 
 normalize_station_vllm_model() {
   printf "%s" "${1:-}" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
@@ -2885,9 +2878,6 @@ validate_station_deepseek_override() {
   if [ -n "${NEMOCLAW_PROVIDER:-}" ]; then
     error "--station-deepseek conflicts with NEMOCLAW_PROVIDER=${NEMOCLAW_PROVIDER}. Remove the provider override to use Station express install."
   fi
-  if [ -n "$(printf "%s" "${NEMOCLAW_VLLM_PROFILE:-}" | tr -d '[:space:]')" ]; then
-    error "--station-deepseek conflicts with NEMOCLAW_VLLM_PROFILE='${NEMOCLAW_VLLM_PROFILE}'. Remove the profile override to use the DeepSeek Station recipe."
-  fi
 
   local requested_model
   requested_model="$(normalize_station_vllm_model "${NEMOCLAW_VLLM_MODEL:-}")"
@@ -2899,107 +2889,10 @@ validate_station_deepseek_override() {
   esac
 }
 
-validate_station_experimental_single_user_override() {
-  local platform="$1"
-  if [ "${STATION_EXPERIMENTAL_SINGLE_USER:-}" != "1" ]; then
-    return 0
-  fi
-  if [ "${STATION_DEEPSEEK:-}" = "1" ]; then
-    error "--station-experimental-single-user cannot be combined with --station-deepseek."
-  fi
-  if [ "$platform" != "DGX Station" ]; then
-    error "--station-experimental-single-user requires a detected DGX Station (detected: ${platform:-unsupported platform})."
-  fi
-  if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ]; then
-    error "--station-experimental-single-user cannot be combined with NEMOCLAW_NO_EXPRESS=1. Remove one override."
-  fi
-  if [ "${NON_INTERACTIVE:-}" = "1" ]; then
-    error "--station-experimental-single-user selects the DGX Station express prompt and cannot be combined with --non-interactive."
-  fi
-  if [ -n "${NEMOCLAW_PROVIDER:-}" ]; then
-    error "--station-experimental-single-user conflicts with NEMOCLAW_PROVIDER=${NEMOCLAW_PROVIDER}. Remove the provider override to use Station express install."
-  fi
-
-  local requested_model
-  requested_model="$(normalize_station_vllm_model "${NEMOCLAW_VLLM_MODEL:-}")"
-  case "$requested_model" in
-    "" | "$STATION_ULTRA_VLLM_MODEL" | "$STATION_ULTRA_SERVED_MODEL" | "nvidia/nvidia-nemotron-3-ultra-550b-a55b-nvfp4") ;;
-    *)
-      error "--station-experimental-single-user conflicts with NEMOCLAW_VLLM_MODEL='${NEMOCLAW_VLLM_MODEL}'. Remove one override or set NEMOCLAW_VLLM_MODEL=${STATION_ULTRA_VLLM_MODEL}."
-      ;;
-  esac
-
-  local requested_served_model
-  requested_served_model="$(normalize_station_vllm_model "${NEMOCLAW_MODEL:-}")"
-  case "$requested_served_model" in
-    "" | "$STATION_EXPERIMENTAL_SINGLE_USER_SERVED_MODEL") ;;
-    *)
-      error "--station-experimental-single-user conflicts with NEMOCLAW_MODEL='${NEMOCLAW_MODEL}'. Remove one override or set NEMOCLAW_MODEL=${STATION_EXPERIMENTAL_SINGLE_USER_SERVED_MODEL}."
-      ;;
-  esac
-
-  local requested_profile
-  requested_profile="$(normalize_station_vllm_model "${NEMOCLAW_VLLM_PROFILE:-}")"
-  case "$requested_profile" in
-    "" | "$STATION_EXPERIMENTAL_SINGLE_USER_PROFILE") ;;
-    *)
-      error "--station-experimental-single-user conflicts with NEMOCLAW_VLLM_PROFILE='${NEMOCLAW_VLLM_PROFILE}'. Remove one override or set NEMOCLAW_VLLM_PROFILE=${STATION_EXPERIMENTAL_SINGLE_USER_PROFILE}."
-      ;;
-  esac
-
-  local requested_port
-  requested_port="$(normalize_station_vllm_model "${NEMOCLAW_VLLM_PORT:-}")"
-  case "$requested_port" in
-    "" | "$STATION_EXPERIMENTAL_SINGLE_USER_PORT") ;;
-    *)
-      error "--station-experimental-single-user conflicts with NEMOCLAW_VLLM_PORT='${NEMOCLAW_VLLM_PORT}'. Remove the override or set NEMOCLAW_VLLM_PORT=${STATION_EXPERIMENTAL_SINGLE_USER_PORT}."
-      ;;
-  esac
-
-  local requested_context_window
-  requested_context_window="$(normalize_station_vllm_model "${NEMOCLAW_CONTEXT_WINDOW:-}")"
-  case "$requested_context_window" in
-    "" | "$STATION_EXPERIMENTAL_SINGLE_USER_CONTEXT_WINDOW") ;;
-    *)
-      error "--station-experimental-single-user conflicts with NEMOCLAW_CONTEXT_WINDOW='${NEMOCLAW_CONTEXT_WINDOW}'. Remove the override or set NEMOCLAW_CONTEXT_WINDOW=${STATION_EXPERIMENTAL_SINGLE_USER_CONTEXT_WINDOW}."
-      ;;
-  esac
-
-  local requested_sandbox_host_url
-  requested_sandbox_host_url="$(printf "%s" "${NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL:-}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//; s:/*$::')"
-  case "$requested_sandbox_host_url" in
-    "" | "$STATION_EXPERIMENTAL_SINGLE_USER_SANDBOX_HOST_URL" | "host.openshell.internal") ;;
-    *)
-      error "--station-experimental-single-user conflicts with NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL='${NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL}'. Remove the override or set NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL=${STATION_EXPERIMENTAL_SINGLE_USER_SANDBOX_HOST_URL}."
-      ;;
-  esac
-
-  if [ -n "$(printf "%s" "${NEMOCLAW_VLLM_EXTRA_ARGS_JSON:-}" | tr -d '[:space:]')" ]; then
-    error "--station-experimental-single-user cannot be combined with NEMOCLAW_VLLM_EXTRA_ARGS_JSON. The qualified profile supplies the exact vLLM arguments."
-  fi
-}
-
-validate_station_express_profile_selector() {
-  local platform="$1"
-  if [ "$platform" != "DGX Station" ] || [ "${STATION_EXPERIMENTAL_SINGLE_USER:-}" = "1" ]; then
-    return 0
-  fi
-  local requested_profile
-  requested_profile="$(normalize_station_vllm_model "${NEMOCLAW_VLLM_PROFILE:-}")"
-  if [ -z "$requested_profile" ]; then
-    return 0
-  fi
-  error "NEMOCLAW_VLLM_PROFILE='${NEMOCLAW_VLLM_PROFILE}' cannot select a DGX Station express profile by itself. Use --station-experimental-single-user for the opt-in recipe, or set NEMOCLAW_PROVIDER=install-vllm for advanced direct onboarding."
-}
-
 configure_station_express_model() {
   local selected_model
   selected_model="$(normalize_station_vllm_model "${NEMOCLAW_VLLM_MODEL:-}")"
-  if [ "${STATION_EXPERIMENTAL_SINGLE_USER:-}" = "1" ]; then
-    NEMOCLAW_VLLM_PROFILE="$STATION_EXPERIMENTAL_SINGLE_USER_PROFILE"
-    NEMOCLAW_VLLM_MODEL="$STATION_ULTRA_VLLM_MODEL"
-    NEMOCLAW_MODEL="$STATION_EXPERIMENTAL_SINGLE_USER_SERVED_MODEL"
-  elif [ "${STATION_DEEPSEEK:-}" = "1" ]; then
+  if [ "${STATION_DEEPSEEK:-}" = "1" ]; then
     NEMOCLAW_VLLM_MODEL="$STATION_DEEPSEEK_VLLM_MODEL"
     NEMOCLAW_MODEL="$STATION_DEEPSEEK_SERVED_MODEL"
   elif [ -z "$selected_model" ]; then
@@ -3023,9 +2916,6 @@ configure_station_express_model() {
     esac
   fi
   export NEMOCLAW_VLLM_MODEL
-  if [ "${STATION_EXPERIMENTAL_SINGLE_USER:-}" = "1" ]; then
-    export NEMOCLAW_VLLM_PROFILE
-  fi
   if [ -n "${NEMOCLAW_MODEL:-}" ]; then
     export NEMOCLAW_MODEL
   fi
@@ -3054,10 +2944,7 @@ describe_express_install() {
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     "DGX Station")
-      if [ "${STATION_EXPERIMENTAL_SINGLE_USER:-}" = "1" ]; then
-        inference_summary="managed local vLLM with the experimental single-user Nemotron Ultra profile"
-        inference_disclosure="This opt-in profile uses the qualified single-user Station runtime and model configuration."
-      elif [ "${STATION_DEEPSEEK:-}" = "1" ]; then
+      if [ "${STATION_DEEPSEEK:-}" = "1" ]; then
         inference_summary="managed local vLLM with DeepSeek V4 Flash"
         inference_disclosure="Managed vLLM pulls the configured Station image/model and runs a local inference container."
       elif [ -n "$(printf "%s" "${NEMOCLAW_VLLM_MODEL:-}" | tr -d '[:space:]')" ]; then
@@ -3110,7 +2997,6 @@ maybe_offer_express_install() {
   local platform
   platform="$(detect_express_platform)"
   validate_station_deepseek_override "$platform"
-  validate_station_experimental_single_user_override "$platform"
   # Not on a platform we have an express recipe for — say nothing.
   if [ -z "$platform" ]; then
     return 0
@@ -3129,7 +3015,6 @@ maybe_offer_express_install() {
     info "Detected ${platform}. Skipping express prompt (NEMOCLAW_PROVIDER=${NEMOCLAW_PROVIDER} already set)."
     return 0
   fi
-  validate_station_express_profile_selector "$platform"
   local reply=""
   if [ -t 0 ]; then
     info "Detected ${platform}."
@@ -3199,14 +3084,12 @@ main() {
   ACCEPT_THIRD_PARTY_SOFTWARE=""
   FRESH=""
   STATION_DEEPSEEK=""
-  STATION_EXPERIMENTAL_SINGLE_USER=""
   for arg in "$@"; do
     case "$arg" in
       --non-interactive) NON_INTERACTIVE=1 ;;
       --yes-i-accept-third-party-software) ACCEPT_THIRD_PARTY_SOFTWARE=1 ;;
       --fresh) FRESH=1 ;;
       --station-deepseek) STATION_DEEPSEEK=1 ;;
-      --station-experimental-single-user) STATION_EXPERIMENTAL_SINGLE_USER=1 ;;
       --version | -v)
         local version_suffix
         version_suffix="$(installer_version_for_display)"

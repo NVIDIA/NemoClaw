@@ -52,7 +52,6 @@ describe("AMBIENT_RECREATE_ENV_VARS contract PRA-4 (#5735)", () => {
       "NEMOCLAW_PREFERRED_API",
       "NEMOCLAW_REASONING",
       "NEMOCLAW_VLLM_MODEL",
-      "NEMOCLAW_VLLM_PROFILE",
       "NEMOCLAW_VLLM_EXTRA_ARGS_JSON",
       "NEMOCLAW_FROM_DOCKERFILE",
       "NEMOCLAW_WEB_SEARCH_PROVIDER",
@@ -123,7 +122,6 @@ describe("isolateAmbientRecreateEnv", () => {
       NEMOCLAW_PREFERRED_API: "openai-responses",
       NEMOCLAW_REASONING: "false",
       NEMOCLAW_VLLM_MODEL: "ambient-vllm-model",
-      NEMOCLAW_VLLM_PROFILE: "experimental-single-user",
       NEMOCLAW_VLLM_EXTRA_ARGS_JSON: '{"ambient":true}',
       NEMOCLAW_FROM_DOCKERFILE: "/tmp/unrelated.Dockerfile",
       NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily",
@@ -154,7 +152,6 @@ describe("isolateAmbientRecreateEnv", () => {
     expect(env.NEMOCLAW_PREFERRED_API).toBe("openai-responses");
     expect(env.NEMOCLAW_REASONING).toBe("false");
     expect(env.NEMOCLAW_VLLM_MODEL).toBe("ambient-vllm-model");
-    expect(env.NEMOCLAW_VLLM_PROFILE).toBe("experimental-single-user");
     expect(env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON).toBe('{"ambient":true}');
     expect(env.NEMOCLAW_FROM_DOCKERFILE).toBe("/tmp/unrelated.Dockerfile");
     expect(env.NEMOCLAW_WEB_SEARCH_PROVIDER).toBe("tavily");

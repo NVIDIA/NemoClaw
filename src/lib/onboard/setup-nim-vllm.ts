@@ -199,9 +199,7 @@ export function createSetupNimVllmHandler(
         `  To install '${requiredModel}', stop the existing vLLM server on localhost:${deps.VLLM_PORT}, then rerun the original install/onboard command.`,
       );
       console.error(`  To keep '${detectedModel}' instead, start detailed setup:`);
-      console.error(
-        "    unset NEMOCLAW_PROVIDER NEMOCLAW_MODEL NEMOCLAW_VLLM_MODEL NEMOCLAW_VLLM_PROFILE",
-      );
+      console.error("    unset NEMOCLAW_PROVIDER NEMOCLAW_MODEL NEMOCLAW_VLLM_MODEL");
       console.error(`    ${cliName()} onboard --fresh`);
       console.error("  Then select Local vLLM when prompted.");
       deps.exitProcess(1);

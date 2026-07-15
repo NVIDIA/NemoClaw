@@ -904,52 +904,6 @@ describe("createSetupNim", () => {
     expect(handleVllmSelection).not.toHaveBeenCalled();
   });
 
-  it("requires the exact experimental managed runtime instead of suggesting existing local vLLM", async () => {
-    vi.stubEnv("NEMOCLAW_VLLM_PROFILE", "experimental-single-user");
-    const profile = {
-      name: "DGX Station experimental single-user",
-    } as VllmProfile;
-    const error = vi.fn();
-    const abortNonInteractive = vi.fn<SetupNimFlowDeps["abortNonInteractive"]>((message) => {
-      throw new Error(message);
-    });
-    const installVllm = vi.fn<SetupNimFlowDeps["installVllm"]>();
-    const handleVllmSelection = vi.fn<SetupNimFlowDeps["handleVllmSelection"]>();
-    const setupNim = createSetupNim(
-      makeDeps({
-        isNonInteractive: () => true,
-        getNonInteractiveProvider: () => "install-vllm",
-        error,
-        abortNonInteractive,
-        detectInferenceProviderHostState: () =>
-          makeHostState({
-            vllmRunning: true,
-            vllmProfile: profile,
-            hasVllmImage: true,
-            vllmEntries: [
-              {
-                key: "install-vllm",
-                label: "Start vLLM (DGX Station experimental single-user)",
-              },
-            ],
-          }),
-        installVllm,
-        handleVllmSelection,
-      }),
-    );
-
-    await expect(setupNim(null)).rejects.toThrow(
-      "The experimental single-user profile requires the qualified managed runtime",
-    );
-
-    const renderedError = String(error.mock.calls[0]?.[0]);
-    expect(renderedError).toContain("stop the existing server");
-    expect(renderedError).not.toContain("Select Local vLLM");
-    expect(abortNonInteractive).toHaveBeenCalledOnce();
-    expect(installVllm).not.toHaveBeenCalled();
-    expect(handleVllmSelection).not.toHaveBeenCalled();
-  });
-
   it("returns interactive occupied-port selection to the provider menu", async () => {
     vi.stubEnv("NEMOCLAW_PROVIDER", "");
     const profile = { name: "DGX Spark" } as VllmProfile;

@@ -22,7 +22,7 @@
 //                           → src/lib/onboard/providers.ts (hosted model aliases)
 //   - NEMOCLAW_PREFERRED_API → src/lib/onboard/setup-nim-selection.ts
 //   - NEMOCLAW_REASONING    → src/lib/onboard/reasoning-mode.ts
-//   - NEMOCLAW_VLLM_MODEL / NEMOCLAW_VLLM_PROFILE / NEMOCLAW_VLLM_EXTRA_ARGS_JSON
+//   - NEMOCLAW_VLLM_MODEL / NEMOCLAW_VLLM_EXTRA_ARGS_JSON
 //                           → src/lib/onboard/setup-nim-vllm.ts
 //   - NEMOCLAW_FROM_DOCKERFILE → src/lib/onboard/entry-options.ts
 //   - NEMOCLAW_POLICY_TIER / NEMOCLAW_POLICY_MODE / NEMOCLAW_POLICY_PRESETS
@@ -48,7 +48,6 @@ export const AMBIENT_RECREATE_ENV_VARS = [
   "NEMOCLAW_PREFERRED_API",
   "NEMOCLAW_REASONING",
   "NEMOCLAW_VLLM_MODEL",
-  "NEMOCLAW_VLLM_PROFILE",
   "NEMOCLAW_VLLM_EXTRA_ARGS_JSON",
   "NEMOCLAW_FROM_DOCKERFILE",
   "NEMOCLAW_WEB_SEARCH_PROVIDER",

@@ -169,33 +169,6 @@ describe("buildVllmMenuEntries", () => {
     assert.match(logs[0], /selecting the running instance/);
   });
 
-  it("keeps the exact experimental managed-install entry when vLLM is already running", () => {
-    const logs: string[] = [];
-    const entries = buildVllmMenuEntries({
-      vllmRunning: true,
-      vllmProfile: { name: "DGX Station experimental single-user" },
-      experimental: false,
-      platform: "station",
-      hasVllmImage: true,
-      env: {
-        NEMOCLAW_PROVIDER: "install-vllm",
-        NEMOCLAW_VLLM_PROFILE: "EXPERIMENTAL-SINGLE-USER",
-      },
-      log: (message) => logs.push(message),
-    });
-
-    assert.deepEqual(entries, [
-      {
-        key: "install-vllm",
-        label: "Start vLLM (DGX Station experimental single-user)",
-      },
-    ]);
-    assert.equal(logs.length, 1);
-    assert.match(logs[0], /requires the qualified managed runtime/);
-    assert.match(logs[0], /existing vLLM instance on localhost:8000 cannot be reused/);
-    assert.doesNotMatch(logs[0], /selecting the running instance/);
-  });
-
   it("does not log the override note when the user did not request install-vllm", () => {
     const logs: string[] = [];
     buildVllmMenuEntries({

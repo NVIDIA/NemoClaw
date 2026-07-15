@@ -54,6 +54,7 @@ vi.mock("./vllm-storage", async (importOriginal) => {
 });
 
 import {
+  assertVllmRegistryDigestRef,
   buildVllmRunArgs,
   detectVllmProfile,
   installVllm,
@@ -63,6 +64,7 @@ import {
   pullImage,
   resolveVllmRuntimeProfile,
   resolveVllmServedModelId,
+  VLLM_IMAGES,
 } from "./vllm";
 import { buildVllmServeCommand, VLLM_MODELS } from "./vllm-models";
 
@@ -116,25 +118,14 @@ function vllmContainerRow(
 function mockSuccessfulVllmInstall(
   containerName: string,
   ownershipResponses: readonly (() => string)[] = [() => "", () => ""],
-  endpoints: {
-    healthStatus?: string;
-    modelsResponse?: string;
-  } = {},
 ): void {
-  mocks.runCapture.mockImplementation((cmd: readonly string[]) => {
-    switch (cmd[0]) {
-      case "sh":
-        return "/usr/bin/tool\n";
-      case "curl": {
-        const url = cmd.at(-1) ?? "";
-        return url.endsWith("/health")
-          ? (endpoints.healthStatus ?? "")
-          : (endpoints.modelsResponse ?? '{"data":[]}');
-      }
-      default:
-        return "";
-    }
-  });
+  const runCaptureByCommand: Record<string, string> = {
+    curl: '{"data":[]}',
+    sh: "/usr/bin/tool\n",
+  };
+  mocks.runCapture.mockImplementation(
+    (cmd: readonly string[]) => runCaptureByCommand[cmd[0] ?? ""] ?? "",
+  );
   mocks.dockerPullWithProgressWatchdog.mockResolvedValue({
     status: 0,
     signal: null,
@@ -174,6 +165,64 @@ describe("vLLM served route identity", () => {
         "served/two",
       ]),
     ).toThrow("exactly one safe model ID");
+  });
+});
+
+describe("managed vLLM image distribution boundary", () => {
+  const digest = `sha256:${"a".repeat(64)}`;
+
+  it("accepts repository-qualified immutable registry digests", () => {
+    expect(() => assertVllmRegistryDigestRef(`vllm/vllm-openai@${digest}`)).not.toThrow();
+    expect(() =>
+      assertVllmRegistryDigestRef(`registry.example.test:5000/team/runtime@${digest}`),
+    ).not.toThrow();
+  });
+
+  it.each([
+    `sha256:${"a".repeat(64)}`,
+    "vllm/vllm-openai:latest",
+    `ubuntu@${digest}`,
+    `vllm/vllm-openai@sha256:${"A".repeat(64)}`,
+    `vllm/vllm-openai@${digest}suffix`,
+    ` vllm/vllm-openai@${digest}`,
+    `vllm/vllm-openai@${digest} `,
+  ])("rejects an unpullable or mutable product image reference %j", (image) => {
+    expect(() => assertVllmRegistryDigestRef(image)).toThrow(
+      /pullable immutable registry reference/,
+    );
+  });
+
+  it("keeps every shipped managed-vLLM image on a registry digest", () => {
+    const refs = new Set<string>();
+    for (const imageSet of Object.values(VLLM_IMAGES)) {
+      for (const value of Object.values(imageSet)) {
+        if (typeof value === "object" && value !== null && "ref" in value) {
+          refs.add(String(value.ref));
+        }
+      }
+    }
+    for (const model of VLLM_MODELS) {
+      if (model.runtime) refs.add(model.runtime.image);
+    }
+
+    expect(refs.size).toBeGreaterThan(0);
+    for (const ref of refs) {
+      expect(() => assertVllmRegistryDigestRef(ref), ref).not.toThrow();
+    }
+  });
+
+  it("refuses a local image ID before invoking Docker pull", async () => {
+    mocks.dockerPullWithProgressWatchdog.mockClear();
+    const profile = {
+      ...detectVllmProfile({ platform: "station", type: "nvidia" })!,
+      image: `sha256:${"a".repeat(64)}`,
+    };
+
+    await expect(pullImage(profile)).resolves.toEqual({
+      ok: false,
+      reason: expect.stringContaining("Local image IDs"),
+    });
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
   });
 });
 
@@ -513,7 +562,6 @@ describe("installVllm model resolution", () => {
     mkdirSpy = vi.spyOn(fs, "mkdirSync").mockImplementation(() => undefined);
     stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     delete process.env.NEMOCLAW_VLLM_MODEL;
-    delete process.env.NEMOCLAW_VLLM_PROFILE;
     delete process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON;
     delete process.env.NEMOCLAW_IGNORE_VLLM_DISK_SPACE;
     delete process.env.HF_TOKEN;
@@ -547,6 +595,29 @@ describe("installVllm model resolution", () => {
     const summary = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
     expect(summary).toContain("Model: nvidia/Qwen3.6-35B-A3B-NVFP4");
     expect(summary).not.toContain("NEMOCLAW_VLLM_MODEL override");
+  });
+
+  it("rejects a local image ID before callbacks, prompts, or Docker work", async () => {
+    const profile = {
+      ...detectVllmProfile({ platform: "station", type: "nvidia" })!,
+      image: `sha256:${"a".repeat(64)}`,
+    };
+    const promptFn = vi.fn<(q: string) => Promise<string>>();
+    const beforeInstall = vi.fn();
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn,
+      beforeInstall,
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(promptFn).not.toHaveBeenCalled();
+    expect(beforeInstall).not.toHaveBeenCalled();
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("Local image IDs"));
   });
 
   it("annotates the summary as a NEMOCLAW_VLLM_MODEL override when the env var resolves", async () => {

@@ -122,59 +122,6 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
     expect(dash._nemoclaw_upstream).toEqual(GATEWAY_CONFIG._nemoclaw_upstream);
   });
 
-  it("mirrors the experimental Station Ultra route and effective context", () => {
-    const stationUltraGateway = {
-      _config_version: 32,
-      _nemoclaw_upstream: { provider: "vllm-local", model: "nemotron-ultra" },
-      model: {
-        default: "nemotron-ultra",
-        provider: "custom",
-        base_url: "https://inference.local/v1",
-        api_key: "sk-OPENSHELL-PROXY-REWRITE",
-        context_length: 262144,
-      },
-      providers: {
-        "vllm-local": {
-          name: "vllm-local",
-          api: "https://inference.local/v1",
-          api_key: "sk-OPENSHELL-PROXY-REWRITE",
-          default_model: "nemotron-ultra",
-          discover_models: true,
-        },
-      },
-      custom_providers: [
-        {
-          name: "vllm-local",
-          base_url: "https://inference.local/v1",
-          api_key: "sk-OPENSHELL-PROXY-REWRITE",
-          discover_models: true,
-        },
-      ],
-    };
-    const src = writeYaml("station-ultra-gateway.yaml", stationUltraGateway);
-    const dst = path.join(tmpDir, "station-ultra-dashboard.yaml");
-
-    const res = runSeed(src, dst);
-    expect(res.status).toBe(0);
-
-    const dash = readYaml(dst) as Record<string, any>;
-    expect(dash._nemoclaw_upstream).toEqual({
-      provider: "vllm-local",
-      model: "nemotron-ultra",
-    });
-    expect(dash.model).toMatchObject({
-      default: "nemotron-ultra",
-      provider: "vllm-local",
-      base_url: "https://inference.local/v1",
-      context_length: 262144,
-    });
-    expect(dash.providers["vllm-local"]).toMatchObject({
-      name: "vllm-local",
-      default_model: "nemotron-ultra",
-      discover_models: true,
-    });
-  });
-
   it("mirrors only the exact native Tavily backend into dashboard config", () => {
     const src = writeYaml("gw.yaml", {
       ...GATEWAY_CONFIG,
