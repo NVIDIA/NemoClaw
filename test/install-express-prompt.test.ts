@@ -108,6 +108,43 @@ sys.exit(exit_code)
     });
   }
 
+  function detectExpressPlatformForProductName(productName: string) {
+    return spawnSync(
+      "bash",
+      [
+        "-c",
+        `
+source "$INSTALLER_UNDER_TEST" >/dev/null
+function [ {
+  if [[ "$#" -eq 3 && "$1" = "-r" && "$2" = "/sys/class/dmi/id/product_name" && "$3" = "]" ]]; then
+    return 0
+  fi
+  builtin [ "$@"
+}
+cat() {
+  if [[ "$#" -eq 1 && "$1" = "/sys/class/dmi/id/product_name" ]]; then
+    printf "%s" "$EXPRESS_PRODUCT_NAME"
+    return
+  fi
+  command cat "$@"
+}
+is_wsl_host() { return 1; }
+detect_express_platform
+`,
+      ],
+      {
+        cwd: path.join(import.meta.dirname, ".."),
+        encoding: "utf-8",
+        env: {
+          HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-platform-detect-")),
+          PATH: TEST_SYSTEM_PATH,
+          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+          EXPRESS_PRODUCT_NAME: productName,
+        },
+      },
+    );
+  }
+
   it("offers express install when curl-piped stdin still has a controlling TTY", () => {
     const result = runExpressPromptWithTty("y\n", "pipe");
     const output = `${result.stdout}${result.stderr}`;
@@ -183,6 +220,22 @@ detect_express_platform
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
     expect(result.stdout).toBe("Windows WSL");
+  });
+
+  it("recognizes Station GB300 OEM firmware as DGX Station", () => {
+    const result = detectExpressPlatformForProductName("Dell Pro Max with Station GB300");
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout).toBe("DGX Station");
+  });
+
+  it("requires both Station and GB300 for the OEM firmware match", () => {
+    for (const productName of ["Dell Pro Max with Station GB200", "Dell Pro Max with GB300"]) {
+      const result = detectExpressPlatformForProductName(productName);
+
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(result.stdout).toBe("");
+    }
   });
 
   it("maps Windows WSL express install to Windows-host Ollama", () => {

@@ -2846,7 +2846,7 @@ detect_express_platform() {
   fi
   case "$model" in
     *DGX*Spark*) printf "DGX Spark" ;;
-    *DGX*Station*) printf "DGX Station" ;;
+    *DGX*Station* | *Station*GB300*) printf "DGX Station" ;;
     *) ;;
   esac
 }

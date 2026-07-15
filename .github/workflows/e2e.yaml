@@ -296,6 +296,39 @@ jobs:
             exit 1
           fi
 
+      - name: Set up DCode profile gate Buildx
+        id: dcode-profile-gate-buildx
+        if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          driver-opts: default-load=true
+
+      - name: Route DCode profile gate Docker builds through Buildx
+        if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}
+        env:
+          DCODE_PROFILE_GATE_BUILDER: ${{ steps.dcode-profile-gate-buildx.outputs.name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${DCODE_PROFILE_GATE_BUILDER}"
+          printf 'BUILDX_BUILDER=%s\n' "${DCODE_PROFILE_GATE_BUILDER}" >> "${GITHUB_ENV}"
+
+      - name: Validate DCode profile gate production Docker build args
+        if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}
+        run: scripts/check-production-build-args.sh
+
+      # Import the trusted publisher cache without allowing PR-controlled E2E
+      # builds to replace it. The negative gate still executes every reviewed
+      # Dockerfile and proves the expected production-image failure.
+      - name: Warm DCode profile gate base build cache
+        if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          builder: ${{ steps.dcode-profile-gate-buildx.outputs.name }}
+          context: .
+          file: agents/langchain-deepagents-code/Dockerfile.base
+          cache-from: type=registry,ref=ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:buildcache
+
       - name: Configure live E2E trace directory
         env:
           TARGET_ID: ${{ matrix.id }}
@@ -2335,6 +2368,36 @@ jobs:
 
       - *dockerhub-auth
 
+      - &rebuild-buildx
+        name: Set up rebuild Buildx
+        id: rebuild-buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          driver-opts: default-load=true
+
+      - &route-rebuild-builds
+        name: Route rebuild Docker builds through Buildx
+        env:
+          REBUILD_BUILDER: ${{ steps.rebuild-buildx.outputs.name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${REBUILD_BUILDER}"
+          printf 'BUILDX_BUILDER=%s\n' "${REBUILD_BUILDER}" >> "${GITHUB_ENV}"
+
+      - name: Validate OpenClaw rebuild production Docker build args
+        run: scripts/check-production-build-args.sh
+
+      # This job may build PR-controlled source, so it imports the trusted
+      # publisher cache read-only and keeps any new layers job-local.
+      - name: Warm current OpenClaw base build cache
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          builder: ${{ steps.rebuild-buildx.outputs.name }}
+          context: .
+          file: Dockerfile.base
+          cache-from: type=registry,ref=ghcr.io/nvidia/nemoclaw/sandbox-base:buildcache
+
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
@@ -2406,6 +2469,23 @@ jobs:
 
       - *dockerhub-auth
 
+      - *rebuild-buildx
+
+      - *route-rebuild-builds
+
+      - &validate-hermes-rebuild-build-args
+        name: Validate Hermes rebuild production Docker build args
+        run: scripts/check-production-build-args.sh
+
+      - &warm-current-hermes-base
+        name: Warm current Hermes base build cache
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          builder: ${{ steps.rebuild-buildx.outputs.name }}
+          context: .
+          file: agents/hermes/Dockerfile.base
+          cache-from: type=registry,ref=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:buildcache
+
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
         with:
@@ -2461,6 +2541,14 @@ jobs:
           persist-credentials: false
 
       - *dockerhub-auth
+
+      - *rebuild-buildx
+
+      - *route-rebuild-builds
+
+      - *validate-hermes-rebuild-build-args
+
+      - *warm-current-hermes-base
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28

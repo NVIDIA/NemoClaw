@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -15,52 +14,10 @@ import {
   validateE2eWorkflowBoundary,
   validateFreeStandingWorkflowInventory,
 } from "../../../tools/e2e/workflow-boundary.mts";
+import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 import { readWorkflow, removeJobNeed } from "../../helpers/e2e-workflow-contract";
 import { testTimeoutOptions } from "../../helpers/timeouts";
 import { assertChannelsStopStartSandboxName } from "../live/channels-stop-start-safety.ts";
-
-function generateMatrixScript(): string {
-  const workflow = readWorkflow();
-  const jobs = workflow.jobs as Record<string, { steps?: Array<Record<string, unknown>> }>;
-  const generateStep = jobs["generate-matrix"]?.steps?.find(
-    (step) => step.name === "Generate E2E target matrix",
-  );
-  expect(generateStep?.run).toEqual(expect.any(String));
-  return generateStep?.run as string;
-}
-
-function generateMatrixForDispatch(env: { JOBS: string; TARGETS: string }): Record<string, string> {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-matrix-"));
-  const outputPath = path.join(tmp, "github-output");
-  const summaryPath = path.join(tmp, "github-summary");
-  try {
-    const result = spawnSync("bash", ["-c", generateMatrixScript()], {
-      cwd: process.cwd(),
-      encoding: "utf-8",
-      timeout: 120_000,
-      killSignal: "SIGKILL",
-      env: {
-        ...process.env,
-        GITHUB_OUTPUT: outputPath,
-        GITHUB_STEP_SUMMARY: summaryPath,
-        JOBS: env.JOBS,
-        TARGETS: env.TARGETS,
-      },
-    });
-    expect(result.signal).toBeNull();
-    expect(result.stderr).toBe("");
-    expect(result.status).toBe(0);
-    return Object.fromEntries(
-      fs
-        .readFileSync(outputPath, "utf-8")
-        .trim()
-        .split("\n")
-        .map((line) => line.split(/=(.*)/s).slice(0, 2)),
-    );
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
-  }
-}
 
 describe("e2e workflow boundary", () => {
   it("guards channels-stop-start destructive cleanup to test-owned sandboxes", () => {
@@ -77,6 +34,78 @@ describe("e2e workflow boundary", () => {
 
   it("keeps the live E2E target workflow scheduled, dispatchable, pinned, and artifact-safe", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
+  });
+
+  it("rejects rebuild and DCode cache wiring drift", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-build-cache-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        {
+          steps: Array<{
+            env?: Record<string, unknown>;
+            name?: string;
+            uses?: string;
+            with?: Record<string, unknown>;
+          }>;
+        }
+      >;
+    };
+    type Step = (typeof workflow.jobs)[string]["steps"][number];
+    const missingStep = (job: string, name: string): never => {
+      throw new Error(`Missing workflow step in ${job}: ${name}`);
+    };
+    const cloneStep = (job: string, name: string): Step => {
+      const steps = workflow.jobs[job].steps;
+      const index = steps.findIndex((step) => step.name === name);
+      const clone = structuredClone(steps[index] ?? missingStep(job, name));
+      steps[index] = clone;
+      return clone;
+    };
+
+    const openClawSetup = cloneStep("rebuild-openclaw", "Set up rebuild Buildx");
+    const openClawRoute = cloneStep(
+      "rebuild-openclaw",
+      "Route rebuild Docker builds through Buildx",
+    );
+    const openClawWarm = cloneStep("rebuild-openclaw", "Warm current OpenClaw base build cache");
+    openClawSetup.with!["driver-opts"] = "network=host";
+    openClawRoute.env!.REBUILD_BUILDER = "default";
+    openClawWarm.with!["cache-from"] = "type=gha,scope=buildkit";
+    openClawWarm.with!["cache-to"] = "type=registry,ref=example.invalid/cache";
+
+    const hermesWarm = cloneStep("rebuild-hermes", "Warm current Hermes base build cache");
+    hermesWarm.with!["cache-from"] = "type=gha,scope=buildkit";
+    hermesWarm.with!["cache-to"] = "type=registry,ref=example.invalid/cache";
+
+    const dcodeSetup = cloneStep("live", "Set up DCode profile gate Buildx");
+    const dcodeRoute = cloneStep("live", "Route DCode profile gate Docker builds through Buildx");
+    const dcodeWarm = cloneStep("live", "Warm DCode profile gate base build cache");
+    dcodeSetup.with!["driver-opts"] = "network=host";
+    dcodeRoute.env!.DCODE_PROFILE_GATE_BUILDER = "default";
+    dcodeWarm.with!["cache-from"] = "type=gha,scope=buildkit";
+    dcodeWarm.with!["cache-to"] = "type=registry,ref=example.invalid/cache";
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      expect(validateE2eWorkflowBoundary(workflowPath)).toEqual(
+        expect.arrayContaining([
+          "rebuild-openclaw Buildx must enable default-load for the live Docker builds",
+          "rebuild-openclaw must route Docker builds to the configured Buildx builder",
+          "rebuild-openclaw base cache must import the trusted publisher cache",
+          "rebuild-openclaw must keep PR-controlled cache layers job-local",
+          "rebuild-hermes base cache must import the trusted publisher cache",
+          "rebuild-hermes must keep PR-controlled cache layers job-local",
+          "live DCode Buildx must enable default-load for the gate Docker builds",
+          "live DCode gate must route Docker builds to the configured Buildx builder",
+          "live DCode cache warm must import the trusted publisher cache",
+          "live DCode cache warm must keep PR-controlled cache layers job-local",
+        ]),
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   // source-shape-contract: security -- Mutates the shipped workflow to prove PR-safe routing rejects credential-backed smokes
@@ -346,25 +375,21 @@ jobs:
         inventory.allowedJobs.filter((job) => !inventory.explicitOnlyJobs.includes(job)).sort(),
       );
 
-      expect(
-        generateMatrixForDispatch({ JOBS: nonHermesJobs.join(","), TARGETS: "" }),
-      ).toMatchObject({
-        hermes_selected: "false",
-        matrix: "[]",
+      expect(buildE2eWorkflowPlan({ jobs: nonHermesJobs.join(",") })).toMatchObject({
+        hermesSelected: false,
+        matrix: [],
       });
-      expect(generateMatrixForDispatch({ JOBS: hermesSelector, TARGETS: "" })).toMatchObject({
-        hermes_selected: "true",
-        matrix: "[]",
+      expect(buildE2eWorkflowPlan({ jobs: hermesSelector })).toMatchObject({
+        hermesSelected: true,
+        matrix: [],
       });
-      expect(
-        generateMatrixForDispatch({ JOBS: "", TARGETS: nonHermesTargets.join(",") }),
-      ).toMatchObject({
-        hermes_selected: "false",
-        matrix: "[]",
+      expect(buildE2eWorkflowPlan({ targets: nonHermesTargets.join(",") })).toMatchObject({
+        hermesSelected: false,
+        matrix: [],
       });
-      expect(generateMatrixForDispatch({ JOBS: "", TARGETS: hermesSelector })).toMatchObject({
-        hermes_selected: "true",
-        matrix: "[]",
+      expect(buildE2eWorkflowPlan({ targets: hermesSelector })).toMatchObject({
+        hermesSelected: true,
+        matrix: [],
       });
 
       for (const job of inventory.allowedJobs) {

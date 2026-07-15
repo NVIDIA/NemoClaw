@@ -206,6 +206,20 @@ describe("hosted inference E2E config", () => {
     expect(env).not.toHaveProperty("RANDOM_NON_SECRET");
   });
 
+  it("preserves a selected Buildx builder without widening the fixture environment", () => {
+    const env = buildAvailabilityProbeEnv({
+      HOME: "/tmp/home",
+      PATH: "/usr/bin",
+      BUILDX_BUILDER: "e2e-cache-builder",
+      GITHUB_TOKEN: "must-not-reach-child",
+      RANDOM_NON_SECRET: "not-allowlisted",
+    });
+
+    expect(env.BUILDX_BUILDER).toBe("e2e-cache-builder");
+    expect(env).not.toHaveProperty("GITHUB_TOKEN");
+    expect(env).not.toHaveProperty("RANDOM_NON_SECRET");
+  });
+
   it("builds provider reachability probes only from trusted endpoints", async () => {
     const calls: Array<{ command: TrustedShellCommand; options?: ShellProbeRunOptions }> = [];
     const provider = providerClientWithCalls(calls);

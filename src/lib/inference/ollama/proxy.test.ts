@@ -136,6 +136,42 @@ describe("promptOllamaModel installed-model fit filter", () => {
     expect(result).toBe("qwen3.5:9b");
   });
 
+  it("defaults to a requested model when it is shown in the installed model menu", async () => {
+    const setup = loadProxyWithMocks({
+      installed: ["qwen2.5:0.5b", "qwen3.6:35b"],
+      promptValues: [""],
+    });
+    active = setup;
+    const result = await setup.proxy.promptOllamaModel(
+      {
+        type: "nvidia",
+        totalMemoryMB: 131_072,
+        availableMemoryMB: 131_072,
+      },
+      { defaultModel: "qwen3.6:35b" },
+    );
+    expect(result).toBe("qwen3.6:35b");
+    expect(setup.promptArgs).toEqual(["  Choose model [2]: "]);
+  });
+
+  it("keeps the memory-based default when a requested model is not shown", async () => {
+    const setup = loadProxyWithMocks({
+      installed: ["qwen2.5:0.5b", "qwen3.5:9b"],
+      promptValues: [""],
+    });
+    active = setup;
+    const result = await setup.proxy.promptOllamaModel(
+      {
+        type: "nvidia",
+        totalMemoryMB: 131_072,
+        availableMemoryMB: 131_072,
+      },
+      { defaultModel: "qwen3.6:35b" },
+    );
+    expect(result).toBe("qwen2.5:0.5b");
+    expect(setup.promptArgs).toEqual(["  Choose model [1]: "]);
+  });
+
   it("respects unknown installed tags (not in the registry) even when nothing else fits", async () => {
     const setup = loadProxyWithMocks({
       installed: ["my-custom:model"],

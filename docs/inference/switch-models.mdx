@@ -61,10 +61,16 @@ To validate a new model before replacing the current sandbox, onboard it under a
 ## Account for Shared Gateways
 
 OpenShell exposes one inference route per gateway.
-Every registered sandbox on the same gateway, including stopped sandboxes, must record the same provider and model.
-NemoClaw exits before changing state when the requested model conflicts with another sandbox on the gateway.
+NemoClaw records each sandbox's intended model, but only one recorded route is live at a time.
+Onboarding a sandbox with another valid model warns immediately before it re-points the shared route.
+The warning names each affected sandbox and its recorded provider and model.
+When another registered sandbox uses the same provider name, `connect` verifies the custom endpoint and API family when applicable, plus the credential environment-variable name.
+It then warns and re-points the route to that sandbox's recorded provider and model.
+A different custom endpoint, API family, or credential environment-variable name remains fail-closed because `connect` cannot restore that provider metadata with a provider/model-only route change.
+Remove or re-onboard the conflicting sandbox before applying a different provider-global identity.
 
-Align the sandboxes to one route, remove a sandbox you no longer need, or onboard a sandbox with another `NEMOCLAW_GATEWAY_PORT`.
+`$$nemoclaw <name> status` shows the recorded model and adds an explicit drift warning when another sandbox's route is live.
+Runtime `inference set` remains fail-closed when the requested change conflicts with another registered sandbox or when route metadata is incomplete.
 
 ## Verify the Change
 

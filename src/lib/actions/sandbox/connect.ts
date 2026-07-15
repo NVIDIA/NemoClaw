@@ -724,6 +724,9 @@ function ensureSandboxInferenceRouteUnlocked(
     assertNoOpenShellGatewayEndpointOverride();
     const { provider, model } = inference;
     const gatewayName = resolveSandboxGatewayName(sb);
+    // The live route exposes only provider/model. Prove the target's durable
+    // custom endpoint/API identity before any route read, probe, or mutation.
+    assertSandboxGatewayRouteCompatible(sandboxName, sb, gatewayName);
     const live = parseGatewayInference(
       captureOpenshell(buildGatewayInferenceGetArgs(gatewayName), {
         ignoreError: true,
@@ -732,7 +735,6 @@ function ensureSandboxInferenceRouteUnlocked(
     );
     const plan = planInferenceRouteReconcile(live, { provider, model });
     if (plan.kind !== "aligned") {
-      assertSandboxGatewayRouteCompatible(sandboxName, sb, gatewayName);
       const recordedRoute = `${sanitizeRouteValueForDisplay(provider)}/${sanitizeRouteValueForDisplay(model)}`;
       if (plan.kind === "diverged") {
         // Shared gateway: re-point loudly (even when quiet) — silent revert was

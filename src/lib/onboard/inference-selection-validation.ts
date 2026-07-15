@@ -162,15 +162,26 @@ export function createInferenceSelectionValidationHelpers(
     // the probe could otherwise rebind to a private/internal address after this
     // public preflight (TOCTOU — cv review, #6293).
     if (preflight.ok) return { pinnedAddresses: preflight.addresses };
+    const reason = preflight.reason ?? "endpoint resolves to a private/internal address";
+    // A preflight failure because the host does not resolve (an unreachable /
+    // non-existent endpoint) is a transport failure, not an endpoint-policy
+    // rejection. Mark it with curl's "could not resolve host" status (6) so it
+    // routes through the transport recovery path — a DNS/VPN/endpoint-URL hint
+    // plus a retry/back/exit prompt — instead of silently looping back to
+    // provider selection. A private-IP SSRF block keeps status 0: it resolved
+    // fine, the address is just refused. (#6854)
+    const unresolvedHost = /cannot resolve endpoint host|did not resolve to any address/i.test(
+      reason,
+    );
     const syntheticProbe = {
       ok: false as const,
-      message: preflight.reason,
+      message: reason,
       failures: [
         {
           name: "SSRF preflight",
           httpStatus: 0,
-          curlStatus: 0,
-          message: preflight.reason ?? "endpoint resolves to a private/internal address",
+          curlStatus: unresolvedHost ? 6 : 0,
+          message: reason,
           body: "",
         },
       ],

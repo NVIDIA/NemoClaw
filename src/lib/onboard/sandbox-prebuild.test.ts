@@ -49,6 +49,7 @@ describe("sandbox BuildKit prebuild", () => {
     vi.stubEnv("DOCKER_HOST", "unix:///var/run/docker.sock");
     vi.stubEnv("DOCKER_CONFIG", "/home/user/.docker-ci");
     vi.stubEnv("DOCKER_CONTEXT", "remote-builder");
+    vi.stubEnv("BUILDX_BUILDER", "cache-builder");
     vi.stubEnv("XDG_CONFIG_HOME", "/home/user/.config");
     vi.stubEnv("HTTPS_PROXY", "http://proxy:8080");
     vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "secret");
@@ -68,6 +69,7 @@ describe("sandbox BuildKit prebuild", () => {
       DOCKER_HOST: "unix:///var/run/docker.sock",
       DOCKER_CONFIG: "/home/user/.docker-ci",
       DOCKER_CONTEXT: "remote-builder",
+      BUILDX_BUILDER: "cache-builder",
       XDG_CONFIG_HOME: "/home/user/.config",
       HTTPS_PROXY: "http://proxy:8080",
     });

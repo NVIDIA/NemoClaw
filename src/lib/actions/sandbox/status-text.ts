@@ -249,11 +249,9 @@ function printAgentVersion(context: SandboxStatusTextContext, sandbox: SandboxEn
   }
 }
 
-// The Model/Provider lines above show the live gateway route, which the
-// shared per-gateway route lets another sandbox move (#6315). When it no
-// longer matches this sandbox's recorded route, say so instead of presenting
-// the live value as this sandbox's own; wording mirrors the connect-time
-// divergence warning (#3726).
+// The Model/Provider lines above show this sandbox's recorded route. The live
+// shared route can differ after another onboard, so report that drift
+// separately; wording mirrors the connect-time divergence warning (#3726).
 function printInferenceRouteDrift(
   drift: SandboxStatusRouteDrift | null,
   sandboxName: string,
@@ -266,6 +264,15 @@ function printInferenceRouteDrift(
   );
   const { liveProvider, liveModel, recordedRoute } = display;
   console.log(`    ${YW}Warning: ${display.warning}${R}`);
+  if (!drift.canConnect) {
+    console.log(
+      `    ${YW}The recorded route cannot be restored with ${CLI_NAME} connect while another registered sandbox uses different provider-global endpoint, API-family, or credential identity.${R}`,
+    );
+    console.log(
+      `    ${YW}Remove or re-onboard the conflicting sandbox before reconnecting '${sandboxName}'.${R}`,
+    );
+    return;
+  }
   console.log(
     `    ${YW}${CLI_NAME} ${shellQuote(sandboxName)} connect realigns the gateway to ${recordedRoute}; to adopt the live route instead:${R}`,
   );
