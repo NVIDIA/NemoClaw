@@ -964,7 +964,7 @@ fi`,
     const freshCommand = "curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --fresh";
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toContain(freshCommand);
-    // The installer must have bailed out before invoking nemoclaw onboard.
+    expect(`${result.stdout}${result.stderr}`).toContain("nemoclaw onboard --resume");
     expect(fs.existsSync(onboardLog)).toBe(false);
   });
 
