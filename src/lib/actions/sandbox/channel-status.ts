@@ -503,7 +503,7 @@ function buildBasicChannelReport(
   agent: AgentDefinition,
   deps: Required<StatusDeps>,
   diagnostic: MessagingChannelDiagnosticSpec,
-  options: { readonly includeDeepDiagnostics?: boolean } = {},
+  options: { readonly includeDeepDiagnostics?: boolean; readonly channelPaused?: boolean } = {},
 ): ChannelStatusSingleReport {
   const entry = deps.getSandbox(sandboxName);
   const enabled = registry.getConfiguredMessagingChannelsFromEntry(entry).includes(channelName);
@@ -540,13 +540,18 @@ function buildBasicChannelReport(
     signals.push(...buildConfigStatusSignals(sandboxName, channelName, entry, agent, deps));
   }
   if (diagnostic.deepProbe !== undefined) {
-    // Channel has a deep probe the summary view never runs. Say so instead of
-    // leaving a silent all-[ok] that reads as healthy (#6743).
+    // Channel has a deep probe this path does not run: the summary view never
+    // runs it, and a paused channel is not probed in detail view. Say so instead
+    // of leaving a silent all-[ok] that reads as healthy (#6743).
     signals.push({
       label: "Runtime health",
       severity: "info",
-      detail: "not checked in summary view",
-      hint: `run \`${CLI_NAME} ${sandboxName} channels status --channel ${channelName}\` to probe live health`,
+      detail: options.channelPaused
+        ? `not checked — ${channelName} is currently paused`
+        : "not checked in summary view",
+      hint: options.channelPaused
+        ? undefined
+        : `run \`${CLI_NAME} ${sandboxName} channels status --channel ${channelName}\` to probe live health`,
     });
   } else if (options.includeDeepDiagnostics ?? true) {
     signals.push({
@@ -727,7 +732,9 @@ export async function showSandboxChannelStatus(
       report: logTailEvaluator(sandboxName, agent, deps),
     };
   } else {
-    report = buildBasicChannelReport(sandboxName, channelName, agent, deps, diagnostic);
+    report = buildBasicChannelReport(sandboxName, channelName, agent, deps, diagnostic, {
+      channelPaused: channelIsPaused,
+    });
   }
 
   if (!(asJson && quietJson)) {
