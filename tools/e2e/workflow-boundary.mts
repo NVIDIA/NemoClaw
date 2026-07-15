@@ -4009,9 +4009,16 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const dcodeGateIndex = dcodeProfileImportGate
     ? steps.indexOf(dcodeProfileImportGate)
     : steps.length;
-  const routesDcodeBuildsThroughBuildx = steps
-    .slice(0, dcodeGateIndex)
-    .some((step) => stringValue(step.run).includes("BUILDX_BUILDER="));
+  const routesDcodeBuildsThroughBuildx = steps.slice(0, dcodeGateIndex).some((step) => {
+    const stepCanRunForDcode = step["if"] === undefined || step["if"] === dcodeTargetIf;
+    const run = stringValue(step.run);
+    return (
+      stepCanRunForDcode &&
+      (stringValue(step.uses).startsWith("docker/setup-buildx-action@") ||
+        run.includes("BUILDX_BUILDER=") ||
+        /docker\s+buildx\s+use(?:\s|$)/u.test(run))
+    );
+  });
   if (
     Object.hasOwn(jobEnv, "BUILDX_BUILDER") ||
     Object.hasOwn(asRecord(dcodeProfileImportGate?.env), "BUILDX_BUILDER") ||

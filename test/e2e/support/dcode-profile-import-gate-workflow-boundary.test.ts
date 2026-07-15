@@ -97,6 +97,21 @@ describe("DCode missing-dependency profile import gate workflow boundary", () =>
     );
   });
 
+  it("rejects selecting a persistent Buildx builder before the local image chain", () => {
+    const errors = validateMutation((workflow) => {
+      const steps = workflow.jobs.live.steps;
+      steps.splice(steps.indexOf(liveGateStep(workflow)), 0, {
+        if: "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}",
+        name: "Select DCode Buildx builder",
+        run: "docker buildx use external",
+      });
+    });
+
+    expect(errors).toContain(
+      "live DCode profile import gate must keep its local image chain on the Docker engine",
+    );
+  });
+
   it("rejects moving the import gate after live inference", () => {
     const errors = validateMutation((workflow) => {
       const steps = workflow.jobs.live.steps;
