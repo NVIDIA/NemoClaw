@@ -13,6 +13,7 @@ import {
   type RequiredGateIdentity,
   waitForRequiredGate,
 } from "../tools/e2e/pr-e2e-required.mts";
+import { createGitHubFetchRouter, githubFetchRoute } from "./support/github-fetch-router.ts";
 
 const HEAD_SHA = "a".repeat(40);
 const BASE_SHA = "b".repeat(40);
@@ -149,22 +150,34 @@ describe("native PR E2E required job", () => {
   it("waits through authorization and revalidates the exact PR before passing", async () => {
     let legacyQueries = 0;
     let clock = 0;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input);
-      if (url.includes("/pulls/42")) return githubResponse(pullRequest());
-      if (url.includes("Coordination")) return githubResponse(listing([]));
-      legacyQueries += 1;
-      return githubResponse(
-        listing([
-          legacyQueries === 1
-            ? check("E2E / PR Gate", {
-                conclusion: "failure",
-                output: { title: "Maintainer authorization required to run E2E" },
-              })
-            : check("E2E / PR Gate"),
-        ]),
-      );
-    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter([
+        githubFetchRoute(
+          ({ url }) => url.includes("/pulls/42"),
+          () => githubResponse(pullRequest()),
+        ),
+        githubFetchRoute(
+          ({ url }) => url.includes("Coordination"),
+          () => githubResponse(listing([])),
+        ),
+        githubFetchRoute(
+          ({ url }) => url.includes("/check-runs") && !url.includes("Coordination"),
+          () => {
+            legacyQueries += 1;
+            return githubResponse(
+              listing([
+                legacyQueries === 1
+                  ? check("E2E / PR Gate", {
+                      conclusion: "failure",
+                      output: { title: "Maintainer authorization required to run E2E" },
+                    })
+                  : check("E2E / PR Gate"),
+              ]),
+            );
+          },
+        ),
+      ]),
+    );
 
     await expect(
       waitForRequiredGate(identity, {
