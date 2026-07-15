@@ -217,6 +217,7 @@ export function request(
           body += chunk;
         });
         res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+        res.on("error", reject);
       },
     );
     req.on("error", reject);

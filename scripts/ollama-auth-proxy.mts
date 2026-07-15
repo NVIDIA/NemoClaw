@@ -59,6 +59,16 @@ const server = http.createServer(
     delete headers.authorization;
     delete headers.host;
 
+    const handleBackendError = (err: Error): void => {
+      if (clientRes.destroyed || clientRes.writableEnded) return;
+      if (clientRes.headersSent) {
+        clientRes.destroy();
+        return;
+      }
+      clientRes.writeHead(502, { "Content-Type": "text/plain" });
+      clientRes.end(`Ollama backend error: ${err.message}`);
+    };
+
     const proxyReq = http.request(
       {
         hostname: "127.0.0.1",
@@ -68,15 +78,20 @@ const server = http.createServer(
         headers,
       },
       (proxyRes: http.IncomingMessage) => {
+        proxyRes.once("error", handleBackendError);
         clientRes.writeHead(proxyRes.statusCode ?? 502, proxyRes.headers);
         proxyRes.pipe(clientRes);
       },
     );
 
-    proxyReq.on("error", (err: Error) => {
-      clientRes.writeHead(502, { "Content-Type": "text/plain" });
-      clientRes.end(`Ollama backend error: ${err.message}`);
+    const destroyUpstream = (): void => {
+      if (!proxyReq.destroyed) proxyReq.destroy();
+    };
+    clientReq.once("aborted", destroyUpstream);
+    clientRes.once("close", () => {
+      if (!clientRes.writableFinished) destroyUpstream();
     });
+    proxyReq.once("error", handleBackendError);
 
     clientReq.pipe(proxyReq);
   },

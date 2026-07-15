@@ -49,8 +49,11 @@ describe("ollama-auth-proxy request handler", () => {
   afterEach(async () => {
     await terminate(proxy);
     proxy = undefined;
-    await new Promise<void>((resolve) => backend?.server.close(() => resolve()));
+    const activeBackend = backend;
     backend = undefined;
+    if (activeBackend) {
+      await new Promise<void>((resolve) => activeBackend.server.close(() => resolve()));
+    }
   });
 
   it("returns 401 when the Authorization header is missing", async () => {
@@ -125,6 +128,40 @@ describe("ollama-auth-proxy request handler", () => {
     expect(res.status).toBe(502);
     expect(res.body).toMatch(/Ollama backend error/);
     expect(proxy?.exitCode).toBeNull();
+  });
+
+  it("stays alive when the backend disconnects after a partial response", async ({ resources }) => {
+    await terminate(proxy);
+    proxy = undefined;
+    await new Promise<void>((resolve) => backend?.server.close(() => resolve()));
+    backend = undefined;
+
+    const disconnectingBackend = resources.ownServer(
+      http.createServer((req, res) => {
+        req.resume();
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.write("partial", () => res.socket?.destroy());
+      }),
+    );
+    await new Promise<void>((resolve, reject) => {
+      disconnectingBackend.once("error", reject);
+      disconnectingBackend.listen(0, "127.0.0.1", resolve);
+    });
+
+    proxyPort = await freePort();
+    proxy = await startProxy(
+      proxyPort,
+      (disconnectingBackend.address() as AddressInfo).port,
+      TOKEN,
+    );
+
+    await expect(
+      request(proxyPort, { path: "/api/tags", auth: `Bearer ${TOKEN}` }),
+    ).rejects.toBeInstanceOf(Error);
+
+    const alive = await request(proxyPort, { path: "/api/tags" });
+    expect(alive.status).toBe(401);
+    expect(proxy.exitCode).toBeNull();
   });
 });
 
