@@ -181,7 +181,9 @@ describe("maintainer skills follow canonical workflow policy", () => {
       evening.indexOf("Load `cut-release-tag`"),
     );
     expect(evening).toContain("contains the exact `## <version>` heading");
-    expect(release).toContain("git grep -n -x '## vX.Y.Z'");
+    expect(release).toContain("git grep -n '^## vX\\.Y\\.Z$'");
+    expect(release).toContain("Unless Step 1 records an explicit waiver");
+    expect(release).toContain("show the recorded waiver reason");
     expect(release).toContain("A conventional Release Notes page or post-tag Announcement draft");
     expect(releaseNotes).toContain("does not replace or create that canonical entry");
     expect(policy).toContain("Run `/nemoclaw-contributor-update-docs for vX.Y.Z`");

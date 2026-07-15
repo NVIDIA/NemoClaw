@@ -62,7 +62,7 @@ Return to `nemoclaw-maintainer-evening` if docs are still pending.
 For the planned version, inspect `origin/main` before generating the plan:
 
 ```bash
-git grep -n -x '## vX.Y.Z' origin/main -- 'docs/changelog/*.mdx'
+git grep -n '^## vX\.Y\.Z$' origin/main -- 'docs/changelog/*.mdx'
 ```
 
 Require exactly one match in a dated file directly under `docs/changelog/`.
@@ -98,7 +98,8 @@ Read the generated `plan.json` and show the maintainer:
 - confirmation phrase,
 - open issue/PR housekeeping plan for the release label.
 
-Verify that the plan's next tag matches the H2 version heading in the dated changelog entry at the candidate SHA.
+Unless Step 1 records an explicit waiver, verify that the plan's next tag matches the H2 version heading in the dated changelog entry at the candidate SHA.
+When the entry is waived, show the recorded waiver reason in the plan presentation and confirmation handoff instead.
 
 For the plan's full `origin/main` SHA, review `.github/workflows/e2e.yaml` at that commit and build the evidence ledger required by the canonical [pre-tag E2E evidence policy](../nemoclaw-maintainer-policies/references/release-train.md#pre-tag-e2e-evidence). The workflow is the sole source of truth; do not substitute or maintain a separate release-gating test list.
 

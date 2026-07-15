@@ -64,6 +64,16 @@ const expectedMigratedBulletCounts: Record<string, number> = {
   "v0.0.34": 0,
 };
 
+function compareVersionsDesc(left: string, right: string): number {
+  const leftParts = left.slice(1).split(".").map(Number);
+  const rightParts = right.slice(1).split(".").map(Number);
+  return (
+    rightParts
+      .map((part, index) => part - leftParts[index])
+      .find((difference) => difference !== 0) ?? 0
+  );
+}
+
 describe("Fern changelog documentation", () => {
   // Compatibility boundary: Fern's staging changelog parser rejects HTML comments even when
   // the local docs check passes, so protect the required MDX header syntax directly.
@@ -80,14 +90,14 @@ describe("Fern changelog documentation", () => {
         source.startsWith(mdxSpdxHeader),
         `${fileName} must start with an MDX-compatible SPDX comment`,
       ).toBe(true);
-      expect(source, `${fileName} must not use an HTML comment`).not.toMatch(/^<!--/);
+      expect(source, `${fileName} must not use an HTML comment`).not.toContain("<!--");
     }
 
     const overview = fs.readFileSync(path.join(changelogDir, "overview.mdx"), "utf8");
     expect(overview).toMatch(
       /^---\n# SPDX-FileCopyrightText: Copyright \(c\) 2026 NVIDIA CORPORATION & AFFILIATES\. All rights reserved\.\n# SPDX-License-Identifier: Apache-2\.0\n---/,
     );
-    expect(overview).not.toMatch(/^<!--/);
+    expect(overview).not.toContain("<!--");
   });
 
   it("keeps one complete cross-agent history in dated entries", () => {
@@ -110,11 +120,8 @@ describe("Fern changelog documentation", () => {
       expect(fileVersions.length, `${fileName} must contain at least one release`).toBeGreaterThan(
         0,
       );
-      expect(
-        fileVersions.map((version) => Number(version.split(".").at(-1))),
-        `${fileName} must keep newest releases first`,
-      ).toEqual(
-        [...fileVersions].map((version) => Number(version.split(".").at(-1))).sort((a, b) => b - a),
+      expect(fileVersions, `${fileName} must keep newest releases first`).toEqual(
+        [...fileVersions].sort(compareVersionsDesc),
       );
       versions.push(...fileVersions);
 
@@ -156,6 +163,14 @@ describe("Fern changelog documentation", () => {
 
     expect(source).toContain("## v0.0.34");
     expect(source.match(/^```bash$/gm)?.length ?? 0, "v0.0.34 must retain its examples").toBe(3);
+  });
+
+  it("sorts complete semantic versions newest first", () => {
+    expect(["v0.0.99", "v0.1.0", "v1.0.0"].sort(compareVersionsDesc)).toEqual([
+      "v1.0.0",
+      "v0.1.0",
+      "v0.0.99",
+    ]);
   });
 
   it("keeps the changelog overview focused on releases", () => {

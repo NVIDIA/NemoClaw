@@ -108,7 +108,8 @@ For each release:
 - If more than one release ships on the same date, put each version in the same file with the newest version first.
 - Include the summary and detailed bullets in the dated file; do not create separate variant-specific Release Notes pages.
 - Use literal CLI names instead of the `$$nemoclaw` variant placeholder because native changelog files do not pass through agent-variant generation.
-- Use root-absolute published routes for internal links in dated entries. Generic links should target the OpenClaw route under `/user-guide/openclaw/`; agent-specific links should target the corresponding Hermes or Deep Agents route.
+- Use root-absolute published routes for internal links in dated entries.
+  Generic links should target the OpenClaw route under `/user-guide/openclaw/`; agent-specific links should target the corresponding Hermes or Deep Agents route.
 - Use MDX comment syntax (`{/* ... */}`) for the SPDX header; HTML comments do not parse in Fern changelog entries.
 - Keep every dated entry directly under `docs/changelog/`; Fern does not support subdirectories there.
 
