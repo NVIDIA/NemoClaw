@@ -280,7 +280,7 @@ it("reports the total wall clock time for a selected E2E job", async () => {
   expect(body).toContain("| rebuild-openclaw | ✅ success | 11m 10s |");
 });
 
-it("reports one total wall clock span for a matrix E2E job", async () => {
+it("reports one total wall clock span from valid matrix E2E jobs", async () => {
   const { body, setFailed } = await executeReport({
     apiJobs: [
       {
@@ -295,6 +295,27 @@ it("reports one total wall clock span for a matrix E2E job", async () => {
         conclusion: "success",
         name: "OpenShell gateway upgrade (v0.2.0)",
         started_at: "2026-07-15T00:02:00Z",
+        status: "completed",
+      },
+      {
+        completed_at: "2026-07-14T23:40:00Z",
+        conclusion: "success",
+        name: "OpenShell gateway upgrade (reversed-timestamps)",
+        started_at: "2026-07-14T23:50:00Z",
+        status: "completed",
+      },
+      {
+        completed_at: "not-a-timestamp",
+        conclusion: "success",
+        name: "OpenShell gateway upgrade (invalid-timestamp)",
+        started_at: "2026-07-14T23:30:00Z",
+        status: "completed",
+      },
+      {
+        completed_at: "2026-07-15T01:00:00Z",
+        conclusion: "skipped",
+        name: "OpenShell gateway upgrade (skipped)",
+        started_at: "2026-07-14T23:00:00Z",
         status: "completed",
       },
     ],
