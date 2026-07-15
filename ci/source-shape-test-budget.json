@@ -62,6 +62,11 @@
       "category": "security"
     },
     {
+      "file": "test/candidate-compat.test.ts",
+      "test": "keeps the manual controller read-only and runs digest-bound deterministic and live lanes (#6691)",
+      "category": "security"
+    },
+    {
       "file": "test/cloudflared-update-check-workflow.test.ts",
       "test": "keeps automatic and on-demand update checks reachable and credential-free",
       "category": "security"

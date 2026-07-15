@@ -11,6 +11,14 @@ import credentialBoundaryManifest from "../src/lib/actions/sandbox/openshell-chi
 import { buildRebuildHermesChildEnv } from "./e2e/live/rebuild-hermes-env.ts";
 
 const SCRIPT = path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh");
+const CANDIDATE_RUNTIME = {
+  cli: process.env.OPENSHELL_BIN,
+  gateway: process.env.OPENSHELL_GATEWAY_BIN,
+  resolutionId: process.env.NEMOCLAW_CANDIDATE_RESOLUTION_ID,
+  sandbox: process.env.NEMOCLAW_OPENSHELL_SANDBOX_BIN,
+  version: process.env.NEMOCLAW_CANDIDATE_VERSION,
+};
+const CANDIDATE_RUNTIME_ENABLED = Object.values(CANDIDATE_RUNTIME).every(Boolean);
 const PINNED_OPEN_SHELL_SHA256 = {
   cliDarwinArm64: "117b5354cc42d80bc4d5e070ea5ac4e341208ff6d3c29b516d8a9c80e2310f8d",
   cliLinuxArm64: "a5ff01a3240d73c72ec1700eda6cc6c752a86cf50c5dd1b5bdc459f544d03045",
@@ -209,6 +217,28 @@ exit 0`,
 }
 
 describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
+  it.runIf(CANDIDATE_RUNTIME_ENABLED)(
+    "validates the receipt-bound candidate through the installer path (#6691)",
+    () => {
+      const context = `installer:${CANDIDATE_RUNTIME.resolutionId}`;
+      const result = spawnSync("bash", [SCRIPT], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NEMOCLAW_CANDIDATE_INVOCATION_CONTEXT: context,
+          NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+          NEMOCLAW_OPENSHELL_GATEWAY_BIN: CANDIDATE_RUNTIME.gateway,
+          NEMOCLAW_OPENSHELL_MAX_VERSION: CANDIDATE_RUNTIME.version,
+          NEMOCLAW_OPENSHELL_MIN_VERSION: CANDIDATE_RUNTIME.version,
+          NEMOCLAW_OPENSHELL_PIN_VERSION: CANDIDATE_RUNTIME.version,
+          NEMOCLAW_OPENSHELL_SANDBOX_BIN: CANDIDATE_RUNTIME.sandbox,
+        },
+      });
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(result.stdout).toContain(`openshell already installed: ${CANDIDATE_RUNTIME.version}`);
+    },
+  );
+
   it("exits cleanly when the required OpenShell and driver binaries are already installed", () => {
     const result = runWithInstalledVersion(REQUIRED_OPENSHELL_VERSION);
     expect(result.status).toBe(0);
