@@ -593,6 +593,16 @@ startGateway(null).catch(() => {});
       nimContainer: "nim-hermes",
       routerPid: 123,
       routerCredentialHash: "hash",
+      sandboxName: "hermes-box",
+      webSearchConfig: { fetchEnabled: true, provider: "tavily" },
+      messagingPlan: null,
+      resourceProfile: { cpu: "75%", memory: "75%" },
+      sandboxPromptProgress: {
+        sandboxName: true,
+        webSearch: true,
+        messaging: true,
+        resourceProfile: true,
+      },
       policyPresets: ["nous-web", "brave"],
       lastCompletedStep: "policies",
       lastStepStarted: "policies",
@@ -621,6 +631,16 @@ startGateway(null).catch(() => {});
     expect(cleared.nimContainer).toBeNull();
     expect(cleared.routerPid).toBeNull();
     expect(cleared.routerCredentialHash).toBeNull();
+    expect(cleared.sandboxName).toBe("hermes-box");
+    expect(cleared.webSearchConfig).toBeNull();
+    expect(cleared.messagingPlan).toBeNull();
+    expect(cleared.resourceProfile).toEqual({ cpu: "75%", memory: "75%" });
+    expect(cleared.sandboxPromptProgress).toEqual({
+      sandboxName: true,
+      webSearch: false,
+      messaging: false,
+      resourceProfile: true,
+    });
     expect(cleared.policyPresets).toBeNull();
     expect(cleared.steps.gateway.status).toBe("complete");
     expect(cleared.steps.provider_selection.status).toBe("pending");

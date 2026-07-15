@@ -322,5 +322,37 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
     expect(result && "verdict" in result && result.verdict).toBe("info");
     const dump = out_lines.join("\n");
     expect(dump).toMatch(/registered but currently paused/);
+    // The paused fallback must not claim it is the summary view nor tell the
+    // operator to rerun the --channel command they are already running (#6887).
+    const runtime =
+      result && "signals" in result
+        ? result.signals.find((s) => s.label === "Runtime health")
+        : undefined;
+    expect(runtime?.detail).toBe("not checked — whatsapp is currently paused");
+    expect(runtime?.hint).toBeUndefined();
+  });
+
+  it("labels a paused telegram channel as paused rather than summary view under --channel (#6887)", async () => {
+    // A probe-capable channel that is paused lands on the basic report even
+    // under an explicit --channel request, since the probe is gated on
+    // !channelIsPaused. The Runtime health signal must reflect the paused state.
+    const execSpy = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+    const { deps } = makeDeps({
+      exec: () => ({ status: 0, stdout: "", stderr: "" }),
+      sandbox: entry(["telegram"], ["telegram"]),
+    });
+    deps.execSandbox = execSpy as unknown as typeof deps.execSandbox;
+    const result = await showSandboxChannelStatus("alpha", { deps, channel: "telegram" });
+    // The config-value read still runs, but the deep gateway-log probe must not.
+    const probeCommands = execSpy.mock.calls
+      .map((call) => String((call as unknown[])[1]))
+      .join("\n");
+    expect(probeCommands).not.toMatch(/gateway\.log|pgrep/);
+    const runtime =
+      result && "signals" in result
+        ? result.signals.find((s) => s.label === "Runtime health")
+        : undefined;
+    expect(runtime?.detail).toBe("not checked — telegram is currently paused");
+    expect(runtime?.hint).toBeUndefined();
   });
 });

@@ -25,7 +25,7 @@ const { probeOpenAiLikeEndpoint } = require("../src/lib/inference/onboard-probes
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const chooseModelPath = path.join(repoRoot, "docs", "inference", "choose-model.mdx");
 const hermesProviderPath = path.join(repoRoot, "docs", "inference", "use-hermes-provider.mdx");
-const releaseNotesPath = path.join(repoRoot, "docs", "about", "release-notes.mdx");
+const releaseNotesPath = path.join(repoRoot, "docs", "changelog", "2026-07-09.mdx");
 const inferenceDocsDir = path.join(repoRoot, "docs", "inference");
 const docsNavPath = path.join(repoRoot, "docs", "index.yml");
 const fernDocsPath = path.join(repoRoot, "fern", "docs.yml");
@@ -226,10 +226,8 @@ describe("inference setup navigation", () => {
   it("routes the latest local and compatible inference release note through the shared chooser", () => {
     const markdown = fs.readFileSync(releaseNotesPath, "utf8");
     const releaseStart = markdown.indexOf("## v0.0.79");
-    const releaseEnd = markdown.indexOf("## v0.0.78", releaseStart);
     expect(releaseStart).toBeGreaterThanOrEqual(0);
-    expect(releaseEnd).toBeGreaterThan(releaseStart);
-    const release = markdown.slice(releaseStart, releaseEnd);
+    const release = markdown.slice(releaseStart);
     const bulletStart = release.indexOf("- Local and compatible inference setup");
     const bulletEnd = release.indexOf("\n- ", bulletStart + 1);
     expect(bulletStart).toBeGreaterThanOrEqual(0);
@@ -237,9 +235,9 @@ describe("inference setup navigation", () => {
     const bullet = release.slice(bulletStart, bulletEnd);
 
     expect(bullet).toContain(
-      "[Choose a Local Inference Server](../inference/local-inference/choose-local-inference-server)",
+      "[Choose a Local Inference Server](/user-guide/openclaw/inference/local-inference/choose-local-inference-server)",
     );
-    expect(bullet).not.toContain("../inference/local-inference/set-up-ollama");
+    expect(bullet).not.toContain("/inference/local-inference/set-up-ollama");
   });
 
   it("routes local options to focused setup pages", () => {

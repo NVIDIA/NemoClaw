@@ -6,7 +6,7 @@ import {
   buildFernPreviewArgs,
   DEFAULT_FERN_PREVIEW_INSTANCE,
   resolveFernPreviewInstance,
-} from "../scripts/fern-preview-config";
+} from "../scripts/fern-preview-config.mts";
 
 describe("Fern preview configuration", () => {
   it("uses the staging docs instance when no override is provided", () => {

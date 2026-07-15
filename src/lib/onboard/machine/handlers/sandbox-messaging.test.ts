@@ -1,10 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
-import { reconcileReusedSandboxMessaging } from "./sandbox-messaging";
+import { hashCredential } from "../../../security/credential-hash";
+import { createSession } from "../../../state/onboard-session";
+import { reconcileReusedSandboxMessaging, reconcileSandboxMessaging } from "./sandbox-messaging";
 
 const channelIds = ["telegram", "unsupported"];
 
@@ -99,6 +101,86 @@ function channelIdsFrom<T extends { readonly channelId: string }>(entries: reado
   return entries.map((entry) => entry.channelId);
 }
 
+function telegramPlan(credentialHash: string): SandboxMessagingPlan {
+  return {
+    schemaVersion: 1,
+    sandboxName: "alpha",
+    agent: "openclaw",
+    workflow: "onboard",
+    channels: [
+      {
+        channelId: "telegram",
+        displayName: "Telegram",
+        authMode: "token-paste",
+        active: true,
+        selected: true,
+        configured: true,
+        disabled: false,
+        inputs: [],
+        hooks: [],
+      },
+    ],
+    disabledChannels: [],
+    credentialBindings: [
+      {
+        channelId: "telegram",
+        credentialId: "botToken",
+        sourceInput: "botToken",
+        providerName: "alpha-telegram-bridge",
+        providerEnvKey: "TELEGRAM_BOT_TOKEN",
+        placeholder: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+        credentialAvailable: true,
+        credentialHash,
+      },
+    ],
+    networkPolicy: { presets: [], entries: [] },
+    agentRender: [],
+    buildSteps: [],
+    stateUpdates: [],
+    healthChecks: [],
+  };
+}
+
+function completedCheckpointSession(
+  plan: SandboxMessagingPlan,
+  stagedCredentialProviders: string[] = [],
+) {
+  const session = createSession();
+  session.sandboxName = plan.sandboxName;
+  session.messagingPlan = plan;
+  session.stagedCredentialProviders = stagedCredentialProviders;
+  session.sandboxPromptProgress.sandboxName = true;
+  session.sandboxPromptProgress.messaging = true;
+  return session;
+}
+
+function reconcileDeps(plans: readonly (SandboxMessagingPlan | null)[]) {
+  return {
+    note: vi.fn(),
+    showMessagingStage: vi.fn(),
+    getRecordedMessagingChannelsForResume: vi.fn(() => null),
+    setupMessagingChannels: vi.fn(async () => ["telegram"]),
+    readMessagingPlanFromEnv: vi
+      .fn()
+      .mockReturnValueOnce(plans[0] ?? null)
+      .mockReturnValue(plans[1] ?? plans[0] ?? null),
+    writePlanToEnv: vi.fn(),
+    clearPlanEnv: vi.fn(),
+    getRegistrySandboxMessagingPlan: vi.fn(() => null),
+    providerMatchesGatewayCredential: vi.fn(() => false),
+  };
+}
+
+beforeEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
+
 describe("reconcileReusedSandboxMessaging", () => {
   it("removes every unsupported channel artifact from a reused plan", () => {
     const result = reconcileReusedSandboxMessaging(
@@ -138,5 +220,130 @@ describe("reconcileReusedSandboxMessaging", () => {
       stateUpdates: ["telegram"],
       healthChecks: ["telegram"],
     });
+  });
+});
+
+describe("reconcileSandboxMessaging completed checkpoint credentials", () => {
+  it("reuses an active channel only when the process credential matches the persisted hash", async () => {
+    const token = "123456:accepted-telegram-token";
+    const plan = telegramPlan(hashCredential(token) ?? "");
+    const deps = reconcileDeps([null]);
+    vi.stubEnv("TELEGRAM_BOT_TOKEN", token);
+
+    const result = await reconcileSandboxMessaging({
+      resume: true,
+      session: completedCheckpointSession(plan),
+      sandboxName: "alpha",
+      agent: { name: "openclaw" },
+      deps,
+    });
+
+    expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
+    expect(deps.writePlanToEnv).toHaveBeenCalledWith(plan);
+    expect(deps.showMessagingStage).toHaveBeenCalledOnce();
+    expect(result).toEqual({ plan, selectedChannels: ["telegram"] });
+  });
+
+  it("runs existing setup validation before accepting a changed Telegram token", async () => {
+    const previousToken = "123456:previous-telegram-token";
+    const changedToken = "123456:changed-telegram-token";
+    const persistedPlan = telegramPlan(hashCredential(previousToken) ?? "");
+    const validatedPlan = telegramPlan(hashCredential(changedToken) ?? "");
+    const deps = reconcileDeps([persistedPlan, validatedPlan]);
+    vi.stubEnv("TELEGRAM_BOT_TOKEN", changedToken);
+
+    const result = await reconcileSandboxMessaging({
+      resume: true,
+      session: completedCheckpointSession(persistedPlan),
+      sandboxName: "alpha",
+      agent: { name: "openclaw" },
+      deps,
+    });
+
+    expect(deps.setupMessagingChannels).toHaveBeenCalledWith(
+      { name: "openclaw" },
+      ["telegram"],
+      "alpha",
+      { selectionCompleted: true },
+    );
+    expect(deps.writePlanToEnv).toHaveBeenCalledWith(persistedPlan);
+    expect(result).toEqual({ plan: validatedPlan, selectedChannels: ["telegram"] });
+  });
+
+  it("propagates Telegram rejection instead of refreshing the persisted hash", async () => {
+    const previousToken = "123456:previous-telegram-token";
+    const rejectedToken = "123456:rejected-telegram-token";
+    const persistedPlan = telegramPlan(hashCredential(previousToken) ?? "");
+    const deps = reconcileDeps([persistedPlan]);
+    deps.setupMessagingChannels.mockRejectedValueOnce(
+      new Error("Bot token was rejected by Telegram"),
+    );
+    vi.stubEnv("TELEGRAM_BOT_TOKEN", rejectedToken);
+
+    await expect(
+      reconcileSandboxMessaging({
+        resume: true,
+        session: completedCheckpointSession(persistedPlan),
+        sandboxName: "alpha",
+        agent: { name: "openclaw" },
+        deps,
+      }),
+    ).rejects.toThrow("Bot token was rejected by Telegram");
+
+    expect(deps.setupMessagingChannels).toHaveBeenCalledWith(
+      { name: "openclaw" },
+      ["telegram"],
+      "alpha",
+      { selectionCompleted: true },
+    );
+    expect(deps.writePlanToEnv).toHaveBeenCalledWith(persistedPlan);
+    expect(persistedPlan.credentialBindings[0]?.credentialHash).toBe(hashCredential(previousToken));
+  });
+
+  it("runs existing setup validation when the checkpointed credential lacks a staging receipt", async () => {
+    const persistedPlan = telegramPlan(hashCredential("123456:previous-token") ?? "");
+    const deps = reconcileDeps([persistedPlan]);
+    deps.providerMatchesGatewayCredential.mockReturnValueOnce(true);
+    deps.setupMessagingChannels.mockRejectedValueOnce(new Error("Telegram token is required"));
+
+    await expect(
+      reconcileSandboxMessaging({
+        resume: true,
+        session: completedCheckpointSession(persistedPlan),
+        sandboxName: "alpha",
+        agent: { name: "openclaw" },
+        deps,
+      }),
+    ).rejects.toThrow("Telegram token is required");
+
+    expect(deps.setupMessagingChannels).toHaveBeenCalledWith(
+      { name: "openclaw" },
+      ["telegram"],
+      "alpha",
+      { selectionCompleted: true },
+    );
+    expect(deps.providerMatchesGatewayCredential).not.toHaveBeenCalled();
+  });
+
+  it("reuses an exact OpenShell provider when the raw credential is unavailable (#6743)", async () => {
+    const persistedPlan = telegramPlan(hashCredential("123456:previous-token") ?? "");
+    const deps = reconcileDeps([null]);
+    deps.providerMatchesGatewayCredential.mockReturnValueOnce(true);
+
+    const result = await reconcileSandboxMessaging({
+      resume: true,
+      session: completedCheckpointSession(persistedPlan, ["alpha-telegram-bridge"]),
+      sandboxName: "alpha",
+      agent: { name: "openclaw" },
+      deps,
+    });
+
+    expect(deps.providerMatchesGatewayCredential).toHaveBeenCalledWith(
+      "alpha-telegram-bridge",
+      "generic",
+      "TELEGRAM_BOT_TOKEN",
+    );
+    expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
+    expect(result).toEqual({ plan: persistedPlan, selectedChannels: ["telegram"] });
   });
 });

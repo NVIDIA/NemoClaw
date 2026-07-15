@@ -95,6 +95,24 @@ The watcher rejects blank or malformed overrides before it starts Fern.
 Fern `.mdx` pages are the canonical docs source.
 Fern publishes Markdown routes for AI agents from the same source pages.
 
+## Updating the Changelog
+
+The native Fern changelog under `docs/changelog/` is the canonical release history.
+One source directory is shared across the OpenClaw, Hermes, and Deep Agents user-guide variants.
+Create the planned release entry in the pre-tag release-note docs PR so it lands on `main` before the release plan captures the tag commit.
+
+For each release:
+
+- Add the complete release entry to `docs/changelog/YYYY-MM-DD.mdx`, using the release date as the filename.
+- Start the entry with an H2 version heading such as `## v0.0.83`.
+- If more than one release ships on the same date, put each version in the same file with the newest version first.
+- Include the summary and detailed bullets in the dated file; do not create separate variant-specific Release Notes pages.
+- Use literal CLI names instead of the `$$nemoclaw` variant placeholder because native changelog files do not pass through agent-variant generation.
+- Use root-absolute published routes for internal links in dated entries.
+  Generic links should target the OpenClaw route under `/user-guide/openclaw/`; agent-specific links should target the corresponding Hermes or Deep Agents route.
+- Use MDX comment syntax (`{/* ... */}`) for the SPDX header; HTML comments do not parse in Fern changelog entries.
+- Keep every dated entry directly under `docs/changelog/`; Fern does not support subdirectories there.
+
 ## Publishing Docs
 
 GitHub Actions publishes Fern docs from the same source files that `npm run docs` validates locally.
@@ -117,7 +135,7 @@ Downstream consumers can pin the source with a raw URL such as
 `https://raw.githubusercontent.com/NVIDIA/NemoClaw/<commit-sha>/docs/resources/starter-prompt.md`.
 The Markdown SPDX comment is part of that raw file but does not appear when Markdown is rendered.
 
-The `scripts/generate-starter-prompt.ts` script removes the Markdown SPDX preamble and writes `docs/_build/StarterPrompt.generated.mdx`.
+The `scripts/generate-starter-prompt.mts` script removes the Markdown SPDX preamble and writes `docs/_build/StarterPrompt.generated.mdx`.
 The generated snippet wraps the prompt in Fern's native visible `Prompt` component, which displays the prompt body and supplies the copy button.
 The generated file is ignored by Git and is recreated by the docs build.
 
@@ -139,7 +157,7 @@ The normal `npm run docs`, `npm run docs:live`, agent-variant sync, preview-watc
 ## Agent Variant Generation
 
 Some Fern pages appear in the OpenClaw, Hermes, and Deep Agents guide variants.
-The `scripts/sync-agent-variant-docs.ts` script reads `docs/index.yml` and renders variant-specific copies for every page that appears in multiple guide variants before Fern validates or publishes the site.
+The `scripts/sync-agent-variant-docs.mts` script reads `docs/index.yml` and renders variant-specific copies for every page that appears in multiple guide variants before Fern validates or publishes the site.
 The source pages stay in their normal `docs/` locations, and generated pages are written under `docs/_build/agent-variants/`, which is ignored by Git.
 Navigation in `docs/index.yml` points Fern at generated pages for shared entries so Fern still renders normal fenced code blocks with copy buttons and syntax highlighting.
 OpenClaw-only, Hermes-only, or Deep Agents-only pages stay as source pages in navigation.

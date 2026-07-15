@@ -1,0 +1,35 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.81
+
+NemoClaw v0.0.81 strengthens rebuild and snapshot state preservation, repairs local compatible inference and WhatsApp setup, improves Docker restart recovery, and makes onboarding, backup, and security diagnostics easier to act on.
+
+- Rebuild and restore preserve more user-owned state without letting old backups replace current managed configuration.
+  Agent manifests can declare key-level restore ownership, managed Deep Agents restores keep only allowlisted UI and thread preferences, and Hermes rebuilds retain the Web Dashboard profile under `/sandbox/.hermes/dashboard-home/`, including its `MEMORY.md` and `USER.md` files.
+  Deep Agents snapshot creation also falls back to `/proc` when `ps` is unavailable while continuing to fail closed when it cannot prove the runtime is idle.
+  For more information, refer to [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots) and [Understand Sandbox State](/user-guide/openclaw/manage-sandboxes/state-and-backups/understand-sandbox-state).
+- Compatible inference setup handles more endpoint and model contracts automatically.
+  Eligible loopback endpoints on ports `8000`, `11434`, and `11435` are validated on the host and registered through `host.openshell.internal`, GPT-5 and the `o1`, `o3`, and `o4` model families use `max_completion_tokens`, and related provider validation probes can reuse bounded HTTPS connections with established fallbacks.
+  Direct blueprint apply now aborts without persisting an incomplete plan or reporting false completion when provider creation or inference configuration fails.
+  For more information, refer to [Set Up an OpenAI-Compatible Endpoint](/user-guide/openclaw/inference/custom-endpoints/set-up-openai-compatible-endpoint) and [Choose a Compatible Inference API](/user-guide/openclaw/inference/custom-endpoints/choose-compatible-inference-api).
+- Sandbox lifecycle recovery covers more host restart and teardown cases.
+  On supported local Docker deployments, `recover` can transactionally replace a legacy keepalive container whose managed supervisor disappeared after a restart, and it commits only after health and settle checks pass.
+  Hermes persists its managed startup command across direct Docker restarts, while unattended destruction of the final sandbox releases the shared gateway by default on macOS.
+  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- Managed Deep Agents sessions skip optional first-run setup and clean up their own process trees on disconnect.
+  The image includes `ripgrep`, pre-completes optional upstream onboarding, suppresses the optional Tavily warning unless web search is configured or used, and refuses a managed fetch CA bundle with unsafe ownership, permissions, links, or content.
+  For more information, refer to [Quickstart with LangChain Deep Agents Code](/user-guide/deepagents/get-started/quickstart) and [Security Best Practices](/user-guide/openclaw/security/best-practices).
+- WhatsApp pairing now uses the OpenClaw loopback gateway so a successful QR login can start the channel without moving a gateway token or requiring `operator.admin`.
+  Externally installed channel plugins now retain verified npm provenance, which enables the trusted persistent-state features expected by current OpenClaw releases.
+  For more information, refer to [Set Up WhatsApp](/user-guide/openclaw/manage-sandboxes/messaging-channels/set-up-whatsapp).
+- Backup and onboarding failures provide more specific recovery evidence.
+  `backup-all` tells you to start a stopped sandbox or container and rerun the backup or installer, and backup failures identify these causes when available: `permission denied`, `tar read error`, or `absent after extraction`.
+  A created-but-not-ready sandbox prints a lifecycle receipt with its readiness gate, timeout, and cleanup result, onboarding progress waits while an interactive prompt owns the terminal, and resumed onboarding does not advance durable state from stale replay results.
+  For more information, refer to [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots), [NemoClaw Quickstart](/user-guide/openclaw/get-started/quickstart), [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- Security and policy diagnostics preserve more context without hiding risk.
+  OpenClaw security audits keep NemoClaw-managed dashboard compatibility findings visible with their severity, remediation, and recorded reason, while token-shaped URL query values are redacted even when their parameter names look benign.
+  The custom Streamable HTTP MCP policy recipe also scopes `DELETE` to the exact MCP endpoint used for session termination.
+  For more information, refer to [Security Best Practices](/user-guide/openclaw/security/best-practices) and [Customize the Network Policy](/user-guide/openclaw/network-policy/customize-network-policy).

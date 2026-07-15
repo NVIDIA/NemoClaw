@@ -122,7 +122,24 @@ NEMOCLAW_PROVIDER=custom \
 | `NEMOCLAW_ENDPOINT_URL` | Base URL of the server. |
 | `NEMOCLAW_MODEL` | Model ID reported by the server. |
 | `NEMOCLAW_REASONING` | Enables reasoning-only validation with the case-insensitive true values `true`, `1`, `yes`, and `y`. |
+| `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS` | Optional comma-separated exact hostnames or IP literals for operator-owned private inference endpoints. Wildcards are not supported. |
 | `COMPATIBLE_API_KEY` | Endpoint API key, or a non-empty placeholder when authentication is not required. |
+
+Private and reserved addresses are blocked by default.
+To use an inference gateway on a trusted corporate network, list only its exact host and keep the endpoint URL on that host:
+
+```bash
+NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS=llm.corp.example \
+  NEMOCLAW_PROVIDER=custom \
+  NEMOCLAW_ENDPOINT_URL=https://llm.corp.example/v1 \
+  NEMOCLAW_MODEL=your-model \
+  COMPATIBLE_API_KEY="$COMPATIBLE_API_KEY" \
+  $$nemoclaw onboard --non-interactive
+```
+
+NemoClaw still resolves the host before probing and pins the probe to the resolved address.
+Only RFC1918, CGNAT, and IPv6 ULA destinations can be admitted; link-local metadata and other reserved ranges remain blocked.
+An unlisted private host, a hostname suffix match, or a DNS failure also remains blocked.
 
 ## Related Topics
 
