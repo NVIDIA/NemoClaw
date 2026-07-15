@@ -286,16 +286,52 @@ describe("GatewayClient recovery helpers (#2701)", () => {
       ).rejects.toThrow(/no gateway process.*at start/);
     });
 
-    it("rejects non-positive durations", async () => {
+    it.each([
+      {
+        name: "zero duration",
+        durationSeconds: 0,
+        pollIntervalSeconds: 1,
+        message: /durationSeconds must be > 0/,
+      },
+      {
+        name: "NaN duration",
+        durationSeconds: Number.NaN,
+        pollIntervalSeconds: 1,
+        message: /durationSeconds must be > 0/,
+      },
+      {
+        name: "infinite duration",
+        durationSeconds: Number.POSITIVE_INFINITY,
+        pollIntervalSeconds: 1,
+        message: /durationSeconds must be > 0/,
+      },
+      {
+        name: "zero poll interval",
+        durationSeconds: 1,
+        pollIntervalSeconds: 0,
+        message: /pollIntervalSeconds must be > 0/,
+      },
+      {
+        name: "NaN poll interval",
+        durationSeconds: 1,
+        pollIntervalSeconds: Number.NaN,
+        message: /pollIntervalSeconds must be > 0/,
+      },
+      {
+        name: "infinite poll interval",
+        durationSeconds: 1,
+        pollIntervalSeconds: Number.POSITIVE_INFINITY,
+        message: /pollIntervalSeconds must be > 0/,
+      },
+    ])("rejects $name before any probe or timer", async (options) => {
       const runner = new ScriptedRunner();
       const gateway = buildGateway(runner);
 
-      await expect(
-        gateway.expectPidStable(fakeInstance(), {
-          durationSeconds: 0,
-          pollIntervalSeconds: 1,
-        }),
-      ).rejects.toThrow(/durationSeconds must be > 0/);
+      await expect(gateway.expectPidStable(fakeInstance(), options)).rejects.toThrow(
+        options.message,
+      );
+      expect(runner.calls).toHaveLength(0);
+      expect(vi.getTimerCount()).toBe(0);
     });
   });
 });
