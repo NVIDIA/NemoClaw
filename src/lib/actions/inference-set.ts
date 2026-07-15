@@ -33,6 +33,7 @@ import {
   recomputeSandboxConfigHash,
   resolveAgentConfig,
   rewriteConfigUrlsWithDnsPinning,
+  seedHermesDashboardConfig,
   writeSandboxConfig,
 } from "../sandbox/config";
 import type { ConfigObject, ConfigValue } from "../security/credential-filter";
@@ -110,6 +111,7 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
     config: ConfigObject,
   ) => void;
   recomputeSandboxConfigHash: (sandboxName: string, target: AgentConfigTarget) => void;
+  seedHermesDashboardConfig: (sandboxName: string, target: AgentConfigTarget) => boolean;
   prepareRunOpenshell: () => void;
   captureOpenshell: (
     args: string[],
@@ -212,6 +214,7 @@ function defaultDeps(): InferenceSetDeps {
     readSandboxConfig,
     writeSandboxConfig,
     recomputeSandboxConfigHash,
+    seedHermesDashboardConfig,
     prepareRunOpenshell: () => {
       getOpenshellBinary();
     },
@@ -865,6 +868,18 @@ async function runInferenceSetWithoutHostLock(
     deps.log(
       `  Run '${CLI_NAME} ${sandboxName} rebuild' to finish applying the model inside the sandbox.`,
     );
+  }
+  // Hermes keeps an isolated dashboard-home config that only mirrors the gateway
+  // config's model routing at sandbox startup. Re-seed it after an in-place
+  // switch so Dashboard Chat (and /api/model/info) converge on the new model
+  // instead of silently staying on the previous one (#6893).
+  if (agentName === "hermes" && inSandboxConfigSynced) {
+    if (!deps.seedHermesDashboardConfig(sandboxName, target)) {
+      deps.log(
+        `  Warning: updated the Hermes model route but could not refresh the dashboard ` +
+          `config for '${sandboxName}'. Restart the sandbox to converge Dashboard Chat.`,
+      );
+    }
   }
   const sessionUpdated = updateMatchingOnboardSession(
     sandboxName,

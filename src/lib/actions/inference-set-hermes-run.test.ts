@@ -105,6 +105,81 @@ describe("runInferenceSet Hermes routing", () => {
     expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
   });
 
+  it("re-seeds the isolated Hermes dashboard config after an in-place switch (#6893)", async () => {
+    const config: ConfigObject = {
+      model: {
+        default: "moonshotai/kimi-k2.6",
+        provider: "custom",
+        base_url: "https://inference.local/v1",
+      },
+    };
+    const deps = createDeps({
+      config,
+      entry: {
+        name: "hermes",
+        agent: "hermes",
+        provider: "hermes-provider",
+        model: "moonshotai/kimi-k2.6",
+      },
+      defaultSandbox: "hermes",
+      target: HERMES_TARGET,
+      session: baseSession({ agent: "hermes", sandboxName: "hermes" }),
+    });
+
+    await runInferenceSet(
+      {
+        provider: "hermes-provider",
+        model: "openai/gpt-5.4-mini",
+        sandboxName: "hermes",
+        noVerify: true,
+      },
+      deps,
+    );
+
+    // The dashboard-home config only re-mirrors the gateway model routing at
+    // startup, so the in-place switch must re-seed it or Dashboard Chat stays on
+    // the previous model. It must run after the gateway config was written.
+    expect(deps.calls.seedHermesDashboardConfig).toHaveBeenCalledWith("hermes", HERMES_TARGET);
+    const writeOrder = deps.calls.writeSandboxConfig.mock.invocationCallOrder[0];
+    const seedOrder = deps.calls.seedHermesDashboardConfig.mock.invocationCallOrder[0];
+    expect(seedOrder).toBeGreaterThan(writeOrder);
+  });
+
+  it("does not re-seed the dashboard when the in-sandbox config write fails (#6893)", async () => {
+    const config: ConfigObject = {
+      model: { default: "moonshotai/kimi-k2.6", provider: "custom" },
+    };
+    const deps = createDeps({
+      config,
+      entry: {
+        name: "hermes",
+        agent: "hermes",
+        provider: "hermes-provider",
+        model: "moonshotai/kimi-k2.6",
+      },
+      defaultSandbox: "hermes",
+      target: HERMES_TARGET,
+      session: baseSession({ agent: "hermes", sandboxName: "hermes" }),
+    });
+    deps.calls.writeSandboxConfig.mockImplementation(() => {
+      throw new Error("write failed");
+    });
+
+    await runInferenceSet(
+      {
+        provider: "hermes-provider",
+        model: "openai/gpt-5.4-mini",
+        sandboxName: "hermes",
+        noVerify: true,
+      },
+      deps,
+    );
+
+    // A failed gateway-config write leaves the old config in place; re-seeding the
+    // dashboard from it would be pointless (and the guidance is to rebuild).
+    expect(deps.calls.seedHermesDashboardConfig).not.toHaveBeenCalled();
+  });
+
   it("keeps Hermes custom Anthropic switches off the managed Anthropic SSE frontend (#6289)", async () => {
     const config: ConfigObject = {
       model: {

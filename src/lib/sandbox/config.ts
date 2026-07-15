@@ -594,6 +594,43 @@ function recomputeSandboxConfigHash(sandboxName: string, target: AgentConfigTarg
   privilegedSandboxExec(sandboxName, ["sh", "-c", script]);
 }
 
+// Absolute path to the Hermes dashboard config seeder inside the sandbox image
+// (installed by the agents/hermes image build). The python resolution order
+// mirrors start.sh's trusted `_HERMES_PYTHON` list.
+const HERMES_DASHBOARD_SEEDER_PATH = "/usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py";
+
+/**
+ * Re-run the Hermes dashboard config seeder inside the sandbox so the isolated
+ * dashboard-home config (`<configDir>/dashboard-home/config.yaml`) re-mirrors the
+ * gateway config's model routing after an in-place `inference set`. Sandbox
+ * startup runs the same seeder; without re-running it, Dashboard Chat and its
+ * `/api/model/info` endpoint stay on the previous model even though the gateway
+ * config, registry, and CLI status all report the new one (#6893).
+ *
+ * Runs as the sandbox user (non-privileged `sandbox exec`, matching start.sh's
+ * step-down before touching sandbox-owned dashboard-home state); the seeder does
+ * no-follow atomic writes and refuses symlinked paths. Best-effort: returns false
+ * on failure so the caller can warn without aborting the route switch.
+ */
+function seedHermesDashboardConfig(sandboxName: string, target: AgentConfigTarget): boolean {
+  const dashboardHome = `${target.configDir}/dashboard-home`;
+  const seed =
+    `exec "$py" ${shellQuote(HERMES_DASHBOARD_SEEDER_PATH)} ` +
+    `${shellQuote(target.configPath)} ${shellQuote(`${dashboardHome}/config.yaml`)} ` +
+    `${shellQuote(`${target.configDir}/.env`)} ${shellQuote(`${dashboardHome}/.env`)}`;
+  const script =
+    `for py in /opt/hermes/.venv/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do ` +
+    `[ -x "$py" ] && ${seed}; done; ` +
+    `echo "no trusted python3 available to seed the Hermes dashboard config" >&2; exit 1`;
+  const binary = getOpenshellBinary();
+  const result = captureOpenshellCommand(
+    binary,
+    ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", script],
+    { ignoreError: true, includeStreams: true, maxBuffer: CONFIG_CAPTURE_MAX_BUFFER },
+  );
+  return !(result.error || result.signal || result.status !== 0);
+}
+
 // ---------------------------------------------------------------------------
 // URL validation (strict SSRF checks for config set)
 // ---------------------------------------------------------------------------
@@ -1224,6 +1261,7 @@ export {
   recomputeSandboxConfigHash,
   resolveAgentConfig,
   restartSandboxAgentAfterConfigSet,
+  seedHermesDashboardConfig,
   rewriteConfigUrlsWithDnsPinning,
   setDotpath,
   validateConfigDotpath,
