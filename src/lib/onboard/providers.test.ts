@@ -81,6 +81,7 @@ function withProviderEnv(next: Record<string, string | undefined>, testBody: () 
     "NEMOCLAW_PROVIDER",
     "NEMOCLAW_ENDPOINT_URL",
     "NEMOCLAW_MODEL",
+    "NEMOCLAW_PROVIDER_MODEL",
     "NEMOCLAW_COMPAT_MODEL",
     "NEMOCLAW_PREFERRED_API",
     "NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL",
@@ -387,6 +388,31 @@ describe("onboard provider helpers", () => {
         expect(process.env.NEMOCLAW_PROVIDER).toBeUndefined();
         expect(process.env.NEMOCLAW_MODEL).toBeUndefined();
         expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
+      },
+    );
+  });
+
+  it("supports the NVIDIA QA non-interactive provider-model contract (#6869)", () => {
+    withProviderEnv(
+      {
+        NEMOCLAW_PROVIDER: "ollama",
+        NEMOCLAW_PROVIDER_MODEL: "qwen3.6:35b",
+      },
+      () => {
+        expect(getRequestedModelHint(true)).toBe("qwen3.6:35b");
+      },
+    );
+  });
+
+  it("keeps NEMOCLAW_MODEL ahead of NEMOCLAW_PROVIDER_MODEL", () => {
+    withProviderEnv(
+      {
+        NEMOCLAW_PROVIDER: "ollama",
+        NEMOCLAW_MODEL: "qwen2.5:0.5b",
+        NEMOCLAW_PROVIDER_MODEL: "qwen3.6:35b",
+      },
+      () => {
+        expect(getRequestedModelHint(true)).toBe("qwen2.5:0.5b");
       },
     );
   });

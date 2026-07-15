@@ -19,6 +19,7 @@ const TRUTHY_FLAG_VALUES = new Set(["1", "true", "yes", "on"]);
 const FALSY_FLAG_VALUES = new Set(["0", "false", "no", "off"]);
 const LOCAL_IMAGE_REPO = LOCAL_SANDBOX_IMAGE_REPO;
 const DOCKER_ENV_NAMES = [
+  "BUILDX_BUILDER",
   "DOCKER_API_VERSION",
   "DOCKER_CERT_PATH",
   "DOCKER_CONFIG",

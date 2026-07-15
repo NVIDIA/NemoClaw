@@ -4,6 +4,12 @@
 import type { OllamaStartupOutcome } from "./ollama-startup";
 import type { SetupNimSelectionState } from "./setup-nim-selection";
 
+const {
+  getRequestedModelFromEnv,
+}: {
+  getRequestedModelFromEnv: (env?: NodeJS.ProcessEnv) => string | null;
+} = require("./providers");
+
 type SetupNimSelectionResult = "selected" | "retry-selection";
 
 type SetupNimOllamaDeps = {
@@ -30,6 +36,7 @@ type SetupNimOllamaDeps = {
       requestedModel: string | null;
       recoveredModel: string | null;
       lockedModel?: string | null;
+      promptDefaultModel?: string | null;
     },
     onModelSelected?: (model: string) => void,
   ) => Promise<
@@ -91,6 +98,8 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
     lockedModel: string | null,
   ): Promise<SetupNimSelectionResult> {
     const constrainedModel = typeof state.model === "string" ? state.model : requestedModel;
+    const promptDefaultModel =
+      !lockedModel && !deps.isNonInteractive() ? getRequestedModelFromEnv(deps.process.env) : null;
     const result = await deps.selectAndValidateOllamaModel(
       gpu,
       state.provider,
@@ -98,6 +107,7 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
         requestedModel: constrainedModel,
         recoveredModel,
         lockedModel,
+        promptDefaultModel,
       },
       (model) => {
         state.model = model;
