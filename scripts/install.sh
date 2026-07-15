@@ -2594,20 +2594,32 @@ run_onboard() {
         # choice may be the cause, so auto-resuming would just loop.
         # Refuse in non-interactive mode (no safe default); prompt in
         # interactive mode so the user can pick resume vs. fresh.
+        local _fresh_install_cmd
+        case "${NEMOCLAW_AGENT:-openclaw}" in
+          hermes)
+            _fresh_install_cmd="curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=hermes bash -s -- --fresh"
+            ;;
+          langchain-deepagents-code)
+            _fresh_install_cmd="curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=langchain-deepagents-code bash -s -- --fresh"
+            ;;
+          *)
+            _fresh_install_cmd="curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --fresh"
+            ;;
+        esac
         if [ "${NON_INTERACTIVE:-}" = "1" ]; then
-          error "Previous onboarding session failed. To discard it and start over, run 'curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --fresh'. To retry the same session, run '${_CLI_BIN} onboard --resume'."
+          error "Previous onboarding session failed. To discard it and start over, run '${_fresh_install_cmd}'. To retry the same session, run '${_CLI_BIN} onboard --resume'."
         fi
         local _prompt_stdin="/dev/tty"
         if [ -t 0 ]; then _prompt_stdin="/dev/stdin"; fi
         if [ ! -r "$_prompt_stdin" ]; then
-          error "Previous onboarding session failed, and no TTY is available to prompt. To discard it and start over, run 'curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --fresh'. To retry the same session, run '${_CLI_BIN} onboard --resume'."
+          error "Previous onboarding session failed, and no TTY is available to prompt. To discard it and start over, run '${_fresh_install_cmd}'. To retry the same session, run '${_CLI_BIN} onboard --resume'."
         fi
         info "Previous onboarding session failed."
         local _resume_answer=""
         while :; do
           printf "  Resume the failed session, or start fresh? [R/f]: " >&2
           if ! IFS= read -r _resume_answer <"$_prompt_stdin"; then
-            error "Could not read response from TTY. To discard the failed session and start over, run 'curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --fresh'. To retry the same session, run '${_CLI_BIN} onboard --resume'."
+            error "Could not read response from TTY. To discard the failed session and start over, run '${_fresh_install_cmd}'. To retry the same session, run '${_CLI_BIN} onboard --resume'."
           fi
           # Use tr to lowercase the answer rather than the bash 4 case
           # expansion form (lowercase via the comma-comma operator), which

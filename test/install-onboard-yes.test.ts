@@ -134,14 +134,21 @@ function runOnboardWithSession(
   return captured.split("\n").filter((line) => line.length > 0);
 }
 
-type FailedPromptMode = "unreadable-tty" | "read-failure";
+type FailedPromptMode = "non-interactive" | "unreadable-tty" | "read-failure";
+type FailedSessionAgent = "" | "hermes" | "langchain-deepagents-code";
 
-function runFailedSessionRecovery(mode: FailedPromptMode) {
+function runFailedSessionRecovery(mode: FailedPromptMode, agent: FailedSessionAgent = "") {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-failed-recovery-"));
   const home = path.join(tmp, "home");
   const promptInput = path.join(tmp, "prompt-input.txt");
   const argvLog = path.join(tmp, "argv.txt");
-  const cliBin = path.join(tmp, "nemoclaw");
+  const cliName =
+    agent === "hermes"
+      ? "nemohermes"
+      : agent === "langchain-deepagents-code"
+        ? "nemo-deepagents"
+        : "nemoclaw";
+  const cliBin = path.join(tmp, cliName);
   fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
   fs.writeFileSync(
     path.join(home, ".nemoclaw", "onboard-session.json"),
@@ -155,7 +162,6 @@ function runFailedSessionRecovery(mode: FailedPromptMode) {
   const snippet = `
     set -e
     source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1 || true
-    _CLI_BIN="nemoclaw"
     _CLI_PATH=""
     show_usage_notice() { :; }
     info() { :; }
@@ -179,9 +185,10 @@ function runFailedSessionRecovery(mode: FailedPromptMode) {
       ...process.env,
       FRESH: "",
       HOME: home,
+      NEMOCLAW_AGENT: agent,
       NEMOCLAW_FRESH: "",
       NEMOCLAW_NON_INTERACTIVE: "",
-      NON_INTERACTIVE: "",
+      NON_INTERACTIVE: mode === "non-interactive" ? "1" : "",
       PATH: `${tmp}:${process.env.PATH ?? ""}`,
       PROMPT_INPUT_FILE: promptInput,
       PROMPT_MODE: mode,
@@ -275,6 +282,27 @@ describe("install.sh run_onboard — failed-session recovery", () => {
     expect(output).toContain(error);
     expect(output).toContain("curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --fresh");
     expect(output).toContain("nemoclaw onboard --resume");
+    expect(fs.existsSync(argvLog)).toBe(false);
+  });
+
+  it.each([
+    {
+      agent: "hermes",
+      cliName: "nemohermes",
+      freshCommand:
+        "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=hermes bash -s -- --fresh",
+    },
+    {
+      agent: "langchain-deepagents-code",
+      cliName: "nemo-deepagents",
+      freshCommand:
+        "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=langchain-deepagents-code bash -s -- --fresh",
+    },
+  ] as const)("preserves $agent in the fresh and resume commands", (testCase) => {
+    const { argvLog, output, status } = runFailedSessionRecovery("non-interactive", testCase.agent);
+    expect(status).not.toBe(0);
+    expect(output).toContain(testCase.freshCommand);
+    expect(output).toContain(`${testCase.cliName} onboard --resume`);
     expect(fs.existsSync(argvLog)).toBe(false);
   });
 });
