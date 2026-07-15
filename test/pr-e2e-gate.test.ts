@@ -11,11 +11,9 @@ import { buildRiskPlan, riskPlanRequiredJobIds } from "../tools/advisors/risk-pl
 import {
   assertCorrelatedWorkflowRun,
   classifyPrGateEvidence,
-  controllerErrorAnnotationTitle,
   dispatchPrGate,
   expectedSignalShards,
   finishPrGate,
-  PrerequisiteCiError,
   type PrGateState,
   type PullRequest,
   parseControllerCommand,
@@ -42,6 +40,7 @@ const WORKFLOW_SHA = "d".repeat(40);
 const ADVANCED_WORKFLOW_SHA = "e".repeat(40);
 const CI_RUN_ID = 99;
 const CI_RUN_ATTEMPT = 3;
+const GATE_RUN_ID = 77;
 const CORRELATION_ID = "12345678-1234-4123-8123-123456789abc";
 const BROAD_FILES = [
   "src/lib/onboard.ts",
@@ -92,7 +91,7 @@ function emptyPrGateCheckRunsRoute() {
 function exactPrGateCheck(overrides: Record<string, unknown> = {}) {
   return {
     id: 17,
-    name: "E2E / PR Gate",
+    name: "E2E / PR Gate Coordination",
     head_sha: HEAD_SHA,
     external_id: prGateExternalId(42, HEAD_SHA, BASE_SHA),
     status: "in_progress",
@@ -180,6 +179,8 @@ function startCommand(workDir: string, prNumber = "42") {
     String(CI_RUN_ATTEMPT),
     "--ci-run-id",
     String(CI_RUN_ID),
+    "--gate-run-id",
+    String(GATE_RUN_ID),
     "--pr",
     prNumber,
     "--work-dir",
@@ -230,143 +231,28 @@ function workflowRun(gate: PrGateState, overrides: Record<string, unknown> = {})
 }
 
 describe("PR E2E controller", () => {
-  it("parses one lifecycle command set inside a private workspace", () => {
-    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-"));
-    try {
-      expect(
-        parseControllerCommand([
-          "--mode",
-          "start",
-          "--head",
-          HEAD_SHA,
-          "--head-repo",
-          "NVIDIA/NemoClaw",
-          "--head-branch",
-          "feature/pr-e2e-gate",
-          "--workflow-sha",
-          WORKFLOW_SHA,
-          "--ci-conclusion",
-          "success",
-          "--ci-display-title",
-          `CI PR #42 head ${HEAD_SHA} base ${BASE_SHA} gate true`,
-          "--ci-run-attempt",
-          String(CI_RUN_ATTEMPT),
-          "--ci-run-id",
-          String(CI_RUN_ID),
-          "--pr",
-          "42",
-          "--work-dir",
-          workDir,
-        ]),
-      ).toMatchObject({
-        mode: "start",
-        ciRunAttempt: CI_RUN_ATTEMPT,
-        ciRunId: CI_RUN_ID,
-        prNumber: 42,
-        planPath: path.join(workDir, "risk-plan.json"),
-        statePath: path.join(workDir, "controller-state.json"),
-        evidencePath: path.join(workDir, "evidence"),
-      });
-      expect(parseControllerCommand(["--mode", "cancel", "--pr", "42"])).toEqual({
-        mode: "cancel",
-        prNumber: 42,
-      });
-      expect(
-        parseControllerCommand([
-          "--mode",
-          "seed",
-          "--pr",
-          "42",
-          "--head",
-          HEAD_SHA,
-          "--base",
-          BASE_SHA,
-        ]),
-      ).toEqual({
-        mode: "seed",
-        prNumber: 42,
-        headSha: HEAD_SHA,
-        baseSha: BASE_SHA,
-      });
-      expect(
-        parseControllerCommand([
-          "--mode",
-          "resolve-fork",
-          "--pr",
-          "42",
-          "--head",
-          HEAD_SHA,
-          "--base",
-          BASE_SHA,
-          "--workflow-sha",
-          WORKFLOW_SHA,
-          "--maintainer",
-          "maintainer",
-          "--reason",
-          "Reviewed exact fork revision",
-          "--evidence-url",
-          "https://github.com/NVIDIA/NemoClaw/actions/runs/123",
-        ]),
-      ).toEqual({
-        mode: "resolve-fork",
-        prNumber: 42,
-        headSha: HEAD_SHA,
-        baseSha: BASE_SHA,
-        workflowSha: WORKFLOW_SHA,
-        maintainer: "maintainer",
-        reason: "Reviewed exact fork revision",
-        evidenceUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/123",
-      });
-      expect(
-        parseControllerCommand([
-          "--mode",
-          "resolve-control-plane",
-          "--pr",
-          "42",
-          "--head",
-          HEAD_SHA,
-          "--base",
-          BASE_SHA,
-          "--workflow-sha",
-          WORKFLOW_SHA,
-          "--maintainer",
-          "maintainer",
-          "--reason",
-          "Reviewed exact control-plane revision",
-        ]),
-      ).toEqual({
-        mode: "resolve-control-plane",
-        prNumber: 42,
-        headSha: HEAD_SHA,
-        baseSha: BASE_SHA,
-        workflowSha: WORKFLOW_SHA,
-        maintainer: "maintainer",
-        reason: "Reviewed exact control-plane revision",
-      });
-      expect(
-        parseControllerCommand(["--mode", "abandon", "--check-id", "17", "--run-id", "23"]),
-      ).toEqual({ mode: "abandon", checkRunId: 17, childRunId: 23 });
-      expect(() =>
-        parseControllerCommand(["--mode", "cancel", "--pr", "9007199254740992"]),
-      ).toThrow(/safe integer range/u);
-      expect(startCommand(workDir, "").prNumber).toBeUndefined();
-
-      fs.chmodSync(workDir, 0o755);
-      expect(() => parseControllerCommand(["--mode", "finish", "--work-dir", workDir])).toThrow(
-        /owned private absolute directory/u,
-      );
-    } finally {
-      fs.chmodSync(workDir, 0o700);
-      fs.rmSync(workDir, { recursive: true, force: true });
-    }
-  });
-
-  it("distinguishes prerequisite CI failures from controller failures in annotations", () => {
-    expect(controllerErrorAnnotationTitle(new PrerequisiteCiError("CI failed"))).toBe(
-      "PR CI did not pass",
-    );
-    expect(controllerErrorAnnotationTitle(new Error("controller failed"))).toBe(
-      "Controller failed",
+  it("explains the accepted evidence URL when a manual fork skip uses another GitHub URL", () => {
+    expect(() =>
+      parseControllerCommand([
+        "--mode",
+        "record-fork-e2e-skip",
+        "--pr",
+        "42",
+        "--head",
+        HEAD_SHA,
+        "--base",
+        BASE_SHA,
+        "--workflow-sha",
+        WORKFLOW_SHA,
+        "--maintainer",
+        "maintainer",
+        "--reason",
+        "Reviewed exact fork revision",
+        "--evidence-url",
+        "https://github.com/NVIDIA/NemoClaw/pull/42#issuecomment-1",
+      ]),
+    ).toThrow(
+      "Evidence URL must be an Actions run URL such as https://github.com/NVIDIA/NemoClaw/actions/runs/123. PR, issue, comment, job, and external URLs are not accepted. Leave the field blank if no run exists.",
     );
   });
 
@@ -908,9 +794,7 @@ describe("PR E2E controller", () => {
       ),
     );
 
-    await expect(seedPrGate(42, HEAD_SHA, BASE_SHA)).rejects.toThrow(
-      /expected exact head and base/u,
-    );
+    await expect(seedPrGate(42, HEAD_SHA, BASE_SHA)).rejects.toThrow(/Superseded by PR update/u);
     expect(requests).toHaveLength(1);
     expect(requests.some((request) => request.url.includes("/check-runs"))).toBe(false);
   });
@@ -959,7 +843,7 @@ describe("PR E2E controller", () => {
     }
   });
 
-  it("rejects stale failed-CI evidence before mutating the live base check", async () => {
+  it("ignores stale failed-CI evidence before mutating the live base check", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-stale-ci-"));
     const outputPath = path.join(workDir, "github-output");
     fs.writeFileSync(outputPath, "", { mode: 0o600 });
@@ -983,17 +867,17 @@ describe("PR E2E controller", () => {
     try {
       await expect(
         startPrGate({ ...startCommand(workDir), ciConclusion: "failure" }),
-      ).rejects.toThrow(/expected exact head and base/u);
+      ).resolves.toBeUndefined();
       expect(requests).toHaveLength(2);
       expect(requests.filter((request) => request.url.includes("/check-runs?"))).toHaveLength(1);
       expect(requests.some((request) => request.url.endsWith("/check-runs"))).toBe(false);
-      expect(fs.readFileSync(outputPath, "utf8")).toBe("");
+      expect(fs.readFileSync(outputPath, "utf8")).toBe("dispatched=false\nfinalized=true\n");
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }
   });
 
-  it("recovers a superseded exact-diff check for the workflow cleanup step", async () => {
+  it("closes a superseded exact-diff check without failing the controller", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-superseded-"));
     const outputPath = path.join(workDir, "github-output");
     fs.writeFileSync(outputPath, "", { mode: 0o600 });
@@ -1009,19 +893,33 @@ describe("PR E2E controller", () => {
             ...pullRequest(),
             head: { ...pullRequest().head, sha: "c".repeat(40) },
           }),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
+            () => githubResponse({}),
+          ),
         ],
         requests,
       ),
     );
 
     try {
-      await expect(startPrGate(startCommand(workDir))).rejects.toThrow(
-        /expected exact head and base/u,
-      );
-      expect(requests).toHaveLength(2);
+      await expect(startPrGate(startCommand(workDir))).resolves.toBeUndefined();
+      expect(requests).toHaveLength(3);
       expect(requests.some((request) => request.url.endsWith("/check-runs"))).toBe(false);
-      expect(requests.some((request) => request.method === "PATCH")).toBe(false);
-      expect(fs.readFileSync(outputPath, "utf8")).toBe("check_id=17\n");
+      const completion = requests.find((request) => request.method === "PATCH");
+      expect(completion?.body).toMatchObject({
+        status: "completed",
+        conclusion: "cancelled",
+        output: {
+          title: "Superseded by PR update",
+          summary: expect.stringContaining(
+            "moved from head `aaaaaaa` on base `bbbbbbb` to head `ccccccc` on base `bbbbbbb`",
+          ),
+        },
+      });
+      expect(fs.readFileSync(outputPath, "utf8")).toBe(
+        "check_id=17\ndispatched=false\nfinalized=true\n",
+      );
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }
@@ -1049,13 +947,11 @@ describe("PR E2E controller", () => {
     );
 
     try {
-      await expect(startPrGate(startCommand(workDir))).rejects.toThrow(
-        /expected exact head and base/u,
-      );
+      await expect(startPrGate(startCommand(workDir))).resolves.toBeUndefined();
       expect(requests).toHaveLength(2);
       expect(requests.some((request) => request.url.endsWith("/check-runs"))).toBe(false);
       expect(requests.some((request) => request.method === "PATCH")).toBe(false);
-      expect(fs.readFileSync(outputPath, "utf8")).toBe("");
+      expect(fs.readFileSync(outputPath, "utf8")).toBe("dispatched=false\nfinalized=true\n");
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }
@@ -1080,7 +976,8 @@ describe("PR E2E controller", () => {
           ),
           githubFetchRoute(
             ({ url }) =>
-              url.includes(`/actions/runs/${CI_RUN_ID}/attempts/${CI_RUN_ATTEMPT}/jobs?`),
+              url.includes(`/actions/runs/${CI_RUN_ID}/attempts/${CI_RUN_ATTEMPT}/jobs?`) &&
+              new URL(url).searchParams.get("page") === "1",
             () =>
               githubResponse({
                 total_count: 101,
@@ -1119,6 +1016,23 @@ describe("PR E2E controller", () => {
               }),
           ),
           githubFetchRoute(
+            ({ url }) =>
+              url.includes(`/actions/runs/${CI_RUN_ID}/attempts/${CI_RUN_ATTEMPT}/jobs?`) &&
+              new URL(url).searchParams.get("page") === "2",
+            () =>
+              githubResponse({
+                total_count: 101,
+                jobs: [
+                  {
+                    id: 105,
+                    name: "late-failure",
+                    conclusion: "failure",
+                    steps: [{ name: "Run late check", conclusion: "failure" }],
+                  },
+                ],
+              }),
+          ),
+          githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
             () => githubResponse({}),
           ),
@@ -1128,20 +1042,9 @@ describe("PR E2E controller", () => {
     );
 
     try {
-      let rejection: unknown;
-      try {
-        await startPrGate({ ...startCommand(workDir), ciConclusion: "failure" });
-      } catch (error) {
-        rejection = error;
-      }
-      expect(rejection).toBeInstanceOf(PrerequisiteCiError);
-      const rejectionMessage = (rejection as Error).message;
-      expect(rejectionMessage).toContain("PR #42: https://github.com/NVIDIA/NemoClaw/pull/42");
-      expect(rejectionMessage).toContain(
-        `CI run attempt ${CI_RUN_ATTEMPT}: https://github.com/NVIDIA/NemoClaw/actions/runs/${CI_RUN_ID}/attempts/${CI_RUN_ATTEMPT}`,
-      );
-      expect(rejectionMessage).toContain("cli-test-shards (6) (Run CLI coverage shard)");
-      expect(rejectionMessage).toContain("job listing truncated");
+      await expect(
+        startPrGate({ ...startCommand(workDir), ciConclusion: "failure" }),
+      ).resolves.toBeUndefined();
 
       expect(requests.some((request) => request.url.endsWith("/dispatches"))).toBe(false);
       expect(requests.filter((request) => request.url.endsWith("/pulls/42"))).toHaveLength(1);
@@ -1173,11 +1076,19 @@ describe("PR E2E controller", () => {
       expect(summary).toContain(
         `[unsafe\\] ::error::&lt;tag&gt;&amp;](https://github.com/NVIDIA/NemoClaw/actions/runs/${CI_RUN_ID}/job/104)`,
       );
+      expect(summary).toContain(
+        `[late-failure](https://github.com/NVIDIA/NemoClaw/actions/runs/${CI_RUN_ID}/job/105)`,
+      );
       expect(summary).toContain("failed step: `bad' step ::warning::`");
       expect(summary).not.toContain("\n::error::");
       expect(summary).not.toContain("\n::warning::");
       expect(summary).not.toContain("static-checks");
-      expect(summary).toContain("The job listing was truncated");
+      expect(summary).not.toContain("The job listing was truncated");
+      expect(
+        requests.filter((request) =>
+          request.url.includes(`/actions/runs/${CI_RUN_ID}/attempts/${CI_RUN_ATTEMPT}/jobs?`),
+        ),
+      ).toHaveLength(2);
       const outputs = fs.readFileSync(outputPath, "utf8");
       expect(outputs).toContain("dispatched=false");
       expect(outputs).toContain("finalized=true");
@@ -1231,12 +1142,7 @@ describe("PR E2E controller", () => {
           ciConclusion: "failure",
           prNumber: undefined,
         }),
-      ).rejects.toThrow(
-        new RegExp(
-          `CI run attempt ${CI_RUN_ATTEMPT}: https://github\\.com/NVIDIA/NemoClaw/actions/runs/${CI_RUN_ID}/attempts/${CI_RUN_ATTEMPT}`,
-          "u",
-        ),
-      );
+      ).resolves.toBeUndefined();
 
       expect(requests.filter((request) => request.url.endsWith("/pulls/42"))).toHaveLength(1);
       expect(requests.some((request) => request.url.includes("/pulls?"))).toBe(false);
@@ -1258,6 +1164,75 @@ describe("PR E2E controller", () => {
       const outputs = fs.readFileSync(outputPath, "utf8");
       expect(outputs).toContain("dispatched=false");
       expect(outputs).toContain("finalized=true");
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("automatically dispatches controller-only changes through the normal evidence path", async () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-controller-"));
+    const outputPath = path.join(workDir, "github-output");
+    fs.writeFileSync(outputPath, "", { mode: 0o600 });
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    vi.stubEnv("GITHUB_OUTPUT", outputPath);
+    const controllerFiles = [".github/workflows/pr-e2e-gate.yaml", "tools/e2e/pr-e2e-gate.mts"];
+    const requests: RecordedGitHubRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          existingPrGateCheckRunsRoute(),
+          githubFetchRoute(
+            ({ url }) => url.includes("/pulls?state=open&head="),
+            () => githubResponse([pullRequestListItem(pullRequest(controllerFiles.length))]),
+          ),
+          githubFetchRoute(
+            ({ url }) => url.includes("/pulls/42/files?"),
+            () => githubResponse(controllerFiles.map((filename) => ({ filename }))),
+          ),
+          pullRequestDetailRoute(pullRequest(controllerFiles.length)),
+          githubFetchRoute(
+            ({ url }) => url.endsWith("/git/ref/heads/main"),
+            () =>
+              githubResponse({
+                ref: "refs/heads/main",
+                object: { type: "commit", sha: WORKFLOW_SHA },
+              }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.endsWith("/actions/workflows/e2e.yaml/dispatches") && method === "POST",
+            () =>
+              githubResponse({
+                workflow_run_id: 23,
+                run_url: "https://api.github.com/repos/NVIDIA/NemoClaw/actions/runs/23",
+                html_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/23",
+              }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
+            () => githubResponse({}),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    try {
+      await startPrGate(startCommand(workDir));
+
+      const dispatch = requests.find((request) => request.url.endsWith("/dispatches"));
+      expect(dispatch?.body).toMatchObject({
+        inputs: {
+          jobs: "cloud-onboard,credential-sanitization,security-posture",
+          checkout_sha: HEAD_SHA,
+          base_sha: BASE_SHA,
+        },
+      });
+      const outputs = fs.readFileSync(outputPath, "utf8");
+      expect(outputs).toContain("dispatched=true");
+      expect(outputs).not.toContain("fork_skip_mode=");
+      expect(outputs).not.toContain("finalized=true");
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }
@@ -1362,16 +1337,19 @@ describe("PR E2E controller", () => {
         evidencePath: command.evidencePath,
         checkRunId: Number(outputs.check_id),
         childRunId: Number(outputs.run_id),
+        evidenceOutcome: "success",
       });
 
       expect(gate.expectedJobs).toEqual(BROAD_JOBS);
       expect(requests.filter((request) => request.url.includes("/pulls?"))).toHaveLength(1);
-      expect(requests.filter((request) => request.url.endsWith("/pulls/42"))).toHaveLength(3);
+      // Finalization brackets evidence parsing with exact-diff reads so a PR update cannot
+      // turn stale evidence into a current-revision result.
+      expect(requests.filter((request) => request.url.endsWith("/pulls/42"))).toHaveLength(4);
       const checkCreation = requests.find(
         (request) => request.url.endsWith("/check-runs") && request.method === "POST",
       );
       expect(checkCreation?.body).toMatchObject({
-        name: "E2E / PR Gate",
+        name: "E2E / PR Gate Coordination",
         head_sha: HEAD_SHA,
         external_id: prGateExternalId(42, HEAD_SHA, BASE_SHA),
         status: "in_progress",

@@ -851,7 +851,11 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   const agentName = sb?.agent || "openclaw";
   const agent = loadAgent(agentName);
   const dir = agent.configPaths.dir;
-  const stateDirs = agent.stateDirs;
+  // Runtime auth state (device identity keypairs, paired-device tokens) is
+  // never captured: sanitizeBackupDirectory scrubs its key/token fields, so a
+  // backup copy could only ever restore as corrupt auth state (#6852).
+  const runtimeAuthStateDirs = new Set(agent.runtimeAuthStateDirs);
+  const stateDirs = agent.stateDirs.filter((d) => !runtimeAuthStateDirs.has(d));
   const stateFiles = normalizeStateFileSpecs(agent.stateFiles);
   _log(
     `backupSandboxState: agent=${agentName}, dir=${dir}, stateDirs=[${stateDirs.join(",")}], stateFiles=[${stateFiles.map((f) => f.path).join(",")}]`,
@@ -1389,6 +1393,19 @@ function restoreSandboxStateInternal(
     return failRestoreContract(
       `Backup state directory '${normalizedBackupDir}' does not match target directory '${normalizedTargetDir}'`,
     );
+  }
+  // Runtime auth state is never restored: its backup copies are
+  // credential-scrubbed and would replace the sandbox's working device
+  // identity and pairing tokens with corrupt files (#6852). The current
+  // target manifest is authoritative here so legacy backups whose embedded
+  // manifests still list these dirs are also skipped.
+  const targetRuntimeAuthDirs = new Set(targetAgent.runtimeAuthStateDirs);
+  const skippedRuntimeAuthDirs = localDirs.filter((d) => targetRuntimeAuthDirs.has(d));
+  if (skippedRuntimeAuthDirs.length > 0) {
+    _log(`Skipping runtime auth state dirs from restore: [${skippedRuntimeAuthDirs.join(",")}]`);
+    for (const d of skippedRuntimeAuthDirs) {
+      localDirs.splice(localDirs.indexOf(d), 1);
+    }
   }
   const targetStateFiles = new Map<string, AgentStateFile>();
   for (const targetFile of targetAgent.stateFiles) {

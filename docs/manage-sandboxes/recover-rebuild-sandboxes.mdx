@@ -1,0 +1,142 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Recover and Rebuild Sandboxes"
+sidebar-title: "Recover and Rebuild Sandboxes"
+description: "Recover a stopped agent runtime or rebuild a sandbox while preserving supported state."
+description-agent: "Explains the supported recovery and rebuild paths for OpenClaw, Hermes, and Deep Agents sandboxes. Use when a gateway or terminal runtime is degraded or when a sandbox image must be recreated."
+keywords: ["nemoclaw recover", "nemoclaw rebuild", "gateway restart", "sandbox recovery"]
+content:
+  type: "how_to"
+skill:
+  priority: 30
+---
+import { AgentOnly } from "../_components/AgentGuide";
+
+Use the lightest recovery operation that repairs the sandbox while preserving its supported state.
+
+## Recover the Agent Runtime
+
+<AgentOnly variant="openclaw">
+If `$$nemoclaw <name> status` reports the sandbox is alive but the gateway is not running, run the recover command instead of opening a shell.
+
+```bash
+$$nemoclaw <sandbox-name> recover
+```
+
+The command repairs a stopped in-sandbox gateway and re-establishes the dashboard port-forward in one step.
+It is idempotent and safe to script.
+If the gateway is already healthy, `recover` exits after the probe and does not restart it.
+
+Use `gateway restart` when you intentionally need a supported OpenClaw gateway to reload runtime configuration or plugins.
+
+```bash
+$$nemoclaw <sandbox-name> gateway restart
+```
+
+The restart command asks the topology-specific controller to stop the tracked gateway child, wait for the entrypoint to launch a replacement, and prove listener and HTTP health.
+The host then checks or recovers host-side dashboard, messaging, and agent forwards.
+Refer to [`$$nemoclaw <name> recover`](../../reference/commands#$$nemoclaw-name-recover) and [`$$nemoclaw <name> gateway restart`](../../reference/commands#$$nemoclaw-name-gateway-restart) for details.
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+If `$$nemoclaw <name> status` reports the sandbox is alive but the Hermes gateway is not running, run the recover command instead of opening a shell.
+
+```bash
+$$nemoclaw <sandbox-name> recover
+```
+
+The command repairs a stopped in-sandbox gateway and re-establishes the dashboard port-forward in one step.
+It is idempotent and safe to script.
+If the gateway is already healthy, `recover` exits after the probe and does not restart it.
+
+Use `gateway restart` when you intentionally need a supported Hermes gateway to reload runtime configuration or plugins.
+
+```bash
+$$nemoclaw <sandbox-name> gateway restart
+```
+
+The restart command asks the topology-specific controller to stop the tracked gateway child, wait for the entrypoint to launch a replacement, and prove listener and HTTP health.
+The host then checks or recovers host-side dashboard, messaging, and agent forwards.
+
+For Hermes, the entrypoint supervisor owns the gateway, dashboard process, internal API relay, dashboard relay, and gateway log stream.
+The nonroot managed supervisor repairs those processes continuously, stops an alive but deaf gateway after four consecutive failed health checks, and quarantines relaunch after five exits within 60 seconds until sandbox recreation.
+
+The host does not start the in-sandbox processes independently.
+Refer to [`$$nemoclaw <name> recover`](../../reference/commands#$$nemoclaw-name-recover) and [`$$nemoclaw <name> gateway restart`](../../reference/commands#$$nemoclaw-name-gateway-restart) for details.
+</AgentOnly>
+
+<AgentOnly variant="openclaw,hermes">
+Recovery uses registry-scoped privileged direct-container control and does not fall back to ordinary `openshell sandbox exec` or a manual in-sandbox relaunch.
+For a local Docker-driver sandbox whose container still uses the legacy keepalive startup, `recover` can transactionally recreate the registered container with a credential-free managed startup command.
+
+NemoClaw keeps the previous container available until the managed controller proves the supervisor topology, gateway health, and settle check, and attempts to restore it if that proof fails.
+The recreation preserves mounted sandbox state, but a committed swap does not retain changes stored only in the previous container's writable layer.
+
+For the controller topology, trust boundary, and fail-closed conditions, refer to [Understand Gateway Lifecycle Control](../configure-sandboxes/understand-gateway-lifecycle-control).
+If recovery cannot repair a sandbox that needs credentials or a current controller contract, rebuild it.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+Deep Agents sandboxes are terminal runtimes and do not expose an OpenClaw or Hermes in-sandbox gateway.
+Use `nemo-deepagents <sandbox-name> status`, `logs`, `connect`, and `rebuild` for recovery.
+If the terminal runtime reports degraded health, rebuild the sandbox instead of using `recover` or `gateway restart`.
+</AgentOnly>
+
+## Rebuild While Preserving State
+
+<AgentOnly variant="openclaw">
+If you changed the underlying Dockerfile, upgraded OpenClaw, or want to pick up a new base image without losing your sandbox's workspace files, use `rebuild` instead of destroying and recreating.
+</AgentOnly>
+<AgentOnly variant="hermes">
+If you changed the underlying Dockerfile, upgraded Hermes, or want to pick up a new base image without losing your sandbox's state files, use `rebuild` instead of destroying and recreating.
+</AgentOnly>
+<AgentOnly variant="deepagents">
+If you changed the underlying Dockerfile, upgraded Deep Agents Code, enabled Tavily Search, or want to pick up a new base image without losing manifest-defined Deep Agents state, use `rebuild` instead of destroying and recreating.
+</AgentOnly>
+
+```bash
+$$nemoclaw <sandbox-name> rebuild
+```
+
+<AgentOnly variant="openclaw">
+The rebuild command preserves the mounted workspace and registered policies while recreating the container.
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+The rebuild command preserves Hermes state and registered policies while recreating the container.
+</AgentOnly>
+
+<AgentOnly variant="deepagents">
+The rebuild command preserves manifest-defined Deep Agents state, regenerates `config.toml`, reconstructs managed MCP projection state, and reapplies registered policies while recreating the container.
+</AgentOnly>
+
+If an archive command produces some usable entries, NemoClaw preserves those entries and reports the manifest-defined paths that could not be archived.
+If backup fails before producing any usable entry, NemoClaw stops before deleting the original sandbox unless you explicitly pass `--force`.
+
+<Warning>
+`rebuild --force` can continue after a total backup failure by recreating the sandbox from recorded registry metadata without restoring prior sandbox state.
+Use this recovery path only when losing uncommitted or otherwise unsnapshotted state is acceptable.
+</Warning>
+
+When rebuild starts with shields up, NemoClaw opens a 30-minute shields-down window for backup and recreation.
+A detached auto-lock timer remains the recovery authority until NemoClaw commits a successful shields-up state, including when the host rebuild process exits unexpectedly.
+
+<AgentOnly variant="hermes">
+For an older Hermes image that predates sealed shields transitions, only the rebuild workflow may use the descriptor-safe compatibility transition needed to archive and replace the sandbox.
+That transition verifies the strict and compatibility hashes and publishes fresh config inodes before changing their lock posture, while ordinary `shields up` and `shields down` commands continue to refuse the older protocol.
+</AgentOnly>
+
+Refer to [`$$nemoclaw <name> rebuild`](../../reference/commands#$$nemoclaw-name-rebuild) for flag details.
+
+## Use the Canonical Configuration Workflows
+
+- Use [Switch Inference Providers](../../inference/manage-inference/switch-providers) to change a model or provider.
+<AgentOnly variant="openclaw,hermes">
+- Use [Credential Rotation](../../security/credential-rotation) to reset or replace a stored provider credential.
+- Use [Customize the Network Policy](../../network-policy/customize-network-policy) to add or remove policy presets.
+</AgentOnly>
+
+## Related Topics
+
+- [Create and Restore Snapshots](../state-and-backups/create-and-restore-snapshots) for the state-preservation contract.
+- [Troubleshooting](../../reference/troubleshooting) for `privileged control unavailable`, stopped sandboxes, and failed rebuilds.

@@ -53,7 +53,7 @@ Use the JSON-compatible payload defined by canonical `triage-instructions.md`. I
 - only canonical labels from `label-taxonomy.json`;
 - labels to remove, including a completed `needs: triage` inbox marker;
 - confidence, rationale, questions, and `human_review_required`;
-- the exact proposed public comment, when one is useful.
+- the proposed public comment, when one is useful.
 
 Prefer no label over a guessed label. Never substitute labels for Issue Type, Priority, Status, or resolution. Never propose an unknown label, and never propose `PRR` during normal triage.
 
@@ -61,14 +61,14 @@ In batch mode, present each dry run and wait for an explicit `apply`, `skip`, or
 
 ## Step 4: Apply Only the Accepted Write Set
 
-An accepted dry run authorizes only the exact fields, labels, and comment the maintainer accepted. Resolve live Issue Type IDs, Project field IDs, and Project option IDs immediately before writing; do not hardcode mutable IDs in this skill.
+An accepted dry run authorizes only the fields, labels, and comment the maintainer accepted. Resolve live Issue Type IDs, Project field IDs, and Project option IDs immediately before writing; do not hardcode mutable IDs in this skill.
 
 Apply writes in this order:
 
 1. Set native Issue Type and accepted Project fields.
 2. Add and remove canonical labels.
 3. Remove `needs: triage` when the inbox action is complete.
-4. Post the exact accepted comment, if any.
+4. Post the accepted comment, if any.
 
 If the accepted plan contains a low-confidence inference, an unknown label, or a write outside the current authorization context, stop and return a corrected dry run instead of writing.
 

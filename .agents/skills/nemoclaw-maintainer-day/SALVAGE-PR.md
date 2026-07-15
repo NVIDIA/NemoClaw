@@ -80,11 +80,11 @@ Do **not** push to `origin` — that creates a separate branch on NVIDIA/NemoCla
 
 ## Step 9: Monitor After Push
 
-After any maintainer push, follow [PR CI and Automated Review Follow-Up](../_shared/pr-follow-up.md) before routing onward. Keep salvage narrow: address valid correctness, security, and test-coverage findings with the smallest safe follow-up; consult the user when feedback is ambiguous, design-changing, or outside the salvage scope.
+After any maintainer push, follow [PR CI and Review Follow-Up](../_shared/pr-follow-up.md) before routing onward. Keep salvage narrow: address valid correctness, security, and test-coverage findings with the smallest safe follow-up; consult the user when feedback is ambiguous, design-changing, or outside the salvage scope.
 
 ## Step 10: Route to Merge Gate
 
-If PR looks ready after CI and automated feedback settle, follow [MERGE-GATE.md](MERGE-GATE.md).
+If PR looks ready after CI and feedback settle, follow [MERGE-GATE.md](MERGE-GATE.md).
 
 ## Notes
 

@@ -1,0 +1,164 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Manage MCP Servers"
+sidebar-title: "Manage MCP Servers"
+description: "Inspect, probe, rotate, restart, remove, rebuild, and destroy NemoClaw-managed MCP servers."
+description-agent: "Explains managed MCP status and credential-resolution probes, credential rotation, restart, removal, rebuild restoration, destroy recovery, and lifecycle locking. Use after an MCP server is registered."
+keywords: ["nemoclaw mcp status", "nemoclaw mcp restart", "nemoclaw mcp remove", "mcp credential rotation"]
+content:
+  type: "how_to"
+skill:
+  priority: 50
+---
+import { AgentOnly } from "../_components/AgentGuide";
+
+Use the host-side MCP commands to inspect and change registered servers.
+
+## List and Inspect Servers
+
+```bash
+$$nemoclaw my-sandbox mcp list
+$$nemoclaw my-sandbox mcp status github --json
+```
+
+`list --json` and `status --json` never include environment values.
+They report provider presence, provider attachment, whether live policy matches registered policy, environment readiness, and adapter registration state.
+
+The per-server `warnings` array reports the current sandbox-scoped provider risk and the OpenShell capabilities required to remove that warning.
+The `env.missing` field lists recorded host variable names that are currently unset.
+
+An existing valid provider can remain ready when a host variable is unset because OpenShell retains the credential.
+The JSON value `support.mode: "bridge"` identifies the agent's config-adapter capability, not a host-side traffic bridge.
+
+## Verify Credential Resolution
+
+Provider presence and metadata cannot prove that OpenShell rewrites `openshell:resolve:env:KEY` when a request leaves the sandbox.
+`mcp status <server>` requests a differential wire-level credential-resolution probe by default.
+
+Before sending probe traffic, NemoClaw verifies exact generated policy, expected provider attachment, provider ID, generic type, valid resource version, and exactly one matching credential key.
+If readiness does not match, it reports `ok: null` with `probe skipped` and sends no request.
+
+When readiness passes, the probe sends the same idempotent MCP `initialize` request twice from inside the sandbox through the adapter runtime.
+One request carries the real placeholder header, and the control request carries a deliberately unresolvable literal bearer.
+
+A working rewrite makes the two requests reach the endpoint with different bearers.
+Only a placeholder HTTP 2xx paired with a rejected control verifies resolution because an accepted request proves a valid credential was on the wire.
+
+Every non-2xx placeholder outcome is inconclusive.
+Identical HTTP 400, 401, or 403 rejections tell you to verify the stored credential first.
+
+For HTTP 401 or 403, a confirmed-valid credential means the host is not rewriting placeholders.
+HTTP 400 remains inconclusive because the endpoint may reject the probe request itself.
+
+The probe never captures or prints endpoint response bodies.
+It refuses to run against a persisted URL that no longer satisfies the authenticated-endpoint boundary.
+
+The verdict appears as `provider.credentialResolution` in JSON and as a `credential resolution:` line in text output.
+Pass `--no-probe` to skip the probe or `--probe` to request it for every server in multi-server status.
+
+The bare `mcp list` and `mcp status` forms never probe, so they stay fast.
+Endpoint outages, policy denials, timeouts, unreachable sandboxes, and endpoints that accept both probes report `ok: null` with evidence in `detail`.
+
+## Rotate a Credential
+
+Export the replacement under the same host environment name used by `mcp add`, then restart that server:
+
+```bash
+export GITHUB_MCP_TOKEN='replacement-value'
+$$nemoclaw my-sandbox mcp restart github
+unset GITHUB_MCP_TOKEN
+```
+
+`restart` requires a successful provider update, waits until the sandbox receives a new opaque provider revision, reapplies policy, and refreshes the adapter.
+An ambiguous or failed update is not treated as successful merely because another writer advanced the provider revision.
+
+Restart resolves the endpoint hostname again before updating its pinned network policy.
+
+The raw value passes only through the OpenShell provider command's process environment and is not added to argv, NemoClaw state, or sandbox config.
+Revoke the old credential upstream after restart succeeds.
+
+If the provider was deleted, restart recreates it from the exported value.
+
+When the host variable is unset, restart reuses an existing provider whose current ID, type, and credential-key metadata match the registry.
+If the provider is missing, export the recorded variable before retrying.
+
+Running restart without a server name refreshes every managed server.
+Export only the variables whose credentials you intend to replace.
+
+## Remove a Server
+
+```bash
+$$nemoclaw my-sandbox mcp remove github
+```
+
+Removing a server blocks new requests and reconnects but does not terminate a response or SSE stream that is already open.
+For immediate revocation, revoke the upstream credential first, then run `$$nemoclaw <sandbox> rebuild --yes` or destroy the sandbox to terminate an existing stream.
+
+`remove --force` may remove a modified same-name adapter entry so an operator can clear local config.
+Provider deletion still requires the exact recorded provider ID, type, and credential key.
+
+Policy deletion still requires exact owned content.
+Force never claims an unowned or drifted provider or same-key live policy.
+
+If cleanup leaves a residual, the command exits nonzero and preserves the registry entry so cleanup can be retried.
+It never detaches the provider from other sandboxes.
+
+## Rebuild with Managed MCP State
+
+`rebuild` preserves providers that match the recorded ID, type, and credential-key metadata.
+It removes adapter entries and detaches providers before replacing the sandbox, then reattaches providers, waits for credential readiness, reapplies policy, and restores adapters.
+
+<AgentOnly variant="deepagents">
+NemoClaw revalidates the prepared Deep Agents replacement after MCP preparation and before stopping inference or deleting the old sandbox.
+If that check fails, it restores prior MCP attachment and adapter state and keeps the old sandbox.
+
+For a Deep Agents v1 image, remove, rebuild, and destroy scrub only the matching registry-owned legacy entry from `.deepagents/.mcp.json`.
+Other user servers and unrelated top-level content remain unchanged.
+
+The replacement image must expose managed MCP capability v2 before NemoClaw restores MCP runtime state.
+</AgentOnly>
+
+If sandbox replacement fails, NemoClaw attempts to restore the previous attachment and adapter state at the path used by the surviving image.
+A later `mcp restart` can retry an incomplete post-rebuild restore.
+
+## Destroy a Sandbox with MCP State
+
+Destroy removes adapter entries and detaches providers that match recorded metadata before asking OpenShell to delete the sandbox.
+If deletion is refused, NemoClaw attempts to restore previous MCP state, reports rollback failures, and preserves recovery state.
+Provider deletion and registry cleanup happen only after OpenShell confirms the sandbox is gone.
+
+An interrupted destroy can leave a durable transaction marker.
+A prepared-only marker means deletion is not durably confirmed.
+If the sandbox is still live, remove each affected server with force until the managed manifest is empty:
+
+```bash
+$$nemoclaw my-sandbox mcp remove <server> --force
+```
+
+A pending marker means the registry records that OpenShell deletion was already confirmed.
+`mcp remove --force` refuses that state because provider or policy cleanup can still be owed.
+Finish the idempotent destroy instead:
+
+```bash
+$$nemoclaw my-sandbox destroy
+```
+
+While either marker remains, rebuild refuses before backup or deletion and prints the applicable recovery command.
+
+## Respect the Lifecycle Lock
+
+If a mutating command times out waiting for the per-sandbox lifecycle lock, confirm that no MCP, rebuild, or destroy command for that sandbox is still running, then retry.
+Every mutating command recovers a lock whose local process is provably dead or whose PID now has a different process-start identity.
+
+NemoClaw does not expose a force-unlock flag.
+A live owner, different host or PID namespace, or incomplete legacy owner record fails closed because removing it could overlap a provider, policy, or adapter mutation.
+
+For state shared across hosts or PID namespaces, resolve the owner on that host or stop sharing the state directory before retrying.
+Do not delete the lock file while ownership is ambiguous.
+
+## Related Topics
+
+- [Add an MCP Server](add-an-mcp-server) for registration requirements.
+- [About Managed MCP Servers](about-managed-mcp-servers) for the security boundary.
+- [Troubleshoot MCP Servers](../../reference/troubleshoot-mcp-servers) for failure remediation.

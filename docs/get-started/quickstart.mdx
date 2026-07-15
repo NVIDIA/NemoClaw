@@ -11,24 +11,19 @@ content:
 skill:
   priority: 10
 ---
-import { StarterPromptFallback } from "../_components/StarterPrompt";
-import { StarterPromptButton } from "../_components/StarterPromptButton";
-
 Create a sandboxed OpenClaw agent, then send it a first prompt.
 
-## Set Up with a Coding Agent
+## Set Up with the Starter Prompt on Your Coding Agent
 
 Copy this starter prompt into Cursor, Claude Code, Codex, Copilot, or another local coding agent when you want it to guide the installation.
-The prompt points the agent to [AI Agent Docs](../resources/agent-skills), this quickstart, the Markdown docs, and the optional `nemoclaw-user-guide` skill.
+The prompt points the agent to [Use NemoClaw Docs with Your Coding Agents](../resources/agent-skills), this quickstart, the Markdown docs, and the optional `nemoclaw-user-guide` skill.
 It asks the agent to collect your choices before it starts interactive commands and to use the checked-in local credential helper and form only after you approve the exact command that receives credentials.
 
-<StarterPromptButton />
+<Markdown src="/../docs/_build/StarterPrompt.generated.mdx" />
 
-<StarterPromptFallback />
+If you prefer to control setup directly, use [Set Up with the Interactive Installer on Your Terminal](#set-up-with-the-interactive-installer-on-your-terminal).
 
-If you prefer to control setup directly, use the interactive installer in [Create Your First Sandboxed Agent](#create-your-first-sandboxed-agent).
-
-## Create Your First Sandboxed Agent
+## Set Up with the Interactive Installer on Your Terminal
 
 If you use the coding-agent prompt in the preceding section, you can skip this procedure or keep it as reference.
 The prompt directs your coding agent to this quickstart, so it has the full setup context.
@@ -116,7 +111,7 @@ Use these details when your first-run path needs more control.
 
     Web search and messaging are optional build-time choices.
     Add them when you need them, then rerun onboarding and accept sandbox recreation when you change those choices later.
-    Refer to [Messaging Channels](../manage-sandboxes/messaging-channels) and [Network Policies](../network-policy/approve-network-requests) before enabling them.
+    Refer to [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) and [Network Policies](../network-policy/approve-network-requests) before enabling them.
   </Accordion>
 
   <Accordion title="Use Docker and supported platforms">
@@ -243,7 +238,7 @@ Use these details when your first-run path needs more control.
     <Tip>
     Export the API key before you launch the installer when you do not want the wizard to ask for it.
     For example, run `export NVIDIA_INFERENCE_API_KEY=<your-key>` before the installer.
-    Refer to [Reset a Stored Credential](../manage-sandboxes/lifecycle#reset-a-stored-credential) if you need to clear and re-enter a key.
+    Refer to [Remove and Re-register a Provider Credential](../security/credential-rotation#remove-and-re-register-a-provider-credential) if you need to clear and re-enter a key.
     </Tip>
 
     | Option | Use when | Credential variable |
@@ -311,7 +306,7 @@ Use these details when your first-run path needs more control.
     When you select a channel, NemoClaw validates the token format before it bakes the channel configuration into the sandbox.
     For example, Slack bot tokens must start with `xoxb-`.
     WeChat and WhatsApp are experimental.
-    Refer to [Messaging Channels](../manage-sandboxes/messaging-channels) before enabling them.
+    Refer to [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) before enabling them.
 
     After the sandbox image builds and OpenClaw starts, NemoClaw asks which network policy tier to apply.
     Web search and messaging selections happen first so the sandbox image and policy suggestions stay aligned.
@@ -399,7 +394,9 @@ Run `nemoclaw onboard`, then use [Troubleshooting](../reference/troubleshooting)
 - [NemoClaw Overview](../about/overview) explains what NemoClaw is and what it supports.
 - [Architecture Overview](../about/how-it-works) explains how NemoClaw works.
 - [Ecosystem](../about/ecosystem) explains how OpenClaw, OpenShell, and NemoClaw relate and when to use NemoClaw instead of OpenShell.
-- [Manage NemoClaw sandboxes](../manage-sandboxes/lifecycle) covers port forwards, rebuilds, upgrades, and removal.
+- [Run Sandboxes](../manage-sandboxes/operate-sandboxes/run-sandboxes) covers port forwards and routine lifecycle control.
+- [Recover and Rebuild Sandboxes](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) covers runtime repair and state-preserving recreation.
+- [Update Sandboxes](../manage-sandboxes/operate-sandboxes/update-sandboxes) and [Uninstall NemoClaw](../manage-sandboxes/operate-sandboxes/uninstall-nemoclaw) cover host lifecycle changes.
 - [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) explains how to choose or change a model and provider.
 - [Network Policies](../network-policy/approve-network-requests) explains how to manage egress approvals.
-- [AI Agent Docs](../resources/agent-skills) lets your AI coding assistant fetch NemoClaw Markdown docs.
+- [Use NemoClaw Docs with Your Coding Agents](../resources/agent-skills) lets your AI coding assistant fetch NemoClaw Markdown docs.

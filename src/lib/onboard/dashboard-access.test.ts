@@ -95,16 +95,20 @@ describe("NEMOCLAW_DASHBOARD_BIND remote-bind opt-in gate (#3259)", () => {
   it("opens the remote bind when env NEMOCLAW_DASHBOARD_BIND=0.0.0.0", () => {
     const chain = buildDashboardChain(LOOPBACK_URL, {
       env: { NEMOCLAW_DASHBOARD_BIND: "0.0.0.0" },
+      isWsl: false,
     });
     expect(chain.bindAddress).toBe("0.0.0.0");
     expect(chain.forwardTarget).toBe("0.0.0.0:18789");
     expect(
-      getDashboardForwardTarget(LOOPBACK_URL, { env: { NEMOCLAW_DASHBOARD_BIND: "0.0.0.0" } }),
+      getDashboardForwardTarget(LOOPBACK_URL, {
+        env: { NEMOCLAW_DASHBOARD_BIND: "0.0.0.0" },
+        isWsl: false,
+      }),
     ).toBe("0.0.0.0:18789");
   });
 
   it("stays loopback when env NEMOCLAW_DASHBOARD_BIND is unset", () => {
-    const chain = buildDashboardChain(LOOPBACK_URL, { env: {} });
+    const chain = buildDashboardChain(LOOPBACK_URL, { env: {}, isWsl: false });
     expect(chain.bindAddress).toBe("127.0.0.1");
     expect(chain.forwardTarget).toBe("18789");
   });
@@ -112,6 +116,7 @@ describe("NEMOCLAW_DASHBOARD_BIND remote-bind opt-in gate (#3259)", () => {
   it("stays loopback when env NEMOCLAW_DASHBOARD_BIND is empty", () => {
     const chain = buildDashboardChain(LOOPBACK_URL, {
       env: { NEMOCLAW_DASHBOARD_BIND: "" },
+      isWsl: false,
     });
     expect(chain.bindAddress).toBe("127.0.0.1");
     expect(chain.forwardTarget).toBe("18789");
@@ -120,6 +125,7 @@ describe("NEMOCLAW_DASHBOARD_BIND remote-bind opt-in gate (#3259)", () => {
   it("stays loopback when env NEMOCLAW_DASHBOARD_BIND=127.0.0.1", () => {
     const chain = buildDashboardChain(LOOPBACK_URL, {
       env: { NEMOCLAW_DASHBOARD_BIND: "127.0.0.1" },
+      isWsl: false,
     });
     expect(chain.bindAddress).toBe("127.0.0.1");
     expect(chain.forwardTarget).toBe("18789");
@@ -135,6 +141,7 @@ describe("NEMOCLAW_DASHBOARD_BIND remote-bind opt-in gate (#3259)", () => {
   ])("does NOT open a remote bind for invalid env value %j", (value) => {
     const chain = buildDashboardChain(LOOPBACK_URL, {
       env: { NEMOCLAW_DASHBOARD_BIND: value },
+      isWsl: false,
     });
     expect(chain.bindAddress).toBe("127.0.0.1");
     expect(chain.forwardTarget).toBe("18789");
@@ -142,14 +149,14 @@ describe("NEMOCLAW_DASHBOARD_BIND remote-bind opt-in gate (#3259)", () => {
 
   it("falls back to process.env when no options.env override is provided", () => {
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
-    const chain = buildDashboardChain(LOOPBACK_URL);
+    const chain = buildDashboardChain(LOOPBACK_URL, { isWsl: false });
     expect(chain.bindAddress).toBe("0.0.0.0");
     expect(chain.forwardTarget).toBe("0.0.0.0:18789");
   });
 
   it("does NOT open a remote bind for invalid process.env value", () => {
     vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0; rm -rf");
-    const chain = buildDashboardChain(LOOPBACK_URL);
+    const chain = buildDashboardChain(LOOPBACK_URL, { isWsl: false });
     expect(chain.bindAddress).toBe("127.0.0.1");
     expect(chain.forwardTarget).toBe("18789");
   });

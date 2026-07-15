@@ -45,6 +45,7 @@ type PublishedSourceRoute = {
 };
 
 type NavNode = {
+  changelog?: string;
   page?: string;
   section?: string;
   link?: string;
@@ -75,6 +76,7 @@ function walkLayout(
   variant: AgentVariant,
   parents: string[],
   index: PublishedRouteIndex,
+  docsDir: string,
 ): void {
   for (const node of nodes ?? []) {
     // Fail loud rather than silently corrupt the route map: this repo always
@@ -83,6 +85,11 @@ function walkLayout(
     // route. If that convention ever changes, update this checker deliberately.
     if (node.path && !node.slug) {
       throw new Error(`docs/index.yml page '${node.path}' has no slug; route checker needs it`);
+    }
+    if (node.changelog && !node.slug) {
+      throw new Error(
+        `docs/index.yml changelog '${node.changelog}' has no slug; route checker needs it`,
+      );
     }
     if (node.contents && node.section !== undefined && !node.slug) {
       throw new Error(
@@ -109,15 +116,26 @@ function walkLayout(
         index.sourceToRoutes.set(source.path, existing);
       }
     }
+    if (node.changelog && node.slug) {
+      const changelogRoot = `/${["user-guide", variant, ...parents, node.slug].join("/")}`;
+      index.routes.add(changelogRoot);
+      for (const fileName of readdirSync(path.resolve(docsDir, node.changelog))) {
+        const date = fileName.match(/^(\d{4})-(\d{2})-(\d{2})\.mdx$/);
+        if (date) {
+          index.routes.add(`${changelogRoot}/${date[1]}/${Number(date[2])}/${Number(date[3])}`);
+        }
+      }
+    }
     if (node.contents) {
       const childParents = node.slug ? [...parents, node.slug] : parents;
-      walkLayout(node.contents, variant, childParents, index);
+      walkLayout(node.contents, variant, childParents, index, docsDir);
     }
   }
 }
 
 export function buildPublishedRouteIndex(
   navYaml: string = readFileSync(path.join(docsRoot, "index.yml"), "utf8"),
+  docsDir: string = docsRoot,
 ): PublishedRouteIndex {
   const doc = parse(navYaml) as { navigation?: NavNode[] };
   const userGuide = doc.navigation?.find((item) => Array.isArray(item.variants));
@@ -127,7 +145,7 @@ export function buildPublishedRouteIndex(
   const index: PublishedRouteIndex = { routes: new Set(), sourceToRoutes: new Map() };
   for (const variant of userGuide.variants) {
     if (!variant.slug || !isAgentVariant(variant.slug)) continue;
-    walkLayout(variant.layout, variant.slug, [], index);
+    walkLayout(variant.layout, variant.slug, [], index, docsDir);
   }
   if (index.routes.size === 0) {
     throw new Error("no published routes derived from docs/index.yml");
@@ -142,8 +160,136 @@ export type RedirectViolation = {
   variant: AgentVariant | null;
 };
 
+export type LegacyHtmlRedirectViolation = {
+  source: string;
+  destination: string | null;
+  expected: string;
+  mustPrecede?: string;
+};
+
 /**
- * Validate static inference redirect destinations against the published route map.
+ * Require renamed Manage Sandboxes routes to preserve their legacy HTML forms
+ * with direct redirects. Falling through to the generic HTML rules would first
+ * remove `.html` or `/index.html`, then require a second redirect to the final
+ * page.
+ */
+export function findMissingDirectLegacyManageSandboxRedirects(
+  fernYaml: string = readFileSync(path.join(repoRoot, "fern", "docs.yml"), "utf8"),
+): LegacyHtmlRedirectViolation[] {
+  const config = parse(fernYaml) as {
+    redirects?: Array<{ source: string; destination: string }>;
+  };
+  const redirects = config.redirects ?? [];
+  const directDestinations = new Map(
+    redirects.map((redirect) => [redirect.source, redirect.destination]),
+  );
+  const violations: LegacyHtmlRedirectViolation[] = [];
+
+  for (const redirect of redirects) {
+    if (
+      (!redirect.source.includes("/manage-sandboxes") &&
+        !redirect.destination.includes("/manage-sandboxes")) ||
+      redirect.source.includes(":path") ||
+      redirect.source.endsWith(".html")
+    ) {
+      continue;
+    }
+
+    for (const source of [`${redirect.source}.html`, `${redirect.source}/index.html`]) {
+      const destination = directDestinations.get(source) ?? null;
+      if (destination !== redirect.destination) {
+        violations.push({ source, destination, expected: redirect.destination });
+      }
+    }
+  }
+
+  return violations;
+}
+
+/** Require every retired Release Notes URL to redirect directly to the native changelog. */
+export function findMissingDirectLegacyReleaseNotesRedirects(
+  fernYaml: string = readFileSync(path.join(repoRoot, "fern", "docs.yml"), "utf8"),
+): LegacyHtmlRedirectViolation[] {
+  const config = parse(fernYaml) as {
+    redirects?: Array<{ source: string; destination: string }>;
+  };
+  const redirects = config.redirects ?? [];
+  const directDestinations = new Map(
+    redirects.map((redirect, index) => [
+      redirect.source,
+      { destination: redirect.destination, index },
+    ]),
+  );
+  const genericIndexes = new Map(
+    [
+      "/nemoclaw/latest/:path*/index.html",
+      "/nemoclaw/:path*/index.html",
+      "/nemoclaw/:path*.html",
+    ].map((source) => [source, redirects.findIndex((redirect) => redirect.source === source)]),
+  );
+  const expectedRedirects: ReadonlyArray<{
+    source: string;
+    expected: string;
+    mustPrecede?: string;
+  }> = [
+    ...["/nemoclaw/latest", "/nemoclaw"].flatMap((base) => {
+      const destinationBase = `${base}/user-guide/:variant/release-notes`;
+      const sourceBase = `${base}/user-guide/:variant/about/release-notes`;
+      return [
+        { source: sourceBase, expected: destinationBase },
+        {
+          source: `${sourceBase}.html`,
+          expected: destinationBase,
+          mustPrecede: "/nemoclaw/:path*.html",
+        },
+        {
+          source: `${sourceBase}/index.html`,
+          expected: destinationBase,
+          mustPrecede: base.endsWith("/latest")
+            ? "/nemoclaw/latest/:path*/index.html"
+            : "/nemoclaw/:path*/index.html",
+        },
+        { source: `${sourceBase}.md`, expected: `${destinationBase}.md` },
+        { source: `${sourceBase}.mdx`, expected: `${destinationBase}.mdx` },
+      ] as const;
+    }),
+    ...["/nemoclaw/latest", "/nemoclaw"].flatMap((base) => {
+      const destination = `${base}/user-guide/openclaw/release-notes`;
+      const sourceBase = `${base}/about/release-notes`;
+      return [
+        { source: sourceBase, expected: destination },
+        {
+          source: `${sourceBase}.html`,
+          expected: destination,
+          mustPrecede: "/nemoclaw/:path*.html",
+        },
+        {
+          source: `${sourceBase}/index.html`,
+          expected: destination,
+          mustPrecede: base.endsWith("/latest")
+            ? "/nemoclaw/latest/:path*/index.html"
+            : "/nemoclaw/:path*/index.html",
+        },
+        { source: `${sourceBase}.md`, expected: `${destination}.md` },
+        { source: `${sourceBase}.mdx`, expected: `${destination}.mdx` },
+      ] as const;
+    }),
+  ];
+
+  return expectedRedirects.flatMap(({ source, expected, mustPrecede }) => {
+    const direct = directDestinations.get(source);
+    if (direct?.destination !== expected) {
+      return [{ source, destination: direct?.destination ?? null, expected }];
+    }
+    const genericIndex = mustPrecede ? (genericIndexes.get(mustPrecede) ?? -1) : -1;
+    return genericIndex >= 0 && direct.index > genericIndex
+      ? [{ source, destination: direct.destination, expected, mustPrecede }]
+      : [];
+  });
+}
+
+/**
+ * Validate static inference and Manage Sandboxes redirect destinations against the published route map.
  * Variant placeholders are expanded independently so one unsupported agent route
  * cannot hide behind a redirect that works for the other variants.
  */
@@ -156,7 +302,14 @@ export function findBrokenPublishedRedirects(
   };
   const violations: RedirectViolation[] = [];
   for (const redirect of config.redirects ?? []) {
-    if (!redirect.source.includes("/inference") && !redirect.destination.includes("/inference")) {
+    const guardedRedirect = ["/inference", "/manage-sandboxes", "/release-notes"].some(
+      (segment) => redirect.source.includes(segment) || redirect.destination.includes(segment),
+    );
+    if (
+      !guardedRedirect ||
+      redirect.source.includes(":path") ||
+      redirect.destination.includes(":path")
+    ) {
       continue;
     }
     const hasVariant =
@@ -168,7 +321,7 @@ export function findBrokenPublishedRedirects(
         ? redirect.destination.replaceAll(":variant", variant)
         : redirect.destination;
       if (destination.includes(":")) continue;
-      const resolved = destination.replace(/^\/nemoclaw(?:\/latest)?/, "");
+      const resolved = destination.replace(/^\/nemoclaw(?:\/latest)?/, "").replace(/\.mdx?$/, "");
       if (!resolved.startsWith("/user-guide/") || index.routes.has(resolved)) continue;
       violations.push({ source, destination, resolved, variant });
     }
@@ -283,9 +436,51 @@ export function findBrokenPublishedRoutes(
 }
 
 /**
+ * Validate every internal link in the singular native changelog. Changelog
+ * entries publish at dated routes, so cross-page links must be root-absolute;
+ * otherwise the same source can resolve beneath `/release-notes/YYYY/M/D`.
+ */
+export function findBrokenChangelogRoutes(
+  index: PublishedRouteIndex,
+  docsDir: string = docsRoot,
+): RouteViolation[] {
+  const changelogDir = path.join(docsDir, "changelog");
+  const changelogRoots = agentVariants.map((variant) => `/user-guide/${variant}/release-notes`);
+  const missingRoots = changelogRoots.filter((route) => !index.routes.has(route));
+  if (missingRoots.length > 0) {
+    throw new Error(
+      `docs/index.yml must publish the shared native changelog at: ${missingRoots.join(", ")}`,
+    );
+  }
+
+  const violations: RouteViolation[] = [];
+  for (const fileName of readdirSync(changelogDir)
+    .filter((name) => name.endsWith(".mdx"))
+    .sort()) {
+    const sourcePath = `changelog/${fileName}`;
+    const links = extractMarkdownLinks(
+      readFileSync(path.join(changelogDir, fileName), "utf8"),
+    ).filter((link) => isInternalRouteLink(link.target));
+    const date = fileName.match(/^(\d{4})-(\d{2})-(\d{2})\.mdx$/);
+    for (const changelogRoot of changelogRoots) {
+      const fromRoute = date
+        ? `${changelogRoot}/${date[1]}/${Number(date[2])}/${Number(date[3])}`
+        : changelogRoot;
+      for (const link of links) {
+        const resolved = resolvePublishedRoute(fromRoute, link.target);
+        if (!link.target.startsWith("/") || !index.routes.has(resolved)) {
+          violations.push({ sourcePath, fromRoute, ...link, resolved });
+        }
+      }
+    }
+  }
+  return violations;
+}
+
+/**
  * Validate only inference links on a shared page whose other historical links
- * are outside this checker's scope. This keeps the release-notes regression
- * guard focused while still rendering and checking every agent variant.
+ * are outside this checker's scope while still rendering and checking every
+ * agent variant.
  */
 export function findBrokenPublishedInferenceRoutes(
   sourcePath: string,
@@ -294,6 +489,20 @@ export function findBrokenPublishedInferenceRoutes(
 ): RouteViolation[] {
   return findBrokenPublishedRoutes(sourcePath, index, docsDir).filter((violation) =>
     /\/inference(?:\/|$)/.test(violation.resolved),
+  );
+}
+
+/**
+ * Validate only Manage Sandboxes links on a shared page whose other historical
+ * links are outside this checker's scope.
+ */
+export function findBrokenPublishedManageSandboxRoutes(
+  sourcePath: string,
+  index: PublishedRouteIndex,
+  docsDir: string = docsRoot,
+): RouteViolation[] {
+  return findBrokenPublishedRoutes(sourcePath, index, docsDir).filter((violation) =>
+    /\/manage-sandboxes(?:\/|$)/.test(violation.resolved),
   );
 }
 
@@ -352,8 +561,8 @@ export function resolvePageLinksByText(
 }
 
 // Pages that have repeatedly regressed on source-path-vs-published-route drift
-// (NemoClaw#5445, #6290, #5465, #5460, #6601). Guard every inference page because
-// its nested navigation intentionally differs from the flat source directory.
+// (NemoClaw#5445, #6290, #5465, #5460, #6601). Guard every inference and Manage
+// Sandboxes page because their nested navigation differs from source directories.
 const GUARDED_SOURCE_PAGES = [
   "reference/commands.mdx",
   "reference/network-policies.mdx",
@@ -366,16 +575,31 @@ const GUARDED_SOURCE_PAGES = [
     .filter((name) => name.endsWith(".mdx"))
     .sort()
     .map((name) => `inference/${name}`),
+  ...readdirSync(path.join(docsRoot, "manage-sandboxes"))
+    .filter((name) => name.endsWith(".mdx"))
+    .sort()
+    .map((name) => `manage-sandboxes/${name}`),
+  "deployment/install-openclaw-plugins.mdx",
+  "deployment/sandbox-hardening.mdx",
+  "deployment/set-up-mcp-bridge.mdx",
 ];
 
 function main(): void {
   const index = buildPublishedRouteIndex();
   const violations = [
     ...GUARDED_SOURCE_PAGES.flatMap((source) => findBrokenPublishedRoutes(source, index)),
-    ...findBrokenPublishedInferenceRoutes("about/release-notes.mdx", index),
+    ...findBrokenChangelogRoutes(index),
   ];
   const redirectViolations = findBrokenPublishedRedirects(index);
-  if (violations.length > 0 || redirectViolations.length > 0) {
+  const legacyHtmlRedirectViolations = [
+    ...findMissingDirectLegacyManageSandboxRedirects(),
+    ...findMissingDirectLegacyReleaseNotesRedirects(),
+  ];
+  if (
+    violations.length > 0 ||
+    redirectViolations.length > 0 ||
+    legacyHtmlRedirectViolations.length > 0
+  ) {
     console.error(
       "check-docs-published-routes: internal links resolve to no published Fern route.",
     );
@@ -396,10 +620,18 @@ function main(): void {
           `    resolves to ${v.resolved} — not a published route`,
       );
     }
+    for (const v of legacyHtmlRedirectViolations) {
+      console.error(
+        `  fern/docs.yml legacy route ${v.source}\n` +
+          `    targets ${v.destination ?? "no direct redirect"}\n` +
+          `    expected direct destination ${v.expected}` +
+          (v.mustPrecede ? ` before ${v.mustPrecede}` : ""),
+      );
+    }
     process.exit(1);
   }
   console.log(
-    `check-docs-published-routes: OK — ${GUARDED_SOURCE_PAGES.length} guarded page(s) plus release-note inference links, all checked links resolve to published routes`,
+    `check-docs-published-routes: OK — ${GUARDED_SOURCE_PAGES.length} guarded page(s), native changelog links, and direct legacy redirects`,
   );
 }
 

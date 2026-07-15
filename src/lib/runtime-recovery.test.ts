@@ -39,12 +39,14 @@ describe("runtime recovery helpers", () => {
           "alpha   2026-06-25 09:40:49  Failed",
           "beta    2026-06-25 09:41:00  CrashLoopBackOff",
           "gamma   2026-06-25 09:42:00  Creating",
+          "delta   2026-06-25 09:43:00  Evicted",
         ].join("\n"),
       ),
     ).toEqual([
       { name: "alpha", phase: "Failed" },
       { name: "beta", phase: "CrashLoopBackOff" },
       { name: "gamma", phase: "Creating" },
+      { name: "delta", phase: "Evicted" },
     ]);
   });
 

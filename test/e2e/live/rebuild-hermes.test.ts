@@ -23,6 +23,7 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 import { listCredentialLeakPaths } from "../fixtures/phases/state-validation.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { buildRebuildHermesChildEnv } from "./rebuild-hermes-env.ts";
+import { startRebuildHermesProgress } from "./rebuild-hermes-progress.ts";
 
 // The migrated scope is the legacy non-interactive shell regression: install.sh,
 // Docker base-image builds, OpenShell provider/sandbox commands, direct Hermes
@@ -75,6 +76,10 @@ const OPENSHELL_TIMEOUT_MS = 2 * 60_000;
 const SANDBOX_CREATE_TIMEOUT_MS = 10 * 60_000;
 const REBUILD_TIMEOUT_MS = 45 * 60_000;
 const LIVE_TIMEOUT_MS = 100 * 60_000;
+// Long Docker and installer commands can become noisy when they wedge. Keep a
+// generous diagnostic tail without letting a stuck child exhaust the hosted
+// runner by growing the fixture's in-memory stdout/stderr buffers forever.
+const LONG_COMMAND_CAPTURE_LIMIT_BYTES = 4 * 1024 * 1024;
 
 interface RegistryData {
   sandboxes?: Record<string, Record<string, unknown>>;
@@ -411,6 +416,8 @@ test(STALE_BASE_REBUILD
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   const redactionValues = [apiKey, DISCORD_FAKE_TOKEN];
   const expectedVersion = expectedHermesVersion();
+  const progress = startRebuildHermesProgress("setup");
+  cleanup.trackDisposable("stop Hermes rebuild progress", progress.stop);
 
   const registrySnapshot = snapshotFile(REGISTRY_FILE);
   const sessionSnapshot = snapshotFile(SESSION_FILE);
@@ -489,13 +496,17 @@ test(STALE_BASE_REBUILD
   cleanup.trackDisposable(`destroy Hermes rebuild sandbox ${SANDBOX_NAME}`, () =>
     cleanupHermesNemoClawSandbox(host, apiKey),
   );
+  cleanup.trackDisposable("mark Hermes rebuild cleanup progress", () => progress.phase("cleanup"));
 
+  progress.phase("phase 1 install");
   const install = await host.command("bash", ["install.sh", "--non-interactive"], {
     artifactName: "phase-1-install-hermes",
     cwd: REPO_ROOT,
     env: testEnv(apiKey),
     redactionValues,
     timeoutMs: INSTALL_TIMEOUT_MS,
+    captureLimitBytes: LONG_COMMAND_CAPTURE_LIMIT_BYTES,
+    onOutput: progress.onOutput,
   });
   expectExitZero(install, "NemoClaw install.sh");
 
@@ -550,6 +561,7 @@ test(STALE_BASE_REBUILD
     timeoutMs: OPENSHELL_TIMEOUT_MS,
   });
 
+  progress.phase("phase 2 old base build");
   const buildOldBase = await host.command(
     "docker",
     [
@@ -575,6 +587,8 @@ test(STALE_BASE_REBUILD
       env: testEnv(apiKey),
       redactionValues,
       timeoutMs: DOCKER_BUILD_TIMEOUT_MS,
+      captureLimitBytes: LONG_COMMAND_CAPTURE_LIMIT_BYTES,
+      onOutput: progress.onOutput,
     },
   );
   expectExitZero(buildOldBase, `docker build old Hermes base ${OLD_HERMES_VERSION}`);
@@ -622,6 +636,7 @@ test(STALE_BASE_REBUILD
     );
     expectExitZero(provider, "OpenShell Discord provider create/update");
 
+    progress.phase("phase 3 old sandbox create");
     const createOldSandbox = await host.command(
       "openshell",
       [
@@ -644,6 +659,8 @@ test(STALE_BASE_REBUILD
         env: testEnv(apiKey),
         redactionValues,
         timeoutMs: SANDBOX_CREATE_TIMEOUT_MS,
+        captureLimitBytes: LONG_COMMAND_CAPTURE_LIMIT_BYTES,
+        onOutput: progress.onOutput,
       },
     );
     expectExitZero(createOldSandbox, "create old Hermes sandbox");
@@ -652,6 +669,7 @@ test(STALE_BASE_REBUILD
   }
   await waitForSandboxReady(host, apiKey);
 
+  progress.phase("phase 4 seed rebuild state");
   const writeMarker = await host.command(
     "openshell",
     [
@@ -715,6 +733,7 @@ test(STALE_BASE_REBUILD
 
   switch (STALE_BASE_REBUILD) {
     case false: {
+      progress.phase("phase 5 current base build");
       const buildCurrentBase = await host.command(
         "docker",
         [
@@ -730,26 +749,33 @@ test(STALE_BASE_REBUILD
           env: testEnv(apiKey),
           redactionValues,
           timeoutMs: DOCKER_BUILD_TIMEOUT_MS,
+          captureLimitBytes: LONG_COMMAND_CAPTURE_LIMIT_BYTES,
+          onOutput: progress.onOutput,
         },
       );
       expectExitZero(buildCurrentBase, "docker build current Hermes base image");
       break;
     }
     case true:
+      progress.phase("phase 5 stale base setup");
       await artifacts.writeText(
         "phase-5-stale-base-note.txt",
         `Left ${CURRENT_BASE_TAG} pointing at ${OLD_HERMES_VERSION}; rebuild must refresh the base cache.\n`,
       );
   }
 
+  progress.phase("phase 6 nemoclaw rebuild");
   const rebuild = await host.command("nemoclaw", [SANDBOX_NAME, "rebuild", "--yes", "--verbose"], {
     artifactName: "phase-6-nemoclaw-rebuild-hermes",
     env: testEnv(apiKey, { NEMOCLAW_REBUILD_VERBOSE: "1" }),
     redactionValues,
     timeoutMs: REBUILD_TIMEOUT_MS,
+    captureLimitBytes: LONG_COMMAND_CAPTURE_LIMIT_BYTES,
+    onOutput: progress.onOutput,
   });
   expectExitZero(rebuild, "nemoclaw rebuild Hermes sandbox");
 
+  progress.phase("phase 7 verification");
   const restoredMarker = await host.command(
     "openshell",
     ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "cat", MARKER_FILE],

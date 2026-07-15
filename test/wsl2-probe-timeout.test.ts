@@ -61,17 +61,13 @@ describe("WSL2 inference verification timeouts (#987)", () => {
   });
 
   describe("retry logic in probeOpenAiLikeEndpoint", () => {
-    function runProbeWithCurlStatuses(statuses: number[]) {
+    function runProbeWithCurlStatuses(statuses: number[], isWsl = false) {
       const httpProbePath = require.resolve("../src/lib/adapters/http/probe.js");
-      const platformPath = require.resolve("../src/lib/platform.js");
       const probesPath = require.resolve("../src/lib/inference/onboard-probes.js");
       const httpProbe = require(httpProbePath);
-      const platform = require(platformPath);
       const originalRunCurlProbe = httpProbe.runCurlProbe;
-      const originalIsWsl = platform.isWsl;
       const calls: string[][] = [];
       let index = 0;
-      platform.isWsl = () => false;
       httpProbe.runCurlProbe = (args: string[]) => {
         calls.push(args);
         const status = statuses[index++] ?? 0;
@@ -105,12 +101,12 @@ describe("WSL2 inference verification timeouts (#987)", () => {
           ) => { ok: boolean };
         };
         const result = probeOpenAiLikeEndpoint("http://localhost:8000", "test-model", "key", {
+          isWsl,
           skipResponsesProbe: false,
         });
         return { result, calls };
       } finally {
         httpProbe.runCurlProbe = originalRunCurlProbe;
-        platform.isWsl = originalIsWsl;
         delete require.cache[probesPath];
       }
     }
@@ -150,12 +146,9 @@ describe("WSL2 inference verification timeouts (#987)", () => {
 
     function runProbeWithResults(results: ProbeResultFixture[], opts: { isWsl?: boolean } = {}) {
       const httpProbePath = require.resolve("../src/lib/adapters/http/probe.js");
-      const platformPath = require.resolve("../src/lib/platform.js");
       const probesPath = require.resolve("../src/lib/inference/onboard-probes.js");
       const httpProbe = require(httpProbePath);
-      const platform = require(platformPath);
       const originalRunCurlProbe = httpProbe.runCurlProbe;
-      const originalIsWsl = platform.isWsl;
       const atomics = globalThis as typeof globalThis & {
         Atomics: { wait: (...args: never[]) => "ok" | "not-equal" | "timed-out" };
       };
@@ -166,7 +159,6 @@ describe("WSL2 inference verification timeouts (#987)", () => {
         calls.push(args);
         return results[index++] ?? results[results.length - 1];
       };
-      platform.isWsl = () => opts.isWsl === true;
       atomics.Atomics.wait = () => "ok";
       delete require.cache[probesPath];
       try {
@@ -178,11 +170,12 @@ describe("WSL2 inference verification timeouts (#987)", () => {
             options?: Record<string, unknown>,
           ) => { ok: boolean; message?: string };
         };
-        const result = probeOpenAiLikeEndpoint("http://localhost:8000", "test-model", "key");
+        const result = probeOpenAiLikeEndpoint("http://localhost:8000", "test-model", "key", {
+          isWsl: opts.isWsl ?? false,
+        });
         return { result, calls };
       } finally {
         httpProbe.runCurlProbe = originalRunCurlProbe;
-        platform.isWsl = originalIsWsl;
         atomics.Atomics.wait = originalWait;
         delete require.cache[probesPath];
       }

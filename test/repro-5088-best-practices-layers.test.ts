@@ -9,14 +9,14 @@ import { describe, expect, it } from "vitest";
 // "four layers" in the intro, the Mermaid diagram, and the at-a-glance table,
 // but the body documents five layer sections (it adds Gateway Authentication).
 // It also keeps the Sandbox Hardening link on the canonical
-// manage-sandboxes/ route rather than the retired deployment/ path.
+// manage-sandboxes/configure-sandboxes/ route rather than the retired deployment/ path.
 const REPO_ROOT = path.dirname(import.meta.dirname);
 const DOC = path.join(REPO_ROOT, "docs", "security", "best-practices.mdx");
 const text = fs.readFileSync(DOC, "utf-8");
 
 describe("best-practices.mdx security-layer consistency (#5088)", () => {
   it("links Sandbox Hardening via the canonical manage-sandboxes path", () => {
-    expect(text).toMatch(/\.\.\/manage-sandboxes\/sandbox-hardening/);
+    expect(text).toMatch(/\.\.\/manage-sandboxes\/configure-sandboxes\/review-sandbox-hardening/);
     expect(text).not.toMatch(/\.\.\/deployment\/sandbox-hardening/);
   });
 

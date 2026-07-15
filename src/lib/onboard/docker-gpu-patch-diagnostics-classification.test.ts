@@ -82,6 +82,13 @@ describe("Docker GPU patch diagnostics", () => {
       "alpha   Ready   1m ago",
     ],
     [
+      "reads the trailing phase from the modern name-created-phase layout",
+      "Name: alpha\nPhase: Error\nReason: ContainerCannotRun\n",
+      "NAME    CREATED              PHASE\nalpha   2026-07-14 05:11:40  Provisioning\n",
+      "Provisioning",
+      "alpha   2026-07-14 05:11:40  Provisioning",
+    ],
+    [
       "keeps the get-derived phase when the sandbox row is absent from list output",
       "Name: alpha\nPhase: Terminated\n",
       "other-box   Ready   2s ago\n",

@@ -133,7 +133,7 @@ function requireEnv(
   }
 }
 
-function requireExactPermissions(
+function requirePermissions(
   errors: string[],
   jobName: string,
   job: WorkflowRecord,
@@ -235,14 +235,14 @@ function checkPrivilegeDomains(
       "workflow-level permissions must be empty so each job declares its privilege domain",
     );
   }
-  requireExactPermissions(errors, "review", reviewJob, {
+  requirePermissions(errors, "review", reviewJob, {
     actions: "read",
     checks: "read",
     contents: "read",
     issues: "read",
     "pull-requests": "read",
   });
-  requireExactPermissions(errors, "publish", publishJob, {
+  requirePermissions(errors, "publish", publishJob, {
     contents: "read",
     "pull-requests": "write",
   });
@@ -277,7 +277,7 @@ function checkAnalysisJob(errors: string[], reviewJob: WorkflowRecord): void {
     }
   }
   if (entries.filter((entry) => booleanValue(entry.publish_comment) === true).length !== 1) {
-    errors.push("advisor matrix must identify exactly one primary artifact lane");
+    errors.push("advisor matrix must identify one primary artifact lane");
   }
   for (const field of ["model", "artifact_dir", "artifact_name"]) {
     requireUniqueMatrixField(errors, entries, field);

@@ -35,11 +35,7 @@ import { resolveVllmInstallModel } from "./vllm-prompt";
 import {
   formatStorageBytes,
   imageStorageRequirementBytes,
-  modelStorageRequirementBytes,
-  probeDockerBindIdentity,
-  probeDockerHostLocality,
   probeDockerStorage,
-  probeModelCacheStorage,
   type StorageProbeResult,
   VLLM_STORAGE_OVERRIDE_ENV,
 } from "./vllm-storage";
@@ -124,6 +120,9 @@ const HF_TOKEN_ENV_KEYS = ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"] as const;
 const MODEL_DOWNLOAD_HEARTBEAT_MS = 30_000;
 const VLLM_LAUNCH_HEARTBEAT_MS = 30_000;
 const HF_CACHE_CONTAINER_DIR = "/root/.cache/huggingface";
+export const NEMOCLAW_VLLM_CONTAINER_NAME = "nemoclaw-vllm";
+export const NEMOCLAW_VLLM_MANAGED_LABEL = "com.nvidia.nemoclaw.managed-vllm";
+const DOCKER_CONTAINER_ID_PATTERN = /^[a-f0-9]{12,64}$/;
 
 function hostHfCacheDir(): string {
   return path.join(os.homedir(), ".cache", "huggingface");
@@ -192,7 +191,7 @@ const SPARK_PROFILE: VllmProfile = {
   image: VLLM_IMAGES.ngc2605Post1.arm64.ref,
   imageDownloadSizeBytes: VLLM_IMAGES.ngc2605Post1.arm64.downloadSizeBytes,
   defaultModel: qwen35bNvfp4Model(),
-  containerName: "nemoclaw-vllm",
+  containerName: NEMOCLAW_VLLM_CONTAINER_NAME,
   dockerRunFlags: vllmDockerRunFlags(),
   pullTimeoutSec: 12 * 60 * 60,
   loadTimeoutSec: 1800,
@@ -205,7 +204,7 @@ const STATION_PROFILE: VllmProfile = {
   image: VLLM_IMAGES.ngc2605Post1.arm64.ref,
   imageDownloadSizeBytes: VLLM_IMAGES.ngc2605Post1.arm64.downloadSizeBytes,
   defaultModel: deepseekV4FlashModel(),
-  containerName: "nemoclaw-vllm",
+  containerName: NEMOCLAW_VLLM_CONTAINER_NAME,
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
   buildDockerRunFlags: () => {
     const indices = getGpuIndicesByName(/GB300/i);
@@ -239,7 +238,7 @@ const GENERIC_LINUX_PROFILE: VllmProfile | null = genericLinuxImage
       image: genericLinuxImage.ref,
       imageDownloadSizeBytes: genericLinuxImage.downloadSizeBytes,
       defaultModel: nemotronNanoModel(),
-      containerName: "nemoclaw-vllm",
+      containerName: NEMOCLAW_VLLM_CONTAINER_NAME,
       dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
       pullTimeoutSec: SPARK_PROFILE.pullTimeoutSec,
       loadTimeoutSec: SPARK_PROFILE.loadTimeoutSec,
@@ -444,6 +443,8 @@ export function buildVllmRunArgs(
     "--restart",
     "unless-stopped",
     ...safeRunFlags,
+    "--label",
+    `${NEMOCLAW_VLLM_MANAGED_LABEL}=true`,
     "-p",
     `${String(VLLM_PORT)}:8000`,
     "--name",
@@ -454,6 +455,71 @@ export function buildVllmRunArgs(
     "-lc",
     buildVllmServeCommand(model, env),
   ];
+}
+
+type VllmContainerOwnership =
+  | { kind: "absent" }
+  | { kind: "foreign" }
+  | { kind: "managed"; containerId: string; running: boolean }
+  | { kind: "unknown" };
+
+function inspectVllmContainerOwnership(containerName: string): VllmContainerOwnership {
+  const format = `{{.ID}}|{{.Names}}|{{.State}}|{{.Label "${NEMOCLAW_VLLM_MANAGED_LABEL}"}}`;
+  try {
+    const output = dockerCapture(
+      [
+        "container",
+        "ls",
+        "--all",
+        "--no-trunc",
+        "--filter",
+        `name=^/${containerName}$`,
+        "--format",
+        format,
+      ],
+      { env: buildVllmDockerEnv(), timeout: 10_000 },
+    ).trim();
+    if (!output) return { kind: "absent" };
+
+    const rows = output.split(/\r?\n/);
+    if (rows.length !== 1) return { kind: "unknown" };
+    const fields = rows[0].split("|");
+    if (fields.length !== 4) return { kind: "unknown" };
+    const [containerId, observedName, state, managedLabel] = fields;
+    if (observedName !== containerName || !DOCKER_CONTAINER_ID_PATTERN.test(containerId)) {
+      return { kind: "unknown" };
+    }
+    if (managedLabel !== "true") return { kind: "foreign" };
+    return { kind: "managed", containerId, running: state === "running" };
+  } catch {
+    return { kind: "unknown" };
+  }
+}
+
+function vllmContainerReplacementTarget(
+  containerName: string,
+): { ok: true; containerId?: string } | { ok: false; reason: string } {
+  const ownership = inspectVllmContainerOwnership(containerName);
+  if (ownership.kind === "foreign") {
+    return {
+      ok: false,
+      reason: `Container "${containerName}" already exists without the NemoClaw ownership label. NemoClaw will not remove it. Remove or rename that container, then retry managed vLLM installation.`,
+    };
+  }
+  if (ownership.kind === "unknown") {
+    return {
+      ok: false,
+      reason: `Could not verify ownership of Docker container "${containerName}". NemoClaw will not remove it. Check Docker access and retry.`,
+    };
+  }
+  return ownership.kind === "managed"
+    ? { ok: true, containerId: ownership.containerId }
+    : { ok: true };
+}
+
+export function isNemoClawManagedVllmRunning(): boolean {
+  const ownership = inspectVllmContainerOwnership(NEMOCLAW_VLLM_CONTAINER_NAME);
+  return ownership.kind === "managed" && ownership.running;
 }
 
 function startContainer(
@@ -476,13 +542,17 @@ function startContainer(
   } catch (err) {
     return { ok: false, reason: (err as Error).message };
   }
-  // Validate every launch input before replacing a potentially healthy
-  // existing container. Once validated, teardown keeps startup idempotent.
-  dockerForceRm(profile.containerName, {
-    env: buildVllmDockerEnv(),
-    ignoreError: true,
-    suppressOutput: true,
-  });
+  // Re-check immediately before teardown. Removing the inspected container ID
+  // avoids deleting an unrelated same-name container if the name changes hands.
+  const replacement = vllmContainerReplacementTarget(profile.containerName);
+  if (!replacement.ok) return replacement;
+  if (replacement.containerId) {
+    dockerForceRm(replacement.containerId, {
+      env: buildVllmDockerEnv(),
+      ignoreError: true,
+      suppressOutput: true,
+    });
+  }
   const result = dockerRunDetached(runArgs, {
     env: buildVllmDockerEnv(buildHfTokenForwardEnv()),
     ignoreError: true,
@@ -598,49 +668,51 @@ function containerStillRunning(profile: VllmProfile): boolean {
   return out === profile.containerName;
 }
 
-interface StorageWarning {
-  item: string;
-  itemLabel: "Image" | "Model";
-  probe: StorageProbeResult;
-  question: string;
-  remediation: readonly string[];
-  requiredBytes: bigint;
-  subject: string;
-}
-
-function printStorageWarning(warning: StorageWarning): void {
-  const insufficient =
-    warning.probe.ok && warning.probe.capacity.availableBytes < warning.requiredBytes;
+function printImageStorageWarning(
+  profile: VllmProfile,
+  probe: StorageProbeResult,
+  requiredBytes: bigint,
+): void {
+  const insufficient = probe.ok && probe.capacity.availableBytes < requiredBytes;
   console.error("");
-  console.error(`  ${insufficient ? "Insufficient" : "Unable to verify"} ${warning.subject}.`);
+  console.error(
+    `  ${insufficient ? "Insufficient" : "Unable to verify"} Docker storage for the managed vLLM image.`,
+  );
   console.error("");
-  console.error(`  ${warning.itemLabel}:     ${warning.item}`);
+  console.error(`  Image:     ${profile.image}`);
   console.error(
     `  Available: ${
-      warning.probe.ok
-        ? formatStorageBytes(warning.probe.capacity.availableBytes)
-        : `unknown (${warning.probe.reason})`
+      probe.ok ? formatStorageBytes(probe.capacity.availableBytes) : `unknown (${probe.reason})`
     }`,
   );
-  console.error(`  Required:  approximately ${formatStorageBytes(warning.requiredBytes)}`);
-  if (warning.probe.ok) {
-    console.error(`  Storage:   ${warning.probe.capacity.source} (${warning.probe.capacity.path})`);
-  } else if (warning.probe.path) {
-    console.error(`  Storage:   ${warning.probe.source ?? "filesystem"} (${warning.probe.path})`);
+  console.error(`  Required:  approximately ${formatStorageBytes(requiredBytes)}`);
+  if (probe.ok) {
+    console.error(`  Storage:   ${probe.capacity.source} (${probe.capacity.path})`);
+  } else if (probe.path) {
+    console.error(`  Storage:   ${probe.source ?? "filesystem"} (${probe.path})`);
   }
   console.error("");
-  for (const line of warning.remediation) console.error(`  ${line}`);
+  if (insufficient) console.error("  Free or expand Docker storage before continuing.");
+  console.error("  Useful diagnostics:");
+  console.error("    docker system df");
+  console.error("    docker info --format '{{.DockerRootDir}}'");
 }
 
-async function storageWarningAccepted(
-  warning: StorageWarning,
+async function imageStorageAccepted(
+  profile: VllmProfile,
   opts: InstallVllmOptions,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<boolean> {
-  if (warning.probe.ok && warning.probe.capacity.availableBytes >= warning.requiredBytes) {
+  const probe = probeDockerStorage();
+  const requiredBytes = imageStorageRequirementBytes(profile.imageDownloadSizeBytes);
+  if (probe.ok && probe.capacity.availableBytes >= requiredBytes) {
     return true;
   }
-  printStorageWarning(warning);
+  printImageStorageWarning(profile, probe, requiredBytes);
+  if (!probe.ok) {
+    console.error("  Continuing because Docker storage capacity could not be verified.");
+    return true;
+  }
   if (env[VLLM_STORAGE_OVERRIDE_ENV] === "1") {
     console.error(`  Continuing because ${VLLM_STORAGE_OVERRIDE_ENV}=1.`);
     return true;
@@ -651,58 +723,7 @@ async function storageWarningAccepted(
     );
     return false;
   }
-  return isAffirmativeAnswer(await opts.promptFn(warning.question));
-}
-
-async function imageStorageAccepted(
-  profile: VllmProfile,
-  opts: InstallVllmOptions,
-): Promise<boolean> {
-  return storageWarningAccepted(
-    {
-      item: profile.image,
-      itemLabel: "Image",
-      probe: probeDockerStorage(),
-      question: "  Continue with the pull anyway? [y/N]: ",
-      remediation: [
-        "Free or expand Docker storage before continuing.",
-        "Useful diagnostics:",
-        "  docker system df",
-        "  docker info --format '{{.DockerRootDir}}'",
-      ],
-      requiredBytes: imageStorageRequirementBytes(profile.imageDownloadSizeBytes),
-      subject: "Docker storage for the managed vLLM image",
-    },
-    opts,
-  );
-}
-
-async function modelStorageAccepted(
-  model: VllmModelDef,
-  opts: InstallVllmOptions,
-  bindProbeImage?: string,
-): Promise<boolean> {
-  const cacheDir = hostHfCacheDir();
-  const dockerHost = bindProbeImage
-    ? probeDockerBindIdentity(cacheDir, bindProbeImage)
-    : probeDockerHostLocality();
-  const probe: StorageProbeResult = dockerHost.ok ? probeModelCacheStorage(cacheDir) : dockerHost;
-  return storageWarningAccepted(
-    {
-      item: model.id,
-      itemLabel: "Model",
-      probe,
-      question: "  Continue with the model download anyway? [y/N]: ",
-      remediation: [
-        `Free or expand storage for ${cacheDir} before continuing.`,
-        "Useful diagnostic:",
-        '  df -h "$HOME/.cache/huggingface"',
-      ],
-      requiredBytes: modelStorageRequirementBytes(model.downloadSizeBytes),
-      subject: "model-cache storage for managed vLLM",
-    },
-    opts,
-  );
+  return isAffirmativeAnswer(await opts.promptFn("  Continue with the pull anyway? [y/N]: "));
 }
 
 interface InstallVllmOptions {
@@ -800,23 +821,22 @@ export async function installVllm(
     return { ok: false };
   }
 
-  const hasImage = imageIsCached(profile);
-  if (!hasImage && !(await imageStorageAccepted(profile, opts))) {
+  // Fail before large downloads when the fixed name belongs to another
+  // operator. startContainer repeats this check to close the teardown race.
+  const replacement = vllmContainerReplacementTarget(profile.containerName);
+  if (!replacement.ok) {
+    console.error(`  vLLM install failed: ${replacement.reason}`);
     return { ok: false };
   }
-  if (!(await modelStorageAccepted(model, opts, hasImage ? profile.image : undefined))) {
+
+  const hasImage = imageIsCached(profile);
+  if (!hasImage && !(await imageStorageAccepted(profile, opts))) {
     return { ok: false };
   }
 
   const pull = await pullImage(profile);
   if (!pull.ok) {
     console.error(`  vLLM install failed: ${String(pull.reason)}`);
-    return { ok: false };
-  }
-
-  // The image now exists, so this re-probe also proves daemon/client bind
-  // identity before their individually valid estimates can overcommit storage.
-  if (!(await modelStorageAccepted(model, opts, profile.image))) {
     return { ok: false };
   }
 

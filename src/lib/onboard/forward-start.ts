@@ -77,10 +77,16 @@ export function looksLikeForwardPortConflict(diagnostic: string): boolean {
  * established the tunnel but could not discover/track the backgrounded
  * process — so the forward is running yet never appears in `openshell forward
  * list`. Observed on macOS hosts backed by Colima, where the remote bind
- * completes *after* openshell's one-shot discovery probe. See GitHub #6099.
+ * completes *after* openshell's one-shot discovery probe, and on hosts whose
+ * ssh config applies `ControlMaster auto` to the sandbox host: the spawned
+ * ssh client delegates the -L forward to the ControlMaster mux daemon and
+ * exits, which openshell 0.0.72+ reports as "ssh exited before local forward
+ * listener opened" even though the mux daemon holds the listener and serves
+ * traffic. Confirmation still requires the live-port probe, so a genuinely
+ * failed ssh (closed port) keeps timing out as before. See GitHub #6099.
  */
 export function looksLikeUntrackedForward(diagnostic: string): boolean {
-  return /could not discover backgrounded ssh process|forward may be running but is not tracked/i.test(
+  return /could not discover backgrounded ssh process|forward may be running but is not tracked|ssh exited before local forward listener opened|local forward listener was not reachable/i.test(
     diagnostic,
   );
 }

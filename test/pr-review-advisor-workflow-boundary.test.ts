@@ -286,7 +286,7 @@ describe("PR review advisor workflow boundary", () => {
     expect(errors.some((error) => error.includes("full commit SHA"))).toBe(true);
   });
 
-  // source-shape-contract: security -- Exactly one advisor lane may write PR comments and neither privilege domain may gain other GitHub capabilities
+  // source-shape-contract: security -- Only one advisor lane may write PR comments and neither privilege domain may gain other GitHub capabilities
   it("requires one advisor lane to publish the PR comment", () => {
     const source = fs.readFileSync(WORKFLOW_PATH, "utf8");
     const workflow = YAML.parse(source) as Workflow;
@@ -319,15 +319,13 @@ describe("PR review advisor workflow boundary", () => {
       expect(workflow.jobs?.[jobName]?.if, jobName).toContain("github.event.action != 'edited'");
       expect(workflow.jobs?.[jobName]?.if, jobName).toContain("github.event.changes.base != null");
     }
-    expect(noPrimary).toContain("advisor matrix must identify exactly one primary artifact lane");
-    expect(twoPrimaries).toContain(
-      "advisor matrix must identify exactly one primary artifact lane",
-    );
+    expect(noPrimary).toContain("advisor matrix must identify one primary artifact lane");
+    expect(twoPrimaries).toContain("advisor matrix must identify one primary artifact lane");
     expect(extraReviewPermission).toContain("review job permissions.id-token is not allowed");
     expect(extraPublishPermission).toContain("publish job permissions.statuses is not allowed");
   });
 
-  it("fetches and verifies the exact event base and head before exposing the worktree", () => {
+  it("fetches and verifies the event base and head before exposing the worktree", () => {
     const result = runPrepareWorkspace({});
     try {
       expect(result.status, result.stderr).toBe(0);
@@ -402,7 +400,7 @@ describe("PR review advisor workflow boundary", () => {
     }
   });
 
-  // source-shape-contract: security -- Symlink cleanup must remain exact and ordered after every untrusted workspace selection but before model credentials
+  // source-shape-contract: security -- Symlink cleanup must remove only intended links after every untrusted workspace selection and before model credentials
   it("rejects deleting or weakening analysis-workspace symlink removal", () => {
     type MutableWorkflow = {
       jobs: { review: { steps: Array<{ name?: string; run?: string; shell?: string }> } };

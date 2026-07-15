@@ -233,7 +233,7 @@ Follow `.agents/skills/_shared/pr-follow-up.md`: after opening or pushing to a P
 **Adding model-specific sandbox compatibility:**
 
 - Add a declarative manifest under `nemoclaw-blueprint/model-specific-setup/<agent>/`
-- Use one exact `agent` per manifest (`openclaw`, `hermes`, etc.); do not make shared multi-agent manifests
+- Use one `agent` per manifest (`openclaw`, `hermes`, etc.); do not make shared multi-agent manifests
 - Put OpenClaw executable wrappers under `nemoclaw-blueprint/openclaw-plugins/`
 - Put Hermes executable wrappers under `agents/hermes/`
 - Keep `agents/hermes/generate-config.ts` as a thin build-time entrypoint; add Hermes env parsing, config construction, registry handling, and serialization under `agents/hermes/config/`
@@ -253,7 +253,7 @@ Follow `.agents/skills/_shared/pr-follow-up.md`: after opening or pushing to a P
 - After completing development changes, run a documentation writer subagent before final handoff. Give it the changed files, behavior summary, and test evidence so it can update docs or report that no doc changes are needed.
 - For normal docs changes, include source pages under `docs/`.
 - Update `.agents/skills/nemoclaw-user-guide/SKILL.md` only when the AI-agent docs routing guidance changes.
-- During release prep, run `nemoclaw-contributor-update-docs`, make doc version bumps, and open the docs refresh PR with the docs changes.
+- During pre-tag release prep, run `nemoclaw-contributor-update-docs` and include the canonical release entry in the release-note docs PR. Create or update `docs/changelog/YYYY-MM-DD.mdx` for `vX.Y.Z` following `docs/CONTRIBUTING.md`; a PR that updates ordinary pages without the dated changelog entry is incomplete. Merge that PR, or record an explicit maintainer waiver, before generating the release plan.
 
 ## PR Requirements
 

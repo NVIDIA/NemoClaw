@@ -1,0 +1,143 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Add Channels After Onboarding"
+sidebar-title: "Add Channels After Onboarding"
+description: "Add a messaging channel to an existing NemoClaw sandbox and rebuild the runtime safely."
+description-agent: "Explains channels list and channels add behavior, policy application, rollback, non-interactive inputs, provider-specific examples, and post-rebuild verification. Use when adding a channel to an existing sandbox."
+keywords: ["nemoclaw channels add", "add messaging channel", "channels list"]
+content:
+  type: "how_to"
+---
+import { AgentOnly } from "../_components/AgentGuide";
+
+Run channel commands from the host, not from inside the sandbox.
+
+## Select and Add a Channel
+
+List the supported channel names:
+
+```bash
+$$nemoclaw my-assistant channels list
+```
+
+Add the channel you want:
+
+```bash
+$$nemoclaw my-assistant channels add telegram
+$$nemoclaw my-assistant channels add discord
+$$nemoclaw my-assistant channels add slack
+$$nemoclaw my-assistant channels add wechat
+$$nemoclaw my-assistant channels add whatsapp
+$$nemoclaw my-assistant channels add teams
+```
+
+`channels add` accepts mixed-case input such as `Telegram`, then stores and prints the canonical lowercase name.
+It collects the inputs the channel needs, registers bridge providers with the OpenShell gateway when it captures tokens, records the channel in the sandbox registry, and asks whether to rebuild immediately.
+
+Telegram, Discord, Slack, and Microsoft Teams prompt for credentials and configuration.
+WeChat runs an interactive host-side QR scan.
+WhatsApp collects no token because pairing happens inside the rebuilt sandbox.
+
+## Apply Policy and Rebuild
+
+`channels add` requires the matching built-in network policy preset YAML.
+A missing or malformed preset aborts before token prompts, registry writes, or the rebuild prompt, so the sandbox never advertises a channel without matching policy.
+With the preset present, the command applies it before rebuild.
+
+When policy application fails after a fresh add writes registry state, NemoClaw attempts to roll back the bridge providers, `messagingChannels` entry, and staged environment credentials.
+It exits without prompting for a rebuild.
+If a gateway-side cleanup step fails, rollback continues and prints `Rollback could not fully clean <surfaces>` so you can clean up manually.
+
+When the same failure happens while re-adding an enabled channel, NemoClaw restores the prior `messagingChannels` entry, staged environment credentials when available, registry credential hashes, and prior bridge providers.
+It flags `gateway-providers` as residual because the in-flight upsert can leave the gateway with the new token.
+
+Verify the gateway bridge before relying on the channel.
+Restore the preset YAML and rerun the original command.
+
+Choose the rebuild so the running sandbox image picks up the new channel.
+For Telegram, Discord, Slack, and Microsoft Teams, `channels add` checks the rebuilt runtime for the selected bridge and reports startup, credential, or missing-plugin warnings before returning.
+If you defer the rebuild, apply the change later:
+
+```bash
+$$nemoclaw my-assistant rebuild
+```
+
+## Add a Channel Non-Interactively
+
+Set required environment variables before running `channels add`.
+Missing credentials fail fast, and the command queues the change for a manual rebuild:
+
+```bash
+NEMOCLAW_NON_INTERACTIVE=1 TELEGRAM_BOT_TOKEN="<your-bot-token>" \
+  $$nemoclaw my-assistant channels add telegram
+$$nemoclaw my-assistant rebuild
+```
+
+Optional mention-mode settings that declare defaults are still written when unset.
+Telegram mention mode defaults to `1`.
+Discord mention mode defaults to `1` when `DISCORD_SERVER_ID` is set.
+
+For Discord server access, include the server settings:
+
+```bash
+DISCORD_BOT_TOKEN="<your-discord-bot-token>" \
+  DISCORD_SERVER_ID="<your-discord-server-id>" \
+  DISCORD_REQUIRE_MENTION=1 \
+  $$nemoclaw my-assistant channels add discord
+```
+
+For Microsoft Teams, create the Teams app and public endpoint first:
+
+```bash
+MSTEAMS_APP_ID="<your-teams-app-id>" \
+  MSTEAMS_APP_PASSWORD="<your-teams-client-secret>" \
+  MSTEAMS_TENANT_ID="<your-teams-tenant-id>" \
+  TEAMS_ALLOWED_USERS="<your-entra-object-id>" \
+  MSTEAMS_PORT=3978 \
+  $$nemoclaw my-assistant channels add teams
+```
+
+After rebuild starts the Teams webhook forward, route the public HTTPS endpoint to `http://127.0.0.1:3978/api/messages` or the selected `MSTEAMS_PORT`.
+
+## Add WeChat
+
+`channels add wechat` renders a QR code, polls Tencent's iLink gateway, and captures the bot token plus `accountId`, `baseUrl`, and `userId` after you scan the QR.
+The login has an eight-minute deadline and refreshes the QR up to three times on expiry.
+
+Keep the terminal in the foreground until you see `✓ WeChat login confirmed`.
+
+The command requires an interactive terminal.
+`NEMOCLAW_NON_INTERACTIVE=1` fails fast because the QR handshake needs a paired phone.
+
+```bash
+$$nemoclaw my-assistant channels add wechat
+```
+
+If `WECHAT_BOT_TOKEN` is already cached for this sandbox, the command reuses it and skips the QR scan so the upstream plugin's iLink session remains valid.
+Use `channels remove wechat` first if you intend to acquire a fresh account.
+
+## Verify Delivery
+
+Send a message to the configured bot or app after the rebuild.
+For Telegram, a Bot API `sendMessage` proves outbound delivery only.
+To test inbound agent replies, send a message from the Telegram client as an allowed user and inspect the gateway log for the inbound turn and outbound reply.
+
+<AgentOnly variant="openclaw">
+For a repeatable installed-runtime outbound check, run the live messaging-provider test with `NEMOCLAW_RUN_LIVE_E2E=1` and `NVIDIA_INFERENCE_API_KEY` set.
+
+```bash
+NEMOCLAW_RUN_LIVE_E2E=1 npx vitest run --project e2e-live test/e2e/live/messaging-providers.test.ts --silent=false --reporter=default
+```
+
+The lane imports the installed OpenClaw Telegram `runtime-api.js`, calls `sendMessageTelegram` through the OpenShell credential rewrite path against a host-side fake Telegram API, and verifies that the captured send has no unresolved placeholder.
+Set `TELEGRAM_BOT_TOKEN_REAL` and `TELEGRAM_CHAT_ID_E2E` only when you also want the optional real outbound send.
+
+The lane does not automate an interactive inbound reply.
+</AgentOnly>
+
+## Related Topics
+
+- [Choose Messaging Channels](choose-messaging-channels) for provider-specific prerequisites.
+- [Manage Messaging Channels](manage-messaging-channels) to rotate, pause, resume, or remove channels.
+- [Common Integration Policy Examples](../../network-policy/integration-policy-examples) for messaging presets.
