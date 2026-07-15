@@ -16,6 +16,30 @@ import { AgentOnly } from "../_components/AgentGuide";
 Update the host CLI first, then check whether existing sandboxes need rebuilds.
 The standard installer follows the admin-promoted `lkg` release tag by default.
 
+## Understand Agent Version Pins
+
+NemoClaw pins the selected agent version into the sandbox image at build time rather than updating it at runtime.
+Existing sandboxes do not auto-upgrade when a newer NemoClaw release ships a newer agent version.
+Run `$$nemoclaw <name> status` to see the agent version currently running in a sandbox.
+After updating the host CLI, run `$$nemoclaw <name> rebuild` to recreate the sandbox with the newer pin while preserving the agent state that NemoClaw manages.
+
+<AgentOnly variant="openclaw">
+
+The OpenClaw runtime build target is declared by `OPENCLAW_VERSION` in the NemoClaw Dockerfiles.
+The `min_openclaw_version` field in `nemoclaw-blueprint/blueprint.yaml` is the compatibility floor for direct blueprint consumers, so it can be lower than the Dockerfile target.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+The Hermes agent manifest declares the expected Hermes version and the `hermes --version` probe command.
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+The `langchain-deepagents-code` agent manifest declares the expected Deep Agents Code version and the `dcode --version` probe command.
+
+</AgentOnly>
+
 ```bash
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 $$nemoclaw upgrade-sandboxes --check

@@ -1,0 +1,35 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.74
+
+NemoClaw v0.0.74 upgrades the OpenShell policy boundary, adds managed MCP and progressive tool disclosure, strengthens the experimental LangChain Deep Agents Code integration, and improves onboarding, local inference, messaging, recovery, and contributor workflows.
+
+- Stable installs pin OpenShell `0.0.72` release artifacts and the supervisor image, adding MCP Streamable HTTP and JSON-RPC request-policy enforcement.
+  Policy mutations read the round-trippable base policy instead of the effective policy, which preserves existing MCP rules without sending provider-composed `_provider_*` entries back through `policy set`.
+  For more information, refer to [OpenShell 0.0.72 Compatibility Review](/user-guide/openclaw/security/openshell-0.0.72-compatibility-review) and [Customize the Network Policy](/user-guide/openclaw/network-policy/customize-network-policy).
+- Managed MCP commands use `add`, `list`, `status`, `restart`, and `remove` to manage authenticated HTTPS Streamable HTTP servers for OpenClaw, Hermes, and experimental LangChain Deep Agents Code through native OpenShell policy enforcement and provider-backed credential replacement.
+  The LangChain Deep Agents Code rebuild path validates the recorded gateway, route, image, staged build context, and prepared replacement inputs before deleting the previous sandbox, then restores managed MCP state after the recreated runtime is ready.
+  For more information, refer to [About Managed MCP Servers](/user-guide/openclaw/manage-sandboxes/mcp-servers/about-managed-mcp-servers), [Quickstart with LangChain Deep Agents Code](/user-guide/deepagents/get-started/quickstart), and the [accepted architecture decision](https://github.com/NVIDIA/NemoClaw/issues/566#issuecomment-4847534784).
+- New sandboxes default to progressive tool disclosure across OpenClaw, Hermes, and LangChain Deep Agents Code, while `--tool-disclosure direct` restores the full visible catalog.
+  The selected mode persists through resume and transactional rebuilds, and model-specific compatibility safeguards can keep an incompatible model on direct disclosure.
+  Sandbox-first `inference get` and `inference set` commands now provide the same route controls as their global forms.
+  For more information, refer to [Troubleshooting](/user-guide/openclaw/reference/troubleshooting#tool-calls-appear-as-assistant-text), [Audit Model Capabilities](/user-guide/openclaw/inference/validate-inference/audit-model-capabilities), and [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- LangChain Deep Agents Code now provides managed `status`, `whoami`, and `identity` commands without launching the interactive UI, validates the installed agent version during onboarding, and keeps credential-shaped or tracing configuration out of persisted runtime metadata.
+  Its rebuild path validates recreation before destructive handoff and preserves the managed proxy, tool-disclosure, and MCP boundaries.
+  For more information, refer to [Quickstart with LangChain Deep Agents Code](/user-guide/deepagents/get-started/quickstart), [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands), and [Security Best Practices](/user-guide/openclaw/security/best-practices).
+- Onboarding uses BuildKit prebuilds with bounded progress heartbeats, reuses validated release and source-commit sandbox images, and rejects stale or incompatible image contracts before sandbox creation.
+  Readiness handling tolerates a bounded run of transient OpenShell `Error` phases, while preflight output distinguishes an unreachable container DNS resolver from one that answers but rejects the query.
+  On Windows on Arm N1X systems, automatic Local Ollama setup treats the integrated GPU as compute-constrained and selects `qwen3.5:9b` instead of the 30B and 35B starter models.
+  For more information, refer to [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands), [Install OpenClaw Plugins](/user-guide/openclaw/manage-sandboxes/install-openclaw-plugins), [Choose a Local Inference Server](/user-guide/openclaw/inference/local-inference/choose-local-inference-server), [Prepare Windows for NemoClaw](/user-guide/openclaw/get-started/prerequisites/windows-preparation), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- Messaging configuration now keeps channel policy ownership with the enabled channel, persists selected policy presets through onboarding and rebuilds, reports Telegram mention mode in channel status, and detects credential conflicts before a destructive rebuild starts.
+  For more information, refer to [Choose Messaging Channels](/user-guide/openclaw/manage-sandboxes/messaging-channels/choose-messaging-channels), [Customize the Network Policy](/user-guide/openclaw/network-policy/customize-network-policy), and [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Day-two commands provide safer recovery and clearer automation behavior.
+  `update --fresh` can reinstall the current version, and `destroy --force` can remove a local record when the OpenShell gateway is unavailable while warning that the sandbox and retained volume may still exist.
+  Failed `exec` commands can surface recent policy-denial context, tunnel stop releases its gateway port, WSL keeps a usable loopback dashboard URL, and affected CLI user-error surfaces preserve a nonzero exit status.
+  For more information, refer to [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands), [Troubleshooting](/user-guide/openclaw/reference/troubleshooting), and [Choose an Inference Provider](/user-guide/openclaw/inference/learn-and-choose/choose-inference-provider).
+- Contributor workflows now provide idempotent one-command setup, read-only readiness checks, diff-scoped local verification, and validated Git signing configuration while preserving development dependencies during installation.
+  The new agent-runnable value benchmark emits machine-readable and Markdown reports for inference latency and trace-backed sandbox startup without turning advisory timings into a release gate.
+  For more information, refer to the [NemoClaw Contributor Guide](https://github.com/NVIDIA/NemoClaw/blob/main/CONTRIBUTING.md) and [NemoClaw Value Benchmark](https://github.com/NVIDIA/NemoClaw/blob/main/scripts/bench/README.md).

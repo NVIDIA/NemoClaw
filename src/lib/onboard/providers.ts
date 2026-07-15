@@ -29,6 +29,10 @@ const HOSTED_INFERENCE_SOURCE_ENV = "NVIDIA_INFERENCE_API_KEY";
 const HOSTED_INFERENCE_PROVIDER_KEY_ENV = "NEMOCLAW_PROVIDER_KEY";
 const HOSTED_INFERENCE_CREDENTIAL_ENV = "COMPATIBLE_API_KEY";
 const HOSTED_INFERENCE_ENDPOINT_URL = "https://inference-api.nvidia.com/v1";
+const MODEL_ENV = "NEMOCLAW_MODEL";
+// Compatibility for the NVIDIA QA non-interactive Ollama invocation tracked
+// in #6869. Remove after that workflow migrates to NEMOCLAW_MODEL.
+const PROVIDER_MODEL_ENV = "NEMOCLAW_PROVIDER_MODEL";
 // Private CI-compatible Inference Hub endpoint model IDs use the
 // provider/namespace/model convention. This endpoint is staged as a custom
 // OpenAI-compatible provider, not as the public build.nvidia.com provider.
@@ -288,11 +292,11 @@ function stageHostedInferenceSourceSecretEnv() {
   process.env.NEMOCLAW_ENDPOINT_URL =
     (process.env.NEMOCLAW_ENDPOINT_URL || "").trim() || HOSTED_INFERENCE_ENDPOINT_URL;
   const model =
-    (process.env.NEMOCLAW_MODEL || "").trim() ||
+    getRequestedModelFromEnv() ||
     (process.env.NEMOCLAW_COMPAT_MODEL || "").trim() ||
     (process.env.NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL || "").trim() ||
     HOSTED_INFERENCE_MODEL;
-  process.env.NEMOCLAW_MODEL = model;
+  process.env[MODEL_ENV] = model;
   process.env.NEMOCLAW_COMPAT_MODEL = (process.env.NEMOCLAW_COMPAT_MODEL || "").trim() || model;
   process.env.NEMOCLAW_PREFERRED_API =
     (process.env.NEMOCLAW_PREFERRED_API || "").trim() || "openai-completions";
@@ -307,11 +311,29 @@ function isHostedInferenceProviderKeyCredentialCandidate(value) {
 
 const isProviderKeyCredentialCandidate = isHostedInferenceProviderKeyCredentialCandidate;
 
+/**
+ * Resolve the requested model from the preferred env var or its compatibility fallback.
+ */
+function getRequestedModelEnv(env = process.env) {
+  const model = (env[MODEL_ENV] || "").trim();
+  if (model) return { value: model, source: MODEL_ENV };
+  const providerModel = (env[PROVIDER_MODEL_ENV] || "").trim();
+  if (providerModel) return { value: providerModel, source: PROVIDER_MODEL_ENV };
+  return { value: "", source: null };
+}
+
+/**
+ * Return the requested model value without exposing which env var supplied it.
+ */
+function getRequestedModelFromEnv(env = process.env) {
+  return getRequestedModelEnv(env).value || null;
+}
+
 function getNonInteractiveModel(providerKey) {
-  const model = (process.env.NEMOCLAW_MODEL || "").trim();
+  const { value: model, source } = getRequestedModelEnv();
   if (!model) return null;
   if (!isSafeModelId(model)) {
-    console.error(`  Invalid NEMOCLAW_MODEL for provider '${providerKey}': ${model}`);
+    console.error(`  Invalid ${source || MODEL_ENV} for provider '${providerKey}': ${model}`);
     console.error("  Model values may only contain letters, numbers, '.', '_', ':', '/', and '-'.");
     process.exit(1);
   }
@@ -510,6 +532,7 @@ module.exports = {
   stageHostedInferenceSourceSecretEnv,
   getNonInteractiveProvider,
   getNonInteractiveModel,
+  getRequestedModelFromEnv,
   getRequestedProviderHint,
   getRequestedModelHint,
   isProviderKeyCredentialCandidate,

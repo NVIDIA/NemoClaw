@@ -324,6 +324,24 @@ describe("inference health", () => {
       expect(result?.endpoint).toBe("http://127.0.0.1:11434/api/tags");
     });
 
+    it("passes the configured model through the unified local health probe", () => {
+      const result = probeProviderHealth("ollama-local", {
+        model: "configured-model",
+        runCurlProbeImpl: () => ({
+          ok: true,
+          httpStatus: 200,
+          curlStatus: 0,
+          body: '{"models":[]}',
+          stderr: "",
+          message: "HTTP 200",
+        }),
+      });
+
+      expect(result?.ok).toBe(false);
+      expect(result?.failureLabel).toBe("unhealthy");
+      expect(result?.detail).toContain("configured-model");
+    });
+
     it("delegates to remote probe for openai-api", () => {
       const result = probeProviderHealth("openai-api", {
         runCurlProbeImpl: () => ({

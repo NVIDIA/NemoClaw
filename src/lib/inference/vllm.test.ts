@@ -19,7 +19,8 @@ const mocks = vi.hoisted(() => ({
   runCapture: vi.fn(),
 }));
 
-vi.mock("../runner", () => ({
+vi.mock("../runner", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../runner")>()),
   runCapture: mocks.runCapture,
 }));
 
