@@ -193,17 +193,17 @@ describe("managed vLLM image distribution boundary", () => {
   });
 
   it("keeps every shipped managed-vLLM image on a registry digest", () => {
-    const refs = new Set<string>();
-    for (const imageSet of Object.values(VLLM_IMAGES)) {
-      for (const value of Object.values(imageSet)) {
-        if (typeof value === "object" && value !== null && "ref" in value) {
-          refs.add(String(value.ref));
-        }
-      }
-    }
-    for (const model of VLLM_MODELS) {
-      if (model.runtime) refs.add(model.runtime.image);
-    }
+    const platformRefs = Object.values(VLLM_IMAGES).flatMap((imageSet) =>
+      Object.values(imageSet)
+        .map((value) =>
+          typeof value === "object" && value !== null && "ref" in value ? String(value.ref) : null,
+        )
+        .filter((ref): ref is string => ref !== null),
+    );
+    const runtimeRefs = VLLM_MODELS.map((model) => model.runtime?.image).filter(
+      (ref): ref is string => typeof ref === "string",
+    );
+    const refs = new Set([...platformRefs, ...runtimeRefs]);
 
     expect(refs.size).toBeGreaterThan(0);
     for (const ref of refs) {
