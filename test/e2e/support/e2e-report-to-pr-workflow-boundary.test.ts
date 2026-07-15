@@ -88,8 +88,10 @@ function executeGenerateMatrixWithPlannerOutput(plan: unknown) {
 }
 
 type ApiJob = {
+  completed_at?: string;
   conclusion: string | null;
   name: string;
+  started_at?: string;
   status: string;
 };
 
@@ -248,10 +250,87 @@ it("reports matrix children by test ID without fabricating a missing child resul
   expect(warning).toHaveBeenCalledWith(
     "Missing per-test results for beta; reporting them as unknown.",
   );
-  expect(body).toContain("| alpha | ✅ success |");
-  expect(body).toContain("| beta | ❓ unknown |");
+  expect(body).toContain("| alpha | ✅ success | — |");
+  expect(body).toContain("| beta | ❓ unknown | — |");
   expect(body).toContain("Some tests failed");
   expect(body).toContain("Shared E2E job aggregate: failure");
+});
+
+it("reports the total wall clock time for a selected E2E job", async () => {
+  const { body, setFailed } = await executeReport({
+    apiJobs: [
+      {
+        completed_at: "2026-07-15T00:27:58Z",
+        conclusion: "success",
+        name: "rebuild-openclaw",
+        started_at: "2026-07-15T00:16:48Z",
+        status: "completed",
+      },
+    ],
+    testMatrix: [],
+    jobs: "rebuild-openclaw",
+    needs: {
+      "generate-matrix": { result: "success" },
+      "rebuild-openclaw": { result: "success" },
+    },
+  });
+
+  expect(setFailed).not.toHaveBeenCalled();
+  expect(body).toContain("| Test | Result | Total wall clock time |");
+  expect(body).toContain("| rebuild-openclaw | ✅ success | 11m 10s |");
+});
+
+it("reports one total wall clock span from valid matrix E2E jobs", async () => {
+  const { body, setFailed } = await executeReport({
+    apiJobs: [
+      {
+        completed_at: "2026-07-15T00:05:00Z",
+        conclusion: "success",
+        name: "OpenShell gateway upgrade (v0.1.0)",
+        started_at: "2026-07-15T00:00:00Z",
+        status: "completed",
+      },
+      {
+        completed_at: "2026-07-15T00:11:00Z",
+        conclusion: "success",
+        name: "OpenShell gateway upgrade (v0.2.0)",
+        started_at: "2026-07-15T00:02:00Z",
+        status: "completed",
+      },
+      {
+        completed_at: "2026-07-14T23:40:00Z",
+        conclusion: "success",
+        name: "OpenShell gateway upgrade (reversed-timestamps)",
+        started_at: "2026-07-14T23:50:00Z",
+        status: "completed",
+      },
+      {
+        completed_at: "not-a-timestamp",
+        conclusion: "success",
+        name: "OpenShell gateway upgrade (invalid-timestamp)",
+        started_at: "2026-07-14T23:30:00Z",
+        status: "completed",
+      },
+      {
+        completed_at: "2026-07-15T01:00:00Z",
+        conclusion: "skipped",
+        name: "OpenShell gateway upgrade (skipped)",
+        started_at: "2026-07-14T23:00:00Z",
+        status: "completed",
+      },
+    ],
+    testMatrix: [],
+    jobs: "openshell-gateway-upgrade",
+    needs: {
+      "generate-matrix": { result: "success" },
+      "openshell-gateway-upgrade": { result: "success" },
+    },
+  });
+
+  expect(setFailed).not.toHaveBeenCalled();
+  expect(body).toContain("| openshell-gateway-upgrade | ✅ success | 11m 0s |");
+  expect(body).not.toContain("OpenShell gateway upgrade (v0.1.0)");
+  expect(body).not.toContain("OpenShell gateway upgrade (v0.2.0)");
 });
 
 it("reports API lookup failures as unknown rather than copying the aggregate result", async () => {

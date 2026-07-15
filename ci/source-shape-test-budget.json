@@ -457,6 +457,11 @@
       "category": "security"
     },
     {
+      "file": "test/starter-prompt-docs.test.ts",
+      "test": "prepares the Starter Prompt in every docs build entry point (#5048)",
+      "category": "compatibility"
+    },
+    {
       "file": "test/validate-blueprint.test.ts",
       "test": "pins the sandbox image by digest instead of a mutable tag (#1438)",
       "category": "security"

@@ -50,16 +50,31 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: nvidia/nemoclaw/sandbox-base
 
 jobs:
-  # Keep one job per package so build failures, reruns, and published tags stay
-  # independently observable. Consolidating the existing publishers into a
-  # matrix is a separate release-workflow refactor, not part of #6456.
+  # Keep one declarative publisher configuration while giving each base image
+  # an independently observable matrix job and registry cache namespace.
   build-and-push:
+    name: Build and push ${{ matrix.display_name }} base image
     if: github.repository == 'NVIDIA/NemoClaw'
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - agent: openclaw
+            display_name: OpenClaw
+            dockerfile: Dockerfile.base
+            image: nvidia/nemoclaw/sandbox-base
+          - agent: hermes
+            display_name: Hermes
+            dockerfile: agents/hermes/Dockerfile.base
+            image: nvidia/nemoclaw/hermes-sandbox-base
+          - agent: langchain-deepagents-code
+            display_name: Deep Agents Code
+            dockerfile: agents/langchain-deepagents-code/Dockerfile.base
+            image: nvidia/nemoclaw/langchain-deepagents-code-sandbox-base
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -83,7 +98,7 @@ jobs:
         env:
           DOCKER_METADATA_SHORT_SHA_LENGTH: 8
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ matrix.image }}
           tags: |
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=ref,event=tag
@@ -92,12 +107,13 @@ jobs:
       - name: Validate production Docker build args
         id: production-build-args
         env:
+          AGENT: ${{ matrix.agent }}
           OPENCLAW_VERSION_INPUT: ${{ inputs.openclaw_version }}
         run: |
           set -euo pipefail
           build_args=()
           openclaw_build_arg=""
-          if [ -n "${OPENCLAW_VERSION_INPUT}" ]; then
+          if [ "$AGENT" = "openclaw" ] && [ -n "${OPENCLAW_VERSION_INPUT}" ]; then
             openclaw_build_arg="OPENCLAW_VERSION=${OPENCLAW_VERSION_INPUT}"
             build_args+=(--build-arg "$openclaw_build_arg")
           fi
@@ -106,7 +122,7 @@ jobs:
           else
             scripts/check-production-build-args.sh
           fi
-          if [ -n "${OPENCLAW_VERSION_INPUT}" ]; then
+          if [ "$AGENT" = "openclaw" ] && [ -n "${OPENCLAW_VERSION_INPUT}" ]; then
             if [[ "$OPENCLAW_VERSION_INPUT" == *$'\r'* || "$OPENCLAW_VERSION_INPUT" == *$'\n'* ]]; then
               echo "ERROR: OpenClaw version must not contain CR or LF characters." >&2
               exit 1
@@ -122,107 +138,11 @@ jobs:
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
-          file: Dockerfile.base
+          file: ${{ matrix.dockerfile }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache,mode=max
           build-args: ${{ steps.production-build-args.outputs.openclaw_build_arg }}
-
-  build-and-push-hermes:
-    if: github.repository == 'NVIDIA/NemoClaw'
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-
-      - name: Set up QEMU (arm64 emulation)
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-
-      - name: Log in to GHCR
-        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        env:
-          DOCKER_METADATA_SHORT_SHA_LENGTH: 8
-        with:
-          images: ${{ env.REGISTRY }}/nvidia/nemoclaw/hermes-sandbox-base
-          tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=ref,event=tag
-            type=sha,prefix=,format=short
-
-      - name: Validate Hermes production Docker build args
-        run: scripts/check-production-build-args.sh
-
-      - name: Build and push
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: .
-          file: agents/hermes/Dockerfile.base
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/nvidia/nemoclaw/hermes-sandbox-base:buildcache
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/nvidia/nemoclaw/hermes-sandbox-base:buildcache,mode=max
-
-  build-and-push-langchain-deepagents-code:
-    if: github.repository == 'NVIDIA/NemoClaw'
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-
-      - name: Set up QEMU (arm64 emulation)
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-
-      - name: Log in to GHCR
-        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        env:
-          DOCKER_METADATA_SHORT_SHA_LENGTH: 8
-        with:
-          images: ${{ env.REGISTRY }}/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base
-          tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=ref,event=tag
-            type=sha,prefix=,format=short
-
-      - name: Validate Deep Agents Code production Docker build args
-        run: scripts/check-production-build-args.sh
-
-      - name: Build and push
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: .
-          file: agents/langchain-deepagents-code/Dockerfile.base
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:buildcache
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:buildcache,mode=max
