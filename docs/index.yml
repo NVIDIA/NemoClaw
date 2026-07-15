@@ -353,7 +353,7 @@ navigation:
             slug: resources
             collapsed: open-by-default
             contents:
-              - page: "AI Agent Docs"
+              - page: "Use Docs with Agents"
                 path: _build/agent-variants/resources/agent-skills.openclaw.generated.mdx
                 slug: agent-skills
               - page: "Community Solutions"
@@ -598,7 +598,7 @@ navigation:
             slug: resources
             collapsed: open-by-default
             contents:
-              - page: "AI Agent Docs"
+              - page: "Use Docs with Agents"
                 path: _build/agent-variants/resources/agent-skills.deepagents.generated.mdx
                 slug: agent-skills
               - page: "Community Solutions"
@@ -926,7 +926,7 @@ navigation:
             slug: resources
             collapsed: open-by-default
             contents:
-              - page: "AI Agent Docs"
+              - page: "Use Docs with Agents"
                 path: _build/agent-variants/resources/agent-skills.hermes.generated.mdx
                 slug: agent-skills
               - page: "Community Solutions"
