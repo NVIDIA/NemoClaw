@@ -146,6 +146,17 @@ describe("handleFinalizationState", () => {
     );
     expect(calls.reportReadiness).toHaveBeenCalledWith(false);
     expect(result.deploymentHealthy).toBe(false);
+    expect(result.stateResult).toEqual({
+      type: "pause",
+      updates: {
+        sandboxName: "my-assistant",
+        provider: "provider",
+        model: "model",
+        hermesAuthMethod: null,
+        hermesToolGateways: [],
+      },
+      metadata: { state: "finalizing", reason: "deployment_not_ready" },
+    });
   });
 
   it("ensures agent dashboard forwarding before completion for non-OpenClaw agents", async () => {

@@ -598,7 +598,9 @@ export function formatVerificationDiagnostics(result: VerifyDeploymentResult): s
   const RESET = "\x1b[0m";
 
   if (result.healthy) {
-    lines.push(`  ${G}✓${RESET} Deployment verified — gateway and dashboard are healthy.`);
+    lines.push(
+      `  ${G}✓${RESET} Deployment verified — gateway, dashboard, and inference route are healthy.`,
+    );
     if (result.verification.gatewayVersion) {
       lines.push(`    OpenClaw version: ${result.verification.gatewayVersion}`);
     }

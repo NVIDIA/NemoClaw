@@ -34,18 +34,18 @@ $$nemoclaw <name> status
 
 The `Inference` row checks the sandbox's `inference.local` path and reports the provider, model, and endpoint with the rest of the sandbox state.
 This path includes the OpenShell proxy and its authentication rewrite.
-Use the final dashboard-based onboarding summary to verify that NemoClaw ran the same route-reachability probe from inside the sandbox.
+When onboarding prints a dashboard summary, use it to verify that NemoClaw ran the same route-reachability probe from inside the sandbox.
 Treat an unreachable route or HTTP 5xx response as a failed readiness check: onboarding marks the sandbox not ready and exits non-zero.
-Restore the configured endpoint or proxy, then rerun the status command.
+Restore the configured endpoint or proxy, then rerun `$$nemoclaw onboard --resume` to complete onboarding.
 
-## Understand Post-Ready Checks
+## Understand Final Route Checks
 
-For local Ollama and vLLM, onboarding performs an additional check after the sandbox becomes ready.
-It requests `https://inference.local/v1/models` from inside the sandbox and accepts only a 2xx response.
-When this check fails, onboarding reports the endpoint and recovery steps before the first agent prompt.
+When onboarding prints a dashboard summary, it first requests `https://inference.local/v1/models` from inside the sandbox after policy and process recovery.
+A transport failure or HTTP 5xx response leaves the onboarding session retryable at final verification instead of completing it.
+After restoring the route, resume onboarding to run the check again without rebuilding a healthy sandbox.
 
-NVIDIA NIM and other compatible endpoints receive their provider validation during onboarding but do not receive this post-ready sandbox-route check.
-For those routes, use the status command and a short agent request after onboarding.
+Provider setup still performs its own model, credential, and endpoint validation before this final route check.
+Use the status command and a short agent request after onboarding to verify ongoing availability and model responses.
 
 ## Send a Short Agent Request
 

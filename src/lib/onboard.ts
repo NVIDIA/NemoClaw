@@ -3116,7 +3116,13 @@ async function handleRoutedSelection(
 
   state.provider = bp.provider_name || "nvidia-router";
   state.model = bp.model;
-  state.endpointUrl = localInference.rewriteHostLoopbackForSandbox(bp.endpoint || "");
+  const { HOST_GATEWAY_URL } = require("./inference/local");
+  const routerEndpointUrl = bp.endpoint || "";
+  state.endpointUrl = routerEndpointUrl;
+  if (routerEndpointUrl.match(/localhost|127\.0\.0\.1/)) {
+    const u = new URL(routerEndpointUrl);
+    state.endpointUrl = `${HOST_GATEWAY_URL}:${u.port}${u.pathname}`;
+  }
   state.preferredInferenceApi = "openai-completions";
   state.assertRouteCompatible?.();
 
@@ -4662,7 +4668,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       },
     });
 
-    await runFinalOnboardFlowSlice({
+    const finalFlowResult = await runFinalOnboardFlowSlice({
       context: finalFlowContext,
       runtime: onboardRuntimeBoundary.getRuntime(),
       phases: [branchSetupPhase, policiesPhase, finalizationPhase],
@@ -4677,7 +4683,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       },
     });
     completed = true;
-    traceCompleted = true;
+    traceCompleted = finalFlowResult.session.machine.state === "complete";
   } finally {
     releaseOnboardLock();
     onboardRuntimeBoundary.clear();

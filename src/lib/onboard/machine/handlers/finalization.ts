@@ -3,7 +3,12 @@
 
 import type { Session } from "../../../state/onboard-session";
 import { type DashboardRuntimeAgent, shouldManageDashboardForAgent } from "../../dashboard-runtime";
-import { completeOnboardMachine, type OnboardStateCompleteResult } from "../result";
+import {
+  completeOnboardMachine,
+  type OnboardStateCompleteResult,
+  type OnboardStatePauseResult,
+  pauseOnboardMachine,
+} from "../result";
 
 export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult> {
   sandboxName: string;
@@ -78,7 +83,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
 }
 
 export interface FinalizationStateResult {
-  stateResult: OnboardStateCompleteResult;
+  stateResult: OnboardStateCompleteResult | OnboardStatePauseResult;
   unmigratedLegacyKeys: string[];
   verificationDiagnostics: string[];
   deploymentHealthy: boolean;
@@ -196,10 +201,19 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
     logTerminalReadyBlock(sandboxName, agent, deps.log);
   }
 
-  const stateResult = completeOnboardMachine(
-    deps.toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
-    { state: "finalizing" },
-  );
+  const sessionUpdates = deps.toSessionUpdates({
+    sandboxName,
+    provider,
+    model,
+    hermesAuthMethod,
+    hermesToolGateways,
+  });
+  const stateResult = deploymentHealthy
+    ? completeOnboardMachine(sessionUpdates, { state: "finalizing" })
+    : pauseOnboardMachine(sessionUpdates, {
+        state: "finalizing",
+        reason: "deployment_not_ready",
+      });
 
   return { stateResult, unmigratedLegacyKeys, verificationDiagnostics, deploymentHealthy };
 }

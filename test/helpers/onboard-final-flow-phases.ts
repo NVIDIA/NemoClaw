@@ -250,7 +250,7 @@ export function createPhases(
       checkAndRecoverSandboxProcesses: vi.fn(),
       warmupScopeUpgrade: vi.fn(),
       autoPairScopeApproval: vi.fn(),
-      isDeploymentHealthy: () => true,
+      isDeploymentHealthy: (result) => result.healthy,
       reportDeploymentReadiness: vi.fn(),
       getChatUiUrl: () => "http://127.0.0.1:45123",
       buildVerifyChain: (): DashboardDeliveryChain => ({

@@ -60,19 +60,6 @@ export function resetOllamaContainerPortCache(): void {
 }
 
 export const HOST_GATEWAY_URL = "http://host.openshell.internal";
-
-export function rewriteHostLoopbackForSandbox(url: string): string {
-  if (!url) return url;
-  try {
-    const parsed = new URL(url);
-    const hostname = parsed.hostname.toLowerCase();
-    if (hostname !== "localhost" && hostname !== "127.0.0.1") return url;
-    const port = parsed.port ? `:${parsed.port}` : "";
-    return `${HOST_GATEWAY_URL}${port}${parsed.pathname}${parsed.search}${parsed.hash}`;
-  } catch {
-    return url;
-  }
-}
 export const LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV = "NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL";
 export const CONTAINER_REACHABILITY_IMAGE = "curlimages/curl:8.10.1";
 // These tags are convenience aliases for callers that want to refer to a
