@@ -36,6 +36,10 @@
     "reason": "Internal child-process setting carrying a JSON-encoded route (including a credential value) used only to seed the hidden HTTPS Pin Runtime adapter at startup. Never user-set."
   },
   {
+    "name": "NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_ORPHANED_ROUTE_IDS",
+    "reason": "Internal child-process setting carrying a JSON-encoded array of route ids (no credentials) that a fresh HTTPS Pin Runtime adapter respawn could not recover, so it can respond to them distinctly from a route that never existed. Never user-set."
+  },
+  {
     "name": "NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE",
     "reason": "Internal installer sentinel exported only during OpenShell gateway replacement so onboard restores the pre-upgrade sandbox backup. Not user-facing."
   },

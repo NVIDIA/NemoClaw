@@ -16,8 +16,12 @@
  *
  * If the adapter process dies, only the next route whose owning command calls
  * `ensureHttpsPinRuntimeAdapter` recovers automatically; other previously
- * registered routes are unreachable until their owning command re-runs. This
- * is an accepted consequence of never persisting plaintext credentials.
+ * registered routes stay unreachable until their owning command re-runs. This
+ * is an accepted consequence of never persisting plaintext credentials -- but
+ * the freshly spawned process is still told which route ids those are (never
+ * their credentials), so it can answer them with an actionable
+ * `route_needs_recovery` response instead of a 404 indistinguishable from a
+ * route that never existed (#6141).
  */
 
 import crypto from "node:crypto";
@@ -306,10 +310,12 @@ function parseRoutePutBody(raw: JsonObject): RouteRuntime {
 export function createHttpsPinRuntimeAdapterServer(options: {
   token: string;
   initialRoutes?: Record<string, RouteRuntime>;
+  orphanedRouteIds?: string[];
   logger?: AdapterLogger;
 }): http.Server {
   const logger = options.logger || defaultAdapterLogger;
   const routes = new Map<string, RouteRuntime>(Object.entries(options.initialRoutes || {}));
+  const orphanedRouteIds = new Set(options.orphanedRouteIds || []);
 
   return http.createServer(async (req, res) => {
     const started = Date.now();
@@ -403,6 +409,26 @@ export function createHttpsPinRuntimeAdapterServer(options: {
         }
         const route = routes.get(routeId);
         if (!route) {
+          if (orphanedRouteIds.has(routeId)) {
+            // Known before the adapter's last restart but not recovered by
+            // it -- distinct from a route that never existed, so the caller
+            // gets an actionable signal instead of an indistinguishable 404.
+            sendJson(res, 503, {
+              error: {
+                message:
+                  "This route was registered before the adapter's last restart and was not recovered. Re-run the original `inference set --endpoint-url` command for this endpoint.",
+                type: "unavailable",
+                code: "route_needs_recovery",
+              },
+            });
+            logAdapterEvent(logger, "request_rejected", {
+              routeId,
+              status: 503,
+              reason: "route_needs_recovery",
+              durationMs: Date.now() - started,
+            });
+            return;
+          }
           sendJson(res, 404, {
             error: { message: "Unknown route", type: "not_found", code: "route_not_found" },
           });
@@ -465,6 +491,16 @@ function parseBootstrapRoute(
   }
 }
 
+function parseOrphanedRouteIds(raw: string | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 export function startHttpsPinRuntimeAdapterFromEnv(): http.Server {
   const token = process.env[HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV];
   const port = Number(
@@ -482,13 +518,17 @@ export function startHttpsPinRuntimeAdapterFromEnv(): http.Server {
   const initialRoutes: Record<string, RouteRuntime> = bootstrap
     ? { [bootstrap.routeId]: bootstrap.route }
     : {};
+  const orphanedRouteIds = parseOrphanedRouteIds(
+    process.env.NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_ORPHANED_ROUTE_IDS,
+  );
 
-  const server = createHttpsPinRuntimeAdapterServer({ token, initialRoutes });
+  const server = createHttpsPinRuntimeAdapterServer({ token, initialRoutes, orphanedRouteIds });
   server.listen(port, HTTPS_PIN_RUNTIME_ADAPTER_BIND_HOST, () => {
     defaultAdapterLogger("adapter_ready", {
       bindHost: HTTPS_PIN_RUNTIME_ADAPTER_BIND_HOST,
       port,
       routeCount: Object.keys(initialRoutes).length,
+      orphanedRouteCount: orphanedRouteIds.length,
       logPath: LOG_PATH,
     });
     console.log(
@@ -592,17 +632,48 @@ function putRoute(options: {
   });
 }
 
+function extractPersistedRoutes(prior: JsonObject | null): Record<string, JsonObject> {
+  if (!prior?.routes || typeof prior.routes !== "object" || Array.isArray(prior.routes)) return {};
+  return prior.routes as Record<string, JsonObject>;
+}
+
 function persistRouteState(routeId: string, meta: RoutePersistedMeta): void {
   const prior = readLocalAdapterJsonFile(STATE_PATH);
-  const priorRoutes =
-    prior?.routes && typeof prior.routes === "object" && !Array.isArray(prior.routes)
-      ? (prior.routes as Record<string, unknown>)
-      : {};
+  const priorRoutes = extractPersistedRoutes(prior);
   writeLocalAdapterJsonFile(STATE_PATH, {
     pid: (prior?.pid as number | null | undefined) ?? loadPersistedPid(),
     updatedAt: new Date().toISOString(),
+    // Re-registering a route (fresh `meta`, no `orphanedAt`) always
+    // supersedes any prior orphaned entry for the same id -- this is how a
+    // route heals after its owner re-runs `inference set` post-recovery.
     routes: { ...priorRoutes, [routeId]: meta },
   });
+}
+
+/**
+ * Computes which previously-registered routes a fresh adapter respawn will
+ * NOT recover (every one except the route currently being bootstrapped),
+ * since credentials are only ever seeded into the process at spawn/PUT time
+ * and are never persisted to disk (see the module doc comment). Returns
+ * their ids -- so the freshly spawned process can tell "this route was
+ * orphaned by a restart" apart from "this route never existed" and respond
+ * accordingly instead of a bare 404 either way -- plus the persisted-state
+ * shape that keeps them recorded (still without credentials) until their
+ * owner re-runs `inference set` and `persistRouteState` supersedes them.
+ */
+function computeRespawnState(
+  priorRoutes: Record<string, JsonObject>,
+  bootstrapRouteId: string,
+): { orphanedRouteIds: string[]; persistedRoutes: Record<string, JsonObject> } {
+  const orphanedRouteIds: string[] = [];
+  const persistedRoutes: Record<string, JsonObject> = {};
+  const orphanedAt = new Date().toISOString();
+  for (const [id, meta] of Object.entries(priorRoutes)) {
+    if (id === bootstrapRouteId) continue;
+    orphanedRouteIds.push(id);
+    persistedRoutes[id] = { ...meta, orphanedAt };
+  }
+  return { orphanedRouteIds, persistedRoutes };
 }
 
 /**
@@ -797,6 +868,17 @@ async function ensureAdapterProcessLocked(bootstrap: {
   // one) keeps previously registered OpenShell provider credentials working
   // across an adapter respawn whenever possible.
   const token = priorToken || crypto.randomBytes(24).toString("hex");
+  // A fresh process starts with an empty in-memory route map -- every route
+  // other than the one being bootstrapped now is unrecoverable this restart,
+  // since credentials are never persisted to disk (see module doc comment).
+  // Tell the freshly spawned process which route ids those are so it can
+  // answer them with an actionable "needs recovery" response instead of a
+  // bare 404 indistinguishable from a route that never existed (#6141).
+  const priorState = readLocalAdapterJsonFile(STATE_PATH);
+  const { orphanedRouteIds, persistedRoutes } = computeRespawnState(
+    extractPersistedRoutes(priorState),
+    bootstrap.routeId,
+  );
   const child = spawnDetachedNodeAdapter({
     scriptPath: getAdapterScriptPath(),
     env: {
@@ -809,6 +891,7 @@ async function ensureAdapterProcessLocked(bootstrap: {
         providerType: bootstrap.providerType,
         credentialValue: bootstrap.credentialValue,
       }),
+      NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_ORPHANED_ROUTE_IDS: JSON.stringify(orphanedRouteIds),
     },
     // This is a long-lived, credential-bearing process, so it gets a
     // purpose-built minimal environment rather than the general subprocess
@@ -825,13 +908,13 @@ async function ensureAdapterProcessLocked(bootstrap: {
       );
     }
     writeLocalAdapterSecretFile(TOKEN_PATH, token);
-    // A fresh process starts with an empty in-memory route map, so the
-    // persisted route metadata must be reset here — every route other than
-    // the one being bootstrapped now is unreachable until it is re-ensured.
+    // Keep the orphaned routes recorded (still without credentials) instead
+    // of dropping them: `persistRouteState` supersedes an entry here the
+    // moment its owner re-runs `inference set`, which is how a route heals.
     writeLocalAdapterJsonFile(STATE_PATH, {
       pid: child.pid ?? null,
       updatedAt: new Date().toISOString(),
-      routes: {},
+      routes: persistedRoutes,
     });
   } catch (err) {
     killStaleAdapter();
@@ -857,6 +940,7 @@ export const __test = {
   probeAdapterHealth,
   tryAcquireAdapterLock,
   withAdapterLock,
+  computeRespawnState,
   LOCK_PATH,
 };
 

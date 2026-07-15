@@ -286,6 +286,61 @@ describe("createHttpsPinRuntimeAdapterServer control plane (#6141)", () => {
   });
 });
 
+describe("createHttpsPinRuntimeAdapterServer orphaned route recovery (#6141)", () => {
+  it("returns 503 route_needs_recovery for a route orphaned by the last respawn, distinct from an unknown route", async () => {
+    const adapter = createHttpsPinRuntimeAdapterServer({
+      token: TEST_TOKEN,
+      orphanedRouteIds: ["orphan-1"],
+    });
+    const baseUrl = await listen(adapter);
+
+    const orphaned = await fetch(`${baseUrl}/route/orphan-1/v1/messages`, {
+      headers: { Authorization: `Bearer ${TEST_TOKEN}` },
+    });
+    expect(orphaned.status).toBe(503);
+    await expect(orphaned.json()).resolves.toMatchObject({
+      error: { code: "route_needs_recovery" },
+    });
+
+    const neverKnown = await fetch(`${baseUrl}/route/never-known/v1/messages`, {
+      headers: { Authorization: `Bearer ${TEST_TOKEN}` },
+    });
+    expect(neverKnown.status).toBe(404);
+    await expect(neverKnown.json()).resolves.toMatchObject({ error: { code: "route_not_found" } });
+  });
+
+  it("prefers a live route over its own stale orphaned-route id once re-registered", async () => {
+    const upstream = http.createServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+    });
+    const upstreamBaseUrl = await listen(upstream);
+    const upstreamPort = new URL(upstreamBaseUrl).port;
+
+    const adapter = createHttpsPinRuntimeAdapterServer({
+      token: TEST_TOKEN,
+      orphanedRouteIds: ["healed-route"],
+    });
+    const baseUrl = await listen(adapter);
+
+    await fetch(`${baseUrl}/control/routes/healed-route`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${TEST_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        targetBaseUrl: `http://real-upstream.example:${upstreamPort}/base`,
+        pinnedAddresses: ["127.0.0.1"],
+        providerType: "openai",
+        credentialValue: "sk-healed",
+      }),
+    });
+
+    const response = await fetch(`${baseUrl}/route/healed-route/`, {
+      headers: { Authorization: `Bearer ${TEST_TOKEN}` },
+    });
+    expect(response.status).toBe(200);
+  });
+});
+
 // Drives the server's request listener directly with a fake req/res instead
 // of a real socket, so the simulated `remoteAddress` isn't at the mercy of
 // how (or whether) a given host/CI sandbox routes secondary loopback
@@ -486,6 +541,33 @@ describe("adapter recovery lock (#6141)", () => {
     await Promise.all([slow, fast]);
 
     expect(order).toEqual(["slow:start", "slow:end", "fast:start", "fast:end"]);
+  });
+});
+
+describe("computeRespawnState orphaned-route bookkeeping (#6141)", () => {
+  it("marks every persisted route except the one being bootstrapped as orphaned", () => {
+    const priorRoutes = {
+      a: { targetBaseUrl: "http://a.example/", pinnedAddresses: ["10.0.0.1"] },
+      b: { targetBaseUrl: "http://b.example/", pinnedAddresses: ["10.0.0.2"] },
+      c: { targetBaseUrl: "http://c.example/", pinnedAddresses: ["10.0.0.3"] },
+    };
+
+    const { orphanedRouteIds, persistedRoutes } = __test.computeRespawnState(priorRoutes, "b");
+
+    expect(orphanedRouteIds.sort()).toEqual(["a", "c"]);
+    expect(Object.keys(persistedRoutes).sort()).toEqual(["a", "c"]);
+    expect(persistedRoutes.a).toMatchObject({ targetBaseUrl: "http://a.example/" });
+    expect(typeof persistedRoutes.a.orphanedAt).toBe("string");
+    expect(persistedRoutes.c).toMatchObject({ targetBaseUrl: "http://c.example/" });
+    expect(typeof persistedRoutes.c.orphanedAt).toBe("string");
+    expect(persistedRoutes.b).toBeUndefined();
+  });
+
+  it("orphans nothing when there is no prior state to recover from", () => {
+    const { orphanedRouteIds, persistedRoutes } = __test.computeRespawnState({}, "bootstrap-only");
+
+    expect(orphanedRouteIds).toEqual([]);
+    expect(persistedRoutes).toEqual({});
   });
 });
 
