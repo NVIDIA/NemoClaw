@@ -17,7 +17,7 @@
  * headings so command-level parity keeps treating them as hidden. The same
  * assertions run against generated agent references (`nemohermes` and
  * `nemo-deepagents` binary forms) so a regression in
- * scripts/sync-agent-variant-docs.ts cannot silently drop the section from an
+ * scripts/sync-agent-variant-docs.mts cannot silently drop the section from an
  * agent variant.
  */
 
@@ -26,7 +26,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { getRegisteredOclifCommandsMetadata } from "../src/lib/cli/oclif-metadata";
-import { renderAgentVariantPage } from "../scripts/sync-agent-variant-docs";
+import { renderAgentVariantPage } from "../scripts/sync-agent-variant-docs.mts";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 

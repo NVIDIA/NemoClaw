@@ -7,8 +7,8 @@
 // machine-readable JSON document plus a Markdown value report. It only contacts
 // the inference endpoint you configure and never posts results anywhere.
 //
-//   tsx scripts/bench/run.ts --base-url <url> --model <model> [--json out.json]
-//   tsx scripts/bench/run.ts --trace .e2e/traces/onboard.json --base-url ... --model ...
+//   tsx scripts/bench/run.mts --base-url <url> --model <model> [--json out.json]
+//   tsx scripts/bench/run.mts --trace .e2e/traces/onboard.json --base-url ... --model ...
 //
 // The API key is read from an environment variable (default OPENAI_API_KEY or
 // NVIDIA_INFERENCE_API_KEY), never from a command-line flag.
@@ -27,7 +27,7 @@ import {
   renderMarkdownReport,
   runInferenceRoundTrip,
   unsupportedTraceMetric,
-} from "./lib";
+} from "./lib.mts";
 
 interface CliOptions {
   baseUrl?: string;
@@ -47,7 +47,7 @@ interface CliOptions {
 const USAGE = `NemoClaw value benchmark (issue #5604)
 
 Usage:
-  tsx scripts/bench/run.ts --base-url <url> --model <model> [options]
+  tsx scripts/bench/run.mts --base-url <url> --model <model> [options]
 
 Options:
   --base-url <url>      OpenAI-compatible base URL (or env OPENAI_BASE_URL / NEMOCLAW_BENCH_BASE_URL)

@@ -23,7 +23,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parse } from "yaml";
 
-import { renderAgentVariantPage } from "./sync-agent-variant-docs.ts";
+import { renderAgentVariantPage } from "./sync-agent-variant-docs.mts";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const docsRoot = path.join(repoRoot, "docs");

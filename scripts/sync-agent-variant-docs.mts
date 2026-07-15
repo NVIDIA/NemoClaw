@@ -44,7 +44,7 @@ type NavigationNode = {
 };
 
 const GENERATED_VARIANT_NOTICE =
-  "{/* This file is generated from a shared agent-variant source by scripts/sync-agent-variant-docs.ts. Run `npm run docs:sync-agent-variants` to regenerate it. Do not edit by hand. */}";
+  "{/* This file is generated from a shared agent-variant source by scripts/sync-agent-variant-docs.mts. Run `npm run docs:sync-agent-variants` to regenerate it. Do not edit by hand. */}";
 const CLI_SENTINEL = "$$nemoclaw";
 
 const checkOnly = process.argv.includes("--check");

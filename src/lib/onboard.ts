@@ -253,6 +253,7 @@ const inferenceConfig: typeof import("./inference/config") = require("./inferenc
 const { DEFAULT_CLOUD_MODEL, getProviderSelectionConfig, parseGatewayInference } = inferenceConfig;
 
 const onboardProviders = require("./onboard/providers");
+const credentialProviderRegistration: typeof import("./onboard/credential-provider-registration") = require("./onboard/credential-provider-registration");
 const inferenceProviders: typeof import("./onboard/inference-providers") = require("./onboard/inference-providers");
 const setupInferenceFactory: typeof import("./onboard/setup-inference") =
   require("./onboard/setup-inference");
@@ -448,6 +449,8 @@ const promptValidatedSandboxName = sandboxAgent.createPromptValidatedSandboxName
   promptOrDefault,
   cliDisplayName,
   isNonInteractive,
+  checkpointSandboxName: (sandboxName, agent) =>
+    onboardSessionBootstrap.checkpointSandboxName(sandboxName, agent, onboardSession.updateSession),
   exit: process.exit,
 });
 const modelRouter: typeof import("./onboard/model-router") = require("./onboard/model-router");
@@ -967,37 +970,20 @@ const verifyDirectSandboxGpu = sandboxGpuPreflight.createDirectSandboxGpuVerifie
   redact,
 });
 
-function upsertMessagingProviders(
-  tokenDefs: MessagingTokenDef[],
-  options: { replaceExisting?: boolean } = {},
-) {
-  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  braveProviderProfile.ensureWebSearchProviderProfiles(tokenDefs, { root: ROOT, runOpenshell, redact });
-  const upserted = onboardProviders.upsertMessagingProviders(tokenDefs, runOpenshell, options);
-  // upsertMessagingProviders process.exits on failure, so reaching this
-  // point means every entry in tokenDefs that had a token was registered.
-  // Mark migrated only when the registered token equals the staged legacy
-  // value — a token rotated since staging (or a fresh prompt) is not a
-  // legacy migration even if it happens to use the same env-key name.
-  // Mirror upsertProvider's withdrawal logic so a later messaging upsert
-  // that replaces the legacy value with something else cannot leave the
-  // mark stuck on.
-  let mutated = false;
-  for (const def of tokenDefs) {
-    if (!def.token || !def.envKey) continue;
-    const stagedValue = stagedLegacyValues.get(def.envKey);
-    if (stagedValue === undefined) continue;
-    if (def.token === stagedValue) {
-      migratedLegacyKeys.add(def.envKey);
-      mutated = true;
-    } else {
-      migratedLegacyKeys.delete(def.envKey);
-      mutated = true;
-    }
-  }
-  if (mutated) persistMigratedLegacyKeys();
-  return upserted;
-}
+const registeredCredentialProviders =
+  credentialProviderRegistration.createCredentialProviderRegistration({
+    root: ROOT,
+    runOpenshell,
+    redact,
+    getGatewayName: () => GATEWAY_NAME,
+    normalizeCredentialValue,
+    updateSession: onboardSession.updateSession,
+    stagedLegacyValues,
+    migratedLegacyKeys,
+    persistMigratedLegacyKeys,
+  });
+const { upsertMessagingProviders, providerMatchesGatewayCredential } =
+  registeredCredentialProviders;
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
 const providerExistsInGateway = (name: string, gatewayName: string = GATEWAY_NAME) => onboardProviders.providerExistsInGateway(name, setupInferenceFactory.createGatewayScopedOpenshellRunner(runOpenshell, gatewayName));
 
@@ -2309,6 +2295,7 @@ async function createSandboxWithBaseImageResolution(
       hermesToolGateways,
       extraProviders: extraProviderPlan.extraProviders,
       staleExtraProviders: extraProviderPlan.staleExtraProviders,
+      ...(createIntent?.reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
       ...(createIntent?.policyTier !== undefined ? { policyTier: createIntent.policyTier } : {}),
     }));
   const messagingCapabilities = await sandboxCreateIntentResolver.rebind(
@@ -2317,6 +2304,7 @@ async function createSandboxWithBaseImageResolution(
       enabledChannels,
       webSearchConfig,
       agent,
+      ...(createIntent?.reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
     },
     resolvedCreateIntent,
   );
@@ -2707,6 +2695,7 @@ async function createSandboxWithBaseImageResolution(
       enabledChannels,
       webSearchConfig,
       agent,
+      ...(createIntent?.reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
     },
     resolvedCreateIntent,
   );
@@ -3745,7 +3734,7 @@ const sandboxCreateIntentResolver = sandboxCreateIntentResolution.createSandboxC
 >({
   channels: MESSAGING_CHANNELS,
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  messagingPreflightDeps: { readMessagingPlanFromEnv, resolveDisabledChannels: channelState.resolveDisabledChannels, gatewayName: () => GATEWAY_NAME, registry, providerExistsInGateway, isNonInteractive, promptYesNoOrDefault, cliName, log: (message) => console.log(message), error: (message) => console.error(message), exitProcess: (code) => process.exit(code), getValidatedMessagingTokenByEnvKey, getCredential, normalizeCredentialValue, registerExtraPlaceholderProviders: extraPlaceholderKeysModule.registerExtraPlaceholderProviders, getMessagingChannelForEnvKey },
+  messagingPreflightDeps: { readMessagingPlanFromEnv, resolveDisabledChannels: channelState.resolveDisabledChannels, gatewayName: () => GATEWAY_NAME, registry, providerExistsInGateway, providerMatchesGatewayCredential, isNonInteractive, promptYesNoOrDefault, cliName, log: (message) => console.log(message), error: (message) => console.error(message), exitProcess: (code) => process.exit(code), getValidatedMessagingTokenByEnvKey, getCredential, normalizeCredentialValue, registerExtraPlaceholderProviders: extraPlaceholderKeysModule.registerExtraPlaceholderProviders, getMessagingChannelForEnvKey },
   filterEnabledChannelsByAgent,
   defaultPolicyPath: path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
   getAgentPolicyPath: (agent) => (agent ? agentOnboard.getAgentPolicyPath(agent) : null),
@@ -3761,6 +3750,9 @@ const sandboxCreateIntentResolver = sandboxCreateIntentResolution.createSandboxC
       promptOrDefault,
     }),
 });
+
+// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+const stageSandboxCredentialProviders = (input: import("./onboard/credential-provider-registration").StageSandboxCredentialProvidersInput<AgentDefinition | null>) => registeredCredentialProviders.stageSandboxCredentialProviders(input, sandboxCreateIntentResolver.prepareCredentialProviders);
 
 function getRecordedMessagingChannelsForResume(
   resume: boolean,
@@ -3782,12 +3774,14 @@ async function setupMessagingChannels(
   agent: AgentDefinition | null = null,
   existingChannels: string[] | null = null,
   sandboxName: string | null = null,
+  options: { readonly selectionCompleted?: boolean } = {},
 ): Promise<string[]> {
   return setupMessagingChannelsImpl(agent, existingChannels, {
     step,
     note,
     isNonInteractive,
     sandboxName,
+    selectionCompleted: options.selectionCompleted,
   });
 }
 
@@ -4217,7 +4211,11 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
 
     const recordedSandboxName =
       session?.steps?.sandbox?.status === "complete" ? session?.sandboxName || null : null;
-    const gatewaySandboxName = resume ? (recordedSandboxName ?? requestedSandboxName) : null;
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    const checkpointedSandboxName = onboardSessionBootstrap.getCheckpointedSandboxName(resume, agent, session);
+    const gatewaySandboxName = resume
+      ? (recordedSandboxName ?? requestedSandboxName ?? checkpointedSandboxName)
+      : null;
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     const onboardGateway = gatewayBinding.resolveCoreOnboardGatewayBinding({ authoritativeGateway, currentGateway: { name: GATEWAY_NAME, port: GATEWAY_PORT }, resume, sandbox: gatewaySandboxName ? registry.getSandbox(gatewaySandboxName) : null });
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
@@ -4243,7 +4241,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       agent,
       recordedSandboxName,
       requestedSandboxName,
-      sandboxName: recordedSandboxName || requestedSandboxName || null,
+      sandboxName: recordedSandboxName || requestedSandboxName || checkpointedSandboxName || null,
       fromDockerfile,
       model: session?.model || null,
       provider: session?.provider || null,
@@ -4347,12 +4345,10 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     const { gpuPassthrough } = initialContext;
     const gpu = initialContext.gpu ?? null;
 
-    // #2753: prefer requestedSandboxName over an unconfirmed session name.
-    // A pre-fix session may carry sandboxName even though sandbox creation
-    // never completed; users supplying `--name` / NEMOCLAW_SANDBOX_NAME on
-    // the resume run must win, otherwise the stale name silently overrides
-    // their explicit recovery input.
-    let sandboxName = recordedSandboxName || requestedSandboxName || null;
+    // #2753: for an unfinished sandbox, an explicit requested name precedes
+    // the checkpointed name from the interrupted session.
+    let sandboxName =
+      recordedSandboxName || requestedSandboxName || checkpointedSandboxName || null;
     if (sandboxName && RESERVED_SANDBOX_NAMES.has(sandboxName)) {
       console.error(
         `  Reserved name in resumed session: '${sandboxName}' is a ${cliDisplayName()} CLI command.`,
@@ -4481,11 +4477,14 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         configureWebSearch,
         startRecordedStep,
         getRecordedMessagingChannelsForResume,
+        showMessagingStage: () => step(5, 8, "Messaging channels"),
         setupMessagingChannels,
         readMessagingPlanFromEnv,
         writePlanToEnv,
         clearPlanEnv,
         getRegistrySandboxMessagingPlan,
+        providerMatchesGatewayCredential,
+        stageSandboxCredentialProviders,
         promptValidatedSandboxName,
         selectResourceProfileForSandbox: () =>
           selectResourceProfileForSandbox({ isNonInteractive, note, prompt, promptOrDefault }),

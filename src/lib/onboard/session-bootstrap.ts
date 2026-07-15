@@ -51,6 +51,28 @@ export interface OnboardSessionBootstrapResult {
   fromDockerfile: string | null;
 }
 
+export function checkpointSandboxName(
+  sandboxName: string,
+  agent: { name?: string } | null,
+  updateSession: OnboardSessionBootstrapDeps["updateSession"],
+): void {
+  if (agent?.name && agent.name !== "openclaw") return;
+  updateSession((current) => {
+    current.sandboxName = sandboxName;
+    current.sandboxPromptProgress.sandboxName = true;
+    return current;
+  });
+}
+
+export function getCheckpointedSandboxName(
+  resume: boolean,
+  agent: { name?: string } | null,
+  session: Session | null,
+): string | null {
+  if (!resume || (agent?.name && agent.name !== "openclaw")) return null;
+  return session?.sandboxPromptProgress?.sandboxName === true ? session.sandboxName : null;
+}
+
 function mode(nonInteractive: boolean): "non-interactive" | "interactive" {
   return nonInteractive ? "non-interactive" : "interactive";
 }
@@ -125,8 +147,12 @@ function assertRecoverableResumeSandboxName(
   deps: OnboardSessionBootstrapDeps,
 ): void {
   const sandboxStepCompleted = session?.steps?.sandbox?.status === "complete";
+  const sandboxNameCheckpointed =
+    (!session?.agent || session.agent === "openclaw") &&
+    session?.sandboxPromptProgress?.sandboxName === true;
   const recoveredSandboxName =
-    input.requestedSandboxName || (sandboxStepCompleted ? session?.sandboxName || null : null);
+    input.requestedSandboxName ||
+    (sandboxStepCompleted || sandboxNameCheckpointed ? session?.sandboxName || null : null);
   if (input.cannotPrompt && !recoveredSandboxName) {
     deps.error(
       "  Cannot resume non-interactive onboard: the previous run was interrupted before sandbox creation completed,",

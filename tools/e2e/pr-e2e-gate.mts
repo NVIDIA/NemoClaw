@@ -1444,11 +1444,28 @@ export function expectedSignalShards(
             throw new Error(`${jobId} matrix agent values must be strings`);
           }
         } else if (keys.length === 1 && Array.isArray(matrix.include)) {
-          shards = matrix.include.map((entry) => {
-            if (!isObjectRecord(entry) || typeof entry.agent !== "string") {
-              throw new Error(`${jobId} matrix include entries must name an agent`);
+          const env = isObjectRecord(job.env) ? job.env : {};
+          const configuredShard = env.NEMOCLAW_E2E_SHARD;
+          let shardKey = "agent";
+          if (configuredShard !== undefined) {
+            const match =
+              typeof configuredShard === "string"
+                ? /^\$\{\{\s*matrix\.([A-Za-z][A-Za-z0-9_]*)\s*\}\}$/u.exec(configuredShard)
+                : null;
+            if (!match) {
+              throw new Error(`${jobId} NEMOCLAW_E2E_SHARD must name one matrix include field`);
             }
-            return entry.agent;
+            shardKey = match[1]!;
+          }
+          shards = matrix.include.map((entry) => {
+            if (!isObjectRecord(entry) || !Object.hasOwn(entry, shardKey)) {
+              throw new Error(`${jobId} matrix include entries must name a ${shardKey} shard`);
+            }
+            const shard = entry[shardKey];
+            if (typeof shard !== "string") {
+              throw new Error(`${jobId} matrix include entries must name a ${shardKey} shard`);
+            }
+            return shard;
           });
         } else {
           throw new Error(`${jobId} uses an unsupported evidence matrix`);
