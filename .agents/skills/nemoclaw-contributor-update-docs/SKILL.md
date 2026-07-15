@@ -169,9 +169,14 @@ When updating an existing page:
 - Do not reorganize sections unless the change requires it.
 - Update any cross-references or "Next Steps" links if relevant.
 
-**Release prep only:** When updating `docs/about/release-notes.mdx`:
+**Release prep only:** When updating the native changelog:
 
-- For each release-note bullet that corresponds to a deeper doc page, end the bullet with `For more information, refer to [DOC PAGE](/doc/path).`
+- Add the complete release entry to `docs/changelog/YYYY-MM-DD.mdx`, using the release date as the filename and an H2 version heading such as `## v0.0.83`.
+- If another release has the same date, add the new version to that file with the newest version first.
+- Keep the summary and detailed bullets together in the dated file; do not create separate variant-specific Release Notes pages.
+- Use literal CLI names instead of `$$nemoclaw`, which native changelog files do not rewrite.
+- Use root-absolute published routes in dated entries. Use `/user-guide/openclaw/` for generic links and the explicit Hermes or Deep Agents route for agent-specific material.
+- For each release-note bullet that corresponds to a deeper doc page, end the bullet with `For more information, refer to [DOC PAGE](/user-guide/openclaw/doc/path).`
 - Link to the most specific existing page that explains the behavior, command, setup flow, or troubleshooting path.
 - Do not add a link when no deeper page exists or when the only possible target is unrelated or too broad.
 - Keep the source docs link as a normal MDX link so Fern can publish both rendered and Markdown routes.
