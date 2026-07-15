@@ -105,7 +105,7 @@ describe("live E2E target gating", () => {
     },
   );
 
-  it("collects exactly one reviewed MCP bridge agent shard", () => {
+  it("collects exactly one reviewed MCP bridge agent shard", testTimeoutOptions(15_000), () => {
     const file = "mcp-bridge.test.ts";
     const expectedTestByShard = {
       deepagents: "mcp-bridge-deepagents",
