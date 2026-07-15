@@ -2,21 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { createRequire } from "node:module";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
+import { MARKER } from "../scripts/patch-openclaw-tool-catalog.mts";
 
-const require = createRequire(import.meta.url);
 const PATCH_SCRIPT = path.join(
   import.meta.dirname,
   "..",
   "scripts",
-  "patch-openclaw-tool-catalog.js",
+  "patch-openclaw-tool-catalog.mts",
 );
-const { MARKER } = require(PATCH_SCRIPT) as { MARKER: string };
 
 function writePackageJson(root: string, version = "2026.4.24") {
   fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ version }, null, 2));
@@ -160,7 +158,7 @@ function makeFixture(opts: { version?: string; allCustomToolsLine?: string } = {
 }
 
 function runPatch(dist: string) {
-  return spawnSync(process.execPath, [PATCH_SCRIPT, dist], {
+  return spawnSync(process.execPath, ["--experimental-strip-types", PATCH_SCRIPT, dist], {
     encoding: "utf-8",
     timeout: 10_000,
   });

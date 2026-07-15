@@ -761,26 +761,66 @@ Silent retry would loop on the same failure if your original choice, such as an 
 - In non-interactive mode (piped `curl | bash` with `NEMOCLAW_NON_INTERACTIVE=1`, CI, scripts), the installer refuses and exits with a non-zero status so a scripted re-run cannot loop.
   You must opt in to one of two paths explicitly:
 
-  Start over with new choices (discards the recorded session and provider/model selection):
+Start over with new choices to discard the recorded session and provider/model selection.
 
-  ```bash
-  curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --fresh
-  ```
+<AgentOnly variant="openclaw">
 
-  Or equivalently, via env var.
-  The variable must be set on the `bash` side of the pipe, not on `curl`, since only the right-hand process inherits it:
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --fresh
+```
 
-  ```bash
-  curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_FRESH=1 bash
-  ```
+</AgentOnly>
 
-  Retry the same session.
+<AgentOnly variant="hermes">
 
-  This is only useful if the original failure was transient, for example a network blip or a stopped Docker daemon, and not a wrong provider choice:
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=hermes bash -s -- --fresh
+```
 
-  ```bash
-  $$nemoclaw onboard --resume
-  ```
+</AgentOnly>
+
+<AgentOnly variant="deepagents">
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=langchain-deepagents-code bash -s -- --fresh
+```
+
+</AgentOnly>
+
+Or use environment variables instead.
+Set them on the `bash` side of the pipe because only the right-hand process inherits them.
+
+<AgentOnly variant="openclaw">
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_FRESH=1 bash
+```
+
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=hermes NEMOCLAW_FRESH=1 bash
+```
+
+</AgentOnly>
+
+<AgentOnly variant="deepagents">
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=langchain-deepagents-code NEMOCLAW_FRESH=1 bash
+```
+
+</AgentOnly>
+
+Retry the same session.
+
+This is only useful if the original failure was transient, for example a network blip or a stopped Docker daemon, and not a wrong provider choice:
+
+```bash
+$$nemoclaw onboard --resume
+```
 
 <AgentOnly variant="openclaw">
 

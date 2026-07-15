@@ -4351,6 +4351,7 @@ jobs:
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_RECREATE_SANDBOX: "1"
       NEMOCLAW_AGENT: ${{ matrix.agent }}
+      NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
       NEMOCLAW_SANDBOX_NAME: e2e-bedrock-${{ matrix.agent }}
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:

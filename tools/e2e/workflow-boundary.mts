@@ -447,8 +447,7 @@ function requireDockerEngineRebuilds(
   const hasSeparateCacheBuilder = steps.some((step) => {
     const uses = stringValue(step.uses);
     return (
-      uses.startsWith("docker/setup-buildx-action@") ||
-      uses.startsWith("docker/build-push-action@")
+      uses.startsWith("docker/setup-buildx-action@") || uses.startsWith("docker/build-push-action@")
     );
   });
   const routesBuildsAwayFromDocker = steps.some((step) => {
@@ -1336,7 +1335,6 @@ function validateRebuildOpenClawJob(errors: string[], jobs: WorkflowRecord): voi
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/rebuild-openclaw.test.ts");
-
 }
 
 function validateRebuildHermesJob(
@@ -1442,7 +1440,6 @@ function validateRebuildHermesJob(
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/rebuild-hermes.test.ts");
-
 }
 
 function validateSandboxRebuildJob(errors: string[], jobs: WorkflowRecord): void {
@@ -3481,6 +3478,11 @@ function validateBedrockRuntimeCompatibleAnthropicJob(
       "bedrock-runtime-compatible-anthropic job must pass matrix.agent through NEMOCLAW_AGENT",
     );
   }
+  if (jobEnv.NEMOCLAW_E2E_SHARD !== "${{ matrix.agent }}") {
+    errors.push(
+      "bedrock-runtime-compatible-anthropic job must pass matrix.agent through NEMOCLAW_E2E_SHARD",
+    );
+  }
   if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-bedrock-${{ matrix.agent }}") {
     errors.push(
       "bedrock-runtime-compatible-anthropic job must derive NEMOCLAW_SANDBOX_NAME from matrix.agent",
@@ -3976,7 +3978,9 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     Object.hasOwn(asRecord(dcodeProfileImportGate?.env), "BUILDX_BUILDER") ||
     routesDcodeBuildsThroughBuildx
   ) {
-    errors.push("live DCode profile import gate must keep its local image chain on the Docker engine");
+    errors.push(
+      "live DCode profile import gate must keep its local image chain on the Docker engine",
+    );
   }
 
   const runVitest = requireStep(errors, steps, "Run live E2E tests");

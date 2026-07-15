@@ -25,6 +25,12 @@ function temporaryE2eWorkflow(source: string): string {
 }
 
 describe("PR E2E shard policy", () => {
+  it("derives Bedrock signal shards from the agent matrix (#6938)", () => {
+    expect(expectedSignalShards(["bedrock-runtime-compatible-anthropic"])).toEqual({
+      "bedrock-runtime-compatible-anthropic": ["openclaw", "hermes"],
+    });
+  });
+
   // source-shape-contract: security -- Malformed matrix shard selectors must fail closed before exact-SHA evidence dispatch
   it("rejects malformed configured matrix shard selectors", () => {
     const workflow = fs.readFileSync(".github/workflows/e2e.yaml", "utf8");
