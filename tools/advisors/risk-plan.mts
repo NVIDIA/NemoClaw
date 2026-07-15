@@ -74,6 +74,7 @@ const E2E_CONTROL_PLANE_FILES = new Set([
 const CONTROLLER_ONLY_E2E_FILES = new Set([
   ".github/workflows/pr-e2e-gate.yaml",
   "tools/e2e/pr-e2e-gate.mts",
+  "tools/e2e/pr-e2e-required.mts",
 ]);
 // These checked-in paths and directories are the source boundary for private-network,
 // policy, and shields enforcement but are not all covered by the token heuristics above.
