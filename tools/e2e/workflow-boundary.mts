@@ -3942,63 +3942,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   }
 
   const dcodeTargetIf = "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}";
-  requireReadOnlyBuildCacheImports(errors, steps, "live DCode cache warm");
-  const dcodeBuildx = requireStep(errors, steps, "Set up DCode profile gate Buildx");
-  if (dcodeBuildx?.uses !== "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c") {
-    errors.push("live DCode profile gate must use the reviewed Buildx action");
-  }
-  if (dcodeBuildx?.id !== "dcode-profile-gate-buildx") {
-    errors.push("live DCode Buildx setup must expose the dcode-profile-gate-buildx step id");
-  }
-  if (dcodeBuildx?.if !== dcodeTargetIf) {
-    errors.push("live DCode Buildx setup must be scoped to the typed DCode target");
-  }
-  if (asRecord(dcodeBuildx?.with)["driver-opts"] !== "default-load=true") {
-    errors.push("live DCode Buildx must enable default-load for the gate Docker builds");
-  }
-
-  const routeDcodeBuilds = requireStep(
-    errors,
-    steps,
-    "Route DCode profile gate Docker builds through Buildx",
-  );
-  if (routeDcodeBuilds?.if !== dcodeTargetIf) {
-    errors.push("live DCode builder routing must be scoped to the typed DCode target");
-  }
-  if (
-    asRecord(routeDcodeBuilds?.env).DCODE_PROFILE_GATE_BUILDER !==
-    "${{ steps.dcode-profile-gate-buildx.outputs.name }}"
-  ) {
-    errors.push("live DCode gate must route Docker builds to the configured Buildx builder");
-  }
-  requireRunContains(errors, routeDcodeBuilds, "test -n");
-  requireRunContains(errors, routeDcodeBuilds, "BUILDX_BUILDER=%s");
-  requireRunContains(errors, routeDcodeBuilds, '>> "${GITHUB_ENV}"');
-
-  const warmDcodeBase = requireStep(errors, steps, "Warm DCode profile gate base build cache");
-  if (warmDcodeBase?.if !== dcodeTargetIf) {
-    errors.push("live DCode cache warm must be scoped to the typed DCode target");
-  }
-  if (warmDcodeBase?.uses !== "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a") {
-    errors.push("live DCode cache warm must use the reviewed build action");
-  }
-  const warmDcodeInputs = asRecord(warmDcodeBase?.with);
-  if (warmDcodeInputs.builder !== "${{ steps.dcode-profile-gate-buildx.outputs.name }}") {
-    errors.push("live DCode cache warm must use the routed Buildx builder");
-  }
-  if (
-    warmDcodeInputs.context !== "." ||
-    warmDcodeInputs.file !== "agents/langchain-deepagents-code/Dockerfile.base"
-  ) {
-    errors.push("live DCode cache warm must build the reviewed base Dockerfile");
-  }
-  if (
-    warmDcodeInputs["cache-from"] !==
-    "type=registry,ref=ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:buildcache"
-  ) {
-    errors.push("live DCode cache warm must import the trusted publisher cache");
-  }
-
   const configureTrace = requireStep(errors, steps, "Configure live E2E trace directory");
   const configureTraceEnv = asRecord(configureTrace?.env);
   if (configureTraceEnv.TARGET_ID !== "${{ matrix.id }}") {
@@ -4063,6 +4006,19 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   ) {
     errors.push("live DCode profile import gate must run the reviewed negative-build script");
   }
+  const dcodeGateIndex = dcodeProfileImportGate
+    ? steps.indexOf(dcodeProfileImportGate)
+    : steps.length;
+  const routesDcodeBuildsThroughBuildx = steps
+    .slice(0, dcodeGateIndex)
+    .some((step) => stringValue(step.run).includes("BUILDX_BUILDER="));
+  if (
+    Object.hasOwn(jobEnv, "BUILDX_BUILDER") ||
+    Object.hasOwn(asRecord(dcodeProfileImportGate?.env), "BUILDX_BUILDER") ||
+    routesDcodeBuildsThroughBuildx
+  ) {
+    errors.push("live DCode profile import gate must keep its local image chain on the Docker engine");
+  }
 
   const runVitest = requireStep(errors, steps, "Run live E2E tests");
   if (
@@ -4078,24 +4034,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     steps.indexOf(dcodeProfileImportGate) >= steps.indexOf(runVitest)
   ) {
     errors.push("live DCode profile import gate must run before live E2E tests");
-  }
-  const dcodeOrderedSteps = [
-    dcodeBuildx,
-    routeDcodeBuilds,
-    warmDcodeBase,
-    prepareWorkspace,
-    dcodeProfileImportGate,
-  ];
-  if (
-    dcodeOrderedSteps.every((step) => step !== undefined) &&
-    dcodeOrderedSteps.some(
-      (step, index) =>
-        index > 0 &&
-        steps.indexOf(dcodeOrderedSteps[index - 1] as WorkflowStep) >=
-          steps.indexOf(step as WorkflowStep),
-    )
-  ) {
-    errors.push("live DCode Buildx setup, cache warm, workspace prep, and gate must stay in order");
   }
   const runVitestEnv = asRecord(runVitest?.env);
   if (runVitestEnv.TARGET_ID !== "${{ matrix.id }}") {

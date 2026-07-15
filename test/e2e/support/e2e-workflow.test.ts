@@ -36,7 +36,7 @@ describe("e2e workflow boundary", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
   });
 
-  it("rejects rebuild and DCode cache wiring drift", () => {
+  it("rejects rebuild cache wiring drift", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-build-cache-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
     const workflow = readWorkflow() as {
@@ -74,21 +74,13 @@ describe("e2e workflow boundary", () => {
     openClawRoute.env!.REBUILD_BUILDER = "default";
     openClawWarm.with!["cache-from"] = "type=gha,scope=buildkit";
     openClawWarm.with!["cache-to"] = "type=registry,ref=example.invalid/cache";
-    openClawWarm.with!.provenance = true;
+    delete openClawWarm.with!.provenance;
 
     const hermesWarm = cloneStep("rebuild-hermes", "Warm current Hermes base build cache");
     hermesWarm.with!["cache-from"] = "type=gha,scope=buildkit";
     hermesWarm.with!["cache-to"] = "type=registry,ref=example.invalid/cache";
     hermesWarm.with!.provenance = true;
 
-    const dcodeSetup = cloneStep("live", "Set up DCode profile gate Buildx");
-    const dcodeRoute = cloneStep("live", "Route DCode profile gate Docker builds through Buildx");
-    const dcodeWarm = cloneStep("live", "Warm DCode profile gate base build cache");
-    dcodeSetup.with!["driver-opts"] = "network=host";
-    dcodeRoute.env!.DCODE_PROFILE_GATE_BUILDER = "default";
-    dcodeWarm.with!["cache-from"] = "type=gha,scope=buildkit";
-    dcodeWarm.with!["cache-to"] = "type=registry,ref=example.invalid/cache";
-    dcodeWarm.with!.provenance = true;
     fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
     try {
@@ -102,11 +94,6 @@ describe("e2e workflow boundary", () => {
           "rebuild-hermes base cache must import the trusted publisher cache",
           "rebuild-hermes must keep PR-controlled cache layers job-local",
           "rebuild-hermes must disable provenance for Docker-loaded cache warm builds",
-          "live DCode Buildx must enable default-load for the gate Docker builds",
-          "live DCode gate must route Docker builds to the configured Buildx builder",
-          "live DCode cache warm must import the trusted publisher cache",
-          "live DCode cache warm must keep PR-controlled cache layers job-local",
-          "live DCode cache warm must disable provenance for Docker-loaded cache warm builds",
         ]),
       );
     } finally {
