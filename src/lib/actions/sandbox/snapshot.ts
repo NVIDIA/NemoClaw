@@ -479,7 +479,8 @@ async function isSnapshotCreationAllowedByDcodeActivity(sandboxName: string): Pr
       resolveSandboxGatewayName(registry.getSandbox(sandboxName)),
       {
         sandboxName,
-        command: ["sh", "-c", DCODE_BUSY_PROBE_SCRIPT],
+        command: ["sh", "-s"],
+        stdin: DCODE_BUSY_PROBE_SCRIPT,
         timeoutMs: OPENSHELL_PROBE_TIMEOUT_MS,
       },
     );

@@ -9,6 +9,7 @@ import type {
   SandboxExecRequest,
   SandboxExecResult,
 } from "../../adapters/openshell/sandbox-control";
+import { DCODE_BUSY_PROBE_SCRIPT } from "./dcode-activity-probe";
 import type { SnapshotStreamSandboxCreateMock } from "./snapshot-create-stream-test-types";
 
 type OpenshellCaptureResult = {
@@ -153,6 +154,7 @@ vi.mock("../../adapters/docker", () => ({
 
 vi.mock("../../adapters/openshell/runtime", () => ({
   captureOpenshell: captureOpenshellMock,
+  captureOpenshellBinary: vi.fn(),
   getOpenshellBinary: vi.fn(() => "openshell"),
   runOpenshell: runOpenshellMock,
 }));
@@ -314,7 +316,7 @@ describe("runSandboxSnapshot", () => {
   }
 
   function capturedDcodeProbeScript(): string {
-    return String(execSandboxReadOnlyMock.mock.calls.at(-1)?.[1].command.at(-1) ?? "");
+    return String(execSandboxReadOnlyMock.mock.calls.at(-1)?.[1].stdin ?? "");
   }
 
   function runProbeScriptWithProcesses(
@@ -405,9 +407,14 @@ describe("runSandboxSnapshot", () => {
     expect(backupSandboxStateMock).not.toHaveBeenCalled();
     expect(execSandboxReadOnlyMock).toHaveBeenCalledWith("nemoclaw", {
       sandboxName: "alpha",
-      command: ["sh", "-c", expect.any(String)],
+      command: ["sh", "-s"],
+      stdin: DCODE_BUSY_PROBE_SCRIPT,
       timeoutMs: 15_000,
     });
+    const { validateOpenShellExecRequest } = await import(
+      "../../adapters/openshell/sandbox-control"
+    );
+    expect(validateOpenShellExecRequest(execSandboxReadOnlyMock.mock.calls.at(-1)![1])).toBeNull();
     expect(consoleError.mock.calls.flat().join("\n")).toContain(
       "Sandbox is actively running a dcode task. Please retry after the task completes.",
     );
