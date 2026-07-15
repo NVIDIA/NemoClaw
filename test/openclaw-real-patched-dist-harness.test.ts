@@ -13,7 +13,7 @@ import { runRealOpenClawDeviceSelfApprovalProof } from "./helpers/openclaw-real-
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const DOCKERFILE = path.join(REPO_ROOT, "Dockerfile");
-const PATCH_OPENCLAW_CHAT_SEND = path.join(REPO_ROOT, "scripts", "patch-openclaw-chat-send.js");
+const PATCH_OPENCLAW_CHAT_SEND = path.join(REPO_ROOT, "scripts", "patch-openclaw-chat-send.mts");
 const PATCH_OPENCLAW_ISSUE_4434_DIAGNOSTICS = path.join(
   REPO_ROOT,
   "scripts",
