@@ -153,10 +153,11 @@ function buildConfigSetRestartGuidance(sandboxName: string, agentName: string): 
   ];
 }
 
-class ConfigUrlValidationError extends Error {
+export class ConfigUrlValidationError extends Error {
   constructor(
     readonly urlValue: string,
     message: string,
+    readonly reason: "dns_backed_https_unsupported" | "invalid" = "invalid",
   ) {
     super(message);
     this.name = "ConfigUrlValidationError";
@@ -950,18 +951,22 @@ async function rewriteConfigUrlsWithDnsPinning(
       // HTTPS endpoints fail closed for generic persisted config because the
       // downstream consumer would otherwise perform a second DNS lookup while
       // NemoClaw cannot pin the peer IP and preserve TLS SNI/Host across the
-      // OpenShell runtime boundary.
+      // OpenShell runtime boundary. This validator handles arbitrary persisted
+      // config values, not just inference endpoints, so the message stays
+      // generic; callers that know the field is an inference endpoint add
+      // their own guidance by checking `reason` on the thrown error.
       if (validated.protocol === "https:" && validated.pinnedUrl !== validated.originalUrl) {
-        throw new Error(
+        throw new ConfigUrlValidationError(
+          trimmed,
           "DNS-backed HTTPS URLs are not supported for arbitrary persisted sandbox config " +
             "values. Use an HTTPS IP-literal endpoint or an HTTP endpoint that can be " +
-            "DNS-pinned. For a DNS-backed HTTPS inference endpoint on an already-onboarded " +
-            "sandbox, use `inference set --endpoint-url`, which routes the connection " +
-            "through the HTTPS Pin Runtime adapter instead of persisting the raw URL.",
+            "DNS-pinned.",
+          "dns_backed_https_unsupported",
         );
       }
       return validated.protocol === "http:" ? validated.pinnedUrl : validated.originalUrl;
     } catch (err: unknown) {
+      if (err instanceof ConfigUrlValidationError) throw err;
       const message = err instanceof Error ? err.message : String(err);
       throw new ConfigUrlValidationError(trimmed, message);
     }

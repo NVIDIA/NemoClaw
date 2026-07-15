@@ -98,6 +98,10 @@ describe("runInferenceSet HTTPS-pin runtime adapter credential handoff (#6141)",
   });
 
   it("never persists the real upstream secret name as the route credentialEnv even when unset", async () => {
+    // Explicitly unset rather than relying on the ambient shell environment
+    // not happening to have this set -- the "unset" case under test must not
+    // depend on the developer's or CI's actual environment.
+    vi.stubEnv("COMPATIBLE_API_KEY", undefined);
     const adapter = mockAdapter();
     const deps = createDeps({
       config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },

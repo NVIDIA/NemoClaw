@@ -376,24 +376,74 @@ test("TC-INF-11 DNS-backed HTTPS custom endpoint routes through the local pinnin
     model,
   });
 
+  // Onboarding's own SSRF preflight (assertEndpointResolvesPublic) only
+  // rejects private/internal addresses; it does not fail closed on
+  // DNS-backed HTTPS the way the HTTPS Pin Runtime adapter's call site does,
+  // and onboarding never wires that adapter itself (only
+  // inference-set-route-containment.ts's normalizeCustomEndpointUrl does, on
+  // the `inference set --endpoint-url` path). Onboard with a disposable
+  // plain-HTTP placeholder endpoint first -- the same shape TC-INF-09 already
+  // onboards successfully with -- then switch to the DNS-backed HTTPS
+  // endpoint through `inference set --endpoint-url`, the actual #6141 call
+  // site this test exercises.
+  const placeholder = await startFakeOpenAiCompatibleServer({
+    apiKey,
+    chatContent: "placeholder",
+    model,
+    publicHost: "localhost",
+    requireAuth: true,
+    requireAuthModels: true,
+  });
+  cleanup.add("close https-pin onboarding placeholder endpoint", () => placeholder.close());
+
   const onboard = await onboardSandbox(
     artifacts,
     sandboxName,
     {
       COMPATIBLE_API_KEY: apiKey,
-      NEMOCLAW_ENDPOINT_URL: endpointUrl,
+      NEMOCLAW_ENDPOINT_URL: placeholder.baseUrl,
       NEMOCLAW_MODEL: model,
       NEMOCLAW_PREFERRED_API: "openai-completions",
       NEMOCLAW_PROVIDER: "custom",
     },
     [apiKey],
-    "tc-inf-11-onboard-https-pin-endpoint",
+    "tc-inf-11-onboard-https-pin-placeholder",
     15 * 60_000,
   );
-  expectOnboardSuccess(onboard, "TC-INF-11 https-pin-endpoint onboard");
+  expectOnboardSuccess(onboard, "TC-INF-11 https-pin-endpoint placeholder onboard");
   cleanup.add(`strict inference-routing https-pin cleanup for ${sandboxName}`, () =>
     cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
   );
+
+  const inferenceSet = await runNemoclawCli(
+    [
+      "inference",
+      "set",
+      "--provider",
+      "compatible-endpoint",
+      "--model",
+      model,
+      "--sandbox",
+      sandboxName,
+      "--endpoint-url",
+      endpointUrl,
+      "--credential-env",
+      "COMPATIBLE_API_KEY",
+      "--inference-api",
+      "openai-completions",
+    ],
+    {
+      artifactName: "tc-inf-11-inference-set-https-pin-endpoint",
+      artifacts,
+      env: buildAvailabilityProbeEnv(),
+      redactionValues: [apiKey],
+      timeoutMs: 60_000,
+    },
+  );
+  expect(
+    inferenceSet.exitCode,
+    `TC-INF-11 inference set https-pin endpoint failed\n${redactedResultText(inferenceSet)}`,
+  ).toBe(0);
 
   // The real hostname must never reach the NemoClaw sandbox registry on
   // disk: only the local adapter's host.openshell.internal route is

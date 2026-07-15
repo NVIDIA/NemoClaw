@@ -21,35 +21,50 @@
  */
 
 import crypto from "node:crypto";
+import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 
-import { HTTPS_PIN_RUNTIME_ADAPTER_PORT } from "../core/ports";
+import {
+  BEDROCK_RUNTIME_ADAPTER_PORT,
+  DASHBOARD_PORT,
+  DASHBOARD_PORT_RANGE_END,
+  DASHBOARD_PORT_RANGE_START,
+  GATEWAY_PORT,
+  HTTPS_PIN_RUNTIME_ADAPTER_PORT,
+  OLLAMA_PORT,
+  OLLAMA_PROXY_PORT,
+  OPENROUTER_RUNTIME_ADAPTER_PORT,
+  VLLM_PORT,
+  validateHttpsPinRuntimeAdapterPort,
+} from "../core/ports";
 import { compactText } from "../core/url-utils";
 import { ROOT, run, runCapture } from "../runner";
 import { buildSubprocessEnv } from "../subprocess-env";
-import { type EndpointDnsLookupFn, assertEndpointResolvesPublic } from "./endpoint-ssrf-preflight";
+import { assertEndpointResolvesPublic, type EndpointDnsLookupFn } from "./endpoint-ssrf-preflight";
 import {
-  ForwardHttpError,
-  type HttpsPinTarget,
-  forwardHttpsPinnedRequest,
-  sendForwardError,
-} from "./https-pin-runtime-adapter-forward";
-import {
+  buildHttpsPinRouteBaseUrl,
+  buildHttpsPinRouteLoopbackBaseUrl,
+  computeHttpsPinRouteId,
   HTTPS_PIN_RUNTIME_ADAPTER_BIND_HOST,
   HTTPS_PIN_RUNTIME_ADAPTER_LOOPBACK_HOST,
   HTTPS_PIN_RUNTIME_ADAPTER_LOOPBACK_ORIGIN,
   HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV,
   type HttpsPinCredentialProviderType,
-  buildHttpsPinRouteBaseUrl,
-  buildHttpsPinRouteLoopbackBaseUrl,
-  computeHttpsPinRouteId,
   resolveHttpsPinCredentialHeader,
 } from "./https-pin-runtime";
 import {
-  DEFAULT_LOCAL_ADAPTER_STATE_DIR,
+  ForwardHttpError,
+  forwardHttpsPinnedRequest,
+  type HttpsPinTarget,
+  sendForwardError,
+} from "./https-pin-runtime-adapter-forward";
+import {
   appendLocalAdapterJsonLine,
+  DEFAULT_LOCAL_ADAPTER_STATE_DIR,
+  ensureLocalAdapterStateDir,
   isLocalAdapterProcess,
+  type JsonObject,
   killLocalAdapterPid,
   loadLocalAdapterPid,
   localAdapterTokenHash,
@@ -62,16 +77,23 @@ import {
   waitForLocalAdapterHealth,
   writeLocalAdapterJsonFile,
   writeLocalAdapterSecretFile,
-  type JsonObject,
 } from "./local-adapter-lifecycle";
 
 const STATE_DIR = DEFAULT_LOCAL_ADAPTER_STATE_DIR;
 const TOKEN_PATH = path.join(STATE_DIR, "https-pin-runtime-adapter-token");
 const PID_PATH = path.join(STATE_DIR, "https-pin-runtime-adapter.pid");
 const STATE_PATH = path.join(STATE_DIR, "https-pin-runtime-adapter.json");
+const LOCK_PATH = path.join(STATE_DIR, "https-pin-runtime-adapter.lock");
 export const LOG_PATH = path.join(STATE_DIR, "https-pin-runtime-adapter.log");
 const PROCESS_NEEDLE = "https-pin-runtime-adapter.js";
 const MAX_CONTROL_BODY_BYTES = 16 * 1024;
+// Matches the sibling OpenRouter adapter's lock retry budget
+// (openrouter-runtime-adapter-lifecycle.ts): long enough to outlast a normal
+// spawn-and-health-check cycle, short enough to fail loudly on a truly stuck
+// lock rather than hang the CLI command indefinitely.
+const LOCK_RETRY_ATTEMPTS = 100;
+const LOCK_RETRY_MS = 100;
+const STALE_LOCK_MS = 30_000;
 
 interface RouteRuntime {
   targetBaseUrl: string;
@@ -143,6 +165,12 @@ function authMatches(actual: string | string[] | undefined, token: string): bool
   const expected = Buffer.from(`Bearer ${token}`);
   const received = Buffer.from(header);
   return received.length === expected.length && crypto.timingSafeEqual(received, expected);
+}
+
+function isLoopbackRemoteAddress(remoteAddress: string | undefined): boolean {
+  if (!remoteAddress) return false;
+  const normalized = remoteAddress.replace(/^::ffff:/, "");
+  return normalized === "127.0.0.1" || normalized === "::1";
 }
 
 function adapterTokenHash(token: string): string {
@@ -286,6 +314,25 @@ export function createHttpsPinRuntimeAdapterServer(options: {
       const controlMatch = url.pathname.match(/^\/control\/routes\/([^/]+)$/);
       if (controlMatch) {
         routeId = controlMatch[1];
+        if (!isLoopbackRemoteAddress(req.socket.remoteAddress)) {
+          // Route registration accepts a caller-supplied targetBaseUrl and
+          // pinnedAddresses with no SSRF re-validation here -- that only
+          // happens host-side in ensureHttpsPinRuntimeAdapter before it
+          // calls this endpoint over loopback. The sandbox authenticates
+          // with this same bearer token to reach /route/:id, so without
+          // this check it could also call /control/routes/:id directly and
+          // register a route pointed at an internal address.
+          sendJson(res, 404, {
+            error: { message: "Not found", type: "not_found", code: "not_found" },
+          });
+          logAdapterEvent(logger, "request_rejected", {
+            routeId,
+            status: 404,
+            reason: "control_plane_non_loopback",
+            durationMs: Date.now() - started,
+          });
+          return;
+        }
         if (req.method !== "PUT") {
           sendJson(res, 404, {
             error: { message: "Not found", type: "not_found", code: "not_found" },
@@ -605,14 +652,91 @@ export async function ensureHttpsPinRuntimeAdapter(options: {
   };
 }
 
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function removeStaleLock(): void {
+  try {
+    const ageMs = Date.now() - fs.statSync(LOCK_PATH).mtimeMs;
+    if (ageMs > STALE_LOCK_MS) fs.unlinkSync(LOCK_PATH);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+}
+
+function tryAcquireAdapterLock(): (() => void) | null {
+  ensureLocalAdapterStateDir(STATE_DIR);
+  removeStaleLock();
+  try {
+    const fd = fs.openSync(LOCK_PATH, "wx", 0o600);
+    fs.writeFileSync(fd, `${process.pid}\n${new Date().toISOString()}\n`);
+    fs.closeSync(fd);
+    return () => {
+      try {
+        fs.unlinkSync(LOCK_PATH);
+      } catch {
+        /* best-effort lock cleanup */
+      }
+    };
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "EEXIST") return null;
+    throw err;
+  }
+}
+
+/**
+ * Serializes the read-check-kill-spawn recovery decision in
+ * `ensureAdapterProcess` across concurrent `inference set` invocations.
+ * Without this, two callers can both see no healthy prior process, both kill
+ * and respawn, and race to bind the same port and overwrite
+ * PID_PATH/TOKEN_PATH/STATE_PATH -- leaking a process and potentially
+ * leaving the persisted token out of sync with whichever process actually
+ * won the port.
+ */
+async function withAdapterLock<T>(operation: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; attempt < LOCK_RETRY_ATTEMPTS; attempt++) {
+    const release = tryAcquireAdapterLock();
+    if (release) {
+      try {
+        return await operation();
+      } finally {
+        release();
+      }
+    }
+    await sleepMs(LOCK_RETRY_MS);
+  }
+  throw new Error("HTTPS Pin Runtime adapter startup is already in progress");
+}
+
+function validateAdapterPortConfiguration(): void {
+  validateHttpsPinRuntimeAdapterPort(
+    "NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT",
+    HTTPS_PIN_RUNTIME_ADAPTER_PORT,
+    {
+      dashboardPort: DASHBOARD_PORT,
+      dashboardRangeStart: DASHBOARD_PORT_RANGE_START,
+      dashboardRangeEnd: DASHBOARD_PORT_RANGE_END,
+      gatewayPort: GATEWAY_PORT,
+      vllmPort: VLLM_PORT,
+      ollamaPort: OLLAMA_PORT,
+      ollamaProxyPort: OLLAMA_PROXY_PORT,
+      bedrockRuntimeAdapterPort: BEDROCK_RUNTIME_ADAPTER_PORT,
+      openrouterRuntimeAdapterPort: OPENROUTER_RUNTIME_ADAPTER_PORT,
+      httpsPinRuntimeAdapterPort: HTTPS_PIN_RUNTIME_ADAPTER_PORT,
+    },
+  );
+}
+
 /** Returns a live adapter token, reusing the running process when possible or spawning a fresh one. */
-async function ensureAdapterProcess(bootstrap: {
+async function ensureAdapterProcessLocked(bootstrap: {
   routeId: string;
   endpointUrl: string;
   pinnedAddresses: string[];
   providerType: HttpsPinCredentialProviderType;
   credentialValue: string;
 }): Promise<string> {
+  validateAdapterPortConfiguration();
   const priorToken = readLocalAdapterTextFile(TOKEN_PATH);
   const priorPid = loadPersistedPid();
   if (
@@ -667,10 +791,23 @@ async function ensureAdapterProcess(bootstrap: {
   return token;
 }
 
+function ensureAdapterProcess(bootstrap: {
+  routeId: string;
+  endpointUrl: string;
+  pinnedAddresses: string[];
+  providerType: HttpsPinCredentialProviderType;
+  credentialValue: string;
+}): Promise<string> {
+  return withAdapterLock(() => ensureAdapterProcessLocked(bootstrap));
+}
+
 export const __test = {
   routeCredentialHash,
   getAdapterScriptPath,
   probeAdapterHealth,
+  tryAcquireAdapterLock,
+  withAdapterLock,
+  LOCK_PATH,
 };
 
 // Detached-process entrypoint: `spawnDetachedNodeAdapter` runs this compiled

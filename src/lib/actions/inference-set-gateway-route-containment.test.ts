@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { withGatewayRouteMutationLock } from "../inference/gateway-route-mutation-lock";
+import { HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV } from "../inference/https-pin-runtime";
 import type { ConfigObject } from "../security/credential-filter";
 import type { SandboxEntry } from "../state/registry";
 import { runInferenceSet } from "./inference-set";
@@ -28,6 +29,7 @@ const entry = (name: string, overrides: Partial<SandboxEntry> = {}): SandboxEntr
 describe("runtime shared gateway route containment", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
+    delete process.env[HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV];
   });
 
   it("rejects an ambient gateway endpoint before OpenShell prep or state mutation", async () => {
@@ -329,6 +331,97 @@ describe("runtime shared gateway route containment", () => {
     expect(rewriteUrlWithDnsPinning).toHaveBeenCalledOnce();
     expect(rewriteUrlWithDnsPinning).toHaveBeenCalledWith(firstEndpoint);
     expect(ensureHttpsPinRuntimeAdapter).not.toHaveBeenCalled();
+  });
+
+  it("serializes concurrent HTTPS-pin adapter route provisions for different gateways so their process.env token writes cannot interleave (#6141)", async () => {
+    const firstEndpoint = "https://race-a.example.test/v1";
+    const secondEndpoint = "https://race-b.example.test/v1";
+    const routeFor = (endpointUrl: string) => ({
+      provider: "compatible-endpoint",
+      model: "custom/model",
+      endpointUrl,
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+    });
+    // Different gateways (distinguished by gatewayPort -- resolveSandboxGatewayName
+    // derives the effective gateway name from the port, not the gatewayName field,
+    // whenever a valid port is present): the per-gateway route-mutation lock does
+    // not serialize these two against each other, so only the credential-env lock
+    // added for this race can prevent their process.env writes from interleaving.
+    const alpha = entry("alpha", routeFor(firstEndpoint));
+    const beta = entry("beta", {
+      ...routeFor(secondEndpoint),
+      gatewayName: "nemoclaw-9091",
+      gatewayPort: 9091,
+    });
+    const preparedFor = (target: SandboxEntry, endpointUrl: string) =>
+      prepareInferenceSetRoute({
+        entry: target,
+        sandboxName: target.name,
+        provider: "compatible-endpoint",
+        model: "custom/model",
+        customRoute: {
+          endpointUrl,
+          credentialEnv: "COMPATIBLE_API_KEY",
+          inferenceApi: "openai-completions",
+        },
+        session: null,
+        sandboxes: [alpha, beta],
+      });
+
+    let releaseA: () => void = () => {};
+    const aGate = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+    const callOrder: string[] = [];
+    const ensureHttpsPinRuntimeAdapter = vi.fn(async (options: { endpointUrl: string }) => {
+      if (options.endpointUrl === firstEndpoint) {
+        callOrder.push("a-start");
+        await aGate;
+        callOrder.push("a-end");
+        return {
+          baseUrl: "http://host.openshell.internal:1/route/a",
+          credentialEnv: HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV,
+          token: "token-a",
+        };
+      }
+      callOrder.push("b-start");
+      return {
+        baseUrl: "http://host.openshell.internal:1/route/b",
+        credentialEnv: HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV,
+        token: "token-b",
+      };
+    });
+    const rewriteUrlWithDnsPinning = vi.fn(async (value: unknown) => value as string);
+
+    const finalize = (target: SandboxEntry, endpointUrl: string) =>
+      finalizeInferenceSetRoute({
+        prepared: preparedFor(target, endpointUrl),
+        sandboxName: target.name,
+        provider: "compatible-endpoint",
+        model: "custom/model",
+        canReuseRecordedRoute: false,
+        getSandboxes: () => [alpha, beta],
+        rewriteUrlWithDnsPinning,
+        ensureHttpsPinRuntimeAdapter,
+      });
+
+    const callA = finalize(alpha, firstEndpoint);
+    await vi.waitFor(() => expect(callOrder).toContain("a-start"));
+    const callB = finalize(beta, secondEndpoint);
+
+    // While A is gated inside the lock, B must not reach its own adapter
+    // call (and process.env write) yet -- proving the two invocations are
+    // serialized rather than interleaved.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(callOrder).toEqual(["a-start"]);
+
+    releaseA();
+    const [resultA, resultB] = await Promise.all([callA, callB]);
+
+    expect(callOrder).toEqual(["a-start", "a-end", "b-start"]);
+    expect(resultA.registryMetadata.endpointUrl).toBe("http://host.openshell.internal:1/route/a");
+    expect(resultB.registryMetadata.endpointUrl).toBe("http://host.openshell.internal:1/route/b");
   });
 
   it("blocks an incomplete legacy custom target even without a peer (#6315)", async () => {

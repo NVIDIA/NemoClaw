@@ -69,7 +69,10 @@ function buildForwardResponseHeaders(source: http.IncomingHttpHeaders): http.Out
   return headers;
 }
 
-function readBoundedRequestBody(req: http.IncomingMessage): Promise<Buffer> {
+function readBoundedRequestBody(
+  req: http.IncomingMessage,
+  bodyTimeoutMs = HTTPS_PIN_RUNTIME_ADAPTER_BODY_TIMEOUT_MS,
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const contentLength = Number(req.headers["content-length"] || 0);
     if (
@@ -86,9 +89,14 @@ function readBoundedRequestBody(req: http.IncomingMessage): Promise<Buffer> {
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
+      // Destroying `req` here (rather than leaving that to the caller) would
+      // tear down the same underlying socket `res` needs to flush the 408
+      // response on -- the client would see a dead connection instead of the
+      // documented JSON body. The caller destroys `req` itself, after the
+      // error response finishes writing.
+      req.removeAllListeners("data");
       reject(new ForwardHttpError(408, "Request body timed out.", "request_timeout"));
-      req.destroy();
-    }, HTTPS_PIN_RUNTIME_ADAPTER_BODY_TIMEOUT_MS);
+    }, bodyTimeoutMs);
 
     req.on("data", (chunk: Buffer) => {
       if (settled) return;
@@ -116,16 +124,33 @@ function readBoundedRequestBody(req: http.IncomingMessage): Promise<Buffer> {
   });
 }
 
-export function sendForwardError(res: http.ServerResponse, err: unknown): number {
+export function sendForwardError(
+  res: http.ServerResponse,
+  err: unknown,
+  req?: http.IncomingMessage,
+): number {
   const status = err instanceof ForwardHttpError ? err.status : 502;
   const code = err instanceof ForwardHttpError ? err.code : "https_pin_runtime_error";
   const message = err instanceof ForwardHttpError ? err.message : "Upstream request failed.";
+  // Only the body-read timeout leaves the client still writing indefinitely
+  // -- every other rejection (e.g. an oversized body) responds without
+  // needing the rest of the client's upload, and destroying the shared
+  // socket there would cut off a still-in-flight client write (EPIPE)
+  // instead of letting it drain normally.
+  const shouldDestroyRequest = Boolean(req) && code === "request_timeout";
   if (!res.headersSent) {
     res.writeHead(status, { "Content-Type": "application/json" });
     res.end(
       JSON.stringify({
         error: { message: compactText(message), type: code, code },
       }),
+      // Only destroy the request socket once the error response has finished
+      // writing, not before -- `req` and `res` share the same underlying
+      // socket, so destroying `req` any earlier would take the response down
+      // with it.
+      () => {
+        if (shouldDestroyRequest && !req?.destroyed) req?.destroy();
+      },
     );
   } else {
     res.destroy(err instanceof Error ? err : undefined);
@@ -152,13 +177,14 @@ export async function forwardHttpsPinnedRequest(options: {
   forwardPath: string;
   target: HttpsPinTarget;
   upstreamTimeoutMs?: number;
+  bodyTimeoutMs?: number;
 }): Promise<number> {
   const { req, res, forwardPath, target } = options;
   let body: Buffer;
   try {
-    body = await readBoundedRequestBody(req);
+    body = await readBoundedRequestBody(req, options.bodyTimeoutMs);
   } catch (err) {
-    return sendForwardError(res, err);
+    return sendForwardError(res, err, req);
   }
 
   const isHttps = target.targetUrl.protocol === "https:";
@@ -170,9 +196,13 @@ export async function forwardHttpsPinnedRequest(options: {
     const resolveOnce = (status: number) => {
       if (settled) return;
       settled = true;
+      res.off("close", onClientClose);
       resolve(status);
     };
     const failRequest = (err: unknown) => {
+      // Once the client-facing response is already finalized (normally, or
+      // via onClientClose below), res is no longer safe to write to.
+      if (settled) return;
       resolveOnce(sendForwardError(res, err));
     };
 
@@ -216,6 +246,16 @@ export async function forwardHttpsPinnedRequest(options: {
         upstreamRes.once("end", () => resolveOnce(status));
       },
     );
+    // If the original client disconnects before the response finishes, the
+    // pinned outbound connection would otherwise keep streaming from the real
+    // upstream until it finishes on its own or the upstream timeout fires --
+    // an abandoned client could hold a pinned connection open indefinitely.
+    const onClientClose = () => {
+      if (res.writableEnded) return;
+      upstreamReq.destroy();
+      resolveOnce(0);
+    };
+    res.once("close", onClientClose);
     upstreamReq.setTimeout(
       options.upstreamTimeoutMs ?? HTTPS_PIN_RUNTIME_ADAPTER_UPSTREAM_TIMEOUT_MS,
       () => {

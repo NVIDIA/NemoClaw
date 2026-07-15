@@ -10,10 +10,28 @@ import {
   isHttpsPinRuntimeEligible,
 } from "../inference/https-pin-runtime";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
+import { ConfigUrlValidationError } from "../sandbox/config";
 import type { ConfigValue } from "../security/credential-filter";
+import { withMcpLifecycleLock } from "../state/mcp-lifecycle-lock";
 import type { Session } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
 import { InferenceSetError } from "./inference-set-error";
+
+/**
+ * Fixed key, not gateway- or sandbox-scoped: every explicit-metadata
+ * `inference set` call that provisions an HTTPS Pin Runtime adapter route
+ * stages the adapter's bearer token in the one shared
+ * `HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV` slot on `process.env`
+ * (see the comment on `ensureHttpsPinAdapterRoute` in
+ * `finalizeInferenceSetRoute`). The per-sandbox/per-gateway locks already
+ * held around this call (`withSandboxMutationLock`,
+ * `withGatewayRouteMutationLock`) do not serialize two calls targeting
+ * *different* sandboxes/gateways against each other, so without this lock two
+ * concurrent adapter-route provisions could interleave their read of the real
+ * upstream credential, their adapter call, and their write of the adapter's
+ * token, and clobber each other's staged value.
+ */
+const HTTPS_PIN_ADAPTER_CREDENTIAL_ENV_LOCK_KEY = "https-pin-adapter-credential-env";
 
 /**
  * Custom-route compatibility is intentionally checked twice. The invalid state
@@ -174,7 +192,14 @@ export async function normalizeCustomEndpointUrl(
     return normalizeEndpointUrlShape(validated).normalized;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new InferenceSetError(`${ENDPOINT_URL_NOT_ALLOWED_PREFIX} ${message}`, 2);
+    // The generic DNS-pinning validator's message stays scoped to arbitrary
+    // persisted config values; only this inference-set call site knows the
+    // rejected field is an inference endpoint, so it adds the adapter hint.
+    const hint =
+      error instanceof ConfigUrlValidationError && error.reason === "dns_backed_https_unsupported"
+        ? " This endpoint should have been routed through the HTTPS Pin Runtime adapter; retry, and report a bug if this persists."
+        : "";
+    throw new InferenceSetError(`${ENDPOINT_URL_NOT_ALLOWED_PREFIX} ${message}${hint}`, 2);
   }
 }
 
@@ -397,31 +422,36 @@ export async function finalizeInferenceSetRoute(options: {
   // Left null for every other endpoint shape, which keeps the operator's real
   // credential env name as the sandbox-facing identity, unchanged.
   let adapterCredentialEnv: string | null = null;
-  const ensureHttpsPinAdapterRoute: EnsureHttpsPinAdapterRoute = async (endpointUrl) => {
-    // The credential env var's value, if any, is read directly from the host
-    // process environment at invocation time and handed straight to the
-    // adapter — never persisted, never returned to this caller. A missing
-    // value is validated by ensureHttpsPinRuntimeAdapter itself, after the
-    // endpoint's own reachability/SSRF check, so an unsafe URL is always
-    // rejected on that ground first.
-    const credentialValue = process.env[httpsPinCredentialEnv] ?? "";
-    const adapter = await options.ensureHttpsPinRuntimeAdapter({
-      gatewayName: prepared.gatewayName,
-      provider: options.provider,
-      endpointUrl,
-      providerType: options.provider === "compatible-anthropic-endpoint" ? "anthropic" : "openai",
-      credentialValue,
+  const ensureHttpsPinAdapterRoute: EnsureHttpsPinAdapterRoute = async (endpointUrl) =>
+    // Serializes the read-call-write sequence below against every other
+    // concurrent adapter-route provision process-wide -- see the lock key's
+    // doc comment for why the per-sandbox/per-gateway locks above cannot
+    // substitute for this.
+    withMcpLifecycleLock(HTTPS_PIN_ADAPTER_CREDENTIAL_ENV_LOCK_KEY, async () => {
+      // The credential env var's value, if any, is read directly from the host
+      // process environment at invocation time and handed straight to the
+      // adapter — never persisted, never returned to this caller. A missing
+      // value is validated by ensureHttpsPinRuntimeAdapter itself, after the
+      // endpoint's own reachability/SSRF check, so an unsafe URL is always
+      // rejected on that ground first.
+      const credentialValue = process.env[httpsPinCredentialEnv] ?? "";
+      const adapter = await options.ensureHttpsPinRuntimeAdapter({
+        gatewayName: prepared.gatewayName,
+        provider: options.provider,
+        endpointUrl,
+        providerType: options.provider === "compatible-anthropic-endpoint" ? "anthropic" : "openai",
+        credentialValue,
+      });
+      // The real upstream credential above authenticates the adapter's own
+      // outbound leg to the real provider. Requests reaching the adapter's
+      // sandbox-facing route must instead carry the adapter's own bearer
+      // token — the adapter rejects anything else with 401 — so the env var
+      // that ends up registered as this route's credential must hold that
+      // token, not the operator's real secret.
+      process.env[adapter.credentialEnv] = adapter.token;
+      adapterCredentialEnv = adapter.credentialEnv;
+      return adapter.baseUrl;
     });
-    // The real upstream credential above authenticates the adapter's own
-    // outbound leg to the real provider. Requests reaching the adapter's
-    // sandbox-facing route must instead carry the adapter's own bearer
-    // token — the adapter rejects anything else with 401 — so the env var
-    // that ends up registered as this route's credential must hold that
-    // token, not the operator's real secret.
-    process.env[adapter.credentialEnv] = adapter.token;
-    adapterCredentialEnv = adapter.credentialEnv;
-    return adapter.baseUrl;
-  };
   let endpointUrl: string;
   let endpointSource: RegistryInferenceMetadata["endpointSource"];
   try {

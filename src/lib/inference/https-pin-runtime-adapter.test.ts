@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { EventEmitter } from "node:events";
+import fs from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -8,6 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { EndpointDnsLookupFn } from "./endpoint-ssrf-preflight";
 import {
+  __test,
   createHttpsPinRuntimeAdapterServer,
   ensureHttpsPinRuntimeAdapter,
 } from "./https-pin-runtime-adapter";
@@ -278,6 +281,144 @@ describe("createHttpsPinRuntimeAdapterServer control plane (#6141)", () => {
     });
     expect(response.status).toBe(404);
     await expect(response.json()).resolves.toMatchObject({ error: { code: "route_not_found" } });
+  });
+});
+
+// Drives the server's request listener directly with a fake req/res instead
+// of a real socket, so the simulated `remoteAddress` isn't at the mercy of
+// how (or whether) a given host/CI sandbox routes secondary loopback
+// addresses like 127.0.0.2 -- only the literal connection identity matters
+// to `isLoopbackRemoteAddress`, not real network delivery.
+function dispatchFakeRequest(
+  server: http.Server,
+  options: {
+    method: string;
+    url: string;
+    remoteAddress: string;
+    authorization?: string;
+    body?: unknown;
+  },
+): Promise<{ status: number; body: unknown }> {
+  const listener = server.listeners("request")[0] as (
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+  ) => unknown;
+
+  const req = new EventEmitter() as unknown as http.IncomingMessage;
+  Object.assign(req, {
+    method: options.method,
+    url: options.url,
+    headers: options.authorization ? { authorization: options.authorization } : {},
+    socket: { remoteAddress: options.remoteAddress },
+  });
+
+  return new Promise((resolve) => {
+    let status = 0;
+    const res = {
+      writeHead(code: number) {
+        status = code;
+      },
+      end(payload?: string) {
+        resolve({ status, body: payload ? JSON.parse(payload) : undefined });
+      },
+    } as unknown as http.ServerResponse;
+
+    void listener(req, res);
+    queueMicrotask(() => {
+      if (options.body !== undefined) {
+        (req as unknown as EventEmitter).emit("data", Buffer.from(JSON.stringify(options.body)));
+      }
+      (req as unknown as EventEmitter).emit("end");
+    });
+  });
+}
+
+describe("createHttpsPinRuntimeAdapterServer control-plane loopback restriction (#6141)", () => {
+  it("rejects a route registration whose connection did not arrive over loopback", async () => {
+    const adapter = createHttpsPinRuntimeAdapterServer({ token: TEST_TOKEN });
+
+    // The container-gateway address the sandbox actually connects from when
+    // it reaches the adapter through `host.openshell.internal` -- distinct
+    // from the literal 127.0.0.1 the host process itself always dials from.
+    const response = await dispatchFakeRequest(adapter, {
+      method: "PUT",
+      url: "/control/routes/route-1",
+      remoteAddress: "172.17.0.2",
+      authorization: `Bearer ${TEST_TOKEN}`,
+      body: {
+        targetBaseUrl: "http://internal.example/base",
+        pinnedAddresses: ["10.0.0.5"],
+        providerType: "openai",
+        credentialValue: "sk-should-not-register",
+      },
+    });
+    expect(response.status).toBe(404);
+
+    const health = await dispatchFakeRequest(adapter, {
+      method: "GET",
+      url: "/health",
+      remoteAddress: "172.17.0.2",
+    });
+    expect(health.body).toMatchObject({ routeCount: 0 });
+  });
+
+  it("still allows route registration over loopback", async () => {
+    const adapter = createHttpsPinRuntimeAdapterServer({ token: TEST_TOKEN });
+
+    const response = await dispatchFakeRequest(adapter, {
+      method: "PUT",
+      url: "/control/routes/route-1",
+      remoteAddress: "127.0.0.1",
+      authorization: `Bearer ${TEST_TOKEN}`,
+      body: {
+        targetBaseUrl: "http://real-upstream.example/base",
+        pinnedAddresses: ["127.0.0.1"],
+        providerType: "openai",
+        credentialValue: "sk-upstream-secret",
+      },
+    });
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ ok: true, routeId: "route-1" });
+  });
+});
+
+describe("adapter recovery lock (#6141)", () => {
+  afterEach(() => {
+    // Defensive: a failed assertion inside a test can leave the real
+    // `~/.nemoclaw` lock file behind, which would wedge every later
+    // `ensureHttpsPinRuntimeAdapter` recovery attempt on this machine.
+    try {
+      fs.unlinkSync(__test.LOCK_PATH);
+    } catch {
+      /* nothing to clean up */
+    }
+  });
+
+  it("blocks a second acquire while the first holder has not released", () => {
+    const release = __test.tryAcquireAdapterLock();
+    expect(release).not.toBeNull();
+    expect(__test.tryAcquireAdapterLock()).toBeNull();
+    release?.();
+    expect(__test.tryAcquireAdapterLock()).not.toBeNull();
+  });
+
+  it("serializes concurrent withAdapterLock operations instead of interleaving them", async () => {
+    const order: string[] = [];
+    const slow = __test.withAdapterLock(async () => {
+      order.push("slow:start");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      order.push("slow:end");
+    });
+    // Give `slow` a head start so it wins the lock first.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const fast = __test.withAdapterLock(async () => {
+      order.push("fast:start");
+      order.push("fast:end");
+    });
+
+    await Promise.all([slow, fast]);
+
+    expect(order).toEqual(["slow:start", "slow:end", "fast:start", "fast:end"]);
   });
 });
 

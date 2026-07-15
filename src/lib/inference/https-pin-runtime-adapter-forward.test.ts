@@ -15,9 +15,9 @@ import {
   startTlsServer,
 } from "../../../test/helpers/corporate-ca-support";
 import {
+  forwardHttpsPinnedRequest,
   HTTPS_PIN_RUNTIME_ADAPTER_MAX_BODY_BYTES,
   type HttpsPinTarget,
-  forwardHttpsPinnedRequest,
 } from "./https-pin-runtime-adapter-forward";
 
 const servers: http.Server[] = [];
@@ -52,7 +52,7 @@ const TEST_CREDENTIAL = { name: "x-api-key", value: "secret-upstream-credential"
 /** A minimal server that forwards every request through `forwardHttpsPinnedRequest` against `target`. */
 function createForwardTestServer(
   target: HttpsPinTarget,
-  options: { upstreamTimeoutMs?: number } = {},
+  options: { upstreamTimeoutMs?: number; bodyTimeoutMs?: number } = {},
 ): http.Server {
   return http.createServer(async (req, res) => {
     const url = new URL(req.url || "/", "http://127.0.0.1");
@@ -62,6 +62,7 @@ function createForwardTestServer(
       forwardPath: url.pathname + url.search,
       target,
       upstreamTimeoutMs: options.upstreamTimeoutMs,
+      bodyTimeoutMs: options.bodyTimeoutMs,
     });
   });
 }
@@ -149,6 +150,115 @@ describe("forwardHttpsPinnedRequest header handling (#6141)", () => {
 
     expect(response.status).toBe(413);
     await expect(response.json()).resolves.toMatchObject({ error: { code: "request_too_large" } });
+  });
+
+  it("delivers the 408 timeout body to the client instead of hanging up the shared socket (#6141)", async () => {
+    const upstreamHandler = () => {
+      throw new Error("upstream must not be contacted for a stalled request body");
+    };
+    const upstream = http.createServer(upstreamHandler);
+    const { port: upstreamPort } = await listen(upstream);
+
+    const target: HttpsPinTarget = {
+      targetUrl: new URL(`http://forward-test.example:${upstreamPort}/base`),
+      pinnedAddress: "127.0.0.1",
+      credential: TEST_CREDENTIAL,
+    };
+    const adapter = createForwardTestServer(target, { bodyTimeoutMs: 50 });
+    const { port: adapterPort } = await listen(adapter);
+
+    // A raw request that declares a body but never finishes sending it, so
+    // the adapter's body-read timeout fires instead of the client ever
+    // completing the write. Destroying `req` before `res` flushes (the bug
+    // this test guards) would tear down the shared socket and the client
+    // would see the connection drop instead of a 408 body.
+    const response = await new Promise<{ status: number | undefined; body: string }>(
+      (resolve, reject) => {
+        const req = http.request(
+          {
+            host: "127.0.0.1",
+            port: adapterPort,
+            path: "/base",
+            method: "POST",
+            headers: { "content-length": "100" },
+          },
+          (res) => {
+            const chunks: Buffer[] = [];
+            res.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+            res.on("end", () => {
+              resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString("utf8") });
+            });
+            res.on("error", reject);
+          },
+        );
+        req.on("error", reject);
+        // Fewer bytes than the declared content-length, and `.end()` is
+        // deliberately never called.
+        req.write("partial-body");
+      },
+    );
+
+    expect(response.status).toBe(408);
+    expect(JSON.parse(response.body)).toMatchObject({ error: { code: "request_timeout" } });
+  });
+
+  it("cancels the pinned upstream request when the client disconnects before the response finishes (#6141)", async () => {
+    let upstreamRequestSocket: import("node:net").Socket | undefined;
+    let resolveUpstreamClosed: () => void;
+    const upstreamClosed = new Promise<void>((resolve) => {
+      resolveUpstreamClosed = resolve;
+    });
+    const upstream = http.createServer((req, res) => {
+      upstreamRequestSocket = req.socket;
+      req.socket.once("close", () => resolveUpstreamClosed());
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.write('{"partial":true');
+      // Never call res.end(): the upstream response is left open so the
+      // only way this promise resolves is via the adapter destroying the
+      // pinned outbound connection after the client disconnects.
+    });
+    const { port: upstreamPort } = await listen(upstream);
+
+    const target: HttpsPinTarget = {
+      targetUrl: new URL(`http://forward-test.example:${upstreamPort}/base`),
+      pinnedAddress: "127.0.0.1",
+      credential: TEST_CREDENTIAL,
+    };
+    const adapter = createForwardTestServer(target, { upstreamTimeoutMs: 30_000 });
+    const { port: adapterPort } = await listen(adapter);
+
+    await new Promise<void>((resolve, reject) => {
+      const clientReq = http.request(
+        { host: "127.0.0.1", port: adapterPort, path: "/base", method: "POST" },
+        (res) => {
+          res.once("data", () => {
+            // Simulate the original client abandoning the request once it
+            // has started receiving a response.
+            clientReq.destroy();
+            resolve();
+          });
+          res.once("error", () => resolve());
+        },
+      );
+      clientReq.on("error", () => {
+        /* destroying our own request triggers this; expected. */
+      });
+      clientReq.end("{}");
+      setTimeout(() => reject(new Error("timed out waiting for client response data")), 2000);
+    });
+
+    // The pinned outbound connection must be torn down promptly, well under
+    // the 30s default/configured upstream timeout, rather than lingering
+    // until the abandoned upstream response finishes on its own.
+    await expect(
+      Promise.race([
+        upstreamClosed,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("upstream connection was not canceled in time")), 2000),
+        ),
+      ]),
+    ).resolves.toBeUndefined();
+    expect(upstreamRequestSocket?.destroyed).toBe(true);
   });
 
   it("times out a stalled upstream response without hanging (#6141)", async () => {

@@ -57,4 +57,23 @@ describe("custom inference endpoint DNS pinning", () => {
       ),
     ).rejects.toThrow(/DNS-backed HTTPS URLs are not supported/);
   });
+
+  it("adds the HTTPS Pin Runtime adapter hint only at the inference-set call site, not in the generic config validator's own message (#6141)", async () => {
+    const lookup = vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]);
+
+    // The generic validator (also used by plain `config set` for arbitrary
+    // fields) must not mention inference set or the adapter -- it has no way
+    // to know the field it's validating is an inference endpoint.
+    await expect(
+      rewriteConfigUrlsWithDnsPinning("https://public-endpoint.example/v1/", lookup),
+    ).rejects.toThrow(/^(?!.*(inference set|HTTPS Pin Runtime adapter)).*$/s);
+
+    // normalizeCustomEndpointUrl is only ever called for `inference set
+    // --endpoint-url`, so it appends the adapter-specific hint itself.
+    await expect(
+      normalizeCustomEndpointUrl("https://public-endpoint.example/v1/", (value) =>
+        rewriteConfigUrlsWithDnsPinning(value, lookup),
+      ),
+    ).rejects.toThrow(/HTTPS Pin Runtime adapter/);
+  });
 });
