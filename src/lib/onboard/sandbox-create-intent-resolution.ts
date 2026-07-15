@@ -58,7 +58,17 @@ export function createSandboxCreateIntentResolver<
       "sandboxName" | "enabledChannels" | "webSearchConfig" | "agent"
     >,
     expectedIntent?: SandboxCreateIntent,
+    skipPlanConflictCheck = false,
   ) {
+    const preflightDeps = expectedIntent
+      ? {
+          ...deps.messagingPreflightDeps,
+          readMessagingPlanFromEnv: () => null,
+          resolveDisabledChannels: () => [...expectedIntent.disabledChannelNames],
+        }
+      : skipPlanConflictCheck
+        ? { ...deps.messagingPreflightDeps, readMessagingPlanFromEnv: () => null }
+        : deps.messagingPreflightDeps;
     const result = await prepareSandboxMessagingPreflight(
       {
         channels: deps.channels,
@@ -68,13 +78,7 @@ export function createSandboxCreateIntentResolver<
         webSearchConfig: input.webSearchConfig,
         env: process.env,
       },
-      expectedIntent
-        ? {
-            ...deps.messagingPreflightDeps,
-            readMessagingPlanFromEnv: () => null,
-            resolveDisabledChannels: () => [...expectedIntent.disabledChannelNames],
-          }
-        : deps.messagingPreflightDeps,
+      preflightDeps,
     );
     if (expectedIntent) {
       validateSandboxCreateIntentBindings(expectedIntent, result.messagingTokenDefs);
@@ -131,5 +135,11 @@ export function createSandboxCreateIntentResolver<
   return {
     resolve,
     rebind: prepareMessagingCapabilities,
+    prepareCredentialProviders: (
+      input: Pick<
+        CompleteSandboxCreateIntentInput<Agent, ResourceProfile>,
+        "sandboxName" | "enabledChannels" | "webSearchConfig" | "agent"
+      >,
+    ) => prepareMessagingCapabilities(input, undefined, true),
   };
 }

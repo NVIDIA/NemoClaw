@@ -198,6 +198,17 @@ describe("sandbox create intent machine boundary", () => {
     });
     const configureWebSearch = vi.fn(async () => braveConfig);
     const setupMessagingChannels = vi.fn(async () => []);
+    const providerMatchesGatewayCredential = vi.fn(
+      (name: string, type: string, credentialEnvName: string) =>
+        name === "tm-brave-search" && type === "brave" && credentialEnvName === "BRAVE_API_KEY",
+    );
+    const stageSandboxCredentialProviders = vi
+      .fn<() => Promise<string[]>>()
+      .mockImplementationOnce(async () => {
+        durableSession.stagedCredentialProviders = ["tm-brave-search"];
+        return ["tm-brave-search"];
+      })
+      .mockResolvedValue([]);
     const readMessagingPlanFromEnv = vi
       .fn<() => typeof messagingPlan | null>()
       .mockReturnValueOnce(null)
@@ -208,6 +219,8 @@ describe("sandbox create intent machine boundary", () => {
       recordStepComplete,
       configureWebSearch,
       setupMessagingChannels,
+      providerMatchesGatewayCredential,
+      stageSandboxCredentialProviders,
       readMessagingPlanFromEnv,
     });
     calls.selectResourceProfile.mockRejectedValueOnce(new Error("resource prompt interrupted"));
@@ -234,6 +247,15 @@ describe("sandbox create intent machine boundary", () => {
     });
     expect(calls.resolveCreateIntent).not.toHaveBeenCalled();
     expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(stageSandboxCredentialProviders).toHaveBeenCalledWith({
+      sandboxName: "tm",
+      enabledChannels: [],
+      webSearchConfig: braveConfig,
+      agent: null,
+    });
+    expect(stageSandboxCredentialProviders.mock.invocationCallOrder[0]).toBeLessThan(
+      calls.selectResourceProfile.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
 
     calls.selectResourceProfile.mockResolvedValueOnce({ cpu: "75%", memory: "75%" });
     await handleSandboxState({
@@ -241,11 +263,17 @@ describe("sandbox create intent machine boundary", () => {
       resume: true,
       sandboxName: durableSession.sandboxName,
       webSearchConfig: durableSession.webSearchConfig,
-      env: credentialEnv,
+      env: {},
     });
 
     expect(configureWebSearch).toHaveBeenCalledTimes(1);
     expect(setupMessagingChannels).toHaveBeenCalledTimes(1);
+    expect(calls.validateBrave).not.toHaveBeenCalled();
+    expect(providerMatchesGatewayCredential).toHaveBeenCalledWith(
+      "tm-brave-search",
+      "brave",
+      "BRAVE_API_KEY",
+    );
     expect(calls.promptName).not.toHaveBeenCalled();
     expect(calls.selectResourceProfile).toHaveBeenCalledTimes(2);
     expect(calls.resolveCreateIntent).toHaveBeenCalledTimes(1);

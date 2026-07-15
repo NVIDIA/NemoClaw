@@ -36,7 +36,7 @@ function createInput(
       if (envKey === "WECHAT_BOT_TOKEN") return "wechat";
       return null;
     },
-    providerExistsInGateway: () => false,
+    providerMatchesGatewayCredential: () => false,
     ...overrides,
   };
 }
@@ -44,7 +44,7 @@ function createInput(
 describe("prepareCreateSandboxMessaging", () => {
   it("filters token definitions by selected and disabled channels and reuses attached missing-token providers", () => {
     const registerExtraPlaceholderProviders = vi.fn(() => ["SLACK_BOT_TOKEN_AGENT_A"]);
-    const providerExistsInGateway = vi.fn((name: string) => name === "demo-slack-bridge");
+    const providerMatchesGatewayCredential = vi.fn((name: string) => name === "demo-slack-bridge");
 
     const result = prepareCreateSandboxMessaging(
       createInput({
@@ -53,7 +53,7 @@ describe("prepareCreateSandboxMessaging", () => {
         getValidatedMessagingTokenByEnvKey: (_channels, envKey) =>
           envKey === "SLACK_APP_TOKEN" ? "xapp-valid" : null,
         registerExtraPlaceholderProviders,
-        providerExistsInGateway,
+        providerMatchesGatewayCredential,
       }),
     );
 
@@ -66,7 +66,11 @@ describe("prepareCreateSandboxMessaging", () => {
     expect(result.hasMessagingTokens).toBe(true);
     expect(result.reusableMessagingProviders).toEqual(["demo-slack-bridge"]);
     expect(result.reusableMessagingChannels).toEqual(["slack"]);
-    expect(providerExistsInGateway).toHaveBeenCalledWith("demo-slack-bridge");
+    expect(providerMatchesGatewayCredential).toHaveBeenCalledWith(
+      "demo-slack-bridge",
+      "generic",
+      "SLACK_BOT_TOKEN",
+    );
     expect(registerExtraPlaceholderProviders).toHaveBeenCalledWith(
       "demo",
       result.messagingTokenDefs,
@@ -90,6 +94,29 @@ describe("prepareCreateSandboxMessaging", () => {
       false,
     );
     expect(registerExtraPlaceholderProviders).not.toHaveBeenCalled();
+  });
+
+  it("reuses an exact Brave gateway provider when the raw key is unavailable (#6743)", () => {
+    const providerMatchesGatewayCredential = vi.fn(
+      (name: string, type: string, credentialEnv: string) =>
+        name === "demo-brave-search" && type === "brave" && credentialEnv === BRAVE_API_KEY_ENV,
+    );
+
+    const result = prepareCreateSandboxMessaging(
+      createInput({
+        webSearchConfig: { fetchEnabled: true },
+        providerMatchesGatewayCredential,
+      }),
+    );
+
+    expect(result.missingWebSearchCredentialEnv).toBeNull();
+    expect(result.messagingTokenDefs).toContainEqual({
+      name: "demo-brave-search",
+      envKey: BRAVE_API_KEY_ENV,
+      token: null,
+      providerType: "brave",
+    });
+    expect(result.reusableMessagingProviders).toEqual(["demo-brave-search"]);
   });
 
   it("reports a missing Tavily key using the selected provider credential", () => {
@@ -182,12 +209,12 @@ describe("prepareCreateSandboxMessaging", () => {
   });
 
   it("includes all static token-backed channels by default without probing reusable providers", () => {
-    const providerExistsInGateway = vi.fn(() => true);
+    const providerMatchesGatewayCredential = vi.fn(() => true);
 
     const result = prepareCreateSandboxMessaging(
       createInput({
         enabledChannels: null,
-        providerExistsInGateway,
+        providerMatchesGatewayCredential,
       }),
     );
 
@@ -201,7 +228,7 @@ describe("prepareCreateSandboxMessaging", () => {
     ]);
     expect(result.reusableMessagingProviders).toEqual([]);
     expect(result.reusableMessagingChannels).toEqual([]);
-    expect(providerExistsInGateway).not.toHaveBeenCalled();
+    expect(providerMatchesGatewayCredential).not.toHaveBeenCalled();
   });
 
   it("uses BRAVE_API_KEY from host env when the credential store has no value", () => {

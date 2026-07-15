@@ -16,7 +16,12 @@ const {
 const openrouter = require("../inference/openrouter");
 const { isSafeModelId } = require("../validation");
 const { compactText } = require("../core/url-utils");
-const { readGatewayProviderMetadata } = require("./gateway-provider-metadata");
+const {
+  matchesGatewayCredentialOnlyProviderBinding,
+  parseGatewayProviderMetadata,
+  readGatewayProviderMetadata,
+} = require("./gateway-provider-metadata");
+const { reportsExactProviderNotFound } = require("./extra-provider-diagnostic-parser");
 
 // ── Constants ────────────────────────────────────────────────────
 
@@ -511,6 +516,123 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   return upserted;
 }
 
+const STAGED_PROVIDER_DIAGNOSTIC_LIMIT = 16 * 1024;
+const SAFE_STAGED_PROVIDER_NAME = /^[A-Za-z0-9._:-]{1,128}$/;
+const SAFE_STAGED_PROVIDER_TYPE = /^[A-Za-z0-9._:-]{1,64}$/;
+const SAFE_STAGED_CREDENTIAL_KEY = /^[A-Z_][A-Z0-9_]{0,127}$/;
+
+function providerCommandOutput(result) {
+  const text = (value) => {
+    if (Buffer.isBuffer(value)) return value.toString("utf8");
+    return typeof value === "string" ? value : "";
+  };
+  const streams = [text(result.stderr), text(result.stdout)].filter(Boolean);
+  return streams.length > 0 ? streams.join("\n") : text(result.output);
+}
+
+function inspectStagedProvider(name, gatewayName, _runOpenshell) {
+  const args = ["provider", "get"];
+  if (gatewayName) args.push("-g", gatewayName);
+  args.push(name);
+  const result = _runOpenshell(args, {
+    ignoreError: true,
+    maxBuffer: STAGED_PROVIDER_DIAGNOSTIC_LIMIT,
+    suppressOutput: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const output = providerCommandOutput(result);
+  if (result.status === 0) {
+    const metadata = parseGatewayProviderMetadata(output);
+    return { kind: "existing", metadata: metadata?.name === name ? metadata : null };
+  }
+  if (
+    result.status === 1 &&
+    Buffer.byteLength(output) < STAGED_PROVIDER_DIAGNOSTIC_LIMIT &&
+    reportsExactProviderNotFound(output, name, STAGED_PROVIDER_DIAGNOSTIC_LIMIT)
+  ) {
+    return { kind: "absent", metadata: null };
+  }
+  return { kind: "indeterminate", metadata: null };
+}
+
+function stagedProviderCreateArgs(name, type, envKey, gatewayName) {
+  const args = buildProviderArgs("create", name, type, envKey, null);
+  if (gatewayName) args.splice(2, 0, "-g", gatewayName);
+  return args;
+}
+
+/**
+ * Stage validated messaging credentials without mutating an existing provider.
+ *
+ * Existing providers are reported as reusable only when their complete
+ * non-secret binding matches. This does not prove that an existing provider
+ * contains the supplied token; callers must retain separate ownership proof
+ * before trusting one for credential-free resume. Mismatched, malformed, and
+ * indeterminate probes are left untouched.
+ * An absent provider is created with its secret available only in the command
+ * environment; this path never issues provider update/delete/replace commands.
+ *
+ * @param {Array<{name: string, envKey: string, token: string|null, providerType?: string}>} tokenDefs
+ * @param {Function} _runOpenshell - Injected runOpenshell from onboard.ts.
+ * @param {{gatewayName?: string|null}} options - Exact gateway scope when available.
+ * @returns {{created: string[], reused: string[], skipped: string[]}}
+ */
+function stageMessagingProvidersCreateMissingOnly(tokenDefs, _runOpenshell, options = {}) {
+  const created = [];
+  const reused = [];
+  const skipped = [];
+  const gatewayName = options.gatewayName || null;
+
+  for (const { name, envKey, token, providerType } of tokenDefs) {
+    const credential = normalizeCredentialValue(token);
+    if (!credential) continue;
+    const type = providerType || "generic";
+    if (
+      !SAFE_STAGED_PROVIDER_NAME.test(name) ||
+      !SAFE_STAGED_PROVIDER_TYPE.test(type) ||
+      !SAFE_STAGED_CREDENTIAL_KEY.test(envKey)
+    ) {
+      skipped.push(name);
+      continue;
+    }
+
+    const inspection = inspectStagedProvider(name, gatewayName, _runOpenshell);
+    if (inspection.kind === "existing") {
+      if (
+        matchesGatewayCredentialOnlyProviderBinding(inspection.metadata, {
+          name,
+          type,
+          credentialKey: envKey,
+        })
+      ) {
+        reused.push(name);
+      } else {
+        skipped.push(name);
+      }
+      continue;
+    }
+    if (inspection.kind !== "absent") {
+      skipped.push(name);
+      continue;
+    }
+
+    const result = _runOpenshell(stagedProviderCreateArgs(name, type, envKey, gatewayName), {
+      ignoreError: true,
+      env: { [envKey]: credential },
+      suppressOutput: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (result.status !== 0) {
+      const rawOutput = providerCommandOutput(result).replaceAll(credential, "[REDACTED]");
+      const output = compactText(redact(rawOutput)) || `Provider create exited unsuccessfully.`;
+      throw new Error(`Failed to stage messaging provider '${name}': ${output}`);
+    }
+    created.push(name);
+  }
+
+  return { created, reused, skipped };
+}
+
 module.exports = {
   BUILD_ENDPOINT_URL,
   OPENAI_ENDPOINT_URL,
@@ -540,6 +662,7 @@ module.exports = {
   upsertProvider,
   providerExistsInGateway,
   readGatewayProviderMetadata,
+  stageMessagingProvidersCreateMissingOnly,
   upsertMessagingProviders,
   getSandboxInferenceConfig,
 };

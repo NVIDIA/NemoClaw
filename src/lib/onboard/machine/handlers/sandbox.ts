@@ -12,6 +12,7 @@ import {
   type WebSearchConfig as SharedWebSearchConfig,
   WEB_SEARCH_PROVIDER_ENV,
   webSearchConfigsEqual,
+  webSearchEnvFor,
   webSearchLabelFor,
   webSearchProviderForConfig,
 } from "../../../inference/web-search";
@@ -25,6 +26,7 @@ import type {
 import type { SandboxEntry } from "../../../state/registry";
 import { getSandboxEntryInference } from "../../../state/registry-entry-view";
 import { toolDisclosureOrDefault } from "../../../tool-disclosure";
+import { HERMES_TAVILY_PROVIDER_PROFILE_ID } from "../../brave-provider-profile";
 import { withDashboardPortReservationLock as withHostDashboardPortReservationLock } from "../../dashboard-port";
 import { type DashboardRuntimeAgent, shouldManageDashboardForAgent } from "../../dashboard-runtime";
 import {
@@ -172,6 +174,13 @@ export interface SandboxStateOptions<
     writePlanToEnv(plan: SandboxMessagingPlan): void;
     clearPlanEnv(): void;
     getRegistrySandboxMessagingPlan(sandboxName: string): SandboxMessagingPlan | null;
+    providerMatchesGatewayCredential(name: string, type: string, credentialEnv: string): boolean;
+    stageSandboxCredentialProviders(input: {
+      sandboxName: string;
+      enabledChannels: readonly string[];
+      webSearchConfig: WebSearchConfig | null;
+      agent: Agent;
+    }): Promise<readonly string[]>;
     promptValidatedSandboxName(agent: Agent): Promise<string>;
     selectResourceProfileForSandbox(): Promise<ResourceProfile | null>;
     stopStaleDashboardListenersForSandbox(sandboxes: unknown[], sandboxName: string): void;
@@ -642,6 +651,29 @@ class SandboxStateFlow<
       state.webSearchConfig as unknown as SharedWebSearchConfig,
     );
     const label = webSearchLabelFor(provider);
+    const credentialEnv = webSearchEnvFor(provider);
+    const localCredential = this.options.env[credentialEnv]?.trim();
+    const providerType =
+      provider === "tavily" &&
+      (this.options.agent as { name?: string } | null)?.name?.trim().toLowerCase() === "hermes"
+        ? HERMES_TAVILY_PROVIDER_PROFILE_ID
+        : provider;
+    if (
+      this.options.resume &&
+      state.sandboxName &&
+      !localCredential &&
+      state.session?.stagedCredentialProviders.includes(
+        `${state.sandboxName}-${provider}-search`,
+      ) &&
+      this.deps.providerMatchesGatewayCredential(
+        `${state.sandboxName}-${provider}-search`,
+        providerType,
+        credentialEnv,
+      )
+    ) {
+      this.deps.note(`  [resume] Reusing ${label} credential registered with OpenShell.`);
+      return state.webSearchConfig;
+    }
     this.deps.note(`  [resume] Revalidating ${label} configuration for sandbox recreation.`);
     const credential = await this.deps.ensureValidatedWebSearchCredential(state.webSearchConfig);
     if (this.deps.isBackToSelection(credential) || !credential) return null;
@@ -945,6 +977,19 @@ class SandboxStateFlow<
       deps: this.deps,
     });
     nextState = this.checkpointMessaging(nextState, messaging);
+    const stagedProviders = await this.deps.withGatewayRouteMutationLock(
+      this.options.gatewayName,
+      () =>
+        this.deps.stageSandboxCredentialProviders({
+          sandboxName: requestedSandboxName,
+          enabledChannels: nextState.selectedMessagingChannels,
+          webSearchConfig: nextState.webSearchConfig,
+          agent: this.options.agent,
+        }),
+    );
+    if (stagedProviders.length > 0) {
+      this.deps.note("  ✓ Registered selected credentials with OpenShell for resume.");
+    }
     return this.createAndRecordSandbox(nextState, requestedSandboxName, messaging.plan, decision);
   }
 

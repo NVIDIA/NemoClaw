@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 type RunResult = { status: number; stdout?: string; stderr?: string };
-type RunOptions = { env?: Record<string, string | undefined> };
+type RunOptions = { env?: Record<string, string | undefined>; suppressOutput?: boolean };
 type RunOpenshell = (command: string[], opts?: RunOptions) => RunResult;
 
 const {
@@ -18,6 +18,7 @@ const {
   getRequestedProviderHint,
   isProviderKeyCredentialCandidate,
   providerExistsInGateway,
+  stageMessagingProvidersCreateMissingOnly,
   stageHostedInferenceSourceSecretEnv,
   upsertProvider,
   upsertMessagingProviders,
@@ -51,6 +52,16 @@ const {
   ) => string | null;
   isProviderKeyCredentialCandidate: (value: string | null | undefined) => boolean;
   providerExistsInGateway: (name: string, runOpenshell: RunOpenshell) => boolean;
+  stageMessagingProvidersCreateMissingOnly: (
+    tokenDefs: Array<{
+      name: string;
+      envKey: string;
+      token: string | null;
+      providerType?: string;
+    }>,
+    runOpenshell: RunOpenshell,
+    options?: { gatewayName?: string | null },
+  ) => { created: string[]; reused: string[]; skipped: string[] };
   stageHostedInferenceSourceSecretEnv: () => boolean;
   upsertProvider: (
     name: string,
@@ -233,6 +244,161 @@ describe("onboard provider helpers", () => {
   it("checks whether providers exist in the gateway", () => {
     expect(providerExistsInGateway("discord-bridge", () => ({ status: 0 }))).toBe(true);
     expect(providerExistsInGateway("missing-bridge", () => ({ status: 1 }))).toBe(false);
+  });
+
+  it("reuses an exact credential-only provider without mutating it", () => {
+    const commands: string[] = [];
+    const result = stageMessagingProvidersCreateMissingOnly(
+      [
+        {
+          name: "tm-telegram-bridge",
+          envKey: "TELEGRAM_BOT_TOKEN",
+          token: "123456:test-token",
+        },
+      ],
+      (command) => {
+        commands.push(command.join(" "));
+        return {
+          status: 0,
+          stdout:
+            "Name: tm-telegram-bridge\nType: generic\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n",
+        };
+      },
+      { gatewayName: "nemoclaw" },
+    );
+
+    expect(result).toEqual({
+      created: [],
+      reused: ["tm-telegram-bridge"],
+      skipped: [],
+    });
+    expect(commands).toEqual(["provider get -g nemoclaw tm-telegram-bridge"]);
+  });
+
+  it.each([
+    ["the provider type differs", "brave", "TELEGRAM_BOT_TOKEN", "<none>"],
+    ["the credential key differs", "generic", "OTHER_TOKEN", "<none>"],
+    ["the provider has configuration", "generic", "TELEGRAM_BOT_TOKEN", "BASE_URL"],
+  ])("skips an existing provider when %s", (_label, type, credentialKey, configKey) => {
+    const commands: string[] = [];
+    const result = stageMessagingProvidersCreateMissingOnly(
+      [
+        {
+          name: "tm-telegram-bridge",
+          envKey: "TELEGRAM_BOT_TOKEN",
+          token: "123456:test-token",
+        },
+      ],
+      (command) => {
+        commands.push(command.join(" "));
+        return {
+          status: 0,
+          stdout: `Name: tm-telegram-bridge\nType: ${type}\nCredential keys: ${credentialKey}\nConfig keys: ${configKey}\n`,
+        };
+      },
+      { gatewayName: "nemoclaw" },
+    );
+
+    expect(result).toEqual({
+      created: [],
+      reused: [],
+      skipped: ["tm-telegram-bridge"],
+    });
+    expect(commands).toEqual(["provider get -g nemoclaw tm-telegram-bridge"]);
+  });
+
+  it("creates an exactly absent provider with its secret only in the command environment", () => {
+    const calls: Array<{ command: string[]; options?: RunOptions }> = [];
+    const token = "123456:staged-secret-token";
+    const result = stageMessagingProvidersCreateMissingOnly(
+      [
+        {
+          name: "tm-telegram-bridge",
+          envKey: "TELEGRAM_BOT_TOKEN",
+          token,
+        },
+      ],
+      (command, options) => {
+        calls.push({ command, options });
+        if (command[1] === "get") {
+          return {
+            status: 1,
+            stderr: "Error: provider 'tm-telegram-bridge' not found",
+          };
+        }
+        return { status: 0 };
+      },
+      { gatewayName: "nemoclaw" },
+    );
+
+    expect(result).toEqual({
+      created: ["tm-telegram-bridge"],
+      reused: [],
+      skipped: [],
+    });
+    expect(calls.map(({ command }) => command.join(" "))).toEqual([
+      "provider get -g nemoclaw tm-telegram-bridge",
+      "provider create -g nemoclaw --name tm-telegram-bridge --type generic --credential TELEGRAM_BOT_TOKEN",
+    ]);
+    expect(calls[1]?.command).not.toContain(token);
+    expect(calls[1]?.options?.env).toEqual({ TELEGRAM_BOT_TOKEN: token });
+    expect(calls[1]?.options?.suppressOutput).toBe(true);
+  });
+
+  it("skips an indeterminate absence probe instead of attempting a create", () => {
+    const commands: string[] = [];
+    const result = stageMessagingProvidersCreateMissingOnly(
+      [
+        {
+          name: "tm-telegram-bridge",
+          envKey: "TELEGRAM_BOT_TOKEN",
+          token: "123456:test-token",
+        },
+      ],
+      (command) => {
+        commands.push(command.join(" "));
+        return { status: 1, stderr: "gateway unavailable" };
+      },
+      { gatewayName: "nemoclaw" },
+    );
+
+    expect(result).toEqual({
+      created: [],
+      reused: [],
+      skipped: ["tm-telegram-bridge"],
+    });
+    expect(commands).toEqual(["provider get -g nemoclaw tm-telegram-bridge"]);
+  });
+
+  it("throws on create failure without attempting update, delete, or secret-bearing arguments", () => {
+    const commands: string[] = [];
+    const token = "123456:staged-secret-token";
+
+    expect(() =>
+      stageMessagingProvidersCreateMissingOnly(
+        [
+          {
+            name: "tm-telegram-bridge",
+            envKey: "TELEGRAM_BOT_TOKEN",
+            token,
+          },
+        ],
+        (command) => {
+          commands.push(command.join(" "));
+          if (command[1] === "get") {
+            return {
+              status: 1,
+              stderr: "Error: provider 'tm-telegram-bridge' not found",
+            };
+          }
+          return { status: 1, stderr: `gateway rejected ${token}` };
+        },
+        { gatewayName: "nemoclaw" },
+      ),
+    ).toThrow("Failed to stage messaging provider 'tm-telegram-bridge': gateway rejected");
+
+    expect(commands.every((command) => !command.includes(token))).toBe(true);
+    expect(commands.some((command) => /provider (update|delete)/.test(command))).toBe(false);
   });
 
   it("creates a new provider and returns ok on success", () => {

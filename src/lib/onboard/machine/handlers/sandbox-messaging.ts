@@ -35,6 +35,7 @@ export interface SandboxMessagingDeps<Agent> {
   writePlanToEnv(plan: SandboxMessagingPlan): void;
   clearPlanEnv(): void;
   getRegistrySandboxMessagingPlan(sandboxName: string): SandboxMessagingPlan | null;
+  providerMatchesGatewayCredential(name: string, type: string, credentialEnv: string): boolean;
 }
 
 export interface SandboxMessagingSelection {
@@ -298,11 +299,17 @@ async function selectionFromCompletedMessagingCheckpoint<Agent>(
   }
 
   const activeChannels = new Set(selectedChannels);
-  const credentialNeedsValidation = filteredPlan.credentialBindings.some(
-    (binding) =>
-      activeChannels.has(binding.channelId) &&
-      hashCredential(getCredential(binding.providerEnvKey)) !== binding.credentialHash,
-  );
+  const credentialNeedsValidation = filteredPlan.credentialBindings.some((binding) => {
+    if (!activeChannels.has(binding.channelId)) return false;
+    const credentialHash = hashCredential(getCredential(binding.providerEnvKey));
+    if (credentialHash) return credentialHash !== binding.credentialHash;
+    if (!options.session?.stagedCredentialProviders.includes(binding.providerName)) return true;
+    return !options.deps.providerMatchesGatewayCredential(
+      binding.providerName,
+      "generic",
+      binding.providerEnvKey,
+    );
+  });
   if (credentialNeedsValidation) {
     return selectionFromMessagingSetup(selectedChannels, options, true);
   }

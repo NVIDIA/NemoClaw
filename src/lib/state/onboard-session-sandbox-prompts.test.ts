@@ -81,6 +81,7 @@ describe("onboard session sandbox prompt checkpoints", () => {
         resourceProfile: true,
       },
       resourceProfile,
+      stagedCredentialProviders: ["tm-brave-search", "tm-telegram-bridge"],
     });
     Object.assign(created as unknown as Record<string, unknown>, {
       BRAVE_API_KEY: braveCredential,
@@ -101,6 +102,7 @@ describe("onboard session sandbox prompt checkpoints", () => {
         resourceProfile: true,
       },
       resourceProfile,
+      stagedCredentialProviders: ["tm-brave-search", "tm-telegram-bridge"],
     });
     const serialized = JSON.stringify(raw);
     expect(serialized).not.toContain(braveCredential);
@@ -117,6 +119,7 @@ describe("onboard session sandbox prompt checkpoints", () => {
       resourceProfile: true,
     });
     expect(loaded.resourceProfile).toEqual(resourceProfile);
+    expect(loaded.stagedCredentialProviders).toEqual(["tm-brave-search", "tm-telegram-bridge"]);
   });
 
   it("defaults unanswered progress and resources for fresh sessions (#6743)", () => {
@@ -129,6 +132,7 @@ describe("onboard session sandbox prompt checkpoints", () => {
       resourceProfile: false,
     });
     expect(fresh.resourceProfile).toBeNull();
+    expect(fresh.stagedCredentialProviders).toEqual([]);
   });
 
   it("keeps explicit null choices complete but clears malformed or missing values (#6743)", () => {

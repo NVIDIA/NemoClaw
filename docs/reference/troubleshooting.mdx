@@ -775,8 +775,8 @@ Silent retry would loop on the same failure if your original choice, such as an 
   ```
 
   Retry the same session without repeating completed non-secret choices.
-  Interactive resume can request a web search or messaging credential again when it was available only to the interrupted process because raw credentials are not stored in the onboarding session.
-  Non-interactive resume cannot prompt for a missing messaging credential: it preserves the completed channel choice, exits, and asks you to export the missing messaging credential environment variables before running `$$nemoclaw onboard --resume` again.
+  Resume also reuses registered web search and messaging credentials when the same onboarding session recorded their creation and OpenShell still reports the exact expected name, type, and credential keys.
+  If the session lacks that creation receipt, the provider is missing, or its binding does not match, interactive resume requests the credential again; non-interactive resume preserves the completed choice, exits, and asks you to export the required environment variable before running `$$nemoclaw onboard --resume` again.
   This is only useful if the original failure was transient, for example a network blip or a stopped Docker daemon, and not a wrong provider choice:
 
   ```bash
@@ -2726,18 +2726,5 @@ TAVILY_API_KEY=<your-tavily-key> \
 
 NemoClaw writes `web.backend: tavily`, applies the `tavily` policy preset, and configures request-body credential rewriting for Hermes.
 If the same onboarding run selected the Nous-managed web gateway, Tavily replaces `nous-web` while selected Nous image, audio, browser, and code tools remain enabled.
-
-### Re-onboarding asks every messaging prompt again
-
-`nemohermes onboard --resume` against a Hermes sandbox that was originally onboarded with Telegram, Discord, and Slack credentials re-prompts for each channel's bot token and per-channel settings rather than reusing the stored values.
-This is tracked in [#3581](https://github.com/NVIDIA/NemoClaw/issues/3581).
-For unattended re-onboards, export the messaging env vars first so the wizard skips the prompts:
-
-```bash
-export TELEGRAM_BOT_TOKEN=...
-export DISCORD_BOT_TOKEN=...
-export SLACK_BOT_TOKEN=...
-nemohermes onboard --resume --non-interactive
-```
 
 </AgentOnly>

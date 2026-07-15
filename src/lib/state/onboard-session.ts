@@ -173,6 +173,8 @@ export interface Session {
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
   messagingPlan: SandboxMessagingPlan | null;
+  /** Non-secret names of credential providers created before sandbox setup completed. */
+  stagedCredentialProviders: string[];
   // SHA-256 hex digest of every legacy credential value successfully
   // written to the OpenShell gateway during this onboard session, keyed by
   // env-name. Persisted across process restarts so a `--resume` run that
@@ -644,6 +646,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     hermesToolGateways: readStringArray(overrides.hermesToolGateways),
     policyPresets: readStringArray(overrides.policyPresets),
     messagingPlan: parseSandboxMessagingPlan(overrides.messagingPlan),
+    stagedCredentialProviders: readStringArray(overrides.stagedCredentialProviders) ?? [],
     migratedLegacyValueHashes: overrides.migratedLegacyValueHashes
       ? readStringRecord(overrides.migratedLegacyValueHashes)
       : null,
@@ -692,6 +695,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     hermesToolGateways: readStringArray(data.hermesToolGateways),
     policyPresets: readStringArray(data.policyPresets),
     messagingPlan: parseSandboxMessagingPlan(data.messagingPlan),
+    stagedCredentialProviders: readStringArray(data.stagedCredentialProviders) ?? [],
     migratedLegacyValueHashes: readStringRecord(data.migratedLegacyValueHashes),
     gpuPassthrough: data.gpuPassthrough === true,
     telegramConfig: parseTelegramConfig(data.telegramConfig),

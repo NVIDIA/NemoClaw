@@ -141,10 +141,14 @@ function telegramPlan(credentialHash: string): SandboxMessagingPlan {
   };
 }
 
-function completedCheckpointSession(plan: SandboxMessagingPlan) {
+function completedCheckpointSession(
+  plan: SandboxMessagingPlan,
+  stagedCredentialProviders: string[] = [],
+) {
   const session = createSession();
   session.sandboxName = plan.sandboxName;
   session.messagingPlan = plan;
+  session.stagedCredentialProviders = stagedCredentialProviders;
   session.sandboxPromptProgress.sandboxName = true;
   session.sandboxPromptProgress.messaging = true;
   return session;
@@ -163,6 +167,7 @@ function reconcileDeps(plans: readonly (SandboxMessagingPlan | null)[]) {
     writePlanToEnv: vi.fn(),
     clearPlanEnv: vi.fn(),
     getRegistrySandboxMessagingPlan: vi.fn(() => null),
+    providerMatchesGatewayCredential: vi.fn(() => false),
   };
 }
 
@@ -295,9 +300,10 @@ describe("reconcileSandboxMessaging completed checkpoint credentials", () => {
     expect(persistedPlan.credentialBindings[0]?.credentialHash).toBe(hashCredential(previousToken));
   });
 
-  it("runs existing setup validation when the checkpointed credential is missing", async () => {
+  it("runs existing setup validation when the checkpointed credential lacks a staging receipt", async () => {
     const persistedPlan = telegramPlan(hashCredential("123456:previous-token") ?? "");
     const deps = reconcileDeps([persistedPlan]);
+    deps.providerMatchesGatewayCredential.mockReturnValueOnce(true);
     deps.setupMessagingChannels.mockRejectedValueOnce(new Error("Telegram token is required"));
 
     await expect(
@@ -316,5 +322,28 @@ describe("reconcileSandboxMessaging completed checkpoint credentials", () => {
       "alpha",
       { selectionCompleted: true },
     );
+    expect(deps.providerMatchesGatewayCredential).not.toHaveBeenCalled();
+  });
+
+  it("reuses an exact OpenShell provider when the raw credential is unavailable (#6743)", async () => {
+    const persistedPlan = telegramPlan(hashCredential("123456:previous-token") ?? "");
+    const deps = reconcileDeps([null]);
+    deps.providerMatchesGatewayCredential.mockReturnValueOnce(true);
+
+    const result = await reconcileSandboxMessaging({
+      resume: true,
+      session: completedCheckpointSession(persistedPlan, ["alpha-telegram-bridge"]),
+      sandboxName: "alpha",
+      agent: { name: "openclaw" },
+      deps,
+    });
+
+    expect(deps.providerMatchesGatewayCredential).toHaveBeenCalledWith(
+      "alpha-telegram-bridge",
+      "generic",
+      "TELEGRAM_BOT_TOKEN",
+    );
+    expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
+    expect(result).toEqual({ plan: persistedPlan, selectedChannels: ["telegram"] });
   });
 });

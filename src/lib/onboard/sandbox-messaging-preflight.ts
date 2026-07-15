@@ -28,7 +28,7 @@ export interface SandboxMessagingPreflightDeps {
   resolveDisabledChannels(sandboxName: string): string[];
   gatewayName(): string;
   registry: MessagingConflictGuardDeps["registry"];
-  providerExistsInGateway(name: string): boolean;
+  providerMatchesGatewayCredential(name: string, type: string, credentialEnv: string): boolean;
   isNonInteractive(): boolean;
   promptYesNoOrDefault(
     message: string,
@@ -80,7 +80,7 @@ export async function prepareSandboxMessagingPreflight(
     normalizeCredentialValue: deps.normalizeCredentialValue,
     registerExtraPlaceholderProviders: deps.registerExtraPlaceholderProviders,
     getMessagingChannelForEnvKey: deps.getMessagingChannelForEnvKey,
-    providerExistsInGateway: deps.providerExistsInGateway,
+    providerMatchesGatewayCredential: deps.providerMatchesGatewayCredential,
   });
 
   if (result.missingWebSearchCredentialEnv) {
