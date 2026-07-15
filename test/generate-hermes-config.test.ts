@@ -524,6 +524,31 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.model.context_window).toBeUndefined();
   });
 
+  it("routes the experimental Station Ultra profile through vllm-local at 262144 context", () => {
+    const { config } = runConfigScript({
+      NEMOCLAW_PROVIDER_KEY: "vllm-local",
+      NEMOCLAW_MODEL: "nemotron-ultra",
+      NEMOCLAW_CONTEXT_WINDOW: "262144",
+    });
+
+    expect(config._nemoclaw_upstream).toEqual({
+      provider: "vllm-local",
+      model: "nemotron-ultra",
+    });
+    expect(config.model).toMatchObject({
+      default: "nemotron-ultra",
+      provider: "custom",
+      base_url: "https://inference.local/v1",
+      context_length: 262144,
+    });
+    expect(config.model.context_window).toBeUndefined();
+    expect(config.providers["vllm-local"]).toMatchObject({
+      name: "vllm-local",
+      default_model: "nemotron-ultra",
+      discover_models: true,
+    });
+  });
+
   it("chains the endpoint probe through to model.context_length in the generated config (#6177)", async () => {
     // Source-level regression across the boundary: the same probe onboarding
     // calls resolves a compatible endpoint's max_model_len into

@@ -29,6 +29,30 @@
 
 export type VllmPlatform = "spark" | "station" | "linux";
 
+export const VLLM_PROFILE_ENV = "NEMOCLAW_VLLM_PROFILE";
+export const EXPERIMENTAL_SINGLE_USER_PROFILE = "experimental-single-user" as const;
+export type VllmModelProfileId = typeof EXPERIMENTAL_SINGLE_USER_PROFILE;
+
+export interface VllmRuntimeQualification {
+  /** GPU model fragment used to select the qualified accelerator. */
+  gpuNameIncludes: string;
+  /** Exact number of matching accelerators required by this single-user recipe. */
+  gpuCount: number;
+  /** Exclusive HBM ceiling used by the Station qualification procedure. */
+  hbmSafetyCeilingMiB: number;
+  /** The qualification procedure must fail closed on non-zero uncorrected ECC. */
+  requireZeroUncorrectedEcc: boolean;
+}
+
+export interface VllmReadinessContract {
+  /** Require the health endpoint in addition to the OpenAI model catalog. */
+  healthEndpoint: boolean;
+  /** Require one exact served alias rather than accepting any non-empty catalog. */
+  servedModelId: string;
+  /** Exact context length that the model catalog must advertise. */
+  maxModelLen: number;
+}
+
 export interface VllmRuntimeOverride {
   /** Model-specific runtime image, pinned by digest. */
   image: string;
@@ -40,6 +64,38 @@ export interface VllmRuntimeOverride {
   loadTimeoutSec?: number;
   /** Additional `docker run` arguments required by this recipe. */
   dockerRunArgs?: readonly string[];
+  /** Networking mode for the long-lived inference container. Defaults to bridge. */
+  networkMode?: "bridge" | "host";
+  /** Non-secret environment passed to the long-lived inference container. */
+  containerEnv?: Readonly<Record<string, string>>;
+  /** Registry images are pulled; local-only images must already exist exactly. */
+  imagePullPolicy?: "registry" | "local-only";
+  /** Docker image/config ID that must back image, even when a manifest ref is used. */
+  expectedImageId?: string;
+  /** Hardware qualification limits associated with this reviewed recipe. */
+  qualification?: VllmRuntimeQualification;
+}
+
+export interface VllmModelProfileOverride {
+  /** Stable opt-in selector consumed from NEMOCLAW_VLLM_PROFILE. */
+  id: VllmModelProfileId;
+  /** Human label for summaries and documentation. */
+  label: string;
+  /** Profiles in this registry are never selected implicitly. */
+  experimental: true;
+  optIn: true;
+  /** Platforms on which this exact recipe was qualified. */
+  platforms: readonly VllmPlatform[];
+  /** Served alias used by the gateway and dashboard. */
+  servedModelId: string;
+  /** Immutable Hugging Face revision owned by this profile. */
+  revision: string;
+  /** Complete ordered vLLM arguments after the model ID. Replaces shared/default args. */
+  exactServeArgs: readonly string[];
+  /** Required runtime/container replacement for this profile. */
+  runtime: VllmRuntimeOverride;
+  /** Strict endpoint contract checked before onboarding continues. */
+  readiness: VllmReadinessContract;
 }
 
 export const NEMOTRON_ULTRA_STATION_IMAGE = {
@@ -48,6 +104,14 @@ export const NEMOTRON_ULTRA_STATION_IMAGE = {
     ref: "vllm/vllm-openai@sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416",
     downloadSizeBytes: 10_670_087_425,
   },
+} as const;
+
+// Exact Docker image/config ID qualified by the reclaimed-v1 offload90 study.
+// It is local-only until a repository-qualified manifest publishes these bytes.
+// Once published, image can become that manifest reference while expectedImageId
+// continues to prove that the pulled image resolves to this exact ID.
+export const NEMOTRON_ULTRA_EXPERIMENTAL_SINGLE_USER_IMAGE = {
+  localImageId: "sha256:e44830d3f0197850e5a63ca895b13a047f358ff4aea15b1655abf61391bb883e",
 } as const;
 
 export interface VllmModelDef {
@@ -63,6 +127,8 @@ export interface VllmModelDef {
   revision?: string;
   /** Stable model name exposed by the local OpenAI-compatible endpoint. */
   servedModelId?: string;
+  /** Exact snapshot path used by a resolved profile instead of the repository ID. */
+  serveModelPath?: string;
   /** Model-specific flags appended after the shared serving flags. */
   modelArgs: string[];
   /** True when the upstream HF repo requires accepting a licence. */
@@ -85,6 +151,12 @@ export interface VllmModelDef {
   serveEnv?: Record<string, string>;
   /** Runtime overrides for recipes that cannot use the platform image. */
   runtime?: VllmRuntimeOverride;
+  /** Complete serve args for a resolved model profile; base entries use shared args. */
+  exactServeArgs?: readonly string[];
+  /** Strict readiness contract for a resolved model profile. */
+  readiness?: VllmReadinessContract;
+  /** Explicit model-scoped profiles. These are never interactive/default choices. */
+  profiles?: Partial<Record<VllmModelProfileId, VllmModelProfileOverride>>;
   /** Whether startup must install vLLM's fastsafetensors extra. Defaults to true. */
   installFastSafetensors?: boolean;
 }
@@ -247,6 +319,76 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       // importing the playbook's host-network setting.
       dockerRunArgs: ["--shm-size", "16g", "--ulimit", "memlock=-1", "--ulimit", "stack=67108864"],
     },
+    profiles: {
+      [EXPERIMENTAL_SINGLE_USER_PROFILE]: {
+        id: EXPERIMENTAL_SINGLE_USER_PROFILE,
+        label: "Experimental single-user",
+        experimental: true,
+        optIn: true,
+        platforms: ["station"],
+        servedModelId: "nemotron-ultra",
+        revision: "183968f87ae4cedce3039313cac1fd43d112c578",
+        exactServeArgs: [
+          "--served-model-name",
+          "nemotron-ultra",
+          "--host",
+          "0.0.0.0",
+          "--port",
+          "8000",
+          "--tensor-parallel-size",
+          "1",
+          "--trust-remote-code",
+          "--cpu-offload-gb",
+          "90",
+          "--cpu-offload-params",
+          "experts",
+          "--kernel_config",
+          "'{\"enable_flashinfer_autotune\": false}'",
+          "--max-num-seqs",
+          "1",
+          "--gpu-memory-utilization",
+          "0.9",
+          "--kv-cache-memory-bytes",
+          "4294967296",
+          "--reasoning-parser",
+          "nemotron_v3",
+          "--enable-auto-tool-choice",
+          "--tool-call-parser",
+          "qwen3_coder",
+        ],
+        runtime: {
+          image: NEMOTRON_ULTRA_EXPERIMENTAL_SINGLE_USER_IMAGE.localImageId,
+          // Unused while local-only. A future manifest publication must make
+          // its compressed pull accounting explicit before this policy changes.
+          imageDownloadSizeBytes: NEMOTRON_ULTRA_STATION_IMAGE.arm64.downloadSizeBytes,
+          modelDownloadSizeBytes: 352_381_245_521,
+          loadTimeoutSec: 1200,
+          dockerRunArgs: ["--shm-size", "16g", "--memory", "650g"],
+          networkMode: "host",
+          containerEnv: {
+            VLLM_WEIGHT_OFFLOADING_DISABLE_PIN_MEMORY: "1",
+            VLLM_NVFP4_GEMM_BACKEND: "flashinfer-trtllm",
+            NEMOTRON_ULTRA_MODEL_OPT_NVFP4_MOE_RECLAIM: "1",
+            HF_HUB_OFFLINE: "1",
+            TRANSFORMERS_OFFLINE: "1",
+            PYTHONHASHSEED: "0",
+          },
+          imagePullPolicy: "local-only",
+          expectedImageId: NEMOTRON_ULTRA_EXPERIMENTAL_SINGLE_USER_IMAGE.localImageId,
+          qualification: {
+            gpuNameIncludes: "GB300",
+            gpuCount: 1,
+            hbmSafetyCeilingMiB: 245000,
+            requireZeroUncorrectedEcc: true,
+          },
+        },
+        readiness: {
+          healthEndpoint: true,
+          servedModelId: "nemotron-ultra",
+          maxModelLen: 262144,
+        },
+      },
+    },
     // The digest-pinned vLLM image already contains the serving package, and
     // this recipe does not use the fastsafetensors load format. Avoid mutating
     // the reviewed runtime from the package index when the container starts.
@@ -322,6 +464,94 @@ export function modelsForPlatform(platform: VllmPlatform): readonly VllmModelDef
 const HF_TOKEN_ENV_KEYS = ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"] as const;
 export const VLLM_EXTRA_ARGS_ENV = "NEMOCLAW_VLLM_EXTRA_ARGS_JSON";
 
+/** Parse and validate the explicit model-profile selector. */
+export function selectVllmModelProfileFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): VllmModelProfileId | null {
+  const requested = String(env[VLLM_PROFILE_ENV] ?? "")
+    .trim()
+    .toLowerCase();
+  if (!requested) return null;
+  if (requested === EXPERIMENTAL_SINGLE_USER_PROFILE) return requested;
+  throw new Error(
+    "Unknown " +
+      VLLM_PROFILE_ENV +
+      "='" +
+      String(env[VLLM_PROFILE_ENV]) +
+      "'. Recognised values: '" +
+      EXPERIMENTAL_SINGLE_USER_PROFILE +
+      "'.",
+  );
+}
+
+export interface ResolvedVllmModelProfile {
+  model: VllmModelDef;
+  profile: VllmModelProfileOverride | null;
+}
+
+function huggingFaceSnapshotContainerPath(modelId: string, revision: string): string {
+  return (
+    "/root/.cache/huggingface/hub/models--" +
+    modelId.replaceAll("/", "--") +
+    "/snapshots/" +
+    revision
+  );
+}
+
+/**
+ * Resolve an explicit model-scoped profile into the effective recipe consumed
+ * by the existing managed-vLLM lifecycle. With no selector this returns the
+ * original model object unchanged, which freezes the canonical Station output.
+ */
+export function resolveVllmModelProfile(
+  model: VllmModelDef,
+  platform: VllmPlatform,
+  env: NodeJS.ProcessEnv = process.env,
+): ResolvedVllmModelProfile {
+  const profileId = selectVllmModelProfileFromEnv(env);
+  if (!profileId) return { model, profile: null };
+
+  const profile = model.profiles?.[profileId];
+  if (!profile) {
+    throw new Error(
+      VLLM_PROFILE_ENV +
+        "='" +
+        profileId +
+        "' requires NEMOCLAW_VLLM_MODEL='nemotron-3-ultra-550b-a55b'.",
+    );
+  }
+  if (!profile.platforms.includes(platform)) {
+    throw new Error(
+      VLLM_PROFILE_ENV + "='" + profileId + "' is not supported on " + platform + ".",
+    );
+  }
+  if (parseVllmExtraServeArgs(env).length > 0) {
+    throw new Error(
+      VLLM_PROFILE_ENV +
+        "='" +
+        profileId +
+        "' cannot be combined with " +
+        VLLM_EXTRA_ARGS_ENV +
+        "; extra arguments would invalidate the qualified runtime contract.",
+    );
+  }
+
+  return {
+    profile,
+    model: {
+      ...model,
+      revision: profile.revision,
+      servedModelId: profile.servedModelId,
+      serveModelPath: huggingFaceSnapshotContainerPath(model.id, profile.revision),
+      modelArgs: [],
+      serveEnv: undefined,
+      runtime: profile.runtime,
+      exactServeArgs: [...profile.exactServeArgs],
+      readiness: profile.readiness,
+    },
+  };
+}
+
 /**
  * Look up the requested express-vLLM model from `NEMOCLAW_VLLM_MODEL`.
  * Returns `null` when the env var is empty so the caller can fall back to
@@ -396,9 +626,38 @@ export function preflightVllmModelEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): PreflightVllmModelResult {
   try {
-    parseVllmExtraServeArgs(env);
+    const profileId = selectVllmModelProfileFromEnv(env);
+    const extraArgs = parseVllmExtraServeArgs(env);
+    if (profileId && extraArgs.length > 0) {
+      throw new Error(
+        VLLM_PROFILE_ENV +
+          "='" +
+          profileId +
+          "' cannot be combined with " +
+          VLLM_EXTRA_ARGS_ENV +
+          "; extra arguments would invalidate the qualified runtime contract.",
+      );
+    }
     const model = selectVllmModelFromEnv(env);
-    if (!model) return { ok: true };
+    if (!model) {
+      if (profileId) {
+        throw new Error(
+          VLLM_PROFILE_ENV +
+            "='" +
+            profileId +
+            "' requires NEMOCLAW_VLLM_MODEL='nemotron-3-ultra-550b-a55b'.",
+        );
+      }
+      return { ok: true };
+    }
+    if (profileId && !model.profiles?.[profileId]) {
+      throw new Error(
+        VLLM_PROFILE_ENV +
+          "='" +
+          profileId +
+          "' requires NEMOCLAW_VLLM_MODEL='nemotron-3-ultra-550b-a55b'.",
+      );
+    }
     assertGatedModelAccess(model, env);
     return { ok: true };
   } catch (err) {
@@ -478,16 +737,21 @@ export function buildVllmServeCommand(
         .map(([key, value]) => `export ${key}=${value}`)
         .join(" && ")} && `
     : "";
-  const args = [
-    ...SHARED_VLLM_ARGS,
-    "--max-model-len",
-    String(model.maxModelLen),
-    ...(model.revision ? ["--revision", model.revision] : []),
-    ...(model.servedModelId ? ["--served-model-name", model.servedModelId] : []),
-    ...model.modelArgs,
-  ];
+  const args = model.exactServeArgs
+    ? [...model.exactServeArgs]
+    : [
+        ...SHARED_VLLM_ARGS,
+        "--max-model-len",
+        String(model.maxModelLen),
+        ...(model.revision ? ["--revision", model.revision] : []),
+        ...(model.servedModelId ? ["--served-model-name", model.servedModelId] : []),
+        ...model.modelArgs,
+      ];
   const extraArgs = parseVllmExtraServeArgs(env).map(shellQuote);
   const setup =
     model.installFastSafetensors === false ? "" : "pip install vllm[fastsafetensors] && ";
-  return `${envPrefix}${setup}vllm serve ${model.id} ${[...args, ...extraArgs].join(" ")}`;
+  return `${envPrefix}${setup}vllm serve ${model.serveModelPath ?? model.id} ${[
+    ...args,
+    ...extraArgs,
+  ].join(" ")}`;
 }

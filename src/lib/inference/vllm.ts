@@ -17,7 +17,7 @@ import {
   dockerSpawn,
   dockerStop,
 } from "../adapters/docker";
-import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
+import { buildCurlProbeSpawnArgs, buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { VLLM_PORT } from "../core/ports";
 import { shellQuote } from "../core/shell-quote";
 import { isAffirmativeAnswer } from "../onboard/prompt-helpers";
@@ -29,10 +29,12 @@ import {
   buildVllmServeCommand,
   NEMOTRON_ULTRA_STATION_IMAGE,
   parseVllmExtraServeArgs,
+  resolveVllmModelProfile,
   VLLM_EXTRA_ARGS_ENV,
   VLLM_MODELS,
   type VllmModelDef,
   type VllmPlatform,
+  type VllmRuntimeQualification,
 } from "./vllm-models";
 import { resolveVllmInstallModel } from "./vllm-prompt";
 import {
@@ -82,6 +84,14 @@ export interface VllmProfile {
   // Optional pinned model snapshot size. Model-specific runtime overrides use
   // this to guard the host Hugging Face cache before a cold download.
   modelDownloadSizeBytes?: number;
+  // Host mode is profile-scoped because it also suppresses Docker port
+  // publication; raw run args cannot represent that invariant safely.
+  networkMode?: "bridge" | "host";
+  // Registry is the historical default. Local-only fails closed unless the
+  // exact qualified Docker image/config ID is already present.
+  imagePullPolicy?: "registry" | "local-only";
+  expectedImageId?: string;
+  qualification?: VllmRuntimeQualification;
 }
 
 // Platform manifests and decimal compressed sizes published by NGC for the
@@ -489,8 +499,7 @@ export function buildVllmRunArgs(
     ...safeRunFlags,
     "--label",
     `${NEMOCLAW_VLLM_MANAGED_LABEL}=true`,
-    "-p",
-    `${String(VLLM_PORT)}:8000`,
+    ...(profile.networkMode === "host" ? [] : ["-p", String(VLLM_PORT) + ":8000"]),
     "--name",
     containerName,
     "--entrypoint",
@@ -504,13 +513,24 @@ export function buildVllmRunArgs(
 export function resolveVllmRuntimeProfile(profile: VllmProfile, model: VllmModelDef): VllmProfile {
   const runtime = model.runtime;
   if (!runtime) return profile;
-  const extraRunArgs = [...(runtime.dockerRunArgs ?? [])];
+  const extraRunArgs = [
+    ...(runtime.networkMode === "host" ? ["--network", "host"] : []),
+    ...(runtime.dockerRunArgs ?? []),
+    ...Object.entries(runtime.containerEnv ?? {}).flatMap(([key, value]) => [
+      "-e",
+      key + "=" + value,
+    ]),
+  ];
   return {
     ...profile,
     image: runtime.image,
     imageDownloadSizeBytes: runtime.imageDownloadSizeBytes,
     modelDownloadSizeBytes: runtime.modelDownloadSizeBytes ?? profile.modelDownloadSizeBytes,
     loadTimeoutSec: runtime.loadTimeoutSec ?? profile.loadTimeoutSec,
+    networkMode: runtime.networkMode ?? profile.networkMode,
+    imagePullPolicy: runtime.imagePullPolicy ?? profile.imagePullPolicy,
+    expectedImageId: runtime.expectedImageId ?? profile.expectedImageId,
+    qualification: runtime.qualification ?? profile.qualification,
     dockerRunFlags: [...profile.dockerRunFlags, ...extraRunArgs],
     buildDockerRunFlags: profile.buildDockerRunFlags
       ? () => [...profile.buildDockerRunFlags!(), ...extraRunArgs]
@@ -625,28 +645,133 @@ function vllmModelsEndpoint(): string {
   return `http://127.0.0.1:${String(VLLM_PORT)}/v1/models`;
 }
 
-function vllmEndpointReady(): boolean {
+function vllmHealthEndpoint(): string {
+  return `http://127.0.0.1:${String(VLLM_PORT)}/health`;
+}
+
+function queryVllmEndpoint(url: string): string {
   const response = runCapture(
     [
       "curl",
-      ...buildValidatedCurlCommandArgs([
-        "-sf",
-        "--connect-timeout",
-        "2",
-        "--max-time",
-        "5",
-        vllmModelsEndpoint(),
-      ]),
+      ...buildValidatedCurlCommandArgs(["-sf", "--connect-timeout", "2", "--max-time", "5", url]),
     ],
     { ignoreError: true },
   ).trim();
+  return response;
+}
+
+function vllmHealthReady(): boolean {
+  const validated = buildValidatedCurlCommandArgs([
+    "-sf",
+    "--connect-timeout",
+    "2",
+    "--max-time",
+    "5",
+    vllmHealthEndpoint(),
+  ]);
+  const url = validated.at(-1);
+  if (!url) return false;
+  const response = runCapture(
+    ["curl", ...buildCurlProbeSpawnArgs(validated.slice(0, -1), url, "/dev/null", "json")],
+    { ignoreError: true },
+  ).trim();
+  return response === "200";
+}
+
+function vllmEndpointReady(model: VllmModelDef): boolean {
+  const readiness = model.readiness;
+  // vLLM's /health endpoint commonly returns an empty 200 response, so check
+  // its status code instead of treating a non-empty body as the success signal.
+  if (readiness?.healthEndpoint && !vllmHealthReady()) return false;
+  const response = queryVllmEndpoint(vllmModelsEndpoint());
   if (!response) return false;
   try {
-    const parsed = JSON.parse(response) as { data?: unknown };
-    return Array.isArray(parsed.data);
+    const parsed = JSON.parse(response) as {
+      data?: Array<{ id?: unknown; max_model_len?: unknown }>;
+    };
+    if (!Array.isArray(parsed.data)) return false;
+    if (!readiness) return true;
+    return (
+      parsed.data.length === 1 &&
+      parsed.data[0]?.id === readiness.servedModelId &&
+      Number(parsed.data[0]?.max_model_len) === readiness.maxModelLen
+    );
   } catch {
     return false;
   }
+}
+
+interface VllmQualificationMonitor {
+  gpuIndex: number;
+  peakHbmMiB: number;
+}
+
+type VllmQualificationResult =
+  | { ok: true; monitor: VllmQualificationMonitor }
+  | { ok: false; reason: string };
+
+function literalCaseInsensitivePattern(value: string): RegExp {
+  return new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+}
+
+function sampleVllmQualification(
+  profile: VllmProfile,
+  monitor: VllmQualificationMonitor,
+): VllmQualificationResult {
+  const qualification = profile.qualification;
+  if (!qualification) return { ok: true, monitor };
+  const raw = runCapture(
+    [
+      "nvidia-smi",
+      `--id=${String(monitor.gpuIndex)}`,
+      "--query-gpu=memory.used,ecc.errors.uncorrected.aggregate.total,ecc.errors.uncorrected.volatile.total",
+      "--format=csv,noheader,nounits",
+    ],
+    { ignoreError: true },
+  ).trim();
+  const rows = raw.split(/\r?\n/).filter((row) => row.trim().length > 0);
+  const values = rows.length === 1 ? rows[0].split(",").map((value) => value.trim()) : [];
+  if (values.length !== 3 || values.some((value) => !/^\d+$/.test(value))) {
+    return {
+      ok: false,
+      reason: `qualified GPU telemetry is unavailable or malformed for GPU ${String(monitor.gpuIndex)}`,
+    };
+  }
+
+  const [hbmMiB, aggregateEcc, volatileEcc] = values.map(Number);
+  monitor.peakHbmMiB = Math.max(monitor.peakHbmMiB, hbmMiB);
+  if (hbmMiB >= qualification.hbmSafetyCeilingMiB) {
+    return {
+      ok: false,
+      reason:
+        `qualified HBM safety ceiling exceeded on GPU ${String(monitor.gpuIndex)}: ` +
+        `${String(hbmMiB)} MiB (required <${String(qualification.hbmSafetyCeilingMiB)} MiB)`,
+    };
+  }
+  if (qualification.requireZeroUncorrectedEcc && (aggregateEcc !== 0 || volatileEcc !== 0)) {
+    return {
+      ok: false,
+      reason:
+        `uncorrected ECC is nonzero on GPU ${String(monitor.gpuIndex)}: ` +
+        `aggregate=${String(aggregateEcc)}, volatile=${String(volatileEcc)}`,
+    };
+  }
+  return { ok: true, monitor };
+}
+
+function initializeVllmQualification(profile: VllmProfile): VllmQualificationResult | null {
+  const qualification = profile.qualification;
+  if (!qualification) return null;
+  const indices = getGpuIndicesByName(literalCaseInsensitivePattern(qualification.gpuNameIncludes));
+  if (indices.length !== qualification.gpuCount) {
+    return {
+      ok: false,
+      reason:
+        `qualified runtime requires exactly ${String(qualification.gpuCount)} GPU matching ` +
+        `'${qualification.gpuNameIncludes}'; detected ${String(indices.length)}`,
+    };
+  }
+  return sampleVllmQualification(profile, { gpuIndex: indices[0], peakHbmMiB: 0 });
 }
 
 function readContainerLogTail(profile: VllmProfile, lineCount = 80): string[] {
@@ -669,7 +794,11 @@ function printContainerLogTail(profile: VllmProfile): void {
 // Poll the real OpenAI-compatible models endpoint instead of interpreting
 // vLLM startup logs. Logs stay quiet on the happy path and print only on
 // failure.
-function waitForVllmReady(profile: VllmProfile): Promise<{ ok: boolean; reason?: string }> {
+function waitForVllmReady(
+  profile: VllmProfile,
+  model: VllmModelDef,
+  qualificationMonitor: VllmQualificationMonitor | null,
+): Promise<{ ok: boolean; reason?: string }> {
   return new Promise((resolve) => {
     let resolved = false;
     const start = Date.now();
@@ -689,7 +818,20 @@ function waitForVllmReady(profile: VllmProfile): Promise<{ ok: boolean; reason?:
 
     function poll(): void {
       if (resolved) return;
-      if (vllmEndpointReady()) {
+      if (qualificationMonitor) {
+        const qualification = sampleVllmQualification(profile, qualificationMonitor);
+        if (!qualification.ok) {
+          done({ ok: false, reason: qualification.reason });
+          return;
+        }
+      }
+      if (vllmEndpointReady(model)) {
+        if (qualificationMonitor && profile.qualification) {
+          emit(
+            `Qualified startup telemetry: peak HBM ${String(qualificationMonitor.peakHbmMiB)} MiB ` +
+              `(<${String(profile.qualification.hbmSafetyCeilingMiB)} MiB), uncorrected ECC 0`,
+          );
+        }
         emit(`vLLM is serving on :${String(VLLM_PORT)}`);
         done({ ok: true });
         return;
@@ -889,14 +1031,33 @@ interface InstallVllmOptions {
   beforeInstall?: (modelId: string) => void;
 }
 
+function inspectImageId(profile: VllmProfile): string {
+  return dockerImageInspectFormat("{{.Id}}", profile.image, {
+    env: buildVllmDockerEnv(),
+    ignoreError: true,
+    timeout: 10_000,
+  }).trim();
+}
+
 function imageIsCached(profile: VllmProfile): boolean {
-  return Boolean(
-    dockerImageInspectFormat("{{.Id}}", profile.image, {
-      env: buildVllmDockerEnv(),
-      ignoreError: true,
-      timeout: 10_000,
-    }).trim(),
-  );
+  return Boolean(inspectImageId(profile));
+}
+
+function verifyExpectedImageId(
+  profile: VllmProfile,
+  observedImageId: string,
+): { ok: true } | { ok: false; reason: string } {
+  if (!profile.expectedImageId || observedImageId === profile.expectedImageId) {
+    return { ok: true };
+  }
+  return {
+    ok: false,
+    reason:
+      "qualified image identity mismatch: expected " +
+      profile.expectedImageId +
+      ", resolved " +
+      (observedImageId || "no local image"),
+  };
 }
 
 export function resolveVllmServedModelId(modelId: string, extraServeArgs: string[]): string {
@@ -935,7 +1096,17 @@ export async function installVllm(
     promptFn: opts.promptFn,
   });
   if (!resolved) return { ok: false };
-  const { model, source: modelSource } = resolved;
+  const { model: selectedModel, source: modelSource } = resolved;
+  let model: VllmModelDef;
+  let activeModelProfile: ReturnType<typeof resolveVllmModelProfile>["profile"];
+  try {
+    const effective = resolveVllmModelProfile(selectedModel, profile.platform);
+    model = effective.model;
+    activeModelProfile = effective.profile;
+  } catch (err) {
+    console.error(`  vLLM install failed: ${(err as Error).message}`);
+    return { ok: false };
+  }
   if (model.runtime && !model.platforms.includes(profile.platform)) {
     console.error(`  vLLM install failed: ${model.label} is not supported on ${profile.name}`);
     return { ok: false };
@@ -959,12 +1130,19 @@ export async function installVllm(
   console.log(
     `    Model: ${model.id}${modelSource === "env" ? " (NEMOCLAW_VLLM_MODEL override)" : ""}`,
   );
+  if (activeModelProfile) {
+    console.log(`    Profile: ${activeModelProfile.id} (experimental, opt-in)`);
+  }
   if (extraServeArgs.length > 0) {
     console.log(
       `    Extra serve args: ${String(extraServeArgs.length)} token(s) from ${VLLM_EXTRA_ARGS_ENV}`,
     );
   }
-  if (!opts.hasImage) console.log("    Image download on first run, cached after");
+  if (runtimeProfile.imagePullPolicy === "local-only") {
+    console.log("    Qualified local image required; no pull or fallback is available");
+  } else if (!opts.hasImage) {
+    console.log("    Image download on first run, cached after");
+  }
   console.log("    Model download on first run, cached after");
   console.log("");
 
@@ -990,6 +1168,35 @@ export async function installVllm(
     return { ok: false };
   }
 
+  let localOnlyImageId: string | null = null;
+  if (runtimeProfile.imagePullPolicy === "local-only") {
+    localOnlyImageId = inspectImageId(runtimeProfile);
+    if (!localOnlyImageId) {
+      console.error(
+        "  vLLM install blocked: the qualified experimental runtime image is not published by the configured image source.",
+      );
+      console.error(
+        `  Required local image ID: ${runtimeProfile.expectedImageId ?? runtimeProfile.image}`,
+      );
+      console.error(
+        "  Publish a repository-qualified manifest for these exact bytes and prove its pulled .Id before enabling a fresh install. No fallback image was substituted.",
+      );
+      return { ok: false };
+    }
+    const identity = verifyExpectedImageId(runtimeProfile, localOnlyImageId);
+    if (!identity.ok) {
+      console.error(`  vLLM install failed: ${identity.reason}`);
+      return { ok: false };
+    }
+  }
+
+  const qualification = initializeVllmQualification(runtimeProfile);
+  if (qualification && !qualification.ok) {
+    console.error(`  vLLM install failed: ${qualification.reason}`);
+    return { ok: false };
+  }
+  const qualificationMonitor = qualification?.monitor ?? null;
+
   // Guard the host filesystem before an image pull or model-download
   // container can start. The cache path itself is created only after both
   // storage decisions pass, so Docker never creates it as root.
@@ -997,7 +1204,7 @@ export async function installVllm(
     return { ok: false };
   }
 
-  const hasImage = imageIsCached(runtimeProfile);
+  const hasImage = localOnlyImageId !== null || imageIsCached(runtimeProfile);
   if (!hasImage && !(await imageStorageAccepted(runtimeProfile, opts))) {
     return { ok: false };
   }
@@ -1008,10 +1215,19 @@ export async function installVllm(
     return { ok: false };
   }
 
-  const pull = await pullImage(runtimeProfile);
-  if (!pull.ok) {
-    console.error(`  vLLM install failed: ${String(pull.reason)}`);
-    return { ok: false };
+  if (runtimeProfile.imagePullPolicy !== "local-only") {
+    const pull = await pullImage(runtimeProfile);
+    if (!pull.ok) {
+      console.error(`  vLLM install failed: ${String(pull.reason)}`);
+      return { ok: false };
+    }
+    if (runtimeProfile.expectedImageId) {
+      const identity = verifyExpectedImageId(runtimeProfile, inspectImageId(runtimeProfile));
+      if (!identity.ok) {
+        console.error(`  vLLM install failed: ${identity.reason}`);
+        return { ok: false };
+      }
+    }
   }
 
   // A cold image pull can consume the same host filesystem that backs the
@@ -1038,7 +1254,7 @@ export async function installVllm(
     `Launch can take 5 minutes to ${String(Math.ceil(runtimeProfile.loadTimeoutSec / 60))} minutes`,
   );
 
-  const ready = await waitForVllmReady(runtimeProfile);
+  const ready = await waitForVllmReady(runtimeProfile, model, qualificationMonitor);
   if (!ready.ok) {
     printContainerLogTail(runtimeProfile);
     dockerStop(runtimeProfile.containerName, {

@@ -285,7 +285,7 @@ describe("inference setup navigation", () => {
       (match) => match[1],
     );
 
-    expect(hostValues).toEqual(["0.0.0.0"]);
+    expect(hostValues).toEqual(["0.0.0.0", "0.0.0.0"]);
     expect(markdown).toContain("default-deny inbound rules");
     expect(markdown).toContain("only from the OpenShell Docker subnet to its gateway address");
   });
@@ -299,7 +299,7 @@ describe("inference setup navigation", () => {
         tag: VLLM_IMAGES.ngc2605Post1.tag,
       },
       {
-        prefix: "- The DGX Station Nemotron 3 Ultra express recipe",
+        prefix: "- The canonical DGX Station Nemotron 3 Ultra express recipe",
         image: VLLM_IMAGES.vllm022.arm64,
         tag: VLLM_IMAGES.vllm022.tag,
       },

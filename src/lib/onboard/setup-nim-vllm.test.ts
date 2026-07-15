@@ -3,6 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { requireValue } from "../core/require-value";
+import { applyVllmRuntimeContextWindow } from "../inference/vllm-runtime-context";
 import type { SetupNimSelectionState } from "./setup-nim-flow";
 import {
   buildDgxSparkExistingVllmHeadroomWarning,
@@ -98,10 +99,37 @@ describe("setupNim vLLM route containment", () => {
       "  To keep 'served/model' instead, start detailed setup:",
     );
     expect(console.error).toHaveBeenCalledWith(
-      "    unset NEMOCLAW_PROVIDER NEMOCLAW_MODEL NEMOCLAW_VLLM_MODEL",
+      "    unset NEMOCLAW_PROVIDER NEMOCLAW_MODEL NEMOCLAW_VLLM_MODEL NEMOCLAW_VLLM_PROFILE",
     );
     expect(console.error).toHaveBeenCalledWith("    nemoclaw onboard --fresh");
     expect(console.error).toHaveBeenCalledWith("  Then select Local vLLM when prompted.");
+  });
+
+  it("carries the experimental Ultra route and 262144 context through the supported lifecycle", async () => {
+    const selection = state("nemotron-ultra");
+    const runtimeEnv: NodeJS.ProcessEnv = {};
+    const models = {
+      data: [{ id: "nemotron-ultra", max_model_len: 262144 }],
+    };
+    const handler = createSetupNimVllmHandler(
+      deps({
+        runCapture: () => JSON.stringify(models),
+        applyVllmRuntimeContextWindow: (response, model) =>
+          applyVllmRuntimeContextWindow(response, model, {
+            env: runtimeEnv,
+            logger: { log: vi.fn(), warn: vi.fn() },
+          }),
+      }),
+    );
+
+    await expect(handler(selection, { managedInstall: true })).resolves.toBe("selected");
+    expect(selection).toMatchObject({
+      provider: "vllm-local",
+      model: "nemotron-ultra",
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      preferredInferenceApi: "openai-completions",
+    });
+    expect(runtimeEnv.NEMOCLAW_CONTEXT_WINDOW).toBe("262144");
   });
 
   it("warns on DGX Spark identified via GPU name (firmware-unknown GB10 host)", async () => {

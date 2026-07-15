@@ -63,7 +63,7 @@ import {
   resolveVllmRuntimeProfile,
   resolveVllmServedModelId,
 } from "./vllm";
-import { VLLM_MODELS } from "./vllm-models";
+import { buildVllmServeCommand, VLLM_MODELS } from "./vllm-models";
 
 beforeEach(() => {
   mocks.dockerImageInspectFormat.mockReturnValue("");
@@ -115,14 +115,19 @@ function vllmContainerRow(
 function mockSuccessfulVllmInstall(
   containerName: string,
   ownershipResponses: readonly (() => string)[] = [() => "", () => ""],
+  endpoints: {
+    healthStatus?: string;
+    modelsResponse?: string;
+  } = {},
 ): void {
-  const runCaptureByCommand: Record<string, string> = {
-    curl: '{"data":[]}',
-    sh: "/usr/bin/tool\n",
-  };
-  mocks.runCapture.mockImplementation(
-    (cmd: readonly string[]) => runCaptureByCommand[cmd[0] ?? ""] ?? "",
-  );
+  mocks.runCapture.mockImplementation((cmd: readonly string[]) => {
+    if (cmd[0] === "sh") return "/usr/bin/tool\n";
+    if (cmd[0] !== "curl") return "";
+    const url = cmd.at(-1) ?? "";
+    return url.endsWith("/health")
+      ? (endpoints.healthStatus ?? "")
+      : (endpoints.modelsResponse ?? '{"data":[]}');
+  });
   mocks.dockerPullWithProgressWatchdog.mockResolvedValue({
     status: 0,
     signal: null,
@@ -201,10 +206,37 @@ describe("vLLM profile detection", () => {
       expect.arrayContaining(["--gpus", "device=0", "--shm-size", "16g"]),
     );
 
-    const args = buildVllmRunArgs(runtime, ultra!, runtime.buildDockerRunFlags!());
-    expect(args).not.toContain("--network");
-    expect(args).toEqual(expect.arrayContaining(["-p", "8000:8000"]));
-    expect(args).toContain(runtime.image);
+    const flags = runtime.buildDockerRunFlags!();
+    const args = buildVllmRunArgs(runtime, ultra!, flags, {} as NodeJS.ProcessEnv);
+    expect(args).toEqual([
+      "--pull=never",
+      "--restart",
+      "unless-stopped",
+      "--gpus",
+      "device=0",
+      "--ipc=host",
+      "-v",
+      `${path.join(os.homedir(), ".cache", "huggingface")}:/root/.cache/huggingface`,
+      "-e",
+      "HF_HOME=/root/.cache/huggingface",
+      "--shm-size",
+      "16g",
+      "--ulimit",
+      "memlock=-1",
+      "--ulimit",
+      "stack=67108864",
+      "--label",
+      `${NEMOCLAW_VLLM_MANAGED_LABEL}=true`,
+      "-p",
+      "8000:8000",
+      "--name",
+      NEMOCLAW_VLLM_CONTAINER_NAME,
+      "--entrypoint",
+      "/bin/bash",
+      runtime.image,
+      "-lc",
+      buildVllmServeCommand(ultra!, {} as NodeJS.ProcessEnv),
+    ]);
   });
 
   it("keeps DGX Spark on the Qwen3.6 35B NVFP4 default", () => {
@@ -474,6 +506,7 @@ describe("installVllm model resolution", () => {
     mkdirSpy = vi.spyOn(fs, "mkdirSync").mockImplementation(() => undefined);
     stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     delete process.env.NEMOCLAW_VLLM_MODEL;
+    delete process.env.NEMOCLAW_VLLM_PROFILE;
     delete process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON;
     delete process.env.NEMOCLAW_IGNORE_VLLM_DISK_SPACE;
     delete process.env.HF_TOKEN;

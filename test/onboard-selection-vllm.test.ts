@@ -703,7 +703,7 @@ const { setupNim } = require(${onboardPath});
     );
     assert.match(
       result.stderr,
-      /unset NEMOCLAW_PROVIDER NEMOCLAW_MODEL NEMOCLAW_VLLM_MODEL\s+nemoclaw onboard --fresh\s+Then select Local vLLM when prompted\./,
+      /unset NEMOCLAW_PROVIDER NEMOCLAW_MODEL NEMOCLAW_VLLM_MODEL NEMOCLAW_VLLM_PROFILE\s+nemoclaw onboard --fresh\s+Then select Local vLLM when prompted\./,
     );
   });
 });

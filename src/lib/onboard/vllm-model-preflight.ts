@@ -4,8 +4,8 @@
 import { preflightVllmModelEnv } from "../inference/vllm-models";
 
 /**
- * Validate `NEMOCLAW_VLLM_MODEL` up front, before onboarding runs preflight or
- * touches Docker, mirroring the `connect` preflight added in #4567.
+ * Validate managed-vLLM model/profile input up front, before onboarding runs
+ * preflight or touches Docker, mirroring the `connect` preflight added in #4567.
  *
  * The variable steers the express-vLLM installer, but it is only consumed deep
  * in the `[3/8]` provider step. That made it validated late and path-dependent:

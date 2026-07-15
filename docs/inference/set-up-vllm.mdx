@@ -75,20 +75,24 @@ Generic Linux NVIDIA GPU hosts require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PR
 In an interactive run, the managed path lists the supported model registry for your host profile.
 Press **Enter** to use the profile default or select another validated model with its registered `vllm serve` arguments.
 
-NemoClaw pulls the vLLM image, downloads model weights into `~/.cache/huggingface`, starts the `nemoclaw-vllm` container on `localhost:8000`, streams Hugging Face download progress, and polls `/v1/models` until the model is ready.
+NemoClaw resolves the pinned vLLM image, downloads model weights into `~/.cache/huggingface`, starts the `nemoclaw-vllm` container on `localhost:8000`, streams Hugging Face download progress, and polls `/v1/models` until the model is ready.
+Registry-backed recipes pull that image; a local-only profile requires its exact image to be preloaded.
 The container carries a NemoClaw ownership label so later onboarding runs can distinguish it from a bring-your-own server without trusting the container name alone.
 If an existing `nemoclaw-vllm` container does not carry that label, NemoClaw preserves it and asks you to remove or rename it before installing managed vLLM.
 If another vLLM server already occupies port `8000`, the managed path stops and asks you to select the existing server or stop it first.
 Managed profiles and model-specific recipes use immutable image digests:
 
 - DGX Spark and DGX Station models without a model-specific runtime use the `linux/arm64` digest `sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2` with a compressed layer size of `9.60 GB` under `nvcr.io/nvidia/vllm:26.05.post1-py3`.
-- The DGX Station Nemotron 3 Ultra express recipe uses the multi-platform index digest `sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416` under `vllm/vllm-openai:v0.22.0`; on DGX Station, that index selects a `linux/arm64` manifest with a compressed layer size of `10.67 GB`.
+- The canonical DGX Station Nemotron 3 Ultra express recipe uses the multi-platform index digest `sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416` under `vllm/vllm-openai:v0.22.0`; on DGX Station, that index selects a `linux/arm64` manifest with a compressed layer size of `10.67 GB`.
   It also pins Hugging Face revision `183968f87ae4cedce3039313cac1fd43d112c578` for the approximately `352.38 GB` model download.
+- The opt-in DGX Station `experimental-single-user` profile requires the preloaded local image ID `sha256:e44830d3f0197850e5a63ca895b13a047f358ff4aea15b1655abf61391bb883e`.
+  This ID is not currently published as a pullable repository manifest, and no existing registry tag has been proven to resolve to it.
+  NemoClaw does not substitute the canonical Ultra image or another vLLM image when the qualified image is absent.
 - Generic Linux `arm64` hosts use `sha256:447995cbb57e6c7cf792cab95e9852e5f62b5fb6d2f39e030fa4eda9a54eadb4` with a compressed layer size of `9.28 GB` under `nvcr.io/nvidia/vllm:26.03.post1-py3`.
 - Generic Linux `amd64` hosts use `sha256:7be6c2f676c36059a494fe17254e69ae5c677535ba6191044e5fc8e42a91c773` with a compressed layer size of `8.93 GB` under `nvcr.io/nvidia/vllm:26.03.post1-py3`.
 
 Image pulls from `nvcr.io` require NGC registry login.
-The Station Nemotron 3 Ultra recipe pulls its vLLM image from Docker Hub instead.
+The canonical Station Nemotron 3 Ultra recipe pulls its vLLM image from Docker Hub instead.
 
 The first run duration depends on image and model size, storage performance, and network throughput.
 Later runs reuse the cached image and model weights.
@@ -103,8 +107,9 @@ For Docker's classic image store, NemoClaw checks the absolute `DockerRootDir` r
 For Docker's containerd image store, it checks the top-level `root` from `/etc/containerd/config.toml`, or `/var/lib/containerd` when that configuration file is absent, and also checks `DockerRootDir` for pull staging.
 The check uses the location with the least available capacity.
 
-NemoClaw recognizes an image cache hit only when Docker contains the exact platform digest.
-A cache hit skips the capacity check, but the explicit watched `docker pull` still runs against that immutable digest.
+For registry-backed recipes, NemoClaw recognizes an image cache hit only when Docker contains the exact platform digest.
+A registry-backed cache hit skips the capacity check, but the explicit watched `docker pull` still runs against that immutable digest.
+The local-only experimental profile performs no pull and verifies the qualified image ID directly.
 The model-download helper and the long-lived vLLM container use `--pull=never`, so an implicit pull cannot select another image.
 
 NemoClaw treats `/var/run/docker.sock` and `/run/docker.sock` as the local default Docker socket paths.
@@ -148,6 +153,87 @@ Pass `--station-deepseek` to select the existing `deepseek-v4-flash` recipe whil
 The registered Ultra recipe tracks the [official DGX Station deployment guide](https://github.com/NVIDIA-NeMo/Nemotron/blob/287ae845639d2ce998998cb8fd1f70a3fa943c0b/usage-cookbook/Nemotron-3-Ultra/StationDeploymentGuide/README.md) and configures the pinned model revision, CPU offload, `16 GB` of shared memory, memory/stack ulimits, MTP speculative decoding, and the Nemotron reasoning and tool-call parsers.
 NemoClaw intentionally keeps its existing bridge-networked managed-inference topology instead of importing the playbook's host-network setting.
 The container publishes port `8000` through Docker, so apply the firewall guidance at the top of this page.
+
+### Opt In to the Experimental Single-User Station Profile
+
+The `experimental-single-user` profile extends the existing managed-vLLM and Station express lifecycle; it is not a separate launcher.
+It is explicit opt-in and does not change the canonical Station express recipe above.
+The canonical recipe remains the default while Nemotron-team quality validation of this experimental profile is pending.
+Use it only on a detected DGX Station:
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --station-experimental-single-user
+```
+
+The installer maps this flag to `NEMOCLAW_VLLM_PROFILE=experimental-single-user` and rejects conflicting model, profile, extra-argument, DeepSeek, and non-Station selections.
+
+<Warning>
+The qualified runtime exists today only as local Docker image ID `sha256:e44830d3f0197850e5a63ca895b13a047f358ff4aea15b1655abf61391bb883e`.
+Before running the installer, this command must return that exact ID:
+
+```bash
+docker image inspect -f '{{.Id}}' sha256:e44830d3f0197850e5a63ca895b13a047f358ff4aea15b1655abf61391bb883e
+```
+
+A fresh pull or fresh machine install remains blocked until a repository-qualified manifest pin is published and proven to resolve to the qualified image.
+The profile fails closed instead of silently using a different vLLM image.
+</Warning>
+
+The profile uses the reclaimed-v1/offload90 configuration with this model identity:
+
+| Setting | Value |
+|---|---|
+| Hugging Face model | `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4` |
+| Revision | `183968f87ae4cedce3039313cac1fd43d112c578` |
+| Served model | `nemotron-ultra` |
+| Maximum context | `262144` |
+
+Its container runs with host networking and host IPC, `16 GiB` shared memory, a `650 GiB` container memory limit, tensor parallel size `1`, and a `1200`-second startup timeout.
+The installer fails closed unless exactly one GB300 is available, HBM is below `245000 MiB`, and aggregate and volatile uncorrected ECC are zero before launch; it samples the same exclusive HBM ceiling and ECC contract throughout startup.
+Full workload-level HBM/ECC qualification through chat and tool calls remains part of the blocked current-PR physical Station acceptance run.
+
+After `vllm serve` and the pinned revision's local snapshot path, the profile supplies exactly these vLLM arguments:
+
+```text
+--served-model-name nemotron-ultra
+--host 0.0.0.0
+--port 8000
+--tensor-parallel-size 1
+--trust-remote-code
+--cpu-offload-gb 90
+--cpu-offload-params experts
+--kernel_config '{"enable_flashinfer_autotune": false}'
+--max-num-seqs 1
+--gpu-memory-utilization 0.9
+--kv-cache-memory-bytes 4294967296
+--reasoning-parser nemotron_v3
+--enable-auto-tool-choice
+--tool-call-parser qwen3_coder
+```
+
+The required environment is:
+
+```text
+VLLM_WEIGHT_OFFLOADING_DISABLE_PIN_MEMORY=1
+VLLM_NVFP4_GEMM_BACKEND=flashinfer-trtllm
+NEMOTRON_ULTRA_MODEL_OPT_NVFP4_MOE_RECLAIM=1
+HF_HUB_OFFLINE=1
+TRANSFORMERS_OFFLINE=1
+PYTHONHASHSEED=0
+```
+
+Prefix caching remains disabled, matching the pinned Station guide.
+That setting predates this experimental profile; it is not an optimization introduced by this work.
+The profile does not add `--enable-prefix-caching`, does not use MTP speculative decoding, and disables FlashInfer autotuning explicitly.
+It also does not use the Gen4B/autotuned result, which measured `44.88197518340701` tokens/s/user but took `2174.438460592006` seconds to start.
+The selected reclaimed-v1/offload90 parent configuration measured `41.87059772268699` parser-free AIPerf tokens/s/user and `285.592754706` seconds to API readiness.
+The Hermes parser overlay has functional qualification but no separate AIPerf score.
+
+NemoClaw routes the profile through provider `vllm-local`, model `nemotron-ultra`, and effective context length `262144` using the normal inference and Hermes lifecycle.
+Generated gateway configuration and the dashboard mirror receive the same route and context; do not edit sandbox configuration files directly.
+Nemotron Ultra requires the `qwen3_coder` tool-call parser, not the Hermes tool parser.
+
+This profile has prior benchmark and functional evidence, but it has not completed a fresh physical-DGX-Station qualification from the current PR.
 
 <Warning>
 DGX Station and its managed-vLLM paths remain Deferred until NemoClaw completes end-to-end validation on physical DGX Station hardware.

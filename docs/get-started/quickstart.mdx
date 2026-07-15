@@ -127,6 +127,8 @@ Use these details when your first-run path needs more control.
     DGX Spark, DGX Station, and Windows WSL offer an interactive express-install path that chooses a managed local inference option for the platform.
     On DGX Station, accepting the express prompt selects the pinned `nemotron-3-ultra-550b-a55b` managed-vLLM recipe and completes onboarding without more provider, model, policy, or sandbox-name choices.
     Pass `--station-deepseek` to use DeepSeek V4 Flash for a Station demo instead.
+    Pass `--station-experimental-single-user` to opt in to the named reclaimed-v1/offload90 Station profile within the same managed-vLLM lifecycle; this flag does not change the default Station recipe.
+    The experimental profile currently requires its exact qualified runtime image to be preloaded, so a fresh pull remains blocked until a repository-qualified manifest is published and proven.
     Refer to [Platform Support](../reference/platform-support) and [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) for the current platform behavior.
 
     If `nemoclaw` is not found after installation and you use nvm or fnm, open a new terminal or reload your shell profile.
@@ -196,6 +198,8 @@ Use these details when your first-run path needs more control.
     DGX Spark uses managed vLLM with `qwen3.6-35b-a3b-nvfp4` by default.
     DGX Station express install explicitly selects `nemotron-3-ultra-550b-a55b` instead of the Station managed-vLLM profile default, `deepseek-v4-flash`, and discloses the approximately `352 GB` model download before confirmation.
     To select DeepSeek V4 Flash while retaining the one-confirmation Station express flow, run `curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --station-deepseek`.
+    To opt in to the experimental single-user Station profile, run `curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --station-experimental-single-user`.
+    That profile fails closed unless Docker already has the exact qualified local image ID `sha256:e44830d3f0197850e5a63ca895b13a047f358ff4aea15b1655abf61391bb883e`; it does not substitute another vLLM image.
     Unless `NEMOCLAW_POLICY_TIER` is set, express install applies policy in `suggested` mode with the `balanced` tier, including the base sandbox policy and supported package, model, web-search, and local-inference presets.
     Express install uses `my-assistant` as the sandbox name across all platforms unless `NEMOCLAW_SANDBOX_NAME` is set.
     Windows WSL selects the Windows-host Ollama setup path.
@@ -204,6 +208,7 @@ Use these details when your first-run path needs more control.
     <Warning>
     Express install automates the configuration but does not change DGX Station's Deferred support status.
     Full NemoClaw onboarding with this recipe has not completed end-to-end validation on physical DGX Station hardware.
+    The experimental single-user profile has prior functional qualification evidence, but this change has not completed a fresh, current-PR physical Station qualification.
     </Warning>
 
     The installer auto-launches `nemoclaw onboard` when it can find the new binary.
