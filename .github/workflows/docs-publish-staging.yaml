@@ -11,8 +11,8 @@ on:
       - "fern/**"
       - "package.json"
       - "package-lock.json"
-      - "scripts/generate-starter-prompt.ts"
-      - "scripts/sync-agent-variant-docs.ts"
+      - "scripts/generate-starter-prompt.mts"
+      - "scripts/sync-agent-variant-docs.mts"
       - ".github/workflows/docs-publish-staging.yaml"
 
 permissions:

@@ -6,8 +6,8 @@
 // Used by CI (basic-checks) and locally via `npm run validate:configs`.
 //
 // Usage:
-//   npx tsx scripts/validate-configs.ts              # validate all known config files
-//   npx tsx scripts/validate-configs.ts --file <config> --schema <schema>  # validate one file
+//   npx tsx scripts/validate-configs.mts              # validate all known config files
+//   npx tsx scripts/validate-configs.mts --file <config> --schema <schema>  # validate one file
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
@@ -288,7 +288,7 @@ function main(): void {
   const hasFileFlag = args.indexOf("--file") !== -1;
   const hasSchemaFlag = args.indexOf("--schema") !== -1;
   if (hasFileFlag !== hasSchemaFlag) {
-    console.error("Usage: validate-configs.ts --file <config> --schema <schema>");
+    console.error("Usage: validate-configs.mts --file <config> --schema <schema>");
     process.exitCode = 1;
     return;
   }
@@ -298,7 +298,7 @@ function main(): void {
     const file = args[fileIdx + 1];
     const schema = args[schemaIdx + 1];
     if (!file || !schema || file.startsWith("-") || schema.startsWith("-")) {
-      console.error("Usage: validate-configs.ts --file <config> --schema <schema>");
+      console.error("Usage: validate-configs.mts --file <config> --schema <schema>");
       process.exitCode = 1;
       return;
     }
@@ -385,7 +385,7 @@ export {
 // Only run main() when invoked directly (skip on test `import`).
 if (
   import.meta.url === `file://${process.argv[1]}` ||
-  process.argv[1]?.endsWith("validate-configs.ts")
+  process.argv[1]?.endsWith("validate-configs.mts")
 ) {
   main();
 }
