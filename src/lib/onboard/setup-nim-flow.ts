@@ -25,6 +25,7 @@ import { promptForInferenceProviderSelection } from "./provider-selection-prompt
 import type { RebuildRouteHandoff, RegistryInferenceRoute } from "./rebuild-route-handoff";
 import { prepareProviderDiscovery } from "./setup-nim-provider-discovery";
 import type { SetupNimSelectionState as BaseSetupNimSelectionState } from "./setup-nim-selection";
+import { requiresExactManagedVllm } from "./vllm-menu";
 
 export type SetupNimGpu = ReturnType<typeof import("../inference/nim").detectGpu>;
 export type SetupNimSelectionState = BaseSetupNimSelectionState<HermesAuthMethod>;
@@ -558,9 +559,11 @@ export function createSetupNim(
             continue selectionLoop;
           }
           if (vllmRunning) {
-            const message =
-              `vLLM is already running on localhost:${String(deps.vllmPort)}. ` +
-              "Select Local vLLM, or stop the existing server before selecting the managed install path.";
+            const message = requiresExactManagedVllm()
+              ? `vLLM is already running on localhost:${String(deps.vllmPort)}. ` +
+                "The experimental single-user profile requires the qualified managed runtime; stop the existing server before selecting the managed install path."
+              : `vLLM is already running on localhost:${String(deps.vllmPort)}. ` +
+                "Select Local vLLM, or stop the existing server before selecting the managed install path.";
             deps.error(`  ${message}`);
             if (deps.isNonInteractive()) {
               deps.abortNonInteractive(message);

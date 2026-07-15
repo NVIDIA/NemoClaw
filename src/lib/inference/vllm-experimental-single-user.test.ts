@@ -247,6 +247,7 @@ describe("experimental single-user vLLM install (#6883)", () => {
     delete process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON;
     delete process.env.NEMOCLAW_VLLM_PORT;
     delete process.env.NEMOCLAW_CONTEXT_WINDOW;
+    delete process.env.NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL;
     delete process.env.NEMOCLAW_IGNORE_VLLM_DISK_SPACE;
     delete process.env.HF_TOKEN;
     delete process.env.HUGGING_FACE_HUB_TOKEN;
@@ -261,7 +262,14 @@ describe("experimental single-user vLLM install (#6883)", () => {
 
   it.each([
     ["NEMOCLAW_VLLM_PORT", "9000", "requires NEMOCLAW_VLLM_PORT=8000"],
+    ["NEMOCLAW_VLLM_PORT", "08000", "requires NEMOCLAW_VLLM_PORT=8000"],
     ["NEMOCLAW_CONTEXT_WINDOW", "8192", "requires NEMOCLAW_CONTEXT_WINDOW=262144"],
+    ["NEMOCLAW_CONTEXT_WINDOW", "0262144", "requires NEMOCLAW_CONTEXT_WINDOW=262144"],
+    [
+      "NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL",
+      "http://127.0.0.1",
+      "requires NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL=http://host.openshell.internal",
+    ],
   ])("rejects conflicting %s before managed-vLLM side effects", async (name, value, message) => {
     process.env[name] = value;
     const profile = detectVllmProfile({ platform: "station", type: "nvidia" })!;

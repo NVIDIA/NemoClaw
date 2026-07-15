@@ -166,7 +166,8 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --station-experimenta
 ```
 
 The installer maps this flag to `NEMOCLAW_VLLM_PROFILE=experimental-single-user` and rejects conflicting model, profile, extra-argument, DeepSeek, and non-Station selections.
-It also rejects ambient `NEMOCLAW_VLLM_PORT` values other than `8000` and `NEMOCLAW_CONTEXT_WINDOW` values other than `262144`, so host readiness, gateway routing, and the dashboard cannot drift from the qualified contract.
+It also rejects ambient `NEMOCLAW_VLLM_PORT` values other than `8000`, `NEMOCLAW_CONTEXT_WINDOW` values other than `262144`, and `NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL` routes other than `http://host.openshell.internal`, so host readiness, gateway routing, and the dashboard cannot drift from the qualified contract.
+An existing server on port `8000` is not reused for this profile; stop it before opting in so the existing managed-vLLM lifecycle can prove the qualified image, arguments, environment, and hardware limits.
 
 <Warning>
 The qualified runtime exists today only as local Docker image ID `sha256:e44830d3f0197850e5a63ca895b13a047f358ff4aea15b1655abf61391bb883e`.

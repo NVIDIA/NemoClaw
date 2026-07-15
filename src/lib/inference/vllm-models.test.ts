@@ -128,6 +128,7 @@ describe("vllm model registry", () => {
       servedModelId: "nemotron-ultra",
       revision: "183968f87ae4cedce3039313cac1fd43d112c578",
       requiredVllmPort: 8000,
+      requiredSandboxHostUrl: "http://host.openshell.internal",
       exactServeArgs: [
         "--served-model-name",
         "nemotron-ultra",
@@ -565,6 +566,7 @@ describe("preflightVllmModelEnv", () => {
         [VLLM_PROFILE_ENV]: EXPERIMENTAL_SINGLE_USER_PROFILE,
         NEMOCLAW_VLLM_PORT: "8000",
         NEMOCLAW_CONTEXT_WINDOW: "262144",
+        NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL: "host.openshell.internal",
       } as NodeJS.ProcessEnv),
     ).toEqual({ ok: true });
   });
@@ -616,7 +618,14 @@ describe("preflightVllmModelEnv", () => {
 
   it.each([
     ["NEMOCLAW_VLLM_PORT", "9000", /requires NEMOCLAW_VLLM_PORT=8000/],
+    ["NEMOCLAW_VLLM_PORT", "08000", /requires NEMOCLAW_VLLM_PORT=8000/],
     ["NEMOCLAW_CONTEXT_WINDOW", "8192", /requires NEMOCLAW_CONTEXT_WINDOW=262144/],
+    ["NEMOCLAW_CONTEXT_WINDOW", "0262144", /requires NEMOCLAW_CONTEXT_WINDOW=262144/],
+    [
+      "NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL",
+      "http://127.0.0.1",
+      /requires NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL=http:\/\/host\.openshell\.internal/,
+    ],
   ])("rejects conflicting qualified-profile runtime input %s", (name, value, message) => {
     expect(
       preflightVllmModelEnv({

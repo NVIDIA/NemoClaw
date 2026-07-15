@@ -27,6 +27,8 @@
  * envelope, and tool-call behaviour validated.
  */
 
+import { HOST_GATEWAY_URL, LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV } from "./local-host-url";
+
 export type VllmPlatform = "spark" | "station" | "linux";
 
 export const VLLM_PROFILE_ENV = "NEMOCLAW_VLLM_PROFILE";
@@ -92,6 +94,8 @@ export interface VllmModelProfileOverride {
   revision: string;
   /** Host port that must stay aligned with this profile's exact serve arguments. */
   requiredVllmPort: number;
+  /** Sandbox-facing host route required by this qualified profile. */
+  requiredSandboxHostUrl: string;
   /** Complete ordered vLLM arguments after the model ID. Replaces shared/default args. */
   exactServeArgs: readonly string[];
   /** Required runtime/container replacement for this profile. */
@@ -331,6 +335,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
         servedModelId: "nemotron-ultra",
         revision: "183968f87ae4cedce3039313cac1fd43d112c578",
         requiredVllmPort: 8000,
+        requiredSandboxHostUrl: HOST_GATEWAY_URL,
         exactServeArgs: [
           "--served-model-name",
           "nemotron-ultra",
@@ -506,10 +511,7 @@ function assertVllmModelProfileRuntimeInputs(
   env: NodeJS.ProcessEnv,
 ): void {
   const requestedPort = String(env.NEMOCLAW_VLLM_PORT ?? "").trim();
-  if (
-    requestedPort &&
-    (!/^[0-9]+$/.test(requestedPort) || Number(requestedPort) !== profile.requiredVllmPort)
-  ) {
+  if (requestedPort && requestedPort !== String(profile.requiredVllmPort)) {
     throw new Error(
       `${VLLM_PROFILE_ENV}='${profile.id}' requires ` +
         `NEMOCLAW_VLLM_PORT=${String(profile.requiredVllmPort)}; remove the override or set it to ` +
@@ -519,15 +521,25 @@ function assertVllmModelProfileRuntimeInputs(
 
   const requiredContextWindow = profile.readiness.maxModelLen;
   const requestedContextWindow = String(env.NEMOCLAW_CONTEXT_WINDOW ?? "").trim();
-  if (
-    requestedContextWindow &&
-    (!/^[0-9]+$/.test(requestedContextWindow) ||
-      Number(requestedContextWindow) !== requiredContextWindow)
-  ) {
+  if (requestedContextWindow && requestedContextWindow !== String(requiredContextWindow)) {
     throw new Error(
       `${VLLM_PROFILE_ENV}='${profile.id}' requires ` +
         `NEMOCLAW_CONTEXT_WINDOW=${String(requiredContextWindow)}; remove the override or set it to ` +
         `${String(requiredContextWindow)}.`,
+    );
+  }
+
+  const requestedSandboxHostUrl = String(env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV] ?? "").trim();
+  const requiredSandboxHost = profile.requiredSandboxHostUrl.replace(/^http:\/\//, "");
+  if (
+    requestedSandboxHostUrl &&
+    requestedSandboxHostUrl.replace(/\/+$/, "") !== profile.requiredSandboxHostUrl &&
+    requestedSandboxHostUrl.replace(/\/+$/, "") !== requiredSandboxHost
+  ) {
+    throw new Error(
+      `${VLLM_PROFILE_ENV}='${profile.id}' requires ` +
+        `${LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV}=${profile.requiredSandboxHostUrl}; remove the ` +
+        `override or set it to ${profile.requiredSandboxHostUrl}.`,
     );
   }
 }

@@ -2671,6 +2671,7 @@ STATION_EXPERIMENTAL_SINGLE_USER_PROFILE="experimental-single-user"
 STATION_EXPERIMENTAL_SINGLE_USER_SERVED_MODEL="nemotron-ultra"
 STATION_EXPERIMENTAL_SINGLE_USER_PORT="8000"
 STATION_EXPERIMENTAL_SINGLE_USER_CONTEXT_WINDOW="262144"
+STATION_EXPERIMENTAL_SINGLE_USER_SANDBOX_HOST_URL="http://host.openshell.internal"
 
 normalize_station_vllm_model() {
   printf "%s" "${1:-}" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
@@ -2770,6 +2771,15 @@ validate_station_experimental_single_user_override() {
     "" | "$STATION_EXPERIMENTAL_SINGLE_USER_CONTEXT_WINDOW") ;;
     *)
       error "--station-experimental-single-user conflicts with NEMOCLAW_CONTEXT_WINDOW='${NEMOCLAW_CONTEXT_WINDOW}'. Remove the override or set NEMOCLAW_CONTEXT_WINDOW=${STATION_EXPERIMENTAL_SINGLE_USER_CONTEXT_WINDOW}."
+      ;;
+  esac
+
+  local requested_sandbox_host_url
+  requested_sandbox_host_url="$(printf "%s" "${NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL:-}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//; s:/*$::')"
+  case "$requested_sandbox_host_url" in
+    "" | "$STATION_EXPERIMENTAL_SINGLE_USER_SANDBOX_HOST_URL" | "host.openshell.internal") ;;
+    *)
+      error "--station-experimental-single-user conflicts with NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL='${NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL}'. Remove the override or set NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL=${STATION_EXPERIMENTAL_SINGLE_USER_SANDBOX_HOST_URL}."
       ;;
   esac
 

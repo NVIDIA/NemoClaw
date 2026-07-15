@@ -21,10 +21,13 @@
  * available for this host." message. It also lets the caller surface managed
  * vLLM by default for known DGX platforms while generic Linux stays gated, and
  * logs a note when running-vLLM takes precedence over the env-var opt-in.
+ * Exact qualified profiles are the exception: they retain the install entry so
+ * the FSM can reject an occupied port instead of reusing an unqualified server.
  */
 
 import { VLLM_PORT } from "../core/ports";
 import type { NvidiaPlatform } from "../inference/nim";
+import { EXPERIMENTAL_SINGLE_USER_PROFILE, VLLM_PROFILE_ENV } from "../inference/vllm-models";
 
 interface VllmProfileShape {
   name: string;
@@ -48,6 +51,20 @@ export interface BuildVllmMenuOptions {
   log?: (message: string) => void;
 }
 
+/**
+ * Exact managed-runtime profiles cannot reuse an arbitrary listener on the
+ * local vLLM port. Their image, arguments, environment, and safety checks are
+ * part of the qualified contract, so onboarding must keep the managed-install
+ * transition and let it fail closed until the existing server is stopped.
+ */
+export function requiresExactManagedVllm(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (
+    String(env[VLLM_PROFILE_ENV] ?? "")
+      .trim()
+      .toLowerCase() === EXPERIMENTAL_SINGLE_USER_PROFILE
+  );
+}
+
 export function buildVllmMenuEntries(opts: BuildVllmMenuOptions): VllmMenuEntry[] {
   const log = opts.log ?? console.log;
   // Read NEMOCLAW_PROVIDER directly so interactive runs with an explicit
@@ -56,7 +73,8 @@ export function buildVllmMenuEntries(opts: BuildVllmMenuOptions): VllmMenuEntry[
   const env = opts.env ?? process.env;
   const userChoseManagedVllm =
     (env.NEMOCLAW_PROVIDER || "").trim().toLowerCase() === "install-vllm";
-  if (opts.vllmRunning) {
+  const exactManagedVllmRequired = requiresExactManagedVllm(env);
+  if (opts.vllmRunning && !exactManagedVllmRequired) {
     if (userChoseManagedVllm) {
       log(
         `  Note: NEMOCLAW_PROVIDER=install-vllm requested, but vLLM is already running on localhost:${VLLM_PORT} — selecting the running instance.`,
@@ -71,7 +89,13 @@ export function buildVllmMenuEntries(opts: BuildVllmMenuOptions): VllmMenuEntry[
       },
     ];
   }
+  if (opts.vllmRunning && exactManagedVllmRequired) {
+    log(
+      `  Note: ${VLLM_PROFILE_ENV}=${EXPERIMENTAL_SINGLE_USER_PROFILE} requires the qualified managed runtime; the existing vLLM instance on localhost:${VLLM_PORT} cannot be reused.`,
+    );
+  }
   if (
+    exactManagedVllmRequired ||
     userChoseManagedVllm ||
     (opts.vllmProfile &&
       (opts.experimental || (opts.platform && MANAGED_VLLM_DEFAULT_PLATFORMS.has(opts.platform))))
