@@ -9,10 +9,11 @@
  */
 
 import path from "path";
-import { warnIfStale } from "../src/lib/stale-dist-check";
+import { fileURLToPath } from "node:url";
+import { warnIfStale } from "../src/lib/stale-dist-check.ts";
 
 try {
-  const repoRoot = path.resolve(__dirname, "..");
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   warnIfStale(repoRoot);
 } catch {
   // Never block the git operation, even if the check itself crashes.
