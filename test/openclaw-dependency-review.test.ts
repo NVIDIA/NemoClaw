@@ -100,6 +100,7 @@ function workflowContracts(): Array<{ name: string; workflow: Workflow }> {
 function runBaseImageBuildArgGuard(
   step: WorkflowStep,
   openclawVersion: string,
+  agent = "openclaw",
 ): { output: string; result: ReturnType<typeof spawnSync> } {
   const tmp = mkdtempSync(path.join(tmpdir(), "nemoclaw-base-image-build-args-"));
   const githubOutput = path.join(tmp, "github-output");
@@ -109,6 +110,7 @@ function runBaseImageBuildArgGuard(
       encoding: "utf-8",
       env: {
         ...process.env,
+        AGENT: agent,
         GITHUB_OUTPUT: githubOutput,
         OPENCLAW_VERSION_INPUT: openclawVersion,
       },
@@ -491,6 +493,12 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
       const { output, result } = runBaseImageBuildArgGuard(guard, input);
       expect(result.status, `${JSON.stringify(input)}: ${result.stderr}`).toBe(0);
       expect(output).toBe(expectedOutput);
+    }
+
+    for (const agent of ["hermes", "langchain-deepagents-code"]) {
+      const { output, result } = runBaseImageBuildArgGuard(guard, "2026.6.10", agent);
+      expect(result.status, `${agent}: ${result.stderr}`).toBe(0);
+      expect(output).toBe("openclaw_build_arg=\n");
     }
 
     for (const input of ["v2026.6.10", "2026.6.10-beta.1", "2026.6.10 trailing", "2026.4.24"]) {

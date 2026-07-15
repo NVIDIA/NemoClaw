@@ -438,6 +438,36 @@ function requireJobStep(
   return step;
 }
 
+function requireDockerEngineRebuilds(
+  errors: string[],
+  jobName: string,
+  jobEnv: WorkflowRecord,
+  steps: readonly WorkflowStep[],
+): void {
+  const hasSeparateCacheBuilder = steps.some((step) => {
+    const uses = stringValue(step.uses);
+    return (
+      uses.startsWith("docker/setup-buildx-action@") ||
+      uses.startsWith("docker/build-push-action@")
+    );
+  });
+  const routesBuildsAwayFromDocker = steps.some((step) => {
+    const run = stringValue(step.run);
+    return (
+      Object.hasOwn(asRecord(step.env), "BUILDX_BUILDER") ||
+      /BUILDX_BUILDER(?:=|<<)/u.test(run) ||
+      /docker\s+buildx\s+use(?:\s|$)/u.test(run)
+    );
+  });
+  if (
+    Object.hasOwn(jobEnv, "BUILDX_BUILDER") ||
+    hasSeparateCacheBuilder ||
+    routesBuildsAwayFromDocker
+  ) {
+    errors.push(`${jobName} must keep rebuild builds on the Docker engine cache`);
+  }
+}
+
 function requireRunContains(
   errors: string[],
   step: WorkflowStep | undefined,
@@ -1265,6 +1295,7 @@ function validateRebuildOpenClawJob(errors: string[], jobs: WorkflowRecord): voi
 
   const steps = asSteps(job.steps);
   requireNoDispatchInputInterpolation(errors, steps);
+  requireDockerEngineRebuilds(errors, jobName, jobEnv, steps);
   for (const step of steps) {
     if (step.name !== "Run OpenClaw rebuild live test") {
       requireEnvDoesNotExposeSecret(
@@ -1305,6 +1336,7 @@ function validateRebuildOpenClawJob(errors: string[], jobs: WorkflowRecord): voi
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/rebuild-openclaw.test.ts");
+
 }
 
 function validateRebuildHermesJob(
@@ -1376,6 +1408,7 @@ function validateRebuildHermesJob(
 
   const steps = asSteps(job.steps);
   requireNoDispatchInputInterpolation(errors, steps);
+  requireDockerEngineRebuilds(errors, jobName, jobEnv, steps);
   for (const step of steps) {
     const stepName = `${jobName} step '${step.name ?? step.uses ?? "<unnamed>"}'`;
     const stepEnv = asRecord(step.env);
@@ -1409,6 +1442,7 @@ function validateRebuildHermesJob(
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/rebuild-hermes.test.ts");
+
 }
 
 function validateSandboxRebuildJob(errors: string[], jobs: WorkflowRecord): void {
@@ -3859,6 +3893,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     errors.push("checkout step must set persist-credentials=false");
   }
 
+  const dcodeTargetIf = "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}";
   const configureTrace = requireStep(errors, steps, "Configure live E2E trace directory");
   const configureTraceEnv = asRecord(configureTrace?.env);
   if (configureTraceEnv.TARGET_ID !== "${{ matrix.id }}") {
@@ -3886,10 +3921,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     "Install Deep Agents Code TUI host dependencies",
     ["expect"],
   );
-  if (
-    dcodeHostDependencies?.if !==
-    "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}"
-  ) {
+  if (dcodeHostDependencies?.if !== dcodeTargetIf) {
     errors.push("live DCode TUI host dependencies must be scoped to the typed DCode target");
   }
 
@@ -3914,10 +3946,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
       "live DCode profile import gate must build the reviewed repository base without an override",
     );
   }
-  if (
-    dcodeProfileImportGate?.["if"] !==
-    "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}"
-  ) {
+  if (dcodeProfileImportGate?.["if"] !== dcodeTargetIf) {
     errors.push("live DCode profile import gate must be scoped to the typed DCode target");
   }
   if (dcodeProfileImportGate?.shell !== "bash") {
@@ -3928,6 +3957,26 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     "bash scripts/check-dcode-profile-import-gate.sh"
   ) {
     errors.push("live DCode profile import gate must run the reviewed negative-build script");
+  }
+  const dcodeGateIndex = dcodeProfileImportGate
+    ? steps.indexOf(dcodeProfileImportGate)
+    : steps.length;
+  const routesDcodeBuildsThroughBuildx = steps.slice(0, dcodeGateIndex).some((step) => {
+    const stepCanRunForDcode = step["if"] === undefined || step["if"] === dcodeTargetIf;
+    const run = stringValue(step.run);
+    return (
+      stepCanRunForDcode &&
+      (stringValue(step.uses).startsWith("docker/setup-buildx-action@") ||
+        /BUILDX_BUILDER(?:=|<<)/u.test(run) ||
+        /docker\s+buildx\s+use(?:\s|$)/u.test(run))
+    );
+  });
+  if (
+    Object.hasOwn(jobEnv, "BUILDX_BUILDER") ||
+    Object.hasOwn(asRecord(dcodeProfileImportGate?.env), "BUILDX_BUILDER") ||
+    routesDcodeBuildsThroughBuildx
+  ) {
+    errors.push("live DCode profile import gate must keep its local image chain on the Docker engine");
   }
 
   const runVitest = requireStep(errors, steps, "Run live E2E tests");

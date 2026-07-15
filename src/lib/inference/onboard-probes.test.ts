@@ -27,6 +27,8 @@ const {
   probeOpenAiLikeEndpoint,
   RETRIABLE_HTTP_PROBE_STATUSES,
 } = require("./onboard-probes");
+const { assertEndpointResolvesPublic } =
+  require("./endpoint-ssrf-preflight") as typeof import("./endpoint-ssrf-preflight");
 
 const FAKE_CONFIG_PATH = "/tmp/nemoclaw-test-credential.conf";
 const FAKE_CREDENTIAL_ARGS = ["--config", FAKE_CONFIG_PATH] as const;
@@ -475,6 +477,39 @@ describe("OpenAI-compatible inference probes", () => {
       });
       expect(result).toMatchObject({ ok: false });
       expect(result.message).toMatch(/private\/internal address/i);
+    });
+
+    it("allows a preflight-approved RFC1918 literal while keeping metadata blocked (#6861)", async () => {
+      const preflight = await assertEndpointResolvesPublic("http://10.0.0.8/v1", async () => [], {
+        trustedPrivateHosts: ["10.0.0.8"],
+      });
+      const body = `if [ -n "$outfile" ]; then
+  cat <<'JSON' > "$outfile"
+{"choices":[{"message":{"content":"OK"}}]}
+JSON
+fi
+printf '200'
+exit 0
+`;
+      withFakeCurlProbe(
+        { script: makeFakeCurlScript(body), dirPrefix: "nemoclaw-trusted-private-probe-" },
+        () => {
+          const approved = probeOpenAiLikeEndpoint("http://10.0.0.8/v1", "openai/model", "dummy", {
+            skipResponsesProbe: true,
+            pinnedAddresses: [],
+            trustedPrivateCapability: preflight.trustedPrivateCapability,
+          });
+          expect(approved).toMatchObject({ ok: true });
+
+          const metadata = probeOpenAiLikeEndpoint(
+            "http://169.254.169.254/v1",
+            "openai/model",
+            "dummy",
+            { skipResponsesProbe: true, pinnedAddresses: [] },
+          );
+          expect(metadata).toMatchObject({ ok: false });
+        },
+      );
     });
 
     it("allows a loopback endpoint so local inference validation can proceed (#6293)", () => {

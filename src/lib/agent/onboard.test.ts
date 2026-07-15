@@ -31,6 +31,7 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
       reason: "test fixture",
     },
     stateDirs: [],
+    runtimeAuthStateDirs: [],
     stateFiles: [],
     userManagedFiles: [],
     versionCommand: "agent --version",

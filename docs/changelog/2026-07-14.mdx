@@ -1,0 +1,66 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.83
+
+NemoClaw v0.0.83 makes shared inference route changes explicit and safe, restores DGX Station GB300 express setup, warns on risky local vLLM configurations, and fixes several onboarding and platform edge cases.
+
+- Shared inference route changes are now explicit and fail-safe.
+  When multiple sandboxes share a gateway, onboarding warns immediately before re-pointing the live route and fails closed before replacing a provider-global identity used by another sandbox.
+  Status output shows each sandbox's recorded route, the live route, and whether `connect` can safely restore a drifted route.
+  For more information, refer to [View Active Inference Route](/user-guide/openclaw/inference/manage-inference/view-active-inference-route), [Switch Models](/user-guide/openclaw/inference/manage-inference/switch-models), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- DGX Station GB300 systems enter the express-install path, and managed vLLM storage preflight blocks only for a verified shortage rather than inconclusive capacity.
+  For more information, refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm) and [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Onboarding warns when a bring-your-own vLLM server on DGX Spark appears to serve a large unquantized model that may exhaust GPU memory under agent tool-call load.
+  The warning is suppressed for the managed Spark vLLM recipe.
+  For more information, refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm) and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- Re-onboarding with the reuse path preserves tier-default policy presets such as `brave` and `tavily` when the policy tier and web-search choice are unchanged.
+- Unreachable custom endpoints during onboarding now route through the transport-recovery path with DNS/VPN guidance and a retry/back/exit prompt instead of silently looping back to provider selection.
+- Rebuild preflight uses the model-aware token field for GPT-5 and o-series models, preventing spurious HTTP 400 failures before rebuild processing begins.
+- Corporate CA trust anchors are available throughout the sandbox image build, so `npm audit signatures` succeeds behind TLS-intercepting corporate proxies without manual workarounds.
+- SSH `ControlMaster`-delegated forwards are recognized by the untracked-forward fallback, preventing a healthy sandbox from being deleted after a forward-detection timeout.
+- Hermes light terminal skin writes correctly on macOS via stdin streaming.
+
+## v0.0.82
+
+NemoClaw v0.0.82 adds non-destructive sandbox stop and start commands, protects managed vLLM downloads with storage checks, strengthens custom policy and dependency validation, and improves onboarding, backup, snapshot, and contributor guidance.
+
+- Sandbox lifecycle controls can now free host resources without deleting a workspace.
+  `nemoclaw <name> stop` stops managed channels and the sandbox's Docker containers while leaving the workspace, registry entry, OpenShell record, credentials, shared gateway, and inference services intact.
+  `nemoclaw <name> start` starts or unpauses the container, then checks runtime health and repairs the gateway and host forwards where applicable.
+  For more information, refer to [Run Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/run-sandboxes) and [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Backup and snapshot recovery handle stopped and cloned sandboxes more safely.
+  `backup-all` can temporarily start an eligible stopped Docker sandbox, capture its backup, and return it to the stopped state, while strict mode still fails when identity, startup, backup, or cleanup cannot be proven.
+  Snapshot clones receive a destination-owned dashboard port so their dashboard URL and later rebuilds do not conflict with the source sandbox.
+  Installer upgrades also ignore route-only placeholders left by interrupted onboarding instead of treating them as backupable sandboxes.
+  For more information, refer to [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots) and [Run Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/run-sandboxes).
+- Managed vLLM setup checks storage before large downloads begin.
+  NemoClaw verifies Docker image storage and the Hugging Face model cache before an uncached image pull or model download, rechecks model capacity after the image pull, and stops when capacity or filesystem identity cannot be established unless the operator explicitly accepts the warning.
+  Managed profiles use immutable platform digests, and the model download and serving containers use `--pull=never` so an implicit pull cannot bypass the storage gate.
+  For more information, refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm) and [Choose an Inference Provider](/user-guide/openclaw/inference/learn-and-choose/choose-inference-provider).
+- Onboarding reports local inference and gateway conflicts more accurately.
+  An identifiable foreign listener on the OpenShell gateway port now fails fast with process details and recovery guidance, interactive setup continues to detect running Ollama and vLLM services when another registry route exists, and an installed but stopped Ollama daemon appears as a start action instead of a running status.
+  Loopback readiness checks bypass host proxies, compatible endpoint validation recommends an OpenAI-compatible endpoint or switching to OpenClaw when a Chat-Completions-only agent selects an Anthropic-compatible endpoint that does not serve `/v1/chat/completions`, and an eligible matching successful check can satisfy the immediately following smoke probe without a duplicate request.
+  For more information, refer to [Troubleshooting](/user-guide/openclaw/reference/troubleshooting), [Choose a Local Inference Server](/user-guide/openclaw/inference/local-inference/choose-local-inference-server), and [Understand Provider Validation](/user-guide/openclaw/inference/validate-inference/understand-provider-validation).
+- Interrupted onboarding preserves more of the selected route and sandbox intent.
+  Resume repairs a missing pending route reservation when inference setup is already complete, and sandbox creation resolves its secret-free policy, messaging, provider, resource, and cleanup intent before destructive state changes begin.
+  These protections keep resumed setup and stale-provider cleanup aligned with the choices made before the interruption.
+  For more information, refer to [NemoClaw Quickstart](/user-guide/openclaw/get-started/quickstart) and [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Managed Deep Agents headless sessions now use the bounded session supervisor, so completed sessions reap their DCode and LangGraph descendants without affecting other sessions or leaving the sandbox unusable.
+  For more information, refer to [Quickstart with LangChain Deep Agents Code](/user-guide/deepagents/get-started/quickstart).
+- Custom policy application rejects catch-all destinations before widening sandbox egress.
+  Runtime custom presets now reject `*`, `0.0.0.0`, `0.0.0.0/0`, `::`, and `::/0` while continuing to allow scoped subdomain wildcards such as `*.example.com`.
+  The same semantic check protects repository validation, `policy-add --from-file`, and in-memory custom preset application.
+  For more information, refer to [Customize the Network Policy](/user-guide/openclaw/network-policy/customize-network-policy).
+- NemoClaw now requires Node.js 22.19 or later for host installs and contributor tooling, matching current OpenClaw runtime and advisor SDK requirements.
+  Ubuntu 26.04 has a digest-pinned userspace contract lane for CLI, preflight, installer, and platform checks, while Docker-host, AppArmor, Landlock, and live onboarding validation remain pending.
+  For more information, refer to [Prerequisites](/user-guide/openclaw/get-started/prerequisites) and [Platform Support and Launch Claims](/user-guide/openclaw/reference/platform-support).
+- Contributor guidance now routes independent integrations, custom images, recipes, and complete workflows through Community Solutions while reserving canonical NemoClaw documentation for approved, maintained product surfaces.
+  The contributor skill catalog also adds evidence-driven workflows for semantic dependency upgrades and route-safe documentation refactors.
+  For more information, refer to [Community Solutions](/user-guide/openclaw/resources/community-contributions) and the [Documentation Contributor Guide](https://github.com/NVIDIA/NemoClaw/blob/main/docs/CONTRIBUTING.md).
+- Build and dependency trust boundaries cover more of the sandbox image path.
+  Reviewed npm archives now share one production dependency audit, OpenClaw's managed WeChat runtime installs from a NemoClaw-owned offline lock, and the messaging build plan no longer persists in final OpenClaw or Hermes image environments.
+  Source and blueprint rebuilds also reuse cached plugin dependency layers.
+  For more information, refer to the [OpenClaw 2026.6.10 Dependency Review](https://github.com/NVIDIA/NemoClaw/blob/main/docs/security/openclaw-2026.6.10-dependency-review.md).

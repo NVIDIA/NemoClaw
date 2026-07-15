@@ -1251,11 +1251,7 @@ $$nemoclaw my-assistant status
 
 #### Checking the OpenClaw version
 
-NemoClaw pins the OpenClaw version inside the sandbox at build time, not at runtime.
-The NemoClaw runtime build target is declared by `OPENCLAW_VERSION` in the NemoClaw Dockerfiles.
-The `min_openclaw_version` field in `nemoclaw-blueprint/blueprint.yaml` remains the compatibility floor for direct blueprint consumers, so it can be lower than the Dockerfile target.
-Existing sandboxes do not auto-upgrade when a newer NemoClaw release ships a newer pin.
-Upgrade by rebuilding the sandbox.
+Refer to [Update Sandboxes](../manage-sandboxes/operate-sandboxes/update-sandboxes#understand-agent-version-pins) for the OpenClaw version pin and rebuild policy.
 
 `$$nemoclaw <name> status` prints the running OpenClaw version on the `Agent` line:
 
@@ -1279,9 +1275,7 @@ The rebuild reuses the existing sandbox name and persisted credentials, so messa
 
 #### Checking the Hermes version
 
-NemoClaw pins the Hermes version inside the sandbox image at build time, not at runtime.
-The Hermes agent manifest declares the expected version and the `hermes --version` probe command.
-Existing sandboxes do not auto-upgrade when a newer NemoClaw release ships a newer Hermes pin; you upgrade by rebuilding the sandbox.
+Refer to [Update Sandboxes](../manage-sandboxes/operate-sandboxes/update-sandboxes#understand-agent-version-pins) for the Hermes version pin and rebuild policy.
 
 `nemohermes <name> status` prints the running Hermes version on the `Agent` line:
 
@@ -1305,9 +1299,7 @@ The rebuild reuses the existing sandbox name and persisted credentials, so messa
 
 #### Checking the Deep Agents version
 
-NemoClaw pins the Deep Agents Code version inside the sandbox image at build time, not at runtime.
-The `langchain-deepagents-code` agent manifest declares the expected version and the `dcode --version` probe command.
-Existing sandboxes do not auto-upgrade when a newer NemoClaw release ships a newer Deep Agents Code pin; you upgrade by rebuilding the sandbox.
+Refer to [Update Sandboxes](../manage-sandboxes/operate-sandboxes/update-sandboxes#understand-agent-version-pins) for the Deep Agents Code version pin and rebuild policy.
 
 `nemo-deepagents <name> status` prints the running Deep Agents Code version on the `Agent` line:
 
@@ -3245,6 +3237,7 @@ Set them before running `$$nemoclaw onboard`.
 | `NEMOCLAW_PROVIDER` | provider key (e.g. `build`, `openrouter`, `openai`, `anthropic`, `anthropicCompatible`, `gemini`, `ollama`, `custom`, `vllm`, `nim-local`, `routed`, `hermes-provider`, `install-vllm`, `install-ollama`, `install-windows-ollama`, `start-windows-ollama`) | Selects the inference provider during onboarding. The wizard skips the provider menu in both interactive and non-interactive runs when this is set. Aliases: `cloud` → `build`, `open-router` / `openrouterai` → `openrouter`, `nim` → `nim-local`, `hermes` / `nous` / `nous-portal` → `hermes-provider`, `anthropiccompatible` → `anthropicCompatible`. Invalid values fail fast with the list of accepted keys. |
 | `NEMOCLAW_TOOL_DISCLOSURE` | `progressive` or `direct` | Selects progressive tool discovery or the prior direct-exposure behavior. Defaults to `progressive`; `--tool-disclosure` takes precedence when both are set. |
 | `NEMOCLAW_ENDPOINT_URL` | URL | Custom endpoint URL. Used together with `NEMOCLAW_PROVIDER=custom` for OpenAI-compatible endpoints or `NEMOCLAW_PROVIDER=anthropicCompatible` for Anthropic-compatible endpoints. |
+| `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS` | comma-separated exact hostnames or IP literals | Allows operator-owned RFC1918, CGNAT, or IPv6 ULA inference endpoints during custom endpoint onboarding. Link-local metadata and other reserved ranges remain blocked; DNS resolution and connection pinning remain active; wildcards are not supported. |
 | `NEMOCLAW_PREFERRED_API` | `completions` (currently the only honored value) | Forces the validation probe to use the `/v1/chat/completions` API path instead of the newer `/v1/responses` API. |
 | `NEMOCLAW_INFERENCE_INPUTS` | comma-separated list of `text` and/or `image` | Declares model input modalities for vision-capable models. Validated strictly; unknown tokens are ignored. |
 | `NEMOCLAW_OLLAMA_REQUIRE_TOOLS` | `0` to disable, anything else to keep the default | When set to `0`, skips the Ollama tool-calling capability check during local-inference onboarding. |
