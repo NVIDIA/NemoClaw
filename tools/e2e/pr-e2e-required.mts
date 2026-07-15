@@ -324,7 +324,7 @@ export async function waitForRequiredGate(
   throw new Error(`Timed out waiting for the trusted E2E verdict${logUrlSuffix(lastLogUrls)}`);
 }
 
-function appendJobSummary(result: RequiredGateResult): void {
+function appendJobSummary(): void {
   const summaryPath = process.env.GITHUB_STEP_SUMMARY;
   if (!summaryPath) return;
   const descriptor = fs.openSync(
@@ -335,20 +335,9 @@ function appendJobSummary(result: RequiredGateResult): void {
     if (!fs.fstatSync(descriptor).isFile()) {
       throw new Error("GITHUB_STEP_SUMMARY must be a regular file");
     }
-    const links = result.logUrls ?? (result.detailsUrl ? [result.detailsUrl] : []);
-    const logLinks = links.map((url, index) => `- [E2E log ${index + 1}](${url})`).join("\n");
-    // lgtm[js/network-data-to-file] The conclusion is allowlisted and links are restricted to
-    // same-repository Actions targets; the runner-owned summary is opened without following symlinks.
-    // lgtm[js/http-to-file-access]
     fs.writeFileSync(
       descriptor,
-      [
-        "## E2E / PR Gate",
-        "",
-        `Result: ${result.conclusion}`,
-        ...(logLinks ? ["", logLinks] : []),
-        "",
-      ].join("\n"),
+      "## E2E / PR Gate\n\nSee the job log for the trusted terminal verdict and links.\n",
       "utf8",
     );
   } finally {
@@ -368,7 +357,7 @@ async function main(): Promise<void> {
   const timeoutSeconds = parsePositiveInteger(args.timeoutSeconds, "timeout-seconds");
   if (timeoutSeconds > 10_200) throw new Error("--timeout-seconds must not exceed 10200");
   const result = await waitForRequiredGate(identity, { timeoutMs: timeoutSeconds * 1000 });
-  appendJobSummary(result);
+  appendJobSummary();
   console.log(`E2E / PR Gate completed: ${formatRequiredGateOutcome(result)}`);
   if (result.conclusion !== "success") {
     throw new Error(`Trusted E2E verdict: ${formatRequiredGateOutcome(result)}`);

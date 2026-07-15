@@ -92,6 +92,7 @@ function runReporter(script: string, jobResponse: unknown, failJobLookup = false
     chmodSync(fakeGh, 0o700);
     const result = spawnSync("bash", ["-e", "-o", "pipefail", "-c", script], {
       encoding: "utf8",
+      timeout: 5_000,
       env: {
         ...process.env,
         FAKE_CHECK_ARGS: checkArgsPath,
