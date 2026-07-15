@@ -49,6 +49,8 @@ const {
   readProcessState,
   readProcessStartIdentity,
   listDescendantProcessIdentities,
+  processInspectionDeadlineAfter,
+  processInspectionDeadlineReached,
   verifyTimerMarkerIdentity,
   killTimer,
 } = require("./timer-control");
@@ -227,11 +229,15 @@ function waitForShieldsDownForwardCommit(
   let observed = readShieldsDownTransition(sandboxName, processToken);
   if (!observed) return null;
 
-  const handoffDeadline = Date.now() + SHIELDS_TRANSITION_HANDOFF_GRACE_MS;
+  const handoffDeadline = processInspectionDeadlineAfter(SHIELDS_TRANSITION_HANDOFF_GRACE_MS);
   const ownerMayBeCurrent = () =>
     readExactProcessStatus(observed!.ownerPid, observed!.ownerStartIdentity, handoffDeadline) !==
     "gone";
-  while (observed.phase === "preparing" && Date.now() < handoffDeadline && ownerMayBeCurrent()) {
+  while (
+    observed.phase === "preparing" &&
+    !processInspectionDeadlineReached(handoffDeadline) &&
+    ownerMayBeCurrent()
+  ) {
     Atomics.wait(transitionPollBuffer, 0, 0, SHIELDS_TRANSITION_POLL_MS);
     const next = readShieldsDownTransition(sandboxName, processToken);
     if (!next) return null;
@@ -258,15 +264,17 @@ function waitForShieldsDownForwardCommit(
 
 function excludeRecoveryProcessTree(
   descendants: ProcessIdentity[],
-  recoveryPid: number,
+  recovery: Pick<ProcessIdentity, "pid" | "startIdentity">,
   recoveryDescendants: ProcessIdentity[],
 ): ProcessIdentity[] {
-  const excludedPids = new Set<number>([recoveryPid, ...recoveryDescendants.map(({ pid }) => pid)]);
-  return descendants.filter(({ pid }) => !excludedPids.has(pid));
+  const identityKey = ({ pid, startIdentity }: Pick<ProcessIdentity, "pid" | "startIdentity">) =>
+    `${String(pid)}\0${startIdentity}`;
+  const excludedIdentities = new Set<string>([recovery, ...recoveryDescendants].map(identityKey));
+  return descendants.filter((descendant) => !excludedIdentities.has(identityKey(descendant)));
 }
 
 function stopTimedOutShieldsDownTree(ownerPid: number, ownerStartIdentity: string): void {
-  let freezeDeadline = Date.now() + SHIELDS_TRANSITION_TERMINATE_GRACE_MS;
+  let freezeDeadline = processInspectionDeadlineAfter(SHIELDS_TRANSITION_TERMINATE_GRACE_MS);
   const waitForKnownExactProcess = (
     pid: number,
     startIdentity: string,
@@ -275,7 +283,7 @@ function stopTimedOutShieldsDownTree(ownerPid: number, ownerStartIdentity: strin
     while (true) {
       const status = readExactProcessStatus(pid, startIdentity, deadline);
       if (status !== "unknown") return status;
-      if (Date.now() >= deadline) {
+      if (processInspectionDeadlineReached(deadline)) {
         throw new Error("Timed-out shields-down process identity could not be verified safely");
       }
       Atomics.wait(transitionPollBuffer, 0, 0, SHIELDS_TRANSITION_POLL_MS);
@@ -301,7 +309,7 @@ function stopTimedOutShieldsDownTree(ownerPid: number, ownerStartIdentity: strin
       const status = readExactProcessStatus(pid, startIdentity, freezeDeadline);
       if (status === "gone" || state?.startsWith("Z")) return "gone";
       if (status === "current" && /^[Tt]/.test(state ?? "")) return "stopped";
-      if (Date.now() >= freezeDeadline) {
+      if (processInspectionDeadlineReached(freezeDeadline)) {
         throw new Error("Timed-out shields-down process tree could not be frozen safely");
       }
       Atomics.wait(transitionPollBuffer, 0, 0, SHIELDS_TRANSITION_POLL_MS);
@@ -312,7 +320,11 @@ function stopTimedOutShieldsDownTree(ownerPid: number, ownerStartIdentity: strin
   // another weakening subprocess while takeover is being established.
   signalExact(ownerPid, ownerStartIdentity, "SIGSTOP", freezeDeadline);
   if (waitForExactStop(ownerPid, ownerStartIdentity) === "gone") return;
-  freezeDeadline = Date.now() + SHIELDS_TRANSITION_TERMINATE_GRACE_MS;
+  freezeDeadline = processInspectionDeadlineAfter(SHIELDS_TRANSITION_TERMINATE_GRACE_MS);
+  const recoveryStartIdentity = readProcessStartIdentity(process.pid, freezeDeadline);
+  if (recoveryStartIdentity === null) {
+    throw new Error("Cannot identify the auto-restore recovery process safely");
+  }
   const recoveryTree = listDescendantProcessIdentities(process.pid, freezeDeadline);
   if (recoveryTree === null) {
     throw new Error("Cannot identify the auto-restore recovery process tree safely");
@@ -333,7 +345,7 @@ function stopTimedOutShieldsDownTree(ownerPid: number, ownerStartIdentity: strin
     );
     const passDescendants = excludeRecoveryProcessTree(
       descendants,
-      process.pid,
+      { pid: process.pid, startIdentity: recoveryStartIdentity },
       recoveryIsInsideOwnerTree ? recoveryTree : [],
     );
     for (const descendant of passDescendants) {
@@ -359,7 +371,7 @@ function stopTimedOutShieldsDownTree(ownerPid: number, ownerStartIdentity: strin
   }
 
   const deepestFirst = [...tracked.entries()].sort((a, b) => b[1].depth - a[1].depth);
-  const killDeadline = Date.now() + SHIELDS_TRANSITION_TERMINATE_GRACE_MS;
+  const killDeadline = processInspectionDeadlineAfter(SHIELDS_TRANSITION_TERMINATE_GRACE_MS);
   for (const [pid, identity] of deepestFirst) {
     signalExact(pid, identity.startIdentity, "SIGKILL", killDeadline);
   }
@@ -372,7 +384,7 @@ function stopTimedOutShieldsDownTree(ownerPid: number, ownerStartIdentity: strin
       readExactProcessStatus(pid, startIdentity, killDeadline) === "gone"
     );
   };
-  while (Date.now() < killDeadline) {
+  while (!processInspectionDeadlineReached(killDeadline)) {
     const survivor = deepestFirst.some(
       ([pid, identity]) => !exactProcessIsGone(pid, identity.startIdentity),
     );

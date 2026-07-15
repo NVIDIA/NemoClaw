@@ -353,7 +353,7 @@ describe("shields command flow", () => {
     const shields = requireDist(shieldsModulePath) as {
       excludeRecoveryProcessTree: (
         descendants: Array<{ pid: number; startIdentity: string; depth: number }>,
-        recoveryPid: number,
+        recovery: { pid: number; startIdentity: string },
         recoveryDescendants: Array<{ pid: number; startIdentity: string; depth: number }>,
       ) => Array<{ pid: number; startIdentity: string; depth: number }>;
     };
@@ -362,10 +362,27 @@ describe("shields command flow", () => {
     const weakeningChild = { pid: 300, startIdentity: "policy-set", depth: 1 };
 
     expect(
-      shields.excludeRecoveryProcessTree([recovery, recoveryChild, weakeningChild], recovery.pid, [
+      shields.excludeRecoveryProcessTree([recovery, recoveryChild, weakeningChild], recovery, [
         recoveryChild,
       ]),
     ).toEqual([weakeningChild]);
+  });
+
+  it("does not exclude a weakening child that reused a recovery PID", () => {
+    const shields = requireDist(shieldsModulePath) as {
+      excludeRecoveryProcessTree: (
+        descendants: Array<{ pid: number; startIdentity: string; depth: number }>,
+        recovery: { pid: number; startIdentity: string },
+        recoveryDescendants: Array<{ pid: number; startIdentity: string; depth: number }>,
+      ) => Array<{ pid: number; startIdentity: string; depth: number }>;
+    };
+    const recovery = { pid: 200, startIdentity: "timer", depth: 1 };
+    const sampledRecoveryChild = { pid: 201, startIdentity: "timer-child", depth: 2 };
+    const reusedPidChild = { pid: 201, startIdentity: "policy-set", depth: 1 };
+
+    expect(
+      shields.excludeRecoveryProcessTree([reusedPidChild], recovery, [sampledRecoveryChild]),
+    ).toEqual([reusedPidChild]);
   });
 
   it("auto-restore waits for the forward shields-down commit before reclaiming policy", () => {

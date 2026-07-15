@@ -4,6 +4,7 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 
 import { isObjectRecord } from "../core/json-types";
 import { resolveNemoclawStateDir } from "../state/paths";
@@ -11,12 +12,20 @@ import { resolveNemoclawStateDir } from "../state/paths";
 const DEFAULT_PROCESS_INSPECTION_TIMEOUT_MS = 5_000;
 
 function processInspectionDeadline(deadline?: number): number {
-  return deadline ?? Date.now() + DEFAULT_PROCESS_INSPECTION_TIMEOUT_MS;
+  return deadline ?? processInspectionDeadlineAfter(DEFAULT_PROCESS_INSPECTION_TIMEOUT_MS);
 }
 
 function remainingProcessInspectionTimeout(deadline: number): number | null {
-  const remaining = deadline - Date.now();
+  const remaining = deadline - performance.now();
   return remaining > 0 ? Math.max(1, Math.floor(remaining)) : null;
+}
+
+function processInspectionDeadlineAfter(timeoutMs: number): number {
+  return performance.now() + timeoutMs;
+}
+
+function processInspectionDeadlineReached(deadline: number): boolean {
+  return performance.now() >= deadline;
 }
 
 interface TimerMarker {
@@ -363,6 +372,8 @@ export {
   isProcessAlive,
   killTimer,
   listDescendantProcessIdentities,
+  processInspectionDeadlineAfter,
+  processInspectionDeadlineReached,
   readAutoRestoreTakeoverToken,
   readProcessStartIdentity,
   readProcessState,

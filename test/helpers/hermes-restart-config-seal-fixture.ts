@@ -99,7 +99,12 @@ export function allowRestartFixturePeerTraversal(fixture: RestartFixture): () =>
   const testTempRoot = path.dirname(fixture.root);
   const testTempRootMode = mode(testTempRoot);
   fs.chmodSync(testTempRoot, testTempRootMode | 0o001);
-  fs.chmodSync(fixture.root, mode(fixture.root) | 0o001);
+  try {
+    fs.chmodSync(fixture.root, mode(fixture.root) | 0o001);
+  } catch (error) {
+    fs.chmodSync(testTempRoot, testTempRootMode);
+    throw error;
+  }
   return () => fs.chmodSync(testTempRoot, testTempRootMode);
 }
 
