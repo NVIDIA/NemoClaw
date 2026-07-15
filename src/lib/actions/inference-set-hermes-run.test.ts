@@ -180,6 +180,44 @@ describe("runInferenceSet Hermes routing", () => {
     expect(deps.calls.seedHermesDashboardConfig).not.toHaveBeenCalled();
   });
 
+  it("does not re-seed or report synced when the config hash refresh fails (#6893)", async () => {
+    const config: ConfigObject = {
+      model: { default: "moonshotai/kimi-k2.6", provider: "custom" },
+    };
+    const deps = createDeps({
+      config,
+      entry: {
+        name: "hermes",
+        agent: "hermes",
+        provider: "hermes-provider",
+        model: "moonshotai/kimi-k2.6",
+      },
+      defaultSandbox: "hermes",
+      target: HERMES_TARGET,
+      session: baseSession({ agent: "hermes", sandboxName: "hermes" }),
+    });
+    deps.calls.recomputeSandboxConfigHash.mockImplementation(() => {
+      throw new Error("hash refresh failed");
+    });
+
+    await runInferenceSet(
+      {
+        provider: "hermes-provider",
+        model: "openai/gpt-5.4-mini",
+        sandboxName: "hermes",
+        noVerify: true,
+      },
+      deps,
+    );
+
+    expect(deps.calls.writeSandboxConfig).toHaveBeenCalledOnce();
+    expect(deps.calls.seedHermesDashboardConfig).not.toHaveBeenCalled();
+    const logs = deps.calls.log.mock.calls.map((call) => String(call[0]));
+    expect(logs.some((line) => line.includes("failed to refresh its integrity hash"))).toBe(true);
+    expect(logs.some((line) => line.includes("rebuild"))).toBe(true);
+    expect(logs.some((line) => line.includes("Inference route synced"))).toBe(false);
+  });
+
   it("withholds the synced line when the dashboard fails to converge (#6893)", async () => {
     const config: ConfigObject = {
       model: {

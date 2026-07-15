@@ -598,11 +598,36 @@ function recomputeSandboxConfigHash(sandboxName: string, target: AgentConfigTarg
 // (installed by the agents/hermes image build). The python resolution order
 // mirrors start.sh's trusted `_HERMES_PYTHON` list.
 const HERMES_DASHBOARD_SEEDER_PATH = "/usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py";
-// Printed by the re-seed script when the Dashboard profile directory is absent
-// (Dashboard disabled) so the caller treats it as a clean no-op, not a failure.
-const HERMES_DASHBOARD_ABSENT_MARKER = "__nemoclaw_hermes_dashboard_absent__";
+const HERMES_TRUSTED_PYTHON3 = [
+  "/opt/hermes/.venv/bin/python3",
+  "/usr/local/bin/python3",
+  "/usr/bin/python3",
+] as const;
+const HERMES_DASHBOARD_PATH_ABSENT_STATUS = 3;
+const HERMES_DASHBOARD_PATH_INSPECTION = [
+  "import os",
+  "import stat",
+  "import sys",
+  "try:",
+  "    mode = os.lstat(sys.argv[1]).st_mode",
+  "except FileNotFoundError:",
+  `    raise SystemExit(${HERMES_DASHBOARD_PATH_ABSENT_STATUS})`,
+  "except OSError as exc:",
+  '    print(f"unable to inspect Hermes dashboard path: {exc}", file=sys.stderr)',
+  "    raise SystemExit(2)",
+  "raise SystemExit(0 if stat.S_ISDIR(mode) else 2)",
+].join("\n");
 
 export type HermesDashboardReseedResult = "converged" | "absent" | "failed";
+
+export interface HermesDashboardReseedDeps {
+  getOpenshellBinary: () => string;
+  captureOpenshellCommand: (
+    binary: string,
+    args: string[],
+    options: import("../adapters/openshell/client").CaptureOpenshellOptions,
+  ) => import("../adapters/openshell/client").CaptureOpenshellResult;
+}
 
 /**
  * Re-run the Hermes dashboard config seeder inside the sandbox so the isolated
@@ -614,35 +639,60 @@ export type HermesDashboardReseedResult = "converged" | "absent" | "failed";
  *
  * Runs as the sandbox user (non-privileged `sandbox exec`, matching start.sh's
  * step-down before touching sandbox-owned dashboard-home state); the seeder does
- * no-follow atomic writes and refuses symlinked paths. Best-effort: returns false
- * on failure so the caller can warn without aborting the route switch.
+ * no-follow atomic writes and refuses symlinked paths. Best-effort: returns
+ * `failed` on failure so the caller can warn without aborting the route switch.
  */
 function seedHermesDashboardConfig(
   sandboxName: string,
   target: AgentConfigTarget,
+  deps: HermesDashboardReseedDeps = { getOpenshellBinary, captureOpenshellCommand },
 ): HermesDashboardReseedResult {
   const dashboardHome = `${target.configDir}/dashboard-home`;
-  const seed =
-    `exec "$py" ${shellQuote(HERMES_DASHBOARD_SEEDER_PATH)} ` +
-    `${shellQuote(target.configPath)} ${shellQuote(`${dashboardHome}/config.yaml`)} ` +
-    `${shellQuote(`${target.configDir}/.env`)} ${shellQuote(`${dashboardHome}/.env`)}`;
-  const script =
-    // A missing Dashboard profile means the Dashboard is disabled — a clean no-op,
-    // not a failure. Signal it with a marker on stdout and exit 0.
-    `[ -d ${shellQuote(dashboardHome)} ] || { echo ${HERMES_DASHBOARD_ABSENT_MARKER}; exit 0; }; ` +
-    `for py in /opt/hermes/.venv/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do ` +
-    `[ -x "$py" ] && ${seed}; done; ` +
-    `echo "no trusted python3 available to seed the Hermes dashboard config" >&2; exit 1`;
-  const binary = getOpenshellBinary();
-  const result = captureOpenshellCommand(
-    binary,
-    ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", script],
-    { ignoreError: true, includeStreams: true, maxBuffer: CONFIG_CAPTURE_MAX_BUFFER },
-  );
-  if (`${result.stdout ?? ""}${result.output ?? ""}`.includes(HERMES_DASHBOARD_ABSENT_MARKER)) {
+  const binary = deps.getOpenshellBinary();
+  const capture = (command: string[]) =>
+    deps.captureOpenshellCommand(
+      binary,
+      ["sandbox", "exec", "--name", sandboxName, "--", ...command],
+      {
+        ignoreError: true,
+        includeStreams: true,
+        maxBuffer: CONFIG_CAPTURE_MAX_BUFFER,
+      },
+    );
+  const failed = (result: import("../adapters/openshell/client").CaptureOpenshellResult) =>
+    Boolean(result.error || result.signal || result.status !== 0);
+
+  let python: (typeof HERMES_TRUSTED_PYTHON3)[number] | null = null;
+  for (const candidate of HERMES_TRUSTED_PYTHON3) {
+    if (!failed(capture([candidate, "-c", ""]))) {
+      python = candidate;
+      break;
+    }
+  }
+  if (!python) return "failed";
+
+  // lstat distinguishes a genuinely absent profile from a file, a symlink
+  // (including a broken one), or an inspection error. Only the first case is a
+  // clean no-op; everything else fails closed so callers cannot report sync.
+  const inspection = capture([python, "-c", HERMES_DASHBOARD_PATH_INSPECTION, dashboardHome]);
+  if (
+    !inspection.error &&
+    !inspection.signal &&
+    inspection.status === HERMES_DASHBOARD_PATH_ABSENT_STATUS
+  ) {
     return "absent";
   }
-  return result.error || result.signal || result.status !== 0 ? "failed" : "converged";
+  if (failed(inspection)) return "failed";
+
+  const seed = capture([
+    python,
+    HERMES_DASHBOARD_SEEDER_PATH,
+    target.configPath,
+    `${dashboardHome}/config.yaml`,
+    `${target.configDir}/.env`,
+    `${dashboardHome}/.env`,
+  ]);
+  return failed(seed) ? "failed" : "converged";
 }
 
 // ---------------------------------------------------------------------------
