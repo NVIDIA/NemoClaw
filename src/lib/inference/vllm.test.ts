@@ -83,6 +83,12 @@ beforeEach(() => {
   });
 });
 
+function currentHostIdentity(): string | null {
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  return uid === undefined || gid === undefined ? null : `${String(uid)}:${String(gid)}`;
+}
+
 function mockDockerSpawnSuccess(): EventEmitter & {
   stdout: EventEmitter;
   stderr: EventEmitter;
@@ -602,16 +608,11 @@ describe("installVllm model resolution", () => {
         "183968f87ae4cedce3039313cac1fd43d112c578",
       ]),
     );
-    if (typeof process.getuid === "function" && typeof process.getgid === "function") {
-      expect(downloadArgs).toEqual(
-        expect.arrayContaining([
-          "--user",
-          `${String(process.getuid())}:${String(process.getgid())}`,
-        ]),
-      );
-    } else {
-      expect(downloadArgs).not.toContain("--user");
-    }
+    const hostIdentity = currentHostIdentity();
+    expect(downloadArgs.includes("--user")).toBe(hostIdentity !== null);
+    expect(downloadArgs).toEqual(
+      expect.arrayContaining(hostIdentity === null ? [] : ["--user", hostIdentity]),
+    );
     expect(mkdirSpy).toHaveBeenCalledWith(path.join(os.homedir(), ".cache", "huggingface"), {
       recursive: true,
     });
@@ -1111,9 +1112,7 @@ describe("installVllm model resolution", () => {
     expect(errors).toContain("NemoClaw did not modify it");
     expect(errors).toContain("sudo chown -R");
     expect(errors).toContain(`'${cacheDir}'`);
-    if (typeof process.getuid === "function" && typeof process.getgid === "function") {
-      expect(errors).toContain(`${String(process.getuid())}:${String(process.getgid())}`);
-    }
+    expect(errors).toContain(currentHostIdentity() ?? "$(id -u):$(id -g)");
   });
 
   it("limits the Hugging Face token to the one-shot download container", async () => {
