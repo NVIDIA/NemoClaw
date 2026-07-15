@@ -37,7 +37,7 @@ type TraceTimingAnalyzer = {
 };
 
 const require = createRequire(import.meta.url);
-const traceTiming: TraceTimingAnalyzer = require("../scripts/scorecard/analyze-trace-timing.ts");
+const traceTiming: TraceTimingAnalyzer = require("../scripts/scorecard/analyze-trace-timing.mts");
 const TRACE_SUMMARY_FILE = "cloud-onboard-trace-timing-summary.json";
 
 function timingSummary(

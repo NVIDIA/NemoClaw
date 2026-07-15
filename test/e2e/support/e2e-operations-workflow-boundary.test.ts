@@ -331,9 +331,9 @@ describe("E2E operations workflow boundary", () => {
     };
     const runtimeModules = new Map<string, unknown>([
       ["path", { join: (...parts: string[]) => parts.join("/") }],
-      ["/workspace/scripts/scorecard/analyze-trace-timing.ts", traceTiming],
-      ["/workspace/scripts/scorecard/summarize-jobs.ts", scorecardJobs],
-      ["/workspace/scripts/scorecard/build-slack-blocks.ts", slackBlocks],
+      ["/workspace/scripts/scorecard/analyze-trace-timing.mts", traceTiming],
+      ["/workspace/scripts/scorecard/summarize-jobs.mts", scorecardJobs],
+      ["/workspace/scripts/scorecard/build-slack-blocks.mts", slackBlocks],
     ]);
     const runtimeRequire = (specifier: string) => {
       const runtimeModule = runtimeModules.get(specifier);

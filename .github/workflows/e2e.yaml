@@ -5458,13 +5458,13 @@ jobs:
           script: |
             const path = require('path');
             const traceTiming = require(
-              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/analyze-trace-timing.ts'),
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/analyze-trace-timing.mts'),
             );
             const scorecardJobs = require(
-              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/summarize-jobs.ts'),
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/summarize-jobs.mts'),
             );
             const slackBlocks = require(
-              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/build-slack-blocks.ts'),
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/build-slack-blocks.mts'),
             );
             const needs = ${{ toJSON(needs) }};
             const safeSelector = /^[A-Za-z0-9_-]+$/;
