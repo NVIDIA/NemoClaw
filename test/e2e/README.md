@@ -97,7 +97,8 @@ Actions job named `E2E / PR Gate`. It checks out the controller at
 `github.workflow_sha`, validates that the PR still has the observed head and
 base, waits for the matching trusted coordination identity, and exits with its
 terminal verdict. It also writes that verdict and the trusted run link to the
-job summary. During rollout, the observer accepts the former custom-check name
+job log and keeps the job summary free of network-derived content. During
+rollout, the observer accepts the former custom-check name
 `E2E / PR Gate` for the same exact-diff external identity so in-flight PRs do
 not lose their gate.
 

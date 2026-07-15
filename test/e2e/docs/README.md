@@ -122,7 +122,8 @@ test/e2e/
   `E2E / PR Gate`. The read-only observer runs from `github.workflow_sha`,
   validates the live PR head and base, waits for the matching trusted
   coordination identity, and mirrors the terminal verdict into the required
-  job and its summary. Authorization states remain pending while the maintainer
+  job. Its summary is static, while the job log includes the validated trusted
+  controller-run link. Authorization states remain pending while the maintainer
   decision is recorded. During rollout, the observer also accepts the former
   `E2E / PR Gate` custom-check name for the same exact-diff identity. The
   controller builds the risk plan from GitHub's complete file list. Internal

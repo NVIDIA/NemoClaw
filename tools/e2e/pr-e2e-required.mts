@@ -255,11 +255,7 @@ export async function waitForRequiredGate(
   throw new Error("Timed out waiting for the trusted exact-diff E2E verdict");
 }
 
-function escapedHtml(value: string): string {
-  return value.replace(/&/gu, "&amp;").replace(/</gu, "&lt;").replace(/>/gu, "&gt;");
-}
-
-function appendJobSummary(result: RequiredGateResult): void {
+function appendJobSummary(): void {
   const summaryPath = process.env.GITHUB_STEP_SUMMARY;
   if (!summaryPath) return;
   const descriptor = fs.openSync(
@@ -270,14 +266,11 @@ function appendJobSummary(result: RequiredGateResult): void {
     if (!fs.fstatSync(descriptor).isFile()) {
       throw new Error("GITHUB_STEP_SUMMARY must be a regular file");
     }
-    const lines = [
-      "## E2E / PR Gate",
-      "",
-      `<strong>${escapedHtml(result.conclusion)}</strong>: ${escapedHtml(result.title)}`,
-      ...(result.detailsUrl ? ["", `[Open trusted run](${result.detailsUrl})`] : []),
-      "",
-    ];
-    fs.writeFileSync(descriptor, `${lines.join("\n")}\n`, "utf8");
+    fs.writeFileSync(
+      descriptor,
+      "## E2E / PR Gate\n\nThis native job mirrors the trusted exact-diff E2E coordination result. See the job log for the validated controller run.\n",
+      "utf8",
+    );
   } finally {
     fs.closeSync(descriptor);
   }
@@ -295,7 +288,8 @@ async function main(): Promise<void> {
   const timeoutSeconds = parsePositiveInteger(args.timeoutSeconds, "timeout-seconds");
   if (timeoutSeconds > 10_200) throw new Error("--timeout-seconds must not exceed 10200");
   const result = await waitForRequiredGate(identity, { timeoutMs: timeoutSeconds * 1000 });
-  appendJobSummary(result);
+  appendJobSummary();
+  if (result.detailsUrl) console.log(`Trusted E2E coordination run: ${result.detailsUrl}`);
   console.log(`E2E / PR Gate completed: conclusion=${result.conclusion} title=${result.title}`);
   if (result.conclusion !== "success") {
     throw new Error(`Trusted exact-diff E2E verdict was ${result.conclusion}: ${result.title}`);
