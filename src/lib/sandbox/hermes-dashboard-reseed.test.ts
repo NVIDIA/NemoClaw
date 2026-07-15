@@ -24,6 +24,7 @@ const TARGET: AgentConfigTarget = {
 const PYTHON = "/opt/hermes/.venv/bin/python3";
 const SEEDER = "/usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py";
 const capture = vi.fn<(binary: string, args: string[], options: unknown) => CaptureResult>();
+const reportFailure = vi.fn<(stage: "python" | "inspection" | "seed", detail: string) => void>();
 
 function result(overrides: Partial<CaptureResult> = {}): CaptureResult {
   return { status: 0, output: "", stdout: "", stderr: "", signal: null, ...overrides };
@@ -45,11 +46,13 @@ function mockReseedFlow(options: { inspection?: CaptureResult; seed?: CaptureRes
 describe("seedHermesDashboardConfig", () => {
   beforeEach(() => {
     capture.mockReset();
+    reportFailure.mockReset();
   });
 
   const deps = {
     getOpenshellBinary: () => "/host/OpenShell binary;still-one-argv",
     captureOpenshellCommand: capture,
+    reportFailure,
   };
 
   it("passes adversarial paths as discrete argv without invoking a shell (#6893)", () => {
@@ -116,6 +119,10 @@ describe("seedHermesDashboardConfig", () => {
 
     expect(seedHermesDashboardConfig("hermes", TARGET, deps)).toBe("failed");
     expect(capture).toHaveBeenCalledTimes(2);
+    expect(reportFailure).toHaveBeenCalledWith(
+      "inspection",
+      expect.stringMatching(/^status=2 detail=/u),
+    );
   });
 
   it.each([
@@ -131,6 +138,7 @@ describe("seedHermesDashboardConfig", () => {
     expect(seedHermesDashboardConfig("hermes", TARGET, deps)).toBe("failed");
     expect(capture).toHaveBeenCalledTimes(3);
     expect(capture.mock.calls[2][2]).toMatchObject({ includeStreams: true });
+    expect(reportFailure).toHaveBeenCalledWith("seed", expect.stringMatching(/^status=/u));
   });
 
   it("fails when none of the fixed trusted Python candidates can run (#6893)", () => {
@@ -143,5 +151,21 @@ describe("seedHermesDashboardConfig", () => {
       "/usr/local/bin/python3",
       "/usr/bin/python3",
     ]);
+    expect(reportFailure).toHaveBeenCalledWith("python", "status=127 detail=not found");
+  });
+
+  it("fully redacts and bounds captured seeder diagnostics (#6893)", () => {
+    mockReseedFlow({
+      seed: result({
+        status: 1,
+        stderr: `Authorization: Bearer nvapi-secret-value ${"x".repeat(1_000)}`,
+      }),
+    });
+
+    expect(seedHermesDashboardConfig("hermes", TARGET, deps)).toBe("failed");
+    const [, detail] = reportFailure.mock.calls[0];
+    expect(detail).toContain("Bearer <REDACTED>");
+    expect(detail).not.toContain("nvapi-secret-value");
+    expect(detail.length).toBeLessThanOrEqual(820);
   });
 });

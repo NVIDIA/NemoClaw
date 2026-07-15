@@ -48,6 +48,7 @@ const {
 const {
   OPENSHELL_OPERATION_TIMEOUT_MS,
 }: typeof import("../adapters/openshell/timeouts") = require("../adapters/openshell/timeouts");
+const { redactFull }: typeof import("../security/redact") = require("../security/redact");
 
 type ConfigObject = import("../security/credential-filter").ConfigObject;
 type ConfigValue = import("../security/credential-filter").ConfigValue;
@@ -630,6 +631,27 @@ export interface HermesDashboardReseedDeps {
     args: string[],
     options: import("../adapters/openshell/client").CaptureOpenshellOptions,
   ) => import("../adapters/openshell/client").CaptureOpenshellResult;
+  reportFailure?: (stage: "python" | "inspection" | "seed", detail: string) => void;
+}
+
+const HERMES_DASHBOARD_RESEED_DIAGNOSTIC_MAX_CHARS = 800;
+
+function hermesDashboardReseedFailureDetail(
+  result: import("../adapters/openshell/client").CaptureOpenshellResult,
+): string {
+  const raw =
+    result.error?.message || result.stderr?.trim() || result.output.trim() || result.stdout?.trim();
+  const detail = redactFull(raw || "no command output")
+    .replace(/\s+/gu, " ")
+    .trim();
+  const bounded = detail.slice(0, HERMES_DASHBOARD_RESEED_DIAGNOSTIC_MAX_CHARS);
+  return [
+    `status=${result.status === null ? "null" : result.status}`,
+    result.signal ? `signal=${result.signal}` : "",
+    bounded ? `detail=${bounded}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 /**
@@ -665,15 +687,32 @@ function seedHermesDashboardConfig(
     );
   const failed = (result: import("../adapters/openshell/client").CaptureOpenshellResult) =>
     Boolean(result.error || result.signal || result.status !== 0);
+  const reportFailure = (
+    stage: "python" | "inspection" | "seed",
+    result: import("../adapters/openshell/client").CaptureOpenshellResult,
+  ) => {
+    const detail = hermesDashboardReseedFailureDetail(result);
+    if (deps.reportFailure) {
+      deps.reportFailure(stage, detail);
+      return;
+    }
+    console.error(`  Hermes dashboard reseed ${stage} failed: ${detail}`);
+  };
 
   let python: (typeof HERMES_TRUSTED_PYTHON3)[number] | null = null;
+  let lastPythonFailure: import("../adapters/openshell/client").CaptureOpenshellResult | undefined;
   for (const candidate of HERMES_TRUSTED_PYTHON3) {
-    if (!failed(capture([candidate, "-c", ""]))) {
+    const probe = capture([candidate, "-c", ""]);
+    if (!failed(probe)) {
       python = candidate;
       break;
     }
+    lastPythonFailure = probe;
   }
-  if (!python) return "failed";
+  if (!python) {
+    if (lastPythonFailure) reportFailure("python", lastPythonFailure);
+    return "failed";
+  }
 
   // lstat distinguishes a genuinely absent profile from a file, a symlink
   // (including a broken one), or an inspection error. Only the first case is a
@@ -686,7 +725,10 @@ function seedHermesDashboardConfig(
   ) {
     return "absent";
   }
-  if (failed(inspection)) return "failed";
+  if (failed(inspection)) {
+    reportFailure("inspection", inspection);
+    return "failed";
+  }
 
   const seed = capture([
     python,
@@ -696,7 +738,11 @@ function seedHermesDashboardConfig(
     `${target.configDir}/.env`,
     `${dashboardHome}/.env`,
   ]);
-  return failed(seed) ? "failed" : "converged";
+  if (failed(seed)) {
+    reportFailure("seed", seed);
+    return "failed";
+  }
+  return "converged";
 }
 
 // ---------------------------------------------------------------------------
