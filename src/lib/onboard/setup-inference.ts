@@ -5,6 +5,7 @@ import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
 import {
   assertEndpointResolvesPublic,
   type EndpointDnsLookupFn,
+  parseTrustedPrivateInferenceHosts,
 } from "../inference/endpoint-ssrf-preflight";
 import {
   type CurrentGatewayRouteCompatibilityCheck,
@@ -82,6 +83,8 @@ type ProviderBranchDeps = Pick<
 export type SetupInferenceDeps = ProviderBranchDeps & {
   /** Injectable resolver for resumed custom-endpoint SSRF preflight tests. */
   resolveEndpointHost?: EndpointDnsLookupFn;
+  /** Exact private endpoint hosts trusted by the operator (tests may inject this). */
+  trustedPrivateEndpointHosts?: readonly string[];
   checkGatewayRouteCompatibility: CurrentGatewayRouteCompatibilityCheck;
   withGatewayRouteMutationLock: typeof withGatewayRouteMutationLock;
   withSandboxMutationLock: typeof withSandboxMutationLock;
@@ -259,6 +262,7 @@ export function createSetupInference(
         }
         deps.step(4, 8, "Setting up inference provider");
         let endpointPinnedAddresses = options.endpointPinnedAddresses;
+        let endpointTrustedPrivateCapability = options.endpointTrustedPrivateCapability;
         // Strictly classified AWS Bedrock Runtime hostnames use the dedicated
         // SigV4/bearer adapter rather than the generic curl probe path. Their
         // hostname is constrained to AWS-owned suffixes by the classifier, so
@@ -274,6 +278,13 @@ export function createSetupInference(
           const preflight = await assertEndpointResolvesPublic(
             endpointUrl,
             deps.resolveEndpointHost,
+            {
+              trustedPrivateHosts:
+                deps.trustedPrivateEndpointHosts ??
+                parseTrustedPrivateInferenceHosts(
+                  process.env.NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS,
+                ),
+            },
           );
           if (!preflight.ok) {
             deps.error(
@@ -283,6 +294,7 @@ export function createSetupInference(
             return { retry: "selection" };
           }
           endpointPinnedAddresses = preflight.addresses;
+          endpointTrustedPrivateCapability = preflight.trustedPrivateCapability;
         }
         const runGatewayOpenshell = createGatewayScopedOpenshellRunner(
           deps.runOpenshell,
@@ -317,6 +329,7 @@ export function createSetupInference(
             deps.verifyOnboardInferenceSmoke({
               ...input,
               pinnedAddresses: endpointPinnedAddresses,
+              trustedPrivateCapability: endpointTrustedPrivateCapability,
               capabilityCache: options.inferenceCapabilityCache,
             }),
           isNonInteractive: deps.isNonInteractive,
@@ -371,6 +384,7 @@ export function createSetupInference(
               skipHostInferenceSmoke: options.skipHostInferenceSmoke === true,
               preferredInferenceApi: options.preferredInferenceApi ?? null,
               pinnedAddresses: endpointPinnedAddresses,
+              trustedPrivateCapability: endpointTrustedPrivateCapability,
               capabilityCache: options.inferenceCapabilityCache,
             },
             {
@@ -457,6 +471,7 @@ export function createSetupInference(
             endpointUrl,
             credentialEnv,
             pinnedAddresses: endpointPinnedAddresses,
+            trustedPrivateCapability: endpointTrustedPrivateCapability,
             capabilityCache: options.inferenceCapabilityCache,
           });
         if (sandboxName) {
