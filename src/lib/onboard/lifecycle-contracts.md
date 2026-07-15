@@ -15,7 +15,7 @@ Related guides: [`README.md`](README.md) describes package placement, [`machine/
 | **plan** | Intent plus observed state, ready to apply | `MessagingWorkflowPlanner.buildPlan`; `materializeSandboxCreatePlan` |
 | **apply** | Effectful phase that binds credentials and live capabilities | `bindMessagingTokenDefs`; create, rebuild, and mutation executors |
 | **checkpoint** | Durable, secret-minimized state from which a later process can continue | onboard session and machine snapshot; registry; backup/recovery manifests |
-| **result** | Handler outcome: advance, retry, branch, complete, or fail | `OnboardStateResult`, applied by `OnboardRuntime` through `OnboardRuntimeBoundary` |
+| **result** | Handler outcome: advance, retry, branch, pause, complete, or fail | `OnboardStateResult`, applied by `OnboardRuntime` through `OnboardRuntimeBoundary` |
 | **compensation** | Effect that undoes or limits a partial apply | failed-create deletion, `cancel-rollback.ts`, `rollbackChannelAdd`, recovery-registry restore |
 | **reconcile** | Align recorded and live state without replaying the full journey | sandbox drift checks, `reconcileSandboxMessaging`, `mergeOpenClawRestoredConfig` |
 
@@ -31,6 +31,7 @@ inference --retry--> provider_selection
 inference --advance--> sandbox
 sandbox --branch--> openclaw -> policies -> finalizing -> post_verify -> complete
 sandbox --branch--> agent_setup -> policies -> finalizing -> post_verify -> complete
+post_verify --pause--> post_verify (retryable handoff without a state transition)
 each nonterminal state --failure--> failed
 ```
 
