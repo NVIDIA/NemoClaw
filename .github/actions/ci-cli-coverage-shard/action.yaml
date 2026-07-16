@@ -91,7 +91,15 @@ runs:
             exit 0
             ;;
         esac
-        npx tsx scripts/checks/e2e-mock-parity.ts --base "$base" --head "$head"
+        parity_check=scripts/checks/e2e-mock-parity.mts
+        if [ ! -f "$parity_check" ]; then
+          parity_check=scripts/checks/e2e-mock-parity.ts
+        fi
+        if [ ! -f "$parity_check" ]; then
+          echo "::error title=Missing E2E mock parity entrypoint::Expected scripts/checks/e2e-mock-parity.mts or scripts/checks/e2e-mock-parity.ts."
+          exit 1
+        fi
+        npx tsx "$parity_check" --base "$base" --head "$head"
 
     - name: Build TypeScript plugin
       shell: bash
