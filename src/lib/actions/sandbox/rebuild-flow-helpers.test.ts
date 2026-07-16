@@ -296,6 +296,97 @@ describe("backupSandboxStateForRebuild with --force", () => {
       ),
     ).toThrow("bail: Failed to back up sandbox state.");
   });
+
+  it("aborts when every state directory failed even though loose files were saved (#6972)", () => {
+    // Mirrors the issue: a post-reboot ownership corruption left all state dirs
+    // unreadable; only a few loose files backed up. Proceeding would destroy the
+    // 14 failed dirs on recreate.
+    backupSpy.mockReturnValue({
+      success: false,
+      backedUpDirs: [],
+      backedUpFiles: ["SOUL.md", ".hermes_history", "runtime/state.db"],
+      failedDirs: ["memories", "sessions", "workspace", "plans"],
+      failedFiles: [],
+      manifest: makeBackupResult().manifest,
+    });
+
+    expect(() =>
+      backupSandboxStateForRebuild(
+        "alpha",
+        makeSandboxEntry(),
+        false,
+        () => undefined,
+        () => true,
+        makeBail(),
+      ),
+    ).toThrow("bail: Failed to back up sandbox state.");
+
+    const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
+    expect(
+      errorLines.some((line: string) => line.includes("None of the 4 sandbox state directories")),
+    ).toBe(true);
+    expect(errorLines.some((line: string) => line.includes("wrong ownership or permissions"))).toBe(
+      true,
+    );
+    expect(errorLines.some((line: string) => line.includes("rebuild --force"))).toBe(true);
+    // Must not fall through to the lenient "Rebuild will continue" warning.
+    const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
+    expect(warnLines.some((line: string) => line.includes("Rebuild will continue"))).toBe(false);
+  });
+
+  it("keeps the salvageable partial manifest when all dirs failed but --force is set (#6972)", () => {
+    const manifest = makeBackupResult().manifest;
+    backupSpy.mockReturnValue({
+      success: false,
+      backedUpDirs: [],
+      backedUpFiles: ["SOUL.md"],
+      failedDirs: ["memories", "sessions"],
+      failedFiles: [],
+      manifest,
+    });
+
+    const result = backupSandboxStateForRebuild(
+      "alpha",
+      makeSandboxEntry(),
+      false,
+      () => undefined,
+      () => true,
+      makeBail(),
+      { force: true },
+    );
+
+    expect(result).toBe(manifest);
+    const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
+    expect(warnLines.some((line: string) => line.includes("--force was specified"))).toBe(true);
+  });
+
+  it("still proceeds on a partial backup that preserved at least one state directory", () => {
+    // Benign case: the base image bakes a root-owned nested subdir that always
+    // perm-fails, marking one top-level dir failed while others succeed. This
+    // must NOT abort — only a total directory-state loss does.
+    backupSpy.mockReturnValue({
+      success: false,
+      backedUpDirs: ["memories", "sessions"],
+      backedUpFiles: ["SOUL.md"],
+      failedDirs: ["plugins"],
+      failedFiles: [],
+      manifest: makeBackupResult().manifest,
+    });
+
+    const result = backupSandboxStateForRebuild(
+      "alpha",
+      makeSandboxEntry(),
+      false,
+      () => undefined,
+      () => true,
+      makeBail(),
+    );
+
+    expect(result).toBeTruthy();
+    const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
+    expect(warnLines.some((line: string) => line.includes("Partial backup"))).toBe(true);
+    expect(warnLines.some((line: string) => line.includes("Rebuild will continue"))).toBe(true);
+  });
 });
 
 describe("warnUnpreservedUserManagedFiles", () => {
