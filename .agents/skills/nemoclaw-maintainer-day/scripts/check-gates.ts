@@ -630,19 +630,15 @@ function currentCheckRollup(
 
   const current: StatusCheck[] = [];
   for (const group of groups.values()) {
-    const groupName = group[0].name ?? "(unknown)";
-    const nativeRequiredCheck =
-      group[0].__typename !== "StatusContext" && REQUIRED_CHECK_NAMES.includes(groupName);
+    const groupName = group[0].name ?? group[0].context ?? "(unknown)";
+    const requiredCheck = REQUIRED_CHECK_NAMES.includes(groupName);
     const expectsActionEvidence = group.some(
       (check) =>
         check.__typename !== "StatusContext" &&
         (check.detailsUrl?.includes("/actions/") ||
           (Boolean(check.workflowName) && !/\/runs\/\d+(?:[/?#]|$)/u.test(check.detailsUrl ?? ""))),
     );
-    if (
-      (nativeRequiredCheck || expectsActionEvidence) &&
-      group.some((check) => !actionRunId(check))
-    ) {
+    if ((requiredCheck || expectsActionEvidence) && group.some((check) => !actionRunId(check))) {
       incompleteAttemptEvidence.add(groupName);
     }
     if (group.length === 1) {
