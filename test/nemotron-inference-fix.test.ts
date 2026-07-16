@@ -175,7 +175,7 @@ console.log(JSON.stringify(records));
     expect(JSON.parse(records[6].writes[0]).chat_template_kwargs).toBeUndefined();
   });
 
-  it("preload strips the top-level `thinking` field for Ultra (#6913), scoped to Ultra", () => {
+  it("preload strips the top-level `thinking` field for Ultra, scoped to Ultra (#6913)", () => {
     const preload = extractStartScriptHeredoc(src, "NEMOTRON_FIX_EOF");
     const harness = `
 const http = require('http');
