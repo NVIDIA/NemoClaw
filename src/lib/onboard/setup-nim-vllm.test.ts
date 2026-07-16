@@ -76,32 +76,102 @@ describe("setupNim vLLM route containment", () => {
     expect(events).toEqual(["preflight", "probe", "exact", "validate"]);
   });
 
-  it("rejects a detected model that differs from the durable shared route before validation", async () => {
-    const validate = vi.fn(async () => ({ ok: true }));
-    const selection = state("required/model");
+  it("adopts a served alias when its reported root matches the requested model (#7023)", async () => {
+    const validate = vi.fn(async () => ({ ok: true, api: "openai-completions" }));
+    const selection = state("nvidia/nemotron-3-ultra-550b-a55b");
     selection.assertRouteCompatible = () => ({
-      requiredModel: "required/model",
+      requiredModel: null,
       requiredEndpointUrl: null,
       requiredInferenceApi: null,
     });
-    const handler = createSetupNimVllmHandler(deps({ validateOpenAiLikeSelection: validate }));
+    const handler = createSetupNimVllmHandler(
+      deps({
+        runCapture: () =>
+          JSON.stringify({
+            data: [
+              {
+                id: "nemotron-ultra",
+                root: "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
+              },
+            ],
+          }),
+        validateOpenAiLikeSelection: validate,
+      }),
+    );
+
+    await expect(handler(selection)).resolves.toBe("selected");
+    expect(selection.model).toBe("nemotron-ultra");
+    expect(validate).toHaveBeenCalledWith(
+      "Local vLLM",
+      "http://127.0.0.1:8000/v1",
+      "nemotron-ultra",
+      null,
+    );
+    expect(console.error).not.toHaveBeenCalled();
+  });
+
+  it("rejects a served alias when its reported root differs from the requested model", async () => {
+    const validate = vi.fn(async () => ({ ok: true }));
+    const selection = state("nvidia/nemotron-3-ultra-550b-a55b");
+    selection.assertRouteCompatible = () => ({
+      requiredModel: null,
+      requiredEndpointUrl: null,
+      requiredInferenceApi: null,
+    });
+    const handler = createSetupNimVllmHandler(
+      deps({
+        runCapture: () =>
+          JSON.stringify({
+            data: [
+              {
+                id: "deepseek",
+                root: "deepseek-ai/DeepSeek-V4-Flash",
+              },
+            ],
+          }),
+        validateOpenAiLikeSelection: validate,
+      }),
+    );
 
     await expect(handler(selection)).rejects.toThrow("exit 1");
     expect(validate).not.toHaveBeenCalled();
     expect(console.error).toHaveBeenCalledWith(
-      "  Detected vLLM model 'served/model' does not match the shared gateway route 'required/model'.",
+      "  Detected vLLM model 'deepseek' does not match the shared gateway route 'nvidia/nemotron-3-ultra-550b-a55b'.",
     );
     expect(console.error).toHaveBeenCalledWith(
-      "  To install 'required/model', stop the existing vLLM server on localhost:8000, then rerun the original install/onboard command.",
+      "  To install 'nvidia/nemotron-3-ultra-550b-a55b', stop the existing vLLM server on localhost:8000, then rerun the original install/onboard command.",
     );
     expect(console.error).toHaveBeenCalledWith(
-      "  To keep 'served/model' instead, start detailed setup:",
+      "  To keep 'deepseek' instead, start detailed setup:",
     );
     expect(console.error).toHaveBeenCalledWith(
       "    unset NEMOCLAW_PROVIDER NEMOCLAW_MODEL NEMOCLAW_VLLM_MODEL",
     );
     expect(console.error).toHaveBeenCalledWith("    nemoclaw onboard --fresh");
     expect(console.error).toHaveBeenCalledWith("  Then select Local vLLM when prompted.");
+  });
+
+  it("exact-checks an adopted alias against the durable shared route before validation", async () => {
+    const validate = vi.fn(async () => ({ ok: true }));
+    const selection = state("required/model");
+    selection.assertRouteCompatible = () => {
+      if (selection.model === "served/model") throw new Error("shared route conflict");
+      return {
+        requiredModel: null,
+        requiredEndpointUrl: null,
+        requiredInferenceApi: null,
+      };
+    };
+    const handler = createSetupNimVllmHandler(
+      deps({
+        runCapture: () =>
+          JSON.stringify({ data: [{ id: "served/model", root: "required/model" }] }),
+        validateOpenAiLikeSelection: validate,
+      }),
+    );
+
+    await expect(handler(selection)).rejects.toThrow("shared route conflict");
+    expect(validate).not.toHaveBeenCalled();
   });
 
   it("warns on DGX Spark identified via GPU name (firmware-unknown GB10 host)", async () => {
