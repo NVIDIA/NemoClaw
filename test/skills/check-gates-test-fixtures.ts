@@ -110,6 +110,7 @@ interface ComplianceFixture {
   prAuthorLogin?: string;
   mergeable?: string;
   mergeStateStatus?: string;
+  currentBaseSha?: string | null;
   verified: boolean;
   reason?: string;
   actionRunAttempts?: Record<string, ActionRunFixture>;
@@ -292,6 +293,18 @@ function runGate(fixture: ComplianceFixture) {
     reason: fixture.reason ?? (fixture.verified ? "valid" : "unsigned"),
   };
   const commitOutput = fixture.commitOutput ?? JSON.stringify(commit);
+  const currentBaseOutput = JSON.stringify({
+    data: {
+      repository: {
+        pullRequest: {
+          baseRef:
+            fixture.currentBaseSha === null
+              ? null
+              : { target: { oid: fixture.currentBaseSha ?? BASE_SHA } },
+        },
+      },
+    },
+  });
   const issueEventPages = fixture.issueEventPages ?? [[]];
   const coordinationCheckPages = fixture.coordinationCheckPages ?? [
     {
@@ -392,6 +405,7 @@ case "$*" in
   "pr view"*) printf '%s' ${shellSingleQuote(JSON.stringify(pr))} ;;
   *"ContributorCommits"*) printf '%s' ${shellSingleQuote(contributorCommitOutput)} ;;
   *"ContributorReviews"*) printf '%s' ${shellSingleQuote(contributorReviewOutput)} ;;
+  *"CurrentBaseRef"*) printf '%s' ${shellSingleQuote(currentBaseOutput)} ;;
   "api graphql"*) printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}' ;;
   "api repos/NVIDIA/NemoClaw/issues/42/comments"*) printf '%s' '{"id":1,"body":"ordinary comment","user":{"login":"reviewer"},"updated_at":"2026-01-01T00:00:00Z"}' ;;
   "api repos/NVIDIA/NemoClaw/pulls/42/commits"*) printf '%s' ${shellSingleQuote(commitOutput)} ;;

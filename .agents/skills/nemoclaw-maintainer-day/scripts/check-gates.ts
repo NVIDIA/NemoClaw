@@ -74,7 +74,12 @@ interface GateOutput {
       pendingChecks?: string[];
       missingChecks?: string[];
     };
-    conflicts: GateResult & { mergeable?: string; mergeStateStatus?: string };
+    conflicts: GateResult & {
+      mergeable?: string;
+      mergeStateStatus?: string;
+      baseSha?: string;
+      currentBaseSha?: string;
+    };
     coderabbit: GateResult & { unresolvedThreads?: CodeRabbitThread[] };
     riskyCodeTested: GateResult & { riskyFiles?: string[]; hasTests?: boolean };
     contributorCompliance: GateResult & {
@@ -1188,17 +1193,45 @@ function checkCi(
 function checkConflicts(
   mergeable: string,
   mergeStateStatus: string,
-): GateResult & { mergeable?: string; mergeStateStatus?: string } {
+  baseSha: string,
+  currentBaseSha: string | null,
+): GateResult & {
+  mergeable?: string;
+  mergeStateStatus?: string;
+  baseSha?: string;
+  currentBaseSha?: string;
+} {
   const conflictStatus = (mergeable ?? "UNKNOWN").toUpperCase();
   const status = (mergeStateStatus ?? "UNKNOWN").toUpperCase();
   const currentBaseStates = new Set(["BLOCKED", "CLEAN", "HAS_HOOKS", "UNSTABLE"]);
 
+  if (!currentBaseSha) {
+    return {
+      pass: false,
+      details: "Unable to verify the current base branch revision",
+      mergeable: conflictStatus,
+      mergeStateStatus: status,
+      baseSha,
+    };
+  }
+  if (baseSha !== currentBaseSha) {
+    return {
+      pass: false,
+      details: "PR branch is behind its base branch; refresh it before approval",
+      mergeable: conflictStatus,
+      mergeStateStatus: status,
+      baseSha,
+      currentBaseSha,
+    };
+  }
   if (conflictStatus === "MERGEABLE" && currentBaseStates.has(status)) {
     return {
       pass: true,
       details: "No merge conflicts",
       mergeable: conflictStatus,
       mergeStateStatus: status,
+      baseSha,
+      currentBaseSha,
     };
   }
   return {
@@ -1209,7 +1242,35 @@ function checkConflicts(
         : `Mergeability: ${conflictStatus}; merge state: ${status}`,
     mergeable: conflictStatus,
     mergeStateStatus: status,
+    baseSha,
+    currentBaseSha,
   };
+}
+
+function fetchCurrentBaseSha(repo: string, number: number): string | null {
+  const [owner, name, extra] = repo.split("/");
+  if (!owner || !name || extra) return null;
+
+  const response = ghJson([
+    "api",
+    "graphql",
+    "-F",
+    `owner=${owner}`,
+    "-F",
+    `name=${name}`,
+    "-F",
+    `number=${number}`,
+    "-f",
+    `query=query CurrentBaseRef($owner: String!, $name: String!, $number: Int!) {
+      repository(owner: $owner, name: $name) {
+        pullRequest(number: $number) { baseRef { target { oid } } }
+      }
+    }`,
+  ]) as {
+    data?: { repository?: { pullRequest?: { baseRef?: { target?: { oid?: unknown } } } } };
+  } | null;
+  const oid = response?.data?.repository?.pullRequest?.baseRef?.target?.oid;
+  return typeof oid === "string" && /^[0-9a-f]{40}$/i.test(oid) ? oid : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1516,7 +1577,13 @@ function main(): void {
     headSha: prData.headRefOid,
     baseSha: prData.baseRefOid,
   });
-  const conflicts = checkConflicts(prData.mergeable, prData.mergeStateStatus);
+  const currentBaseSha = fetchCurrentBaseSha(repo, prNumber);
+  const conflicts = checkConflicts(
+    prData.mergeable,
+    prData.mergeStateStatus,
+    prData.baseRefOid,
+    currentBaseSha,
+  );
   const coderabbit = checkCodeRabbit(repo, prNumber);
   const riskyCodeTested = checkRiskyCodeTested(prData.files ?? []);
   const contributorCompliance = checkContributorCompliance(repo, prNumber, prData.body ?? "");

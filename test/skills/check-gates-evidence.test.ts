@@ -41,6 +41,44 @@ describe("maintainer merge-gate contributor compliance", () => {
     expect(output.allPass).toBe(true);
   });
 
+  it("fails closed when BLOCKED masks a stale base revision", () => {
+    const output = JSON.parse(
+      runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        mergeable: "MERGEABLE",
+        mergeStateStatus: "BLOCKED",
+        currentBaseSha: "cccccccccccccccccccccccccccccccccccccccc",
+      }).stdout,
+    );
+
+    expect(output.gates.conflicts).toMatchObject({
+      pass: false,
+      mergeable: "MERGEABLE",
+      mergeStateStatus: "BLOCKED",
+      baseSha: BASE_SHA,
+      currentBaseSha: "cccccccccccccccccccccccccccccccccccccccc",
+    });
+    expect(output.allPass).toBe(false);
+  });
+
+  it("fails closed when the current base revision cannot be verified", () => {
+    const output = JSON.parse(
+      runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        currentBaseSha: null,
+      }).stdout,
+    );
+
+    expect(output.gates.conflicts).toMatchObject({
+      pass: false,
+      baseSha: BASE_SHA,
+    });
+    expect(output.gates.conflicts.currentBaseSha).toBeUndefined();
+    expect(output.allPass).toBe(false);
+  });
+
   it("fails closed while GitHub has not determined mergeability", () => {
     const result = runGate({
       body: "Signed-off-by: Example User <user@example.com>",
