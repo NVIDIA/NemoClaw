@@ -223,7 +223,7 @@ describe("vllm model registry", () => {
     expect(cmd).not.toContain("--gpu-memory-utilization 0.7");
   });
 
-  it("builds the Nemotron-3-Nano-4B FP8 serve command with auto tool-choice enabled (#6314)", () => {
+  it("builds the Nemotron-3-Nano-4B FP8 serve command with auto tool-choice and reasoning parser (#6314, #6915)", () => {
     // #6314: the generic-Linux managed-vLLM default (`GENERIC_LINUX_PROFILE.defaultModel`)
     // used to omit `--enable-auto-tool-choice` and `--tool-call-parser`, so every agent
     // request with `tool_choice: "auto"` failed HTTP 400 out of the box on generic Linux.
@@ -239,11 +239,19 @@ describe("vllm model registry", () => {
     expect(cmd).toContain("--load-format fastsafetensors");
     expect(cmd).toContain("--enable-auto-tool-choice");
     expect(cmd).toContain("--tool-call-parser qwen3_coder");
-    // The tool-call flags must appear paired: the parser value comes as a single
-    // shell token immediately after `--tool-call-parser`, and each switch is listed
-    // only once.
+    // #6915: Nemotron-3-Nano is a reasoning model, so the serve command must
+    // also pin the reasoning parser from the model card. Without it, vLLM
+    // leaves the `<think>…</think>` trace (and the orphan `</think>` marker the
+    // chat template does not pair with an opening tag) inline in `content`,
+    // which the agent's streaming parser mishandles into an empty turn that
+    // wedges the session. The Ultra-550B managed profile already pins the same
+    // `nemotron_v3` parser; this asserts the generic-Linux Nano default matches.
+    expect(cmd).toContain("--reasoning-parser nemotron_v3");
+    // The parser flags must appear paired and exactly once each: the value is a
+    // single shell token immediately after its switch.
     expect(cmd.match(/--enable-auto-tool-choice/g)).toHaveLength(1);
     expect(cmd.match(/--tool-call-parser/g)).toHaveLength(1);
+    expect(cmd.match(/--reasoning-parser/g)).toHaveLength(1);
   });
 
   it("registers the Qwen3.6-35B NVFP4 checkpoint for DGX Spark", () => {

@@ -290,9 +290,10 @@ describe("e2e workflow boundary", () => {
     timeout: 60_000,
   }, () => {
     const inventory = readFreeStandingJobsInventory();
-    const workflowJobs = new Set(
-      Object.keys((readWorkflow().jobs as Record<string, unknown>) ?? {}),
-    );
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { env?: Record<string, string> }>;
+    };
+    const workflowJobs = new Set(Object.keys(workflow.jobs));
 
     expect(validateFreeStandingWorkflowInventory()).toEqual([]);
     expect(inventory.allowedJobs).not.toHaveLength(0);
@@ -305,6 +306,8 @@ describe("e2e workflow boundary", () => {
     expect(inventory.liveTestToJobs.get("test/e2e/live/full-e2e.test.ts")).toEqual(
       expect.arrayContaining(["full-e2e", "security-posture"]),
     );
+    expect(workflow.jobs["gpu-e2e"]?.env?.NEMOCLAW_MODEL).toBe("qwen3.5:9b");
+    expect(workflow.jobs["gpu-double-onboard"]?.env?.NEMOCLAW_MODEL).toBe("qwen3.5:9b");
     expect(
       focusedE2eJobsForChangedFiles(
         [
