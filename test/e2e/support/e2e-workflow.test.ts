@@ -37,6 +37,34 @@ describe("e2e workflow boundary", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
   });
 
+  it("binds typed-target evidence identity and upload to the live matrix entry", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        {
+          env?: Record<string, string>;
+          steps?: Array<{
+            env?: Record<string, string>;
+            name?: string;
+            with?: Record<string, string>;
+          }>;
+        }
+      >;
+    };
+    const live = workflow.jobs.live!;
+    const run = live.steps!.find((step) => step.name === "Run live E2E tests")!;
+    run.env!.E2E_TARGET_ID = "unbound-target";
+    const upload = live.steps!.find((step) => step.name === "Upload E2E artifacts")!;
+    upload.with!.path = upload.with!.path.replace("e2e-artifacts/live/risk-signal.json\n", "");
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "live E2E step must bind risk-signal identity to matrix.id",
+        "artifact upload path must include e2e-artifacts/live/risk-signal.json",
+      ]),
+    );
+  });
+
   it("rejects Bedrock matrix shard identity drift (#6938)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-bedrock-shard-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
@@ -258,9 +286,21 @@ describe("e2e workflow boundary", () => {
           targets: "network-policy",
         }),
       ).toMatchObject({
-        valid: false,
+        valid: true,
         liveTargetsRun: false,
-        selectedFreeStandingJobs: [],
+        selectedFreeStandingJobs: ["network-policy"],
+        registryTargets: [],
+      });
+      expect(
+        evaluateE2eWorkflowDispatchSelectors({
+          jobs: "network-policy",
+          targets: "ubuntu-repo-cloud-langchain-deepagents-code",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveTargetsRun: true,
+        selectedFreeStandingJobs: ["network-policy"],
+        registryTargets: ["ubuntu-repo-cloud-langchain-deepagents-code"],
       });
       expect(
         evaluateE2eWorkflowDispatchSelectors({

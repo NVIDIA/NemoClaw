@@ -354,9 +354,6 @@ export function evaluateE2eWorkflowDispatchSelectors(input: {
   const targets = input.targets ?? "";
   const errors: string[] = [];
 
-  if (jobs && targets) {
-    errors.push("Use either targets or jobs, not both");
-  }
   if (targets && !SELECTOR_PATTERN.test(targets)) {
     errors.push("Invalid target input");
   }
@@ -393,17 +390,7 @@ export function evaluateE2eWorkflowDispatchSelectors(input: {
     };
   }
 
-  if (jobs) {
-    return {
-      valid: true,
-      errors: [],
-      selectedFreeStandingJobs: splitSelector(jobs).sort(),
-      registryTargets: [],
-      liveTargetsRun: false,
-    };
-  }
-
-  const selectedFreeStandingJobs = new Set<string>();
+  const selectedFreeStandingJobs = new Set(splitSelector(jobs));
   const registryTargets: string[] = [];
   for (const target of splitSelector(targets)) {
     const job = freeStandingTargetToJob.get(target);
@@ -3816,7 +3803,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   }
   validateInferenceModeGeneration(errors, generate, generateEnv);
   requireRunContains(errors, generate, "npx tsx tools/e2e/workflow-plan.mts");
-  requireRunContains(errors, generate, "Use either targets or jobs, not both");
   requireRunContains(errors, generate, "for selector_name in JOBS TARGETS");
   requireRunContains(errors, generate, "Invalid ${selector_name,,} input; use comma-separated ids");
   requireRunContains(errors, generate, 'planner_args+=(--jobs "${JOBS}")');
@@ -3860,11 +3846,8 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (liveTargets.needs !== "generate-matrix") {
     errors.push("live job must depend on generate-matrix");
   }
-  if (
-    liveTargets.if !==
-    "${{ (github.event_name != 'workflow_dispatch' || inputs.jobs == '') && needs.generate-matrix.outputs.matrix != '[]' }}"
-  ) {
-    errors.push("live job must not run when a free-standing jobs selector is supplied");
+  if (liveTargets.if !== "${{ needs.generate-matrix.outputs.matrix != '[]' }}") {
+    errors.push("live job must run whenever the trusted planner emits typed targets");
   }
   const strategy = asRecord(liveTargets.strategy);
   if (strategy["fail-fast"] !== false) {
@@ -4015,6 +3998,9 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     errors.push("live DCode profile import gate must run before live E2E tests");
   }
   const runVitestEnv = asRecord(runVitest?.env);
+  if (runVitestEnv.E2E_TARGET_ID !== "${{ matrix.id }}") {
+    errors.push("live E2E step must bind risk-signal identity to matrix.id");
+  }
   if (runVitestEnv.TARGET_ID !== "${{ matrix.id }}") {
     errors.push("live E2E step must pass matrix.id through TARGET_ID env");
   }
@@ -4144,6 +4130,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     uploadPath,
     "e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json",
   );
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/risk-signal.json");
   requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/actions/");
   requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/logs/");
   requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/shell/");

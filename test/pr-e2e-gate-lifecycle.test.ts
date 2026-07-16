@@ -104,7 +104,7 @@ function pullRequestListItem(pull = pullRequest()): Omit<PullRequest, "changed_f
 function state(): PrGateState {
   const plan = buildRiskPlan({ headSha: HEAD_SHA, changedFiles: ["src/lib/onboard.ts"] });
   return {
-    version: 2,
+    version: 3,
     commitSha: HEAD_SHA,
     baseSha: BASE_SHA,
     workflowSha: WORKFLOW_SHA,
@@ -112,6 +112,7 @@ function state(): PrGateState {
     correlationId: CORRELATION_ID,
     prNumber: 42,
     expectedJobs: ["onboard-repair", "onboard-resume"],
+    expectedTargets: [],
     expectedShards: {
       "onboard-repair": ["default"],
       "onboard-resume": ["default"],
@@ -175,7 +176,7 @@ function signal(
 }
 
 function writePassingEvidence(evidencePath: string, gate: PrGateState): void {
-  for (const job of gate.expectedJobs) {
+  for (const job of [...gate.expectedJobs, ...gate.expectedTargets]) {
     for (const shard of gate.expectedShards[job]!) {
       const directory = path.join(evidencePath, `${job}-${shard}`);
       fs.mkdirSync(directory, { recursive: true });
