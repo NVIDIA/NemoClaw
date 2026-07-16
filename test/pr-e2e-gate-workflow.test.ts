@@ -429,6 +429,8 @@ describe("PR E2E gate workflow", () => {
     expect(required.name).toBe("E2E / PR Gate");
     expect(required.if).toContain("github.event_name == 'pull_request_target'");
     expect(required.if).toContain("github.event.action != 'closed'");
+    expect(required.if).toContain("github.event.action != 'edited'");
+    expect(required.if).toContain("github.event.changes.base != null");
     expect(required.permissions).toEqual({
       checks: "read",
       contents: "read",
