@@ -298,74 +298,173 @@ function checkContributorApprovalOverlap(
 // Gate 1: CI green
 // ---------------------------------------------------------------------------
 
-function currentCheckRollup(statusCheckRollup: StatusCheck[], repo: string): StatusCheck[] {
-  const latestAttemptJobsByRun = new Map<string, Set<string> | null>();
+interface ExactDiffIdentity {
+  number: number;
+  headSha: string;
+  baseSha: string;
+}
 
-  const latestAttemptJobIds = (runId: string): Set<string> | null => {
-    if (latestAttemptJobsByRun.has(runId)) return latestAttemptJobsByRun.get(runId) ?? null;
+interface ActionRunMetadata {
+  attempt: number;
+  exactDiff: boolean | null;
+}
+
+interface CurrentCheckRollup {
+  checks: StatusCheck[];
+  incompleteAttemptEvidence: string[];
+}
+
+function currentCheckRollup(
+  statusCheckRollup: StatusCheck[],
+  repo: string,
+  exactDiff: ExactDiffIdentity,
+): CurrentCheckRollup {
+  const actionRunMetadataById = new Map<string, ActionRunMetadata | null>();
+  const latestAttemptJobsByRun = new Map<string, Map<string, string> | null>();
+  const incompleteAttemptEvidence = new Set<string>();
+
+  const actionRunMetadata = (runId: string): ActionRunMetadata | null => {
+    if (actionRunMetadataById.has(runId)) return actionRunMetadataById.get(runId) ?? null;
 
     const runData = ghJson(["api", `repos/${repo}/actions/runs/${runId}`]);
-    const attempt =
-      typeof runData === "object" && runData !== null && !Array.isArray(runData)
-        ? (runData as Record<string, unknown>).run_attempt
-        : undefined;
-    if (!Number.isSafeInteger(attempt) || (attempt as number) < 1) {
+    if (typeof runData !== "object" || runData === null || Array.isArray(runData)) {
+      actionRunMetadataById.set(runId, null);
+      return null;
+    }
+    const record = runData as Record<string, unknown>;
+    if (!Number.isSafeInteger(record.run_attempt) || (record.run_attempt as number) < 1) {
+      actionRunMetadataById.set(runId, null);
+      return null;
+    }
+
+    let exactDiffMatch: boolean | null = null;
+    if (Array.isArray(record.pull_requests)) {
+      exactDiffMatch = false;
+      for (const value of record.pull_requests) {
+        if (typeof value !== "object" || value === null || Array.isArray(value)) {
+          exactDiffMatch = null;
+          break;
+        }
+        const pull = value as Record<string, unknown>;
+        const head = pull.head;
+        const base = pull.base;
+        if (
+          !Number.isSafeInteger(pull.number) ||
+          typeof head !== "object" ||
+          head === null ||
+          Array.isArray(head) ||
+          typeof base !== "object" ||
+          base === null ||
+          Array.isArray(base) ||
+          typeof (head as Record<string, unknown>).sha !== "string" ||
+          typeof (base as Record<string, unknown>).sha !== "string"
+        ) {
+          exactDiffMatch = null;
+          break;
+        }
+        if (
+          pull.number === exactDiff.number &&
+          (head as Record<string, unknown>).sha === exactDiff.headSha &&
+          (base as Record<string, unknown>).sha === exactDiff.baseSha
+        ) {
+          exactDiffMatch = true;
+        }
+      }
+    }
+
+    const metadata = { attempt: record.run_attempt as number, exactDiff: exactDiffMatch };
+    actionRunMetadataById.set(runId, metadata);
+    return metadata;
+  };
+
+  const latestAttemptJobs = (runId: string): Map<string, string> | null => {
+    if (latestAttemptJobsByRun.has(runId)) return latestAttemptJobsByRun.get(runId) ?? null;
+
+    const metadata = actionRunMetadata(runId);
+    if (!metadata) {
+      latestAttemptJobsByRun.set(runId, null);
+      return null;
+    }
+    const pages = ghJson([
+      "api",
+      "--paginate",
+      "--slurp",
+      `repos/${repo}/actions/runs/${runId}/attempts/${metadata.attempt}/jobs?per_page=100`,
+    ]);
+    if (!Array.isArray(pages) || pages.length === 0) {
       latestAttemptJobsByRun.set(runId, null);
       return null;
     }
 
-    const jobsData = ghJson([
-      "api",
-      `repos/${repo}/actions/runs/${runId}/attempts/${attempt}/jobs?per_page=100`,
-    ]);
-    if (typeof jobsData !== "object" || jobsData === null || Array.isArray(jobsData)) {
-      latestAttemptJobsByRun.set(runId, null);
-      return null;
+    let expectedTotal: number | null = null;
+    const jobsById = new Map<string, string>();
+    let observedJobs = 0;
+    for (const page of pages) {
+      if (typeof page !== "object" || page === null || Array.isArray(page)) {
+        latestAttemptJobsByRun.set(runId, null);
+        return null;
+      }
+      const { jobs, total_count: totalCount } = page as Record<string, unknown>;
+      if (
+        !Number.isSafeInteger(totalCount) ||
+        (totalCount as number) < 0 ||
+        (expectedTotal !== null && totalCount !== expectedTotal) ||
+        !Array.isArray(jobs)
+      ) {
+        latestAttemptJobsByRun.set(runId, null);
+        return null;
+      }
+      expectedTotal = totalCount as number;
+      observedJobs += jobs.length;
+      for (const value of jobs) {
+        if (typeof value !== "object" || value === null || Array.isArray(value)) {
+          latestAttemptJobsByRun.set(runId, null);
+          return null;
+        }
+        const { id, name } = value as Record<string, unknown>;
+        if (!Number.isSafeInteger(id) || (id as number) < 1 || typeof name !== "string" || !name) {
+          latestAttemptJobsByRun.set(runId, null);
+          return null;
+        }
+        jobsById.set(String(id), name);
+      }
     }
-    const { jobs, total_count: totalCount } = jobsData as Record<string, unknown>;
     if (
-      !Number.isInteger(totalCount) ||
-      (totalCount as number) < 0 ||
-      (totalCount as number) > 100 ||
-      !Array.isArray(jobs) ||
-      jobs.length !== totalCount
+      expectedTotal === null ||
+      observedJobs !== expectedTotal ||
+      jobsById.size !== expectedTotal
     ) {
       latestAttemptJobsByRun.set(runId, null);
       return null;
     }
-
-    const ids = new Set<string>();
-    for (const job of jobs) {
-      const id =
-        typeof job === "object" && job !== null && !Array.isArray(job)
-          ? (job as Record<string, unknown>).id
-          : undefined;
-      if (!Number.isSafeInteger(id) || (id as number) < 1) {
-        latestAttemptJobsByRun.set(runId, null);
-        return null;
-      }
-      ids.add(String(id));
-    }
-    if (ids.size !== jobs.length) {
-      latestAttemptJobsByRun.set(runId, null);
-      return null;
-    }
-    latestAttemptJobsByRun.set(runId, ids);
-    return ids;
+    latestAttemptJobsByRun.set(runId, jobsById);
+    return jobsById;
   };
 
   const checksFromLatestAttempt = (runId: string, checks: StatusCheck[]): StatusCheck[] | null => {
-    const jobIds = latestAttemptJobIds(runId);
-    if (!jobIds) return null;
+    const checkName = checks[0]?.name;
+    const jobsById = latestAttemptJobs(runId);
+    if (!checkName || !jobsById) return null;
+
+    const expectedIds = new Set(
+      [...jobsById].filter(([, name]) => name === checkName).map(([id]) => id),
+    );
+    if (expectedIds.size === 0) return null;
+
     const selected: StatusCheck[] = [];
+    const selectedIds = new Set<string>();
     for (const check of checks) {
       const match = check.detailsUrl?.match(
         new RegExp(`/actions/runs/${runId}/job/(\\d+)(?:[/?#]|$)`, "u"),
       );
       if (!match) return null;
-      if (jobIds.has(match[1])) selected.push(check);
+      if (expectedIds.has(match[1])) {
+        if (selectedIds.has(match[1])) return null;
+        selectedIds.add(match[1]);
+        selected.push(check);
+      }
     }
-    return selected.length > 0 ? selected : null;
+    return selectedIds.size === expectedIds.size ? selected : null;
   };
 
   const groups = new Map<string, StatusCheck[]>();
@@ -408,18 +507,35 @@ function currentCheckRollup(statusCheckRollup: StatusCheck[], repo: string): Sta
             runId,
             checks,
             timestamp: timestamps.every(Number.isFinite) ? Math.min(...timestamps) : Number.NaN,
+            allSkipped: checks.every(
+              (check) =>
+                check.status?.toUpperCase() === "COMPLETED" &&
+                check.conclusion?.toUpperCase() === "SKIPPED",
+            ),
           };
         });
         if (runs.every(({ timestamp }) => Number.isFinite(timestamp))) {
-          const latestTimestamp = Math.max(...runs.map(({ timestamp }) => timestamp));
-          const latestRuns = runs.filter(({ timestamp }) => timestamp === latestTimestamp);
+          const meaningfulExactDiffRun = runs.some(
+            ({ runId, allSkipped }) => !allSkipped && actionRunMetadata(runId)?.exactDiff === true,
+          );
+          const candidates = meaningfulExactDiffRun
+            ? runs.filter(
+                ({ runId, allSkipped }) =>
+                  !(allSkipped && actionRunMetadata(runId)?.exactDiff === true),
+              )
+            : runs;
+          const latestTimestamp = Math.max(...candidates.map(({ timestamp }) => timestamp));
+          const latestRuns = candidates.filter(({ timestamp }) => timestamp === latestTimestamp);
           if (latestRuns.length === 1) {
             const latest = latestRuns[0];
-            current.push(
-              ...(latest.checks.length > 1
-                ? (checksFromLatestAttempt(latest.runId, latest.checks) ?? latest.checks)
-                : latest.checks),
-            );
+            const selected =
+              latest.checks.length > 1
+                ? checksFromLatestAttempt(latest.runId, latest.checks)
+                : latest.checks;
+            if (!selected) {
+              incompleteAttemptEvidence.add(latest.checks[0]?.name ?? "(unknown)");
+            }
+            current.push(...(selected ?? latest.checks));
           } else {
             current.push(...latestRuns.flatMap(({ checks }) => checks));
           }
@@ -429,9 +545,9 @@ function currentCheckRollup(statusCheckRollup: StatusCheck[], repo: string): Sta
 
       if (byRun.size === 1) {
         const [runId, checks] = [...byRun][0];
-        current.push(
-          ...(checks.length > 1 ? (checksFromLatestAttempt(runId, checks) ?? checks) : checks),
-        );
+        const selected = checks.length > 1 ? checksFromLatestAttempt(runId, checks) : checks;
+        if (!selected) incompleteAttemptEvidence.add(checks[0]?.name ?? "(unknown)");
+        current.push(...(selected ?? checks));
         continue;
       }
 
@@ -477,18 +593,23 @@ function currentCheckRollup(statusCheckRollup: StatusCheck[], repo: string): Sta
         .map(({ check }) => check),
     );
   }
-  return current;
+  return { checks: current, incompleteAttemptEvidence: [...incompleteAttemptEvidence].sort() };
 }
 
 function checkCi(
   statusCheckRollup: StatusCheck[] | null,
   repo: string,
+  exactDiff: ExactDiffIdentity,
 ): GateResult & { failingChecks?: string[]; pendingChecks?: string[]; missingChecks?: string[] } {
   if (!statusCheckRollup || statusCheckRollup.length === 0) {
     return { pass: false, details: "No status checks found" };
   }
 
-  const currentChecks = currentCheckRollup(statusCheckRollup, repo);
+  const { checks: currentChecks, incompleteAttemptEvidence } = currentCheckRollup(
+    statusCheckRollup,
+    repo,
+    exactDiff,
+  );
 
   // Check that all required checks are present.
   // Fork PRs from first-time contributors need "Approve and run" before
@@ -545,6 +666,15 @@ function checkCi(
   }
   if (pending.length > 0) {
     return { pass: false, details: `${pending.length} pending check(s)`, pendingChecks: pending };
+  }
+  if (incompleteAttemptEvidence.length > 0) {
+    return {
+      pass: false,
+      details: `${incompleteAttemptEvidence.length} check context(s) have incomplete latest-attempt evidence`,
+      failingChecks: incompleteAttemptEvidence.map(
+        (name) => `${name}: latest attempt evidence incomplete`,
+      ),
+    };
   }
   return { pass: true, details: `All ${currentChecks.length} current checks green` };
 }
@@ -842,7 +972,7 @@ function main(): void {
     "--repo",
     repo,
     "--json",
-    "number,title,url,body,files,statusCheckRollup,mergeStateStatus,author",
+    "number,title,url,body,files,statusCheckRollup,mergeStateStatus,headRefOid,baseRefOid,author",
   ]) as {
     number: number;
     title: string;
@@ -851,6 +981,8 @@ function main(): void {
     files: Array<{ path: string; status: string }>;
     statusCheckRollup: StatusCheck[];
     mergeStateStatus: string;
+    headRefOid: string;
+    baseRefOid: string;
     author: PrIdentity | null;
   } | null;
 
@@ -859,7 +991,11 @@ function main(): void {
     process.exit(1);
   }
 
-  const ci = checkCi(prData.statusCheckRollup, repo);
+  const ci = checkCi(prData.statusCheckRollup, repo, {
+    number: prNumber,
+    headSha: prData.headRefOid,
+    baseSha: prData.baseRefOid,
+  });
   const conflicts = checkConflicts(prData.mergeStateStatus);
   const coderabbit = checkCodeRabbit(repo, prNumber);
   const riskyCodeTested = checkRiskyCodeTested(prData.files ?? []);

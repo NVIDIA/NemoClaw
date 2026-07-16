@@ -55,7 +55,16 @@ interface ComplianceFixture {
   prAuthorLogin?: string;
   verified: boolean;
   reason?: string;
-  actionRunAttempts?: Record<string, { attempt: number; jobIds: number[] }>;
+  actionRunAttempts?: Record<
+    string,
+    {
+      attempt: number;
+      jobs?: Array<{ id: number; name: string }>;
+      jobPages?: Array<Array<{ id: number; name: string }>>;
+      headSha?: string;
+      baseSha?: string;
+    }
+  >;
 }
 
 interface ComparatorFixture extends ComplianceFixture {
@@ -92,6 +101,7 @@ function runGate(fixture: ComplianceFixture) {
       })),
     mergeStateStatus: "CLEAN",
     headRefOid: "abc123",
+    baseRefOid: "base123",
     author: { login: fixture.prAuthorLogin ?? "contributor" },
   };
   const contributorCommitPages = (
@@ -142,17 +152,38 @@ function runGate(fixture: ComplianceFixture) {
   };
   const commitOutput = fixture.commitOutput ?? JSON.stringify(commit);
   const actionRunCases = Object.entries(fixture.actionRunAttempts ?? {})
-    .flatMap(([runId, value]) => [
-      `  "api repos/NVIDIA/NemoClaw/actions/runs/${runId}") printf '%s' ${shellSingleQuote(
-        JSON.stringify({ run_attempt: value.attempt }),
-      )} ;;`,
-      `  "api repos/NVIDIA/NemoClaw/actions/runs/${runId}/attempts/${value.attempt}/jobs?per_page=100") printf '%s' ${shellSingleQuote(
-        JSON.stringify({
-          total_count: value.jobIds.length,
-          jobs: value.jobIds.map((id) => ({ id })),
-        }),
-      )} ;;`,
-    ])
+    .flatMap(([runId, value]) => {
+      const jobPages = value.jobPages ?? [value.jobs ?? []];
+      const jobs = jobPages.flat();
+      const runData = {
+        run_attempt: value.attempt,
+        ...(value.headSha && value.baseSha
+          ? {
+              head_sha: value.headSha,
+              pull_requests: [
+                {
+                  number: 42,
+                  head: { sha: value.headSha },
+                  base: { sha: value.baseSha },
+                },
+              ],
+            }
+          : {}),
+      };
+      return [
+        `  "api repos/NVIDIA/NemoClaw/actions/runs/${runId}") printf '%s' ${shellSingleQuote(
+          JSON.stringify(runData),
+        )} ;;`,
+        `  "api --paginate --slurp repos/NVIDIA/NemoClaw/actions/runs/${runId}/attempts/${value.attempt}/jobs?per_page=100") printf '%s' ${shellSingleQuote(
+          JSON.stringify(
+            jobPages.map((page) => ({
+              total_count: jobs.length,
+              jobs: page,
+            })),
+          ),
+        )} ;;`,
+      ];
+    })
     .join("\n");
 
   fs.writeFileSync(
@@ -436,7 +467,9 @@ describe("maintainer merge-gate contributor compliance", () => {
     };
     const result = runGate({
       ...fixture,
-      actionRunAttempts: { "300": { attempt: 2, jobIds: [20] } },
+      actionRunAttempts: {
+        "300": { attempt: 2, jobs: [{ id: 20, name: "E2E / PR Gate" }] },
+      },
     });
 
     expect(result.status).toBe(0);
@@ -448,6 +481,166 @@ describe("maintainer merge-gate contributor compliance", () => {
     expect(JSON.parse(unavailable.stdout).gates.ci).toMatchObject({
       pass: false,
       failingChecks: ["E2E / PR Gate: FAILURE"],
+    });
+  });
+
+  it("ignores a later all-skipped workflow run for the same exact PR diff", () => {
+    const requiredChecks = REQUIRED_CHECK_NAMES.filter((name) => name !== "E2E / PR Gate").map(
+      (name) => ({
+        __typename: "CheckRun",
+        name,
+        workflowName: `CI / ${name}`,
+        startedAt: "2026-01-01T00:01:00Z",
+        status: "COMPLETED",
+        conclusion: "SUCCESS",
+      }),
+    );
+    const result = runGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      statusChecks: [
+        ...requiredChecks,
+        {
+          __typename: "CheckRun",
+          name: "E2E / PR Gate",
+          workflowName: "E2E / PR Gate Controller",
+          detailsUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/400/job/40",
+          startedAt: "2026-01-01T00:00:00Z",
+          status: "COMPLETED",
+          conclusion: "SUCCESS",
+        },
+        {
+          __typename: "CheckRun",
+          name: "E2E / PR Gate",
+          workflowName: "E2E / PR Gate Controller",
+          detailsUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/401/job/41",
+          startedAt: "2026-01-01T00:02:00Z",
+          status: "COMPLETED",
+          conclusion: "SKIPPED",
+        },
+      ],
+      actionRunAttempts: {
+        "400": { attempt: 1, headSha: "abc123", baseSha: "base123" },
+        "401": { attempt: 1, headSha: "abc123", baseSha: "base123" },
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      allPass: true,
+      gates: { ci: { pass: true } },
+    });
+  });
+
+  it("paginates every job before selecting the latest run attempt", () => {
+    const firstPage = Array.from({ length: 100 }, (_value, index) => ({
+      id: index + 20,
+      name: `unrelated-job-${index}`,
+    }));
+    const requiredChecks = REQUIRED_CHECK_NAMES.filter((name) => name !== "E2E / PR Gate").map(
+      (name) => ({
+        __typename: "CheckRun",
+        name,
+        workflowName: `CI / ${name}`,
+        startedAt: "2026-01-01T00:01:00Z",
+        status: "COMPLETED",
+        conclusion: "SUCCESS",
+      }),
+    );
+    const result = runGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      statusChecks: [
+        ...requiredChecks,
+        {
+          __typename: "CheckRun",
+          name: "E2E / PR Gate",
+          workflowName: "E2E / PR Gate Controller",
+          detailsUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/500/job/10",
+          startedAt: "2026-01-01T00:00:00Z",
+          status: "COMPLETED",
+          conclusion: "FAILURE",
+        },
+        {
+          __typename: "CheckRun",
+          name: "E2E / PR Gate",
+          workflowName: "E2E / PR Gate Controller",
+          detailsUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/500/job/120",
+          startedAt: "2026-01-01T00:02:00Z",
+          status: "COMPLETED",
+          conclusion: "SUCCESS",
+        },
+      ],
+      actionRunAttempts: {
+        "500": {
+          attempt: 2,
+          jobPages: [firstPage, [{ id: 120, name: "E2E / PR Gate" }]],
+        },
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      allPass: true,
+      gates: { ci: { pass: true } },
+    });
+  });
+
+  it("fails closed when a latest-attempt job is absent from the PR rollup", () => {
+    const requiredChecks = REQUIRED_CHECK_NAMES.filter((name) => name !== "E2E / PR Gate").map(
+      (name) => ({
+        __typename: "CheckRun",
+        name,
+        workflowName: `CI / ${name}`,
+        startedAt: "2026-01-01T00:01:00Z",
+        status: "COMPLETED",
+        conclusion: "SUCCESS",
+      }),
+    );
+    const result = runGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      statusChecks: [
+        ...requiredChecks,
+        {
+          __typename: "CheckRun",
+          name: "E2E / PR Gate",
+          workflowName: "E2E / PR Gate Controller",
+          detailsUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/600/job/10",
+          startedAt: "2026-01-01T00:00:00Z",
+          status: "COMPLETED",
+          conclusion: "SUCCESS",
+        },
+        {
+          __typename: "CheckRun",
+          name: "E2E / PR Gate",
+          workflowName: "E2E / PR Gate Controller",
+          detailsUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/600/job/20",
+          startedAt: "2026-01-01T00:02:00Z",
+          status: "COMPLETED",
+          conclusion: "SUCCESS",
+        },
+      ],
+      actionRunAttempts: {
+        "600": {
+          attempt: 2,
+          jobs: [
+            { id: 20, name: "E2E / PR Gate" },
+            { id: 21, name: "E2E / PR Gate" },
+          ],
+        },
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      allPass: false,
+      gates: {
+        ci: {
+          pass: false,
+          failingChecks: ["E2E / PR Gate: latest attempt evidence incomplete"],
+        },
+      },
     });
   });
 
