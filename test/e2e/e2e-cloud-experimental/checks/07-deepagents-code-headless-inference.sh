@@ -17,8 +17,10 @@
 # proxy routes inference.local when the request follows the normalized path.
 # Keep these phases in one ordered acceptance check: the absent-DNS observation
 # must describe the same sandbox used by login, direct-exec, and connect, and the
-# final credential scan must cover every captured output. Per-phase diagnostics
-# retain failure attribution without splitting that shared evidence boundary.
+# final credential scan must cover every captured output. A second connect run
+# sends untrusted evidence through the image-installed route-probe helper and
+# must stop before session attach. Per-phase diagnostics retain failure
+# attribution without splitting that shared evidence boundary.
 
 set -euo pipefail
 
@@ -78,6 +80,67 @@ sandbox_dcode_wrapper_contract() {
 nemoclaw_connect_probe() {
   "${NEMOCLAW_CLI_BIN:-${REPO:-.}/bin/nemoclaw.js}" "$SANDBOX_NAME" connect --probe-only 2>&1
 }
+
+dcode_connect_fail_closed_contract() (
+  local fixture_dir real_openshell openshell_shim probe_marker attach_marker
+  local connect_output connect_exit
+  fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/${PREFIX}.XXXXXX")"
+  trap 'rm -rf "$fixture_dir"' EXIT
+  real_openshell="$(command -v openshell)"
+  openshell_shim="${fixture_dir}/openshell"
+  probe_marker="${fixture_dir}/managed-probe-used"
+  attach_marker="${fixture_dir}/session-attach-invoked"
+
+  cat >"$openshell_shim" <<'SHIM'
+#!/bin/bash
+set -euo pipefail
+
+readonly REAL_OPENSHELL="${OPENSHELL_NEMOCLAW_E2E_REAL_BIN:?}"
+readonly PROBE_MARKER="${OPENSHELL_NEMOCLAW_E2E_PROBE_MARKER:?}"
+readonly ATTACH_MARKER="${OPENSHELL_NEMOCLAW_E2E_ATTACH_MARKER:?}"
+
+if [ "${1:-}" = "sandbox" ] && [ "${2:-}" = "connect" ]; then
+  : >"$ATTACH_MARKER"
+  exit 97
+fi
+
+args=("$@")
+for ((index = 0; index + 3 < ${#args[@]}; index += 1)); do
+  if [ "${args[index]}" = "/usr/local/lib/nemoclaw/dcode-managed-exec" ] \
+    && [ "${args[index + 1]}" = "/bin/sh" ] \
+    && [ "${args[index + 2]}" = "-c" ]; then
+    : >"$PROBE_MARKER"
+    args[index + 3]='printf "%s\n" "UNTRUSTED PREAMBLE" "BROKEN 000"'
+    exec "$REAL_OPENSHELL" "${args[@]}"
+  fi
+done
+
+exec "$REAL_OPENSHELL" "$@"
+SHIM
+  chmod 700 "$openshell_shim"
+
+  if connect_output="$(env \
+    NEMOCLAW_OPENSHELL_BIN="$openshell_shim" \
+    OPENSHELL_NEMOCLAW_E2E_REAL_BIN="$real_openshell" \
+    OPENSHELL_NEMOCLAW_E2E_PROBE_MARKER="$probe_marker" \
+    OPENSHELL_NEMOCLAW_E2E_ATTACH_MARKER="$attach_marker" \
+    "${NEMOCLAW_CLI_BIN:-${REPO:-.}/bin/nemoclaw.js}" "$SANDBOX_NAME" connect 2>&1)"; then
+    connect_exit=0
+  else
+    connect_exit=$?
+  fi
+
+  printf '%s\n' "$connect_output"
+  printf 'NEMOCLAW_DCODE_UNTRUSTED_CONNECT_EXIT:%s\n' "$connect_exit"
+  if [ -f "$probe_marker" ]; then
+    printf '%s\n' NEMOCLAW_DCODE_IMAGE_PROBE_USED
+  fi
+  if [ -e "$attach_marker" ]; then
+    printf '%s\n' NEMOCLAW_DCODE_SESSION_ATTACH_INVOKED
+  else
+    printf '%s\n' NEMOCLAW_DCODE_SESSION_ATTACH_NOT_INVOKED
+  fi
+)
 
 sandbox_login_proxy_contract() {
   # OpenShell rejects CR/LF in any exec argv element, so keep this remote login
@@ -408,7 +471,22 @@ DCODE_EXIT:${direct_exit}"
     fail_test "nemoclaw connect --probe-only rejected the managed inference route (exit ${connect_exit})"
   fi
 
-  # 8. No real secrets in managed config, runtime env files, artifacts, logs, or captured output.
+  # 8. Untrusted evidence from the image-installed helper must fail closed
+  # before the user-facing connect path can invoke interactive session attach.
+  fail_closed_connect_output="$(dcode_connect_fail_closed_contract || true)"
+  fail_closed_connect_exit="$(printf '%s\n' "$fail_closed_connect_output" | sed -n 's/^NEMOCLAW_DCODE_UNTRUSTED_CONNECT_EXIT:\([0-9][0-9]*\)$/\1/p' | tail -n1)"
+  if [ -n "$fail_closed_connect_exit" ] \
+    && [ "$fail_closed_connect_exit" -ne 0 ] \
+    && grep -Fq NEMOCLAW_DCODE_IMAGE_PROBE_USED <<<"$fail_closed_connect_output" \
+    && grep -Fq NEMOCLAW_DCODE_SESSION_ATTACH_NOT_INVOKED <<<"$fail_closed_connect_output" \
+    && grep -Fq "UNTRUSTED PREAMBLE" <<<"$fail_closed_connect_output" \
+    && grep -Fq "did not return a trusted result" <<<"$fail_closed_connect_output"; then
+    pass "connect rejects untrusted image-backed route evidence before session attach"
+  else
+    fail_test "connect did not fail closed before session attach for untrusted image-backed route evidence"
+  fi
+
+  # 9. No real secrets in managed config, runtime env files, artifacts, logs, or captured output.
   leak_scan="$(sandbox_exec "$(sandbox_artifact_scan_command)" || true)"
   combined="${config_output}
 ${openrouter_identity_output}
@@ -424,7 +502,8 @@ ${proxy_contract_output}
 ${route_output}
 ${headless_output}
 ${direct_headless_output}
-${connect_output}"
+${connect_output}
+${fail_closed_connect_output}"
   if printf '%s' "$combined" | contains_secret; then
     fail_test "secret-shaped value found in config/env/output (redacted from log)"
   else
