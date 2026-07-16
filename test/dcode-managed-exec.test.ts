@@ -164,15 +164,14 @@ describe("Deep Agents Code side-effect-free managed exec", () => {
   it("closes the legacy inference-probe descriptor before managed exec (#7031)", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-managed-exec-"));
     try {
-      const { launcherPath, rlimitMarkerPath, wrapperMarkerPath } =
-        makeLauncherFixture(tempDir);
+      const { launcherPath, rlimitMarkerPath, wrapperMarkerPath } = makeLauncherFixture(tempDir);
 
       const result = spawnSync(
         launcherPath,
         [
           "/bin/sh",
           "-c",
-          'if printf FORGED 2>/dev/null >&3; then printf FD3_OPEN; else printf FD3_CLOSED; fi',
+          "if printf FORGED 2>/dev/null >&3; then printf FD3_OPEN; else printf FD3_CLOSED; fi",
         ],
         {
           env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
