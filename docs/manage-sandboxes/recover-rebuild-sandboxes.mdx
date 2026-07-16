@@ -110,12 +110,13 @@ The rebuild command preserves Hermes state and registered policies while recreat
 The rebuild command preserves manifest-defined Deep Agents state, regenerates `config.toml`, reconstructs managed MCP projection state, and reapplies registered policies while recreating the container.
 </AgentOnly>
 
-If an archive command produces some usable entries, NemoClaw preserves those entries and reports the manifest-defined paths that could not be archived.
-If backup fails before producing any usable entry, NemoClaw stops before deleting the original sandbox unless you explicitly pass `--force`.
+If an archive command preserves at least one state directory, NemoClaw keeps the usable entries and reports the manifest-defined paths that could not be archived.
+If every state directory fails, NemoClaw stops before deleting the original sandbox even when it captured loose files, unless you explicitly pass `--force`.
 
 <Warning>
-`rebuild --force` can continue after a total backup failure by recreating the sandbox from recorded registry metadata without restoring prior sandbox state.
-Use this recovery path only when losing uncommitted or otherwise unsnapshotted state is acceptable.
+`rebuild --force` can continue when no state directory was preserved.
+NemoClaw restores any loose files captured in the partial backup; if nothing usable was captured, it recreates the sandbox from recorded registry metadata without restoring prior sandbox state.
+Use this recovery path only when losing the state that could not be backed up is acceptable.
 </Warning>
 
 When rebuild starts with shields up, NemoClaw opens a 30-minute shields-down window for backup and recreation.
