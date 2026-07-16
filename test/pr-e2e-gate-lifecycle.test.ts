@@ -679,8 +679,7 @@ describe("PR E2E controller lifecycle", () => {
       const expectedMarker = expectedRetryReason
         ? `<!-- nemoclaw-pr-e2e-retry:v1:${expectedRetryReason} -->`
         : "<!-- nemoclaw-pr-e2e-retry:v1:";
-      if (expectedRetryReason) expect(completionSummary).toContain(expectedMarker);
-      else expect(completionSummary).not.toContain(expectedMarker);
+      expect(completionSummary?.includes(expectedMarker)).toBe(expectedRetryReason !== undefined);
       assertCompletionLink(completion?.body);
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
     } finally {
