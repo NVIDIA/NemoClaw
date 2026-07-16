@@ -138,6 +138,62 @@ NEMOCLAW_PROVIDER=ollama NEMOCLAW_MODEL=<approved-model-or-omit-this-variable> N
 
 If non-interactive mode cannot cover a later prompt, stop before running the interactive command. Ask me one selection question, then choose either a supported non-interactive environment variable or a rerun plan. Do not leave a command waiting at `Choose [1]:`.
 
+## Handle DGX Station Express Installation
+
+If I choose Linux, determine whether the host is a DGX Station before asking the generic inference-provider question.
+With my permission, inspect the read-only firmware identifiers at `/sys/class/dmi/id/product_name` and `/sys/firmware/devicetree/base/model`.
+Do not override platform detection or assume that another NVIDIA GPU host is a DGX Station.
+
+On a detected DGX Station, ask me to choose one of these paths as a single selection question:
+
+- Express install with NVIDIA Nemotron 3 Ultra 550B, the Station express default with an approximately 352 GB model download.
+- Express install with DeepSeek V4 Flash.
+- Choose another inference provider through the normal provider questions.
+
+Before setting `NEMOCLAW_YES=1`, explain the selected model download and ask for my approval as a separate question.
+Also explain that the DGX Station express recipe remains Deferred until physical end-to-end validation is complete.
+
+There is no environment variable that accepts the installer express prompt non-interactively.
+Do not describe any of these settings as selecting express mode:
+
+- `NEMOCLAW_NON_INTERACTIVE=1` or `--non-interactive` skips the express prompt.
+- `NEMOCLAW_NO_EXPRESS=1` skips the express prompt.
+- `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` or `--yes-i-accept-third-party-software` accepts the notice and also establishes non-interactive intent, which skips the express prompt.
+- Any explicit `NEMOCLAW_PROVIDER` skips the express prompt because the provider is already selected.
+
+`NEMOCLAW_VLLM_MODEL` can preselect the model shown by the interactive Station express flow, but it does not accept or skip the express prompt.
+The `--station-deepseek` flag selects DeepSeek only within that interactive flow.
+It conflicts with non-interactive mode, `NEMOCLAW_NO_EXPRESS=1`, any explicit `NEMOCLAW_PROVIDER`, and any `NEMOCLAW_VLLM_MODEL` value other than the DeepSeek slug or model ID.
+
+When the coding-agent terminal cannot answer the express prompt, reproduce the selected Station recipe by setting the express outcome explicitly.
+Use these common values after I approve the model download, policy tier, sandbox name, third-party software notice, and required host changes:
+
+| Variable | Station express value |
+|---|---|
+| `NEMOCLAW_NON_INTERACTIVE` | `1` |
+| `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE` | `1` |
+| `NEMOCLAW_PROVIDER` | `install-vllm` |
+| `NEMOCLAW_POLICY_MODE` | `suggested` |
+| `NEMOCLAW_POLICY_TIER` | The approved tier, or `balanced` for the express default |
+| `NEMOCLAW_SANDBOX_NAME` | The approved name, or `my-assistant` for the express default |
+| `NEMOCLAW_YES` | `1` after I approve the model download |
+| `NEMOCLAW_NON_INTERACTIVE_SUDO_MODE` | `prompt` only when a local terminal can securely handle a sudo password prompt |
+
+Add the model values for my selection:
+
+| Station selection | `NEMOCLAW_VLLM_MODEL` | `NEMOCLAW_MODEL` |
+|---|---|---|
+| NVIDIA Nemotron 3 Ultra 550B | `nemotron-3-ultra-550b-a55b` | `nvidia/nemotron-3-ultra-550b-a55b` |
+| DeepSeek V4 Flash | `deepseek-v4-flash` | `deepseek-ai/DeepSeek-V4-Flash` |
+
+Add `NEMOCLAW_AGENT=hermes` or `NEMOCLAW_AGENT=langchain-deepagents-code` when I selected that agent.
+Leave `NEMOCLAW_AGENT` unset for OpenClaw.
+Leave `NEMOCLAW_WEB_SEARCH_PROVIDER` unset to retain the selected policy tier's supported default, or set it only after I choose a different supported web-search option.
+
+`NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt` makes the configuration equivalent to the express path, but it does not make sudo unattended.
+If passwordless sudo is unavailable and the coding-agent terminal cannot handle a secure password prompt, stop before installation and explain the blocker.
+Never request or pass a sudo password through an environment variable or chat.
+
 ## Configure Messaging Channels after Non-Interactive Onboarding
 
 Non-interactive onboarding can skip the interactive messaging-channel picker for agents that support messaging. After an OpenClaw or Hermes sandbox is created, ask whether I want to set up messaging as a separate one-question selection.
