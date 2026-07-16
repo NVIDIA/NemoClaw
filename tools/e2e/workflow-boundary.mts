@@ -3771,8 +3771,11 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     errors.push("generate-matrix job must run on ubuntu-latest");
   }
   const generateOutputs = asRecord(generateMatrix.outputs);
-  if (generateOutputs.matrix !== "${{ steps.matrix.outputs.matrix }}") {
-    errors.push("generate-matrix job must expose matrix output");
+  if (
+    generateOutputs.matrix !==
+    "${{ steps.controller_matrix.outputs.matrix || steps.matrix.outputs.matrix }}"
+  ) {
+    errors.push("generate-matrix job must expose trusted controller matrix output");
   }
   if (generateOutputs.test_matrix !== "${{ steps.matrix.outputs.test_matrix }}") {
     errors.push("generate-matrix job must expose test_matrix output");
@@ -3785,10 +3788,52 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   }
   const generateSteps = asSteps(generateMatrix.steps);
   requireNoDispatchInputInterpolation(errors, generateSteps);
+  const controllerMatrix = requireJobStep(
+    errors,
+    "generate-matrix",
+    generateSteps,
+    "Build trusted controller target matrix",
+  );
+  if (controllerMatrix?.id !== "controller_matrix") {
+    errors.push("trusted controller matrix step must use id controller_matrix");
+  }
+  if (controllerMatrix?.if !== "${{ inputs.checkout_sha != '' }}") {
+    errors.push("trusted controller matrix step must run only for controller dispatches");
+  }
+  if (controllerMatrix?.shell !== "bash") {
+    errors.push("trusted controller matrix step must use bash");
+  }
+  const controllerMatrixEnv = asRecord(controllerMatrix?.env);
+  if (controllerMatrixEnv.TARGETS !== "${{ inputs.targets }}") {
+    errors.push("trusted controller matrix step must bind targets through TARGETS env");
+  }
+  requireRunContains(errors, controllerMatrix, 'case "${TARGETS}" in');
+  requireRunContains(errors, controllerMatrix, "matrix='[]'");
+  requireRunContains(errors, controllerMatrix, "ubuntu-repo-cloud-langchain-deepagents-code");
+  if (!stringValue(controllerMatrix?.run).includes('"runner":"ubuntu-latest"')) {
+    errors.push("trusted controller matrix must pin typed target runner to ubuntu-latest");
+  }
+  requireRunContains(
+    errors,
+    controllerMatrix,
+    "PR E2E target is not approved by the trusted controller",
+  );
+  requireRunContains(
+    errors,
+    controllerMatrix,
+    `printf 'matrix=%s\\n' "\${matrix}" >> "\${GITHUB_OUTPUT}"`,
+  );
   const generateCheckout = generateSteps.find((step) =>
     stringValue(step.uses).startsWith("actions/checkout@"),
   );
   if (!generateCheckout) errors.push("generate-matrix job missing checkout step");
+  if (
+    controllerMatrix &&
+    generateCheckout &&
+    generateSteps.indexOf(controllerMatrix) >= generateSteps.indexOf(generateCheckout)
+  ) {
+    errors.push("trusted controller matrix step must run before PR checkout");
+  }
   requireFullShaAction(errors, generateCheckout, "generate-matrix checkout");
   if (asRecord(generateCheckout?.with)["persist-credentials"] !== false) {
     errors.push("generate-matrix checkout step must set persist-credentials=false");
@@ -3797,6 +3842,9 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const generateEnv = asRecord(generate?.env);
   if (generateEnv.CHECKOUT_SHA !== "${{ inputs.checkout_sha }}") {
     errors.push("matrix generation step must bind controller checkout through CHECKOUT_SHA env");
+  }
+  if (generateEnv.CONTROLLER_MATRIX !== "${{ steps.controller_matrix.outputs.matrix }}") {
+    errors.push("matrix generation step must receive the trusted controller matrix");
   }
   if (generateEnv.JOBS !== "${{ inputs.jobs }}") {
     errors.push("matrix generation step must pass jobs through JOBS env");
@@ -3828,8 +3876,8 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   requireRunContains(errors, generate, "expected_hermes_selected=true");
   requireRunContains(errors, generate, "E2E planner changed the trusted Hermes selection");
   requireRunContains(errors, generate, 'if [ -n "${CHECKOUT_SHA}" ]');
-  requireRunContains(errors, generate, "expected_target_ids=");
-  requireRunContains(errors, generate, "actual_target_ids=");
+  requireRunContains(errors, generate, "expected_controller_matrix=");
+  requireRunContains(errors, generate, "actual_controller_matrix=");
   requireRunContains(
     errors,
     generate,

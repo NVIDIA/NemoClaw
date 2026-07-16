@@ -87,11 +87,33 @@ jobs:
   generate-matrix:
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.matrix.outputs.matrix }}
+      matrix: ${{ steps.controller_matrix.outputs.matrix || steps.matrix.outputs.matrix }}
       test_matrix: ${{ steps.matrix.outputs.test_matrix }}
       hermes_selected: ${{ steps.matrix.outputs.hermes_selected }}
       explicit_only_jobs: ${{ steps.matrix.outputs.explicit_only_jobs }}
     steps:
+      - id: controller_matrix
+        name: Build trusted controller target matrix
+        if: ${{ inputs.checkout_sha != '' }}
+        env:
+          TARGETS: ${{ inputs.targets }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${TARGETS}" in
+            "")
+              matrix='[]'
+              ;;
+            ubuntu-repo-cloud-langchain-deepagents-code)
+              matrix='[{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest","label":"ubuntu-repo-cloud-langchain-deepagents-code"}]'
+              ;;
+            *)
+              echo "::error::PR E2E target is not approved by the trusted controller" >&2
+              exit 1
+              ;;
+          esac
+          printf 'matrix=%s\n' "${matrix}" >> "${GITHUB_OUTPUT}"
+
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
@@ -145,6 +167,7 @@ jobs:
         name: Generate E2E target matrix
         env:
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          CONTROLLER_MATRIX: ${{ steps.controller_matrix.outputs.matrix }}
           INFERENCE_MODE: ${{ inputs.inference_mode || 'mock' }}
           JOBS: ${{ inputs.jobs }}
           TARGETS: ${{ inputs.targets }}
@@ -226,9 +249,9 @@ jobs:
           test_matrix="$(jq -c '.testMatrix' <<< "${plan}")"
           explicit_only_jobs_csv="$(jq -r '.explicitOnlyJobs | join(",")' <<< "${plan}")"
           if [ -n "${CHECKOUT_SHA}" ]; then
-            expected_target_ids="$(jq -cn --arg targets "${TARGETS}" '$targets | if length == 0 then [] else split(",") end | sort')"
-            actual_target_ids="$(jq -c 'map(.id) | sort' <<< "${matrix}")"
-            if [ "${actual_target_ids}" != "${expected_target_ids}" ]; then
+            expected_controller_matrix="$(jq -c 'map({id, runner}) | sort_by(.id)' <<< "${CONTROLLER_MATRIX}")"
+            actual_controller_matrix="$(jq -c 'map({id, runner}) | sort_by(.id)' <<< "${matrix}")"
+            if [ "${actual_controller_matrix}" != "${expected_controller_matrix}" ]; then
               echo "::error::E2E planner matrix does not match controller-selected targets" >&2
               exit 1
             fi

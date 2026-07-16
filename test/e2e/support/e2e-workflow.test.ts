@@ -129,6 +129,37 @@ describe("e2e workflow boundary", () => {
     );
   });
 
+  it("keeps controller runner selection in a trusted pre-checkout matrix (#7031)", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        {
+          outputs: Record<string, string>;
+          steps: Array<{ id?: string; name?: string; run?: string; uses?: string }>;
+        }
+      >;
+    };
+    const generateMatrix = workflow.jobs["generate-matrix"]!;
+    generateMatrix.outputs.matrix = "${{ steps.matrix.outputs.matrix }}";
+    const trustedIndex = generateMatrix.steps.findIndex((step) => step.id === "controller_matrix");
+    if (trustedIndex < 0) throw new Error("workflow missing trusted controller matrix step");
+    const [trusted] = generateMatrix.steps.splice(trustedIndex, 1);
+    trusted!.run = trusted!.run!.replace('"runner":"ubuntu-latest"', '"runner":"self-hosted"');
+    const checkoutIndex = generateMatrix.steps.findIndex((step) =>
+      step.uses?.startsWith("actions/checkout@"),
+    );
+    if (checkoutIndex < 0) throw new Error("workflow missing generate-matrix checkout step");
+    generateMatrix.steps.splice(checkoutIndex + 1, 0, trusted!);
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "generate-matrix job must expose trusted controller matrix output",
+        "trusted controller matrix must pin typed target runner to ubuntu-latest",
+        "trusted controller matrix step must run before PR checkout",
+      ]),
+    );
+  });
+
   type RebuildWorkflowStep = {
     env?: Record<string, string>;
     name?: string;
