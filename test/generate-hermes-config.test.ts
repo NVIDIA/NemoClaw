@@ -7,7 +7,12 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
+import {
+  MIN_HERMES_CONTEXT_WINDOW,
+  readHermesBuildSettings,
+} from "../agents/hermes/config/build-env.ts";
 import { generateHermesConfig } from "../agents/hermes/config/generate.ts";
+import { buildHermesConfig } from "../agents/hermes/config/hermes-config.ts";
 import { discoverModelSpecificSetups } from "../agents/hermes/config/model-specific-setup.ts";
 import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../src/lib/hermes-proxy-api-key";
 import {
@@ -522,6 +527,25 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.model.context_length).toBe(65536);
     // context_window is silently ignored by Hermes; we must not emit it.
     expect(config.model.context_window).toBeUndefined();
+  });
+
+  it("accepts Hermes' minimum context window as model.context_length (#6760)", () => {
+    const settings = readHermesBuildSettings(
+      buildHermesTestEnv({ NEMOCLAW_CONTEXT_WINDOW: String(MIN_HERMES_CONTEXT_WINDOW) }),
+    );
+    const config = buildHermesConfig(settings);
+
+    expect((config.model as Record<string, unknown>).context_length).toBe(
+      MIN_HERMES_CONTEXT_WINDOW,
+    );
+  });
+
+  it("rejects a configured context window below Hermes' minimum (#6760)", () => {
+    expect(() =>
+      readHermesBuildSettings(buildHermesTestEnv({ NEMOCLAW_CONTEXT_WINDOW: "16384" })),
+    ).toThrow(
+      `Hermes NEMOCLAW_CONTEXT_WINDOW must be at least ${MIN_HERMES_CONTEXT_WINDOW} tokens, got 16384`,
+    );
   });
 
   it("chains the endpoint probe through to model.context_length in the generated config (#6177)", async () => {

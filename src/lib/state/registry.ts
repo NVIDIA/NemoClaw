@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { isErrnoException } from "../core/errno";
 import { isObjectRecord } from "../core/json-types";
+import { GATEWAY_PORT } from "../core/ports";
 import type { InferenceSelection } from "../inference/selection";
 import {
   inferenceSelectionRegistryFields,
@@ -28,6 +29,7 @@ import {
 import type { SandboxMessagingState } from "./registry-messaging";
 import { parseSandboxRegistryEntries, retainedDefaultSandbox } from "./registry-normalization";
 import * as reversibleRemoval from "./registry-reversible-removal";
+import { nemoclawStateRoot } from "./state-root";
 
 export {
   getSandboxEntryDisplayInference,
@@ -161,7 +163,10 @@ export interface SandboxRegistry {
 
 export type SandboxRemovalReceipt = reversibleRemoval.RegistryRemovalReceipt<SandboxEntry>;
 
-export const REGISTRY_FILE = path.join(process.env.HOME || "/tmp", ".nemoclaw", "sandboxes.json");
+export const REGISTRY_FILE = path.join(
+  nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY_PORT),
+  "sandboxes.json",
+);
 export const LOCK_DIR = `${REGISTRY_FILE}.lock`;
 export const LOCK_OWNER = path.join(LOCK_DIR, "owner");
 export const LOCK_STALE_MS = 10_000;

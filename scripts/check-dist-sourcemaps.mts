@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 type SourceMap = {
   sources?: unknown;
@@ -76,6 +77,6 @@ function main(): void {
   process.exit(1);
 }
 
-if (require.main === module) {
+if (fileURLToPath(import.meta.url) === path.resolve(process.argv[1] ?? "")) {
   main();
 }

@@ -52,6 +52,8 @@ import {
 const TIMEOUT_MS = 45 * 60_000;
 const MOCK_BASELINE_API_KEY = "hermes-inference-switch-baseline-credential";
 const MOCK_BASELINE_MODEL = "hermes-inference-switch-baseline-model";
+const HERMES_DASHBOARD_INTERNAL_PORT =
+  process.env.NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT ?? "19119";
 
 function canonicalEndpoint(value: unknown): string | null {
   return typeof value === "string" ? new URL(value).toString() : null;
@@ -142,16 +144,20 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   const redactionValues = [apiKey, publicApiKey].filter(
     (value): value is string => typeof value === "string",
   );
-  const installEnv: NodeJS.ProcessEnv = mockBaseline
-    ? {
-        COMPATIBLE_API_KEY: apiKey,
-        NEMOCLAW_COMPAT_MODEL: MOCK_BASELINE_MODEL,
-        NEMOCLAW_ENDPOINT_URL: mockBaseline.baseUrl,
-        NEMOCLAW_MODEL: MOCK_BASELINE_MODEL,
-        NEMOCLAW_PREFERRED_API: "openai-completions",
-        NEMOCLAW_PROVIDER: "custom",
-      }
-    : {};
+  const installEnv: NodeJS.ProcessEnv = {
+    NEMOCLAW_HERMES_DASHBOARD: "1",
+    NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT: HERMES_DASHBOARD_INTERNAL_PORT,
+    ...(mockBaseline
+      ? {
+          COMPATIBLE_API_KEY: apiKey,
+          NEMOCLAW_COMPAT_MODEL: MOCK_BASELINE_MODEL,
+          NEMOCLAW_ENDPOINT_URL: mockBaseline.baseUrl,
+          NEMOCLAW_MODEL: MOCK_BASELINE_MODEL,
+          NEMOCLAW_PREFERRED_API: "openai-completions",
+          NEMOCLAW_PROVIDER: "custom",
+        }
+      : {}),
+  };
 
   const install = await installHermes(host, apiKey, installEnv);
   expect(install.exitCode, resultText(install)).toBe(0);
@@ -222,6 +228,41 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   expect(model.api_mode).toBe(expectedApiMode());
   expect((await apiKeyShape(sandbox)).exitCode).toBe(0);
   expect(config.stdout).not.toMatch(/^models:\s*$/mu);
+
+  const dashboardConfig = await sandbox.exec(
+    SANDBOX_NAME,
+    ["cat", "/sandbox/.hermes/dashboard-home/config.yaml"],
+    {
+      artifactName: "hermes-dashboard-config-yaml-after-switch",
+      env: env(),
+      redactionValues,
+      timeoutMs: 30_000,
+    },
+  );
+  expect(dashboardConfig.exitCode, resultText(dashboardConfig)).toBe(0);
+  const dashboardModel = parseHermesModelBlock(dashboardConfig.stdout);
+  expect(dashboardModel.default).toBe(SWITCH_MODEL);
+  expect(dashboardModel.provider).toBe(SWITCH_PROVIDER);
+  expect(dashboardModel.base_url).toBe(expectedBaseUrl());
+  expect(dashboardModel.api_mode).toBe(expectedApiMode());
+
+  const dashboardModelInfo = await sandbox.exec(
+    SANDBOX_NAME,
+    [
+      "curl",
+      "-sf",
+      "--max-time",
+      "10",
+      `http://127.0.0.1:${HERMES_DASHBOARD_INTERNAL_PORT}/api/model/info`,
+    ],
+    {
+      artifactName: "hermes-dashboard-model-info-after-switch",
+      env: env(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(dashboardModelInfo.exitCode, resultText(dashboardModelInfo)).toBe(0);
+  expect(JSON.parse(dashboardModelInfo.stdout)).toMatchObject({ model: SWITCH_MODEL });
 
   const strictHash = await hashCheck(sandbox, "/etc/nemoclaw/hermes.config-hash", "strict");
   expect(strictHash.exitCode, resultText(strictHash)).toBe(0);

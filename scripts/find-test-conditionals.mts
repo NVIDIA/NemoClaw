@@ -557,7 +557,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
       roots.push(argv[++index] ?? "");
     } else if (arg === "--help" || arg === "-h") {
       console.log(
-        `Usage: tsx scripts/find-test-conditionals.ts [--top N] [--min-score N] [--root PATH] [--json]\n\nScans test/spec files under test, src, and nemoclaw/src by default.`,
+        `Usage: tsx scripts/find-test-conditionals.mts [--top N] [--min-score N] [--root PATH] [--json]\n\nScans test/spec files under test, src, and nemoclaw/src by default.`,
       );
       process.exit(0);
     } else {

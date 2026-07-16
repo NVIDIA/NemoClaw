@@ -10,7 +10,7 @@ NemoClaw v0.0.83 makes shared inference route changes explicit and safe, restore
 - Shared inference route changes are now explicit and fail-safe.
   When multiple sandboxes share a gateway, onboarding warns immediately before re-pointing the live route and fails closed before replacing a provider-global identity used by another sandbox.
   Status output shows each sandbox's recorded route, the live route, and whether `connect` can safely restore a drifted route.
-  For more information, refer to [View Active Inference Route](/user-guide/openclaw/inference/manage-inference/view-active-inference-route), [Switch Models](/user-guide/openclaw/inference/manage-inference/switch-models), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+  For more information, refer to [Use Shared Gateway Routes](/user-guide/openclaw/inference/manage-inference/use-shared-gateway-routes) and [View Active Inference Route](/user-guide/openclaw/inference/manage-inference/view-active-inference-route).
 - DGX Station GB300 systems enter the express-install path, and managed vLLM storage preflight blocks only for a verified shortage rather than inconclusive capacity.
   For more information, refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm) and [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
 - Onboarding warns when a bring-your-own vLLM server on DGX Spark appears to serve a large unquantized model that may exhaust GPU memory under agent tool-call load.
@@ -20,6 +20,7 @@ NemoClaw v0.0.83 makes shared inference route changes explicit and safe, restore
 - Unreachable custom endpoints during onboarding now route through the transport-recovery path with DNS/VPN guidance and a retry/back/exit prompt instead of silently looping back to provider selection.
 - Rebuild preflight uses the model-aware token field for GPT-5 and o-series models, preventing spurious HTTP 400 failures before rebuild processing begins.
 - Corporate CA trust anchors are available throughout the sandbox image build, so `npm audit signatures` succeeds behind TLS-intercepting corporate proxies without manual workarounds.
+  For more information, refer to [Configure Corporate CA Trust](/user-guide/openclaw/security/configure-corporate-ca-trust).
 - SSH `ControlMaster`-delegated forwards are recognized by the untracked-forward fallback, preventing a healthy sandbox from being deleted after a forward-detection timeout.
 - Hermes light terminal skin writes correctly on macOS via stdin streaming.
 
