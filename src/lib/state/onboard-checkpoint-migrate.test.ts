@@ -9,7 +9,11 @@ import {
   deriveCheckpointFromSession,
   resolveCheckpointForResume,
 } from "./onboard-checkpoint-migrate";
-import { CHECKPOINT_SCHEMA_VERSION, type OnboardCheckpoint } from "./onboard-checkpoint-types";
+import {
+  CHECKPOINT_SCHEMA_VERSION,
+  type CheckpointLoadResult,
+  type OnboardCheckpoint,
+} from "./onboard-checkpoint-types";
 import { createSession, normalizeSession, type Session } from "./onboard-session";
 
 function rawJson(value: unknown): Record<string, unknown> {
@@ -105,11 +109,10 @@ describe("resolveCheckpointForResume", () => {
     const raw = rawJson(completedSession());
     const result = resolveCheckpointForResume(raw);
     expect(result.status).toBe("migrated");
-    if (result.status === "migrated") {
-      expect(result.checkpoint.sandboxIdentity).toEqual(
-        decisionSelected({ name: "my-sandbox", agent: "openclaw" }),
-      );
-    }
+    const migrated = result as Extract<CheckpointLoadResult, { status: "migrated" }>;
+    expect(migrated.checkpoint.sandboxIdentity).toEqual(
+      decisionSelected({ name: "my-sandbox", agent: "openclaw" }),
+    );
   });
 
   it("reports a corrupt embedded checkpoint rather than migrating over it", () => {

@@ -90,10 +90,7 @@ describe("checkpoint schema inspection", () => {
   it("loads and round-trips a valid v1 checkpoint", () => {
     const checkpoint = baseCheckpoint();
     const result = inspectCheckpoint(serializeCheckpoint(checkpoint));
-    expect(result.status).toBe("loaded");
-    if (result.status === "loaded") {
-      expect(result.checkpoint).toEqual(checkpoint);
-    }
+    expect(result).toEqual({ status: "loaded", checkpoint });
   });
 
   it("rejects a checkpoint whose sandbox identity value is malformed", () => {

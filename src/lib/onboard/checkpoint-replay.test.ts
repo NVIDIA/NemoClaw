@@ -108,11 +108,10 @@ describe("crash-then-resume matrix proves at-most-once destructive create (#6228
       effectGroups: { sandbox_create: { completedAt: ISO, fingerprint: "fp" } },
     });
     expect(planSandboxCreateReplay(cp, { liveSandboxExists: true }).action).toBe("reuse");
-    const gone = planSandboxCreateReplay(cp, { liveSandboxExists: false });
-    expect(gone.action).toBe("create");
-    if (gone.action === "create") {
-      expect(gone.identity.name).toBe("my-sandbox");
-    }
+    expect(planSandboxCreateReplay(cp, { liveSandboxExists: false })).toEqual({
+      action: "create",
+      identity: { name: "my-sandbox", agent: "openclaw" },
+    });
   });
 });
 
