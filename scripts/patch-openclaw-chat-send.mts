@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env -S node --experimental-strip-types
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -9,8 +9,29 @@
  * events.
  */
 
-const fs = require("node:fs");
-const path = require("node:path");
+import fs from "node:fs";
+import path from "node:path";
+
+type DistEntry = { file: string; source: string };
+
+type PatchResult =
+  | { nextSource: string; status: "no-match"; error: string }
+  | { nextSource: string; status: "already-applied" | "would-apply"; error?: undefined };
+
+type Recognizer = {
+  id: string;
+  marker: string;
+  postVerifyError: string;
+  patch: (source: string, file: string) => PatchResult;
+};
+
+type FileSpec = {
+  id: string;
+  label: string;
+  requiredWhen?: (sources: string[]) => boolean;
+  selector: (source: string) => boolean;
+  recognizers: Recognizer[];
+};
 
 const AUDIT_FLAG = "--audit";
 const EXIT_APPLY_FAILURE = 1;
@@ -23,24 +44,24 @@ const positional = args.filter((value) => value !== AUDIT_FLAG);
 const distDir = positional[0];
 
 if (!distDir || positional.length > 1) {
-  console.error("Usage: patch-openclaw-chat-send.js [--audit] <openclaw-dist-dir>");
+  console.error("Usage: patch-openclaw-chat-send.mts [--audit] <openclaw-dist-dir>");
   process.exit(EXIT_USAGE);
 }
 
-function fail(message) {
+function fail(message: string): never {
   console.error(`ERROR: ${message}`);
   process.exit(EXIT_APPLY_FAILURE);
 }
 
-function listJsFiles(dir) {
+function listJsFiles(dir: string) {
   return fs
     .readdirSync(dir, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
     .map((entry) => path.join(dir, entry.name));
 }
 
-let distEntries;
-function getDistEntries() {
+let distEntries: DistEntry[] | undefined;
+function getDistEntries(): DistEntry[] {
   if (!distEntries) {
     distEntries = listJsFiles(distDir).map((file) => ({
       file,
@@ -50,7 +71,7 @@ function getDistEntries() {
   return distEntries;
 }
 
-function patchChatSendRunStart(source, file) {
+function patchChatSendRunStart(source: string, file: string): PatchResult {
   if (source.includes("nemoclaw: correlate chat.send run ids")) {
     return { nextSource: source, status: "already-applied" };
   }
@@ -71,7 +92,7 @@ function patchChatSendRunStart(source, file) {
   return { nextSource, status: "would-apply" };
 }
 
-function patchChatSendTranscriptIdempotency(source, file) {
+function patchChatSendTranscriptIdempotency(source: string, file: string): PatchResult {
   if (source.includes("idempotencyKey: clientRunId")) {
     return { nextSource: source, status: "already-applied" };
   }
@@ -95,7 +116,7 @@ function patchChatSendTranscriptIdempotency(source, file) {
   return { nextSource, status: "would-apply" };
 }
 
-function patchChatSendEmptyFinal(source, file) {
+function patchChatSendEmptyFinal(source: string, file: string): PatchResult {
   if (source.includes("suppressing empty final event")) {
     return { nextSource: source, status: "already-applied" };
   }
@@ -120,7 +141,7 @@ function patchChatSendEmptyFinal(source, file) {
   return { nextSource, status: "would-apply" };
 }
 
-function patchGetReplyFollowupRunId(source, file) {
+function patchGetReplyFollowupRunId(source: string, file: string): PatchResult {
   if (source.includes("carry chat.send run id into queued followup")) {
     return { nextSource: source, status: "already-applied" };
   }
@@ -141,7 +162,7 @@ function patchGetReplyFollowupRunId(source, file) {
   return { nextSource, status: "would-apply" };
 }
 
-function patchGetReplyWebchatQueueMode(source, file) {
+function patchGetReplyWebchatQueueMode(source: string, file: string): PatchResult {
   if (source.includes("force webchat chat.send queued turns")) {
     return { nextSource: source, status: "already-applied" };
   }
@@ -178,7 +199,7 @@ function patchGetReplyWebchatQueueMode(source, file) {
   return { nextSource, status: "would-apply" };
 }
 
-function patchFollowupRunIdPreservation(source, file) {
+function patchFollowupRunIdPreservation(source: string, file: string): PatchResult {
   let working = source;
   const legacyShim =
     "const runId = opts?.runId ?? crypto.randomUUID(); // nemoclaw: preserve chat.send run ids in followup queue";
@@ -233,7 +254,7 @@ function patchFollowupRunIdPreservation(source, file) {
   return { nextSource, status: "would-apply" };
 }
 
-function patchEmbeddedAgentRetryPersistence(source, file) {
+function patchEmbeddedAgentRetryPersistence(source: string, file: string): PatchResult {
   if (source.includes("nemoclaw: suppress persisted user turn on embedded retries")) {
     return { nextSource: source, status: "already-applied" };
   }
@@ -256,7 +277,7 @@ function patchEmbeddedAgentRetryPersistence(source, file) {
   return { nextSource, status: "would-apply" };
 }
 
-const FILES = [
+const FILES: FileSpec[] = [
   {
     id: "chat-send",
     label: "chat.send runtime",
@@ -361,7 +382,7 @@ const FILES = [
   },
 ];
 
-function resolveFile(fileSpec, { dryRun }) {
+function resolveFile(fileSpec: FileSpec, { dryRun }: { dryRun: boolean }) {
   const entries = getDistEntries();
   const sources = entries.map((entry) => entry.source);
   if (fileSpec.requiredWhen && !fileSpec.requiredWhen(sources)) {
@@ -378,7 +399,7 @@ function resolveFile(fileSpec, { dryRun }) {
   return { file: candidates[0] };
 }
 
-function processFile(fileSpec, file, { dryRun }) {
+function processFile(fileSpec: FileSpec, file: string, { dryRun }: { dryRun: boolean }) {
   let source = fs.readFileSync(file, "utf8");
   const original = source;
   const recognizerResults = [];
@@ -416,6 +437,7 @@ function runApplyMode() {
   for (const fileSpec of FILES) {
     const { file, skipped } = resolveFile(fileSpec, { dryRun: false });
     if (skipped) continue;
+    if (!file) continue;
     processFile(fileSpec, file, { dryRun: false });
     summary.push(path.basename(file));
   }
@@ -425,7 +447,7 @@ function runApplyMode() {
   console.log(`INFO: patched OpenClaw chat.send compatibility in ${fileList}`);
 }
 
-function statusBadge(status) {
+function statusBadge(status: string) {
   switch (status) {
     case "applied":
     case "already-applied":

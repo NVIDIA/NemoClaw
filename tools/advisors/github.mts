@@ -11,6 +11,7 @@ export type GitHubRequestOptions = {
   method?: string;
   body?: unknown;
   userAgent?: string;
+  signal?: AbortSignal;
 };
 
 export async function githubRest<T>(apiPath: string, token: string): Promise<T> {
@@ -94,6 +95,7 @@ export async function githubApi<T>(
       ...(options.userAgent ? { "User-Agent": options.userAgent } : {}),
     },
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    signal: options.signal,
   });
   const text = await response.text();
   if (!response.ok) {

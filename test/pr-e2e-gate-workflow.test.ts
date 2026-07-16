@@ -60,111 +60,6 @@ function collectStrings(value: unknown): string[] {
         : [];
 }
 
-function runWaitStep(
-  scenario: "success" | "failure" | "query-failure" | "timeout" | "unsupported",
-  options: { runId?: string } = {},
-) {
-  const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
-  const wait = step(workflow.jobs.coordinate, "Wait for E2E run");
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-wait-"));
-  const binDir = path.join(tempDir, "bin");
-  const callCountPath = path.join(tempDir, "gh-call-count");
-  fs.mkdirSync(binDir);
-  fs.writeFileSync(callCountPath, "0\n");
-  fs.writeFileSync(
-    path.join(binDir, "gh"),
-    `#!/usr/bin/env bash
-set -euo pipefail
-count="$(cat "$FAKE_GH_CALL_COUNT")"
-count=$((count + 1))
-printf '%s\n' "$count" > "$FAKE_GH_CALL_COUNT"
-case "$FAKE_GH_SCENARIO:$count" in
-  success:1 | success:2 | failure:1) printf 'in_progress:none\n' ;;
-  success:*) printf 'completed:success\n' ;;
-  failure:*) printf 'completed:failure\n' ;;
-  query-failure:*) printf 'simulated GitHub query failure\n' >&2; exit 1 ;;
-  unsupported:*) printf 'completed:unknown\n' ;;
-  *) exit 2 ;;
-esac
-`,
-    { mode: 0o755 },
-  );
-  fs.writeFileSync(path.join(binDir, "sleep"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
-  fs.writeFileSync(
-    path.join(binDir, "timeout"),
-    `#!/usr/bin/env bash
-set -euo pipefail
-if [ "$FAKE_GH_SCENARIO" = "timeout" ]; then
-  exit 124
-fi
-shift 3
-exec "$@"
-`,
-    { mode: 0o755 },
-  );
-
-  try {
-    const result = spawnSync("bash", ["-e", "-o", "pipefail", "-c", wait.run!], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        FAKE_GH_CALL_COUNT: callCountPath,
-        FAKE_GH_SCENARIO: scenario,
-        GATE_RUN_URL: "https://github.com/NVIDIA/NemoClaw/actions/runs/17",
-        GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
-        PATH: `${binDir}:${process.env.PATH ?? ""}`,
-        RUN_ID: options.runId ?? "29110351531",
-      },
-      timeout: 5_000,
-    });
-    return {
-      ...result,
-      ghCallCount: Number(fs.readFileSync(callCountPath, "utf8").trim()),
-    };
-  } finally {
-    fs.rmSync(tempDir, { recursive: true, force: true });
-  }
-}
-
-function runEvidenceStep(scenario: "success" | "failure" | "timeout") {
-  const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
-  const evidence = step(workflow.jobs.coordinate, "Download evidence");
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-evidence-"));
-  const binDir = path.join(tempDir, "bin");
-  fs.mkdirSync(binDir);
-  fs.writeFileSync(
-    path.join(binDir, "timeout"),
-    `#!/usr/bin/env bash
-set -euo pipefail
-case "$FAKE_DOWNLOAD_SCENARIO" in
-  success) exit 0 ;;
-  failure) printf 'simulated artifact download failure\n' >&2; exit 2 ;;
-  timeout) exit 124 ;;
-  *) exit 64 ;;
-esac
-`,
-    { mode: 0o755 },
-  );
-
-  try {
-    const script = evidence.run!.replaceAll("${{ steps.workspace.outputs.work_dir }}", tempDir);
-    return spawnSync("bash", ["-e", "-o", "pipefail", "-c", script], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        FAKE_DOWNLOAD_SCENARIO: scenario,
-        GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
-        PATH: `${binDir}:${process.env.PATH ?? ""}`,
-        RUN_ID: "29110351531",
-        RUN_URL: "https://github.com/NVIDIA/NemoClaw/actions/runs/29110351531",
-      },
-      timeout: 5_000,
-    });
-  } finally {
-    fs.rmSync(tempDir, { recursive: true, force: true });
-  }
-}
-
 function runStartStep(headBranch: string, prNumber = "42") {
   const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
   const start = step(workflow.jobs.coordinate, "Start evaluation");
@@ -396,6 +291,10 @@ esac
 describe("PR E2E gate workflow", () => {
   // source-shape-contract: security -- Trusted metadata triggers and least privilege bound the write-capable controller
   it("limits triggers and job permissions", () => {
+    const ciWorkflow = readYaml<Workflow>(".github/workflows/pr.yaml");
+    const ciRequired =
+      "${{ github.event.action != 'edited' || github.event.changes.base != null }}";
+    const ciVerification = step(ciWorkflow.jobs.checks, "Verify required PR checks");
     const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
     const initialize = workflow.jobs.initialize;
     const required = workflow.jobs.required;
@@ -454,6 +353,23 @@ describe("PR E2E gate workflow", () => {
       },
     });
     expect(workflow.permissions).toEqual({});
+    expect(ciWorkflow.jobs.changes.if).toBe(ciRequired);
+    expect(ciWorkflow.jobs.checks.if).toBe("always()");
+    expect(ciVerification.env?.CI_REQUIRED).toBe(ciRequired);
+    expect(ciVerification.run).toContain('if [ "$CI_REQUIRED" != "true" ]; then');
+    expect(ciVerification.run).toContain("Metadata-only PR edit");
+    const metadataOnlyGate = spawnSync("bash", ["-c", ciVerification.run ?? ""], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        ...ciVerification.env,
+        CHANGES_RESULT: "skipped",
+        CI_REQUIRED: "false",
+        STATIC_RESULT: "failure",
+      },
+    });
+    expect(metadataOnlyGate.status, metadataOnlyGate.stderr).toBe(0);
+    expect(metadataOnlyGate.stdout).toContain("Metadata-only PR edit");
     expect(initialize.if).toContain("github.event_name == 'pull_request_target'");
     expect(initialize.if).toContain("github.event.action != 'closed'");
     expect(initialize.if).toContain("github.event.action != 'edited'");
@@ -469,6 +385,8 @@ describe("PR E2E gate workflow", () => {
     expect(required.name).toBe("E2E / PR Gate");
     expect(required.if).toContain("github.event_name == 'pull_request_target'");
     expect(required.if).toContain("github.event.action != 'closed'");
+    expect(required.if).toContain("github.event.action != 'edited'");
+    expect(required.if).toContain("github.event.changes.base != null");
     expect(required.permissions).toEqual({
       checks: "read",
       contents: "read",
@@ -576,14 +494,15 @@ describe("PR E2E gate workflow", () => {
     expect(start.run).toContain('--ci-display-title "$CI_DISPLAY_TITLE"');
     expect(start.run).toContain('--gate-run-id "$GATE_RUN_ID"');
     const wait = step(coordinate, "Wait for E2E run");
-    expect(wait.env?.GATE_RUN_URL).toBe(
-      "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
-    );
+    expect(wait.env?.GITHUB_TOKEN).toBe("${{ github.token }}");
+    expect(wait.run).toContain("--mode wait");
+    expect(wait.run).toContain('--run-id "${{ steps.start.outputs.run_id }}"');
     const evidence = step(coordinate, "Download evidence");
-    expect(evidence.env?.RUN_URL).toBe(
-      "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ steps.start.outputs.run_id }}",
-    );
-    expect(evidence.run).toContain('"$RUN_URL" >&2');
+    expect(evidence.env?.GH_TOKEN).toBe("${{ github.token }}");
+    expect(evidence.env?.GITHUB_TOKEN).toBe("${{ github.token }}");
+    expect(evidence.run).toContain("--mode download");
+    expect(evidence.run).toContain('--work-dir "${{ steps.workspace.outputs.work_dir }}"');
+    expect(evidence.run).toContain('--run-id "${{ steps.start.outputs.run_id }}"');
     const finish = step(coordinate, "Verify evidence");
     expect(finish.run).toContain('--evidence-outcome "${{ steps.evidence.outcome }}"');
     const approval = step(approveForkSkip, "Record approved credentialed E2E skip");
@@ -746,73 +665,34 @@ describe("PR E2E gate workflow", () => {
     expect(racedWorkflow.stdout).toContain("workflow_sha must match the trusted workflow commit");
   });
 
-  it("logs each child state once and exits after success", () => {
-    const result = runWaitStep("success");
+  // source-shape-contract: security -- Always-run finalization and private-workspace cleanup must survive every coordinate failure path
+  it("orders the coordinate steps and always finalizes through the controller", () => {
+    const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
+    const coordinate = workflow.jobs.coordinate;
 
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    expect(result.stdout.trim().split(/\r?\n/u)).toEqual([
-      expect.stringContaining("status=in_progress"),
-      expect.stringContaining("status=completed conclusion=success"),
+    expect((coordinate.steps ?? []).map((candidate) => candidate.name)).toEqual([
+      "Checkout controller",
+      "Setup Node",
+      "Install controller dependencies",
+      "Create private workspace",
+      "Start evaluation",
+      "Upload risk plan",
+      "Wait for E2E run",
+      "Download evidence",
+      "Verify evidence",
+      "Close incomplete check",
+      "Remove private workspace",
     ]);
-  });
 
-  it("leaves terminal child failures for finalization to report", () => {
-    const result = runWaitStep("failure");
-
-    expect(result.status).toBe(0);
-    expect(result.stdout.match(/status=in_progress/gu)).toHaveLength(1);
-    expect(result.stdout).toContain("status=completed conclusion=failure");
-    expect(result.stderr).toBe("");
-  });
-
-  it("preserves GitHub CLI errors when status queries fail", () => {
-    const result = runWaitStep("query-failure");
-
-    expect(result.status).toBe(1);
-    expect(result.stderr).toContain("simulated GitHub query failure");
-    expect(result.stderr).toContain("::error title=Run status query failed::");
-    expect(result.stderr).toContain("https://github.com/NVIDIA/NemoClaw/actions/runs/29110351531");
-  });
-
-  it("leaves bounded wait timeouts for finalization to cancel and report", () => {
-    const result = runWaitStep("timeout");
-
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("did not complete within 105 minutes");
-    expect(result.stdout).toContain("https://github.com/NVIDIA/NemoClaw/actions/runs/29110351531");
-    expect(result.stderr).toBe("");
-  });
-
-  it("links timeout and generic evidence download failures to the child run", () => {
-    const timeout = runEvidenceStep("timeout");
-    const failure = runEvidenceStep("failure");
-    const runUrl = "https://github.com/NVIDIA/NemoClaw/actions/runs/29110351531";
-
-    expect(timeout.status).toBe(124);
-    expect(timeout.stderr).toContain("::error title=Evidence download timed out::");
-    expect(timeout.stderr).toContain(runUrl);
-    expect(failure.status).toBe(2);
-    expect(failure.stderr).toContain("simulated artifact download failure");
-    expect(failure.stderr).toContain("::error title=Evidence download failed::");
-    expect(failure.stderr).toContain(runUrl);
-  });
-
-  it("rejects an invalid child run ID before querying GitHub", () => {
-    const result = runWaitStep("success", { runId: "invalid" });
-
-    expect(result.status).toBe(1);
-    expect(result.ghCallCount).toBe(0);
-    expect(result.stderr).toContain("::error title=Invalid run ID::");
-    expect(result.stderr).toContain("https://github.com/NVIDIA/NemoClaw/actions/runs/17");
-  });
-
-  it("fails closed for an unsupported child state", () => {
-    const result = runWaitStep("unsupported");
-
-    expect(result.status).toBe(1);
-    expect(result.ghCallCount).toBe(1);
-    expect(result.stderr).toContain("::error title=Unexpected run state::");
-    expect(result.stderr).toContain("https://github.com/NVIDIA/NemoClaw/actions/runs/29110351531");
+    const evidence = step(coordinate, "Download evidence");
+    expect(evidence.if).toContain("always()");
+    const finish = step(coordinate, "Verify evidence");
+    expect(finish.if).toContain("always()");
+    const abandon = step(coordinate, "Close incomplete check");
+    expect(abandon.if).toContain("always()");
+    const cleanup = step(coordinate, "Remove private workspace");
+    expect(cleanup.if).toContain("always()");
+    expect(cleanup.if).toContain("steps.workspace.outputs.work_dir");
+    expect(cleanup.run).toBe('rm -rf -- "${{ steps.workspace.outputs.work_dir }}"');
   });
 });

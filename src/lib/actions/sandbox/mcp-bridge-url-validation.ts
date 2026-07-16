@@ -76,7 +76,7 @@ export function normalizeMcpServerUrl(rawUrl: string): string {
   }
   if (parsed.protocol !== "https:") {
     throw new McpBridgeError(
-      "Authenticated MCP server URLs must use https:// so the configured MCP client uses TLS when OpenShell forwards credential-bearing requests.",
+      "Authenticated MCP server URLs must use https:// so the configured MCP client uses TLS when OpenShell forwards credential-bearing requests. Managed mcp add enforces this for every agent; an agent-native registration path may accept a plain-http URL but bypasses NemoClaw credential replacement and egress policy.",
       2,
     );
   }

@@ -162,4 +162,4 @@ function summarizeJobs(input: SummarizeJobsInput): JobSummary {
   };
 }
 
-module.exports = { isSelectiveDispatch, loadWorkflowRunJobs, summarizeJobs };
+export { isSelectiveDispatch, loadWorkflowRunJobs, summarizeJobs };
