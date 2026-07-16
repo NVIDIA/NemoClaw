@@ -934,10 +934,14 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
 
   const useMockBaseline =
     SWITCH_PROVIDER === "compatible-anthropic-endpoint" && SWITCH_MOCK_ANTHROPIC === "1";
+  // OpenShell reaches this fixture from its gateway network namespace, where
+  // the runner's loopback address is not routable.
   const baselineProvider: FakeOpenAiCompatibleServer | undefined = useMockBaseline
     ? await startFakeOpenAiCompatibleServer({
         apiKey: MOCK_BASELINE_API_KEY,
+        host: "0.0.0.0",
         model: MOCK_BASELINE_MODEL,
+        publicHost: "host.openshell.internal",
         requireAuth: true,
       })
     : undefined;

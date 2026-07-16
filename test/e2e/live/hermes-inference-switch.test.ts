@@ -120,10 +120,14 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   });
   expect(docker.exitCode, resultText(docker)).toBe(0);
 
+  // OpenShell reaches this fixture from its gateway network namespace, where
+  // the runner's loopback address is not routable.
   const mockBaseline = mockAnthropicSwitchEnabled()
     ? await startFakeOpenAiCompatibleServer({
         apiKey: MOCK_BASELINE_API_KEY,
+        host: "0.0.0.0",
         model: MOCK_BASELINE_MODEL,
+        publicHost: "host.openshell.internal",
         requireAuth: true,
       })
     : undefined;
