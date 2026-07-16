@@ -92,20 +92,16 @@
 //   chat-completions request for a model whose generated config has
 //   `reasoning: true`. NVIDIA Build's OpenAI-compatible endpoint rejects that
 //   field — `400 "Validation: Unsupported parameter(s): thinking"` — in BOTH
-//   its object (`{"type":"enabled"}`) and boolean (`true`) forms. The whole
-//   Nemotron-3 family reasons, so any of Ultra 550B / Super 120B / Nano 30B
-//   onboarded with `reasoning: true` 400s on every agent turn (Ultra observed
-//   0/20 in the report). The model still reasons without the field (the
-//   endpoint returns `reasoning_content` either way), so the field carries no
-//   behavior to preserve.
+//   its object (`{"type":"enabled"}`) and boolean (`true`) forms. Ultra 550B
+//   is a reasoning model, so a reasoning-enabled Ultra sandbox 400s on every
+//   agent turn (0/20 in the report). The model still reasons without the
+//   field (the endpoint returns `reasoning_content` either way), so the field
+//   carries no behavior to preserve.
 //
-//   Scope: matched by STRIP_TOP_LEVEL_THINKING_RE = /^nvidia\/nemotron-3-/i.
-//   The rejection is per-model, not endpoint-wide — verified 400-with /
-//   200-without for nemotron-3 ultra/super/nano, but `openai/gpt-oss-120b` on
-//   the same endpoint ACCEPTS top-level `thinking` (200). So the strip is
-//   family-scoped, not a blanket rewrite that would clobber a field another
-//   model accepts. deepseek-v4-pro / kimi-k2.6 are handled by the
-//   chat_template_kwargs rules above and are intentionally out of this scope.
+//   Scope: the exact `nvidia/nemotron-3-ultra-550b-a55b` model ID reproduced
+//   in #6913. Prefix collisions and other Nemotron-3 IDs preserve their
+//   top-level `thinking` field unless their own accepted scope establishes the
+//   same endpoint contract.
 //
 //   Source boundary: NemoClaw owns the sandbox preload that wraps outgoing
 //   chat-completions traffic. The `thinking` field originates in OpenClaw's
@@ -122,9 +118,9 @@
 //   Regression proof: test/nemotron-inference-fix.test.ts covers the strip/
 //   skip branches; the http/https/fetch transports share the same
 //   patchJsonBody path already exercised by the kwargs tests. Verified
-//   end-to-end against integrate.api.nvidia.com by replaying Nemotron-3
-//   requests carrying a top-level `thinking` through this preload: 400 without
-//   the strip, 200 with it (both object and boolean forms, Ultra and Nano).
+//   end-to-end against integrate.api.nvidia.com by replaying an Ultra request
+//   carrying a top-level `thinking` through this preload: 400 without the
+//   strip, 200 with it (both object and boolean forms).
 //
 //   Removal condition: remove STRIP_TOP_LEVEL_THINKING_RE once OpenClaw stops
 //   emitting a top-level `thinking` on the managed Build route (e.g. it moves
@@ -149,14 +145,9 @@
   // set `chat_template_kwargs.thinking` (a chat-template arg the endpoint
   // accepts); this strips the *top-level* `thinking` request field entirely.
   //
-  // Scope is the whole Nemotron-3 family, not just Ultra: the endpoint rejects
-  // top-level `thinking` for `nemotron-3-ultra-550b-a55b`, `nemotron-3-super-
-  // 120b-a12b`, and `nemotron-3-nano-30b-a3b` alike (verified 400 with the
-  // field, 200 without), so any of them onboarded with `reasoning: true` hits
-  // the same failure. The rejection is per-model, NOT endpoint-wide — e.g.
-  // `openai/gpt-oss-120b` on the same endpoint *accepts* top-level `thinking`
-  // (200) — so this stays model-scoped rather than stripping unconditionally.
-  var STRIP_TOP_LEVEL_THINKING_RE = /^nvidia\/nemotron-3-/i;
+  // Scope is the exact Ultra model ID accepted by #6913. Do not infer support
+  // for suffix variants or other Nemotron-3 models from this workaround.
+  var STRIP_TOP_LEVEL_THINKING_RE = /^nvidia\/nemotron-3-ultra-550b-a55b$/i;
 
   // #4851: Ultra 550B silently drops intermediate steps from `content` when
   // asked to perform multi-step tasks without execution-capable tools —
