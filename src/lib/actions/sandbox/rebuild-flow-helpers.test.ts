@@ -313,7 +313,10 @@ describe("backupSandboxStateForRebuild with --force", () => {
         plans: "permission denied",
       },
       failedFiles: [],
-      manifest: makeBackupResult().manifest,
+      // Non-force abort bails before the manifest is read; keep the fixture
+      // internally consistent (no backed-up dirs) rather than reusing a manifest
+      // that claims otherwise.
+      manifest: null,
     });
 
     expect(() =>
@@ -357,7 +360,9 @@ describe("backupSandboxStateForRebuild with --force", () => {
         sessions: "absent after extraction",
       },
       failedFiles: [],
-      manifest: makeBackupResult().manifest,
+      // Non-force abort bails before the manifest is read; null keeps the fixture
+      // consistent with backedUpDirs: [].
+      manifest: null,
     });
 
     expect(() =>
