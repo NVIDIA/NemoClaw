@@ -24,6 +24,9 @@ interface AgentOutputOverrides {
   model?: string;
   winnerProvider?: string;
   winnerModel?: string;
+  attemptProvider?: string;
+  attemptModel?: string;
+  attemptStage?: string;
   attemptResult?: "success" | "error";
 }
 
@@ -35,6 +38,9 @@ function agentOutput({
   model = GPU_MODEL,
   winnerProvider = "inference",
   winnerModel = GPU_MODEL,
+  attemptProvider = provider,
+  attemptModel = model,
+  attemptStage = "assistant",
   attemptResult = "success",
 }: AgentOutputOverrides = {}): string {
   return JSON.stringify({
@@ -51,10 +57,10 @@ function agentOutput({
           winnerModel,
           attempts: [
             {
-              provider,
-              model,
+              provider: attemptProvider,
+              model: attemptModel,
               result: attemptResult,
-              stage: "assistant",
+              stage: attemptStage,
             },
           ],
         },
@@ -90,6 +96,21 @@ const invalidExecutionProofs: Array<{
     name: "winner model",
     overrides: { winnerModel: "unexpected" },
     message: "execution trace must select the expected model",
+  },
+  {
+    name: "attempt provider",
+    overrides: { attemptProvider: "unexpected" },
+    message: "execution trace must contain a successful assistant attempt",
+  },
+  {
+    name: "attempt model",
+    overrides: { attemptModel: "unexpected" },
+    message: "execution trace must contain a successful assistant attempt",
+  },
+  {
+    name: "attempt stage",
+    overrides: { attemptStage: "tool" },
+    message: "execution trace must contain a successful assistant attempt",
   },
 ];
 
