@@ -221,6 +221,7 @@ describe("inference selection validation", () => {
     expectedProbeOptions,
   }) => {
     vi.stubEnv("NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS", "anthropic.corp.example");
+    vi.stubEnv("NEMOCLAW_REASONING", "false");
     const probeEndpoint = vi.fn(() => ({
       ok: true,
       api: intendedApi,
