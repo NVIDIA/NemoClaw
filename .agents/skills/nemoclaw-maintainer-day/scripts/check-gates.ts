@@ -74,7 +74,7 @@ interface GateOutput {
       pendingChecks?: string[];
       missingChecks?: string[];
     };
-    conflicts: GateResult & { mergeStateStatus?: string };
+    conflicts: GateResult & { mergeable?: string; mergeStateStatus?: string };
     coderabbit: GateResult & { unresolvedThreads?: CodeRabbitThread[] };
     riskyCodeTested: GateResult & { riskyFiles?: string[]; hasTests?: boolean };
     contributorCompliance: GateResult & {
@@ -304,6 +304,16 @@ interface ExactDiffIdentity {
   baseSha: string;
 }
 
+interface BaseRefChangeEvidence {
+  complete: boolean;
+  latestAt?: number;
+}
+
+interface E2eCoordinationEvidence {
+  valid: boolean | null;
+  trustedLegacyCheckId?: number;
+}
+
 function parseGitHubTimestamp(value: string | undefined): number {
   const match = value?.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?Z$/u);
   if (!match) return Number.NaN;
@@ -318,6 +328,121 @@ function parseGitHubTimestamp(value: string | undefined): number {
     parsed.getUTCSeconds() === second
     ? Date.parse(match[0])
     : Number.NaN;
+}
+
+function fetchBaseRefChangeEvidence(repo: string, number: number): BaseRefChangeEvidence {
+  const pages = ghJson([
+    "api",
+    "--paginate",
+    "--slurp",
+    `repos/${repo}/issues/${number}/events?per_page=100`,
+  ]);
+  if (!Array.isArray(pages) || pages.length === 0) return { complete: false };
+
+  let latestAt: number | undefined;
+  const baseRefChangeIds = new Set<number>();
+  for (const page of pages) {
+    if (!Array.isArray(page)) return { complete: false };
+    for (const value of page) {
+      if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        return { complete: false };
+      }
+      const { id, event, created_at: createdAt } = value as Record<string, unknown>;
+      if (typeof event !== "string") return { complete: false };
+      if (event !== "base_ref_changed") continue;
+      if (
+        !Number.isSafeInteger(id) ||
+        (id as number) < 1 ||
+        baseRefChangeIds.has(id as number) ||
+        typeof createdAt !== "string"
+      ) {
+        return { complete: false };
+      }
+      const timestamp = parseGitHubTimestamp(createdAt);
+      if (!Number.isFinite(timestamp)) return { complete: false };
+      baseRefChangeIds.add(id as number);
+      latestAt = latestAt === undefined ? timestamp : Math.max(latestAt, timestamp);
+    }
+  }
+  return { complete: true, ...(latestAt === undefined ? {} : { latestAt }) };
+}
+
+function fetchE2eCoordinationEvidence(
+  repo: string,
+  exactDiff: ExactDiffIdentity,
+): E2eCoordinationEvidence {
+  const checkNames = ["E2E / PR Gate Coordination", "E2E / PR Gate"];
+  const checkRuns: Array<Record<string, unknown>> = [];
+  const ids = new Set<number>();
+  for (const checkName of checkNames) {
+    const pages = ghJson([
+      "api",
+      "--paginate",
+      "--slurp",
+      `repos/${repo}/commits/${exactDiff.headSha}/check-runs?check_name=${encodeURIComponent(checkName)}&filter=all&per_page=100`,
+    ]);
+    if (!Array.isArray(pages) || pages.length === 0) return { valid: null };
+
+    let expectedTotal: number | null = null;
+    let observedTotal = 0;
+    for (const page of pages) {
+      if (typeof page !== "object" || page === null || Array.isArray(page)) {
+        return { valid: null };
+      }
+      const { total_count: totalCount, check_runs: pageRuns } = page as Record<string, unknown>;
+      if (
+        !Number.isSafeInteger(totalCount) ||
+        (totalCount as number) < 0 ||
+        (expectedTotal !== null && totalCount !== expectedTotal) ||
+        !Array.isArray(pageRuns)
+      ) {
+        return { valid: null };
+      }
+      expectedTotal = totalCount as number;
+      observedTotal += pageRuns.length;
+      for (const value of pageRuns) {
+        if (typeof value !== "object" || value === null || Array.isArray(value)) {
+          return { valid: null };
+        }
+        const record = value as Record<string, unknown>;
+        if (
+          !Number.isSafeInteger(record.id) ||
+          (record.id as number) < 1 ||
+          ids.has(record.id as number) ||
+          (typeof record.external_id !== "string" && record.external_id !== null)
+        ) {
+          return { valid: null };
+        }
+        ids.add(record.id as number);
+        checkRuns.push(record);
+      }
+    }
+    if (expectedTotal === null || observedTotal !== expectedTotal) {
+      return { valid: null };
+    }
+  }
+
+  const externalId = `nemoclaw-pr-e2e:v2:${exactDiff.number}:${exactDiff.headSha}:${exactDiff.baseSha}`;
+  const exactChecks = checkRuns.filter((check) => check.external_id === externalId);
+  if (exactChecks.length !== 1) return { valid: false };
+  const exact = exactChecks[0];
+  const app = exact.app;
+  const valid =
+    typeof exact.name === "string" &&
+    checkNames.includes(exact.name) &&
+    exact.head_sha === exactDiff.headSha &&
+    typeof app === "object" &&
+    app !== null &&
+    !Array.isArray(app) &&
+    (app as Record<string, unknown>).id === 15368 &&
+    exact.status === "completed" &&
+    exact.conclusion === "success";
+  return {
+    valid,
+    ...(valid && exact.name === "E2E / PR Gate"
+      ? { trustedLegacyCheckId: exact.id as number }
+      : {}),
+  };
 }
 
 const ACTION_STATUSES = new Set([
@@ -339,18 +464,40 @@ const ACTION_CONCLUSIONS = new Set([
   "SUCCESS",
   "TIMED_OUT",
 ]);
+const PASSING_ACTION_RUN_CONCLUSIONS = new Set(["NEUTRAL", "SKIPPED", "SUCCESS"]);
 const HEAD_BOUND_ACTION_EVENTS = new Set(["dynamic", "push", "workflow_call", "workflow_dispatch"]);
-
-function normalizeActionEnum(value: unknown, allowed: ReadonlySet<string>): string | null {
-  if (typeof value !== "string") return null;
-  const normalized = value.toUpperCase();
-  return allowed.has(normalized) ? normalized : null;
-}
+const PR_CI_RUN_TITLE =
+  /^CI PR #([1-9][0-9]*) head ([a-f0-9]{40}) base ([a-f0-9]{40}) gate (true|false)$/u;
+const REQUIRED_CHECK_WORKFLOW_PATHS = new Map([
+  ["checks", ".github/workflows/pr.yaml"],
+  ["changes", ".github/workflows/pr.yaml"],
+  ["check-hash", ".github/workflows/installer-hash-check.yaml"],
+  ["commit-lint", ".github/workflows/commit-lint.yaml"],
+  ["dco-check", ".github/workflows/dco-check.yaml"],
+  ["E2E / PR Gate", ".github/workflows/pr-e2e-gate.yaml"],
+]);
+const PR_METADATA_EDIT_JOB_NAMES = new Set([
+  "build-typecheck",
+  "changes",
+  "checks",
+  "cli-test-shards",
+  "cli-tests",
+  "docs-only-checks",
+  "installer-integration",
+  "plugin-tests",
+  "reviewed-npm-audit",
+  "static-checks",
+  "wechat-runtime-audit",
+]);
 
 interface ActionRunMetadata {
   attempt: number;
+  createdAt: number | null;
   exactDiff: boolean | null;
-  exactHead: boolean | null;
+  hasPullRequests: boolean | null;
+  headShaMatches: boolean | null;
+  immutablePrDiff: boolean | null;
+  prCiGate: boolean | null;
   event: string | null;
   path: string | null;
   status: string | null;
@@ -359,7 +506,7 @@ interface ActionRunMetadata {
 
 interface ActionJobMetadata {
   name: string;
-  status: string | null;
+  status: string;
   conclusion: string | null;
 }
 
@@ -372,6 +519,8 @@ function currentCheckRollup(
   statusCheckRollup: StatusCheck[],
   repo: string,
   exactDiff: ExactDiffIdentity,
+  baseRefChangeEvidence: BaseRefChangeEvidence,
+  trustedLegacyE2eCheckId?: number,
 ): CurrentCheckRollup {
   const actionRunMetadataById = new Map<string, ActionRunMetadata | null>();
   const latestAttemptJobsByRun = new Map<string, Map<string, ActionJobMetadata> | null>();
@@ -386,13 +535,27 @@ function currentCheckRollup(
     if (!Number.isSafeInteger(record.run_attempt) || (record.run_attempt as number) < 1) {
       return null;
     }
+    const status = typeof record.status === "string" ? record.status.toUpperCase() : null;
+    const conclusion =
+      typeof record.conclusion === "string" ? record.conclusion.toUpperCase() : record.conclusion;
+    if (
+      !status ||
+      !ACTION_STATUSES.has(status) ||
+      (conclusion !== null &&
+        (typeof conclusion !== "string" || !ACTION_CONCLUSIONS.has(conclusion)))
+    ) {
+      return null;
+    }
 
     let exactDiffMatch: boolean | null = null;
+    let hasPullRequests: boolean | null = null;
     if (Array.isArray(record.pull_requests)) {
-      exactDiffMatch = false;
+      hasPullRequests = record.pull_requests.length > 0;
+      exactDiffMatch = hasPullRequests ? false : null;
       for (const value of record.pull_requests) {
         if (typeof value !== "object" || value === null || Array.isArray(value)) {
           exactDiffMatch = null;
+          hasPullRequests = null;
           break;
         }
         const pull = value as Record<string, unknown>;
@@ -410,6 +573,7 @@ function currentCheckRollup(
           typeof (base as Record<string, unknown>).sha !== "string"
         ) {
           exactDiffMatch = null;
+          hasPullRequests = null;
           break;
         }
         if (
@@ -422,14 +586,40 @@ function currentCheckRollup(
       }
     }
 
+    const event = typeof record.event === "string" ? record.event : null;
+    const path = typeof record.path === "string" ? record.path : null;
+    const createdAt =
+      typeof record.created_at === "string" ? parseGitHubTimestamp(record.created_at) : Number.NaN;
+    let immutablePrDiff: boolean | null = null;
+    let prCiGate: boolean | null = null;
+    if (event === "pull_request" && path === ".github/workflows/pr.yaml") {
+      const title = typeof record.display_title === "string" ? record.display_title : "";
+      const match = title.match(PR_CI_RUN_TITLE);
+      if (match) {
+        const titlePrNumber = Number(match[1]);
+        if (Number.isSafeInteger(titlePrNumber) && titlePrNumber > 0) {
+          immutablePrDiff =
+            titlePrNumber === exactDiff.number &&
+            match[2] === exactDiff.headSha &&
+            match[3] === exactDiff.baseSha;
+          prCiGate = match[4] === "true";
+        }
+      }
+    }
+
     return {
       attempt: record.run_attempt as number,
+      createdAt: Number.isFinite(createdAt) ? createdAt : null,
       exactDiff: exactDiffMatch,
-      exactHead: typeof record.head_sha === "string" ? record.head_sha === exactDiff.headSha : null,
-      event: typeof record.event === "string" ? record.event : null,
-      path: typeof record.path === "string" ? record.path : null,
-      status: normalizeActionEnum(record.status, ACTION_STATUSES),
-      conclusion: normalizeActionEnum(record.conclusion, ACTION_CONCLUSIONS),
+      hasPullRequests,
+      headShaMatches:
+        typeof record.head_sha === "string" ? record.head_sha === exactDiff.headSha : null,
+      immutablePrDiff,
+      prCiGate,
+      event,
+      path,
+      status,
+      conclusion,
     };
   };
 
@@ -485,21 +675,27 @@ function currentCheckRollup(
           return null;
         }
         const { id, name, status, conclusion } = value as Record<string, unknown>;
+        const normalizedStatus = typeof status === "string" ? status.toUpperCase() : null;
+        const normalizedConclusion =
+          typeof conclusion === "string" ? conclusion.toUpperCase() : conclusion;
         if (
           !Number.isSafeInteger(id) ||
           (id as number) < 1 ||
           typeof name !== "string" ||
           !name ||
-          typeof status !== "string" ||
-          (typeof conclusion !== "string" && conclusion !== null)
+          !normalizedStatus ||
+          !ACTION_STATUSES.has(normalizedStatus) ||
+          (normalizedConclusion !== null &&
+            (typeof normalizedConclusion !== "string" ||
+              !ACTION_CONCLUSIONS.has(normalizedConclusion)))
         ) {
           latestAttemptJobsByRun.set(runId, null);
           return null;
         }
         jobsById.set(String(id), {
           name,
-          status: normalizeActionEnum(status, ACTION_STATUSES),
-          conclusion: normalizeActionEnum(conclusion, ACTION_CONCLUSIONS),
+          status: normalizedStatus,
+          conclusion: normalizedConclusion,
         });
       }
     }
@@ -515,10 +711,16 @@ function currentCheckRollup(
     if (
       !refreshed ||
       refreshed.attempt !== metadata.attempt ||
+      refreshed.createdAt !== metadata.createdAt ||
       refreshed.exactDiff !== metadata.exactDiff ||
-      refreshed.exactHead !== metadata.exactHead ||
+      refreshed.hasPullRequests !== metadata.hasPullRequests ||
+      refreshed.headShaMatches !== metadata.headShaMatches ||
+      refreshed.immutablePrDiff !== metadata.immutablePrDiff ||
+      refreshed.prCiGate !== metadata.prCiGate ||
       refreshed.event !== metadata.event ||
-      refreshed.path !== metadata.path
+      refreshed.path !== metadata.path ||
+      refreshed.status !== metadata.status ||
+      refreshed.conclusion !== metadata.conclusion
     ) {
       latestAttemptJobsByRun.set(runId, null);
       return null;
@@ -528,49 +730,70 @@ function currentCheckRollup(
     return jobsById;
   };
 
-  const currentRunEvidenceState = (
-    metadata: ActionRunMetadata | null,
-    requiresExactDiff: boolean,
-  ): boolean | null => {
-    if (!metadata?.event || !metadata.path) return null;
-    if (metadata.exactDiff === true) return true;
-    if (requiresExactDiff) return metadata.exactDiff === false ? false : null;
-    if (HEAD_BOUND_ACTION_EVENTS.has(metadata.event)) {
-      if (metadata.exactHead === true) return true;
-      if (metadata.exactHead === false) return false;
-      return null;
-    }
-    return metadata.exactDiff === false ? false : null;
-  };
-
-  const isAllSkippedNonAttempt = (runId: string): boolean => {
+  const classifyPrMetadataEditRun = (
+    runId: string,
+  ): "recognized" | "invalid" | "not_metadata_edit" => {
     const run = actionRunMetadata(runId);
     const jobs = latestAttemptJobs(runId);
-    return Boolean(
-      run?.exactDiff === true &&
+    if (!run || !jobs || jobs.size === 0) return "not_metadata_edit";
+
+    if (
+      runIdentityEvidence(runId, true) !== "current" ||
+      run.event !== "pull_request" ||
+      run.path !== ".github/workflows/pr.yaml" ||
+      run.status !== "COMPLETED" ||
+      run.conclusion !== "SUCCESS"
+    ) {
+      return "not_metadata_edit";
+    }
+    if (run.prCiGate !== false) return "not_metadata_edit";
+
+    const jobNames = new Set([...jobs.values()].map((job) => job.name));
+    const hasExactMetadataEditShape =
+      jobs.size === PR_METADATA_EDIT_JOB_NAMES.size &&
+      jobNames.size === PR_METADATA_EDIT_JOB_NAMES.size &&
+      [...PR_METADATA_EDIT_JOB_NAMES].every((name) => jobNames.has(name)) &&
+      [...jobs.values()].every(
+        (job) =>
+          job.status === "COMPLETED" &&
+          (job.name === "checks" ? job.conclusion === "SUCCESS" : job.conclusion === "SKIPPED"),
+      );
+    return hasExactMetadataEditShape ? "recognized" : "invalid";
+  };
+
+  const isNonAttemptRun = (runId: string): boolean => {
+    const run = actionRunMetadata(runId);
+    const jobs = latestAttemptJobs(runId);
+    if (!run || !jobs || jobs.size === 0) return false;
+
+    const allSkippedTargetRun = Boolean(
+      runIdentityEvidence(runId, true) === "current" &&
         run.event === "pull_request_target" &&
         run.path &&
         run.status === "COMPLETED" &&
         run.conclusion === "SKIPPED" &&
-        jobs &&
-        jobs.size > 0 &&
         [...jobs.values()].every(
           (job) => job.status === "COMPLETED" && job.conclusion === "SKIPPED",
         ),
     );
+    if (allSkippedTargetRun) return true;
+    return classifyPrMetadataEditRun(runId) === "recognized";
   };
 
-  const isMeaningfulExactDiffRun = (runId: string, path: string): boolean => {
+  const isMeaningfulExactDiffRun = (runId: string, event: string, path: string): boolean => {
     const run = actionRunMetadata(runId);
     const jobs = latestAttemptJobs(runId);
     return Boolean(
-      run?.exactDiff === true &&
-        run.event === "pull_request_target" &&
+      run &&
+        jobs &&
+        classifyPrMetadataEditRun(runId) === "not_metadata_edit" &&
+        runIdentityEvidence(runId, true) === "current" &&
+        run.event === event &&
         run.path === path &&
+        (run.path !== ".github/workflows/pr.yaml" || run.prCiGate === true) &&
         run.status === "COMPLETED" &&
         run.conclusion !== null &&
         run.conclusion !== "SKIPPED" &&
-        jobs &&
         jobs.size > 0 &&
         [...jobs.values()].every((job) => job.status === "COMPLETED" && job.conclusion !== null) &&
         [...jobs.values()].some((job) => job.conclusion !== "SKIPPED"),
@@ -605,9 +828,31 @@ function currentCheckRollup(
 
   const latestAttemptChecks = (runId: string, checks: StatusCheck[]): StatusCheck[] => {
     const selected = checksFromLatestAttempt(runId, checks);
+    const checkName = checks[0]?.name ?? "";
+    const requiresExactDiff = REQUIRED_CHECK_NAMES.includes(checkName);
+    const expectedWorkflowPath = REQUIRED_CHECK_WORKFLOW_PATHS.get(checkName);
     const runMetadata = actionRunMetadata(runId);
-    const requiresExactDiff = REQUIRED_CHECK_NAMES.includes(checks[0]?.name ?? "");
-    if (!selected || currentRunEvidenceState(runMetadata, requiresExactDiff) !== true) {
+    const hasCurrentIdentity = runIdentityEvidence(runId, requiresExactDiff) === "current";
+    const checkHashIsNewerThanBaseRefChange =
+      checkName !== "check-hash" ||
+      (baseRefChangeEvidence.complete &&
+        (baseRefChangeEvidence.latestAt === undefined ||
+          (runMetadata?.createdAt !== null &&
+            runMetadata?.createdAt !== undefined &&
+            runMetadata.createdAt > baseRefChangeEvidence.latestAt)));
+    if (
+      !selected ||
+      !hasCurrentIdentity ||
+      !checkHashIsNewerThanBaseRefChange ||
+      !runMetadata ||
+      !runMetadata.event ||
+      !runMetadata.path ||
+      (expectedWorkflowPath !== undefined && runMetadata.path !== expectedWorkflowPath) ||
+      (expectedWorkflowPath === ".github/workflows/pr.yaml" && runMetadata.prCiGate !== true) ||
+      runMetadata.status !== "COMPLETED" ||
+      runMetadata.conclusion === null ||
+      !PASSING_ACTION_RUN_CONCLUSIONS.has(runMetadata.conclusion)
+    ) {
       incompleteAttemptEvidence.add(checks[0]?.name ?? "(unknown)");
     }
     return selected ?? checks;
@@ -615,6 +860,55 @@ function currentCheckRollup(
 
   const actionRunId = (check: StatusCheck): string | undefined =>
     check.detailsUrl?.match(/\/actions\/runs\/(\d+)(?:\/|$)/)?.[1];
+
+  const isTrustedLegacyE2eCheck = (check: StatusCheck): boolean =>
+    trustedLegacyE2eCheckId !== undefined &&
+    check.name === "E2E / PR Gate" &&
+    check.detailsUrl?.match(/\/runs\/(\d+)(?:[/?#]|$)/u)?.[1] === String(trustedLegacyE2eCheckId);
+
+  function runIdentityEvidence(
+    runId: string,
+    requiresExactDiff: boolean,
+  ): "current" | "other" | "unknown" {
+    const metadata = actionRunMetadata(runId);
+    if (!metadata?.event || !metadata.path) return "unknown";
+    if (metadata.exactDiff === true) {
+      if (metadata.headShaMatches === true) {
+        if (metadata.event === "pull_request" && metadata.path === ".github/workflows/pr.yaml") {
+          if (metadata.immutablePrDiff === true) return "current";
+          if (metadata.immutablePrDiff === false) return "other";
+          return "unknown";
+        }
+        return "current";
+      }
+      if (metadata.headShaMatches === false) return "other";
+      return "unknown";
+    }
+    if (metadata.exactDiff === false) return "other";
+    if (
+      !requiresExactDiff &&
+      metadata.hasPullRequests === false &&
+      HEAD_BOUND_ACTION_EVENTS.has(metadata.event) &&
+      metadata.headShaMatches !== null
+    ) {
+      return metadata.headShaMatches ? "current" : "other";
+    }
+    return "unknown";
+  }
+
+  const allActionRunIds = new Set(
+    statusCheckRollup.map(actionRunId).filter((runId): runId is string => Boolean(runId)),
+  );
+  const hasMeaningfulAlternateRun = (runId: string): boolean => {
+    const { event, path } = actionRunMetadata(runId) ?? {};
+    return Boolean(
+      event &&
+        path &&
+        [...allActionRunIds].some(
+          (otherRunId) => otherRunId !== runId && isMeaningfulExactDiffRun(otherRunId, event, path),
+        ),
+    );
+  };
 
   const groups = new Map<string, StatusCheck[]>();
   for (const check of statusCheckRollup) {
@@ -638,11 +932,21 @@ function currentCheckRollup(
         (check.detailsUrl?.includes("/actions/") ||
           (Boolean(check.workflowName) && !/\/runs\/\d+(?:[/?#]|$)/u.test(check.detailsUrl ?? ""))),
     );
-    if ((requiredCheck || expectsActionEvidence) && group.some((check) => !actionRunId(check))) {
+    if (
+      (requiredCheck || expectsActionEvidence) &&
+      group.some((check) => !actionRunId(check) && !isTrustedLegacyE2eCheck(check))
+    ) {
       incompleteAttemptEvidence.add(groupName);
     }
     if (group.length === 1) {
       const runId = group[0].__typename !== "StatusContext" ? actionRunId(group[0]) : undefined;
+      if (runId && classifyPrMetadataEditRun(runId) === "invalid") {
+        incompleteAttemptEvidence.add(groupName);
+      }
+      if (runId && isNonAttemptRun(runId)) {
+        if (hasMeaningfulAlternateRun(runId)) continue;
+        incompleteAttemptEvidence.add(groupName);
+      }
       current.push(...(runId ? latestAttemptChecks(runId, group) : group));
       continue;
     }
@@ -674,25 +978,17 @@ function currentCheckRollup(
             runId,
             checks,
             timestamp: timestamps.every(Number.isFinite) ? Math.min(...timestamps) : Number.NaN,
-            allSkipped: checks.every(
-              (check) =>
-                check.status?.toUpperCase() === "COMPLETED" &&
-                check.conclusion?.toUpperCase() === "SKIPPED",
-            ),
           };
         });
         if (hasOrderingEvidence) {
-          const requiresExactDiff = REQUIRED_CHECK_NAMES.includes(groupName);
-          const currentEvidenceRuns = runs.filter(
-            ({ runId }) =>
-              currentRunEvidenceState(actionRunMetadata(runId), requiresExactDiff) === true,
+          const currentIdentityRuns = runs.filter(
+            ({ runId }) => runIdentityEvidence(runId, requiredCheck) === "current",
           );
-          const unknownEvidenceRun = runs.some(
-            ({ runId }) =>
-              currentRunEvidenceState(actionRunMetadata(runId), requiresExactDiff) === null,
+          const unknownIdentityRun = runs.some(
+            ({ runId }) => runIdentityEvidence(runId, requiredCheck) === "unknown",
           );
-          const currentEvidenceIdentities = new Set(
-            currentEvidenceRuns.map(({ runId }) => {
+          const currentWorkflowIdentities = new Set(
+            currentIdentityRuns.map(({ runId }) => {
               const metadata = actionRunMetadata(runId);
               return metadata?.event && metadata.path
                 ? JSON.stringify([metadata.event, metadata.path])
@@ -700,25 +996,27 @@ function currentCheckRollup(
             }),
           );
           if (
-            currentEvidenceRuns.length === 0 ||
-            unknownEvidenceRun ||
-            currentEvidenceIdentities.size !== 1 ||
-            currentEvidenceIdentities.has(null)
+            currentIdentityRuns.length === 0 ||
+            unknownIdentityRun ||
+            currentWorkflowIdentities.size !== 1 ||
+            currentWorkflowIdentities.has(null)
           ) {
             incompleteAttemptEvidence.add(group[0]?.name ?? "(unknown)");
           }
-          const diffCandidates = currentEvidenceRuns.length > 0 ? currentEvidenceRuns : runs;
-          const candidates = diffCandidates.filter(({ runId, allSkipped }) => {
-            if (!allSkipped || !isAllSkippedNonAttempt(runId)) return true;
-            const path = actionRunMetadata(runId)?.path;
-            return !(
-              path &&
-              runs.some(
-                ({ runId: otherRunId }) =>
-                  otherRunId !== runId && isMeaningfulExactDiffRun(otherRunId, path),
-              )
-            );
+          const identityCandidates = currentIdentityRuns.length > 0 ? currentIdentityRuns : runs;
+          const candidates = identityCandidates.filter(({ runId }) => {
+            if (classifyPrMetadataEditRun(runId) === "invalid") {
+              incompleteAttemptEvidence.add(group[0]?.name ?? "(unknown)");
+              return true;
+            }
+            if (!isNonAttemptRun(runId)) return true;
+            const hasMeaningfulRun = hasMeaningfulAlternateRun(runId);
+            if (!hasMeaningfulRun) {
+              incompleteAttemptEvidence.add(group[0]?.name ?? "(unknown)");
+            }
+            return !hasMeaningfulRun;
           });
+          if (candidates.length === 0) continue;
           const latestTimestamp = Math.max(...candidates.map(({ timestamp }) => timestamp));
           const latestRuns = candidates.filter(({ timestamp }) => timestamp === latestTimestamp);
           for (const latest of latestRuns) {
@@ -776,6 +1074,19 @@ function currentCheckRollup(
         .map(({ check }) => check),
     );
   }
+  const prCiRunIds = new Set<string>();
+  const prCiNames = new Set<string>();
+  for (const check of current) {
+    const name = check.name ?? check.context;
+    if (name !== "checks" && name !== "changes") continue;
+    prCiNames.add(name);
+    const runId = actionRunId(check);
+    if (runId) prCiRunIds.add(runId);
+  }
+  if (prCiNames.size === 2 && prCiRunIds.size !== 1) {
+    incompleteAttemptEvidence.add("checks");
+    incompleteAttemptEvidence.add("changes");
+  }
   return { checks: current, incompleteAttemptEvidence: [...incompleteAttemptEvidence].sort() };
 }
 
@@ -788,11 +1099,20 @@ function checkCi(
     return { pass: false, details: "No status checks found" };
   }
 
-  const { checks: currentChecks, incompleteAttemptEvidence } = currentCheckRollup(
+  const baseRefChangeEvidence = fetchBaseRefChangeEvidence(repo, exactDiff.number);
+  const e2eCoordinationEvidence = fetchE2eCoordinationEvidence(repo, exactDiff);
+  const rollup = currentCheckRollup(
     statusCheckRollup,
     repo,
     exactDiff,
+    baseRefChangeEvidence,
+    e2eCoordinationEvidence.trustedLegacyCheckId,
   );
+  const currentChecks = rollup.checks;
+  const incompleteAttemptEvidence = new Set(rollup.incompleteAttemptEvidence);
+  if (e2eCoordinationEvidence.valid !== true) {
+    incompleteAttemptEvidence.add("E2E / PR Gate");
+  }
 
   // Check that all required checks are present.
   // Fork PRs from first-time contributors need "Approve and run" before
@@ -850,13 +1170,12 @@ function checkCi(
   if (pending.length > 0) {
     return { pass: false, details: `${pending.length} pending check(s)`, pendingChecks: pending };
   }
-  if (incompleteAttemptEvidence.length > 0) {
+  if (incompleteAttemptEvidence.size > 0) {
+    const incompleteNames = [...incompleteAttemptEvidence].sort();
     return {
       pass: false,
-      details: `${incompleteAttemptEvidence.length} check context(s) have incomplete latest-attempt evidence`,
-      failingChecks: incompleteAttemptEvidence.map(
-        (name) => `${name}: latest attempt evidence incomplete`,
-      ),
+      details: `${incompleteNames.length} check context(s) have incomplete latest-attempt evidence`,
+      failingChecks: incompleteNames.map((name) => `${name}: latest attempt evidence incomplete`),
     };
   }
   return { pass: true, details: `All ${currentChecks.length} current checks green` };
@@ -866,14 +1185,31 @@ function checkCi(
 // Gate 2: No conflicts
 // ---------------------------------------------------------------------------
 
-function checkConflicts(mergeStateStatus: string): GateResult & { mergeStateStatus?: string } {
-  const clean = ["CLEAN", "HAS_HOOKS", "UNSTABLE"];
+function checkConflicts(
+  mergeable: string,
+  mergeStateStatus: string,
+): GateResult & { mergeable?: string; mergeStateStatus?: string } {
+  const conflictStatus = (mergeable ?? "UNKNOWN").toUpperCase();
   const status = (mergeStateStatus ?? "UNKNOWN").toUpperCase();
+  const currentBaseStates = new Set(["BLOCKED", "CLEAN", "HAS_HOOKS", "UNSTABLE"]);
 
-  if (clean.includes(status)) {
-    return { pass: true, details: "No merge conflicts", mergeStateStatus: status };
+  if (conflictStatus === "MERGEABLE" && currentBaseStates.has(status)) {
+    return {
+      pass: true,
+      details: "No merge conflicts",
+      mergeable: conflictStatus,
+      mergeStateStatus: status,
+    };
   }
-  return { pass: false, details: `Merge state: ${status}`, mergeStateStatus: status };
+  return {
+    pass: false,
+    details:
+      status === "BEHIND"
+        ? "PR branch is behind its base branch; refresh it before approval"
+        : `Mergeability: ${conflictStatus}; merge state: ${status}`,
+    mergeable: conflictStatus,
+    mergeStateStatus: status,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1155,7 +1491,7 @@ function main(): void {
     "--repo",
     repo,
     "--json",
-    "number,title,url,body,files,statusCheckRollup,mergeStateStatus,headRefOid,baseRefOid,author",
+    "number,title,url,body,files,statusCheckRollup,mergeable,mergeStateStatus,headRefOid,baseRefOid,author",
   ]) as {
     number: number;
     title: string;
@@ -1163,6 +1499,7 @@ function main(): void {
     body: string;
     files: Array<{ path: string; status: string }>;
     statusCheckRollup: StatusCheck[];
+    mergeable: string;
     mergeStateStatus: string;
     headRefOid: string;
     baseRefOid: string;
@@ -1179,7 +1516,7 @@ function main(): void {
     headSha: prData.headRefOid,
     baseSha: prData.baseRefOid,
   });
-  const conflicts = checkConflicts(prData.mergeStateStatus);
+  const conflicts = checkConflicts(prData.mergeable, prData.mergeStateStatus);
   const coderabbit = checkCodeRabbit(repo, prNumber);
   const riskyCodeTested = checkRiskyCodeTested(prData.files ?? []);
   const contributorCompliance = checkContributorCompliance(repo, prNumber, prData.body ?? "");
