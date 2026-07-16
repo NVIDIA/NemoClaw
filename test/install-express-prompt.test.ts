@@ -15,6 +15,7 @@ describe("installer express install prompt (sourced)", () => {
     platform = "DGX Spark",
     extraEnv: Record<string, string> = {},
     entrypoint: "prompt" | "accepted-station-main" = "prompt",
+    entrypointArgs: string[] = [],
   ) {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-prompt-"));
     const python =
@@ -34,6 +35,7 @@ answer = sys.argv[2].encode()
 stdin_mode = sys.argv[3]
 platform = sys.argv[4]
 entrypoint = sys.argv[5]
+entrypoint_args = sys.argv[6:]
 if entrypoint == "accepted-station-main":
     script = r'''
 source "$INSTALLER_UNDER_TEST" >/dev/null
@@ -49,7 +51,7 @@ bash() {
     "\${NEMOCLAW_VLLM_MODEL:-}" "\${NEMOCLAW_POLICY_MODE:-}" "\${NEMOCLAW_YES:-}" "\${NEMOCLAW_SANDBOX_NAME:-}"
   exit 0
 }
-main --station-deepseek
+main "$@"
 '''
 else:
     script = r'''
@@ -72,7 +74,7 @@ if pid == 0:
         devnull = os.open(os.devnull, os.O_RDONLY)
         os.dup2(devnull, 0)
         os.close(devnull)
-    os.execvpe("bash", ["bash", "-c", script], env)
+    os.execvpe("bash", ["bash", "-c", script, "nemoclaw-express-prompt", *entrypoint_args], env)
 
 output = bytearray()
 os.set_blocking(fd, False)
@@ -117,7 +119,16 @@ sys.exit(exit_code)
 `;
     return spawnSync(
       python,
-      ["-c", ptyRunner, INSTALLER_PAYLOAD, answer, stdinMode, platform, entrypoint],
+      [
+        "-c",
+        ptyRunner,
+        INSTALLER_PAYLOAD,
+        answer,
+        stdinMode,
+        platform,
+        entrypoint,
+        ...entrypointArgs,
+      ],
       {
         cwd: tmp,
         encoding: "utf-8",
@@ -388,15 +399,28 @@ main "$@"
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("reaches and accepts the DeepSeek express prompt through main after notice acceptance (#7008)", () => {
+  it.each([
+    {
+      name: "environment notice acceptance",
+      extraEnv: { NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1" },
+      entrypointArgs: ["--station-deepseek"],
+    },
+    {
+      name: "the CLI notice-acceptance flag",
+      extraEnv: {},
+      entrypointArgs: ["--station-deepseek", "--yes-i-accept-third-party-software"],
+    },
+  ])("reaches and accepts the DeepSeek express prompt through main with $name (#7008)", ({
+    extraEnv,
+    entrypointArgs,
+  }) => {
     const result = runExpressPromptWithTty(
       "\n",
       "pipe",
       "DGX Station",
-      {
-        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-      },
+      extraEnv,
       "accepted-station-main",
+      entrypointArgs,
     );
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status, output).toBe(0);
