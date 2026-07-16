@@ -406,7 +406,7 @@ describe("starter prompt docs CTA", () => {
     expect(generatedSnippet).toContain(`>\n${prompt}\n</Prompt>`);
     expect(generatedSnippet).not.toContain("<!--");
     expect(prompt).not.toMatch(/<https?:\/\//);
-    expect(prompt).toContain("Use placeholders like `<PASTE_YOUR_API_KEY_HERE>`");
+    expect(prompt).toContain("Use redacted placeholders such as `<PASTE_YOUR_API_KEY_HERE>`");
     expect(read("docs/index.mdx")).toContain(
       'import { CommandTerminal } from "./_components/CommandTerminal";\n\n<BadgeLinks',
     );
@@ -530,7 +530,15 @@ describe("starter prompt docs CTA", () => {
     expect(promptSource).toContain("Confirm and Run Approved Command");
     expect(promptSource).toContain("do not retry or resubmit");
     expect(promptSource).toContain("exposure minimization, not guaranteed erasure");
-    expect(promptSource).toContain("prefer letting that command prompt for the credential itself");
+    expect(promptSource).toContain(
+      "Keep the helper bound to `http://127.0.0.1`, accept only one valid submission, and run only the already-approved command.",
+    );
+    expect(promptSource).toContain(
+      "Prefer letting an account-persistent command use its own reviewed secure credential prompt when available.",
+    );
+    expect(promptSource).toContain(
+      "use the reviewed helper only with an already-downloaded and verified installer",
+    );
     expect(promptSource).toContain("Do not hand-assemble a `curl | bash` wrapper");
     // The slim prompt delegates install-time credential mechanics to the helper and installer;
     // guard against the prose curl | bash wrapper synthesis creeping back into the copied prompt.
@@ -558,6 +566,51 @@ describe("starter prompt docs CTA", () => {
     }
     expect(formSource).not.toContain("localStorage");
     expect(formSource).not.toContain("sessionStorage");
+  });
+
+  it("preserves safe remote credentials, administrator access, and Ollama eligibility (#6990)", () => {
+    const promptSource = readStarterPrompt();
+
+    expect(promptSource).toContain(
+      "Preserve its scheme, host, port, `/local-credential-form.html` path, complete `field=` query string, and `#cap=` fragment exactly.",
+    );
+    expect(promptSource).toContain("`ssh -N -L <port>:127.0.0.1:<port> <username>@<host>`");
+    expect(promptSource).toContain(
+      "Require the same port on both sides; do not remap the helper to another local port.",
+    );
+    expect(promptSource).not.toContain("<local-port>:127.0.0.1:<remote-port>");
+
+    expect(promptSource).toContain("`NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt`");
+    expect(promptSource).toContain(
+      "If neither passwordless sudo nor a secure password prompt is available, stop before the affected install or system change.",
+    );
+    expect(promptSource).toContain(
+      "Let the real `sudo` program collect the password; never use chat or the API-key form for the computer password.",
+    );
+
+    expect(promptSource).toContain(
+      "Offer Local Ollama for OpenClaw or Hermes when it is installed, running, or officially installable.",
+    );
+    expect(promptSource).toContain(
+      "Do not offer Local Ollama for Deep Agents unless current official documentation adds support.",
+    );
+    expect(promptSource).toContain(
+      "Do not hide Ollama merely because the computer is not DGX or GB300.",
+    );
+    expect(promptSource).toContain("OpenRouter: `NEMOCLAW_PROVIDER=openrouter`");
+    expect(promptSource).toContain("Existing vLLM: `NEMOCLAW_PROVIDER=vllm`");
+    expect(promptSource).toContain(
+      "Windows WSL Express: `NEMOCLAW_PROVIDER=install-windows-ollama`",
+    );
+    expect(promptSource).toContain(
+      "NEMOCLAW_VLLM_MODEL=nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
+    );
+    expect(promptSource).toContain(
+      "Leave `NEMOCLAW_VLLM_MODEL` unset so the installed maintained release selects its current Spark Express model.",
+    );
+    expect(promptSource).toContain(
+      "Set `NEMOCLAW_YES=1` only after both the separate download approval and final install approval.",
+    );
   });
 
   it("rejects missing, ambiguous, and unsafe credential schemas (#5048)", async () => {
@@ -846,10 +899,9 @@ describe("starter prompt docs CTA", () => {
   it("keeps Deep Agents as a selectable starter prompt option (#5048)", () => {
     const promptSource = readStarterPrompt();
 
-    expect(promptSource).toContain("- LangChain Deep Agents Code.");
-    expect(promptSource).toContain(
-      "https://docs.nvidia.com/nemoclaw/latest/user-guide/deepagents/get-started/quickstart.md",
-    );
+    expect(promptSource).toContain("3. LangChain Deep Agents Code.");
+    expect(promptSource).toContain("load `nemoclaw-user-guide`");
+    expect(promptSource).toContain("https://docs.nvidia.com/nemoclaw/llms.txt");
     expect(promptSource).toContain("NEMOCLAW_AGENT=langchain-deepagents-code");
     expect(promptSource).toContain("nemo-deepagents onboard");
   });
