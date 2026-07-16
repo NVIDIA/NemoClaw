@@ -154,14 +154,16 @@ describe("setupNim vLLM route containment", () => {
   it("exact-checks an adopted alias against the durable shared route before validation", async () => {
     const validate = vi.fn(async () => ({ ok: true }));
     const selection = state("required/model");
-    selection.assertRouteCompatible = () => {
-      if (selection.model === "served/model") throw new Error("shared route conflict");
-      return {
+    selection.assertRouteCompatible = vi
+      .fn()
+      .mockReturnValueOnce({
         requiredModel: null,
         requiredEndpointUrl: null,
         requiredInferenceApi: null,
-      };
-    };
+      })
+      .mockImplementationOnce(() => {
+        throw new Error("shared route conflict");
+      });
     const handler = createSetupNimVllmHandler(
       deps({
         runCapture: () =>
