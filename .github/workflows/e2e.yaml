@@ -5570,7 +5570,22 @@ jobs:
               preview: 'SLACK_WEBHOOK_URL_PREVIEW',
             };
             const channel = data?.channel;
-            if (!Object.hasOwn(envByChannel, channel) || !data.payload || typeof data.payload !== 'object') {
+            const payload = data?.payload;
+            const attachments = payload?.attachments;
+            const validPayload =
+              Object.hasOwn(envByChannel, channel) &&
+              payload !== null &&
+              typeof payload === 'object' &&
+              typeof payload.text === 'string' &&
+              Array.isArray(attachments) &&
+              attachments.every(
+                (attachment) =>
+                  attachment !== null &&
+                  typeof attachment === 'object' &&
+                  typeof attachment.color === 'string' &&
+                  Array.isArray(attachment.blocks),
+              );
+            if (!validPayload) {
               core.setFailed('Invalid precomputed Slack payload');
               return;
             }

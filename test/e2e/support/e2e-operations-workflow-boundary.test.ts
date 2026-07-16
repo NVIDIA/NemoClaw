@@ -385,7 +385,13 @@ describe("E2E operations workflow boundary", () => {
     const fetchMock = vi.fn();
     vi.stubEnv(
       "SLACK_DATA",
-      JSON.stringify({ channel: "preview", payload: { text: "safe precomputed payload" } }),
+      JSON.stringify({
+        channel: "preview",
+        payload: {
+          text: "safe precomputed payload",
+          attachments: [{ color: "#76b900", blocks: [] }],
+        },
+      }),
     );
     vi.stubEnv("POST_TO_SLACK", "false");
     try {
@@ -395,6 +401,36 @@ describe("E2E operations workflow boundary", () => {
         fetchMock,
       );
       expect(info).toHaveBeenCalledWith("Selective dispatch without post_to_slack — skipping");
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it.each([
+    ["empty payload", { channel: "daily", payload: {} }],
+    [
+      "missing text",
+      { channel: "daily", payload: { attachments: [{ color: "#76b900", blocks: [] }] } },
+    ],
+    ["non-array attachments", { channel: "daily", payload: { text: "hi", attachments: {} } }],
+    [
+      "malformed attachment",
+      { channel: "daily", payload: { text: "hi", attachments: [{ blocks: [] }] } },
+    ],
+  ])("rejects a precomputed Slack payload with %s before calling fetch", async (_label, data) => {
+    const script = workflowScript("scorecard", "Post scorecard to Slack");
+    const setFailed = vi.fn();
+    const fetchMock = vi.fn();
+    vi.stubEnv("SLACK_DATA", JSON.stringify(data));
+    vi.stubEnv("POST_TO_SLACK", "true");
+    try {
+      await new AsyncFunction("process", "core", "fetch", script)(
+        process,
+        { info: vi.fn(), setFailed },
+        fetchMock,
+      );
+      expect(setFailed).toHaveBeenCalledWith("Invalid precomputed Slack payload");
       expect(fetchMock).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllEnvs();
