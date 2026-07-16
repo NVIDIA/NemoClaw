@@ -175,6 +175,75 @@ console.log(JSON.stringify(records));
     expect(JSON.parse(records[6].writes[0]).chat_template_kwargs).toBeUndefined();
   });
 
+  it("preload strips the top-level `thinking` field for Ultra (#6913), scoped to Ultra", () => {
+    const preload = extractStartScriptHeredoc(src, "NEMOTRON_FIX_EOF");
+    const harness = `
+const http = require('http');
+const https = require('https');
+const records = [];
+function installStub(mod) {
+  mod.request = function (options) {
+    const record = { options, writes: [], headers: {}, removed: [] };
+    records.push(record);
+    return {
+      write(chunk) {
+        record.writes.push(Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk));
+        return true;
+      },
+      end(cb) { if (typeof cb === 'function') cb(); return true; },
+      getHeader(name) { return record.headers[name]; },
+      setHeader(name, value) { record.headers[name] = value; },
+      removeHeader(name) { record.removed.push(name); delete record.headers[name]; },
+    };
+  };
+}
+installStub(http);
+installStub(https);
+${preload}
+function send(mod, options, body) {
+  const req = mod.request(options);
+  req.write(body);
+  req.end();
+}
+// A system message is present so the #4851 tool-less nudge does not fire and
+// the assertions stay focused on the top-level thinking strip.
+send(https, { method: 'POST', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-ultra-550b-a55b', messages: [{ role: 'system', content: 'x' }], thinking: { type: 'enabled' } }));
+send(https, { method: 'POST', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-ultra-550b-a55b', messages: [{ role: 'system', content: 'x' }], thinking: true }));
+send(https, { method: 'POST', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-ultra-550b-a55b', messages: [{ role: 'system', content: 'x' }] }));
+send(https, { method: 'POST', path: '/v1/chat/completions' }, JSON.stringify({ model: 'deepseek-ai/deepseek-v4-pro', messages: [], thinking: { type: 'enabled' } }));
+console.log(JSON.stringify(records));
+`;
+
+    const result = spawnSync(process.execPath, ["-e", harness], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
+    expect(result.status).toBe(0);
+    const records = JSON.parse(result.stdout.trim());
+
+    // Ultra + object-form top-level thinking → stripped, Content-Length refreshed.
+    const ultraObj = JSON.parse(records[0].writes[0]);
+    expect("thinking" in ultraObj).toBe(false);
+    expect(records[0].removed).toContain("content-length");
+    expect(Number(records[0].headers["Content-Length"])).toBeGreaterThan(0);
+
+    // Ultra + boolean-form top-level thinking → also stripped.
+    const ultraBool = JSON.parse(records[1].writes[0]);
+    expect("thinking" in ultraBool).toBe(false);
+
+    // Ultra without a thinking field → nothing added; still nemotron, so
+    // force_nonempty_content is injected by the kwargs rule.
+    const ultraNone = JSON.parse(records[2].writes[0]);
+    expect("thinking" in ultraNone).toBe(false);
+    expect(ultraNone.chat_template_kwargs.force_nonempty_content).toBe(true);
+
+    // Non-Ultra model → top-level thinking preserved (the strip is Ultra-scoped;
+    // this model gets the chat_template_kwargs.thinking rewrite, not a strip).
+    const deepSeek = JSON.parse(records[3].writes[0]);
+    expect(deepSeek.thinking).toEqual({ type: "enabled" });
+    expect(deepSeek.chat_template_kwargs.thinking).toBe(false);
+  });
+
   it("preload also injects model-specific kwargs for stubbed fetch requests", () => {
     const preload = extractStartScriptHeredoc(src, "NEMOTRON_FIX_EOF");
     const harness = `
