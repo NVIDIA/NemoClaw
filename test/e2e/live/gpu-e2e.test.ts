@@ -240,17 +240,6 @@ test("GPU Ollama onboard enables CUDA, auth proxy, and sandbox inference", {
   expect(route.exitCode, resultText(route)).toBe(0);
   expect(resultText(route)).toMatch(/ollama/i);
 
-  const readySandbox = await sandbox.openshell(["sandbox", "get", SANDBOX_NAME], {
-    artifactName: "openshell-sandbox-ready-after-inference",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
-  });
-  expect(readySandbox.exitCode, resultText(readySandbox)).toBe(0);
-  expect(
-    readySandbox.stdout.split(/\r?\n/).some((line) => line.trim() === "Phase: Ready"),
-    `OpenShell sandbox must be exactly Ready after routed inference; got ${resultText(readySandbox)}`,
-  ).toBe(true);
-
   const tokenRecord = readTokenFileChecked(ollamaProxyTokenFile());
   expect(tokenRecord.mode).toBe("600");
   const token = tokenRecord.token;
@@ -312,6 +301,17 @@ test("GPU Ollama onboard enables CUDA, auth proxy, and sandbox inference", {
   );
   expect(chat.exitCode, resultText(chat)).toBe(0);
   expect(chatContent(chat.stdout)).toMatch(/pong/i);
+
+  const readySandbox = await sandbox.openshell(["sandbox", "get", SANDBOX_NAME], {
+    artifactName: "openshell-sandbox-ready-after-inference",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
+  });
+  expect(readySandbox.exitCode, resultText(readySandbox)).toBe(0);
+  expect(
+    readySandbox.stdout.split(/\r?\n/).some((line) => line.trim() === "Phase: Ready"),
+    `OpenShell sandbox must be exactly Ready after routed inference; got ${resultText(readySandbox)}`,
+  ).toBe(true);
 
   const restart = await host.command(
     "bash",
