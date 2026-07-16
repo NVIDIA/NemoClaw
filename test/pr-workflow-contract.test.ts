@@ -507,7 +507,21 @@ describe("pull request and main workflow contracts", () => {
 
   // source-shape-contract: compatibility -- Path-filter semantics keep documentation-only and code-changing PR lanes distinct
   it("routes only code-changing PRs through the code-check path", () => {
+    const ciRequired =
+      "${{ github.event.action != 'edited' || github.event.changes.base != null }}";
     const filterStep = prWorkflow.jobs.changes.steps?.find((step) => step.id === "filter");
+    const verificationStep = requiredWorkflowStep(
+      prWorkflow.jobs.checks,
+      "Verify required PR checks",
+    );
+
+    expect(prWorkflow.on?.pull_request?.types).toContain("edited");
+    expect(prWorkflow.jobs.changes.if).toBe(ciRequired);
+    expect(prWorkflow.jobs.checks.if).toBe("always()");
+    expect(verificationStep.env?.CI_REQUIRED).toBe(ciRequired);
+    expect(verificationStep.run).toContain('if [ "$CI_REQUIRED" != "true" ]; then');
+    expect(verificationStep.run).toContain("Metadata-only PR edit");
+    expect(verificationStep.run).toContain('require_success "changes" "$CHANGES_RESULT"');
 
     expect(filterStep?.uses).toContain("dorny/paths-filter");
     expect(filterStep?.with?.["predicate-quantifier"]).toBe("every");
