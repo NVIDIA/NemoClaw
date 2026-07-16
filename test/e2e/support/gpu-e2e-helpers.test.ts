@@ -148,6 +148,15 @@ describe("GPU E2E helpers", () => {
     expect(hasExactReadyPhase("Sandbox:\n  \u001b[2mPhase:\u001b[0m Error\n")).toBe(false);
   });
 
+  it.each([
+    ["Error before Ready", "Phase: Error\nPhase: Ready\n"],
+    ["Ready before Error", "Phase: Ready\nPhase: Error\n"],
+    ["prefixed Ready", "Current Phase: Ready\n"],
+    ["suffixed Ready", "Phase: Ready (stale)\n"],
+  ])("rejects %s output", (_case, output) => {
+    expect(hasExactReadyPhase(output)).toBe(false);
+  });
+
   it("accepts successful execution proof when the model suppresses visible text", () => {
     expect(() =>
       assertAgentExecutionSucceeded(agentOutput(), "inference", GPU_MODEL),

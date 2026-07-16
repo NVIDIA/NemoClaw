@@ -119,9 +119,11 @@ export function chatContent(raw: string): string {
 }
 
 export function hasExactReadyPhase(output: string): boolean {
-  return stripAnsi(output)
+  const phaseLines = stripAnsi(output)
     .split(/\r?\n/)
-    .some((line) => line.trim() === "Phase: Ready");
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("Phase:"));
+  return phaseLines.length === 1 && phaseLines[0] === "Phase: Ready";
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
