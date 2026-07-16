@@ -802,6 +802,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "nemoclaw_connect_probe",
       "${NEMOCLAW_CLI_BIN:-${REPO:-.}/bin/nemoclaw.js}",
       "connect --probe-only 2>&1",
+      "dcode_connect_fail_closed_contract",
+      "connect rejects untrusted image-backed route evidence before session attach",
       "direct-exec dcode -n reached managed inference",
       "connect --probe-only accepted the managed inference route",
       'sandbox_login_exec "cd /sandbox',
