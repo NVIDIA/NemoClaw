@@ -215,6 +215,22 @@ describe("runLiveVitestCommand (#6961)", () => {
     expect(spawned).toBe(false);
   });
 
+  it("rejects a repeated supported option before spawning Vitest", () => {
+    let spawned = false;
+    const spawn: LiveVitestSpawner = () => {
+      spawned = true;
+      return { status: 0 };
+    };
+
+    expect(() =>
+      runLiveVitestCommand(
+        [...validArgs, "--test-path", "test/e2e/live/registry-targets.test.ts"],
+        spawn,
+      ),
+    ).toThrow(/must not be repeated/);
+    expect(spawned).toBe(false);
+  });
+
   it.each([
     ["missing", []],
     ["unsupported", ["runx"]],
