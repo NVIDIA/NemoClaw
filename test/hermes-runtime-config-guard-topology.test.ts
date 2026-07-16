@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+
+import { dockerSpawnSync } from "../src/lib/adapters/docker/exec";
 
 const RUNTIME_CONFIG_GUARD = path.join(
   import.meta.dirname,
@@ -12,6 +15,24 @@ const RUNTIME_CONFIG_GUARD = path.join(
   "hermes",
   "runtime-config-guard.py",
 );
+const ROOT_RUNTIME_IMAGE =
+  "python:3.12-slim@sha256:cab2dbf575e971934a81e4622f5aba17aa7929719bd7e31033a3a83b97fd0464";
+const ROOT_CONTAINER_DRIVER = String.raw`
+import json
+import os
+import sys
+
+payload = json.load(sys.stdin)
+guard_path = "/tmp/runtime-config-guard.py"
+with open(guard_path, "x", encoding="utf-8") as handle:
+    handle.write(payload["guard_source"])
+os.chmod(guard_path, 0o444)
+sys.argv = ["-c", guard_path]
+exec(
+    compile(payload["harness"], "<root-runtime-harness>", "exec"),
+    {"__name__": "__main__"},
+)
+`;
 
 function runPythonHarness(source: string) {
   return spawnSync("python3", ["-c", source, RUNTIME_CONFIG_GUARD], {
@@ -20,9 +41,46 @@ function runPythonHarness(source: string) {
   });
 }
 
+function runRootContainerHarness(source: string) {
+  return dockerSpawnSync(
+    [
+      "run",
+      "--rm",
+      "-i",
+      "--platform",
+      "linux/amd64",
+      "--network",
+      "none",
+      "--read-only",
+      "--tmpfs",
+      "/tmp:rw,nosuid,nodev,size=64m",
+      ROOT_RUNTIME_IMAGE,
+      "python3",
+      "-c",
+      ROOT_CONTAINER_DRIVER,
+    ],
+    {
+      encoding: "utf-8",
+      input: JSON.stringify({
+        guard_source: readFileSync(RUNTIME_CONFIG_GUARD, "utf-8"),
+        harness: source,
+      }),
+      timeout: 60_000,
+    },
+  );
+}
+
 const loadGuardModule = String.raw`
 import importlib.util
 import sys
+import types
+
+yaml = types.ModuleType("yaml")
+class YAMLError(Exception):
+    pass
+yaml.YAMLError = YAMLError
+yaml.safe_load = lambda _text: {"model": "test"}
+sys.modules["yaml"] = yaml
 
 spec = importlib.util.spec_from_file_location("runtime_config_guard", sys.argv[1])
 guard = importlib.util.module_from_spec(spec)
@@ -431,10 +489,11 @@ print(json.dumps({
     });
   });
 
-  it.skipIf(process.platform !== "linux" || process.getuid?.() !== 0)(
+  // source-shape-contract: security -- Executes the shipped guard as root to prove real Linux repair and rollback metadata
+  it.skipIf(process.platform !== "linux")(
     "restores exact locked posture after root-separated repair and later failure (#7033)",
     () => {
-      const result = runPythonHarness(`${loadGuardModule}
+      const result = runRootContainerHarness(`${loadGuardModule}
 import json
 import os
 import stat
@@ -450,6 +509,15 @@ with tempfile.TemporaryDirectory() as tmp:
     strict = os.path.join(tmp, "hermes.config-hash")
     state = os.path.join(tmp, "restart-state.json")
     lock = os.path.join(tmp, "hermes-config-mutation.lock")
+    lifecycle_marker = os.path.join(tmp, "hermes-root-lifecycle")
+
+    with open(lifecycle_marker, "wb") as handle:
+        handle.write(b"root-separated\\n")
+    os.chown(lifecycle_marker, 0, 0)
+    os.chmod(lifecycle_marker, 0o444)
+    guard.HERMES_ROOT_LIFECYCLE_MARKER = lifecycle_marker
+    guard._pid1_is_nemoclaw_start = lambda: True
+    guard._process_effective_uid = lambda pid: 0 if pid == 1 else None
 
     with open(config, "wb") as handle:
         handle.write(b"model: test\\n")
@@ -492,7 +560,6 @@ with tempfile.TemporaryDirectory() as tmp:
     if child_status != 0:
         raise RuntimeError(f"sandbox chmod child failed: {child_status}")
 
-    guard._attested_shields_runtime_topology = lambda: "root-separated"
     real_verify_compat = guard._verify_compat_hash
     guard._verify_compat_hash = lambda *_args: (_ for _ in ()).throw(
         guard.UnsafePathError("simulated later validation failure")
@@ -510,6 +577,9 @@ with tempfile.TemporaryDirectory() as tmp:
     guard.prepare_shields_abort(hermes, state, token)
     aborting_state = guard._load_restart_state(state).get("phase")
     guard.abort_shields_transition(hermes, state, token)
+    lifecycle_stat = os.stat(lifecycle_marker, follow_symlinks=False)
+    with open(lifecycle_marker, "rb") as handle:
+        lifecycle_content = handle.read().decode("ascii")
 
     print(json.dumps({
         "finish_error": finish_error,
@@ -531,11 +601,18 @@ with tempfile.TemporaryDirectory() as tmp:
         "marker_exists": os.path.exists(
             os.path.join(hermes, guard.RESTART_ORPHAN_MARKER_NAME)
         ),
+        "lifecycle_marker": {
+            "uid": lifecycle_stat.st_uid,
+            "gid": lifecycle_stat.st_gid,
+            "mode": oct(stat.S_IMODE(lifecycle_stat.st_mode)),
+            "nlink": lifecycle_stat.st_nlink,
+            "content": lifecycle_content,
+        },
     }))
 `);
 
-      expect(result.status, result.stderr).toBe(0);
-      expect(JSON.parse(result.stdout)).toEqual({
+      expect(result.status, String(result.stderr)).toBe(0);
+      expect(JSON.parse(String(result.stdout))).toEqual({
         aborting_state: "shields-transition-aborting",
         applied_state: "shields-transition-applied",
         file_modes: {
@@ -547,6 +624,13 @@ with tempfile.TemporaryDirectory() as tmp:
         hermes_gid: 0,
         hermes_mode: "0o755",
         hermes_uid: 0,
+        lifecycle_marker: {
+          content: "root-separated\n",
+          gid: 0,
+          mode: "0o444",
+          nlink: 1,
+          uid: 0,
+        },
         lock_exists: false,
         marker_exists: false,
         parent_gid: 12345,
