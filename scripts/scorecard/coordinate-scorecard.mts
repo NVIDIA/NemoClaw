@@ -139,7 +139,14 @@ function validateSlackData(data: unknown): data is SlackData {
   const candidate = data as { channel?: unknown; payload?: unknown };
   if (typeof candidate.channel !== "string") return false;
   if (!SLACK_CHANNELS.includes(candidate.channel as SlackChannel)) return false;
-  return candidate.payload !== null && typeof candidate.payload === "object";
+  if (candidate.payload === null || typeof candidate.payload !== "object") return false;
+  const payload = candidate.payload as { text?: unknown; attachments?: unknown };
+  if (typeof payload.text !== "string" || !Array.isArray(payload.attachments)) return false;
+  return payload.attachments.every((attachment) => {
+    if (attachment === null || typeof attachment !== "object") return false;
+    const value = attachment as { color?: unknown; blocks?: unknown };
+    return typeof value.color === "string" && Array.isArray(value.blocks);
+  });
 }
 
 function buildScorecard(input: ScorecardInput): ScorecardResult {
