@@ -80,11 +80,19 @@ realDockerTest(
 
     vi.stubEnv("DOCKER_HOST", DOCKER_HOST);
     vi.stubEnv("DOCKER_CONTEXT", undefined);
-    const probe = probeDockerStorage();
+    const capacitySamples = new Map<string, { bavail: bigint; bsize: bigint }>();
+    const probe = probeDockerStorage({
+      statfs: (target) => {
+        const sample = fs.statfsSync(target, { bigint: true });
+        capacitySamples.set(target, sample);
+        return sample;
+      },
+    });
     expect(probe.ok, probe.ok ? undefined : probe.reason).toBe(true);
     assert(probe.ok);
 
-    const capacityStats = fs.statfsSync(probe.capacity.path, { bigint: true });
+    const capacityStats = capacitySamples.get(probe.capacity.path);
+    assert(capacityStats, `the probe did not sample ${probe.capacity.path}`);
     const measuredAvailableBytes = capacityStats.bavail * capacityStats.bsize;
     expect(probe.capacity.availableBytes).toBe(measuredAvailableBytes);
     expect(probe.capacity.availableBytes).toBeGreaterThan(0n);
