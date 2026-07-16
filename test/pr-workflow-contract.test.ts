@@ -1016,6 +1016,12 @@ describe("pull request and main workflow contracts", () => {
     expect(stepRuns(sharedActions.staticChecks).join("\n")).not.toContain(
       "skills-frontmatter.test.ts",
     );
+    expect(
+      requiredStep(
+        sharedActions.staticChecks,
+        "Enforce base-trusted createRequire allowlist ratchet",
+      ).run,
+    ).toBe('npx tsx "$GITHUB_ACTION_PATH/create-require-ratchet.mts"');
   });
 
   // source-shape-contract: security -- Downloaded CI tooling must use a committed digest rather than upstream metadata
