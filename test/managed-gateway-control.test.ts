@@ -395,7 +395,7 @@ with tempfile.TemporaryDirectory() as root:
             control._terminate_gateway(reader, expected_gateway)
 
             with open(os.path.join(proc_root, "41", "stat"), "w", encoding="ascii") as stream:
-                fields = ["S", "40"] + (["0"] * 17) + ["999"]
+                fields = ["S", "40"] + (["0"] * 15) + ["1", "0", "999"]
                 stream.write(f"41 (managed) {' '.join(fields)}\n")
             try:
                 control._terminate_gateway(reader, expected_gateway)
