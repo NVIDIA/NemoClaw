@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { findCoverageIgnoreDirectives } from "../scripts/checks/no-coverage-ignore.mts";
+import {
+  findCoverageIgnoreDirectives,
+  isScannedSourcePath,
+} from "../scripts/checks/no-coverage-ignore.mts";
 
 const forbiddenDirective = ["v8", "ignore"].join(" ");
 
@@ -27,5 +30,17 @@ describe("coverage ignore guard", () => {
     const source = `const marker = '${forbiddenDirective} next';`;
 
     expect(findCoverageIgnoreDirectives(source, "src/example.ts")).toEqual([]);
+  });
+});
+
+describe("scanned source path selection", () => {
+  it("scans .mts files under tracked roots", () => {
+    expect(isScannedSourcePath("scripts/checks/no-coverage-ignore.mts")).toBe(true);
+    expect(isScannedSourcePath("src/lib/example.mts")).toBe(true);
+  });
+
+  it("excludes non-source extensions and paths outside tracked roots", () => {
+    expect(isScannedSourcePath("scripts/checks/README.md")).toBe(false);
+    expect(isScannedSourcePath("docs/example.mts")).toBe(false);
   });
 });
