@@ -12,7 +12,14 @@ import {
   type SessionUpdates,
   sanitizeFailure,
 } from "../../state/onboard-session";
-import { advanceTo, branchTo, completeOnboardMachine, failOnboardMachine, retryTo } from "./result";
+import {
+  advanceTo,
+  branchTo,
+  completeOnboardMachine,
+  failOnboardMachine,
+  pauseOnboardMachine,
+  retryTo,
+} from "./result";
 import {
   MissingOnboardStateHandlerError,
   OnboardMachineTransitionLimitError,
@@ -150,6 +157,35 @@ describe("runOnboardMachine", () => {
       machine: { state: "failed" },
     });
     expect(policies).not.toHaveBeenCalled();
+  });
+
+  it("stops on a pause result without leaving the current retryable state", async () => {
+    const session = createSession({
+      machine: {
+        version: MACHINE_SNAPSHOT_VERSION,
+        state: "post_verify",
+        stateEnteredAt: "2026-05-28T00:00:00.000Z",
+        revision: 4,
+      },
+    });
+    const runtime = createRuntime(session);
+    const postVerify = vi.fn(() =>
+      pauseOnboardMachine({ sandboxName: "my-assistant" }, { reason: "not-ready" }),
+    );
+
+    const result = await runOnboardMachine({
+      context: { attempts: 0, visited: [] } as RunnerContext,
+      runtime,
+      handlers: { post_verify: postVerify },
+    });
+
+    expect(postVerify).toHaveBeenCalledOnce();
+    expect(result.session).toMatchObject({
+      status: "in_progress",
+      resumable: true,
+      sandboxName: "my-assistant",
+      machine: { state: "post_verify", revision: 4 },
+    });
   });
 
   it("returns immediately for terminal sessions", async () => {

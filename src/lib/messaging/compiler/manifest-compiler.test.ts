@@ -823,6 +823,7 @@ describe("ManifestCompiler", () => {
       "telegram-get-me-reachability",
       "telegram-openclaw-bridge-health",
       "telegram-gateway-conflict-status",
+      "telegram-status-health",
     ]);
     expect(plan.runtimeSetup).toEqual({ nodePreloads: [], envAliases: [], secretScans: [] });
     expect(plan.credentialBindings.map((binding) => binding.channelId)).toEqual(["telegram"]);
@@ -1279,6 +1280,7 @@ describe("ManifestCompiler", () => {
       "telegram-get-me-reachability",
       "telegram-openclaw-bridge-health",
       "telegram-gateway-conflict-status",
+      "telegram-status-health",
     ]);
     expect(plan.runtimeSetup).toEqual({ nodePreloads: [], envAliases: [], secretScans: [] });
   });

@@ -34,15 +34,27 @@ $$nemoclaw <name> status
 
 The `Inference` row checks the sandbox's `inference.local` path and reports the provider, model, and endpoint with the rest of the sandbox state.
 This path includes the OpenShell proxy and its authentication rewrite.
+When onboarding prints a dashboard summary, use it to verify that NemoClaw ran the same route-reachability probe from inside the sandbox.
+Treat an unreachable route or HTTP 5xx response as a failed readiness check: onboarding marks the sandbox not ready and exits non-zero.
+Restore the configured endpoint or proxy, run `$$nemoclaw onboard --resume` to complete the retained onboarding session, then rerun the status command.
 
-## Understand Post-Ready Checks
+## Understand Local Provider Post-Ready Checks
 
-For local Ollama and vLLM, onboarding performs an additional check after the sandbox becomes ready.
+For local Ollama and vLLM on Docker GPU sandboxes using the compatibility route, onboarding performs an additional check after the sandbox becomes ready.
 It requests `https://inference.local/v1/models` from inside the sandbox and accepts only a 2xx response.
-When this check fails, onboarding reports the endpoint and recovery steps before the first agent prompt.
+When this check fails, onboarding reports the endpoint and local-provider recovery steps before the first agent prompt.
 
-NVIDIA NIM and other compatible endpoints receive their provider validation during onboarding but do not receive this post-ready sandbox-route check.
-For those routes, use the status command and a short agent request after onboarding.
+NVIDIA NIM and other compatible endpoints receive their provider validation during onboarding but do not receive this local-provider post-ready check.
+For those routes, continue to the final route check, then use the status command and a short agent request after onboarding.
+
+## Understand Final Route Checks
+
+When onboarding prints a dashboard summary, it first requests `https://inference.local/v1/models` from inside the sandbox after policy and process recovery.
+A transport failure or HTTP 5xx response leaves the onboarding session retryable at final verification instead of completing it.
+After restoring the route, resume onboarding to run the check again without rebuilding a healthy sandbox.
+
+Provider setup still performs its own model, credential, and endpoint validation before this final route check.
+Use the status command and a short agent request after onboarding to verify ongoing availability and model responses.
 
 ## Send a Short Agent Request
 

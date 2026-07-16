@@ -1,18 +1,49 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { checkGatewayRouteCompatibility } from "../inference/gateway-route-compatibility";
 import type { SandboxEntry } from "../state/registry";
 import { createSetupInference, type SetupInferenceDeps } from "./setup-inference";
 
 describe("onboard shared gateway route containment", () => {
-  it("preflights a resumed custom endpoint and pins the final host smoke (#6293)", async () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it.each([
+    {
+      scenario: "public",
+      endpointUrl: "https://public-name.example/v1",
+      resolvedAddress: "93.184.216.34",
+      trustedHosts: "",
+      expectedError: null,
+      expectedPinnedAddresses: ["93.184.216.34"],
+      expectedTrustedPrivateAddresses: [],
+    },
+    {
+      scenario: "operator-trusted private",
+      endpointUrl: "https://llm.corp.example/v1",
+      resolvedAddress: "10.0.0.8",
+      trustedHosts: "llm.corp.example",
+      expectedError: null,
+      expectedPinnedAddresses: ["10.0.0.8"],
+      expectedTrustedPrivateAddresses: ["10.0.0.8"],
+    },
+    {
+      scenario: "unlisted private",
+      endpointUrl: "https://unlisted.corp.example/v1",
+      resolvedAddress: "10.0.0.8",
+      trustedHosts: "",
+      expectedError: "exit 1",
+      expectedPinnedAddresses: [],
+      expectedTrustedPrivateAddresses: [],
+    },
+  ])("handles a resumed $scenario endpoint at the shared preflight", async (scenario) => {
+    vi.stubEnv("NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS", scenario.trustedHosts);
     let lookupCount = 0;
     const resolveEndpointHost = vi.fn(async () => {
       lookupCount += 1;
       return lookupCount === 1
-        ? [{ address: "93.184.216.34", family: 4 }]
+        ? [{ address: scenario.resolvedAddress, family: 4 }]
         : [{ address: "10.0.0.8", family: 4 }];
     });
     const verifyOnboardInferenceSmoke = vi.fn();
@@ -38,7 +69,7 @@ describe("onboard shared gateway route containment", () => {
           providerName: "compatible-endpoint",
           providerType: "openai",
           credentialEnv: "COMPATIBLE_API_KEY",
-          endpointUrl: "https://public-name.example/v1",
+          endpointUrl: scenario.endpointUrl,
           helpUrl: null,
           modelMode: "input",
           defaultModel: "model-a",
@@ -63,21 +94,27 @@ describe("onboard shared gateway route containment", () => {
       }),
     } as unknown as SetupInferenceDeps);
 
-    await expect(
-      setupInference(
-        "sandbox-a",
-        "model-a",
-        "compatible-endpoint",
-        "https://public-name.example/v1",
-        "COMPATIBLE_API_KEY",
-      ),
-    ).resolves.toEqual({ ok: true });
-
-    expect(resolveEndpointHost).toHaveBeenCalledOnce();
-    expect(verifyOnboardInferenceSmoke).toHaveBeenCalledWith(
-      expect.objectContaining({ pinnedAddresses: ["93.184.216.34"] }),
+    const errorMessage = await setupInference(
+      "sandbox-a",
+      "model-a",
+      "compatible-endpoint",
+      scenario.endpointUrl,
+      "COMPATIBLE_API_KEY",
+    ).then(
+      () => null,
+      (error: Error) => error.message,
     );
-    expect(JSON.stringify(verifyOnboardInferenceSmoke.mock.calls)).not.toContain("10.0.0.8");
+
+    expect(errorMessage).toBe(scenario.expectedError);
+    expect(resolveEndpointHost).toHaveBeenCalledOnce();
+    expect(
+      verifyOnboardInferenceSmoke.mock.calls.flatMap(([request]) => request.pinnedAddresses ?? []),
+    ).toEqual(scenario.expectedPinnedAddresses);
+    expect(
+      verifyOnboardInferenceSmoke.mock.calls.flatMap(
+        ([request]) => request.trustedPrivateCapability?.addresses ?? [],
+      ),
+    ).toEqual(scenario.expectedTrustedPrivateAddresses);
   });
 
   it("warns once inside the gateway lock before applying a valid conflicting route (#6315)", async () => {

@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { scanTextForTestConditionals } from "../scripts/find-test-conditionals";
+import { scanTextForTestConditionals } from "../scripts/find-test-conditionals.mts";
 
 const WORKFLOW_PATH = ".github/workflows/codebase-growth-guardrails.yaml";
 const STEP_NAME = "Require changed test files not to add if statements";

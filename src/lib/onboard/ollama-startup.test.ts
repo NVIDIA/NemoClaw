@@ -7,6 +7,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { MIN_HERMES_OLLAMA_CONTEXT_WINDOW } from "../inference/ollama-runtime-context";
 import {
   isOllamaProviderPinned,
   runOllamaStartupOrGate,
@@ -36,6 +37,7 @@ describe("runOllamaStartupOrGate steer hint (#4365)", () => {
   });
 
   function restore() {
+    setOllamaAutostartDisabled(false);
     wait.waitForHttp = originalWaitForHttp;
     runner.runShell = originalRunShell;
     if (originalProviderEnv === undefined) delete process.env.NEMOCLAW_PROVIDER;
@@ -169,6 +171,111 @@ describe("runOllamaStartupOrGate steer hint (#4365)", () => {
       expect(errSpy).not.toHaveBeenCalled();
     } finally {
       errSpy.mockRestore();
+      restore();
+    }
+  });
+
+  it("starts a NemoClaw-owned Hermes daemon with its required context length", () => {
+    delete process.env.NEMOCLAW_PROVIDER;
+    wait.waitForHttp = () => true;
+    let command = "";
+    runner.runShell = (value: string) => {
+      command = value;
+      return { status: 0 };
+    };
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      const outcome = runOllamaStartupOrGate({
+        ollamaReady: false,
+        ollamaPort: 11434,
+        getLocalProviderBaseUrl: () => "http://host.openshell.internal:11435/v1",
+        isNonInteractive: () => false,
+        contextWindowFloor: MIN_HERMES_OLLAMA_CONTEXT_WINDOW,
+      });
+
+      expect(outcome).toEqual({ kind: "ready" });
+      expect(command).toBe(
+        "OLLAMA_CONTEXT_LENGTH=64000 OLLAMA_HOST=127.0.0.1:11434 ollama serve > /dev/null 2>&1 &",
+      );
+    } finally {
+      logSpy.mockRestore();
+      restore();
+    }
+  });
+
+  const providerSetups = {
+    pinned: () => {
+      process.env.NEMOCLAW_PROVIDER = "ollama";
+    },
+    unpinned: () => {
+      delete process.env.NEMOCLAW_PROVIDER;
+    },
+  };
+  const outcomeAssertions = {
+    continue: (invoke: () => ReturnType<typeof runOllamaStartupOrGate>) => {
+      expect(invoke()).toEqual({ kind: "continue" });
+    },
+    exit: (invoke: () => ReturnType<typeof runOllamaStartupOrGate>) => {
+      expect(invoke).toThrow(/process\.exit:1/);
+    },
+  };
+
+  it.each([
+    {
+      name: "returns to provider selection for an interactive unpinned run",
+      nonInteractive: false,
+      outcome: "continue",
+      providerSetup: "unpinned",
+      expectedExitCalls: 0,
+    },
+    {
+      name: "exits an interactive provider-pinned run instead of looping",
+      nonInteractive: false,
+      outcome: "exit",
+      providerSetup: "pinned",
+      expectedExitCalls: 1,
+    },
+    {
+      name: "exits a non-interactive run",
+      nonInteractive: true,
+      outcome: "exit",
+      providerSetup: "unpinned",
+      expectedExitCalls: 1,
+    },
+  ] as const)("refuses an unavailable Hermes fallback and $name (#6760)", (testCase) => {
+    providerSetups[testCase.providerSetup]();
+    setOllamaAutostartDisabled(true);
+    let shellCalled = false;
+    runner.runShell = () => {
+      shellCalled = true;
+      return { status: 0 };
+    };
+    const getLocalProviderBaseUrl = vi.fn(() => "http://host.openshell.internal:11435/v1");
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit:${code ?? 0}`);
+    }) as never);
+    const invoke = () =>
+      runOllamaStartupOrGate({
+        ollamaReady: false,
+        ollamaPort: 11434,
+        getLocalProviderBaseUrl,
+        isNonInteractive: () => testCase.nonInteractive,
+        contextWindowFloor: MIN_HERMES_OLLAMA_CONTEXT_WINDOW,
+      });
+
+    try {
+      outcomeAssertions[testCase.outcome](invoke);
+      expect(exitSpy).toHaveBeenCalledTimes(testCase.expectedExitCalls);
+      expect(shellCalled).toBe(false);
+      expect(getLocalProviderBaseUrl).not.toHaveBeenCalled();
+      expect(errSpy).toHaveBeenCalledWith(
+        "  Ollama is not running on localhost:11434 and --no-ollama-autostart is set; cannot verify the required 64000-token context window.",
+      );
+    } finally {
+      errSpy.mockRestore();
+      exitSpy.mockRestore();
       restore();
     }
   });

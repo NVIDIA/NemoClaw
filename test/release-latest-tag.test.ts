@@ -11,7 +11,7 @@ const repoRoot = path.join(import.meta.dirname, "..");
 const latestScriptPath = path.join(repoRoot, "scripts", "release-latest-tag.sh");
 const cutScriptPath = path.join(repoRoot, "scripts", "release-cut-tag.sh");
 const waitLatestScriptPath = path.join(repoRoot, "scripts", "release-wait-latest.sh");
-const planScriptPath = path.join(repoRoot, "scripts", "release-plan.ts");
+const planScriptPath = path.join(repoRoot, "scripts", "release-plan.mts");
 const tsxPath = path.join(repoRoot, "node_modules", ".bin", "tsx");
 const tempRoots: string[] = [];
 
@@ -481,7 +481,7 @@ exit 2
       fixture.work,
       [
         tsxPath,
-        path.join(repoRoot, "scripts", "release-notes-data.ts"),
+        path.join(repoRoot, "scripts", "release-notes-data.mts"),
         "--plan",
         planPath,
         "--output",
@@ -552,7 +552,7 @@ exit 2
       fixture.work,
       [
         tsxPath,
-        path.join(repoRoot, "scripts", "release-notes-data.ts"),
+        path.join(repoRoot, "scripts", "release-notes-data.mts"),
         "--plan",
         planPath,
         "--output",

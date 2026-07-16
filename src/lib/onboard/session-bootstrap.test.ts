@@ -310,6 +310,34 @@ describe("prepareOnboardSession", () => {
     expect(deps.exitProcess).toHaveBeenCalledTimes(1);
   });
 
+  it("allows non-interactive resume with a checkpointed sandbox name", async () => {
+    const session = createSession({
+      sandboxName: "checkpointed-box",
+      sandboxPromptProgress: {
+        sandboxName: true,
+        webSearch: false,
+        messaging: false,
+        resourceProfile: false,
+      },
+    });
+    const { deps } = createDeps(session);
+
+    const result = await prepareOnboardSession(
+      {
+        resume: true,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: null,
+        cannotPrompt: true,
+        nonInteractive: true,
+      },
+      deps,
+    );
+
+    expect(result.session?.sandboxName).toBe("checkpointed-box");
+    expect(deps.exitProcess).not.toHaveBeenCalled();
+  });
+
   it("allows interactive resume to prompt when no sandbox name was recorded", async () => {
     const { deps } = createDeps(createSession({ sandboxName: null }));
 

@@ -57,7 +57,7 @@ vi.mock("./runtime-recovery.js", () => ({
 
 vi.mock("./runner.js", async () => {
   const actual = await vi.importActual<typeof import("./runner.js")>("./runner.js");
-  return { validateName: actual.validateName };
+  return { ROOT: actual.ROOT, validateName: actual.validateName };
 });
 
 import { resolveOpenshell } from "./adapters/openshell/resolve.js";

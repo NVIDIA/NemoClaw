@@ -57,6 +57,50 @@ describe("vllm model registry", () => {
     ).toEqual(deepseek);
   });
 
+  it("pins the DGX Station Nemotron Ultra serving recipe", () => {
+    const ultra = VLLM_MODELS.find((m) => m.envValue === "nemotron-3-ultra-550b-a55b");
+    expect(ultra).toBeDefined();
+    expect(ultra!.id).toBe("nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4");
+    expect(ultra!.revision).toBe("183968f87ae4cedce3039313cac1fd43d112c578");
+    expect(ultra!.servedModelId).toBe("nvidia/nemotron-3-ultra-550b-a55b");
+    expect(ultra!.runtime).toEqual({
+      image:
+        "vllm/vllm-openai@sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416",
+      imageDownloadSizeBytes: 10_670_087_425,
+      modelDownloadSizeBytes: 352_381_245_521,
+      loadTimeoutSec: 3600,
+      dockerRunArgs: ["--shm-size", "16g", "--ulimit", "memlock=-1", "--ulimit", "stack=67108864"],
+    });
+
+    const cmd = buildVllmServeCommand(ultra!);
+    expect(cmd).toBe(
+      [
+        "export VLLM_WEIGHT_OFFLOADING_DISABLE_PIN_MEMORY=1",
+        "&& export VLLM_NVFP4_GEMM_BACKEND=flashinfer-trtllm",
+        "&& vllm serve nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
+        "--tensor-parallel-size 1",
+        "--pipeline-parallel-size 1",
+        "--data-parallel-size 1",
+        "--port 8000",
+        "--trust-remote-code",
+        "--max-model-len 262144",
+        "--revision 183968f87ae4cedce3039313cac1fd43d112c578",
+        "--served-model-name nvidia/nemotron-3-ultra-550b-a55b",
+        "--host 0.0.0.0",
+        "--cpu-offload-gb 150",
+        "--cpu-offload-params experts",
+        `--kernel_config '{"enable_flashinfer_autotune": false}'`,
+        `--speculative-config '{"method":"nemotron_h_mtp","num_speculative_tokens":3}'`,
+        "--max-num-seqs 256",
+        "--gpu-memory-utilization 0.9",
+        "--reasoning-parser nemotron_v3",
+        "--enable-auto-tool-choice",
+        "--tool-call-parser qwen3_coder",
+        `--default-chat-template-kwargs '{"enable_thinking":true,"force_nonempty_content":true}'`,
+      ].join(" "),
+    );
+  });
+
   it("rejects an unknown NEMOCLAW_VLLM_MODEL with a helpful message", () => {
     expect(() =>
       selectVllmModelFromEnv({ NEMOCLAW_VLLM_MODEL: "made-up-model" } as NodeJS.ProcessEnv),
@@ -267,6 +311,7 @@ describe("modelsForPlatform", () => {
     expect(slugs).toContain("nemotron-3-nano-4b");
     expect(slugs).toContain("deepseek-r1-distill-70b");
     expect(slugs).toContain("deepseek-v4-flash");
+    expect(slugs).toContain("nemotron-3-ultra-550b-a55b");
     expect(slugs).not.toContain("qwen3.6-35b-a3b-nvfp4");
   });
 

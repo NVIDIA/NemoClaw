@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { getCredential } from "../../../credentials/store";
 import {
   createBuiltInChannelManifestRegistry,
   listSupportedMessagingChannelIdsForAgent,
@@ -18,6 +19,7 @@ type MessagingAgentLike = {
 
 export interface SandboxMessagingDeps<Agent> {
   note(message: string): void;
+  showMessagingStage?(): void;
   getRecordedMessagingChannelsForResume(
     resume: boolean,
     session: Session | null,
@@ -27,11 +29,13 @@ export interface SandboxMessagingDeps<Agent> {
     agent: Agent,
     existingChannels: string[] | null,
     sandboxName: string,
+    options?: { readonly selectionCompleted?: boolean },
   ): Promise<string[]>;
   readMessagingPlanFromEnv(): SandboxMessagingPlan | null;
   writePlanToEnv(plan: SandboxMessagingPlan): void;
   clearPlanEnv(): void;
   getRegistrySandboxMessagingPlan(sandboxName: string): SandboxMessagingPlan | null;
+  providerMatchesGatewayCredential(name: string, type: string, credentialEnv: string): boolean;
 }
 
 export interface SandboxMessagingSelection {
@@ -157,12 +161,21 @@ function selectionFromReusablePlan<Agent>(
 async function selectionFromMessagingSetup<Agent>(
   existingChannels: string[] | null,
   options: ReconcileSandboxMessagingOptions<Agent>,
+  selectionCompleted = false,
 ): Promise<SandboxMessagingSelection> {
   const existing = existingChannels
     ? filterChannelNamesForCurrentAgent(existingChannels, options.agent)
     : existingChannels;
+  const setupOptions = selectionCompleted ? { selectionCompleted: true } : undefined;
   const selected = filterChannelNamesForCurrentAgent(
-    await options.deps.setupMessagingChannels(options.agent, existing, options.sandboxName),
+    setupOptions
+      ? await options.deps.setupMessagingChannels(
+          options.agent,
+          existing,
+          options.sandboxName,
+          setupOptions,
+        )
+      : await options.deps.setupMessagingChannels(options.agent, existing, options.sandboxName),
     options.agent,
   );
   const plan = options.deps.readMessagingPlanFromEnv();
@@ -250,6 +263,71 @@ export function reconcileReusedSandboxMessaging<Agent>(
   };
 }
 
+async function selectionFromCompletedMessagingCheckpoint<Agent>(
+  envPlan: SandboxMessagingPlan | null,
+  options: ReconcileSandboxMessagingOptions<Agent>,
+): Promise<SandboxMessagingSelection> {
+  // A completed checkpoint makes the session copy authoritative. The process
+  // plan may already have refreshed hashes, so it cannot prove that a newly
+  // exported credential passed the channel's validation hooks.
+  const durablePlan = options.session?.messagingPlan ?? null;
+  if (!durablePlan) {
+    options.deps.clearPlanEnv();
+    options.deps.showMessagingStage?.();
+    options.deps.note("  [resume] Reusing messaging selection: no channels.");
+    return { plan: null, selectedChannels: [] };
+  }
+
+  const filteredPlan = filterMessagingPlanForCurrentAgent(durablePlan, options.agent);
+  if (!filteredPlan) {
+    options.deps.clearPlanEnv();
+    options.deps.showMessagingStage?.();
+    options.deps.note("  [resume] Reusing messaging selection: no active channels.");
+    return { plan: null, selectedChannels: [] };
+  }
+  const selectedChannels = getActiveChannelsFromPlan(filteredPlan);
+  if (selectedChannels.length === 0) {
+    const selection = selectionFromReusablePlan(
+      durablePlan,
+      options.agent,
+      envPlan !== durablePlan,
+      options.deps,
+    );
+    options.deps.showMessagingStage?.();
+    options.deps.note("  [resume] Reusing messaging selection: no active channels.");
+    return selection;
+  }
+
+  const activeChannels = new Set(selectedChannels);
+  const credentialNeedsValidation = filteredPlan.credentialBindings.some((binding) => {
+    if (!activeChannels.has(binding.channelId)) return false;
+    const credentialHash = hashCredential(getCredential(binding.providerEnvKey));
+    if (credentialHash) return credentialHash !== binding.credentialHash;
+    if (!options.session?.stagedCredentialProviders.includes(binding.providerName)) return true;
+    return !options.deps.providerMatchesGatewayCredential(
+      binding.providerName,
+      "generic",
+      binding.providerEnvKey,
+    );
+  });
+  if (credentialNeedsValidation) {
+    options.deps.writePlanToEnv(durablePlan);
+    return selectionFromMessagingSetup(selectedChannels, options, true);
+  }
+
+  const selection = selectionFromReusablePlan(
+    durablePlan,
+    options.agent,
+    envPlan !== durablePlan,
+    options.deps,
+  );
+  options.deps.showMessagingStage?.();
+  options.deps.note(
+    `  [resume] Reusing messaging channels: ${selection.selectedChannels.join(", ")}.`,
+  );
+  return selection;
+}
+
 export async function reconcileSandboxMessaging<Agent>(
   options: ReconcileSandboxMessagingOptions<Agent>,
 ): Promise<SandboxMessagingSelection> {
@@ -259,6 +337,14 @@ export async function reconcileSandboxMessaging<Agent>(
     options.sandboxName,
   );
   const envPlan = options.deps.readMessagingPlanFromEnv();
+  const agentName = (options.agent as MessagingAgentLike | null)?.name;
+  if (
+    (!agentName || agentName === "openclaw") &&
+    options.resume &&
+    options.session?.sandboxPromptProgress?.messaging === true
+  ) {
+    return selectionFromCompletedMessagingCheckpoint(envPlan, options);
+  }
   const registryPlan = options.deps.getRegistrySandboxMessagingPlan(options.sandboxName);
   if (recordedChannels) {
     return selectionFromRecordedChannels(recordedChannels, envPlan, registryPlan, options);
