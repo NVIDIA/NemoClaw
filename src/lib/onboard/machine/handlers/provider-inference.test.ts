@@ -500,6 +500,44 @@ describe("handleProviderInferenceState", () => {
     expect(result).toMatchObject({ provider: "ollama-local", model: "llama3.1" });
   });
 
+  it("reuses a persisted vLLM served alias when resume repairs inference (#7023)", async () => {
+    const session = createSession({
+      provider: "vllm-local",
+      model: "nemotron-ultra",
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      credentialEnv: null,
+      preferredInferenceApi: "openai-completions",
+    });
+    session.steps.provider_selection.status = "complete";
+    const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => false) });
+
+    const result = await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+    });
+
+    expect(calls.setupNim).not.toHaveBeenCalled();
+    expect(calls.setupInference).toHaveBeenCalledWith(
+      "my-assistant",
+      "nemotron-ultra",
+      "vllm-local",
+      "http://host.openshell.internal:8000/v1",
+      null,
+      null,
+      [],
+      expect.objectContaining({
+        gatewayName: "nemoclaw",
+        preferredInferenceApi: "openai-completions",
+      }),
+    );
+    expect(calls.complete).toHaveBeenCalledWith(
+      "inference",
+      expect.objectContaining({ provider: "vllm-local", model: "nemotron-ultra" }),
+    );
+    expect(result).toMatchObject({ provider: "vllm-local", model: "nemotron-ultra" });
+  });
+
   it("reserves the prompted sandbox route when resume skips already-ready inference (#6562)", async () => {
     const session = createSession({
       provider: "nvidia-prod",
