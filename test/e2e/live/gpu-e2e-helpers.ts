@@ -11,6 +11,7 @@ import { type SandboxClient, validateSandboxName } from "../fixtures/clients/san
 import { expect } from "../fixtures/e2e-test.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { stripAnsi } from "./json-envelope.ts";
 
 export { REPO_ROOT };
 
@@ -115,6 +116,12 @@ export function chatContent(raw: string): string {
       .find((value): value is string => typeof value === "string" && value.trim().length > 0)
       ?.trim() ?? ""
   );
+}
+
+export function hasExactReadyPhase(output: string): boolean {
+  return stripAnsi(output)
+    .split(/\r?\n/)
+    .some((line) => line.trim() === "Phase: Ready");
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

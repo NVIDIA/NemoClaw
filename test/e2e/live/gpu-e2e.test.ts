@@ -16,6 +16,7 @@ import {
   detectOllamaModel,
   ensureOllama,
   env,
+  hasExactReadyPhase,
   ollamaProxyTokenFile,
   openClawModelConfigProjectionScript,
   PROXY_PORT,
@@ -309,7 +310,7 @@ test("GPU Ollama onboard enables CUDA, auth proxy, and sandbox inference", {
   });
   expect(readySandbox.exitCode, resultText(readySandbox)).toBe(0);
   expect(
-    readySandbox.stdout.split(/\r?\n/).some((line) => line.trim() === "Phase: Ready"),
+    hasExactReadyPhase(readySandbox.stdout),
     `OpenShell sandbox must be exactly Ready after routed inference; got ${resultText(readySandbox)}`,
   ).toBe(true);
 
