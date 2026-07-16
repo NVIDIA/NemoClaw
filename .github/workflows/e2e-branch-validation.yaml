@@ -291,27 +291,16 @@ jobs:
       # instance gets torn down. Captures the onboard log, sandbox list,
       # docker state, and gateway status so downstream onboard failures are
       # diagnosable without re-running with keep_alive=true.
+      # Best-effort debug capture before teardown. Diagnostic only: it adds no
+      # credential beyond what this data-plane job already holds, so it runs the
+      # helper from the tested checkout. Failures are surfaced, not discarded.
       - name: Collect Brev debug bundle on failure
         if: failure()
         continue-on-error: true
-        run: |
-          INSTANCE="${{ env.BREV_E2E_INSTANCE_NAME }}"
-          mkdir -p brev-debug-bundle
-          brev refresh >/dev/null 2>&1 || true
-          ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR \
-              -o ConnectTimeout=10 "${INSTANCE}" \
-              'set +e
-               mkdir -p /tmp/nc-debug
-               cp /tmp/nemoclaw-onboard.log /tmp/nc-debug/ 2>/dev/null || true
-               cp -R /tmp/nemoclaw-traces /tmp/nc-debug/traces 2>/dev/null || true
-               timeout 15s openshell sandbox list  > /tmp/nc-debug/sandbox-list.txt 2>&1
-               timeout 15s openshell gateway status > /tmp/nc-debug/gateway-status.txt 2>&1
-               timeout 15s docker ps -a             > /tmp/nc-debug/docker-ps.txt 2>&1
-               timeout 30s tar -C /tmp -czf /tmp/nc-debug.tar.gz nc-debug
-              ' || true
-          scp -o StrictHostKeyChecking=no -o LogLevel=ERROR \
-              "${INSTANCE}:/tmp/nc-debug.tar.gz" brev-debug-bundle/ 2>/dev/null || true
-          ls -la brev-debug-bundle/ || true
+        env:
+          INSTANCE_NAME: ${{ env.BREV_E2E_INSTANCE_NAME }}
+          DEST_DIR: brev-debug-bundle
+        run: node --experimental-strip-types tools/e2e/brev-lifecycle.mts collect-debug
 
       - name: Upload Brev debug bundle on failure
         if: failure()
@@ -329,56 +318,42 @@ jobs:
           path: /tmp/brev-e2e-*.log
           if-no-files-found: ignore
 
-      - name: Delete Brev instance
-        if: always() && !inputs.keep_alive
+  # Teardown runs in its own job: the validation job has executed target code by
+  # this point, so a helper living in that job's workspace can no longer be
+  # trusted to delete the instance. This job checks out only the trusted
+  # revision and never the tested branch (#6962).
+  cleanup-brev-instance:
+    name: Delete Brev instance
+    needs: e2e-branch-validation
+    if: always() && !inputs.keep_alive
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      BREV_E2E_INSTANCE_NAME: e2e-${{ inputs.pr_number || 'run' }}-${{ inputs.test_suite }}-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Checkout trusted lifecycle tooling
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: "22"
+
+      - name: Install Brev CLI
         env:
-          INSTANCE: ${{ env.BREV_E2E_INSTANCE_NAME }}
-        run: |
-          set -euo pipefail
+          BREV_API_TOKEN: ${{ secrets.BREV_API_TOKEN }}
+          BREV_API_KEY: ${{ secrets.BREV_API_KEY }}
+          BREV_ORG_ID: ${{ secrets.BREV_ORG_ID }}
+        run: node --experimental-strip-types tools/e2e/brev-lifecycle.mts install-cli
 
-          if ! command -v brev >/dev/null 2>&1; then
-            echo "Brev CLI is unavailable; the validation step could not have created ${INSTANCE}."
-            exit 0
-          fi
-
-          for attempt in 1 2 3; do
-            if output="$(timeout 30s brev delete "$INSTANCE" 2>&1)"; then
-              printf '%s\n' "$output"
-              echo "Brev deletion requested for ${INSTANCE}."
-              exit 0
-            else
-              status=$?
-            fi
-
-            if list_json="$(timeout 30s brev ls --json 2>/dev/null)" && \
-               jq -e '
-                 (type == "array" and all(.[]; type == "object")) or
-                 (type == "object" and
-                  ((.workspaces? // null) | type == "array") and
-                  all(.workspaces[]; type == "object"))
-               ' \
-                 <<<"$list_json" >/dev/null; then
-              if ! jq -e --arg name "$INSTANCE" '
-                (if type == "array" then . else .workspaces end)
-                | any(.[];
-                    ((.name // .workspaceName // .instanceName // .Name // "") | tostring)
-                    == $name)
-              ' <<<"$list_json" >/dev/null; then
-                echo "Brev instance ${INSTANCE} is already absent."
-                exit 0
-              fi
-            fi
-
-            if [ "$attempt" -eq 3 ]; then
-              printf '%s\n' "$output" >&2
-              echo "::error::Failed to delete Brev instance ${INSTANCE} after ${attempt} attempts."
-              exit "$status"
-            fi
-
-            echo "::warning::Brev delete attempt ${attempt} failed; refreshing before retry."
-            timeout 30s brev refresh >/dev/null 2>&1 || true
-            sleep "$((attempt * 5))"
-          done
+      - name: Delete Brev instance
+        env:
+          INSTANCE_NAME: ${{ env.BREV_E2E_INSTANCE_NAME }}
+        run: node --experimental-strip-types tools/e2e/brev-lifecycle.mts delete-instance
 
   report-pr:
     name: Report Brev E2E result
@@ -393,6 +368,17 @@ jobs:
       checks: write
       pull-requests: write
     steps:
+      - name: Checkout trusted reporter tooling
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: "22"
+
       - name: Publish completed check and PR comment
         env:
           GH_TOKEN: ${{ github.token }}
@@ -405,102 +391,4 @@ jobs:
           RUN_ATTEMPT: ${{ github.run_attempt }}
           RUN_ID: ${{ github.run_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
-            echo "::error::pr_number must be a positive integer. See $RUN_URL"
-            exit 1
-          fi
-          pr_json="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefName,headRefOid)"
-          branch="$(jq -r '.headRefName' <<<"$pr_json")"
-          current_sha="$(jq -r '.headRefOid' <<<"$pr_json")"
-          if [[ "$current_sha" != "$TESTED_SHA" ]]; then
-            echo "::error::PR head moved after Brev validation; refusing to report stale evidence. See $RUN_URL"
-            exit 1
-          fi
-          case "$VALIDATION_RESULT" in
-            success)
-              conclusion="success"
-              status="PASSED"
-              emoji="✅"
-              ;;
-            cancelled)
-              conclusion="cancelled"
-              status="CANCELLED"
-              emoji="⚪"
-              ;;
-            skipped)
-              conclusion="skipped"
-              status="SKIPPED"
-              emoji="⚪"
-              ;;
-            *)
-              conclusion="failure"
-              status="FAILED"
-              emoji="❌"
-              ;;
-          esac
-          validation_url="$RUN_URL"
-          validation_link_text="workflow run"
-          if [[ "$RUN_ID" =~ ^[1-9][0-9]*$ && "$RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]; then
-            jobs_json=""
-            if jobs_json="$(gh api \
-              "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/attempts/$RUN_ATTEMPT/jobs?per_page=100" \
-              2>/dev/null)"; then
-              validation_job_id="$(jq -er \
-                --arg suite "$TEST_SUITE" \
-                --arg result "$VALIDATION_RESULT" \
-                --argjson run_id "$RUN_ID" \
-                --argjson run_attempt "$RUN_ATTEMPT" '
-                  if ((.total_count | type) == "number"
-                    and (.total_count | floor) == .total_count
-                    and .total_count >= 0
-                    and .total_count <= 100
-                    and (.jobs | type) == "array"
-                    and (.jobs | length) == .total_count)
-                  then
-                    [.jobs[] | select(
-                      (.id | type) == "number"
-                      and (.id | floor) == .id
-                      and .id > 0
-                      and .id <= 9007199254740991
-                      and .run_id == $run_id
-                      and .run_attempt == $run_attempt
-                      and (.name == "e2e-branch-validation"
-                        or .name == ("brev-nightly-e2e (" + $suite + ") / e2e-branch-validation")
-                        or ($suite == "dashboard-remote-bind"
-                          and .name == "dashboard-remote-bind-e2e / e2e-branch-validation"))
-                      and .status == "completed"
-                      and .conclusion == $result
-                    )]
-                    | if length == 1 then .[0].id else empty end
-                  else empty end
-                ' <<<"$jobs_json" 2>/dev/null)" || validation_job_id=""
-              if [[ "$validation_job_id" =~ ^[1-9][0-9]*$ ]]; then
-                validation_url="$RUN_URL/job/$validation_job_id"
-                validation_link_text="validation job"
-              fi
-            fi
-          fi
-          gh api "repos/$GITHUB_REPOSITORY/check-runs" \
-            -f "name=Brev E2E ($TEST_SUITE)" \
-            -f "head_sha=$TESTED_SHA" \
-            -f status="completed" \
-            -f "conclusion=$conclusion" \
-            -f "details_url=$validation_url" \
-            -f "output[title]=Brev E2E ($TEST_SUITE): $conclusion" \
-            -f "output[summary]=[Open the $validation_link_text]($validation_url) for details."
-          body_file="$(mktemp)"
-          printf "%s **Brev E2E** (%s): **%s** on branch \`%s\` — [See %s](%s)\n" \
-            "$emoji" "$TEST_SUITE" "$status" "$branch" "$validation_link_text" "$validation_url" >"$body_file"
-          if [[ "$KEEP_ALIVE" == "true" ]]; then
-            cat >>"$body_file" <<EOF
-
-          > **Instance \`$INSTANCE_NAME\` is still running.** To SSH in:
-          > \`\`\`
-          > brev refresh && ssh $INSTANCE_NAME
-          > \`\`\`
-          > When done, delete it: \`brev delete $INSTANCE_NAME\`
-          EOF
-          fi
-          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file "$body_file"
+        run: node --experimental-strip-types tools/e2e/brev-lifecycle.mts report-pr

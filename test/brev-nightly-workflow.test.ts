@@ -191,76 +191,46 @@ describe("Brev nightly workflow contract", () => {
       "pull-requests": "write",
     });
     expect(reporter?.if).toContain("inputs.pr_number != ''");
-    expect(reporter?.steps?.[0]?.env?.TESTED_SHA).toBe(
-      "${{ needs.e2e-branch-validation.outputs.tested_sha }}",
+    const publish = reporter?.steps?.find(
+      (step) => step.name === "Publish completed check and PR comment",
     );
-    expect(reporter?.steps?.[0]?.env?.INSTANCE_NAME).toContain("inputs.test_suite");
-    expect(reporter?.steps?.[0]?.run).toContain(
-      "PR head moved after Brev validation; refusing to report stale evidence",
-    );
-    expect(reporter?.steps?.[0]?.run).toContain(
-      "pr_number must be a positive integer. See $RUN_URL",
-    );
-    expect(reporter?.steps?.[0]?.run).toContain("refusing to report stale evidence. See $RUN_URL");
-    expect(reporter?.steps?.[0]?.run).toContain(
-      "actions/runs/$RUN_ID/attempts/$RUN_ATTEMPT/jobs?per_page=100",
-    );
-    expect(reporter?.steps?.[0]?.run).toContain(".id <= 9007199254740991");
-    expect(reporter?.steps?.[0]?.run).not.toContain("html_url");
-    expect(reporter?.steps?.some((step) => step.uses?.includes("checkout"))).toBe(false);
+    expect(publish?.env?.TESTED_SHA).toBe("${{ needs.e2e-branch-validation.outputs.tested_sha }}");
+    expect(publish?.env?.INSTANCE_NAME).toContain("inputs.test_suite");
+    expect(publish?.env?.RUN_ID).toBe("${{ github.run_id }}");
+    expect(publish?.env?.RUN_ATTEMPT).toBe("${{ github.run_attempt }}");
+    // The publisher runs from the trusted helper; stale-SHA rejection, PR-number
+    // validation, and job-link resolution are covered by
+    // test/e2e/support/brev-lifecycle.test.ts.
+    expect(publish?.run).toContain("tools/e2e/brev-lifecycle.mts report-pr");
+
+    // The reporter checks out only the trusted workflow revision, never target
+    // code, and pins every action it uses.
+    const reporterCheckout = reporter?.steps?.find((step) => step.uses?.includes("checkout"));
+    expect(reporterCheckout?.with?.ref).toBe("${{ github.workflow_sha }}");
+    expect(reporterCheckout?.with?.["persist-credentials"]).toBe(false);
+    expect(reporterCheckout?.with?.path).toBeUndefined();
+    for (const step of reporter?.steps ?? []) {
+      if (step.uses)
+        expect(step.uses, `${step.name} must pin its action`).toMatch(/@[0-9a-f]{40}$/);
+    }
+    expect(JSON.stringify(reporter)).not.toContain("inputs.branch");
     expect(JSON.stringify(reporter)).not.toMatch(/BREV_|NVIDIA_INFERENCE_API_KEY/);
   });
 
-  it("links failed checks and comments to the validated job with a run fallback", () => {
-    const reporter = branchValidation.jobs?.["report-pr"]?.steps?.find(
+  // source-shape-contract: compatibility -- The check must still deep-link the validated job (#6978)
+  it("gives the reporter the run identity it needs to link the validated job", () => {
+    const publish = branchValidation.jobs?.["report-pr"]?.steps?.find(
       (step) => step.name === "Publish completed check and PR comment",
     );
-    const script = reporter?.run ?? "";
 
-    const direct = runReporter(script, {
-      jobs: [
-        {
-          conclusion: "failure",
-          id: 456,
-          name: "brev-nightly-e2e (full) / e2e-branch-validation",
-          run_attempt: 2,
-          run_id: 123,
-          status: "completed",
-        },
-      ],
-      total_count: 1,
-    });
-    const directUrl = `${direct.runUrl}/job/456`;
-    expect(direct.checkArgs).toContain("conclusion=failure");
-    expect(direct.checkArgs).toContain(`details_url=${directUrl}`);
-    expect(direct.checkArgs).toContain(
-      `output[summary]=[Open the validation job](${directUrl}) for details.`,
+    // resolveValidationJobUrl consumes these; its matching rules and run-URL
+    // fallback are covered directly in test/e2e/support/brev-lifecycle.test.ts.
+    expect(publish?.env?.RUN_ID).toBe("${{ github.run_id }}");
+    expect(publish?.env?.RUN_ATTEMPT).toBe("${{ github.run_attempt }}");
+    expect(publish?.env?.RUN_URL).toBe(
+      "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
     );
-    expect(direct.comment).toContain(`[See validation job](${directUrl})`);
-
-    const unsafeId = runReporter(script, {
-      jobs: [
-        {
-          conclusion: "failure",
-          id: Number.MAX_SAFE_INTEGER + 1,
-          name: "brev-nightly-e2e (full) / e2e-branch-validation",
-          run_attempt: 2,
-          run_id: 123,
-          status: "completed",
-        },
-      ],
-      total_count: 1,
-    });
-    expect(unsafeId.checkArgs).toContain(`details_url=${unsafeId.runUrl}`);
-    expect(unsafeId.comment).not.toContain(`${unsafeId.runUrl}/job/`);
-
-    const fallback = runReporter(script, { jobs: [], total_count: 0 }, true);
-    expect(fallback.checkArgs).toContain("conclusion=failure");
-    expect(fallback.checkArgs).toContain(`details_url=${fallback.runUrl}`);
-    expect(fallback.checkArgs).toContain(
-      `output[summary]=[Open the workflow run](${fallback.runUrl}) for details.`,
-    );
-    expect(fallback.comment).toContain(`[See workflow run](${fallback.runUrl})`);
+    expect(branchValidation.jobs?.["report-pr"]?.permissions?.actions).toBe("read");
   });
 
   // source-shape-contract: security -- Suite validation must reject unsupported input before any target checkout
@@ -283,19 +253,28 @@ describe("Brev nightly workflow contract", () => {
   it("keeps instance deletion inside the workflow ownership boundary", () => {
     const steps = branchValidation.jobs?.["e2e-branch-validation"]?.steps ?? [];
     const run = steps.find((step) => step.name === "Run ephemeral Brev E2E");
-    const cleanup = steps.find((step) => step.name === "Delete Brev instance");
+    const cleanupJob = branchValidation.jobs?.["cleanup-brev-instance"];
+    const cleanup = cleanupJob?.steps?.find((step) => step.name === "Delete Brev instance");
 
     expect(branchValidation.on?.workflow_call?.inputs?.keep_alive).toMatchObject({
       default: false,
     });
     expect(run?.env?.[BREV_WORKFLOW_OWNERSHIP_ENV]).toBe("1");
-    expect(cleanup?.if).toBe("always() && !inputs.keep_alive");
-    expect(cleanup?.env?.INSTANCE).toBe("${{ env.BREV_E2E_INSTANCE_NAME }}");
-    expect(cleanup?.run).toContain("for attempt in 1 2 3");
-    expect(cleanup?.run).toContain('timeout 30s brev delete "$INSTANCE"');
-    expect(cleanup?.run).toContain("timeout 30s brev ls --json");
-    expect(cleanup?.run).toContain("timeout 30s brev refresh");
-    expect(cleanup?.run).not.toMatch(/grep.*not found/);
+
+    // Teardown runs in its own job, after target code has executed, so it must
+    // not live in the validation workspace at all.
+    expect(steps.some((step) => step.name === "Delete Brev instance")).toBe(false);
+    expect(cleanupJob?.if).toBe("always() && !inputs.keep_alive");
+    expect(cleanupJob?.needs).toBe("e2e-branch-validation");
+    expect(cleanup?.env?.INSTANCE_NAME).toBe("${{ env.BREV_E2E_INSTANCE_NAME }}");
+    expect(cleanup?.run).toContain("tools/e2e/brev-lifecycle.mts delete-instance");
+
+    // The cleanup job checks out only the trusted revision and never target code.
+    const cleanupCheckout = cleanupJob?.steps?.find((step) => step.uses?.includes("checkout"));
+    expect(cleanupCheckout?.with?.ref).toBe("${{ github.workflow_sha }}");
+    expect(cleanupCheckout?.with?.["persist-credentials"]).toBe(false);
+    expect(JSON.stringify(cleanupJob)).not.toContain("inputs.branch");
+    expect(cleanupJob?.permissions).toEqual({ contents: "read" });
   });
 
   // source-shape-contract: security -- Brev credentials must originate only from repository secrets
