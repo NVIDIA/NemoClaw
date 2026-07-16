@@ -105,6 +105,7 @@ For Docker's containerd image store, it checks the top-level `root` from `/etc/c
 For model files, NemoClaw checks the filesystem backing `~/.cache/huggingface`.
 The check compares Docker image storage against the image bytes and compares model-cache storage against the model files plus writable allowance.
 When those paths share a filesystem, NemoClaw compares the shared capacity against the aggregate requirement.
+When NemoClaw cannot determine whether successful checks share a filesystem, it conservatively compares their aggregate requirement against the lowest reported capacity.
 NemoClaw does not move the Hugging Face cache to `/raid` or another fallback mount during this preflight.
 
 NemoClaw recognizes an image cache hit only when Docker contains the exact platform digest.

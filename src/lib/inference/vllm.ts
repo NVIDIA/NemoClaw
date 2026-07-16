@@ -868,10 +868,15 @@ function managedStorageCheckLabel(requirements: readonly ManagedStorageRequireme
 function managedStorageChecks(
   requirements: readonly ManagedStorageRequirement[],
 ): ManagedStorageCheck[] {
+  const aggregateSuccessfulRequirements = requirements.some(
+    (requirement) => requirement.probe.ok && !requirement.probe.capacity.filesystemId,
+  );
   const checks = new Map<string, ManagedStorageCheck>();
   for (const requirement of requirements) {
     if (!requirement.probe.ok) continue;
-    const key = storageCapacityKey(requirement.probe.capacity);
+    const key = aggregateSuccessfulRequirements
+      ? "all-successful-requirements"
+      : storageCapacityKey(requirement.probe.capacity);
     const existing = checks.get(key);
     if (existing) {
       existing.requiredBytes += requirement.requiredBytes;
