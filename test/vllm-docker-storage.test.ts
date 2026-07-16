@@ -125,6 +125,7 @@ realDockerTest(
       fs.writeFileSync(path.join(fakeBinDir, "nvidia-smi"), "#!/bin/sh\nexit 0\n", {
         mode: 0o755,
       });
+      fs.writeFileSync(path.join(fakeBinDir, "curl"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
       vi.stubEnv("PATH", `${fakeBinDir}${path.delimiter}${process.env.PATH ?? ""}`);
       vi.stubEnv("HOME", blockedHome);
       vi.stubEnv("NEMOCLAW_VLLM_MODEL", profile.defaultModel.envValue);
@@ -156,9 +157,30 @@ realDockerTest(
     ).toBe(0);
     const checkoutSha = checkoutResult.stdout.trim();
     expect(checkoutSha).toMatch(/^[0-9a-f]{40}$/u);
+    const sourceVersionResult = spawnSync("git", ["describe", "--tags", "--always", "--dirty"], {
+      encoding: "utf8",
+      timeout: 5_000,
+    });
+    expect(
+      sourceVersionResult.status,
+      `could not record the validated source version: ${
+        sourceVersionResult.error?.message ||
+        sourceVersionResult.stderr ||
+        sourceVersionResult.stdout
+      }`,
+    ).toBe(0);
+    const releaseCandidateSourceVersion = sourceVersionResult.stdout.trim();
+    expect(releaseCandidateSourceVersion).not.toBe("");
+    const packageMetadata = JSON.parse(
+      fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8"),
+    ) as { version?: unknown };
+    expect(typeof packageMetadata.version).toBe("string");
+    const packageVersion = String(packageMetadata.version);
     const evidence = {
       schemaVersion: 1,
       checkoutSha,
+      releaseCandidateSourceVersion,
+      packageVersion,
       platform: process.platform,
       architecture: process.arch,
       dockerHost: DOCKER_HOST,
