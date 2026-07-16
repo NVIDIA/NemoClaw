@@ -15,6 +15,7 @@ import {
   apiKeyShapeCommand,
   cleanupHermesSwitch,
   compatibleAnthropicMetadataArgs,
+  expectAuthenticatedBaselineInventoryRequest,
   hostedInstallModel,
   inferenceLocalMaxTokens,
   installHermes,
@@ -112,6 +113,36 @@ describe("Hermes inference switch command shape", () => {
         NEMOCLAW_SWITCH_MOCK_HOST: "host.openshell.internal",
       }),
     ).toBe("http://host.openshell.internal:18766");
+  });
+
+  it("uses authenticated model inventory as baseline readiness evidence", () => {
+    expect(() =>
+      expectAuthenticatedBaselineInventoryRequest({
+        requests: () => [
+          {
+            auth: "ok",
+            authorizationSent: true,
+            bodyBytes: 0,
+            method: "GET",
+            path: "/v1/models",
+          },
+        ],
+      }),
+    ).not.toThrow();
+
+    expect(() =>
+      expectAuthenticatedBaselineInventoryRequest({
+        requests: () => [
+          {
+            auth: "ok",
+            authorizationSent: true,
+            bodyBytes: 0,
+            method: "POST",
+            path: "/v1/models",
+          },
+        ],
+      }),
+    ).toThrow();
   });
 
   it("enables local baseline inference only for the mock Anthropic lane", () => {

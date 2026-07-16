@@ -396,6 +396,10 @@ esac
 describe("PR E2E gate workflow", () => {
   // source-shape-contract: security -- Trusted metadata triggers and least privilege bound the write-capable controller
   it("limits triggers and job permissions", () => {
+    const ciWorkflow = readYaml<Workflow>(".github/workflows/pr.yaml");
+    const ciRequired =
+      "${{ github.event.action != 'edited' || github.event.changes.base != null }}";
+    const ciVerification = step(ciWorkflow.jobs.checks, "Verify required PR checks");
     const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
     const initialize = workflow.jobs.initialize;
     const required = workflow.jobs.required;
@@ -454,6 +458,23 @@ describe("PR E2E gate workflow", () => {
       },
     });
     expect(workflow.permissions).toEqual({});
+    expect(ciWorkflow.jobs.changes.if).toBe(ciRequired);
+    expect(ciWorkflow.jobs.checks.if).toBe("always()");
+    expect(ciVerification.env?.CI_REQUIRED).toBe(ciRequired);
+    expect(ciVerification.run).toContain('if [ "$CI_REQUIRED" != "true" ]; then');
+    expect(ciVerification.run).toContain("Metadata-only PR edit");
+    const metadataOnlyGate = spawnSync("bash", ["-c", ciVerification.run ?? ""], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        ...ciVerification.env,
+        CHANGES_RESULT: "skipped",
+        CI_REQUIRED: "false",
+        STATIC_RESULT: "failure",
+      },
+    });
+    expect(metadataOnlyGate.status, metadataOnlyGate.stderr).toBe(0);
+    expect(metadataOnlyGate.stdout).toContain("Metadata-only PR edit");
     expect(initialize.if).toContain("github.event_name == 'pull_request_target'");
     expect(initialize.if).toContain("github.event.action != 'closed'");
     expect(initialize.if).toContain("github.event.action != 'edited'");
@@ -469,6 +490,8 @@ describe("PR E2E gate workflow", () => {
     expect(required.name).toBe("E2E / PR Gate");
     expect(required.if).toContain("github.event_name == 'pull_request_target'");
     expect(required.if).toContain("github.event.action != 'closed'");
+    expect(required.if).toContain("github.event.action != 'edited'");
+    expect(required.if).toContain("github.event.changes.base != null");
     expect(required.permissions).toEqual({
       checks: "read",
       contents: "read",

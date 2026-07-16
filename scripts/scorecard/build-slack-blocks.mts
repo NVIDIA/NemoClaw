@@ -151,11 +151,5 @@ function getSlackChannel(data: ScorecardData): SlackChannel {
   return "preview";
 }
 
-module.exports = {
-  buildBlocks,
-  buildFallbackText,
-  getSlackChannel,
-  getStatusColor,
-};
-
 export type { ScorecardData, SlackBlock, SlackChannel, SlackStatusColor };
+export { buildBlocks, buildFallbackText, getSlackChannel, getStatusColor };

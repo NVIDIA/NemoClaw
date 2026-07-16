@@ -85,7 +85,7 @@ jobs:
 
   required:
     name: E2E / PR Gate
-    if: ${{ github.event_name == 'pull_request_target' && github.repository == 'NVIDIA/NemoClaw' && github.event.action != 'closed' }}
+    if: ${{ github.event_name == 'pull_request_target' && github.repository == 'NVIDIA/NemoClaw' && github.event.action != 'closed' && (github.event.action != 'edited' || github.event.changes.base != null) }}
     runs-on: ubuntu-latest
     timeout-minutes: 170
     permissions:

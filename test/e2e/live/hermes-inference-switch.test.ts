@@ -16,7 +16,7 @@ import {
   ensureCompatibleAnthropicSwitchProvider,
   env,
   envHash,
-  expectAuthenticatedBaselineRequest,
+  expectAuthenticatedBaselineInventoryRequest,
   expectedApiMode,
   expectedBaseUrl,
   hashCheck,
@@ -165,7 +165,7 @@ test("Hermes inference set updates route/config and preserves live runtime", {
 
   const install = await installHermes(host, apiKey, installEnv);
   expect(install.exitCode, resultText(install)).toBe(0);
-  expectAuthenticatedBaselineRequest(mockBaseline, MOCK_BASELINE_MODEL);
+  expectAuthenticatedBaselineInventoryRequest(mockBaseline);
   const baselineRoute = await sandbox.openshell(["inference", "get", "-g", "nemoclaw"], {
     artifactName: "openshell-inference-route-before-switch",
     env: env(),

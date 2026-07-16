@@ -204,7 +204,7 @@ export const RISK_RULES: readonly RiskRule[] = [
       file === ".github/workflows/e2e.yaml" ||
       file.startsWith(".github/actions/prepare-e2e/") ||
       file === "src/lib/trace.ts" ||
-      file === "scripts/scorecard/analyze-trace-timing.ts" ||
+      file === "scripts/scorecard/analyze-trace-timing.mts" ||
       file === "scripts/e2e/sanitize-trace-timing.py" ||
       file === "ci/onboard-performance-budget.json" ||
       RISK_RELEVANT_TEST_FILES.has(file),

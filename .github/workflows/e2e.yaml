@@ -1009,6 +1009,7 @@ jobs:
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_MODEL: "qwen3.5:9b"
       NEMOCLAW_PROVIDER: "ollama"
       NEMOCLAW_OLLAMA_PULL_TIMEOUT: "2400"
       NEMOCLAW_SANDBOX_NAME: "e2e-gpu-ollama"
@@ -3260,6 +3261,7 @@ jobs:
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_MODEL: "qwen3.5:9b"
       NEMOCLAW_SANDBOX_NAME: "e2e-gpu-double-onboard"
       NEMOCLAW_PROVIDER: "ollama"
       NEMOCLAW_OLLAMA_PROXY_PORT: "11435"
@@ -5392,13 +5394,13 @@ jobs:
           script: |
             const path = require('path');
             const traceTiming = require(
-              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/analyze-trace-timing.ts'),
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/analyze-trace-timing.mts'),
             );
             const scorecardJobs = require(
-              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/summarize-jobs.ts'),
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/summarize-jobs.mts'),
             );
             const slackBlocks = require(
-              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/build-slack-blocks.ts'),
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/build-slack-blocks.mts'),
             );
             const needs = ${{ toJSON(needs) }};
             const safeSelector = /^[A-Za-z0-9_-]+$/;
