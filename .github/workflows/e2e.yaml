@@ -5114,10 +5114,19 @@ jobs:
     if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' }}
     permissions:
       actions: read
+      contents: read
       # The issue-comment endpoint accepts pull request write permission for PR comments.
       # Keep issues: write absent so this job cannot restore general issue routing.
       pull-requests: write
     steps:
+      - name: Check out the trusted E2E reporting helper
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            tools/e2e/report-e2e-results.mts
+          sparse-checkout-cone-mode: false
       - name: Post E2E target results to PR
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
@@ -5128,357 +5137,32 @@ jobs:
           JOBS: ${{ inputs.jobs }}
         with:
           script: |
+            const path = require('node:path');
+            const { pathToFileURL } = require('node:url');
+            const { resolveReportPr, loadReportJobs, renderE2eReport } = await import(
+              pathToFileURL(path.join(process.env.GITHUB_WORKSPACE, 'tools/e2e/report-e2e-results.mts')).href
+            );
             const needs = ${{ toJSON(needs) }};
-            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const workflowBranch = context.ref.replace('refs/heads/', '');
-            const prNumberInput = process.env.JOB_PR_NUMBER || '';
-            const rawRequestedTargets = process.env.JOB_TARGETS || '';
-            const rawRequestedTestIds = process.env.JOBS || '';
-            const selectorValidationPassed = needs['generate-matrix']?.result === 'success';
-            const requestedTargets = selectorValidationPassed ? rawRequestedTargets : '';
-            const requestedTestIdsCsv = selectorValidationPassed ? rawRequestedTestIds : '';
-            const explicitOnlyReasons = {
-              'openshell-gateway-auth-contract': {
-                job: 'openshell-gateway-auth-contract',
-                target: 'openshell-gateway-auth-contract',
-                reason: 'default dispatch excludes the resource-heavy OpenShell auth-contract probe unless selected',
-              },
-              'mcp-bridge-dev': {
-                job: 'mcp-bridge-dev',
-                target: 'mcp-bridge-dev',
-                reason: 'default dispatch excludes moving OpenShell dev artifacts unless explicitly selected',
-              },
-              'jetson-nvmap-gpu': {
-                job: 'jetson-nvmap-gpu',
-                target: 'jetson-nvmap-gpu',
-                reason: 'default dispatch excludes Jetson; explicit dispatch requires allow_jetson_runner_queue=true after confirming an online Jetson runner because queued jobs do not honor timeout-minutes before assignment',
-              },
-              'sandbox-rlimits-connect': {
-                job: 'sandbox-rlimits-connect',
-                target: 'sandbox-rlimits-connect',
-                reason: 'default dispatch excludes the destructive rlimit fork/connect probe unless selected',
-              },
-            };
-            const explicitOnlySkippedJobs = (process.env.EXPLICIT_ONLY_JOBS || '')
-              .split(',')
-              .filter(Boolean)
-              .map((job) => explicitOnlyReasons[job] ?? {
-                job,
-                target: job,
-                reason: 'default dispatch excludes this explicit-only job unless selected',
-              });
-            const targetsRejected = rawRequestedTargets && !selectorValidationPassed;
-            const testIdsRejected = rawRequestedTestIds && !selectorValidationPassed;
-
-            let prNumber;
-            if (prNumberInput) {
-              if (!/^[1-9][0-9]*$/.test(prNumberInput)) {
-                core.setFailed(`Invalid pr_number input: ${prNumberInput}. Use a positive pull request number.`);
-                return;
-              }
-              prNumber = Number(prNumberInput);
-              if (!Number.isSafeInteger(prNumber)) {
-                core.setFailed(`Invalid pr_number input: ${prNumberInput}. Use a safe positive integer.`);
-                return;
-              }
-              try {
-                const { data: suppliedPr } = await github.rest.pulls.get({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  pull_number: prNumber,
-                });
-                if (suppliedPr.state !== 'open') {
-                  core.setFailed(`PR #${prNumber} is ${suppliedPr.state}; E2E reports only comment on open PRs.`);
-                  return;
-                }
-              } catch (error) {
-                if (error.status === 404) {
-                  core.setFailed(`pr_number ${prNumber} does not identify a pull request in ${context.repo.owner}/${context.repo.repo}.`);
-                  return;
-                }
-                throw error;
-              }
-            } else {
-              const { data: prs } = await github.rest.pulls.list({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                head: `${context.repo.owner}:${workflowBranch}`,
-                state: 'open',
-              });
-              if (prs.length === 0) {
-                core.info(`No open PR found for branch ${workflowBranch} — skipping comment.`);
-                return;
-              }
-              prNumber = prs[0].number;
-            }
-
-            const requestedTestIds = requestedTestIdsCsv
-              .split(',')
-              .map((testId) => testId.trim())
-              .filter(Boolean);
-            const requestedTestIdSet = new Set(requestedTestIds);
-            const selectiveDispatch =
-              requestedTestIds.length > 0 || Boolean(requestedTargets) || targetsRejected || testIdsRejected;
-            const emoji = { success: '✅', failure: '❌', cancelled: '⚠️', skipped: '⏭️' };
-            const safeSelector = /^[A-Za-z0-9_-]+$/;
-            let testIds;
-            try {
-              const testMatrix = JSON.parse(process.env.TEST_MATRIX || '[]');
-              if (!Array.isArray(testMatrix)) throw new Error('matrix must be an array');
-              testIds = testMatrix.map((row) => {
-                if (!row || typeof row !== 'object' || !safeSelector.test(row.id || '')) {
-                  throw new Error('matrix row has an invalid id');
-                }
-                return row.id;
-              });
-              if (new Set(testIds).size !== testIds.length) {
-                throw new Error('matrix repeats a test id');
-              }
-            } catch (error) {
-              core.setFailed(`Invalid test matrix: ${error.message}`);
+            const prNumber = await resolveReportPr({ github, context, core, env: process.env });
+            if (prNumber === undefined) return;
+            const { apiJobs, loaded } = await loadReportJobs({ github, context, core });
+            const report = renderE2eReport({
+              needs,
+              env: process.env,
+              apiJobs,
+              apiJobsLoaded: loaded,
+              context,
+            });
+            if (report.fatal) {
+              core.setFailed(report.fatal);
               return;
             }
-
-            const testResults = new Map();
-            const jobLinks = new Map();
-            const wallClockRanges = new Map();
-            const validatedJobUrl = (job) =>
-              Number.isSafeInteger(job.id) && job.id > 0
-                ? `${runUrl}/job/${job.id}`
-                : undefined;
-            const recordJobLink = (name, job) => {
-              const url = validatedJobUrl(job);
-              if (!url) return;
-              const didNotPass =
-                job.status === 'completed' &&
-                !['success', 'skipped', 'neutral'].includes(job.conclusion);
-              const current = jobLinks.get(name);
-              if (!current || (didNotPass && !current.didNotPass)) {
-                jobLinks.set(name, { didNotPass, url });
-              }
-            };
-            const recordWallClockRange = (name, job) => {
-              if (job.conclusion === 'skipped') return;
-              const startedAt = Date.parse(job.started_at || '');
-              const completedAt = Date.parse(job.completed_at || '');
-              if (!Number.isFinite(startedAt) || !Number.isFinite(completedAt) || completedAt < startedAt) {
-                return;
-              }
-              const current = wallClockRanges.get(name);
-              wallClockRanges.set(name, {
-                startedAt: current ? Math.min(current.startedAt, startedAt) : startedAt,
-                completedAt: current ? Math.max(current.completedAt, completedAt) : completedAt,
-              });
-            };
-            const formatWallClockTime = (range) => {
-              if (!range) return '—';
-              const totalSeconds = Math.round((range.completedAt - range.startedAt) / 1000);
-              const hours = Math.floor(totalSeconds / 3600);
-              const minutes = Math.floor((totalSeconds % 3600) / 60);
-              const seconds = totalSeconds % 60;
-              return [hours ? `${hours}h` : '', minutes ? `${minutes}m` : '', `${seconds}s`]
-                .filter(Boolean)
-                .join(' ');
-            };
-            let sharedJobResultsLoaded = false;
-            try {
-              const apiJobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                run_id: context.runId,
-                filter: 'latest',
-                per_page: 100,
-              });
-              const selectedTestIds = new Set(testIds);
-              const aggregateJobNames = Object.keys(needs);
-              for (const job of apiJobs) {
-                const jobName = job.name || '';
-                const match = /^Shared E2E \(([A-Za-z0-9_-]+)\)$/.exec(jobName);
-                const aggregateJobName = aggregateJobNames.find((name) =>
-                  jobName.startsWith(`${name} (`),
-                );
-                const reportEntryName =
-                  match?.[1] ??
-                  aggregateJobName ??
-                  (/^OpenShell gateway upgrade \(.+\)$/.test(jobName)
-                    ? 'openshell-gateway-upgrade'
-                    : jobName);
-                recordWallClockRange(reportEntryName, job);
-                recordJobLink(reportEntryName, job);
-                if (!match || !selectedTestIds.has(match[1])) continue;
-                const result =
-                  job.status === 'completed' &&
-                  ['success', 'failure', 'cancelled', 'skipped'].includes(job.conclusion)
-                    ? job.conclusion
-                    : 'unknown';
-                testResults.set(match[1], { jobUrl: validatedJobUrl(job), result });
-              }
-              sharedJobResultsLoaded = true;
-            } catch (error) {
-              // The Actions jobs API is the only source of matrix-child conclusions;
-              // `needs['shared-e2e']` exposes only their aggregate. Keep missing children
-              // unknown instead of fabricating per-test evidence. This path is covered
-              // by e2e-report-to-pr-workflow-boundary.test.ts and can be removed when
-              // Actions exposes matrix-child conclusions directly to dependent jobs.
-              core.warning(`Could not load per-test results; reporting them as unknown: ${error.message}`);
-            }
-            const missingTestResults = testIds.filter((id) => !testResults.has(id));
-            if (sharedJobResultsLoaded && missingTestResults.length > 0) {
-              core.warning(`Missing per-test results for ${missingTestResults.join(', ')}; reporting them as unknown.`);
-            }
-            const sharedJobAggregateResult = needs['shared-e2e']?.result;
-            const knownTestResults = testIds.map((id) => testResults.get(id)?.result);
-            const allTestResultsKnown =
-              knownTestResults.length > 0 &&
-              knownTestResults.every((result) => result && result !== 'unknown');
-            const expectedAggregateChildResult =
-              sharedJobAggregateResult === 'failure'
-                ? 'failure'
-                : sharedJobAggregateResult === 'cancelled'
-                  ? 'cancelled'
-                  : undefined;
-            const testAttributionMismatch =
-              allTestResultsKnown &&
-              expectedAggregateChildResult &&
-              !knownTestResults.includes(expectedAggregateChildResult);
-            if (testAttributionMismatch) {
-              core.warning(
-                `Per-test conclusions (${knownTestResults.join(', ')}) contradict shared E2E job aggregate ${sharedJobAggregateResult}; reporting child attribution as unknown.`,
-              );
-              for (const id of testIds) {
-                testResults.set(id, { ...testResults.get(id), result: 'unknown' });
-              }
-            }
-
-            const allEntries = Object.entries(needs)
-              .filter(([name]) => name !== 'shared-e2e')
-              .map(([name, value]) => [
-                name,
-                {
-                  ...value,
-                  jobUrl: jobLinks.get(name)?.url,
-                  wallClockRange: wallClockRanges.get(name),
-                },
-              ]);
-            if (needs['shared-e2e']) {
-              allEntries.push(
-                ...testIds.map((id) => [
-                  id,
-                  {
-                    ...(testResults.get(id) ?? { result: 'unknown' }),
-                    jobUrl: testResults.get(id)?.jobUrl ?? jobLinks.get(id)?.url,
-                    wallClockRange: wallClockRanges.get(id),
-                  },
-                ]),
-              );
-            }
-            allEntries.sort(([a], [b]) => a.localeCompare(b));
-            const missingRequestedTestIds = selectorValidationPassed
-              ? requestedTestIds.filter((testId) => !allEntries.some(([name]) => name === testId))
-              : [];
-            const selectedEntries = requestedTestIds.length > 0
-              ? allEntries.filter(([name]) => requestedTestIdSet.has(name))
-              : selectiveDispatch
-                ? allEntries.filter(
-                    ([name, { result }]) => result !== 'skipped' && name !== 'generate-matrix',
-                  )
-                : allEntries;
-            const reportedEntries = selectedEntries.length > 0
-              ? selectedEntries
-              : selectiveDispatch
-                ? allEntries.filter(([, { result }]) => result !== 'skipped')
-                : allEntries;
-            const rows = reportedEntries.map(
-              ([name, { jobUrl, result, wallClockRange }]) => {
-                const label = result === 'failure' ? `[${name}](${jobUrl ?? runUrl})` : name;
-                return `| ${label} | ${emoji[result] || '❓'} ${result} | ${formatWallClockTime(wallClockRange)} |`;
-              },
-            );
-            for (const name of missingRequestedTestIds) {
-              rows.push(`| ${name} | ❓ not reported | — |`);
-            }
-
-            const ran = reportedEntries.filter(([, v]) => v.result !== 'skipped');
-            const passed = ran.filter(([, v]) => v.result === 'success');
-            const failed = ran.filter(([, v]) => v.result === 'failure');
-            const skipped = reportedEntries.filter(([, v]) => v.result === 'skipped');
-            const cancelled = ran.filter(([, v]) => v.result === 'cancelled');
-            const unknown = ran.filter(([, v]) => v.result === 'unknown');
-            const sharedJobAggregateFailed = sharedJobAggregateResult === 'failure';
-            const sharedJobAggregateCancelled = sharedJobAggregateResult === 'cancelled';
-            const passingStatus = requestedTestIds.length > 0
-              ? '✅ All requested tests passed'
-              : selectiveDispatch
-                ? '✅ All selected tests passed'
-                : '✅ All default tests passed';
-            const status =
-              failed.length > 0 || missingRequestedTestIds.length > 0 || sharedJobAggregateFailed
-                ? '❌ Some tests failed'
-                : (cancelled.length > 0 || sharedJobAggregateCancelled) && passed.length === 0
-                  ? '⚠️ Run cancelled — no signal'
-                  : cancelled.length > 0 || sharedJobAggregateCancelled
-                    ? '⚠️ Some tests cancelled — partial pass'
-                    : unknown.length > 0
-                      ? '⚠️ Per-test results incomplete'
-                    : skipped.length > 0 && passed.length === 0
-                      ? '⚠️ No selected tests ran'
-                      : passingStatus;
-
-            const lines = [
-              `### E2E Target Results — ${status}`,
-              '',
-              `**Run:** [${context.runId}](${runUrl})`,
-              `**Workflow ref:** \`${workflowBranch}\``,
-              targetsRejected
-                ? '**Requested targets:** _(selector rejected by workflow validation)_'
-                : requestedTargets
-                  ? `**Requested targets:** \`${requestedTargets}\``
-                  : '**Requested targets:** _(default — all supported)_',
-              testIdsRejected
-                ? '**Requested test IDs:** _(selector rejected by workflow validation)_'
-                : requestedTestIdsCsv
-                  ? `**Requested test IDs:** \`${requestedTestIdsCsv}\``
-                  : '**Requested test IDs:** _(default — all default-enabled tests; explicit-only tests `openshell-gateway-auth-contract`, `mcp-bridge-dev`, `hermes-gpu-startup`, `sandbox-rlimits-connect`, and `jetson-nvmap-gpu` are skipped unless selected)_',
-              `**Summary:** ${passed.length} passed, ${failed.length} failed, ${cancelled.length} cancelled, ${skipped.length} skipped, ${unknown.length} unknown`,
-              '',
-              '| Test | Result | Total wall clock time |',
-              '|-----|--------|-----------------------|',
-              ...rows,
-            ];
-            if (!selectiveDispatch) {
-              const skippedJobHints = explicitOnlySkippedJobs
-                .map(
-                  ({ job, target, reason }) =>
-                    `\`${job}\` (${reason}; validate with \`jobs=${job}\` or \`targets=${target}\`)`,
-                )
-                .join(', ');
-              lines.push('', `> **Explicit-only jobs skipped:** ${skippedJobHints}.`);
-            }
-            if (failed.length > 0) {
-              const failedLinks = failed
-                .map(([name, { jobUrl }]) => `[${name}](${jobUrl ?? runUrl})`)
-                .join(', ');
-              lines.push('', `> **Failed tests:** ${failedLinks}. Check [the workflow run](${runUrl}) for all logs and artifacts.`);
-            }
-            if (missingRequestedTestIds.length > 0) {
-              lines.push(
-                '',
-                `> **Missing requested test IDs:** ${missingRequestedTestIds.join(', ')}. The reporting workflow needs to include these tests.`,
-              );
-            }
-            if (unknown.length > 0) {
-              const unknownNames = unknown.map(([name]) => name).join(', ');
-              lines.push(
-                '',
-                `> **Unknown per-test results:** ${unknownNames}. Shared E2E job aggregate: ${needs['shared-e2e']?.result ?? 'unavailable'}.`,
-              );
-            }
-
+            for (const warning of report.warnings) core.warning(warning);
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: prNumber,
-              body: lines.join('\n'),
+              body: report.body,
             });
 
   # ── Scheduled/manual scorecard ────────────────────────────────────────────

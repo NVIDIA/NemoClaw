@@ -152,9 +152,9 @@ describe("E2E operations workflow boundary", () => {
         "cloud-onboard must not hold issues: write",
         "cloud-onboard must not hold pull-requests: write",
         "report-to-pr must not hold issues: write",
-        "report-to-pr must hold only actions: read and pull-requests: write",
+        "report-to-pr must hold only actions: read, contents: read, and pull-requests: write",
         "report-to-pr must run only for manual workflow dispatches",
-        "report-to-pr must contain only its PR-comment step",
+        "report-to-pr must first check out the trusted workflow revision, then post its PR comment",
         "report-to-pr must not use issue mutations or generic GitHub write surfaces",
       ]),
     );

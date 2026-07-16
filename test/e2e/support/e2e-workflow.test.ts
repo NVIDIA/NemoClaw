@@ -684,11 +684,10 @@ jobs:
           "workflow missing snapshot-commands job",
           "report-to-pr job must wait for live",
           "report-to-pr step must pass jobs through JOBS env",
-          "step 'Post E2E target results to PR' run script must check selector validation before echoing selectors",
-          "step 'Post E2E target results to PR' run script must omit rejected test ID selectors",
-          "step 'Post E2E target results to PR' run script must filter reported entries for selective dispatches",
-          "step 'Post E2E target results to PR' run script must report missing requested jobs",
-          "step 'Post E2E target results to PR' run script must count cancelled jobs",
+          "step 'Post E2E target results to PR' run script must load the trusted report helper from the checked-out workspace",
+          "step 'Post E2E target results to PR' run script must invoke resolveReportPr from the trusted report helper",
+          "step 'Post E2E target results to PR' run script must invoke renderE2eReport from the trusted report helper",
+          "report-to-pr must check out the trusted workflow revision before reporting",
         ]),
       );
     } finally {
