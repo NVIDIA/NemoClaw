@@ -28,7 +28,7 @@ I do not know how to use a terminal.
 
 ## Goal
 
-Install NemoClaw, collect onboarding choices before execution, include messaging in the first sandbox build, launch the selected agent, and verify that it responds.
+Install NemoClaw, collect onboarding choices before execution, include messaging in the first sandbox build when the selected agent supports it, launch the selected agent, and verify that it responds.
 
 ## Agent Selection
 
@@ -67,7 +67,7 @@ Use `NEMOCLAW_AGENT=langchain-deepagents-code` or `nemo-deepagents onboard` for 
 If DGX Spark or DGX Station is detected, ask: "Do you want the recommended Express Install?"
 Choices:
 
-1. Yes, use the platform's explicit Express model and Balanced policy.
+1. Yes, use the platform's Express model and required Balanced policy.
 2. No, let me choose the runtime and model.
 
 If DGX Spark Express is selected:
@@ -93,11 +93,11 @@ If DGX Station Express is selected:
 
 For both Express paths:
 
-- Set `NEMOCLAW_POLICY_TIER=balanced`, `NEMOCLAW_NON_INTERACTIVE=1`, and the selected `NEMOCLAW_AGENT`.
+- Balanced policy is required for Express; set `NEMOCLAW_POLICY_TIER=balanced`, `NEMOCLAW_NON_INTERACTIVE=1`, and the selected `NEMOCLAW_AGENT`.
 - Set `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` only after explaining the notice and receiving approval.
 - Set `NEMOCLAW_YES=1` only after both the separate download approval and final install approval.
 - Set `NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt` only when required and a secure sudo prompt is available.
-- Ask separately for sandbox name, web search, messaging, download approval, and final install approval.
+- Ask separately for sandbox name, web search, messaging when the selected agent supports it, download approval, and final install approval.
 
 ## Windows WSL Express Install
 
@@ -150,7 +150,7 @@ Ask required model, endpoint, credential, and download questions one at a time.
 ## Avoid Interactive Menus
 
 - Collect every choice before running the installer.
-- Ask one question at a time for model, endpoint, sandbox name, web search, messaging, policy, credentials, administrator access, and downloads.
+- Ask one question at a time for model, endpoint, sandbox name, web search, messaging when the selected agent supports it, policy when Express is not selected, credentials, administrator access, and downloads.
 - Use non-interactive environment variables whenever supported.
 - Never leave a command waiting at `Choose [1]:`.
 - If a choice cannot be supplied non-interactively, stop before starting and explain the supported alternative.
@@ -199,7 +199,7 @@ Use this provider mapping for non-interactive setup:
 - Anthropic-compatible: `NEMOCLAW_PROVIDER=anthropicCompatible`, endpoint, model, `COMPATIBLE_ANTHROPIC_API_KEY`.
 - Ollama: `NEMOCLAW_PROVIDER=ollama`, optional `NEMOCLAW_MODEL`.
 - Existing vLLM: `NEMOCLAW_PROVIDER=vllm`.
-- Managed vLLM: `NEMOCLAW_PROVIDER=install-vllm`, required Express model or approved optional override.
+- Managed vLLM: `NEMOCLAW_PROVIDER=install-vllm`; leave `NEMOCLAW_VLLM_MODEL` unset for DGX Spark Express, set it to `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4` for DGX Station Express, or use an approved optional override for non-Express setup.
 - Windows WSL Express: `NEMOCLAW_PROVIDER=install-windows-ollama`.
 
 Do not offer Hermes Provider for OpenClaw or Deep Agents.
@@ -246,7 +246,8 @@ Use `channels add` and rebuild only for channels omitted from initial onboarding
 
 ## Policy, Approval, and Verification
 
-- Ask for Balanced, Restricted, or Open policy.
+- For Express, state that Balanced policy is required, keep `NEMOCLAW_POLICY_TIER=balanced`, and skip the policy-tier question.
+- For non-Express installation, ask for Balanced, Restricted, or Open policy.
 - Explain that messaging and web-search selections add required endpoints.
 - Before installation, summarize platform, administrator access, agent, Express choice, provider, exact model, validation warning, downloads, storage, sandbox, web search, messaging, policy, credential names without their values, and system changes.
 - Ask for final permission.

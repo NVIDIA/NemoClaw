@@ -613,6 +613,31 @@ describe("starter prompt docs CTA", () => {
     );
   });
 
+  it("aligns messaging and policy questions with agent support and Express mode (#6990)", () => {
+    const promptSource = readStarterPrompt();
+
+    expect(promptSource).toContain(
+      "include messaging in the first sandbox build when the selected agent supports it",
+    );
+    expect(promptSource).toContain(
+      "Ask separately for sandbox name, web search, messaging when the selected agent supports it, download approval, and final install approval.",
+    );
+    expect(promptSource).toContain("Skip messaging for Deep Agents.");
+    expect(promptSource).toContain(
+      "Balanced policy is required for Express; set `NEMOCLAW_POLICY_TIER=balanced`",
+    );
+    expect(promptSource).toContain(
+      "For Express, state that Balanced policy is required, keep `NEMOCLAW_POLICY_TIER=balanced`, and skip the policy-tier question.",
+    );
+    expect(promptSource).toContain(
+      "For non-Express installation, ask for Balanced, Restricted, or Open policy.",
+    );
+    expect(promptSource).not.toContain("\n- Ask for Balanced, Restricted, or Open policy.\n");
+    expect(promptSource).toContain(
+      "Managed vLLM: `NEMOCLAW_PROVIDER=install-vllm`; leave `NEMOCLAW_VLLM_MODEL` unset for DGX Spark Express, set it to `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4` for DGX Station Express",
+    );
+  });
+
   it("rejects missing, ambiguous, and unsafe credential schemas (#5048)", async () => {
     const missing = runCredentialForm(
       withCredentialCapability("http://127.0.0.1:4123/local-credential-form.html"),
