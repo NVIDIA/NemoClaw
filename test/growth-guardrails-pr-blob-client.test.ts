@@ -6,9 +6,9 @@ import { describe, expect, it } from "vitest";
 import {
   assertRepositoryName,
   createPrBlobClient,
+  type FetchLike,
   GRAPHQL_BATCH_SIZE,
   isTransientStatus,
-  type FetchLike,
 } from "../tools/growth-guardrails/pr-blob-client.mts";
 
 const DETERMINISTIC = { sleep: async () => {}, random: () => 0 } as const;
@@ -137,6 +137,47 @@ describe("growth-guardrails pr-blob-client", () => {
     const files = await client.getPullFiles("NVIDIA/NemoClaw", "9");
     expect(files).toEqual([{ filename: "ok.ts" }]);
     expect(urls).toHaveLength(2);
+  });
+
+  it("retries a transient GraphQL error payload then succeeds", async () => {
+    const { fetchImpl, urls } = scriptedFetch([
+      async () =>
+        jsonResponse({
+          errors: [{ message: "API rate limit exceeded", type: "RATE_LIMITED" }],
+        }),
+      async () =>
+        jsonResponse(
+          blobData({
+            f0: {
+              __typename: "Blob",
+              text: "ok\n",
+              isBinary: false,
+              isTruncated: false,
+            },
+          }),
+        ),
+    ]);
+    const client = createPrBlobClient({ token: "t", fetchImpl, ...DETERMINISTIC });
+
+    const blobs = await client.fetchBlobs("NVIDIA/NemoClaw", "oid", ["test/a.test.ts"]);
+
+    expect(blobs.get("test/a.test.ts")).toBe("ok\n");
+    expect(urls).toHaveLength(2);
+  });
+
+  it("does not retry a non-transient GraphQL error payload", async () => {
+    const { fetchImpl, urls } = scriptedFetch([
+      async () =>
+        jsonResponse({
+          errors: [{ message: "Resource not accessible", type: "FORBIDDEN" }],
+        }),
+    ]);
+    const client = createPrBlobClient({ token: "t", fetchImpl, ...DETERMINISTIC });
+
+    await expect(client.fetchBlobs("NVIDIA/NemoClaw", "oid", ["test/a.test.ts"])).rejects.toThrow(
+      /GraphQL errors: Resource not accessible/,
+    );
+    expect(urls).toHaveLength(1);
   });
 
   it("gives up after exhausting retries on persistent 503", async () => {

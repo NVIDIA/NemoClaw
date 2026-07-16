@@ -17,14 +17,22 @@ function linesOf(count: number): string {
   return "x\n".repeat(count);
 }
 
+type BlobFetchCall = {
+  readonly repo: string;
+  readonly oid: string;
+  readonly paths: readonly string[];
+};
+
 /** Fake client: resolves blobs from a (repo\0oid\0path) table, no network. */
 function fakeClient(
   pullFiles: PullRequestFile[],
   table: Record<string, string | null>,
+  fetchCalls: BlobFetchCall[] = [],
 ): PrBlobClient {
   return {
     getPullFiles: async () => pullFiles,
     fetchBlobs: async (repo, oid, paths) => {
+      fetchCalls.push({ repo, oid, paths: [...paths] });
       const map = new Map<string, string | null>();
       for (const path of paths) map.set(path, table[`${repo} ${oid} ${path}`] ?? null);
       return map;
@@ -194,6 +202,39 @@ describe("growth-guardrails test-size-budget: orchestration", () => {
     const result = await runTestSizeBudget(client, ENV);
     expect(result.ok).toBe(true);
     expect(result.violations).toEqual([]);
+  });
+
+  it("fetches the base budget and ordinary head tests in two exact batches", async () => {
+    const fetchCalls: BlobFetchCall[] = [];
+    const client = fakeClient(
+      [
+        { filename: "test/a.test.ts", status: "modified" },
+        { filename: "test/b.test.ts", status: "modified" },
+      ],
+      {
+        "NVIDIA/NemoClaw base ci/test-file-size-budget.json":
+          '{"defaultMaxLines":1500,"legacyMaxLines":{}}',
+        "fork/repo head test/a.test.ts": linesOf(20),
+        "fork/repo head test/b.test.ts": linesOf(30),
+      },
+      fetchCalls,
+    );
+
+    const result = await runTestSizeBudget(client, ENV);
+
+    expect(result.ok).toBe(true);
+    expect(fetchCalls).toEqual([
+      {
+        repo: "NVIDIA/NemoClaw",
+        oid: "base",
+        paths: ["ci/test-file-size-budget.json"],
+      },
+      {
+        repo: "fork/repo",
+        oid: "head",
+        paths: ["test/a.test.ts", "test/b.test.ts"],
+      },
+    ]);
   });
 
   it("enforces the fallback baseline when the base budget file is absent", async () => {

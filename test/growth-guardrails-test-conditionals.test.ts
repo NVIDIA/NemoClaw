@@ -22,13 +22,21 @@ function blobs(entries: Record<string, string | null>): Map<string, string | nul
   return new Map(Object.entries(entries));
 }
 
+type BlobFetchCall = {
+  readonly repo: string;
+  readonly oid: string;
+  readonly paths: readonly string[];
+};
+
 function fakeClient(
   pullFiles: PullRequestFile[],
   table: Record<string, string | null>,
+  fetchCalls: BlobFetchCall[] = [],
 ): PrBlobClient {
   return {
     getPullFiles: async () => pullFiles,
     fetchBlobs: async (repo, oid, paths) => {
+      fetchCalls.push({ repo, oid, paths: [...paths] });
       const map = new Map<string, string | null>();
       for (const path of paths) map.set(path, table[`${repo} ${oid} ${path}`] ?? null);
       return map;
@@ -136,5 +144,39 @@ describe("growth-guardrails test-conditionals: orchestration", () => {
     const result = await runTestConditionals(client, ENV);
     expect(result.ok).toBe(true);
     expect([result.baseTotal, result.headTotal]).toEqual([0, 0]);
+  });
+
+  it("batches deduplicated ordinary test paths once per revision", async () => {
+    const fetchCalls: BlobFetchCall[] = [];
+    const client = fakeClient(
+      [
+        { filename: "test/a.test.ts", status: "modified" },
+        { filename: "test/b.test.ts", status: "modified" },
+        { filename: "test/a.test.ts", status: "modified" },
+      ],
+      {
+        "NVIDIA/NemoClaw base test/a.test.ts": NO_IF,
+        "NVIDIA/NemoClaw base test/b.test.ts": NO_IF,
+        "fork/repo head test/a.test.ts": NO_IF,
+        "fork/repo head test/b.test.ts": NO_IF,
+      },
+      fetchCalls,
+    );
+
+    const result = await runTestConditionals(client, ENV);
+
+    expect(result.ok).toBe(true);
+    expect(fetchCalls).toEqual([
+      {
+        repo: "NVIDIA/NemoClaw",
+        oid: "base",
+        paths: ["test/a.test.ts", "test/b.test.ts"],
+      },
+      {
+        repo: "fork/repo",
+        oid: "head",
+        paths: ["test/a.test.ts", "test/b.test.ts"],
+      },
+    ]);
   });
 });
