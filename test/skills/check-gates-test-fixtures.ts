@@ -449,6 +449,7 @@ function runComparatorGate(fixture: ComparatorFixture, prNumber = "42") {
     number: 42,
     state: fixture.state ?? "OPEN",
     body: fixture.body,
+    author: { login: fixture.prAuthorLogin ?? "example-user" },
     headRefOid: fixture.headRefOid ?? "abc123",
     statusCheckRollup: (fixture.checkNames ?? REQUIRED_CHECK_NAMES).map((name) => ({
       name,

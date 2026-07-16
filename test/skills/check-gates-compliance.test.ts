@@ -609,6 +609,41 @@ describe("maintainer PR comparator contributor compliance", () => {
     });
   });
 
+  it.each([
+    "app/dependabot",
+    "dependabot[bot]",
+  ])("accepts the explicit PR-body DCO bypass for %s", (prAuthorLogin) => {
+    const result = runComparatorGate({
+      body: "Automated dependency update.",
+      prAuthorLogin,
+      verified: true,
+    });
+
+    const output = JSON.parse(result.stdout);
+    expect(output.gates.contributor_compliance).toBe(true);
+    expect(output.details).toMatchObject({
+      dco_declaration_present: false,
+      dco_declaration_bypassed: true,
+      unverified_commits: [],
+    });
+  });
+
+  it("still rejects an unverified Dependabot commit", () => {
+    const result = runComparatorGate({
+      body: "Automated dependency update.",
+      prAuthorLogin: "app/dependabot",
+      verified: false,
+      reason: "unsigned",
+    });
+
+    const output = JSON.parse(result.stdout);
+    expect(output.gates.contributor_compliance).toBe(false);
+    expect(output.details).toMatchObject({
+      dco_declaration_bypassed: true,
+      unverified_commits: [{ sha: "abc123", reason: "unsigned" }],
+    });
+  });
+
   it("fails when a commit is not verified", () => {
     const result = runComparatorGate({
       body: "Signed-off-by: Example User <user@example.com>",
