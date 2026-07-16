@@ -91,6 +91,8 @@ function executeGenerateMatrixWithPlannerOutput(plan: unknown) {
 type ApiJob = {
   completed_at?: string;
   conclusion: string | null;
+  html_url?: string;
+  id?: number;
   name: string;
   started_at?: string;
   status: string;
@@ -279,6 +281,68 @@ it("reports the total wall clock time for a selected E2E job", async () => {
   expect(setFailed).not.toHaveBeenCalled();
   expect(body).toContain("| Test | Result | Total wall clock time |");
   expect(body).toContain("| rebuild-openclaw | ✅ success | 11m 10s |");
+});
+
+it("links every failed entry to a validated same-run job and keeps the run fallback", async () => {
+  const { body, setFailed } = await executeReport({
+    apiJobs: [
+      {
+        conclusion: "failure",
+        html_url: "https://attacker.example/job/456",
+        id: 456,
+        name: "rebuild-openclaw",
+        status: "completed",
+      },
+      {
+        conclusion: "failure",
+        id: 0,
+        name: "cloud-onboard",
+        status: "completed",
+      },
+    ],
+    testMatrix: [],
+    jobs: "rebuild-openclaw,cloud-onboard",
+    needs: {
+      "generate-matrix": { result: "success" },
+      "rebuild-openclaw": { result: "failure" },
+      "cloud-onboard": { result: "failure" },
+    },
+  });
+
+  const runUrl = "https://github.com/NVIDIA/NemoClaw/actions/runs/123";
+  const jobUrl = `${runUrl}/job/456`;
+  expect(setFailed).not.toHaveBeenCalled();
+  expect(body).toContain(`| [rebuild-openclaw](${jobUrl}) | ❌ failure | — |`);
+  expect(body).toContain(`| [cloud-onboard](${runUrl}) | ❌ failure | — |`);
+  expect(body).toContain(
+    `> **Failed tests:** [cloud-onboard](${runUrl}), [rebuild-openclaw](${jobUrl}).`,
+  );
+  expect(body).not.toContain("attacker.example");
+  expect(body).not.toContain("/job/0");
+});
+
+it("links failed shared-matrix entries to their physical job", async () => {
+  const { body, setFailed } = await executeReport({
+    apiJobs: [
+      {
+        conclusion: "failure",
+        id: 789,
+        name: "Shared E2E (alpha)",
+        status: "completed",
+      },
+    ],
+    testMatrix: DEFAULT_TEST_MATRIX.slice(0, 1),
+    jobs: "alpha",
+    needs: {
+      "generate-matrix": { result: "success" },
+      "shared-e2e": { result: "failure" },
+    },
+  });
+
+  const jobUrl = "https://github.com/NVIDIA/NemoClaw/actions/runs/123/job/789";
+  expect(setFailed).not.toHaveBeenCalled();
+  expect(body).toContain(`| [alpha](${jobUrl}) | ❌ failure | — |`);
+  expect(body).toContain(`> **Failed tests:** [alpha](${jobUrl}).`);
 });
 
 it("reports one total wall clock span from valid matrix E2E jobs", async () => {

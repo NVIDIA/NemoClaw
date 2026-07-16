@@ -283,7 +283,12 @@
     },
     {
       "file": "test/onboard-performance-config-schema.test.ts",
-      "test": "keeps configured budgets derived from the checked-in samples",
+      "test": "keeps baseline budgets derived from the checked-in samples",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/onboard-performance-config-schema.test.ts",
+      "test": "keeps interim cap adjustments tied to functional post-change evidence",
       "category": "compatibility"
     },
     {
@@ -329,6 +334,11 @@
     {
       "file": "test/pr-e2e-gate-workflow.test.ts",
       "test": "pins both controller checkouts and installs without lifecycle scripts or caches",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-e2e-gate-workflow.test.ts",
+      "test": "orders the coordinate steps and always finalizes through the controller",
       "category": "security"
     },
     {

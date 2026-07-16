@@ -6,12 +6,15 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  formatStorageDecimalBytes,
+  findUnwritableTreePath,
   formatStorageBytes,
+  formatStorageDecimalBytes,
   imageStorageRequirementBytes,
   managedVllmStorageEstimateBytes,
+  measureDirectorySizeBytes,
+  modelStorageRequirementBytes,
   probeDockerStorage,
-  probeModelCacheStorage,
+  probeHostStorage,
   resolveDockerStorageLocations,
 } from "./vllm-storage";
 
@@ -34,6 +37,7 @@ const nativeHost = {
   dockerContext: undefined,
   dockerHost: undefined,
   platform: "linux" as NodeJS.Platform,
+  stat: () => ({ dev: 1n }),
 };
 
 afterEach(() => {
@@ -50,26 +54,177 @@ describe("managed vLLM image-storage requirements", () => {
     );
   });
 
+  it("reserves the pinned snapshot plus staging space for a model download", () => {
+    expect(modelStorageRequirementBytes(352_381_245_521)).toBe(352_381_245_521n + 3n * GIB);
+    expect(() => modelStorageRequirementBytes(0)).toThrow(
+      "vLLM model download size must be a positive finite byte count",
+    );
+  });
+
   it("formats available and required bytes as rounded GiB values", () => {
     expect(formatStorageBytes(2n * GIB)).toBe("2 GiB");
     expect(formatStorageBytes((23n * GIB) / 10n)).toBe("2.3 GiB");
   });
 
   it("formats catalog estimates as decimal GB values", () => {
-    expect(formatStorageDecimalBytes(391_525_574_555n)).toBe("391.526 GB");
+    expect(formatStorageDecimalBytes(390_458_611_865n)).toBe("390.459 GB");
     expect(formatStorageDecimalBytes(816_000_000n)).toBe("0.816 GB");
   });
 
   it("adds image, model, and writable bytes for a cold managed-vLLM estimate (#6858)", () => {
     expect(
       managedVllmStorageEstimateBytes({
-        imageCompressedBytes: 10_670_047_835,
+        imageCompressedBytes: 9_603_085_145,
         imageUnpackedBytes: 27_658_526_720,
         includeImage: true,
         modelBytes: 352_381_000_000,
         writableAllowanceBytes: 816_000_000,
       }).totalBytes,
-    ).toBe(391_525_574_555n);
+    ).toBe(390_458_611_865n);
+  });
+});
+
+describe("host cache-storage detection", () => {
+  it("finds an unwritable root-created cache directory", () => {
+    expect(
+      findUnwritableTreePath("/home/user/.cache/huggingface", {
+        canWrite: (target) => target !== "/home/user/.cache/huggingface",
+        list: () => [],
+      }),
+    ).toBe("/home/user/.cache/huggingface");
+  });
+
+  it("finds root-owned descendants before a host-UID download", () => {
+    const entries = new Map([
+      [
+        "/cache",
+        [
+          { kind: "directory" as const, name: "hub" },
+          { kind: "file" as const, name: "version.txt" },
+        ],
+      ],
+      ["/cache/hub", [{ kind: "file" as const, name: "root-owned-blob" }]],
+    ]);
+    const checked: string[] = [];
+
+    expect(
+      findUnwritableTreePath("/cache", {
+        canWrite: (target) => {
+          checked.push(target);
+          return target !== "/cache/hub/root-owned-blob";
+        },
+        list: (target) => entries.get(target) ?? [],
+      }),
+    ).toBe("/cache/hub/root-owned-blob");
+    expect(checked).toEqual(expect.arrayContaining(["/cache", "/cache/version.txt", "/cache/hub"]));
+  });
+
+  it("accepts a writable cache tree", () => {
+    expect(
+      findUnwritableTreePath("/cache", {
+        canWrite: () => true,
+        list: () => [],
+      }),
+    ).toBeNull();
+  });
+
+  it("counts complete and partial snapshot files without following directory symlinks", () => {
+    const entries = new Map([
+      [
+        "/cache/snapshot",
+        [
+          { kind: "file" as const, name: "config.json" },
+          { kind: "directory" as const, name: "weights" },
+          { kind: "symlink" as const, name: "tokenizer.json" },
+          { kind: "symlink" as const, name: "directory-link" },
+        ],
+      ],
+      ["/cache/snapshot/weights", [{ kind: "symlink" as const, name: "model-00001.safetensors" }]],
+    ]);
+    const sizes = new Map([
+      ["/cache/snapshot/config.json", 100n],
+      ["/cache/snapshot/tokenizer.json", 200n],
+      ["/cache/snapshot/weights/model-00001.safetensors", 1_000n],
+      ["/cache/snapshot/directory-link", null],
+    ]);
+
+    expect(
+      measureDirectorySizeBytes("/cache/snapshot", {
+        exists: () => true,
+        list: (target) => entries.get(target) ?? [],
+        statFileSize: (target) => sizes.get(target) ?? null,
+      }),
+    ).toBe(1_300n);
+  });
+
+  it("treats a missing or unreadable snapshot as uncached", () => {
+    expect(
+      measureDirectorySizeBytes("/cache/missing", {
+        exists: () => false,
+      }),
+    ).toBe(0n);
+    expect(
+      measureDirectorySizeBytes("/cache/interrupted", {
+        exists: () => true,
+        list: () => {
+          throw new Error("broken link");
+        },
+      }),
+    ).toBe(0n);
+  });
+
+  it("measures the filesystem containing an existing cache directory", () => {
+    const statfs = vi.fn(() => ({ bavail: 400n, bsize: GIB }));
+
+    expect(
+      probeHostStorage("/home/user/.cache/huggingface", "Hugging Face cache", {
+        exists: () => true,
+        statfs,
+      }),
+    ).toEqual({
+      ok: true,
+      capacity: {
+        availableBytes: 400n * GIB,
+        path: "/home/user/.cache/huggingface",
+        source: "Hugging Face cache",
+      },
+    });
+    expect(statfs).toHaveBeenCalledWith("/home/user/.cache/huggingface");
+  });
+
+  it("measures the nearest existing ancestor before a first cache download", () => {
+    const statfs = vi.fn(() => ({ bavail: 500n, bsize: GIB }));
+
+    expect(
+      probeHostStorage("/home/user/.cache/huggingface", "Hugging Face cache", {
+        exists: (target) => target === "/home/user",
+        statfs,
+      }),
+    ).toEqual({
+      ok: true,
+      capacity: {
+        availableBytes: 500n * GIB,
+        path: "/home/user/.cache/huggingface",
+        source: "Hugging Face cache",
+      },
+    });
+    expect(statfs).toHaveBeenCalledWith("/home/user");
+  });
+
+  it("reports an inconclusive host probe without creating the cache path", () => {
+    expect(
+      probeHostStorage("/mnt/models/huggingface", "Hugging Face cache", {
+        exists: (target) => target === "/mnt",
+        statfs: () => {
+          throw new Error("mount unavailable");
+        },
+      }),
+    ).toEqual({
+      ok: false,
+      reason: "could not inspect /mnt: mount unavailable",
+      path: "/mnt/models/huggingface",
+      source: "Hugging Face cache",
+    });
   });
 });
 
@@ -338,13 +493,13 @@ describe("Hugging Face model-cache storage", () => {
     const cacheDir = path.join(root, ".cache", "huggingface");
     const statfs = vi.fn(() => ({ bavail: 7n, bsize: GIB }));
 
-    expect(probeModelCacheStorage(cacheDir, { statfs })).toEqual({
+    expect(probeHostStorage(cacheDir, "Hugging Face cache", { statfs })).toEqual({
       ok: true,
       capacity: {
         availableBytes: 7n * GIB,
         filesystemId: expect.any(String),
-        path: root,
-        source: "model cache filesystem",
+        path: cacheDir,
+        source: "Hugging Face cache",
       },
     });
     expect(statfs).toHaveBeenCalledWith(root);

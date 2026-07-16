@@ -88,6 +88,17 @@ Before a credential or provider side effect, the MCP command loads the exact gen
 
 A runtime that rejects `protocol: mcp` therefore fails closed.
 
+## Local or Plain-HTTP MCP URL Is Rejected
+
+If `$$nemoclaw <sandbox> mcp add` rejects a `http://` or local URL and requires HTTPS, this is the managed registration boundary, not a Hermes-specific limitation.
+Managed `mcp add` enforces HTTPS, a publicly reachable endpoint, and pinned egress policy the same way for OpenClaw, Hermes, and Deep Agents Code so OpenShell forwards the bearer credential over TLS.
+
+An agent-native registration path, such as OpenClaw `mcporter` run inside the sandbox, may accept a plain-HTTP or local URL, but it bypasses NemoClaw credential replacement and generated egress policy.
+A URL that the agent-native path accepts is therefore not registrable through managed `mcp add`.
+
+For local development, expose the MCP server over HTTPS on a publicly reachable endpoint — a public hostname or IP address with public address records — then register it with `$$nemoclaw <sandbox> mcp add`.
+See [Add an MCP Server](../manage-sandboxes/mcp-servers/add-an-mcp-server) for the full endpoint requirements.
+
 ## Lifecycle Lock Times Out
 
 Confirm that no `mcp add`, `mcp restart`, `mcp remove`, `rebuild`, or `destroy` command for the sandbox is still running, then retry the original command.

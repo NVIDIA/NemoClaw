@@ -37,6 +37,24 @@ describe("e2e workflow boundary", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
   });
 
+  it("rejects Bedrock matrix shard identity drift (#6938)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-bedrock-shard-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { env: Record<string, unknown> }>;
+    };
+    delete workflow.jobs["bedrock-runtime-compatible-anthropic"].env.NEMOCLAW_E2E_SHARD;
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      expect(validateE2eWorkflowBoundary(workflowPath)).toContain(
+        "bedrock-runtime-compatible-anthropic job must pass matrix.agent through NEMOCLAW_E2E_SHARD",
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("requires unknown inference modes to be rejected before planning", () => {
     const workflow = readWorkflow() as {
       jobs: Record<string, { steps?: Array<{ name?: string; run?: string }> }>;
@@ -272,9 +290,10 @@ describe("e2e workflow boundary", () => {
     timeout: 60_000,
   }, () => {
     const inventory = readFreeStandingJobsInventory();
-    const workflowJobs = new Set(
-      Object.keys((readWorkflow().jobs as Record<string, unknown>) ?? {}),
-    );
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { env?: Record<string, string> }>;
+    };
+    const workflowJobs = new Set(Object.keys(workflow.jobs));
 
     expect(validateFreeStandingWorkflowInventory()).toEqual([]);
     expect(inventory.allowedJobs).not.toHaveLength(0);
@@ -287,6 +306,8 @@ describe("e2e workflow boundary", () => {
     expect(inventory.liveTestToJobs.get("test/e2e/live/full-e2e.test.ts")).toEqual(
       expect.arrayContaining(["full-e2e", "security-posture"]),
     );
+    expect(workflow.jobs["gpu-e2e"]?.env?.NEMOCLAW_MODEL).toBe("qwen3.5:9b");
+    expect(workflow.jobs["gpu-double-onboard"]?.env?.NEMOCLAW_MODEL).toBe("qwen3.5:9b");
     expect(
       focusedE2eJobsForChangedFiles(
         [

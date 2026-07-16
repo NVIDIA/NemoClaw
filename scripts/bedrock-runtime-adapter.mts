@@ -2,9 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const {
-  startBedrockRuntimeAdapterFromEnv,
-} = require("../dist/lib/inference/bedrock-runtime-adapter");
+import { startBedrockRuntimeAdapterFromEnv } from "../dist/lib/inference/bedrock-runtime-adapter.js";
 
 try {
   startBedrockRuntimeAdapterFromEnv();

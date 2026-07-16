@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   buildCredentialFormCsp,
+  parseCliArguments,
   parseCredentialField,
   sanitizeInheritedChildEnvironment,
   startLocalCredentialHelper,
@@ -283,7 +284,7 @@ export function registerLocalCredentialHelperTests(group: LocalCredentialHelperT
     }
   }
 
-  function helperArgs(
+  function helperCliArguments(
     fields: string[],
     command: string[],
     formPath = FORM_PATH,
@@ -291,16 +292,22 @@ export function registerLocalCredentialHelperTests(group: LocalCredentialHelperT
     commandCwd?: string,
   ): string[] {
     const cwdArgs = commandCwd === undefined ? [] : ["--cwd", commandCwd];
-    const args = [
+    const args = ["--execution-profile", executionProfile, "--form", formPath, ...cwdArgs];
+    return [...args, ...fields.flatMap((field) => ["--field", field]), "--", ...command];
+  }
+
+  function helperArgs(
+    fields: string[],
+    command: string[],
+    formPath = FORM_PATH,
+    executionProfile: "account-home" | "isolated" = "isolated",
+    commandCwd?: string,
+  ): string[] {
+    return [
       "--experimental-strip-types",
       HELPER_PATH,
-      "--execution-profile",
-      executionProfile,
-      "--form",
-      formPath,
-      ...cwdArgs,
+      ...helperCliArguments(fields, command, formPath, executionProfile, commandCwd),
     ];
-    return [...args, ...fields.flatMap((field) => ["--field", field]), "--", ...command];
   }
 
   function readinessState(captured: CapturedChild): ReadinessState {
@@ -610,38 +617,39 @@ export function registerLocalCredentialHelperTests(group: LocalCredentialHelperT
           label: "field count above the session limit",
         },
         { fields: ["bad-name:secret"], label: "malformed field name" },
-      ])("rejects $label before listening (#5048)", async ({ fields }) => {
+      ])("rejects $label before listening (#5048)", ({ fields }) => {
+        expect(() =>
+          parseCliArguments(
+            helperCliArguments(fields, [process.execPath, "-e", "process.exit(0)"]),
+          ),
+        ).toThrow();
+      });
+
+      it("wires field rejection through the CLI entrypoint before listening (#5048)", async () => {
         const captured = captureChild(
-          helperArgs(fields, [process.execPath, "-e", "process.exit(0)"]),
+          helperArgs(["PATH:text"], [process.execPath, "-e", "process.exit(0)"]),
         );
 
         const result = await withTimeout(captured.closed, PROCESS_TIMEOUT_MS, "invalid helper CLI");
 
         expect(result.code).not.toBe(0);
+        expect(captured.output()).toContain(
+          "--field PATH is a process-control environment variable and is not allowed",
+        );
         expect(captured.output()).not.toMatch(READINESS_URL_PATTERN);
       });
 
       it.each([
         { executable: "node" },
         { executable: "./node" },
-      ])("rejects non-absolute approved executable $executable before listening (#5048)", async ({
+      ])("rejects non-absolute approved executable $executable before listening (#5048)", ({
         executable,
       }) => {
-        const captured = captureChild(
-          helperArgs(["OPENAI_API_KEY:secret"], [executable, "-e", "process.exit(0)"]),
-        );
-
-        const result = await withTimeout(
-          captured.closed,
-          PROCESS_TIMEOUT_MS,
-          "relative executable",
-        );
-
-        expect(result.code).not.toBe(0);
-        expect(captured.output()).toContain(
-          "approved command executable must use an absolute path",
-        );
-        expect(captured.output()).not.toMatch(READINESS_URL_PATTERN);
+        expect(() =>
+          parseCliArguments(
+            helperCliArguments(["OPENAI_API_KEY:secret"], [executable, "-e", "process.exit(0)"]),
+          ),
+        ).toThrow("approved command executable must use an absolute path");
       });
 
       it.each([
@@ -665,27 +673,21 @@ export function registerLocalCredentialHelperTests(group: LocalCredentialHelperT
           options: ["--execution-profile", "isolated", "--cwd", REPO_ROOT],
           expected: "--execution-profile isolated does not accept --cwd",
         },
-      ])("rejects an unsafe or ambiguous execution profile before listening (#5048)", async ({
+      ])("rejects an unsafe or ambiguous execution profile before listening (#5048)", ({
         expected,
         options,
       }) => {
-        const captured = captureChild([
-          "--experimental-strip-types",
-          HELPER_PATH,
-          ...options,
-          "--field",
-          "OPENAI_API_KEY:secret",
-          "--",
-          process.execPath,
-          "-e",
-          "process.exit(0)",
-        ]);
-
-        const result = await withTimeout(captured.closed, PROCESS_TIMEOUT_MS, "execution profile");
-
-        expect(result.code).not.toBe(0);
-        expect(captured.output()).toContain(expected);
-        expect(captured.output()).not.toMatch(READINESS_URL_PATTERN);
+        expect(() =>
+          parseCliArguments([
+            ...options,
+            "--field",
+            "OPENAI_API_KEY:secret",
+            "--",
+            process.execPath,
+            "-e",
+            "process.exit(0)",
+          ]),
+        ).toThrow(expected);
       });
     }
 

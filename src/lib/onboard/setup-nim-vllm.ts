@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { cliName } from "./branding";
 import type { SetupNimSelectionResult, SetupNimSelectionState } from "./setup-nim-flow";
 
 type VllmModelEntry = {
@@ -194,6 +195,13 @@ export function createSetupNimVllmHandler(
       console.error(
         `  Detected vLLM model '${detectedModel}' does not match the shared gateway route '${requiredModel}'.`,
       );
+      console.error(
+        `  To install '${requiredModel}', stop the existing vLLM server on localhost:${deps.VLLM_PORT}, then rerun the original install/onboard command.`,
+      );
+      console.error(`  To keep '${detectedModel}' instead, start detailed setup:`);
+      console.error("    unset NEMOCLAW_PROVIDER NEMOCLAW_MODEL NEMOCLAW_VLLM_MODEL");
+      console.error(`    ${cliName()} onboard --fresh`);
+      console.error("  Then select Local vLLM when prompted.");
       deps.exitProcess(1);
     }
     state.model = detectedModel;

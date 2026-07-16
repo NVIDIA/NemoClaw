@@ -372,6 +372,9 @@ jobs:
       - live
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
     steps:
       - name: Check out trusted compatibility controller
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -394,11 +397,14 @@ jobs:
           path: candidate-results
           merge-multiple: true
 
-      - name: Finalize auditable evidence
+      - id: finalize
+        name: Finalize auditable evidence
         env:
+          GH_TOKEN: ${{ github.token }}
           RESOLUTION_ID: ${{ needs.resolve.outputs.resolution_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
           RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         shell: bash
         run: |
           set -euo pipefail
@@ -410,8 +416,60 @@ jobs:
             --run-id "$RUN_ID" \
             --attempt "$RUN_ATTEMPT" \
             --output candidate-compatibility-evidence.json
+          printf '{"total_count":0,"jobs":[]}\n' > candidate-current-attempt-jobs.json
+          if [[ "$RUN_ID" =~ ^[1-9][0-9]*$ && "$RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]; then
+            if gh api \
+              "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/attempts/$RUN_ATTEMPT/jobs?per_page=100" \
+              > candidate-current-attempt-jobs.tmp; then
+              mv candidate-current-attempt-jobs.tmp candidate-current-attempt-jobs.json
+            else
+              rm -f candidate-current-attempt-jobs.tmp
+              echo "::warning::Could not load current-attempt jobs; failed lanes will link to the workflow run."
+            fi
+          else
+            echo "::warning::Invalid workflow run identity; failed lanes will link to the workflow run."
+          fi
           node <<'NODE' >> "$GITHUB_STEP_SUMMARY"
           const evidence = require("./candidate-compatibility-evidence.json");
+          const jobResponse = require("./candidate-current-attempt-jobs.json");
+          const runId = Number(process.env.RUN_ID);
+          const runAttempt = Number(process.env.RUN_ATTEMPT);
+          const runUrl = process.env.RUN_URL;
+          const jobs = jobResponse
+            && Number.isSafeInteger(jobResponse.total_count)
+            && jobResponse.total_count >= 0
+            && jobResponse.total_count <= 100
+            && Array.isArray(jobResponse.jobs)
+            && jobResponse.jobs.length === jobResponse.total_count
+              ? jobResponse.jobs
+              : [];
+          const failedLaneUrl = (lane, result) => {
+            if (result !== "failure"
+              || !Number.isSafeInteger(runId)
+              || runId <= 0
+              || !Number.isSafeInteger(runAttempt)
+              || runAttempt <= 0) return runUrl;
+            const expectedJobName = lane === "installer"
+              ? "deterministic (installer)"
+              : lane === "live:openshell-gateway-auth-contract"
+                ? "live"
+                : undefined;
+            const matches = expectedJobName
+              ? jobs.filter((job) => job
+                  && Number.isSafeInteger(job.id)
+                  && job.id > 0
+                  && job.name === expectedJobName
+                  && job.run_id === runId
+                  && job.run_attempt === runAttempt
+                  && job.status === "completed"
+                  && job.conclusion === "failure")
+              : [];
+            return matches.length === 1 ? `${runUrl}/job/${matches[0].id}` : runUrl;
+          };
+          const failedLaneResult = (lane, result, reason) => {
+            if (result !== "failure") return result ?? reason;
+            return `[failure](${failedLaneUrl(lane, result)})`;
+          };
           console.log("## Candidate compatibility evidence\n");
           console.log(`- NemoClaw SHA: \`${evidence.receipt.nemoclawSha}\``);
           console.log(`- Candidate: \`${evidence.receipt.component} ${evidence.receipt.requestedCandidate}\``);
@@ -421,11 +479,17 @@ jobs:
           console.log("| --- | --- | --- |");
           const results = new Map(evidence.results.map((result) => [result.lane, result.conclusion]));
           for (const lane of evidence.plan.deterministic) {
-            console.log(`| \`${lane.id}\` | ${lane.status} | ${results.get(lane.id) ?? lane.reason} |`);
+            console.log(`| \`${lane.id}\` | ${lane.status} | ${failedLaneResult(lane.id, results.get(lane.id), lane.reason)} |`);
           }
           for (const lane of evidence.plan.live) {
-            console.log(`| \`e2e:${lane.id}\` | ${lane.status} | ${results.get(`live:${lane.id}`) ?? lane.reason} |`);
+            const resultLane = `live:${lane.id}`;
+            console.log(`| \`e2e:${lane.id}\` | ${lane.status} | ${failedLaneResult(resultLane, results.get(resultLane), lane.reason)} |`);
           }
+          require("node:fs").appendFileSync(process.env.GITHUB_OUTPUT, [
+            `deterministic_failure_url=${failedLaneUrl("installer", results.get("installer"))}`,
+            `live_failure_url=${failedLaneUrl("live:openshell-gateway-auth-contract", results.get("live:openshell-gateway-auth-contract"))}`,
+            "",
+          ].join("\n"));
           NODE
 
       - name: Upload compatibility evidence
@@ -441,7 +505,22 @@ jobs:
           retention-days: 30
 
       - name: Enforce aggregate result
+        if: ${{ always() }}
         env:
+          DETERMINISTIC_FAILURE_URL: ${{ steps.finalize.outputs.deterministic_failure_url }}
           DETERMINISTIC_RESULT: ${{ needs.deterministic.result }}
+          LIVE_FAILURE_URL: ${{ steps.finalize.outputs.live_failure_url }}
           LIVE_RESULT: ${{ needs.live.result }}
-        run: test "$DETERMINISTIC_RESULT" = success && test "$LIVE_RESULT" = success
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          failed=0
+          if [[ "$DETERMINISTIC_RESULT" != success ]]; then
+            echo "::error title=Candidate installer compatibility failed::See ${DETERMINISTIC_FAILURE_URL:-$RUN_URL}"
+            failed=1
+          fi
+          if [[ "$LIVE_RESULT" != success ]]; then
+            echo "::error title=Candidate live compatibility failed::See ${LIVE_FAILURE_URL:-$RUN_URL}"
+            failed=1
+          fi
+          exit "$failed"

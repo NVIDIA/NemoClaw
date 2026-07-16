@@ -433,7 +433,10 @@ describe("uninstall run plan", () => {
     const logs: string[] = [];
     const killed: number[] = [];
     const exited = new Set<number>();
-    const stub = psStub("55678", { exited });
+    const stub = psStub("55678", {
+      exited,
+      cmdline: "/usr/bin/node /opt/nemoclaw/scripts/ollama-auth-proxy.mts\n",
+    });
     const result = runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
@@ -563,13 +566,15 @@ describe("uninstall run plan", () => {
     expect(logs).toContain("Stopped Ollama auth proxy 33333");
   });
 
-  it("never kills a process on :11435 whose cmdline is not the auth proxy", () => {
+  it.each([
+    "ollama-auth-proxy-helper.mjs",
+    "ollama-auth-proxy.mts.backup",
+  ])("never kills the near-named %s process on :11435", (scriptName) => {
     const logs: string[] = [];
     const killed: number[] = [];
-    // Same owner, different cmdline — exercises the cmdline gate specifically.
     const stub = psStub("99999", {
       exited: new Set(),
-      cmdline: "/usr/sbin/nginx -g daemon off;\n",
+      cmdline: `/usr/bin/node /opt/nemoclaw/scripts/${scriptName}\n`,
     });
     const result = runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },

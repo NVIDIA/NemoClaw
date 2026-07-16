@@ -16,7 +16,7 @@ import {
   ensureCompatibleAnthropicSwitchProvider,
   env,
   envHash,
-  expectAuthenticatedBaselineRequest,
+  expectAuthenticatedBaselineInventoryRequest,
   expectedApiMode,
   expectedBaseUrl,
   hashCheck,
@@ -120,10 +120,14 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   });
   expect(docker.exitCode, resultText(docker)).toBe(0);
 
+  // OpenShell reaches this fixture from its gateway network namespace, where
+  // the runner's loopback address is not routable.
   const mockBaseline = mockAnthropicSwitchEnabled()
     ? await startFakeOpenAiCompatibleServer({
         apiKey: MOCK_BASELINE_API_KEY,
+        host: "0.0.0.0",
         model: MOCK_BASELINE_MODEL,
+        publicHost: "host.openshell.internal",
         requireAuth: true,
       })
     : undefined;
@@ -161,7 +165,7 @@ test("Hermes inference set updates route/config and preserves live runtime", {
 
   const install = await installHermes(host, apiKey, installEnv);
   expect(install.exitCode, resultText(install)).toBe(0);
-  expectAuthenticatedBaselineRequest(mockBaseline, MOCK_BASELINE_MODEL);
+  expectAuthenticatedBaselineInventoryRequest(mockBaseline);
   const baselineRoute = await sandbox.openshell(["inference", "get", "-g", "nemoclaw"], {
     artifactName: "openshell-inference-route-before-switch",
     env: env(),

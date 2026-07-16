@@ -20,7 +20,10 @@ import {
   parseDockerInspectJson,
   sameContainerId,
 } from "./docker-gpu-patch-clone";
-import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
+import {
+  DOCKER_GPU_PATCH_STOP_TIMEOUT_MS,
+  DOCKER_GPU_PATCH_TIMEOUT_MS,
+} from "./docker-gpu-patch-constants";
 import { reconcileSupervisorReconnect } from "./docker-gpu-patch-finalize";
 import { selectDockerGpuPatchMode } from "./docker-gpu-patch-mode";
 import { restoreDockerGpuPatchBackupAfterRecreateFailure } from "./docker-gpu-patch-rollback";
@@ -249,7 +252,10 @@ export function recreateOpenShellDockerSandboxContainer(
       suppressOutput: true,
       timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
     };
-    const stopResult = d.dockerStop(oldContainerId, containerMutationOptions);
+    const stopResult = d.dockerStop(oldContainerId, {
+      ...containerMutationOptions,
+      timeout: DOCKER_GPU_PATCH_STOP_TIMEOUT_MS,
+    });
     if (!hasZeroDockerExitStatus(stopResult)) {
       context.rolledBack = hasZeroDockerExitStatus(
         d.dockerStart(oldContainerId, containerMutationOptions),

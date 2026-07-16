@@ -1,5 +1,5 @@
 {
-  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\n\nFive independent workflow_dispatch full-e2e samples of current-main baseline 1a74b8348c2182fbf806726341186f008444e28e with the phase-measurement changes at 4544d07c8bfd500c3b64a74380ef5cd0e62089f5. All runs completed install, BuildKit prebuild without fallback, the silence assertion, and the expected first turn. Each budget is derived independently so phase caps diagnose regressions; they are not portions that must sum to the root-start budget.",
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\n\nFive independent workflow_dispatch full-e2e samples of current-main baseline 1a74b8348c2182fbf806726341186f008444e28e with the phase-measurement changes at 4544d07c8bfd500c3b64a74380ef5cd0e62089f5. All runs completed install, BuildKit prebuild without fallback, the silence assertion, and the expected first turn. Each baseline budget is derived independently so phase caps diagnose regressions; they are not portions that must sum to the root-start budget. The separate validation adjustment records four existing full-e2e job observations from three descendant heads after f62c278bd737f4f47be2e85436f65b270d5b4280 added the reviewed WeChat runtime graph to the supported sandbox image. The relevant image-building inputs listed in imageInputPaths were unchanged through 2adc8481ff3053a5a7be37d130cb183e222934ff; repository tests enforce that ancestry and unchanged-input boundary. All four jobs completed install, BuildKit prebuild without fallback, the silence assertion, and the expected first turn; two exceeded the prior root-start and/or sandbox-phase caps. The conclusion fields record the full-e2e job conclusions, not aggregate workflow conclusions. The adjustment raises only those two caps from the maximum observed value plus the existing headroom, rounded up to one second. This is a bounded post-change validation adjustment, not a replacement five-run exact-head calibration. Retire it by replacing the baseline and removing validationAdjustment after five successful full-e2e samples from one exact head that contains the image change.",
   "schemaVersion": 1,
   "calibratedAt": "2026-07-13",
   "baselineMainSha": "1a74b8348c2182fbf806726341186f008444e28e",
@@ -150,6 +150,183 @@
       }
     }
   ],
+  "validationAdjustment": {
+    "validatedAt": "2026-07-14",
+    "imageChangeSha": "f62c278bd737f4f47be2e85436f65b270d5b4280",
+    "imageInputsVerifiedThroughSha": "2adc8481ff3053a5a7be37d130cb183e222934ff",
+    "imageInputPaths": [
+      "Dockerfile",
+      "tsconfig.runtime-preloads.json",
+      "agents/openclaw/mcporter-runtime",
+      "agents/openclaw/wechat-runtime",
+      "nemoclaw/package.json",
+      "nemoclaw/package-lock.json",
+      "nemoclaw/tsconfig.json",
+      "nemoclaw/openclaw.plugin.json",
+      "nemoclaw/src",
+      "nemoclaw-blueprint/blueprint.yaml",
+      "nemoclaw-blueprint/policies",
+      "nemoclaw-blueprint/scripts",
+      "nemoclaw-blueprint/openclaw-plugins",
+      "nemoclaw-blueprint/model-specific-setup",
+      "scripts/checks/verify-openshell-policy-boundary-dependencies.mts",
+      "scripts/nemoclaw-start.sh",
+      "scripts/gateway-control.sh",
+      "scripts/managed-gateway-control.py",
+      "scripts/state-dir-guard.py",
+      "scripts/openclaw-config-guard.py",
+      "scripts/codex-acp-wrapper.sh",
+      "scripts/generate-openclaw-config.mts",
+      "scripts/validate-openclaw-tool-search.mts",
+      "scripts/lib/sandbox-init.sh",
+      "scripts/lib/gateway-supervisor.sh",
+      "scripts/lib/sandbox-rlimits.sh",
+      "scripts/lib/openclaw_device_approval_policy.py",
+      "scripts/lib/clean_runtime_shell_env_shim.py",
+      "scripts/lib/normalize_mutable_config_perms.py",
+      "src/lib/messaging",
+      "src/lib/tool-disclosure.ts",
+      "scripts/patch-openclaw-tool-catalog.js",
+      "scripts/patch-openclaw-chat-send.js",
+      "scripts/patch-openclaw-mcp-npx.mts",
+      "scripts/patch-openclaw-issue-4434-diagnostics.ts",
+      "scripts/patch-openclaw-device-self-approval.ts",
+      "scripts/verify-wechat-runtime-lock.mts",
+      "scripts/lib/reviewed-npm-archive.mts",
+      "src/lib/sandbox/build-context.ts"
+    ],
+    "adjustedMetrics": [
+      "rootStartToFirstTurnCompletion",
+      "nemoclaw.onboard.phase.sandbox"
+    ],
+    "derivation": {
+      "statistic": "maximum",
+      "minimumHeadroomMs": 5000,
+      "relativeHeadroomPercent": 10,
+      "roundUpMs": 1000
+    },
+    "retirement": {
+      "trigger": "successful-exact-head-calibration",
+      "minimumSampleCount": 5,
+      "allSamplesSameHead": true,
+      "imageChangeMustBeAncestor": true,
+      "action": "replace-baseline-and-remove-adjustment"
+    },
+    "runs": [
+      {
+        "runId": 29296660267,
+        "runUrl": "https://github.com/NVIDIA/NemoClaw/actions/runs/29296660267",
+        "headSha": "b634f011e78aa6c31537a70ff76d57bfa8ad7ee6",
+        "conclusion": "failure",
+        "installExitCode": 0,
+        "firstTurnExitCode": 0,
+        "performancePassed": false,
+        "usedBuildKitPrebuild": true,
+        "buildKitFallback": false,
+        "maxSilenceSecs": 32,
+        "responseChars": 23,
+        "measurementsMs": {
+          "onboardRoot": 191509,
+          "rootStartToFirstTurnCompletion": 199164,
+          "rootEndToInstallCompletion": 181,
+          "firstTurnCommand": 7470,
+          "rootEndToFirstTurnCompletion": 7655,
+          "phases": {
+            "nemoclaw.onboard.phase.preflight": 3526,
+            "nemoclaw.onboard.phase.gateway": 66,
+            "nemoclaw.onboard.phase.provider_selection": 1257,
+            "nemoclaw.onboard.phase.inference": 1309,
+            "nemoclaw.onboard.phase.sandbox": 149492
+          }
+        }
+      },
+      {
+        "runId": 29307095519,
+        "runUrl": "https://github.com/NVIDIA/NemoClaw/actions/runs/29307095519",
+        "headSha": "4f64b0ac19d321c6a85c88799c5675e33c3c1a7e",
+        "conclusion": "success",
+        "installExitCode": 0,
+        "firstTurnExitCode": 0,
+        "performancePassed": true,
+        "usedBuildKitPrebuild": true,
+        "buildKitFallback": false,
+        "maxSilenceSecs": 33,
+        "responseChars": 23,
+        "measurementsMs": {
+          "onboardRoot": 187160,
+          "rootStartToFirstTurnCompletion": 195237,
+          "rootEndToInstallCompletion": 168,
+          "firstTurnCommand": 7905,
+          "rootEndToFirstTurnCompletion": 8077,
+          "phases": {
+            "nemoclaw.onboard.phase.preflight": 1204,
+            "nemoclaw.onboard.phase.gateway": 63,
+            "nemoclaw.onboard.phase.provider_selection": 2187,
+            "nemoclaw.onboard.phase.inference": 1467,
+            "nemoclaw.onboard.phase.sandbox": 139921
+          }
+        }
+      },
+      {
+        "runId": 29313003676,
+        "runUrl": "https://github.com/NVIDIA/NemoClaw/actions/runs/29313003676",
+        "headSha": "2adc8481ff3053a5a7be37d130cb183e222934ff",
+        "conclusion": "failure",
+        "installExitCode": 0,
+        "firstTurnExitCode": 0,
+        "performancePassed": false,
+        "usedBuildKitPrebuild": true,
+        "buildKitFallback": false,
+        "maxSilenceSecs": 39,
+        "responseChars": 23,
+        "measurementsMs": {
+          "onboardRoot": 199724,
+          "rootStartToFirstTurnCompletion": 206895,
+          "rootEndToInstallCompletion": 139,
+          "firstTurnCommand": 7028,
+          "rootEndToFirstTurnCompletion": 7171,
+          "phases": {
+            "nemoclaw.onboard.phase.preflight": 1222,
+            "nemoclaw.onboard.phase.gateway": 64,
+            "nemoclaw.onboard.phase.provider_selection": 2634,
+            "nemoclaw.onboard.phase.inference": 1072,
+            "nemoclaw.onboard.phase.sandbox": 155080
+          }
+        }
+      },
+      {
+        "runId": 29313408425,
+        "runUrl": "https://github.com/NVIDIA/NemoClaw/actions/runs/29313408425",
+        "headSha": "2adc8481ff3053a5a7be37d130cb183e222934ff",
+        "conclusion": "success",
+        "installExitCode": 0,
+        "firstTurnExitCode": 0,
+        "performancePassed": true,
+        "usedBuildKitPrebuild": true,
+        "buildKitFallback": false,
+        "maxSilenceSecs": 31,
+        "responseChars": 23,
+        "measurementsMs": {
+          "onboardRoot": 185646,
+          "rootStartToFirstTurnCompletion": 193112,
+          "rootEndToInstallCompletion": 180,
+          "firstTurnCommand": 7282,
+          "rootEndToFirstTurnCompletion": 7466,
+          "phases": {
+            "nemoclaw.onboard.phase.preflight": 1262,
+            "nemoclaw.onboard.phase.gateway": 51,
+            "nemoclaw.onboard.phase.provider_selection": 1367,
+            "nemoclaw.onboard.phase.inference": 708,
+            "nemoclaw.onboard.phase.sandbox": 141977
+          }
+        }
+      }
+    ],
+    "derivedCapsMs": {
+      "rootStartToFirstTurnCompletionBudgetMs": 228000,
+      "sandboxPhaseBudgetMs": 171000
+    }
+  },
   "derivedBudgetsMs": {
     "rootStartToFirstTurnCompletionBudgetMs": 205000,
     "rootEndToFirstTurnCompletionBudgetMs": 14000,

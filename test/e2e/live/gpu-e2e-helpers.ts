@@ -16,6 +16,7 @@ export { REPO_ROOT };
 
 export const CLI = CLI_ENTRYPOINT;
 export const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-gpu-ollama";
+const DEFAULT_GPU_E2E_MODEL = "qwen3.5:9b";
 validateSandboxName(SANDBOX_NAME);
 export const PROXY_PORT = tcpPort(process.env.NEMOCLAW_OLLAMA_PROXY_PORT, "11435");
 
@@ -35,6 +36,7 @@ export function env(
     ...buildAvailabilityProbeEnv(base),
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_NON_INTERACTIVE: "1",
+    NEMOCLAW_MODEL: base.NEMOCLAW_MODEL ?? DEFAULT_GPU_E2E_MODEL,
     NEMOCLAW_PROVIDER: "ollama",
     NEMOCLAW_OLLAMA_PROXY_PORT: PROXY_PORT,
     NEMOCLAW_RECREATE_SANDBOX: "1",
@@ -242,7 +244,7 @@ sleep 2
 curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" "http://127.0.0.1:$1/api/tags"`,
       "restart-proxy",
       PROXY_PORT,
-      path.join(REPO_ROOT, "scripts", "ollama-auth-proxy.js"),
+      path.join(REPO_ROOT, "scripts", "ollama-auth-proxy.mts"),
     ],
     {
       artifactName: "proxy-restart-from-token",

@@ -1023,6 +1023,7 @@ jobs:
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_MODEL: "qwen3.5:9b"
       NEMOCLAW_PROVIDER: "ollama"
       NEMOCLAW_OLLAMA_PULL_TIMEOUT: "2400"
       NEMOCLAW_SANDBOX_NAME: "e2e-gpu-ollama"
@@ -3328,6 +3329,7 @@ jobs:
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_MODEL: "qwen3.5:9b"
       NEMOCLAW_SANDBOX_NAME: "e2e-gpu-double-onboard"
       NEMOCLAW_PROVIDER: "ollama"
       NEMOCLAW_OLLAMA_PROXY_PORT: "11435"
@@ -4351,6 +4353,7 @@ jobs:
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_RECREATE_SANDBOX: "1"
       NEMOCLAW_AGENT: ${{ matrix.agent }}
+      NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
       NEMOCLAW_SANDBOX_NAME: e2e-bedrock-${{ matrix.agent }}
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
@@ -5239,7 +5242,23 @@ jobs:
             }
 
             const testResults = new Map();
+            const jobLinks = new Map();
             const wallClockRanges = new Map();
+            const validatedJobUrl = (job) =>
+              Number.isSafeInteger(job.id) && job.id > 0
+                ? `${runUrl}/job/${job.id}`
+                : undefined;
+            const recordJobLink = (name, job) => {
+              const url = validatedJobUrl(job);
+              if (!url) return;
+              const didNotPass =
+                job.status === 'completed' &&
+                !['success', 'skipped', 'neutral'].includes(job.conclusion);
+              const current = jobLinks.get(name);
+              if (!current || (didNotPass && !current.didNotPass)) {
+                jobLinks.set(name, { didNotPass, url });
+              }
+            };
             const recordWallClockRange = (name, job) => {
               if (job.conclusion === 'skipped') return;
               const startedAt = Date.parse(job.started_at || '');
@@ -5287,13 +5306,14 @@ jobs:
                     ? 'openshell-gateway-upgrade'
                     : jobName);
                 recordWallClockRange(reportEntryName, job);
+                recordJobLink(reportEntryName, job);
                 if (!match || !selectedTestIds.has(match[1])) continue;
                 const result =
                   job.status === 'completed' &&
                   ['success', 'failure', 'cancelled', 'skipped'].includes(job.conclusion)
                     ? job.conclusion
                     : 'unknown';
-                testResults.set(match[1], { result });
+                testResults.set(match[1], { jobUrl: validatedJobUrl(job), result });
               }
               sharedJobResultsLoaded = true;
             } catch (error) {
@@ -5327,14 +5347,20 @@ jobs:
               core.warning(
                 `Per-test conclusions (${knownTestResults.join(', ')}) contradict shared E2E job aggregate ${sharedJobAggregateResult}; reporting child attribution as unknown.`,
               );
-              for (const id of testIds) testResults.set(id, { result: 'unknown' });
+              for (const id of testIds) {
+                testResults.set(id, { ...testResults.get(id), result: 'unknown' });
+              }
             }
 
             const allEntries = Object.entries(needs)
               .filter(([name]) => name !== 'shared-e2e')
               .map(([name, value]) => [
                 name,
-                { ...value, wallClockRange: wallClockRanges.get(name) },
+                {
+                  ...value,
+                  jobUrl: jobLinks.get(name)?.url,
+                  wallClockRange: wallClockRanges.get(name),
+                },
               ]);
             if (needs['shared-e2e']) {
               allEntries.push(
@@ -5342,6 +5368,7 @@ jobs:
                   id,
                   {
                     ...(testResults.get(id) ?? { result: 'unknown' }),
+                    jobUrl: testResults.get(id)?.jobUrl ?? jobLinks.get(id)?.url,
                     wallClockRange: wallClockRanges.get(id),
                   },
                 ]),
@@ -5364,8 +5391,10 @@ jobs:
                 ? allEntries.filter(([, { result }]) => result !== 'skipped')
                 : allEntries;
             const rows = reportedEntries.map(
-              ([name, { result, wallClockRange }]) =>
-                `| ${name} | ${emoji[result] || '❓'} ${result} | ${formatWallClockTime(wallClockRange)} |`,
+              ([name, { jobUrl, result, wallClockRange }]) => {
+                const label = result === 'failure' ? `[${name}](${jobUrl ?? runUrl})` : name;
+                return `| ${label} | ${emoji[result] || '❓'} ${result} | ${formatWallClockTime(wallClockRange)} |`;
+              },
             );
             for (const name of missingRequestedTestIds) {
               rows.push(`| ${name} | ❓ not reported | — |`);
@@ -5428,8 +5457,10 @@ jobs:
               lines.push('', `> **Explicit-only jobs skipped:** ${skippedJobHints}.`);
             }
             if (failed.length > 0) {
-              const failedNames = failed.map(([name]) => name).join(', ');
-              lines.push('', `> **Failed tests:** ${failedNames}. Check [run artifacts](${runUrl}) for logs.`);
+              const failedLinks = failed
+                .map(([name, { jobUrl }]) => `[${name}](${jobUrl ?? runUrl})`)
+                .join(', ');
+              lines.push('', `> **Failed tests:** ${failedLinks}. Check [the workflow run](${runUrl}) for all logs and artifacts.`);
             }
             if (missingRequestedTestIds.length > 0) {
               lines.push(
@@ -5482,13 +5513,13 @@ jobs:
           script: |
             const path = require('path');
             const traceTiming = require(
-              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/analyze-trace-timing.ts'),
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/analyze-trace-timing.mts'),
             );
             const scorecardJobs = require(
-              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/summarize-jobs.ts'),
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/summarize-jobs.mts'),
             );
             const slackBlocks = require(
-              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/build-slack-blocks.ts'),
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/build-slack-blocks.mts'),
             );
             const needs = ${{ toJSON(needs) }};
             const safeSelector = /^[A-Za-z0-9_-]+$/;

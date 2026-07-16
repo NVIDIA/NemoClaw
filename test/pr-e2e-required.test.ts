@@ -10,7 +10,9 @@ import {
   classifyCoordinationCheck,
   coordinationExternalId,
   findCoordinationCheck,
+  formatRequiredGateOutcome,
   type RequiredGateIdentity,
+  type RequiredGateResult,
   waitForRequiredGate,
 } from "../tools/e2e/pr-e2e-required.mts";
 import { createGitHubFetchRouter, githubFetchRoute } from "./support/github-fetch-router.ts";
@@ -91,10 +93,13 @@ describe("native PR E2E required job", () => {
           conclusion: "failure",
           output: { title: "Maintainer approval required to skip credentialed E2E" },
         }),
+        identity.repository,
       ),
     ).toEqual({
       state: "waiting",
       description: "Maintainer approval required to skip credentialed E2E",
+      detailsUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/99",
+      logUrls: ["https://github.com/NVIDIA/NemoClaw/actions/runs/99"],
     });
   });
 
@@ -103,13 +108,72 @@ describe("native PR E2E required job", () => {
       classifyCoordinationCheck(
         check(undefined, {
           conclusion: "failure",
-          details_url: "https://example.com/untrusted",
-          output: { title: "Selected E2E jobs failed" },
+          details_url: "https://github.com/attacker/repo/runs/17",
+          output: {
+            summary: "[logs](https://github.com/attacker/repo/actions/runs/23/job/77)",
+            title: "Selected E2E jobs failed",
+          },
         }),
+        identity.repository,
       ),
     ).toEqual({
       state: "complete",
       result: { conclusion: "failure", title: "Selected E2E jobs failed" },
+    });
+  });
+
+  it("carries direct failed-job links into the terminal error message", () => {
+    const jobUrl = "https://github.com/NVIDIA/NemoClaw/actions/runs/23/job/77";
+    const reflectedUrl = "https://github.com/NVIDIA/NemoClaw/actions/runs/23/job/88";
+    const classified = classifyCoordinationCheck(
+      check(undefined, {
+        conclusion: "failure",
+        details_url: "https://github.com/NVIDIA/NemoClaw/runs/17",
+        output: {
+          summary: [
+            "[Selected E2E run 23](https://github.com/NVIDIA/NemoClaw/actions/runs/23) concluded `failure`.",
+            "Jobs that did not pass:",
+            `- [hermes-e2e ${reflectedUrl}](${jobUrl}) — concluded \`failure\`.`,
+            `Reflected prose must not become a link: ${reflectedUrl}`,
+            "[untrusted](https://example.com/actions/runs/23/job/88)",
+          ].join("\n"),
+          title: "hermes-e2e failed",
+        },
+      }),
+      identity.repository,
+    );
+
+    expect(classified).toEqual({
+      state: "complete",
+      result: {
+        conclusion: "failure",
+        detailsUrl: "https://github.com/NVIDIA/NemoClaw/runs/17",
+        logUrls: [jobUrl],
+        title: "hermes-e2e failed",
+      },
+    });
+    const result = classified as { state: "complete"; result: RequiredGateResult };
+    expect(formatRequiredGateOutcome(result.result)).toBe(
+      `conclusion=failure title=hermes-e2e failed logs=${jobUrl}`,
+    );
+  });
+
+  it("links waiting messages to the trusted coordination job", () => {
+    expect(
+      classifyCoordinationCheck(
+        check(undefined, {
+          status: "in_progress",
+          conclusion: null,
+          details_url: "https://github.com/NVIDIA/NemoClaw/runs/17",
+          output: { title: "Running 3 E2E jobs" },
+        }),
+        identity.repository,
+      ),
+    ).toEqual({
+      state: "waiting",
+      description: "Running 3 E2E jobs",
+      detailsUrl: "https://github.com/NVIDIA/NemoClaw/runs/17",
+      logUrls: ["https://github.com/NVIDIA/NemoClaw/runs/17"],
     });
   });
 
@@ -193,6 +257,44 @@ describe("native PR E2E required job", () => {
       }),
     ).resolves.toMatchObject({ conclusion: "success" });
     expect(coordinationQueries).toBe(3);
+  });
+
+  it("includes the trusted coordination link when polling times out", async () => {
+    let clock = 0;
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter([
+        githubFetchRoute(
+          ({ url }) => url.includes("/pulls/42"),
+          () => githubResponse(pullRequest()),
+        ),
+        githubFetchRoute(
+          ({ url }) => url.includes("Coordination"),
+          () =>
+            githubResponse(
+              listing([
+                check(undefined, {
+                  status: "in_progress",
+                  conclusion: null,
+                  details_url: "https://github.com/NVIDIA/NemoClaw/runs/17",
+                  output: { title: "Running E2E jobs" },
+                }),
+              ]),
+            ),
+        ),
+      ]),
+    );
+
+    await expect(
+      waitForRequiredGate(identity, {
+        timeoutMs: 10,
+        pollIntervalMs: 10,
+        now: () => clock,
+        sleep: async (milliseconds) => {
+          clock += milliseconds;
+        },
+      }),
+    ).rejects.toThrow("https://github.com/NVIDIA/NemoClaw/runs/17");
   });
 
   it("fails closed when the PR head changes before a terminal verdict is accepted", async () => {
