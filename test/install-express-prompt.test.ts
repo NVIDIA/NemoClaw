@@ -322,7 +322,11 @@ detect_express_platform
     expect(output).not.toMatch(/Run express install/);
   });
 
-  it.each([
+  it.each<{
+    name: string;
+    extraEnv: Record<string, string>;
+    entrypointArgs: string[];
+  }>([
     {
       name: "a Station-only flag on DGX Spark",
       args: ["--station-deepseek"],
