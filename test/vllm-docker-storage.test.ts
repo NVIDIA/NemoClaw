@@ -29,6 +29,30 @@ interface DockerInfo {
   ServerVersion?: unknown;
 }
 
+type ValidationSubject =
+  | { kind: "checkout"; checkoutSha: string }
+  | { kind: "release-candidate"; version: string; checkoutSha: string };
+
+type ValidationSubjectFactory = (checkoutSha: string) => ValidationSubject;
+
+const checkoutValidationSubject: ValidationSubjectFactory = (checkoutSha) => ({
+  kind: "checkout",
+  checkoutSha,
+});
+
+const validationSubjectFactories = new Map<string | undefined, ValidationSubjectFactory>([
+  [undefined, checkoutValidationSubject],
+  ["", checkoutValidationSubject],
+  [
+    RELEASE_CANDIDATE_VERSION,
+    (checkoutSha) => ({
+      kind: "release-candidate",
+      version: RELEASE_CANDIDATE_VERSION,
+      checkoutSha,
+    }),
+  ],
+]);
+
 function dockerEnvironment(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, DOCKER_HOST };
   delete env.DOCKER_CONTEXT;
@@ -52,17 +76,14 @@ function writeEvidence(evidence: Record<string, unknown>): void {
 
 function validationSubject(
   checkoutSha: string,
-  candidateVersion = process.env.NEMOCLAW_CANDIDATE_VERSION,
-):
-  | { kind: "checkout"; checkoutSha: string }
-  | { kind: "release-candidate"; version: string; checkoutSha: string } {
-  if (!candidateVersion) return { kind: "checkout", checkoutSha };
-  if (candidateVersion !== RELEASE_CANDIDATE_VERSION) {
-    throw new Error(
-      `NEMOCLAW_CANDIDATE_VERSION must be exactly ${RELEASE_CANDIDATE_VERSION}; received ${JSON.stringify(candidateVersion)}`,
-    );
-  }
-  return { kind: "release-candidate", version: candidateVersion, checkoutSha };
+  candidateVersion: string | undefined,
+): ValidationSubject {
+  const factory = validationSubjectFactories.get(candidateVersion);
+  assert(
+    factory,
+    `NEMOCLAW_CANDIDATE_VERSION must be exactly ${RELEASE_CANDIDATE_VERSION}; received ${JSON.stringify(candidateVersion)}`,
+  );
+  return factory(checkoutSha);
 }
 
 afterEach(() => {
@@ -73,6 +94,7 @@ afterEach(() => {
 test("distinguishes checkout evidence from exact v0.0.85 release acceptance (#7039)", () => {
   const checkoutSha = "a".repeat(40);
   expect(validationSubject(checkoutSha, undefined)).toEqual({ kind: "checkout", checkoutSha });
+  expect(validationSubject(checkoutSha, "")).toEqual({ kind: "checkout", checkoutSha });
   expect(validationSubject(checkoutSha, RELEASE_CANDIDATE_VERSION)).toEqual({
     kind: "release-candidate",
     version: RELEASE_CANDIDATE_VERSION,
@@ -168,7 +190,7 @@ realDockerTest(
     const evidence = {
       schemaVersion: 1,
       checkoutSha,
-      validationSubject: validationSubject(checkoutSha),
+      validationSubject: validationSubject(checkoutSha, process.env.NEMOCLAW_CANDIDATE_VERSION),
       platform: process.platform,
       architecture: process.arch,
       dockerHost: DOCKER_HOST,
