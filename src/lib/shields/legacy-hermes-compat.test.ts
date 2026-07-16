@@ -292,16 +292,17 @@ describe("legacy Hermes shields compatibility", () => {
 
     const commands = dockerExecSpy.mock.calls.map(commandFromCall);
     expect(commands.some((cmd) => isGuardAction(cmd, "finish-shields-transition"))).toBe(true);
-    expect(commands.some((cmd) => isGuardAction(cmd, "prepare-shields-abort"))).toBe(true);
-    expect(
-      commands.some(
-        (cmd) =>
-          isGuardAction(cmd, "run-state-dir-transition") &&
-          cmd.includes("--state-action") &&
-          cmd.includes("lock"),
-      ),
-    ).toBe(true);
-    expect(commands.some((cmd) => isGuardAction(cmd, "abort-shields-transition"))).toBe(true);
+    const prepareIndex = commands.findIndex((cmd) => isGuardAction(cmd, "prepare-shields-abort"));
+    const restoreIndex = commands.findIndex(
+      (cmd) =>
+        isGuardAction(cmd, "run-state-dir-transition") &&
+        cmd.includes("--state-action") &&
+        cmd.includes("lock"),
+    );
+    const abortIndex = commands.findIndex((cmd) => isGuardAction(cmd, "abort-shields-transition"));
+    expect(prepareIndex).toBeGreaterThan(-1);
+    expect(restoreIndex).toBeGreaterThan(prepareIndex);
+    expect(abortIndex).toBeGreaterThan(restoreIndex);
   });
 
   it("rejects other sandbox-owned Hermes root modes before finishing a sealed unlock", () => {

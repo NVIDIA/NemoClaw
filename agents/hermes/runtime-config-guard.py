@@ -789,6 +789,13 @@ def _attested_shields_runtime_topology() -> str:
     if sandbox_uid <= 0:
         return "unknown"
     if _openshell_supervised_nonroot_start_is_live(0, sandbox_uid):
+        if (
+            _root_lifecycle_marker_state() != marker_state
+            or not _startup_ready_marker_absent()
+        ):
+            raise UnsafePathError(
+                "Hermes runtime topology changed during attestation"
+            )
         return "same-uid-nonroot"
     return "unknown"
 

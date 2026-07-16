@@ -89,7 +89,7 @@ spec.loader.exec_module(guard)
 `;
 
 describe("Hermes mutable shields root topology", () => {
-  it("maps a real missing marker to same-UID and rejects filesystem marker bypasses (#7033)", () => {
+  it("maps a real missing marker to same-UID and rejects marker bypass or drift (#7033)", () => {
     const result = runPythonHarness(`${loadGuardModule}
 import json
 import os
@@ -143,6 +143,18 @@ with tempfile.TemporaryDirectory() as tmp:
 
     os.mkdir(marker, 0o700)
     directory_error = capture_topology_error()
+    os.rmdir(marker)
+
+    marker_states = iter(("absent", "root-separated"))
+    guard._root_lifecycle_marker_state = lambda: next(marker_states)
+    guard._startup_ready_marker_absent = lambda: True
+    guard._openshell_supervised_nonroot_start_is_live = lambda *_args: True
+    marker_drift_error = capture_topology_error()
+
+    guard._root_lifecycle_marker_state = lambda: "absent"
+    startup_states = iter((True, False))
+    guard._startup_ready_marker_absent = lambda: next(startup_states)
+    startup_drift_error = capture_topology_error()
 
 print(json.dumps({
     "missing_state": missing_state,
@@ -152,6 +164,8 @@ print(json.dumps({
     "dangling_symlink_error": dangling_symlink_error,
     "hardlink_error": hardlink_error,
     "directory_error": directory_error,
+    "marker_drift_error": marker_drift_error,
+    "startup_drift_error": startup_drift_error,
     "fallback_calls": fallback_calls,
 }))
 `);
@@ -162,9 +176,11 @@ print(json.dumps({
       directory_error: "Hermes root lifecycle marker is unsafe",
       fallback_calls: ["same-uid-proof", "missing-proof"],
       hardlink_error: "Hermes root lifecycle marker is unsafe",
+      marker_drift_error: "Hermes runtime topology changed during attestation",
       missing_state: "absent",
       missing_topology: "same-uid-nonroot",
       missing_without_proof: "unknown",
+      startup_drift_error: "Hermes runtime topology changed during attestation",
       symlink_error: "Hermes root lifecycle marker is unsafe",
     });
   });
