@@ -358,7 +358,6 @@ const { resolveSandboxImageTagFromCreateOutput } =
   require("./domain/sandbox/image-tag") as typeof import("./domain/sandbox/image-tag");
 const nim: typeof import("./inference/nim") = require("./inference/nim");
 const onboardSession: typeof import("./state/onboard-session") = require("./state/onboard-session");
-const onboardCheckpointMigrate: typeof import("./state/onboard-checkpoint-migrate") = require("./state/onboard-checkpoint-migrate");
 const {
   registerIncompleteOnboardExitHandlerForSession,
 }: typeof import("./onboard/onboard-exit-handler") = require("./onboard/onboard-exit-handler");
@@ -4165,7 +4164,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         cliName,
         error: (message) => console.error(message),
         exitProcess: (code) => process.exit(code),
-        resolveResumeCheckpoint: onboardCheckpointMigrate.loadResumeCheckpoint,
       },
     );
     await onboardRuntimeBoundary.recordOnboardStarted(resume);

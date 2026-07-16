@@ -17,6 +17,7 @@ import {
   webSearchProviderForConfig,
 } from "../../../inference/web-search";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
+import { isDecisionSelected } from "../../../state/onboard-checkpoint-decision";
 import type {
   HermesAuthMethod,
   Session,
@@ -26,6 +27,15 @@ import type {
 import type { SandboxEntry } from "../../../state/registry";
 import { getSandboxEntryInference } from "../../../state/registry-entry-view";
 import { toolDisclosureOrDefault } from "../../../tool-disclosure";
+import {
+  recordCheckpointEffectGroup,
+  recordCheckpointSandboxIdentity,
+} from "../../checkpoint-record";
+import { planSandboxCreateReplay } from "../../checkpoint-replay";
+import {
+  bindingRevalidationGuidance,
+  revalidateCheckpointBindings,
+} from "../../checkpoint-revalidate";
 import { withDashboardPortReservationLock as withHostDashboardPortReservationLock } from "../../dashboard-port";
 import { type DashboardRuntimeAgent, shouldManageDashboardForAgent } from "../../dashboard-runtime";
 import {
@@ -500,7 +510,49 @@ class SandboxStateFlow<
       ...toolDisclosureSignals,
       ...dcodeResumeSignals,
     });
-    return dcodeResume.preserveManagedDcodeRegistryEntry(this.options, decision);
+    const managedDcodeDecision = dcodeResume.preserveManagedDcodeRegistryEntry(
+      this.options,
+      decision,
+    );
+    return this.applyCheckpointCrashRecovery(managedDcodeDecision, state, sandboxReuseState);
+  }
+
+  // A "create" decision from decideSandboxResume means only that the sandbox
+  // step was never marked complete; it does not check whether a previous run
+  // already executed the destructive create effect before crashing. When a
+  // durable checkpoint proves that (recorded identity + a sandbox_create
+  // effect receipt), disambiguate using live state instead of blindly
+  // recreating under the same name (#5961, #6228).
+  private applyCheckpointCrashRecovery(
+    decision: SandboxResumeDecision,
+    state: SandboxStepState<WebSearchConfig>,
+    sandboxReuseState: string,
+  ): SandboxResumeDecision {
+    if (decision.kind !== "create") return decision;
+    const checkpoint = state.session?.checkpoint;
+    if (!checkpoint?.effectGroups.sandbox_create) return decision;
+    if (!isDecisionSelected(checkpoint.sandboxIdentity)) return decision;
+
+    const bindingCheck = revalidateCheckpointBindings(checkpoint, {
+      availableCredentialEnvs: new Set(
+        Object.keys(this.options.env).filter((name) => Boolean(this.options.env[name]?.trim())),
+      ),
+      liveRegisteredProviders: new Set(state.session?.stagedCredentialProviders ?? []),
+    });
+    if (bindingCheck.status === "stale") {
+      const guidance = bindingRevalidationGuidance(bindingCheck);
+      if (guidance) this.deps.error(guidance);
+      this.deps.error(
+        "  A previous onboarding attempt was interrupted after starting sandbox creation.",
+      );
+      this.deps.error("  Re-run with the required credentials available to continue safely.");
+      return this.deps.exitProcess(1);
+    }
+
+    const replay = planSandboxCreateReplay(checkpoint, {
+      liveSandboxExists: sandboxReuseState === "ready",
+    });
+    return replay.action === "reuse" ? { kind: "reuse" } : decision;
   }
 
   private applyObservabilityRequest(
@@ -736,6 +788,11 @@ class SandboxStateFlow<
       }
       current.sandboxName = sandboxName;
       current.sandboxPromptProgress.sandboxName = true;
+      recordCheckpointSandboxIdentity(
+        current,
+        sandboxName,
+        current.agent ?? (this.options.agent as { name?: string } | null)?.name ?? "openclaw",
+      );
       return current;
     });
     if (messagingInvalidated) this.deps.clearPlanEnv();
@@ -925,7 +982,7 @@ class SandboxStateFlow<
       );
       // createSandbox() owns the build fingerprint. In particular, reusing an
       // image must not stamp it with the current version and hide build drift.
-      const { nemoclawVersion: _builtFingerprint, ...agentRegistryFields } =
+      const { nemoclawVersion: builtFingerprint, ...agentRegistryFields } =
         this.deps.getSandboxAgentRegistryFields(this.options.agent, !this.options.fromDockerfile);
       // Preserve the validated route and credential env-var name, never a credential value.
       this.deps.updateSandboxRegistry(sandboxName, {
@@ -939,7 +996,7 @@ class SandboxStateFlow<
       });
       // Finalization marks the default so a cancelled onboarding cannot leave a
       // partially configured sandbox selected as the default.
-      const completedSession = await this.deps.recordStepComplete(
+      await this.deps.recordStepComplete(
         "sandbox",
         this.deps.toSessionUpdates({
           sandboxName,
@@ -951,7 +1008,15 @@ class SandboxStateFlow<
           hermesToolGateways: effectiveHermesToolGateways,
         }),
       );
-      return { ...state, sandboxName, session: completedSession };
+      const recordedSession = this.deps.updateSession((current) => {
+        recordCheckpointEffectGroup(
+          current,
+          "sandbox_create",
+          typeof builtFingerprint === "string" ? builtFingerprint : sandboxName,
+        );
+        return current;
+      });
+      return { ...state, sandboxName, session: recordedSession };
     };
     const withGatewayLock = () =>
       this.deps.withGatewayRouteMutationLock(this.options.gatewayName, createAndRecord);
