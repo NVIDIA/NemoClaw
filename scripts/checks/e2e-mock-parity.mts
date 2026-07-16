@@ -182,7 +182,7 @@ function changedFiles(base: string, head: string): string[] {
 function main(): void {
   const base = argument("--base");
   const head = argument("--head") ?? "HEAD";
-  if (!base) throw new Error("usage: e2e-mock-parity.ts --base <git-ref> [--head <git-ref>]");
+  if (!base) throw new Error("usage: e2e-mock-parity.mts --base <git-ref> [--head <git-ref>]");
 
   const manifestPath = path.join(REPO_ROOT, DEFAULT_PARITY_MANIFEST);
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as MockParityManifest;
