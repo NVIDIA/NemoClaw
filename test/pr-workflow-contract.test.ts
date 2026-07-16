@@ -317,13 +317,15 @@ describe("pull request and main workflow contracts", () => {
   // source-shape-contract: security -- Dependabot's bounded DCO exemption must report an explicit successful required check
   it("records the Dependabot DCO bypass as a successful required job", () => {
     const job = dcoWorkflow.jobs["dco-check"];
-    const bypass = requiredWorkflowStep(job, "Check DCO bypass list");
+    const bypass = requiredWorkflowStep(job, "Check Dependabot DCO bypass");
     const declaration = requiredWorkflowStep(job, "Check PR body for Signed-off-by");
 
     expect(job.if).toBeUndefined();
+    expect(job.steps?.some((step) => step.uses?.startsWith("actions/checkout@"))).toBe(false);
     expect(bypass.env?.USERNAME).toBe("${{ github.event.pull_request.user.login }}");
     expect(bypass.run).toContain('"$USERNAME" == "dependabot[bot]"');
     expect(bypass.run).toContain('"$USERNAME" == "app/dependabot"');
+    expect(bypass.run).not.toContain(".github/dco-bypass.txt");
     expect(declaration.if).toBe("${{ steps.dco-bypass.outputs.bypass != 'true' }}");
   });
 
