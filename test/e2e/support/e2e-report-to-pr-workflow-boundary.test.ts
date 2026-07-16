@@ -79,7 +79,7 @@ function executeGenerateMatrixWithPlannerOutput(
           GITHUB_STEP_SUMMARY: path.join(directory, "summary.md"),
           INFERENCE_MODE: "mock",
           JOBS: options.jobs ?? "cloud-onboard",
-          PATH: `${binDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
+          PATH: `${binDirectory}:${process.env.PATH ?? ""}`,
           TARGETS: options.targets ?? "",
         },
         timeout: 30_000,
