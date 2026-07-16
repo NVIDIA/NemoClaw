@@ -16,23 +16,43 @@ import {
 
 const GPU_MODEL = "qwen3.5:9b";
 
-function agentOutput(attemptResult: "success" | "error"): string {
+interface AgentOutputOverrides {
+  status?: string;
+  summary?: string;
+  aborted?: boolean;
+  provider?: string;
+  model?: string;
+  winnerProvider?: string;
+  winnerModel?: string;
+  attemptResult?: "success" | "error";
+}
+
+function agentOutput({
+  status = "ok",
+  summary = "completed",
+  aborted = false,
+  provider = "inference",
+  model = GPU_MODEL,
+  winnerProvider = "inference",
+  winnerModel = GPU_MODEL,
+  attemptResult = "success",
+}: AgentOutputOverrides = {}): string {
   return JSON.stringify({
-    status: "ok",
-    summary: "completed",
+    status,
+    summary,
     result: {
       payloads: [],
       meta: {
-        aborted: false,
-        agentMeta: { provider: "inference", model: GPU_MODEL },
+        aborted,
+        agentMeta: { provider, model },
         finalAssistantVisibleText: "NO_REPLY",
         executionTrace: {
-          winnerProvider: "inference",
-          winnerModel: GPU_MODEL,
+          winnerProvider,
+          winnerModel,
           attempts: [
             {
-              provider: "inference",
-              model: GPU_MODEL,
+              provider,
+              model,
               result: attemptResult,
               stage: "assistant",
             },
@@ -42,6 +62,36 @@ function agentOutput(attemptResult: "success" | "error"): string {
     },
   });
 }
+
+const invalidExecutionProofs: Array<{
+  name: string;
+  overrides: AgentOutputOverrides;
+  message: string;
+}> = [
+  { name: "status", overrides: { status: "error" }, message: "agent command must report success" },
+  { name: "summary", overrides: { summary: "failed" }, message: "agent command must complete" },
+  { name: "abort state", overrides: { aborted: true }, message: "agent command must not abort" },
+  {
+    name: "provider",
+    overrides: { provider: "unexpected" },
+    message: "agent must use the expected provider",
+  },
+  {
+    name: "model",
+    overrides: { model: "unexpected" },
+    message: "agent must use the expected model",
+  },
+  {
+    name: "winner provider",
+    overrides: { winnerProvider: "unexpected" },
+    message: "execution trace must select the expected provider",
+  },
+  {
+    name: "winner model",
+    overrides: { winnerModel: "unexpected" },
+    message: "execution trace must select the expected model",
+  },
+];
 
 describe("GPU E2E helpers", () => {
   it("forwards the workflow-owned Ollama model pull timeout", () => {
@@ -70,14 +120,27 @@ describe("GPU E2E helpers", () => {
 
   it("accepts successful execution proof when the model suppresses visible text", () => {
     expect(() =>
-      assertAgentExecutionSucceeded(agentOutput("success"), "inference", GPU_MODEL),
+      assertAgentExecutionSucceeded(agentOutput(), "inference", GPU_MODEL),
     ).not.toThrow();
   });
 
   it("rejects a recovery trace without a successful assistant attempt", () => {
     expect(() =>
-      assertAgentExecutionSucceeded(agentOutput("error"), "inference", GPU_MODEL),
+      assertAgentExecutionSucceeded(
+        agentOutput({ attemptResult: "error" }),
+        "inference",
+        GPU_MODEL,
+      ),
     ).toThrow("execution trace must contain a successful assistant attempt");
+  });
+
+  it.each(invalidExecutionProofs)("rejects invalid $name execution proof", ({
+    overrides,
+    message,
+  }) => {
+    expect(() =>
+      assertAgentExecutionSucceeded(agentOutput(overrides), "inference", GPU_MODEL),
+    ).toThrow(message);
   });
 
   it("projects only model evidence before OpenClaw config crosses the artifact boundary", () => {
