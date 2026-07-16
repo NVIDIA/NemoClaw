@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -15,6 +16,9 @@ import {
   validateLiveSelector,
   validateLiveTestPath,
 } from "../../../tools/e2e/live-vitest-invocation.mts";
+
+const LIVE_VITEST_TOOL = path.resolve("tools/e2e/live-vitest-invocation.mts");
+const TSX = path.resolve("node_modules", ".bin", "tsx");
 
 describe("validateLiveProject (#6961)", () => {
   it("accepts the live project and defaults to it", () => {
@@ -234,12 +238,8 @@ describe("runLiveVitestCommand (#6961)", () => {
   it.each([
     ["missing", []],
     ["unsupported", ["runx"]],
-  ])("fails the direct CLI for a %s subcommand", (_label, args) => {
-    const result = spawnSync(
-      process.execPath,
-      ["--experimental-strip-types", "tools/e2e/live-vitest-invocation.mts", ...args],
-      { encoding: "utf8" },
-    );
+  ])("fails the workflow CLI for a %s subcommand", (_label, args) => {
+    const result = spawnSync(TSX, [LIVE_VITEST_TOOL, ...args], { encoding: "utf8" });
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('expected "run"');
