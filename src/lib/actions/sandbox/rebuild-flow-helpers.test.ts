@@ -297,15 +297,21 @@ describe("backupSandboxStateForRebuild with --force", () => {
     ).toThrow("bail: Failed to back up sandbox state.");
   });
 
-  it("aborts when every state directory failed even though loose files were saved (#6972)", () => {
+  it("aborts with an ownership hint when every state directory hit permission denied (#6972)", () => {
     // Mirrors the issue: a post-reboot ownership corruption left all state dirs
     // unreadable; only a few loose files backed up. Proceeding would destroy the
-    // 14 failed dirs on recreate.
+    // failed dirs on recreate.
     backupSpy.mockReturnValue({
       success: false,
       backedUpDirs: [],
       backedUpFiles: ["SOUL.md", ".hermes_history", "runtime/state.db"],
       failedDirs: ["memories", "sessions", "workspace", "plans"],
+      failedDirReasons: {
+        memories: "permission denied",
+        sessions: "permission denied",
+        workspace: "permission denied",
+        plans: "permission denied",
+      },
       failedFiles: [],
       manifest: makeBackupResult().manifest,
     });
@@ -323,15 +329,55 @@ describe("backupSandboxStateForRebuild with --force", () => {
 
     const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
     expect(
-      errorLines.some((line: string) => line.includes("None of the 4 sandbox state directories")),
+      errorLines.some((line: string) =>
+        line.includes("None of the 4 sandbox state directories could be preserved"),
+      ),
     ).toBe(true);
     expect(errorLines.some((line: string) => line.includes("wrong ownership or permissions"))).toBe(
+      true,
+    );
+    // The per-dir cause is surfaced on the Failed: line.
+    expect(errorLines.some((line: string) => line.includes("memories (permission denied)"))).toBe(
       true,
     );
     expect(errorLines.some((line: string) => line.includes("rebuild --force"))).toBe(true);
     // Must not fall through to the lenient "Rebuild will continue" warning.
     const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
     expect(warnLines.some((line: string) => line.includes("Rebuild will continue"))).toBe(false);
+  });
+
+  it("aborts with an unstable-mount hint when every dir was absent after extraction (#6972)", () => {
+    backupSpy.mockReturnValue({
+      success: false,
+      backedUpDirs: [],
+      backedUpFiles: ["SOUL.md"],
+      failedDirs: ["memories", "sessions"],
+      failedDirReasons: {
+        memories: "absent after extraction",
+        sessions: "absent after extraction",
+      },
+      failedFiles: [],
+      manifest: makeBackupResult().manifest,
+    });
+
+    expect(() =>
+      backupSandboxStateForRebuild(
+        "alpha",
+        makeSandboxEntry(),
+        false,
+        () => undefined,
+        () => true,
+        makeBail(),
+      ),
+    ).toThrow("bail: Failed to back up sandbox state.");
+
+    const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
+    expect(
+      errorLines.some((line: string) => line.includes("did not materialize on extraction")),
+    ).toBe(true);
+    expect(errorLines.some((line: string) => line.includes("wrong ownership or permissions"))).toBe(
+      false,
+    );
   });
 
   it("keeps the salvageable partial manifest when all dirs failed but --force is set (#6972)", () => {

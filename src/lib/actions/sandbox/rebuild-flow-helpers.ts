@@ -14,6 +14,11 @@ import {
 import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, G, R, YW } from "../../cli/terminal-style";
 import {
+  BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION,
+  BACKUP_FAILURE_PERMISSION_DENIED,
+  formatFailedBackupItems,
+} from "../../domain/backup-failure";
+import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
@@ -302,14 +307,35 @@ export function backupSandboxStateForRebuild(
       const dirCount = backup.failedDirs.length;
       const fileCount = backup.backedUpFiles.length;
       console.error(
-        `  None of the ${dirCount} sandbox state ${dirCount === 1 ? "directory" : "directories"} could be read (only ${fileCount} loose ${fileCount === 1 ? "file was" : "files were"} saved).`,
+        `  None of the ${dirCount} sandbox state ${dirCount === 1 ? "directory" : "directories"} could be preserved (only ${fileCount} loose ${fileCount === 1 ? "file was" : "files were"} saved).`,
       );
-      console.error(
-        "  This usually means the sandbox's mounted state has wrong ownership or permissions — for example after a host reboot remapped the mount's UIDs.",
-      );
+      // Tailor the hypothesis to the recorded per-dir cause instead of always
+      // blaming ownership: "permission denied" points at ownership/permissions,
+      // while "absent after extraction" points at an unstable/disappearing mount.
+      const reasons = Object.values(backup.failedDirReasons ?? {});
+      const anyPermissionDenied = reasons.includes(BACKUP_FAILURE_PERMISSION_DENIED);
+      const allAbsent =
+        reasons.length === backup.failedDirs.length &&
+        reasons.every((reason) => reason === BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION);
+      if (anyPermissionDenied) {
+        console.error(
+          "  The sandbox user could not read this state — the mounted files likely have wrong ownership or permissions, for example after a host reboot remapped the mount's UIDs.",
+        );
+      } else if (allAbsent) {
+        console.error(
+          "  The directories were reported by the sandbox but did not materialize on extraction — the mounted state may be unstable or disappearing under the container.",
+        );
+      } else {
+        console.error(
+          "  Inspect the per-directory failure reasons below along with the mount's ownership and permissions.",
+        );
+      }
     }
     if (backup.error) console.error(`  Reason: ${backup.error}`);
-    if (backup.failedDirs.length > 0) console.error(`  Failed: ${backup.failedDirs.join(", ")}`);
+    if (backup.failedDirs.length > 0)
+      console.error(
+        `  Failed: ${formatFailedBackupItems(backup.failedDirs, backup.failedDirReasons)}`,
+      );
     if (backup.failedFiles.length > 0)
       console.error(`  Failed files: ${backup.failedFiles.join(", ")}`);
     console.error("  Aborting rebuild to prevent data loss.");
