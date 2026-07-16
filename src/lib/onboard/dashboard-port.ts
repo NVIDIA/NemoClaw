@@ -14,12 +14,15 @@
  */
 
 import { spawnSync } from "node:child_process";
+import os from "node:os";
 
 import {
   DASHBOARD_PORT,
   DASHBOARD_PORT_RANGE_END,
   DASHBOARD_PORT_RANGE_START,
+  GATEWAY_PORT,
 } from "../core/ports";
+import { listHostGatewayRegistryEntries } from "../state/gateway-registry";
 import { type McpLifecycleLockOptions, withMcpLifecycleLock } from "../state/mcp-lifecycle-lock";
 
 // runner.ts is still CommonJS — use require so module shape matches.
@@ -29,6 +32,7 @@ type RunCaptureFn = typeof import("../runner").runCapture;
 type SandboxRegistryEntry = {
   name: string;
   dashboardPort?: number | null;
+  scopeGatewayPort?: number;
 };
 
 export type ListSandboxesFn = () => { sandboxes: SandboxRegistryEntry[] };
@@ -186,13 +190,11 @@ export function findDashboardForwardOwner(
  * The host-level bind probe also misses Docker-mediated forwards on macOS,
  * which is exactly the scenario reported on multi-instance hosts.
  *
- * The registry persists `dashboardPort` per sandbox and lives at host scope
- * (one file under `~/.nemoclaw/sandboxes.json`), so consulting it during
- * allocation closes the gap between gateway namespaces without enumerating
- * forwards across every NemoClaw gateway. The forward-list value still wins
- * for sandboxes whose forward exists on the currently selected gateway —
- * the registry view is a supplementary signal for sandboxes whose owning
- * gateway is not currently selected.
+ * The registry persists `dashboardPort` per sandbox. Allocation aggregates
+ * the default registry plus bounded real directories under `gateways/*`, so
+ * the view remains host-wide after gateway state becomes port-scoped. The
+ * forward-list value still wins for sandboxes whose forward exists on the
+ * currently selected gateway.
  */
 function mergeOccupiedPorts(
   forwardOccupied: Map<string, string>,
@@ -209,33 +211,47 @@ function mergeOccupiedPorts(
 
 /**
  * Build a cross-gateway occupancy map (port → owning sandbox name) from the
- * persisted sandbox registry, excluding the sandbox currently being allocated
- * for. The registry is the single host-scope view of dashboard ports across
- * every NemoClaw gateway — `openshell forward list` only knows about the
+ * persisted sandbox registries, excluding the current sandbox only in the
+ * selected gateway scope. `openshell forward list` only knows about the
  * currently selected gateway's forwards, so a fresh onboard against a second
- * `NEMOCLAW_GATEWAY_PORT` gateway cannot see the first gateway's allocations
- * without this view.
+ * `NEMOCLAW_GATEWAY_PORT` gateway needs this host-wide view.
  *
- * `listSandboxes()` already degrades to an empty registry when
- * `~/.nemoclaw/sandboxes.json` is missing or unparseable, so this helper does
- * not need an extra catch-all. Any remaining error (e.g. an unreadable
- * registry file with the wrong filesystem permissions) propagates so the
- * allocator surfaces it instead of silently handing out a colliding port.
+ * Production enumeration is bounded and rejects symlinked, malformed, or
+ * unreadable registry state. Errors propagate so the allocator fails closed
+ * instead of silently handing out a colliding port.
  *
  * `listSandboxesFn` is an injectable seam for tests; production callers
- * leave it at the default that reads `~/.nemoclaw/sandboxes.json`.
+ * leave it at the host-wide default.
  */
 export function getRegistryOccupiedDashboardPorts(
   currentSandboxName: string,
   listSandboxesFn?: ListSandboxesFn,
 ): Map<string, string> {
   const occupied = new Map<string, string>();
-  const list = listSandboxesFn ?? (require("../state/registry").listSandboxes as ListSandboxesFn);
+  const list =
+    listSandboxesFn ??
+    (() => ({
+      sandboxes: listHostGatewayRegistryEntries(process.env.HOME || os.homedir()).map(
+        ({ entry, gatewayPort }) => ({
+          name: entry.name,
+          dashboardPort: entry.dashboardPort,
+          scopeGatewayPort: gatewayPort,
+        }),
+      ),
+    }));
   for (const entry of list().sandboxes) {
-    if (entry.name === currentSandboxName) continue;
+    if (
+      entry.name === currentSandboxName &&
+      (entry.scopeGatewayPort === undefined || entry.scopeGatewayPort === GATEWAY_PORT)
+    )
+      continue;
     const port = entry.dashboardPort;
     if (typeof port !== "number" || !Number.isInteger(port) || port <= 0) continue;
-    occupied.set(String(port), entry.name);
+    const owner =
+      entry.scopeGatewayPort !== undefined && entry.scopeGatewayPort !== GATEWAY_PORT
+        ? `${entry.name} (gateway ${String(entry.scopeGatewayPort)})`
+        : entry.name;
+    occupied.set(String(port), owner);
   }
   return occupied;
 }

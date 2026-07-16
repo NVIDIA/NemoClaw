@@ -366,9 +366,56 @@ jobs:
       - name: Verify CLI shards completed
         env:
           CLI_SHARD_RESULT: ${{ needs['cli-test-shards'].result }}
+          GH_TOKEN: ${{ github.token }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          set -u
           if [ "$CLI_SHARD_RESULT" != "success" ]; then
-            echo "::error title=CLI coverage shards failed::Expected success, got ${CLI_SHARD_RESULT}"
+            details="$RUN_URL"
+            if jobs_json="$(gh api \
+              "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/attempts/$RUN_ATTEMPT/jobs?per_page=100" \
+              2>/dev/null)"; then
+              if job_ids="$(jq -er '
+                if ((.total_count | type) != "number") or
+                  (.total_count < 0) or
+                  (.total_count > 100) or
+                  ((.total_count | floor) != .total_count) or
+                  ((.jobs | type) != "array") or
+                  ((.jobs | length) != .total_count)
+                then error("invalid workflow job listing")
+                else
+                  [.jobs[] |
+                    select((.name | type) == "string") |
+                    select(.name | test("^cli-test-shards \\([1-8]\\)$")) |
+                    select(.conclusion != "success")] as $failed |
+                  if ($failed | length) == 0 or
+                    ($failed | length) > 8 or
+                    (($failed | map(.name) | unique | length) != ($failed | length))
+                  then error("invalid failed CLI shard listing")
+                  else
+                    $failed[] |
+                    if ((.id | type) != "number") or
+                      (.id < 1) or
+                      (.id > 9007199254740991) or
+                      ((.id | floor) != .id) or
+                      (.status != "completed") or
+                      ((.conclusion | type) != "string")
+                    then error("invalid failed CLI shard")
+                    else .id
+                    end
+                  end
+                end
+              ' <<<"$jobs_json" 2>/dev/null)"; then
+                details=""
+                while IFS= read -r job_id; do
+                  [ -n "$details" ] && details="${details}; "
+                  details="${details}${RUN_URL}/job/${job_id}"
+                done <<<"$job_ids"
+              fi
+            fi
+            echo "::error title=CLI coverage shards failed::Expected success, got ${CLI_SHARD_RESULT}. Details: ${details}"
             exit 1
           fi
 
@@ -442,6 +489,8 @@ jobs:
       - cli-tests
       - plugin-tests
     if: always()
+    permissions:
+      actions: read
     runs-on: ubuntu-latest
     timeout-minutes: 1
     steps:
@@ -456,16 +505,77 @@ jobs:
           WECHAT_RUNTIME_AUDIT_RESULT: ${{ needs['wechat-runtime-audit'].result }}
           REVIEWED_NPM_AUDIT_RESULT: ${{ needs['reviewed-npm-audit'].result }}
           CLI_TESTS_RESULT: ${{ needs['cli-tests'].result }}
+          GH_TOKEN: ${{ github.token }}
           PLUGIN_TESTS_RESULT: ${{ needs['plugin-tests'].result }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
+
+          job_listing_state="uninitialized"
+          jobs_json=""
+          dependency_url="$RUN_URL"
+          failed=0
+
+          load_job_listing() {
+            if [ "$job_listing_state" != "uninitialized" ]; then
+              return
+            fi
+            if jobs_json="$(gh api \
+              "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/attempts/$RUN_ATTEMPT/jobs?per_page=100" \
+              2>/dev/null)" && jq -e '
+                ((.total_count | type) == "number") and
+                (.total_count >= 0) and
+                (.total_count <= 100) and
+                ((.total_count | floor) == .total_count) and
+                ((.jobs | type) == "array") and
+                ((.jobs | length) == .total_count)
+              ' <<<"$jobs_json" >/dev/null 2>&1; then
+              job_listing_state="ready"
+            else
+              job_listing_state="failed"
+            fi
+          }
+
+          resolve_dependency_url() {
+            local name="$1"
+            local result="$2"
+            local job_id=""
+            dependency_url="$RUN_URL"
+            case "$name" in
+              changes|docs-only-checks|static-checks|build-typecheck|installer-integration|wechat-runtime-audit|reviewed-npm-audit|cli-tests|plugin-tests) ;;
+              *) return ;;
+            esac
+            load_job_listing
+            if [ "$job_listing_state" = "ready" ] && job_id="$(jq -er \
+              --arg name "$name" \
+              --arg result "$result" '
+                [.jobs[] | select(.name == $name)] as $matching |
+                if ($matching | length) != 1
+                then error("missing or duplicate dependency job")
+                elif (($matching[0].id | type) != "number") or
+                  ($matching[0].id < 1) or
+                  ($matching[0].id > 9007199254740991) or
+                  (($matching[0].id | floor) != $matching[0].id) or
+                  ($matching[0].status != "completed") or
+                  (($matching[0].conclusion | type) != "string") or
+                  ($matching[0].conclusion != $result)
+                then error("invalid dependency job")
+                else $matching[0].id
+                end
+              ' <<<"$jobs_json" 2>/dev/null)"; then
+              dependency_url="${RUN_URL}/job/${job_id}"
+            fi
+          }
 
           require_success() {
             local name="$1"
             local result="$2"
             if [ "$result" != "success" ]; then
-              echo "::error title=${name} failed::Expected success, got ${result}"
-              exit 1
+              resolve_dependency_url "$name" "$result"
+              echo "::error title=${name} failed::Expected success, got ${result}. Details: ${dependency_url}"
+              failed=1
             fi
           }
 
@@ -475,8 +585,9 @@ jobs:
             case "$result" in
               success|skipped) ;;
               *)
-                echo "::error title=${name} failed::Expected success or skipped, got ${result}"
-                exit 1
+                resolve_dependency_url "$name" "$result"
+                echo "::error title=${name} failed::Expected success or skipped, got ${result}. Details: ${dependency_url}"
+                failed=1
                 ;;
             esac
           }
@@ -502,6 +613,8 @@ jobs:
             allow_success_or_skipped "cli-tests" "$CLI_TESTS_RESULT"
             allow_success_or_skipped "plugin-tests" "$PLUGIN_TESTS_RESULT"
           fi
+
+          [ "$failed" -eq 0 ]
 
   # Sandbox image builds and E2E tests have moved to pr-self-hosted.yaml,
   # which runs on NVIDIA self-hosted runners via copy-pr-bot.

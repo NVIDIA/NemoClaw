@@ -1,13 +1,14 @@
-#!/usr/bin/env node
+#!/usr/bin/env -S node --experimental-strip-types
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-"use strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const fs = require("node:fs");
-const path = require("node:path");
+const SCRIPT_PATH = fileURLToPath(import.meta.url);
 
-const MARKER = "/* nemoclaw compact tool catalog (#2600) */";
+export const MARKER = "/* nemoclaw compact tool catalog (#2600) */";
 const ALL_CUSTOM_TOOLS_PATTERN =
   "\t\t\tconst allCustomTools = [...customTools, ...clientToolDefs];";
 const EFFECTIVE_TOOLS_PATTERN = "\t\tconst effectiveTools = [...tools, ...filteredBundledTools];";
@@ -177,11 +178,20 @@ const CATALOG_HELPER_AND_ASSIGNMENT = [
   "\t\t\tconst allCustomTools = nemoClawCreateToolCatalog(nemoClawCatalogSourceTools);",
 ].join("\n");
 
-function usage() {
-  return "Usage: patch-openclaw-tool-catalog.js <openclaw-dist-dir>";
+type PatchStatus = "patched" | "already-patched" | "native-tool-search" | "skipped-built-in";
+
+type PatchSelectionResult = {
+  patched: boolean;
+  text: string;
+  status?: PatchStatus;
+  skippedBuiltIn?: boolean;
+};
+
+function usage(): string {
+  return "Usage: patch-openclaw-tool-catalog.mts <openclaw-dist-dir>";
 }
 
-function countOccurrences(haystack, needle) {
+function countOccurrences(haystack: string, needle: string): number {
   let count = 0;
   let index = haystack.indexOf(needle);
   while (index !== -1) {
@@ -191,14 +201,16 @@ function countOccurrences(haystack, needle) {
   return count;
 }
 
-function readOpenClawVersion(distDir) {
+function readOpenClawVersion(distDir: string): string {
   const packageJsonPath = path.resolve(distDir, "..", "package.json");
-  let payload;
+  let payload: { version?: unknown };
   try {
     payload = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
   } catch (err) {
     throw new Error(
-      `Could not read OpenClaw package metadata at ${packageJsonPath}: ${err.message}`,
+      `Could not read OpenClaw package metadata at ${packageJsonPath}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
     );
   }
   if (typeof payload.version !== "string") {
@@ -207,12 +219,16 @@ function readOpenClawVersion(distDir) {
   return payload.version;
 }
 
-function listSelectionFiles(distDir) {
-  let entries;
+function listSelectionFiles(distDir: string): string[] {
+  let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(distDir, { withFileTypes: true });
   } catch (err) {
-    throw new Error(`Could not read OpenClaw dist directory ${distDir}: ${err.message}`);
+    throw new Error(
+      `Could not read OpenClaw dist directory ${distDir}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
   }
   return entries
     .filter((entry) => entry.isFile() && /^selection-.*\.js$/.test(entry.name))
@@ -220,15 +236,15 @@ function listSelectionFiles(distDir) {
     .sort();
 }
 
-function hasBuiltInToolCatalog(source) {
+function hasBuiltInToolCatalog(source: string): boolean {
   return source.includes("applyToolSearchCatalog({") && source.includes("buildToolSearchRunPlan({");
 }
 
-function hasNativeToolSearch(source) {
+function hasNativeToolSearch(source: string): boolean {
   return NATIVE_TOOL_SEARCH_PATTERNS.every((pattern) => source.includes(pattern));
 }
 
-function patchSelectionText(source, filePath) {
+export function patchSelectionText(source: string, filePath: string): PatchSelectionResult {
   if (source.includes(MARKER)) {
     if (ALREADY_PATCHED_FORBIDDEN_PATTERNS.some((pattern) => source.includes(pattern))) {
       throw new Error(`${filePath}: compact catalog marker is present but original targets remain`);
@@ -273,7 +289,11 @@ function patchSelectionText(source, filePath) {
   return { patched: true, text };
 }
 
-function patchOpenClawToolCatalog(distDir) {
+export function patchOpenClawToolCatalog(distDir: string): {
+  status: PatchStatus;
+  file: string;
+  version: string;
+} {
   const resolvedDist = path.resolve(distDir);
   const version = readOpenClawVersion(resolvedDist);
 
@@ -309,7 +329,7 @@ function patchOpenClawToolCatalog(distDir) {
   return { status: result.status ?? "already-patched", file: target, version };
 }
 
-function main(argv) {
+function main(argv: readonly string[]): number {
   const distDir = argv[2];
   if (!distDir || argv.length > 3) {
     console.error(usage());
@@ -327,12 +347,6 @@ function main(argv) {
   }
 }
 
-if (require.main === module) {
+if (process.argv[1] && path.resolve(process.argv[1]) === SCRIPT_PATH) {
   process.exitCode = main(process.argv);
 }
-
-module.exports = {
-  MARKER,
-  patchOpenClawToolCatalog,
-  patchSelectionText,
-};

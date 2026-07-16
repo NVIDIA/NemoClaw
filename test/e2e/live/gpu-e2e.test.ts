@@ -244,6 +244,8 @@ test("GPU Ollama onboard enables CUDA, auth proxy, and sandbox inference", {
         {
           model,
           messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+          // Keep this assertion about routed inference, not the model's reasoning-token budget.
+          reasoning_effort: "none",
           max_tokens: 32,
         },
       )}'`,

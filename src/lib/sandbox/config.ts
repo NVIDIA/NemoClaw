@@ -47,6 +47,10 @@ const {
   parseConfig,
   serializeConfig,
 }: typeof import("./config-format") = require("./config-format");
+const {
+  OPENSHELL_OPERATION_TIMEOUT_MS,
+}: typeof import("../adapters/openshell/timeouts") = require("../adapters/openshell/timeouts");
+const { redactFull }: typeof import("../security/redact") = require("../security/redact");
 
 type ConfigObject = import("../security/credential-filter").ConfigObject;
 type ConfigValue = import("../security/credential-filter").ConfigValue;
@@ -621,6 +625,167 @@ function recomputeSandboxConfigHash(sandboxName: string, target: AgentConfigTarg
   const script = buildRecomputeSandboxConfigHashScript(target);
   if (!script) return;
   privilegedSandboxExec(sandboxName, ["sh", "-c", script]);
+}
+
+// Absolute path to the Hermes dashboard config seeder inside the sandbox image
+// (installed by the agents/hermes image build). The python resolution order
+// mirrors start.sh's trusted `_HERMES_PYTHON` list.
+const HERMES_DASHBOARD_SEEDER_PATH = "/usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py";
+const HERMES_TRUSTED_PYTHON3 = [
+  "/opt/hermes/.venv/bin/python3",
+  "/usr/local/bin/python3",
+  "/usr/bin/python3",
+] as const;
+const HERMES_DASHBOARD_PATH_ABSENT_STATUS = 3;
+// OpenShell rejects CR/LF in argv, so encode the multiline program inside a
+// single-line Python expression.
+const HERMES_DASHBOARD_PATH_INSPECTION = `exec(${JSON.stringify(
+  [
+    "import os",
+    "import stat",
+    "import sys",
+    "try:",
+    "    mode = os.lstat(sys.argv[1]).st_mode",
+    "except FileNotFoundError:",
+    `    raise SystemExit(${HERMES_DASHBOARD_PATH_ABSENT_STATUS})`,
+    "except OSError as exc:",
+    '    print(f"unable to inspect Hermes dashboard path: {exc}", file=sys.stderr)',
+    "    raise SystemExit(2)",
+    "raise SystemExit(0 if stat.S_ISDIR(mode) else 2)",
+  ].join("\n"),
+)})`;
+
+export type HermesDashboardReseedResult = "converged" | "absent" | "failed";
+
+export interface HermesDashboardReseedDeps {
+  getOpenshellBinary: () => string;
+  captureOpenshellCommand: (
+    binary: string,
+    args: string[],
+    options: import("../adapters/openshell/client").CaptureOpenshellOptions,
+  ) => import("../adapters/openshell/client").CaptureOpenshellResult;
+  reportFailure?: (stage: "python" | "inspection" | "seed", detail: string) => void;
+}
+
+const HERMES_DASHBOARD_RESEED_DIAGNOSTIC_MAX_CHARS = 800;
+
+function hermesDashboardReseedFailureDetail(
+  result: import("../adapters/openshell/client").CaptureOpenshellResult,
+): string {
+  const raw =
+    result.error?.message || result.stderr?.trim() || result.output.trim() || result.stdout?.trim();
+  const detail = redactFull(raw || "no command output")
+    .replace(/\s+/gu, " ")
+    .trim();
+  const bounded = detail.slice(0, HERMES_DASHBOARD_RESEED_DIAGNOSTIC_MAX_CHARS);
+  return [
+    `status=${result.status === null ? "null" : result.status}`,
+    result.signal ? `signal=${result.signal}` : "",
+    bounded ? `detail=${bounded}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+/**
+ * Re-run the Hermes dashboard config seeder inside the sandbox so the isolated
+ * dashboard-home config (`<configDir>/dashboard-home/config.yaml`) re-mirrors the
+ * gateway config's model routing after an in-place `inference set`. Sandbox
+ * startup runs the same seeder; without re-running it, Dashboard Chat and its
+ * `/api/model/info` endpoint stay on the previous model even though the gateway
+ * config, registry, and CLI status all report the new one (#6893).
+ *
+ * Runs as the sandbox user (non-privileged `sandbox exec`, matching start.sh's
+ * step-down before touching sandbox-owned dashboard-home state); the seeder does
+ * no-follow atomic writes and refuses symlinked paths. Best-effort: returns
+ * `failed` on failure so the caller can warn without aborting the route switch.
+ */
+function seedHermesDashboardConfig(
+  sandboxName: string,
+  target: AgentConfigTarget,
+  deps: HermesDashboardReseedDeps = { getOpenshellBinary, captureOpenshellCommand },
+): HermesDashboardReseedResult {
+  const dashboardHome = `${target.configDir}/dashboard-home`;
+  const binary = deps.getOpenshellBinary();
+  const capture = (command: string[]) =>
+    deps.captureOpenshellCommand(
+      binary,
+      ["sandbox", "exec", "--name", sandboxName, "--", ...command],
+      {
+        ignoreError: true,
+        includeStreams: true,
+        maxBuffer: CONFIG_CAPTURE_MAX_BUFFER,
+        timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+      },
+    );
+  const failed = (result: import("../adapters/openshell/client").CaptureOpenshellResult) =>
+    Boolean(result.error || result.signal || result.status !== 0);
+  const reportFailure = (
+    stage: "python" | "inspection" | "seed",
+    result: import("../adapters/openshell/client").CaptureOpenshellResult,
+  ) => {
+    const detail = hermesDashboardReseedFailureDetail(result);
+    if (deps.reportFailure) {
+      deps.reportFailure(stage, detail);
+      return;
+    }
+    console.error(`  Hermes dashboard reseed ${stage} failed: ${detail}`);
+  };
+
+  let python: (typeof HERMES_TRUSTED_PYTHON3)[number] | null = null;
+  let lastPythonFailure: import("../adapters/openshell/client").CaptureOpenshellResult | undefined;
+  for (const candidate of HERMES_TRUSTED_PYTHON3) {
+    const probe = capture([candidate, "-c", ""]);
+    if (!failed(probe)) {
+      python = candidate;
+      break;
+    }
+    lastPythonFailure = probe;
+  }
+  if (!python) {
+    if (lastPythonFailure) reportFailure("python", lastPythonFailure);
+    return "failed";
+  }
+
+  // lstat distinguishes a genuinely absent profile from a file, a symlink
+  // (including a broken one), or an inspection error. Only the first case is a
+  // clean no-op; everything else fails closed so callers cannot report sync.
+  const inspection = capture([python, "-c", HERMES_DASHBOARD_PATH_INSPECTION, dashboardHome]);
+  if (
+    !inspection.error &&
+    !inspection.signal &&
+    inspection.status === HERMES_DASHBOARD_PATH_ABSENT_STATUS
+  ) {
+    return "absent";
+  }
+  if (failed(inspection)) {
+    reportFailure("inspection", inspection);
+    return "failed";
+  }
+
+  const dashboardConfigPath = `${dashboardHome}/config.yaml`;
+  const seed = capture([
+    python,
+    HERMES_DASHBOARD_SEEDER_PATH,
+    target.configPath,
+    dashboardConfigPath,
+    `${target.configDir}/.env`,
+    `${dashboardHome}/.env`,
+  ]);
+  if (failed(seed)) {
+    reportFailure("seed", seed);
+    return "failed";
+  }
+  const seededMarker = `[dashboard] seeded model routing into ${dashboardConfigPath}`;
+  if (
+    !String(seed.stderr ?? "")
+      .split(/\r?\n/u)
+      .includes(seededMarker)
+  ) {
+    reportFailure("seed", seed);
+    return "failed";
+  }
+  return "converged";
 }
 
 // ---------------------------------------------------------------------------
@@ -1280,6 +1445,7 @@ export {
   resolveAgentConfig,
   restartSandboxAgentAfterConfigSet,
   rewriteConfigUrlsWithDnsPinning,
+  seedHermesDashboardConfig,
   setDotpath,
   validateConfigDotpath,
   validateUrlValue,

@@ -287,6 +287,19 @@ export class OnboardRuntime {
   }
 
   async applyResult(result: OnboardStateResult): Promise<Session> {
+    if (result.type === "pause") {
+      const current = this.ensureSession();
+      if (isTerminalOnboardMachineState(current.machine.state)) {
+        throw new Error(`Cannot pause terminal onboarding state: ${current.machine.state}`);
+      }
+      if (result.updates && Object.keys(this.deps.filterSafeUpdates(result.updates)).length > 0) {
+        return this.updateContext(result.updates, {
+          state: current.machine.state,
+          metadata: result.metadata,
+        });
+      }
+      return current;
+    }
     if (result.type === "complete") {
       return this.complete(result.updates ?? {}, { metadata: result.metadata });
     }

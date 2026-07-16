@@ -79,16 +79,18 @@ NemoClaw pulls the vLLM image, downloads model weights into `~/.cache/huggingfac
 The container carries a NemoClaw ownership label so later onboarding runs can distinguish it from a bring-your-own server without trusting the container name alone.
 If an existing `nemoclaw-vllm` container does not carry that label, NemoClaw preserves it and asks you to remove or rename it before installing managed vLLM.
 If another vLLM server already occupies port `8000`, the managed path stops and asks you to select the existing server or stop it first.
-Managed profiles use immutable NGC platform digests:
+Managed profiles and model-specific recipes use immutable image digests:
 
-- DGX Spark and DGX Station use the `linux/arm64` digest `sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2` with a compressed layer size of `9.60 GB` under `nvcr.io/nvidia/vllm:26.05.post1-py3`.
-  DGX Station remains deferred until this path is validated end-to-end on physical hardware.
+- DGX Spark and DGX Station models without a model-specific runtime use the `linux/arm64` digest `sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2` with a compressed layer size of `9.60 GB` under `nvcr.io/nvidia/vllm:26.05.post1-py3`.
+- The DGX Station Nemotron 3 Ultra express recipe uses the multi-platform index digest `sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416` under `vllm/vllm-openai:v0.22.0`; on DGX Station, that index selects a `linux/arm64` manifest with a compressed layer size of `10.67 GB`.
+  It also pins Hugging Face revision `183968f87ae4cedce3039313cac1fd43d112c578` for the approximately `352.38 GB` model download.
 - Generic Linux `arm64` hosts use `sha256:447995cbb57e6c7cf792cab95e9852e5f62b5fb6d2f39e030fa4eda9a54eadb4` with a compressed layer size of `9.28 GB` under `nvcr.io/nvidia/vllm:26.03.post1-py3`.
 - Generic Linux `amd64` hosts use `sha256:7be6c2f676c36059a494fe17254e69ae5c677535ba6191044e5fc8e42a91c773` with a compressed layer size of `8.93 GB` under `nvcr.io/nvidia/vllm:26.03.post1-py3`.
 
 Image pulls from `nvcr.io` require NGC registry login.
+The Station Nemotron 3 Ultra recipe pulls its vLLM image from Docker Hub instead.
 
-The first run can take 10 to 30 minutes.
+The first run duration depends on image and model size, storage performance, and network throughput.
 Later runs reuse the cached image and model weights.
 The managed container uses Docker's `--restart unless-stopped` policy, so Docker restarts it unless an operator explicitly stops it.
 
@@ -108,36 +110,50 @@ The model-download helper and the long-lived vLLM container use `--pull=never`, 
 NemoClaw treats `/var/run/docker.sock` and `/run/docker.sock` as the local default Docker socket paths.
 It cannot inspect daemon storage through a remote endpoint, a named non-default Docker context, or another Unix socket.
 When both `DOCKER_CONTEXT` and `DOCKER_HOST` are set, NemoClaw follows Docker CLI precedence and uses `DOCKER_CONTEXT`.
-When the check is inconclusive, NemoClaw prints the reason, approximate image requirement, and diagnostic commands, then continues with the pull without claiming that capacity is sufficient.
+Before a registered model with pinned size metadata is downloaded, NemoClaw also checks the filesystem that contains the host Hugging Face cache.
+When a Docker image-storage check is inconclusive, NemoClaw prints the reason, approximate requirement, and diagnostic commands, then continues without claiming that capacity is sufficient.
+An inconclusive model-cache check remains guarded because a registered model download can be hundreds of gigabytes.
+Interactive setup requires explicit confirmation, and non-interactive setup stops with guidance to rerun interactively.
 
 When verified capacity is insufficient, the warning identifies the image, available capacity, approximate requirement, checked path and source, remediation, and diagnostic commands.
 Interactive setup continues only when you enter `y` or `yes` explicitly.
-Pressing **Enter**, entering `n` or `no`, or entering any other response stops before the guarded image pull starts.
+Pressing **Enter**, entering `n` or `no`, or entering any other response stops before the guarded image or model download starts.
 
 <Warning>
-`--yes` and `NEMOCLAW_YES=1` do not accept a verified insufficient-storage warning.
-Non-interactive setup stops unless you set `NEMOCLAW_IGNORE_VLLM_DISK_SPACE=1` exactly.
-The override applies only when NemoClaw verifies that Docker image storage is insufficient.
-Use it only after you independently verify that Docker storage can complete the image pull.
-Inconclusive checks continue automatically and do not require the override.
+`--yes` and `NEMOCLAW_YES=1` do not change managed vLLM storage-warning handling.
+Express installation and other non-interactive setup treat a verified warning that Docker image storage or model-cache storage is insufficient as advisory, so NemoClaw prints the warning and continues the guarded download.
+Interactive setup still requires you to enter `y` or `yes` for a verified insufficient-capacity warning.
+An inconclusive model-cache warning also requires explicit confirmation interactively, and non-interactive setup stops with guidance to rerun interactively.
+An inconclusive Docker image-storage check retains its existing automatic-continue behavior.
 </Warning>
 
 <Note>
-This preflight checks only the pinned vLLM container image.
-It does not estimate or gate the Hugging Face model-weight download into `~/.cache/huggingface`.
-Before the first managed-vLLM run, verify that the filesystem backing your model cache has enough free space for the selected model.
+The model-cache guard applies when the selected registered recipe declares a pinned snapshot size.
+NemoClaw creates `~/.cache/huggingface` as the host user and runs the one-shot download container with the host UID and GID, avoiding root-owned cache paths.
+Hugging Face credentials are forwarded only to that temporary downloader, not retained by the long-lived vLLM container.
+A legacy root-owned or otherwise unwritable cache stops before the image pull and prints a safe ownership-repair command; NemoClaw never changes its ownership automatically.
 </Note>
 
 If image pull output stops making progress, a watchdog stops the stalled pull without imposing a fixed wall-clock limit on slow but active downloads.
 If vLLM does not become ready, NemoClaw prints a short tail of the container logs before exiting.
 
-Managed vLLM uses these profile defaults:
+When you start managed vLLM outside the installer express flow, NemoClaw uses these profile defaults:
 
 | Host profile | Default model |
 |---|---|
 | DGX Spark | `nvidia/Qwen3.6-35B-A3B-NVFP4` |
 | DGX Station | `deepseek-ai/DeepSeek-V4-Flash` |
 | Linux with an NVIDIA GPU | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` |
+
+On DGX Station, accepting the installer express prompt sets `NEMOCLAW_VLLM_MODEL=nemotron-3-ultra-550b-a55b` and overrides the profile default.
+Pass `--station-deepseek` to select the existing `deepseek-v4-flash` recipe while retaining the same one-confirmation express flow.
+The registered Ultra recipe tracks the [official DGX Station deployment guide](https://github.com/NVIDIA-NeMo/Nemotron/blob/287ae845639d2ce998998cb8fd1f70a3fa943c0b/usage-cookbook/Nemotron-3-Ultra/StationDeploymentGuide/README.md) and configures the pinned model revision, CPU offload, `16 GB` of shared memory, memory/stack ulimits, MTP speculative decoding, and the Nemotron reasoning and tool-call parsers.
+NemoClaw intentionally keeps its existing bridge-networked managed-inference topology instead of importing the playbook's host-network setting.
+The container publishes port `8000` through Docker, so apply the firewall guidance at the top of this page.
+
+<Warning>
+DGX Station and its managed-vLLM paths remain Deferred until NemoClaw completes end-to-end validation on physical DGX Station hardware.
+</Warning>
 
 ## Run Non-Interactive Onboarding
 
@@ -158,6 +174,7 @@ NEMOCLAW_PROVIDER=install-vllm \
 On DGX Spark and DGX Station, `NEMOCLAW_PROVIDER=install-vllm` is sufficient for a non-interactive run.
 Add `NEMOCLAW_EXPERIMENTAL=1` on a generic Linux NVIDIA GPU host.
 Non-interactive runs use the profile default unless you set `NEMOCLAW_VLLM_MODEL`.
+On DGX Station, a direct provider-only run therefore selects `deepseek-v4-flash`; the installer express flow sets the Nemotron 3 Ultra override for you.
 
 ## Select a Managed Model
 
@@ -169,14 +186,16 @@ NemoClaw applies the registered `vllm serve` arguments, including the reasoning 
 | `qwen3.6-27b` | `Qwen/Qwen3.6-27B-FP8` | Supported override. |
 | `qwen3.6-35b-a3b-nvfp4` | `nvidia/Qwen3.6-35B-A3B-NVFP4` | DGX Spark default. |
 | `nemotron-3-nano-4b` | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` | Generic Linux NVIDIA GPU default. |
-| `deepseek-v4-flash` | `deepseek-ai/DeepSeek-V4-Flash` | DGX Station default. |
+| `deepseek-v4-flash` | `deepseek-ai/DeepSeek-V4-Flash` | DGX Station profile default outside express install. |
+| `nemotron-3-ultra-550b-a55b` | `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4` | DGX Station express-install selection with a pinned model revision and model-specific vLLM image. |
 | `deepseek-r1-distill-70b` | `deepseek-ai/DeepSeek-R1-Distill-Llama-70B` | Gated and requires license acceptance. |
 
 Slugs are case-insensitive, and NemoClaw also accepts the full Hugging Face model ID.
 An unrecognized value fails before image or model downloads and prints the valid slugs.
 
 Gated models require a Hugging Face token.
-Export `HF_TOKEN` before onboarding so NemoClaw can forward it to the managed container.
+Export `HF_TOKEN` before onboarding so NemoClaw can forward it temporarily to the one-shot model downloader.
+The token is not retained in the long-lived managed vLLM container after the explicit download completes.
 
 ```bash
 export HF_TOKEN="<your-hf-token>"

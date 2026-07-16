@@ -102,7 +102,11 @@ runs:
       run: |
         node -e "require('node:fs').rmSync('dist', { recursive: true, force: true })"
         npm run build:cli
-        npx tsx scripts/check-dist-sourcemaps.ts dist
+        dist_sourcemap_check=scripts/check-dist-sourcemaps.mts
+        if [ ! -f "$dist_sourcemap_check" ]; then
+          dist_sourcemap_check=scripts/check-dist-sourcemaps.ts
+        fi
+        npx tsx "$dist_sourcemap_check" dist
 
     - name: Upload compiled CLI artifact
       if: ${{ steps.validate-shard-inputs.outputs.upload_build_artifact == 'true' && success() }}

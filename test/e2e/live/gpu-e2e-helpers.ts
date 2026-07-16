@@ -242,7 +242,7 @@ sleep 2
 curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" "http://127.0.0.1:$1/api/tags"`,
       "restart-proxy",
       PROXY_PORT,
-      path.join(REPO_ROOT, "scripts", "ollama-auth-proxy.js"),
+      path.join(REPO_ROOT, "scripts", "ollama-auth-proxy.mts"),
     ],
     {
       artifactName: "proxy-restart-from-token",

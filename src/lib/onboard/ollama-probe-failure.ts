@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ApplyOllamaRuntimeContextWindowResult } from "../inference/ollama-runtime-context";
 import { abortNonInteractive } from "./non-interactive-abort";
 import { isOllamaProviderPinned } from "./ollama-startup";
 
@@ -11,6 +12,29 @@ export interface OllamaProbeFailureInput {
 }
 
 export type OllamaProbeFailureAction = "back-to-selection" | "continue";
+
+type SelectedOllamaModel = {
+  outcome: "selected";
+  model: string;
+  allowToolsIncompatible: boolean;
+};
+
+export type OllamaModelSelectionOutcome = SelectedOllamaModel | { outcome: "back-to-selection" };
+
+/** Finish Ollama selection, returning to provider selection on an interactive context failure. */
+export function completeOllamaRuntimeContextSelection(
+  result: ApplyOllamaRuntimeContextWindowResult,
+  selected: SelectedOllamaModel,
+  isNonInteractive: () => boolean,
+): OllamaModelSelectionOutcome {
+  if (result.ok) return selected;
+  if (isNonInteractive()) abortNonInteractive(result.message);
+  console.error(`  ${result.message}`);
+  if (isOllamaProviderPinned()) process.exit(1);
+  console.log("  Returning to provider selection.");
+  console.log("");
+  return { outcome: "back-to-selection" };
+}
 
 /**
  * Centralizes selectAndValidateOllamaModel's reaction to a failed Ollama
