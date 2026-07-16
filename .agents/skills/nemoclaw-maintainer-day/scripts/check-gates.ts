@@ -298,20 +298,203 @@ function checkContributorApprovalOverlap(
 // Gate 1: CI green
 // ---------------------------------------------------------------------------
 
+function currentCheckRollup(statusCheckRollup: StatusCheck[], repo: string): StatusCheck[] {
+  const latestAttemptJobsByRun = new Map<string, Set<string> | null>();
+
+  const latestAttemptJobIds = (runId: string): Set<string> | null => {
+    if (latestAttemptJobsByRun.has(runId)) return latestAttemptJobsByRun.get(runId) ?? null;
+
+    const runData = ghJson(["api", `repos/${repo}/actions/runs/${runId}`]);
+    const attempt =
+      typeof runData === "object" && runData !== null && !Array.isArray(runData)
+        ? (runData as Record<string, unknown>).run_attempt
+        : undefined;
+    if (!Number.isSafeInteger(attempt) || (attempt as number) < 1) {
+      latestAttemptJobsByRun.set(runId, null);
+      return null;
+    }
+
+    const jobsData = ghJson([
+      "api",
+      `repos/${repo}/actions/runs/${runId}/attempts/${attempt}/jobs?per_page=100`,
+    ]);
+    if (typeof jobsData !== "object" || jobsData === null || Array.isArray(jobsData)) {
+      latestAttemptJobsByRun.set(runId, null);
+      return null;
+    }
+    const { jobs, total_count: totalCount } = jobsData as Record<string, unknown>;
+    if (
+      !Number.isInteger(totalCount) ||
+      (totalCount as number) < 0 ||
+      (totalCount as number) > 100 ||
+      !Array.isArray(jobs) ||
+      jobs.length !== totalCount
+    ) {
+      latestAttemptJobsByRun.set(runId, null);
+      return null;
+    }
+
+    const ids = new Set<string>();
+    for (const job of jobs) {
+      const id =
+        typeof job === "object" && job !== null && !Array.isArray(job)
+          ? (job as Record<string, unknown>).id
+          : undefined;
+      if (!Number.isSafeInteger(id) || (id as number) < 1) {
+        latestAttemptJobsByRun.set(runId, null);
+        return null;
+      }
+      ids.add(String(id));
+    }
+    if (ids.size !== jobs.length) {
+      latestAttemptJobsByRun.set(runId, null);
+      return null;
+    }
+    latestAttemptJobsByRun.set(runId, ids);
+    return ids;
+  };
+
+  const checksFromLatestAttempt = (runId: string, checks: StatusCheck[]): StatusCheck[] | null => {
+    const jobIds = latestAttemptJobIds(runId);
+    if (!jobIds) return null;
+    const selected: StatusCheck[] = [];
+    for (const check of checks) {
+      const match = check.detailsUrl?.match(
+        new RegExp(`/actions/runs/${runId}/job/(\\d+)(?:[/?#]|$)`, "u"),
+      );
+      if (!match) return null;
+      if (jobIds.has(match[1])) selected.push(check);
+    }
+    return selected.length > 0 ? selected : null;
+  };
+
+  const groups = new Map<string, StatusCheck[]>();
+  for (const check of statusCheckRollup) {
+    const identity = JSON.stringify([
+      check.__typename ?? (check.context ? "StatusContext" : "CheckRun"),
+      check.name ?? check.context ?? "(unknown)",
+      check.workflowName ?? "",
+    ]);
+    const group = groups.get(identity) ?? [];
+    group.push(check);
+    groups.set(identity, group);
+  }
+
+  const current: StatusCheck[] = [];
+  for (const group of groups.values()) {
+    if (group.length === 1) {
+      current.push(group[0]);
+      continue;
+    }
+
+    if (group[0].__typename !== "StatusContext") {
+      const byRun = new Map<string, StatusCheck[]>();
+      for (const check of group) {
+        const runId = check.detailsUrl?.match(/\/actions\/runs\/(\d+)(?:\/|$)/)?.[1];
+        if (!runId) {
+          byRun.clear();
+          break;
+        }
+        const runChecks = byRun.get(runId) ?? [];
+        runChecks.push(check);
+        byRun.set(runId, runChecks);
+      }
+      if (byRun.size > 1) {
+        const runs = [...byRun].map(([runId, checks]) => {
+          const timestamps = checks.map((check) =>
+            Date.parse(check.startedAt ?? check.completedAt ?? ""),
+          );
+          return {
+            runId,
+            checks,
+            timestamp: timestamps.every(Number.isFinite) ? Math.min(...timestamps) : Number.NaN,
+          };
+        });
+        if (runs.every(({ timestamp }) => Number.isFinite(timestamp))) {
+          const latestTimestamp = Math.max(...runs.map(({ timestamp }) => timestamp));
+          const latestRuns = runs.filter(({ timestamp }) => timestamp === latestTimestamp);
+          if (latestRuns.length === 1) {
+            const latest = latestRuns[0];
+            current.push(
+              ...(latest.checks.length > 1
+                ? (checksFromLatestAttempt(latest.runId, latest.checks) ?? latest.checks)
+                : latest.checks),
+            );
+          } else {
+            current.push(...latestRuns.flatMap(({ checks }) => checks));
+          }
+          continue;
+        }
+      }
+
+      if (byRun.size === 1) {
+        const [runId, checks] = [...byRun][0];
+        current.push(
+          ...(checks.length > 1 ? (checksFromLatestAttempt(runId, checks) ?? checks) : checks),
+        );
+        continue;
+      }
+
+      const customCheckRuns = group.every(
+        (check) =>
+          !check.detailsUrl?.includes("/actions/runs/") &&
+          /\/runs\/\d+(?:[/?#]|$)/u.test(check.detailsUrl ?? ""),
+      );
+      if (customCheckRuns) {
+        const timestamped = group.map((check) => ({
+          check,
+          timestamp: Date.parse(check.startedAt ?? check.completedAt ?? ""),
+        }));
+        if (timestamped.every(({ timestamp }) => Number.isFinite(timestamp))) {
+          const latestTimestamp = Math.max(...timestamped.map(({ timestamp }) => timestamp));
+          current.push(
+            ...timestamped
+              .filter(({ timestamp }) => timestamp === latestTimestamp)
+              .map(({ check }) => check),
+          );
+          continue;
+        }
+      }
+
+      // Keep duplicate jobs from one workflow run together. This prevents a
+      // later-starting matrix job from hiding another job's failure.
+      current.push(...group);
+      continue;
+    }
+
+    const timestamped = group.map((check) => ({
+      check,
+      timestamp: Date.parse(check.startedAt ?? check.completedAt ?? ""),
+    }));
+    if (timestamped.some(({ timestamp }) => !Number.isFinite(timestamp))) {
+      current.push(...group);
+      continue;
+    }
+    const latestTimestamp = Math.max(...timestamped.map(({ timestamp }) => timestamp));
+    current.push(
+      ...timestamped
+        .filter(({ timestamp }) => timestamp === latestTimestamp)
+        .map(({ check }) => check),
+    );
+  }
+  return current;
+}
+
 function checkCi(
   statusCheckRollup: StatusCheck[] | null,
+  repo: string,
 ): GateResult & { failingChecks?: string[]; pendingChecks?: string[]; missingChecks?: string[] } {
   if (!statusCheckRollup || statusCheckRollup.length === 0) {
     return { pass: false, details: "No status checks found" };
   }
 
+  const currentChecks = currentCheckRollup(statusCheckRollup, repo);
+
   // Check that all required checks are present.
   // Fork PRs from first-time contributors need "Approve and run" before
   // pull_request workflows execute. Until then only pull_request_target
   // checks (like check-pr-limit) and external bots (CodeRabbit) appear.
-  const presentNames = new Set(
-    statusCheckRollup.map((c) => c.name ?? c.context ?? "").filter(Boolean),
-  );
+  const presentNames = new Set(currentChecks.map((c) => c.name ?? c.context ?? "").filter(Boolean));
   const missingChecks = REQUIRED_CHECK_NAMES.filter((name) => !presentNames.has(name));
   if (missingChecks.length > 0) {
     return {
@@ -325,7 +508,7 @@ function checkCi(
   const failing: string[] = [];
   const pending: string[] = [];
 
-  for (const check of statusCheckRollup) {
+  for (const check of currentChecks) {
     const checkName = check.name ?? check.context ?? "(unknown)";
 
     // StatusContext (e.g. CodeRabbit) uses `state` instead of `status`/`conclusion`.
@@ -363,7 +546,7 @@ function checkCi(
   if (pending.length > 0) {
     return { pass: false, details: `${pending.length} pending check(s)`, pendingChecks: pending };
   }
-  return { pass: true, details: `All ${statusCheckRollup.length} checks green` };
+  return { pass: true, details: `All ${currentChecks.length} current checks green` };
 }
 
 // ---------------------------------------------------------------------------
@@ -676,7 +859,7 @@ function main(): void {
     process.exit(1);
   }
 
-  const ci = checkCi(prData.statusCheckRollup);
+  const ci = checkCi(prData.statusCheckRollup, repo);
   const conflicts = checkConflicts(prData.mergeStateStatus);
   const coderabbit = checkCodeRabbit(repo, prNumber);
   const riskyCodeTested = checkRiskyCodeTested(prData.files ?? []);
