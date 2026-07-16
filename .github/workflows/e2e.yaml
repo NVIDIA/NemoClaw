@@ -3506,17 +3506,18 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   openshell-gateway-upgrade:
-    name: OpenShell gateway upgrade (${{ matrix.legacy.id }})
+    name: OpenShell gateway upgrade (${{ matrix.id }})
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openshell-gateway-upgrade,') || contains(format(',{0},', inputs.targets), ',openshell-gateway-upgrade,') }}
-    runs-on: ${{ matrix.legacy.runner }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        legacy:
+        include:
           - id: v0.0.36-x86_64
             runner: ubuntu-latest
+            shard: v0-0-36-x86-64
             nemoclaw_ref: v0.0.36
             nemoclaw_commit: "3351fbdd4eb7d9b80ec471545083956327da2b10"
             installer_sha256: "0c42400a0d3867739f1d75d612e069967be4506e169974bbbebf14b7af39144f"
@@ -3525,6 +3526,7 @@ jobs:
             openclaw_version: 2026.4.24
           - id: v0.0.55-x86_64
             runner: ubuntu-latest
+            shard: v0-0-55-x86-64
             nemoclaw_ref: v0.0.55
             nemoclaw_commit: "95d483fe2b6569d68e59493c60f19df09a068e8f"
             installer_sha256: "ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897"
@@ -3533,6 +3535,7 @@ jobs:
             openclaw_version: 2026.5.22
           - id: v0.0.55-aarch64
             runner: ubuntu-24.04-arm
+            shard: v0-0-55-aarch64
             nemoclaw_ref: v0.0.55
             nemoclaw_commit: "95d483fe2b6569d68e59493c60f19df09a068e8f"
             installer_sha256: "ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897"
@@ -3544,16 +3547,17 @@ jobs:
       E2E_TARGET_ID: "openshell-gateway-upgrade"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-upgrade
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_E2E_SHARD: ${{ matrix.shard }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME: "e2e-gateway-upgrade-survivor"
-      NEMOCLAW_OLD_NEMOCLAW_REF: ${{ matrix.legacy.nemoclaw_ref }}
-      NEMOCLAW_OLD_NEMOCLAW_COMMIT: ${{ matrix.legacy.nemoclaw_commit }}
-      NEMOCLAW_OLD_INSTALLER_SHA256: ${{ matrix.legacy.installer_sha256 }}
-      NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF: ${{ matrix.legacy.sandbox_base_image_ref }}
-      NEMOCLAW_OLD_OPENSHELL_VERSION: ${{ matrix.legacy.openshell_version }}
-      NEMOCLAW_OLD_OPENCLAW_VERSION: ${{ matrix.legacy.openclaw_version }}
+      NEMOCLAW_OLD_NEMOCLAW_REF: ${{ matrix.nemoclaw_ref }}
+      NEMOCLAW_OLD_NEMOCLAW_COMMIT: ${{ matrix.nemoclaw_commit }}
+      NEMOCLAW_OLD_INSTALLER_SHA256: ${{ matrix.installer_sha256 }}
+      NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF: ${{ matrix.sandbox_base_image_ref }}
+      NEMOCLAW_OLD_OPENSHELL_VERSION: ${{ matrix.openshell_version }}
+      NEMOCLAW_OLD_OPENCLAW_VERSION: ${{ matrix.openclaw_version }}
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -3580,7 +3584,7 @@ jobs:
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
-          name: e2e-openshell-gateway-upgrade-${{ matrix.legacy.id }}
+          name: e2e-openshell-gateway-upgrade-${{ matrix.id }}
 
       - name: Clean up Docker auth
         if: always()
