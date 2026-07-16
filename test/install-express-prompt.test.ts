@@ -60,6 +60,9 @@ detect_express_platform() { printf "$EXPRESS_PLATFORM"; }
 NON_INTERACTIVE="\${NON_INTERACTIVE:-}"
 NEMOCLAW_PROVIDER="\${NEMOCLAW_PROVIDER:-}"
 NEMOCLAW_NO_EXPRESS="\${NEMOCLAW_NO_EXPRESS:-}"
+if [ "\${FORCE_EXPRESS_PROMPT_READ_FAILURE:-}" = "1" ]; then
+  read() { return 1; }
+fi
 maybe_offer_express_install
 printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s POLICY=%s YES=%s SANDBOX=%s\\n" \\
   "\${NON_INTERACTIVE:-}" "\${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}" "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_MODEL:-}" \\
@@ -446,23 +449,24 @@ main "$@"
     // Docker / build deps are mocked to prove the error fires before any host
     // mutation (the preflight validation path).
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-notty-"));
-    const mutationLog = path.join(tmp, "host-mutations.log");
-    const python =
-      spawnSync("bash", ["--noprofile", "--norc", "-c", "command -v python3"], {
-        encoding: "utf-8",
-      }).stdout.trim() || "python3";
-    const shellScript = `
+    try {
+      const mutationLog = path.join(tmp, "host-mutations.log");
+      const python =
+        spawnSync("bash", ["--noprofile", "--norc", "-c", "command -v python3"], {
+          encoding: "utf-8",
+        }).stdout.trim() || "python3";
+      const shellScript = `
 source "$INSTALLER_UNDER_TEST" >/dev/null
 detect_express_platform() { printf "%s" "$EXPRESS_PLATFORM"; }
 ensure_docker() { printf "ensure_docker\\n" >>"$MUTATION_LOG"; }
 ensure_openshell_build_deps() { printf "ensure_openshell_build_deps\\n" >>"$MUTATION_LOG"; }
 main "$@"
 `;
-    const result = spawnSync(
-      python,
-      [
-        "-c",
-        `
+      const result = spawnSync(
+        python,
+        [
+          "-c",
+          `
 import os
 import subprocess
 import sys
@@ -480,30 +484,45 @@ sys.stdout.buffer.write(result.stdout)
 sys.stderr.buffer.write(result.stderr)
 sys.exit(result.returncode)
 `,
-        shellScript,
-      ],
-      {
-        cwd: tmp,
-        encoding: "utf-8",
-        timeout: 15_000,
-        killSignal: "SIGKILL",
-        env: {
-          HOME: tmp,
-          PATH: TEST_SYSTEM_PATH,
-          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
-          MUTATION_LOG: mutationLog,
-          EXPRESS_PLATFORM: "DGX Station",
+          shellScript,
+        ],
+        {
+          cwd: tmp,
+          encoding: "utf-8",
+          timeout: 15_000,
+          killSignal: "SIGKILL",
+          env: {
+            HOME: tmp,
+            PATH: TEST_SYSTEM_PATH,
+            INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+            MUTATION_LOG: mutationLog,
+            EXPRESS_PLATFORM: "DGX Station",
+          },
         },
-      },
-    );
+      );
+      const output = `${result.stdout}${result.stderr}`;
+      expect(result.error, output).toBeUndefined();
+      const mutations = fs.existsSync(mutationLog) ? fs.readFileSync(mutationLog, "utf-8") : "";
+      expect(result.status, output).not.toBe(0);
+      expect(output).toMatch(/--station-deepseek.*needs an interactive terminal/);
+      // Failed at preflight, before Docker / build-dependency mutation.
+      expect(mutations).toBe("");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed if the Station DeepSeek prompt becomes unreadable after preflight (#7014)", () => {
+    const result = runExpressPromptWithTty("", "tty", "DGX Station", {
+      FORCE_EXPRESS_PROMPT_READ_FAILURE: "1",
+      STATION_DEEPSEEK: "1",
+    });
     const output = `${result.stdout}${result.stderr}`;
     expect(result.error, output).toBeUndefined();
-    const mutations = fs.existsSync(mutationLog) ? fs.readFileSync(mutationLog, "utf-8") : "";
     expect(result.status, output).not.toBe(0);
     expect(output).toMatch(/--station-deepseek.*needs an interactive terminal/);
-    // Failed at preflight, before Docker / build-dependency mutation.
-    expect(mutations).toBe("");
-    fs.rmSync(tmp, { recursive: true, force: true });
+    expect(output).not.toMatch(/Using express install/);
+    expect(output).not.toMatch(/RESULT NON_INTERACTIVE=/);
   });
 
   it.each([

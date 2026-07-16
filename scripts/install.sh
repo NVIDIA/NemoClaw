@@ -2892,6 +2892,10 @@ express_prompt_can_read_tty() {
   return 1
 }
 
+fail_station_deepseek_terminal_required() {
+  error "--station-deepseek selects the DGX Station express prompt, which needs an interactive terminal. Re-run from a terminal (for a curl|bash pipe, /dev/tty must be available), or omit --station-deepseek and configure the install non-interactively."
+}
+
 validate_station_deepseek_override() {
   local platform="$1"
   if [ "${STATION_DEEPSEEK:-}" != "1" ]; then
@@ -2937,7 +2941,7 @@ validate_station_deepseek_override() {
   # rejection above. Checked last so a genuine config conflict (provider/model)
   # is still reported first.
   if ! express_prompt_can_read_tty; then
-    error "--station-deepseek selects the DGX Station express prompt, which needs an interactive terminal. Re-run from a terminal (for a curl|bash pipe, /dev/tty must be available), or omit --station-deepseek and configure the install non-interactively."
+    fail_station_deepseek_terminal_required
   fi
 }
 
@@ -3079,6 +3083,9 @@ maybe_offer_express_install() {
     describe_express_install "$platform"
     printf "  Run express install with these settings? [Y/n]: "
     if ! IFS= read -r reply; then
+      if [ "${STATION_DEEPSEEK:-}" = "1" ]; then
+        fail_station_deepseek_terminal_required
+      fi
       info "Skipping express install (unable to read from TTY)."
       return 0
     fi
@@ -3088,6 +3095,9 @@ maybe_offer_express_install() {
     printf "  Run express install with these settings? [Y/n]: "
     if ! IFS= read -r reply <&3; then
       exec 3<&-
+      if [ "${STATION_DEEPSEEK:-}" = "1" ]; then
+        fail_station_deepseek_terminal_required
+      fi
       info "Skipping express install (unable to read from TTY)."
       return 0
     fi
