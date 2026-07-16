@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -119,67 +119,79 @@ describe("trusted E2E parity entrypoint selection", () => {
   const parityStep = action.runs.steps.find(
     (step) => step.name === "Validate changed live E2E mock parity",
   );
-  if (!parityStep) throw new Error("Missing E2E mock parity action step");
+  const parityRun = parityStep?.run ?? "";
+  const parityEnv = parityStep?.env ?? {};
+  const stem = "scripts/checks/e2e-mock-parity";
 
-  it("prefers .mts, falls back to .ts, and rejects a missing check (#6921)", () => {
-    const stem = "scripts/checks/e2e-mock-parity";
-    const variants = [
-      { extensions: ["mts", "ts"], expected: `${stem}.mts`, status: 0 },
-      { extensions: ["mts"], expected: `${stem}.mts`, status: 0 },
-      { extensions: ["ts"], expected: `${stem}.ts`, status: 0 },
-      { extensions: [], expected: null, status: 1 },
-    ] as const;
+  function withParityEntrypoints(
+    extensions: readonly string[],
+    verify: (result: SpawnSyncReturns<string>, commandLog: string) => void,
+  ): void {
+    const temp = mkdtempSync(join(tmpdir(), "nemoclaw-e2e-parity-entrypoint-"));
+    const fakeBin = join(temp, "bin");
+    const commandLog = join(temp, "command.json");
+    mkdirSync(fakeBin);
+    mkdirSync(join(temp, "scripts", "checks"), { recursive: true });
+    writeFileSync(
+      join(fakeBin, "npx"),
+      [
+        "#!/usr/bin/env node",
+        'const fs = require("node:fs");',
+        "fs.appendFileSync(process.env.COMMAND_LOG, `${JSON.stringify(process.argv.slice(2))}\\n`);",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    for (const extension of extensions) {
+      writeFileSync(join(temp, `${stem}.${extension}`), "// fixture\n");
+    }
 
-    for (const variant of variants) {
-      const temp = mkdtempSync(join(tmpdir(), "nemoclaw-e2e-parity-entrypoint-"));
-      const fakeBin = join(temp, "bin");
-      const commandLog = join(temp, "command.json");
-      mkdirSync(fakeBin);
-      mkdirSync(join(temp, "scripts", "checks"), { recursive: true });
-      writeFileSync(
-        join(fakeBin, "npx"),
-        [
-          "#!/usr/bin/env node",
-          'const fs = require("node:fs");',
-          "fs.appendFileSync(process.env.COMMAND_LOG, `${JSON.stringify(process.argv.slice(2))}\\n`);",
-        ].join("\n"),
-        { mode: 0o755 },
-      );
-      for (const extension of variant.extensions) {
-        writeFileSync(join(temp, `${stem}.${extension}`), "// fixture\n");
-      }
-
-      try {
-        const result = spawnSync("bash", ["-c", parityStep.run ?? ""], {
+    try {
+      verify(
+        spawnSync("bash", ["-c", parityRun], {
           cwd: temp,
           encoding: "utf8",
           env: {
             ...process.env,
-            ...parityStep.env,
+            ...parityEnv,
             COMMAND_LOG: commandLog,
             EVENT_NAME: "pull_request",
             PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
             PUSH_BASE_SHA: "unused",
           },
           timeout: 5_000,
-        });
-
-        expect(result.status, String(result.stderr)).toBe(variant.status);
-        if (variant.expected) {
-          const commands = readFileSync(commandLog, "utf8")
-            .trim()
-            .split("\n")
-            .map((line) => JSON.parse(line));
-          expect(commands).toEqual([
-            ["tsx", variant.expected, "--base", "HEAD^1", "--head", "HEAD^2"],
-          ]);
-        } else {
-          expect(existsSync(commandLog)).toBe(false);
-          expect(String(result.stdout)).toContain("Missing E2E mock parity entrypoint");
-        }
-      } finally {
-        rmSync(temp, { force: true, recursive: true });
-      }
+        }),
+        commandLog,
+      );
+    } finally {
+      rmSync(temp, { force: true, recursive: true });
     }
+  }
+
+  it.each([
+    {
+      extensions: ["mts", "ts"],
+      expected: `${stem}.mts`,
+      title: "prefers .mts when both entrypoints exist",
+    },
+    { extensions: ["mts"], expected: `${stem}.mts`, title: "runs the migrated .mts entrypoint" },
+    { extensions: ["ts"], expected: `${stem}.ts`, title: "falls back to the .ts entrypoint" },
+  ])("$title (#6921)", ({ extensions, expected }) => {
+    withParityEntrypoints(extensions, (result, commandLog) => {
+      expect(result.status, String(result.stderr)).toBe(0);
+      expect(
+        readFileSync(commandLog, "utf8")
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line)),
+      ).toEqual([["tsx", expected, "--base", "HEAD^1", "--head", "HEAD^2"]]);
+    });
+  });
+
+  it("rejects a missing parity entrypoint (#6921)", () => {
+    withParityEntrypoints([], (result, commandLog) => {
+      expect(result.status, String(result.stderr)).toBe(1);
+      expect(existsSync(commandLog)).toBe(false);
+      expect(String(result.stdout)).toContain("Missing E2E mock parity entrypoint");
+    });
   });
 });
